@@ -124,9 +124,18 @@ parallel**.
 - **A build ranks by its site's Priority.** There is no separate Build mark; the site's one Priority
   covers its keeping, its build and its harvest (this retires `docs/plan_site_crews.md` §2.4's Build
   mark).
-- **One builder on every build first.** After pass 1, every build that can make progress gets one
-  builder, at any priority: the player started it, so the game tries to staff it. Keepers and hold
-  crews still come first, so the ground the band already has never rots to pay for new ground.
+- **One builder on every build, ranked by its site's priority group.** Keepers come first on every
+  row at every priority (keeping an improvement from sliding down its ladder is the claim that
+  never rots to pay for new ground). Then, per priority group High to Low, each of the group's
+  builds that can make progress gets one builder, then the group's hold crews. A hold crew is a
+  food take, not rot protection, so a Normal row's hold crew does not beat a High build, and a
+  Low build still gets its builder before the Low hold crews.
+- **A crew rounds once.** The keeper keeps first and gathers with what is left, so a row's heads
+  are `ceil(keep_hands + gather hands)`, not `ceil(keep) + ceil(gather)`; the fraction of a hand
+  of keeping rides inside a gatherer's head. A row with nothing to take (a tile or band
+  improvement, a source at its floor) gets `ceil(keep_hands)` heads. `keepersStaffed` counts the
+  heads whose turn is entirely keeping (`floor(keep_hands)`, plus one when the row has no other
+  head).
 - **Then builders round-robin within a priority.** In passes 2 and 3, High builds each take one more
   builder in turn until every High build is at its cap; only then Normal, then Low. Within a priority
   group, builds are staffed before sources reach toward their floor.

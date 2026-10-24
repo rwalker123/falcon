@@ -48,8 +48,8 @@ use godot::prelude::*;
 use sim_runtime::{
     CommandEncodeError, CommandEnvelope, CommandPayload, DenialRaidForecastQuery,
     DepositCrewTakeQuery, FactionCapacityQuery, ForageCrewTakeQuery, HuntCrewTakeQuery,
-    QueryPayload, QueryReply, QueryReplyEnvelope, WorkPartyForecastQuery, WorkPartySource,
-    MAX_PROTO_FRAME,
+    QueryPayload, QueryReply, QueryReplyEnvelope, StaffingPreviewQuery, WorkPartyForecastQuery,
+    WorkPartySource, MAX_PROTO_FRAME,
 };
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -118,6 +118,9 @@ pub(crate) const QUERY_KIND_FORAGE_CREW_TAKE: &str = "forage_crew_take";
 /// deposit holding none of that material is refused server-side as `unknown_deposit`, which reaches
 /// the sheet through the ordinary `error` field exactly as `unknown_patch` does — neither token is
 /// special-cased here.
+/// **The compose sheets' dry run of the real staffing** — *"what crew would this row be given, and
+/// which rows lose hands?"* Same source addressing as the work-party ask.
+pub(crate) const QUERY_KIND_STAFFING_PREVIEW: &str = "staffing_preview";
 pub(crate) const WORK_PARTY_SOURCE_HUNT: &str = "hunt";
 pub(crate) const WORK_PARTY_SOURCE_FORAGE: &str = "forage";
 pub(crate) const WORK_PARTY_SOURCE_EXTRACT: &str = "extract";
@@ -276,22 +279,7 @@ pub(crate) fn dispatch(
             crop: dict_string(ask, "crop"),
         }),
         QUERY_KIND_WORK_PARTY => {
-            let source = match dict_string(ask, "source_kind").as_str() {
-                WORK_PARTY_SOURCE_HUNT => WorkPartySource::Hunt {
-                    herd_id: dict_string(ask, "herd_id"),
-                },
-                WORK_PARTY_SOURCE_FORAGE => WorkPartySource::Forage {
-                    x: dict_u32(ask, "x"),
-                    y: dict_u32(ask, "y"),
-                    take_species: dict_string_array(ask, "take_species"),
-                },
-                WORK_PARTY_SOURCE_EXTRACT => WorkPartySource::Extract {
-                    x: dict_u32(ask, "x"),
-                    y: dict_u32(ask, "y"),
-                    material: dict_string(ask, "material"),
-                },
-                other => return Err(format!("unknown work-party source kind {other:?}")),
-            };
+            let source = work_party_source(ask)?;
             QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
                 faction_id: dict_u32(ask, "faction_id"),
                 band_id: dict_u64(ask, "band_id"),
@@ -301,6 +289,15 @@ pub(crate) fn dispatch(
                 floor: dict_f32(ask, "floor"),
             })
         }
+        QUERY_KIND_STAFFING_PREVIEW => QueryPayload::StaffingPreview(StaffingPreviewQuery {
+            faction_id: dict_u32(ask, "faction_id"),
+            band_id: dict_u64(ask, "band_id"),
+            source: work_party_source(ask)?,
+            kit_id: dict_string(ask, "kit_id"),
+            floor: dict_f32(ask, "floor"),
+            priority: dict_string(ask, "priority"),
+            max_workers: dict_u32(ask, "max_workers"),
+        }),
         // Listing reads save HEADERS off disk and is answered before the world gate, but it still
         // queues behind the sim's current turn, so it takes the save channel's patience rather than
         // the forecast one's.
@@ -346,6 +343,27 @@ pub(crate) fn dispatch(
     )
 }
 
+/// The work-party source an ask names (`source_kind` plus its address keys), shared by the forecast
+/// and the staffing preview because both address a row the same way.
+fn work_party_source(ask: &VarDictionary) -> Result<WorkPartySource, String> {
+    Ok(match dict_string(ask, "source_kind").as_str() {
+        WORK_PARTY_SOURCE_HUNT => WorkPartySource::Hunt {
+            herd_id: dict_string(ask, "herd_id"),
+        },
+        WORK_PARTY_SOURCE_FORAGE => WorkPartySource::Forage {
+            x: dict_u32(ask, "x"),
+            y: dict_u32(ask, "y"),
+            take_species: dict_string_array(ask, "take_species"),
+        },
+        WORK_PARTY_SOURCE_EXTRACT => WorkPartySource::Extract {
+            x: dict_u32(ask, "x"),
+            y: dict_u32(ask, "y"),
+            material: dict_string(ask, "material"),
+        },
+        other => return Err(format!("unknown work-party source kind {other:?}")),
+    })
+}
+
 /// **Does this question name a faction whose private state answers it?**
 ///
 /// The one place the channel split is decided, and it is deliberately an **exhaustive match with no
@@ -361,7 +379,8 @@ fn names_a_faction(query: &QueryPayload) -> bool {
         | QueryPayload::HuntCrewTake(_)
         | QueryPayload::WorkPartyForecast(_)
         | QueryPayload::DepositCrewTake(_)
-        | QueryPayload::ForageCrewTake(_) => true,
+        | QueryPayload::ForageCrewTake(_)
+        | QueryPayload::StaffingPreview(_) => true,
         // The save headers on disk and the roster ceiling for a grid size. Neither reads a faction's
         // state, and both are asked before a world — and therefore before a seat — exists.
         QueryPayload::ListSaves | QueryPayload::FactionCapacity(_) => false,
@@ -614,6 +633,30 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
             let _ = dict.insert("hunters_on_the_road", f64::from(reply.hunters_on_the_road));
             // 1-based; `0` = no load lands within the forecast's horizon.
             let _ = dict.insert("first_load_turn", i64::from(reply.first_load_turn));
+        }
+        Ok(QueryReply::StaffingPreview(reply)) => {
+            let _ = dict.insert("ok", true);
+            let _ = dict.insert("kind", QUERY_KIND_STAFFING_PREVIEW);
+            let _ = dict.insert("workers", i64::from(reply.workers));
+            let _ = dict.insert("keepers", i64::from(reply.keepers));
+            let _ = dict.insert("kitted", i64::from(reply.kitted));
+            let _ = dict.insert("bare", i64::from(reply.bare));
+            let _ = dict.insert("idle_before", i64::from(reply.idle_before));
+            let _ = dict.insert("idle_after", i64::from(reply.idle_after));
+            let mut losses = VarArray::new();
+            for loss in &reply.losses {
+                let mut row = VarDictionary::new();
+                let _ = row.insert("kind", loss.kind.as_str());
+                let _ = row.insert("x", i64::from(loss.x));
+                let _ = row.insert("y", i64::from(loss.y));
+                let _ = row.insert("herd_id", loss.herd_id.as_str());
+                let _ = row.insert("material", loss.material.as_str());
+                let _ = row.insert("branch", loss.branch.as_str());
+                let _ = row.insert("before", i64::from(loss.before));
+                let _ = row.insert("after", i64::from(loss.after));
+                losses.push(&row.to_variant());
+            }
+            let _ = dict.insert("losses", &losses);
         }
         Ok(QueryReply::ListSaves(slots)) => {
             let _ = dict.insert("ok", true);
@@ -943,6 +986,17 @@ mod tests {
                 floor: 0.0,
                 max_workers: 0,
                 crop: String::new(),
+            }),
+            QueryPayload::StaffingPreview(StaffingPreviewQuery {
+                faction_id: 0,
+                band_id: 1,
+                source: WorkPartySource::Hunt {
+                    herd_id: String::new(),
+                },
+                kit_id: String::new(),
+                floor: 0.0,
+                priority: String::new(),
+                max_workers: 0,
             }),
         ] {
             assert!(names_a_faction(&query));

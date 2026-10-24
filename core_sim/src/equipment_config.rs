@@ -1345,7 +1345,7 @@ pub struct DefaultKitsConfig {
     /// **The builders' default: nothing.** Each web's [`EquipmentStat::BuildWork`] item rides its
     /// own builders kit (`tillage` carries the hoes, `hurdling` the crook) — but *defaulting* the
     /// pool onto either would hand one web's build the other's offset. So the role opens bare, like
-    /// the two keeping roles, and what the pool actually works with is derived per queue entry from
+    /// the two keeping roles, and what the pool actually works with is derived per declared build from
     /// the head's own branch ([`EquipmentConfig::build_kit_for_branch`]).
     pub builders: String,
     /// **The road keepers' default: nothing.** The shipped roster declares no road gear, so the
@@ -1362,7 +1362,7 @@ pub struct DefaultKitsConfig {
     /// is load-bearing rather than a gap: **the free floor of both branches has to be workable
     /// bare-handed** or the material economy could never start (`docs/plan_extraction.md` §4d — a
     /// felling kit wants a haft, a haft is wood, and wood comes from felling). The two quarry tools
-    /// that ship declare `build_work` and land on the builders' pool, not here.
+    /// that ship declare `build_work` and land on the build crew, not here.
     pub extract: String,
     /// **The working keepers' default: nothing.** The shipped roster declares no keeping gear on
     /// either deposit branch, so the `quarrywork` role opens bare like the three keeping roles above

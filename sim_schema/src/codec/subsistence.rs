@@ -40,6 +40,46 @@ pub(crate) fn create_upkeep_toe<'a>(
     Some(builder.create_vector(&rows))
 }
 
+/// **A DECLARED BUILD'S TOOL LINES** — absent rather than empty where the rung asks for no tool,
+/// the `kitToe` convention. Rides the pool table's [`fb::PoolToeLine`] (`pool` reads `"build"`).
+pub(crate) fn create_build_toe<'a>(
+    builder: &mut FbBuilder<'a>,
+    lines: &[crate::state::population::PoolToeLineState],
+) -> Option<WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::PoolToeLine<'a>>>>> {
+    if lines.is_empty() {
+        return None;
+    }
+    let rows: Vec<_> = lines
+        .iter()
+        .map(|line| {
+            let pool = builder.create_string(&line.pool);
+            let item_id = builder.create_string(&line.item_id);
+            fb::PoolToeLine::create(
+                builder,
+                &fb::PoolToeLineArgs {
+                    pool: Some(pool),
+                    itemId: Some(item_id),
+                    required: line.required,
+                    filled: line.filled,
+                },
+            )
+        })
+        .collect();
+    Some(builder.create_vector(&rows))
+}
+
+/// The decode twin of [`create_build_toe`].
+pub(crate) fn decode_build_toe(
+    lines: Option<flatbuffers::Vector<'_, ForwardsUOffset<fb::PoolToeLine<'_>>>>,
+) -> Vec<crate::state::population::PoolToeLineState> {
+    map_rows(lines, |line| crate::state::population::PoolToeLineState {
+        pool: text(line.pool()),
+        item_id: text(line.itemId()),
+        required: line.required(),
+        filled: line.filled(),
+    })
+}
+
 /// The decode twin of [`create_upkeep_toe`].
 pub(crate) fn decode_upkeep_toe(
     lines: Option<flatbuffers::Vector<'_, ForwardsUOffset<fb::KitToeLine<'_>>>>,
@@ -561,6 +601,7 @@ fn create_herds<'a>(
         let upkeep_material_supplied =
             create_material_payoffs(builder, &herd.upkeep_material_supplied);
         let upkeep_toe = create_upkeep_toe(builder, &herd.upkeep_toe);
+        let build_toe = create_build_toe(builder, &herd.build_toe);
         let rung_quotes = create_rung_quotes(builder, &herd.rung_quotes);
         let size_tier = builder.create_string(herd.size_tier.as_str());
         let predator_eaten_by = builder.create_string(&herd.predator_eaten_by);
@@ -662,11 +703,14 @@ fn create_herds<'a>(
                 upkeepWorkersAtCompletion: herd.upkeep_workers_at_completion,
                 upkeepNextWorkerTurn: herd.upkeep_next_worker_turn,
                 upkeepToe: upkeep_toe,
+                buildersStaffed: herd.builders_staffed,
+                buildersKitted: herd.builders_kitted,
+                buildersCap: herd.builders_cap,
+                buildToe: build_toe,
                 meterRotPerTurn: herd.meter_rot_per_turn,
                 // Where this herd sits in the winning band's queue — read as one set with
                 // `buildTurnsRemaining` and `buildWorkFromGear`, which is what makes a chained date
                 // legible (docs/plan_standing_upkeep.md 4.6b).
-                buildQueuePosition: herd.build_queue_position,
                 // …and WHY it is stuck, when it is. `""` = not blocked.
                 buildBlockedReason: Some(build_blocked_reason),
                 buildDestinationRung: Some(build_destination_rung),
@@ -813,6 +857,7 @@ fn create_forage_patches<'a>(
         let upkeep_material_supplied =
             create_material_payoffs(builder, &patch.upkeep_material_supplied);
         let upkeep_toe = create_upkeep_toe(builder, &patch.upkeep_toe);
+        let build_toe = create_build_toe(builder, &patch.build_toe);
         let entry = fb::ForagePatchState::create(
             builder,
             &fb::ForagePatchStateArgs {
@@ -863,9 +908,12 @@ fn create_forage_patches<'a>(
                 upkeepWorkersAtCompletion: patch.upkeep_workers_at_completion,
                 upkeepNextWorkerTurn: patch.upkeep_next_worker_turn,
                 upkeepToe: upkeep_toe,
+                buildersStaffed: patch.builders_staffed,
+                buildersKitted: patch.builders_kitted,
+                buildersCap: patch.builders_cap,
+                buildToe: build_toe,
                 meterRotPerTurn: patch.meter_rot_per_turn,
                 // The plant twin — see the herd row above.
-                buildQueuePosition: patch.build_queue_position,
                 buildBlockedReason: Some(build_blocked_reason),
                 buildDestinationRung: Some(build_destination_rung),
                 buildLegs: build_legs,
@@ -1247,6 +1295,7 @@ fn create_ladder_rungs<'a>(
                 earnsKnowledge: Some(earns_knowledge),
                 requiresRung: Some(requires_rung),
                 workCost: state.work_cost,
+                maxBuilders: state.max_builders,
                 upkeepWorkPerTurn: state.upkeep_work_per_turn,
                 buildMaterialCost: state.build_material_cost,
                 buildMaterialId: Some(build_material_id),
@@ -1355,6 +1404,7 @@ fn create_deposits<'a>(
                 Some(builder.create_vector(&deposit.regrowth_samples))
             };
             let upkeep_toe = create_upkeep_toe(builder, &deposit.upkeep_toe);
+            let build_toe = create_build_toe(builder, &deposit.build_toe);
             fb::DepositState::create(
                 builder,
                 &fb::DepositStateArgs {
@@ -1382,6 +1432,10 @@ fn create_deposits<'a>(
                     upkeepWorkersAtCompletion: deposit.upkeep_workers_at_completion,
                     upkeepNextWorkerTurn: deposit.upkeep_next_worker_turn,
                     upkeepToe: upkeep_toe,
+                    buildersStaffed: deposit.builders_staffed,
+                    buildersKitted: deposit.builders_kitted,
+                    buildersCap: deposit.builders_cap,
+                    buildToe: build_toe,
                     hasNeglectGrace: deposit.has_neglect_grace,
                     neglectGraceRemaining: deposit.neglect_grace_remaining,
                     buildTurnsRemaining: deposit.build_turns_remaining,
@@ -1429,6 +1483,10 @@ fn decode_deposit(deposit: fb::DepositState<'_>) -> DepositState {
         upkeep_workers_at_completion: deposit.upkeepWorkersAtCompletion(),
         upkeep_next_worker_turn: deposit.upkeepNextWorkerTurn(),
         upkeep_toe: decode_upkeep_toe(deposit.upkeepToe()),
+        builders_staffed: deposit.buildersStaffed(),
+        builders_kitted: deposit.buildersKitted(),
+        builders_cap: deposit.buildersCap(),
+        build_toe: decode_build_toe(deposit.buildToe()),
         has_neglect_grace: deposit.hasNeglectGrace(),
         neglect_grace_remaining: deposit.neglectGraceRemaining(),
         build_turns_remaining: deposit.buildTurnsRemaining(),
@@ -1680,6 +1738,10 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         upkeep_workers_at_completion: herd.upkeepWorkersAtCompletion(),
         upkeep_next_worker_turn: herd.upkeepNextWorkerTurn(),
         upkeep_toe: decode_upkeep_toe(herd.upkeepToe()),
+        builders_staffed: herd.buildersStaffed(),
+        builders_kitted: herd.buildersKitted(),
+        builders_cap: herd.buildersCap(),
+        build_toe: decode_build_toe(herd.buildToe()),
         has_neglect_grace: herd.hasNeglectGrace(),
         neglect_grace_remaining: herd.neglectGraceRemaining(),
         provisions_per_biomass: herd.provisionsPerBiomass(),
@@ -1699,7 +1761,6 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         build_work_from_gear: herd.buildWorkFromGear(),
         build_work_per_worker_turn: herd.buildWorkPerWorkerTurn(),
         meter_rot_per_turn: herd.meterRotPerTurn(),
-        build_queue_position: herd.buildQueuePosition(),
         build_blocked_reason: text(herd.buildBlockedReason()),
         build_destination_rung: text(herd.buildDestinationRung()),
         build_legs: decode_build_legs(herd.buildLegs()),
@@ -1762,6 +1823,10 @@ fn decode_forage_patch(patch: fb::ForagePatchState<'_>) -> ForagePatchState {
         upkeep_workers_at_completion: patch.upkeepWorkersAtCompletion(),
         upkeep_next_worker_turn: patch.upkeepNextWorkerTurn(),
         upkeep_toe: decode_upkeep_toe(patch.upkeepToe()),
+        builders_staffed: patch.buildersStaffed(),
+        builders_kitted: patch.buildersKitted(),
+        builders_cap: patch.buildersCap(),
+        build_toe: decode_build_toe(patch.buildToe()),
         has_neglect_grace: patch.hasNeglectGrace(),
         neglect_grace_remaining: patch.neglectGraceRemaining(),
         provisions_per_biomass: patch.provisionsPerBiomass(),
@@ -1776,7 +1841,6 @@ fn decode_forage_patch(patch: fb::ForagePatchState<'_>) -> ForagePatchState {
         build_work_from_gear: patch.buildWorkFromGear(),
         build_work_per_worker_turn: patch.buildWorkPerWorkerTurn(),
         meter_rot_per_turn: patch.meterRotPerTurn(),
-        build_queue_position: patch.buildQueuePosition(),
         build_blocked_reason: text(patch.buildBlockedReason()),
         build_destination_rung: text(patch.buildDestinationRung()),
         build_legs: decode_build_legs(patch.buildLegs()),
@@ -1860,6 +1924,7 @@ fn decode_ladder_rung(state: fb::LadderRungState<'_>) -> LadderRungState {
         earns_knowledge: text(state.earnsKnowledge()),
         requires_rung: text(state.requiresRung()),
         work_cost: state.workCost(),
+        max_builders: state.maxBuilders(),
         upkeep_work_per_turn: state.upkeepWorkPerTurn(),
         build_material_cost: state.buildMaterialCost(),
         build_material_id: text(state.buildMaterialId()),

@@ -1332,19 +1332,17 @@ func _auto_craft_states() -> void:
 		panel != null and _label_with_text(panel, lent_text) == null)
 	await _build_queue_suggestion_states()
 
-const BQ_FACE := "Tame Wild Boar"
 const BQ_POSITION := 1
-const BQ_LINE := "2 builders, for Tame Wild Boar"
-const BQ_FALLBACK_LINE := "2 builders, for (12, 7)"
-const BQ_ONE_LINE := "1 builder, for Tame Wild Boar"
+const BQ_LINE := "2 builders, for (12, 7)"
+const BQ_ONE_LINE := "1 builder, for (12, 7)"
 ## What the sim really publishes: a builder's gear always adds build work, so the queued-build
 ## suggestion carries a positive `work_per_turn` - the wording must win over `+X work a turn` anyway.
 const BQ_WORK_PER_TURN := 0.5
 
-func _bq_source(position: int, builders: float = 2.0) -> Dictionary:
-	return {"kind": HudCraftingVocab.SOURCE_KIND_BUILD_QUEUE, "job": "hunt", "target_x": 12,
+func _bq_source(_position: int, builders: float = 2.0) -> Dictionary:
+	return {"kind": HudCraftingVocab.SOURCE_KIND_BUILD, "job": "hunt", "target_x": 12,
 		"target_y": 7, "fauna_id": "wild_boar", "material": "", "missing_units": 2.0,
-		"workers_without": builders, "work_per_turn": BQ_WORK_PER_TURN, "queue_position": position}
+		"workers_without": builders, "work_per_turn": BQ_WORK_PER_TURN}
 
 ## A take-row suggestion first, then a Crook whose only shortage is a queued build, then a Sled that
 ## is short for a take AND a queued build (the mixed case keeps today's wording).
@@ -1378,11 +1376,6 @@ func _auto_meta_value_node(node: Node, meta: String, value: Variant) -> Node:
 	return null
 
 func _build_queue_suggestion_states() -> void:
-	var controller = h._hud.crafting_panel()
-	var real_source: Callable = controller._build_queue_faces
-	# The Work tab's own row labels are the join target; the harness hands the controller the label the
-	# queue row would draw for position 1.
-	controller.set_build_queue_faces_source(func(_b: Dictionary) -> Dictionary: return {BQ_POSITION: BQ_FACE})
 	var panel: CraftingPanel = await _auto_show(_build_queue_band())
 	if panel == null:
 		h._assert_hud("crafting/build-queue — the panel opens", false)
@@ -1398,13 +1391,6 @@ func _build_queue_suggestion_states() -> void:
 	await h._save("crafting_build_queue_suggestion")
 	h._hud.close_crafting_panel()
 	await h._settle()
-	# An unresolvable position falls back to the job + target.
-	controller.set_build_queue_faces_source(func(_b: Dictionary) -> Dictionary: return {})
-	panel = await _auto_show(_build_queue_band())
-	line = _consequence_of(panel, "crook") if panel != null else ""
-	h._assert_hud("crafting/build-queue — an unresolved position falls back to the job and tile (%s)" % line,
-		line == BQ_FALLBACK_LINE)
-	controller.set_build_queue_faces_source(real_source)
 	h._hud.close_crafting_panel()
 	await h._settle()
 

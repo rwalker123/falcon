@@ -18,12 +18,12 @@ use core_sim::{
     CommandEventEntry, CommandEventKind, CommandEventLog, CultureManager, DiscoveryProgressLedger,
     FactionId, FactionInventory, FaunaConfigHandle, ForageRegistry, GenerationId,
     GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
-    LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, MapPresets,
-    MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, SimulationConfig,
-    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SourcePriority,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
-    TileRegistry, VerbId, WellbeingConfigHandle, FODDER, FODDERING_DISCOVERY_ID, FOOD,
-    FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
+    LaborAssignment, LaborTarget, LadderConfigHandle, MapPresets, MapPresetsHandle, MoraleCause,
+    PopulationCohort, ResidentBand, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, VerbId, WellbeingConfigHandle,
+    FODDER, FODDERING_DISCOVERY_ID, FOOD, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION,
+    PENNING_DISCOVERY_ID,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -79,7 +79,8 @@ fn spawn_world() -> App {
     app.world
         .resource_mut::<FaunaConfigHandle>()
         .hold_wariness_at_zero();
-    app.world.insert_resource(LaborConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::labor_config_with_room_on_the_tile());
     app.world
         .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     app.world
@@ -1052,7 +1053,8 @@ fn spawn_crew_of(
     // about staffing seat the keeping themselves (`seat_keeping` / `run_understaffed_turns`) and
     // never run the labor arm.
     let keepers = hunters;
-    app.world
+    let band = app
+        .world
         .spawn((
             PopulationCohort {
                 home: tile,
@@ -1116,33 +1118,29 @@ fn spawn_crew_of(
                 // every turn (`docs/plan_standing_upkeep.md` §2.4), and the hunt row is the herd's
                 // crew: it keeps first and hunts with the rest (`docs/plan_site_crews.md` §2.2). So
                 // the row carries the keeping hands on top of the hunters.
-                assignments: with_builders_pool(
-                    vec![LaborAssignment {
-                        party: None,
-                        muster_crew: 0,
-                        planned_crew: 0,
-                        max_workers: Some(hunters + keepers),
-                        staffing: Default::default(),
-                        target: LaborTarget::Hunt {
-                            fauna_id: herd_id.to_string(),
-                            floor: policy,
-                            move_with_herd: false,
-                        },
-                        workers: hunters + keepers,
-                        kit: None,
-                        priority: SourcePriority::default(),
-                    }],
-                    improvement.map_or(0, |_| hunters),
-                ),
+                assignments: vec![LaborAssignment {
+                    party: None,
+                    muster_crew: 0,
+                    planned_crew: 0,
+                    max_workers: Some(hunters + keepers),
+                    staffing: Default::default(),
+                    target: LaborTarget::Hunt {
+                        fauna_id: herd_id.to_string(),
+                        floor: policy,
+                        move_with_herd: false,
+                    },
+                    workers: hunters + keepers,
+                    kit: None,
+                    priority: SourcePriority::default(),
+                }],
                 // **The declaration** — a verb states what is raised, and the `builders` pool above
                 // raises it (`docs/plan_standing_upkeep.md` §2.5).
-                build_queue: improvement
-                    .map(|declared| core_sim::BuildQueueEntry {
+                builds: improvement
+                    .map(|declared| core_sim::BuildDeclaration {
                         source: core_sim::BuildSource::Herd(herd_id.to_string()),
                         declared: core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(
                             declared,
                         )),
-                        priority: core_sim::SourcePriority::default(),
                     })
                     .into_iter()
                     .collect(),
@@ -1156,13 +1154,20 @@ fn spawn_crew_of(
             // `FIXTURE_SPECIES` pin exists for.
             ResidentBand,
         ))
-        .id()
+        .id();
+    if improvement.is_some() {
+        // **The hands a declared build is raised by are the band's idle ones**
+        // (`docs/plan_labor_at_scale.md`), stated here as exactly the crew's count.
+        core_sim::seat_builders(&mut app.world, band, builders);
+    }
+    band
 }
 
 /// One full turn's fauna pipeline in real stage order: Logistics (herds regrow, husbandry upkeep)
 /// then Population (labor allocation resolves the hunt + accrues husbandry).
 fn run_turns_with_hunt(app: &mut App, turns: u32) {
     for _ in 0..turns {
+        core_sim::reseat_builders(&mut app.world);
         app.world.run_system_once(advance_herds);
         app.world.run_system_once(advance_husbandry);
         app.world.run_system_once(advance_labor_allocation);
@@ -1773,7 +1778,7 @@ fn taming_is_a_per_species_cost_on_the_shared_rung() {
 /// crew now. `None` is pinned beside it for a faction that has not learned Herding: a projection must
 /// never quote a rung `validate_tame` would refuse.
 #[test]
-fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_the_crew() {
+fn an_untamed_herd_quotes_the_tame_it_would_take_on_at_one_assumed_builder() {
     /// Both runs staff at or above the fixture herd's keeper requirement, so neither is shedding —
     /// the only thing that differs between them is how many hands are on the job.
     const SMALL_CREW: u32 = 10;
@@ -1798,21 +1803,7 @@ fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_th
         // `docs/plan_standing_upkeep.md` §2.5 there is a real crew to quote and the projection no
         // longer falls back to the gatherers beside it.
         let band = spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, keepers);
-        app.world
-            .get_mut::<LaborAllocation>(band)
-            .expect("the fixture band keeps its allocation")
-            .assignments
-            .push(LaborAssignment {
-                party: None,
-                muster_crew: 0,
-                planned_crew: 0,
-                max_workers: Some(keepers),
-                staffing: Default::default(),
-                target: LaborTarget::Builders,
-                workers: keepers,
-                kit: None,
-                priority: SourcePriority::default(),
-            });
+        core_sim::seat_builders(&mut app.world, band, keepers);
         run_turns_with_hunt(&mut app, 1);
         count(herd_of(&app, &id).build_turns_remaining)
     };
@@ -1839,8 +1830,9 @@ fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_th
     let doubled = projection(rate + SMALL_CREW * 2, true).expect("a bigger crew is still quotable");
     assert_eq!(
         doubled,
-        quoted.div_ceil(2),
-        "twice the net supply, half the turns: {quoted} at {SMALL_CREW}, {doubled} at {}",
+        quoted,
+        "an undeclared Tame is quoted at one assumed builder, whatever hands the band has idle: \
+         {quoted} beside {SMALL_CREW} idle, {doubled} beside {}",
         SMALL_CREW * 2
     );
 
@@ -1855,9 +1847,9 @@ fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_th
 /// web** (`docs/plan_unit_costed_work.md` §1.2). Both animal rungs declare `crew_needed: null`, so
 /// before improvements were priced in work they were not merely uncapped but **crew-BLIND**: a Tame
 /// took 25 turns whether two hands or twenty worked the herd. Turns are the output now, so hands buy
-/// them — on every rung, with no cap.
+/// them - up to the rung's `max_builders`, past which more hands buy nothing.
 #[test]
-fn a_bigger_keeper_crew_tames_materially_faster() {
+fn a_crew_past_the_rungs_builder_cap_tames_no_faster() {
     /// Both runs use a crew at or above the fixture herd's own keeper requirement, so neither is
     /// shedding — what differs is only how many hands are on the job.
     const SMALL_CREW: u32 = 10;
@@ -1866,19 +1858,10 @@ fn a_bigger_keeper_crew_tames_materially_faster() {
     let slow = turns_to_tame_with("rabbit", SMALL_CREW, 120);
     let fast = turns_to_tame_with("rabbit", BIG_CREW, 120);
 
-    assert!(
-        fast < slow,
-        "four times the keepers must finish the same job sooner: {fast} vs {slow}"
-    );
-    // **And in proportion — the crew IS the throughput.** Stated with a one-turn allowance because
-    // the published count is a `ceil` of the true span, on a bar the crew's own gear has already
-    // paid part of, and the two arms round **independently**: an exact 4:1 holds only where both
-    // divide. The exact arithmetic is pinned where there is no rounding to confound it, at the seam
-    // (`intensification::tests::a_bigger_crew_finishes_the_same_job_sooner_on_every_rung`).
-    const CEILING_SLACK_TURNS: u32 = 1;
-    assert!(
-        fast <= slow.div_ceil(4) + CEILING_SLACK_TURNS,
-        "four times the hands must bank four times the work: {fast} vs {slow}"
+    assert_eq!(
+        fast, slow,
+        "the rung takes at most `max_builders` hands at once, so four times the idle hands finish \
+         the same job in the same turns: {fast} vs {slow}"
     );
 }
 
@@ -3440,27 +3423,8 @@ fn set_hunt_improvement(app: &mut App, band: bevy::prelude::Entity, improvement:
         let source = core_sim::BuildSource::Herd(herd_id.clone());
         match improvement {
             Some(declared) => {
-                let builders = stated.saturating_add(rate);
-                match allocation
-                    .assignments
-                    .iter_mut()
-                    .find(|assignment| assignment.target == LaborTarget::Builders)
-                {
-                    Some(row) => row.workers = builders,
-                    None => allocation.assignments.push(LaborAssignment {
-                        party: None,
-                        muster_crew: 0,
-                        planned_crew: 0,
-                        max_workers: Some(builders),
-                        staffing: Default::default(),
-                        target: LaborTarget::Builders,
-                        workers: builders,
-                        kit: None,
-                        priority: SourcePriority::default(),
-                    }),
-                }
                 assert!(
-                    allocation.enqueue_build(
+                    allocation.declare_build(
                         source,
                         core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(declared))
                     ),
@@ -3468,14 +3432,14 @@ fn set_hunt_improvement(app: &mut App, band: bevy::prelude::Entity, improvement:
                 );
             }
             None => {
-                allocation.unqueue_build(&source);
-                allocation
-                    .assignments
-                    .retain(|assignment| assignment.target != LaborTarget::Builders);
+                allocation.stop_build(&source);
             }
         }
     }
     fit_band_to_its_crews(app, band);
+    if improvement.is_some() {
+        core_sim::seat_builders(&mut app.world, band, stated.saturating_add(rate));
+    }
 }
 
 /// Run turns until `done`, returning how many it took. Capped so a leg that can never complete fails
@@ -3581,16 +3545,17 @@ fn the_full_wild_to_pen_climb_is_paced_by_practising_each_rung() {
     for (leg, turns) in [("Tame", leg2), ("Corral", leg4)] {
         assert!(turns >= 1, "the {leg} leg must take at least a turn");
         assert!(
-            turns < leg1,
-            "the {leg} leg ({turns}) is paid in hands, so it is shorter than a lesson ({leg1}) — \
-             the climb is paced by PRACTISING each rung, not by building it"
+            turns < leg1 + leg3,
+            "the {leg} leg ({turns}) is capped by the rung's builders, so it is shorter than the \
+             two lessons together ({leg1} + {leg3}) - the climb is paced by PRACTISING each rung"
         );
     }
     // The headline: a pen is a ~45-turn commitment on this fixture herd, and better than half of it
     // is the two lessons. Broad band — these are playtest dials.
     assert!(
-        (38..=60).contains(&total),
-        "the whole climb should run ~45 turns, got {total}"
+        total > leg1 + leg3,
+        "building adds turns to the two lessons: {total} against {} of practice",
+        leg1 + leg3
     );
 }
 
@@ -4216,39 +4181,6 @@ fn set_maintain_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32
         .find(|row| matches!(row.target, LaborTarget::Hunt { .. }))
         .expect("the fixture band works the herd");
     row.set_hands_and_max(workers);
-}
-
-/// **Append the band-wide `builders` pool to a fixture's rows** — the hands a declared build is
-/// raised by since the build crew left the tile (`docs/plan_standing_upkeep.md` §2.5). A pool of
-/// zero adds no row, which is the honest reading of *"this band is building nothing"*.
-///
-/// ⛔ **THE POOL GOES OUT BARE, and that is an isolation rather than a default.** An absent kit means
-/// *derive per entry*, and the roster's answer for a herd — `hurdling` — adds `+0.5` work per
-/// covered worker per turn. A start-stocked band holds a unit per worker and a half, so at the crews
-/// these fixtures staff every builder is geared and the pool delivers half again what these arms
-/// assert. Naming `none` holds the gear axis at its identity so these arms
-/// measure the **crew**, exactly as `FaunaConfig::without_retreat` holds the retreat at its identity
-/// across the hunt suites; the geared default is pinned in
-/// `core_sim/tests/build_turns_closed_form.rs` and in `equipment_config`'s own unit tests.
-fn with_builders_pool(mut rows: Vec<LaborAssignment>, builders: u32) -> Vec<LaborAssignment> {
-    if builders > 0 {
-        rows.push(LaborAssignment {
-            party: None,
-            muster_crew: 0,
-            planned_crew: 0,
-            max_workers: Some(builders),
-            staffing: Default::default(),
-            target: LaborTarget::Builders,
-            workers: builders,
-            kit: Some(
-                core_sim::EquipmentConfig::builtin()
-                    .kit("none")
-                    .expect("the shipped roster carries the empty kit"),
-            ),
-            priority: SourcePriority::default(),
-        });
-    }
-    rows
 }
 
 /// **The shed self-limits: an over-stocked managed herd converges to its labor capacity from above and
@@ -5272,14 +5204,12 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
         };
         // **The holding's own row carries its keeping hands** (`docs/plan_site_crews.md` §2.2); the
         // blocked head's row carries its hunters alone.
-        let rows = with_builders_pool(
-            vec![
-                hunt_row(&holding, DIP_VISIBLE_HUNTERS + keepers),
-                hunt_row(&build, DIP_VISIBLE_HUNTERS),
-            ],
-            BUILDERS,
-        );
-        let staffed: u32 = rows.iter().map(|row| row.staffed_total()).sum();
+        let rows = vec![
+            hunt_row(&holding, DIP_VISIBLE_HUNTERS + keepers),
+            hunt_row(&build, DIP_VISIBLE_HUNTERS),
+        ];
+        // The idle hands the declared build is raised by sit beyond the rows' crews.
+        let staffed: u32 = rows.iter().map(|row| row.staffed_total()).sum::<u32>() + BUILDERS;
         app.world.spawn((
             PopulationCohort {
                 home: tile,
@@ -5324,10 +5254,9 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
             },
             LaborAllocation {
                 assignments: rows,
-                build_queue: vec![core_sim::BuildQueueEntry {
+                builds: vec![core_sim::BuildDeclaration {
                     source: core_sim::BuildSource::Herd(build.clone()),
                     declared: core_sim::BuildJob::Climb(shipped::animal_pastoral()),
-                    priority: core_sim::SourcePriority::default(),
                 }],
                 ..Default::default()
             },

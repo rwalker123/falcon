@@ -323,39 +323,25 @@ fn spawn_the_farming_band(
         ResidentBand,
         core_sim::BandId(BUILDER_BAND_ID),
         LaborAllocation {
-            assignments: vec![
-                LaborAssignment {
-                    party: None,
-                    muster_crew: 0,
-                    planned_crew: 0,
-                    max_workers: Some(gatherers + keepers),
-                    staffing: Default::default(),
-                    target: LaborTarget::Forage {
-                        tile: source,
-                        floor: DEFAULT_ESCAPEMENT_FLOOR,
-                        species: None,
-                        take_species: TakeSelection::EVERYTHING,
-                    },
-                    workers: gatherers + keepers,
-                    kit: None,
-                    priority: SourcePriority::default(),
+            assignments: vec![LaborAssignment {
+                party: None,
+                muster_crew: 0,
+                planned_crew: 0,
+                max_workers: Some(gatherers + keepers),
+                staffing: Default::default(),
+                target: LaborTarget::Forage {
+                    tile: source,
+                    floor: DEFAULT_ESCAPEMENT_FLOOR,
+                    species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
-                LaborAssignment {
-                    party: None,
-                    muster_crew: 0,
-                    planned_crew: 0,
-                    max_workers: Some(builders),
-                    staffing: Default::default(),
-                    target: LaborTarget::Builders,
-                    workers: builders,
-                    kit: None,
-                    priority: SourcePriority::default(),
-                },
-            ],
-            build_queue: vec![core_sim::BuildQueueEntry {
+                workers: gatherers + keepers,
+                kit: None,
+                priority: SourcePriority::default(),
+            }],
+            builds: vec![core_sim::BuildDeclaration {
                 source: core_sim::BuildSource::Patch(source),
                 declared: core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(declared)),
-                priority: core_sim::SourcePriority::default(),
             }],
             ..Default::default()
         },
@@ -776,43 +762,29 @@ fn spawn_the_herding_band(
         ResidentBand,
         core_sim::BandId(BUILDER_BAND_ID),
         LaborAllocation {
-            assignments: vec![
-                LaborAssignment {
-                    party: None,
-                    muster_crew: 0,
-                    planned_crew: 0,
-                    max_workers: Some(hunters + keepers),
-                    staffing: Default::default(),
-                    // **The food-peak floor, not the shipped default** — a `Tame` needs stock
-                    // standing *above* the hunters' floor to accrue (`crew_is_working_the_source`),
-                    // and the default floor sits high enough on this flock that the hunt holds it
-                    // flat against the line and the build stalls forever. Every husbandry fixture in
-                    // the suite hunts at the peak for the same reason.
-                    target: LaborTarget::Hunt {
-                        fauna_id: herd_id.to_string(),
-                        floor: core_sim::MSY_BIOMASS_FRACTION,
-                        move_with_herd: false,
-                    },
-                    workers: hunters + keepers,
-                    kit: None,
-                    priority: SourcePriority::default(),
+            assignments: vec![LaborAssignment {
+                party: None,
+                muster_crew: 0,
+                planned_crew: 0,
+                max_workers: Some(hunters + keepers),
+                staffing: Default::default(),
+                // **The food-peak floor, not the shipped default** — a `Tame` needs stock
+                // standing *above* the hunters' floor to accrue (`crew_is_working_the_source`),
+                // and the default floor sits high enough on this flock that the hunt holds it
+                // flat against the line and the build stalls forever. Every husbandry fixture in
+                // the suite hunts at the peak for the same reason.
+                target: LaborTarget::Hunt {
+                    fauna_id: herd_id.to_string(),
+                    floor: core_sim::MSY_BIOMASS_FRACTION,
+                    move_with_herd: false,
                 },
-                LaborAssignment {
-                    party: None,
-                    muster_crew: 0,
-                    planned_crew: 0,
-                    max_workers: Some(A_STEADY_BUILD_POOL),
-                    staffing: Default::default(),
-                    target: LaborTarget::Builders,
-                    workers: A_STEADY_BUILD_POOL,
-                    kit: None,
-                    priority: SourcePriority::default(),
-                },
-            ],
-            build_queue: vec![core_sim::BuildQueueEntry {
+                workers: hunters + keepers,
+                kit: None,
+                priority: SourcePriority::default(),
+            }],
+            builds: vec![core_sim::BuildDeclaration {
                 source: core_sim::BuildSource::Herd(herd_id.to_string()),
                 declared: core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(declared)),
-                priority: core_sim::SourcePriority::default(),
             }],
             ..Default::default()
         },
@@ -1177,7 +1149,7 @@ fn a_zero_destination_capacity_is_not_the_no_destination_reading() {
     {
         let mut query = app.world.query::<&mut LaborAllocation>();
         for mut allocation in query.iter_mut(&mut app.world) {
-            allocation.build_queue.clear();
+            allocation.builds.clear();
         }
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         for herd in registry.herds.iter_mut() {
@@ -1476,7 +1448,7 @@ fn unqueueing_the_corral_clears_the_site() {
             .query_filtered::<(bevy::prelude::Entity, &LaborAllocation), bevy::prelude::With<ResidentBand>>();
         query
             .iter(&app.world)
-            .find(|(_, allocation)| !allocation.build_queue.is_empty())
+            .find(|(_, allocation)| !allocation.builds.is_empty())
             .map(|(entity, _)| entity)
             .expect("the fixture band holds the queued Corral")
     };
@@ -1565,7 +1537,7 @@ fn the_pen_quote_says_taken_while_a_band_holds_the_corral() {
             .query_filtered::<(bevy::prelude::Entity, &LaborAllocation), bevy::prelude::With<ResidentBand>>();
         query
             .iter(&app.world)
-            .find(|(_, allocation)| !allocation.build_queue.is_empty())
+            .find(|(_, allocation)| !allocation.builds.is_empty())
             .map(|(entity, _)| entity)
             .expect("the fixture band holds the queued Corral")
     };

@@ -155,15 +155,6 @@ static func builder_band(src: Dictionary, prefix: String = "") -> int:
 	var band_id := int(src.get(prefix + "builder_band", 0))
 	return band_id if band_id > 0 else HudConst.NO_BAND_ID
 
-## Does another people's ownership shut the viewer out of a rung this source has not reached? The
-## catalog's `requires_ownership` read against the wire's owner, never a re-derived rule.
-static func blocked_by_owner(src: Dictionary, prefix: String = "") -> bool:
-	if foreign_owner(src, prefix) == NO_FOREIGN_OWNER:
-		return false
-	for quote in quotes(src, prefix):
-		if requires_ownership(quote) and not bool(quote.get(KEY_REACHED, false)):
-			return true
-	return false
 
 ## Does climbing to this rung commit a crop? The catalog's `requires_crop`.
 static func requires_crop(quote: Dictionary) -> bool:

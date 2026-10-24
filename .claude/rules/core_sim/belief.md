@@ -80,7 +80,7 @@ beneath until the meter tops out), a decayed one pays nothing, and the belief it
 because the stock is monotone.
 
 **The monument is an ordinary tile rung** (`belief:monument`, verb `raise`, `intensification.md` ->
-"The tile kind"): built by the builders with 20 stone drawn from the band's own store as the meter
+"The tile kind"): built by builders joining the site's crew (`max_builders` 3) with 20 stone drawn from the band's own store as the meter
 climbs, kept by a tile crew, decaying to `belief:gathering_ground` after its grace when unkept. Two
 things are specific to it, both config: `site_requirement.min_belief` (**1.0**) - the tile must hold
 belief, judged through `forage::rung_site_refusal` with the `BeliefRegistry` reading threaded in beside

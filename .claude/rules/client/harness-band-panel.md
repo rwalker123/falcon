@@ -208,10 +208,9 @@ pushed-event liveness claim and the *nothing foreign reached the viewport* claim
 `_finish`. The behaviour, the two adversaries it was falsified with and why a quiet machine cannot
 reproduce the class by moving the mouse are in `test-harnesses.md` → "A SIMULATED GESTURE IS NOT
 HERMETIC" — it is the shared windowed-harness contract rather than this harness's own, and all six
-pixel harnesses take the seal. **Three of this harness's mechanisms belong to it**: `_drive_click`
-pushes its press and release with no awaited frame between them, `_drive_drag`'s hold re-warps the
-physical pointer every frame, and every simulated event goes through the one `_push_input` wrapper
-the guard discriminates on.
+pixel harnesses take the seal. **Two of this harness's mechanisms belong to it**: `_drive_click`
+pushes its press and release with no awaited frame between them, and every simulated event goes
+through the one `_push_input` wrapper the guard discriminates on.
 
 **THE CARAVAN PASS AND THE HUNT VERB'S RETIREMENT took out one frame and five `assert OK` and
 added two `: PASS`** — five hunt-compose frames out and four denial-hosted layout frames in, the hunt
@@ -223,20 +222,6 @@ the footer claim in. The two sections at the foot of this file have what each cl
 `assert OK`s, and **fourteen** `: PASS` — thirteen on the block itself plus
 `_assert_work_party_rows_fit_the_zone`, which reports as a claim rather than as an `assert OK`.
 The section at the foot of this file has the fixture and what each claim can tell apart.
-
-**THE PR #680 REVIEW FIXES MOVED IT 1328 → 1334 `PASS`**, frames and `assert OK` unchanged: **+3**
-for `_assert_closed_settings_costs_the_board_nothing` (a closed build-queue block reserves nothing,
-an open one adds exactly its strip, and the rendered board really does draw more rows closed) and
-**+3** for `_assert_pending_role_edit_keeps_card_and_row_in_step` (the settled pair both speak, the
-pending pair both fall silent, and the two AGREE).
-
-**32 of the 184 frames MOVED** — measured by A/B against the sabotaged build rather than guessed.
-(Nothing is re-recorded: `ui_preview_out/` is gitignored, so a frame is a run artifact and "moved"
-means it renders differently, never that a baseline was committed.) Every one of the 32 has a
-non-empty BUILD QUEUE — the only state `build_queue_block_height` can return non-zero for — and
-every one gains back the work-board row the phantom 34px reservation was eating. A frame with an
-**open** strip did **not** move, which is the arithmetic working rather than a frame set that
-shifted wholesale.
 
 **THE POOL-TOE SUB-UNIT FIX MOVED IT 183 / 1323 / 536 → 184 / 1328 / 542**, re-measured rather than
 summed: **+1 frame** (`band_panel_keepers_tools_short`), **+5 `PASS`** (`_assert_pool_toe_rounding`'s
@@ -369,8 +354,8 @@ still exits 0 with ZERO `FAIL` lines; for how many frames and claims that is, re
 quotes: every figure in it is frozen at the moment that step landed, several were already behind the
 harness when written, and summing them gives a wrong answer by construction. (It was 379 / 570 / 115
 before the WORK TAB READ THE LEG IN FLIGHT — `band-city-panel.md`
-→ "THE PERCENTAGE IS THE LEG IN FLIGHT'S". That step is **+1 frame and +17 `: PASS`**:
-`band_panel_queue_leg_animal` and the four-state block below, whose remaining two `assert OK`s are
+→ "THE ROW'S PERCENTAGE IS THE LEG IN FLIGHT'S". That step is **+1 frame and +17 `: PASS`**:
+`band_panel_rung_track_legs` and the four-state block below, whose remaining two `assert OK`s are
 that frame's own bounds/content-fits pair. The `assert OK` delta reads +3 rather than +2 and the
 `PASS` one +19 rather than +17, which is the recorded figure's own drift rather than two lost claims —
 the paragraph below already records this tally as having been behind the harness twice.) (The figures
@@ -378,71 +363,7 @@ before it were RE-MEASURED into an emptied `ui_preview_out/`.) The figure record
 MATERIALS-ONLY WORK ROW read 260 / 420 / 104 and was already 119 / 150 / 11 behind the harness, so
 that change's delta is not recoverable by subtracting them: it is **+2 frames, +8 `assert OK` and +6
 `: PASS`** — `band_panel_work_material_forage` / `_crops`, each contributing its own shell / bounds /
-content-fits / width-fits quartet and `_assert_work_row_states_its_materials`' three. The figure
-recorded before the Builders card lost its kit picker read 254 / 377 / 101 and was already three
-frames and forty-three `PASS` behind the harness, so that delta is not recoverable either: it is
-**+2 `: PASS`, no `assert OK` and no frame** — eight of `_assert_builders_kit_picker`'s claims retired
-with the control, ten gear-line/absence claims and three stepper claims in their place.
-
-(It was 246 / 356 / 97 before the BUILD QUEUE BLOCK — `docs/plan_standing_upkeep.md` §4.6b, specified
-in `band-city-panel.md` → "THE BUILD QUEUE BLOCK". Its four states —
-`band_panel_build_queue` / `_blocked` / `_none` / `_wide` — account for the eight `assert OK`s (each
-state's own bounds/content-fits pair) and eighteen of the twenty-one `PASS`es; the other three are
-`_assert_builders_card_kit_faces`, PNG-less, which fixed the Builders card's roster-order
-fall-through. (It has since grown to six, that helper's picker-face claim having become a gear-line +
-picker-absence pair per state — see the BUILDERS KIT PAIR paragraph below.)
-**`band_panel_build_queue_none` is the PAIRED NEGATIVE and is what makes the other three worth
-anything** — a block drawn unconditionally passes every positive claim above it and fails only there,
-which is exactly what sabotage produced (28 failures: that one claim plus 27 zones the block's own
-20px head then overran). The wide state REPORTS its extent rather than only asserting the fit: the
-work zone comes out **300px of a 300px box, 0 spare**, with the board still paging two rows.)
-
-(It was 242 / 348 / 95 before the BUILDERS KIT PAIR — `band_panel_builders_kit_plant` /
-`band_panel_builders_kit_animal`, the frames on which the Builders card's gear line is judged. **The
-PAIR is the claim, and the fixture is what makes it one**: ONE band, whose forage row and hunt row
-already name the two sources, with the head moving by re-ordering **the band's own `build_queue`** —
-so the two frames differ in the queue head's WEB and in nothing else.
-
-> **It used to move by dialling those SOURCES' own `buildQueuePosition`, and that stopped being the
-> head** (`docs/plan_standing_upkeep.md` §4.9 item 9a). Membership and order are the band's own
-> `buildQueue` now, so both frames change the BAND fixture rather than the sources — which also means
-> the pair is no longer byte-identical outside the queue, and the third case added with the reorder
-> arrows (a plant head under another band's animal head) is what pins that the derivation reads the
-> acting band.
-
-**They asserted a PICKER's face, its greyed entry and the reason on it until slice 6b retired that
-control** (`band-city-panel.md` → "THE BUILDERS CARD MOUNTS NO PICKER EITHER"). Re-aimed rather than
-deleted, since the states themselves still matter: each now asserts the read-only gear line's WHOLE
-TEXT by equality — the kit's name, what its tool takes off a build, and the condition of the item
-behind it, composed from the vocabulary and the fixture's own numbers rather than through
-`KitRoster.role_gear_line` — beside the ABSENCE of a picker on that card, which is asked of the
-CONTROL (`KitRoster.KIT_PICKER_META`) and never of the label. `_assert_builders_card_kit_faces` runs
-the same helper over three states PNG-LESS, the EMPTY queue included, a resolver stuck on one web
-satisfying any one of them alone.
-
-**`_assert_builders_stepper_sends_no_kit` is the claim that made the retirement worth making**, and
-it is a PAIR: driving the Builders `+` must emit a line carrying no `kit` token at all — read off
-`Main.format_assign_labor`, so the sim keeps deriving per entry — while a Scout stepper driven onto
-its NON-default kit first still carries `kit none`. Without the Scout half the claim passes on a
-client that dropped the tail everywhere, `Main._kit_token` omitting a selection equal to the job
-default. Sabotage-verified on two DISJOINT mutations: collapsing `_commanded_role_kit_id`'s builders
-fork fails **exactly one**, naming `assign_labor 0 4904 builders 1 kit none`; restoring `builders` to
-`KIT_PICKER_ROLES` fails **ten** — the five picker-absence claims and the five gear lines that then
-have no label to read — and leaves the stepper pair green.)
-
-(It was 240 / 341 / 94 before **`band_panel_builders_segment`** — the BUILDERS segment
-state, whose two `assert OK`s are its own bounds/content-fits pair and whose `PASS`es are
-`_assert_people_bar_is_one_bar`'s plus three of its own. **Its fixture IS the claim**: the
-reference band's four assignments spend 13 of 16 workers, so putting THREE builders on its forage row
-takes it to exactly `working_age` — before the fix the zone read `3 idle of 16` over segments summing
-to 13, and after it `0 idle of 16` over segments summing to 16. **A band with slack could not say
-this**: the idle count would merely be wrong by three rather than wrong about whether the band has any
-hands at all. The partition guard is what does the work — it sums the RENDERED chips against
-`working_age`, so a bar missing the build segment fails by exactly its count — with the segment's own
-count and the NEGATIVE on the reference band (a band with no build in flight grows no such segment,
-the bar's render-only-when-non-zero rule) beside it. The rationale is `labor-ui.md` →
-"`effective_idle` SUMS `staffed_total`". The paragraph below records the figures as they stood before
-it.)
+content-fits / width-fits quartet and `_assert_work_row_states_its_materials`' three.
 
 **It was 240 `assert OK` lines, 341 `: PASS` ones and ZERO `FAIL` ones, over
 94 frames.** (It was 236 / 332 / 92 before the KEEPING POOL landed — `docs/plan_standing_upkeep.md`
@@ -1030,40 +951,31 @@ Deny and Scout sheets". What the harness half has to get right:
 
 ## A ROLE PASSES **TWO** GATES, AND THE GUARD DRIVES EVERY ONE OF THEM NOW
 
-**`builders` did not parse, and the pool was unstaffable for a whole slice.** Reported from live play:
-the Builders `+` did nothing and the event dock read *"Not connected to the server."* The client was
-connected. `sim_runtime::command_text`'s `assign_labor` role match enumerated
-`scout | warrior | agriculture | husbandry` and returned `UnexpectedToken` for anything else — and the
-native bridge (`bridge/command.rs` → `send_line`) **parses a line before it sends it**, so the command
-was rejected locally and never reached the socket. No build queue could progress, because nothing could
-ever stand on the pool that funds it.
+**A role the text grammar did not name was unstaffable for a whole slice.** Reported from live play: a
+staffing `+` did nothing and the event dock read *"Not connected to the server."* The client was
+connected. `sim_runtime::command_text`'s `assign_labor` role match enumerated a closed set and returned
+`UnexpectedToken` for anything else — and the native bridge (`bridge/command.rs` → `send_line`)
+**parses a line before it sends it**, so the command was rejected locally and never reached the
+socket.
 
 - **A role has to be admitted TWICE, by two files that do not know about each other**: the text grammar
-  in `sim_runtime`, and the sim's own `handle_assign_labor`. `band-city-panel.md` asserted *"the sim has
-  parsed `builders` since §2.5"* — true of the handler, false of the grammar, and the two were
-  conflated. The sim half was right the whole time.
+  in `sim_runtime`, and the sim's own `handle_assign_labor`. A claim that the sim parses a role is true
+  of the handler and says nothing about the grammar.
 - **THIS GATE EXISTS TO CATCH EXACTLY THAT, AND IT PASSED**, because its band-wide-role drive was a
   single `scout` line. An assertion that passes because the case was never asked is the failure mode
   this repo keeps re-learning; a guard whose whole purpose is "the client's lines parse" must ask about
   **every** line the client can build, not one representative.
-- **The drive is a sweep over `ASSIGN_LABOR_ROLES`** — scout · warrior · roadwork · builders — each
-  with a non-default kit, **plus the bare `assign_labor … builders 2`**, which is the exact form the
-  pool's `+` emits for a player who never opened a kit picker. The kit-bearing form alone would have
-  missed it. **The three retired keeping pools** (`RETIRED_ASSIGN_LABOR_ROLES`: agriculture ·
-  husbandry · quarrywork, spelled as strings because their `HudConst` constants retired) are asserted
-  to build NO line (`docs/plan_site_crews.md`).
+- **The drive is a sweep over `ASSIGN_LABOR_ROLES`** — scout · warrior · roadwork — each with a
+  non-default kit. **The retired roles** (`RETIRED_ASSIGN_LABOR_ROLES`: agriculture · husbandry ·
+  quarrywork · builders, spelled as strings because their `HudConst` constants retired) are asserted to
+  build NO line (`docs/plan_site_crews.md`, `docs/plan_labor_at_scale.md`).
 - **Every site verb is driven in every form it takes** (`docs/plan_site_crews.md` §2.4):
-  `build_priority` and `build_order` in the tile, herd, working (`<x> <y> <material>`) and road
-  (`road <x> <y>`) forms, `work_priority` in the first three, `unqueue` in all four — counted per form
-  in `EXPECTED_KINDS`, and driven through the controls' own emitters so a payload missing `material`
-  or `road` fails the parse check as the patch it would name. `work_priority`'s road form is asserted
-  to build NO line, and `_assert_retired_kit_verbs` asserts `Main` has no `format_build_kit` /
-  `format_upkeep_kit` and the HUD no signal for either.
-- **`band_panel_preview`'s `(f3)` state, `_assert_a_working_and_a_road_carry_their_marks`**, frames
-  `band_panel_site_marks.png`: the queued Groundwork row carries both pills and the queued road only
-  a `Build` pill, each press building the working or road form. **Every pill is re-found after a
-  press** — the optimistic write re-renders the Work tab, and pressing a held pill aborts the state
-  silently.
+  `work_priority` in the patch, herd and working forms, `unqueue` in all four (patch, herd,
+  working `<x> <y> <material>`, road `road <x> <y>`) — counted per form in `EXPECTED_KINDS`, and driven
+  through the controls' own emitters so a payload missing `material` or `road` fails the parse check as
+  the patch it would name. `work_priority`'s road form is asserted to build NO line, and
+  `_assert_retired_kit_verbs` asserts `Main` has no `format_build_kit` / `format_upkeep_kit` and the HUD
+  no signal for either.
 - **`_assert_every_role_is_emittable` closes the other direction**: every listed role builds a real line
   from `Main.format_assign_labor`, and an unknown role builds NOTHING — so the list is a list rather
   than a builder that accepts anything.
@@ -1075,8 +987,8 @@ ever stand on the pool that funds it.
   cannot call `Array.size()` — attempting it is a hard parse error that hangs the guard SILENTLY, which
   is this family's documented failure mode arriving on the fix for another one.
 
-Sabotage-verified by reverting the Rust role addition: the guard fails naming both forms and the token —
-`the server parser REJECTED 'assign_labor 0 71204 builders 2' — UnexpectedToken("builders")`.
+Sabotage-verified by reverting a Rust role addition: the guard fails naming the form and the token —
+`the server parser REJECTED 'assign_labor 0 71204 <role> 2' — UnexpectedToken("<role>")`.
 
 ## `command_guard`'s SHIPMENT drive asserts an AMOUNT, not a handle (arc #527, issue #517)
 
@@ -1212,347 +1124,49 @@ caller could drift — and each asserts the verb, the tooltip and the ceremony:
   the field party's three and the report-owed party's three; pinning it FALSE fails the camped party's
   three alone.
 
-## The QUEUE's controls, and the two traps they walked into (`docs/plan_standing_upkeep.md` §4.7b)
+## Build crew chips (`docs/plan_labor_at_scale.md`)
 
-`_render_queue_control_states` runs inside `_render_build_queue_states`, on the SAME three-entry
-fixture the states above render, because each of its four claims is about the block as drawn rather
-than about a fixture of its own — and the exclusion claim is about two lists at once, which no fixture
-can stage alone.
+A declared build has no list: the Work tab shows it as a crew chip on the site's own row
+(`band-city-panel.md` → "THE BUILD CREW CHIP"). The states are in `_render_build_crew_states` (patch,
+herd and working rows, with `_crew_patches` / `_crew_chips` staging and finding them) and the road row's
+in `band_panel_build_crew_road`; source-level crews come from `tools/ui_preview/fixtures_crew.gd`
+(`CrewFx`), dialled once by `BandFx.staff_builders` and re-read by every source that passes through.
 
-> ### ⛔ A CLICK ON A QUEUE ROW FREES EVERY ROW, so a row captured before one is a freed object
->
-> `_toggle_queue_settings` → `_repage_work_zone` rebuilds the block, and `_click_control` on a freed
-> `Control` **raises**: the assertion block ends with no `FAIL` line, the strip is left open over every
-> state that follows, and the run reports failures several states later that have nothing to do with
-> the cause. `_find_queue_row(animal)` re-finds a row from the LIVE tree by its verb face, and every
-> click in these blocks goes through it. The closer at the end of `_assert_queue_row_settings` already
-> documented this for its own click; §4.7a ②'s kit made the ANIMAL row expandable, which reached the
-> same trap one click earlier.
+- **`band_panel_build_crews`** — every declared build on the board wears ONE chip
+  (`WORK_ROW_STOP_CHIP_META`), asserted by COUNT (at least three: a patch, a herd, a working). The hovers
+  are asserted by their sentences: `N building (up to M), done in ≈T` on a staffed build,
+  `Nobody is building — every worker is busy on a work row. Lower a row's Max or stop working a row to free a builder.` where the sim staffed nobody,
+  `Short of hoes` on a build short of its own tool, and `Click to stop this build.` on every chip.
+- **A REAL click on a chip sends the stop** (`_drive_click`, never `pressed.emit()`, which cannot see a
+  covered or zero-size control): the emitted payload is read back through `Main.format_unqueue` and
+  must begin `unqueue `. The press leaves a real withdrawal on the optimistic overlay, so the state
+  clears `_pending_labor` straight after, or every state below inherits a board missing that chip.
+- **`band_panel_build_crew_road`** — the same chip on a ROADWORK roster row: exactly one chip inside
+  the roster block, stating no spare hands and the road's own tool shortfall.
+- **The SET is the claim.** A chip that always warned passes the hover claims alone, and one that never
+  warned passes the staffed one; the staffed, empty and tool-short sources ride one frame.
 
-> ### ⛔ A `✕` GRAMMAR PROBE IS NOW A STATE CHANGE, and it is inherited by every state below
->
-> The withdrawal is OPTIMISTIC and keyed on the TURN, which does not advance in a harness — so
-> `_assert_unqueue_command_grammar` and `_assert_pending_queue_row`, which press the real button to
-> read the line it emits, leave real withdrawals on the overlay. Both restore what they withdrew
-> (`_pending_labor.clear()` / `drop_pending_unqueue`) so they stay grammar probes. Without that, the
-> pending-queue states one block down lose their rows and fail for a reason nothing in them names.
+### The sanctioned-scroll guard
 
-> ⛔ **RETIRED — THE FLOW, ASSERTED WHERE IT WAS DECIDED.** It read: *"No shipped dock is wide
-> enough for the settings pair on one line (342px of strip on the tall LEFT dock, 368 on the 1920
-> BOTTOM one, against 444 — 408 of pickers plus the withdrawal's 32 and its gap), so a rendered
-> one-line frame is unreachable — `_assert_queue_settings_predicate` asserts
-> `HudWorkVocab.queue_settings_one_line` on both sides of its threshold and that the reserved height
-> follows the wrap, and `_assert_queue_settings_flow` REPORTS the width at every dock it renders."*
->
-> `docs/plan_pool_toe.md` §3 retired the kit picker, so the strip has ONE control and the predicate
-> one answer. **The reasoning survives the pair and is why `_assert_queue_settings_strip` still
-> exists**: the height is RESERVED before it is drawn, so anything that decides how many lines a
-> strip takes has to be checkable WITHOUT a layout — a container that wrapped at layout time could
-> not tell the reservation what it did, and this zone answers the difference by clipping the board.
-> What the replacement checks is the half that still bites: the crop picker does not shrink, no kit
-> picker stands beside it, and the strip DREW what it RESERVED.
+`_assert_scroll_only_where_sanctioned` asserts the work zone's scroll exists exactly where it is
+sanctioned: the sections list when the zone is mounted on a band page, and the road roster's list
+(`ROSTER_EXPANDED_SCROLL_NAME`) when that expansion holds the zone, never otherwise.
 
-**The DRAG is driven TWICE — through the controller's callables AND as a real mouse gesture — because
-the two pin different halves and neither implies the other.** `_render_queue_drag_state` calls
-`_queue_drag_data` / `_queue_can_drop` / `_queue_drop` directly: that is the ARITHMETIC — the payload,
-the edge the pointer sits on, the index the drop computes — it needs no window, and it is what proved
-the per-band ordering fix. `_assert_queue_reorder_by_real_gesture` pushes
-`InputEventMouseButton` / `InputEventMouseMotion` into `get_viewport()` and lets Godot's own GUI drag
-machinery run: that is the WIRING — whether `mouse_focus` resolves to the handle, whether the walk up
-the parent chain finds a `get_drag_data`, whether a drag ever begins at all.
+⛔ **EACH OF ITS CLAIMS IS MADE ONLY WHERE ITS ZONE IS MOUNTED.** The narrow shell parents only the
+ACTIVE tab's zone (`_reparent_zones` detaches the rest), so a zone can be in `_zones` and nowhere the
+walk could find it; asking this guard from a narrow-shell WORK-tab state would otherwise report a
+parties list that had "lost" a scroll it was merely detached from.
 
-⛔ **EVERY FIXTURE ABOVE HAS A MODEL FOR EVERY QUEUE ENTRY, AND THAT IS WHAT MADE THEM ALL BLIND TO
-ONE CLASS OF DEFECT.** On a self-consistent fixture a position counted in the DRAWN list and one
-counted in the WIRE queue are the same number, so no claim could tell them apart.
-`_build_hidden_queue_band_fixture` is the one that can: three wire entries, the first of them an entry
-with no model. `_assert_queue_positions_are_the_wires` then makes the claims the others cannot — the
-ranks are `[1, 2]`, the top drawn row's `▲` is ENABLED and only the bottom's `▼` is disabled, neither
-row wears the `▸`, and all **three** senders of `build_order` (`▲`, `▼`, and the drag through
-`_assert_queue_drag_sends`) send the wire's index. Three separate arithmetics over one list: a fix to
-any one of them proves nothing about the other two. Reverting the rank to the drawn index fails eight
-of them. The frame is `band_panel_queue_hidden_entry`.
+> **A CLICK FREES THE LIST, NOT ONLY THE ROWS.** A row captured before a click that rebuilds the zone
+> is a freed object, and `Control.is_ancestor_of` on a freed instance **raises** — which ends the
+> assertion block with **no `FAIL` line**, leaves the state open over everything below, and still exits
+> 0 with a healthy PASS count. Re-find from the live tree after every real click.
 
-> #### ⛔ IT HID ITS ENTRY BY A RULE THE CLIENT NO LONGER HAS, AND WAS RE-POINTED RATHER THAN RELAXED
->
-> The hidden entry used to be a fourth patch held at ZERO TAKE CREW — the state the sim keeps
-> deliberately and the work board dropped, which is the defect
-> `_assert_an_uncrewed_queued_source_still_draws` now pins. That row is admitted, so a fixture hiding
-> its entry that way would stage a thing the client does not do and the state's own row-count claim
-> would fail. **The remaining cause is the client's own RESOLUTION rather than a crew rule**: a road
-> entry names a TILE and is joined against the snapshot's `routes` section, which
-> `core_sim::snapshot::routes::route_states` publishes only for DISCOVERED tiles and not at all where
-> the faction has no visibility map yet — so `_road_at` answers `{}` and `_road_queue_models` skips it.
-> The fixture pushes an EMPTY road network as its own stated input, and every assertion above is kept
-> at full strength; `_assert_a_queued_road_draws_its_row` two states later is the paired positive, the
-> same kind of entry with its tile IN sight.
+## The build states and the rollback (`docs/plan_standing_upkeep.md` §4.6a/b)
 
-⛔ **AND THE ZERO-CREW QUEUED SOURCE IS A STATE OF ITS OWN NOW** —
-`_assert_an_uncrewed_queued_source_still_draws`, appended at the END of the queue chapter (it pushes a
-band of its own and restores the reorder fixture, so no frame above it moves). Its fixture is Ray's
-reproduction and nothing else: **the player's two harvested tiles**, one of them emptied and queued at
-the head, the other crewed and queued behind it — no herd, no spare patches — so the board is ONE PAGE
-and a row that is missing is missing because it was filtered rather than because it was paged off.
-
-**THE PAIRED NEGATIVE IS HALF THE CLAIM AND RUNS FIRST**: the same emptied row with NO entry on the
-wire must stay off the board and out of the block, or "the row is drawn" is satisfied by a filter that
-admits every zero-crew row the sim keeps — which would repopulate the work board with every source the
-player deliberately emptied. Its lone drawn entry additionally carries the **DISABLED `▲`** that the
-player's own screenshot should have shown. The positive then asserts the board row, both queue rows,
-the wire ranks `[0, 1]`, the `▸` on the emptied entry and NOT on the one behind it, the head's `▲`
-disabled and the second's enabled, and the `✕` reachable on the re-admitted row (read back through
-`Main.format_unqueue`, so the withdrawal names the emptied source's own tile).
-
-**Sabotage-verified on two DISJOINT mutations of the one filter.** Restoring the crew-only test fails
-**exactly two** — *a QUEUED source with no take crew is drawn on the work board* and *the block draws
-BOTH entries, 2 rows (got 1)* — i.e. the reported defect in its own words. Dropping the crew test
-altogether (admitting every zero-crew row) fails **exactly one**, and it is the negative: *an emptied
-source the band has NOT queued stays OFF the work board*. Neither mutation touches the other's claim,
-which is what says the two halves are independent. **MEASURED, BEFORE AND AFTER**: `1101 : PASS` →
-`1113`, exit 0 both times. One frame added (`band_panel_queue_uncrewed_head`); the two hidden-entry
-frames re-render on the re-pointed fixture and are expected to differ from their pre-change
-baselines — they draw the same two queue rows off a road entry rather than a patch one.
-
-⛔ **AND EVERY BUTTON THE QUEUE GREW WITH THE ARROWS IS DRIVEN THE SAME WAY.** `_drive_click` — a real
-`push_input` press and release on a window point — is what `_assert_queue_arrow_click` and
-`_render_queue_withdrawal_state` use, because `pressed.emit()` cannot see a control that is covered,
-zero-size, `IGNORE`-filtered or **disabled**, and the reorder pair shares 32px with 2px between while
-the `✕` now rides a strip whose height is reserved rather than measured. The disabled case is the one
-that matters most here: the arrows are deliberately dead at the ends of the queue, so a harness that
-emitted the signal would read a live command off a control the player cannot press. The frame is still taken
-**while the drag is live**, and the block is still asserted NOT to have rebuilt under a `rerender()`,
-which is the state no other frame reaches.
-
-> #### ⛔ "A HARNESS CANNOT DRIVE THE GESTURE" WAS FALSE, AND IT LET A DEAD GESTURE SHIP GREEN
->
-> What used to stand here was *"Godot exposes no public getter for what `set_drag_forwarding` installs
-> (`_get_drag_data` is a virtual the Viewport calls), so what a harness CAN read is what the player can
-> see."* The getter is beside the point: a harness does not need to READ the callables, it needs to
-> make the ENGINE call them — and it can, through `Viewport.push_input`.
->
-> The reorder was unusable in the real client for a whole release. Pressing the handle merely opened
-> the row's settings; no drag, no preview, no drop. Every direct-callable claim above passed the whole
-> time, because the row's `gui_input` toggle fired on the **press** and `_repage_work_zone` freed the
-> marker before the pointer had travelled far enough for Godot to ask for drag data. **A claim whose
-> subject is the ENGINE's routing has to push events.**
-
-Three things the real gesture needs, each measured rather than assumed:
-
-- **The motion must carry `relative` AND `button_mask`.** Godot accumulates `relative` as a VECTOR SUM
-  and compares its length to a threshold, so a single teleporting motion — or one with no button held —
-  is not a drag at all. `QUEUE_GESTURE_KICK` deliberately overshoots on the first motion, which is what
-  keeps the gesture's start independent of how far apart two `WORK_ROW_HEIGHT` rows happen to sit.
-- ⛔ **The PHYSICAL cursor decides the drop's LOCAL position.** Godot picks the drag-over CONTROL from
-  the pushed event, but localizes the point it hands `can_drop_data` / `drop_data` from
-  `Viewport.get_mouse_position()`, which on a root window reads `DisplayServer.mouse_get_position()`.
-  Pushed events alone therefore route to the right ROW and then ask *"which EDGE?"* about wherever the
-  human's mouse is sitting — measured here as a drop that landed BELOW a row the pointer was in the top
-  quarter of, i.e. an `above` flag that is pure noise. `Input.warp_mouse` is the only lever that moves
-  what Godot reads: `_drive_drag` warps with every motion and puts the pointer back where it found it.
-- **It skips under `_is_headless()`.** There is no viewport worth pushing into on the dummy driver.
-
-**The handle's affordances are still read off the node** — the move cursor, the tooltip, the
-`MOUSE_FILTER_PASS`. What changed is that the pair they exist for is now BEHAVIOURAL: a real click on
-those same pixels must still open the settings strip, and a completed drag must NOT (the Viewport
-consumes the button-up for the drop and never forwards it to `gui_input`). `_click_control` sends both
-halves of a click for the same reason — the queue row's toggle lives on the release now.
-
-**The withdrawal state re-pushes the same fixture on the same turn**, which is the command's own
-recapture: the server broadcasts after every command, so a row that only survives until the next
-snapshot fails here. It doubles as
-the re-seat this layer needs — an optimistic write runs `_after_pending_change`, which re-renders the
-SELECTED unit, and in this harness that is a stale reference band rather than the queue fixture.
-
-> ⛔ **THE REASON NARROWED, AND THE OLD ONE IS NO LONGER TRUE.** It was *"that capture still carries
-> the stale turn-written `buildQueuePosition`"*. `PopulationCohortState.buildQueue` is captured LIVE
-> off the allocation, so `unqueue` drops the entry on the command's own recapture and the block would
-> lose the row with no overlay at all. What the tombstone still covers is the **press→reply round
-> trip** — the frames between the `✕` and the server's answer, which no wire field can reach — and
-> the rollback for a send that never went. `band-city-panel.md` → "④ THE WITHDRAWAL…" carries the
-> same correction; the two files must not drift back apart.
-
-## The EXPANSION's frames, and the three traps they paid for (§4.9 item 9c)
-
-`_render_queue_expanded_states` runs inside `_render_queue_control_states`, after the wire-rank block
-and before the withdrawal, on a fixture **longer than any other in this file** —
-`_build_long_queue_band_fixture` builds ON the two-entry reference band and appends `QUEUE_LONG_TAIL`
-plant entries, so the head marker, the builders pool and both webs are the ones every other queue
-state already asserts against.
-
-⛔ **THE PAIRED NEGATIVE RUNS FIRST, ON THE SAME BAND.** `band_panel_queue_collapsed_long` asserts the
-3-row block and its `+11 more` and that **no expanded list exists**. Without it every claim below
-passes on a mode that is always on, and the collapsed block is the state the game spends nearly all of
-its time in.
-
-**THE ENTRY COUNT IS CHOSEN AGAINST THE TIGHTEST BOX, and it is reported rather than assumed.** The
-auto-scroll frame is meaningless unless the list OVERFLOWS its viewport, and only the 1920 BOTTOM dock
-is short enough to overflow at any reasonable length: `_report_queue_expanded_geometry` prints the
-box, the declared viewport, the rows it affords and the scrollbar's width at every dock these states
-render, so *which docks scroll* is a measurement. Fourteen entries fill **9.3 rows of viewport on the
-bottom dock and 22.3 on the tall LEFT one** — the LEFT dock does not scroll, and the frame says so.
-
-### The nine states, and what each one alone cannot tell
-
-- **`band_panel_queue_collapsed_long`** (tall LEFT) — the mode is OFF by default and the block is
-  unchanged: 3 rows plus `+11 more`, no expanded list.
-- **`band_panel_queue_expanded_doors`** (tall LEFT) — both doors, both directions, all real clicks;
-  the work inspector cleared on entry; press-and-slide-off toggles nothing.
-- **`band_panel_queue_expanded`** (tall LEFT) — one row per entry; board / chips / pager / inspector /
-  `+N more` all ABSENT; head and POOLS PRESENT; the sanctioned scroll, once, under `ZONE_WORK`, by name.
-- **`band_panel_queue_expanded_arrows`** (tall LEFT) — a real `▲` and a real `▼` on **row 4**, past
-  the 3-row cap, so a row only the expansion draws.
-- **`band_panel_queue_expanded_settings`** (**1920 BOTTOM**) — ⛔ the expansion open AND a row's strip
-  open, in the tightest box this panel ships.
-- **`band_panel_queue_expanded_autoscroll`** (1920 BOTTOM) — the pump, the physical-pointer read and
-  the hover re-resolve.
-- **`band_panel_queue_expanded_scrolled`** (1920 BOTTOM) — the list keeps the player's place across
-  the rebuild its own click causes.
-- **the empty-queue survival block** (1920 BOTTOM, PNG-less) — the mode is the player's and outlives a
-  band with nothing queued.
-- **`band_panel_queue_expanded_hidden_entry`** (tall LEFT) — the expansion's own row loop counts the
-  WIRE queue, not the list it drew.
-
-⛔ **THE STRIP FRAME IS REQUIRED, NOT THE EXPANSION ALONE.** A frame with the expansion open and a
-frame with a strip open are **two disjoint frame families with the defect living in the gap** — the
-exact shape that hid a 64px overflow in §4.7 and an inspector-height defect before it. It runs on the
-1920 BOTTOM dock because that is the shortest box the panel ships, and the strip is opened on **row
-5**, an entry that had no way to be configured at all before this mode.
-
-> #### ⛔ A REQUIRED FRAME'S HEADLESS SKIP WRAPS THE INPUT, NEVER THE FRAME
->
-> `_assert_queue_expanded_settings` carried its `_is_headless()` return ABOVE its own claims, so under
-> the dummy driver it returned after the geometry print and the row-count guard: no `_save`, no
-> `_assert_zones_within_bounds`, no `_assert_zone_content_fits`, no `_assert_scroll_only_where_sanctioned`,
-> no extent report. The gap the frame exists to cover was **unasserted in exactly the run that is meant
-> to be the cheap full-coverage one**, and it exited 0 while doing it. None of those claims needs a
-> click; the CLICK needs a viewport. The skip now wraps the input alone and the headless path opens the
-> same strip through `_toggle_queue_settings`, so the **combined state** is asserted in both modes and
-> only the mechanism differs (the claim's own text says which). Measured: the block reports **10 claims
-> (7 `PASS` + 3 `assert OK`) headless and the same 10 windowed**, against **0 headless** before.
-> `_assert_queue_expanded_scroll_persists` takes the same shape for the same reason.
-
-### `_drive_drag` grew a HOLD, and the hold is the auto-scroll's whole test
-
-The hold awaits frames at the destination **with nothing pushed at all** before the release, which is
-the gesture a player makes when they park the pointer at the edge — and a scroll that only advanced on
-motion looks identical to a working one until you stop moving. `hold_probe` is called on each held
-frame and is **awaited**, so a probe may itself capture: the auto-scrolled, mid-drag list exists on no
-other frame, since the drop ends the gesture and `_repage_work_zone` rebuilds the block at scroll 0.
-
-The frame's claims are the three mechanisms, apart: `scroll_vertical` starts at 0 and has advanced by
-the travel the claims need after the hold; a row that was outside the viewport is inside it now;
-**the drop mark moved to a row that was not visible at the start, with the pointer stationary**; the
-release sends the target's **WIRE** index, read back through `Main.format_build_order` the way
-`_assert_queue_arrow_click` does; and the block did not rebuild under the gesture. It skips under
-`_is_headless()` like `_assert_queue_reorder_by_real_gesture`.
-
-> #### ⛔ THE HOLD IS A CONDITION UNDER A WALL-CLOCK BUDGET, NOT A FRAME COUNT
->
-> The pump is on the unscaled wall clock, so `QUEUE_AUTOSCROLL_HOLD_FRAMES` (45) bought
-> `45 × whatever a frame costs here` — measured **36px**, against the **17px** the arrival claim needs,
-> with a large share of it coming from the awaited PNG `_save` mid-hold. On a faster machine or a
-> faster save three claims fail at once, and it was the one outcome in this harness that depended on
-> machine speed. `hold_done` makes the hold end on **`QUEUE_AUTOSCROLL_TARGET_ROWS` (2) of travel**
-> instead, under `QUEUE_AUTOSCROLL_TRAVEL_BUDGET_SECONDS` (3.0, ~9× the 0.33s the pump honestly needs),
-> with `QUEUE_AUTOSCROLL_HOLD_FRAMES_MAX` as a ceiling so a DEAD pump cannot hold the run open. The
-> deadline is inside the callable so the gesture ENDS on it and the travel claim reports what was
-> actually reached — a blown budget fails loudly rather than skipping. Measured windowed: **0 → 56px
-> over 77 frames** (i.e. ~230fps, which is why 45 frames was only ever worth ~33px). **Every tick is
-> still the engine's**: nothing calls `_queue_autoscroll_tick`, the hold pushes no input, and deleting
-> the pump's step still fails the same **4** claims — what changed is only when the hold STOPS. The PNG
-> is now captured on the frame the travel lands, so it always shows a scrolled list mid-gesture.
->
-> #### ⛔ THE LAST SAMPLE IS TAKEN AT THE RELEASE, NOT A FRAME BEFORE IT
->
-> The hold's loop probes and THEN awaits a frame, and the release is pushed after that frame — so the
-> pump ticked once more between the final sample and the drop, and `want_position`, computed from that
-> sample's `mark`/`above`, could name the row under the pointer one step BEFORE the row Godot drops
-> onto. `_drive_drag` probes once more immediately before pushing the button-up, with no
-> `process_frame` between, so the expectation is read from the state the drop sees. Measured, the
-> window it closes is real but narrow here: **1px of travel** between the penultimate sample and the
-> release across three runs, which crosses a row boundary only sometimes — an intermittent failure
-> about nothing under test.
-
-> #### ⛔ `Engine.time_scale` IS 0 IN EVERY RENDER HARNESS, SO A `_process` DELTA IS ZERO
->
-> `band_panel_preview`, `ui_preview` and `blend_probe` all pin `Engine.time_scale = 0.0` for
-> determinism, and `preview_watchdog` documents that every `delta` in the process is therefore zero.
-> A per-frame pump driven by the frame delta advances by **exactly nothing** here — measured as
-> `0 → 0px over 45 frames`, indistinguishable from having no pump at all. The auto-scroll reads
-> `Time.get_ticks_usec` instead, which is unscaled. **Any future harness claim about a rate must ask
-> what clock the code under test is on**; this one was written, run, and read as a bug in the fixture
-> before the frozen clock was found.
-
-### The sanctioned-scroll guard was NARROWED, not extended
-
-`SANCTIONED_SCROLLS` gained `[BUILD_QUEUE_EXPANDED_SCROLL_NAME, ZONE_WORK]`, and its existence claim
-is the **first conditional one**: the list must be found exactly when `_queue_expanded` **and** the
-work zone is mounted, and never otherwise.
-
-⛔ **AND EACH OF THE THREE CLAIMS IS NOW MADE ONLY WHERE ITS ZONE IS MOUNTED.** The narrow shell
-parents only the ACTIVE tab's zone (`_reparent_zones` detaches the rest), so a zone can be in `_zones`
-and nowhere the walk could find it. The band zone's claim already guarded for that; the parties one
-did not, so asking this guard from a narrow-shell WORK-tab state reported a parties list that had
-"lost" a scroll it was merely detached from. Every pre-existing call site is on a wide shell where all
-three are parented, so no claim was weakened.
-
-> #### ⛔ A CLICK FREES THE LIST, NOT ONLY THE ROWS
->
-> `harness-band-panel.md` already records that a queue row captured before a click is a freed object.
-> The expansion reaches the same trap one level up: `_toggle_queue_settings` → `_repage_work_zone`
-> frees the `ScrollContainer` too, and `scroll.is_ancestor_of(strip)` on a freed instance **raises** —
-> which ends the assertion block with **no `FAIL` line**, leaves the strip open over every state
-> below, and still exits 0 with a healthy PASS count. It happened once here and was caught only by
-> reading the log for the assertions that should have been there. `_expanded_queue_scroll()` re-finds
-> it from the live tree after every real click.
-
-### The falsifications, and the one that failed nothing
-
-Each defect was restored, the run counted, and the fix put back.
-
-- **The auto-scroll pump deleted → 4 failed.** *the pointer held STILL … and the list scrolled
-  anyway* · *carrying N row(s) that were outside the viewport … into it* · *the drop mark MOVED under
-  a stationary pointer* · *it names a row that was NOT on screen*.
-- **The hover re-resolve dropped → 2 failed** — the two drop-mark claims above. The wire-index claim
-  did NOT fail, and correctly so: the arithmetic is right either way, and what the re-resolve fixes is
-  WHICH row the mark and the drop name.
-- **The expansion's loop ranks its DRAWN list → 7 failed**, every one of them on
-  `band_panel_queue_expanded_hidden_entry`: *the two drawn rows wear the WIRE's ranks* · *NEITHER
-  drawn row wears the `▸`* · *the TOP drawn row's `▲` is ENABLED* · both `▲`/`▼` meta-value claims ·
-  *a REAL click … emitted no build_order at all* · the `▼` command line.
-- **The `_work_open_key` clear removed → 3 failed.** *entering the mode CLEARED the open work
-  inspector* · *the board back and no inspector springing back onto it* (the board came back at 8 rows
-  where it had 9) · *no work inspector is open beside it*, which is the required strip frame's own.
-- **The header toggle fired on the PRESS → 1 failed**, and only because the claim was written for it.
-  See below.
-- **A stub board left drawn in the mode → 7 failed** — the zone-fit and zone-bounds guards at **both**
-  docks (168px over on each) plus the board and chips absence claims.
-- **The scroll restore deleted → 2 failed.** *the rebuild the click caused KEPT the player's place* ·
-  *with that row still inside the viewport*.
-- **The restore written into the builder instead of deferred a frame → 1 failed**, and only because
-  the frame scrolls past 100px: a fresh `VScrollBar` is a `Range` and a `Range` ships `max = 100`, so
-  at 84px (three rows) the un-deferred form PASSES and at 112 (four) it clamps to 100 and fails. That
-  is what fixes `QUEUE_SCROLL_PERSIST_ROWS` at 4 — a falsification that does not bite is a constant
-  chosen wrong, not a fix confirmed.
-- **The empty-queue prune put back → 2 failed.** *the MODE survived it* · *reselecting the band that
-  HAS a queue comes back EXPANDED* (it came back with 1 drawn row, i.e. collapsed).
-
-⛔ **THE PRESS-TIME HEADER TOGGLE FAILED NOTHING, WHICH MEANT A CLAIM WAS MISSING.** The head sits in
-the same place in both modes, so a plain click looks identical whichever edge fires it, and the header
-is not a drag source — the drag starts on a ROW's marker — so the press-time rebuild kills no gesture.
-What a press-time toggle really breaks is **press, slide off, release**, which must change nothing.
-That is now driven with `_drive_drag` from the header onto the last queue row, and it is the only
-claim that can tell the two edges apart. Its twin asserts the row the release landed on did not open
-either — `mouse_focus` latched on the header.
-
-> **A FALSIFICATION THAT FAILS NOTHING IS A RESULT, not a formality.** Two of the six here changed the
-> harness rather than confirming it, and both were places where the obvious claim was about the fix's
-> *mechanism* instead of about a consequence the player could see.
-
-## The build states, the rollback and the pending queue row (`docs/plan_standing_upkeep.md` §4.6a/b)
-
-Three blocks land at the end of the run, after `_render_build_queue_states`. Order is load-bearing
-here as everywhere: each restores the reference band and the herd roster on its way out, and the
-rollback block leaves the pending overlay empty.
+Two blocks land at the end of the run. Order is load-bearing here as everywhere: each restores the
+reference band and the herd roster on its way out, and the rollback block leaves the pending overlay
+empty.
 
 **`_render_work_build_state_states` — the WORK ROW's build states, as a SET.** ONE band, FOUR forage
 rows differing only in their meter and the wire's own countdown: climbing (`🌱45%`, `SIGNAL_DEEP`),
@@ -1564,22 +1178,20 @@ formats so the claim is the FORK and not the format.
 - **The SET is the claim.** A row builder that marked EVERYTHING passes the two stalled claims; one
   that marked NOTHING passes the two healthy ones. Sabotage-verified in both directions, each failing
   a disjoint pair.
-- **THE BAND HAS NO BUILDERS, and that is what makes four states reachable at once.** The pool is
-  BAND-level, so every row on one board is asked against one crew count — with hands on it no row
-  could be `UNSTARTED` and the states would have nowhere to differ. It is an ordinary live state
-  besides: another band's pool can be funding the same rung, which is why the map's badge sums the
-  count across bands.
+- **EACH ROW CARRIES ITS OWN `builders_staffed`, which is what makes four states reachable at once.**
+  The declared-with-nobody-on-it row has none, and the others differ by meter and countdown, so the
+  states have somewhere to differ on one board.
 - **`_assert_work_row_and_badge_agree` is the two-surface claim, and no per-surface assertion can make
   it** — each is perfectly self-consistent while contradicting the other. The row's face comes off the
   RENDERED board (`HudWorkVocab.WORK_ROW_BUILD_STATE_META`, valued the face, because the three states
   differ by one glyph and a text search would only confirm the string already assumed); the badge's
-  verdict is composed the way `BandOverlayRenderer._queue_source_badge` composes it. Its COUNTS —
+  verdict is composed the way `BandOverlayRenderer` composes it. Its COUNTS —
   four build rows, exactly two stalled — are what stop a hard-wired verdict agreeing with itself.
 - **`_work_row_build_faces` keys on the row's NAME label, found by `SIZE_EXPAND_FILL`.** Every other
   slot in a work row is a fixed column, so that flag is the one structural handle on the label whose
   text the assertion is trying to join against.
 
-**`_assert_pending_assign_rollback` — PNG-LESS, and it has to be**: a card showing three builders is a
+**`_assert_pending_assign_rollback` — PNG-LESS, and it has to be**: a card showing three scouts is a
 perfectly ordinary card. It asserts the two `has_method` names `Main` probes for (a failed probe fails
 SILENTLY, so a rename would simply stop rolling anything back), drives the REAL `_emit_assign_labor`
 for both writes so the payload under test is the one `Main` receives, then drops ONE and requires an
@@ -1591,25 +1203,6 @@ the entity's whole record fails exactly the survivor claim.
 > scene node with a `_ready` this harness does not stand up, so the block drives everything up to and
 > including the method that handler reaches by name. The seam it cannot reach is one comparison.
 
-**`_render_pending_queue_states` — the pending queue row, NEGATIVE FIRST.** One confirmed entry and
-nothing declared (assert no row below the head position, no `○` anywhere), then the same band with a
-build declared through the real `record_pending_assign`, then the WIDE dock for the height budget,
-then a turn advance that reconciles the overlay away and leaves the row CONFIRMED. Four claims on the
-pending row — it sorts LAST, it wears `○` and states no date, it has no `▸`, and its `✕` still emits
-`unqueue 0 72 18` — asserted together, since any one alone is satisfied by a row that got the other
-three wrong. Sabotage-verified by admitting every un-positioned row: the negative fails in two states
-naming the phantom rows it found.
-
-- **`_declare_pending_build` calls `_hud._bandpanel.rerender()`, NOT `Hud._after_pending_change`, and
-  that is a HARNESS fact rather than a client one.** That method also re-renders the SELECTION card,
-  whose occupant this harness stages separately — a `_band_fixture()`-shaped Band 2 pushed long before
-  this block — so the re-render replaces the panel's subject with the OTHER fixture of the same band
-  and two of the queued rows vanish. A live client cannot reach that: both dicts come from one
-  snapshot.
-- **The wide dock reads `Zone_work` at 252px of a 300px box.** `Zone_band` at 749/300 and
-  `Zone_parties` at 300/300 are the same numbers `band_panel_build_queue_wide` prints and are
-  structural (the board is `EXPAND_FILL` and pages).
-
 ## THE LEG IN FLIGHT — the two-leg fixture existed and could not tell the defect from the fix
 
 **`_track_climbing_patch_fixtures` had staged a two-leg entry since the destination track landed, and
@@ -1620,28 +1213,26 @@ is `patch_build_verb`'s answer, which honours a declaration at or above the rung
 to the Cultivate meter and the board read the leg **by accident**. `_track_band_fixture(build_job)`
 states it, which is what makes `band_panel_rung_track_climbing` reproduce the played state.
 
-Four claims per state, from `_assert_queue_row_states`, and the SET is what makes any of them worth
-anything — a fix that repointed the whole row passes the last two alone:
+The claim is that the Work tab's two readouts — the row's title (the DESTINATION, what the player
+ordered) and the rung mark's leg percentage — name ONE rung, with the wanted percent composed through
+the TILE CARD's own producer, so the claim is that two surfaces AGREE and a literal on each side cannot
+let both be separately plausible.
 
-| claim | why it is there |
-|---|---|
-| the row is still titled for its DESTINATION | that is what the player ordered, and it is why moving the percentage costs nothing |
-| the date column, by EQUALITY | one string carries the verb, the leg's percent AND the whole climb's turn, so asserting them apart would let a row state a leg's date beside a leg's percentage and pass |
-| the source row's rung chip | the two Work-tab readouts must name ONE rung — the shape of the reported defect |
-| the wanted percent is composed through the TILE CARD's own producer | the claim is that two surfaces AGREE; a literal on each side lets both be separately plausible |
-
-**Four states, and three of them are PNG-less** — a percentage is a number and a row quoting the wrong
-rung's meter renders a perfectly plausible row:
+**The fixtures a percentage needs, because a row quoting the wrong rung's meter renders a perfectly
+plausible row:**
 
 - the reported two-leg `sow`, on `band_panel_rung_track_climbing`;
 - **the FIRST turn of banked work** (`TRACK_FIRST_TURN_WORK_DONE`, one unit of fifty ⇒ 2%) — the
-  assertion that actually catches the bug, since at 60% a renderer that had merely swapped one meter
-  for another passes;
+  state that actually catches the bug, since at 60% a renderer that had merely swapped one meter for
+  another passes;
 - **a single-leg `sow` on already-tended ground, which must be UNCHANGED** — its leg IS its
   destination, and without it "read the leg" is satisfied by a renderer that always names the rung
   below the one declared;
-- **the animal twin** (`band_panel_queue_leg_animal`), a `corral` on an untamed herd: the two webs
-  share no fixture and no rung table, so a fix reaching only the plant one passes every claim above.
+- **a PEN RING**, which is not a leg at all: it widens the rung its herd already stands on, so the
+  ladder credit is structurally zero for its whole life. Its percentage is the herd's own
+  `pen_extend_progress / pen_extend_cost`, and the fixture pair (30 of 40 work ⇒ 75%) differs from the
+  herd drawer's `herd_pen_extending` (42 of 70 ⇒ 60%) on purpose, so a row that reached for the wrong
+  ring fails on the number instead of coinciding with it.
 
 ## THE CROP STEP AND THE SOW'S PRICE ARE ONE BASKET AT TWO WIRE PRICES (§4.15)
 
@@ -1696,25 +1287,6 @@ face carrying no identity beyond the row it prices.
 Sabotage-verified by returning the destination reading: **exactly six fail** — both readouts on the
 two-leg sow, the first turn and the animal twin — printing the played `Sowing 0% · turn 64` and `▦0%`,
 while the single-leg control stays green.
-
-**A FIFTH STATE SITS BESIDE THEM AND IS NOT ONE OF THE FOUR: `band_panel_queue_ring`**, the pen
-extension the leg re-pointing cannot reach at all. A ring widens the rung its herd already stands on,
-so it has no leg and the ladder credit is structurally zero for its whole life — the row read
-`🐄 Corral Wild Fowl   turn 151 (0%)` in play. Its percentage is the herd's own
-`pen_extend_progress / pen_extend_cost`, and the state carries a PNG because a queue row for a
-completed rung is a shape the four above never render. Three claims, the first a PRECONDITION without
-which the other two pass for free: that the pen rung is full with no rung in flight, that the face
-still names the widened rung's verb, and the date column by EQUALITY. Its fixture pair (30 of 40 work
-⇒ 75%) differs from the herd drawer's `herd_pen_extending` (42 of 70 ⇒ 60%) on purpose, so a row that
-reached for the wrong ring fails on the number instead of coinciding with it.
-
-**`_report_queue_row_columns` PRINTS the row's two columns and both worst cases**, the
-`_report_work_row_name_column` rule one block over: the verb made the date column longer, and what a
-red line there asks for is a design decision. It reads **queue NAME 126px** (the widest shipped face,
-`🐄 Corral Thunder Mammoths`, needs 189 — it was already ellipsised before this change) and **DATE
-168px** (its own widest, `Cultivating 100% · turn 999`, needs exactly 168), beside the BOARD row's
-line one at **109px**. Those numbers are what bought the queue row's SOURCE ICON its retirement — the
-arithmetic is in `band-city-panel.md`.
 
 ## The MATERIALS-ONLY work row — the assertions were fine, the fixtures never reached the state
 
@@ -1897,30 +1469,18 @@ that shipped a completely dead drag green in #570, and it is caught only because
 through `_drive_click` rather than called.
 
 
-## The `-5` frame — a fresh entry and a stalled one have to be in ONE frame (§4.9)
+## The `-5` producers — a fresh declaration and a stalled one must read apart (§4.9)
 
-`band_panel_build_queue_not_yet_estimated` renders a three-entry BUILD QUEUE whose rows read three
-different faces at once: `Queued 0%` (the `-5` head), `⚠ Stalled 0%` (the `-1` herd behind it) and
-`⚠ ∞ turns, losing ground (0%)` (the `-3` patch behind that).
-
-**ONE FRAME, BECAUSE THE DEFECT IS THAT TWO OF THEM LOOKED IDENTICAL.** A frame staging only the fresh
-entry proves nothing — it is green with the fix and green with the defect restored, on a board that
-has never drawn a genuine stall beside it. `_assert_not_yet_estimated_reads_apart` therefore asserts
-the pair AND their inequality: the head's exact composed face, that it carries no
-`RUNG_HAZARD_GLYPH`, that the entry behind it still carries one, that the two strings differ, and both
-inks (`INK` for the head, `WARN` for the stalled one) — because a neutral word in amber still says
-*warning*.
-
-**`_assert_not_yet_estimated_producers` IS PNG-LESS AND DELIBERATELY SO.** Three of the four swept
-producers cannot be seen in any one frame — a pace tints a compose face, a stall verdict marks a map
-badge — and the stated failure mode in this client is *two producers disagreeing about one meter*. It
-asks the producers themselves (`build_turns_remaining` passes `-5` through and specifically not onto
+The wire's `-5` (`BUILD_TURNS_NOT_YET_ESTIMATED`) means *declared since the last turn resolved, so no
+estimate pass has run for it*, and the defect it fixed was that a fresh declaration and a genuine stall
+looked identical. **`_assert_not_yet_estimated_producers` IS PNG-LESS AND DELIBERATELY SO.** Three of
+the four swept producers cannot be seen in any one frame — a pace tints a compose face, a stall verdict
+marks a map badge — and the stated failure mode in this client is *two producers disagreeing about one
+meter*. It asks the producers themselves (`build_turns_remaining` passes `-5` through and specifically not onto
 `-1`; `build_pace` answers `BUILD_PACE_UNKNOWN` and neither stops the sheet nor paints it as climbing;
 `build_is_stalled` is false for a staffed `-5` **and still true for a `-3` beside it**, so the verdict
 has not simply stopped firing; `build_turns_clause` states no clause), so a consumer rendering
 correctly off a producer that has quietly stopped passing the sentinel still fails here.
-
-**Nothing on this frame is pressable**, so nothing is driven: it is a readout defect end to end.
 
 ### `UNKNOWN_BUILD_TURNS_SENTINEL` had to be re-aimed, for the THIRD time
 
@@ -1934,23 +1494,10 @@ as a NEUTRAL face rather than merely a different one.
 
 ### Falsifications
 
-Baseline before the slice: **789 PASS / 0 FAIL**; after: **805 PASS / 0 FAIL** (`band_panel_preview`,
-exit 0 both). `ui_preview` is **1344 PASS / 0 FAIL** before and after, the re-aim included.
-
-| Restored defect | Failures |
+| Restored defect | Failure |
 |---|---|
-| `build_sentinel_value` folds `-5` onto the stalled face (the shipped pre-fix render) | **4** — the head's face, `carries NO hazard mark`, `the two READ APART … (["⚠ Stalled 0%", "⚠ Stalled 0%", …])`, and the head's ink |
-| …the same branch deleted outright instead | **1** — the head's face only, and it renders `Cultivating 0% · turn 37`: with `-5` still passed through, `build_completion_value` adds a NEGATIVE count to the turn and dates the job five turns in the PAST |
-| `build_pace` loses its `-5` arm (a swept consumer left un-swept) | **2** — `` `build_pace` answers no verdict for it (got "growing") `` and `neither stops the sheet nor paints it as climbing` |
-| `build_turns_remaining` collapses `-5` onto `-1` again (the root) | **6** — all four render claims plus both producer claims |
-
-**One of them is weaker than the others and it is worth saying so.** Deleting the branch outright
-(row 2) trips only ONE assertion, because the resulting face is neither the queued one nor the stalled
-one — so `carries NO hazard mark`, `READ APART` and the ink claim all pass on it. They are not
-vacuous (rows 1 and 4 fail all four), but the set's floor against *some other wrong face* is the exact
-string comparison alone.
-
-
+| `build_pace` loses its `-5` arm (a swept consumer left un-swept) | `` `build_pace` answers no verdict for it (got "growing") `` and `neither stops the sheet nor paints it as climbing` |
+| `build_turns_remaining` collapses `-5` onto `-1` again (the root) | both producer claims |
 
 ## The material half's frames (`docs/plan_standing_upkeep.md` §4.9 item 12)
 
@@ -2053,14 +1600,8 @@ passes.
 
 ## The ring caret and the strip's head line (§4.9 item 12c, Stage B)
 
-**MEASURED, BEFORE AND AFTER**: `858 : PASS / 448 assert OK` → `864 / 445`. **No frame added and none
-retired.**
-
-The six `: PASS` are `_assert_ring_caret_rides_the_standing_mark`. The `assert OK` figure falls by
-**three, and all three are the parked kit pair** — `every zone renders inside its zone rect` plus the
-two `content fits its zone box` lines for `band_panel_pools_wide_selected` and
-`band_panel_queue_settings_exclusive`, which FAIL rather than passing while that pair is mounted. **No
-assertion was lost**; the run's only failures are those three.
+The six `: PASS` this stage added are `_assert_ring_caret_rides_the_standing_mark`. No frame was added
+and none removed.
 
 > ### ⛔ AND ONE GUARD SILENTLY STOPPED COVERING THE ROW THE NEW CONTROL IS ON
 >
@@ -2112,12 +1653,10 @@ it walks `BOARD_LAYOUT_PROBE_COUNTS` (3, 4, 6, 8, 12 — the preference exactly,
 exists to rebalance, the two counts either side, and one past every affordable column) at two queue
 depths, and asserts the page still SHOWS every source the height-derived layout would have and takes
 no more pages to do it. See `band-city-panel.md` → "THE COLUMN BREAKS AT THREE ROWS BY PREFERENCE".
-- **BOTH QUEUE DEPTHS, because the queue is what decides how tall a column can be.** The matrix's
-  fixture is the fullest band in this file, whose four-entry BUILD QUEUE leaves a bottom dock about
-  three board rows — so at the staged depth the preference has nothing to shorten and the probe would
-  have reported "no change" everywhere while proving nothing. The board the change is about is the
-  same dock with NOTHING queued, where the height affords five. Walking both is what makes it a probe
-  of the RULE rather than of one fixture's queue depth.
+- **BOTH BOARD DEPTHS, because what stands above the board decides how tall a column can be.** At the
+  fullest staged depth the preference has nothing to shorten and the probe would have reported "no
+  change" everywhere while proving nothing, so the same dock is walked with nothing above the board as
+  well. Walking both is what makes it a probe of the RULE rather than of one fixture's depth.
 - **It asserts `min(page, count)`, never `page`.** Slots a band cannot fill are not worth protecting,
   and a raw-page assertion would forbid the change's whole purpose — a six-source band would have to
   keep a 10-slot 2 × 5 page with four slots empty and go on drawing 5 + 1. The two readings coincide
@@ -2130,9 +1669,8 @@ no more pages to do it. See `band-city-panel.md` → "THE COLUMN BREAKS AT THREE
   every inequality above, so the live board's own row count is asserted non-zero beside them.
 
 **THE FIXTURE IS THE FULLEST BAND IN THIS FILE, and that is the choice the matrix stands on.** It runs
-on `_build_queue_band_fixture(4)` with `_build_queue_patches(4)` — the POOLS block, a four-entry BUILD
-QUEUE and a board stacked together, which is the state the four pixels of spare were measured in. On
-the reference band the same walk reports 400–700px of spare on every row and asserts nothing about the
+on `_declared_build_band_fixture(4)` with `_declared_build_patches(4)` — a board of four declared builds
+with their crews, the state the four pixels of spare were measured in. On the reference band the same walk reports 400–700px of spare on every row and asserts nothing about the
 arithmetic that mattered.
 
 **Three frames, and the third is the one item 12c never got**:
@@ -2166,7 +1704,7 @@ they happen not to overlap, and a price card opening behind the surface that spa
 kind of thing that ships.
 
 **Sabotage-verified by restoring the retired terms** (`_work_board_capacity`'s `inspector_h`,
-`WORK_ZONE_GAP_COUNT` 3, `BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT`): 2 failures, and the informative one is
+`WORK_ZONE_GAP_COUNT` 3): 2 failures, and the informative one is
 `the board's capacity does not move for ANY picker … (rows [2, 1, 1, 1], drawn [1, 1, 1, 1])`. The
 matrix's own printout shows the same thing as a measurement — LEFT 1440×720 drops from 3 board rows to
 2 the moment a picker opens.
@@ -2375,7 +1913,7 @@ wayfinding gear is now the binding item: the covered party is 2 rather than 4, a
 reads `2 of 9 Ranging kits available` where it read `4 of 9`.
 
 **`BandFx.kit_roster_fixture()` gained the `ranging` entry and `none` gained the `expedition` job.**
-The ranging kit lists that job ALONE and appears in no hunt, forage, scout, warrior or builders picker
+The ranging kit lists that job ALONE and appears in no hunt, forage, scout or warrior picker
 in either harness. It equips exactly ONE axis to a value the roster does not already carry —
 `expedition_sight_range`, which no other entry lifts, and which is the point: a sight clause reading
 the same for this kit and for `none` would present the fourth item as decoration. Every other axis it
@@ -2399,130 +1937,15 @@ zone drawing nothing.
 asserted alone passes on a builder that never draws chips anywhere.
 
 **`_work_chip_count()` counts by `WORK_CHIP_TOOLTIP`, never by matching a face**: `All 0` is precisely
-the face under test, and it is the same probe `_assert_queue_expanded_shape` already uses, so "the
-chips are gone" means one thing wherever it is claimed.
+the face under test, so "the chips are gone" means one thing wherever it is claimed.
 
-## THE ROSTER DOOR — the fixture that did not exist, and the claim that is not a row count
+## The build phase states (`_render_build_phase_states`)
 
-**MEASURED, BEFORE AND AFTER, ON THIS TREE**: `1202 : PASS / 515 assert OK / 176 frames` →
-`1238 / 524 / 180`, exit 0 both times. Moving the door ONTO the head — and extending the same control
-to the BUILD QUEUE — took it to `1274 / 528 / 182`. The behaviour is `band-city-panel.md` → "THE
-ROSTER DOOR" and "ONE CONTROL IN TWO STATES"; what belongs here is the fixture and what each claim can
-tell apart.
-
-⛔ **NO FIXTURE IN THIS FILE HAD MORE THAN THREE WORKINGS, WHICH IS EXACTLY WHY NOTHING CAUGHT THE
-DEFECT.** Both rosters cap at `ROADWORK_ROSTER_ROWS_MAX`, every roster state staged exactly three
-rows, so the cap never truncated anything — and the thing it truncates is the only control that opens
-a working's ladder (`_open_deposit_track` has ONE caller and it is a roster ROW) and the only other
-control that stops the band being billed for it. Two disjoint frame families with the defect living in
-the gap, one more time.
-
-**`DOOR_WORKINGS` IS FIVE HOLDINGS ON THREE TILES, NOT FIVE TILES.** The near hex and the mid hex each
-carry BOTH materials, so the fixture is `(tile, material)` pairs — the identity a working actually
-has, and the shape a tile-keyed roster cannot draw. The road roster gains two roads for the same
-reason, so the shared builder is exercised on a block that also overflows.
-
-⛔ **THE BAND'S WORKFORCE IS BUDGETED, and that is what makes the head's stepper pressable at all.**
-The `+` is gated on `effective_idle > 0`, so `_door_band_fixture` writes its OWN `labor_assignments`
-— trimmed source rows, both pools, five one-cutter holdings, 14 of 16 — rather than layering five
-crews on top of the reference band's 13. A fixture that merely appended would have staged a band with
-no idle hands and a dead `+`, and the stepper claim would have proved nothing.
-
-### The four states, and what each one alone cannot tell
-
-- **`band_panel_workings_roster_collapsed`** — the PAIRED NEGATIVE, and it runs first. Three rows and
-  a `+2 more ▾` **on the head**, plus the claim that matters as an absence: the other two workings
-  have **no row, no `⌃` and no `✕` at all**. An absence is worth asserting only where a presence would
-  otherwise have been visible, which is why it is the same frame family as the expansion. It also
-  asserts the door is a DESCENDANT OF THE HEAD — a door anywhere else is the two-controls-in-two-places
-  shape the correction removed, and no reachability claim would notice.
-- **`band_panel_workings_roster_expanded`** — reached by a **REAL** `_drive_click` on the door
-  (`pressed.emit()` cannot see a control that is covered, zero-size or filtered out of the hit test,
-  and this is a small ghost Button in a head row). Every model has a row, every row its `⌃` AND its
-  `✕`; the head's ONE control now reads `Show less ▴` and stands for no hidden row; the board GONE
-  rather than squeezed; the OTHER roster gone with it; the POOLS block still above.
-- **`band_panel_roadwork_roster_expanded`** — the same builder on the other roster, one frame being
-  enough for a second caller of one function, plus the claim that GROUNDWORK folded.
-- **`band_panel_workings_roster_expanded_tight`** — the 1920 BOTTOM dock, the shortest work zone this
-  panel ships. The viewport is declared off the zone's own box and is **not clamped up to a floor**,
-  so the claim on the tightest dock is `_assert_zone_content_fits`; the geometry is PRINTED beside it
-  (`WORK zone box 380 × 356, pools 110, expanded roster declares 193px = 6.9 rows of 28`) rather than
-  asserted, a near-miss and a comfortable fit being the same green line otherwise.
-
-### THE THREE-STATE TABLE, ASSERTED DIRECTLY — including the row that is an ABSENCE
-
-`band-city-panel.md` → "ONE CONTROL IN TWO STATES" is the design; these are the claims.
-
-- **collapsed over the cap** — `band_panel_workings_roster_collapsed` (5 workings) and
-  `band_panel_queue_collapsed_long` (14 entries): the head carries the button, its face is
-  `zone_disclosure_face(false, hidden)` **composed rather than spelled**, and its `*_OVERFLOW_META`
-  equals the count of rows with no row of their own.
-- **expanded** — the same two blocks one press later: face `Show less ▴`, meta `0`.
-- **collapsed and drawn WHOLE** — the ABSENCE, and it is paired with a presence in the same family
-  every time. `band_panel_roadwork_roster` keeps exactly the cap, so **no door and the head is NOT a
-  toggle** (`_roster_head_toggle` answers `null`). On the queue it is a FORK inside
-  `_assert_build_queue_block`, on the very count that function just asserted — so every state that
-  calls it claims one or the other, and the presence and the absence cannot drift into two frames.
-
-⛔ **THE STRANDING CASE IS ITS OWN CLAIM, ON BOTH BLOCKS.**
-`_assert_the_expanded_roster_cannot_strand_the_player` re-pushes the door band holding only
-`DOOR_WORKINGS_KEPT_AFTER_DROP` (2) while the list is OPEN;
-`_assert_the_expanded_queue_cannot_strand_the_player` does the same with
-`QUEUE_STRANDING_ENTRIES` (= `BUILD_QUEUE_ROWS_MAX`, the boundary rather than a number beside it).
-Each then asserts the collapse affordance is STILL there, and — one press later, on the same band —
-that folding back leaves a list drawn whole with no door. **Frames:**
-`band_panel_workings_roster_expanded_under_the_cap`, `band_panel_queue_expanded_under_the_cap`.
-
-**FALSIFIED:** making the expanded affordance conditional on overflow (dropping `not expanded` from
-`_make_zone_head_a_toggle`'s guard and passing the real overflow from both expanded builders) fails
-**exactly 2** claims — one per block, both the stranding one — and nothing else. The narrowness is the
-point: the sabotage is invisible to every other frame, which is precisely why the case needs a claim
-of its own.
-
-⛔ **THE HEAD HEIGHTS ARE MEASURED BY THE HARNESS, NOT ASSERTED INTO EXISTENCE.**
-`_assert_zone_head_reserves(where, block, reserved)` is one helper over all three blocks: it PRINTS
-`block head reserves Xpx, draws Ypx` and asserts `reserved ≥ drawn`. The print is what the constants
-are corrected from — the zone `clip_contents`, so a head drawing taller than its block reserved takes
-the difference off the bottom of the BOARD in silence. The with-button cases need their own call
-sites, because the states that assert each block by default are the ones drawn WHOLE:
-`band_panel_workings_roster` measures 21 (stepper only) while
-`band_panel_workings_roster_collapsed` measures 22 (stepper + door), and `band_panel_roadwork_roster`
-measures 20 while `band_panel_roadwork_roster_expanded` measures 22.
-
-⛔ **`_assert_the_expanded_roster_reaches_every_working` WALKS THE MODELS, NEVER A LIST THIS FILE
-TYPED TWICE.** It asks the controller's own `_workings_roster_models` for the keys and requires a row
-for each, then requires each row to carry both controls. **A probe that counted rows would pass on a
-renderer that drew five rows without controls, which is the defect restated.**
-
-> #### ⛔ THE STEPPER PRESS RE-RENDERS THE *SELECTION* INTO THE PANEL, AND THIS FILE'S SELECTION IS
-> STALE
->
-> The trap `_assert_crew_edit_keeps_the_kit` already records, met again: `_emit_assign_labor` →
-> `_after_pending_change` re-renders the SELECTED unit, which here is an unstamped `_band_fixture()`
-> left behind long ago — so the panel band comes back with no `band_id`, and BOTH rosters' membership
-> tests then match nothing (a road is filtered on its keeper's `band_id`, a working on this band's own
-> `extract` rows). **Measured: every claim after the press reported an EMPTY roster.** The door's band
-> is re-pushed straight after it, and the optimistic overlay cleared with it.
-
-> #### ⛔ A RESTORE IS AN ASSIGNMENT, NEVER A SECOND TOGGLE
->
-> `_assert_the_roster_door_excludes_the_zones_other_expansions` put the zone back with a second
-> `_toggle_queue_expanded()`. A toggle is a function of the state it is undoing, so under a BROKEN
-> exclusion it lands on the OPPOSITE value and leaves the queue's expansion open over every state
-> below — **measured under sabotage as 61 failures burying the three claims that had actually
-> fired**. It assigns `_queue_expanded = false` and re-pages instead, and the same sabotage then
-> reports exactly 3.
->
-> The two KEYS in that block are likewise set directly: what is under test is the MUTATOR's clear, and
-> reaching them through their own togglers would re-render the zone between the precondition and the
-> claim.
-
-### The falsifications
-
-| Restored defect | Failures |
-|---|---|
-| the expanded list capped at `ROADWORK_ROSTER_ROWS_MAX` (the door opening onto the same truncation) | **3**, and every one is the reachability claim — both docks' `EVERY working this band holds has a row — 3 of 5 (missing ["68,18:wood", "71,12:stone"])` and the road roster's `3 of 5 kept`. Nothing else moves: the block still draws, the head still toggles, the frames still fit |
-| the exclusion removed from `_toggle_roster_expanded` and `_toggle_queue_expanded` | **3** — the two keys (`precondition` / `precondition`), the queue's expansion (`queue expanded true`), and the other direction (`roster quarrywork, queue expanded false`) |
+Frames `band_panel_build_phase_building` and `band_panel_build_phase_stalled`: a build is worked by its own site's
+crew, so the claims are the two `WorkStrip.build_phase` outcomes read off `builders_staffed` on a patch row and on a
+`deposits` row. Staffed is `building` with `N building (up to M)`; nobody staffed is `stalled` with
+`BUILD_CREW_NO_HANDS`. `_render_build_crew_states` holds the same sentences on the strip chips and the road
+roster's stop chip.
 
 ## The workings roster's rung TRACK (issue #650)
 
@@ -2608,100 +2031,6 @@ on every frame in the chapter — measured, the first cut of this state failed o
 > tile's `units` list are stripped of their own `tile_info` (`_roster_row`), which is the shape
 > `MapView` already has: `tile_info` is stamped onto the payload handed out, never onto the rows inside
 > it.
-
-## The POOL TOE's four-card SET, and the two claims no card can carry
-
-`docs/plan_pool_toe.md` §5 and issue #716. `band_panel_pool_kit_short` stages **four pools, four
-answers, one frame**, and the behaviour is `band-city-panel.md` → "⛔ A POOL CAN BE SHORT OF ITS
-TOOLS". What belongs here is the fixture and what each claim can tell apart.
-
-| card | its TOE rows | what the card must say |
-|---|---|---|
-| Agriculture | hoes **4 of 4** | `⚠`, the work line only — the tools are **FILLED** and say nothing |
-| Husbandry | crook **0 of 2** | `⚠`, the work line, then `Short of tools.` on the next line |
-| Roadwork | earthmoving tools **4 of 6**, stone-dressing tools **0 of 2** | `ⓘ` in `INK_DIM`, calm title, `Supplies 2 of 2 work a turn.` then the INFO tool line — its bill is staged PAID IN FULL |
-| Builders | none at all | nothing — **NOT APPLICABLE** |
-
-**`_assert_pool_card_state` makes every card's claims together**: the `SHORT` meta, the ONE glyph it
-drew and that glyph's ink, the title's ink, the tool meta by EQUALITY against the shipped sentence,
-the coverage sentence present IFF the pool has a bill (a separate expectation from *short*, which the
-meta, the glyph and the title ink carry) under its own web's hint, and **no `N of M <item>` count on
-any line**
-(`POOL_TOOL_COUNT_PATTERN`, a shape rather than one item's word, so a stray count naming any item is
-caught). The expectations are the vocab's own sentences — the wording under test — never a string
-re-composed through `pool_tools_short_line`.
-
-⛔ **THE SET IS THE CLAIM, AND THE TWO SILENT CARDS ARE WHY.** A tooltip builder that always renders
-a tool line passes the two SHORT cards on its own; one that never renders passes the two silent ones.
-Neither can pass all four.
-
-⛔ **THE ROADWORK CARD IS WHAT ISSUE #716 CHANGED, AND IT IS THE ONLY CARD THAT CAN SAY SO.** Its bill
-is staged PAID IN FULL (`roadwork_demand == roadwork_supplied`, `POOL_GEAR_ROAD_DEMAND`) and its TOE
-short, so it asserts the `ⓘ`, `SHORT` meta `false`, a calm `INK` title, and
-(`_assert_pool_covered_tools_short_hover`) `Supplies 2 of 2 work a turn.` by equality with the INFO
-sentence on the very next line. **It staged no bill at all until PR #743's review**, so the covered
-state the issue is about was never rendered and an `ⓘ` that flew only on a bill-less pool passed. The Husbandry card
-is the paired WARN form. **`band_panel_pool_kit_short_builders`** re-pushes the band with a short
-builders TOE line and asserts the Builders card flies the `ⓘ` — it is passed no `cover`, so it can
-never be work-short — with `POOL_TOOLS_SHORT_BUILDERS_LINE` (*The top job in the queue is short of
-tools.*) as its tool line: `_want_pool_tool_line` forks on the ROLE, and
-`_assert_pool_tools_line_forks_on_work` drives the builders fork both ways round (work short and
-not) beside a FILLED row that states nothing.
-
-⛔ **THE FILLED CARD AND THE NOT-APPLICABLE CARD RENDER IDENTICALLY**, so what separates them is
-asserted against the FIXTURE rather than against the card
-(`_assert_pool_toe_filled_is_not_absent`): the filled pool really has a row and the calm one has
-none, and BOTH render no line. Without the first half, *"a filled pool states no tool line"* is
-satisfied by a decoder that dropped the filled row on the way in.
-
-**THE SHARED ITEM IS TWO ROWS AT DIFFERENT NUMBERS, AND QUARRYWORK'S COMES FIRST.** Roadwork and
-Quarrywork both want stone-dressing tools; the rows are adjacent and in the wrong order for a reader
-that trusts position. The card no longer counts anything, so `_assert_pool_toe_joins_on_the_pool`
-asks the join itself: Roadwork's rows are its own two and carry none of the quarry gang's figures.
-
-**THE SHORT TEST AND THE FORK ARE DRIVEN, NOT RENDERED** (`_assert_pool_tools_line_forks_on_work`).
-The playtest row (`0.5666 of 0.7906`, which the retired counted line printed as `1 of 1 hoe` and
-skipped) and a row short by a tenth (`3.0 / 2.9`) are both SHORT on the raw floats; the line takes the
-WARN form beside a work shortfall and the INFO form without one — both ways, since a composer that
-ignored `work_short` passes either alone; and a FILLED row states nothing either way.
-
-### …and what the two retired PICKERS cost the rest of the file
-
-- **`WIDE_DOCK_QUEUE_ROWS` 1 → 2** and **`DIALOG_PROBE_WIDE_BOARD_ROWS` 2 → 1**, both RE-MEASURED off
-  a failing run rather than adjusted. `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` fell 56 → 34 with the
-  strip's second control, and the zone's standing allocation rule — *the queue claims up to its
-  authored cap and the board takes the remainder* — hands that 22px to a second QUEUE row before the
-  board sees any. The claim §4.9 item 12d actually made is untouched: the board's count does not
-  change when a row is SELECTED, which `_assert_zone_budget_has_no_inspector_term` pins by EQUALITY.
-- **`_assert_queue_settings_strip` replaced `_assert_queue_settings_flow` / `_assert_queue_settings_predicate`.**
-  With one control the flow predicate has one answer, so what is left is the half that still bites:
-  the crop picker does not shrink, there is no kit picker beside it, and the strip DREW no taller than
-  it RESERVED.
-- **Two RETIRED metas are spelled in the harness** — `RETIRED_UPKEEP_KIT_META` and
-  `RETIRED_QUEUE_KIT_PICKER_META`. The client's consts went with their controls and an ABSENCE claim
-  still needs a needle, so the harness carries the dead strings rather than the client carrying dead
-  consts. If either ever matches a node again, a retired picker has come back.
-- ⛔ **A QUEUED HUNT ENTRY LOST ITS `✕` FOR ONE PASS, and the harness is what found it.** The strip
-  was made conditional on `legs or crop` when the kit left, so an animal entry stopped expanding —
-  and §4.7b ③ had moved the withdrawal INTO that strip when the reorder arrows took its column. The
-  failing claim was `…and on a HERD entry `unqueue 0 game_deer_07` (got "")`: a well-formed queue row
-  with no way to take it back. The strip opens on every confirmed entry again, and the `✕` is what
-  guarantees it.
-
-### ⛔ RETIRED — the counted noun's INFLECTION claims
-
-`_assert_pool_toe_inflection`, `_assert_pool_toe_rounding` and `_assert_pool_toe_sub_unit_shortfall`
-went with the counted tool line they tested (issue #716): the card names and counts no tool, so there
-is no noun to inflect and no display pair to round. The raw-float short test they also pinned is
-carried by `_assert_pool_tools_line_forks_on_work`, above.
-
-⛔ **THE AUTO-SCROLL BLOCK FLAKED ONCE UNDER LOAD, and it is the wall-clock budget doing what it is
-for.** A run started immediately after a `--import` failed three claims with
-`the engine's own pump carried the list 1 → 5px (56px wanted) over 427 frames` — the pump is on
-`Time.get_ticks_usec` with a `QUEUE_AUTOSCROLL_TRAVEL_BUDGET_SECONDS` deadline, so a machine busy
-enough to starve the frame loop blows the budget and FAILS LOUDLY rather than hanging. The immediate
-re-run was green. **Judge it by a second run before treating it as a regression**; nothing in the
-pool-TOE arc is anywhere near that gesture.
 
 ## The work party's block — one contrast frame, one narrow one (`docs/plan_civilization_steps.md`)
 
@@ -2839,61 +2168,6 @@ refused with targeting still armed. `_assert_denial_quarry_eligibility` lost its
 `_assert_dock_chart_carries_the_kit` survives PNG-less — it is arithmetic on `floor_chart_model`,
 which the herd sheet still draws — and is called from the same block.
 
-## The queue HEAD's tool shortfall, the strip's DETAIL line, and the labelled withdrawal
-
-`band-city-panel.md` → "THE HEAD CARRIES THE BUILDERS' TOOL SHORTFALL", "⑤ THE STRIP OPENS ON THE JOB'S
-DETAIL LINE" and "THE WORK ZONE'S WORST CASE AT 418". One state, `_render_queue_head_tools_short_state`,
-appended at the very END of `_render_queue_control_states` (it pushes its own bands and restores the
-three-entry fixture, so no frame above it moves). Seven frames; the run measures **`1599 / 227`**
-(`PASS` / frames) on the merged tree, exit 0.
-
-| frame | what it stages |
-|---|---|
-| `band_panel_queue_head_tools_short` | builders TOE short, nothing open: the head row's amber `◆ builders short of tools` second line |
-| `band_panel_queue_head_tools_short_open` | the head's strip OPEN: the row is one line, the detail line leads with `◆ builders short of tools` beside `Remove from queue`, crop picker below |
-| `band_panel_queue_tame_detail` | a NON-head (Tame) strip open — its price by EQUALITY, the head wearing its line again, `Remove from queue` pressed with REAL input |
-| `band_panel_queue_head_tools_short_expanded` | the same band in the expanded queue mode, nothing open |
-| `band_panel_queue_head_tools_worst_case` | 1920 BOTTOM: fund-mode pools + tool-short head + its crop strip open — **358 of 358, asserted** |
-| `band_panel_queue_head_tools_worst_case_tight` | the same at 1152×720, the narrow shell — **328 of 337, asserted** |
-| `band_panel_queue_head_tools_worst_case_closed` | 1920 BOTTOM, the strip CLOSED — the `◆` line drawn, 334 of 358 |
-
-- **THE PLACEMENT IS ASSERTED** (`_assert_queue_head_tools_mark`, on every strip-closed state and with
-  a non-head strip open): ONE `◆` line, on the head row and inside it, below the face; amber
-  (`KIT_SHORT_SEVERITY`) and a text-presentation glyph (`EMOJI_PLANE_FLOOR`); the row draws the 44px it
-  reserved; and line one is untouched — the face unclipped (123 of 126), the date at 168, the `▸` in
-  the marker column.
-- **THE PAIR: LINE OR CLAUSE, NEVER BOTH.** With the head's strip open no `◆` line is drawn, the head
-  draws and reserves 28px, and the detail line LEADS with the clause in amber
-  (`_queue_tools_clause`). The worst-case frame asserts the same exclusion at the 1920 BOTTOM dock.
-- **THE PAIRED NEGATIVES**: every non-head row's hover checked both ways; the Tame's detail line is
-  its price by EQUALITY, so it carries no clause; the builders' TOE FILLED draws no `◆` line, the head
-  stays one line, the Builders card has no tool line, and the head's OPEN strip does not state it; a
-  PENDING entry is refused by `_queue_entry_tools_short` both stamped at rank 0 and at its real
-  `NOT_IN_ANY_BUILD_QUEUE`, and `_queue_head_tools_height` charges nothing for a queue it leads.
-- **THE TAME'S PRICE IS THE FIXTURE'S, BY EQUALITY.** The three-entry fixture's herd carries no
-  `tame_work_cost` / `tame_upkeep_demand`, which the wire publishes unconditionally, so this state
-  stages them (`_queue_priced_herds`).
-- **THE WITHDRAWAL IS DRIVEN WITH `_drive_click`**, and asserted at its full natural width (150),
-  inside the strip, on the detail line's own row and right of the label.
-- **THE WORST CASE CARRIES A LIVENESS CONJUNCT** — fund-mode row, the head flagged tool-short, strip
-  open, crop picker drawn — because the keeping-pool patch has no basket of its own; the state lends it
-  the queue fixture's, or the strip is 32 and the fit is a fit of a smaller zone.
-- **`_assert_queue_settings_strip`** asserts every strip-open state LEADS with its detail line and
-  reserves within `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` (54); `_assert_closed_settings_costs_the_board_nothing`
-  adds the crop line and the head's second line to its equality.
-- **Harness finders are off the glyph**: every withdrawal message names `BUILD_QUEUE_UNQUEUE_LABEL`,
-  and the withdrawal's right-edge claim reads the button's own width. Every finder is by
-  `BUILD_QUEUE_UNQUEUE_META`.
-
-**Sabotage-verified.** Letting `_head_row_wears_tools_line` ignore the open strip fails the pair (`◆`
-line drawn with the strip open, head 44px against 28), the worst-case exclusion, and both fits — the
-1920 BOTTOM dock `needs 374px … short by 16`, 1152×720 `needs 344px … short by 7`. Dropping the rank
-test from `_queue_entry_tools_short` fails the head-only set in both modes (ranks `[0, 1, 2]`) and the
-two non-head hovers.
-
-`WIDE_DOCK_QUEUE_ROWS` is **1**, re-measured off a failing run: the strip's reservation went 34 → 54
-with `Remove from queue` beside the detail line, and the 358px box keeps the queue at its floor row.
-
 ## The Trade tab's states live in `tools/band_panel_trade_tab.gd` (issue #731)
 
 **A file of its own, run LAST** (`await TRADE_TAB_STATES.new().run(self)` just before
@@ -2931,10 +2205,8 @@ cap and must carry nothing, the pair's negative half.
 ## The Work tab's SECTIONS and its SITE CREWS (`docs/plan_site_crews.md`)
 
 `_render_work_sections_states`, run straight after `_render_empty_work_zone_states`. One board carries
-every row shape the sections introduce: a WILD queued patch (owes nothing), a Tended Patch its crew
-keeps in full, a Tended Patch its crew keeps SHORT, the reference hunt
-row, and one queued build whose own mark is `high` so the pill and the queue's read-only mark both
-state a non-default level. Frames: `band_panel_work_sections`, `band_panel_work_sections_tools_short`,
+every row shape the sections introduce: a WILD patch (owes nothing), a Tended Patch its crew
+keeps in full, a Tended Patch its crew keeps SHORT, and the reference hunt row. Frames: `band_panel_work_sections`, `band_panel_work_sections_tools_short`,
 `band_panel_work_sections_collapsed`.
 
 - **Every expected string is composed from the fixture's own numbers**, never through
@@ -2950,28 +2222,25 @@ state a non-default level. Frames: `band_panel_work_sections`, `band_panel_work_
 - **The tools-short `ⓘ` hover carries all three tending clauses**: the kept patch is being raised to a
   Field (`improvement: sow` on its row), so it reads `Tending: 2 workers now · another needed around
   turn 58 · 3 workers once it's a Field`, and `TENDING_RUNG_PHRASES` pins the article per rung name.
-- **The pills are claimed as a set**: a `Priority` pill on every row, exactly ONE `Build` pill and it
-  is on the queued row, and the queue row's `Build:` mark is a `Label`, not a control. Both pills are
-  pressed with REAL input (`_drive_click`) and the emitted LINE is read back through `Main`'s own
-  formatter — `build_priority 0 <band> 71 18 low` (High cycles to Low) and `work_priority … high`.
+- **The pill is claimed by a REAL click**: a `Priority` pill on the kept row is pressed with
+  `_drive_click` and the emitted LINE is read back through `Main`'s own formatter —
+  `work_priority … high`. There is no `Build` pill.
 - **The collapse is a pair**: the AGRICULTURE chevron folds its section (head kept, no harvest row)
   while the HUSBANDRY row stays, and the same chevron unfolds it back to the full row count.
 - **The inspector on the kept patch** re-runs `_assert_kits_section_draws_its_control` and
   `_assert_work_inspector_worst_case_fits`, both carried over from the retired POOLS worst-case state.
 - `_assert_scroll_only_where_sanctioned` gained the sections list: it exists exactly when the work
-  zone is mounted on a band page and neither expansion holds the zone.
+  zone is mounted on a band page and the road roster's expansion does not hold the zone.
 
 **What retired with the pools, as whole families**: the POOLS block states (`band_panel_pools_*`, the
 fund-mode worst case), the pool-card mark / TOE / idle / pending sets and their fixtures, the
 declare-time keeping claims, the keeper-tools remedy fork, the workings-roster head and its idle and
-unseen cases, the roster DOOR's workings frames, the Gathering filter state
-(`band_panel_rung_ready_filter`), the chips claims on the empty work zone, and the board-capacity
-probes (`_probe_work_board_layout`). The workings roster claims were re-aimed at the GROUNDWORK
-section: every row now carries its own crew stepper, and `_assert_groundwork_site_crew_lines` reads
-each row's rung line (no head count) and its pill line. A block's HEAD is found through `_block_head`: the Work tab's section
-head on the collapsed path, the block's own first child when expanded. Every queue row is
-`BUILD_QUEUE_ROW_HEIGHT` tall, and `WIDE_DOCK_QUEUE_ROWS` is `BUILD_QUEUE_ROWS_MAX`, the zone scrolling
-rather than trading queue rows for board rows.
+unseen cases, the Gathering filter state (`band_panel_rung_ready_filter`), the chips claims on the
+empty work zone, and the board-capacity probes (`_probe_work_board_layout`). The workings roster claims
+were re-aimed at the GROUNDWORK section: every row now carries its own crew stepper, and
+`_assert_groundwork_site_crew_lines` reads each row's rung line (no head count) and its pill line. A
+block's HEAD is found through `_block_head`: the Work tab's section head on the collapsed path, the
+block's own first child when expanded.
 
 **A 1920×1080 display cannot run the whole walk**: macOS leaves a 928px-tall window there, so every
 state that pins a 1080-high canvas fails its pin and the dock-row walk stalls into the watchdog. The
@@ -2979,11 +2248,11 @@ site-crews arc was measured on a temporary copy with those pins at 900 and the d
 interface-scale walks skipped — 188 frames / 1326 `: PASS` / 401 `assert OK`, exit 0 — which is not
 comparable to the full-walk tally above.
 
-## The Work tab's five sections in ONE frame, and the pool rows as site rows
+## The Work tab's four sections in ONE frame, and the pool row as a site row
 
 `band_panel_work_sections_all_five` (`_render_work_sections_all_five`) stands the sections band up
-with roads it keeps and two workings, so BUILD QUEUE, AGRICULTURE, HUSBANDRY, ROADWORK and GROUNDWORK
-all draw at once. `_assert_pool_row_is_a_site_row` measures each pool row against a DRAWN harvest row
+with roads it keeps and two workings, so AGRICULTURE, HUSBANDRY, ROADWORK and GROUNDWORK all draw at
+once. `_assert_pool_row_is_a_site_row` measures each pool row against a DRAWN harvest row
 — the `+`'s right edge and the icon's x equal to theirs, the title at `WORK_ROW_FONT_SIZE` in its
 state's ink (WARN on the short road crew), and the muted second line — so the claim is that the
 columns line up, not that the code passed the same constant. `band_panel_work_sections` is the
@@ -3038,8 +2307,8 @@ Three frames, run after the work-party states: `band_panel_work_crew_split`,
   draws the Max stepper reading `No max`, and `Unassign` emits one stop request that
   `Main.format_stop_labor` renders as `stop_labor <faction> <band> …`, never `assign_labor`. The reservation
   term is `WORK_INSPECTOR_MAX_SECTION_HEIGHT`, summed in `_assert_sections_are_drawn_and_cost_the_sum`.
-- **The rest of the board follows**: a staffed row at crew zero stays on the board
-  (`_assert_an_uncrewed_queued_source_still_draws`), the pool rows' crew control (a `+`, or the Roadwork
+- **The rest of the board follows**: a staffed row at crew zero stays on the board,
+  the pool rows' crew control (a `+`, or the Roadwork
   pool's number) sits in the site rows' column, no Groundwork row carries a stepper, and a pending
   edit's Max restates through `_emit_work_assign` (`RESTATE_STANDING_COUNT`).
 - **`command_guard`** drives the six `stop_labor` forms (the band improvement's `branch=<id>` is the sixth) through the real server parser
@@ -3125,7 +2394,7 @@ gift checkbox, the confirm dialogs) and **states what the line must say just bef
 
 `band_panel_people_idle` (the reference band, 3 idle: the amber card under the People block) and
 `band_panel_people_no_idle` (every hand spent: no card, no Idle chip) are a PAIR, and
-`_assert_people_bar_is_one_bar` makes the shared claims on both and on the need/builders/homeward states:
+`_assert_people_bar_is_one_bar` makes the shared claims on both and on the need/homeward states:
 the four chips sum to `size`, the Idle chip is `HudBandLaborState.people_idle`, working is
 `working_age − idle`, the card exists exactly when idle > 0, and the working chip's tooltip names every
 non-zero part of `working_breakdown`. `_assert_faction_idle_card` (on `band_panel_faction`, two bands both
@@ -3133,3 +2402,36 @@ idle) and `_assert_faction_work_idle_labels` (on `band_panel_faction_work`: an i
 `N working` in each summary, no bar) cover the faction page; `_assert_idle_card_reason_list` drives the
 most-idle-first, capped-at-three `+N more` list over constructed bands. The orb's idle alert is asserted
 equal to `people_idle` in `_assert_idle_attention_nets_the_muster`.
+
+## The work strip's port (issue #877)
+
+The Work board's source rows wear the work strip (`band-city-panel.md` -> "THE WORK STRIP") and open a
+compose sheet on a click, so the walk's inspector-dialog states for forage, hunt, working and tile rows
+were retired with the card: the sections and worst-case-fit frames, the kits and upkeep gates, the
+priority and floor-swap pickers, the dialog's centring, modality, ESC precedence and reselect states, and
+the crew-split frame. The roadwork row's inspector keeps its own claims. What replaced them:
+
+- **A row is found by its rung slot** (`WORK_ROW_RUNG_META`, stamped on the marks run when no rung mark
+  is drawn), and a row's name by `_row_name_label` (the first ellipsised expanding Label under the row).
+- **The ladder chip is a container**: `WORK_ROW_BUILD_STATE_META` / `_KIND_META` sit on it and its `Button`
+  is the press target (`_chip_button`). `_workings_marks()` returns each Groundwork row's offer button
+  stamped with the row's `(tile, material)` key, which is the handle the deposit-track claims read.
+- **A kit shortfall is a line of the strip's warning mark** (`warn_lines`, `WORK_STRIP_WARN_META`),
+  asserted on the model and on the drawn mark's WARN ink; the old kit glyph is gone.
+- **A stalled build is the filling chip with a WARN ink**, not a different face: the face is always
+  `glyph + percent`.
+- **The ladder mark's hover says only that it takes the source up a rung**; the pile and standing rate
+  are on the rung card.
+- **The strip must fit the 356px L-dock** beside the pills line. `_assert_zones_within_bounds` and the
+  zone-width fit claims are what fail when `WORK_STRIP_CREW_WIDTH` or `WORK_STRIP_SEPARATION` grow.
+- **The row's crew bar is proved on the strip**: `_render_work_crew_split_states` (frames
+  `band_panel_work_crew_split`, `_big`, `band_panel_work_max_chip`) asserts each row's bar sits inside the row,
+  under the number, with the row's own segment counts, and `band_panel_work_crew_split_four` is a site with
+  builders staffed on it carrying all four segments (keepers, builders, kit-holding, bare) with each drawn even where the crew
+  overflows its room. A fixture row that states `workers` without the three staffed keys draws no bar, which
+  real wire data never does (they sum to `workers`); `_build_state_band_fixture` states them.
+- **The row click is driven through the row's `gui_input`** (`_render_work_row_click_states`): a pointer press at
+  a forage, hunt and groundwork row's name opens the matching sheet beside the selection card (non-empty
+  anchor) and the sheet is still open after the next snapshot refresh; a press on the strip's chip opens the
+  rung card and not the sheet. `Main` is not instanced, so the map's focus-and-select hop is stood in for by a
+  listener on `alert_focus_requested`.

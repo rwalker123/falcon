@@ -53,6 +53,10 @@ pub(crate) fn tile_improvement_states(
             });
             // **The viewer's own queue, or nothing** - the builder's scratch rule above.
             let queued = build_kits.tile_is_queued(improvement.tile, improvement.branch);
+            let crew = build_kits.crew_of(&crate::components::BuildSource::Tile {
+                tile: improvement.tile,
+                branch: improvement.branch,
+            });
             sim_runtime::TileImprovementState {
                 tile_x: improvement.tile.x,
                 tile_y: improvement.tile.y,
@@ -103,6 +107,10 @@ pub(crate) fn tile_improvement_states(
                     &improvement.upkeep_toe,
                     viewer,
                 ),
+                builders_staffed: crew.staffed,
+                builders_kitted: crew.kitted,
+                builders_cap: crew.cap,
+                build_toe: crew.toe,
                 is_queued: queued,
             }
         })
@@ -172,6 +180,7 @@ pub(crate) fn route_states(
             let demand = road_keeping_basis(road, measure, ladder);
             let grace = road_neglect_grace_remaining(road, ladder);
             let payoff = road.payoff();
+            let crew = build_kits.crew_of(&crate::components::BuildSource::Road(tile));
             sim_runtime::RouteState {
                 tile_x: tile.x,
                 tile_y: tile.y,
@@ -230,6 +239,10 @@ pub(crate) fn route_states(
                     road.build_queue_position,
                     build_kits.road_is_queued(tile),
                 ),
+                builders_staffed: crew.staffed,
+                builders_kitted: crew.kitted,
+                builders_cap: crew.cap,
+                build_toe: crew.toe,
             }
         })
         .collect()

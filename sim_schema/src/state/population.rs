@@ -1432,32 +1432,6 @@ pub struct PopulationCohortState {
     /// (append-only).
     #[serde(default)]
     pub upkeep_fund_mode: String,
-    /// **THE BUILDS THIS BAND HAS DECLARED, IN THE ORDER IT WILL RAISE THEM**
-    /// (`docs/plan_standing_upkeep.md` §4.9 item 9a) — the wire copy of
-    /// `core_sim`'s `LaborAllocation::build_queue`. The whole `builders` pool goes on entry `0`
-    /// until its meter fills, then on the next.
-    ///
-    /// **THE RANK IS THE INDEX.** An entry's place in the line *is* its position in this vector, and
-    /// there is deliberately no second integer to disagree with it — §4.9's own rule for whichever
-    /// ordering ships first (*"if the queue ships with a rank of its own, they will drift"*), and
-    /// one ordered list has nothing to drift against.
-    ///
-    /// **It is THIS band's own order, which
-    /// [`ForagePatchState::build_queue_position`](crate::state::subsistence::ForagePatchState::build_queue_position)
-    /// is not.**
-    /// That field is source-addressed and rides the *winning* band (the soonest estimate), so it
-    /// states the winning band's place in the winning band's line — routinely another band's answer,
-    /// two bands on one source being ordinary. A band's queue block ordered on it draws a list that
-    /// is not the band's, and the drag arithmetic then inverts the gesture computed from it.
-    ///
-    /// **Captured LIVE off the allocation, not stamped by the turn** — the same discipline as
-    /// [`LaborAssignmentState::kit_id`]. The server re-captures after every dispatched command, so a
-    /// `build_order` / `unqueue` / declaration lands on that command's own recapture and a client
-    /// needs no optimistic ordering overlay.
-    ///
-    /// Unfiltered: exactly what the band holds, in the band's order. Appended last (append-only).
-    #[serde(default)]
-    pub build_queue: Vec<BuildQueueEntryState>,
     /// **THE HAY THIS BAND'S PENS ARE SHORT, PER TURN** — summed over every pen it keeps, in fodder
     /// units. A pen's own share is not published: what a pen row states is how much MORE it needs
     /// ([`HerdTelemetryState::pen_fodder_shortfall`](crate::state::subsistence::HerdTelemetryState::pen_fodder_shortfall)),
@@ -1941,7 +1915,16 @@ pub struct BandImprovementState {
     pub upkeep_tools_short: bool,
     /// The keeping tools, one line per item the crew claimed.
     pub upkeep_toe: Vec<KitToeLineState>,
-    /// Whether this band has a build queued on this improvement.
+    /// The builders on this improvement's declared build (see
+    /// [`crate::state::subsistence::ForagePatchState::builders_staffed`]).
+    pub builders_staffed: u32,
+    /// Of those, the ones holding the rung's build kit.
+    pub builders_kitted: u32,
+    /// The most builders the build could take this turn.
+    pub builders_cap: u32,
+    /// The tools the build's builders asked for and what they were given.
+    pub build_toe: Vec<PoolToeLineState>,
+    /// Whether this band has a build declared on this improvement.
     pub is_queued: bool,
 }
 
@@ -1964,6 +1947,10 @@ impl Default for BandImprovementState {
             upkeep_hands: 0.0,
             upkeep_tools_short: false,
             upkeep_toe: Vec::new(),
+            builders_staffed: 0,
+            builders_kitted: 0,
+            builders_cap: 0,
+            build_toe: Vec::new(),
             is_queued: false,
         }
     }
@@ -2203,47 +2190,6 @@ pub struct PoolCrewLineState {
     /// In keepers and a float like every other hand quantity on this wire, so the subtraction above
     /// casts nothing.
     pub keepers: f32,
-}
-
-/// **ONE ENTRY OF ONE BAND'S BUILD QUEUE** — a row of [`PopulationCohortState::build_queue`],
-/// naming only the **source** the entry is a build on.
-///
-/// An entry names its source and its **Build mark**, and nothing else: the declared job, the kit,
-/// the destination rung, the legs, the chained date and the blocked cause are all published on the
-/// **source** row (`ForagePatchState` / the herd twin) and agree across every band holding the
-/// source by construction — `cultivate`/`sow`/`tame` enqueue the same declaration on every band
-/// working it. The mark is the
-/// entry's own and per band (`build_priority` names one band), so it rides here.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct BuildQueueEntryState {
-    /// Which web the entry is on, in the [`LaborAssignmentState::kind`] vocabulary — `"forage"` for
-    /// a patch, `"hunt"` for a herd. The same token the band's own labor row publishes for the same
-    /// source, so a client joins the two on one spelling.
-    #[serde(default)]
-    pub kind: String,
-    /// The patch's tile. `0,0` on a hunt entry, which names its herd in [`Self::fauna_id`].
-    #[serde(default)]
-    pub target_x: u32,
-    #[serde(default)]
-    pub target_y: u32,
-    /// The herd's id. Empty on a forage entry.
-    #[serde(default)]
-    pub fauna_id: String,
-    /// **This build's own mark** — `"high"`, `"normal"` or `"low"` (`docs/plan_site_crews.md`
-    /// §2.4). The builders' tool claim and the build's pile rank at the head entry's mark; the site
-    /// row's `priority` ranks the site's crew.
-    #[serde(default)]
-    pub build_priority: String,
-    /// **The deposit's material on a working's entry** — one hex can hold two workings, so the tile
-    /// alone names neither. Empty on a patch, herd or road entry. The command grammar's
-    /// `<x> <y> <material>` (`docs/plan_site_crews.md` §2.4).
-    #[serde(default)]
-    pub material: String,
-    /// **The ladder branch of a per-tile entry** (a road's `"route"`, a tile improvement's own
-    /// branch id) - the command grammar's `branch=<id>`, since such a tile may also carry a patch.
-    /// Empty on a patch, herd or working entry.
-    #[serde(default)]
-    pub branch: String,
 }
 
 /// **One run of a band's hunt workers holding the same gear** — a row of
@@ -2492,7 +2438,7 @@ pub struct CraftSuggestionState {
 /// The `kind` / `job` / target keys are spelled as `snapshot.fbs`'s `CraftSuggestionSource` states.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct CraftSuggestionSourceState {
-    /// `"pool"` | `"site"` | `"take"` | `"build_queue"`.
+    /// `"pool"` | `"site"` | `"take"` | `"build"`.
     pub kind: String,
     /// The pool token, or the labor row's kind.
     pub job: String,
@@ -2506,9 +2452,6 @@ pub struct CraftSuggestionSourceState {
     pub workers_without: f32,
     /// `workers_without × build_work` on a pool, site or queued build; `0` on a take row.
     pub work_per_turn: f32,
-    /// The queued build's place in the build queue (`kind == "build_queue"` only; `0` otherwise).
-    #[serde(default)]
-    pub queue_position: u32,
 }
 
 /// **One material of the pile a bench has already withdrawn** for the item in flight — a row of

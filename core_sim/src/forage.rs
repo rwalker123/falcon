@@ -258,17 +258,15 @@ pub struct ForagePatch {
     /// [`Self::build_turns_remaining`]'s cycle, and for its reason: the kit is re-read every turn, so
     /// no state may record *"this build was geared"*.
     pub build_work_from_gear: f32,
-    /// **WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, and
-    /// [`crate::intensification::NOT_IN_ANY_BUILD_QUEUE`] (`-1`) when no band has queued it
+    /// **THE ESTIMATE-PASS STAMP** — `ESTIMATE_PASS_RAN` (`systems::labor`) once the estimate
+    /// pass has dated a declared build on this source this turn, else
+    /// [`crate::intensification::NOT_IN_ANY_BUILD_QUEUE`] (`-1`, the neutral). It is what separates
+    /// "no pass has run for this build yet" from "the pass ran and had no number"
     /// (`docs/plan_standing_upkeep.md` §4.6b).
     ///
     /// **It rides the same winner as [`Self::build_turns_remaining`] and
-    /// [`Self::build_work_from_gear`]** — the three are read as one set, so a date from one band's
-    /// queue beside another band's position would be two answers pretending to be one.
-    ///
-    /// **Without it a chained date is a number with no explanation.** The whole builders pool goes
-    /// on the head of a queue, so an entry's turns are everything above it plus its own span — and
-    /// the player cannot tell forty turns of work from eight turns of work behind four other jobs.
+    /// [`Self::build_work_from_gear`]** — the three are read as one set, so a date from one band
+    /// beside another band's stamp would be two answers pretending to be one.
     ///
     /// Transient per-turn scratch on [`Self::build_turns_remaining`]'s cycle, and for its reason.
     pub build_queue_position: i32,
@@ -395,7 +393,7 @@ pub struct ForagePatch {
     /// the demand was the rung's flat rate that carry was exact. Interpolation makes it a moving
     /// target: a build banks work between the stamp and the judgement, so the demand the pass reads
     /// is always a little above the one the keepers were asked to cover. Measured on a three-entry
-    /// build queue with its keeping fully staffed, that gap bled **~0.03 work a turn**
+    /// build declared with its keeping fully staffed, that gap bled **~0.03 work a turn**
     /// off the very meter it was funding — a permanent shortfall on a correctly-played band, which
     /// also re-armed `neglect_turns` every turn and left the wire counting down a grace that could
     /// never reset.
@@ -511,7 +509,7 @@ pub fn patch_build_rung(
     // want different tools. Deriving `Cultivate` there would honour the tool and **dead-end the rung**:
     // `Sow` is the create-from-nothing verb, its accrual deliberately carries no work predicate
     // (bare ground stands below every floor by construction), and the Cultivate arm's gate does carry
-    // one - so a bare-ground Sow would bank nothing, for ever, with the queue entry live. The whole
+    // one - so a bare-ground Sow would bank nothing, for ever, with the declared build live. The whole
     // capability rung 3 exists for would go. The kit question is left open rather than answered by
     // making the verb unusable.
     //
@@ -540,7 +538,7 @@ pub fn patch_build_verb(
     patch_build_rung(patch, ladder, declared).and_then(|rung| ladder.rung(rung).verb_id())
 }
 
-/// **IS THE RUNG THIS QUEUE ENTRY DECLARED ALREADY STANDING?** - the test that retires a **dead**
+/// **IS THE RUNG THIS DECLARED BUILD DECLARED ALREADY STANDING?** - the test that retires a **dead**
 /// entry (`docs/plan_standing_upkeep.md` §2.5), and the plant twin of
 /// `fauna::herd_rung_already_built`.
 ///
@@ -888,7 +886,7 @@ impl ForagePatch {
     /// forbids is the other direction — a `Cultivate` whose surplus ran on into the Field above it,
     /// or a verb whose rung the source has already passed banking anything at all.
     /// **BANK WORK TOWARD A DESTINATION, CROSSING EVERY RUNG BETWEEN HERE AND THERE** — the seam a
-    /// queue entry accrues through, returning every rung this call completed.
+    /// declared build accrues through, returning every rung this call completed.
     ///
     /// ⛔ **THE CAP IS THE DESTINATION, NEVER THE LEG.** Capping each leg at its own top would throw
     /// away whatever a turn's work overshot a boundary by — a hidden tax of up to one turn per leg,
@@ -930,7 +928,7 @@ impl ForagePatch {
         let (base, width) = patch_rung_span(self, target, ladder);
         let top = base + width;
         self.set_ladder_position((self.ladder_position + amount).min(top), ladder);
-        // **EVERY rung this call crossed, not just the destination.** A queue entry names a
+        // **EVERY rung this call crossed, not just the destination.** A declared build names a
         // destination and lays every leg to it, so a `sow` on untended ground raises the tended rung
         // on the way — and *that* completion is news a player who ordered "take it to Field" wants
         // to see. The queue still retires only at the destination; only the announcement is per rung.
@@ -938,7 +936,7 @@ impl ForagePatch {
     }
 
     // **RETIRED: `accrue_field`** — the `Sow` arm's own bool wrapper, *"did this call finish the
-    // Field"*. A queue entry names a **destination** now (`docs/plan_standing_upkeep.md` §2.8), so
+    // Field"*. A declared build names a **destination** now (`docs/plan_standing_upkeep.md` §2.8), so
     // the arm banks through [`Self::accrue_to`] and reads the rungs it crossed: on untended ground a
     // `sow` lays the tended rung on the way and that completion is its own feed line, which a bool
     // could not carry. [`Self::accrue_cultivation`] survives because the Cultivate arm's destination
@@ -1115,7 +1113,7 @@ fn plant_standing(
     )
 }
 
-/// **THE LEGS A QUEUE ENTRY STILL HAS TO LAY ON THIS PATCH** — every rung from where the position
+/// **THE LEGS A DECLARED BUILD STILL HAS TO LAY ON THIS PATCH** — every rung from where the position
 /// stands up to and including `destination`, each carrying what it owes **from here**
 /// (`docs/plan_standing_upkeep.md` §2.8).
 ///
@@ -3603,7 +3601,7 @@ pub fn advance_cultivation(
         // exact state that must bleed. What the crew supplied is the one thing stored, because it is
         // the one thing a crew authors.
         //
-        // **This pass cannot see a band's build queue and does not need to** ([`NOTHING_IN_FLIGHT`]):
+        // **This pass cannot see a band's declared builds and does not need to** ([`NOTHING_IN_FLIGHT`]):
         // it runs a whole stage after the accrual that banked the turn's work, so any meter a verb
         // is filling already carries progress and answers on the progress term alone.
         // **THE BILL THE KEEPERS WERE HANDED, not the one that has since risen** — see
@@ -4278,7 +4276,7 @@ fn patch_capacity_at(
 /// from a capacity of zero (barren ground, which is a real reading a real patch can have).
 ///
 /// **It is the DESTINATION's capacity, not next turn's.** Next turn's position depends on work that
-/// has not been banked yet; the destination is exact — the queue entry already names the rung its
+/// has not been banked yet; the destination is exact — the declared build already names the rung its
 /// climb ends on ([`ForagePatch::build_destination`]), so the gain at that rung is known today.
 ///
 /// # WHY IT IS PUBLISHED AT ALL
@@ -7184,7 +7182,7 @@ mod tests {
     /// fullness test moved *who* answers for a meter; it did not make the arm a step function.
     ///
     /// Asserted at the seam rather than through the system because a build's *accrual* scales with
-    /// the band's **builders pool**, so a system-level comparison would confound the two.
+    /// the band's **build crew**, so a system-level comparison would confound the two.
     #[test]
     fn a_half_staffed_keeping_is_half_short_on_the_meter_it_is_raising() {
         let forage = test_forage_config();

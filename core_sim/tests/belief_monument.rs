@@ -134,7 +134,7 @@ fn belief_at(app: &App, tile: UVec2) -> f32 {
     app.world.resource::<BeliefRegistry>().get(tile)
 }
 
-/// Place the gathering ground, stand the builders on the queue head and crew the tile.
+/// Place the gathering ground, declare the build, seat the builders and crew the tile.
 fn begin_the_monument(app: &mut App, entity: Entity, faction: FactionId, tile: UVec2) {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     app.world.resource_mut::<TileImprovementRegistry>().place(
@@ -144,9 +144,8 @@ fn begin_the_monument(app: &mut App, entity: Entity, faction: FactionId, tile: U
         &ladder,
     );
     let mut allocation = LaborAllocation::default();
-    allocation.set_assignment(LaborTarget::Builders, BUILDERS, ALL_HANDS, None);
     allocation.set_assignment(monument_row(tile), CREW_HANDS, ALL_HANDS, None);
-    allocation.enqueue_build(
+    allocation.declare_build(
         BuildSource::Tile {
             tile,
             branch: belief_branch(),
@@ -154,6 +153,7 @@ fn begin_the_monument(app: &mut App, entity: Entity, faction: FactionId, tile: U
         BuildJob::Climb(monument()),
     );
     app.world.entity_mut(entity).insert(allocation);
+    core_sim::seat_builders(&mut app.world, entity, BUILDERS);
 }
 
 fn held(app: &App, tile: UVec2) -> RungId {

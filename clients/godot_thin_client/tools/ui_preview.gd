@@ -64,6 +64,8 @@ const CHAPTERS := [
 	"res://tools/ui_preview/chapters/worked_land_ranch.gd",
 	"res://tools/ui_preview/chapters/dealings.gd",
 	"res://tools/ui_preview/chapters/treaties.gd",
+	"res://tools/ui_preview/chapters/work_strip.gd",
+	"res://tools/ui_preview/chapters/staffing_preview.gd",
 ]
 
 ## The one method a chapter owes the harness (see the chapter contract in
@@ -818,19 +820,14 @@ func _forage_open_button() -> Button:
 ## sharpest one, a RUNNING build, where the verb is DERIVED from the meter and so answers itself
 ## whatever the composition says. Withdrawing work already banked is `abandon`, command-line only.
 ##
-## (2) **THE WITHDRAWAL'S OWN LINE, through `Main.format_unqueue`.** `unqueue` names a SOURCE, and its
-## two shapes are told apart exactly as the sim's parser tells them apart — two integer tokens are a
-## TILE, one token is a HERD id. That split is what a shared branch gets wrong, and it is the reason
-## this probe is worth making on both webs. The live control that SENDS it is the BUILD QUEUE row's
-## `✕`, driven in `band_panel_preview`.
 func _assert_walk_away_emits(kind: String, improvement: String, want_line: String,
 		payload: Dictionary) -> void:
 	var sheet := _hud._drawercompose._compose_sheet
 	var control := ForageFx.find_improvement_control(sheet, improvement)
 	# By STATE, not by type — every state of this control is a `Label` since §4.7a ①.
 	_assert_hud("a running %s build renders the RUNNING state" % kind,
-		control != null and String(control.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
-			== HudWidgets.IMPROVEMENT_STATE_RUNNING)
+		control != null and String(control.get_meta(ForageFx.IMPROVEMENT_STATE_META, ""))
+			== ForageFx.IMPROVEMENT_STATE_RUNNING)
 	var captured: Array[Dictionary] = []
 	var sink := func(p: Dictionary) -> void: captured.append(p)
 	_hud.improvement_requested.connect(sink)

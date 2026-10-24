@@ -372,9 +372,9 @@ only per-row signal**; every other one it publishes is about the strip.
   band's **durable `BandId`**, never the ECS entity — both are `u64`, which is the confusion
   `xtask/src/command_guard.rs` exists because someone once shipped.
 - **A cohort with no durable id still emits its line and renders linkless**, which is the demographic
-  feed's own rule rather than a fabricated `band=0`. The band-wide roles (`kind=scout` / `warrior` /
-  `builders`) name no source at all, which is the second reason the band is stated rather than
-  inferred from the row.
+  feed's own rule rather than a fabricated `band=0`. The band-wide roles (`kind=scout` / `warrior`)
+  name no source at all, which is the second reason the band is stated rather than inferred from the
+  row.
 - **It carries a `band_id`, not an `entity`.** The dock's only handle on a band is the wire's durable
   `BandId`; `BandPanelController.show_work_tab` takes the client-local entity. **The roster is the
   only place the two meet**, so the join happens exactly once, in `HudLayer.show_band_work_tab`

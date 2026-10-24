@@ -18,8 +18,8 @@ use core_sim::{
     advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero, CommandEventLog,
     DiscoveryProgressLedger, ExtractionConfig, ExtractionConfigHandle, FactionId, FactionInventory,
     FoodSiteRegistry, ForageRegistry, GenerationId, HerdRegistry, LaborAllocation, LaborAssignment,
-    LaborConfigHandle, LaborTarget, LadderConfig, LadderConfigHandle, LocalStore, MoraleCause,
-    PopulationCohort, RungId, SimulationConfig, SimulationTick, SourcePriority, Tile, TileRegistry,
+    LaborTarget, LadderConfig, LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort,
+    RungId, SimulationConfig, SimulationTick, SourcePriority, Tile, TileRegistry,
 };
 use sim_schema::TerrainType;
 
@@ -66,7 +66,7 @@ fn world_of(terrain: TerrainType) -> (World, Entity) {
     config.map_topology.wrap_horizontal = false;
     world.insert_resource(config);
     world.insert_resource(core_sim::FaunaConfigHandle::default());
-    world.insert_resource(LaborConfigHandle::default());
+    world.insert_resource(core_sim::labor_config_with_room_on_the_tile());
     world.insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     world.insert_resource(core_sim::FloraConfigHandle::default());
     world.insert_resource(LadderConfigHandle::default());
@@ -634,8 +634,6 @@ fn two_axes_arm_exactly_two_people_across_the_fellers_and_the_keepers() {
 fn a_working_raised_this_turn_arms_no_more_people_than_there_are_axes() {
     const AXES: u32 = 2;
     const FELLERS_PER_ROW: u32 = 2;
-    /// One builder: the pool claims one axe, leaving one for the take rows.
-    const BUILDERS: u32 = 1;
     /// How far below felling's top row B's working is seated — far less than one bare builder banks
     /// in a turn, so the raise completes this turn in both arms.
     const SHORT_OF_THE_TOP: f32 = 0.01;
@@ -693,18 +691,7 @@ fn a_working_raised_this_turn_arms_no_more_people_than_there_are_axes() {
             let mut allocation = world
                 .get_mut::<LaborAllocation>(band)
                 .expect("the fixture band has an allocation");
-            allocation.assignments.push(LaborAssignment {
-                party: None,
-                muster_crew: 0,
-                planned_crew: 0,
-                max_workers: Some(BUILDERS),
-                staffing: Default::default(),
-                target: LaborTarget::Builders,
-                workers: BUILDERS,
-                kit: None,
-                priority: SourcePriority::default(),
-            });
-            assert!(allocation.enqueue_build(
+            assert!(allocation.declare_build(
                 core_sim::BuildSource::Deposit {
                     tile: climbing,
                     material: WOOD.to_string(),
@@ -1206,18 +1193,7 @@ fn a_band_learns_woodcraft_at_the_free_floor_and_then_raises_a_felling_working()
         let mut allocation = world
             .get_mut::<LaborAllocation>(band)
             .expect("the fixture band has an allocation");
-        allocation.assignments.push(LaborAssignment {
-            party: None,
-            muster_crew: 0,
-            planned_crew: 0,
-            max_workers: Some(8),
-            staffing: Default::default(),
-            target: LaborTarget::Builders,
-            workers: 8,
-            kit: None,
-            priority: SourcePriority::default(),
-        });
-        assert!(allocation.enqueue_build(
+        assert!(allocation.declare_build(
             core_sim::BuildSource::Deposit {
                 tile: UVec2::new(0, 0),
                 material: WOOD.to_string(),
@@ -2008,18 +1984,7 @@ fn a_slumped_working_can_be_cut_back_open() {
             kit: None,
             priority: SourcePriority::default(),
         });
-        allocation.assignments.push(LaborAssignment {
-            party: None,
-            muster_crew: 0,
-            planned_crew: 0,
-            max_workers: Some(12),
-            staffing: Default::default(),
-            target: LaborTarget::Builders,
-            workers: 12,
-            kit: None,
-            priority: SourcePriority::default(),
-        });
-        assert!(allocation.enqueue_build(
+        assert!(allocation.declare_build(
             core_sim::BuildSource::Deposit {
                 tile: at,
                 material: STONE.to_string(),
@@ -4135,7 +4100,7 @@ mod wire {
         "requires_rung": "coppice",
         "ceiling_required": null,
         "site_requirement": null,
-        "build": { "work_cost": 400.0, "grace_turns": null },
+        "build": { "work_cost": 400.0, "max_builders": 4, "grace_turns": null },
         "upkeep": {
             "work_per_turn": 3.0,
             "scaled_by": "source_load",

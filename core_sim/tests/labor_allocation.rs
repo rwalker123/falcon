@@ -94,7 +94,8 @@ fn spawn_world() -> App {
     app.world
         .resource_mut::<FaunaConfigHandle>()
         .hold_wariness_at_zero();
-    app.world.insert_resource(LaborConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::labor_config_with_room_on_the_tile());
     app.world
         .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     app.world
@@ -2331,39 +2332,26 @@ fn a_staffed_row_squeezed_to_nobody_is_not_shed_and_keeps_its_declaration() {
     // band works, one hand short, with a single builder beside it: the builders are step 11, the one
     // step below, which is what keeps a row standing for the turn's prune to run against.
     let mut allocation = LaborAllocation {
-        assignments: vec![
-            LaborAssignment {
-                party: None,
-                muster_crew: 0,
-                planned_crew: 0,
-                max_workers: Some(1),
-                staffing: Default::default(),
-                target: LaborTarget::Hunt {
-                    fauna_id: herd_id.clone(),
-                    floor: 0.5,
-                    move_with_herd: false,
-                },
-                workers: 1,
-                kit: None,
-                priority: SourcePriority::default(),
+        assignments: vec![LaborAssignment {
+            party: None,
+            muster_crew: 0,
+            planned_crew: 0,
+            max_workers: Some(1),
+            staffing: Default::default(),
+            target: LaborTarget::Hunt {
+                fauna_id: herd_id.clone(),
+                floor: 0.5,
+                move_with_herd: false,
             },
-            LaborAssignment {
-                party: None,
-                muster_crew: 0,
-                planned_crew: 0,
-                max_workers: Some(1),
-                staffing: Default::default(),
-                target: LaborTarget::Builders,
-                workers: 1,
-                kit: None,
-                priority: SourcePriority::default(),
-            },
-        ],
+            workers: 1,
+            kit: None,
+            priority: SourcePriority::default(),
+        }],
         ..Default::default()
     };
     let source = core_sim::BuildSource::Herd(herd_id.clone());
     assert!(
-        allocation.enqueue_build(
+        allocation.declare_build(
             source.clone(),
             core_sim::BuildJob::Climb(shipped::animal_pastoral())
         ),
@@ -2373,29 +2361,20 @@ fn a_staffed_row_squeezed_to_nobody_is_not_shed_and_keeps_its_declaration() {
 
     app.world.run_system_once(advance_labor_allocation);
 
-    // **A staffed row is never shed** (#871): the builder the player set by hand holds the band's
-    // one pair of hands, the hunt is staffed from what is left - nobody - and stays the band's
-    // holding with its declaration intact, announcing nothing.
+    // **A staffed row is never shed** (#871), and a build is not a row of its own: the band's one
+    // pair of hands is dealt by the staffing, and the hunt stays the band's holding with its
+    // declaration intact, announcing nothing.
     let allocation = app
         .world
         .get::<LaborAllocation>(band)
         .expect("band allocation");
     assert_eq!(
         allocation.assignments.len(),
-        2,
-        "the hunt row stands at nobody rather than being shed"
-    );
-    assert_eq!(
-        allocation.workers_on(&LaborTarget::Hunt {
-            fauna_id: herd_id.clone(),
-            floor: 0.5,
-            move_with_herd: false,
-        }),
-        0,
-        "the builder holds the only hand"
+        1,
+        "the hunt row stands rather than being shed"
     );
     assert!(
-        allocation.build_queue_position(&source).is_some(),
+        allocation.has_build(&source),
         "the row stands, so its declaration stands with it"
     );
     assert!(

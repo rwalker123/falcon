@@ -245,8 +245,6 @@ const SHED_TRIMMED_LINKED_DETAIL := "status=trimmed reason=too_few_workers kind=
 
 const SHED_TRIMMED_LINKED_BAND := 3
 
-## The row DESTROYED outright, which stays on the ALERT rung it already had: the queue entry goes with
-## it on the turn's prune, so a build commitment is lost and not merely thinned.
 const SHED_LAPSED_LABEL := "foragers at (58, 4) disbanded — too few workers"
 
 const SHED_LAPSED_DETAIL := "status=lapsed reason=too_few_workers kind=forage x=58 y=4 band=7 workers=2 lost=2"

@@ -316,11 +316,11 @@ pub fn useful_take_hands(
     }
 }
 
-/// **THE RUNG THE BAND'S QUEUE ENTRY ON `target` DECLARES** — what the keeping seams resolve the
+/// **THE RUNG THE BAND'S DECLARED BUILD ON `target` DECLARES** — what the keeping seams resolve the
 /// verb against, `None` for no entry or a job that raises no rung.
 pub fn declared_on(allocation: &LaborAllocation, target: &LaborTarget) -> Option<RungId> {
     let source = BuildSource::of(target)?;
-    allocation.build_queue_entry(&source)?.declared.climb()
+    allocation.build_declaration(&source)?.declared.climb()
 }
 
 /// **THE HANDS A CREW OF `crew` ON `target` WOULD SPEND KEEPING IT** — each web's prospective

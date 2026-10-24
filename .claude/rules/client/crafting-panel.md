@@ -603,11 +603,11 @@ Each row is TWO lines and one button (`_build_suggestion_row`, keyed `SUGGESTION
 
 - **`<item> ×<count>`** — the name is the item's offers' `displayName`, the count the sim's WHOLE
   shortfall net of what is already queued (a suggestion the queue covers is simply not published).
-- **ONE consequence line, in the shortage's own unit, in WARN** — the queued-build wording comes FIRST
-  (`N builders, for <label>`, see "A queued build names itself on the suggestion"), then `+X work a turn` where the published
+- **ONE consequence line, in the shortage's own unit, in WARN** — the declared-build wording comes FIRST
+  (`N builders, for <label>`, see "A declared build names itself on the suggestion"), then `+X work a turn` where the published
   `work_per_turn > 0` (gear that adds build or keeping work), else the people going without:
   `3 hunters without`. The noun is the work vocabulary's own crew noun where EVERY source shares a job
-  that has one (`hunt` → `Hunters`, `forage` → `Harvesters`, `builders` → `Builders`), else
+  that has one (`hunt` → `Hunters`, `forage` → `Harvesters`), else
   `workers` — a suggestion drawn from two jobs is about workers, and naming one would undercount the
   other. No noun is minted here: `scout`, `warrior`, `extract` and `roadwork` have no plural crew noun
   in the client, so they read `workers`.
@@ -833,21 +833,18 @@ on|off` and `bench_auto_skip <f> <band>`, relayed panel → `CraftingPanelContro
 - **An idle bench with Auto on** reads `Auto: nothing to make.` in place of the Make-a-row prompt; the
   `No one at the bench` crew prompt is the sim's blocked line and is untouched.
 
-### A queued build names itself on the suggestion
+### A declared build names itself on the suggestion
 
-A suggestion's `sources` may carry `kind: "build_queue"` lines (a LATER build in the band's queue, with
-`queue_position` >= 1, `job` and the target keys; the head job stays the `pool`/`builders` line). When one
-is present and every other line is the builders' own, the amber consequence reads `N builders, for <label>`
-(`SUGGESTION_BUILD_QUEUE_FORMAT`; `1 builder, for <label>` at exactly one,
-`SUGGESTION_BUILD_QUEUE_ONE_FORMAT`), N the earliest-position line's `workers_without`. **This wording
-takes precedence over `+X work a turn`**: a builder's gear always publishes `work_per_turn > 0` (build
-kits are productivity), so checking work first would make this wording unreachable and hide which build
-the gear is for. **The label is the Work tab's own queue-row face, joined by `queue_position`**: `BandPanelController.build_queue_faces(band)` returns
-`{rank: face}` off the same `_build_queue_models` list and `_build_queue_job_face` the block draws, `Hud`
-hands it to `CraftingPanelController` as a Callable, and the panel receives it as `PAYLOAD_BUILD_QUEUE_FACES`
-- so a road's `roadwork`/`extract` spelling never has to match. Only when the position is unresolved does it
-fall back to `HudWorkVocab.build_queue_subject(job, x, y, "")`. Any non-build source (take, site, other
-pool) keeps today's wording, being the more urgent fact.
+A suggestion's `sources` may carry `kind: "build"` lines (a declared build whose builders are short of
+the item, with `job` and the target keys). When one is present and every other line is a build line, the
+amber consequence reads `N builders, for <label>` (`SUGGESTION_BUILD_FORMAT`; `1 builder, for <label>` at
+exactly one, `SUGGESTION_BUILD_ONE_FORMAT`), N the first line's `workers_without`
+(`CraftingPanel._first_build_source`). **This wording takes precedence over `+X work a turn`**: a
+builder's gear always publishes `work_per_turn > 0` (build kits are productivity), so checking work
+first would make this wording unreachable and hide which build the gear is for. **The label is the
+build's own name with no position** (`HudWorkVocab.build_site_subject(job, x, y, "")`, e.g.
+`Tame (12, 4)`): a declared build is named by the site it is raised on, not by a place in a line. Any
+non-build source (take, site, other pool) keeps its ordinary wording, being the more urgent fact.
 
 ## A WHOLE KIT IS ONE BENCH ORDER (issue #780)
 
@@ -884,7 +881,7 @@ over four wire terms — `kit_needs[]` and `materials_free[]` on the cohort, `be
   is in the box as well as in the well.
 - **The well's title appends `· for <Kit>`** when the worked order belongs to a kit order.
 - **A kit row reads CLAIMS, not the headcount.** Each `kit_needs[].items[]` carries `claimed` (a float:
-  units actually claimed on this kit by rows, pools, sites and queued builds) and `short` (an int: whole
+  units actually claimed on this kit by rows, pools, sites and declared builds) and `short` (an int: whole
   units missing on those claims, before the bench's queue is netted off - the figure Make Next starts
   from), beside `have` and `queued`. `kit_needs[].people` counts everyone on the kit's jobs against every
   kit those jobs could use, which read `6 hunters without traps` with no row using traps and `1 without
@@ -905,7 +902,7 @@ over four wire terms — `kit_needs[]` and `materials_free[]` on the cohort, `be
   unchanged: the order count is the player's and is never capped by need.** Pinned by `crafting_bench`
   frames `crafting_kits_ledger` (partial queue, fully queued, all equipped and not in use at once) and
   `crafting_kit_settled_short` (8 crooks held, 9 claimed: `8 of 9`, `Crook 1 short`).
-- **A Make Next entry can name a MATERIAL** (a queued build short of the goods it draws): its `item_id` is
+- **A Make Next entry can name a MATERIAL** (a declared build short of the goods it draws): its `item_id` is
   the bare material id (`hurdles`) while its ledger row is keyed `material:hurdles`.
   `CraftingPanel._row_in` falls back to the `material:` key after an item's own row, and
   `_row_key_of` keys a stock offer by the published `output_material_id` before the recipe-book lookup.

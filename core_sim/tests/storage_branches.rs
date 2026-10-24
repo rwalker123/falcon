@@ -497,9 +497,8 @@ fn begin_the_rack(app: &mut App, entity: Entity, band: BandId) {
         .bands_mut()
         .place(band, camp_stores(), &ladder);
     let mut allocation = LaborAllocation::default();
-    allocation.set_assignment(LaborTarget::Builders, BUILDERS, ALL_HANDS, None);
     allocation.set_assignment(rack_row(band), CREW_HANDS, ALL_HANDS, None);
-    allocation.enqueue_build(
+    allocation.declare_build(
         BuildSource::Band {
             band,
             branch: camp_stores(),
@@ -507,6 +506,7 @@ fn begin_the_rack(app: &mut App, entity: Entity, band: BandId) {
         BuildJob::Climb(drying_rack()),
     );
     app.world.entity_mut(entity).insert(allocation);
+    core_sim::seat_builders(&mut app.world, entity, BUILDERS);
 }
 
 /// Place a pit at `tile`, stand the builders on the queue head and put the tile crew on it.
@@ -519,9 +519,8 @@ fn begin_the_pit(app: &mut App, entity: Entity, faction: FactionId, tile: UVec2)
         &ladder,
     );
     let mut allocation = LaborAllocation::default();
-    allocation.set_assignment(LaborTarget::Builders, BUILDERS, ALL_HANDS, None);
     allocation.set_assignment(pit_row(tile), CREW_HANDS, ALL_HANDS, None);
-    allocation.enqueue_build(
+    allocation.declare_build(
         BuildSource::Tile {
             tile,
             branch: food_stores(),
@@ -529,6 +528,7 @@ fn begin_the_pit(app: &mut App, entity: Entity, faction: FactionId, tile: UVec2)
         BuildJob::Climb(storage_pit()),
     );
     app.world.entity_mut(entity).insert(allocation);
+    core_sim::seat_builders(&mut app.world, entity, BUILDERS);
 }
 
 fn set_crew(app: &mut App, band: Entity, row: LaborTarget, hands: u32) {
@@ -622,7 +622,7 @@ fn a_rack_waits_on_storage_and_then_eats_its_wood() {
         app.world
             .get::<LaborAllocation>(entity)
             .unwrap()
-            .build_queue
+            .builds
             .is_empty(),
         "the entry retires at its destination"
     );

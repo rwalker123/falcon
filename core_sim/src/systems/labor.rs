@@ -4,7 +4,7 @@ use super::*;
 
 use crate::belief::BeliefRegistry;
 use crate::belief_config::{BeliefConfig, BeliefConfigHandle};
-use crate::components::{BandWorkforce, ExcessRejoining};
+use crate::components::{BandWorkforce, BuildCrew, ExcessRejoining};
 use crate::intensification::{CostScale, RungStanding, SourceKind};
 use crate::ladder_ids::BranchId;
 use crate::work_party::{WorkParty, WALKS_BACK_TO_ITS_ROW, WALKS_PLAIN};
@@ -213,7 +213,7 @@ fn credit_managed_rung_lesson(
 /// # ⛔ IT IS NOT THE KEEPING POOL'S ELIGIBILITY TEST — that is `*_keeping_meter`
 ///
 /// It reads through `forage::patch_unwinding_rung` / `fauna::herd_keeping_rung`, which are
-/// progress-only, and **every** caller pairs it with *"…or the source carries a queue entry"* — so a
+/// progress-only, and **every** caller pairs it with *"…or the source carries a declared build"* — so a
 /// build declared on bare ground keeps its row on the declaration alone. The retired keeping pools
 /// used to borrow it as their claim gate, where the entry term is not available in that shape, and
 /// the missing half was exactly the turn a build banked its first work. What a site crew keeps is
@@ -267,16 +267,13 @@ pub fn source_has_a_meter_at_risk(
             .is_some_and(|improvement| {
                 improvement.position() > crate::intensification::RUNG_UNSTARTED
             }),
-        LaborTarget::Scout
-        | LaborTarget::Warrior
-        | LaborTarget::Roadwork
-        | LaborTarget::Builders => false,
+        LaborTarget::Scout | LaborTarget::Warrior | LaborTarget::Roadwork => false,
     }
 }
 
 /// **THE TWO REGISTRIES OF IMPROVEMENTS ON A SINGLE TILE** - roads and the tile kind's improvements,
 /// bundled so [`advance_labor_allocation`] stays under Bevy's 16-parameter ceiling. Both are sources
-/// with no labor row of their own: the pass raises them from the builders' pool and pays their
+/// with no labor row of their own: the pass raises them from the build crew and pays their
 /// keeping from the `Roadwork` pool, so it reads and writes the pair together.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct PerTileWorks<'w> {
@@ -331,46 +328,57 @@ pub struct LaborConfigs<'w> {
     pub leadership: Option<Res<'w, crate::leadership_config::LeadershipConfigHandle>>,
 }
 
-/// **WHAT THE BAND'S BUILDERS' TOOLS ADD TO WHAT THEY DELIVER, RESOLVED PER BUILD.**
+/// **ONE DECLARED BUILD AS THIS TURN WORKS IT** — the crew staffing put on it, the legs it still has
+/// to lay (the first is the rung in flight, which its tools, its material pile and its wear are all
+/// resolved at) and the rank of its site's one Priority. Struck once per band per turn, before
+/// anything is paid.
+struct BuildPlan {
+    declaration: BuildDeclaration,
+    crew: BuildCrew,
+    /// `(rung, owed, width)` per leg, in climb order — empty for a commitment and for a build that
+    /// banks nothing this turn.
+    legs: Vec<(RungId, f32, f32)>,
+    /// **Does this build put work on the ground this turn?** It has builders and its rung's gate
+    /// holds (a ring: it has builders and the pen is extending). Only a funded build claims tools
+    /// and a material pile.
+    funded: bool,
+    priority: SourcePriority,
+}
+
+impl BuildPlan {
+    /// The rung the build is working this turn — the first leg.
+    fn in_flight(&self) -> Option<RungId> {
+        self.legs.first().map(|(rung, _, _)| *rung)
+    }
+}
+
+/// **WHAT A BUILD'S BUILDERS' TOOLS ADD TO WHAT THEY DELIVER, RESOLVED PER BUILD.**
 ///
-/// One pool, one queue — but the tools are the **job's**, because a hoe and a set of hurdles are
-/// tools for different work and `EquipmentStat::BuildWork` is a per-worker *sum*. Without that split
-/// a bundle carrying both would deliver `0.5 + 0.5` per worker on a plant build.
+/// Every declared build is worked by its own crew, and the tools are the **job's**, because a hoe
+/// and a set of hurdles are tools for different work and `EquipmentStat::BuildWork` is a per-worker
+/// *sum*. Without that split a bundle carrying both would deliver `0.5 + 0.5` per worker on a plant
+/// build.
 ///
-/// # ⛔ THE TOOLS ARE DERIVED FROM THE RUNG, AND THERE IS NO KIT IN IT ANY MORE
+/// # ⛔ THE TOOLS ARE DERIVED FROM THE RUNG, AND THERE IS NO KIT IN IT
 ///
-/// It resolved a **kit** per entry — the entry's own named choice, else the roster's answer for that
-/// web — and that lookup could not name a rung, so a rung-tied tool was refused outright
-/// (`docs/plan_pool_toe.md` §1). What answers now is
-/// [`crate::equipment_config::EquipmentConfig::pool_toe`] at the branch **and rung in flight**:
-/// every item whose `build_work` serves this build, whatever it is bound to.
+/// What answers is [`crate::equipment_config::EquipmentConfig::pool_toe`] at the branch **and rung
+/// in flight**: every item whose `build_work` serves this build, whatever it is bound to.
 ///
-/// ⛔ **A KIT NAMED ON THE ENTRY IS NOT AN INPUT, AND CANNOT BE NAMED.** The entry's stored kit and
-/// the `build_kit` command are retired (proto field 60 reserved): *"which tools does this job want"*
-/// follows from the job, and no source row carries a build kit. The `builders` **row's** kit was
-/// never an input and still is not.
+/// # A BUILD READS ITS OWN SETTLED SHARE
 ///
-/// # The head is FUNDED and everything below it is DATED
-///
-/// The pool's claim on the band's tools is the **head entry's** lines over the whole pool, settled
-/// band-wide against every other pool's claims (§2.4). So:
-///
-/// - a source whose tools **are** the ones the pool bid for reads its **settled** share, which is
-///   what the turn actually arms;
-/// - any other source — an entry further down the queue, on another web or another rung — claims
-///   nothing this turn and is *dated* at the band's whole live stock, which is what it would be
-///   armed with when the pool reaches it.
+/// Each declared build bids on the band's tools for exactly the builders staffing armed
+/// ([`plan_pool_tools`]), so a source whose tools **are** the ones its build bid for reads its
+/// **settled** share — what the turn actually arms. A source nobody has declared a build on is
+/// *dated* at the band's whole live stock, which is what it would be armed with.
 struct BuildersGear<'a> {
     /// The roster every answer is resolved through.
     equipment: &'a crate::equipment_config::EquipmentConfig,
     /// **The band's ledger as the turn found it** — the wear snapshot every rate is struck at, so a
     /// tool that breaks mid-turn does not re-price the work already banked beside it.
     band_kit: &'a BandEquipment,
-    /// The whole pool, since all hands go on the head.
-    builders: u32,
     /// The ladder, which says which branch a source of each kind stands on.
     ladder: &'a LadderConfig,
-    /// **The band's settled tool plan**, from which the pool reads the head's own fill.
+    /// **The band's settled tool plan**, from which each build reads its own fill.
     tools: &'a PoolToolPlan,
 }
 
@@ -398,7 +406,6 @@ struct BuildersRungGear {
 impl<'a> BuildersGear<'a> {
     fn resolve(
         equipment: &'a crate::equipment_config::EquipmentConfig,
-        builders: u32,
         ladder: &'a LadderConfig,
         band_kit: &'a BandEquipment,
         tools: &'a PoolToolPlan,
@@ -406,14 +413,13 @@ impl<'a> BuildersGear<'a> {
         Self {
             equipment,
             band_kit,
-            builders,
             ladder,
             tools,
         }
     }
 
     /// **THE GEAR ONE BUILD IS RAISED WITH** — every tool serving the branch **and rung** in front of
-    /// the pool, priced over the whole builders pool.
+    /// the pool, priced over the whole build crew.
     ///
     /// ⛔ **THE RUNG IS THE ONE BEING WORKED THIS TURN, NEVER THE ENTRY'S DESTINATION.** A `pave`
     /// standing on ground below a dirt road is doing *grading* work, so it must resolve the grading
@@ -433,6 +439,7 @@ impl<'a> BuildersGear<'a> {
         &self,
         source: &BuildSource,
         rung: Option<crate::intensification::RungId>,
+        builders: u32,
     ) -> BuildersRungGear {
         let branch = source_branch(self.ladder, source, rung);
         let key = rung.map(|rung| rung.wire_key());
@@ -448,20 +455,18 @@ impl<'a> BuildersGear<'a> {
                     .equipment
                     .default_kit(crate::equipment_config::KitJob::Builders),
                 work_per_worker: crate::intensification::NO_BUILD_GEAR,
-                gear_supply: gear_work_supply(crate::intensification::NO_BUILD_GEAR, self.builders),
+                gear_supply: gear_work_supply(crate::intensification::NO_BUILD_GEAR, builders),
             };
         };
         let toe = self.equipment.pool_toe(branch, key);
-        let pool = self.builders as f32;
-        // **The coverage is over the POOL**, so the rate the wire publishes and the rate the accrual
-        // is struck at are one number for the whole band.
+        let pool = builders as f32;
+        // **The coverage is over the BUILD'S crew**, so the rate the wire publishes and the rate the
+        // accrual is struck at are one number.
         //
-        // ⛔ **THE HEAD READS ITS SETTLED SHARE; EVERYTHING ELSE IS DATED AT THE LIVE STOCK.** The
-        // pool bids on one job — the head's — so that is the only reading the band-wide settlement
-        // has an answer for, and it is the one the turn actually arms. An entry further down the
-        // queue banks nothing, claims nothing, and is quoted at what the band holds, which is what
-        // it would be armed with when the pool reaches it.
-        let coverage = match self.tools.builders_fill(toe.kit()) {
+        // ⛔ **A DECLARED BUILD READS ITS SETTLED SHARE; A SOURCE WITH NONE IS DATED AT THE LIVE
+        // STOCK.** The build bid on the band's tools for the builders staffing armed, so that is the
+        // reading the band-wide settlement has an answer for and the one the turn actually arms.
+        let coverage = match self.tools.build_fill(source, toe.kit()) {
             Some(fill) => {
                 self.equipment
                     .coverage_from_units(toe.kit(), pool, self.band_kit, |item| fill.units_of(item))
@@ -477,7 +482,7 @@ impl<'a> BuildersGear<'a> {
                 .equipment
                 .build_gear_kit(toe.kit(), self.band_kit, branch, key),
             work_per_worker,
-            gear_supply: gear_work_supply(work_per_worker, self.builders),
+            gear_supply: gear_work_supply(work_per_worker, builders),
         }
     }
 }
@@ -495,11 +500,11 @@ impl<'a> BuildersGear<'a> {
 /// there, so no rung-bound tool may be quoted against it
 /// ([`crate::equipment_config::EquipmentEffect::serves_build`]).
 fn queued_destination(
-    build_queue: &[crate::components::BuildQueueEntry],
+    builds: &[crate::components::BuildDeclaration],
     source: &BuildSource,
     ladder: &LadderConfig,
 ) -> Option<crate::intensification::RungId> {
-    build_queue
+    builds
         .iter()
         .find(|entry| &entry.source == source)
         .map(|entry| entry.declared.destination(ladder))
@@ -643,6 +648,9 @@ enum ToolCrew {
     Pool(crate::equipment_config::KitJob),
     /// One site's crew, by its row's index in `LaborAllocation::assignments`.
     Site(usize),
+    /// **One declared build's builders**, by the build's index in `LaborAllocation::builds` — a
+    /// build is its own crew of its own people, so two builds never pass a tool between them.
+    Build(usize),
 }
 
 impl ToolCrew {
@@ -652,6 +660,7 @@ impl ToolCrew {
         match self {
             ToolCrew::Pool(pool) => ToolClaimStage::of_pool(pool),
             ToolCrew::Site(_) => ToolClaimStage::Keeping,
+            ToolCrew::Build(_) => ToolClaimStage::Building,
         }
     }
 }
@@ -1211,7 +1220,7 @@ struct PoolTopUp {
 /// ⛔ **ROADWORK, AND DELIBERATELY NOT THE BUILDERS.** Roadwork is the one keeping pool left
 /// (`docs/plan_site_crews.md` §1: a site's own crew keeps it). `builders` is not a keeping pool: `build_workers` puts the **whole** head count on the queue head (`docs/plan_pool_toe.md`
 /// §2.4), so no builder is ever left standing by a plan that wanted fewer, and the pool never
-/// reaches [`pool_rates`] at all — it is paid through `BuildersGear`. A builders pool with an
+/// reaches [`pool_rates`] at all — it is paid through `BuildersGear`. A build crew with an
 /// **empty queue** is idle in a different sense, which nothing here measures.
 struct PoolRates {
     /// One [`KeepingPayment`] per claim, index-aligned with the claim list.
@@ -1354,13 +1363,18 @@ fn keeping_worker_need(
 ///
 /// **The fills are index-aligned with each claimant's own list**, in that list's order: Roadwork's
 /// with its road claims, the sites' with the band's site asks ([`SiteKeepingAsk`]).
+/// One declared build's tool claim: its source, the fill its builders were armed with, and what ALL
+/// its builders would need of each tool.
+type BuildToolClaim = (BuildSource, ToeFill, Vec<(std::sync::Arc<str>, f32)>);
+
 pub struct PoolToolPlan {
     roadwork: Vec<ToeFill>,
     /// **One fill per site ask**, index-aligned with the asks [`plan_pool_tools`] was handed.
     sites: Vec<ToeFill>,
-    /// **The builders' one claim** — the head entry's tool lines over the whole pool (§2.4).
-    /// `None` when nothing is being raised, which is *"no tool is out"* rather than an empty TOE.
-    builders: Option<ToeFill>,
+    /// **One claim per declared build** — each build's tool lines over the builders staffing armed
+    /// for it, keyed by the build's source, beside what ALL its builders would need of each tool (the
+    /// requirement the wire states, so a bare builder shows as a tool the build is short of).
+    builds: Vec<BuildToolClaim>,
 }
 
 /// **WHAT ONE POOL BRINGS TO THE SETTLEMENT** — its claims, its head count, and nothing else.
@@ -1386,11 +1400,15 @@ impl<'a> PoolAsk<'a> {
     }
 }
 
-/// **THE BUILDERS' ASK** — the head entry's branch and in-flight rung, the pool standing on it, and
-/// the rank of the head entry's own **Build mark** (`docs/plan_site_crews.md` §2.4).
-struct BuildersAsk {
+/// **ONE DECLARED BUILD'S ASK** — its source, its branch and in-flight rung, the builders staffing
+/// armed (the hands the claim is struck for) and the rank of its site's one Priority.
+struct BuildAsk {
+    source: BuildSource,
     branch: BranchId,
     rung: Option<String>,
+    /// **The builders staffing counted as kitted** — the claim is for exactly these.
+    armed: u32,
+    /// Every builder on the build, armed or bare — what the published requirement is struck for.
     builders: u32,
     priority: SourcePriority,
 }
@@ -1408,7 +1426,7 @@ fn plan_pool_tools(
     mode: crate::intensification::UpkeepFundMode,
     sites: &[SiteKeepingAsk],
     roadwork: PoolAsk<'_>,
-    builders: Option<BuildersAsk>,
+    builds: &[BuildAsk],
 ) -> PoolToolPlan {
     let mut claims: Vec<ToeClaim> = sites.iter().map(SiteKeepingAsk::claim).collect();
     let site_span = claims.len();
@@ -1422,24 +1440,43 @@ fn plan_pool_tools(
     );
     let road_span = road_claims.len();
     claims.extend(road_claims);
-    // **The builders' claim goes on LAST**, so the keeping spans index the head of the vector and
-    // the build's share is the tail — `settle_material_upkeep`'s own convention.
-    let builders_claim = builders.as_ref().map(|ask| {
-        let toe = equipment.pool_toe(ask.branch, ask.rung.as_deref());
-        ToeClaim::of(
-            ToolCrew::Pool(crate::equipment_config::KitJob::Builders),
-            ask.priority,
-            ask.builders as f32,
-            // **THE BUILDERS ASK FOR EVERY HAND THEY HAVE** — all of them go on the queue head
-            // (§2.4), so the pool is never capped below its head count and its `need` is its
-            // `hands`. Nothing reads it: the builders are paid through `BuildersGear`, not through
-            // [`pool_rates`], so step 5 does not reach them.
-            ask.builders as f32,
-            &toe,
-        )
-    });
-    let has_builders = builders_claim.is_some();
-    claims.extend(builders_claim);
+    // **The builds' claims go on LAST**, so the keeping spans index the head of the vector and the
+    // builds' share is the tail — `settle_material_upkeep`'s own convention.
+    // What ALL a build's builders would need, kept beside the claim: staffing armed what the shelf
+    // could, the settlement must not arm more (it would starve a take row staffing served first), but
+    // the player and the craft suggestions need to see the tool the unarmed builders are short of.
+    let wanted_by_build: Vec<Vec<(std::sync::Arc<str>, f32)>> = builds
+        .iter()
+        .map(|ask| {
+            let toe = equipment.pool_toe(ask.branch, ask.rung.as_deref());
+            toe.tools()
+                .iter()
+                .map(|tool| {
+                    (
+                        std::sync::Arc::clone(&tool.item),
+                        ask.builders as f32 / tool.workers_per_unit as f32,
+                    )
+                })
+                .collect()
+        })
+        .collect();
+    let build_claims: Vec<ToeClaim> = builds
+        .iter()
+        .enumerate()
+        .map(|(index, ask)| {
+            let toe = equipment.pool_toe(ask.branch, ask.rung.as_deref());
+            ToeClaim::of(
+                ToolCrew::Build(index),
+                ask.priority,
+                ask.armed as f32,
+                // **A BUILD ASKS FOR EVERY ARMED HAND IT HAS** — staffing already sized the crew, so
+                // nothing cuts it below its head count and its `need` is its `hands`.
+                ask.armed as f32,
+                &toe,
+            )
+        })
+        .collect();
+    claims.extend(build_claims);
 
     let mut fills = settle_pool_tools(equipment, band_kit, &claims).into_iter();
     let sites = fills.by_ref().take(site_span).collect();
@@ -1447,7 +1484,13 @@ fn plan_pool_tools(
     PoolToolPlan {
         sites,
         roadwork,
-        builders: has_builders.then(|| fills.next()).flatten(),
+        builds: builds
+            .iter()
+            .map(|ask| ask.source.clone())
+            .zip(fills)
+            .zip(wanted_by_build)
+            .map(|((source, fill), wanted)| (source, fill, wanted))
+            .collect(),
     }
 }
 
@@ -1510,16 +1553,45 @@ impl PoolToolPlan {
             .collect()
     }
 
-    /// **THE BUILDERS' SETTLED FILL, IF THIS SITE IS THE ONE THEY CLAIMED FOR** — matched on the
+    /// **A DECLARED BUILD'S SETTLED FILL, IF THESE ARE THE TOOLS IT CLAIMED** — matched on the
     /// **tools**, not on the rung key.
     ///
     /// ⛔ **THE TOOLS ARE THE RIGHT KEY AND THE RUNG IS NOT.** Every plant and animal tool on the
     /// shipped roster is rung-free, so one branch's rungs resolve the identical TOE and a rung-key
-    /// match would refuse the head its own settled share whenever a caller quoted it at the entry's
+    /// match would refuse a build its own settled share whenever a caller quoted it at the entry's
     /// *destination* rather than at the rung in flight. Comparing the requirement itself asks the
-    /// question that actually matters: *is this the same set of tools the pool bid for*.
-    fn builders_fill(&self, kit: &crate::equipment_config::KitChoice) -> Option<&ToeFill> {
-        self.builders.as_ref().filter(|fill| &fill.kit == kit)
+    /// question that actually matters: *is this the same set of tools the build bid for*.
+    fn build_fill(
+        &self,
+        source: &BuildSource,
+        kit: &crate::equipment_config::KitChoice,
+    ) -> Option<&ToeFill> {
+        self.builds
+            .iter()
+            .find(|(held, _, _)| held == source)
+            .map(|(_, fill, _)| fill)
+            .filter(|fill| &fill.kit == kit)
+    }
+
+    /// **EVERY BUILD'S TABLE OF EQUIPMENT AS THIS TURN SETTLED IT** — one line per `(build, item)` the
+    /// build claimed, read off the settled fills (never re-derived): the requirement its armed
+    /// builders put on the band's tools and what the settlement handed it. A build that claimed
+    /// nothing has no line.
+    pub fn build_toe_lines(&self) -> Vec<crate::components::BuildToeLine> {
+        self.builds
+            .iter()
+            .flat_map(|(source, fill, wanted)| {
+                wanted
+                    .iter()
+                    .filter(|(_, required)| *required > NOTHING_DEMANDED)
+                    .map(|(item, required)| crate::components::BuildToeLine {
+                        source: source.clone(),
+                        item: item.to_string(),
+                        required: *required,
+                        filled: fill.units_of(item),
+                    })
+            })
+            .collect()
     }
 
     /// **EVERY POOL'S TABLE OF EQUIPMENT AS THIS TURN SETTLED IT** — the readout the wire publishes
@@ -1541,19 +1613,7 @@ impl PoolToolPlan {
     /// a paved road states one earthmoving line and one stone-dressing line rather than one per
     /// road.
     pub fn toe_lines(&self) -> Vec<crate::components::PoolToeLine> {
-        [
-            (
-                crate::equipment_config::KitJob::Roadwork,
-                &self.roadwork[..],
-            ),
-            (
-                crate::equipment_config::KitJob::Builders,
-                self.builders.as_slice(),
-            ),
-        ]
-        .into_iter()
-        .flat_map(|(pool, fills)| pool_toe_lines(pool, fills))
-        .collect()
+        pool_toe_lines(crate::equipment_config::KitJob::Roadwork, &self.roadwork)
     }
 }
 
@@ -1618,49 +1678,35 @@ fn pool_or_plan(
     }
 }
 
-/// **THE ONE SOURCE THIS BAND'S BUILDERS CAN PUT WORK ON THE GROUND FOR THIS TURN**, and the rung it
+/// **THE SOURCES THIS BAND'S BUILDERS CAN PUT WORK ON THE GROUND FOR THIS TURN**, and the rung each
 /// declared there — the verb term of [`site_keeping_claims`]' eligibility, and nothing else.
 ///
-/// # WHY THE VERB TERM IS NARROWED TO THE FUNDED HEAD, AND THEN TO A HEAD THAT CAN ACTUALLY BANK
+/// # WHY THE VERB TERM IS NARROWED TO BUILDS THAT CAN ACTUALLY BANK
 ///
 /// The keeping bill starts at the **first work banked** (`docs/plan_standing_upkeep.md` §2.4/§4.6a),
 /// and the *only* reason the claim side needs a verb at all is that [`site_keeping_claims`] runs
 /// before the accrual that banks it: on that one turn the ground does not yet carry the work the
-/// site's crew is about to owe for. **All hands go on the head** (§2.5), so at most one of a band's sources can bank
-/// its first work in a turn, and every entry behind the head banks nothing however long it waits.
+/// site's crew is about to owe for.
 ///
-/// Honouring a *waiting* entry's declaration would therefore bill the pool for ground with **nothing
-/// on it** — and, because the default `UpkeepFundMode::Spread` funds in proportion to demand, a band
-/// with two queued-but-unfunded builds would dilute the share of the Field it actually holds. That is
-/// not the fix this seam is for; it is a new way to starve a real holding.
+/// Every declared build is worked in parallel now, but a build with **no builders staffed** puts
+/// nothing on the ground, and honouring its declaration would bill the site's crew for ground with
+/// **nothing on it**. **A build whose own rung GATE refuses banks nothing either**, for as long as the
+/// block lasts, so the same dilution would reach the real holdings through it. The gate is resolved
+/// fresh from this turn's ground ([`head_rung_gate`]) and joins the builders test. It cuts **only a
+/// meter at zero**: a blocked build that has already banked work is answered for by its own
+/// progress (`forage::patch_build_verb` / `fauna::herd_build_verb` honour a declaration only at a
+/// zero meter), so it goes on claiming exactly as it did.
 ///
-/// **A head whose own rung GATE refuses banks nothing either**, for as long as the block lasts, so
-/// the same dilution reaches the same real holdings through the funded entry rather than a waiting
-/// one — the state reported from play as a blocked `Tame` starving a band's `husbandry`. The head's
-/// gate is therefore resolved *before* the keeping is claimed ([`head_rung_gate`]) and joins this test.
-/// It cuts **only a meter at zero**: a blocked head that has already banked work is answered for by
-/// its own progress (`forage::patch_build_verb` / `fauna::herd_build_verb` honour a declaration only
-/// at a zero meter), so it goes on claiming exactly as it did — which is right, because the pool
-/// still owes for the work standing on that ground.
+/// **The invariant this preserves is `claim-side verb ⊆ payment-side verb`.** Every term added here
+/// can only remove sources from the claim, so the two seams stay a subset and cannot disagree in the
+/// direction that caused the first-turn bug.
 ///
-/// **The invariant this preserves is `claim-side verb ⊆ payment-side verb`.** The payment side reads
-/// *any* queue entry's declaration and applies no gate; every term added here can only remove
-/// sources from the claim, so the two seams stay a subset and cannot disagree in the direction that
-/// caused the first-turn bug. What a further narrowing risks instead is refusing a share on a turn
-/// the build really does bank — which is why the gate is resolved fresh from this turn's ground
-/// rather than read off last turn's published `build_blocked_reason` (the decay pass clears that at
-/// the top of every turn, so at this point in the turn it is always [`crate::intensification::BuildGate::Open`]).
-///
-/// `None` when the queue is empty, when the head declares a **ring** (which fills no rung meter and
-/// so names no verb), or when nobody is on the `builders` row — a declaration with no hands behind it
-/// puts nothing on the ground either.
-///
-/// ⛔ **THE RING'S ABSENCE HERE IS ABOUT THE VERB AND NOTHING ELSE.** This seam once decided the
-/// build's *material* claim too, and a ring therefore bid for no pile and widened a pen for free.
-/// The pile is laid by [`head_ring_leg`] now, off the ring's own gate — so filtering `ExtendPen` out
-/// of a **verb** answer no longer makes a ring materially free.
+/// A **ring** declares no rung (it fills no rung meter and so names no verb) and is absent here;
+/// ⛔ that absence is about the VERB and nothing else — the pile is laid by [`head_ring_leg`] off the
+/// ring's own gate, so filtering `ExtendPen` out of a **verb** answer no longer makes a ring
+/// materially free.
 struct SourceBankingFirstWork {
-    source: Option<(BuildSource, RungId)>,
+    sources: Vec<(BuildSource, RungId)>,
 }
 
 impl SourceBankingFirstWork {
@@ -1668,40 +1714,47 @@ impl SourceBankingFirstWork {
     /// per-web `*_build_verb` seams then answer whether that declaration is live: a meter already
     /// carrying progress declares for itself and needs nothing from here.
     fn declared_on(&self, target: &LaborTarget) -> Option<RungId> {
-        let (banking, rung) = self.source.as_ref()?;
         let source = BuildSource::of(target)?;
-        (&source == banking).then_some(*rung)
+        self.rung_of(&source)
+    }
+
+    /// The rung a source's build declared, if the source is banking its first work.
+    fn rung_of(&self, source: &BuildSource) -> Option<RungId> {
+        self.sources
+            .iter()
+            .find(|(banking, _)| banking == source)
+            .map(|(_, rung)| *rung)
     }
 }
 
-/// Resolve [`SourceBankingFirstWork`] for a band — the head of its queue, if that entry declares a
-/// rung, the band has builders to raise it, **and that rung's own gate holds**. The first two mirror
-/// the assignment loop's own `build_workers` rule (`is_queue_head && declared.is_some()`, else
-/// nobody); the third mirrors [`RungDef::build_accrual`]'s `eligible`, because both are asking the
-/// same question — *will a work unit land on this ground this turn* — one stage earlier.
-///
-/// `head_gate` is [`head_rung_gate`] at the call site, where the ledger, the land and the configs
-/// are all in hand.
+/// Resolve [`SourceBankingFirstWork`] for a band — every declared build that names a rung, has
+/// builders staffed on it, **and whose rung's own gate holds**. The first two mirror the assignment
+/// loop's own `build_workers` rule, and the third mirrors [`RungDef::build_accrual`]'s `eligible`,
+/// because both ask the same question — *will a work unit land on this ground this turn* — one stage
+/// earlier. `gate` is [`head_rung_gate`] at the call site.
 fn source_banking_its_first_work(
     allocation: &LaborAllocation,
-    head_gate: impl FnOnce(&BuildSource, RungId) -> BuildGate,
+    gate: impl Fn(&BuildSource, RungId) -> BuildGate,
 ) -> SourceBankingFirstWork {
-    if allocation.workers_on(&LaborTarget::Builders) == NO_CREW_ON_THIS_ACTIVITY {
-        return SourceBankingFirstWork { source: None };
-    }
-    let source = allocation
-        .build_queue
-        .first()
-        .and_then(|entry| {
+    let sources = allocation
+        .builds
+        .iter()
+        .filter(|declaration| {
+            allocation
+                .build_crew(&declaration.source)
+                .is_some_and(|crew| crew.total() > NO_CREW_ON_THIS_ACTIVITY)
+        })
+        .filter_map(|declaration| {
             // Neither of the two "work on a rung already held" kinds names a rung, so neither is
             // ever the source banking its first *rung* work.
-            entry
+            declaration
                 .declared
                 .climb()
-                .map(|rung| (entry.source.clone(), rung))
+                .map(|rung| (declaration.source.clone(), rung))
         })
-        .filter(|(source, rung)| head_gate(source, *rung).holds());
-    SourceBankingFirstWork { source }
+        .filter(|(source, rung)| gate(source, *rung).holds())
+        .collect();
+    SourceBankingFirstWork { sources }
 }
 
 /// **THE FACTS A RUNG'S GATE IS JUDGED AGAINST** - what the caller resolved about the source and the
@@ -1709,7 +1762,7 @@ fn source_banking_its_first_work(
 /// ask for is ignored, so a caller fills in what is cheap and the rung's *properties* decide what
 /// counts.
 struct GateFacts {
-    /// The queue entry still declares this rung (only judged on a rung that `places_source`).
+    /// The declared build still declares this rung (only judged on a rung that `places_source`).
     declared: bool,
     /// The faction knows the rung's `unlock_knowledge`.
     knows: bool,
@@ -1856,7 +1909,7 @@ fn herd_room_gate(herd: &Herd, floor: f32, fauna: &FaunaConfig) -> BuildGate {
 /// **No predator drew anything off the herd** — the boundary [`herd_room_gate`] compares against.
 const NOTHING_PREDATED: f32 = 0.0;
 
-/// **DOES THE HEAD OF THIS BAND'S QUEUE ACTUALLY CLEAR ITS OWN RUNG'S GATE THIS TURN?** — asked
+/// **DOES THIS DECLARED BUILD ACTUALLY CLEAR ITS OWN RUNG'S GATE THIS TURN?** — asked
 /// before the site keeping is claimed, so a build the ground refuses cannot claim a share of it.
 ///
 /// # It composes the ARM'S OWN gate, not a second reading of it
@@ -1879,7 +1932,7 @@ const NOTHING_PREDATED: f32 = 0.0;
 ///
 /// # ⛔ THE ROUTE BRANCH IS ANSWERED BEFORE THE LABOR-ROW LOOKUP, BECAUSE A ROAD HAS NO ROW
 ///
-/// Every other source is found by matching the queue entry against `assignments`, and
+/// Every other source is found by matching the declared build against `assignments`, and
 /// [`BuildSource::of`] never yields a `Road` — a road's holding lives on `routes::Road::keeper`, not
 /// on a row. So a road head fell straight through to [`BuildGate::Unworked`], which meant
 /// `source_banking_its_first_work` filtered it out, `banking.source` was permanently `None` for a
@@ -1908,8 +1961,8 @@ fn head_rung_gate(
     flora: &crate::flora_config::FloraConfig,
     extraction: &crate::extraction_config::ExtractionConfig,
     food_sites: &FoodSiteRegistry,
-    tile_registry: &TileRegistry,
-    tiles: &Query<&Tile>,
+    ground_of: &dyn Fn(UVec2) -> Option<Tile>,
+    grid: (u32, u32),
     map_seed: u64,
     wrap_horizontal: bool,
     belief: &BeliefRegistry,
@@ -1924,9 +1977,7 @@ fn head_rung_gate(
             discovery,
             knowledge_threshold,
             ladder,
-            tile_registry
-                .index(tile.x, tile.y)
-                .and_then(|entity| tiles.get(entity).ok()),
+            ground_of(*tile).as_ref(),
             labor,
             belief.get(*tile),
         );
@@ -1961,7 +2012,7 @@ fn head_rung_gate(
         .map(|assignment| &assignment.target)
         .find(|target| BuildSource::of(target).is_some_and(|held| &held == source))
     else {
-        // An entry with no row is retired by `prune_build_queue` this same turn; until then it is a
+        // An entry with no row is retired by `prune_builds` this same turn; until then it is a
         // declaration nobody is standing behind.
         return BuildGate::Unworked;
     };
@@ -1980,10 +2031,8 @@ fn head_rung_gate(
             if kind != Some(SourceKind::Patch) {
                 return BuildGate::Undeclared;
             }
-            let ground = tile_registry
-                .index(tile.x, tile.y)
-                .and_then(|entity| tiles.get(entity).ok());
-            let Some(ground) = ground else {
+            let ground = ground_of(*tile);
+            let Some(ground) = ground.as_ref() else {
                 return BuildGate::Unworked;
             };
             let patch = forage_registry.patch(*tile);
@@ -2005,18 +2054,10 @@ fn head_rung_gate(
                 facts.owned = patch.owner.is_none_or(|owner| owner == faction);
             }
             if rung.places_source {
-                let fresh_water = tile_is_fresh_watered(
-                    ground,
-                    tile_registry.width,
-                    tile_registry.height,
-                    wrap_horizontal,
-                    |coord| {
-                        tile_registry
-                            .index(coord.x, coord.y)
-                            .and_then(|entity| tiles.get(entity).ok())
-                            .map(|neighbor| neighbor.terrain_tags)
-                    },
-                );
+                let fresh_water =
+                    tile_is_fresh_watered(ground, grid.0, grid.1, wrap_horizontal, |coord| {
+                        ground_of(coord).map(|neighbor| neighbor.terrain_tags)
+                    });
                 facts.land_admits = rung_site_refusal(
                     rung,
                     ground,
@@ -2071,12 +2112,10 @@ fn head_rung_gate(
             rung_build_gate(rung, &facts)
         }
         (BuildSource::Deposit { tile, material }, LaborTarget::Extract { .. }) => {
-            let Some(ground) = tile_registry
-                .index(tile.x, tile.y)
-                .and_then(|entity| tiles.get(entity).ok())
-            else {
+            let Some(ground) = ground_of(*tile) else {
                 return BuildGate::Unworked;
             };
+            let ground = &ground;
             if kind != Some(SourceKind::Deposit) {
                 // A rung another branch owns can never stand on a deposit — a dead entry.
                 return BuildGate::Undeclared;
@@ -2092,7 +2131,7 @@ fn head_rung_gate(
                 knowledge_threshold,
             )
         }
-        // A queue entry always names a Forage tile, a Hunt herd or an Extract deposit; a band-wide
+        // A declared build always names a Forage tile, a Hunt herd or an Extract deposit; a band-wide
         // role holds none of the three.
         _ => BuildGate::Unworked,
     }
@@ -2405,7 +2444,7 @@ struct KeepingClaim {
     /// [`ToeFill`] beside the hands that hold them.
     ///
     /// ⛔ **THE SITE'S OWN RUNG, NEVER A DESTINATION.** A keeper is holding what is there; nothing
-    /// about a queued build changes what this turn's keeping is worth, so a Field being widened is
+    /// about a declared build changes what this turn's keeping is worth, so a Field being widened is
     /// kept exactly as a Field.
     rung: Option<crate::intensification::RungId>,
     invested: f32,
@@ -2627,10 +2666,7 @@ fn site_keeping_claims(
                         format!("band:{:020}:{branch}", band.0),
                     )
                 }),
-            LaborTarget::Scout
-            | LaborTarget::Warrior
-            | LaborTarget::Roadwork
-            | LaborTarget::Builders => None,
+            LaborTarget::Scout | LaborTarget::Warrior | LaborTarget::Roadwork => None,
         };
         let Some((branch, rung, demand, invested, tiebreak)) = site else {
             continue;
@@ -3121,8 +3157,8 @@ fn band_banking(
     flora: &crate::flora_config::FloraConfig,
     extraction: &crate::extraction_config::ExtractionConfig,
     food_sites: &FoodSiteRegistry,
-    tile_registry: &TileRegistry,
-    tiles: &Query<&Tile>,
+    ground_of: &dyn Fn(UVec2) -> Option<Tile>,
+    grid: (u32, u32),
     map_seed: u64,
     wrap_horizontal: bool,
     belief: &BeliefRegistry,
@@ -3146,13 +3182,169 @@ fn band_banking(
             flora,
             extraction,
             food_sites,
-            tile_registry,
-            tiles,
+            ground_of,
+            grid,
             map_seed,
             wrap_horizontal,
             belief,
         )
     })
+}
+
+/// **EVERYTHING "CAN THIS DECLARED BUILD PROGRESS" IS JUDGED AGAINST** — the world as the turn and a
+/// command both read it, bundled so staffing can ask the same question from either
+/// ([`declared_build_can_progress`]).
+pub(crate) struct BuildProgressContext<'a> {
+    pub sources: &'a crate::take_claims::ClaimSources<'a>,
+    pub roads: &'a crate::routes::RoadRegistry,
+    pub tile_improvements: &'a crate::tile_improvement::TileImprovementRegistry,
+    pub band_id: Option<BandId>,
+    pub faction: FactionId,
+    pub discovery: &'a DiscoveryProgressLedger,
+    pub knowledge_threshold: f32,
+    pub food_sites: &'a FoodSiteRegistry,
+    /// The map's `(width, height)`.
+    pub grid: (u32, u32),
+    pub wrap_horizontal: bool,
+    /// The band's stores — a build whose rung eats a material the store has none of cannot bank.
+    pub stores: &'a LocalStore,
+    /// What stands on each tile - a `min_belief` rung's site is judged against it.
+    pub belief: &'a BeliefRegistry,
+}
+
+/// **THE RUNG A DECLARED BUILD IS WORKING THIS TURN** — the first leg it still has to lay, which is
+/// what its builders' cap, tools, material pile and wear are all resolved at. A ring is fencing on the
+/// pen rung; a commitment works at the rung it was stamped with. A declaration whose legs are all laid
+/// answers its destination.
+pub(crate) fn build_rung_in_flight(
+    declaration: &BuildDeclaration,
+    forage_registry: &ForageRegistry,
+    herds: &HerdRegistry,
+    roads: &crate::routes::RoadRegistry,
+    tile_improvements: &crate::tile_improvement::TileImprovementRegistry,
+    deposits: &crate::extraction::DepositRegistry,
+    ladder: &LadderConfig,
+) -> RungId {
+    match declaration.declared {
+        BuildJob::Climb(destination) => head_build_legs(
+            &declaration.source,
+            destination,
+            forage_registry,
+            herds,
+            roads,
+            tile_improvements,
+            deposits,
+            ladder,
+        )
+        .first()
+        .map_or(destination, |(rung, _, _)| *rung),
+        BuildJob::ExtendPen => declaration.declared.destination(ladder),
+        BuildJob::SetHerdOutput(rung) => rung,
+    }
+}
+
+/// **CAN THIS DECLARED BUILD MAKE PROGRESS THIS TURN?** — the question staffing asks before it gives a
+/// build a builder (*"a build that cannot progress gets no builders"*): the declared job is not
+/// already standing, the rung's own gate holds, and the store holds something of each material the
+/// rung in flight eats. A ring asks the pen's `pen_extending` flag and a commitment its in-flight
+/// target.
+pub(crate) fn declared_build_can_progress(
+    context: &BuildProgressContext<'_>,
+    allocation: &LaborAllocation,
+    declaration: &BuildDeclaration,
+) -> bool {
+    let sources = context.sources;
+    if entry_job_already_built(
+        declaration,
+        sources.forage,
+        sources.herds,
+        context.roads,
+        context.tile_improvements,
+        sources.deposits,
+        sources.ladder,
+    ) {
+        return false;
+    }
+    let gate_holds = match declaration.declared {
+        BuildJob::Climb(rung) => head_rung_gate(
+            &declaration.source,
+            rung,
+            allocation,
+            sources.forage,
+            sources.herds,
+            context.roads,
+            context.tile_improvements,
+            context.band_id,
+            context.faction,
+            context.discovery,
+            context.knowledge_threshold,
+            sources.ladder,
+            sources.fauna,
+            sources.labor,
+            sources.flora,
+            sources.extraction,
+            context.food_sites,
+            sources.ground_of,
+            context.grid,
+            sources.map_seed,
+            context.wrap_horizontal,
+            context.belief,
+        )
+        .holds(),
+        // A ring and a commitment name no rung gate: their own flags are their whole gate, and
+        // `entry_job_already_built` above has already refused a finished one.
+        BuildJob::ExtendPen | BuildJob::SetHerdOutput(_) => true,
+    };
+    if !gate_holds {
+        return false;
+    }
+    !build_is_stalled_on_materials(
+        declaration,
+        sources.forage,
+        sources.herds,
+        context.roads,
+        context.tile_improvements,
+        sources.deposits,
+        sources.ladder,
+        context.stores,
+    )
+}
+
+/// **A BUILD THAT CANNOT DRAW A SINGLE UNIT OF WHAT ITS RUNG IN FLIGHT EATS IS STALLED**, and a stalled
+/// build holds no builders. Asked of the first leg only: the rung being worked is the one that draws.
+#[allow(clippy::too_many_arguments)] // one declaration, every registry its legs resolve against, the store
+fn build_is_stalled_on_materials(
+    declaration: &BuildDeclaration,
+    forage_registry: &ForageRegistry,
+    herds: &HerdRegistry,
+    roads: &crate::routes::RoadRegistry,
+    tile_improvements: &crate::tile_improvement::TileImprovementRegistry,
+    deposits: &crate::extraction::DepositRegistry,
+    ladder: &LadderConfig,
+    stores: &LocalStore,
+) -> bool {
+    let legs = match declaration.declared {
+        BuildJob::Climb(destination) => head_build_legs(
+            &declaration.source,
+            destination,
+            forage_registry,
+            herds,
+            roads,
+            tile_improvements,
+            deposits,
+            ladder,
+        ),
+        BuildJob::ExtendPen => head_ring_leg(&declaration.source, herds, ladder)
+            .into_iter()
+            .collect(),
+        BuildJob::SetHerdOutput(_) => Vec::new(),
+    };
+    let in_flight = &legs[..legs.len().min(1)];
+    build_material_wants(in_flight, f32::INFINITY, ladder)
+        .keys()
+        .any(|id| {
+            stores.material_total(id.as_str()).to_f32() <= crate::components::MATERIAL_DUST_UNITS
+        })
 }
 
 /// **IS ANYTHING COMING FOR THIS BAND** — [`ShedFacts::threatened`], and **the same trigger
@@ -3361,10 +3553,9 @@ fn resolve_shed_facts(
                 }),
             // A band-wide role stands on no ground, so it carries neither a lesson nor a meter. No
             // step of the order asks these of a role row; the entry exists to hold the alignment.
-            LaborTarget::Scout
-            | LaborTarget::Warrior
-            | LaborTarget::Roadwork
-            | LaborTarget::Builders => SourceShedFacts::default(),
+            LaborTarget::Scout | LaborTarget::Warrior | LaborTarget::Roadwork => {
+                SourceShedFacts::default()
+            }
         })
         .collect();
     ShedFacts {
@@ -3979,7 +4170,7 @@ impl ToolClaimStage {
     pub const SERVED_FIRST_TO_LAST: [ToolClaimStage; 2] =
         [ToolClaimStage::Keeping, ToolClaimStage::Building];
 
-    /// **The stage of a pool's claim** — building is the builders' pool and nothing else; every
+    /// **The stage of a pool's claim** — building is the build crew and nothing else; every
     /// standing pool is keeping something.
     pub fn of_pool(pool: crate::equipment_config::KitJob) -> Self {
         if pool == crate::equipment_config::KitJob::Builders {
@@ -4973,7 +5164,7 @@ fn settle_pen_hay(
 /// assignment loop and merely applied inside it (`docs/plan_standing_upkeep.md` §2.7).
 ///
 /// **Both accounts bid on ONE store in ONE call**, per material id: every source's upkeep rate, and
-/// the pile the head queue entry wants for the work its builders are about to bank. They are settled
+/// the pile the head declared build wants for the work its builders are about to bank. They are settled
 /// together because they are the same scarcity — a band mending fences and raising a new pen out of
 /// one pile of hurdles is choosing between them, and two settlements would let the earlier one eat
 /// the store before the later one saw it.
@@ -4981,8 +5172,9 @@ struct MaterialSettlement {
     /// **Index-aligned with `assignments`** — the same convention `upkeep_shares` and `last_yields`
     /// follow, so an arm reads its own row by the index it is already iterating on.
     upkeep: Vec<MaterialUpkeepShare>,
-    /// The head entry's own draw. [`BuildMaterialDraw::coverage`] is what the arms scale by.
-    build: BuildMaterialDraw,
+    /// **Every declared build's own draw**, index-aligned with the plans the settlement was handed.
+    /// [`BuildMaterialDraw::coverage`] is what the arms scale by.
+    builds: Vec<BuildMaterialDraw>,
 }
 
 /// One source's material keeping for the turn: the bill it was handed, and what the store paid.
@@ -5062,8 +5254,7 @@ fn settle_material_upkeep(
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
     stores: &LocalStore,
-    build: BuildMaterialDraw,
-    build_priority: SourcePriority,
+    builds: Vec<(BuildMaterialDraw, SourcePriority)>,
     reach: BandReach,
 ) -> MaterialSettlement {
     let mut upkeep: Vec<MaterialUpkeepShare> =
@@ -5100,13 +5291,13 @@ fn settle_material_upkeep(
     let ids: BTreeSet<String> = upkeep
         .iter()
         .flat_map(|share| share.demanded.keys())
-        .chain(build.wanted.keys())
+        .chain(builds.iter().flat_map(|(draw, _)| draw.wanted.keys()))
         .cloned()
         .collect();
-    // **The build's coverage is the WORST of its materials**, so a store rich in one good and empty
+    // **A build's coverage is the WORST of its materials**, so a store rich in one good and empty
     // of another stalls the build at the empty one's rate. Folded across the ids below; `FULLY_SERVED`
     // is the identity a build declaring nothing keeps.
-    let mut coverage = FULLY_SERVED;
+    let mut coverages = vec![FULLY_SERVED; builds.len()];
     for id in &ids {
         // The claim vector: every source's upkeep in assignment order, then the build's, so the
         // settled vector splits back on the same index.
@@ -5124,12 +5315,18 @@ fn settle_material_upkeep(
                 )
             })
             .collect();
-        let wanted = build
-            .wanted
-            .get(id.as_str())
-            .copied()
-            .unwrap_or(NOTHING_DEMANDED);
-        claims.push((build_priority, wanted));
+        let wanted_by_build: Vec<f32> = builds
+            .iter()
+            .map(|(draw, _)| {
+                draw.wanted
+                    .get(id.as_str())
+                    .copied()
+                    .unwrap_or(NOTHING_DEMANDED)
+            })
+            .collect();
+        for ((_, priority), wanted) in builds.iter().zip(&wanted_by_build) {
+            claims.push((*priority, *wanted));
+        }
         let settled =
             settle_scarce_material_store(&claims, stores.material_total(id.as_str()).to_f32());
         for (index, share) in upkeep.iter_mut().enumerate() {
@@ -5137,17 +5334,23 @@ fn settle_material_upkeep(
                 share.settled.insert(id.clone(), settled[index]);
             }
         }
-        if wanted > NOTHING_DEMANDED {
-            let paid = settled[assignments.len()];
-            coverage = coverage.min(paid / wanted);
+        for (position, wanted) in wanted_by_build.iter().enumerate() {
+            if *wanted > NOTHING_DEMANDED {
+                let paid = settled[assignments.len() + position];
+                coverages[position] = coverages[position].min(paid / wanted);
+            }
         }
     }
     MaterialSettlement {
         upkeep,
-        build: BuildMaterialDraw {
-            coverage: coverage.clamp(NOTHING_DEMANDED, FULLY_SERVED),
-            wanted: build.wanted,
-        },
+        builds: builds
+            .into_iter()
+            .zip(coverages)
+            .map(|((draw, _), coverage)| BuildMaterialDraw {
+                coverage: coverage.clamp(NOTHING_DEMANDED, FULLY_SERVED),
+                wanted: draw.wanted,
+            })
+            .collect(),
     }
 }
 
@@ -5157,7 +5360,7 @@ fn settle_material_upkeep(
 ///
 /// `legs` are the entry's own legs in climb order, each carrying the rung, what it still **owes**
 /// from the source's position, and its **full span width** on this source's price list. A turn's
-/// accrual is walked across them — a queue entry can span two, and **each leg draws its own rung's
+/// accrual is walked across them — a declared build can span two, and **each leg draws its own rung's
 /// pile** at `pile × (accrual_in_this_leg / width)`.
 ///
 /// **The owed cap is what makes the completing turn honest**: a leg one work unit from full draws a
@@ -5311,13 +5514,13 @@ fn head_build_legs(
     legs
 }
 
-/// **THE ONE LEG A HEAD *RING* LAYS** — [`head_build_legs`]' twin for the queue entry that widens a
+/// **THE ONE LEG A HEAD *RING* LAYS** — [`head_build_legs`]' twin for the declared build that widens a
 /// pen instead of climbing a rung, in the same `(rung, owed, width)` shape and for the same reader.
 ///
 /// # A RING IS A PEN BUILD, AND THE MATERIAL ACCOUNT IS WHERE THAT WAS LAST UNTRUE
 ///
 /// Widening a fence is the same fencing labour on the same `animal:pen` record: the ring is priced at
-/// that rung's [`RungDef::build_cost`], raised by the same builders pool, and wears the same keepers'
+/// that rung's [`RungDef::build_cost`], raised by the same build crew, and wears the same keepers'
 /// tools. **So it eats the same pile.** It was materially free for exactly one turn of this arc's
 /// life, because [`SourceBankingFirstWork`] answers a *verb* question and a ring names no verb — so
 /// nothing bid for it and it was quoted at [`FULLY_SERVED`].
@@ -5350,13 +5553,13 @@ fn head_ring_leg(
     (owed > NOTHING_DEMANDED).then_some((pen.rung_id(), owed, width))
 }
 
-/// **THE GOODS A QUEUED BUILD STILL HAS TO DRAW, PER MATERIAL** - the entry's pile times the share of
+/// **THE GOODS A DECLARED BUILD STILL HAS TO DRAW, PER MATERIAL** - the entry's pile times the share of
 /// its climb left (`pile x owed / width` per leg, the same legs and draw the settlement uses), so a
 /// pen 64% built owes 36% of its hurdles. A source this cannot lay legs for (a road or a tile
 /// improvement, whose registries the capture does not hold) is quoted its whole pile - the honest
 /// over-estimate - and a job that eats nothing (`set_herd_output`) owes nothing.
 pub(crate) fn remaining_build_materials(
-    entry: &BuildQueueEntry,
+    entry: &BuildDeclaration,
     forage_registry: &ForageRegistry,
     registry: &HerdRegistry,
     deposits: &crate::extraction::DepositRegistry,
@@ -5673,6 +5876,7 @@ fn restore_muster(
 /// component existed) may carry none of them, and an absent component reads as *nothing there* —
 /// no id to link a feed line to, no gear, no bench holding anybody.
 type LaborBandParts = (
+    Entity,
     &'static mut PopulationCohort,
     &'static mut LaborAllocation,
     Option<&'static mut BandEquipment>,
@@ -5925,10 +6129,32 @@ pub fn advance_labor_allocation(
 
     // **EVERY BAND'S CREW ON EVERY SOURCE, READ ONCE BEFORE ANY BAND IS PAID** — the denominator a
     // source's keeping bill is shared by when several bands work it ([`SiteCrews`]).
-    let mut site_crews = SiteCrews::of(cohorts.iter().map(|parts| parts.1));
-    for (mut cohort, mut allocation, mut band_equipment, band_id, mut bench, mut band_leadership) in
-        cohorts.iter_mut()
-    {
+    let mut site_crews = SiteCrews::of(cohorts.iter().map(|parts| parts.2));
+    // **BANDS ARE STAFFED IN BAND-ID ORDER**, never the query's: a tile's `tile_worker_cap` is shared
+    // by the bands working it and a later band sees only the room earlier ones left, so the order is
+    // a rule of the game. A query's order follows entity layout, which a rollback's respawn does not
+    // reproduce — and the replay would then divide a contested tile differently.
+    let mut band_order: Vec<(u64, Entity)> = cohorts
+        .iter()
+        .map(|parts| (parts.4.map_or(u64::MAX, |id| id.0), parts.0))
+        .collect();
+    band_order.sort_unstable();
+    // **THE HANDS THE BANDS STAFFED EARLIER THIS TURN HOLD ON EACH TILE** — what a later band's tile
+    // room is cut by.
+    let mut tile_load: BTreeMap<crate::staffing::TileKey, u32> = BTreeMap::new();
+    for (_, band_entity) in band_order {
+        let Ok((
+            _,
+            mut cohort,
+            mut allocation,
+            mut band_equipment,
+            band_id,
+            mut bench,
+            mut band_leadership,
+        )) = cohorts.get_mut(band_entity)
+        else {
+            continue;
+        };
         // **WHOSE WORK BOARD THIS TURN'S LOSSES BELONG TO** — the `band=` token appended to every
         // line below that reports a row the band did not ask to lose. Copied out of the query up
         // front because the announcements are written from several arms of the loop.
@@ -6000,8 +6226,13 @@ pub fn advance_labor_allocation(
             &flora,
             &extraction_cfg,
             &food_sites,
-            &tile_registry,
-            &tiles,
+            &|pos: UVec2| {
+                tile_registry
+                    .index(pos.x, pos.y)
+                    .and_then(|entity| tiles.get(entity).ok())
+                    .cloned()
+            },
+            (grid_width, grid_height),
             map_seed,
             wrap_horizontal,
             &belief,
@@ -6103,7 +6334,7 @@ pub fn advance_labor_allocation(
         // shedding order ([`ShedStep`]) when the band no longer has the people, and it used to do so
         // in total silence — the one place in the labor system that gave up work without saying so,
         // while the out-of-range lapse a hundred lines below has always pushed a feed entry. A row
-        // destroyed outright can cost a 25-turn build commitment (the queue entry goes with it on
+        // destroyed outright can cost a 25-turn build commitment (the declared build goes with it on
         // the prune below); a row merely cut is the crew the player set moving on its own. Neither
         // may happen quietly.
         // **A ROW THE SHED DROPS TAKES ITS PARTY WITH IT** — its hands are people the band no
@@ -6139,6 +6370,9 @@ pub fn advance_labor_allocation(
         {
             row.workers = NO_CREW_ON_THIS_ACTIVITY;
         }
+        // The builders are the sim's to place too: they stand at zero for the shed and are restaffed
+        // below with the rows.
+        allocation.build_crews.clear();
         let hand_set_before =
             allocation.assigned_total() + bench_hands(&bench) + allocation.walking_home();
         for shed in allocation.normalize(bench.as_deref_mut(), available, shed_facts) {
@@ -6161,6 +6395,13 @@ pub fn advance_labor_allocation(
             }
             announce_shed_crew(&mut event_log, tick.0, faction, band_id, &shed);
         }
+        // **A DECLARATION REQUIRES A HOLDING** (`docs/plan_standing_upkeep.md` §3.2): the declared builds
+        // are pruned of anything the band no longer works before a single builder is placed, so no seam
+        // that drops a row can leave builders on ground nobody stands on. A ring whose declaration goes
+        // here stops with it ([`fauna::cancel_dropped_rings`]).
+        let pruned_entries =
+            allocation.prune_builds(&|tile| band_keeps_road(&roads, band_id, tile));
+        fauna::cancel_dropped_rings(&mut registry, &pruned_entries);
         // ## ⛔ THE SIM STAFFS EVERY STAFFED ROW FROM THE PLAYER'S FLOOR (#871)
         //
         // After the shed and before the muster: the pool is the working people less the bench, the
@@ -6199,6 +6440,23 @@ pub fn advance_labor_allocation(
                 drives_known,
                 start: fauna::ProjectionStart::AfterRegrowth,
             };
+            let progress_context = BuildProgressContext {
+                sources: &staff_sources,
+                roads: &roads,
+                tile_improvements: &tile_improvements,
+                band_id,
+                faction,
+                discovery: &discovery,
+                knowledge_threshold,
+                food_sites: &food_sites,
+                grid: (grid_width, grid_height),
+                wrap_horizontal,
+                stores: &cohort.stores,
+                belief: &belief,
+            };
+            let can_progress = |declaration: &BuildDeclaration| {
+                declared_build_can_progress(&progress_context, &allocation, declaration)
+            };
             let staffing_world = crate::staffing::StaffingWorld {
                 sources: &staff_sources,
                 tile_improvements: &tile_improvements,
@@ -6209,6 +6467,8 @@ pub fn advance_labor_allocation(
                     grid_width,
                     wrap_horizontal,
                 }),
+                tile_hands_elsewhere: &tile_load,
+                build_can_progress: &can_progress,
             };
             let pool = crate::staffing::staffable_pool(
                 &allocation,
@@ -6232,8 +6492,13 @@ pub fn advance_labor_allocation(
                 bench_hands(&bench),
                 lost_to_staffed,
             );
-            allocation.apply_staffing(staffed, lost_to_staffed);
+            allocation.apply_staffing(staffed.rows, lost_to_staffed);
+            allocation.apply_build_crews(staffed.builds);
             site_crews.restate(&hands_before, &staffed_hands_by_source(&allocation));
+        }
+        // This band's placements are now part of what the bands after it see on each tile.
+        for (tile, hands) in crate::staffing::tile_hands_of(&allocation, &registry) {
+            *tile_load.entry(tile).or_insert(NO_CREW_ON_THIS_ACTIVITY) += hands;
         }
         // ## ⛔ HUNTING BY NEED — THE CREW IS MUSTERED HERE, AND HANDED BACK AFTER THE ROW WALK
         //
@@ -6326,9 +6591,8 @@ pub fn advance_labor_allocation(
         // the shed's `continue`s and rewritten below from the plan this turn actually settled, so a
         // band that loses its last worker stops publishing a TOE for sites it no longer holds.
         allocation.last_pool_toe.clear();
-        allocation.last_pool_toe_head = None;
-        // **AND THE QUEUED BUILDS' TOOLS**, on the same rule.
-        allocation.last_queued_build_toe.clear();
+        // **AND THE BUILDS' TOOLS**, on the same rule.
+        allocation.last_build_toe.clear();
         // **AND THE SITE CREWS' KEEPING ISSUES**, on the same rule: the take crews' item budget is
         // struck less them, and a band that sheds its last hand holds no site to issue to.
         allocation.last_keeping_issued.clear();
@@ -6336,26 +6600,11 @@ pub fn advance_labor_allocation(
         // loses its last worker stops publishing keepers it no longer has. The Roadwork seat below
         // stamps its line back.
         allocation.last_pool_crew.clear();
-        // **AN ENTRY REQUIRES A ROW** (`docs/plan_standing_upkeep.md` §3.2 of the slice brief): the
-        // queue is pruned of anything the band no longer works before a single work unit is aimed,
-        // so no seam that drops a row can leave the pool funding ground nobody stands on. A ring
-        // whose entry goes here stops with it ([`fauna::cancel_dropped_rings`]).
-        //
-        // ⛔ **IT RUNS BEFORE THE HEAD IS READ, NOT AFTER.** Everything below reads
-        // `build_queue.first()` — the claim side's verb term, the builders' bid on the band's tools,
-        // the material pile — so a prune underneath them would let a pool claim tools and a pile for
-        // an entry the same turn drops.
-        let pruned_entries =
-            allocation.prune_build_queue(&|tile| band_keeps_road(&roads, band_id, tile));
-        fauna::cancel_dropped_rings(&mut registry, &pruned_entries);
-        // **THE FUNDED HEAD, AND ONLY IF ITS OWN GATE HOLDS** — the claim side's verb term
-        // ([`SourceBankingFirstWork`]). A head the ground refuses banks nothing however long it
+        // **EVERY DECLARED BUILD WHOSE GATE HOLDS** — the claim side's verb term
+        // ([`SourceBankingFirstWork`]). A build the ground refuses banks nothing however long it
         // stands there, so letting it claim would dilute the share of everything the band really
-        // holds under the default `Spread`.
-        //
-        // **Re-struck against what SURVIVED the shed**, unlike the pre-shed reading the shedding
-        // order was handed: a band whose builders row was emptied above funds no head at all, and
-        // the split must not fund one it no longer has the hands to bank.
+        // holds under the default `Spread`. Struck against what survived the shed and the staffing:
+        // a build with no builders funds nothing.
         let banking = band_banking(
             &allocation,
             &forage_registry,
@@ -6372,68 +6621,75 @@ pub fn advance_labor_allocation(
             &flora,
             &extraction_cfg,
             &food_sites,
-            &tile_registry,
-            &tiles,
+            &|pos: UVec2| {
+                tile_registry
+                    .index(pos.x, pos.y)
+                    .and_then(|entity| tiles.get(entity).ok())
+                    .cloned()
+            },
+            (grid_width, grid_height),
             map_seed,
             wrap_horizontal,
             &belief,
         );
-        // **THE BAND'S BUILDERS** — one pool, whose whole output goes on the **head** of the queue
-        // until that entry's meter fills, then on the next (§2.5). It is not a crew on any tile: a
-        // verb declares, and the hands are here.
-        let builders = allocation.workers_on(&LaborTarget::Builders);
-        // **THE HEAD STAYS THE HEAD EVEN WHEN ITS GATE REFUSES.** It is not skipped, not reordered
-        // and not passed over — a stuck head says so loudly (`crate::intensification::BuildTurns::Blocked`) rather than
-        // letting the queue quietly fund something the player did not put first.
-        let head_entry = allocation.build_queue.first().cloned();
-        // The queue as it stands for this turn, read inside the assignment loop (which borrows the
-        // allocation's assignments) and walked again by the chain pass after it.
-        let build_queue = allocation.build_queue.clone();
-        // **THE LEGS THE HEAD STILL HAS TO LAY** — the rung in flight is the first of them, and it
-        // is what the builders' tools, the material pile and the wear are all resolved at.
-        //
-        // **AND THE HEAD MAY BE A RING**, which is why the two arms meet in one pair. A ring is a pen
-        // build — the same rung record prices it, funds it and wears the same tools on it — so it
-        // draws the same pile, laid as [`head_ring_leg`]. `banking` cannot answer for it (it
-        // resolves a *verb*, and a ring names none), so the ring's own gate is asked here instead:
-        // the head entry declares `ExtendPen`, the band has builders, and `Herd::pen_extending` is
-        // set.
-        let (pile_source, pile_legs) = match banking.source.as_ref() {
-            Some((source, declared_rung)) => (
-                Some(source.clone()),
-                head_build_legs(
-                    source,
-                    *declared_rung,
-                    &forage_registry,
-                    &registry,
-                    &roads,
-                    &tile_improvements,
-                    &deposits,
-                    &ladder,
-                ),
-            ),
-            None => match head_entry.as_ref().filter(|entry| {
-                matches!(entry.declared, BuildJob::ExtendPen) && builders > NO_CREW_ON_THIS_ACTIVITY
-            }) {
-                Some(entry) => (
-                    Some(entry.source.clone()),
-                    head_ring_leg(&entry.source, &registry, &ladder)
+        // The declarations as they stand for this turn, read inside the assignment loop (which
+        // borrows the allocation's assignments) and walked again by the chain pass after it.
+        let builds = allocation.builds.clone();
+        // **EVERY DECLARED BUILD IS WORKED THIS TURN BY ITS OWN CREW** — in parallel with the others.
+        // The legs it still has to lay: the rung in flight is the first of them, and it is what the
+        // builders' tools, the material pile and the wear are all resolved at. **A ring is a pen
+        // build** — the same rung record prices it, funds it and wears the same tools — so it draws
+        // the same pile, laid as [`head_ring_leg`]; `banking` cannot answer for it (it resolves a
+        // *verb*, and a ring names none), so the ring's own gate is asked here instead: it has
+        // builders and `Herd::pen_extending` is set.
+        let build_plans: Vec<BuildPlan> = allocation
+            .builds
+            .iter()
+            .map(|declaration| {
+                let crew = allocation
+                    .build_crew(&declaration.source)
+                    .unwrap_or_default();
+                let staffed = crew.total() > NO_CREW_ON_THIS_ACTIVITY;
+                let legs = match declaration.declared {
+                    BuildJob::Climb(_) => banking
+                        .rung_of(&declaration.source)
+                        .filter(|_| staffed)
+                        .map(|declared_rung| {
+                            head_build_legs(
+                                &declaration.source,
+                                declared_rung,
+                                &forage_registry,
+                                &registry,
+                                &roads,
+                                &tile_improvements,
+                                &deposits,
+                                &ladder,
+                            )
+                        })
+                        .unwrap_or_default(),
+                    BuildJob::ExtendPen => head_ring_leg(&declaration.source, &registry, &ladder)
+                        .filter(|_| staffed)
                         .into_iter()
                         .collect(),
-                ),
-                None => (None, Vec::new()),
-            },
-        };
-        // **The rung the pool is standing on this turn is the FIRST LEG** — the legs are in climb
-        // order and each carries what it still owes, so the head of the list is the one this turn's
-        // work lands in. It is the same rung the arms below charge the wear against.
-        let head_in_flight = pile_legs.first().map(|(rung, _, _)| *rung);
-        // **THE HEAD ENTRY'S OWN BUILD MARK** (`docs/plan_site_crews.md` §2.4) — the rank the build
-        // competes for the band's stores **and its tools** at, a ring's included. It is the entry's
-        // and never its site row's: the row's `Priority` ranks that site's crew.
-        let build_priority = head_entry
-            .as_ref()
-            .map_or_else(SourcePriority::default, |entry| entry.priority);
+                    BuildJob::SetHerdOutput(_) => Vec::new(),
+                };
+                let funded = match declaration.declared {
+                    BuildJob::Climb(_) => banking.rung_of(&declaration.source).is_some() && staffed,
+                    BuildJob::ExtendPen => !legs.is_empty(),
+                    BuildJob::SetHerdOutput(_) => false,
+                };
+                BuildPlan {
+                    declaration: declaration.clone(),
+                    crew,
+                    legs,
+                    funded,
+                    priority: crate::staffing::build_site_priority(
+                        &allocation,
+                        &declaration.source,
+                    ),
+                }
+            })
+            .collect();
         // **WHAT THIS BAND'S SITES OWE THEIR OWN CREWS**, struck against what survived the shed —
         // the list the tool plan claims from and the keeping below is resolved off, in its order.
         let site_claims = site_keeping_claims(
@@ -6479,32 +6735,30 @@ pub fn advance_labor_allocation(
                 &road_claims_funded,
                 allocation.workers_on(&LaborTarget::Roadwork),
             ),
-            // **The builders bid for the HEAD and nothing else** (§2.4): entries behind it are dated,
-            // not worked, and claim nothing. A pool with nobody on it has no tool out either.
-            pile_source
-                .as_ref()
-                .filter(|_| builders > NO_CREW_ON_THIS_ACTIVITY)
-                .and_then(|source| {
-                    Some(BuildersAsk {
-                        branch: source_branch(&ladder, source, head_in_flight)?,
-                        rung: head_in_flight.map(|rung| rung.wire_key()),
-                        builders,
-                        priority: build_priority,
+            // **Every funded build bids for exactly the builders staffing armed**: a build with nobody
+            // armed claims nothing, and a build that banks nothing this turn holds no tool out.
+            &build_plans
+                .iter()
+                .filter(|plan| plan.funded && plan.crew.total() > NO_CREW_ON_THIS_ACTIVITY)
+                .filter_map(|plan| {
+                    let in_flight = plan.in_flight();
+                    Some(BuildAsk {
+                        source: plan.declaration.source.clone(),
+                        branch: source_branch(&ladder, &plan.declaration.source, in_flight)?,
+                        rung: in_flight.map(|rung| rung.wire_key()),
+                        armed: plan.crew.kitted,
+                        builders: plan.crew.total(),
+                        priority: plan.priority,
                     })
-                }),
+                })
+                .collect::<Vec<_>>(),
         );
         // **AND THE PLAN IS WHAT THE WIRE STATES** (`docs/plan_pool_toe.md` §4). Published from the
         // settled plan rather than re-derived at capture: the capture holds no claim lists, and a
         // second derivation there would be free to disagree with the tools these hands actually
         // worked with.
         allocation.last_pool_toe = pool_tools.toe_lines();
-        // **STAMPED WITH THE ENTRY THE BUILDERS' CLAIM WAS STRUCK FOR**, so the capture can withhold
-        // the builders' lines once that entry is no longer the queue head.
-        allocation.last_pool_toe_head = pile_source
-            .as_ref()
-            .filter(|_| builders > NO_CREW_ON_THIS_ACTIVITY)
-            .and(head_entry.as_ref())
-            .map(|entry| (entry.source.clone(), entry.declared));
+        allocation.last_build_toe = pool_tools.build_toe_lines();
         allocation.last_keeping_issued = pool_tools.keeping_issued(&site_asks, &allocation);
         // ## ⛔ THE ROADS THIS BAND KEEPS, PAID HERE — AFTER THE SHED AND BEFORE THE QUOTE
         //
@@ -6544,7 +6798,9 @@ pub fn advance_labor_allocation(
             &pool_tools.sites,
             allocation.assignments.len(),
         );
-        if allocation.assignments.is_empty() {
+        // A band with nothing declared has nothing to staff or settle; a road build needs no row
+        // (its keeper is the road's), so a declaration alone keeps the pass going.
+        if allocation.assignments.is_empty() && allocation.builds.is_empty() {
             continue;
         }
         let Ok(band_pos) = tiles.get(cohort.current_tile).map(|tile| tile.position) else {
@@ -6572,7 +6828,7 @@ pub fn advance_labor_allocation(
         // these indices are still the ones this loop saw.
         let mut repaired_takes: Vec<(usize, TakeSelection)> = Vec::new();
         // **Builds that COMPLETED this turn** — the source has climbed its rung, so there is
-        // nothing left to raise and its **queue entry retires** after the loop, handing the pool to
+        // nothing left to raise and its **declared build retires** after the loop, handing the pool to
         // whatever the player put next (`docs/plan_standing_upkeep.md` §2.4: *"at its cost, the
         // entry leaves the queue"*). Collected rather than applied in place because the loop borrows
         // the allocation's assignments immutably.
@@ -6596,7 +6852,7 @@ pub fn advance_labor_allocation(
         // permanently short.
         //
         // **It cannot be stamped inside the per-assignment arm**, unlike the plant web's: the animal
-        // build accrual runs in the build-queue pass *above* that arm, so by the time the arm is
+        // build accrual runs in the build pass *above* that arm, so by the time the arm is
         // reached the position has already moved. Here — between the split and the first accrual —
         // is the one point where the bill and the share describe the same position.
         //
@@ -6624,14 +6880,11 @@ pub fn advance_labor_allocation(
             herd.upkeep_materials_demanded =
                 fauna::herd_upkeep_material_demands(herd, &fauna, &ladder);
         }
-        // **THE BUILDERS' OWN TOOLS, DERIVED PER BUILD FROM THE RUNG IT STANDS ON.** The head's
-        // reading is its **settled** share of the band's tools; everything below it in the queue is
-        // dated at what the band holds. See [`BuildersGear`].
-        let builders_gear =
-            BuildersGear::resolve(&equipment_cfg, builders, &ladder, &band_kit, &pool_tools);
-        // **WHAT EACH SOURCE CONTRIBUTED TO THE CHAIN**, recorded as the loop goes and evaluated in
-        // **queue order** afterwards — the loop visits assignments, and the queue's order is the
-        // player's.
+        // **THE BUILDERS' OWN TOOLS, DERIVED PER BUILD FROM THE RUNG IT STANDS ON.** A declared
+        // build reads its **settled** share of the band's tools. See [`BuildersGear`].
+        let builders_gear = BuildersGear::resolve(&equipment_cfg, &ladder, &band_kit, &pool_tools);
+        // **WHAT EACH SOURCE CONTRIBUTED TO ITS COUNTDOWN**, recorded as the loop goes and dated
+        // afterwards against the build's own crew.
         let mut build_quotes: Vec<(BuildSource, BuildQuote)> = Vec::new();
         // **The band's fodder inflow rate this turn** (Flora Roster F3, §5.3) — the fodder its hay
         // Fields harvest into the `FODDER` store, summed across every Forage assignment. This is the
@@ -6678,24 +6931,35 @@ pub fn advance_labor_allocation(
         // are resolved with the band's tool plan above, off the same `banking` gate the keeping
         // claim reads, so the pool cannot draw a pile for work it will not bank and cannot be armed
         // for a job it is not standing on.
-        let build_want = match pile_source.as_ref() {
-            Some(source) => {
-                // The turn's accrual as the arm will compute it — the whole pool at the tools the
-                // rung in flight wants, which is `RungDef::build_accrual`'s body once its gate has
-                // held, and the ring arm's `pen_extend_accrual` on the same terms.
-                let accrual = crate::intensification::pool_work_supply(
-                    builders,
-                    builders_gear
-                        .for_source(source, head_in_flight)
-                        .work_per_worker,
-                );
-                BuildMaterialDraw {
-                    coverage: FULLY_SERVED,
-                    wanted: build_material_wants(&pile_legs, accrual, &ladder),
-                }
-            }
-            None => BuildMaterialDraw::unbilled(),
-        };
+        let build_wants: Vec<(BuildMaterialDraw, SourcePriority)> = build_plans
+            .iter()
+            .map(|plan| {
+                let draw = match plan.in_flight() {
+                    Some(in_flight) if plan.funded => {
+                        // The turn's accrual as the arm will compute it — this build's crew at the
+                        // tools the rung in flight wants, which is `RungDef::build_accrual`'s body
+                        // once its gate has held, and the ring arm's `pen_extend_accrual` on the same
+                        // terms.
+                        let accrual = crate::intensification::pool_work_supply(
+                            plan.crew.total(),
+                            builders_gear
+                                .for_source(
+                                    &plan.declaration.source,
+                                    Some(in_flight),
+                                    plan.crew.total(),
+                                )
+                                .work_per_worker,
+                        );
+                        BuildMaterialDraw {
+                            coverage: FULLY_SERVED,
+                            wanted: build_material_wants(&plan.legs, accrual, &ladder),
+                        }
+                    }
+                    _ => BuildMaterialDraw::unbilled(),
+                };
+                (draw, plan.priority)
+            })
+            .collect();
         let material_settlement = settle_material_upkeep(
             &allocation.assignments,
             &forage_registry,
@@ -6705,23 +6969,29 @@ pub fn advance_labor_allocation(
             &fauna,
             &ladder,
             &cohort.stores,
-            build_want,
-            build_priority,
+            build_wants,
             band_reach,
         );
-        // **AND THE BUILD'S SHARE IS SPENT HERE, at the coverage the store could pay.** The materials
+        // **AND EACH BUILD'S SHARE IS SPENT HERE, at the coverage the store could pay.** The materials
         // go in as the meter climbs — `coverage` scales the accrual in every build arm below, so the
         // work banked and the pile drawn are one fraction of the same turn. **Decay refunds nothing**:
         // nothing credits this back when a position falls.
-        for (id, wanted) in &material_settlement.build.wanted {
-            let drawn = wanted * material_settlement.build.coverage;
-            if drawn > NOTHING_DEMANDED {
-                cohort
-                    .stores
-                    .take_material_batches(id, crate::scalar::scalar_from_f32(drawn));
+        for draw in &material_settlement.builds {
+            for (id, wanted) in &draw.wanted {
+                let drawn = wanted * draw.coverage;
+                if drawn > NOTHING_DEMANDED {
+                    cohort
+                        .stores
+                        .take_material_batches(id, crate::scalar::scalar_from_f32(drawn));
+                }
             }
         }
-        let build_coverage = material_settlement.build.coverage;
+        // Each declared build's own coverage, which scales its accrual and its countdown.
+        let build_coverages: Vec<(BuildSource, f32)> = build_plans
+            .iter()
+            .zip(&material_settlement.builds)
+            .map(|(plan, draw)| (plan.declaration.source.clone(), draw.coverage))
+            .collect();
         // **THE KIT'S LIFE AS THE TURN FOUND IT** — the before half of the crossing
         // [`announce_kit_life`] reads at the foot of this band's turn. Taken here, ahead of every
         // wear charge, so the pair is one turn's transition and not a level test.
@@ -6878,7 +7148,7 @@ pub fn advance_labor_allocation(
             let build_source = BuildSource::of(&assignment.target);
             let queued = build_source
                 .as_ref()
-                .and_then(|source| build_queue.iter().find(|entry| &entry.source == source));
+                .and_then(|source| builds.iter().find(|entry| &entry.source == source));
             // **The player's DECLARATION, which answers only for a meter at zero.** What is
             // actually being built is **derived from the source's own meters**
             // (`forage::patch_build_verb` / `fauna::herd_build_verb`), because a meter carrying
@@ -6888,34 +7158,40 @@ pub fn advance_labor_allocation(
             // Neither "work on a rung already held" kind names a rung, so neither declares anything
             // here; each is its own arm's own kind.
             let declared = queued.and_then(|entry| entry.declared.climb());
-            // **IS THIS SOURCE THE HEAD?** — the one test that decides where the pool lands. Only
-            // the head receives work; everything below it is dated, not funded.
-            let is_queue_head = match (&build_source, &head_entry) {
-                (Some(source), Some(head)) => &head.source == source,
-                _ => false,
+            // **THE BUILDERS STAFFING PUT ON THIS SOURCE'S BUILD** — its own crew, in parallel with
+            // every other declared build's. `builders` below is therefore *this build's* crew, not a
+            // band-wide pool: the name survives because every arm already prices the build at it.
+            let this_crew = build_source
+                .as_ref()
+                .and_then(|source| allocation.build_crew(source))
+                .unwrap_or_default();
+            let builders = this_crew.total();
+            // **THE CREW A QUOTE IS STRUCK AT**: a declared build's own crew, and for a source with no
+            // declaration the one builder a projection assumes (what the compose sheet asks:
+            // "what would this take if I started it now").
+            let quote_builders = if queued.is_some() {
+                builders
+            } else {
+                A_PROJECTION_ASSUMES_BUILDERS
             };
-            // **ALL HANDS ON THE HEAD** (§2.5). A waiting entry gets `0` and its meter does not
-            // move — its rot is the site crew's business, not the builders'.
-            let build_workers = if is_queue_head && declared.is_some() {
+            // **A DECLARED BUILD IS WORKED EVERY TURN BY ITS OWN CREW.** A declaration that names no
+            // rung (a ring, a commitment) is worked by its own arm below.
+            let build_workers = if declared.is_some() {
                 builders
             } else {
                 NO_CREW_ON_THIS_ACTIVITY
             };
-            // **THE SHARE OF ITS MATERIAL PILE THIS ENTRY WAS SETTLED**
+            // **THE SHARE OF ITS MATERIAL PILE THIS BUILD WAS SETTLED**
             // (`docs/plan_standing_upkeep.md` §2.7), which scales its accrual **and its countdown**:
             // a forecast and a take must not disagree, and an unscaled countdown published *"≈20
-            // turns"* for a build banking a quarter of its turn.
-            //
-            // ⛔ **ONLY THE HEAD HAS ONE.** The settlement struck its want against `banking.source`,
-            // which is the head and only the head; a waiting entry has bid on nothing and its store
-            // draw is not decided until it is funded, so it is quoted at [`FULLY_SERVED`] — the same
-            // convention that quotes every waiting entry at the **full pool**.
-            let entry_material_coverage = if is_queue_head {
-                build_coverage
-            } else {
-                FULLY_SERVED
-            };
-            // **A RUNNING QUOTE DESCRIBES A QUEUE ENTRY** — the ring's rule (`if ring_queued`
+            // turns"* for a build banking a quarter of its turn. Every funded build bid on the store
+            // in the one settlement; a source with no declared build is quoted at [`FULLY_SERVED`].
+            let build_coverage = build_source
+                .as_ref()
+                .and_then(|source| build_coverages.iter().find(|(held, _)| held == source))
+                .map_or(FULLY_SERVED, |(_, coverage)| *coverage);
+            let entry_material_coverage = build_coverage;
+            // **A RUNNING QUOTE DESCRIBES A DECLARED BUILD** — the ring's rule (`if ring_queued`
             // below), stated for the four rung arms too, and the fix for a patch that published
             // `≈1 turn` for ever.
             //
@@ -6950,7 +7226,7 @@ pub fn advance_labor_allocation(
             );
             // The **ring's** own funding, which the head declares as its own queue kind rather than
             // through a rung verb: a built pen carries no meter for a verb to name.
-            let ring_workers = if is_queue_head && ring_queued {
+            let ring_workers = if ring_queued {
                 builders
             } else {
                 NO_CREW_ON_THIS_ACTIVITY
@@ -6963,7 +7239,7 @@ pub fn advance_labor_allocation(
                 queued.map(|entry| entry.declared),
                 Some(BuildJob::SetHerdOutput(_))
             );
-            let recommit_workers = if is_queue_head && recommit_queued {
+            let recommit_workers = if recommit_queued {
                 builders
             } else {
                 NO_CREW_ON_THIS_ACTIVITY
@@ -7133,7 +7409,7 @@ pub fn advance_labor_allocation(
                     // life of a game. Silently: the player emptied it themselves, and the reversion
                     // it may have followed announces itself.
                     //
-                    // **A QUEUE ENTRY IS A HOLDING TOO.** A `Sow` declared on bare ground has no
+                    // **A DECLARED BUILD IS A HOLDING TOO.** A `Sow` declared on bare ground has no
                     // meter yet and may have no gatherers either — that is the create-from-nothing
                     // case the rung exists for — so the row survives on the declaration alone until
                     // the player withdraws it (`unqueue`) or puts the source down (`abandon`).
@@ -7161,7 +7437,8 @@ pub fn advance_labor_allocation(
                     let patch_source = BuildSource::Patch(*tile);
                     let entry_gear = builders_gear.for_source(
                         &patch_source,
-                        queued_destination(&build_queue, &patch_source, &ladder),
+                        queued_destination(&builds, &patch_source, &ladder),
+                        quote_builders,
                     );
                     // The **gather** season is the food module's. A tile with no module offers no
                     // wild gather at all (`NO_FORAGE_SEASON` → zero per-worker throughput), which is
@@ -7937,7 +8214,7 @@ pub fn advance_labor_allocation(
                             tick.0,
                             *tile,
                             build_workers,
-                            builders,
+                            quote_builders,
                             entry_gear.work_per_worker,
                             &ladder,
                             band_equipment.as_deref_mut(),
@@ -7979,7 +8256,7 @@ pub fn advance_labor_allocation(
                     // player is deciding. It is the `penUpkeep` rule applied to turns: **always
                     // meaningful, never `-1`-because-unstarted**.
                     //
-                    // Quoted **at the band's whole builders pool** against the rung the patch would
+                    // Quoted **at the band's whole build crew** against the rung the patch would
                     // climb next — `patch_rung_key(..).above()`, the ladder's own order — and from the
                     // work already banked on **that** rung, so a build the player walked away from
                     // quotes the turns still owed rather than the whole job again. The gates below are
@@ -7988,7 +8265,7 @@ pub fn advance_labor_allocation(
                     // failure mode wearing a turn count.
                     //
                     // **AND IT IS DATED AT THE BACK OF THE LINE.** The chain pass adds everything
-                    // already queued ahead of it, because that is where a newly queued build would
+                    // already queued ahead of it, because that is where a newly declared build would
                     // actually go — quoting it as though it went to the head would over-promise by
                     // the whole queue.
                     if improvement.is_none() {
@@ -8057,7 +8334,7 @@ pub fn advance_labor_allocation(
                                         _ => RUNG_COST_UNSCALED,
                                     },
                                     banked,
-                                    builders,
+                                    quote_builders,
                                     entry_gear.work_per_worker,
                                     gate,
                                     // **The SOURCE's live bleed**, not the quoted rung's rate — a build
@@ -8295,7 +8572,8 @@ pub fn advance_labor_allocation(
                     let herd_source = BuildSource::Herd(fauna_id.clone());
                     let entry_gear = builders_gear.for_source(
                         &herd_source,
-                        queued_destination(&build_queue, &herd_source, &ladder),
+                        queued_destination(&builds, &herd_source, &ladder),
+                        quote_builders,
                     );
                     let Some(herd) = registry.herds.iter_mut().find(|herd| herd.id == *fauna_id)
                     else {
@@ -8572,7 +8850,7 @@ pub fn advance_labor_allocation(
                         // (the aurochs is closest), and that is honest. See `managed_yield_biomass`.
                         // **`workers` is the TAKE crew, and extending the pen does not touch it**
                         // (`docs/plan_standing_upkeep.md` §2.5). A ring is raised by the band's
-                        // `builders` pool, and only while it is the head of that band's queue
+                        // build crew, and only while it holds builders
                         // (`ring_workers`, below), so the keepers slaughtering out of the pen go on
                         // slaughtering at their own rate.
                         // The forgone yield that used to price a ring — the pen rung's retired
@@ -8844,8 +9122,7 @@ pub fn advance_labor_allocation(
                         // is the same fencing labor at the same forgone-yield price, so it must
                         // never drift from the initial build.
                         //
-                        // **THE RING IS RAISED BY THE BAND'S BUILDERS, AND ONLY AT THE HEAD OF THE
-                        // QUEUE.** A ring is fencing work on the same `animal:pen` rung as the pen it
+                        // **THE RING IS RAISED BY ITS OWN BUILD CREW.** A ring is fencing work on the same `animal:pen` rung as the pen it
                         // widens, so it is funded from the same pool as every other build
                         // (`docs/plan_standing_upkeep.md` §2.5) — otherwise widening a fence would be
                         // the one build in the game that costs nothing, which is exactly what it
@@ -8935,7 +9212,7 @@ pub fn advance_labor_allocation(
                         // **A RING IS AN ORDINARY BUILD AND IS DATED LIKE ONE** — recorded for the
                         // band's chain pass exactly as the four rung arms record theirs.
                         //
-                        // **Without this the ring was the one queue entry with no quote**, so
+                        // **Without this the ring was the one declared build with no quote**, so
                         // `publish_build_chain`'s `None` arm minted [`crate::intensification::BuildTurns::Blocked`] for a
                         // ring that was accruing perfectly normally — and `carried` then handed that
                         // `-4` to **every other source the band works**. `extend_pen` is a one-click
@@ -9020,7 +9297,7 @@ pub fn advance_labor_allocation(
                         }
                         // **THE OUTPUT COMMITMENT, ONE TURN OF IT** (`docs/plan_pen_standing_yield.md` §4)
                         // — a `set_herd_output` job is work on the rung the herd already stands on, so it is
-                        // the ring's shape exactly: the band's `builders` pool, only at the head of the queue,
+                        // the ring's shape exactly: the build's own crew,
                         // its own in-flight state on the herd, and its own queue kind because no rung verb can
                         // name it.
                         //
@@ -9427,7 +9704,7 @@ pub fn advance_labor_allocation(
                         let balance = rung.build_balance(
                             improvement,
                             eligible,
-                            builders,
+                            quote_builders,
                             entry_gear.work_per_worker,
                             meter_rot,
                             entry_material_coverage,
@@ -9592,7 +9869,7 @@ pub fn advance_labor_allocation(
                                         next,
                                         cost_multiplier,
                                         banked,
-                                        builders,
+                                        quote_builders,
                                         entry_gear.work_per_worker,
                                         gate,
                                         // The source's live bleed — always `0` on the animal web, whose
@@ -9719,7 +9996,7 @@ pub fn advance_labor_allocation(
                     };
                     // **THE OUTPUT COMMITMENT, ONE TURN OF IT** (`docs/plan_pen_standing_yield.md` §4)
                     // — a `set_herd_output` job is work on the rung the herd already stands on, so it is
-                    // the ring's shape exactly: the band's `builders` pool, only at the head of the queue,
+                    // the ring's shape exactly: the build's own crew,
                     // its own in-flight state on the herd, and its own queue kind because no rung verb can
                     // name it.
                     //
@@ -10097,7 +10374,7 @@ pub fn advance_labor_allocation(
                         )
                     };
                     // **THE BUILD, before the take.** A working's meter is raised by the band's
-                    // builders pool exactly as a patch's is: the pool lands only on the **head** of
+                    // build crew exactly as a patch's is: the pool lands only on the **head** of
                     // the queue (`build_workers`), the rung's own gate decides whether it banks,
                     // and the material store scales it (`entry_material_coverage` — the quarry rung
                     // is the second declarer of a build pile on the shipped ladder).
@@ -10131,7 +10408,8 @@ pub fn advance_labor_allocation(
                             .raising
                             .filter(|next| ladder.at_or_above(destination, *next))
                             .unwrap_or(destination);
-                        let entry_gear = builders_gear.for_source(&deposit_source, Some(in_flight));
+                        let entry_gear =
+                            builders_gear.for_source(&deposit_source, Some(in_flight), builders);
                         let accrual = rung.build_accrual(
                             improvement,
                             gate.holds(),
@@ -10537,7 +10815,7 @@ pub fn advance_labor_allocation(
                     // keeps the improvement FIRST (`keeping`, struck by the same site-keeping claims a
                     // working's is); **hands beyond the bill do nothing**, because there is no yield
                     // to collect - the working's rule when its stock offers nothing more - and the
-                    // build is raised by the band's `builders` pool, as it is on a working.
+                    // build is raised by the build's own crew, as it is on a working.
                     //
                     // **A HOLDING ROW LASTS EXACTLY AS LONG AS THERE IS SOMETHING TO HOLD.**
                     if !row_is_held
@@ -10623,7 +10901,8 @@ pub fn advance_labor_allocation(
                             .raising
                             .filter(|next| ladder.at_or_above(destination, *next))
                             .unwrap_or(destination);
-                        let entry_gear = builders_gear.for_source(&tile_source, Some(in_flight));
+                        let entry_gear =
+                            builders_gear.for_source(&tile_source, Some(in_flight), builders);
                         let accrual = rung.build_accrual(
                             verb,
                             gate.holds(),
@@ -10697,7 +10976,7 @@ pub fn advance_labor_allocation(
                     //
                     // The improvement stands at the camp, so its crew is never a work party and has
                     // no walk: the keeping is paid by the hands present, and the build is raised by
-                    // the band's `builders` pool (its wood, if the rung eats any, drawn from the
+                    // the build's own crew (its wood, if the rung eats any, drawn from the
                     // band's own store as the meter climbs - the settlement above struck it).
                     //
                     // **A HOLDING ROW LASTS EXACTLY AS LONG AS THERE IS SOMETHING TO HOLD.**
@@ -10779,7 +11058,8 @@ pub fn advance_labor_allocation(
                             .raising
                             .filter(|next| ladder.at_or_above(destination, *next))
                             .unwrap_or(destination);
-                        let entry_gear = builders_gear.for_source(&band_source, Some(in_flight));
+                        let entry_gear =
+                            builders_gear.for_source(&band_source, Some(in_flight), builders);
                         let accrual = rung.build_accrual(
                             verb,
                             gate.holds(),
@@ -10858,13 +11138,6 @@ pub fn advance_labor_allocation(
                     // the roads the band keeps rather than from `assignments` — so the split runs
                     // once per band in [`settle_bands_roadwork`], above this loop and ahead of the
                     // band's `continue`s, and this row is only the head count that call divides.
-                }
-                LaborTarget::Builders => {
-                    // **And neither do the builders**, for the same reason one level over: their
-                    // hands are a pool too, resolved before the loop (`builders`) and spent entirely
-                    // on the **head** of the band's queue inside whichever source arm that entry
-                    // names. By the time the loop reaches the role's own row the work is already
-                    // banked.
                 }
                 LaborTarget::Warrior => {
                     // Still a no-op **in the labor pass** — warriors do no per-worker yield here, and
@@ -10992,7 +11265,7 @@ pub fn advance_labor_allocation(
                 }
             }
         }
-        // ## ⛔ THE ROAD AT THE HEAD OF THE QUEUE — RAISED BY THE BAND'S BUILDERS, NOT BY TRAFFIC
+        // ## ⛔ THE DECLARED ROAD BUILD — RAISED BY THE BAND'S BUILDERS, NOT BY TRAFFIC
         //
         // **`grade` and `pave` are ordinary crew builds** (`docs/plan_standing_upkeep.md` §4.13a
         // rule 2): traffic wears the free floor in and stops there, and everything above it is a
@@ -11005,8 +11278,9 @@ pub fn advance_labor_allocation(
         // directly here, after the loop, at exactly the point the other four verbs' completions are
         // collected.
         //
-        // **All hands on the head**, the same rule as everywhere else (§2.5): the entry banks the
-        // whole `builders` pool at its own kit, or nothing.
+        // **Every declared road build is worked by its own crew** (`build_crews`, keyed by the road's
+        // tile — a road has no labor row to carry one), in parallel with every other declared build:
+        // the crew banks at its own kit, or nothing.
         //
         // ⛔ **AND IT BANKS ONLY WHAT THE KEEPER OWNS.** A band whose `grade` has been superseded —
         // the tile decayed back into the free floor and lost its keeper ([`BuildGate::NoKeeper`]),
@@ -11027,10 +11301,9 @@ pub fn advance_labor_allocation(
         // building perfectly well. It is the same hole the pen ring fell into and it is closed the
         // same way: the entry kind records a quote.
         //
-        // The walk is over the **whole queue** rather than the head alone, because a waiting entry
-        // is dated too — at the full pool and [`FULLY_SERVED`], the convention every other waiting
-        // entry is quoted under.
-        for entry in &build_queue {
+        // The walk is over **every declared build**, a crew or none: a road nobody builds is dated
+        // too, at [`FULLY_SERVED`], the convention every other unfunded build is quoted under.
+        for entry in &builds {
             let (BuildSource::Road(tile), BuildJob::Climb(destination)) =
                 (&entry.source, entry.declared)
             else {
@@ -11050,7 +11323,19 @@ pub fn advance_labor_allocation(
                 knowledge_threshold,
                 &ladder,
             );
-            let is_head = allocation.build_queue_position(&entry.source) == Some(BUILD_QUEUE_HEAD);
+            let builders = allocation
+                .build_crew(&entry.source)
+                .unwrap_or_default()
+                .total();
+            let build_coverage = build_coverages
+                .iter()
+                .find(|(held, _)| held == &entry.source)
+                .map_or(FULLY_SERVED, |(_, coverage)| *coverage);
+            // **Did this road's build bid for the pile?** It has builders and the keeper's gate
+            // holds — the same plan the settlement was struck from.
+            let is_funded = build_plans
+                .iter()
+                .any(|plan| plan.declaration.source == entry.source && plan.funded);
             // **THE RUNG THE ROAD IS ACTUALLY CLIMBING, not where the entry is going** — a `pave`
             // on a road that has decayed back below a dirt road is doing *grading* work this turn,
             // so it resolves and wears the grading tool. The destination caps the climb below; it
@@ -11061,10 +11346,10 @@ pub fn advance_labor_allocation(
                 .and_then(|held| ladder.above_id(held))
                 .filter(|next| ladder.at_or_above(destination, *next))
                 .unwrap_or(destination);
-            let gear = builders_gear.for_source(&entry.source, Some(in_flight));
-            // **Only the head bid for the pile**, so only the head is scaled by what the store
-            // settled; a waiting entry has bid on nothing and is quoted at full coverage.
-            let entry_material_coverage = if is_head {
+            let gear = builders_gear.for_source(&entry.source, Some(in_flight), builders);
+            // **Only a funded build bid for the pile**, so only it is scaled by what the store
+            // settled; an unfunded one has bid on nothing and is quoted at full coverage.
+            let entry_material_coverage = if is_funded {
                 build_coverage
             } else {
                 FULLY_SERVED
@@ -11094,20 +11379,48 @@ pub fn advance_labor_allocation(
             let meter_rot = crate::routes::road_meter_rot(road, measure, &ladder);
             // **THE ROW'S OWN BUILD SCRATCH, stamped where the quote is struck** — a road is a
             // source row (`RouteState`) and this is the pair a patch row publishes one branch over.
-            // The cause is [`BuildQuote::blocking_gate`]'s, so the tile and the queue entry cannot
+            // The cause is [`BuildQuote::blocking_gate`]'s, so the tile and the declared build cannot
             // give the player two different reasons for one stall.
-            let pile = if is_head {
+            let stalled_on_the_store = build_is_stalled_on_materials(
+                entry,
+                &forage_registry,
+                &registry,
+                &roads,
+                &tile_improvements,
+                &deposits,
+                &ladder,
+                &cohort.stores,
+            );
+            let pile = if is_funded {
                 build_material_wants(&legs, at_full_coverage, &ladder)
                     .values()
                     .sum::<f32>()
+            } else if stalled_on_the_store {
+                // A build the store cannot feed holds no builders, but the bill it could not pay
+                // is still stated: what one builder would have drawn.
+                build_material_wants(
+                    &legs,
+                    crate::intensification::pool_work_supply(
+                        A_PROJECTION_ASSUMES_BUILDERS,
+                        gear.work_per_worker,
+                    ),
+                    &ladder,
+                )
+                .values()
+                .sum::<f32>()
             } else {
-                // A waiting entry has bid on nothing: it draws no stone this turn, and saying it
+                // An unfunded build has bid on nothing: it draws no stone this turn, and saying it
                 // wanted some would put a demand on the wire that nothing was ever going to pay.
                 crate::routes::NO_MATERIAL_DRAWN
             };
             if let Some(road) = roads.road_mut(*tile) {
                 road.build_material_demanded = pile;
-                road.build_material_supplied = pile * entry_material_coverage;
+                road.build_material_supplied = if stalled_on_the_store && !is_funded {
+                    // The store paid nothing toward a pile it could not feed.
+                    crate::routes::NO_MATERIAL_DRAWN
+                } else {
+                    pile * entry_material_coverage
+                };
             }
             let quote = BuildQuote {
                 cost: width,
@@ -11135,18 +11448,20 @@ pub fn advance_labor_allocation(
             // stuck on stone with no cause at all, the same silence
             // [`crate::intensification::BuildQuote::blocking_gate`] exists to end.
             //
-            // **Only the head carries one**, on `publish_build_chain`'s own rule: an entry merely
-            // waiting its turn is not stuck and must not publish a reason it would have to explain
-            // away.
+            // **Only a staffed build carries one**: a build nobody works is not stuck on anything and
+            // must not publish a reason it would have to explain away.
             if let Some(road) = roads.road_mut(*tile) {
-                road.build_blocked_reason = if is_head {
+                road.build_blocked_reason = if builders > NO_CREW_ON_THIS_ACTIVITY {
                     quote.blocking_gate()
+                } else if stalled_on_the_store && gate.holds() {
+                    // A build the store cannot feed holds no builders, and says why.
+                    BuildGate::Materials
                 } else {
                     BuildGate::Open
                 };
             }
             build_quotes.push((entry.source.clone(), quote));
-            if !is_head || !gate.holds() || builders == NO_CREW_ON_THIS_ACTIVITY {
+            if !gate.holds() || builders == NO_CREW_ON_THIS_ACTIVITY {
                 continue;
             }
             // ⛔ **THE STORE SCALES THE WORK, exactly as it scales the pile**
@@ -11161,7 +11476,7 @@ pub fn advance_labor_allocation(
                 continue;
             };
             // **Capped at the DESTINATION's top**, so a `grade` does not run on into the paved road
-            // nobody ordered — the queue entry names where the road should end up, and §2.8's *"an
+            // nobody ordered — the declared build names where the road should end up, and §2.8's *"an
             // entry retires at its destination"* is the same rule read from the other side.
             let before = road.position();
             road.set_position((before + accrual).min(base + width), &ladder);
@@ -11178,7 +11493,7 @@ pub fn advance_labor_allocation(
                 completed.push((entry.source.clone(), entry.declared));
             }
         }
-        // **RETIRE THE QUEUE ENTRY OF EVERY BUILD THAT COMPLETED THIS TURN** — the one seam all five
+        // **RETIRE THE DECLARED BUILD OF EVERY BUILD THAT COMPLETED THIS TURN** — the one seam all five
         // build kinds (Cultivate/Sow/Tame/Corral, and the pen ring) pass through. There is nothing
         // left to raise on this source, so the entry leaves the queue and the whole pool moves to
         // whatever the player put next (`docs/plan_standing_upkeep.md` §2.4).
@@ -11199,7 +11514,7 @@ pub fn advance_labor_allocation(
         for (source, job) in &completed {
             // A completion another band finished retires nothing here and announces nothing: this
             // band never had the entry.
-            if !allocation.unqueue_build(source) {
+            if !allocation.stop_build(source) {
                 continue;
             }
             // **A finished build of a directed-work rung is work that succeeded**: it banks a
@@ -11609,7 +11924,7 @@ pub fn advance_labor_allocation(
         // funding stops with it** — see [`fauna::cancel_dropped_rings`]; the lapse is the one exit
         // no command issues, so nothing else would clear the flag.
         let lapsed_entries =
-            allocation.prune_build_queue(&|tile| band_keeps_road(&roads, band_id, tile));
+            allocation.prune_builds(&|tile| band_keeps_road(&roads, band_id, tile));
         fauna::cancel_dropped_rings(&mut registry, &lapsed_entries);
         // **RETIRE EVERY ENTRY WHOSE DECLARED JOB IS ALREADY STANDING** — and say so on the verb's
         // own channel, exactly as a completion is announced.
@@ -11619,7 +11934,7 @@ pub fn advance_labor_allocation(
         // result of a single `cultivate` / `corral` / `extend_pen`. When one of them finishes the
         // rung, the other's entry declares a job that no longer exists: `build_workers` is still the
         // whole pool, **no arm consumes it**, `completed` never fires for that band, and
-        // `prune_build_queue` only drops entries whose *row* is gone. So the survivor's builders
+        // `prune_builds` only drops entries whose *row* is gone. So the survivor's builders
         // banked nothing, for ever, with no line saying why — and, on a patch, the projection of the
         // **next** rung was consumed by the chain as the dead head's own span, mis-dating every
         // entry behind it.
@@ -11640,24 +11955,31 @@ pub fn advance_labor_allocation(
             tick.0,
             &mut event_log,
         );
-        // **THE QUEUED BUILDS' TOOLS** — what each entry behind the head will ask of the builders'
-        // hands, struck from its own quote (`queued_build_toe`). The craft suggestions walk these
-        // against the stock the settlement left.
-        allocation.last_queued_build_toe = queued_build_toe(
-            &equipment_cfg,
-            &ladder,
-            &allocation,
-            &build_quotes,
-            builders,
-        );
         // **THE CHAIN** — every entry's published finish date, walked in **queue order**
         // (`docs/plan_standing_upkeep.md` §4.6b). It runs here, after the meters have moved and the
         // queue has been edited, because the answer is a fact about the band's whole list and no
         // per-source site can see one.
+        let stalled: Vec<BuildSource> = allocation
+            .builds
+            .iter()
+            .filter(|declaration| {
+                build_is_stalled_on_materials(
+                    declaration,
+                    &forage_registry,
+                    &registry,
+                    &roads,
+                    &tile_improvements,
+                    &deposits,
+                    &ladder,
+                    &cohort.stores,
+                )
+            })
+            .map(|declaration| declaration.source.clone())
+            .collect();
         publish_build_chain(
             &allocation,
             &build_quotes,
-            builders,
+            &stalled,
             &builders_gear,
             &mut forage_registry,
             &mut registry,
@@ -11672,60 +11994,7 @@ pub fn advance_labor_allocation(
     }
 }
 
-/// **WHAT EACH QUEUED BUILD BEHIND THE HEAD WILL NEED OF THE BUILDERS' HANDS** — the head's claim
-/// ([`plan_pool_tools`]'s builders claim) computed for every later entry: the tools of the rung in
-/// flight on that entry (its quote's first leg, the reading the head's ask takes) over the pool's
-/// whole hand count, through [`ToeClaim::of`]. An entry with no quote, or one the ladder resolves no
-/// branch for, claims nothing; a pool with no hands claims nothing.
-fn queued_build_toe(
-    equipment: &crate::equipment_config::EquipmentConfig,
-    ladder: &LadderConfig,
-    allocation: &LaborAllocation,
-    quotes: &[(BuildSource, crate::intensification::BuildQuote)],
-    builders: u32,
-) -> Vec<crate::components::QueuedBuildToe> {
-    if builders == NO_CREW_ON_THIS_ACTIVITY {
-        return Vec::new();
-    }
-    let mut lines = Vec::new();
-    for (position, entry) in allocation
-        .build_queue
-        .iter()
-        .enumerate()
-        .skip(BUILD_QUEUE_HEAD + 1)
-    {
-        let Some((_, quote)) = quotes.iter().find(|(source, _)| *source == entry.source) else {
-            continue;
-        };
-        let rung = quote.legs.first().map(|leg| leg.rung);
-        let Some(branch) = source_branch(ladder, &entry.source, rung) else {
-            continue;
-        };
-        let toe = equipment.pool_toe(branch, rung.map(|rung| rung.wire_key()).as_deref());
-        let claim = ToeClaim::of(
-            ToolCrew::Pool(crate::equipment_config::KitJob::Builders),
-            entry.priority,
-            builders as f32,
-            builders as f32,
-            &toe,
-        );
-        lines.extend(
-            claim
-                .required
-                .iter()
-                .filter(|(_, required)| *required > NO_UNITS_SETTLED)
-                .map(|(item, required)| crate::components::QueuedBuildToe {
-                    position: position as u32,
-                    source: entry.source.clone(),
-                    item: item.to_string(),
-                    required: *required,
-                }),
-        );
-    }
-    lines
-}
-
-/// **DROP EVERY QUEUE ENTRY WHOSE DECLARED JOB IS ALREADY STANDING, AND ANNOUNCE EACH ONE.**
+/// **DROP EVERY DECLARED BUILD WHOSE DECLARED JOB IS ALREADY STANDING, AND ANNOUNCE EACH ONE.**
 ///
 /// The completion path's twin, for the job **another band** (or an earlier turn) finished: there is
 /// nothing left to raise, so the entry leaves the queue and the whole pool moves to whatever the
@@ -11747,7 +12016,7 @@ fn queued_build_toe(
 /// a ring that finished, was cancelled, or was never begun — dead in every case.
 ///
 /// ⛔ **DOES THIS BAND STILL KEEP THE ROAD ON THIS TILE?** — the route branch's half of *an entry
-/// requires a holding*, handed to [`LaborAllocation::prune_build_queue`] because a road's membership
+/// requires a holding*, handed to [`LaborAllocation::prune_builds`] because a road's membership
 /// is `routes::Road::keeper` and the component cannot see it.
 ///
 /// **A road with no keeper is nobody's job**, and a road kept by another band is not this band's:
@@ -11770,7 +12039,7 @@ fn band_keeps_road(
     })
 }
 
-/// A source the band no longer holds is not this function's business — `prune_build_queue` has
+/// A source the band no longer holds is not this function's business — `prune_builds` has
 /// already taken it, and an entry naming a source neither registry can resolve is left alone rather
 /// than guessed at.
 #[allow(clippy::too_many_arguments)] // every registry a source kind can be resolved against
@@ -11786,8 +12055,8 @@ fn retire_entries_already_built(
     tick: u64,
     event_log: &mut CommandEventLog,
 ) {
-    let dead: Vec<BuildQueueEntry> = allocation
-        .build_queue
+    let dead: Vec<BuildDeclaration> = allocation
+        .builds
         .iter()
         .filter(|entry| {
             entry_job_already_built(
@@ -11803,7 +12072,7 @@ fn retire_entries_already_built(
         .cloned()
         .collect();
     for entry in &dead {
-        if !allocation.unqueue_build(&entry.source) {
+        if !allocation.stop_build(&entry.source) {
             continue;
         }
         let (channel, verb) = match entry.declared {
@@ -11836,7 +12105,7 @@ fn retire_entries_already_built(
 /// Is this one entry's declared job already standing? See [`retire_entries_already_built`] for the
 /// table this implements.
 fn entry_job_already_built(
-    entry: &BuildQueueEntry,
+    entry: &BuildDeclaration,
     forage_registry: &ForageRegistry,
     herds: &HerdRegistry,
     roads: &crate::routes::RoadRegistry,
@@ -11904,61 +12173,44 @@ fn entry_job_already_built(
     }
 }
 
-/// **DATE EVERY ENTRY IN ONE BAND'S QUEUE, AND EVERY SOURCE BEHIND IT** — the countdown half of
-/// *all hands on the head* (`docs/plan_standing_upkeep.md` §4.6b).
+/// **DATE EVERY DECLARED BUILD FROM ITS OWN CREW, AND EVERY SOURCE THE BAND WORKS WITHOUT ONE** — the
+/// countdown half of *builds join the site's crew* (`docs/plan_labor_at_scale.md`).
 ///
-/// # A WAITING ENTRY GETS A REAL DATE, NOT A "QUEUED" BADGE
+/// There is no queue to chain through: every declared build is worked this turn by the builders
+/// staffing put on it, so each is dated independently, at its own crew:
 ///
-/// The queue is deterministic — the head takes the whole pool until it fills, then the next one does
-/// — so an entry's turns are **the sum of everything above it plus its own span at the full pool**.
-/// Under §4.6a a waiting entry's meter is held by the *keeping*, not by the builders, so that
-/// chained number is exact rather than an estimate that drifts.
+/// | the build's own answer | it publishes |
+/// |---|---|
+/// | a count | `turns` at its crew, its legs dated on a running sum from `0` |
+/// | [`BuildTurns::Holding`] / [`BuildTurns::Rotting`] | itself — a meter standing still or losing ground never reaches its cost |
+/// | no answer | `None` — the honest *"no estimate"*, or, for a build staffing gave nobody because it cannot progress, the cause it is stuck on |
 ///
-/// # BAD NEWS PROPAGATES, AND THAT IS FREE
+/// # A BUILD THAT CANNOT PROGRESS SAYS **WHY**
 ///
-/// If the head never finishes, nothing below it does either — so the first entry that cannot name a
-/// number is what **every** entry below it publishes. `carried` is that value, and once set nothing
-/// further is evaluated.
+/// A build staffing gave no builders because its rung's gate refuses it, or because the store holds
+/// none of what it eats, publishes that cause ([`BuildGate`]) beside the absence of a date — the
+/// quote carries the refusing conjunct, and `stalled` names the builds the store emptied.
 ///
-/// | the head's own answer | it publishes | why |
-/// |---|---|---|
-/// | a count | `cumulative + n` | its own span, behind everything above it |
-/// | [`BuildTurns::Holding`] / [`BuildTurns::Rotting`] | itself, carried down | a meter standing still or losing ground never reaches its cost |
-/// | no answer, **at the head, with a staffed pool** | [`crate::intensification::BuildTurns::Blocked`], carried down | the pool is standing on a gate that refuses it |
-/// | no answer, anywhere else | `None`, carried down | a *waiting* entry may well be eligible by the time it reaches the head, so it says the honest *"no estimate"* — and we cannot date what is behind an unanswerable entry |
+/// # A SOURCE WITH NO DECLARED BUILD IS QUOTED AT A FULL CREW
 ///
-/// # AND A BLOCKED HEAD SAYS **WHY**, DOWN THE WHOLE QUEUE
-///
-/// The `Blocked` sentinel states only *that* the pool is stuck, and the playtest it was filed
-/// against sat on `⚠ Blocked 32%` for turns while fixing the one thing a surface happened to name.
-/// The quote carries the refusing conjunct ([`BuildGate`]), so the head publishes its cause and
-/// **`carried` takes it down the queue with the sentinel** — everything behind a blocked head is
-/// stuck for the head's reason, which is the only reason there is to give.
-///
-/// A head that produced **no quote at all** is [`BuildGate::Unworked`]: not a rung's gate refusing,
-/// but the labor loop never reaching this source. Everything that is not a blocked entry publishes
-/// [`crate::intensification::BuildGate::Open`], whose key is `""`.
-///
-/// # A SOURCE WITH NO ENTRY IS QUOTED AT THE BACK OF THE LINE
-///
-/// That is where a newly queued build would actually go, so quoting it as though it went to the head
-/// would over-promise the compose sheet by the whole queue.
-#[allow(clippy::too_many_arguments)] // the band's queue, its quotes, its pool and all three registries
+/// What a build would take if the player declared it now: the quote was struck at the rung's
+/// `max_builders`, so the compose sheet reads the date a full crew would meet.
+#[allow(clippy::too_many_arguments)] // the band's builds, their quotes and crews, and all three registries
 fn publish_build_chain(
     allocation: &LaborAllocation,
     quotes: &[(BuildSource, BuildQuote)],
-    builders: u32,
+    stalled: &[BuildSource],
     builders_gear: &BuildersGear,
     forage_registry: &mut ForageRegistry,
     herds: &mut HerdRegistry,
     // **Written, not merely read.** A road is a source row and this pass stamps its countdown, the
-    // one figure on it that only the queue can answer for.
+    // one figure on it that only the build's crew can answer for.
     roads: &mut crate::routes::RoadRegistry,
     // **Written, not merely read** - a tile improvement is a source row too, and takes the road's
-    // pair (the date and the place in the line) from this pass.
+    // pair (the date and the estimate stamp) from this pass.
     tile_improvements: &mut crate::tile_improvement::TileImprovementRegistry,
     // **Written, not merely read.** A working is a source row (`DepositState`) and this pass stamps
-    // its countdown, the one figure on it that only the queue can answer for.
+    // its countdown, the one figure on it that only the build's crew can answer for.
     deposits: &mut crate::extraction::DepositRegistry,
     patch_claims: &mut BuildEstimateClaims<UVec2>,
     herd_claims: &mut BuildEstimateClaims<String>,
@@ -11971,104 +12223,60 @@ fn publish_build_chain(
             .find(|(key, _)| key == source)
             .map(|(_, quote)| quote.clone())
     };
-    // Turns already promised to the entries above this one.
-    let mut cumulative: u32 = 0;
-    // Once an entry cannot name a number, every entry below it publishes the same thing. `Some`
-    // means *"decided"*; the inner `Option` is the published answer, `None` being the wire's
-    // "no estimate", and the [`BuildGate`] beside it is the cause a blocked answer carries.
-    let mut carried: Option<(Option<BuildTurns>, BuildGate)> = None;
-    for (position, entry) in allocation.build_queue.iter().enumerate() {
+    for entry in &allocation.builds {
         let quote = quote_for(&entry.source);
-        // **The legs, dated where the entry can be dated and bare where it cannot.** An entry whose
-        // countdown is a stall or a block publishes its legs' *work* — which is a fact about the
-        // source and still true — with the stall's own sentinel on each date, because a leg cannot
-        // be dated when the entry carrying it cannot.
+        let builders = allocation
+            .build_crew(&entry.source)
+            .unwrap_or_default()
+            .total();
         let mut legs: Vec<crate::intensification::PublishedBuildLeg> = Vec::new();
-        let (published, reason) = match carried {
-            Some(value) => value,
-            None => match quote.as_ref().and_then(|quote| quote.turns(builders)) {
-                Some(crate::intensification::BuildTurns::Turns(turns)) => {
-                    // **THE LEGS ARE DATED ON THE SAME RUNNING SUM** — everything above this entry,
-                    // then each leg's own span in climb order — so the last leg's number is exactly
-                    // the entry's, by construction rather than by a second calculation agreeing with
-                    // the first. Struck *before* `cumulative` absorbs the entry's whole span, and the
-                    // final leg leaves it exactly where that would have.
-                    legs = quote
-                        .as_ref()
-                        .map_or_else(Vec::new, |quote| leg_chain(quote, cumulative, builders));
-                    cumulative = cumulative.saturating_add(turns);
-                    (
-                        Some(crate::intensification::BuildTurns::Turns(cumulative)),
-                        crate::intensification::BuildGate::Open,
-                    )
+        let (published, reason) = match quote.as_ref().and_then(|quote| quote.turns(builders)) {
+            Some(crate::intensification::BuildTurns::Turns(turns)) => {
+                // **THE LEGS ARE DATED ON THE SAME RUNNING SUM** — each leg's own span in climb
+                // order — so the last leg's number is exactly the build's, by construction rather
+                // than by a second calculation agreeing with the first.
+                legs = quote
+                    .as_ref()
+                    .map_or_else(Vec::new, |quote| leg_chain(quote, 0, builders));
+                (
+                    Some(crate::intensification::BuildTurns::Turns(turns)),
+                    crate::intensification::BuildGate::Open,
+                )
+            }
+            Some(state @ (BuildTurns::Holding | BuildTurns::Rotting)) => {
+                (Some(state), crate::intensification::BuildGate::Open)
+            }
+            // `build_turns_estimate` answers for one build's arithmetic and never returns this; a
+            // quote whose store coverage is zero mints it, and it carries its cause.
+            Some(crate::intensification::BuildTurns::Blocked) => (
+                Some(crate::intensification::BuildTurns::Blocked),
+                blocked_reason(quote.clone()),
+            ),
+            // **A BUILD THE STORE CANNOT FEED HOLDS NO BUILDERS, AND SAYS SO** - it publishes the
+            // blocked sentinel with its cause, not silence: nothing banks, so a number would be a
+            // promise, and `None` would read as "nobody has looked".
+            None if stalled.contains(&entry.source)
+                && quote
+                    .as_ref()
+                    .is_none_or(|quote| quote.blocking_gate().holds()) =>
+            {
+                (
+                    Some(crate::intensification::BuildTurns::Blocked),
+                    crate::intensification::BuildGate::Materials,
+                )
+            }
+            // **A DECLARED BUILD WHOSE OWN GATE REFUSES IT** publishes the blocked sentinel with the
+            // refusing conjunct: it holds no builders, and silence (`-1`) is what a player must not
+            // read it as.
+            None => match quote.as_ref().map(BuildQuote::blocking_gate) {
+                Some(gate) if !gate.holds() => {
+                    (Some(crate::intensification::BuildTurns::Blocked), gate)
                 }
-                Some(state @ (BuildTurns::Holding | BuildTurns::Rotting)) => {
-                    carried = Some((Some(state), crate::intensification::BuildGate::Open));
-                    (Some(state), crate::intensification::BuildGate::Open)
-                }
-                // `build_turns_estimate` answers for one build's arithmetic and never returns this;
-                // the arm below is the only place it is minted. Carried like any other stall.
-                Some(crate::intensification::BuildTurns::Blocked) => {
-                    let value = (
-                        Some(crate::intensification::BuildTurns::Blocked),
-                        blocked_reason(quote.clone()),
-                    );
-                    carried = Some(value);
-                    value
-                }
-                None => {
-                    // **ONLY THE HEAD, WITH A STAFFED POOL, IS BLOCKED.** A waiting entry whose gate
-                    // refuses may well be eligible by the time it reaches the head.
-                    let value =
-                        if position == BUILD_QUEUE_HEAD && builders > NO_CREW_ON_THIS_ACTIVITY {
-                            // ⛔ **A SOURCE THAT IS ON THE GROUND MUST RECORD A QUOTE, AND THIS
-                            // IS WHERE A KIND THAT DOES NOT IS CAUGHT.** A staffed head with no
-                            // quote is minted `Blocked` here with `blocked_reason(None)` —
-                            // [`BuildGate::Unworked`], *"the labor loop never reached this
-                            // source"* — and `carried` then hands that same `-4` down the whole
-                            // queue and onto every unqueued source the band works.
-                            //
-                            // For a source that is genuinely **not there** (a `sow` ordered on bare
-                            // ground the faction cannot seed, which places no patch) that answer is
-                            // the truth and the cause is the right one. For a source that *is*
-                            // there it is a lie, and two entry kinds have shipped telling it: the
-                            // pen ring, and the road — a band that typed `grade` and staffed its
-                            // builders published `⚠ Blocked` on its patches and its herds while the
-                            // road built perfectly well. Both were fixed by their arm pushing a
-                            // quote; this states the invariant so a third kind fails loudly in a
-                            // test rather than quietly on a player's screen.
-                            debug_assert!(
-                                quote.is_some()
-                                    || !source_is_on_the_ground(
-                                        &entry.source,
-                                        forage_registry,
-                                        herds,
-                                        roads,
-                                        tile_improvements,
-                                        deposits,
-                                    ),
-                                "a staffed head standing on real ground must record a BuildQuote - \
-                                 without one it publishes Blocked with the cause `unworked`, which \
-                                 is false here, and carries that answer onto every entry behind \
-                                 it: {:?}",
-                                entry.source
-                            );
-                            (
-                                Some(crate::intensification::BuildTurns::Blocked),
-                                blocked_reason(quote.clone()),
-                            )
-                        } else {
-                            // **Not blocked, so no cause** — an entry merely waiting its turn is not
-                            // stuck and must not publish a reason it would have to explain away.
-                            (None, crate::intensification::BuildGate::Open)
-                        };
-                    carried = Some(value);
-                    value
-                }
+                _ => (None, crate::intensification::BuildGate::Open),
             },
         };
         if legs.is_empty() {
-            // Not dated: carry the entry's own answer onto every leg, so the pair on the wire says
+            // Not dated: carry the build's own answer onto every leg, so the pair on the wire says
             // one thing.
             legs = quote.as_ref().map_or_else(Vec::new, |quote| {
                 quote
@@ -12086,11 +12294,11 @@ fn publish_build_chain(
         }
         publish_entry(
             &entry.source,
-            position,
             published,
             reason,
             Some(entry.declared.destination(ladder)),
             legs,
+            builders,
             builders_gear,
             forage_registry,
             herds,
@@ -12102,26 +12310,18 @@ fn publish_build_chain(
             deposit_claims,
         );
     }
-    // **Everything the band works that is NOT queued** — quoted where it would land if the player
-    // queued it now, which is the tail.
+    // **Everything the band works that has NO declared build** — quoted where it would land if the
+    // player declared one now, at a full crew.
     for (source, quote) in quotes {
-        if allocation.build_queue_position(source).is_some() {
+        if allocation.has_build(source) {
             continue;
         }
-        // **The carried cause rides with the carried sentinel here too.** A source the band works
-        // but has not queued is dated behind a blocked head like everything else, so it is stuck for
-        // the head's reason and must be able to say so.
-        let (projected, reason) = match carried {
-            Some(value) => value,
-            None => match quote.turns(builders) {
-                Some(crate::intensification::BuildTurns::Turns(turns)) => (
-                    Some(crate::intensification::BuildTurns::Turns(
-                        cumulative.saturating_add(turns),
-                    )),
-                    crate::intensification::BuildGate::Open,
-                ),
-                other => (other, crate::intensification::BuildGate::Open),
-            },
+        let (projected, reason) = match quote.turns(A_PROJECTION_ASSUMES_BUILDERS) {
+            Some(crate::intensification::BuildTurns::Turns(turns)) => (
+                Some(crate::intensification::BuildTurns::Turns(turns)),
+                crate::intensification::BuildGate::Open,
+            ),
+            other => (other, crate::intensification::BuildGate::Open),
         };
         match source {
             BuildSource::Patch(tile) => {
@@ -12178,36 +12378,6 @@ fn publish_build_chain(
     }
 }
 
-/// **IS THIS QUEUED SOURCE ACTUALLY THERE?** — the term that tells a *missing quote* apart from a
-/// *missing source*, and the whole of what makes the staffed-head invariant assertable.
-///
-/// A queue entry can name ground that does not exist: `sow` places a Field on **bare** ground, so an
-/// entry the faction cannot yet seed names a tile with no patch on it, turn after turn. That head
-/// records no quote and publishing [`BuildGate::Unworked`] for it is exactly right — nothing is
-/// there. What must never happen is the same answer for a source that **is** there, which is the
-/// defect the pen ring and the road both shipped.
-fn source_is_on_the_ground(
-    source: &BuildSource,
-    forage_registry: &ForageRegistry,
-    herds: &HerdRegistry,
-    roads: &crate::routes::RoadRegistry,
-    tile_improvements: &crate::tile_improvement::TileImprovementRegistry,
-    deposits: &crate::extraction::DepositRegistry,
-) -> bool {
-    match source {
-        BuildSource::Patch(tile) => forage_registry.patch(*tile).is_some(),
-        BuildSource::Herd(id) => herds.find(id).is_some(),
-        BuildSource::Road(tile) => roads.road(*tile).is_some(),
-        BuildSource::Tile { tile, branch } => tile_improvements.get(*tile, *branch).is_some(),
-        BuildSource::Band { band, branch } => {
-            tile_improvements.bands().get(*band, *branch).is_some()
-        }
-        // A working exists from the moment a crew is put on it (`DepositRegistry::open`), so this
-        // is `false` only where the row names ground that holds none of that material at all.
-        BuildSource::Deposit { tile, material } => deposits.source(*tile, material).is_some(),
-    }
-}
-
 /// **WHY THE POOL IS STUCK ON THIS ENTRY** — the cause a [`crate::intensification::BuildTurns::Blocked`] head publishes.
 ///
 /// A quote whose gate refused answers with that conjunct. Everything else is
@@ -12215,7 +12385,7 @@ fn source_is_on_the_ground(
 /// reached it), or it produced one whose gate *held* — which `build_turns_estimate` makes
 /// unreachable at a staffed head, and which would otherwise publish a block with no cause, the very
 /// silence this field exists to end.
-/// **HAS THE SOURCE REACHED WHERE THE PLAYER SENT IT?** — the one test that retires a queue entry
+/// **HAS THE SOURCE REACHED WHERE THE PLAYER SENT IT?** — the one test that retires a declared build
 /// (`docs/plan_standing_upkeep.md` §2.8): an entry names a **destination**, so it stays at the head
 /// until `held` is at or above it, whatever intermediate rungs completed on the way.
 ///
@@ -12308,11 +12478,11 @@ fn blocked_reason(quote: Option<BuildQuote>) -> BuildGate {
 #[allow(clippy::too_many_arguments)] // one source, its answer, and both webs' registries and claims
 fn publish_entry(
     source: &BuildSource,
-    position: usize,
     turns: Option<BuildTurns>,
     reason: BuildGate,
     destination: Option<RungId>,
     legs: Vec<crate::intensification::PublishedBuildLeg>,
+    builders: u32,
     builders_gear: &BuildersGear,
     forage_registry: &mut ForageRegistry,
     herds: &mut HerdRegistry,
@@ -12330,9 +12500,13 @@ fn publish_entry(
         // legs are in climb order, so the head of the list is where this turn's work lands and
         // therefore which tool the pool is holding. A row with no legs is climbing nothing.
         gear: builders_gear
-            .for_source(source, legs.first().map(|published| published.leg.rung))
+            .for_source(
+                source,
+                legs.first().map(|published| published.leg.rung),
+                builders,
+            )
             .gear_supply,
-        position: position as i32,
+        position: ESTIMATE_PASS_RAN,
         destination,
         legs,
     };
@@ -12384,7 +12558,7 @@ fn publish_entry(
         // ⛔ **NO CLAIMS OBJECT, AND THAT IS STRUCTURAL RATHER THAN AN OMISSION.** The patch and herd
         // arms go through [`BuildEstimateClaims`] because several bands can work one source and the
         // **sooner** answer must win. A road cannot be contested: there is one keeper per tile, and
-        // each band's own `prune_build_queue` drops the entry for a road it does not keep **before**
+        // each band's own `prune_builds` drops the entry for a road it does not keep **before**
         // that band's queue is walked — so by the time this pass runs, at most one band holds an
         // entry for any tile. A claims set would be a rule with nothing to arbitrate.
         BuildSource::Road(tile) => {
@@ -12450,9 +12624,14 @@ fn publish_entry(
     }
 }
 
-/// **The 0-based head of a build queue** — named rather than a bare `0` at the one site that tests
-/// it, because the test is *"is this the entry the pool is standing on"* and not an index.
-const BUILD_QUEUE_HEAD: usize = 0;
+/// **THE STAMP A DECLARED BUILD'S ESTIMATE CARRIES ONCE THE PASS HAS LOOKED AT IT** — the Logistics
+/// decay passes clear it back to [`crate::intensification::NOT_IN_ANY_BUILD_QUEUE`] every turn, so a
+/// declaration made since the last turn resolved reads *not yet estimated* rather than *stalled*.
+const ESTIMATE_PASS_RAN: i32 = 0;
+
+/// **A PROJECTION ASSUMES THE BUILD HAS BUILDERS** — a source with no declared build is quoted at a
+/// full crew, and the countdown only asks whether anyone is on the job.
+const A_PROJECTION_ASSUMES_BUILDERS: u32 = 1;
 
 /// The `extend_pen` command's own name — the feed detail of a ring that completed, and the job token
 /// a ring's row publishes. A ring is not one of the four rung verbs, so it has no
@@ -12543,7 +12722,7 @@ pub const NO_STANDING_YIELD_HERE: f32 = 0.0;
 pub const EXTEND_PEN_ACTION: &str = "extend_pen";
 
 /// The `set_herd_output` command's own name — the feed detail of a commitment that completed, and
-/// the job token its queue entry publishes. [`EXTEND_PEN_ACTION`]'s twin, and here for its reason:
+/// the job token its declared build publishes. [`EXTEND_PEN_ACTION`]'s twin, and here for its reason:
 /// the job names no rung verb, so the token is the only thing that can say what the entry is.
 pub const SET_HERD_OUTPUT_ACTION: &str = "set_herd_output";
 
@@ -12598,7 +12777,7 @@ fn describe_build_source(source: &BuildSource) -> String {
 }
 
 // **RETIRED: `describe_worked_source`** — it named a worked source for the completion hand-off's
-// feed line, and that line now names a **queue entry** rather than a labor row
+// feed line, and that line now names a **declared build** rather than a labor row
 // (`docs/plan_standing_upkeep.md` §2.5). [`describe_build_source`] is its replacement, over the
 // vocabulary the queue is keyed in.
 
@@ -12686,11 +12865,6 @@ fn announce_shed_crew(
             CommandEventKind::CancelOrder,
             "road keepers".to_string(),
             "kind=roadwork".to_string(),
-        ),
-        LaborTarget::Builders => (
-            CommandEventKind::CancelOrder,
-            "builders".to_string(),
-            "kind=builders".to_string(),
         ),
     };
     // **The crew that is left is what the two lines differ on.** A row still worked says the number
@@ -13305,7 +13479,7 @@ enum EstimateStanding {
     Holds,
     /// The meter is going backwards ([`BuildTurns::Rotting`]).
     Rots,
-    /// **The head of this band's queue is refused by its own gate** ([`crate::intensification::BuildTurns::Blocked`]).
+    /// **A declared build of this band is refused by its own gate** ([`crate::intensification::BuildTurns::Blocked`]).
     ///
     /// **Below `Rots` and above `Silent`**, which continues the one stated rule rather than starting
     /// a second: a band that is rotting a meter is at least *supplying* something to it, a blocked
@@ -13350,7 +13524,7 @@ fn estimate_standing(estimate: Option<BuildTurns>) -> EstimateStanding {
 /// (`docs/plan_unit_costed_work.md` §1.2).
 ///
 /// Returns **every rung this call completed**, in climb order - the feed line rides each, and the
-/// caller retires the queue entry only at its destination.
+/// caller retires the declared build only at its destination.
 #[allow(clippy::too_many_arguments)] // the rung, the gate, the actor and the feed line are all inputs
 fn accrue_patch_rung(
     patch: &mut ForagePatch,
@@ -13361,8 +13535,8 @@ fn accrue_patch_rung(
     event_log: &mut CommandEventLog,
     tick: u64,
     tile: UVec2,
-    // **The hands actually on this build this turn** - the band's whole builders pool when this patch
-    // is the head of its queue, and zero otherwise (`docs/plan_standing_upkeep.md` §2.5).
+    // **The hands actually on this build this turn** - the band's whole build crew when this patch
+    // build holds builders, and zero otherwise (`docs/plan_standing_upkeep.md` §2.5).
     workers: u32,
     // **The pool the quote is struck at**, which is the full builders count whether or not this
     // entry is the one being funded: every entry in a queue is dated at the crew the head will hand
@@ -13445,7 +13619,7 @@ fn accrue_patch_rung(
     };
     if accrual <= 0.0 {
         // **A build in flight claims the patch's estimate even when it is STALLED** - a stall's
-        // answer is *"no estimate"*, and it is still the **queued build's** answer, so a band merely
+        // answer is *"no estimate"*, and it is still the **declared build's** answer, so a band merely
         // gathering this ground must not quote the next rung over it.
         if entry_declares_a_rung {
             record_quote(patch, quotes);
@@ -15174,8 +15348,15 @@ mod labor_yield_tests {
     /// with nothing added for the rung's rate. See [`the_harness_build_crew`] for why the padding
     /// went: a build crew supplies none of the rate (§4.6a), so a head count is a head count on both
     /// webs. The keeping a fixture staffs beside it is [`the_harness_keeping_crew`].
-    fn animal_builders(_world: &World, _key: RungId) -> u32 {
-        WORKERS
+    fn animal_builders(world: &World, key: RungId) -> u32 {
+        let ladder = world.resource::<LadderConfigHandle>().get();
+        WORKERS.min(
+            ladder
+                .rung(key)
+                .build
+                .as_ref()
+                .map_or(WORKERS, |build| build.max_builders),
+        )
     }
 
     /// **THE KEEPERS THAT EXACTLY COVER THIS RUNG'S DEMAND** at the harness herd's own load — what a
@@ -15207,11 +15388,13 @@ mod labor_yield_tests {
     /// a build crew supplies none of the rate, so the padding was correcting for nothing and only
     /// made the crew larger than the head count these fixtures state. Every pace assertion divides by
     /// [`build_work_per_turn`], which reads this same crew.
-    fn the_harness_build_crew(
-        _rung: &crate::intensification::RungDef,
-        _source_measure: f32,
-    ) -> u32 {
-        WORKERS
+    fn the_harness_build_crew(rung: &crate::intensification::RungDef, _source_measure: f32) -> u32 {
+        // A build never takes more hands than its rung's cap, however many the harness has idle.
+        WORKERS.min(
+            rung.build
+                .as_ref()
+                .map_or(WORKERS, |build| build.max_builders),
+        )
     }
 
     /// **Turns this harness's crew needs to finish `rung`'s whole job**, `ceil(cost / work)`. Turns
@@ -15392,16 +15575,10 @@ mod labor_yield_tests {
     }
 
     /// A content band (morale 1 → output multiplier 1.0) on `tile` with the given assignments.
-    /// **STAND A BAND'S BUILDERS ON ONE SOURCE** — the 6b shape of what a fixture used to say with
-    /// `improvement: Some(verb)` and a build crew on the source row.
-    ///
-    /// It is two facts now and both are needed, which is the point: the **`builders` role row** is
-    /// where the hands are, and the **queue entry** is what they are raising. A fixture that staffed
-    /// only the first would find the pool idle, and one that queued only the second would find it
-    /// unfunded — neither is a bug in the sim.
-    ///
-    /// Appends the role row (so it lands at the tail, after the source rows the caller staffed) and
-    /// declares the build on the source those rows name.
+    /// **DECLARE A BUILD ON A SOURCE AND LEAVE IT `builders` HANDS** - the declaration is the build;
+    /// the sim staffs it from the hands the band's other crews leave (`crate::seat_builders`). A
+    /// fixture that declared without leaving hands would find the build unstaffed - neither is a bug
+    /// in the sim.
     fn declare_build(
         world: &mut World,
         band: Entity,
@@ -15413,26 +15590,13 @@ mod labor_yield_tests {
             let mut allocation = world
                 .get_mut::<LaborAllocation>(band)
                 .expect("the fixture band has an allocation");
-            allocation.assignments.push(LaborAssignment {
-                party: None,
-                muster_crew: 0,
-                planned_crew: 0,
-                max_workers: Some(builders),
-                staffing: Default::default(),
-                target: LaborTarget::Builders,
-                // ⛔ **A `builders` ROW CARRIES NO KIT AT ALL** since §4.7a ②: the builders' kit was
-                // a property of the queue ENTRY, and `assign_labor` refuses a token here. Neither
-                // prices anything now — the isolation below rides the band's ledger.
-                kit: None,
-                workers: builders,
-                priority: SourcePriority::default(),
-            });
             assert!(
-                allocation.enqueue_build(source.clone(), declared),
+                allocation.declare_build(source.clone(), declared),
                 "fixture: a build is declared on a source the band already works"
             );
         }
         crate::disarm_the_builders(world, band, declared.destination(shipped::ladder()));
+        crate::seat_builders(world, band, builders);
     }
 
     /// [`declare_build`]'s plant half, by tile.
@@ -16399,7 +16563,7 @@ mod labor_yield_tests {
     /// hold it. What would be left is the sim moving hands between two rows the player staffs by
     /// hand.
     ///
-    /// **What completion does now is retire the QUEUE ENTRY** (`docs/plan_standing_upkeep.md` §2.4:
+    /// **What completion does now is retire the DECLARED BUILD** (`docs/plan_standing_upkeep.md` §2.4:
     /// *"at its cost, the entry leaves the queue"*), which hands the whole pool to whatever the
     /// player put next. It frees nobody, because the builders never stood on the source.
     ///
@@ -16436,7 +16600,7 @@ mod labor_yield_tests {
         }));
         let without_upkeep = tended_upkeep(serde_json::Value::Null);
 
-        let run = |ladder: std::sync::Arc<LadderConfig>| -> (u32, u32) {
+        let run = |ladder: std::sync::Arc<LadderConfig>| -> u32 {
             let (mut world, tile) = world_with_source(CAP);
             world.insert_resource(LadderConfigHandle::new(ladder));
             world.resource_mut::<SimulationConfig>().map_seed = WORTH_TENDING_SEED;
@@ -16494,36 +16658,29 @@ mod labor_yield_tests {
                 .expect("the forage row survives")
                 .clone();
             assert!(
-                allocation.build_queue.is_empty(),
+                allocation.builds.is_empty(),
                 "the finished build's entry leaves the queue either way: {:?}",
-                allocation.build_queue
+                allocation.builds
             );
             assert!(
                 row.workers > NO_CREW_ON_THIS_ACTIVITY,
                 "fixture: the row survives with its gatherers, so there were hands on this source \
                  for a hand-off to have moved: {row:?}"
             );
-            // **The builders are still standing where the player put them**, and the site row still
-            // holds the crew the player staffed — nothing moved hands onto the keeping
-            // (`docs/plan_standing_upkeep.md` §2.3). The keeping is paid out of the row's own crew.
-            (
-                allocation.workers_on(&LaborTarget::Builders),
-                row.workers.saturating_sub(WORKERS),
-            )
+            // The site row still holds the crew the sim staffed — nothing moved hands onto the
+            // keeping (`docs/plan_standing_upkeep.md` §2.3). The keeping is paid out of the row's
+            // own crew.
+            row.workers.saturating_sub(WORKERS)
         };
 
-        let (still_building, on_keeping) = run(std::sync::Arc::new(with_upkeep));
-        assert_eq!(
-            still_building, BUILDERS,
-            "liveness: the pool the fixture staffed is still there to have been moved"
-        );
+        let on_keeping = run(std::sync::Arc::new(with_upkeep));
         assert_eq!(
             on_keeping, NO_CREW_ON_THIS_ACTIVITY,
             "a finished rung that costs something to HOLD moves nobody onto the keeping — the \
              player staffs it, and the bill started at the first work banked"
         );
 
-        let (_, freed) = run(std::sync::Arc::new(without_upkeep));
+        let freed = run(std::sync::Arc::new(without_upkeep));
         assert_eq!(
             freed, NO_CREW_ON_THIS_ACTIVITY,
             "…and so does one that costs nothing: there is one branch now, not two"
@@ -18678,7 +18835,7 @@ mod labor_yield_tests {
         world
             .get::<LaborAllocation>(band)
             .expect("the band works")
-            .build_queue_entry(&source)
+            .build_declaration(&source)
             .map(|entry| entry.declared)
     }
 
@@ -18777,7 +18934,7 @@ mod labor_yield_tests {
              pre-commit forecast promised: {completing} vs {promised_dip}"
         );
 
-        // (2) The handoff: the queue entry retired, and NOTHING else moved — least of all the
+        // (2) The handoff: the declared build retired, and NOTHING else moved — least of all the
         // stance. Rewriting `policy` here is exactly what issue #442 deletes.
         let completed = only_source_assignment(&world, band);
         // **The crew is the sim's now** (#871): completion neither moves the player's Max nor
@@ -19140,7 +19297,7 @@ mod labor_yield_tests {
     /// in every builder's hand.
     ///
     /// ⛔ **THE GEAR AXIS IS HELD ON THE LEDGER NOW, NOT ON A KIT NAMED ON THE ENTRY.** These arms
-    /// used to differ in the queue entry's `kit` — `hurdling` against `big_game` — because a build
+    /// used to differ in the declared build's `kit` — `hurdling` against `big_game` — because a build
     /// resolved one roster kit. A pool's tools follow from the **rung** since
     /// `docs/plan_pool_toe.md`, so an entry's kit prices nothing and the only thing that can still
     /// separate a geared crew from a bare one is whether the band actually holds the tool.
@@ -19164,7 +19321,7 @@ mod labor_yield_tests {
     /// What one turn of a `Tame` assignment left behind — the build meter, the gear it spent, and the
     /// two liveness handles that tell a *refused* build apart from a fixture that never ran at all:
     /// `tame_arm_ran` is the herd's `tamed_this_turn`, which the `Tame` arm sets on entry, and
-    /// `still_queued` is whether the band's build queue still names the herd afterwards.
+    /// `still_queued` is whether the band's declarations still name the herd afterwards.
     struct TameTurn {
         progress: f32,
         // **RETIRED: `rate`** — the maintenance rate this herd owed on the turn measured. It was
@@ -19200,56 +19357,42 @@ mod labor_yield_tests {
         let builders = animal_builders(&world, shipped::animal_pastoral());
         // ⛔ **THE TAKE ROW CARRIES A HUNT KIT, NOT THE BUILD KIT UNDER TEST.** It used to carry
         // `kit_id`, which put `hurdling` — a `builders`/`husbandry` kit — on a `hunt` row, a state
-        // `assign_labor` refuses by name. It was harmless while the builders' pool armed off the
+        // `assign_labor` refuses by name. It was harmless while the build crew armed off the
         // whole ledger and is not now: the row's ten hands and the pool's both claim the band's one
         // `crook`, so the pool was issued half a set and the fixture measured the budget rather than
         // the tool. Both arms take with the job's own default, so the take is identical across them
-        // and the queue entry's kit is the only variable — which is also what retires the *"the two
+        // and the declared build's kit is the only variable — which is also what retires the *"the two
         // kits move the pace through a second channel"* caveat the comparison below carried.
         let take_kit = equipment.default_kit(crate::equipment_config::KitJob::Hunt);
         let band = spawn_band(
             &mut world,
             tile,
-            vec![
-                LaborAssignment {
-                    party: None,
-                    muster_crew: 0,
-                    planned_crew: 0,
-                    max_workers: Some(WORKERS),
-                    staffing: Default::default(),
-                    target: LaborTarget::Hunt {
-                        fauna_id: HERD_ID.to_string(),
-                        floor: BUILDER_FLOOR,
-                        move_with_herd: false,
-                    },
-                    workers: WORKERS,
-                    kit: Some(take_kit),
-                    priority: SourcePriority::default(),
+            vec![LaborAssignment {
+                party: None,
+                muster_crew: 0,
+                planned_crew: 0,
+                max_workers: Some(WORKERS),
+                staffing: Default::default(),
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    floor: BUILDER_FLOOR,
+                    move_with_herd: false,
                 },
-                // **THE `builders` ROW CARRIES NO KIT** — one is refused there since §4.7a ②,
-                // because a build's gear is a property of the queue ENTRY and not of the band.
-                LaborAssignment {
-                    party: None,
-                    muster_crew: 0,
-                    planned_crew: 0,
-                    max_workers: Some(builders),
-                    staffing: Default::default(),
-                    target: LaborTarget::Builders,
-                    workers: builders,
-                    kit: None,
-                    priority: SourcePriority::default(),
-                },
-            ],
+                workers: WORKERS,
+                kit: Some(take_kit),
+                priority: SourcePriority::default(),
+            }],
         );
         {
             let mut allocation = world
                 .get_mut::<LaborAllocation>(band)
                 .expect("the fixture band has an allocation");
-            assert!(allocation.enqueue_build(
+            assert!(allocation.declare_build(
                 BuildSource::Herd(HERD_ID.to_string()),
                 BuildJob::Climb(shipped::animal_pastoral()),
             ));
         }
+        crate::seat_builders(&mut world, band, builders);
         // **THE LEDGER UNDER TEST**, and it is the whole of the gear axis: a build's tools follow
         // from the rung it stands on, so what separates a geared pool from a bare one is whether the
         // band owns the tool at all. `spawn_band` builds no ledger, and wear is only charged on an
@@ -19290,8 +19433,7 @@ mod labor_yield_tests {
         let still_queued = world
             .get::<LaborAllocation>(band)
             .expect("the band's allocation survives the turn")
-            .build_queue_position(&BuildSource::Herd(HERD_ID.to_string()))
-            .is_some();
+            .has_build(&BuildSource::Herd(HERD_ID.to_string()));
         TameTurn {
             progress,
             gear_wear,
@@ -19397,7 +19539,7 @@ mod labor_yield_tests {
         // (This used to carry a second reason — *"the two kits move the pace through a second
         // channel"*, `big_game`'s spears shrinking the flock and moving the escapement room the
         // build's gate reads. That channel is closed: both arms now take with the hunt job's own
-        // default kit and differ only in the queue entry's, so a turn count here would measure the
+        // default kit and differ only in the declared build's, so a turn count here would measure the
         // handling gear alone.)
         let ladder = LadderConfig::builtin();
         let pastoral = ladder.rung(shipped::animal_pastoral());
@@ -19828,14 +19970,8 @@ mod labor_yield_tests {
                 priority: SourcePriority::default(),
             });
             assert!(
-                allocation.enqueue_build(source.clone(), BuildJob::Climb(shipped::plant_farm())),
+                allocation.declare_build(source.clone(), BuildJob::Climb(shipped::plant_farm())),
                 "fixture: the sow is queued on a source the band works"
-            );
-            assert_eq!(
-                allocation.build_queue_position(&source),
-                Some(1),
-                "fixture: the sow must sit BEHIND the pen — a head is funded and a waiting entry is \
-                 only dated, which is the whole distinction under test"
             );
         }
         (world, band)
@@ -19862,17 +19998,11 @@ mod labor_yield_tests {
     /// The waiting entry's **own** span — what the chain added on top of the head's date. Both
     /// numbers come off the wire, so this is what a client renders as *"and then N more"*.
     fn sow_span_behind_the_pen(world: &World) -> u32 {
-        let head = match published_pen_countdown(world) {
+        // Builds run side by side, each on its own crew, so the sow's date is its own span.
+        match published_sow_countdown(world) {
             Some(crate::intensification::BuildTurns::Turns(turns)) => turns,
-            other => {
-                panic!("fixture: the head must name a date for the tail to be measured: {other:?}")
-            }
-        };
-        let tail = match published_sow_countdown(world) {
-            Some(crate::intensification::BuildTurns::Turns(turns)) => turns,
-            other => panic!("fixture: the waiting sow must name a date: {other:?}"),
-        };
-        tail - head
+            other => panic!("fixture: the sow beside the pen must name a date: {other:?}"),
+        }
     }
 
     /// ⛔ **A WAITING ENTRY IS QUOTED AT ITS OWN COVERAGE, NEVER THE BAND'S**
@@ -19934,11 +20064,11 @@ mod labor_yield_tests {
             Some(crate::intensification::BuildTurns::Blocked),
             "a pen build that cannot draw one hurdle publishes the blocked sentinel"
         );
-        assert_eq!(
+        assert_ne!(
             published_sow_countdown(&dry),
             Some(crate::intensification::BuildTurns::Blocked),
-            "…and the queue behind it carries that, because a date behind an unstartable build \
-             would be a promise"
+            "…and the build beside it is NOT blocked by it: builds run in parallel, each on its own \
+             crew, so one build's empty shelf says nothing of another's date"
         );
 
         // --- the head's shelf is HALF: the tail's own span is untouched ---------------------------
@@ -19981,8 +20111,7 @@ mod labor_yield_tests {
             world
                 .get::<LaborAllocation>(band)
                 .expect("the fixture band")
-                .build_queue_position(&BuildSource::Herd(HERD_ID.to_string()))
-                .is_some(),
+                .has_build(&BuildSource::Herd(HERD_ID.to_string())),
             "**AND IT IS A STALL, NOT A REFUSAL** — the entry stays in the queue, exactly as a build \
              whose builders left does"
         );
@@ -20201,11 +20330,13 @@ mod labor_yield_tests {
         // The pace is scaled, so the span is stretched by the inverse — asserted as a ratio against
         // the covered arm rather than as a number, so a retune of the rung moves both together. One
         // turn of slack for the `ceil` at each end.
-        let expected = (covered as f32 / COVERAGE).ceil() as u32;
+        // Both arms have banked this one turn already (the covered one in full, the stretched one
+        // at the coverage), so the doubling is of the whole span, `covered + 1`, less the turn run.
+        let expected = ((covered + 1) as f32 / COVERAGE).ceil() as u32 - 1;
         assert!(
             stretched.abs_diff(expected) <= 1,
-            "…and it is stretched by exactly the coverage: {stretched} against {covered}/{COVERAGE} \
-             = {expected}"
+            "…and it is stretched by exactly the coverage: {stretched} against ({covered}+1)/{COVERAGE} \
+             - 1 = {expected}"
         );
         assert_eq!(
             published_pen_block_reason(&partial),
@@ -20416,7 +20547,7 @@ mod labor_yield_tests {
     /// is the ordinary end of a road nobody walked, not an edge case worth collapsing.
     ///
     /// ⛔ **IT IS ASSERTED AT THE GATE, WHICH IS THE ONLY PLACE IT CAN BE.** The verdict is consumed
-    /// by `source_banking_its_first_work` - struck *before* the turn's `prune_build_queue` - and that
+    /// by `source_banking_its_first_work` - struck *before* the turn's `prune_builds` - and that
     /// prune then drops the entry of any road this band does not keep, so neither cause survives to
     /// the published row. A wire-level fixture would assert on an entry that no longer exists.
     ///
@@ -20605,7 +20736,7 @@ mod labor_yield_tests {
         );
     }
 
-    /// **A TWO-LEG QUEUE ENTRY DRAWS EACH LEG'S OWN PILE**, at that leg's own rung's rate over that
+    /// **A TWO-LEG DECLARED BUILD DRAWS EACH LEG'S OWN PILE**, at that leg's own rung's rate over that
     /// leg's own width — the property a single-leg fixture cannot see.
     ///
     /// Asserted at [`super::build_material_wants`], because the shipped ladder has no two-leg climb whose

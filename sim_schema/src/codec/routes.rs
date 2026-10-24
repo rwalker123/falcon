@@ -1,6 +1,8 @@
 //! Route-section FlatBuffers serialization — the roads in the ground, one row per tile.
 
-use crate::codec::subsistence::{create_upkeep_toe, decode_upkeep_toe};
+use crate::codec::subsistence::{
+    create_build_toe, create_upkeep_toe, decode_build_toe, decode_upkeep_toe,
+};
 use crate::codec::{map_rows, map_rows_if_present, text, FbBuilder};
 use crate::state::routes::{RouteState, TileImprovementState};
 use crate::state::subsistence::BuildLegState;
@@ -18,6 +20,7 @@ fn create_routes<'a>(
             let rung = builder.create_string(&route.rung);
             // Why the pool is stuck on this tile — `""` when it is not stuck at all.
             let build_blocked_reason = builder.create_string(&route.build_blocked_reason);
+            let build_toe = create_build_toe(builder, &route.build_toe);
             fb::RouteState::create(
                 builder,
                 &fb::RouteStateArgs {
@@ -38,6 +41,10 @@ fn create_routes<'a>(
                     frictionMultiplier: route.friction_multiplier,
                     holdsLinkToTiles: route.holds_link_to_tiles,
                     buildBlockedReason: Some(build_blocked_reason),
+                    buildersStaffed: route.builders_staffed,
+                    buildersKitted: route.builders_kitted,
+                    buildersCap: route.builders_cap,
+                    buildToe: build_toe,
                     buildMaterialDemand: route.build_material_demand,
                     buildMaterialSupplied: route.build_material_supplied,
                     buildTurnsRemaining: route.build_turns_remaining,
@@ -79,6 +86,7 @@ fn create_tile_improvements<'a>(
             let build_legs = builder.create_vector(&leg_offsets);
             let build_blocked_reason = builder.create_string(&improvement.build_blocked_reason);
             let upkeep_toe = create_upkeep_toe(builder, &improvement.upkeep_toe);
+            let build_toe = create_build_toe(builder, &improvement.build_toe);
             fb::TileImprovementState::create(
                 builder,
                 &fb::TileImprovementStateArgs {
@@ -100,6 +108,10 @@ fn create_tile_improvements<'a>(
                     upkeepHands: improvement.upkeep_hands,
                     upkeepToolsShort: improvement.upkeep_tools_short,
                     upkeepToe: upkeep_toe,
+                    buildersStaffed: improvement.builders_staffed,
+                    buildersKitted: improvement.builders_kitted,
+                    buildersCap: improvement.builders_cap,
+                    buildToe: build_toe,
                     isQueued: improvement.is_queued,
                 },
             )
@@ -193,6 +205,10 @@ fn decode_tile_improvement(improvement: fb::TileImprovementState<'_>) -> TileImp
         upkeep_hands: improvement.upkeepHands(),
         upkeep_tools_short: improvement.upkeepToolsShort(),
         upkeep_toe: decode_upkeep_toe(improvement.upkeepToe()),
+        builders_staffed: improvement.buildersStaffed(),
+        builders_kitted: improvement.buildersKitted(),
+        builders_cap: improvement.buildersCap(),
+        build_toe: decode_build_toe(improvement.buildToe()),
         is_queued: improvement.isQueued(),
     }
 }
@@ -216,6 +232,10 @@ fn decode_route(route: fb::RouteState<'_>) -> RouteState {
         friction_multiplier: route.frictionMultiplier(),
         holds_link_to_tiles: route.holdsLinkToTiles(),
         build_blocked_reason: text(route.buildBlockedReason()),
+        builders_staffed: route.buildersStaffed(),
+        builders_kitted: route.buildersKitted(),
+        builders_cap: route.buildersCap(),
+        build_toe: decode_build_toe(route.buildToe()),
         build_material_demand: route.buildMaterialDemand(),
         build_material_supplied: route.buildMaterialSupplied(),
         build_turns_remaining: route.buildTurnsRemaining(),

@@ -117,9 +117,29 @@ static func crew_take_rows(herd: Dictionary, max_workers: int, floor: float) -> 
 		})
 	return rows
 
+## **THE STAFFING PREVIEW'S STAND-IN IS OPT-IN.** `{}` (the default) answers NOTHING, so the sheet stays on
+## its idle-based estimate and every chapter that predates the preview renders the frame it always did.
+## A chapter that judges the preview sets the reply it wants (`workers`, `idle_before`, `idle_after`,
+## `losses`, as `bridge/query.rs` decodes it) here and clears it when done. `asks` records each
+## preview ask the sheet put, so a chapter can say what the sheet asked.
+static var staffing_preview_canned: Dictionary = {}
+static var staffing_preview_asks: Array = []
+
+static func staffing_preview_answer(request_id: int, ask: Dictionary) -> Dictionary:
+	staffing_preview_asks.append(ask)
+	if staffing_preview_canned.is_empty():
+		return {}
+	var reply := staffing_preview_canned.duplicate(true)
+	reply["request_id"] = request_id
+	reply["ok"] = true
+	reply["kind"] = ForecastQuery.KIND_STAFFING_PREVIEW
+	return reply
+
 ## One canned reply, in the shape `native/src/bridge/query.rs` decodes.
 static func answer(hud: Node, request_id: int, ask: Dictionary) -> Dictionary:
 	var kind := String(ask.get("kind", ""))
+	if kind == ForecastQuery.KIND_STAFFING_PREVIEW:
+		return staffing_preview_answer(request_id, ask)
 	if kind == ForecastQuery.KIND_WORK_PARTY:
 		return work_party_answer(hud, request_id, ask)
 	if kind == ForecastQuery.KIND_DEPOSIT_CREW_TAKE:

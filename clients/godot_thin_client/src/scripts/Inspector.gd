@@ -574,7 +574,7 @@ func _send_command(line: String, success_message: String,
 		# bridge' or 'the bridge could not deliver'"*, and that stopped being true when PARSING moved
 		# into the bridge: `bridge/command.rs` runs `parse_command_line` before it touches the socket,
 		# so a line the CLIENT could not build is a third answer — and the one that fired. Reported
-		# from play, the Builders pool's `+` produced `assign_labor 0 1 builders 1`, the text grammar
+		# from play, a role stepper produced `assign_labor 0 1 <role> 1`, the text grammar
 		# did not know the role, and the dock read *"Not connected to the server"* on a connected
 		# client. The pool had therefore never been staffable at all.
 		#

@@ -60,11 +60,10 @@ per-tab panels).
 
 `Hud._emit_assign_labor` records the pending entry BEFORE the command is emitted — which is right, the
 card must answer the stepper on the frame it was pressed — and nothing rolled it back when the send
-FAILED. Reported from play: an `assign_labor 0 1 builders 3 kit hurdling` that never reached the
-server (`Inspector.gd`'s `err != OK` transport branch) left the Builders card showing three builders
-the sim had never heard of until the next turn's `reconcile_pending` quietly took them away, while the
-build queue beside it correctly read `⚠ No builders`. One screen, two answers, and the wrong one was
-the one with the number on it.
+FAILED. Reported from play: an `assign_labor 0 1 scout 3 kit wayfinding` that never reached the
+server (`Inspector.gd`'s `err != OK` transport branch) left the Scout card showing three scouts the
+sim had never heard of until the next turn's `reconcile_pending` quietly took them away. One screen,
+two answers, and the wrong one was the one with the number on it.
 
 - **`Main._send_runtime_command` / `_send_formatted_command` ANSWER whether the line went.** They
   warned and returned nothing; every caller that wrote something on the strength of that call must now
@@ -89,7 +88,7 @@ the one with the number on it.
   worse than a dropped one.
 
 **Asserted PNG-LESS in `band_panel_preview._assert_pending_assign_rollback`** — a card showing three
-builders is a perfectly ordinary card, and the whole defect is that the number is fiction. It drives
+scouts is a perfectly ordinary card, and the whole defect is that the number is fiction. It drives
 the REAL emitter (so the payload under test is the one `Main` receives), asserts the `has_method`
 names `Main` probes for, then drops one entry and requires an unrelated pending edit on the SAME band
 to SURVIVE. The survivor is half the claim.

@@ -90,7 +90,7 @@ fn consumers(app: &mut App, band: Entity, lines: &[(&str, f32, f32)]) {
         .get_mut::<LaborAllocation>(band)
         .expect("a spawned band carries an allocation");
     allocation.last_pool_toe.clear();
-    allocation.last_queued_build_toe.clear();
+    allocation.last_build_toe.clear();
     allocation.last_keeping_issued = lines
         .iter()
         .map(|(item, required, issued)| KeepingIssue {

@@ -11,9 +11,9 @@ class_name SourceForecast
 ##   • THE RAID — `denial_forecast` and friends: what a detached denial party does to a herd, over how
 ##     many turns, and what it hauls home.
 ##   • THE FLOOR'S INSTRUMENT — `floor_chart_model` and the layer under it (`regrowth_at`,
-##     `project_stock`, `crew_to_clear` / `crew_to_hold`, `harvest_verdict`): the projection the
-##     compose sheet's chart draws, the two crew targets beneath it and the sentence saying which of
-##     the crew and the floor is BINDING. One model, three readings, so they cannot disagree.
+##     `project_stock`, `crew_to_clear` / `crew_to_hold`): the projection the
+##     compose sheet's chart draws and the two crew targets beneath it. One model, two readings, so
+##     they cannot disagree.
 ##
 ## WHY IT IS ITS OWN FILE. The next phase lifts a `DrawerComposeController` out of `Hud.gd`, but this
 ## layer is called by the work zone and the parties zone TOO, so it cannot travel with the drawer. The
@@ -127,12 +127,12 @@ const IMPROVEMENT_FELL := "fell"
 const IMPROVEMENT_COPPICE := "coppice"
 const IMPROVEMENT_QUARRY := "quarry"
 # **THE FENCE RING'S JOB TOKEN, AND IT IS NOT A RUNG.** `snapshot::population::resolved_build_job`
-# publishes this in the `improvement` slot for a queue entry whose declared job is
-# `BuildJob::ExtendPen`: a ring widens the pen rung its herd already stands on, so there is no meter
-# for a rung verb to name and the entry publishes the command's own name instead. It is therefore
-# absent from `HUNT_IMPROVEMENTS` and from every `FORECAST_BUILD_*_KEYS` table — the ring's meter is
-# the herd's own `pen_extend_progress` / `pen_extend_cost` pair, read by `pen_extend_fraction`. This
-# token is how a reader tells a RING entry from a RUNG entry with what is already on the wire.
+# publishes this in the `improvement` slot for a declared build whose job is `BuildJob::ExtendPen`: a
+# ring widens the pen rung its herd already stands on, so there is no meter for a rung verb to name and
+# the build publishes the command's own name instead. It is therefore absent from `HUNT_IMPROVEMENTS`
+# and from every `FORECAST_BUILD_*_KEYS` table — the ring's meter is the herd's own
+# `pen_extend_progress` / `pen_extend_cost` pair, read by `pen_extend_fraction`. This token is how a
+# reader tells a RING from a RUNG build with what is already on the wire.
 const BUILD_JOB_EXTEND_PEN := "extend_pen"
 # WHICH KIND OF SOURCE a forecast dict describes, stated explicitly by every `forecast_inputs` caller:
 # a herd and a raw wire forage patch share the empty key prefix, so the prefix cannot answer it and a
@@ -141,9 +141,9 @@ const SOURCE_KIND_HERD := "herd"
 const SOURCE_KIND_FORAGE := "forage"
 ## ⛔ **THE THIRD BRANCH'S SOURCE KIND, AND `source_kind_for_labor` DELIBERATELY DOES NOT ANSWER IT.**
 ## That function is a two-way alias over the two FOOD WEBS — its `else` is `SOURCE_KIND_HERD`, so a
-## road handed to it comes back an animal and every keyed readout after it names the wrong pool. A
-## road has no labor row to be routed FROM, so there is nothing for that alias to widen; what needs
-## the kind is the queue row's price clause, which resolves it from the entry's own `roadwork` kind.
+## road handed to it comes back an animal and every keyed readout after it names the wrong pool. A road
+## has no labor row to be routed FROM, so there is nothing for that alias to widen; what needs the kind
+## is the price clause, which resolves it from the road's own `roadwork` kind.
 const SOURCE_KIND_ROUTE := "route"
 
 ## ⛔ **THE FOURTH BRANCH'S SOURCE KIND, AND IT IS STATED SO THAT EVERY KIND-KEYED TABLE ANSWERS ITS
@@ -989,13 +989,15 @@ const ECOLOGY_PHASE_THRIVING := "thriving"
 # control renders — the tile card and the herd drawer. It cannot answer for a crew the player is
 # PROPOSING, which is what a compose sheet's stepper asks; that is the terms below.
 const FORECAST_BUILD_TURNS_KEY := "build_turns_remaining"
-# **WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, `NOT_IN_ANY_BUILD_QUEUE`
-# when no band has queued it (`docs/plan_standing_upkeep.md` §4.6b). It rides the SAME winning band
-# as `FORECAST_BUILD_TURNS_KEY` and `FORECAST_BUILD_GEAR_WORK_KEY`, so the three are read as one set;
-# the countdown is a CHAINED date — everything ahead of this entry plus its own span at the full
-# builders pool — and this is what makes that number explicable.
-const FORECAST_BUILD_QUEUE_POSITION_KEY := "build_queue_position"
-# **WHY THE QUEUE IS BLOCKED HERE** — `""` on any source that is not a blocked build, else the sim's
+# `cap` is 0 where nobody has declared a build here, which is how a surface tells a declared build
+# from none. The viewer's own bands only.
+const FORECAST_BUILDERS_STAFFED_KEY := "builders_staffed"
+const FORECAST_BUILDERS_KITTED_KEY := "builders_kitted"
+const FORECAST_BUILDERS_CAP_KEY := "builders_cap"
+const FORECAST_BUILD_TOE_KEY := "build_toe"
+# A deposit / tile row also publishes membership directly: a build is declared on it.
+const FORECAST_IS_QUEUED_KEY := "is_queued"
+# **WHY THE BUILD IS BLOCKED HERE** — `""` on any source that is not a blocked build, else the sim's
 # own short cause key for the conjunct of the rung's gate that refused
 # (`docs/plan_standing_upkeep.md` §4.6b). It is READ BESIDE `FORECAST_BUILD_TURNS_KEY`'s `-4`, never
 # instead of it: the sentinel says the builders are held here, this says why, and a `-4` with no cause
@@ -1003,19 +1005,7 @@ const FORECAST_BUILD_QUEUE_POSITION_KEY := "build_queue_position"
 # **THE SIM DECIDES `eligible`, SO THE SIM SAYS WHY** — this client holds no gate machinery for it and
 # must not re-derive one. It rides the SAME winning band as the three fields above.
 const FORECAST_BUILD_BLOCKED_REASON_KEY := "build_blocked_reason"
-# **WHERE THE QUEUED ENTRY IS TAKING THIS SOURCE, AND WHAT IS LEFT OF THE CLIMB**
-# (`docs/plan_standing_upkeep.md` §2.8). A queue entry names a DESTINATION rung rather than a single
-# rung — the four verbs always were destinations, and with ONE POSITION PER SOURCE that reading
-# became literal: the entry lays every rung between where the source stands and where it was sent,
-# in order, and stays at the head until it ARRIVES. So a `sow` declared on untended ground is two
-# legs and costs the whole branch.
 #
-# **BOTH ARE READ AND NEITHER IS RE-DERIVED.** A leg's `work_remaining` is its owing FROM WHERE THE
-# SOURCE STANDS (a patch 30 units into a Cultivate owes 20 on that leg, not 50 — a previous
-# improvement is a RECEIPT, NOT A DISCOUNT) and its `turns_remaining` is CHAINED behind the legs
-# above it against a build queue this client cannot see. Reconstructing either would be a second
-# producer of a verdict that already has one, which is the failure the whole `buildTurnsRemaining`
-# family exists to prevent.
 const FORECAST_BUILD_DESTINATION_KEY := "build_destination_rung"
 const FORECAST_BUILD_LEGS_KEY := "build_legs"
 # **WHAT THE SOURCE WILL CARRY AT THAT DESTINATION** — the same `K` as `FORECAST_CAPACITY_KEY`,
@@ -1040,13 +1030,6 @@ const FORECAST_BUILD_DESTINATION_CAPACITY_KEY := "build_destination_capacity"
 # readers are two GDScript surfaces: a typo in a `get` here is a silent zero, which on the work side
 # would price a whole branch as free.
 const BUILD_LEG_RUNG_KEY := "rung"
-## ⛔ **THE LEG'S OWN NAME, WHERE THE VERB CANNOT PRODUCE ONE.** The two food webs derive a leg's word
-## from its improvement verb (`DetailFormat.rung_badge_word`), which is a hard-coded four and answers
-## `""` for `grade` / `pave` — so a road's leg would render as a bare price with nothing saying which
-## rung it buys. The ROUTE branch's rung names are published per world, so its producer carries the
-## name and the renderer prefers it. `""` on every leg either food web builds, which takes the derived
-## word exactly as before.
-const BUILD_LEG_NAME_KEY := "name"
 const BUILD_LEG_WORK_KEY := "work_remaining"
 const BUILD_LEG_TURNS_KEY := "turns_remaining"
 # …and the fourth key `build_legs` ADDS: the wire's rung crossed to the improvement verb a command
@@ -1233,23 +1216,19 @@ const BUILD_TURNS_HOLDS := -2
 ## without the player having to know the sentinel.
 const BUILD_TURNS_ROTS := -3
 
-## **THE ANSWER FOR AN ENTRY THE QUEUE IS STUCK ON** — `sim_schema::BUILD_QUEUE_BLOCKED`
-## (`docs/plan_standing_upkeep.md` §4.6b). The band's builders are STAFFED and standing on this
-## entry, and the rung's own gate refuses it, so nothing banks — and, because the whole pool goes on
-## the head of the queue until it fills, **nothing behind it moves either**: every entry queued
-## behind a blocked head publishes this too.
+## **THE ANSWER FOR A BUILD THE SITE'S CREW IS STUCK ON** — `sim_schema::BUILD_QUEUE_BLOCKED`
+## (`docs/plan_standing_upkeep.md` §4.6b). The site's builders are STAFFED and standing on this build,
+## and the rung's own gate refuses it, so nothing banks.
 ##
 ## **IT IS NOT `BUILD_TURNS_NO_ESTIMATE`, AND THAT IS THE WHOLE POINT OF THE FOURTH SENTINEL.** `-1`
-## is *there is no question here* — a waiting entry whose gate may well hold by the time it reaches
-## the head, a source at the top of its ladder — and renders as no line at all. This one is a
-## STANDING FAULT with a remedy, and rendering it as silence is how a stuck queue reads as a working
-## one.
+## is *there is no question here* — a source at the top of its ladder, a build whose gate may well hold
+## by the time a crew is on it — and renders as no line at all. This one is a STANDING FAULT with a
+## remedy, and rendering it as silence is how a stuck build reads as a working one.
 ##
-## **NOR IS IT `BUILD_TURNS_HOLDS` OR `_ROTS`.** Those are answers about the METER's arithmetic under
-## a crew; this is an answer about the QUEUE, and its remedy is on a different line entirely — the
-## band's keeping, not its builders. A client rendering three of the four cannot derive the fourth:
-## the wire is the only thing that knows a refusing gate is sitting at the head of a staffed pool
-## rather than merely waiting its turn.
+## **NOR IS IT `BUILD_TURNS_HOLDS` OR `_ROTS`.** Those are answers about the METER's arithmetic under a
+## crew; this is an answer about the BUILD's gate, and its remedy is on a different line entirely. A
+## client rendering three of the four cannot derive the fourth: the wire is the only thing that knows a
+## refusing gate is sitting under a staffed crew rather than merely waiting for one.
 const BUILD_TURNS_QUEUE_BLOCKED := -4
 
 ## **THE ANSWER FOR A BUILD THE SIM HAS NOT LOOKED AT YET** — `sim_schema::BUILD_NOT_YET_ESTIMATED`
@@ -1278,14 +1257,6 @@ const BUILD_TURNS_QUEUE_BLOCKED := -4
 ## `build_pace` here and `DetailFormat.build_sentinel_value` — answer for it inside their own single
 ## fork; a third fork is the thing those two extractions exist to prevent.
 const BUILD_TURNS_NOT_YET_ESTIMATED := -5
-
-## **THIS SOURCE IS IN NO BAND'S BUILD QUEUE** — the neutral of `FORECAST_BUILD_QUEUE_POSITION_KEY`,
-## the client's copy of `sim_schema::NOT_IN_ANY_BUILD_QUEUE`. A real position is 0-based, so the
-## sentinel sits outside the range exactly as the countdown's negatives do.
-const NOT_IN_ANY_BUILD_QUEUE := -1
-
-## The head of a band's build queue — the one entry its whole builders pool is funding.
-const BUILD_QUEUE_HEAD := 0
 
 ## **THIS SOURCE IS HEADING NOWHERE** — the neutral of `FORECAST_BUILD_DESTINATION_CAPACITY_KEY`, the
 ## client's copy of `sim_schema::NO_BUILD_DESTINATION_CAPACITY`. No band has queued the source, so
@@ -2994,42 +2965,6 @@ static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capac
 const VERDICT_OK := "ok"
 const VERDICT_SLOW := "slow"
 const VERDICT_BLOCKED := "blocked"
-# THE FLOOR BINDS — the crew is big enough, so the floor is what the source settles at.
-#
-# **IT STATES THE COUNTDOWN AND NOTHING ELSE.** Both readings once closed with *", then holds it —
-# taking only what grows back"*, and that clause is gone: what the source does once it ARRIVES is the
-# `VERDICT_HOLDS_AT_FLOOR` sentence's own job, said by the sheet the moment it is true, so a
-# countdown that also narrated the aftermath was answering a question the player had not reached yet.
-#
-# **AND THAT IS WHY THERE IS ONE PAIR HERE RATHER THAN TWO.** A STRIPPED twin of each existed solely
-# to drop that clause where there was no aftermath to promise — a herd taken to floor 0 is gone, and
-# the full sentence contradicted the sheet's own `0 hold it after`. With the clause off the base
-# form the two spellings were the same string, and a `regrows` flag choosing between identical
-# constants is a fork with one answer; `harvest_verdict` therefore takes no such flag. What stripping
-# costs is still said, by the aside's `FLOOR_STRIP_CONSEQUENCE`.
-const VERDICT_REACHES_FORMAT := "Reaches the floor in %d turns."
-# A crew big enough to clear the source in one turn is common (it is the `clear it now` target), so
-# "1 turns" is a reading the panel would print often rather than an edge case worth tolerating.
-const VERDICT_REACHES_ONE_TURN := "Reaches the floor next turn."
-# THE CREW BINDS — the take equals the regrowth somewhere ABOVE the floor, and that is where it stops.
-# The crew that WOULD reach it is named, because "add hands" is the remedy and a verdict that
-# withholds the number is a puzzle rather than an answer.
-const VERDICT_SETTLES_FORMAT := "This crew can't draw it that low. It settles at %d%% and holds there"
-const VERDICT_SETTLES_CREW_FORMAT := " — %d %s would reach the floor."
-const VERDICT_SETTLES_END := "."
-# NEITHER BINDS — there is nothing above the floor to take, so the crew's size is irrelevant until the
-# source grows back past it. The STOCK, not the percent, because the point is the quantity the source
-# has to reach — and in whatever unit the flag above it is flying (`stock_face`), because the two name
-# one threshold and a sheet reading "leave 50% · ≈11 Red Deer" over "grows past 1075" states it twice
-# in two currencies.
-const VERDICT_AT_FLOOR_FORMAT := "Already at or below the floor. This crew takes nothing until it grows past %s."
-# THE SOURCE IS AT ITS FLOOR AND THE CREW IS LIVING OFF THE REGROWTH — the equilibrium the *reaches*
-# branch below promises, seen from inside rather than counted down to. It states no turn count because
-# there is nothing left to wait for, and it wears the same words the reaching verdict closes with, so
-# arriving at the floor and standing on it read as one state rather than two.
-const VERDICT_HOLDS_AT_FLOOR := "At the floor and holding it — taking only what grows back."
-# No crew at all is its own reading and must not render as "reaches the floor in 0 turns".
-const VERDICT_NO_CREW := "No one assigned. Nothing is taken and it grows back on its own."
 
 # ---- THE DENIAL RAID — a MISSION, not a floor (`docs/plan_denial_raid.md`) -----------------------
 # **IT CARRIES NO FLOOR AND NO RATE.** A denial party publishes no delivery forecast, because its goal
@@ -3306,28 +3241,17 @@ static func _improvement_ladder(src: Dictionary, prefix: String) -> Array:
 static func improvement_ladder(src: Dictionary, prefix: String) -> Array:
     return RungQuotes.verbs(src, prefix)
 
-## **IS THIS CREW TAKING ANYTHING?** — the client's reading of the sim's work predicate
-## (`systems::labor::crew_is_working_the_source`, `standing_above_floor > 0`), plus the crew term the
-## sim gets for free (an assignment always has workers; a compose sheet dialled to 0 does not).
-## `STOCK_FRACTION_EPSILON` is the same display tolerance the verdict's at-the-floor branch uses, so
-## the two sentences can never disagree about whether the source is being worked.
-static func crew_is_taking(workers: int, biomass: float, capacity: float, floor: float) -> bool:
-    return workers > 0 \
-        and biomass > clamp_floor(floor) * capacity + STOCK_FRACTION_EPSILON * capacity
-
-## **IS THIS CREW TAKING ANYTHING NEXT TURN?** — the FORWARD-LOOKING twin of `crew_is_taking`, and the
-## only one a sentence about what the crew is EARNING may be keyed on.
-##
-## `crew_is_taking` tests the room standing right now, `B − floor·K`, against the wire's PUBLISHED
-## biomass — which is the POST-take stock, so on a source held at its floor it is false by
-## construction. That is the intended steady state of a Sustain policy, not an edge case: a patch
+## **IS THIS CREW TAKING ANYTHING NEXT TURN?** — the only reading a sentence about what the crew is
+## EARNING may be keyed on. A test of the room standing right now, `B − floor·K`, against the wire's
+## PUBLISHED biomass would be wrong: that is the POST-take stock, so on a source held at its floor it
+## is false by construction. That is the intended steady state of a Sustain policy, not an edge case: a patch
 ## publishing `+0.71 /turn` rendered *"Teaching nothing: nothing is being taken"* beside it, and the
 ## sim's own lesson gate was meanwhile firing at full multiplier off `biomass_before` — the
 ## post-regrowth, PRE-take stock (`systems::labor`), which on that patch stands well above the floor.
 ##
 ## `room_next_turn` is `escapement_room_next_turn` — this turn's growth first, then what stands above
-## the floor — which is the same room the readout's headline and the verdict's at-the-floor refusal
-## are composed from, so no two of the three can disagree about whether a take is happening.
+## the floor — which is the same room the readout's headline is composed from, so the two cannot
+## disagree about whether a take is happening.
 static func crew_is_taking_next_turn(workers: int, room_next_turn: float) -> bool:
     return workers > 0 and room_next_turn > 0.0
 
@@ -3385,64 +3309,8 @@ static func teaching_note(lesson: String, floor: float, taking: bool,
         "teaching": true,
     }
 
-## The verdict for a crew at a floor, as `{severity, text}`. `crew_noun` is the sheet's own word for
-## these workers (foragers / hunters / herders), lower-cased by the caller that owns it.
-##
-## **IT TAKES NO `regrows` TERM.** One existed to drop the reaching sentence's *"then holds it"*
-## clause where there was no aftermath to promise; the clause is off both readings now, so the flag
-## chose between two identical strings. See `VERDICT_REACHES_FORMAT`.
 ## `floor_chart_model`'s `take_crew` when every hand of the crew gathers.
 const WHOLE_CREW_TAKES := -1.0
-
-## **THE VERDICT'S CREW CLAUSE, RESTATED FOR A CONVERTED CREW** — `text` with its
-## `K <noun> would reach the floor` clause re-spelled at `crew` (or closed with `VERDICT_SETTLES_END`
-## where the conversion has no answer). Any other verdict passes through untouched.
-static func verdict_with_reaching_crew(verdict: Dictionary, reaching: int, crew: int,
-        crew_noun: String) -> Dictionary:
-    var text := String(verdict.get("text", ""))
-    if reaching <= 0:
-        return verdict
-    var clause := VERDICT_SETTLES_CREW_FORMAT % [reaching, crew_noun]
-    if not text.ends_with(clause):
-        return verdict
-    var out := verdict.duplicate()
-    out["text"] = text.left(text.length() - clause.length()) \
-        + ((VERDICT_SETTLES_CREW_FORMAT % [crew, crew_noun]) if crew > 0 else VERDICT_SETTLES_END)
-    return out
-
-static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capacity: float,
-        floor: float, reaching_crew: int, crew_noun: String,
-        body_mass: float = 0.0, quarry: String = "",
-        takes_next_turn: bool = true) -> Dictionary:
-    if workers <= 0:
-        return {"severity": VERDICT_BLOCKED, "text": VERDICT_NO_CREW}
-    var floor_stock := clamp_floor(floor) * capacity
-    # **THE AT-FLOOR REFUSAL IS FORWARD-LOOKING NOW, and it has to be**: the headline above it states
-    # what NEXT turn's take is, so a sentence keyed on the INSTANTANEOUS room would say *"takes
-    # nothing"* over a live figure on every source held at its floor — which is exactly the pair
-    # reported from play. `takes_next_turn` is the same room that headline is composed from, so the
-    # two cannot disagree, and the sentence is true precisely when it renders.
-    if not takes_next_turn:
-        return {
-            "severity": VERDICT_BLOCKED,
-            "text": VERDICT_AT_FLOOR_FORMAT % stock_face(floor_stock, body_mass, quarry),
-        }
-    # **STANDING AT THE FLOOR AND PAYING THE REGROWTH IS ITS OWN STATE**, and neither branch below can
-    # word it: the walk never "reaches" a floor it started on (`project_stock` requires a DESCENT), so
-    # this would fall through to *"this crew can't draw it that low"* about a source already there.
-    if not crew_is_taking(workers, biomass, capacity, floor):
-        return {"severity": VERDICT_OK, "text": VERDICT_HOLDS_AT_FLOOR}
-    var reached := int(walk.get("reached_turn", PROJECTION_REACHED_NONE))
-    if reached != PROJECTION_REACHED_NONE:
-        return {
-            "severity": VERDICT_OK,
-            "text": VERDICT_REACHES_ONE_TURN if reached == 1 else VERDICT_REACHES_FORMAT % reached,
-        }
-    var settled := int(round(float(walk.get("settled_fraction", 0.0)) * FLOOR_PERCENT_SCALE))
-    var text := VERDICT_SETTLES_FORMAT % settled
-    text += (VERDICT_SETTLES_CREW_FORMAT % [reaching_crew, crew_noun]) \
-        if reaching_crew > 0 else VERDICT_SETTLES_END
-    return {"severity": VERDICT_SLOW, "text": text}
 
 ## **THE WHOLE INSTRUMENT, COMPOSED ONCE** — everything the chart draws, the two crew targets, the
 ## verdict and the idle-crew note, from one forecast and one walk of the projection. It exists so the
@@ -3458,12 +3326,11 @@ static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capa
 ## (`rung_lesson_known`), and it is a PARAMETER because this layer is all-`static` and holds no
 ## snapshot: knowledge belongs to the faction, not to the source, so nothing here can look it up.
 ## **`per_crew` IS THE SIM'S TAKE CURVE, AND EVERY CREW ANSWER ON THIS MODEL IS A SEARCH OF IT** —
-## the walk's take arm, both pills, the reaching crew and therefore the verdict's *"settles at N%"*
-## and the count it offers as the remedy. Empty on the plant web, on the raid branch and for the one
+## the walk's take arm, both pills and the reaching crew. Empty on the plant web, on the raid branch and for the one
 ## frame before the reply lands, where every one of them falls back to the closed forms. See the
 ## curve-reading section above for why leaving them there was the panel being two models at once.
 static func floor_chart_model(src: Dictionary, kind: String, prefix: String, floor: float,
-        workers: int, crew_noun: String, lesson_known: bool,
+        workers: int, lesson_known: bool,
         per_crew: Array = [], take_crew: float = WHOLE_CREW_TAKES,
         knowledge: Dictionary = {}) -> Dictionary:
     var capacity := float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0))
@@ -3584,22 +3451,13 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry, reaching,
             body_mass, engage_rate, stay, per_crew),
         "crew_to_hold": hold,
-        # The verdict's `K <noun> would reach the floor` count and its noun, carried beside the sentence
-        # so a caller that converts the crew (a KEPT patch, `DrawerComposeController._kept_crew_targets`)
-        # can restate that one clause through the same conversion as the pills.
-        "reaching_crew": reaching,
-        "crew_noun": crew_noun,
-        # `takes_next_turn` from the SAME room the readout's headline is composed from
-        # (`escapement_room_next_turn`), so the sentence and the number above it are one answer.
-        "verdict": harvest_verdict(walk, workers, biomass, capacity, floor_value, reaching,
-            crew_noun, body_mass, quarry, room_next_turn > 0.0),
         # THE ASIDE'S SECOND LINE, composed HERE rather than at the render site for the same reason
         # the verdict and the idle note are: it is a function of the floor, so it has to be recomposed
         # by every live drag, and this model IS what a drag recomposes. **It takes no `improvement`**:
         # the line is about the LESSON alone now (`docs/plan_standing_upkeep.md` §2.2), and a build in
         # flight neither speeds it up nor is paced by it.
         # …and its `taking` term is the FORWARD room, the same one the verdict above is keyed on
-        # (`crew_is_taking_next_turn`). It read the instantaneous `crew_is_taking`, which is false by
+        # (`crew_is_taking_next_turn`). It read the instantaneous room, which is false by
         # construction on any source held at its floor — so a patch publishing a live take, whose
         # lesson the sim was crediting at full multiplier, was told *"nothing is being taken"* while
         # the verdict one row up correctly read *"At the floor and holding it"*.
@@ -4182,10 +4040,6 @@ static func build_is_losing(src: Dictionary, build_workers: int) -> bool:
 ## the one with the number on it. Both surfaces call THIS now: two producers of one verdict is exactly
 ## how they came apart, and the fix is one producer rather than two careful copies.
 ##
-## `src` is the BARE source dict (the raw wire patch or herd) and `progress` is the meter the caller
-## has already resolved through `RungGates.rung_in_progress` — asked, not re-derived, so the plate's
-## warning and its glyph provably describe the same verb. `build_workers` is the BAND's `builders`
-## POOL, not a per-source crew (§2.5): a verb declares and names no hands.
 static func build_is_stalled(src: Dictionary, progress: float, build_workers: int) -> bool:
     return build_is_losing(src, build_workers) \
         or build_is_unstaffed(unstaffed_build_of(progress, build_workers))
@@ -4287,10 +4141,10 @@ const BUILD_PACE_HOLDING := "holding"
 const BUILD_PACE_HELD := "held"
 ## The rate is going unpaid: the meter is losing ground.
 const BUILD_PACE_LOSING := "losing"
-## **THE QUEUE IS STUCK ON THIS ENTRY** — the band's builders are staffed and standing here, its own
-## gate refuses it, and nothing behind it moves either (`BUILD_TURNS_QUEUE_BLOCKED`). A FOURTH arm,
-## because blocked ≠ holding ≠ rotting ≠ silent: it is a hazard like the two `∞` states, and unlike
-## either of them no number of builders fixes it — the remedy is off the build line entirely.
+## **THE BUILD IS STUCK** — the site's crew is staffed and standing here and its own gate refuses it
+## (`BUILD_TURNS_QUEUE_BLOCKED`). A FOURTH arm, because blocked ≠ holding ≠ rotting ≠ silent: it is a
+## hazard like the two `∞` states, and unlike either of them no number of builders fixes it — the
+## remedy is off the build line entirely.
 const BUILD_PACE_BLOCKED := "blocked"
 
 ## Is a build in flight on this source at all? The bare question three warnings and the keeping row
@@ -4420,17 +4274,6 @@ static func pen_extend_cost(herd: Dictionary) -> float:
 static func pen_ring_is_in_flight(herd: Dictionary) -> bool:
     return pen_extend_work_done(herd) > BUILD_WORK_COST_NONE
 
-## **THE RING'S METER AS A FRACTION — the ONE place that division is written.** Two surfaces quote a
-## ring: the build queue's percentage for an `extend_pen` entry, and the work row's standing-rung mark,
-## whose hover states it (`HudWorkVocab.WORK_ROW_RING_BUILDING_TOOLTIP_FORMAT`). Both come through
-## here, so one ring can never be quoted two ways.
-##
-## ⛔ **THE THIRD SURFACE IS RETIRED.** The dead claim, quoted because it named a control that no longer
-## exists: *"Two surfaces quote a ring: the herd drawer's WARN-amber `Fencing N%` badge (and its
-## in-place patch) and the build queue's percentage."* §4.9 item 12c took the tile card's `Extend pen`
-## button and that badge out with it (`_build_extend_pen_control`, `_apply_fencing_badge`,
-## `PEN_FENCING_LABEL`) — a ring is declared from the work row's mark now, and the badge was a third
-## statement of one meter beside the queue row that dates it.
 ##
 ## **`pen_extend_progress` IS WORK, NOT A FRACTION.** It was normalized `0..1` until unit-costed work
 ## landed; a reader that still scales it by `PROGRESS_PERCENT_SCALE` prints `Fencing 6900%` off 69
@@ -4440,6 +4283,13 @@ static func pen_ring_is_in_flight(herd: Dictionary) -> bool:
 ## herd already stands on — the herd reads `Corralled 100%` for the ring's whole life — so
 ## `improvement_progress` has nothing to answer for it and `build_completion_value`'s ladder credit is
 ## structurally zero.
+##
+## **THE RING'S METER AS A FRACTION — the ONE place that division is written.** `pen_extend_progress`
+## is WORK, banked against `pen_extend_cost` on the same herd dict, so every percentage of it comes
+## through here — the Work row's percentage and the standing-rung mark's hover
+## (`HudWorkVocab.WORK_ROW_RING_BUILDING_TOOLTIP_FORMAT`) — and never the bare field scaled by
+## `PROGRESS_PERCENT_SCALE`, which reads 69 banked work units as `6900%`. One ring can never be quoted
+## two ways.
 ##
 ## **A ZERO DENOMINATOR IS AN UNPRICED RING, NOT A FULL ONE.** `Herd::begin_pen_extension` leaves both
 ## fields at zero and `accrue_pen_extension` is what stamps the cost, so a ring that has banked no
@@ -4505,10 +4355,10 @@ static func meter_rot_per_turn(src: Dictionary, prefix: String) -> float:
 ## nobody had touched. Twice now, silence has read as success on this exact row.
 ##
 ## **AND THE FIFTH IS THE ONE THIS READER WAS LAST LEFT BEHIND BY.** `BUILD_NOT_YET_ESTIMATED` was
-## collapsed onto `-1` by the fall-through below — the client had never heard of it — and the build
-## queue's date column then wore the `⚠ Stalled 0%` hazard on an entry queued one command ago. Passing
-## a sentinel through is the whole job of this function; each new one is a fresh chance to get it
-## wrong, and this is the third time.
+## collapsed onto `-1` by the fall-through below — the client had never heard of it — and the Work
+## row's date column then wore the `⚠ Stalled 0%` hazard on a build declared one command ago. Passing a
+## sentinel through is the whole job of this function; each new one is a fresh chance to get it wrong,
+## and this is the third time.
 ##
 ## **THE SIM DRAWS TWO BOUNDARIES HERE THAT A CLIENT-SIDE COMPARISON WOULD BLUR**, and both reach this
 ## reader as `-1`: an UNSTAFFED source has promised nothing (a comparison would call every idle
@@ -4525,16 +4375,29 @@ static func build_turns_remaining(src: Dictionary, prefix: String) -> int:
         return turns
     return BUILD_TURNS_NO_ESTIMATE
 
-## **WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, `NOT_IN_ANY_BUILD_QUEUE`
-## when no band has queued it (`docs/plan_standing_upkeep.md` §4.6b).
-##
-## It is read BESIDE `build_turns_remaining`, never instead of it: the countdown is the sum of every
-## entry ahead of this one plus its own span at the full builders pool, so on its own it cannot tell
-## forty turns of work from eight turns of work queued behind four other jobs. Anything below zero is
-## normalised to the sentinel — a negative position is not a place in a line.
-static func build_queue_position(src: Dictionary, prefix: String) -> int:
-    var position := int(src.get(prefix + FORECAST_BUILD_QUEUE_POSITION_KEY, NOT_IN_ANY_BUILD_QUEUE))
-    return position if position >= BUILD_QUEUE_HEAD else NOT_IN_ANY_BUILD_QUEUE
+## **HAS A BUILD BEEN DECLARED ON THIS SOURCE?** - the one membership test. A patch, a herd and a road
+## state it as a non-zero `builders_cap` (the cap is 0 where nobody declared a build); a deposit and a
+## tile improvement also publish `is_queued`, which means the same thing.
+static func build_is_declared(src: Dictionary, prefix: String) -> bool:
+    return build_crew_cap(src, prefix) > BUILD_CREW_NONE \
+        or bool(src.get(prefix + FORECAST_IS_QUEUED_KEY, false))
+
+## The builders the sim staffed on this source's build this turn, kitted and bare together.
+static func build_crew_staffed(src: Dictionary, prefix: String) -> int:
+    return maxi(int(src.get(prefix + FORECAST_BUILDERS_STAFFED_KEY, BUILD_CREW_NONE)), BUILD_CREW_NONE)
+
+## Of those, the ones holding the build kit (every builder, when the rung asks for no tool).
+static func build_crew_kitted(src: Dictionary, prefix: String) -> int:
+    return maxi(int(src.get(prefix + FORECAST_BUILDERS_KITTED_KEY, BUILD_CREW_NONE)), BUILD_CREW_NONE)
+
+## The most builders this source's build could take this turn.
+static func build_crew_cap(src: Dictionary, prefix: String) -> int:
+    return maxi(int(src.get(prefix + FORECAST_BUILDERS_CAP_KEY, BUILD_CREW_NONE)), BUILD_CREW_NONE)
+
+## The build's own tool lines, `[{pool, item_id, required, filled}]` - empty when the rung asks for none.
+static func build_toe(src: Dictionary, prefix: String) -> Array:
+    var lines: Variant = src.get(prefix + FORECAST_BUILD_TOE_KEY, [])
+    return lines as Array if lines is Array else []
 
 ## **WHY THIS SOURCE'S BUILD IS BLOCKED** — the sim's own cause key, `""` when it is not blocked or
 ## when the wire says nothing. Read it BESIDE `build_turns_remaining`'s `BUILD_TURNS_QUEUE_BLOCKED`,
@@ -4545,14 +4408,13 @@ static func build_queue_position(src: Dictionary, prefix: String) -> int:
 static func build_blocked_reason(src: Dictionary, prefix: String) -> String:
     return String(src.get(prefix + FORECAST_BUILD_BLOCKED_REASON_KEY, "")).strip_edges()
 
-## **WHERE THE QUEUED ENTRY IS TAKING THIS SOURCE** — the destination rung as an IMPROVEMENT VERB,
-## `IMPROVEMENT_NONE` when no band has queued it. It is the wire's `<branch>:<id>` read through the
-## one crossing table (`RUNG_KEY_IMPROVEMENTS`), so nothing else in the client has to know how the sim
-## spells a rung.
 ##
-## Read it BESIDE `build_legs`: this says where the climb ENDS, those say what is LEFT of it. The
-## entry retires when the source reaches this rung's top and not when an intermediate rung fills, so
-## a two-leg `sow` holds the head of the queue through its Cultivate leg.
+## **WHERE THE DECLARED BUILD IS TAKING THIS SOURCE** — the destination rung as an IMPROVEMENT VERB,
+## `IMPROVEMENT_NONE` when no band has a build declared. It is the wire's `<branch>:<id>` read through
+## the one crossing table (`RUNG_KEY_IMPROVEMENTS`), so nothing else in the client has to know how the
+## sim spells a rung. Read it BESIDE `build_legs`: this says where the climb ENDS, those say what is
+## LEFT of it. The build retires when the source reaches this rung's top and not when an intermediate
+## rung fills.
 static func build_destination_rung(src: Dictionary, prefix: String) -> String:
     var key := String(src.get(prefix + FORECAST_BUILD_DESTINATION_KEY, "")).strip_edges()
     return RungQuotes.verb_of(RungQuotes.quote_of_rung(src, prefix, key))
@@ -4580,9 +4442,9 @@ static func build_destination_capacity(src: Dictionary, prefix: String) -> float
 static func states_destination_capacity(capacity: float) -> bool:
     return capacity > NO_BUILD_DESTINATION_CAPACITY
 
-## **THE LEGS THE QUEUED ENTRY STILL HAS TO LAY**, in climb order, first-incomplete first — the FIRST
-## row is the leg in flight. `[]` when the source is not queued, or has already arrived, and that
-## emptiness is a real answer rather than an absence to fill in.
+## **THE LEGS THE DECLARED BUILD STILL HAS TO LAY**, in climb order, first-incomplete first — the FIRST
+## row is the leg in flight. `[]` when the source has no build declared, or has already arrived, and
+## that emptiness is a real answer rather than an absence to fill in.
 ##
 ## Each row is normalised to `{rung, improvement, work_remaining, turns_remaining}` — the wire's rung
 ## key crossed to a verb beside it, so a caller matching legs against a branch and a caller naming the
@@ -4637,15 +4499,6 @@ static func build_leg_in_flight(src: Dictionary, prefix: String) -> Dictionary:
             return leg
     return {}
 
-## **RETIRED — `build_is_queue_head`, *is this source at the head of the queue that funds it?***
-##
-## ⛔ **IT COULD NOT ANSWER FOR A PARTICULAR BAND, AND BOTH ITS CALLERS WERE ASKING FOR ONE**
-## (`docs/plan_standing_upkeep.md` §4.9 item 9a). It read `build_queue_position == 0`, which is
-## published per SOURCE and rides the WINNING band — the soonest estimate among the bands working it —
-## so it meant *some* band has this at its head, routinely not the band asking. The Builders card
-## derived the wrong web's kit and the compose sheet drew a running meter over an entry standing third
-## in the acting band's line. `HudBandLaborState.is_band_build_head` / `head_build_branch` answer off
-## `PopulationCohortState.buildQueue`, the only list that is a particular band's.
 
 ## **THE WORK UNITS THE POOL'S KITS ADD TO ITS OUTPUT THIS TURN** — `workers × gear_per_worker`, the
 ## gear-only remainder of the build's supply (`intensification::gear_work_supply`). `0` when no build
@@ -4841,10 +4694,6 @@ const MATERIAL_FLOW_MIN := 0.005
 static func keepers_wanted(src: Dictionary, prefix: String) -> int:
     return int(upkeep_state(src, prefix).get("crew", NO_UPKEEP_CREW))
 
-## RETIRED — **`min_build_work(src, prefix, improvement)`**, *"the work a build crew must beat before
-## any of it is progress"*, which the BUILDERS stepper stated as its threshold
-## (`docs/plan_standing_upkeep.md` §2.4).
-##
 ## **THERE IS NO BUILD-CREW THRESHOLD LEFT TO STATE.** It answered the quoted rung's own upkeep rate,
 ## which was the term the closed form subtracted while the build crew supplied the rate; the keeping
 ## pool owes that at every fullness now and a builder's whole output is progress, so the smallest
@@ -4872,13 +4721,6 @@ static func keepers_wanted(src: Dictionary, prefix: String) -> int:
 ## what answers it — `neglectGraceRemaining` counts the shortfall turns forgiven before the penalty
 ## begins, and the `At risk:` row beside this warning states it.
 ##
-## **`is_unbuilt_and_unpaid` MERGED INTO IT, AND THE DISTINCTION IT KEPT HAD NOTHING LEFT UNDER IT**
-## (§4.6a). There were two tests split on `build_is_in_flight` because the two states were owed by
-## DIFFERENT CREWS — a rung that stood was owed its keepers, a rung still going up was owed its
-## builders. **One pool owes both now**, at every fullness, so the shortfall means the same thing and
-## the remedy is the same sentence on either side of completion. Keeping them apart preserved a
-## distinction with nothing under it, and made the work board tell a player to staff BUILDERS for a
-## bill the keeping pool owes.
 ##
 ## **WHAT THE MERGE COST**: the note no longer distinguishes a rung being RAISED from one being HELD.
 ## It does not need to — the player does the same thing either way — and the source's own card still
@@ -5026,18 +4868,6 @@ static func workers_for_work(work: float, per_worker_turn: float) -> int:
 ## `build_accrual` takes no floor at all and neither does this. `learn_multiplier` still paces the
 ## KNOWLEDGE accrual, which is where *how much you leave standing shapes what you learn* still holds —
 ## and that is why `floor` stays a parameter here: the work PREDICATE below reads it.
-##
-## `kit_gear` is the BUILDERS' kit, as `BUILD_GEAR_PER_WORKER` / `BUILD_GEAR_SATURATING_CREW` off the
-## band's own resolved row (`KitRoster.build_gear`) — the caller passes it because which kit the pool
-## carries is a fact about the BAND'S `builders` row rather than about this source, and it is what
-## lets a kit swap re-price the whole estimate. `{}` is a legal reading and means the crew carries
-## nothing that helps.
-##
-## ⛔ **IT IS NOT THE COMPOSE SHEET'S OWN PICKER, which chooses what the TAKE crew carries.** Both
-## sheets passed their own selection for a release — the GATHERING kit on the forage sheet, which
-## declares no build axis at all — and `DrawerComposeController._build_gear_for` is the seam that
-## resolves the entry's own kit and its web instead (`labor-ui.md` → "A BUILD IS PRICED AT THE
-## **BUILDERS'** KIT").
 ##
 ## **THE WORK PREDICATE IS PART OF THE FORM, and leaving it out is a lie at the loudest end of the
 ## slider.** `RungDef::build_accrual`'s `eligible` carries `crew_is_working_the_source` on Cultivate
@@ -5347,6 +5177,9 @@ const FORAGE_CREW_NEXT_RUNG_FODDER_KEY := "next_rung_fodder"
 const FORAGE_CREW_NEXT_RUNG_MATERIALS_KEY := "next_rung_materials"
 ## The hunt curve's twin: the same crew's likely take once the next rung stands, animals a turn.
 const HUNT_CREW_NEXT_RUNG_ANIMALS_KEY := "next_rung_animals_likely"
+## The hands the crew spends keeping the FINISHED rung (both curves publish it): a crew at or under it
+## gathers nothing once the rung stands.
+const NEXT_RUNG_KEEP_HANDS_KEY := "next_rung_keep_hands"
 
 ## The row for `workers`, `{}` where the curve has none.
 static func forage_crew_row(per_crew: Array, workers: int) -> Dictionary:

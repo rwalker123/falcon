@@ -255,8 +255,6 @@ func _ready() -> void:
 	await _drive_far_herd_assign_labor()
 	await _drive_send_denial_raid()
 	await _drive_assign_labor_kits()
-	await _drive_build_order()
-	await _drive_build_priority()
 	await _drive_work_priority()
 	await _drive_stop_labor()
 	await _drive_unqueue()
@@ -630,95 +628,20 @@ func _drive_assign_labor_kits() -> void:
 	# `assign_labor <faction> <band> <role> <workers>` takes no tile, no herd, no floor and no
 	# species, so its tail is CLOSED but for the kit token.
 	#
-	# ⛔ **IT DROVE `scout` ALONE, AND THE COMMENT SAID WHY: *"Warrior parses through the identical
-	# arm of `handle_assign_labor`, so a second emit would buy a duplicate rather than a second
-	# claim."* THAT REASONING IS WRONG, AND IT COST A WHOLE SLICE.** The roles share an arm in the
-	# SIM, and the sim is not the only gate: `sim_runtime::command_text::parse_command_line`
-	# enumerates them SEPARATELY, in another crate, and the client's native bridge runs that parser
-	# BEFORE it sends. `builders` was missing from that enumeration from
-	# `docs/plan_standing_upkeep.md` §2.5 onward, so every Builders staffing line was refused
-	# locally — the pool has never been staffable through the UI, no build queue could ever move, and
-	# the dock blamed the network. This guard was green throughout, because the one role it did not
-	# drive was the one role that did not parse.
+	# The roles share an arm in the SIM, but the sim is not the only gate: `sim_runtime::command_text::
+	# parse_command_line` enumerates them SEPARATELY, in another crate, and the client's native bridge runs
+	# that parser BEFORE it sends. So every role is driven here, not one standing for all.
 	#
 	# **SO THE LIST IS THE CLAIM.** Every role `Main.format_assign_labor` can emit is driven, and a
 	# role added there without being added here fails `_assert_every_role_is_emittable` below rather
 	# than failing in play.
 	for role in ASSIGN_LABOR_ROLES:
-		# ⛔ **THE `builders` ROW TAKES NO `kit` TOKEN ANY MORE** (`docs/plan_standing_upkeep.md`
-		# §4.7a ②). The builders' kit is a property of the queue ENTRY, and `handle_assign_labor`
-		# REFUSES a `kit` token on this role by name — it parses and is then rejected, which is a
-		# state this parser-level guard cannot see. So the role is swept BARE, and the per-entry
-		# override is retired with `build_kit` itself (`docs/plan_site_crews.md`).
-		var kit := KitRoster.NO_KIT_ID if role == HudConst.LABOR_KIND_BUILDERS \
-			else BandFx.KIT_ID_NONE
+		# A band-wide role is swept BARE: the sim refuses a `kit` token on `roadwork` by name, and a
+		# parser-level guard cannot see that refusal.
+		var kit := BandFx.KIT_ID_NONE
 		_hud._emit_assign_labor(band, String(role), PARTY_WORKERS, -1, -1, "",
 			SourceForecast.DEFAULT_HARVEST_FLOOR, "", SourceForecast.IMPROVEMENT_NONE, kit)
 		await _settle()
-	# **AND THE BARE FORM OF THE ONE THAT BROKE.** `_kit_token` omits an empty selection, so this is
-	# `assign_labor <f> <b> builders 3` with nothing after the count — the exact line the Builders
-	# pool's `+` emits for a player who has never opened a kit picker, and therefore the exact line
-	# the parser refused. The tailed form above and this one are two different parses.
-	_hud._emit_assign_labor(band, HudConst.LABOR_KIND_BUILDERS, PARTY_WORKERS, -1, -1, "",
-		SourceForecast.DEFAULT_HARVEST_FLOOR, "", SourceForecast.IMPROVEMENT_NONE,
-		KitRoster.NO_KIT_ID)
-	await _settle()
-
-## **`build_order` — THE QUEUE'S REORDER** (`docs/plan_standing_upkeep.md` §4.7b ③), both source
-## forms again.
-##
-## **THIS ONE DOES NAME A BAND, where `unqueue` does not** — a queue belongs to a band —
-## so it is squarely what this guard's handle assertion is for: the fixture's `entity` and `band_id`
-## are deliberately different numbers, and a client sending entity bits down the reorder would produce
-## a line that parses and moves someone else's queue.
-func _drive_build_order() -> void:
-	var band: Dictionary = _hud._band_labor.panel_band()
-	# ⛔ **A WORKING IS `<x> <y> <material>` AND A ROAD IS `road <x> <y>`** (`docs/plan_site_crews.md`
-	# §2.4) — the bare tile is the PATCH on that hex, so a queue row addressing either the old way
-	# would reorder somebody else's entry.
-	_hud._bandpanel._emit_build_order(band, {
-		"kind": HudConst.LABOR_KIND_EXTRACT, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
-		"material": DEPOSIT_MATERIAL,
-	}, BUILD_ORDER_POSITION)
-	await _settle()
-	_hud._bandpanel._emit_build_order(band, {
-		"kind": HudConst.LABOR_KIND_ROADWORK, "x": TARGET_X, "y": TARGET_Y, "herd_id": "", "road": true,
-	}, BUILD_ORDER_POSITION)
-	await _settle()
-	_hud._bandpanel._emit_build_order(band, {
-		"kind": SourceForecast.LABOR_KIND_FORAGE, "key": "forage:%d,%d" % [TARGET_X, TARGET_Y],
-		"x": TARGET_X, "y": TARGET_Y, "herd_id": "",
-	}, BUILD_ORDER_POSITION)
-	await _settle()
-	_hud._bandpanel._emit_build_order(band, {
-		"kind": SourceForecast.LABOR_KIND_HUNT, "key": "hunt:%s" % NEAR_HERD_ID,
-		"x": -1, "y": -1, "herd_id": NEAR_HERD_ID,
-	}, SourceForecast.BUILD_QUEUE_HEAD)
-	await _settle()
-
-## **`build_priority` — A QUEUED BUILD'S OWN MARK** (`docs/plan_site_crews.md` §2.4), both source
-## forms, driven through the `Build` pill's own commit. It names a BAND, so the handle assertion is what
-## proves the client does not send entity bits down it.
-func _drive_build_priority() -> void:
-	var band: Dictionary = _hud._band_labor.panel_band()
-	_hud._bandpanel._commit_build_priority(band, {
-		"x": TARGET_X, "y": TARGET_Y, "herd_id": "",
-	}, HudWorkVocab.WORK_PRIORITY_HIGH)
-	await _settle()
-	_hud._bandpanel._commit_build_priority(band, {
-		"x": -1, "y": -1, "herd_id": NEAR_HERD_ID,
-	}, HudWorkVocab.WORK_PRIORITY_LOW)
-	await _settle()
-	# …and the two site forms the queue now draws rows for: a working's and a road's.
-	_hud._bandpanel._commit_build_priority(band, {
-		"kind": HudConst.LABOR_KIND_EXTRACT, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
-		"material": DEPOSIT_MATERIAL,
-	}, HudWorkVocab.WORK_PRIORITY_HIGH)
-	await _settle()
-	_hud._bandpanel._commit_build_priority(band, {
-		"kind": HudConst.LABOR_KIND_ROADWORK, "x": TARGET_X, "y": TARGET_Y, "herd_id": "", "road": true,
-	}, HudWorkVocab.WORK_PRIORITY_LOW)
-	await _settle()
 
 ## **`work_priority` — A SITE CREW'S MARK**, in its three forms: the patch, the herd and the working.
 ## ⛔ **NO ROAD FORM**: a road has no crew to rank and the server refuses it by name, so the client
@@ -738,21 +661,20 @@ func _drive_work_priority() -> void:
 		}).is_empty():
 		_fail("work_priority: a line was built for a ROAD, which has no crew to rank")
 
-## **`stop_labor` - A STAFFED ROW'S END** (#871), in the five forms it can name: the patch, the herd, the
-## working, a tile-branch row (`<branch> <x> <y>`, the word leading) and the lone `roadwork` token. A staffed
-## row's count slot is a Max now, so this is the only line that ends one - and it names its band by BandId.
+## **`stop_labor` - A STAFFED ROW'S END** (#871), in the three forms a live control can name: the patch, the
+## herd and the working. It is emitted by the compose sheet's `Stop working here`
+## (`DrawerComposeController._emit_stop_labor`, reached through the HUD's `_drawercompose`, relayed on
+## `HudLayer.stop_labor_requested`). The tile-branch, camp-stores and roadwork forms were the retired work
+## inspector's, so no control names them any more.
 func _drive_stop_labor() -> void:
 	var band: Dictionary = _hud._band_labor.panel_band()
 	for model in [
 			{"kind": SourceForecast.LABOR_KIND_FORAGE, "x": TARGET_X, "y": TARGET_Y, "herd_id": ""},
 			{"kind": SourceForecast.LABOR_KIND_HUNT, "x": -1, "y": -1, "herd_id": NEAR_HERD_ID},
 			{"kind": HudConst.LABOR_KIND_EXTRACT, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
-				"material": DEPOSIT_MATERIAL},
-			{"kind": HudConst.LABOR_KIND_TILE, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
-				"branch": "route"},
-			{"kind": HudConst.LABOR_KIND_BAND, "x": -1, "y": -1, "herd_id": "", "branch": "camp_stores"},
-			{"kind": HudConst.LABOR_KIND_ROADWORK, "x": -1, "y": -1, "herd_id": ""}]:
-		_hud._bandpanel._commit_stop_labor(band, model)
+				"material": DEPOSIT_MATERIAL}]:
+		_hud._drawercompose._emit_stop_labor(band, String(model["kind"]), int(model["x"]),
+			int(model["y"]), String(model["herd_id"]), String(model.get("material", "")))
 		await _settle()
 
 ## **`unqueue` — THE WITHDRAWAL**, in the four forms a queue row can name: patch, herd, working, road.
@@ -764,7 +686,7 @@ func _drive_unqueue() -> void:
 			{"kind": HudConst.LABOR_KIND_EXTRACT, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
 				"material": DEPOSIT_MATERIAL},
 			{"kind": HudConst.LABOR_KIND_ROADWORK, "x": TARGET_X, "y": TARGET_Y, "herd_id": "", "road": true}]:
-		_hud._bandpanel._emit_unqueue(band, model)
+		_hud._rungcard.emit_unqueue(band, model)
 		await _settle()
 	_hud._band_labor._pending_labor.clear()
 
@@ -784,10 +706,6 @@ func _main_has_static(method: String) -> bool:
 		if String((entry as Dictionary).get("name", "")) == method:
 			return true
 	return false
-
-## The position the plant drive moves its entry to. **Not the head**, because 0 is what an
-## uninitialised int and a dropped field both look like.
-const BUILD_ORDER_POSITION := 2
 
 ## `send_trade_expedition` (arc #527, issue #517) — the parties compose sheet's FIFTH mission, and the
 ## one drive whose subject is an AMOUNT rather than a handle.
@@ -1007,16 +925,12 @@ func _connect_recorders() -> void:
 		_record("recall_expedition", p, MAIN_SCRIPT.format_recall_expedition(p)))
 	_hud.split_band_requested.connect(func(p: Dictionary) -> void:
 		_record("split_band", p, MAIN_SCRIPT.format_split_band(p)))
-	_hud.build_order_requested.connect(func(p: Dictionary) -> void:
-		_record("build_order", p, MAIN_SCRIPT.format_build_order(p)))
 	_hud.work_priority_requested.connect(func(p: Dictionary) -> void:
 		_record("work_priority", p, MAIN_SCRIPT.format_work_priority(p)))
 	_hud.stop_labor_requested.connect(func(p: Dictionary) -> void:
 		_record("stop_labor", p, MAIN_SCRIPT.format_stop_labor(p)))
 	_hud.unqueue_requested.connect(func(p: Dictionary) -> void:
 		_record("unqueue", p, MAIN_SCRIPT.format_unqueue(p)))
-	_hud.build_priority_requested.connect(func(p: Dictionary) -> void:
-		_record("build_priority", p, MAIN_SCRIPT.format_build_priority(p)))
 	_hud.cancel_order_requested.connect(func(band: Dictionary, scope: String) -> void:
 		_record("cancel_order", band, MAIN_SCRIPT.format_cancel_order(band, scope)))
 	_hud.abandon_requested.connect(func(p: Dictionary) -> void:
@@ -1162,11 +1076,10 @@ func _drive_deposit_verbs() -> void:
 ## trailing position and the tail is closed — which is exactly what this guard proves, the two
 ## grammars being one arm apart and therefore able to drift apart in one edit.
 ##
-## **DRIVEN THROUGH `Main.format_abandon_working`, the pure static both controls reach** — the
-## workings roster row's `✕` and the deposit ladder card's put-down row, which converge on one
-## `HudLayer.abandon_working_requested` relay. Their CLICK PATH is asserted where it is real
-## (`band_panel_preview`), which is also the only place a wrong material could be caught: a line
-## naming the other working of the same hex parses perfectly here.
+## **DRIVEN THROUGH `Main.format_abandon_working`, the pure static.** No control emits it now: the
+## `HudLayer.abandon_working_requested` relay, the workings roster row's `✕` and the deposit ladder
+## card's put-down row were retired, and `Stop working here` (`stop_labor`) drops a working's holding.
+## What remains is the PARSE; a line naming the other working of the same hex parses perfectly here.
 ##
 ## The Rust half classifies it `PlaceAddressed` beside `abandon` and the three rung verbs, so what
 ## this asserts is the PARSE.
@@ -1300,14 +1213,13 @@ const ASSIGN_LABOR_ROLES := [
 	HudConst.LABOR_KIND_SCOUT,
 	HudConst.LABOR_KIND_WARRIOR,
 	HudConst.LABOR_KIND_ROADWORK,
-	HudConst.LABOR_KIND_BUILDERS,
 ]
 
 ## **THE THREE RETIRED KEEPING POOLS** (`docs/plan_site_crews.md` §1) — a patch, a herd and a working
 ## are kept by their own crews, and the sim refuses these tokens by name. Spelled here rather than
 ## reached through `HudConst`, whose constants retired with the pools: an ABSENCE claim still needs a
 ## needle, and the builder must build NOTHING for any of them.
-const RETIRED_ASSIGN_LABOR_ROLES := ["agriculture", "husbandry", "quarrywork"]
+const RETIRED_ASSIGN_LABOR_ROLES := ["agriculture", "husbandry", "quarrywork", "builders"]
 
 ## A role name no builder knows, for the negative below.
 const ASSIGN_LABOR_UNKNOWN_ROLE := "stonemason"
@@ -1325,11 +1237,11 @@ const ASSIGN_LABOR_GRAMMAR_DRIVES := 9
 
 ## …and the BARE `builders` line beside its tailed one — the exact line the pool's `+` emits — plus the
 ## FAR HERD's commit (`_drive_far_herd_assign_labor`), the hunt line a sheet past the apron sends.
-const ASSIGN_LABOR_BARE_DRIVES := 2
+const ASSIGN_LABOR_BARE_DRIVES := 1
 
 ## What `EXPECTED_KINDS` must say for `assign_labor`. Spelled here because a `const` initializer
 ## cannot call `Array.size()`, and re-derived at runtime so the two cannot drift.
-const ASSIGN_LABOR_EXPECTED := 15
+const ASSIGN_LABOR_EXPECTED := 13
 
 ## **THE LIST ABOVE IS THE WHOLE OF WHAT THE CLIENT CAN SAY, ASSERTED RATHER THAN TRUSTED.**
 ##
@@ -1429,15 +1341,11 @@ const EXPECTED_KINDS := {
 	# Fission's own verb. It names a BAND rather than a party, so the handle assertion is what proves
 	# the client does not send entity bits down the split either.
 	"split_band": 1,
-	# FOUR — the tile, herd, working and road forms, the one site grammar a builder can get backwards
-	# (`docs/plan_standing_upkeep.md` §4.7b ③, `docs/plan_site_crews.md` §2.4).
-	"build_order": 4,
-	# TWO — a queued build's own mark, tile form and herd form (`docs/plan_site_crews.md` §2.4).
-	"build_priority": 4,
 	# THREE — the patch, the herd and the working; the road form is asserted to build NO line.
 	"work_priority": 3,
-	# FIVE — the patch, herd, working, tile-branch and roadwork forms of a staffed row's end (#871).
-	"stop_labor": 6,
+	# THREE — the patch, herd and working forms of a staffed row's end (#871), all from the sheet's
+	# `Stop working here`; the inspector's tile-branch / camp-stores / roadwork forms went with it.
+	"stop_labor": 3,
 	# FOUR — every form a queue row can withdraw.
 	"unqueue": 4,
 	# ONE — the Deny verb's sheet, opened on the herd its pick landed on, is the raid's only launch site.

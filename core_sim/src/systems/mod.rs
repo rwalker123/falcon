@@ -22,7 +22,7 @@ use crate::{
     combat_config::CombatConfigHandle,
     components::{
         available_workers, fragments_from_contract, fragments_to_contract, BandBench,
-        BandEquipment, BandId, BandTravel, BuildJob, BuildQueueEntry, BuildSource, DeathCause,
+        BandEquipment, BandId, BandTravel, BuildDeclaration, BuildJob, BuildSource, DeathCause,
         DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase,
         KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause,
         MoraleContributions, MountainMetadata, PopulationCohort, PowerNode, ResidentBand, ShedCrew,

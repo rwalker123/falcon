@@ -1389,7 +1389,7 @@ panel, the AI's Craft specialist (#668) and auto-craft (#779) read one list.
 | a standing pool | `LaborAllocation::last_pool_toe` (`poolToe`) | `pool` / the pool token |
 | a site crew | `LaborAllocation::last_keeping_issued` — each `KeepingIssue` carries `required` beside the `units` issued | `site` / the row kind keeping it (`forage` / `hunt` / `extract`) + target keys |
 | a take row | the row's kit lines from `craft_suggestions::take_row_gear` — the very lines `kitToe` is copied from | `take` / the row kind (+ target keys; none on `scout` / `warrior`) |
-| a queued build behind the head | `LaborAllocation::last_queued_build_toe` — walked against the stock the settlement left (below) | `build_queue` / the entry's kind + target keys, with `queuePosition` |
+| a declared build | `LaborAllocation::last_build_toe` (`BuildToeLine { source, item, required, filled }`) — what the build's own builders claimed beside what the settlement gave them (`buildToe` on the wire) | `build` / the build's kind + target keys |
 
 `KeepingIssue::required` exists for this: `keeping_issued` used to write only what was **paid**, so a
 claim the settlement reached with nothing had no line at all. It now writes one line per claimed item
@@ -1433,34 +1433,28 @@ those zeros as the zeros they are.
   by `hunt_by_need::a_crew_going_out_publishes_the_shortage_on_the_rows_and_a_waiting_row_does_not`.
 - **The score is workers going without** — `(required − filled).max(0) × workers_per_unit`, summed
   over sources.
-- **The order** (`craft_suggestions::rank_of`): every **non-build** shortage first (a pool other than
-  the builders, a site crew, a take row), by workers going without, ties by item id; then **the
-  current build** — the head job's builders line, as build position 0, however many people it leaves
-  without; then **the later jobs in queue order**, ties by item id. An item short in more than one
-  place is **one** suggestion: its count is the total (the queue netting applies to that total) and it
-  ranks at its **earliest** position, so hoes short now at a site and later for a queued job rank
-  with the non-build shortages.
-- **A queued job asks for what the head asks for.** `systems::labor::queued_build_toe` strikes, for
-  every entry after the head, its in-flight rung's `pool_toe` × the builders' hand count through
-  `ToeClaim::of` — the builders' claim for the head — and parks the lines on
-  `LaborAllocation::last_queued_build_toe` (`QueuedBuildToe { position, source, item, required }`,
-  cleared with `last_pool_toe`, riding `BandRecord::labor`). The rung comes from the entry's own quote
-  (`BuildQuote::legs`, first leg). A pool with no hands, or an entry with no quote, claims nothing.
+- **The order** (`craft_suggestions::rank_of`): every **non-build** shortage first (a pool, a site
+  crew, a take row), by workers going without, ties by item id; then **the declared builds**, by
+  builders going without, ties by item id. An item short in more than one place is **one**
+  suggestion: its count is the total (the queue netting applies to that total) and it ranks at its
+  **earliest** position, so hoes short now at a site and later for a build rank with the non-build
+  shortages.
+- **Every declared build asks for its own crew's kit.** The settlement strikes, for each build, its
+  in-flight rung's `pool_toe` × that build's builders through `ToeClaim::of`, and parks the lines on
+  `LaborAllocation::last_build_toe` (cleared each turn, riding `BandRecord::labor`). The rung comes
+  from the build's own quote (`BuildQuote::legs`, first leg). A build with no builders, or no quote,
+  claims nothing.
 - **Stock left after the settlement** is `BandEquipment::live_units` (the reading
   `settle_pool_tools` itself uses) less every unit the turn issued — the `filled` of the pools'
-  (the head's builders line included), sites' and take rows' lines, all already in the line list
-  (`craft_suggestions::queued_build_lines`; nothing re-derives the settlement). Queued jobs then take
-  from it **cumulatively, in queue order, items in id order**: 2 crooks held and two Tame jobs of 2
-  each leave job 2 short 2; Tame, Cultivate, Tame on 2 crooks and 0 hoes leaves job 2 short 2 hoes and
-  job 3 short 2 crooks.
-- **A queued build short of the GOODS it draws is a suggestion too** (`craft_suggestions::
+  (the builds', sites' and take rows' lines, all already in the line list
+  (`craft_suggestions::build_lines`; nothing re-derives the settlement).
+- **A declared build short of the GOODS it draws is a suggestion too** (`craft_suggestions::
   build_material_suggestions`, merged by `merge_build_material_suggestions` into the one ranking).
-  The build queue is walked in order against the store: each entry's **remaining** pile
+  The declared builds are walked in declaration order against the store: each build's **remaining** pile
   (`systems::remaining_build_materials`: pile x the share of its climb still owed, off the same legs
   the settlement draws - a pen 64% built owes 36% of its hurdles; a road or tile improvement is quoted
   its whole pile) is added to a running need, and the part the stock does not cover is that entry's
-  shortfall. Every line is a `build_queue` source carrying its queue position and source, the head's
-  included (position 0), so the job can be named. The suggestion is emitted only when a recipe makes
+  shortfall. Every line is a `build` source carrying the build's source, so the job can be named. The suggestion is emitted only when a recipe makes
   the material; `count` is whole passes of that recipe covering the shortfall, less what the bench's
   queue owes; a holding under `MATERIAL_DUST_UNITS` is nothing. Its words are the sim's:
   `CraftSuggestion.displayName` (an item's name or a material's title, set for every suggestion) and
@@ -1469,7 +1463,6 @@ those zeros as the zeros they are.
   equipment, so `shortfalls` fill and a client finds the queueable craft; the panel's manual Queue sends
   `bench_enqueue` with that offer's `recipeId`, which the handler accepts (it checks the recipe exists
   and its craft is known, never what the recipe outputs). Auto-craft reads the same list (below).
-  Pinned by `build_queue::make_next_names_the_hurdles_a_queued_pen_build_is_still_short_of`.
 - **A detached party is not a source.** `population_state` publishes an empty list for any cohort
   with an `Expedition`: it carries the kit it left with and is never resupplied. A far work party is
   a take **row** of its home band, so it counts.
@@ -1491,12 +1484,11 @@ those zeros as the zeros they are.
   the client states the people instead.
 - **Numbers and join keys only.** The client owns the words, as with `craftOffers`, and joins on
   `itemId == CraftOffer.outputItemId` for makeability; an item no recipe makes is still published.
-  A `build_queue` source line carries `queuePosition` (≥ 1; the head is the builders' `pool` line)
-  and the queue entry's own keys — `job` is `BuildSource::kind()`, the `BuildQueueEntryState.kind`
-  spelling, with `targetX/Y` / `faunaId` / `material` — which is how the client names the job
-  ("2 builders, for Tame Wild Boar") from the build-queue row it already holds.
-- **Auto-craft needs nothing here**: it takes the top usable suggestion, so a queued job's tools are
-  crafted ahead of the job reaching the head (`auto_craft::auto_crafts_the_tools_a_queued_build_will_need`).
+  A `build` source line carries the build's own keys — `job` is `BuildSource::kind()`, with
+  `targetX/Y` / `faunaId` / `material` — which is how the client names the job ("2 builders, for
+  Tame Wild Boar") from the site row it already holds.
+- **Auto-craft needs nothing here**: it takes the top usable suggestion, so a declared build's tools are
+  crafted ahead of the build needing them (`auto_craft::auto_crafts_the_tools_a_queued_build_will_need`).
 
 ### Coming up - the kit that wears out before a new one could be made (#778)
 
@@ -1560,8 +1552,8 @@ opening a slot, auto-craft with and without a usable shortage above, the stale s
 trip and the splinter.
 
 Pinned by `craft_suggestions::tests` (ranking and ties, work only where gear adds work, queue netting
-to zero, fractional shortfalls, the cumulative queued-job walk, the build/non-build order and the
-merge), `build_queue::the_jobs_behind_the_head_are_suggested_their_tools_off_the_encoded_frame` and, off the encoded frame, by
+to zero, fractional shortfalls, the build/non-build order and the
+merge) and, off the encoded frame, by
 `bench_queue::suggestions_rank_by_workers_without_and_net_out_the_queue`,
 `::a_suggestion_does_not_rise_on_the_turn_its_item_is_made` and
 `::a_detached_party_publishes_no_suggestions` (paired with its home band carrying the same lines).
@@ -1624,8 +1616,8 @@ order; `craft_suggestions::band_kit_needs` + `snapshot::crafting::kit_need_state
 |---|---|
 | `people` | `LaborAllocation::workers_on_job` summed over the kit's `jobs` |
 | `have` (per item) | `Σ filled` over the settled lines that serve **this kit's jobs**, plus the **spare** units — `live_units − Σ filled over ALL lines`, floored at zero |
-| `claimed` (per item) | `Σ required` over the settled lines **on this kit** (`SupplySource::is_on_kit`): a take row is on the kit it CHOSE (`SupplySource::Take.kit`, so the sled shared by `big_game` and `trapping` is counted once, on the row's own), a pool by its job, a site by its keeping job, a queued build on the kit carrying the item whose jobs include `builders`. A kit nobody's row chose reads 0. Of the standing and the hunt-turn pass, the one with the larger shortfall (Make Next's rule) |
-| `short` (per item) | `whole_shortfall(Σ (required - filled).max(0))` over those same lines - `ceil(missing - WHOLE_UNIT_TOLERANCE)`, the one formula Make Next starts its count from, **before** the bench's `queued` nets it. The reader nets `queued`. Pinned by `build_queue::the_kit_ledger_claims_and_shortfall_agree_with_make_next_off_the_encoded_frame` and `craft_suggestions::tests` |
+| `claimed` (per item) | `Σ required` over the settled lines **on this kit** (`SupplySource::is_on_kit`): a take row is on the kit it CHOSE (`SupplySource::Take.kit`, so the sled shared by `big_game` and `trapping` is counted once, on the row's own), a pool by its job, a site by its keeping job, a declared build on the kit carrying the item whose jobs include `builders`. A kit nobody's row chose reads 0. Of the standing and the hunt-turn pass, the one with the larger shortfall (Make Next's rule) |
+| `short` (per item) | `whole_shortfall(Σ (required - filled).max(0))` over those same lines - `ceil(missing - WHOLE_UNIT_TOLERANCE)`, the one formula Make Next starts its count from, **before** the bench's `queued` nets it. The reader nets `queued`. Pinned by `craft_suggestions::tests` |
 | `queued` | `craft_suggestions::queued_units` — the very figure the suggestions net by (queue + parked) |
 | `finished` (per item) | `craft_suggestions::parked_units` — whole units of the item on `BandBench::finished` (made this turn, stocked at the top of the next). A pure readout: `queued` already includes them (`queued_units` adds the same `parked_units` sum), so `queued − finished` is what the queue still owes. On the turn an item completes with its order popped `queued == finished == 1`; next turn both are `0` and the unit is in the equipment ledger. Pinned off the encoded frame by `bench_queue::a_finished_item_is_queued_and_finished_until_the_next_turn_stocks_it` |
 | `recipes` | one per recipe whose output is the item, book order: `outputPerPass`, and `inputs` — each amount **per pass with the bench's material efficiency applied** (`systems::required`, the call the bench draws with) |
@@ -1688,8 +1680,8 @@ auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 33)
   `craft_suggestions::build_material_suggestions_in_world` (the same wrapper the snapshot calls), so a
   pen short of hurdles is queued as an auto order at the suggestion's count, ranked where the
   suggestion ranks (a kit shortage outranks it). Pinned by
-  `build_queue::{an_empty_auto_bench_queues_the_hurdles_a_pen_build_is_short_of,
-  a_hurdles_auto_order_can_be_skipped_and_stays_skipped}`.
+  an auto-bench fixture that queues the hurdles a pen build is short of, and one that skips it and
+  stays skipped.
 - **A queued auto order that later runs short WAITS** (the ordinary skip/waiting semantics) and no
   longer holds the bench: the next fill queues what can be made. Only the player's skip parks it.
 - **It never picks the crew.** `BandBench::workers` is untouched by every path.

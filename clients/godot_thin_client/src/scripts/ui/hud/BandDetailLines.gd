@@ -200,12 +200,6 @@ const BAND_MORALE_GROWTH_CLAUSE_FORMAT := BAND_MORALE_GROWTH_CLAUSE_SEPARATOR + 
 # `BAND_KIT_ROW_PREFIX` / `_SEPARATOR` / `_ENTRY_FORMAT`, `_band_kit_line`, its `BAND_KIT_ROW_MAX_ENTRIES`
 # budget and the 22px `Zone_band` measurement that budget existed to respect.
 #
-# **IT DID NOT COMPRESS TO A LINE, AND SOMETHING ELSE ALREADY OWNS IT.** The row was a bounded summary
-# of an unbounded list — three of however many items the server publishes, ordered dry-first, with the
-# rest hidden behind a caret — because a fourth entry wrapped and overflowed the zone. The CRAFTING
-# panel's kit ledger states every item in full, with room for its condition and what it does; the
-# Builders card's own gear line was retired in §4.7 for exactly this reason.
-#
 # **WHAT REPLACES IT IS NOTIFICATION, NOT ANOTHER ROW.** `equipment.json`'s `life_readout` seams
 # (`warn_fraction` 0.34, `danger_fraction` 0.10) now reach the event dock as `kit_life` — warn →
 # Notable, danger → Alert — so a kit approaching its cliff announces itself instead of waiting to be

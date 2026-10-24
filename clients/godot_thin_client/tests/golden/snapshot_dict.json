@@ -1576,7 +1576,24 @@
       "branch": "deposits[0].branch",
       "build_blocked_reason": "deposits[0].build_blocked_reason",
       "build_fraction": 54.860001,
+      "build_toe": [
+        {
+          "filled": 25.4,
+          "item_id": "hoes",
+          "pool": "build",
+          "required": 1.56
+        },
+        {
+          "filled": 59.630001,
+          "item_id": "crook",
+          "pool": "build",
+          "required": 108.839996
+        }
+      ],
       "build_turns_remaining": 51,
+      "builders_cap": 34,
+      "builders_kitted": 99,
+      "builders_staffed": 143,
       "capacity": 92.010002,
       "default_kit_id": "deposits[0].default_kit_id",
       "has_neglect_grace": true,
@@ -1622,7 +1639,24 @@
       "branch": "deposits[1].branch",
       "build_blocked_reason": "deposits[1].build_blocked_reason",
       "build_fraction": 41.509998,
+      "build_toe": [
+        {
+          "filled": 58.82,
+          "item_id": "hoes",
+          "pool": "build",
+          "required": 4.75
+        },
+        {
+          "filled": 65.809998,
+          "item_id": "crook",
+          "pool": "build",
+          "required": 111.050003
+        }
+      ],
       "build_turns_remaining": 180,
+      "builders_cap": 195,
+      "builders_kitted": 104,
+      "builders_staffed": 162,
       "capacity": 56.279999,
       "default_kit_id": "deposits[1].default_kit_id",
       "has_neglect_grace": false,
@@ -1668,7 +1702,24 @@
       "branch": "deposits[2].branch",
       "build_blocked_reason": "deposits[2].build_blocked_reason",
       "build_fraction": 38.169998,
+      "build_toe": [
+        {
+          "filled": 109.120003,
+          "item_id": "hoes",
+          "pool": "build",
+          "required": 99.839996
+        },
+        {
+          "filled": 10.98,
+          "item_id": "crook",
+          "pool": "build",
+          "required": 50.580002
+        }
+      ],
       "build_turns_remaining": 85,
+      "builders_cap": 76,
+      "builders_kitted": 25,
+      "builders_staffed": 169,
       "capacity": 74.269997,
       "default_kit_id": "deposits[2].default_kit_id",
       "has_neglect_grace": false,
@@ -2007,11 +2058,27 @@
           "material_id": "forage_patches[0].build_material_cost[2].material_id"
         }
       ],
-      "build_queue_position": 117,
+      "build_toe": [
+        {
+          "filled": 36.450001,
+          "item_id": "hoes",
+          "pool": "build",
+          "required": 86.809998
+        },
+        {
+          "filled": 26.139999,
+          "item_id": "crook",
+          "pool": "build",
+          "required": 71.269997
+        }
+      ],
       "build_turns_remaining": 171,
       "build_work_from_gear": 76.230003,
       "build_work_per_worker_turn": 70.059998,
       "builder_band": 138,
+      "builders_cap": 74,
+      "builders_kitted": 131,
+      "builders_staffed": 23,
       "carrying_capacity": 26.76,
       "collapse_fraction": 36.84,
       "committed_display_name": "forage_patches[0].committed_display_name",
@@ -2581,11 +2648,27 @@
           "material_id": "forage_patches[1].build_material_cost[2].material_id"
         }
       ],
-      "build_queue_position": 144,
+      "build_toe": [
+        {
+          "filled": 105.43,
+          "item_id": "hoes",
+          "pool": "build",
+          "required": 111.800003
+        },
+        {
+          "filled": 93.82,
+          "item_id": "crook",
+          "pool": "build",
+          "required": 60.68
+        }
+      ],
       "build_turns_remaining": 172,
       "build_work_from_gear": 25.290001,
       "build_work_per_worker_turn": 23.07,
       "builder_band": 175,
+      "builders_cap": 107,
+      "builders_kitted": 80,
+      "builders_staffed": 170,
       "carrying_capacity": 41.889999,
       "collapse_fraction": 23.440001,
       "committed_display_name": "forage_patches[1].committed_display_name",
@@ -3155,11 +3238,27 @@
           "material_id": "forage_patches[2].build_material_cost[2].material_id"
         }
       ],
-      "build_queue_position": 23,
+      "build_toe": [
+        {
+          "filled": 103.769997,
+          "item_id": "hoes",
+          "pool": "build",
+          "required": 75.970001
+        },
+        {
+          "filled": 22.07,
+          "item_id": "crook",
+          "pool": "build",
+          "required": 94.169998
+        }
+      ],
       "build_turns_remaining": 125,
       "build_work_from_gear": 42.209999,
       "build_work_per_worker_turn": 83.43,
       "builder_band": 60,
+      "builders_cap": 124,
+      "builders_kitted": 169,
+      "builders_staffed": 25,
       "carrying_capacity": 12.86,
       "collapse_fraction": 101.169998,
       "committed_display_name": "forage_patches[2].committed_display_name",
@@ -4014,11 +4113,27 @@
           "material_id": "herds[0].build_material_cost[2].material_id"
         }
       ],
-      "build_queue_position": 84,
+      "build_toe": [
+        {
+          "filled": 48.080002,
+          "item_id": "hoes",
+          "pool": "build",
+          "required": 23.440001
+        },
+        {
+          "filled": 89.879997,
+          "item_id": "crook",
+          "pool": "build",
+          "required": 72.480003
+        }
+      ],
       "build_turns_remaining": 128,
       "build_work_from_gear": 61.02,
       "build_work_per_worker_turn": 39.950001,
       "builder_band": 75,
+      "builders_cap": 79,
+      "builders_kitted": 108,
+      "builders_staffed": 134,
       "carrying_capacity": 59.91,
       "collapse_fraction": 9.08,
       "current_rung": "herds[0].current_rung",
@@ -4350,11 +4465,27 @@
           "material_id": "herds[1].build_material_cost[2].material_id"
         }
       ],
-      "build_queue_position": 153,
+      "build_toe": [
+        {
+          "filled": 93.459999,
+          "item_id": "hoes",
+          "pool": "build",
+          "required": 31.49
+        },
+        {
+          "filled": 61.77,
+          "item_id": "crook",
+          "pool": "build",
+          "required": 12.46
+        }
+      ],
       "build_turns_remaining": 111,
       "build_work_from_gear": 23.51,
       "build_work_per_worker_turn": 104.040001,
       "builder_band": 30,
+      "builders_cap": 38,
+      "builders_kitted": 191,
+      "builders_staffed": 59,
       "carrying_capacity": 52.919998,
       "collapse_fraction": 77.970001,
       "current_rung": "herds[1].current_rung",
@@ -4686,11 +4817,27 @@
           "material_id": "herds[2].build_material_cost[2].material_id"
         }
       ],
-      "build_queue_position": 6,
+      "build_toe": [
+        {
+          "filled": 61.549999,
+          "item_id": "hoes",
+          "pool": "build",
+          "required": 23.34
+        },
+        {
+          "filled": 13.6,
+          "item_id": "crook",
+          "pool": "build",
+          "required": 109.510002
+        }
+      ],
       "build_turns_remaining": 186,
       "build_work_from_gear": 31.209999,
       "build_work_per_worker_turn": 52.419998,
       "builder_band": 53,
+      "builders_cap": 137,
+      "builders_kitted": 138,
+      "builders_staffed": 48,
       "carrying_capacity": 66.68,
       "collapse_fraction": 62.07,
       "current_rung": "herds[2].current_rung",
@@ -5359,6 +5506,7 @@
       ],
       "label": "ladder_rungs[0].label",
       "label_fallback": "ladder_rungs[0].label_fallback",
+      "max_builders": 91,
       "min_deposit_capacity": 77.510002,
       "order": 80,
       "places_source": false,
@@ -5463,6 +5611,7 @@
       ],
       "label": "ladder_rungs[1].label",
       "label_fallback": "ladder_rungs[1].label_fallback",
+      "max_builders": 66,
       "min_deposit_capacity": 14.55,
       "order": 95,
       "places_source": true,
@@ -5567,6 +5716,7 @@
       ],
       "label": "ladder_rungs[2].label",
       "label_fallback": "ladder_rungs[2].label_fallback",
+      "max_builders": 17,
       "min_deposit_capacity": 91.580002,
       "order": 134,
       "places_source": true,
@@ -6959,35 +7109,6 @@
         }
       ],
       "breeding_population": 186,
-      "build_queue": [
-        {
-          "branch": "populations[0].build_queue[0].branch",
-          "build_priority": "populations[0].build_queue[0].build_priority",
-          "fauna_id": "populations[0].build_queue[0].fauna_id",
-          "kind": "populations[0].build_queue[0].kind",
-          "material": "populations[0].build_queue[0].material",
-          "target_x": 128,
-          "target_y": 117
-        },
-        {
-          "branch": "populations[0].build_queue[1].branch",
-          "build_priority": "populations[0].build_queue[1].build_priority",
-          "fauna_id": "populations[0].build_queue[1].fauna_id",
-          "kind": "populations[0].build_queue[1].kind",
-          "material": "populations[0].build_queue[1].material",
-          "target_x": 145,
-          "target_y": 156
-        },
-        {
-          "branch": "populations[0].build_queue[2].branch",
-          "build_priority": "populations[0].build_queue[2].build_priority",
-          "fauna_id": "populations[0].build_queue[2].fauna_id",
-          "kind": "populations[0].build_queue[2].kind",
-          "material": "populations[0].build_queue[2].material",
-          "target_x": 114,
-          "target_y": 103
-        }
-      ],
       "carry_fodder_weight": 50.959999,
       "carry_material_weight": 39.889999,
       "carry_per_worker": 112.379997,
@@ -7182,7 +7303,6 @@
               "kind": "populations[0].craft_suggestions[0].sources[0].kind",
               "material": "populations[0].craft_suggestions[0].sources[0].material",
               "missing_units": 24.57,
-              "queue_position": 119,
               "target_x": 28,
               "target_y": 17,
               "work_per_turn": 14.15,
@@ -7194,7 +7314,6 @@
               "kind": "populations[0].craft_suggestions[0].sources[1].kind",
               "material": "populations[0].craft_suggestions[0].sources[1].material",
               "missing_units": 73.300003,
-              "queue_position": 34,
               "target_x": 189,
               "target_y": 200,
               "work_per_turn": 93.330002,
@@ -7206,7 +7325,6 @@
               "kind": "populations[0].craft_suggestions[0].sources[2].kind",
               "material": "populations[0].craft_suggestions[0].sources[2].material",
               "missing_units": 72.07,
-              "queue_position": 113,
               "target_x": 62,
               "target_y": 51,
               "work_per_turn": 90.730003,
@@ -7251,7 +7369,6 @@
               "kind": "populations[0].craft_suggestions[1].sources[0].kind",
               "material": "populations[0].craft_suggestions[1].sources[0].material",
               "missing_units": 83.980003,
-              "queue_position": 72,
               "target_x": 43,
               "target_y": 54,
               "work_per_turn": 47.610001,
@@ -7263,7 +7380,6 @@
               "kind": "populations[0].craft_suggestions[1].sources[1].kind",
               "material": "populations[0].craft_suggestions[1].sources[1].material",
               "missing_units": 24.99,
-              "queue_position": 85,
               "target_x": 42,
               "target_y": 31,
               "work_per_turn": 16.120001,
@@ -7275,7 +7391,6 @@
               "kind": "populations[0].craft_suggestions[1].sources[2].kind",
               "material": "populations[0].craft_suggestions[1].sources[2].material",
               "missing_units": 95.769997,
-              "queue_position": 54,
               "target_x": 89,
               "target_y": 100,
               "work_per_turn": 48.09,
@@ -9094,18 +9209,6 @@
           "item_id": "stone_dressing",
           "pool": "roadwork",
           "required": 102.550003
-        },
-        {
-          "filled": 28.26,
-          "item_id": "stone_dressing",
-          "pool": "builders",
-          "required": 70.599998
-        },
-        {
-          "filled": 49.139999,
-          "item_id": "hoes",
-          "pool": "builders",
-          "required": 20.5
         }
       ],
       "pooling_links": [
@@ -9451,35 +9554,6 @@
         }
       ],
       "breeding_population": 161,
-      "build_queue": [
-        {
-          "branch": "populations[1].build_queue[0].branch",
-          "build_priority": "populations[1].build_queue[0].build_priority",
-          "fauna_id": "populations[1].build_queue[0].fauna_id",
-          "kind": "populations[1].build_queue[0].kind",
-          "material": "populations[1].build_queue[0].material",
-          "target_x": 151,
-          "target_y": 162
-        },
-        {
-          "branch": "populations[1].build_queue[1].branch",
-          "build_priority": "populations[1].build_queue[1].build_priority",
-          "fauna_id": "populations[1].build_queue[1].fauna_id",
-          "kind": "populations[1].build_queue[1].kind",
-          "material": "populations[1].build_queue[1].material",
-          "target_x": 62,
-          "target_y": 51
-        },
-        {
-          "branch": "populations[1].build_queue[2].branch",
-          "build_priority": "populations[1].build_queue[2].build_priority",
-          "fauna_id": "populations[1].build_queue[2].fauna_id",
-          "kind": "populations[1].build_queue[2].kind",
-          "material": "populations[1].build_queue[2].material",
-          "target_x": 189,
-          "target_y": 200
-        }
-      ],
       "carry_fodder_weight": 12.16,
       "carry_material_weight": 81.660004,
       "carry_per_worker": 74.93,
@@ -9674,7 +9748,6 @@
               "kind": "populations[1].craft_suggestions[0].sources[0].kind",
               "material": "populations[1].craft_suggestions[0].sources[0].material",
               "missing_units": 98.639999,
-              "queue_position": 26,
               "target_x": 125,
               "target_y": 136,
               "work_per_turn": 71.769997,
@@ -9686,7 +9759,6 @@
               "kind": "populations[1].craft_suggestions[0].sources[1].kind",
               "material": "populations[1].craft_suggestions[0].sources[1].material",
               "missing_units": 92.110001,
-              "queue_position": 63,
               "target_x": 76,
               "target_y": 65,
               "work_per_turn": 29.49,
@@ -9698,7 +9770,6 @@
               "kind": "populations[1].craft_suggestions[0].sources[2].kind",
               "material": "populations[1].craft_suggestions[0].sources[2].material",
               "missing_units": 107.169998,
-              "queue_position": 180,
               "target_x": 159,
               "target_y": 170,
               "work_per_turn": 38.130001,
@@ -9743,7 +9814,6 @@
               "kind": "populations[1].craft_suggestions[1].sources[0].kind",
               "material": "populations[1].craft_suggestions[1].sources[0].material",
               "missing_units": 77.639999,
-              "queue_position": 73,
               "target_x": 38,
               "target_y": 27,
               "work_per_turn": 95.019997,
@@ -9755,7 +9825,6 @@
               "kind": "populations[1].craft_suggestions[1].sources[1].kind",
               "material": "populations[1].craft_suggestions[1].sources[1].material",
               "missing_units": 63.540001,
-              "queue_position": 172,
               "target_x": 55,
               "target_y": 66,
               "work_per_turn": 16.92,
@@ -9767,7 +9836,6 @@
               "kind": "populations[1].craft_suggestions[1].sources[2].kind",
               "material": "populations[1].craft_suggestions[1].sources[2].material",
               "missing_units": 59.040001,
-              "queue_position": 47,
               "target_x": 116,
               "target_y": 105,
               "work_per_turn": 75.739998,
@@ -11513,18 +11581,6 @@
           "item_id": "stone_dressing",
           "pool": "roadwork",
           "required": 23.450001
-        },
-        {
-          "filled": 59.580002,
-          "item_id": "stone_dressing",
-          "pool": "builders",
-          "required": 70.019997
-        },
-        {
-          "filled": 44.110001,
-          "item_id": "hoes",
-          "pool": "builders",
-          "required": 43.040001
         }
       ],
       "pooling_links": [
@@ -11887,35 +11943,6 @@
         }
       ],
       "breeding_population": 160,
-      "build_queue": [
-        {
-          "branch": "populations[2].build_queue[0].branch",
-          "build_priority": "populations[2].build_queue[0].build_priority",
-          "fauna_id": "populations[2].build_queue[0].fauna_id",
-          "kind": "populations[2].build_queue[0].kind",
-          "material": "populations[2].build_queue[0].material",
-          "target_x": 90,
-          "target_y": 79
-        },
-        {
-          "branch": "populations[2].build_queue[1].branch",
-          "build_priority": "populations[2].build_queue[1].build_priority",
-          "fauna_id": "populations[2].build_queue[1].fauna_id",
-          "kind": "populations[2].build_queue[1].kind",
-          "material": "populations[2].build_queue[1].material",
-          "target_x": 3,
-          "target_y": 14
-        },
-        {
-          "branch": "populations[2].build_queue[2].branch",
-          "build_priority": "populations[2].build_queue[2].build_priority",
-          "fauna_id": "populations[2].build_queue[2].fauna_id",
-          "kind": "populations[2].build_queue[2].kind",
-          "material": "populations[2].build_queue[2].material",
-          "target_x": 24,
-          "target_y": 13
-        }
-      ],
       "carry_fodder_weight": 77.010002,
       "carry_material_weight": 33.52,
       "carry_per_worker": 84.809998,
@@ -12110,7 +12137,6 @@
               "kind": "populations[2].craft_suggestions[0].sources[0].kind",
               "material": "populations[2].craft_suggestions[0].sources[0].material",
               "missing_units": 57.02,
-              "queue_position": 77,
               "target_x": 130,
               "target_y": 119,
               "work_per_turn": 90.349998,
@@ -12122,7 +12148,6 @@
               "kind": "populations[2].craft_suggestions[0].sources[1].kind",
               "material": "populations[2].craft_suggestions[0].sources[1].material",
               "missing_units": 12.59,
-              "queue_position": 96,
               "target_x": 11,
               "target_y": 22,
               "work_per_turn": 15.98,
@@ -12134,7 +12159,6 @@
               "kind": "populations[2].craft_suggestions[0].sources[2].kind",
               "material": "populations[2].craft_suggestions[0].sources[2].material",
               "missing_units": 29.52,
-              "queue_position": 123,
               "target_x": 168,
               "target_y": 157,
               "work_per_turn": 0.97,
@@ -12179,7 +12203,6 @@
               "kind": "populations[2].craft_suggestions[1].sources[0].kind",
               "material": "populations[2].craft_suggestions[1].sources[0].material",
               "missing_units": 85.589996,
-              "queue_position": 30,
               "target_x": 121,
               "target_y": 132,
               "work_per_turn": 84.330002,
@@ -12191,7 +12214,6 @@
               "kind": "populations[2].craft_suggestions[1].sources[1].kind",
               "material": "populations[2].craft_suggestions[1].sources[1].material",
               "missing_units": 38.009998,
-              "queue_position": 27,
               "target_x": 176,
               "target_y": 165,
               "work_per_turn": 72.0,
@@ -12203,7 +12225,6 @@
               "kind": "populations[2].craft_suggestions[1].sources[2].kind",
               "material": "populations[2].craft_suggestions[1].sources[2].material",
               "missing_units": 12.56,
-              "queue_position": 128,
               "target_x": 171,
               "target_y": 182,
               "work_per_turn": 59.509998,
@@ -14022,18 +14043,6 @@
           "item_id": "stone_dressing",
           "pool": "roadwork",
           "required": 20.65
-        },
-        {
-          "filled": 89.190002,
-          "item_id": "stone_dressing",
-          "pool": "builders",
-          "required": 99.480003
-        },
-        {
-          "filled": 62.779999,
-          "item_id": "hoes",
-          "pool": "builders",
-          "required": 108.269997
         }
       ],
       "pooling_links": [
@@ -14390,7 +14399,24 @@
       "build_fraction": 107.57,
       "build_material_demand": 101.519997,
       "build_material_supplied": 106.889999,
+      "build_toe": [
+        {
+          "filled": 4.66,
+          "item_id": "hoes",
+          "pool": "build",
+          "required": 67.290001
+        },
+        {
+          "filled": 49.07,
+          "item_id": "crook",
+          "pool": "build",
+          "required": 25.959999
+        }
+      ],
       "build_turns_remaining": 170,
+      "builders_cap": 121,
+      "builders_kitted": 162,
+      "builders_staffed": 32,
       "friction_multiplier": 83.839996,
       "grants_sight": true,
       "has_keeper": false,
@@ -14414,7 +14440,24 @@
       "build_fraction": 66.529999,
       "build_material_demand": 40.959999,
       "build_material_supplied": 78.059998,
+      "build_toe": [
+        {
+          "filled": 12.77,
+          "item_id": "hoes",
+          "pool": "build",
+          "required": 12.87
+        },
+        {
+          "filled": 50.619999,
+          "item_id": "crook",
+          "pool": "build",
+          "required": 12.57
+        }
+      ],
       "build_turns_remaining": 177,
+      "builders_cap": 144,
+      "builders_kitted": 197,
+      "builders_staffed": 133,
       "friction_multiplier": 84.18,
       "grants_sight": false,
       "has_keeper": true,
@@ -14438,7 +14481,24 @@
       "build_fraction": 59.610001,
       "build_material_demand": 31.299999,
       "build_material_supplied": 99.260002,
+      "build_toe": [
+        {
+          "filled": 48.110001,
+          "item_id": "hoes",
+          "pool": "build",
+          "required": 110.050003
+        },
+        {
+          "filled": 1.23,
+          "item_id": "crook",
+          "pool": "build",
+          "required": 61.189999
+        }
+      ],
       "build_turns_remaining": 144,
+      "builders_cap": 175,
+      "builders_kitted": 68,
+      "builders_staffed": 198,
       "friction_multiplier": 57.740002,
       "grants_sight": false,
       "has_keeper": true,
@@ -14662,7 +14722,24 @@
           "work_remaining": 94.919998
         }
       ],
+      "build_toe": [
+        {
+          "filled": 54.740002,
+          "item_id": "hoes",
+          "pool": "build",
+          "required": 44.93
+        },
+        {
+          "filled": 46.310001,
+          "item_id": "crook",
+          "pool": "build",
+          "required": 39.970001
+        }
+      ],
       "build_turns_remaining": 110,
+      "builders_cap": 189,
+      "builders_kitted": 158,
+      "builders_staffed": 20,
       "current_rung": "tile_improvements[0].current_rung",
       "has_neglect_grace": true,
       "is_queued": false,
@@ -14695,7 +14772,24 @@
           "work_remaining": 89.18
         }
       ],
+      "build_toe": [
+        {
+          "filled": 64.93,
+          "item_id": "hoes",
+          "pool": "build",
+          "required": 6.65
+        },
+        {
+          "filled": 2.49,
+          "item_id": "crook",
+          "pool": "build",
+          "required": 18.809999
+        }
+      ],
       "build_turns_remaining": 29,
+      "builders_cap": 44,
+      "builders_kitted": 1,
+      "builders_staffed": 1,
       "current_rung": "tile_improvements[1].current_rung",
       "has_neglect_grace": false,
       "is_queued": true,
@@ -14728,7 +14822,24 @@
           "work_remaining": 76.779999
         }
       ],
+      "build_toe": [
+        {
+          "filled": 76.970001,
+          "item_id": "hoes",
+          "pool": "build",
+          "required": 79.18
+        },
+        {
+          "filled": 68.940002,
+          "item_id": "crook",
+          "pool": "build",
+          "required": 73.739998
+        }
+      ],
       "build_turns_remaining": 84,
+      "builders_cap": 131,
+      "builders_kitted": 184,
+      "builders_staffed": 2,
       "current_rung": "tile_improvements[2].current_rung",
       "has_neglect_grace": false,
       "is_queued": true,
