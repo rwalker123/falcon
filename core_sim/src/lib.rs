@@ -106,6 +106,7 @@ mod snapshot;
 mod snapshot_overlays_config;
 pub mod spoilage;
 pub mod staffing;
+pub mod staffing_preview;
 mod start_profile;
 pub mod starting_loadout;
 mod supply;

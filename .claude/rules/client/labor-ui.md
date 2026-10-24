@@ -8030,6 +8030,31 @@ Kit row and the readout.
   (chart, yields, verdict, deal, kit coverage, work party) is priced at it. `_hunt_priced_crew` /
   `_forage_priced_crew` carry the crew the priced source is struck at: the first-pass guess while the
   forecast is being struck (`_first_pass_crew`), the staffed crew after.
+- **A SOURCE THE BAND DOES NOT WORK YET IS PRICED OFF THE SIM'S DRY RUN, NOT THE IDLE POOL**
+  (`ForecastQuery.KIND_STAFFING_PREVIEW`, `_staffing_preview_view`). The command restaffs the whole band
+  by Priority, taking hands from lower rows, so the idle-based pool (`source_crew_pool_*`) can be `0` on
+  a sheet whose command would staff a full crew. The hunt, forage and deposit builders ask the preview
+  with the sheet's own Priority, Max, floor and kit (the key carries each, so changing Priority or Max
+  re-asks; a patch's ticked plants ride the key too) and, once it answers, `_previewed_crew` replaces the
+  estimate: `staffed_crew` is the reply's `workers`. While it is pending (or refused) the idle-based
+  estimate stands. A worked row never asks - it reads its own `workers`, and its Priority / Max controls
+  re-send live. A migratory herd on migration mode asks nothing (the muster is its own rule). A deposit
+  that never renews is worked by exactly its Max in heads, so its Max is raised to the dig floor BEFORE
+  the ask (the sim refuses a dig without a count).
+  - **The crew-take curve is asked wide enough to cover the previewed crew**: its `max_workers` is
+    `max(pool, preview workers)` (`_preview_curve_pool`), through the same `_crew_take_workers` clamp, on
+    the build AND drag paths so both share one key.
+  - **A curve whose crew term is `0` asks nothing and reads an answered, EMPTY curve** (`STATE_READY`, no
+    rows), on the hunt sheet as on the deposit and forage ones. It used to read `PENDING` forever, which
+    sat the "Costing what this crew brings down..." line on a sheet that never put the question.
+  - **THE PREVIEW LINE** (`_mount_staffing_preview`, `HudComposeVocab.staffing_preview_line`) sits under the
+    Priority / Max controls: `If you hunt here: 3 hunters - 2 from Harvest (x, y), 1 idle` (verb `hunt` /
+    `gather` / `work`; the crew noun is the sheet's own). Each losing row is named as the Work tab names it
+    (`Hunt <herd>`, `Harvest (x, y)`, `<Material> (x, y)`, `Roadwork`), a `build:<kind>` row as `the <site>
+    build`. All idle and no losses reads `..., all idle`. `workers == 0` is the amber `No one would come at
+    Normal priority - raise it to High` (at High: `No one would come - every worker is on a High row`). The
+    hover is every row's before -> after plus the idle pool's. A refusal renders through the ordinary
+    failure line.
 - **THE CREW ROW IS THE WORK STRIP** (`_mount_work_strip`, #877): the section label, then the SAME strip
   the Work tab's row wears (`band-city-panel.md` → "THE WORK STRIP") — the rung mark, the ladder chip, the
   floor glyph, `⚠`, `ⓘ`, and the crew number over the `CrewSplitMarks` bar — followed by the row's

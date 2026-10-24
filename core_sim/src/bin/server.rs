@@ -5271,38 +5271,6 @@ fn labor_event_kind(role: &str) -> CommandEventKind {
     }
 }
 
-/// **THE WORKING ON `(tile, material)` AS IT STANDS NOW** — the registry's live working, or, where no
-/// band has opened one, the derived opening state (`snapshot::deposits`' own rule). `None` for ground
-/// holding none of the material or a tile off the map.
-fn working_as_it_stands(
-    app: &bevy::prelude::App,
-    tile: UVec2,
-    material: &str,
-) -> Option<core_sim::extraction::DepositSource> {
-    if let Some(live) = app
-        .world
-        .resource::<core_sim::DepositRegistry>()
-        .source(tile, material)
-    {
-        return Some(live.clone());
-    }
-    let entity = app.world.resource::<TileRegistry>().index(tile.x, tile.y)?;
-    let ground = app.world.get::<Tile>(entity)?;
-    let extraction = app.world.resource::<ExtractionConfigHandle>().get();
-    let capacity = core_sim::extraction::tile_deposit_capacity(&extraction, material, ground);
-    if capacity <= core_sim::NO_DEPOSIT {
-        return None;
-    }
-    let branch = core_sim::extraction::deposit_branch(&extraction, material)?;
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
-    Some(core_sim::extraction::DepositSource::opening(
-        tile,
-        material,
-        capacity,
-        core_sim::RungStanding::unstarted_on(&ladder, branch),
-    ))
-}
-
 /// **A SEAM THAT NEVER RENEWS HAS NO REGROWTH TO STAFF AGAINST, SO IT NEEDS THE PLAYER'S COUNT.**
 /// The sim sizes a staffed extract row's crew from what the deposit regrows; stone on a rock body
 /// never does (`extraction_config::NEVER_RENEWS`), so its crew is the Max in heads and a row with no
@@ -5313,23 +5281,7 @@ fn never_renewing_dig_without_a_count(
     target: &LaborTarget,
     workers: u32,
 ) -> Option<String> {
-    let LaborTarget::Extract { tile, material, .. } = target else {
-        return None;
-    };
-    if workers > core_sim::NO_CREW_ON_THIS_ACTIVITY {
-        return None;
-    }
-    let extraction = app.world.resource::<ExtractionConfigHandle>().get();
-    let entity = app.world.resource::<TileRegistry>().index(tile.x, tile.y)?;
-    let ground = app.world.get::<Tile>(entity)?;
-    (core_sim::extraction::tile_deposit_regrowth(&extraction, material, ground)
-        <= core_sim::NEVER_RENEWS)
-        .then(|| {
-            format!(
-                "A {material} dig needs a digger count - this seam never renews, so the count you \
-                 give is how many people dig it."
-            )
-        })
+    core_sim::staffing_preview::never_renewing_dig_without_a_count(&app.world, target, workers)
 }
 
 /// **What this row runs on when the player names no kit** — the herd's own default for a Hunt on a
@@ -5352,40 +5304,7 @@ fn default_kit_for_target(
     equipment: &core_sim::EquipmentConfig,
     target: &LaborTarget,
 ) -> KitChoice {
-    let job = target.kit_job();
-    // **A WORKING'S DEFAULT IS DERIVED FROM ITS BRANCH** (#663) — the same
-    // `extraction::working_default_kit` the published `DepositState.defaultKitId` is read through, so
-    // the kit this command stores (and the turn and the seed then price with) is the picker's
-    // `(default)`. Ground holding none of the material falls to the job default;
-    // `validate_labor_policy` refuses that row anyway.
-    if let LaborTarget::Extract { tile, material, .. } = target {
-        return working_as_it_stands(app, *tile, material).map_or_else(
-            || equipment.default_kit(job),
-            |working| core_sim::extraction::working_default_kit(equipment, &working),
-        );
-    }
-    let LaborTarget::Hunt { fauna_id, .. } = target else {
-        return equipment.default_kit(job);
-    };
-    let fauna = app.world.resource::<FaunaConfigHandle>().get();
-    let resolved = app
-        .world
-        .resource::<HerdRegistry>()
-        .find(fauna_id)
-        .and_then(|herd| {
-            fauna
-                .species_by_display(&herd.species)
-                .map(|species| (species, herd.is_corralled()))
-        });
-    let Some((species, corralled)) = resolved else {
-        return equipment.default_kit(job);
-    };
-    core_sim::herd_default_hunt_kit(
-        equipment,
-        app.world.resource::<CreaturesConfigHandle>().get().person(),
-        species,
-        corralled,
-    )
+    core_sim::staffing_preview::default_kit_for_target(&app.world, equipment, target)
 }
 
 // One labor command's worth of context: the band, the role, the crew, the source's coordinates or
@@ -13313,6 +13232,7 @@ fn querying_faction(query: &QueryPayload) -> Option<(FactionId, &'static str)> {
             Some((FactionId(ask.faction_id), "deposit_crew_take"))
         }
         QueryPayload::ForageCrewTake(ask) => Some((FactionId(ask.faction_id), "forage_crew_take")),
+        QueryPayload::StaffingPreview(ask) => Some((FactionId(ask.faction_id), "staffing_preview")),
         // The save headers on disk, and the roster ceiling for a grid size. Neither reads a
         // faction's state, and both are asked from the landing screen — before a world, and
         // therefore before any seat — so a gate applied to them would close the load menu.

@@ -384,6 +384,11 @@ frames share the read path's 4-byte little-endian length prefix and the same
 must agree on it. Replies cross to the main thread through `CommandBridge.poll_query_replies` rather
 than a signal off the worker, so a render never observes a half-applied answer.
 
+**`QueryPayload::StaffingPreview` is the compose sheets' dry run of the real staffing** (`QUERY_KIND_STAFFING_PREVIEW`). Its
+source is addressed exactly as a work-party ask's (`work_party_source`, shared), it rides the seated link with
+the other faction-bearing questions, and its reply decodes to `{workers, keepers, kitted, bare, idle_before,
+idle_after, losses: [{kind, x, y, herd_id, material, branch, before, after}]}`.
+
 **A QUERY TRIGGERS NO SNAPSHOT.** The server answers and skips the recapture — the query changed
 nothing, and that recapture is the expensive half of a turn. Nothing downstream may wait on a frame
 to render an answer; the reply is the whole of it.

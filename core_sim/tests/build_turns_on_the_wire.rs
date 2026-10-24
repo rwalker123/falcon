@@ -181,6 +181,27 @@ fn staff_the_keeping(app: &mut App, source: UVec2, keepers: u32) {
     }
 }
 
+/// **HOLD THE TENDED RUNG TO NO BUILDERS** - for the arms that stage a half-built meter nobody is
+/// building.
+fn hold_the_build_to_nobody(app: &mut App) {
+    // A declared build is dealt its first builder ahead of its own priority group's hold crew, so any
+    // spare hand would become a builder and those arms would stop being "nobody building"; the
+    // measurement is the meter's keeping, not the staffing order (`staffing::tests` owns that).
+    let mut ladder = (*app.world.resource::<LadderConfigHandle>().get()).clone();
+    for rung in ladder
+        .rungs
+        .iter_mut()
+        .filter(|rung| rung.id == shipped::plant_tended().id.as_str())
+    {
+        if let Some(build) = rung.build.as_mut() {
+            build.max_builders = NOBODY_BUILDING;
+        }
+    }
+    app.world
+        .resource_mut::<LadderConfigHandle>()
+        .replace(std::sync::Arc::new(ladder));
+}
+
 /// **`plant:tended`'s keeping demand in whole hands** — what the holding arm staffs, read straight
 /// off the shipped ladder so a retune moves the fixture with the game, and **at the fixture tile's
 /// own tender-load**, since the rung quotes its rate per load (`forage::patch_tender_loads`).
@@ -847,6 +868,7 @@ fn the_build_countdown_publishes_five_distinct_states_on_the_wire() {
         "fixture: the rung must cost something to hold, or both arms are the same arm"
     );
     staff_the_keeping(&mut app, source, keepers);
+    hold_the_build_to_nobody(&mut app);
     let span = turns_past_the_grace(&app);
     let mut holding = NO_BUILD_TURNS_ESTIMATE;
     for _ in 0..span {
@@ -979,6 +1001,7 @@ fn an_abandoned_half_built_patch_publishes_rotting_and_a_kept_one_holding() {
     );
     let keepers = keeping_demand_in_hands(&app, source);
     staff_the_keeping(&mut app, source, keepers);
+    hold_the_build_to_nobody(&mut app);
     let span = turns_past_the_grace(&app);
     let mut parked = NO_BUILD_TURNS_ESTIMATE;
     for _ in 0..span {
@@ -1092,6 +1115,7 @@ fn the_published_rot_is_exactly_what_the_next_decay_pass_bleeds() {
     }
     let keepers = keeping_demand_in_hands(&app, source);
     staff_the_keeping(&mut app, source, keepers);
+    hold_the_build_to_nobody(&mut app);
     resolve_a_turn(&mut app, source);
     assert_eq!(
         rot_now(&app, source),

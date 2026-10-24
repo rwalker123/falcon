@@ -1949,3 +1949,119 @@ const WORK_PARTY_COUNT_SINGULAR := 1
 
 ## While the answer is in flight — the raid readout's own treatment.
 const WORK_PARTY_PENDING := "Costing the work party…"
+
+
+# ---- THE STAFFING PREVIEW LINE (a source the band does NOT yet work) ----------------------------
+#
+# The sim's dry run of the real staffing (`ForecastQuery.KIND_STAFFING_PREVIEW`) says what crew the row
+# would be given and which rows give hands up for it. The sheet states it in ONE line under the crew
+# strip, because the idle pool alone is not the crew: the command restaffs the whole band by Priority.
+
+## The verb the lead names, per web: `If you hunt here: …`.
+const STAFFING_PREVIEW_LEAD_FORMAT := "If you %s here: "
+const STAFFING_PREVIEW_VERB_HUNT := "hunt"
+const STAFFING_PREVIEW_VERB_FORAGE := "gather"
+const STAFFING_PREVIEW_VERB_EXTRACT := "work"
+
+## `3 hunters` and, at one, `1 hunter`.
+const STAFFING_PREVIEW_CREW_FORMAT := "%d %s"
+const STAFFING_PREVIEW_PLURAL_SUFFIX := "s"
+const STAFFING_PREVIEW_ONE := 1
+
+## The sources of those hands, joined: `2 from Hunt Red Deer, 1 idle`.
+const STAFFING_PREVIEW_DASH := " — "
+const STAFFING_PREVIEW_JOIN := ", "
+const STAFFING_PREVIEW_FROM_FORMAT := "%d from %s"
+const STAFFING_PREVIEW_IDLE_FORMAT := "%d idle"
+const STAFFING_PREVIEW_ALL_IDLE := ", all idle"
+
+## A build's builders lose hands too: `1 from the Harvest (4, 5) build`.
+const STAFFING_PREVIEW_BUILD_KIND_PREFIX := "build:"
+const STAFFING_PREVIEW_BUILD_FORMAT := "the %s build"
+
+## The Work tab's names for the row kinds that have no per-source format of their own.
+const STAFFING_PREVIEW_ROADWORK_NAME := "Roadwork"
+const STAFFING_PREVIEW_BAND_NAME := "Band work"
+const STAFFING_PREVIEW_BAND_KIND := "band"
+const STAFFING_PREVIEW_TILE_NAME_FORMAT := "%s (%d, %d)"
+
+## Nobody would come: the amber line says why and what moves it.
+const STAFFING_PREVIEW_NOBODY_AT_FORMAT := "No one would come at %s priority — raise it to High"
+const STAFFING_PREVIEW_NOBODY_AT_HIGH := "No one would come — every worker is on a High row"
+
+## The hover: every row whose crew falls, before → after.
+const STAFFING_PREVIEW_TIP_ROW_FORMAT := "%s: %d → %d"
+const STAFFING_PREVIEW_TIP_IDLE_FORMAT := "Idle: %d → %d"
+
+## **A LOSING ROW, NAMED THE WAY THE WORK TAB NAMES IT.** `herd_label_for_id` is the HUD's one herd-naming
+## rule; a `build:<kind>` row reads as its site's build.
+static func staffing_loss_name(loss: Dictionary, herd_label_for_id: Callable) -> String:
+    var kind := String(loss.get("kind", ""))
+    if kind.begins_with(STAFFING_PREVIEW_BUILD_KIND_PREFIX):
+        var inner := loss.duplicate()
+        inner["kind"] = kind.substr(STAFFING_PREVIEW_BUILD_KIND_PREFIX.length())
+        return STAFFING_PREVIEW_BUILD_FORMAT % staffing_loss_name(inner, herd_label_for_id)
+    var x := int(loss.get("x", 0))
+    var y := int(loss.get("y", 0))
+    if kind == SourceForecast.LABOR_KIND_HUNT:
+        var herd_label := ""
+        if herd_label_for_id.is_valid():
+            herd_label = String(herd_label_for_id.call(String(loss.get("herd_id", ""))))
+        return HudWorkVocab.build_site_subject(kind, x, y, "") if herd_label == "" \
+            else HudWorkVocab.WORK_ROW_HUNT_FORMAT % herd_label
+    if kind == SourceForecast.LABOR_KIND_FORAGE:
+        return HudWorkVocab.WORK_ROW_PLANT_FORMAT % [x, y]
+    if kind == HudConst.LABOR_KIND_EXTRACT:
+        return STAFFING_PREVIEW_TILE_NAME_FORMAT % [
+            HudLoadoutVocab.material_label(String(loss.get("material", ""))), x, y]
+    if kind == HudConst.LABOR_KIND_ROADWORK:
+        return STAFFING_PREVIEW_ROADWORK_NAME
+    if kind == STAFFING_PREVIEW_BAND_KIND:
+        return STAFFING_PREVIEW_BAND_NAME
+    return STAFFING_PREVIEW_TILE_NAME_FORMAT % [
+        String(loss.get("branch", kind)).capitalize(), x, y]
+
+## The crew noun at the count: `Hunters` -> `3 hunters`, `1 hunter`.
+static func staffing_crew_phrase(workers: int, crew_noun: String) -> String:
+    var noun := crew_noun.to_lower()
+    if workers == STAFFING_PREVIEW_ONE and noun.ends_with(STAFFING_PREVIEW_PLURAL_SUFFIX):
+        noun = noun.substr(0, noun.length() - STAFFING_PREVIEW_PLURAL_SUFFIX.length())
+    return STAFFING_PREVIEW_CREW_FORMAT % [workers, noun]
+
+## **THE ONE LINE**: `{"text", "warn"}`. `warn` is true for the nobody-would-come reading, which the
+## sheet draws amber. `priority` is the sheet's own (`high` / `normal` / `low`).
+static func staffing_preview_line(reply: Dictionary, verb: String, crew_noun: String,
+        priority: String, herd_label_for_id: Callable) -> Dictionary:
+    var workers := int(reply.get("workers", 0))
+    if workers <= 0:
+        var nobody := STAFFING_PREVIEW_NOBODY_AT_HIGH if priority == HudWorkVocab.WORK_PRIORITY_HIGH \
+            else STAFFING_PREVIEW_NOBODY_AT_FORMAT % priority.capitalize()
+        return {"text": nobody, "warn": true}
+    var parts: Array[String] = []
+    for loss_variant in reply.get("losses", []):
+        var loss: Dictionary = loss_variant
+        var lost := int(loss.get("before", 0)) - int(loss.get("after", 0))
+        if lost > 0:
+            parts.append(STAFFING_PREVIEW_FROM_FORMAT % [lost, staffing_loss_name(loss,
+                herd_label_for_id)])
+    var idle_used := int(reply.get("idle_before", 0)) - int(reply.get("idle_after", 0))
+    if idle_used > 0 and not parts.is_empty():
+        parts.append(STAFFING_PREVIEW_IDLE_FORMAT % idle_used)
+    var text := STAFFING_PREVIEW_LEAD_FORMAT % verb + staffing_crew_phrase(workers, crew_noun)
+    if parts.is_empty():
+        text += STAFFING_PREVIEW_ALL_IDLE
+    else:
+        text += STAFFING_PREVIEW_DASH + STAFFING_PREVIEW_JOIN.join(PackedStringArray(parts))
+    return {"text": text, "warn": false}
+
+## The hover: each row's before → after, then the idle pool's.
+static func staffing_preview_tooltip(reply: Dictionary, herd_label_for_id: Callable) -> String:
+    var lines: Array[String] = []
+    for loss_variant in reply.get("losses", []):
+        var loss: Dictionary = loss_variant
+        lines.append(STAFFING_PREVIEW_TIP_ROW_FORMAT % [
+            staffing_loss_name(loss, herd_label_for_id), int(loss.get("before", 0)),
+            int(loss.get("after", 0))])
+    lines.append(STAFFING_PREVIEW_TIP_IDLE_FORMAT % [int(reply.get("idle_before", 0)),
+        int(reply.get("idle_after", 0))])
+    return "\n".join(PackedStringArray(lines))

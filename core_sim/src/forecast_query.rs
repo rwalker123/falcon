@@ -76,6 +76,9 @@ pub fn answer_forecast_query(world: &mut World, query: &QueryPayload) -> QueryRe
         ),
         QueryPayload::DepositCrewTake(ask) => answer_deposit_crew_take(world, ask),
         QueryPayload::ForageCrewTake(ask) => answer_forage_crew_take(world, ask),
+        QueryPayload::StaffingPreview(ask) => {
+            crate::staffing_preview::answer_staffing_preview(world, ask)
+        }
         // **Answered by the server, from disk.** The slot list is a question about the filesystem,
         // not about a world — it has no `World` to resolve against and must be answerable while the
         // server is idle, which is exactly when a player opens the load menu. Reaching here means

@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 use core_sim::{apply_port_base, SimulationConfig};
 use sim_runtime::commands::{
     query_error, DenialRaidForecastQuery, DepositCrewTakeQuery, FactionCapacityQuery,
-    HuntCrewTakeQuery, QueryPayload, SeatClaimReply,
+    HuntCrewTakeQuery, QueryPayload, SeatClaimReply, StaffingPreviewQuery, WorkPartySource,
 };
 use sim_runtime::{CommandEnvelope, CommandPayload, QueryReply, QueryReplyEnvelope};
 
@@ -315,6 +315,21 @@ fn deposit_crew_take_about(faction_id: u32) -> QueryPayload {
     })
 }
 
+/// The staffing dry run - answered out of the named band's whole labor allocation, so seat-gated.
+fn staffing_preview_about(faction_id: u32) -> QueryPayload {
+    QueryPayload::StaffingPreview(StaffingPreviewQuery {
+        faction_id,
+        band_id: ANY_BAND,
+        source: WorkPartySource::Hunt {
+            herd_id: NO_SUCH_HERD.to_string(),
+        },
+        kit_id: String::new(),
+        floor: ANY_FLOOR,
+        priority: String::new(),
+        max_workers: 0,
+    })
+}
+
 /// Boot a server on its own port block with its own save directory, and hand back where to reach it.
 fn start_server(case: &str) -> (ServerProcess, Scratch, PathBuf, Ports) {
     let scratch = Scratch {
@@ -537,6 +552,11 @@ fn a_question_about_another_seats_faction_is_refused_over_the_socket() {
             HOME_ASKS_THE_RIVALS_ID + 2 * REQUEST_ID_STRIDE,
             deposit_crew_take_about(RIVAL_SEAT),
             "deposit_crew_take",
+        ),
+        (
+            HOME_ASKS_THE_RIVALS_ID + 3 * REQUEST_ID_STRIDE,
+            staffing_preview_about(RIVAL_SEAT),
+            "staffing_preview",
         ),
     ] {
         let refused = home.ask(

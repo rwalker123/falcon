@@ -2,6 +2,8 @@
 paths:
   - "core_sim/src/work_party.rs"
   - "core_sim/src/staffing.rs"
+  - "core_sim/src/staffing_preview.rs"
+  - "core_sim/tests/staffing_preview.rs"
   - "core_sim/src/take_claims.rs"
   - "core_sim/src/systems/labor.rs"
   - "core_sim/src/supply.rs"
@@ -93,9 +95,28 @@ Pinned by `server::tests::a_band_improvements_crew_is_the_keepers_the_sim_staffs
 
 | pass | what it hands out |
 |---|---|
-| 1 | the site's **keepers** (`planned_keep_hands`, ceiled), then **kitted** hands up to the row's **hold crew** |
+| 1a | the site's **keepers** on every row at every priority, High to Low: `floor(keep_hands)` whole-keeper heads round-robin, then, for a row with a fraction of a hand of keeping left, one head that carries it (a kitted gatherer if the shelf can arm one, else a bare one where a bare hand works, else a keeper; a row with no hold take gives it a keeper's head so the improvement is kept) |
+| 1b | per priority group High to Low: the group's **builds'** first builder (kitted if the shelf can arm one, else bare), then the group's **kitted** hands up to the row's **hold crew** |
 | 2 | **kitted** hands up to the row's **reach crew** |
 | 3 | every row up to its **useful crew** (the room above the floor, clear-it-now; the crew past which the take stops rising): the kit's units still unspent first, then **bare** hands, only on a web where a bare hand takes something (never on a hunt that needs a weapon) |
+
+**The reason for the order is what each head protects.** Only keepers guard the ground the band
+already has; a hold crew is a food take, so a Normal row's hold crew does not beat a High build, and
+a Low build still gets its builder before the Low hold crews but after the High and Normal ones.
+Pinned by `staffing::tests::{a_high_build_gets_its_builder_before_a_normal_rows_hold_crew,
+a_build_ranks_by_its_groups_priority_against_hold_crews}`.
+
+**A crew's heads round once.** `StaffRowInput::keep_hands` is the keeping, FRACTIONAL
+(`planned_keep_hands`, unceiled), and every target is `ceil(keep_hands + gather hands)`
+(`staffing::{hold,reach,useful}_heads`): in the turn a keeper keeps first and gathers with what is
+left (`SiteKeeping`'s split is fractional, `crew - keep_hands`), so the keeping's fraction costs no
+head of its own. A row with no take to make still gets `ceil(keep_hands)`. `keepersStaffed` is the
+heads whose turn is entirely keeping (`floor(keep_hands)`, plus one when the fraction has no
+gatherer to ride with); the remainder is inside a kitted or bare head, so `keepersStaffed +
+kittedStaffed + bareStaffed == workers` still holds, and `take_claims::row_claims`' keeping
+remainder (`keepers - keep_hands`, floored at zero) reads zero for it because the gatherer's head is
+already counted in `kitted`. Pinned by `staffing::tests::{keeping_and_gathering_round_once,
+a_keeping_only_row_gets_a_whole_keeper_for_a_fraction}`.
 
 **A hunt row's three targets (hold, reach, useful) are sized by `fauna::hunt_crew_for_take`**, the
 one crew function `workers_needed` also reads: haul, reach and fight against a take RATE, capped at
@@ -158,6 +179,47 @@ Pinned by `staffing::tests` (the passes, in order, against a shelf), `labor_allo
 re-staff on a smaller pool and the turn's staffed rows), `shedding_order::a_smaller_pool_restaffs_the_rows_and_sheds_nothing`,
 `take_kit_claims` (granted claims against asks) and `server::tests` (`stop_labor`, the Max on
 `assign_labor`).
+
+### The staffing preview — one staffing, two callers
+
+`QueryPayload::StaffingPreview` (`sim_runtime`, proto query field **10**, reply field **13**; answered by
+`staffing_preview::answer_staffing_preview`, seat-gated like the other faction-bearing questions)
+is the compose sheet's dry run: *if this band added (or re-stated) this row at this Priority / Max /
+floor / kit, what crew would the staffing give it, and which rows lose hands?* A sheet that quoted
+the crew from the idle hands alone read `0` where the command gives a crew, because the command
+restaffs the whole band by Priority and can take hands from lower rows.
+
+**The ask**: `faction_id`, `band_id`, one source (`Hunt { herd_id }`, `Forage { x, y, take_species }` or
+`Extract { x, y, material }`, the work-party forecast's own source messages), `kit_id` (empty = the
+default `assign_labor` resolves for that row), `floor`, `priority` (`high` | `normal` | `low`, empty =
+normal) and `max_workers` (`0` = no Max). **The reply**: `workers` with its `keepers` / `kitted` /
+`bare` split, `idle_before` / `idle_after` (the published `idleWorkers` meaning: hands pass 3 left
+unused, without and with the row) and `losses`: one `{ kind, x, y, herd_id, material, branch, before,
+after }` per row whose crew falls, High priority first then row order, declared builds last
+(`kind` is `build:<kind>` for their builders).
+
+**One staffing, two callers.** The row is built by the helpers `assign_labor` shares
+(`staffing_preview::{default_kit_for_target, working_as_it_stands,
+never_renewing_dig_without_a_count}`) and written onto a COPY of the band's allocation with
+`set_staffed_row` and `set_source_priority`; an existing row on that source is overwritten in place.
+The copy is staffed by `staffing::staff_allocation_copy` (`with_band_staffing_over` →
+`staff_rows_settled` with the band's bench and nobody lost → `apply_staffing` +
+`apply_build_crews`), the staffing `restaff_band` runs, and the UNMODIFIED allocation is staffed the
+same way for the "before" figures, so a loss compares like with like and never against stale
+stored crews. The reply therefore equals the crew the row gets after the matching `assign_labor`.
+The take selection is passed as sent (the command's prune-to-the-current-basket repair is not
+run). Nothing is written to the world.
+
+**Refusals** (`query_error` tokens): `unknown_band`, `unknown_herd`, `unknown_patch`,
+`unknown_deposit`, `unknown_kit`, `kit_wrong_job`, `invalid_floor`, `invalid_priority`, and
+`never_renewing_dig_without_a_count` (an extract row on ground that never renews with
+`max_workers` 0, the row `assign_labor` refuses by the same predicate). A hunt `follow` box has no
+field.
+
+Pinned by `tests/staffing_preview.rs` (a new Normal row takes from the Low row and equals the
+command's restaff; a Low row leaves the Normal row alone; idle hands first with no losses; the
+allocation unchanged after the query; the refusal tokens), the cross-seat refusal over the socket
+in `query_seat_gate.rs`, and `sim_runtime`'s `the_staffing_preview_round_trips`.
 
 ## Config files
 

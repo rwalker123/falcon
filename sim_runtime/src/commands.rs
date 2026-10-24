@@ -737,6 +737,60 @@ pub enum QueryPayload {
     /// **The patch's take at every crew size, after keeping** — the forage twin of
     /// [`Self::DepositCrewTake`]. See [`ForageCrewTakeQuery`].
     ForageCrewTake(ForageCrewTakeQuery),
+    /// **The compose sheet's dry run of the real staffing** — what crew a row would be given if it
+    /// were added or re-stated, and which rows lose hands. See [`StaffingPreviewQuery`].
+    StaffingPreview(StaffingPreviewQuery),
+}
+
+/// **THE DRY RUN OF THE REAL STAFFING** — *"if this band added (or re-stated) this row at this
+/// Priority / Max / floor / kit, what crew would the staffing give it, and which rows lose hands?"*
+/// Answered by running the staffing `assign_labor` runs on a copy of the band's allocation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StaffingPreviewQuery {
+    pub faction_id: u32,
+    /// The asking band's durable `BandId`.
+    pub band_id: u64,
+    /// The row: a herd, a patch (with its crop selection) or a deposit.
+    pub source: WorkPartySource,
+    /// An `equipment.json` roster id; **empty** = the default `assign_labor` would resolve.
+    pub kit_id: String,
+    /// The composed escapement floor, `0.0..=1.0`.
+    pub floor: f32,
+    /// `high` | `normal` | `low` (the `work_priority` vocabulary); empty = `normal`.
+    pub priority: String,
+    /// The row's Max; `0` = no Max.
+    pub max_workers: u32,
+}
+
+/// One row whose crew falls under the previewed row — see [`StaffingPreviewReply::losses`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct StaffingPreviewLoss {
+    /// The labor kind token (`forage`, `hunt`, `extract`, `tile`, `band`, `roadwork`), or
+    /// `build:<kind>` for a declared build's builders.
+    pub kind: String,
+    pub x: u32,
+    pub y: u32,
+    pub herd_id: String,
+    pub material: String,
+    pub branch: String,
+    /// The crew staffed without the previewed row, and with it.
+    pub before: u32,
+    pub after: u32,
+}
+
+/// The answer to [`StaffingPreviewQuery`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct StaffingPreviewReply {
+    /// The previewed row's crew after the restaff; `keepers + kitted + bare == workers`.
+    pub workers: u32,
+    pub keepers: u32,
+    pub kitted: u32,
+    pub bare: u32,
+    /// The hands pass 3 left unused without / with the previewed row (`idleWorkers`).
+    pub idle_before: u32,
+    pub idle_after: u32,
+    /// Rows whose crew falls: Priority order (High first), then row order; builds last.
+    pub losses: Vec<StaffingPreviewLoss>,
 }
 
 /// **THE DEPOSIT COMPOSE SHEET'S QUESTION** (#663) — what a crew of each size, off this band,
@@ -1062,6 +1116,8 @@ pub enum QueryReply {
     /// The deposit compose sheet's crew curve.
     DepositCrewTake(DepositCrewTakeReply),
     ForageCrewTake(ForageCrewTakeReply),
+    /// The staffing dry run's crew and the rows it would cost.
+    StaffingPreview(StaffingPreviewReply),
 }
 
 /// **Whether this connection now drives that faction.**
@@ -1247,6 +1303,12 @@ pub mod query_error {
     /// Also what an **unseated** connection is told when it asks one of the three: holding no seat
     /// is holding nobody's private state.
     pub const NOT_YOUR_SEAT: &str = "not_your_seat";
+    /// A staffing preview's `priority` is not `high`, `normal` or `low` (rejected, never read as the
+    /// default - the `work_priority` command's rule).
+    pub const INVALID_PRIORITY: &str = "invalid_priority";
+    /// A staffing preview of a dig on ground that never renews, with no Max: the sim sizes such a
+    /// crew from the player's count, so `assign_labor` refuses the same row.
+    pub const NEVER_RENEWING_DIG_WITHOUT_A_COUNT: &str = "never_renewing_dig_without_a_count";
 }
 
 /// **How a receiver answers a pending dealing** (`answer_dealing`): accept, refuse, or counter.
@@ -2555,6 +2617,43 @@ impl CommandEnvelope {
                                 crop: ask.crop.clone(),
                             })
                         }
+                        QueryPayload::StaffingPreview(ask) => {
+                            pb::query_command::Query::StaffingPreview(pb::StaffingPreviewQuery {
+                                faction_id: ask.faction_id,
+                                band_id: ask.band_id,
+                                kit_id: ask.kit_id.clone(),
+                                floor: ask.floor,
+                                priority: ask.priority.clone(),
+                                max_workers: ask.max_workers,
+                                source: Some(match &ask.source {
+                                    WorkPartySource::Hunt { herd_id } => {
+                                        pb::staffing_preview_query::Source::Hunt(
+                                            pb::WorkPartyHuntSource {
+                                                herd_id: herd_id.clone(),
+                                            },
+                                        )
+                                    }
+                                    WorkPartySource::Forage { x, y, take_species } => {
+                                        pb::staffing_preview_query::Source::Forage(
+                                            pb::WorkPartyForageSource {
+                                                x: *x,
+                                                y: *y,
+                                                take_species: take_species.clone(),
+                                            },
+                                        )
+                                    }
+                                    WorkPartySource::Extract { x, y, material } => {
+                                        pb::staffing_preview_query::Source::Extract(
+                                            pb::WorkPartyExtractSource {
+                                                x: *x,
+                                                y: *y,
+                                                material: material.clone(),
+                                            },
+                                        )
+                                    }
+                                }),
+                            })
+                        }
                         QueryPayload::DepositCrewTake(ask) => {
                             pb::query_command::Query::DepositCrewTake(pb::DepositCrewTakeQuery {
                                 faction_id: ask.faction_id,
@@ -3129,6 +3228,38 @@ impl CommandEnvelope {
                             crop: ask.crop,
                         })
                     }
+                    pb::query_command::Query::StaffingPreview(ask) => {
+                        let source = match ask.source.ok_or(CommandDecodeError::MissingPayload)? {
+                            pb::staffing_preview_query::Source::Hunt(hunt) => {
+                                WorkPartySource::Hunt {
+                                    herd_id: hunt.herd_id,
+                                }
+                            }
+                            pb::staffing_preview_query::Source::Forage(forage) => {
+                                WorkPartySource::Forage {
+                                    x: forage.x,
+                                    y: forage.y,
+                                    take_species: forage.take_species,
+                                }
+                            }
+                            pb::staffing_preview_query::Source::Extract(extract) => {
+                                WorkPartySource::Extract {
+                                    x: extract.x,
+                                    y: extract.y,
+                                    material: extract.material,
+                                }
+                            }
+                        };
+                        QueryPayload::StaffingPreview(StaffingPreviewQuery {
+                            faction_id: ask.faction_id,
+                            band_id: ask.band_id,
+                            source,
+                            kit_id: ask.kit_id,
+                            floor: ask.floor,
+                            priority: ask.priority,
+                            max_workers: ask.max_workers,
+                        })
+                    }
                     pb::query_command::Query::DepositCrewTake(ask) => {
                         QueryPayload::DepositCrewTake(DepositCrewTakeQuery {
                             faction_id: ask.faction_id,
@@ -3312,6 +3443,30 @@ impl QueryReplyEnvelope {
                         .collect(),
                 })
             }
+            QueryReply::StaffingPreview(answer) => {
+                pb::query_reply_envelope::Reply::StaffingPreview(pb::StaffingPreviewReply {
+                    workers: answer.workers,
+                    keepers: answer.keepers,
+                    kitted: answer.kitted,
+                    bare: answer.bare,
+                    idle_before: answer.idle_before,
+                    idle_after: answer.idle_after,
+                    losses: answer
+                        .losses
+                        .iter()
+                        .map(|loss| pb::StaffingPreviewLoss {
+                            kind: loss.kind.clone(),
+                            x: loss.x,
+                            y: loss.y,
+                            herd_id: loss.herd_id.clone(),
+                            material: loss.material.clone(),
+                            branch: loss.branch.clone(),
+                            before: loss.before,
+                            after: loss.after,
+                        })
+                        .collect(),
+                })
+            }
             QueryReply::DepositCrewTake(answer) => {
                 pb::query_reply_envelope::Reply::DepositCrewTake(pb::DepositCrewTakeReply {
                     per_crew: answer
@@ -3439,6 +3594,30 @@ impl QueryReplyEnvelope {
                                     amount: payoff.amount,
                                 })
                                 .collect(),
+                        })
+                        .collect(),
+                })
+            }
+            pb::query_reply_envelope::Reply::StaffingPreview(answer) => {
+                QueryReply::StaffingPreview(StaffingPreviewReply {
+                    workers: answer.workers,
+                    keepers: answer.keepers,
+                    kitted: answer.kitted,
+                    bare: answer.bare,
+                    idle_before: answer.idle_before,
+                    idle_after: answer.idle_after,
+                    losses: answer
+                        .losses
+                        .into_iter()
+                        .map(|loss| StaffingPreviewLoss {
+                            kind: loss.kind,
+                            x: loss.x,
+                            y: loss.y,
+                            herd_id: loss.herd_id,
+                            material: loss.material,
+                            branch: loss.branch,
+                            before: loss.before,
+                            after: loss.after,
                         })
                         .collect(),
                 })
@@ -3872,6 +4051,76 @@ mod tests {
             let decoded = CommandEnvelope::decode(&bytes).expect("decode");
             assert_eq!(decoded.payload, payload);
         }
+    }
+
+    /// **The staffing dry run survives the envelope on all three sources**, every field a distinct
+    /// value so a transposition cannot pass.
+    #[test]
+    fn the_staffing_preview_round_trips() {
+        for source in [
+            WorkPartySource::Hunt {
+                herd_id: "boar_east".to_string(),
+            },
+            WorkPartySource::Forage {
+                x: 4,
+                y: 7,
+                take_species: vec!["wild_emmer".to_string()],
+            },
+            WorkPartySource::Extract {
+                x: 5,
+                y: 8,
+                material: "wood".to_string(),
+            },
+        ] {
+            let ask = QueryPayload::StaffingPreview(StaffingPreviewQuery {
+                faction_id: 2,
+                band_id: 9,
+                source,
+                kit_id: "stalking".to_string(),
+                floor: 0.35,
+                priority: "low".to_string(),
+                max_workers: 6,
+            });
+            let envelope = CommandEnvelope {
+                payload: CommandPayload::Query {
+                    request_id: 12,
+                    query: ask.clone(),
+                },
+                correlation_id: None,
+            };
+            let decoded = CommandEnvelope::decode(&envelope.encode_to_vec().expect("encode"))
+                .expect("decode");
+            assert_eq!(
+                decoded.payload,
+                CommandPayload::Query {
+                    request_id: 12,
+                    query: ask
+                }
+            );
+        }
+        let reply = QueryReplyEnvelope {
+            request_id: 12,
+            reply: QueryReply::StaffingPreview(StaffingPreviewReply {
+                workers: 5,
+                keepers: 1,
+                kitted: 3,
+                bare: 1,
+                idle_before: 7,
+                idle_after: 2,
+                losses: vec![StaffingPreviewLoss {
+                    kind: "extract".to_string(),
+                    x: 11,
+                    y: 12,
+                    herd_id: String::new(),
+                    material: "stone".to_string(),
+                    branch: String::new(),
+                    before: 4,
+                    after: 1,
+                }],
+            }),
+        };
+        let bytes = reply.encode_to_vec().expect("encode");
+        assert_eq!(QueryReplyEnvelope::decode(&bytes).expect("decode"), reply);
     }
 
     /// **The patch's crew curve survives the envelope, question and answer both** — every field a

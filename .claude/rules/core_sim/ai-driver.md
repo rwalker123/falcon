@@ -1555,6 +1555,13 @@ a 20-seed sweep (seeds 1–24 less the bench's 3 / 18 / 20 / 22) the rule moved 
 turns on seeds 50 and 54, so `Land` (which needs a falling runway) never proposes there: both are `declined`
 rows with a note; seed 37's `declined` row was withdrawn because `Land` wins there again.
 
+**Builders rank by priority group, and a crew rounds its keeping once, moved it again.** On the
+20-seed paired sweep (seeds 1–20) against the order before it: `food_stock` 39.8 → 49.0 (15 seeds
+better, 4 worse), `patches_improved` 0.10 → 0.75 (10 better, none worse), children 14.7 → 15.5,
+working 19.0 → 18.9, hunger deaths 0.05 → 0.10 (one death on one seed). The band's own cluster now
+feeds it for the whole run on seeds 22, 37 and 59 — `Land` raises no `land_short` and proposes
+nothing — so all three joined 20, 50 and 54 as `declined` rows with a note.
+
 ⛔ **The start kinds above are what the seeds read NOW, not what they were chosen for.** The
 eight were picked to span `stay` / `split_local` / `split_far` / `short`; the sim changes since
 (the work party, site crews, spoilage) moved the tick-2 ground reading, and the set now covers

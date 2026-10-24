@@ -1103,7 +1103,68 @@ message QueryCommand {
     DepositCrewTakeQuery deposit_crew_take = 8;
     // 8 is held by `deposit_crew_take`, so the patch's crew curve takes 9 (append-only).
     ForageCrewTakeQuery forage_crew_take = 9;
+    // 9 is held by `forage_crew_take`, so the staffing dry run takes 10 (append-only).
+    // Seat-gated: it is answered out of the named band's whole labor allocation.
+    StaffingPreviewQuery staffing_preview = 10;
   }
+}
+
+// THE COMPOSE SHEET'S DRY RUN OF THE REAL STAFFING: "If this band added (or re-stated) THIS row at
+// THIS Priority / Max / floor / kit, what crew would the staffing give it, and which rows lose
+// hands?" Answered by running the same restaff `assign_labor` runs on a COPY of the band's
+// allocation; nothing is written to the world. A hunt `follow` box is out of scope (no field).
+message StaffingPreviewQuery {
+  uint32 faction_id = 1;
+  // The asking band's durable `BandId`.
+  uint64 band_id = 2;
+  // The row being added or re-stated: reuses the work-party forecast's source messages. A source
+  // naming no row kind is a malformed ask.
+  oneof source {
+    WorkPartyHuntSource hunt = 3;
+    WorkPartyForageSource forage = 4;
+    WorkPartyExtractSource extract = 5;
+  }
+  // An `equipment.json` roster id; EMPTY = the default `assign_labor` would resolve for this row.
+  string kit_id = 6;
+  // The composed escapement floor, a fraction in 0..=1 (rejected, never clamped).
+  float floor = 7;
+  // The `work_priority` vocabulary: "high" | "normal" | "low" (case-insensitive); empty = normal.
+  string priority = 8;
+  // The row's Max (`assign_labor`'s count on a staffed row); 0 = no Max.
+  uint32 max_workers = 9;
+}
+
+// ONE ROW WHOSE CREW FALLS UNDER THE PREVIEWED ROW. `kind` is the labor kind token
+// (`forage` | `hunt` | `extract` | `tile` | `band` | `roadwork`) of a take row, or `build:<kind>`
+// for a declared build's builders (the source's own kind token after `build:`). The identity fields
+// are the ones the kind uses and are otherwise empty/zero: `x`,`y` for forage, extract, tile, and
+// a patch / deposit / tile build; `herd_id` for hunt; `material` for extract; `branch` for a
+// tile or band row.
+message StaffingPreviewLoss {
+  string kind = 1;
+  uint32 x = 2;
+  uint32 y = 3;
+  string herd_id = 4;
+  string material = 5;
+  string branch = 6;
+  // The row's crew staffed WITHOUT the previewed row, and WITH it.
+  uint32 before = 7;
+  uint32 after = 8;
+}
+
+// The answer to `StaffingPreviewQuery`.
+message StaffingPreviewReply {
+  // The previewed row's crew once the band is restaffed, and its breakdown (sum == workers).
+  uint32 workers = 1;
+  uint32 keepers = 2;
+  uint32 kitted = 3;
+  uint32 bare = 4;
+  // The hands pass 3 left unused (the published `idleWorkers`) without / with the previewed row.
+  uint32 idle_before = 5;
+  uint32 idle_after = 6;
+  // Rows whose crew falls, in Priority order (High first) then the allocation's own row order,
+  // declared builds after the take rows.
+  repeated StaffingPreviewLoss losses = 7;
 }
 
 // THE DEPOSIT COMPOSE SHEET'S QUESTION: "What does a crew of each size, off THIS band, carrying THIS
@@ -1367,6 +1428,8 @@ message QueryReplyEnvelope {
     DepositCrewTakeReply deposit_crew_take = 11;
     // 11 is held by `deposit_crew_take`, so the patch's crew curve takes 12 (append-only).
     ForageCrewTakeReply forage_crew_take = 12;
+    // 12 is held by `forage_crew_take`, so the staffing dry run's answer takes 13 (append-only).
+    StaffingPreviewReply staffing_preview = 13;
   }
 }
 

@@ -5,9 +5,14 @@
 //! decides the **crew**, every turn, with no smoothing. A row's crew is the sum of three kinds of
 //! head, staffed in three passes across the whole band:
 //!
-//! 1. **Hold, kitted** — every row (highest [`SourcePriority`] first, ties dealt as below) gets its
-//!    **keepers** first, then **kitted** heads up to the crew that takes what regrows at the floor
-//!    (`T_hold`). If the band's units run out the row stays short: there is no bare fallback here.
+//! 1. **Keepers, then each group's builders and hold crews** — every row at every priority gets its
+//!    **keepers** first (keeping an improvement from sliding down its ladder is the one claim that
+//!    outranks everything). Then, per priority group High to Low, the group's builds get their
+//!    first builder and the group's rows get **kitted** heads up to the crew that takes what
+//!    regrows at the floor (`T_hold`) - a hold crew is a food take, so a Normal row's never beats a
+//!    High build. If the band's units run out the row stays short: there is no bare fallback here.
+//!    A crew is sized `ceil(keep_hands + gather hands)`, rounded ONCE: the keeper keeps first and
+//!    gathers with what is left, so the fraction of a hand of keeping rides inside a gatherer's head.
 //! 2. **Reach, kitted** — with heads and units remaining, kitted heads up to the crew that draws the
 //!    stock *down* toward the floor (`T_reach`, strictly above the largest regrowth between the floor
 //!    and today's stock).
@@ -21,8 +26,9 @@
 //! # Builds join the crew (#872)
 //!
 //! A declared build is a **build input** beside the row inputs (`StaffRowInput::is_build`), staffed
-//! from the same pool and shelf: after pass 1 every build that can progress gets **one builder**
-//! (any priority, priority order then nearest first); then, per priority group in passes 2 and 3,
+//! from the same pool and shelf: in pass 1, per priority group, every build that can progress gets
+//! **one builder** (nearest first) ahead of that group's hold crews; then, per priority group in
+//! passes 2 and 3,
 //! the group's builds are dealt **before** its sources reach toward their floor, round-robin up to
 //! their cap (the rung's `max_builders`, cut by the room the tile left). A bare-handed builder
 //! always contributes, so a build is a pass-3 destination. A tile's room is shared by every row and
@@ -80,6 +86,9 @@ const NOBODY: u32 = 0;
 /// larder, its engagement unbounded) reports no crew for a target, but nothing is taken by nobody.
 const AT_LEAST_ONE_HAND: u32 = 1;
 
+/// **NO HANDS** - the empty fractional crew.
+const NO_HANDS: f32 = 0.0;
+
 /// What the reach pass is aiming at on one row.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ReachTarget {
@@ -98,8 +107,10 @@ pub struct StaffRowInput<'a> {
     pub priority: SourcePriority,
     /// The player's Max: the most heads the sim may put on the row. `None` is no max.
     pub max: Option<u32>,
-    /// The keeping hands the row owes its site, staffed first.
-    pub keepers: u32,
+    /// **The keeping hands the row owes its site, FRACTIONAL** - the turn's keeping takes exactly this
+    /// much of the crew's work and the rest gathers, so the passes round `keep_hands + gather hands`
+    /// once rather than ceiling the keeping and the gathering apart.
+    pub keep_hands: f32,
     /// `T_hold` — the take per turn that holds the source at its floor (what regrows there).
     pub hold_take: f32,
     /// `T_reach` — what the reach pass aims at.
@@ -170,13 +181,79 @@ fn arm(row: &StaffRowInput<'_>, held: u32, target: u32, shelf: &mut BTreeMap<Arc
     }
 }
 
-/// The heads the row needs in total (take hands, keepers excluded) to reach `target` with `armed`
-/// of them kitted — rounded up once. `None` where no crew reaches it.
-fn take_hands_needed(row: &StaffRowInput<'_>, target: f32, armed: u32) -> Option<u32> {
+/// **The take hands, fractional,** that reach `target` with `armed` of them kitted; nothing where no
+/// take is wanted or no crew reaches it.
+fn gather_hands(row: &StaffRowInput<'_>, target: f32, armed: u32) -> f32 {
     if target <= NO_TAKE_WANTED {
-        return Some(NOBODY);
+        return NO_HANDS;
     }
-    (row.hands)(target, armed).map(|hands| (hands.max(0.0).ceil() as u32).max(AT_LEAST_ONE_HAND))
+    // A source bounded by neither carry nor reach reports no crew for a target, but nothing is taken
+    // by nobody: a wanted take is at least one hand.
+    (row.hands)(target, armed).map_or(NO_HANDS, |hands| {
+        if hands > NO_HANDS {
+            hands
+        } else {
+            AT_LEAST_ONE_HAND as f32
+        }
+    })
+}
+
+/// **THE WHOLE-HEAD KEEPERS OF A ROW** - the heads whose turn is entirely keeping.
+fn whole_keepers(row: &StaffRowInput<'_>) -> u32 {
+    row.keep_hands.max(NO_HANDS).floor() as u32
+}
+
+/// Whether the keeping leaves a fraction of a hand over, which rides inside a gatherer's head.
+fn keeps_a_fraction(row: &StaffRowInput<'_>) -> bool {
+    row.keep_hands > whole_keepers(row) as f32
+}
+
+/// **A ROW THAT HOLDS A TAKE** carries the keeping's fractional remainder in a gatherer's head; a row
+/// with no hold take (a tile or band improvement, a source at its floor) gives that remainder a
+/// keeper's head of its own so the improvement is still kept.
+fn remainder_rides_with_a_gatherer(row: &StaffRowInput<'_>) -> bool {
+    row.hold_take > NO_TAKE_WANTED
+}
+
+/// **THE HEADS A CREW NEEDS IN ALL**, keeping and gathering, rounded up ONCE: the keeper keeps first
+/// and gathers with what is left, exactly as the turn splits it.
+fn crew_heads(row: &StaffRowInput<'_>, gather: f32) -> u32 {
+    (row.keep_hands.max(NO_HANDS) + gather).ceil() as u32
+}
+
+/// The crew that holds the source at its floor, keepers included.
+fn hold_heads(row: &StaffRowInput<'_>, armed: u32) -> u32 {
+    let heads = crew_heads(row, gather_hands(row, row.hold_take, armed));
+    if row.hold_take > NO_TAKE_WANTED {
+        heads.max(AT_LEAST_ONE_HAND)
+    } else {
+        heads
+    }
+}
+
+/// The take hands the reach pass aims at.
+fn reach_gather(row: &StaffRowInput<'_>, armed: u32) -> f32 {
+    match row.reach {
+        ReachTarget::Nothing => NO_HANDS,
+        ReachTarget::Take(target) => gather_hands(row, target, armed),
+        ReachTarget::Heads(heads) => heads as f32,
+    }
+}
+
+/// The crew that draws the stock down toward the floor, keepers included.
+fn reach_heads(row: &StaffRowInput<'_>, armed: u32) -> u32 {
+    let hold = gather_hands(row, row.hold_take, armed);
+    crew_heads(row, reach_gather(row, armed).max(hold))
+}
+
+/// The crew past which the take stops rising, keepers included.
+fn useful_heads(row: &StaffRowInput<'_>, armed: u32) -> u32 {
+    let hold = gather_hands(row, row.hold_take, armed);
+    let useful = match row.reach {
+        ReachTarget::Heads(heads) => heads as f32,
+        _ => gather_hands(row, row.useful_take, armed),
+    };
+    crew_heads(row, useful.max(reach_gather(row, armed)).max(hold))
 }
 
 /// Which passes a staffing run deals.
@@ -218,18 +295,12 @@ fn staff_passes(
     for &i in &order {
         let row = &rows[i];
         let kmax = kitted_capacity(row, NOBODY, shelf);
-        let keepers = row.keepers.min(cap_of(row));
-        let hold = take_hands_needed(row, row.hold_take, kmax).unwrap_or(NOBODY);
-        let reach = match row.reach {
-            ReachTarget::Nothing => NOBODY,
-            ReachTarget::Take(target) => take_hands_needed(row, target, kmax).unwrap_or(NOBODY),
-            ReachTarget::Heads(heads) => heads,
-        };
-        out[i].hold_crew = keepers.saturating_add(hold).min(cap_of(row));
-        out[i].reach_crew = keepers.saturating_add(reach.max(hold)).min(cap_of(row));
-        let useful = useful_hands(row, kmax);
-        out[i].useful_crew = keepers
-            .saturating_add(useful.max(reach).max(hold))
+        out[i].hold_crew = hold_heads(row, kmax).min(cap_of(row));
+        out[i].reach_crew = reach_heads(row, kmax)
+            .max(out[i].hold_crew)
+            .min(cap_of(row));
+        out[i].useful_crew = useful_heads(row, kmax)
+            .max(out[i].reach_crew)
             .min(cap_of(row));
     }
 
@@ -247,19 +318,42 @@ fn staff_passes(
         .map(|group| group.iter().partition(|&&i| rows[i].is_build))
         .collect();
 
-    // ## Pass 1 — keepers, then kitted heads up to the hold crew; one head at a time within a group.
+    // ## Pass 1a — the keepers on every row at every priority, High to Low: the ground the band
+    // already has never rots to pay for anything else (a hold crew is a food take, not rot
+    // protection). A row's whole-head keepers go first, round-robin within a group; then the head
+    // that carries the keeping's fractional remainder.
     for (_, sources) in &split {
         deal_round_robin(sources, |i| ledger.deal_keeper(&rows[i], i));
-        deal_kitted(rows, sources, &mut ledger, shelf, |row, kmax| {
-            take_hands_needed(row, row.hold_take, kmax).unwrap_or(NOBODY)
-        });
+        for &i in sources {
+            let row = &rows[i];
+            if !keeps_a_fraction(row) {
+                continue;
+            }
+            let held = ledger.out[i].kitted;
+            let kind = if !remainder_rides_with_a_gatherer(row) {
+                HeadKind::Keeper
+            } else if kitted_capacity(row, held, shelf) > held {
+                HeadKind::Kitted
+            } else if row.bare_can_work {
+                HeadKind::Bare
+            } else {
+                HeadKind::Keeper
+            };
+            if ledger.deal_head(i, true, kind) && matches!(kind, HeadKind::Kitted) {
+                arm(row, held, held + 1, shelf);
+            }
+        }
     }
+    // The keeper-typed heads each row holds from here on; every later want is the row's crew less
+    // these.
+    let kept: Vec<u32> = ledger.out.iter().map(|crew| crew.keepers).collect();
 
-    // ## One builder on every build — the player started it, so the game tries to staff it. After
-    // pass 1 (the ground the band already has never rots to pay for new ground), at any priority,
-    // in priority order then nearest first; kitted if the shelf can arm one, else bare.
-    if passes == Passes::All {
-        for (builds, _) in &split {
+    // ## Pass 1b — each priority group in turn, High to Low: its builds' first builder (the player
+    // started the build, so the game tries to staff it; kitted if the shelf can arm one, else bare),
+    // THEN the group's kitted heads up to the hold crew. A Normal row's hold crew therefore never
+    // beats a High build, and a Low build still beats the Low hold crews.
+    for (builds, sources) in &split {
+        if passes == Passes::All {
             for &i in builds {
                 let row = &rows[i];
                 let kitted = kitted_capacity(row, NOBODY, shelf) >= 1;
@@ -277,20 +371,21 @@ fn staff_passes(
                 }
             }
         }
+        deal_kitted(rows, sources, &mut ledger, shelf, |i, row, kmax| {
+            hold_heads(row, kmax).saturating_sub(kept[i])
+        });
     }
 
     // ## Pass 2 — kitted heads up to the reach crew, from whatever units and heads remain. A group's
     // builds go first, up to their cap.
     for (builds, sources) in &split {
         if passes == Passes::All {
-            deal_kitted(rows, builds, &mut ledger, shelf, |row, _| cap_of(row));
+            deal_kitted(rows, builds, &mut ledger, shelf, |_, row, _| cap_of(row));
         }
-        deal_kitted(rows, sources, &mut ledger, shelf, |row, kmax| {
-            match row.reach {
-                ReachTarget::Nothing => NOBODY,
-                ReachTarget::Take(target) => take_hands_needed(row, target, kmax).unwrap_or(NOBODY),
-                ReachTarget::Heads(heads) => heads,
-            }
+        deal_kitted(rows, sources, &mut ledger, shelf, |i, row, kmax| {
+            reach_heads(row, kmax)
+                .max(hold_heads(row, kmax))
+                .saturating_sub(kept[i])
         });
     }
 
@@ -302,9 +397,11 @@ fn staff_passes(
     // sits on the shelf while someone works bare), then bare hands where one adds value. A group's
     // builds first: a bare-handed builder always contributes.
     for (builds, sources) in &split {
-        deal_kitted(rows, builds, &mut ledger, shelf, |row, _| cap_of(row));
+        deal_kitted(rows, builds, &mut ledger, shelf, |_, row, _| cap_of(row));
         deal_round_robin(builds, |i| ledger.deal_head(i, true, HeadKind::Bare));
-        deal_kitted(rows, sources, &mut ledger, shelf, useful_hands);
+        deal_kitted(rows, sources, &mut ledger, shelf, |i, row, kmax| {
+            useful_heads(row, kmax).saturating_sub(kept[i])
+        });
         let mut needed: Vec<Option<u32>> = vec![None; rows.len()];
         deal_round_robin(sources, |i| {
             let row = &rows[i];
@@ -312,7 +409,8 @@ fn staff_passes(
                 return false;
             }
             let kitted = ledger.out[i].kitted;
-            let useful = *needed[i].get_or_insert_with(|| useful_hands(row, kitted));
+            let useful =
+                *needed[i].get_or_insert_with(|| useful_heads(row, kitted).saturating_sub(kept[i]));
             ledger.deal_head(i, kitted + ledger.out[i].bare < useful, HeadKind::Bare)
         });
     }
@@ -363,7 +461,7 @@ impl Ledger {
 
     /// One keeper, while the row still owes its site one.
     fn deal_keeper(&mut self, row: &StaffRowInput<'_>, i: usize) -> bool {
-        let owed = self.out[i].keepers < row.keepers;
+        let owed = self.out[i].keepers < whole_keepers(row);
         self.deal_head(i, owed, HeadKind::Keeper)
     }
 }
@@ -390,22 +488,23 @@ fn deal_kitted(
     group: &[usize],
     ledger: &mut Ledger,
     shelf: &mut BTreeMap<Arc<str>, u32>,
-    want_of: impl Fn(&StaffRowInput<'_>, u32) -> u32,
+    want_of: impl Fn(usize, &StaffRowInput<'_>, u32) -> u32,
 ) {
     let mut memo: Vec<Option<(u32, u32)>> = vec![None; rows.len()];
     deal_round_robin(group, |i| {
         let row = &rows[i];
         let held = ledger.out[i].kitted;
+        let gatherers = held + ledger.out[i].bare;
         let kmax = kitted_capacity(row, held, shelf);
         let want = match memo[i] {
             Some((at, want)) if at == kmax => want,
             _ => {
-                let want = want_of(row, kmax);
+                let want = want_of(i, row, kmax);
                 memo[i] = Some((kmax, want));
                 want
             }
         };
-        if !ledger.deal_head(i, held < want.min(kmax), HeadKind::Kitted) {
+        if !ledger.deal_head(i, held < kmax && gatherers < want, HeadKind::Kitted) {
             return false;
         }
         arm(row, held, held + 1, shelf);
@@ -427,15 +526,6 @@ fn priority_groups(rows: &[StaffRowInput<'_>], order: &[usize]) -> Vec<Vec<usize
         group.sort_by_key(|&i| (rows[i].distance, i));
     }
     groups
-}
-
-/// **THE USEFUL CREW'S TAKE HANDS** - the heads that reach the row's useful take with `armed` of
-/// them kitted (a mined seam's useful crew is its Max in heads).
-fn useful_hands(row: &StaffRowInput<'_>, armed: u32) -> u32 {
-    match row.reach {
-        ReachTarget::Heads(heads) => heads,
-        _ => take_hands_needed(row, row.useful_take, armed).unwrap_or(NOBODY),
-    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -980,7 +1070,7 @@ fn build_staff_inputs<'a>(
         let mut input = StaffRowInput {
             priority: row.priority,
             max: row.max_workers,
-            keepers: 0,
+            keep_hands: NO_HANDS,
             hold_take: NO_TAKE_WANTED,
             useful_take: NO_TAKE_WANTED,
             reach: ReachTarget::Nothing,
@@ -1005,8 +1095,8 @@ fn build_staff_inputs<'a>(
                 take_species,
                 ..
             } => {
-                input.keepers = planned_keep_hands(sources, band_kit, declared, &target, crew_bound)
-                    .ceil() as u32;
+                input.keep_hands =
+                    planned_keep_hands(sources, band_kit, declared, &target, crew_bound);
                 forage_input(
                     world,
                     band_kit,
@@ -1021,8 +1111,8 @@ fn build_staff_inputs<'a>(
             LaborTarget::Hunt {
                 fauna_id, floor, ..
             } => {
-                input.keepers = planned_keep_hands(sources, band_kit, declared, &target, crew_bound)
-                    .ceil() as u32;
+                input.keep_hands =
+                    planned_keep_hands(sources, band_kit, declared, &target, crew_bound);
                 hunt_input(
                     world, band_kit, kit, fauna_id, *floor, crew_float, &mut input,
                 );
@@ -1032,21 +1122,21 @@ fn build_staff_inputs<'a>(
                 material,
                 floor,
             } => {
-                input.keepers = planned_keep_hands(sources, band_kit, declared, &target, crew_bound)
-                    .ceil() as u32;
+                input.keep_hands =
+                    planned_keep_hands(sources, band_kit, declared, &target, crew_bound);
                 extract_input(
                     world, band_kit, kit, *tile, material, *floor, crew_float, &mut input,
                 );
             }
             LaborTarget::Tile { .. } => {
-                input.keepers = tile_keepers(world, band_kit, &target, crew_bound).ceil() as u32;
+                input.keep_hands = tile_keepers(world, band_kit, &target, crew_bound);
             }
             LaborTarget::Band { .. } => {
                 // It stands at the camp: distance 0, and the row is never a work party.
-                input.keepers = band_keepers(world, band_kit, &target, crew_bound).ceil() as u32;
+                input.keep_hands = band_keepers(world, band_kit, &target, crew_bound);
             }
             LaborTarget::Roadwork => {
-                input.keepers = roadwork_keepers(world, band_kit, crew_bound).ceil() as u32;
+                input.keep_hands = roadwork_keepers(world, band_kit, crew_bound);
             }
             LaborTarget::Scout | LaborTarget::Warrior => continue,
         }
@@ -1138,7 +1228,7 @@ fn build_inputs<'a>(
         rows.push(StaffRowInput {
             priority,
             max: Some(if can_progress { rung_cap } else { NOBODY }),
-            keepers: 0,
+            keep_hands: NO_HANDS,
             hold_take: NO_TAKE_WANTED,
             useful_take: NO_TAKE_WANTED,
             reach: ReachTarget::Nothing,
@@ -1371,9 +1461,9 @@ fn extract_input<'a>(
     }
     if ground_rate <= crate::extraction_config::NEVER_RENEWS {
         // A seam that never renews holds nothing; its reach is the player's Max in heads.
-        let wanted = input
-            .max
-            .map_or(NOBODY, |max| max.saturating_sub(input.keepers));
+        let wanted = input.max.map_or(NOBODY, |max| {
+            max.saturating_sub(input.keep_hands.ceil() as u32)
+        });
         input.reach = ReachTarget::Heads(wanted);
         return;
     }
@@ -1419,10 +1509,22 @@ fn with_band_staffing<R>(
     band: bevy::prelude::Entity,
     body: impl FnOnce(&StaffingWorld<'_>, &LaborAllocation, &BandEquipment, u32, u32) -> R,
 ) -> Option<R> {
+    let allocation = world.get::<LaborAllocation>(band)?.clone();
+    with_band_staffing_over(world, band, allocation, body)
+}
+
+/// [`with_band_staffing`] over an allocation the caller supplies instead of the one the band holds -
+/// the seam the compose sheet's dry run (`staffing_preview`) staffs a COPY through. Everything but
+/// the allocation is read from the world exactly as the command path reads it.
+pub(crate) fn with_band_staffing_over<R>(
+    world: &bevy::prelude::World,
+    band: bevy::prelude::Entity,
+    allocation: LaborAllocation,
+    body: impl FnOnce(&StaffingWorld<'_>, &LaborAllocation, &BandEquipment, u32, u32) -> R,
+) -> Option<R> {
     let cohort = world.get::<crate::components::PopulationCohort>(band)?;
     let faction = cohort.faction;
     let available = crate::components::available_workers(cohort.working);
-    let allocation = world.get::<LaborAllocation>(band)?.clone();
     let bench_workers = world
         .get::<crate::components::BandBench>(band)
         .map_or(NOBODY, |bench| bench.workers);
@@ -1513,6 +1615,42 @@ fn with_band_staffing<R>(
             body(&staffing_world, &allocation, &band_kit, pool, available)
         },
     ))
+}
+
+/// **STAFF A COPY OF A BAND'S ALLOCATION THE WAY THE COMMAND PATH DOES** — `restaff_band`'s staffing
+/// (`staff_rows_settled` with the band's bench and nobody lost, then `apply_staffing` and
+/// `apply_build_crews`) run on `allocation` instead of the one the band holds, and returned rather
+/// than written. Nothing in the world changes. `None` where the band has no cohort.
+///
+/// The one staffing the compose sheet's dry run (`staffing_preview`) and the command path share.
+pub fn staff_allocation_copy(
+    world: &bevy::prelude::World,
+    band: bevy::prelude::Entity,
+    allocation: LaborAllocation,
+) -> Option<LaborAllocation> {
+    let bench_workers = world
+        .get::<crate::components::BandBench>(band)
+        .map_or(NOBODY, |bench| bench.workers);
+    let staffed = with_band_staffing_over(
+        world,
+        band,
+        allocation.clone(),
+        |staffing_world, allocation, kit, pool, available| {
+            staff_rows_settled(
+                staffing_world,
+                allocation,
+                kit,
+                pool,
+                available,
+                bench_workers,
+                NOBODY,
+            )
+        },
+    )?;
+    let mut staffed_allocation = allocation;
+    staffed_allocation.apply_staffing(staffed.rows, NOBODY);
+    staffed_allocation.apply_build_crews(staffed.builds);
+    Some(staffed_allocation)
 }
 
 /// **RESTAFF ONE BAND OUTSIDE THE TURN** — what a command handler calls after it changed an input
@@ -1705,7 +1843,7 @@ mod tests {
         StaffRowInput {
             priority,
             max,
-            keepers,
+            keep_hands: keepers as f32,
             hold_take: hold,
             useful_take: reach.max(hold),
             reach: if reach > 0.0 {
@@ -1902,7 +2040,7 @@ mod tests {
         StaffRowInput {
             priority,
             max: Some(rung_cap),
-            keepers: 0,
+            keep_hands: 0.0,
             hold_take: 0.0,
             useful_take: 0.0,
             reach: ReachTarget::Nothing,
@@ -1995,6 +2133,81 @@ mod tests {
         let out = staff_band(&rows, 4, &mut shelf(0));
         assert_eq!(out[1].total(), RUNG_CAP, "the build fills to its cap first");
         assert_eq!(out[0].total(), 1, "the source takes what the build left");
+    }
+
+    /// A row holding `hold` take per turn, one kitted hand taking `RATE` of it, bare hands 1.
+    fn holding<'a>(priority: SourcePriority, hold: f32, keep_hands: f32) -> StaffRowInput<'a> {
+        const RATE: f32 = 4.0;
+        let mut row = linear_row(priority, None, 0, hold, hold, RATE, 1.0, spears());
+        row.keep_hands = keep_hands;
+        row
+    }
+
+    /// **A HOLD CREW IS A FOOD TAKE, NOT ROT PROTECTION**: a High build gets its builder ahead of a
+    /// Normal row's hold crew, and the keeping's fraction no longer costs a whole extra head.
+    #[test]
+    fn a_high_build_gets_its_builder_before_a_normal_rows_hold_crew() {
+        const POOL: u32 = 6;
+        // The High forage row: 0.043 hands of keeping and 1.4 hands of gathering (5.6 at 4 a hand)
+        // round ONCE to two heads; the Normal hunt holds four heads but only three kits are left.
+        let rows = vec![
+            holding(SourcePriority::High, 5.6, 0.043),
+            holding(SourcePriority::Normal, 16.0, 0.0),
+            a_build(SourcePriority::High, 3, None),
+        ];
+        let out = staff_band(&rows, POOL, &mut shelf(5));
+        assert_eq!(
+            (out[0].keepers, out[0].kitted + out[0].bare),
+            (0, 2),
+            "the fraction of a hand of keeping rides inside a gatherer's head"
+        );
+        assert_eq!(out[2].total(), 1, "the High build's builder comes next");
+        assert_eq!(out[1].total(), 3, "the Normal hold crew takes what is left");
+    }
+
+    /// A Normal build does NOT beat a High row's hold crew; a Low build beats the Low hold crews but
+    /// not the High and Normal ones.
+    #[test]
+    fn a_build_ranks_by_its_groups_priority_against_hold_crews() {
+        let rows = vec![
+            holding(SourcePriority::High, 12.0, 0.0),
+            a_build(SourcePriority::Normal, 2, None),
+        ];
+        let out = staff_band(&rows, 3, &mut shelf(9));
+        assert_eq!((out[0].total(), out[1].total()), (3, 0));
+
+        let rows = vec![
+            holding(SourcePriority::High, 4.0, 0.0),
+            holding(SourcePriority::Normal, 4.0, 0.0),
+            a_build(SourcePriority::Low, 2, None),
+            holding(SourcePriority::Low, 16.0, 0.0),
+        ];
+        let out = staff_band(&rows, 3, &mut shelf(9));
+        assert_eq!(
+            crews(&out),
+            vec![1, 1, 1, 0],
+            "the Low build beats the Low hold crew, behind the High and Normal ones"
+        );
+    }
+
+    /// **THE KEEPING AND THE GATHERING ROUND ONCE**: 1.6 hands of keeping and 0.5 of gathering are
+    /// ceil(2.1) = 3 heads, one of them a whole keeper.
+    #[test]
+    fn keeping_and_gathering_round_once() {
+        let rows = vec![holding(SourcePriority::Normal, 2.0, 1.6)];
+        let out = staff_band(&rows, 20, &mut shelf(10));
+        assert_eq!(out[0].total(), 3);
+        assert_eq!(out[0].keepers, 1);
+        assert_eq!(out[0].keepers + out[0].kitted + out[0].bare, out[0].total());
+        assert_eq!(out[0].hold_crew, 3);
+    }
+
+    /// A row with nothing to take still keeps its improvement with a whole head.
+    #[test]
+    fn a_keeping_only_row_gets_a_whole_keeper_for_a_fraction() {
+        let rows = vec![holding(SourcePriority::Normal, 0.0, 0.3)];
+        let out = staff_band(&rows, 20, &mut shelf(10));
+        assert_eq!((out[0].keepers, out[0].kitted, out[0].bare), (1, 0, 0));
     }
 
     #[test]
