@@ -1004,6 +1004,15 @@ off the same capped assessment the turn makes.
 | a hunt in progress | the crew was out this turn, the herd has `wounds.pending() > 0` and **no kill landed** → send, whatever the larder says |
 | otherwise | send iff `runway <= turns_to_kill + follow.need_margin_turns` (default **1**); `turns_to_kill` is the first non-zero slot of `fauna::project_arrivals_hunt` at that crew (`fauna::hunt_crew_turns_to_kill`), `runway` is the **need clock's** (`snapshot::kill_turns_of_food`, below) and the `NOT_FOOD_LIMITED_TURNS` sentinel never triggers |
 
+**Growth's trend reads a need row at its `sustainable`, not its `realized`.** `band_food_flow`
+(`systems/population.rs`) zips `assignments` with `last_yields`; a need row's `realized` is the
+take at the hands present this turn, so it is 0 on every waiting turn and lumpy on a crew turn, and a
+fully fed following band would read as earning nothing and take the deficit penalty on the birth
+trend. The need row contributes the herd's long-run `SourceYield::sustainable` instead; every other
+row still contributes `realized`. The need clock (`snapshot::food_terms_over` / `standing_yields`)
+still excludes the need row, because the hunt counting itself as income would stop it ever
+triggering. Pinned by `need_row_contributes_sustainable_to_steady_income`.
+
 ### The clock counts only the food the kill replaces
 
 `snapshot::band_turns_of_food` (the wire's `turnsOfFood`) counts the whole larder, and a trigger read
