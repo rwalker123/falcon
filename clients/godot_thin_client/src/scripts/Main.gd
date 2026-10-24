@@ -417,8 +417,6 @@ func _ready() -> void:
             hud.connect("unqueue_requested", Callable(self, "_on_hud_unqueue"))
         if hud.has_signal("abandon_requested") and not hud.is_connected("abandon_requested", Callable(self, "_on_hud_abandon")):
             hud.connect("abandon_requested", Callable(self, "_on_hud_abandon"))
-        if hud.has_signal("abandon_working_requested") and not hud.is_connected("abandon_working_requested", Callable(self, "_on_hud_abandon_working")):
-            hud.connect("abandon_working_requested", Callable(self, "_on_hud_abandon_working"))
         if hud.has_signal("build_order_requested") and not hud.is_connected("build_order_requested", Callable(self, "_on_hud_build_order")):
             hud.connect("build_order_requested", Callable(self, "_on_hud_build_order"))
         if hud.has_signal("work_priority_requested") and not hud.is_connected("work_priority_requested", Callable(self, "_on_hud_work_priority")):
@@ -2831,12 +2829,6 @@ func _on_hud_unqueue(payload: Dictionary) -> void:
 ## shadow, so there is nothing a refused send would have to take back.
 func _on_hud_abandon(payload: Dictionary) -> void:
     _send_formatted_command(format_abandon(payload))
-
-## PUT ONE WORKING DOWN — the deposit branches' own release, and a different verb from the one above.
-## **No rollback** for the road's reason: nothing optimistic is written for it, and the next snapshot
-## restates the `deposits` section and the band's labor rows together.
-func _on_hud_abandon_working(payload: Dictionary) -> void:
-    _send_formatted_command(format_abandon_working(payload))
 
 ## RE-ORDER a band's build queue (`docs/plan_standing_upkeep.md` §4.7b ③).
 ##

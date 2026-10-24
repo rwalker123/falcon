@@ -2,18 +2,20 @@ class_name CrewSplitMarks
 extends Control
 
 ## **ONE SMALL SQUARE PER WORKER THE SIM STAFFED** (#871) — how a staffed row's crew divides into
-## keepers (the site's keeping hands), hands holding a whole kit, and bare hands.
+## keepers (the site's keeping hands), builders (hands raising the site's next rung), hands holding a
+## whole kit, and bare hands.
 ##
-## The keepers fill from the left in a muted earth, then the kitted hands in the bright green, then the
-## bare hands in a quieter green. It is drawn, not glyphs, so the three read as a bar of colour.
+## The keepers fill in a muted earth, then the builders in a cool blue, then the kitted hands in the
+## bright green, then the bare hands in a quieter green; the whole run is aligned to the END of the
+## control, under the crew number. It is drawn, not glyphs, so the four read as a bar of colour.
 ##
-## **IT DRAWS; IT DOES NOT MODEL.** The three counts are the sim's — the row's own `keepers_staffed` /
-## `kitted_staffed` / `bare_staffed` on a Work-tab row or a working source's sheet, the client's
+## **IT DRAWS; IT DOES NOT MODEL.** The four counts are the sim's — the row's own `keepers_staffed` /
+## `kitted_staffed` / `bare_staffed` (and the build's hands) on a Work-tab row or a working source's sheet, the client's
 ## forecast crew on a source nobody works yet — and the caller hands them in. The words on its hover are
 ## `HudWorkVocab.crew_bar_words`, so the picture and the sentence are about one set of figures.
 ##
 ## **INFORMATION, NOT AN ALERT**: no warning ink and no ⚠. The colours are `HudStyle.CREW_TEND` /
-## `CREW_KITTED` / `CREW_BARE`, derived from the palette's own earth and green.
+## `CREW_BUILD` / `CREW_KITTED` / `CREW_BARE`, derived from the palette's own earth and green.
 ##
 ## **A WIDE CREW NEVER WIDENS ITS ROW.** The control claims only one mark plus a `+N` as its minimum
 ## width and fits the rest at draw time against the width it was actually given: first the marks
@@ -26,38 +28,39 @@ extends Control
 var _keepers := 0
 var _kitted := 0
 var _bare := 0
+var _builders := 0
 var _mark_size := HudWorkVocab.CREW_SPLIT_MARK_SIZE
 var _gap := HudWorkVocab.CREW_SPLIT_MARK_GAP
 var _radius := HudWorkVocab.CREW_SPLIT_MARK_RADIUS
-var _align_end := true
 var _words := ""
 var _focus_card: PanelContainer = null
 
-## Build the bar for a crew of `keepers + kitted + bare`. `kit_names` is the kit's on-screen item words
-## (`baskets`), `hold_crew` the wire's hands-to-hold figure (`0` = none). `sheet` takes the compose
-## sheet's larger squares and aligns them to the start; a Work-tab row aligns them under its number.
+## Build the bar for a crew of `keepers + builders + kitted + bare` (four segments, drawn in that order,
+## always aligned to the end). `kit_names` is the kit's on-screen item words (`baskets`), `hold_crew` the
+## wire's hands-to-hold figure (`0` = none). `sheet` takes the compose sheet's larger squares; a Work-tab
+## row uses the smaller ones.
 static func build(keepers: int, kitted: int, bare: int, kit_names: String, hold_crew: int,
-        sheet: bool) -> CrewSplitMarks:
+        sheet: bool, builders: int = 0) -> CrewSplitMarks:
     var marks := CrewSplitMarks.new()
-    marks.setup(keepers, kitted, bare, kit_names, hold_crew, sheet)
+    marks.setup(keepers, kitted, bare, kit_names, hold_crew, sheet, builders)
     return marks
 
 func setup(keepers: int, kitted: int, bare: int, kit_names: String, hold_crew: int,
-        sheet: bool) -> void:
+        sheet: bool, builders: int = 0) -> void:
     _keepers = maxi(keepers, 0)
+    _builders = maxi(builders, 0)
     _kitted = maxi(kitted, 0)
     _bare = maxi(bare, 0)
     if sheet:
         _mark_size = HudWorkVocab.CREW_SPLIT_SHEET_MARK_SIZE
         _gap = HudWorkVocab.CREW_SPLIT_SHEET_MARK_GAP
         _radius = HudWorkVocab.CREW_SPLIT_SHEET_MARK_RADIUS
-    _align_end = not sheet
-    _words = HudWorkVocab.crew_bar_words(_keepers, _kitted, _bare, kit_names, hold_crew)
+    _words = HudWorkVocab.crew_bar_words(_keepers, _kitted, _bare, kit_names, hold_crew, _builders)
     tooltip_text = _words
     if "accessibility_description" in self:
         set("accessibility_description", _words)
     set_meta(HudWorkVocab.CREW_SPLIT_META,
-        {"keepers": _keepers, "kitted": _kitted, "bare": _bare})
+        {"keepers": _keepers, "builders": _builders, "kitted": _kitted, "bare": _bare})
     # PASS, so the row's own click still reaches the row and the tooltip still shows.
     mouse_filter = Control.MOUSE_FILTER_PASS
     focus_mode = Control.FOCUS_ALL
@@ -74,11 +77,14 @@ func words() -> String:
 
 ## How many workers this control was handed.
 func crew() -> int:
-    return _keepers + _kitted + _bare
+    return _keepers + _builders + _kitted + _bare
 
-## The three segments it draws.
+## The four segments it draws.
 func keepers() -> int:
     return _keepers
+
+func builders() -> int:
+    return _builders
 
 func kitted() -> int:
     return _kitted
@@ -133,13 +139,14 @@ func _draw() -> void:
     var mark := float(plan["size"])
     var gap := float(plan["gap"])
     var overflow := int(plan["overflow"])
+    var segments := drawn_segments(drawn)
     var total := _row_width(drawn, mark, gap)
     if overflow > 0:
         total += gap + _overflow_width(overflow)
-    var x := size.x - total if _align_end else 0.0
+    var x := size.x - total
     var y := (size.y - mark) * 0.5
     for i in drawn:
-        _draw_mark(Rect2(x, y, mark, mark), _segment_of(i))
+        _draw_mark(Rect2(x, y, mark, mark), segments[i])
         x += mark + gap
     if overflow > 0:
         var font := get_theme_default_font()
@@ -156,24 +163,74 @@ func _draw() -> void:
         ring.set_corner_radius_all(_radius)
         ring.draw(get_canvas_item(), Rect2(Vector2.ZERO, size))
 
-## Which segment the i-th mark belongs to: keepers first, then the kitted hands, then the bare ones.
+## Which segment the i-th mark belongs to: keepers first, then the builders, then the kitted hands,
+## then the bare ones.
+## **WHICH SEGMENT EACH DRAWN MARK WEARS, when the crew is wider than the room.** A crew that fits draws one
+## mark per worker in segment order. One that does not draws `drawn` marks and counts the rest as `+N`, and
+## those marks are shared out so that EVERY non-empty segment keeps at least one (a plain "first N" would
+## draw only keepers and builders and hide the hands holding a kit and the bare ones), the remainder going
+## to the segments in proportion to their size.
+func drawn_segments(drawn: int) -> Array[int]:
+    var counts: Array[int] = [_keepers, _kitted, _bare, _builders]
+    var out: Array[int] = []
+    if drawn >= crew():
+        for i in crew():
+            out.append(_segment_of(i))
+        return out
+    var shown: Array[int] = [0, 0, 0, 0]
+    var spare := drawn
+    for seg in 4:
+        if counts[seg] > 0 and spare > 0:
+            shown[seg] = 1
+            spare -= 1
+    var extra_total := 0
+    for seg in 4:
+        extra_total += counts[seg] - shown[seg]
+    var budget := spare
+    for seg in 4:
+        if extra_total <= 0:
+            break
+        var share := mini(counts[seg] - shown[seg], budget * (counts[seg] - shown[seg]) / extra_total)
+        shown[seg] += share
+        spare -= share
+    # What proportional rounding left over goes to whichever segment still has unshown workers, largest first.
+    while spare > 0:
+        var best := -1
+        for seg in 4:
+            if counts[seg] - shown[seg] > 0 and (best < 0 or counts[seg] - shown[seg] > counts[best] - shown[best]):
+                best = seg
+        if best < 0:
+            break
+        shown[best] += 1
+        spare -= 1
+    for seg in [SEGMENT_KEEPER, SEGMENT_BUILDER, SEGMENT_KITTED, SEGMENT_BARE]:
+        for _k in shown[seg]:
+            out.append(seg)
+    return out
+
 func _segment_of(i: int) -> int:
     if i < _keepers:
         return SEGMENT_KEEPER
-    if i < _keepers + _kitted:
+    if i < _keepers + _builders:
+        return SEGMENT_BUILDER
+    if i < _keepers + _builders + _kitted:
         return SEGMENT_KITTED
     return SEGMENT_BARE
 
 const SEGMENT_KEEPER := 0
 const SEGMENT_KITTED := 1
 const SEGMENT_BARE := 2
+const SEGMENT_BUILDER := 3
 
 ## One mark, filled and outlined in its segment's colours.
 func _draw_mark(rect: Rect2, segment: int) -> void:
     var radius := int(round(float(_radius) * rect.size.x / _mark_size))
     var fill := HudStyle.CREW_TEND
     var line := HudStyle.CREW_TEND_LINE
-    if segment == SEGMENT_KITTED:
+    if segment == SEGMENT_BUILDER:
+        fill = HudStyle.CREW_BUILD
+        line = HudStyle.CREW_BUILD_LINE
+    elif segment == SEGMENT_KITTED:
         fill = HudStyle.CREW_KITTED
         line = HudStyle.CREW_KITTED_LINE
     elif segment == SEGMENT_BARE:

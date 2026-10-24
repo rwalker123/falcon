@@ -13,7 +13,7 @@ extends RefCounted
 ## catalog's tier row: a pen below it says how many rings reach it, a pen in it says what it does.
 
 ## The checkpoints this chapter owes the walk -- assertions made plus frames saved, as a FLOOR.
-const EXPECTED_CHECKPOINTS := 58
+const EXPECTED_CHECKPOINTS := 55
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -286,7 +286,6 @@ const OTHER_PEOPLE := 1
 const OTHER_BUILD_PROGRESS := 0.2
 ## The words, as the player reads them (never composed through the producers).
 const OTHER_TILE_ROW := "\u2691 Lothari \u00b7 20%"
-const OTHER_SHEET_LINE := "Lothari is cultivating this"
 
 ## A wild patch with a 20% Cultivate meter, owned by `owner_faction`.
 func _owned_patch(owner_faction: int) -> Dictionary:
@@ -299,20 +298,14 @@ func _owned_patch(owner_faction: int) -> Dictionary:
 	tile["patch_owner"] = owner_faction
 	return RungFx.stamp_patch(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
-func _sheet_state(tile: Dictionary) -> String:
-	var host := VBoxContainer.new()
-	h.add_child(host)
-	h._hud._drawercompose._build_improvement_control(SourceForecast.LABOR_KIND_FORAGE, tile,
-		HudComposeVocab.FORAGE_FORECAST_PREFIX, 0.5, "", BandFx.band_fixture(), 1, {}, false, host)
-	var out := ""
-	for child in host.get_children():
-		if child is Label:
-			out = (child as Label).text
-			if child.has_meta(HudWidgets.IMPROVEMENT_CONTROL_META):
-				out = "%s|%s" % [child.get_meta(HudWidgets.IMPROVEMENT_CONTROL_META), out]
-			break
-	host.queue_free()
-	return out
+## Whose build the source carries, as the work strip's row model states it (`foreign_build`), `""` for a
+## source whose build is ours or nobody's. The compose sheet states it under the strip.
+func _foreign_owner_of(source: Dictionary, prefix: String) -> int:
+	return RungQuotes.foreign_owner(source, prefix)
+
+func _band_labor_builder_label(tile: Dictionary) -> String:
+	return h._hud._band_labor.builder_label(RungQuotes.builder_band(tile,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX))
 
 func _another_peoples_build() -> void:
 	FactionNames.update([{"faction": OTHER_PEOPLE, "name": "Lothari"}])
@@ -332,21 +325,16 @@ func _another_peoples_build() -> void:
 			and _row_value(our_lines, DetailFormat.CULTIVATION_ROW) != "")
 	h._assert_hud("...in warn ink",
 		DetailFormat.rung_value_hex(OTHER_TILE_ROW, "") == HudStyle.WARN_HEX)
-	var their_sheet := _sheet_state(theirs)
-	h._assert_hud("compose sheet: another people's source gets ONE line, not a build control (got `%s`)" % their_sheet,
-		their_sheet == "%s|%s" % [HudWidgets.IMPROVEMENT_STATE_FOREIGN, OTHER_SHEET_LINE])
-	h._assert_hud("...and our own patch keeps its control (no foreign line)",
-		not _sheet_state(ours).begins_with(HudWidgets.IMPROVEMENT_STATE_FOREIGN))
-	h._assert_hud("...and the next-rung offer is withdrawn on their ground, kept on ours",
-		RungQuotes.blocked_by_owner(theirs, HudComposeVocab.FORAGE_FORECAST_PREFIX)
-			and not RungQuotes.blocked_by_owner(ours, HudComposeVocab.FORAGE_FORECAST_PREFIX))
+	h._assert_hud("the source is another people's ground, and ours is not",
+		_foreign_owner_of(theirs, HudComposeVocab.FORAGE_FORECAST_PREFIX) == OTHER_PEOPLE
+			and _foreign_owner_of(ours, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+				== RungQuotes.NO_FOREIGN_OWNER)
 	await _another_peoples_herd()
 	await _builder_band_names()
 	FactionNames.reset()
 
 const OTHER_TAME_PROGRESS := 0.3
 const OTHER_HERD_ROW := "\u2691 Lothari \u00b7 30%"
-const OTHER_HERD_SHEET_LINE := "Lothari is taming this"
 
 ## A wild herd 30% through the Tame, owned by `owner_faction`.
 func _owned_herd(owner_faction: int) -> Dictionary:
@@ -356,21 +344,6 @@ func _owned_herd(owner_faction: int) -> Dictionary:
 	herd["has_owner"] = true
 	herd["owner"] = owner_faction
 	return RungFx.stamp_herd(herd)
-
-func _herd_sheet_state(herd: Dictionary) -> String:
-	var host := VBoxContainer.new()
-	h.add_child(host)
-	h._hud._drawercompose._build_improvement_control(SourceForecast.LABOR_KIND_HUNT, herd,
-		HudComposeVocab.BARE_FORECAST_PREFIX, 0.5, "", BandFx.band_fixture(), 1, {}, false, host)
-	var out := ""
-	for child in host.get_children():
-		if child is Label:
-			out = (child as Label).text
-			if child.has_meta(HudWidgets.IMPROVEMENT_CONTROL_META):
-				out = "%s|%s" % [child.get_meta(HudWidgets.IMPROVEMENT_CONTROL_META), out]
-			break
-	host.queue_free()
-	return out
 
 func _another_peoples_herd() -> void:
 	var theirs := _owned_herd(OTHER_PEOPLE)
@@ -388,11 +361,10 @@ func _another_peoples_herd() -> void:
 	h._assert_hud("...and our own Tame on the same herd reads as today",
 		not _row_value(our_lines, DetailFormat.HUSBANDRY_ROW).contains("Lothari")
 			and _row_value(our_lines, DetailFormat.HUSBANDRY_ROW) != "")
-	var their_sheet := _herd_sheet_state(theirs)
-	h._assert_hud("herd sheet: one line, not a Tame control (got `%s`)" % their_sheet,
-		their_sheet == "%s|%s" % [HudWidgets.IMPROVEMENT_STATE_FOREIGN, OTHER_HERD_SHEET_LINE])
-	h._assert_hud("...and our own herd keeps its control",
-		not _herd_sheet_state(ours).begins_with(HudWidgets.IMPROVEMENT_STATE_FOREIGN))
+	h._assert_hud("the herd is another people's, and ours is not",
+		_foreign_owner_of(theirs, HudComposeVocab.BARE_FORECAST_PREFIX) == OTHER_PEOPLE
+			and _foreign_owner_of(ours, HudComposeVocab.BARE_FORECAST_PREFIX)
+				== RungQuotes.NO_FOREIGN_OWNER)
 
 const BUILDER_BAND_ID := 77
 const BUILDER_BAND_NAME := "Netherford"
@@ -419,8 +391,8 @@ func _builder_band_names() -> void:
 	var named_lines: Array = h._hud._drawer._tile_terrain_lines(named, DetailFormat.Context.new())
 	h._assert_hud("tile card: a named builder reads `Band, People`",
 		_row_value(named_lines, DetailFormat.CULTIVATION_ROW) == "\u2691 Netherford, Lothari \u00b7 20%")
-	h._assert_hud("compose sheet: a named builder reads `Band, People is cultivating this`",
-		_sheet_state(named) == "%s|Netherford, Lothari is cultivating this" % HudWidgets.IMPROVEMENT_STATE_FOREIGN)
+	h._assert_hud("the named builder band resolves to its roster name",
+		_band_labor_builder_label(named) == BUILDER_BAND_NAME)
 	var gone := _built_patch(OTHER_PEOPLE, BUILDER_BAND_ID + 1)
 	var gone_lines: Array = h._hud._drawer._tile_terrain_lines(gone, DetailFormat.Context.new())
 	h._assert_hud("...a builder the roster does not hold falls back to the people alone",

@@ -54,7 +54,7 @@ const SOW_IN_FLIGHT_PERCENT := 94
 const COMMITTED_CROP_SPECIES := "wild_emmer"
 const COMMITTED_CROP_NAME := "Wild Emmer"
 ## What the line must read, spelled out rather than composed through the format under test.
-const COMMITTED_CROP_LINE := "Committed to Wild Emmer — sowing 94%"
+const COMMITTED_CROP_LINE := "Committed to Wild Emmer"
 ## The two halves of the shipped defect, asserted absent: the false claim and the blank crop name.
 const RETIRED_NOTHING_PICKED := "Nothing picked"
 const BLANK_NAME_TAIL := "committed to ."
@@ -437,9 +437,8 @@ func _assert_committed_ground_names_its_crop() -> void:
 	h._assert_hud("…and every crop chip is disabled with the reason on its hover (%s)" % str(chip_reasons),
 		all_disabled and chip_reasons.all(func(t: String) -> bool:
 			return t == COMMITTED_CHIP_REASON))
-	h._assert_hud("committed ground — the crop line names the crop and the Sow's progress (\"%s\")"
-			% COMMITTED_CROP_LINE,
-		_sheet_says(COMMITTED_CROP_LINE))
+	h._assert_hud("committed ground — no `Committed to …` line is drawn (the lit chip names the crop)",
+		not _sheet_says(COMMITTED_CROP_LINE))
 	h._assert_hud("…and never says nothing was picked, nor leaves the crop name blank",
 		not _sheet_says(RETIRED_NOTHING_PICKED) and not _sheet_says(BLANK_NAME_TAIL))
 	h._assert_hud("…and the committed crop's chip is the lit one (%s)" % str(_chip_states()),

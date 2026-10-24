@@ -1041,17 +1041,6 @@ const WORK_INSPECTOR_HEIGHT := WORK_INSPECTOR_EXTENT + WORK_INSPECTOR_SLACK
 ## no longer states is how many there are.**
 const WORK_INSPECTOR_NOTE_LINE_HEIGHT := 14.0
 
-## …and what EACH LINE AFTER THE FIRST costs, which is **NOT the same number**: a wrapped note draws
-## **31px at two lines against 14 at one**, measured on the card itself
-## (`band_panel_preview`'s worst-case probe). The difference is Godot's `Label` `line_spacing`, which
-## is spent BETWEEN lines and so is not in a one-line label's height at all.
-##
-## ⛔ **CHARGING WRAPPED LINES AT `WORK_INSPECTOR_NOTE_LINE_HEIGHT` UNDER-RESERVES BY 3px A LINE, AND
-## THAT IS HOW THIS CONSTANT WAS FOUND.** The first cut of the wrap did exactly that and the harness
-## caught it on two states — 402 reserved against 407 drawn at the worst case, 334 against 336 on a
-## kept herd — which is the whole reason `reserved >= drawn` is asserted against a laid-out label
-## rather than against the arithmetic that produced it.
-const WORK_INSPECTOR_NOTE_WRAP_LINE_HEIGHT := 17.0
 
 ## **ONE CONTROL LINE — a `compact` `OptionButton` at this zone's type size, MEASURED.** Two blocks
 ## draw it: the BUILD QUEUE row's settings strip (`BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT`) and the work
@@ -1064,11 +1053,6 @@ const WORK_INSPECTOR_NOTE_WRAP_LINE_HEIGHT := 17.0
 ## zone the shipped control is 22 and the block gap is charged once per BLOCK rather than per line.
 const WORK_COMPACT_PICKER_LINE_HEIGHT := 22.0
 
-## What one conditional prose line costs the card: its FIRST line and the gap the column puts above
-## every block. A second and third line, where the sentence wraps to them, are added on top by
-## `BandPanelController._work_inspector_wrap_overflow` — the gap is charged once per BLOCK, so it is
-## right here and must not be inside the per-line overflow.
-const WORK_INSPECTOR_NOTE_HEIGHT := WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(ZONE_BLOCK_SEPARATION)
 
 ## **WHAT ONE BOARD ROW COSTS, and it is TWO LINES.** A source row holds a name, a variable-length
 ## ACCOUNT list, four affordances and a stepper, and 356px of narrow-shell zone does not hold them on
@@ -1111,47 +1095,7 @@ const WORK_ROW_PARTY_LINE_HEIGHT := float(TWO_LINE_STEPPER_SEPARATION) \
 static func work_row_height(party_lines: int) -> float:
     return WORK_ROW_TWO_LINE_HEIGHT + float(maxi(party_lines, 0)) * WORK_ROW_PARTY_LINE_HEIGHT
 
-## …and what the `ArrivalStrip` costs when the model's schedule has a gap worth drawing.
-##
-## **A TWIN of `ArrivalStrip.STRIP_HEIGHT`, deliberately not a read of it.** A `const` initializer
-## evaluates at class load, so a vocab leaf referencing a `class_name`d Control script is a load cycle
-## waiting to happen (`hud-modules.md` → `const` direction). The two cross-reference each other in
-## prose instead; change one and change the other.
-const WORK_INSPECTOR_ARRIVALS_STRIP_HEIGHT := 8.0
 
-const WORK_INSPECTOR_ARRIVALS_HEIGHT := WORK_INSPECTOR_ARRIVALS_STRIP_HEIGHT \
-    + float(ZONE_BLOCK_SEPARATION)
-
-## …and the policy picker, when the row's `Set floor` link has it open — the four rungs plus the gap
-## above them.
-##
-## **STATED AS A DELTA, where it used to be a whole alternative strip height** (`186`, i.e. a second
-## total). A second total cannot compose with the conditional lines above it: the fork that chose
-## between the two totals is exactly what made the strip's reservation model-blind.
-##
-## **MEASURED like the base, and it is HALF what the two totals implied** — `band_panel_work_policy_
-## investment` draws 110px against the base's 78, i.e. the three preset cells plus their gap. The 68 the
-## old pair implied was that 32 plus the base's own cushion, counted twice.
-##
-## There is no taller variant of the picker any more: `WORK_INSPECTOR_STANDING_LINE_HEIGHT` reserved
-## room for a WARN line naming a rung the picker could not show, and issue #442 removed the state — a
-## `policy` is always one of the four, so every open picker draws the same height.
-const WORK_INSPECTOR_POLICY_PICKER_HEIGHT := 32.0
-
-## …and the PRIORITY picker, when the row's `Priority` link has it open
-## (`docs/plan_standing_upkeep.md` §4.9 item 9b). **The floor picker's three cells plus ONE hint
-## line**: the two pickers are built from the same three-cell grid, and this one carries
-## `WORK_PRIORITY_HINT` beneath it at the same `ALLOC_SECTION_FONT_SIZE` and the same block gap every
-## other conditional line in this strip is measured at — so it is stated as the pair rather than as a
-## fresh number of its own, and moving the grid moves both.
-##
-## ⛔ **IT IS A TERM IN A SUM NOW, NOT AN ARM OF A MAX.** The retired reading was *"THE TWO PICKERS ARE
-## MUTUALLY EXCLUSIVE, so the strip pays for AT MOST ONE — `_work_picker_open` is a three-valued state
-## precisely so that this is true by construction rather than by discipline."* §4.9 item 12d's second
-## pass draws POLICY, PRIORITY and KITS as sections at once, so the exclusion is gone and
-## `WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT` wraps this in a header.
-const WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT := WORK_INSPECTOR_POLICY_PICKER_HEIGHT \
-    + WORK_INSPECTOR_NOTE_HEIGHT
 
 ## **THE RULE ABOVE EVERY SECTION HEADER** (`docs/plan_standing_upkeep.md` §4.9 item 12d, second
 ## pass). A `ColorRect` at `HudStyle.LINE_SOFT`, which is the Band panel\'s OWN hairline vocabulary —
@@ -1165,18 +1109,6 @@ const WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT := WORK_INSPECTOR_POLICY_PICKER_HEIG
 ## change the other.
 const WORK_INSPECTOR_SECTION_RULE_THICKNESS := 1.0
 
-## What one SECTION HEADER costs the card: the rule, the gap under it, the header label\'s own line,
-## and the gap under that. The label is `HudWidgets.alloc_section_label` — a bare `Label` at
-## `ALLOC_SECTION_FONT_SIZE` with no autowrap, so it is exactly one line, and 14px is the measured
-## height of that type (`WORK_INSPECTOR_NOTE_LINE_HEIGHT`) rather than a guess. Both gaps are the
-## column\'s own `ZONE_BLOCK_SEPARATION`, spent once each by the `VBoxContainer`.
-##
-## **THE ONE-LINE CLAIM SURVIVES *HERE* AND DIED FOR THE NOTES**, and the difference is what the label
-## holds: a section header is a single uppercase WORD (`POLICY`, `PRIORITY`, `KITS`) that cannot reach
-## the column's width, while the notes are sentences and now wrap. Only the prose lines take
-## `build_wrapping_status_part`.
-const WORK_INSPECTOR_SECTION_HEAD_HEIGHT := WORK_INSPECTOR_SECTION_RULE_THICKNESS \
-    + float(ZONE_BLOCK_SEPARATION) + WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(ZONE_BLOCK_SEPARATION)
 
 ## …and what the ACTIONS row costs ON TOP of the base extent, which is only its rule and that rule\'s
 ## gap. The row itself (`Jump to source` … `Unassign`) has always been inside `WORK_INSPECTOR_EXTENT`;
@@ -1185,115 +1117,8 @@ const WORK_INSPECTOR_SECTION_HEAD_HEIGHT := WORK_INSPECTOR_SECTION_RULE_THICKNES
 const WORK_INSPECTOR_ACTIONS_RULE_HEIGHT := WORK_INSPECTOR_SECTION_RULE_THICKNESS \
     + float(ZONE_BLOCK_SEPARATION)
 
-## The three SECTIONS, each its header plus the controls under it. **They are terms in a SUM now, not
-## arms of a max** — the card draws all three at once, which is the whole of §4.9 item 12d\'s second
-## pass.
-const WORK_INSPECTOR_POLICY_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIGHT \
-    + WORK_INSPECTOR_POLICY_PICKER_HEIGHT
 
-const WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIGHT \
-    + WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT
 
-## …and the MAX section (#871): its header and the one stepper line. The line is the stepper's own
-## measured height (its `-` / `+` buttons at the compact row type), taller than a picker's 22px line.
-const WORK_INSPECTOR_MAX_LINE_HEIGHT := 26.0
-const WORK_INSPECTOR_MAX_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIGHT \
-    + WORK_INSPECTOR_MAX_LINE_HEIGHT
-
-## …and the KITS section AT ITS FLOOR: its header and the ONE control line every row draws — the take
-## crew's tool. **It is the only section a row can LACK** — `_work_inspector_has_kits` gates it, a
-## section with an empty picker in it being a control that answers nothing.
-##
-## ⛔ **THE SITE'S BILL IS NOT IN HERE, AND THAT IS THE FIX** (issue: the wild source's Upkeep row).
-## The retired reading was *"the one that grew: its header, its two control lines, and the HINT line
-## the strip could not afford"* — a flat two-row price, which is what let the card draw an Upkeep
-## picker on a source that stands on no rung and therefore has nothing to keep. What a site owes is
-## `WORK_INSPECTOR_KITS_BILL_HEIGHT`, added only where it really owes something.
-const WORK_INSPECTOR_KITS_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIGHT \
-    + WORK_COMPACT_PICKER_LINE_HEIGHT
-
-## …and what the SITE'S BILL costs ON TOP of that floor: the one line that states what this site is
-## billed per turn (the tending line, `tending_line`), where it is billed at all.
-##
-## ⛔ **IT WAS `WORK_INSPECTOR_KITS_UPKEEP_HEIGHT` AND CARRIED A CONTROL LINE TOO.** The retired
-## reading: *"BOTH ARE GATED ON ONE ANSWER AND THE PAIR IS INDIVISIBLE. An Upkeep picker with no bill
-## beside it is the control this constant exists to stop drawing, and a bill with no picker beside it
-## is a number the player cannot act on."* The first half stands; the second died with the choice
-## (`docs/plan_pool_toe.md` §3 — a site's tools follow from its rung), so the picker went and the
-## bill stayed, and the term is one prose line rather than a line plus a control.
-const WORK_INSPECTOR_KITS_BILL_HEIGHT := WORK_INSPECTOR_NOTE_HEIGHT
-
-## …and what the KIT SHORTFALL line under the take picker costs when the row has one to state — one
-## prose line and the block gap above it, exactly as every other conditional sentence on this card is
-## priced. It is charged separately from the UPKEEP pair because the two are independent: a WILD
-## source owes no keeping bill and can still be short of the gear its crew takes.
-##
-## **AT ONE LINE, like every term in `WORK_INSPECTOR_CEILING_HEIGHT`** — the sentence names a kit and
-## carries a remedy clause, so it routinely wraps, and the lines beyond the first are
-## `BandPanelController._work_inspector_wrap_overflow`'s to add on top.
-const WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT := WORK_INSPECTOR_NOTE_HEIGHT
-
-## **THE CEILING THESE TERMS ADD UP TO, AND IT IS A SUM OVER THREE SECTIONS — AT ONE LINE PER NOTE.**
-##
-## ⛔ **IT IS A FLOOR ON THE WORST CASE NOW RATHER THAN THE WORST CASE ITSELF** (§4.9 item 12d, third
-## pass). The card's four prose lines WRAP, so a model whose sentences run long reserves this plus one
-## `WORK_INSPECTOR_NOTE_LINE_HEIGHT` per wrapped line — `BandPanelController.
-## _work_inspector_wrap_overflow`, measured at the card's real column width. Stating the ceiling at one
-## line each is deliberate: it keeps every term below a constant anybody can add up, and it keeps the
-## structural claim (*no fifth conditional child has appeared*) separable from the typographic one
-## (*this sentence is long*). `band_panel_preview._assert_work_inspector_worst_case_fits` asks both —
-## that the reservation exceeds this ceiling by whole note lines and by nothing else, and that a
-## genuinely wrapping worst case still reserves what it draws.
-##
-## (`docs/plan_standing_upkeep.md` §4.9 item 12d). A model carrying every conditional child at once —
-## the overdraw line, the `note`, the `muted_note` and the `ArrivalStrip` — on a row that HAS kits
-## reserves **372px**: the base 64, three note lines at 20, the arrivals at 14, the actions rule at 7,
-## the POLICY / PRIORITY / KITS sections at 59 / 79 / 69, and the take crew's own gear-shortfall
-## line at 20. **It was 394 while the KITS section carried an Upkeep PICKER beside the bill**
-## (`docs/plan_pool_toe.md` §3 retired it), and the 22px that came off is exactly that control line.
-##
-## ⛔ **THE PROSE FIGURE WAS 374 AND HAD BEEN 20 LOW SINCE `WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT`
-## JOINED THE SUM — re-added term by term rather than adjusted by the difference.** That term is in
-## the expression below and was missing from this paragraph, which is the one way a stated ceiling
-## drifts from the expression under it; re-derive from the `const` if the two ever disagree again.
-##
-## That figure is the
-## `WorkInspectorDialog`\'s own `min_height` at that model rather than a debt anybody owes the work
-## zone. **It clears the shortest viewport this client renders at with room to spare** — 372 of the
-## 696px a 720-high window leaves inside `WorkInspectorDialog.VIEWPORT_MARGIN`, a margin of 324 — and
-## where a window ever is too short, the card\'s own scroll carries the remainder instead of a zone
-## clipping the board.
-##
-## ⛔ **A SUM, NOT A MAX, AND THE MAX IS THE RETIRED CLAIM — quoted rather than deleted.** It read:
-## *"The picker term is the TALLER of the two, the priority one: they cannot both be open
-## (`_work_picker_open`), so the ceiling is a max rather than a sum, and taking the floor picker\'s 32
-## here would understate it by the hint line."* and, of the kit pair, *"THE KIT PAIR IS NOT A TERM
-## HERE, AND THAT IS THE POINT OF THE THIRD PICKER. It rides the `max` with the other two —
-## `WORK_INSPECTOR_KITS_PICKER_HEIGHT` is 44 against the priority picker\'s 52 — so it cannot be the
-## worst case and this constant does not move for it."* Both were exactly right while the strip
-## competed for a 396px zone box and could afford one expansion. The card competes with nothing, so
-## all three sections draw at once and every one of them is a term.
-##
-## ⛔ **AND THE OLDER RETIREMENT STANDS, quoted for the same reason**: *"THE CEILING THESE TERMS ADD UP
-## TO, stated because it is UNMEASURED rather than because it is reserved. … `BandCityPanel.
-## PANEL_HEIGHT_WIDE` is sized against that 104, so a row reaching this ceiling would take the work
-## zone 106px past its box on a horizontal dock. NOTHING PADS FOR IT, DELIBERATELY. No fixture
-## produces the combination and it is not known to be reachable in play … A KNOWN unmeasured worst
-## case is the cheaper thing to carry; if one is ever observed, this is the figure both of that
-## constant\'s levers move by."* The zone budget carries no inspector term at all now, so this height
-## cannot take anything past any box, `PANEL_HEIGHT_WIDE` is not the lever it would move, and the
-## combination is no longer unmeasured: `band_panel_preview._assert_work_inspector_worst_case_fits`
-## builds it, mounts it in the real card and pins it against the viewport it is centred in.
-const WORK_INSPECTOR_CEILING_HEIGHT := WORK_INSPECTOR_HEIGHT \
-    + 3.0 * WORK_INSPECTOR_NOTE_HEIGHT \
-    + WORK_INSPECTOR_ARRIVALS_HEIGHT \
-    + WORK_INSPECTOR_POLICY_SECTION_HEIGHT \
-    + WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT \
-    + WORK_INSPECTOR_MAX_SECTION_HEIGHT \
-    + WORK_INSPECTOR_KITS_SECTION_HEIGHT \
-    + WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT \
-    + WORK_INSPECTOR_KITS_BILL_HEIGHT \
-    + WORK_INSPECTOR_ACTIONS_RULE_HEIGHT
 
 const WORK_COLUMN_RULE_WIDTH := 1.0
 
@@ -1827,7 +1652,6 @@ static func natural_list(parts: Array[String]) -> String:
     return NATURAL_LIST_SEPARATOR.join(PackedStringArray(parts.slice(0, parts.size() - 1))) \
         + NATURAL_LIST_FINAL + parts[parts.size() - 1]
 
-const WORK_ROW_MARKS_WIDTH := 20.0
 
 ## The SOURCE-RUNG slot, immediately left of the policy/⚠ marks. Sized like `WORK_ROW_ICON_WIDTH` —
 ## it holds the same one-emoji family (🌾 / 🐄) at the same `WORK_ROW_FONT_SIZE`, and a Label's
@@ -1838,9 +1662,6 @@ const WORK_ROW_MARKS_WIDTH := 20.0
 ## `WORK_COLUMN_MIN_WIDTH` budget.
 const WORK_ROW_RUNG_WIDTH := 16
 
-## The ready slot is WIDER than the rung slot: it carries two glyphs (`⌃` + the verb) where the rung
-## slot carries one. Reserved even when empty, so the right-anchored furniture lines up down the board.
-const WORK_ROW_READY_WIDTH := 26
 
 ## The stable handle on a rung mark, mirroring `HudWidgets.POLICY_RUNG_META`'s job for a picker rung.
 ## `band_panel_preview` identifies the mark by THIS, never by its glyph: `FoodIcons.SITE_ICONS`
@@ -1961,22 +1782,6 @@ const WORK_ROW_FOREIGN_BAND_META := &"work_row_foreign_band"
 
 const WORK_ROW_BUILDING_TOOLTIP_FORMAT := "%s in progress — %d%% done."
 
-## …and the SAME rung under way while nobody is raising it, or while it is losing ground: the verb
-## glyph and a `⚠`, with **the percentage dropped**. A percent on a build nobody is staffing implies
-## progress that is not happening, and a percent that is falling is the same lie one state over — so
-## the slot still says WHICH rung is promised here and stops saying it is being worked.
-##
-## **IT IS THE MAP BADGE'S FACE, RESTATED RATHER THAN SHARED.** `BandOverlayRenderer`'s
-## `BADGE_UNSTAFFED_FORMAT` is the identical `%s⚠` plus the trailing space its plate needs for the
-## crew count that follows it, which this row's own reserved slot does not. A HUD controller must not
-## import a MAP renderer, so the two faces are deliberate twins — but the VERDICT behind them is
-## genuinely one function: both fork on `SourceForecast.build_is_stalled`, neither re-derives it from
-## a crew count or a percentage, and that is what stops the map showing an alert the WORK tab does not.
-##
-## **A PARKED BUILD IS NOT THIS.** `BUILD_PACE_HELD` — a `-2` with nobody on it and its keeping
-## covered — keeps its number and its ordinary ink, because that number is honest and the state is a
-## decision rather than a failure (`labor-ui.md` → "THE BUILD LINE'S STATE IS ITS COLOUR").
-const WORK_ROW_BUILDING_UNSTAFFED_FORMAT := "%s⚠"
 
 ## …and its tooltip, which drops the percent for the reason the face does and names both remedies —
 ## the two ways a meter comes to a stop have two different fixes, and the row cannot tell which
@@ -2490,11 +2295,6 @@ const WORK_INSPECTOR_META := "work_inspector"
 ## same question.
 const WORK_INSPECTOR_DIALOG_META := "work_inspector_dialog"
 
-## …and the stable handle on ONE SECTION HEADER, valued the title it states (§4.9 item 12d, second
-## pass). The three sections have nothing else findable — their controls are the same widgets other
-## surfaces build — and the claim a harness has to make is that ALL THREE draw on ONE render, which is
-## a count of these and not a search for a string.
-const WORK_INSPECTOR_SECTION_META := "work_inspector_section"
 
 const INSPECTOR_CLOSE_GLYPH := "✕"
 
@@ -2513,21 +2313,10 @@ const WORK_INSPECT_RUNG_SEPARATOR := " · "
 ## that did have content — the floor, the rank, the kits — is a section with its controls drawn.
 const WORK_INSPECT_JUMP := "Jump to source"
 
-const WORK_INSPECT_UNASSIGN := "Unassign"
 
-## The inspector's MAX section header (#871): the most hands the game may put on this source, live.
-const WORK_INSPECT_MAX := "Max"
 
-## The POLICY section\'s header. **A NOUN, where the retired link face was a verb** — it read
-## *"Change policy"*, which is what you press, and a header names what is below it. The other two
-## headers are `WORK_INSPECT_PRIORITY` and `WORK_INSPECT_KITS`, which were already nouns and are
-## reused as-is; `HudWidgets.alloc_section_label` uppercases all three, so the case is not spelled
-## here.
-const WORK_INSPECT_POLICY_SECTION := "Policy"
+const WORK_WARN_OVERDRAW_LINE := "⚠ Overdraws the source at this policy."
 
-const WORK_INSPECT_OVERDRAW_LINE := "⚠ Overdraws the source at this policy."
-
-const WORK_INSPECT_ASSIGNED_FORMAT := "%d assigned"
 
 ## **RETIRED — `WORK_INSPECT_BUILDERS_FORMAT`, the `N building` clause**
 ## (`docs/plan_standing_upkeep.md` §2.5). It named the SOURCE's own build crew, and a source has none:
@@ -2587,14 +2376,6 @@ const WORK_PRIORITY_HINT := "When something runs short, the band spends it on hi
 ## spelling in `hud_crafting_vocab.gd` would be free to drift from this one.
 const WORK_INSPECT_PRIORITY := "Priority"
 
-## The strip's FIFTH inline link, between `Priority` and `Unassign` — the kit pair, opened on demand
-## (`docs/plan_standing_upkeep.md` §4.9 item 12c). The three pickers are the same kind of control (a
-## standing property of this row) and `Unassign` stays last, being the destructive one.
-##
-## **PLURAL, because it opens TWO pickers.** `Kit` would name the take crew's alone, which is the half
-## a player already meets on the compose sheet — and the whole point of the pair is that the SITE has
-## one too.
-const WORK_INSPECT_KITS := "Kits"
 
 ## The stable handle on ONE picker button, valued the LEVEL it would send — `POLICY_RUNG_META`'s twin
 ## one control over, and for its reason: the face is presentation (`WORK_PRIORITY_FACES`), so a
@@ -2800,13 +2581,6 @@ static func roadwork_roster_row_height(build_queued: bool) -> float:
 # ⛔ **THE `quarrywork` POOL AND ITS HEAD STEPPER ARE RETIRED** (`docs/plan_site_crews.md` §0). A
 # working is kept by the crew cutting it, staffed on its own GROUNDWORK row, so the keeping is that
 # row's crew and the row states it (the crew-split marks under its stepper).
-#
-# ⛔ **AND ITS `✕` IS `abandon_working`, NEVER `abandon`** (issue #650). The road roster's drop is
-# `abandon <faction> <x> <y>`, whose target resolves to a FORAGE source sim-side
-# (`BuildSourceRef::target` → `forage_source`) and which drops every band-of-the-faction's holding on
-# the tile — so it neither reaches a working nor confines itself to one. `abandon_working <faction>
-# <x> <y> <material>` names the `(tile, material)` PAIR and drops this band's hold on that ONE working,
-# which is why the row's control carries the material structurally rather than by label.
 
 ## **A WORKING HAS HALF A NAME THE ROAD LACKED — its MATERIAL** — so the name cell is the material
 ## and then the road roster's locator: `Wood · 4 tiles E`. Two workings on one tile are two rows that
@@ -2820,38 +2594,8 @@ const WORKINGS_ROW_NAME_META := &"workings_row_name"
 ## meta could not tell apart.
 const WORKINGS_ROSTER_ROW_META := "workings_roster_row"
 
-## ⛔ **THE ROW'S DECLARING MARK — the `⌃` that opens this working's rung TRACK** (issue #650), and
-## the same control the work board's own rows carry: `WORK_ROW_READY_FORMAT` over
-## `RUNG_TRACK_MARK_GLYPH`, so a deposit rung and a plant rung are pressed with one gesture in one
-## place. Its handle is its own so a harness can find the mark without knowing which row drew it.
-##
-## ⛔ **THIS IS NOT roads.md's ROSTER RULE BEING BROKEN.** That rule forbids a STEPPER, a CREW COUNT
-## and a KIT PICKER on a row, because a per-row worker count would re-introduce the per-tile work row
-## `docs/plan_standing_upkeep.md` §4.13b retired. A declaring mark is none of the three: it names no
-## crew, staffs nobody, and opens the identical card `cultivate` and `sow` are ordered from. **The
-## per-row prohibition is unchanged and still asserted.**
-const WORKINGS_ROSTER_TRACK_META := "workings_roster_track"
 
-## …and what the mark says on its hover. It states what the press DOES rather than what it costs: the
-## price of each rung is on the rung's own row inside the track, which is where a price is comparable.
-const WORKINGS_ROSTER_TRACK_TOOLTIP := "Take this ground further up its ladder."
 
-## The mark's own width, so the value cell beside it clips against a stable edge rather than against
-## whichever glyph the row happens to carry.
-const WORKINGS_ROSTER_TRACK_WIDTH := 22.0
-
-## ⛔ **A GROUNDWORK ROW CARRIES NO `✕`** — putting a working down is the row's INSPECTOR action (a
-## click on the row opens it), where a harvest or hunt row's `Unassign` lives: a destructive control a
-## comma from the `−` stepper is a mis-click hazard, and the labelled version names what it drops.
-## This is that action's stable handle, valued the working's own `(tile, material)` — the pair the
-## emitted line names. Its own constant rather than the road's, because a scan for the road roster's
-## `✕` must not find it.
-const WORKINGS_ROSTER_ABANDON_META := "workings_roster_abandon"
-
-## …and the LADDER CARD's own put-down row, which sends the identical command from the other of the
-## verb's two surfaces. **Valued `true` rather than a key**: the card is about exactly one working, so
-## there is nothing for a harness to tell apart, where a roster row's control has its siblings.
-const WORKINGS_LADDER_ABANDON_META := "workings_ladder_abandon"
 
 # ---- The BUILD QUEUE block (`docs/plan_standing_upkeep.md` §4.6b) ---------------------------------
 #
@@ -3173,10 +2917,6 @@ const BUILD_QUEUE_SETTINGS_KEY_WIDTH := 30.0
 ## `WORK_INSPECTOR_KITS_SECTION_HEIGHT` and the upkeep row rides
 ## `WORK_INSPECTOR_KITS_BILL_HEIGHT`, which is what makes *reserved ≥ drawn* hold on BOTH shapes.
 
-## The crew key's declared width — wider than the queue strip's `CROP`/`KIT` because this key is a
-## crew NOUN (`Harvesters` / `Hunters` / `Herders`) rather than a three-letter tag, and both keys in
-## the picker take it so the two rows share a left edge.
-const WORK_INSPECTOR_KIT_KEY_WIDTH := 62.0
 
 ## ⛔ RETIRED — **`WORK_INSPECTOR_KIT_PICKER_WIDTH`**, a declared 168px column borrowed from the queue
 ## settings strip. That strip places two controls SIDE BY SIDE and must column them; a picker body has
@@ -3215,12 +2955,6 @@ const WORK_INSPECTOR_KIT_KEY_WIDTH := 62.0
 ## (`DetailFormat.standing_rung_face`). The one rung it names is the one an in-flight build lands on.
 const WORK_INSPECT_KITS_UPKEEP_GOODS_FORMAT := "%s a turn"
 
-## ⛔ **THE `none` RULE IS BACK IN BOTH TOOLTIPS, WHICH IS WHERE IT CAME FROM.** It was moved out to a
-## shared hint line for one slice; that line is retired above, and a caveat about what ONE control\'s
-## `No kit` entry means is a per-control fact rather than a section-wide one. What each tooltip carries
-## besides is the half a shared line never could — which of the two this picker IS (the crew\'s tool
-## against the site\'s) and the upkeep one\'s SCOPE.
-const WORK_INSPECT_TAKE_KIT_TOOLTIP := "Crew kit · none = bare hands, saves tools"
 
 ## > ⛔ RETIRED — **`WORK_INSPECT_UPKEEP_KIT_TOOLTIP`**: *"What this SITE is held with, turn after
 ## > turn — the keeping tool, not the take one. Set per site, so a pick here moves this row and no
@@ -3231,12 +2965,6 @@ const WORK_INSPECT_TAKE_KIT_TOOLTIP := "Crew kit · none = bare hands, saves too
 ## always-on height term. A picker body has the strip's full width and stacks its two rows
 ## unconditionally, so there is no width branch left to state — and the height is a plain constant in
 ## the `max` above rather than a term added to every strip whether or not anyone asked for it.
-
-## The stable handle on the take picker, valued the kit id it currently states — the queue crop
-## picker's own rule one host over: the face is presentation, so a harness identifying the control by
-## `text` would be asserting the string it had already composed. `WORK_INSPECT_UPKEEP_KIT_META` was
-## its twin and retired with the Upkeep picker (`docs/plan_pool_toe.md` §3).
-const WORK_INSPECT_TAKE_KIT_META := &"work_inspect_take_kit"
 
 
 ## > ⛔ RETIRED — **`BUILD_QUEUE_KIT_TOOLTIP`**, the queue kit picker's hover: *"Which tools this
@@ -4267,17 +3995,11 @@ static func tending_text(tending: Dictionary) -> String:
         int(tending.get("at_completion", UPKEEP_NO_WORKERS_AT_COMPLETION)),
         String(tending.get("rung_after", "")))
 
-## ---- THE ROW'S KEEPING MARK: `⚠` short, `ⓘ` short of tools ---------------------------------------
-##
-## `⚠` when the crew keeps less than the demand; else `ⓘ` where the site's keeping-tool claim was not
-## fully filled (`upkeep_tools_short`) — the work is covered and more tools would only free hands.
-const SITE_KEEPING_SHORT_MARK := UPKEEP_POOL_SHORT_MARK
+
 const SITE_KEEPING_TOOLS_MARK := UPKEEP_POOL_IDLE_MARK
 const SITE_KEEPING_TOOLS_SHORT := POOL_TOOLS_SHORT_WARN_LINE
 const SITE_KEEPING_TOOLS_INFO := POOL_TOOLS_SHORT_INFO_LINE
 
-## The mark's handle, valued the glyph it drew (`""` on a row with nothing to say).
-const SITE_KEEPING_MARK_META := &"work_row_keeping_mark"
 
 ## Is the crew keeping less than its site owes? The one test the mark and the hover fork on.
 static func site_keeping_is_short(kept: float, demand: float) -> bool:
@@ -4307,11 +4029,6 @@ static func site_keeping_hint(tending: Dictionary, kept: float, demand: float,
             lines.append(SITE_KEEPING_TOOLS_SHORT if short else SITE_KEEPING_TOOLS_INFO)
     return "\n".join(lines)
 
-## **THE KEEPING MARK** — `⚠` short, else `ⓘ` tools short, else `""`.
-static func site_keeping_mark(kept: float, demand: float, tools_short: bool) -> String:
-    if site_keeping_is_short(kept, demand):
-        return SITE_KEEPING_SHORT_MARK
-    return SITE_KEEPING_TOOLS_MARK if tools_short else ""
 
 ## ---- TWO PRIORITY MARKS PER ROW (`docs/plan_site_crews.md` §2.4) --------------------------------
 ##
@@ -4410,6 +4127,7 @@ const CREW_SPLIT_SENTENCE_META := &"crew_split_sentence"
 
 ## The three clauses of the bar's hover, in the order the bar draws them, and the empty crew's line.
 const CREW_BAR_KEEPERS_FORMAT := "%d keep it up"
+const CREW_BAR_BUILDERS_FORMAT := "%d building"
 const CREW_BAR_KITTED_FORMAT := "%d with %s"
 const CREW_BAR_BARE_FORMAT := "%d bare-handed"
 const CREW_BAR_NOBODY := "Nobody here this turn"
@@ -4427,13 +4145,15 @@ const CREW_BAR_GEAR_FALLBACK := "gear"
 ## TAKE (the crew less its keepers), `hold_crew` hold the source at the floor and the rest draw it
 ## down to it.
 static func crew_bar_words(keepers: int, kitted: int, bare: int, kit_names: String,
-        hold_crew: int) -> String:
-    var crew := keepers + kitted + bare
+        hold_crew: int, builders: int = 0) -> String:
+    var crew := keepers + builders + kitted + bare
     if crew <= 0:
         return CREW_BAR_NOBODY
     var parts: Array[String] = []
     if keepers > 0:
         parts.append(CREW_BAR_KEEPERS_FORMAT % keepers)
+    if builders > 0:
+        parts.append(CREW_BAR_BUILDERS_FORMAT % builders)
     if kitted > 0:
         parts.append(CREW_BAR_KITTED_FORMAT % [kitted,
             kit_names if kit_names != "" else CREW_BAR_GEAR_FALLBACK])
@@ -4480,3 +4200,44 @@ const MAX_STEPPER_RAISE_ARIA := "Raise the max"
 const MAX_STEPPER_VALUE_WIDTH := 64.0
 const MAX_STEPPER_META := &"max_stepper"
 const MAX_STEPPER_VALUE_META := &"max_stepper_value"
+
+## ---- THE WORK STRIP (`docs/plan_labor_at_scale.md`, issue #877) ---------------------------------
+##
+## ONE control for a source's rung, warnings and crew: the standing rung's mark, the ladder slot (the
+## `⌃` offer, or the build in flight filling), the floor glyph, `⚠`, `ⓘ`, then the crew number over the
+## crew bar. A Work-tab row and the same source's compose sheet both mount it, built from one model by
+## `WorkStrip.model_from_row`, so the two can never disagree.
+const WORK_STRIP_META := &"work_strip"
+## The root's handle on the controls a harness reads: the ladder chip (valued its kind, reusing
+## `WORK_ROW_BUILD_KIND_*`), the floor glyph and the one `⚠`.
+const WORK_STRIP_LADDER_META := &"work_strip_ladder"
+const WORK_STRIP_FLOOR_META := &"work_strip_floor"
+const WORK_STRIP_WARN_META := &"work_strip_warn"
+const WORK_STRIP_INFO_META := &"work_strip_info"
+## The fill layer inside a chip or a stop row, valued the progress it was drawn at.
+const WORK_STRIP_FILL_META := &"work_strip_fill"
+const WORK_STRIP_CREW_META := &"work_strip_crew"
+const WORK_STRIP_SEPARATION := 4
+const WORK_STRIP_MARKS_SEPARATION := 4
+const WORK_STRIP_LADDER_MIN_WIDTH := 40.0
+const WORK_STRIP_CHIP_PADDING_H := 5
+const WORK_STRIP_CHIP_PADDING_V := 1
+## The bar's room in a row; the squares fit themselves into it (`CrewSplitMarks.layout_for`).
+const WORK_STRIP_CREW_WIDTH := 48.0
+## How opaque the progress fill lies over the chip's chrome.
+const WORK_STRIP_FILL_ALPHA := 0.6
+
+
+
+## The ladder slot's two hovers. The card's own title is `RUNG_TRACK_TITLE`.
+const WORK_STRIP_OFFER_TIP := "Take it to…"
+const WORK_STRIP_BUILD_HANDS_FORMAT := "%s %d%% · %d building"
+const WORK_STRIP_BUILD_DONE_FORMAT := "%s, done in %s"
+const WORK_STRIP_BUILD_NO_HANDS_FORMAT := "%s %d%% · no spare hands this turn"
+## A build the band's builders have not reached: the pool has hands, but they are on an earlier queued build.
+const WORK_STRIP_BUILD_WAITING_FORMAT := "%s %d%% · waiting its turn in the build queue"
+## The in-flight rung's row on the rung card: its tooltip ends with this, and pressing it stops the build.
+const WORK_STRIP_STOP_SUFFIX := " — click to stop"
+const WORK_STRIP_STOP_META := &"work_strip_stop"
+## The hover lines of the one `⚠` are joined one per line.
+const WORK_STRIP_WARN_SEPARATOR := "\n"

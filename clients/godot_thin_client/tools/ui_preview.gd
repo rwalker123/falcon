@@ -64,6 +64,7 @@ const CHAPTERS := [
 	"res://tools/ui_preview/chapters/worked_land_ranch.gd",
 	"res://tools/ui_preview/chapters/dealings.gd",
 	"res://tools/ui_preview/chapters/treaties.gd",
+	"res://tools/ui_preview/chapters/work_strip.gd",
 ]
 
 ## The one method a chapter owes the harness (see the chapter contract in
@@ -829,8 +830,8 @@ func _assert_walk_away_emits(kind: String, improvement: String, want_line: Strin
 	var control := ForageFx.find_improvement_control(sheet, improvement)
 	# By STATE, not by type — every state of this control is a `Label` since §4.7a ①.
 	_assert_hud("a running %s build renders the RUNNING state" % kind,
-		control != null and String(control.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
-			== HudWidgets.IMPROVEMENT_STATE_RUNNING)
+		control != null and String(control.get_meta(ForageFx.IMPROVEMENT_STATE_META, ""))
+			== ForageFx.IMPROVEMENT_STATE_RUNNING)
 	var captured: Array[Dictionary] = []
 	var sink := func(p: Dictionary) -> void: captured.append(p)
 	_hud.improvement_requested.connect(sink)

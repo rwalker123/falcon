@@ -308,82 +308,122 @@ static func find_crop_row_by_species(root: Node, species: String) -> Button:
 			return found
 	return null
 
-## The improvement control's FACE text — the handle the meter assertions read. "" when the control is
-## absent. **Every state is a `Label` since `docs/plan_standing_upkeep.md` §4.7a ①**; the `CheckBox`
-## branch this used to carry went with the two states that were boxes.
-static func improvement_face(root: Node, improvement: String) -> String:
-	var control := find_improvement_control(root, improvement)
-	# **THE OFFERED STATE IS A `RichTextLabel`, and its `text` is BBCODE** — its `Work tab` is a live
-	# `[url]` (`docs/plan_standing_upkeep.md` §4.7a ①), so the raw property carries markup no player
-	# ever sees. `get_parsed_text` is what is on screen, which is what every claim here is about.
-	if control is RichTextLabel:
-		return (control as RichTextLabel).get_parsed_text()
-	if control is Label:
-		return (control as Label).text
-	return ""
 
-## **IS THE CONTROL'S FACE IN A STOPPING INK?** — the other half of the `∞` claim, and the half a text
-## assertion structurally cannot make: the larder's runway draws the same glyph in NEUTRAL ink for the
-## opposite news, so what says which way a build's `∞` points is the colour.
+## **THE WORK STRIP, AS THE SHEETS' RUNG CONTROL** (issue #877). The improvement control this file used
+## to find is gone: a source's rung state is the work strip's now (the same control the Work tab's row
+## wears), so the probes below read the strip and answer in the OLD STATE WORDS, which is what lets a
+## claim about "this rung is on offer / running / done" keep its shape.
 ##
-## **BOTH STOPPING INKS COUNT, and asking only about the amber was a real trap.** The wire spells two
-## never-finishing sentinels — the meter HOLDS at the rate, the meter ROTS under it — and the client
-## paints them amber and red (`HudWidgets.improvement_pace_stops`, whose pair this is). A reader
-## hard-wired to `WARN` therefore FAILS on the redder, worse half of the very claim it exists to make,
-## which is exactly what happened the day `BUILD_METER_ROTS` was honoured: the lone-builder frames
-## quote a NEGATIVE net and had been reading amber only because the client flattened the two.
-##
-## Where a frame means one specific ink, it compares `improvement_face_color` directly — that is the
-## reader for *which* of the three, and this one is for *is this face a stop at all*.
-##
-## Read as the RESOLVED font colour off the state's `Label` (every state is one since §4.7a ①),
-## because `get_theme_color` answers the stock default where no override is set — an "an override exists" test would pass on the very bug this looks for, which
-## IS a missing override.
-static func improvement_face_stops(root: Node, improvement: String) -> bool:
-	var ink := improvement_face_color(root, improvement)
-	return ink == HudStyle.WARN or ink == HudStyle.DANGER
+## The words are the harness's own and ride the strip as meta the harness stamps (`IMPROVEMENT_STATE_META`,
+## `IMPROVEMENT_CONTROL_META`); nothing in the client reads them.
+const IMPROVEMENT_CONTROL_META := "improvement"
+const IMPROVEMENT_STATE_META := "improvement_state"
+const IMPROVEMENT_STATE_OFFERED := "offered"
+const IMPROVEMENT_STATE_RUNNING := "running"
+const IMPROVEMENT_STATE_DECLARED := "declared"
+const IMPROVEMENT_STATE_DONE := "done"
+## States the retired control also had; the strip draws neither (a knowledge-gated rung offers no `⌃`, a
+## foreign build blanks the slot), so a probe never answers them and a claim asking for one fails.
+const IMPROVEMENT_STATE_GATED := "gated"
+const IMPROVEMENT_STATE_FOREIGN := "foreign"
 
-## **THE FACE'S RESOLVED INK, for the THREE-state build line** (issue #545 follow-up). The pace is a
-## colour now — green climbing, amber holding, red losing — so a bool reader can only ever ask about
-## one of the three, and the two `∞` states would read alike through it. Callers compare against
-## `HudStyle` directly, so a frame can claim which of the three a build line is in.
-##
-## `Color()` (transparent black, which no face wears) where the control is absent, so a missing
-## control fails a colour claim rather than matching one by accident.
-static func improvement_face_color(root: Node, improvement: String) -> Color:
-	var control := find_improvement_control(root, improvement)
-	if control == null:
-		return Color()
-	# A `RichTextLabel` reads `default_color`; `font_color` is a `Label`'s slot and is ignored there,
-	# so asking for the wrong one answers the stock theme colour and passes any claim by accident.
-	if control is RichTextLabel:
-		return control.get_theme_color("default_color")
-	return control.get_theme_color("font_color")
-
-## **WHICH OF THE FIVE STATES THE CONTROL IS IN** — `IMPROVEMENT_STATE_META`, or `""` where the rung
-## has no control at all (`docs/plan_standing_upkeep.md` §4.7a ①).
-##
-## **IT REPLACED THE TYPE TEST, and the SET is what a caller must assert.** Every state is a `Label`
-## now, so `is CheckBox` / `is Label` separates nothing: a builder that rendered every state the same
-## way passes any single positive type check, and only comparing the whole set of states against the
-## fixtures that produce them can see that.
-static func improvement_state(root: Node, improvement: String) -> String:
-	var control := find_improvement_control(root, improvement)
-	if control == null:
-		return ""
-	return String(control.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
-
-static func find_improvement_control(root: Node, improvement: String) -> Control:
+## The work strip on a node, or `null`. A node queued for deletion is the previous render's.
+static func find_strip(root: Node) -> HBoxContainer:
 	if root == null:
 		return null
-	if root is Control and (root as Control).get_meta(
-			HudWidgets.IMPROVEMENT_CONTROL_META, "") == improvement:
-		return root as Control
-	for child in root.get_children():
-		var found := find_improvement_control(child, improvement)
-		if found != null:
-			return found
+	for node in root.find_children("*", "HBoxContainer", true, false):
+		if node.has_meta(HudWorkVocab.WORK_STRIP_META) and not node.is_queued_for_deletion():
+			var cursor: Node = node
+			var freed := false
+			while cursor != null:
+				if cursor.is_queued_for_deletion():
+					freed = true
+				cursor = cursor.get_parent()
+			if not freed:
+				return node as HBoxContainer
 	return null
+
+## The ladder slot's kind on the strip (`WorkStrip.LADDER_*`), `"<no strip>"` where the sheet mounts none —
+## so a claim that no `⌃` is offered cannot be satisfied by a sheet that never built its strip.
+const NO_STRIP := "<no strip>"
+
+static func ladder_kind(root: Node) -> String:
+	var strip := find_strip(root)
+	if strip == null:
+		return NO_STRIP
+	return String((strip.get_meta(HudWorkVocab.WORK_STRIP_META) as Dictionary).get(
+		WorkStrip.M_LADDER_KIND, WorkStrip.LADDER_NONE))
+
+## The ladder chip's HOVER (`""` where the strip draws no chip): the build's builders, or that nobody builds it.
+static func strip_chip_tip(root: Node) -> String:
+	var strip := find_strip(root)
+	if strip == null:
+		return ""
+	for node in strip.find_children("*", "Control", true, false):
+		if node.has_meta(HudWorkVocab.WORK_STRIP_LADDER_META):
+			return (node as Control).tooltip_text
+	return ""
+
+## One line describing the strip, for failure messages and prints.
+static func describe(root: Node) -> String:
+	var m := strip_model(root)
+	if m.is_empty():
+		return "<no strip>"
+	var row: Dictionary = m.get(WorkStrip.M_ROW, {})
+	return "kind=%s glyph=%s prog=%s tip=%s rung=%s crew=%s ready=%s building=%s standing=%s" % [
+		m.get(WorkStrip.M_LADDER_KIND), m.get(WorkStrip.M_LADDER_GLYPH),
+		m.get(WorkStrip.M_LADDER_PROGRESS), strip_chip_tip(root), m.get(WorkStrip.M_RUNG_MARK),
+		m.get(WorkStrip.M_CREW), row.get("ready_policy"), row.get("building_policy"),
+		row.get("standing_improvement")]
+
+## The strip's model, `{}` where there is none.
+static func strip_model(root: Node) -> Dictionary:
+	var strip := find_strip(root)
+	return {} if strip == null else (strip.get_meta(HudWorkVocab.WORK_STRIP_META) as Dictionary)
+
+## **THE STATE OF THE RUNG `improvement`, read off the strip** and `""` where the strip says nothing of it.
+## OFFERED: the `⌃` is on offer for that verb. RUNNING / DECLARED: the chip is up for it (DECLARED at
+## 0%, i.e. nothing banked yet). DONE: the strip's standing-rung mark is up and the verb is the rung the
+## source stands on.
+static func improvement_state(root: Node, improvement: String) -> String:
+	var model := strip_model(root)
+	if model.is_empty():
+		return ""
+	var row: Dictionary = model.get(WorkStrip.M_ROW, {})
+	var kind := String(model.get(WorkStrip.M_LADDER_KIND, WorkStrip.LADDER_NONE))
+	if kind == WorkStrip.LADDER_OFFER and String(row.get("ready_policy", "")) == improvement:
+		return IMPROVEMENT_STATE_OFFERED
+	if (kind == WorkStrip.LADDER_BUILDING or kind == WorkStrip.LADDER_STALLED) \
+			and String(row.get("building_policy", "")) == improvement:
+		return IMPROVEMENT_STATE_DECLARED if float(model.get(WorkStrip.M_LADDER_PROGRESS, 0.0)) <= 0.0 \
+			else IMPROVEMENT_STATE_RUNNING
+	if String(row.get("standing_improvement", "")) == improvement and String(model.get(WorkStrip.M_RUNG_MARK, "")) != "":
+		return IMPROVEMENT_STATE_DONE
+	return ""
+
+## The ladder chip's FACE text for the rung `improvement` (`▦45%` building, `⌃▦` on offer), `""` when the
+## strip says nothing of that rung. The percent is the chip's own, drawn from the build's progress.
+static func improvement_face(root: Node, improvement: String) -> String:
+	var strip := find_strip(root)
+	if strip == null or improvement_state(root, improvement) == "":
+		return ""
+	for node in strip.find_children("*", "Control", true, false):
+		if node.has_meta(HudWorkVocab.WORK_ROW_BUILD_STATE_META):
+			return String(node.get_meta(HudWorkVocab.WORK_ROW_BUILD_STATE_META))
+	return ""
+
+## The strip, stamped with the state it is in for `improvement`, or `null` when it says nothing of that
+## rung. Callers read `IMPROVEMENT_STATE_META` off it the way they read the retired control's.
+static func find_improvement_control(root: Node, improvement: String) -> Control:
+	var strip := find_strip(root)
+	if strip == null:
+		return null
+	var state := improvement_state(root, improvement)
+	if state == "":
+		return null
+	strip.set_meta(IMPROVEMENT_CONTROL_META, improvement)
+	strip.set_meta(IMPROVEMENT_STATE_META, state)
+	return strip
 
 ## **RETIRED — `build_crew_row`, the BUILDERS stepper's own finder** (`docs/plan_standing_upkeep.md`
 ## §2.5). The row is gone with the per-source build crew a verb used to carry, and so is the meta it

@@ -2066,24 +2066,6 @@ func road_next_rung(tile: Vector2i) -> String:
 			return HudRouteVocab.next_rung_key(HudRouteVocab.rung_of(road))
 	return KitRoster.BUILD_RUNG_ANY
 
-## **IS THIS SOURCE THE ENTRY THIS BAND'S BUILDERS ARE STANDING ON?** — *are they on THIS one*, which
-## is what separates a build in flight from one waiting its turn.
-##
-## It takes the SOURCE dict because its two callers hold one and not an identity: a hunt sheet's
-## subject is the herd (named by `id`) and a forage sheet's is the tile_info (named by its `x`/`y`,
-## which are the patch's). Resolving that shape here rather than at the call site keeps the whole
-## question one answer, which is the property this pair exists to have.
-func is_band_build_head(band: Dictionary, kind: String, source: Dictionary) -> bool:
-	var head := build_queue_head(band)
-	if head.is_empty():
-		return false
-	var head_kind := String(head.get("kind", "")).strip_edges().to_lower()
-	if head_kind != kind:
-		return false
-	if kind == LABOR_KIND_HUNT:
-		return String(head.get("fauna_id", "")) == String(source.get("id", ""))
-	return int(head.get("target_x", -1)) == int(source.get("x", -1)) \
-		and int(head.get("target_y", -1)) == int(source.get("y", -1))
 
 ## Coerce a wire `arrival_schedule` to a PackedFloat32Array. The native decoder already hands over a
 ## packed array; a fixture (or an absent field) may hand over a plain Array or null.
