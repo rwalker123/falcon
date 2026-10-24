@@ -106,6 +106,7 @@ mod snapshot;
 mod snapshot_overlays_config;
 pub mod spoilage;
 pub mod staffing;
+pub mod staffing_preview;
 mod start_profile;
 pub mod starting_loadout;
 mod supply;
@@ -159,15 +160,15 @@ pub use combat_config::{
 };
 pub use components::{
     available_workers, floor_is_valid, floor_overdraws, take_overdraws, BandBench, BandEquipment,
-    BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BenchOrder, BenchQueueError, BuildJob,
-    BuildQueueEntry, BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs,
-    DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
-    FinishedBatch, FoodBatch, FoodMix, KeepingIssue, KeepingToolLine, KitOrder, KnowledgeFragment,
-    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw,
-    MoraleCause, MusterBench, MusterKit, MusterPlan, PoolToeLine, PopulationCohort, PowerNode,
-    QueuedBuildToe, ResidentBand, ScoutPack, Settlement, ShedCrew, ShedFacts, ShedStep,
-    ShedSubject, ShipmentTerms, SourcePriority, SourceShedFacts, SourceYield, StaffedCrew,
-    StartingUnit, StationReport, StrangersOrder, TakeSelection, Tile, TownCenter, TransferCause,
+    BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BenchOrder, BenchQueueError,
+    BuildDeclaration, BuildJob, BuildSource, BuildToeLine, DeathCause, DemographicFlowAccumulator,
+    DrawnInputs, DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission,
+    ExpeditionPhase, FinishedBatch, FoodBatch, FoodMix, KeepingIssue, KeepingToolLine, KitOrder,
+    KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch,
+    MaterialDraw, MoraleCause, MusterBench, MusterKit, MusterPlan, PoolToeLine, PopulationCohort,
+    PowerNode, ResidentBand, ScoutPack, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject,
+    ShipmentTerms, SourcePriority, SourceShedFacts, SourceYield, StaffedCrew, StartingUnit,
+    StationReport, StrangersOrder, TakeSelection, Tile, TownCenter, TransferCause,
     TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
     YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT,
     NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
@@ -1843,8 +1844,8 @@ pub fn build_test_app() -> App {
 /// hands, so a band that holds one delivers `n × 1.5` a turn against `n`: any fixture measuring the
 /// *meter* rather than the tool runs half again as fast as the number it asserts.
 ///
-/// ⛔ **THE AXIS IS HELD ON THE LEDGER, NOT ON A KIT NAMED ON THE QUEUE ENTRY.** It used to be
-/// `BuildQueueEntry { kit: Some(the empty kit) }`, because a build's gear was resolved from one kit
+/// ⛔ **THE AXIS IS HELD ON THE LEDGER, NOT ON A KIT NAMED ON THE DECLARED BUILD.** It used to be
+/// `BuildDeclaration { kit: Some(the empty kit) }`, because a build's gear was resolved from one kit
 /// the entry named. A pool's tools follow from the **rung** since `docs/plan_pool_toe.md`, so an
 /// entry's kit prices nothing and a bare one there holds nothing at its identity.
 ///
@@ -1876,6 +1877,64 @@ pub fn disarm_the_builders(world: &mut World, band: Entity, rung: crate::intensi
         ledger.restore_batches(&tool.item, Vec::new());
     }
     world.entity_mut(band).insert(ledger);
+}
+
+/// **LEAVE EXACTLY `idle` HANDS UNCOMMITTED ON A FIXTURE BAND** - the builders a declared build is
+/// staffed from. A build has no `builders` row to put a count on: the sim staffs it from the hands
+/// the band's other crews, its bench and its walkers leave (`docs/plan_labor_at_scale.md`, "Builds
+/// join the site's crew"), so a fixture that wants N builders states it as N people beyond what is
+/// already committed. Sets the band's working-age head count to `committed + idle`.
+pub fn seat_builders(world: &mut World, band: Entity, idle: u32) {
+    world.entity_mut(band).insert(SeatedBuilders(idle));
+    let committed = world
+        .get::<crate::components::LaborAllocation>(band)
+        .map_or(0, |allocation| {
+            // A staffed row is restaffed to its Max each turn, so the hands it WILL hold are the
+            // committed ones - not what it held when the fixture last looked.
+            allocation
+                .assignments
+                .iter()
+                .map(|row| row.max_workers.unwrap_or(row.staffed_total()))
+                .sum::<u32>()
+        })
+        + world
+            .get::<crate::components::BandBench>(band)
+            .map_or(0, |bench| bench.workers);
+    let mut cohort = world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band has a cohort");
+    cohort.working = crate::scalar::Scalar::from_u32(committed + idle);
+}
+
+/// **A labor config with room for every crew a fixture stands on one hex** - the shipped config
+/// with `tile_worker_cap` lifted past any fixture crew, for the harnesses whose one source row plus
+/// its builders would otherwise meet the per-tile cap rather than the thing under test. A test
+/// helper; nothing in the sim calls it.
+pub fn labor_config_with_room_on_the_tile() -> LaborConfigHandle {
+    /// More hands than any fixture stands on one hex.
+    const ROOM_FOR_EVERY_FIXTURE_CREW: u32 = 1000;
+    let mut labor = (*LaborConfig::builtin()).clone();
+    labor.tile_worker_cap = ROOM_FOR_EVERY_FIXTURE_CREW;
+    LaborConfigHandle::new(std::sync::Arc::new(labor))
+}
+
+/// **The idle hands a fixture stated for a band's builds** - recorded by [`seat_builders`] so
+/// [`reseat_builders`] can restate them after a fixture resizes the band or changes its rows.
+#[derive(bevy::prelude::Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SeatedBuilders(pub u32);
+
+/// Restate every seated band's idle hands (see [`SeatedBuilders`]): working-age becomes what the band
+/// has committed plus the idle count the fixture asked for. A test helper; nothing in the sim calls
+/// it.
+pub fn reseat_builders(world: &mut World) {
+    let seated: Vec<(Entity, u32)> = world
+        .query::<(Entity, &SeatedBuilders)>()
+        .iter(world)
+        .map(|(entity, seated)| (entity, seated.0))
+        .collect();
+    for (band, idle) in seated {
+        seat_builders(world, band, idle);
+    }
 }
 
 /// Execute a single simulation turn.

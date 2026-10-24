@@ -13,8 +13,8 @@ pub use commands::{
     DenialRaidForecastReply, DenialRow, DepositCrewTakeQuery, DepositCrewTakeReply,
     DepositCrewTakeRow, FactionCapacityQuery, FactionCapacityReply, ForageCrewTakeQuery,
     ForageCrewTakeReply, ForageCrewTakeRow, HuntCrewTakeQuery, HuntCrewTakeReply, HuntCrewTakeRow,
-    QueryPayload, QueryReply, QueryReplyEnvelope, WorkPartyForecastQuery, WorkPartyForecastReply,
-    WorkPartySource,
+    QueryPayload, QueryReply, QueryReplyEnvelope, StaffingPreviewLoss, StaffingPreviewQuery,
+    StaffingPreviewReply, WorkPartyForecastQuery, WorkPartyForecastReply, WorkPartySource,
 };
 pub use commands::{
     BundleRequest, CancelScope, CommandDecodeError, CommandEncodeError, CommandEnvelope,

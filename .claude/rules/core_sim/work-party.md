@@ -2,6 +2,8 @@
 paths:
   - "core_sim/src/work_party.rs"
   - "core_sim/src/staffing.rs"
+  - "core_sim/src/staffing_preview.rs"
+  - "core_sim/tests/staffing_preview.rs"
   - "core_sim/src/take_claims.rs"
   - "core_sim/src/systems/labor.rs"
   - "core_sim/src/supply.rs"
@@ -54,7 +56,7 @@ every crew the player set by hand (the rows that are not staffed). Rows are grou
 is not free for the row that was just given it. The crews are applied to a copy and, while the
 hands committed (rows, bench, walkers) exceed the people the band has, one hand comes off the
 lowest-priority row whose crew is above the party already standing (a row cannot be shrunk below its
-party without cutting more hands loose). The near row waits for the walkers to arrive. Pinned by
+party without cutting more hands loose). A build ranks by its site's Priority through `staffing::build_site_priority` (a road build at the Roadwork row's), the same reading the passes and the labor pass use. At equal priority the rows' surplus goes before a build's builders (the passes deal a group's builds their first head before its hold crews, so the trim runs in reverse); within one kind the later index goes first. Pinned by `staffing::tests::{a_high_roadwork_build_is_trimmed_after_a_normal_row, a_low_roadwork_build_is_trimmed_before_a_normal_row, at_equal_priority_a_row_is_trimmed_before_the_build}`. The near row waits for the walkers to arrive. Pinned by
 `work_party_caravan::a_far_party_the_staffing_shrinks_walks_its_cut_hands_home_and_commits_no_hand_twice`.
 
 **Within a priority group every pass deals ONE head at a time, round-robin**, across the group's rows
@@ -93,9 +95,28 @@ Pinned by `server::tests::a_band_improvements_crew_is_the_keepers_the_sim_staffs
 
 | pass | what it hands out |
 |---|---|
-| 1 | the site's **keepers** (`planned_keep_hands`, ceiled), then **kitted** hands up to the row's **hold crew** |
+| 1a | the site's **keepers** on every row at every priority, High to Low: `floor(keep_hands)` whole-keeper heads round-robin, then, for a row with a fraction of a hand of keeping left, one head that carries it (a kitted gatherer if the shelf can arm one, else a bare one where a bare hand works, else a keeper; a row with no hold take gives it a keeper's head so the improvement is kept) |
+| 1b | per priority group High to Low: the group's **builds'** first builder (kitted if the shelf can arm one, else bare), then the group's **kitted** hands up to the row's **hold crew** |
 | 2 | **kitted** hands up to the row's **reach crew** |
 | 3 | every row up to its **useful crew** (the room above the floor, clear-it-now; the crew past which the take stops rising): the kit's units still unspent first, then **bare** hands, only on a web where a bare hand takes something (never on a hunt that needs a weapon) |
+
+**The reason for the order is what each head protects.** Only keepers guard the ground the band
+already has; a hold crew is a food take, so a Normal row's hold crew does not beat a High build, and
+a Low build still gets its builder before the Low hold crews but after the High and Normal ones.
+Pinned by `staffing::tests::{a_high_build_gets_its_builder_before_a_normal_rows_hold_crew,
+a_build_ranks_by_its_groups_priority_against_hold_crews}`.
+
+**A crew's heads round once.** `StaffRowInput::keep_hands` is the keeping, FRACTIONAL
+(`planned_keep_hands`, unceiled), and every target is `ceil(keep_hands + gather hands)`
+(`staffing::{hold,reach,useful}_heads`): in the turn a keeper keeps first and gathers with what is
+left (`SiteKeeping`'s split is fractional, `crew - keep_hands`), so the keeping's fraction costs no
+head of its own. A row with no take to make still gets `ceil(keep_hands)`. `keepersStaffed` is the
+heads whose turn is entirely keeping (`floor(keep_hands)`, plus one when the fraction has no
+gatherer to ride with); the remainder is inside a kitted or bare head, so `keepersStaffed +
+kittedStaffed + bareStaffed == workers` still holds, and `take_claims::row_claims`' keeping
+remainder (`keepers - keep_hands`, floored at zero) reads zero for it because the gatherer's head is
+already counted in `kitted`. Pinned by `staffing::tests::{keeping_and_gathering_round_once,
+a_keeping_only_row_gets_a_whole_keeper_for_a_fraction}`.
 
 **A hunt row's three targets (hold, reach, useful) are sized by `fauna::hunt_crew_for_take`**, the
 one crew function `workers_needed` also reads: haul, reach and fight against a take RATE, capped at
@@ -148,13 +169,60 @@ lands. Pinned by `server::tests::a_never_renewing_dig_with_no_count_is_refused_a
 
 **Approximations to know.** The command-time restaff reads the world before the coming turn's
 regrowth, while the turn staffs after it, so a row's crew can move by a hand between the seed and the
-turn. Several bands working one source each staff their share of the keeping bill. A band's gear that
+turn. The herd it reads is `fauna::next_turns_quarry`: regrown, then less the predation the herd
+suffered last turn (`Herd::predator_eaten_this_turn`, held at the predation escapement floor), so a
+warren a pack eats back to its floor every turn is not staffed for a regrowth the turn will not hand
+over (`predated_restaff`). `HuntProjection::step`'s first between-turns step (`ProjectionStart::BeforeRegrowth`)
+takes the same predation through the same helper, so the row's published `realized` / arrivals and the
+crew curve read one stock; later projected steps carry none (the stamp resets on the clone), and an
+`AfterRegrowth` start reads the turn's real post-predation stock (`fauna::tests::a_between_turns_projection_takes_the_predation_the_curve_takes`). Several bands working one source each staff their share of the keeping bill. A band's gear that
 the turn settles after staffing (the pools' and the keeping's issue) is not in the staffing's shelf.
 
 Pinned by `staffing::tests` (the passes, in order, against a shelf), `labor_allocation` (the
 re-staff on a smaller pool and the turn's staffed rows), `shedding_order::a_smaller_pool_restaffs_the_rows_and_sheds_nothing`,
 `take_kit_claims` (granted claims against asks) and `server::tests` (`stop_labor`, the Max on
 `assign_labor`).
+
+### The staffing preview — one staffing, two callers
+
+`QueryPayload::StaffingPreview` (`sim_runtime`, proto query field **10**, reply field **13**; answered by
+`staffing_preview::answer_staffing_preview`, seat-gated like the other faction-bearing questions)
+is the compose sheet's dry run: *if this band added (or re-stated) this row at this Priority / Max /
+floor / kit, what crew would the staffing give it, and which rows lose hands?* A sheet that quoted
+the crew from the idle hands alone read `0` where the command gives a crew, because the command
+restaffs the whole band by Priority and can take hands from lower rows.
+
+**The ask**: `faction_id`, `band_id`, one source (`Hunt { herd_id }`, `Forage { x, y, take_species }` or
+`Extract { x, y, material }`, the work-party forecast's own source messages), `kit_id` (empty = the
+default `assign_labor` resolves for that row), `floor`, `priority` (`high` | `normal` | `low`, empty =
+normal) and `max_workers` (`0` = no Max). **The reply**: `workers` with its `keepers` / `kitted` /
+`bare` split, `idle_before` / `idle_after` (the published `idleWorkers` meaning: hands pass 3 left
+unused, without and with the row) and `losses`: one `{ kind, x, y, herd_id, material, branch, before,
+after }` per row whose crew falls, High priority first then row order, declared builds last
+(`kind` is `build:<kind>` for their builders).
+
+**One staffing, two callers.** The row is built by the helpers `assign_labor` shares
+(`staffing_preview::{default_kit_for_target, working_as_it_stands,
+never_renewing_dig_without_a_count}`) and written onto a COPY of the band's allocation with
+`set_staffed_row` and `set_source_priority`; an existing row on that source is overwritten in place.
+The copy is staffed by `staffing::staff_allocation_copy` (`with_band_staffing_over` →
+`staff_rows_settled` with the band's bench and nobody lost → `apply_staffing` +
+`apply_build_crews`), the staffing `restaff_band` runs, and the UNMODIFIED allocation is staffed the
+same way for the "before" figures, so a loss compares like with like and never against stale
+stored crews. The reply therefore equals the crew the row gets after the matching `assign_labor`.
+The take selection is passed as sent (the command's prune-to-the-current-basket repair is not
+run). Nothing is written to the world.
+
+**Refusals** (`query_error` tokens): `unknown_band`, `unknown_herd`, `unknown_patch`,
+`unknown_deposit`, `unknown_kit`, `kit_wrong_job`, `invalid_floor`, `invalid_priority`, and
+`never_renewing_dig_without_a_count` (an extract row on ground that never renews with
+`max_workers` 0, the row `assign_labor` refuses by the same predicate). A hunt `follow` box has no
+field.
+
+Pinned by `tests/staffing_preview.rs` (a new Normal row takes from the Low row and equals the
+command's restaff; a Low row leaves the Normal row alone; idle hands first with no losses; the
+allocation unchanged after the query; the refusal tokens), the cross-seat refusal over the socket
+in `query_seat_gate.rs`, and `sim_runtime`'s `the_staffing_preview_round_trips`.
 
 ## Config files
 
@@ -938,6 +1006,15 @@ off the same capped assessment the turn makes.
 | equipment cap | the crew is capped at **the hands the band can fully equip with the kit items that bind a camp kill** (`MusterPricing::equippable_crew`): per such item, the units no row claims (`unclaimed_units x workers_per_unit`, floored) plus the hands the lendable donor rows' settled units would arm (each row capped at the hands it has present), and the least over those items. **The items that bind a camp kill** (`hunt_by_need::kill_bearing_items`, one list for the cap and for `muster_kit`'s shortfall) are the kit's items declaring a stat the kill reads - `attack`, `dispersion` or `exposure` (`EquipmentStat::bears_on_a_kill`), on the item or any tier - never an item id; the sled (`hunt_carry`, `deposit_take`) is not one, because a need crew is only mustered inside `band_work_range`, where nothing is hauled and the sled wears nothing. **Never caps (`NO_KIT_CAP`)** when no item of the kit binds a camp kill, or when the bare hunter already wounds the quarry (`combat::strike_damage(inputs.intrinsic.attack, defense) > 0` against the quarry the hunt curve prices): the gate is cleared bare-handed, so a kit shortage does not stop the hunt. `crew = min(meal-sized, cap)`; a cap of `0` sends nobody (`muster_crew` 0, `turnsToKill` 0, `turnsUntilHunt` `NO_HUNT_NEEDED`, even mid-hunt) |
 | a hunt in progress | the crew was out this turn, the herd has `wounds.pending() > 0` and **no kill landed** → send, whatever the larder says |
 | otherwise | send iff `runway <= turns_to_kill + follow.need_margin_turns` (default **1**); `turns_to_kill` is the first non-zero slot of `fauna::project_arrivals_hunt` at that crew (`fauna::hunt_crew_turns_to_kill`), `runway` is the **need clock's** (`snapshot::kill_turns_of_food`, below) and the `NOT_FOOD_LIMITED_TURNS` sentinel never triggers |
+
+**Growth's trend reads a need row at its `sustainable`, not its `realized`.** `band_food_flow`
+(`systems/population.rs`) zips `assignments` with `last_yields`; a need row's `realized` is the
+take at the hands present this turn, so it is 0 on every waiting turn and lumpy on a crew turn, and a
+fully fed following band would read as earning nothing and take the deficit penalty on the birth
+trend. The need row contributes the herd's long-run `SourceYield::sustainable` instead; every other
+row still contributes `realized`. The need clock (`snapshot::food_terms_over` / `standing_yields`)
+still excludes the need row, because the hunt counting itself as income would stop it ever
+triggering. Pinned by `need_row_contributes_sustainable_to_steady_income`.
 
 ### The clock counts only the food the kill replaces
 

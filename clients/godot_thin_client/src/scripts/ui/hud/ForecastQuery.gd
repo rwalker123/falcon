@@ -54,6 +54,11 @@ const KIND_DEPOSIT_CREW_TAKE := "deposit_crew_take"
 ## turn's provisions by the hands the patch's keeping leaves. Asked on a KEPT patch only, keyed like
 ## the deposit curve: on the band's pool, so a stepper tick asks nothing new.
 const KIND_FORAGE_CREW_TAKE := "forage_crew_take"
+## **THE STAFFING PREVIEW** - a dry run of the sim's real staffing with a not-yet-worked row added at the
+## sheet's Priority / Max / floor / kit: the crew the command will give it, and which rows give hands up.
+## The ask names its source the way the work-party ask does (`source_kind` + address). Keyed on the
+## Priority and Max beside the curve's terms, so changing either on the sheet re-asks.
+const KIND_STAFFING_PREVIEW := "staffing_preview"
 
 # ---- what a sheet gets back -----------------------------------------------------------------------
 
@@ -155,6 +160,13 @@ static func key_of(subject: String, kit_id: String, party_workers: int, floor: f
 		band: Dictionary, kits: Array) -> String:
 	return "%s:%s:%d:%f:%s" % [subject, kit_id, party_workers, floor,
 		KitRoster.gear_fingerprint(kits, kit_id, band)]
+
+## The staffing preview's exact key: the curve key's terms (kit, Max as the crew term, floor, gear) plus
+## the Priority and whatever the source adds (a patch's ticked plants).
+static func preview_key_of(subject: String, kit_id: String, max_workers: int, floor: float,
+		priority: String, band: Dictionary, kits: Array, extra: String = "") -> String:
+	return "%s:priority=%s%s" % [key_of(subject, kit_id, max_workers, floor, band, kits), priority,
+		extra]
 
 ## **ASK, IDEMPOTENTLY.** Call it on every render of a sheet: a key already answered or already in
 ## flight sends nothing, so the sheets do not need to remember what they asked. `params` is the

@@ -108,12 +108,18 @@ const CREW_KITTED_LIGHTEN := 0.15
 const CREW_KITTED_LINE_LIGHTEN := 0.45
 const CREW_BARE_DARKEN := 0.3
 const CREW_BARE_LINE_DARKEN := 0.1
+# The BUILDERS segment: the cool written-ink blue, so hands raising a rung read apart from the earth
+# (keeping) and the greens (taking). Information, like the rest.
+const CREW_BUILD_DARKEN := 0.15
+const CREW_BUILD_LINE_LIGHTEN := 0.2
 static var CREW_TEND := VOICE_PIGMENT.darkened(CREW_TEND_DARKEN)
 static var CREW_TEND_LINE := VOICE_PIGMENT.darkened(CREW_TEND_LINE_DARKEN)
 static var CREW_KITTED := HEALTHY.lightened(CREW_KITTED_LIGHTEN)
 static var CREW_KITTED_LINE := HEALTHY.lightened(CREW_KITTED_LINE_LIGHTEN)
 static var CREW_BARE := HEALTHY.darkened(CREW_BARE_DARKEN)
 static var CREW_BARE_LINE := HEALTHY.darkened(CREW_BARE_LINE_DARKEN)
+static var CREW_BUILD := VOICE_INK.darkened(CREW_BUILD_DARKEN)
+static var CREW_BUILD_LINE := VOICE_INK.lightened(CREW_BUILD_LINE_LIGHTEN)
 
 # Hex strings for BBCode-based labels (RichTextLabel headers, command feed). DERIVED from the
 # colours above by `apply_palette` — never edit one of these to change a tint.
@@ -177,6 +183,8 @@ static func apply_palette(p: Dictionary) -> void:
 	CREW_KITTED_LINE = HEALTHY.lightened(CREW_KITTED_LINE_LIGHTEN)
 	CREW_BARE = HEALTHY.darkened(CREW_BARE_DARKEN)
 	CREW_BARE_LINE = HEALTHY.darkened(CREW_BARE_LINE_DARKEN)
+	CREW_BUILD = VOICE_INK.darkened(CREW_BUILD_DARKEN)
+	CREW_BUILD_LINE = VOICE_INK.lightened(CREW_BUILD_LINE_LIGHTEN)
 	SIGNAL_HEX = SIGNAL.to_html(false)
 	WARN_HEX = WARN.to_html(false)
 	DANGER_HEX = DANGER.to_html(false)
@@ -476,20 +484,6 @@ static func work_row_stylebox(open: bool) -> StyleBoxFlat:
 	sb.content_margin_right = WORK_ROW_PADDING_H
 	sb.content_margin_top = WORK_ROW_PADDING_V
 	sb.content_margin_bottom = WORK_ROW_PADDING_V
-	return sb
-
-## **THE BUILD QUEUE'S DROP INDICATOR — the SAME row backing with one edge lit**
-## (`docs/plan_standing_upkeep.md` §4.7b ③). The queue's rows are flush (the block's `separation` is
-## 0), so an indicator drawn BETWEEN them would need a height term on both sides of a reservation the
-## work zone clips against. Lighting the target row's own top or bottom edge costs the block nothing:
-## the content margins are stated explicitly here, so a border added to this box moves no child.
-static func work_row_drop_stylebox(open: bool, above: bool, edge_width: int) -> StyleBoxFlat:
-	var sb := work_row_stylebox(open)
-	if above:
-		sb.border_width_top = edge_width
-	else:
-		sb.border_width_bottom = edge_width
-	sb.border_color = SIGNAL
 	return sb
 
 ## The inspector strip under a work-board / parties row — the role card's chrome, reused so a strip

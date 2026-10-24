@@ -198,17 +198,13 @@ const SOURCE_KIND_KEY := "kind"
 const SOURCE_KIND_POOL := "pool"
 const SOURCE_KIND_SITE := "site"
 const SOURCE_KIND_TAKE := "take"
-## A LATER build in the band's queue (the head job is the `pool`/`builders` line). Joined onto the Work
-## tab's build queue by `queue_position` (>= 1; the head is 0), which is the rank that tab draws from.
-const SOURCE_KIND_BUILD_QUEUE := "build_queue"
-const SOURCE_QUEUE_POSITION_KEY := "queue_position"
-## The builders' own job token on a source line, the head job's spelling.
-const SOURCE_JOB_BUILDERS := "builders"
-## `N builders, for <the build queue row's own label>` - a suggestion whose only shortage is a queued build.
-const SUGGESTION_BUILD_QUEUE_FORMAT := "%s builders, for %s"
+## A DECLARED BUILD whose builders are short of the item (`buildToe` on the source row).
+const SOURCE_KIND_BUILD := "build"
+## `N builders, for <the build's site>` - a suggestion whose only shortage is a declared build.
+const SUGGESTION_BUILD_FORMAT := "%s builders, for %s"
 ## Its singular, for exactly one builder going without (`1 builder, for Tame Wild Boar`).
-const SUGGESTION_BUILD_QUEUE_ONE_FORMAT := "1 builder, for %s"
-## A pool token (`roadwork` | `builders`) or a labor-row kind (`hunt`, `forage`, `extract`, `scout`,
+const SUGGESTION_BUILD_ONE_FORMAT := "1 builder, for %s"
+## A pool token (`roadwork`) or a labor-row kind (`hunt`, `forage`, `extract`, `scout`,
 ## `warrior`) — the `LaborAssignment` spelling.
 const SOURCE_JOB_KEY := "job"
 const SOURCE_TARGET_X_KEY := "target_x"
@@ -551,11 +547,6 @@ const LEDGER_STOCK_ROW_KEY_FORMAT := "recipe:%s"
 ## on the ledger, and the picker's claims are about ONE row's button.
 const MAKE_BUTTON_META := "crafting_make_button"
 
-# ---- the queue rows under the bench well ---------------------------------------------------------
-## **THE WELL IS THE WORKED ORDER'S ROW** — its title, progress, crew, ✕ and a `made/count` stepper
-## captioned `Made`. **One row per OTHER order** (a skipped head included), each stating what it makes,
-## `made/count` inside its own `− n +`, a `↑` (not on index 0) and a `✕`. The leading status word says
-## which is WAITING (skipped), PAUSED (holding a cut pile) or merely QUEUED.
 const HEAD_COUNT_CAPTION := "Made"
 const ORDER_STATUS_PAUSED := "Paused"
 const ORDER_STATUS_QUEUED := "Queued"
@@ -629,9 +620,6 @@ const SUGGESTION_COMING_UP_TOOLTIP_ONE := "The bench needs about 1 turn to make 
 const SUGGESTION_COMING_UP_META := "crafting_suggestion_coming_up"
 ## The tooltip: one line per source — who, where, how many units short, and what it costs.
 const SUGGESTION_SOURCE_FORMAT := "%s: %s missing, %s without"
-## A MATERIAL suggestion states goods, not people: `2 more Hurdles, for Corral Wild Boar`, and for the head
-## job (the builders' own, no queue row to name) `2 more Hurdles, for the top job`. Its hover lines state
-## the units short and no crew count (`%s: %s short`).
 const SUGGESTION_MATERIAL_FORMAT := "%s more %s, for %s"
 const SUGGESTION_MATERIAL_TOP_JOB := "the top job"
 const SUGGESTION_MATERIAL_SOURCE_FORMAT := "%s: %s short"
@@ -841,8 +829,6 @@ const BENCH_SUB_FONT_SIZE := 12
 ## footnote to the job rather than as the reason it is not moving.
 const BENCH_BLOCKED_FONT_SIZE := 12
 const BENCH_TEACH_FONT_SIZE := 11
-## The queue rows: one font for the name and the stepper face, a smaller one for the status word, and
-## a fixed status column so the names line up whatever the word.
 const QUEUE_ROW_FONT_SIZE := 12
 const ORDER_STATUS_FONT_SIZE := 10
 const ORDER_REASON_FONT_SIZE := 11
@@ -1025,9 +1011,6 @@ const NO_KIT_ORDER := 0
 const KITS_HEAD := "Kits"
 
 ## **THE JOB NOUNS, ONE TABLE** — plural / singular, keyed by the job token a kit names.
-## `hunt`, `forage` and `builders` take their plural from the nouns the compose sheets already speak
-## (`CraftingPanel._kit_job_words`), so the plural here is a fallback for those three and the only
-## spelling for the rest.
 const KIT_JOB_WORDS := {
 	"hunt": {"noun": "hunters", "one": "hunter"},
 	"forage": {"noun": "harvesters", "one": "harvester"},

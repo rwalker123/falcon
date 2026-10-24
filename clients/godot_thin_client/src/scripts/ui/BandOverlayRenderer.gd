@@ -34,14 +34,12 @@ extends RefCounted
 # See draw_band_work_highlights.
 const LABOR_KIND_FORAGE := "forage"
 const LABOR_KIND_HUNT := "hunt"
-# The band-level BUILD pool's row kind (`docs/plan_standing_upkeep.md` §2.5). It works no tile, so it
-# is never a worked source here — it is read for the source badge's *is anybody building this* fork.
-const LABOR_KIND_BUILDERS := "builders"
-# Selected-band RANGE BORDERS: three clean PERIMETER outlines (the outer boundary of each hex
-# disk, traced edge-by-edge — NOT a filled tile-by-tile mesh), so the band's three reaches read
-# apart at a glance: forage (green, ties to the worked-forage fills), hunt (red, ties to the
-# hunted-herd rings), and scout sight (azure, the new "sight" color, kept clear of the slate fog
-# tint). See _draw_range_border.
+# It works no tile, so it is never a worked source here — it is read for the source badge's *is
+# anybody building this* fork. Selected-band RANGE BORDERS: three clean PERIMETER outlines (the
+# outer boundary of each hex disk, traced edge-by-edge — NOT a filled tile-by-tile mesh), so the
+# band's three reaches read apart at a glance: forage (green, ties to the worked-forage fills), hunt
+# (red, ties to the hunted-herd rings), and scout sight (azure, the new "sight" color, kept clear of
+# the slate fog tint). See _draw_range_border.
 const FORAGE_RANGE_OUTLINE := Color(0.46, 0.96, 0.46, 0.85)   # green, tied to FORAGE_WORKED_*
 const FORAGE_RANGE_OUTLINE_WIDTH := 2.0
 const SCOUT_RANGE_OUTLINE := Color(0.32, 0.66, 0.99, 0.85)    # azure "sight", distinct from fog slate
@@ -483,14 +481,6 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 	# summing a second one of its own — see the member's own ⛔.
 	var crew: Dictionary = _source_crew
 	crew.clear()
-	# **AND THE BUILD CREW IS AGGREGATED THE SAME WAY, because "nobody is building this" is a claim
-	# about the SOURCE and not about one band's row.** One band's declaration with no builders is
-	# covered by another band's builders on the same rung, so the badge asks the summed count.
-	#
-	# **THE COUNT IS THE BAND'S `builders` POOL, not a per-source crew** (`docs/plan_standing_upkeep.md`
-	# §2.5): a verb declares and names no hands. Added once per (band × source it works), which is the
-	# set of bands that could hold this source in a queue at all.
-	var builders: Dictionary = {}
 	for unit_variant in _view.units:
 		if not (unit_variant is Dictionary):
 			continue
@@ -529,22 +519,14 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 						# axis is structurally empty and its quarry's badge can only ever show a rung
 						# on OFFER, never one under way (issue #442).
 						var qcenter := _view._hex_center(qcol, qrow, radius, origin)
-						# **THE BADGE IS QUEUED BEFORE THE MARK IS DRAWN, at all four call sites**
-						# (issue #650). The queue is where the BUILD STATE is resolved, and the ring
-						# has to know it — a source with a rung under way draws its ring as a faint
-						# TRACK with the progress arc over it. Resolving the state twice is the one
-						# thing forbidden here, so the mark reads the queue's answer instead.
 						_queue_source_badge(qcenter, qkey, LABOR_KIND_HUNT, qherd,
 							SourceForecast.IMPROVEMENT_NONE, int(crew[qkey]), radius, origin,
-							HUNT_WORKED_COLOR, selected, int(builders.get(qkey, 0)))
+							HUNT_WORKED_COLOR, selected)
 						_draw_worked_mark(qcenter, qkey, HUNT_WORKED_COLOR, selected, radius)
 						_note_if_hidden(qkey, Vector2i(qx, qrow), LABOR_KIND_HUNT, qherd,
 							SourceForecast.IMPROVEMENT_NONE, false)
 			# A party carries no `labor_assignments` of its own; its one source is the quarry above.
 			continue
-		# This band's whole build pool, resolved once and credited to every source it works — the
-		# queue that spends it is the band's, and this renderer has no queue.
-		var band_builders := _builders_pool_of_marker(band)
 		for entry_variant in _labor_assignments_of_marker(band):
 			if not (entry_variant is Dictionary):
 				continue
@@ -560,12 +542,11 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				var tcol := eff_col + _view._wrapped_col_delta(band_col, tx)
 				var fkey := _view.secondary_food_key(tx, trow)
 				crew[fkey] = int(crew.get(fkey, 0)) + int(entry.get("workers", 0))
-				builders[fkey] = int(builders.get(fkey, 0)) + band_builders
 				var fcenter := _view._hex_center(tcol, trow, radius, origin)
 				_queue_source_badge(fcenter, fkey, LABOR_KIND_FORAGE,
 					_view.forage_patch_lookup.get(Vector2i(tx, trow), {}),
 					String(entry.get("improvement", "")), int(crew[fkey]), radius, origin,
-					FORAGE_WORKED_COLOR, selected, int(builders[fkey]))
+					FORAGE_WORKED_COLOR, selected)
 				_draw_worked_mark(fcenter, fkey, FORAGE_WORKED_COLOR, selected, radius)
 				_note_if_hidden(fkey, Vector2i(tx, trow), LABOR_KIND_FORAGE,
 					_view.forage_patch_lookup.get(Vector2i(tx, trow), {}),
@@ -585,11 +566,10 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				var hcol := eff_col + _view._wrapped_col_delta(band_col, hx)
 				var hkey := _view.secondary_herd_key(herd_id)
 				crew[hkey] = int(crew.get(hkey, 0)) + int(entry.get("workers", 0))
-				builders[hkey] = int(builders.get(hkey, 0)) + band_builders
 				var hcenter := _view._hex_center(hcol, hrow, radius, origin)
 				_queue_source_badge(hcenter, hkey, LABOR_KIND_HUNT, herd,
 					String(entry.get("improvement", "")), int(crew[hkey]), radius, origin,
-					HUNT_WORKED_COLOR, selected, int(builders[hkey]))
+					HUNT_WORKED_COLOR, selected)
 				_draw_worked_mark(hcenter, hkey, HUNT_WORKED_COLOR, selected, radius)
 				_note_if_hidden(hkey, Vector2i(hx, hrow), LABOR_KIND_HUNT, herd,
 					String(entry.get("improvement", "")), bool(entry.get("overdraws", false)))
@@ -625,7 +605,7 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 		_queue_source_badge(wcenter, key,
 			HudConst.LABOR_KIND_EXTRACT, {}, SourceForecast.IMPROVEMENT_NONE,
 			int(crew[key]), radius, origin, EXTRACT_WORKED_COLOR,
-			bool(working.get("selected", false)), 0,
+			bool(working.get("selected", false)),
 			held_working_mark(_working_row(wtile, String(working.get("material", ""))),
 				_view.ladder_rung_catalog))
 		_draw_worked_mark(wcenter, key, EXTRACT_WORKED_COLOR,
@@ -687,8 +667,7 @@ func _label_anchor(hex_center: Vector2, key: String, radius: float) -> Vector2:
 ## plate, the ring's progress ARC and the source list's build cell are three faces of one answer, and
 ## the list is drawn at EVERY zoom — a queue that returned before resolving would leave a row with no
 ## countdown on exactly the frames where the map has no plate to read it off either.
-## `builders` is this source's BUILD crew, summed across bands — see `_draw_source_badge` for why a
-## rung under way has to know it.
+## The source's BUILD crew is read off its own row (`builders_staffed`) - a rung under way has to know it.
 ## `hex_center` is the plate's ANCHOR HEX in screen space, passed in rather than derived from a
 ## column here: the food and hunt arms anchor to the BAND's wrap image (`eff_col + delta`, so a
 ## source across the seam draws beside the band that works it) while a working anchors to its own
@@ -699,8 +678,10 @@ func _label_anchor(hex_center: Vector2, key: String, radius: float) -> Vector2:
 ## web, sweep says how far, and a second colour lookup would be free to disagree with the ring itself.
 func _queue_source_badge(hex_center: Vector2, key: String, kind: String, source: Dictionary,
 		improvement: String, crew: int, radius: float, origin: Vector2,
-		ring_color: Color, selected: bool, builders: int = 0, held: Dictionary = {}) -> void:
+		ring_color: Color, selected: bool, held: Dictionary = {}) -> void:
 	var slot := _view.secondary_slot_of(key)
+	# The builders the sim staffed on THIS source's build (the site's own crew).
+	var builders := SourceForecast.build_crew_staffed(source, HudComposeVocab.BARE_FORECAST_PREFIX)
 	# BUILDING TAKES PRECEDENCE, and the two are mutually exclusive anyway: `next_rung_ready` excludes
 	# the verb already in flight, and `rung_in_progress` answers only for that verb.
 	var ready: Dictionary = {}
@@ -709,13 +690,6 @@ func _queue_source_badge(hex_center: Vector2, key: String, kind: String, source:
 	# off the meter `rung_in_progress` has just resolved, so the plate's warning and its glyph provably
 	# describe the same verb and this renderer resolves nothing about the ladder for itself.
 	#
-	# **ONE FUNCTION ANSWERS IT, AND THAT IS THE POINT** (`docs/plan_standing_upkeep.md` §4.6a). The
-	# two halves used to be composed here — `unstaffed_build_of` for *declared and never started*,
-	# `build_is_losing` for the wire's own rot verdict — and the WORK BOARD, which had no such fork at
-	# all, went on printing a confident percent whatever the staffing. `SourceForecast.build_is_stalled`
-	# is now the single producer both surfaces call, so the map cannot show an alert the Work tab does
-	# not. It is asked with the BUILDERS because `BUILD_METER_HOLDS` covers both a crew treading water
-	# and a build parked on purpose — and only the first is news.
 	var stalled := false
 	if not source.is_empty():
 		building = RungGates.rung_in_progress(kind, source, improvement)
@@ -761,7 +735,7 @@ func _queue_source_badge(hex_center: Vector2, key: String, kind: String, source:
 		"build_text": DetailFormat.build_countdown_value(
 			SourceForecast.build_turns_remaining(source, HudComposeVocab.BARE_FORECAST_PREFIX),
 			builders, HudFormat.progress_percent(progress),
-			SourceForecast.build_queue_position(source, HudComposeVocab.BARE_FORECAST_PREFIX))
+			SourceForecast.build_is_declared(source, HudComposeVocab.BARE_FORECAST_PREFIX))
 			if not building.is_empty() else "",
 	})
 
@@ -1667,17 +1641,6 @@ func _selected_player_band() -> Dictionary:
 func _labor_assignments_of_marker(band: Dictionary) -> Array:
 	var v: Variant = band.get("labor_assignments", [])
 	return v if v is Array else []
-
-## **THIS BAND'S `builders` POOL** (`docs/plan_standing_upkeep.md` §2.5) — an ordinary standing-role
-## row of `labor_assignments`, like `scout`. It is what the source badge asks now that a verb names no
-## crew: the same LOCAL-copy rule as the reader above, for the same reason.
-func _builders_pool_of_marker(band: Dictionary) -> int:
-	for entry_variant in _labor_assignments_of_marker(band):
-		if entry_variant is Dictionary \
-				and String((entry_variant as Dictionary).get("kind", "")).strip_edges().to_lower() \
-					== LABOR_KIND_BUILDERS:
-			return maxi(int((entry_variant as Dictionary).get("workers", 0)), 0)
-	return 0
 
 ## True if (col, row) is on-map AND within hex distance `r_range` of the band — the membership test
 ## for a range disk. Both coords share the band's effective column frame (see _band_effective_col),

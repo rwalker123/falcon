@@ -441,8 +441,23 @@ fn band_food_flow(labor: Option<&LaborAllocation>) -> Option<FoodFlow> {
     if labor.last_yields.is_empty() && !labor.assignments.is_empty() {
         return None;
     }
+    // A need row (a follow-the-herd hunt) holds no standing workers and sends a crew only when
+    // meat runs low, so its `realized` is 0 on every waiting turn. Growth's trend reads it at the
+    // herd's long-run `sustainable` rate instead; every other row contributes `realized`.
+    let income: f32 = labor
+        .assignments
+        .iter()
+        .zip(&labor.last_yields)
+        .map(|(row, y)| {
+            if row.is_need_row() {
+                y.sustainable
+            } else {
+                y.realized
+            }
+        })
+        .sum();
     Some(FoodFlow {
-        steady_income: scalar_from_f32(labor.last_yields.iter().map(|y| y.realized).sum::<f32>()),
+        steady_income: scalar_from_f32(income),
     })
 }
 
@@ -2966,8 +2981,7 @@ mod food_flow_tests {
             last_roadwork_supplied: 0.0,
             last_keeping_issued: Default::default(),
             last_pool_toe: Vec::new(),
-            last_pool_toe_head: None,
-            last_queued_build_toe: Vec::new(),
+            last_build_toe: Vec::new(),
             last_pool_crew: Vec::new(),
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
@@ -2980,7 +2994,8 @@ mod food_flow_tests {
             last_fodder_transfers: Default::default(),
             last_transfer_crossings: Vec::new(),
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
-            build_queue: Vec::new(),
+            builds: Vec::new(),
+            build_crews: Vec::new(),
             homeward: Vec::new(),
         };
         assert!(
@@ -3022,8 +3037,7 @@ mod food_flow_tests {
             last_roadwork_supplied: 0.0,
             last_keeping_issued: Default::default(),
             last_pool_toe: Vec::new(),
-            last_pool_toe_head: None,
-            last_queued_build_toe: Vec::new(),
+            last_build_toe: Vec::new(),
             last_pool_crew: Vec::new(),
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
@@ -3036,13 +3050,53 @@ mod food_flow_tests {
             last_fodder_transfers: Default::default(),
             last_transfer_crossings: Vec::new(),
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
-            build_queue: Vec::new(),
+            builds: Vec::new(),
+            build_crews: Vec::new(),
             homeward: Vec::new(),
         };
         let flow = band_food_flow(Some(&labor)).expect("projected telemetry is real data");
         assert!(
             (flow.steady_income.to_f32() - 5.0).abs() < 1e-4,
             "should sum realized (2+3), not actual (12+0): {}",
+            flow.steady_income.to_f32()
+        );
+    }
+
+    /// A need row (follow-the-herd hunt) contributes its `sustainable`, not its lumpy `realized`
+    /// (0 on a waiting turn); an ordinary row still contributes `realized`.
+    #[test]
+    fn need_row_contributes_sustainable_to_steady_income() {
+        let need = LaborAssignment {
+            target: LaborTarget::Hunt {
+                fauna_id: "herd".to_string(),
+                floor: 0.5,
+                move_with_herd: true,
+            },
+            workers: 0,
+            max_workers: None,
+            ..forage_assignment()
+        };
+        assert!(need.is_need_row());
+        let mut labor = LaborAllocation {
+            assignments: vec![need, forage_assignment()],
+            ..Default::default()
+        };
+        labor.last_yields = vec![
+            SourceYield {
+                realized: 0.0,
+                sustainable: 2.88,
+                ..SourceYield::ZERO
+            },
+            SourceYield {
+                realized: 3.0,
+                sustainable: 9.0,
+                ..SourceYield::ZERO
+            },
+        ];
+        let flow = band_food_flow(Some(&labor)).expect("telemetry present");
+        assert!(
+            (flow.steady_income.to_f32() - 5.88).abs() < 1e-4,
+            "need row at sustainable (2.88) + ordinary row at realized (3): {}",
             flow.steady_income.to_f32()
         );
     }

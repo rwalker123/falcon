@@ -430,13 +430,13 @@ fn two_quarries_and_one_chisel(ranks: [SourcePriority; 2]) -> [bool; 2] {
     })
 }
 
-/// ⛔ **A ROAD BUILD'S BUILD MARK RANKS ITS BUILDERS' TOOL CLAIM** (`docs/plan_site_crews.md`
-/// §2.4). A road has no crew, so its only mark is the Build mark on a queued road build — and that
-/// mark is what the builders' claim on the paving's stone-dressing gear settles at. Against a
-/// `Normal` quarry crew reaching for the same single chisel: a `High` paving takes it and leaves
-/// the quarry keeping tool-short; a `Low` paving loses it and the quarry keeps armed.
+/// ⛔ **A ROAD BUILD RANKS AT NORMAL, AND THE QUARRY ROW'S PRIORITY DECIDES THE ONE CHISEL**
+/// (`docs/plan_labor_at_scale.md`: a build has no mark of its own). A road has no crew row, so its
+/// build's builders claim the paving's stone-dressing gear at the default rank. Against a quarry crew
+/// reaching for the same single chisel: a `High` quarry takes it and leaves the paving bare; a `Low`
+/// quarry loses it to the paving and keeps tool-short.
 #[test]
-fn a_road_builds_mark_ranks_its_builders_tool_claim() {
+fn a_road_build_ranks_normal_against_the_quarry_rows_priority() {
     /// The one chisel, armed.
     const ONE_CHISEL: f32 = 1.0;
     /// Nothing armed.
@@ -444,14 +444,14 @@ fn a_road_builds_mark_ranks_its_builders_tool_claim() {
     let high = a_queued_paving_and_a_quarry(SourcePriority::High);
     let low = a_queued_paving_and_a_quarry(SourcePriority::Low);
     assert!(
-        high.builders_armed == ONE_CHISEL && high.quarry_short,
-        "a High paving wins the chisel from the Normal quarry: builders armed {}, quarry short {}",
+        high.builders_armed == NO_CHISEL && !high.quarry_short,
+        "a High quarry wins the chisel from the Normal paving: builders armed {}, quarry short {}",
         high.builders_armed,
         high.quarry_short
     );
     assert!(
-        low.builders_armed == NO_CHISEL && !low.quarry_short,
-        "a Low paving loses it to the Normal quarry: builders armed {}, quarry short {}",
+        low.builders_armed == ONE_CHISEL && low.quarry_short,
+        "a Low quarry loses it to the Normal paving: builders armed {}, quarry short {}",
         low.builders_armed,
         low.quarry_short
     );
@@ -460,13 +460,15 @@ fn a_road_builds_mark_ranks_its_builders_tool_claim() {
 /// **A band paving a dirt road it keeps, with a quarry crew beside it and ONE chisel** — the
 /// road's queued `pave` at the head of the queue, marked `build_mark`. Returns whether the quarry
 /// kept tool-short and how much gear the builders were armed with.
-fn a_queued_paving_and_a_quarry(build_mark: SourcePriority) -> PavingTurn {
+fn a_queued_paving_and_a_quarry(quarry_priority: SourcePriority) -> PavingTurn {
     const ONE_CHISEL: u32 = 1;
     const A_TAKE_CREW: u32 = 1;
     const A_QUARRY_KEEPING_CREW: u32 = 3;
     const BUILDERS: u32 = 2;
     /// Kept from next door — the paving's cost is not what is under test.
     const NEXT_DOOR: f32 = 1.0;
+    /// Stone enough to pave a tile outright, so the store never stalls the paving.
+    const PAVING_STONE: f32 = 100.0;
     let mut app = spawn_world();
     let (band, faction, band_id, home) = first_band(&mut app);
     // A `pave` is only raised by a faction that knows paving.
@@ -502,36 +504,45 @@ fn a_queued_paving_and_a_quarry(build_mark: SourcePriority) -> PavingTurn {
             },
             workers: A_TAKE_CREW + A_QUARRY_KEEPING_CREW,
             kit: None,
-            priority: SourcePriority::Normal,
-        });
-        allocation.assignments.push(core_sim::LaborAssignment {
-            party: None,
-            muster_crew: 0,
-            planned_crew: 0,
-            max_workers: Some(BUILDERS),
-            staffing: Default::default(),
-            target: LaborTarget::Builders,
-            workers: BUILDERS,
-            kit: None,
-            priority: SourcePriority::default(),
+            priority: quarry_priority,
         });
         assert!(
-            allocation.enqueue_build(
+            allocation.declare_build(
                 core_sim::BuildSource::Road(road_tile),
                 core_sim::BuildJob::Climb(shipped::route_paved_road()),
             ),
             "fixture: the band keeps the road, so its paving is enrolled"
         );
-        assert!(
-            allocation.set_build_priority(&core_sim::BuildSource::Road(road_tile), build_mark),
-            "fixture: the queued paving takes its Build mark"
-        );
         let staffed: u32 = allocation.assignments.iter().map(|row| row.workers).sum();
         app.world.entity_mut(band).insert(allocation);
         staffed
     };
-    size_the_band(&mut app, band, staffed);
+    size_the_band(&mut app, band, staffed + BUILDERS);
     stock_exactly(&mut app, band, &[(STONE_DRESSING, ONE_CHISEL)]);
+    // A paving that the store cannot feed holds no builders, so the paving's stone is stocked.
+    {
+        let materials = core_sim::MaterialsConfig::builtin();
+        let characteristics: std::collections::BTreeMap<String, f32> = materials
+            .material("stone")
+            .expect("the shipped roster carries stone")
+            .characteristics
+            .iter()
+            .map(|axis| (axis.clone(), core_sim::OPENING_MATERIAL_READING))
+            .collect();
+        let key = materials
+            .band_key("stone", &characteristics)
+            .expect("the shipped roster rates stone");
+        app.world
+            .get_mut::<PopulationCohort>(band)
+            .expect("the fixture band has a cohort")
+            .stores
+            .deposit_material(
+                "stone",
+                key,
+                core_sim::scalar_from_f32(PAVING_STONE),
+                &characteristics,
+            );
+    }
 
     app.update();
 
@@ -539,9 +550,9 @@ fn a_queued_paving_and_a_quarry(build_mark: SourcePriority) -> PavingTurn {
         .world
         .get::<LaborAllocation>(band)
         .expect("the fixture band holds an allocation")
-        .last_pool_toe
+        .last_build_toe
         .iter()
-        .filter(|line| line.pool == core_sim::KitJob::Builders && line.item == STONE_DRESSING)
+        .filter(|line| line.item == STONE_DRESSING)
         .map(|line| line.filled)
         .sum();
     let quarry_short = app

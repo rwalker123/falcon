@@ -231,6 +231,10 @@ fn deposit_row(
     // floor on and `deposit_runway` forks the readout on. The field published below scales it by the
     // rung; these are two different questions off one number, so it is read once.
     let regrowth_rate = tile_deposit_regrowth(config, &source.material, ground);
+    let crew = build_kits.crew_of(&crate::components::BuildSource::Deposit {
+        tile,
+        material: source.material.clone(),
+    });
     sim_runtime::DepositState {
         tile_x: tile.x,
         tile_y: tile.y,
@@ -312,6 +316,10 @@ fn deposit_row(
         // decay pass on the one-turn cycle, so it describes the turn just resolved.
         build_blocked_reason: source.build_blocked_reason.key().to_string(),
         is_queued: build_kits.deposit_is_queued(tile, &source.material),
+        builders_staffed: crew.staffed,
+        builders_kitted: crew.kitted,
+        builders_cap: crew.cap,
+        build_toe: crew.toe,
         // **WHAT THE WORKING'S OWN `extract` CREW SPENT KEEPING IT THIS TURN**
         // (`docs/plan_site_crews.md` §2.5) — stamped by the labour pass beside `upkeep_supplied`.
         upkeep_hands: source.upkeep_hands,

@@ -422,6 +422,24 @@ pub struct HerdTelemetryState {
     /// Appended last (append-only).
     #[serde(default)]
     pub upkeep_toe: Vec<crate::state::population::KitToeLineState>,
+    /// **The builders on this source's declared build this turn**, the bare-handed and the kitted
+    /// together (`docs/plan_labor_at_scale.md`, "Builds join the site's crew"). The viewer's own
+    /// bands only. Appended last (append-only).
+    #[serde(default)]
+    pub builders_staffed: u32,
+    /// Of [`Self::builders_staffed`], the ones holding the build kit the rung uses (every builder
+    /// when the rung asks for no tool).
+    #[serde(default)]
+    pub builders_kitted: u32,
+    /// **The most builders the build could take this turn** — the rung's `maxBuilders` cut by the
+    /// room the tile left. `0` where no build is declared.
+    #[serde(default)]
+    pub builders_cap: u32,
+    /// **The tools the build's builders asked for and what the settlement gave them**, one
+    /// [`crate::state::population::PoolToeLineState`] per tool (`pool` reads `"build"`). Empty where
+    /// the rung asks for no tool.
+    #[serde(default)]
+    pub build_toe: Vec<crate::state::population::PoolToeLineState>,
     /// **Is there anything here to neglect?** `false` for a **wild** herd — nobody's to keep, so it
     /// never sheds and [`Self::neglect_grace_remaining`] means nothing. Read this first, exactly as
     /// [`ForagePatchState::owner`]'s `has_owner` companion is read first.
@@ -576,7 +594,7 @@ pub struct HerdTelemetryState {
     /// **IT IS A CHAINED DATE** (`docs/plan_standing_upkeep.md` §4.6b). The band's whole `builders`
     /// pool goes on the **head** of its queue until that entry's meter fills, then on the next — so
     /// a count here is *everything above this entry plus its own span at the full pool*, and
-    /// [`Self::build_queue_position`] beside it is what makes that number explicable. A source with
+    /// A source with
     /// nothing queued is quoted at the **back of the line**, which is where a newly queued build
     /// would actually go.
     ///
@@ -686,33 +704,6 @@ pub struct HerdTelemetryState {
     /// an animal build. Appended (append-only).
     #[serde(default)]
     pub meter_rot_per_turn: f32,
-    /// **WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, and
-    /// [`crate::NOT_IN_ANY_BUILD_QUEUE`] (`-1`) when no band has queued it
-    /// (`docs/plan_standing_upkeep.md` §4.6b).
-    ///
-    /// The whole `builders` pool goes on the **head** of a band's queue until that entry's meter
-    /// fills, then on the next — so [`Self::build_turns_remaining`] beside it is a **chained** date:
-    /// everything above this entry plus its own span at the full pool. **Without this field that
-    /// date is an exact number with no explanation**, and the player cannot tell forty turns of work
-    /// from eight turns of work behind four other jobs.
-    ///
-    /// **It rides the same winner** as [`Self::build_turns_remaining`] and
-    /// [`Self::build_work_from_gear`]: several bands may work one source, the sooner estimate wins,
-    /// and all three come from that band. Appended (append-only).
-    ///
-    /// **⛔ IT IS NOT THE RANK, and no band's queue may be ordered on it**
-    /// (`docs/plan_standing_upkeep.md` §4.9 item 9a). It is a **source-addressed readout** of the
-    /// *winning* band's place in the *winning* band's line — the map annotation, the tile card and
-    /// the compose sheet all ask about the source and get the best answer anyone has. It is not an
-    /// answer about any *particular* band, because the winner is routinely somebody else: a band's
-    /// queue `[X, Y, Z]` sorted on this field came out `[Y, X, Z]` when a second band also held `Y`
-    /// and had the sooner estimate, so the drag gesture took its insert index off a list that was
-    /// not that band's.
-    ///
-    /// **[`crate::state::population::PopulationCohortState::build_queue`] is the rank** — the band's
-    /// own entries in the band's own order, position being the vector index.
-    #[serde(default = "not_in_any_build_queue")]
-    pub build_queue_position: i32,
     /// **WHY THE BAND'S BUILDERS ARE STUCK ON THIS SOURCE** — `""` whenever this source is not a
     /// blocked build, else a short lowercase cause key (`knowledge`, `escapement`, `no_crop`,
     /// `species_ceiling`, `rung_below`, `owned_by_other`, `site`, `ring_idle`, `undeclared`,
@@ -957,6 +948,10 @@ impl Default for HerdTelemetryState {
             upkeep_workers_at_completion: 0,
             upkeep_next_worker_turn: NO_NEXT_KEEPING_WORKER,
             upkeep_toe: Vec::new(),
+            builders_staffed: 0,
+            builders_kitted: 0,
+            builders_cap: 0,
+            build_toe: Vec::new(),
             has_neglect_grace: false,
             neglect_grace_remaining: 0,
             provisions_per_biomass: 0.0,
@@ -984,7 +979,6 @@ impl Default for HerdTelemetryState {
             build_work_per_worker_turn: 0.0,
             // A herd nothing has described quotes no rung, so neither rate is owed yet.
             meter_rot_per_turn: 0.0,
-            build_queue_position: crate::NOT_IN_ANY_BUILD_QUEUE,
             build_blocked_reason: String::new(),
             build_destination_rung: String::new(),
             build_legs: Vec::new(),
@@ -1211,6 +1205,24 @@ pub struct ForagePatchState {
     /// Appended last (append-only).
     #[serde(default)]
     pub upkeep_toe: Vec<crate::state::population::KitToeLineState>,
+    /// **The builders on this source's declared build this turn**, the bare-handed and the kitted
+    /// together (`docs/plan_labor_at_scale.md`, "Builds join the site's crew"). The viewer's own
+    /// bands only. Appended last (append-only).
+    #[serde(default)]
+    pub builders_staffed: u32,
+    /// Of [`Self::builders_staffed`], the ones holding the build kit the rung uses (every builder
+    /// when the rung asks for no tool).
+    #[serde(default)]
+    pub builders_kitted: u32,
+    /// **The most builders the build could take this turn** — the rung's `maxBuilders` cut by the
+    /// room the tile left. `0` where no build is declared.
+    #[serde(default)]
+    pub builders_cap: u32,
+    /// **The tools the build's builders asked for and what the settlement gave them**, one
+    /// [`crate::state::population::PoolToeLineState`] per tool (`pool` reads `"build"`). Empty where
+    /// the rung asks for no tool.
+    #[serde(default)]
+    pub build_toe: Vec<crate::state::population::PoolToeLineState>,
     /// **Is there anything here to neglect?** `false` for a wild patch (both improvement meters at
     /// zero), which is most of them. Read this before [`Self::neglect_grace_remaining`].
     #[serde(default)]
@@ -1307,7 +1319,7 @@ pub struct ForagePatchState {
     /// **IT IS A CHAINED DATE** (`docs/plan_standing_upkeep.md` §4.6b). The band's whole `builders`
     /// pool goes on the **head** of its queue until that entry's meter fills, then on the next — so
     /// a count here is *everything above this entry plus its own span at the full pool*, and
-    /// [`Self::build_queue_position`] beside it is what makes that number explicable. A source with
+    /// A source with
     /// nothing queued is quoted at the **back of the line**, which is where a newly queued build
     /// would actually go.
     ///
@@ -1433,33 +1445,6 @@ pub struct ForagePatchState {
     /// Appended (append-only).
     #[serde(default)]
     pub meter_rot_per_turn: f32,
-    /// **WHERE THIS PATCH SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, and
-    /// [`crate::NOT_IN_ANY_BUILD_QUEUE`] (`-1`) when no band has queued it
-    /// (`docs/plan_standing_upkeep.md` §4.6b).
-    ///
-    /// The whole `builders` pool goes on the **head** of a band's queue until that entry's meter
-    /// fills, then on the next — so [`Self::build_turns_remaining`] beside it is a **chained** date:
-    /// everything above this entry plus its own span at the full pool. **Without this field that
-    /// date is an exact number with no explanation**, and the player cannot tell forty turns of work
-    /// from eight turns of work behind four other jobs.
-    ///
-    /// **It rides the same winner** as [`Self::build_turns_remaining`] and
-    /// [`Self::build_work_from_gear`]: several bands may work one source, the sooner estimate wins,
-    /// and all three come from that band. Appended (append-only).
-    ///
-    /// **⛔ IT IS NOT THE RANK, and no band's queue may be ordered on it**
-    /// (`docs/plan_standing_upkeep.md` §4.9 item 9a). It is a **source-addressed readout** of the
-    /// *winning* band's place in the *winning* band's line — the map annotation, the tile card and
-    /// the compose sheet all ask about the source and get the best answer anyone has. It is not an
-    /// answer about any *particular* band, because the winner is routinely somebody else: a band's
-    /// queue `[X, Y, Z]` sorted on this field came out `[Y, X, Z]` when a second band also held `Y`
-    /// and had the sooner estimate, so the drag gesture took its insert index off a list that was
-    /// not that band's.
-    ///
-    /// **[`crate::state::population::PopulationCohortState::build_queue`] is the rank** — the band's
-    /// own entries in the band's own order, position being the vector index.
-    #[serde(default = "not_in_any_build_queue")]
-    pub build_queue_position: i32,
     /// **WHY THE BAND'S BUILDERS ARE STUCK ON THIS SOURCE** — `""` whenever this source is not a
     /// blocked build, else a short lowercase cause key (`knowledge`, `escapement`, `no_crop`,
     /// `species_ceiling`, `rung_below`, `owned_by_other`, `site`, `ring_idle`, `undeclared`,
@@ -1775,6 +1760,24 @@ pub struct DepositState {
     /// Appended last (append-only).
     #[serde(default)]
     pub upkeep_toe: Vec<crate::state::population::KitToeLineState>,
+    /// **The builders on this source's declared build this turn**, the bare-handed and the kitted
+    /// together (`docs/plan_labor_at_scale.md`, "Builds join the site's crew"). The viewer's own
+    /// bands only. Appended last (append-only).
+    #[serde(default)]
+    pub builders_staffed: u32,
+    /// Of [`Self::builders_staffed`], the ones holding the build kit the rung uses (every builder
+    /// when the rung asks for no tool).
+    #[serde(default)]
+    pub builders_kitted: u32,
+    /// **The most builders the build could take this turn** — the rung's `maxBuilders` cut by the
+    /// room the tile left. `0` where no build is declared.
+    #[serde(default)]
+    pub builders_cap: u32,
+    /// **The tools the build's builders asked for and what the settlement gave them**, one
+    /// [`crate::state::population::PoolToeLineState`] per tool (`pool` reads `"build"`). Empty where
+    /// the rung asks for no tool.
+    #[serde(default)]
+    pub build_toe: Vec<crate::state::population::PoolToeLineState>,
     /// `false` = **nothing at risk here** (a working on either free floor, which declares no
     /// upkeep). Read this before the countdown beside it.
     pub has_neglect_grace: bool,
@@ -1862,6 +1865,10 @@ impl Default for DepositState {
             upkeep_workers_at_completion: 0,
             upkeep_next_worker_turn: NO_NEXT_KEEPING_WORKER,
             upkeep_toe: Vec::new(),
+            builders_staffed: 0,
+            builders_kitted: 0,
+            builders_cap: 0,
+            build_toe: Vec::new(),
             has_neglect_grace: false,
             neglect_grace_remaining: 0,
             // Same rule one field over: `0` renders as a finished build.
@@ -1913,14 +1920,6 @@ impl Default for BuildLegState {
 /// absent value reads as *"no estimate"* rather than as a build finishing this turn.
 fn no_build_turns_estimate() -> i32 {
     crate::NO_BUILD_TURNS_ESTIMATE
-}
-
-/// The serde default of `build_queue_position` — [`crate::NOT_IN_ANY_BUILD_QUEUE`], because a source
-/// nobody has described is in nobody's queue. It is named rather than left to a bare
-/// `#[serde(default)]`, which would answer `0` — the **head** of the queue, the
-/// reassuring-direction wrong answer and one a client would render as *"next up"*.
-fn not_in_any_build_queue() -> i32 {
-    crate::NOT_IN_ANY_BUILD_QUEUE
 }
 
 /// **One material a commitment would pay, and how much of it per turn** — a row of
@@ -2304,6 +2303,10 @@ pub struct LadderRungState {
     /// Work units to reach the rung, before per-source scaling.
     #[serde(default)]
     pub work_cost: f32,
+    /// **How many hands can build this rung at once** (`docs/plan_labor_at_scale.md`) - the rung's
+    /// `build.max_builders`; `0` on a rung with nothing to build. Appended last (append-only).
+    #[serde(default)]
+    pub max_builders: u32,
     /// Work units per turn a source at the rung owes its keeper, before per-source load.
     #[serde(default)]
     pub upkeep_work_per_turn: f32,
@@ -2389,6 +2392,7 @@ impl Default for LadderRungState {
             earns_knowledge: String::new(),
             requires_rung: String::new(),
             work_cost: 0.0,
+            max_builders: 0,
             upkeep_work_per_turn: 0.0,
             build_material_cost: 0.0,
             build_material_id: String::new(),

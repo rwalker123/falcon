@@ -186,7 +186,7 @@ enum GearHeld {
 /// what [`GearHeld::APartysWorth`] arms (so the other arm is the linear regime). It is deliberately
 /// **not** [`KEEPERS`]: a build crew that happened to equal the take crew would let a form reading
 /// the wrong one of the two pass.
-const THE_BUILD_CREW: u32 = 3;
+const THE_BUILD_CREW: u32 = 2;
 // **The gear regimes are what fix it**, per the doc above: it must out-number what `OneSet` arms and
 // not out-number what `APartysWorth` does, and it must differ from [`KEEPERS`]. It carried a second
 // reason for one slice — *"three, not two, because the maintenance rate is a tax on building and two
@@ -334,20 +334,9 @@ fn spawn_keepers_of(
                     // build's gear is read off the queue ENTRY below (§4.7a ②). The published turns
                     // estimate and the gear stamp are both quoted at the pool, so the two have to
                     // agree for a closed-form check to mean anything.
-                    LaborAssignment {
-                        party: None,
-                        muster_crew: 0,
-                        planned_crew: 0,
-                        max_workers: Some(builders),
-                        staffing: Default::default(),
-                        target: LaborTarget::Builders,
-                        workers: builders,
-                        kit: None,
-                        priority: SourcePriority::default(),
-                    },
                 ],
-                build_queue: improvement
-                    .map(|declared| core_sim::BuildQueueEntry {
+                builds: improvement
+                    .map(|declared| core_sim::BuildDeclaration {
                         source: core_sim::BuildSource::Herd(fauna_id.to_string()),
                         declared: core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(
                             declared,
@@ -360,7 +349,6 @@ fn spawn_keepers_of(
                         // the regime the kit row's `min(crew, saturating) × worth` describes; at a
                         // tie the keeping would hold it and the quote would be about a stock the
                         // builders never saw.
-                        priority: core_sim::SourcePriority::High,
                     })
                     .into_iter()
                     .collect(),
@@ -562,6 +550,18 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
         // The build's own crew, smaller than the party beside it — the gear stamp reads the
         // BUILD's crew now, so this is the count both halves of the form are judged at.
         let keepers = spawn_taming_keepers(&mut app, pos, &id, gear, THE_BUILD_CREW);
+        {
+            // **THE HERD'S OWN ROW IS HELD AT NOBODY**: its keeping would claim the handling gear
+            // first (keeping is served before building within a tier), and the kit row's terms
+            // describe the LEDGER, not a settlement the keeping has already drawn on. With no keeping
+            // hand the build is the only claimant, which is the regime the closed form describes.
+            let mut allocation = app
+                .world
+                .get_mut::<LaborAllocation>(keepers)
+                .expect("the keeper band keeps its allocation");
+            allocation.assignments[0].workers = 0;
+            allocation.assignments[0].max_workers = Some(0);
+        }
         for _ in 0..TURNS_TO_REACH_MID_BUILD {
             // **Stage order, and `advance_husbandry` is load-bearing here.** It is what clears the
             // per-turn keeping scratch (`Herd::upkeep_supplied` / `upkeep_demanded`), so a chain
@@ -612,7 +612,7 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
             "fixture: the handling kit must publish a build contribution and a crew above zero, got \
              per-worker {build_work_per_worker} crew {saturating_crew}"
         );
-        if saturating_crew < THE_BUILD_CREW {
+        if saturating_crew < herd.builders_staffed {
             saw_saturated = true;
         } else {
             saw_linear = true;
@@ -620,7 +620,9 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
 
         // (1) **THE GEAR TERM** — the two kit-row terms, evaluated at the committed crew, must equal
         // what the sim stamped on the source from that same crew's coverage.
-        let staffed = THE_BUILD_CREW;
+        // The crew the sim staffed on the build, published on the source's own row.
+        let staffed = herd.builders_staffed;
+        assert!(staffed > 0, "fixture: the build must be staffed");
         let gear = client_gear_term(build_work_per_worker, saturating_crew, staffed);
         assert!(
             (gear - herd.build_work_from_gear).abs() < 1e-3,
@@ -743,8 +745,8 @@ fn the_gear_offset_scales_with_the_builders_pool_and_ignores_the_take_crew() {
     );
 
     // (1) Two builders deliver more gear work than one — up to the point the gear runs out.
-    let two_builders = gear_stamped_for(GearHeld::APartysWorth, KEEPERS, TWO_BUILDERS);
-    let one_builder = gear_stamped_for(GearHeld::APartysWorth, KEEPERS, SOLE_BUILDER);
+    let two_builders = gear_stamped_for(GearHeld::APartysWorth, NO_TAKE, TWO_BUILDERS);
+    let one_builder = gear_stamped_for(GearHeld::APartysWorth, NO_TAKE, SOLE_BUILDER);
     assert!(
         one_builder > NO_GEAR_AT_ALL,
         "**LIVENESS**: the pool's own kit must deliver something. A `build_work` item in a \
@@ -759,8 +761,8 @@ fn the_gear_offset_scales_with_the_builders_pool_and_ignores_the_take_crew() {
     // (2) …and saturates: with one set of gear between them, a second builder finds nothing to
     // pick up, so the offset is the same as one builder's.
     assert_eq!(
-        gear_stamped_for(GearHeld::OneSet, KEEPERS, TWO_BUILDERS),
-        gear_stamped_for(GearHeld::OneSet, KEEPERS, SOLE_BUILDER),
+        gear_stamped_for(GearHeld::OneSet, NO_TAKE, TWO_BUILDERS),
+        gear_stamped_for(GearHeld::OneSet, NO_TAKE, SOLE_BUILDER),
         "the saturating prefix binds against the BUILD crew — an unarmed builder delivers nothing \
          further"
     );
@@ -777,6 +779,10 @@ fn the_gear_offset_scales_with_the_builders_pool_and_ignores_the_take_crew() {
 /// **One builder** — the smallest crew a build can have, and the one that makes reading the *take*
 /// crew instead most obviously wrong.
 const SOLE_BUILDER: u32 = 1;
+/// **No hands on the take row** - the idle hands are then exactly the builders the fixture names.
+/// A build takes the hands the site's row leaves, so a fixture that wants a build crew of N states
+/// it as N hands beyond a row held at nothing.
+const NO_TAKE: u32 = 0;
 /// Two, so "scales with the build crew" is a comparison rather than a single reading.
 const TWO_BUILDERS: u32 = 2;
 /// What a crew carrying nothing that helps takes off a job — `intensification::NO_BUILD_GEAR`.
@@ -794,6 +800,9 @@ fn gear_stamped_for(gear: GearHeld, take: u32, builders: u32) -> f32 {
             .expect("the keeper band keeps its allocation");
         // Row 0 is the worked source; the `builders` row beside it carries the pool and its kit.
         allocation.assignments[0].workers = take;
+        // The sim re-staffs the row from its Max every turn, so the take is stated there too: a
+        // build's crew is whatever hands the row and the keeping leave, up to the rung's cap.
+        allocation.assignments[0].max_workers = Some(take);
     }
     // The band has to afford both crews, or `normalize` trims the build away and the arm measures
     // a job nobody is doing (`docs/plan_standing_upkeep.md` §2.2).
@@ -853,7 +862,7 @@ fn set_improvement(app: &mut App, band: bevy::prelude::Entity, improvement: Verb
     // **A verb DECLARES; it does not staff** (`docs/plan_standing_upkeep.md` §2.5) — completion
     // retires the previous entry, so declaring the next rung is the whole of what `corral` does.
     // The `builders` row the fixture spawned is untouched and simply moves to the new head.
-    assert!(allocation.enqueue_build(
+    assert!(allocation.declare_build(
         core_sim::BuildSource::Herd(fauna_id),
         core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(improvement)),
     ));
@@ -1220,14 +1229,22 @@ fn the_wire_publishes_the_whole_job_and_a_geared_pool_that_finishes_it_sooner() 
         // **THE JOB IS THE WHOLE JOB, WHATEVER THE POOL CARRIES** — the invariant this arm was
         // re-aimed onto (§4.8). The published `tameWorkCost` is the rung's own price times the
         // species' multiplier, and no term of the crew's kit appears in it.
+        // A declared build is quoted at the crew the sim staffed on it; a source with none is
+        // quoted at the one builder a projection assumes.
+        const PROJECTION_CREW: u32 = 1;
+        let crew = if herd.builders_staffed > 0 {
+            herd.builders_staffed
+        } else {
+            PROJECTION_CREW
+        };
         let gear = client_gear_term(
             tiers.build_work_per_worker,
             tiers.build_work_saturating_crew,
-            KEEPERS,
+            crew,
         );
         assert!(
             gear > 0.0,
-            "fixture: {KEEPERS} keepers must actually be carrying handling gear, or both halves of \
+            "fixture: {crew} builders must actually be carrying handling gear, or both halves of \
              the claim are vacuous"
         );
         assert!(
@@ -1246,7 +1263,7 @@ fn the_wire_publishes_the_whole_job_and_a_geared_pool_that_finishes_it_sooner() 
             tiers.build_work_per_worker,
             tiers.build_work_saturating_crew,
             herd.build_work_per_worker_turn,
-            KEEPERS,
+            crew,
             herd.meter_rot_per_turn,
         )
         .expect("a staffed crew has an estimate");
@@ -1256,7 +1273,7 @@ fn the_wire_publishes_the_whole_job_and_a_geared_pool_that_finishes_it_sooner() 
             NO_GEAR_PER_WORKER,
             tiers.build_work_saturating_crew,
             herd.build_work_per_worker_turn,
-            KEEPERS,
+            crew,
             herd.meter_rot_per_turn,
         )
         .expect("a staffed bare crew has an estimate");
@@ -1396,7 +1413,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                 current_tile: tile,
                 size: 30,
                 children: scalar_zero(),
-                working: scalar_from_f32((GATHERERS + BUILDERS + 8) as f32),
+                working: scalar_from_f32((GATHERERS + BUILDERS) as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -1456,22 +1473,10 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                     // and the whole of it goes on the head of the queue below — which is this patch.
                     // **NO KIT NAMED, so the pool derives one per queue entry** — the head is a patch,
                     // so the roster answers `tillage` and the hoes are what the gear term below reads.
-                    LaborAssignment {
-                        party: None,
-                        muster_crew: 0,
-                        planned_crew: 0,
-                        max_workers: Some(BUILDERS),
-                        staffing: Default::default(),
-                        target: LaborTarget::Builders,
-                        workers: BUILDERS,
-                        kit: None,
-                        priority: SourcePriority::default(),
-                    },
                 ],
-                build_queue: vec![core_sim::BuildQueueEntry {
+                builds: vec![core_sim::BuildDeclaration {
                     source: core_sim::BuildSource::Patch(source),
                     declared: core_sim::BuildJob::Climb(shipped::plant_tended()),
-                    priority: core_sim::SourcePriority::default(),
                 }],
                 ..Default::default()
             },

@@ -169,4 +169,4 @@ refreshes the anchors), `advance_leadership` (so a band crowned this turn counts
 migration, defection, independence and the culture splits.
 
 **Checkpoint.** `SimState::tribes` (`TribeRegistry`: tribes, shared histories, `next_id`, `formed`;
-`SIM_STATE_RESOURCES`); `SAVE_FORMAT_VERSION` 55.
+`SIM_STATE_RESOURCES`); `SAVE_FORMAT_VERSION` 56.

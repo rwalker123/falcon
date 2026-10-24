@@ -141,23 +141,17 @@ func _building_herd_band_fixture() -> Dictionary:
 		"activity": "hunt", "labor_assignments": [],
 	})
 
-## The band STANDING on Tame on that herd — the fixture the re-admission frame turns on. Everything
-## else about `BandFx.band_fixture` is kept; only the assignment list is replaced, by the single hunt
-## assignment whose `fauna_id` matches `HerdFx.fully_tamed_herd_fixture`'s and whose policy is the rung the
-## ceiling pass has since hidden.
-## The BAND'S `builders` POOL — the animal twin of `BandFx.CULTIVATING_BAND_BUILDERS`, and staffed
-## for the same reason: a running build is STAFFED, so a fixture that puts nobody on the pool stages a
-## build nobody is paying for (`docs/plan_standing_upkeep.md` §2.5).
 const TAME_STANDING_BUILDERS := 3
 
 func _tame_standing_band_fixture() -> Dictionary:
 	var band := BandFx.band_fixture()
+	BandFx.CrewFx.staffed = TAME_STANDING_BUILDERS
 	band["labor_assignments"] = [{
 		"kind": "hunt", "workers": HerdFx.TAMED_HERD_CREW, "fauna_id": HerdFx.taming_herd_fixture()["id"],
 		"floor": 0.5, "improvement": "tame", "target_x": 70, "target_y": 17,
 		"actual_yield": 0.45, "sustainable_yield": 0.45,
 		"workers_needed": HerdFx.TAMED_HERD_CREW, "overdraws": false,
-	}, BandFx.builders_role_row(TAME_STANDING_BUILDERS)]
+	}]
 	return band
 
 func run(harness) -> void:
@@ -179,9 +173,9 @@ func run(harness) -> void:
 	# meter now, so there is no stored intent to clear. **Asserted by STATE, not by type** — every
 	# state of this control is a `Label` since §4.7a ①, so the type says nothing on its own.
 	h._assert_hud("a running Tame renders the RUNNING state, as Cultivate does",
-		tame_box is Label
-			and String(tame_box.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
-				== HudWidgets.IMPROVEMENT_STATE_RUNNING)
+		tame_box != null
+			and String(tame_box.get_meta(ForageFx.IMPROVEMENT_STATE_META, ""))
+				== ForageFx.IMPROVEMENT_STATE_RUNNING)
 	# **THE SAME PAIR ITS PLANT TWIN CARRIES, on the web that shares the control.** The payoff is off
 	# both sheets' faces and in both readouts; asserting only the absence would pass on a sheet that
 	# had lost the payoff too, which is why the second half names where it went.
@@ -206,9 +200,6 @@ func run(harness) -> void:
 		not Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(Readout.TEACHING_LESSON_NEEDLE))
 	h._assert_hud("…and no BUILD half survives it here either, as on the plant sheet",
 		not Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(Readout.TEACHING_BUILD_NEEDLE))
-	# **THE BUILDERS STEPPER IS THE LEVER NOW, ON BOTH WEBS**, so what has to be present is the row —
-	# the running control states the meter and the stepper beneath it is the whole of what a player can
-	# change about the build.
 	h._assert_hud("a running Tame mounts its BUILDERS stepper — the lever the uncheck used to be",
 		Readout.stepper_count(h._hud._drawercompose._compose_sheet)
 			== Readout.COMPOSE_STEPPERS_PER_SHEET)
@@ -255,15 +246,15 @@ func run(harness) -> void:
 	await h._save("improvement_done_animal")
 	var pastoral_label = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "tame")
 	h._assert_hud("a finished Tame renders the DONE state",
-		pastoral_label is Label and String(pastoral_label.get_meta(
-			HudWidgets.IMPROVEMENT_STATE_META, "")) == HudWidgets.IMPROVEMENT_STATE_DONE)
+		pastoral_label != null and String(pastoral_label.get_meta(
+			ForageFx.IMPROVEMENT_STATE_META, "")) == ForageFx.IMPROVEMENT_STATE_DONE)
 	h._assert_hud("…and carries NO upkeep clause on its face",
 		pastoral_label != null
 		and not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
 			HudConst.LABOR_POLICY_TAME).contains(UPKEEP_NEEDLE))
 	h._assert_hud("…with the next rung, Corral, OFFERED beneath it",
 		String(ForageFx.improvement_state(h._hud._drawercompose._compose_sheet, "corral"))
-			== HudWidgets.IMPROVEMENT_STATE_OFFERED)
+			== ForageFx.IMPROVEMENT_STATE_OFFERED)
 
 	# State 442-corral-done — the OTHER half of the pair, and **the two frames now MATCH.** The penned
 	# 🐄 label used to end `· N.NN fodder/turn upkeep` while the pastoral ◎ one did not, and that
@@ -281,8 +272,8 @@ func run(harness) -> void:
 	await h._save("improvement_done_penned")
 	var penned_label = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "corral")
 	h._assert_hud("a finished Corral renders the DONE state",
-		penned_label is Label and String(penned_label.get_meta(
-			HudWidgets.IMPROVEMENT_STATE_META, "")) == HudWidgets.IMPROVEMENT_STATE_DONE)
+		penned_label != null and String(penned_label.get_meta(
+			ForageFx.IMPROVEMENT_STATE_META, "")) == ForageFx.IMPROVEMENT_STATE_DONE)
 	h._assert_hud("…and carries NO upkeep clause either — a pen bills the larder for nothing",
 		not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
 			SourceForecast.IMPROVEMENT_CORRAL).contains(UPKEEP_NEEDLE))
@@ -326,8 +317,8 @@ func run(harness) -> void:
 	# running control and a done one are both Labels now, and this claim is about which.
 	var dip_box = ForageFx.find_improvement_control(dip_sheet, SourceForecast.IMPROVEMENT_TAME)
 	h._assert_hud("the sheet is visibly BUILDING — a running Tame, not a stale verb",
-		dip_box != null and String(dip_box.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
-			== HudWidgets.IMPROVEMENT_STATE_RUNNING)
+		dip_box != null and String(dip_box.get_meta(ForageFx.IMPROVEMENT_STATE_META, ""))
+			== ForageFx.IMPROVEMENT_STATE_RUNNING)
 	h._assert_hud("…staffed by the composed TAKE crew (%d), which is the crew the take is priced for"
 		% HERD_DIP_CREW, Readout.stepper_value(dip_sheet) == HERD_DIP_CREW)
 	# (2) **THE TAKE IS THE UNDIPPED ONE.** Four hunters land the whole body they would land with no

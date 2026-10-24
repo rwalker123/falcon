@@ -231,7 +231,7 @@ fn band_suggestions_and_offers(
             materials: &configs.materials,
         }),
     );
-    // **A queued build short of the GOODS it draws** (hurdles for a pen) is a suggestion like any
+    // **A declared build short of the GOODS it draws** (hurdles for a pen) is a suggestion like any
     // other - the same wrapper the snapshot merges - so an empty auto bench works it down.
     let build_materials = with_world_sources(world, cohort.faction, |sources| {
         build_material_suggestions_in_world(

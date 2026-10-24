@@ -1217,7 +1217,6 @@ func _feed_states() -> void:
 	await h._settle()
 
 
-# ---- (h) THE COMMAND BUILDERS' REFUSALS -------------------------------------------------------------
 
 func _command_states() -> void:
 	h._assert_hud("commands: an answer with no dealing id builds nothing",

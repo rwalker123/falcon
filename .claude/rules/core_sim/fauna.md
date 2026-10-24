@@ -516,6 +516,22 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > > guard asserting the clone never shrinks looks obviously true and fires on the first thin-herd
 > > fixture it meets.
 > >
+> > **THE FORECAST ALSO TAKES LAST TURN'S PREDATION.** After the regrowth, `next_turns_quarry`
+> > subtracts `Herd::predator_eaten_this_turn` (read off the original herd before `regrow_biomass`
+> > resets the stamp on the clone), never taking the clone under the predation escapement floor
+> > (`fauna::predation_escapement_floor`, `predation_escapement_fraction × herd_capacity`, the same
+> > expression `advance_predation` stops at) and never raising it. It is a persistence forecast: the
+> > packs that ate last turn are expected to eat the same again, and `advance_predation` runs after
+> > regrowth and before the Population take. Playtest: a band worked two Rabbit Warrens (K 100,
+> > floor 0.5) while a Grey Wolf Pack ate 8.6-8.9 of each warren's ~8.75 regrowth every turn. The
+> > turn staffed each row against a warren standing at its floor (1 hand each, 4 idle); every
+> > command's restaff read the regrown, unpredated clone, saw ~8.7 of room, staffed the rows 4 + 2
+> > and swallowed hands the turn would not use, so a build got 0 builders. Every reader of the
+> > quarry (restaff, assign-time seed, crew-take query, capture, `ClaimSources::herd`) inherits it;
+> > `project_realized_hunt`'s first between-turns step (`ProjectionStart::BeforeRegrowth`) takes the same predation through the same helper (`subtract_forecast_predation`), so its `realized` and the crew curve read one stock; its later steps carry none. Pinned by
+> > `fauna::tests::a_forecast_subtracts_the_predation_last_turn_suffered_down_to_the_floor` and
+> > `tests/predated_restaff.rs`.
+> >
 > > **The client's room arm was already forward** (`SourceForecast.escapement_room_next_turn`), so
 > > before this the two halves of the sheet's own `min(room, haul, brought_down)` sat a turn apart and
 > > the stale one won. Both halves are next-turn now; `forecast_query`'s
@@ -1320,8 +1336,7 @@ and fog-filtered with the row. The fields ride the checkpoint (`SAVE_FORMAT_VERS
 
 Tests: `predators::the_herd_names_the_predator_species_that_ate_most`,
 `predators::the_predation_stamp_resets_the_next_turn`,
-`predators::the_predation_stamp_round_trips_the_checkpoint_and_the_save`,
-`build_queue::a_tame_whose_room_wolves_emptied_refuses_as_predators_ate_growth` (encoded envelope).
+`predators::the_predation_stamp_round_trips_the_checkpoint_and_the_save`.
 
 ## The regional staples carry their correction in reach
 

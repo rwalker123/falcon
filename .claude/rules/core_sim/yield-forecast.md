@@ -1094,7 +1094,7 @@ A source stores `Option<BuildTurns>`, and its `None` covered two different facts
 
 - **the estimate pass ran and had no number** — nobody works the source, its gate refuses, or a
   running build banked nothing and is genuinely **stalled**;
-- **no estimate pass has ever run for this entry** — the player queued it since the last turn
+- **no estimate pass has ever run for this build** — the player declared it since the last turn
   resolved, and the server re-captures after every command, so that frame reaches the client.
 
 `published_build_countdown` (`snapshot/subsistence.rs`) is the one seam both webs' rows go through,
@@ -1104,29 +1104,30 @@ and it splits them: `sim_schema::BUILD_NOT_YET_ESTIMATED` (`-5`) for the second,
 
 **The test is the estimate pass, never the meter.** A genuinely stalled build sits at `0%` too, so a
 rule reading progress reproduces the defect it is fixing. What *is* knowable is that
-`publish_build_chain` calls `publish_entry` for **every entry in the queue it walks** — whether or not
-that entry has a quote — and `publish_entry` always stamps the entry's 0-based place, while the
-Logistics decay passes (`forage::advance_cultivation`, `fauna::advance_husbandry`) clear the place
-back to `NOT_IN_ANY_BUILD_QUEUE` every turn along with `build_turns_remaining` itself.
+`publish_build_chain` calls `publish_entry` for **every declared build** — whether or not that build
+has a quote — and `publish_entry` always stamps the source with `ESTIMATE_PASS_RAN` in its
+`build_queue_position` scratch field, while the Logistics decay passes
+(`forage::advance_cultivation`, `fauna::advance_husbandry`) clear the stamp back to
+`NOT_IN_ANY_BUILD_QUEUE` every turn along with `build_turns_remaining` itself.
 
 **Two terms, and each is load-bearing:**
 
 | term | what it rules out |
 |---|---|
-| the source is in a band's **live** queue (`QueuedBuildSources::patch_is_queued` / `herd_is_queued`) | every unworked patch on the map, which also carries the cleared place, reading as a build about to start |
-| its stamped place is still `NOT_IN_ANY_BUILD_QUEUE` | a genuinely stalled entry, which *is* live-queued, reading the same way |
+| a band has a build **declared** on the source (`QueuedBuildSources::patch_is_queued` / `herd_is_queued`) | every unworked patch on the map, which also carries the cleared stamp, reading as a build about to start |
+| its stamp is still `NOT_IN_ANY_BUILD_QUEUE` | a genuinely stalled build, which *is* declared, reading the same way |
 
-The queue membership is read **live off the bands' own `build_queue`s** rather than off the
-turn-written row, for the reason a working's `isQueued` already is: the row's scratch lags a command
-by a whole turn, and this state exists precisely in the frame before that turn. `QueuedBuildSources` was
-already that index, so it grew a membership predicate rather than a second walk.
+The declaration is read **live off the bands' own `builds`** rather than off the turn-written row, for
+the reason a working's `isQueued` already is: the row's scratch lags a command by a whole turn, and
+this state exists precisely in the frame before that turn. `QueuedBuildSources` was already that
+index, so it grew a membership predicate rather than a second walk.
 
 **The legs keep `-1`.** `published_build_legs` maps an undated leg to `NO_BUILD_TURNS_ESTIMATE` and
-is untouched: `build_legs` is cleared by the same reset, so an entry no pass has reached publishes
+is untouched: `build_legs` is cleared by the same reset, so a build no pass has reached publishes
 **no legs at all** and the case cannot arise there.
 
-`core_sim/tests/build_queue.rs` drives it on both webs — queued-with-no-turn, then one turn to a real
-count, then a live-queued entry the pass reached and could not date — plus the unqueued-patch control.
+A fixture drives it on both webs: declared-with-no-turn, then one turn to a real count, then a
+declared build the pass reached and could not date — plus the undeclared-patch control.
 
 ## Reading both webs off one table
 
@@ -1254,41 +1255,41 @@ indistinguishable from the command having been refused.
 worker count was correct throughout and a test that read only the count would have passed the whole
 time.
 
-### The shedding order — the eleven steps, and why they are in that order
+### The shedding order — nine steps (numbered 1–3 and 5–10), and why they are in that order
 
 `ShedStep` (`components.rs`) is the list, one variant per step, walked top to bottom; the first step
 that names a staffed row gives **one** hand, and the walk re-runs for the next hand. Nothing about it
-is positional.
+is positional. **There is no step 4 and no step 11**: builders are not a role the shed takes from
+(staffing deals them what the rows leave), and the numbering keeps its gaps so every reference to a
+step in these files keeps meaning the same step.
 
 | | Step | Band |
 |---|---|---|
 | 1 | a **scout** | *Nothing is lost* |
 | 2 | a **warrior**, if nothing threatens the band | |
 | 3 | a **Roadwork keeper above the roads' demand** — the one band-level keeping pool left | |
-| 4 | a **builder**, while more than one remains and something is queued | |
 | 5 | **thin the least-productive worked source that has two or more hands and a hand ABOVE its keeping line — and the crafting BENCH, ranked beside them** — "least productive" is the four-level test below, whose second level passes over a source still accruing knowledge; a site row gives a hand only while `workers − 1 ≥ keeping_need` (`docs/plan_site_crews.md` §2.6) | *Output falls, nothing ends* |
 | 5b | **the crafting bench's LAST hand** — the job stalls, keeping its recipe, its progress and the pile it drew | |
-| 6 | **empty the least-productive source carrying no improvement and no queued build** | *Something ends* |
+| 6 | **empty the least-productive source carrying no improvement and no declared build** | *Something ends* |
 | 7 | a **warrior**, unconditionally | |
 | 8 | a **keeper below the demand** — a Roadwork keeper first, then a keeping hand off the least-productive improved site row with two or more hands; improvements begin to rot | |
-| 9 | **empty the least-productive improved source with no queued build** | |
-| 10 | **empty a source carrying a queued build** — the row drops and the declaration goes with it | |
-| 11 | **the last builder** — every queued build stalls | |
+| 9 | **empty the least-productive improved source with no declared build** | |
+| 10 | **empty a source carrying a declared build** — the row drops and the declaration goes with it | |
 
 Below that, `ShedStep::LastHand`: a single worker on a single row, taken, and the row ends. Steps 6,
 9 and 10 partition every staffed *source* row between them and the role steps name every staffed
 *role* row, so the walk is already total and that arm is the assertion rather than a case.
 
-**Thinning beats emptying, and that is the sharp line.** The builders have been a band-level pool
-since `docs/plan_standing_upkeep.md` §2.5, so taking a hand off a source mid-build does not slow that
-build at all — only **emptying** the row does, because an entry requires a row (§3.2) and dropping
-the row drops the entry. The cliff is emptying, never building. Two consequences of the same
+**Thinning beats emptying, and that is the sharp line.** A build's builders are dealt by staffing from
+what the rows leave, so taking a hand off a source mid-build does not remove the build — only
+**emptying** the row does, because a declaration requires a row (§3.2) and dropping the row drops the
+declaration. The cliff is emptying, never building. Two consequences of the same
 reasoning: **9 is worse than 8** (an improved source with no take crew still owes its upkeep and now
 pays nothing, where rot is gradual and recoverable), and **7 sits after 6** (pulling the guard under
 a real threat can cost people, which is worse than losing a row nothing was invested in).
 
 **One hand per pass of the walk**, because the picture changes with every hand taken — a keeper
-surplus falls, a two-hand row becomes a one-hand row, a builder pool reaches its last. A step that
+surplus falls, a two-hand row becomes a one-hand row. A step that
 *empties* a row still takes one hand, and that is not a coincidence: step 5 names every source row
 with two or more hands, so by the time the walk reaches step 6 no source row has more than one.
 
@@ -1468,7 +1469,7 @@ The two halves were individually reasonable — an edited row is naturally re-ap
 from the tail means *"where each row falls in the shedding order is where the player put it in the
 list"*, which is a statement the player can make. Their composition is what nobody chose: the list
 position a player controls is silently overwritten by the act of editing the row. **List position
-must never be the shedding order again**; nothing in the eleven steps is positional.
+must never be the shedding order again**; nothing in the nine steps is positional.
 
 `core_sim/tests/shedding_order.rs` pins the reported case on the **encoded envelope** — the raise
 stands and the poorer ground per head gives the hand — because the claim is about the crew count the
@@ -1516,26 +1517,25 @@ costs no bytes, while the Rust variants are declared `Low < Normal < High` so `m
 row the player marked to give up. The codec maps the two rather than casting, so neither can drift
 into the other.
 
-`work_priority` names a **band**, like `build_order` and unlike the source-addressed `unqueue` /
+`work_priority` names a **band**, unlike the source-addressed `unqueue` /
 `abandon`: the orderings it feeds partition one band's own rows and serve one band's own stores.
 `xtask`'s command guard classifies it as band-addressed for that reason. An unknown level is refused
 **by name** (`upkeep_mode`'s rule) — a mistyped rank must not silently land on the default, which is
 the one value that would look like it worked.
 
-**The site source grammar** (every queue verb: `abandon`, `unqueue`, `build_order`,
-`work_priority`, `build_priority` — `command_text::parse_site_source`) is the tile-or-herd grammar
+**The site source grammar** (every source-addressed verb: `abandon`, `unqueue`,
+`work_priority` — `command_text::parse_site_source`) is the tile-or-herd grammar
 plus two shapes a tile alone cannot name: `<x> <y> <material>` is a **working** (one hex can hold
 two deposits; the material sits where `fell` carries it) and `<branch> <x> <y>` (`route 4 9`) is a
 **road** (a tile can carry a road and a patch, so the branch is said out loud and leads). They ride
-`material` / `branch` on each proto message (fields **7** / **9** on the band-scoped three, **5** /
+`material` / `branch` on each proto message (field **7** / **9** on the band-scoped `work_priority`, **5** /
 **7** on `abandon` / `unqueue`; the old `road` bool's field is reserved). The bare tile still names the patch. What each verb does with the two new shapes:
 
 | verb | `<x> <y> <material>` | `route <x> <y>` |
 |---|---|---|
 | `work_priority` | the extract row's Priority | **refused by name** — a road has no crew |
-| `build_priority` / `build_order` | the queued working build | the queued road build |
-| `unqueue` | withdraws the queued working build | withdraws the queued road build; the keeper stays |
-| `abandon` | **is `abandon_working`** — `handle_abandon` calls it, one path | puts down the road alone (keeper and entry), not the patch |
+| `unqueue` | stops the declared working build | stops the declared road build; the keeper stays |
+| `abandon` | **is `abandon_working`** — `handle_abandon` calls it, one path | puts down the road alone (keeper and declaration), not the patch |
 
 A bare-tile `abandon` is a **place**: its patch row and its road, never a working.
 
@@ -1597,7 +1597,7 @@ rows go to the earliest row.
 **Step 5b takes the bench's LAST hand and the job stalls.** Numbered `5b` rather than renumbering six
 steps and forty-odd references to them — the repo's own `4.7a` / `9b` convention for a late
 insertion, and `ShedStep`'s **order** is the authority anyway. It sits above step 6 because a stalled
-craft **ends nothing**, where emptying a source drops the row and takes its queued build with it.
+craft **ends nothing**, where emptying a source drops the row and takes its declared build with it.
 
 **A `High` bench therefore stalls before a `Low` source is emptied, and that is intended.** It is the
 same rule already pinned for rows, where an unimproved `High` row is emptied at step 6 before an

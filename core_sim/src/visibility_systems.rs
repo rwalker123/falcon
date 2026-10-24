@@ -501,9 +501,8 @@ pub fn calculate_visibility(
                         LaborTarget::Scout
                         | LaborTarget::Warrior
                         // **A band-wide role stands on no tile of its own**: the road keepers hold
-                        // what the band keeps, and the builders work the queue head.
+                        // what the band keeps.
                         | LaborTarget::Roadwork
-                        | LaborTarget::Builders
                         // **A band improvement stands at the camp**, which the band's own presence
                         // already reveals.
                         | LaborTarget::Band { .. } => None,

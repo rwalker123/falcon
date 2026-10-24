@@ -1064,35 +1064,6 @@ table PopulationCohortState {
   // sim did not write; read it as "spread".
   upkeepFundMode:string;
 
-  // --- THE BUILDS THIS BAND HAS DECLARED, IN THE ORDER IT WILL RAISE THEM ------------------------
-  // (appended last, append-only wire; docs/plan_standing_upkeep.md section 4.9 item 9a). The whole
-  // `builders` pool goes on entry 0 until its meter fills, then on the next.
-  //
-  // *** THE RANK IS THE INDEX. *** An entry's place in the line IS its position in this vector, and
-  // there is deliberately NO second integer to disagree with it. Section 4.9 states the rule for
-  // whichever ordering ships first - "if the queue ships with a rank of its own, they will drift" -
-  // and one ordered list has nothing to drift against. A client renders this order and sends
-  // `build_order <faction> <band> <source...> <position>` with an index into it; nothing re-sorts.
-  //
-  // *** IT IS THIS BAND'S OWN ORDER, WHICH `ForagePatchState.buildQueuePosition` IS NOT. *** That
-  // field is source-addressed and rides the winning band (the soonest estimate), so it publishes the
-  // WINNING band's place in the WINNING band's line - routinely another band's answer, since two
-  // bands holding one source is ordinary. It is therefore useless as a rank for any PARTICULAR band,
-  // and a queue block ordered on it draws a list that is not the band's: band B's `[X, Y, Z]` came
-  // out `[Y, X, Z]` because band C also held Y and had the sooner estimate, and the drag arithmetic
-  // then inverted the gesture it was computed from. THIS field is the rank; that one is a readout.
-  //
-  // *** IT IS CAPTURED LIVE off `LaborAllocation::build_queue`, NOT stamped by the turn *** - the
-  // same discipline as `DepositState.isQueued`. The server re-captures and broadcasts after
-  // every dispatched command, so a `build_order`, an `unqueue` or a fresh declaration arrives on
-  // THAT COMMAND'S OWN recapture rather than a turn later. A client therefore needs no optimistic
-  // ordering overlay, and must not keep one: an overlay is a second ordering beside this one, which
-  // is exactly the drift the "rank is the index" rule above exists to forbid.
-  //
-  // UNFILTERED: exactly what the band holds, in the band's order. The sim prunes dead entries
-  // (`prune_build_queue`), so anything here is a build this band is really going to raise.
-  buildQueue:[BuildQueueEntryState];
-
   // --- THE BAND'S HAY LEDGER (appended last, append-only wire) -----------------------------------
   // The fodder twins of `foodIncome` / `foodConsumption` / `turnsOfFood`, in FODDER units per turn,
   // against the `fodderStore` above. A pen eats grass and hay and never the people's food, so the
@@ -1319,11 +1290,12 @@ table PopulationCohortState {
   // `filled == required`. That distinction is the readout: a surface shows no tool line when every
   // line is filled, and it cannot tell "satisfied" from "not applicable" off an absent row.
   //
-  // *** THE POOL TOKEN IS THE ROLE TOKEN *** - `roadwork` | `builders`, the same spelling
+  // *** THE POOL TOKEN IS THE ROLE TOKEN *** - `roadwork`, the same spelling
   // `LaborAssignment.kind` publishes for the row, so a client joins a line to its pool card without
-  // a table of its own. *** THOSE TWO ONLY *** (docs/plan_site_crews.md section 4): the
-  // `agriculture`, `husbandry` and `quarrywork` pools retired, and a site crew's keeping-tool claim
-  // is stated on its own source row (`upkeepToolsShort`) rather than here.
+  // a table of its own. *** THAT ONE ONLY *** (docs/plan_site_crews.md section 4,
+  // docs/plan_labor_at_scale.md): the `agriculture`, `husbandry` and `quarrywork` pools retired, a
+  // site crew's keeping-tool claim is stated on its own source row (`upkeepToolsShort`), and a
+  // build's tools are on its own source row (`buildToe`).
   poolToe:[PoolToeLine];
   // --- WHAT EACH KEEPING POOL DID NOT USE (appended last, issue #715) ---------------------------
   // HOW MANY OF EACH KEEPING POOL'S ASSIGNED KEEPERS THE TURN'S BILL DID NOT CONSUME. One row per
@@ -1338,7 +1310,7 @@ table PopulationCohortState {
   // *** ONE POOL, `roadwork`, AND `builders` IS NOT ONE. *** Roadwork is the only keeping pool
   // (docs/plan_site_crews.md section 1: a patch, herd or working is kept by its own crew, which
   // publishes its keeping hands on its source row as `upkeepHands`). The builders are not a keeping
-  // pool: the WHOLE head count goes on the build queue's head (section 2.4), so no builder is ever
+  // pool: each build is dealt its own builders up to the rung's cap (section 2.4), so no builder is ever
   // left standing by a plan that wanted fewer.
   //
   // *** A POOL WITH A HEAD COUNT AND NO ROADS STATES ITS WHOLE HEAD COUNT *** - that is the
@@ -1650,8 +1622,31 @@ table BandImprovementState {
   // Whether the keeping crew's tool claim was filled less than in full, and the tools it claimed.
   upkeepToolsShort:bool = false;
   upkeepToe:[KitToeLine];
-  // Whether this band has a build queued on this improvement.
+  // Whether this band has a build declared on this improvement.
   isQueued:bool = false;
+  // --- THE BUILDERS ON THIS SOURCE'S DECLARED BUILD (appended last, docs/plan_labor_at_scale.md,
+  // "Builds join the site's crew") ----------------------------------------------------------------
+  // A build is worked by the site's own crew - there is no build queue and no Builders role. Every
+  // declared build is staffed every turn from the same pool as the band's rows, so builds on
+  // different sites run in parallel, each ranked by its site's one Priority.
+  //
+  // buildersStaffed - the builders on this build this turn, the bare-handed and the kitted together.
+  // buildersKitted  - of those, the ones holding the build kit the rung uses (every builder, when
+  //                   the rung asks for no tool).
+  // buildersCap     - the most builders the build could take THIS turn: the rung's `maxBuilders`,
+  //                   cut by the room the tile left (`tile_worker_cap` is shared by every band
+  //                   working the tile). 0 when nobody has declared a build here.
+  // buildToe        - the tools the build's builders asked the band for and what the settlement gave
+  //                   them, one line per tool (`pool` reads "build"): the shortfall a builder is
+  //                   bare-handed for. Absent when the rung asks for no tool.
+  //
+  // THE VIEWER'S OWN BANDS ONLY: a rival's crew on a source is the builder's internal state, the
+  // same class as the larder, and is withheld on the same rule as the rest of the build scratch.
+  // `isQueued` keeps its name and now means "a build is declared on this source".
+  buildersStaffed:uint = 0;
+  buildersKitted:uint = 0;
+  buildersCap:uint = 0;
+  buildToe:[PoolToeLine];
 }
 
 // An amount of one material: a recipe input per PASS (the bench's material efficiency already
@@ -1675,7 +1670,7 @@ table KitNeed {
 
 // ONE ITEM OF A KIT. `have` is the units that serve THIS kit's jobs: those the settlement issued to
 // the jobs' consumers, plus the spare units nobody holds. A unit another job holds never counts, and
-// a queued build's forecast line never counts either. `queued` is the units the bench already owes
+// a declared build's forecast line never counts either. `queued` is the units the bench already owes
 // (finished-but-undelivered included) - the same figure the craft suggestions net by.
 table KitNeedItem {
   itemId:string;
@@ -1685,7 +1680,7 @@ table KitNeedItem {
   // One entry per recipe that outputs the item, book order.
   recipes:[KitNeedRecipe];
   // Units the claims ON THIS KIT asked for (sum of `required` over the shortfall lines attributed to
-  // the kit: take rows that chose it, pools/sites through their job, queued builds through the
+  // the kit: take rows that chose it, pools/sites through their job, declared builds through the
   // builders job). 0 when nobody's row chose the kit. Appended last.
   claimed:float;
   // Whole units still missing on those lines BEFORE the bench's queue nets them - the same figure
@@ -1927,7 +1922,7 @@ table BandKitTiers {
   //
   // THE THREE BUILD FIELDS ARE ONE READING. Hoes add +0.5 per worker per turn to a Cultivate and
   // NOTHING to a Tame; hurdles do the reverse. A sheet pricing a build must compare this against the
-  // branch of the rung the queue entry names and treat a mismatch as 0 - the same discipline
+  // branch of the rung the declared build names and treat a mismatch as 0 - the same discipline
   // attackMaxBodyMass imposes on attack, and for the same reason: the number is real, it is simply
   // not real HERE.
   buildWorkBranch:string;
@@ -1939,7 +1934,7 @@ table BandKitTiers {
   // A branch was enough while a web's rungs all wanted the same tool; the route ladder is the first
   // where they do not - an earthmoving tool is worth its offset on a `grade` and NOTHING on the
   // `pave` above it, and the stone-dressing tool is the exact reverse. So a sheet must compare BOTH
-  // this and `buildWorkBranch` against the rung the queue entry is actually raising and treat a
+  // this and `buildWorkBranch` against the rung the declared build is actually raising and treat a
   // mismatch as 0. An empty string is "no rung bound", not "no rung": it matches every rung on the
   // branch.
   buildWorkRung:string;
@@ -3239,33 +3234,6 @@ table ForagePatchState {
   // correctly says the meter is losing ground, and `buildTurnsRemaining`'s `-2`/`-3` are struck from
   // a term the sheet cannot see.
   meterRotPerTurn:float = 0;
-  // WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE (appended,
-  // docs/plan_standing_upkeep.md 4.6b) - 0-BASED, and `-1` when no band has queued it.
-  //
-  // The whole `builders` pool goes on the HEAD of a band's queue until that entry's meter fills,
-  // then on the next - so `buildTurnsRemaining` above is a CHAINED date: everything above this entry
-  // plus its own span at the full pool. WITHOUT THIS FIELD that date is an exact number with no
-  // explanation, and the player cannot tell 40 turns of work from 8 turns of work behind four other
-  // jobs.
-  //
-  // IT RIDES THE SAME WINNER as `buildTurnsRemaining` and `buildWorkFromGear`: several bands may
-  // work one source, the sooner estimate wins, and all three come from that band. Reading a date
-  // from one band's queue beside a position from another's would be two answers pretending to be
-  // one.
-  //
-  // *** IT IS NOT THE RANK, AND NO BAND'S QUEUE MAY BE ORDERED ON IT ***
-  // (docs/plan_standing_upkeep.md section 4.9 item 9a). It is a SOURCE-ADDRESSED READOUT of the
-  // WINNING band's place in the WINNING band's line - the map annotation, the tile card and the
-  // compose sheet, all of which ask about the source and get the best answer anyone has. It is not
-  // an answer about any PARTICULAR band, because the winner is routinely somebody else: band B's
-  // queue `[X, Y, Z]` sorted on this field came out `[Y, X, Z]` when band C also held Y and had the
-  // sooner estimate, so the drag gesture computed its insert index off a list that was not B's and
-  // moved the entry to the wrong place.
-  //
-  // *** `PopulationCohortState.buildQueue` IS THE RANK *** - the band's own entries in the band's
-  // own order, where position is the vector index. A per-band question is answered there; this
-  // field answers the per-source one and keeps the winner rule it was designed with.
-  buildQueuePosition:int = -1;
   // WHY THE QUEUE IS BLOCKED HERE (appended, docs/plan_standing_upkeep.md 4.6b) - "" whenever this
   // source is not a blocked build, else a short lowercase cause key on the free-form-string
   // convention `ecologyPhase` / `rungQuotes[plant:farm].siteRefusal` already use.
@@ -3304,7 +3272,7 @@ table ForagePatchState {
   //                    could simply have claimed
   //   site           - the ground does not admit the rung (Sow's gathering-site + fresh-water rule)
   //   ring_idle      - an `extend_pen` entry whose ring is not running
-  //   undeclared     - the band's queue entry does not name the rung its meter is on
+  //   undeclared     - the band's declared build does not name the rung its meter is on
   //   materials      - the rung's own gate HOLDS and the band's stores are what stopped it: not one
   //                    of any rung's `eligible` conjuncts but the countdown's own, minted off a
   //                    material coverage of zero. The remedy is off the build line - a bench or a
@@ -3323,7 +3291,7 @@ table ForagePatchState {
   //
   // READ IT BESIDE `buildLegs`: this says where the climb ends, those say what is left of it. The
   // entry leaves the queue when the source reaches this rung's top - NOT when an intermediate rung
-  // fills - so a two-leg `sow` holds the head of the queue through its Cultivate leg.
+  // fills - so a two-leg `sow` stays declared through its Cultivate leg.
   buildDestinationRung:string;
 
   // THE LEGS STILL TO LAY (appended), in climb order, first-incomplete first. Empty when the source
@@ -3566,19 +3534,42 @@ table ForagePatchState {
   rungQuotes:[RungQuoteState];
   // The BAND whose work last advanced this patch's build meter (`bandId` of its `PopulationCohortState` row), 0 = none. Set with `owner` and cleared with it, so a client can name a foreign build by band and people. Follows the row's own legibility (a wild-ground substitution carries 0). Appended.
   builderBand:ulong;
+  // --- THE BUILDERS ON THIS SOURCE'S DECLARED BUILD (appended last, docs/plan_labor_at_scale.md,
+  // "Builds join the site's crew") ----------------------------------------------------------------
+  // A build is worked by the site's own crew - there is no build queue and no Builders role. Every
+  // declared build is staffed every turn from the same pool as the band's rows, so builds on
+  // different sites run in parallel, each ranked by its site's one Priority.
+  //
+  // buildersStaffed - the builders on this build this turn, the bare-handed and the kitted together.
+  // buildersKitted  - of those, the ones holding the build kit the rung uses (every builder, when
+  //                   the rung asks for no tool).
+  // buildersCap     - the most builders the build could take THIS turn: the rung's `maxBuilders`,
+  //                   cut by the room the tile left (`tile_worker_cap` is shared by every band
+  //                   working the tile). 0 when nobody has declared a build here.
+  // buildToe        - the tools the build's builders asked the band for and what the settlement gave
+  //                   them, one line per tool (`pool` reads "build"): the shortfall a builder is
+  //                   bare-handed for. Absent when the rung asks for no tool.
+  //
+  // THE VIEWER'S OWN BANDS ONLY: a rival's crew on a source is the builder's internal state, the
+  // same class as the larder, and is withheld on the same rule as the rest of the build scratch.
+  // `isQueued` keeps its name and now means "a build is declared on this source".
+  buildersStaffed:uint = 0;
+  buildersKitted:uint = 0;
+  buildersCap:uint = 0;
+  buildToe:[PoolToeLine];
 }
 
-// ONE LEG OF A QUEUE ENTRY'S CLIMB (appended) - a rung the entry has still to raise, and what it
+// ONE LEG OF A DECLARED BUILD'S CLIMB (appended) - a rung the entry has still to raise, and what it
 // owes on that rung FROM WHERE THE SOURCE STANDS NOW.
 //
-// A QUEUE ENTRY NAMES A DESTINATION, NOT A RUNG (docs/plan_standing_upkeep.md section 2.8). The four
+// A DECLARED BUILD NAMES A DESTINATION, NOT A RUNG (docs/plan_standing_upkeep.md section 2.8). The four
 // verbs always were destinations - `cultivate` means take it to Cultivated, `sow` means take it to
 // Field - and with one position per source that reading became literal: the entry lays every leg
 // between where the source stands and where it was sent, in order, and stays at the head until it
 // arrives. So `sow` on untended ground is TWO legs and costs the whole branch.
 //
 // THE CLIENT MUST NOT RE-DERIVE THESE. The rung spans are the sim's config, the source's position is
-// the sim's state, and the turns below are chained against a build queue the client cannot see. A
+// the sim's state, and the turns below are stamped against builds the client cannot see. A
 // client that reconstructed them would be a second producer of a verdict that already has one.
 table BuildLegState {
   // The rung this leg raises, as `<branch>:<id>` - `plant:tended`, `plant:farm`. Branch-qualified
@@ -3591,53 +3582,12 @@ table BuildLegState {
   workRemaining:float;
 
   // Turns until THIS LEG is done, CHAINED exactly as `buildTurnsRemaining` is: everything above this
-  // leg plus its own span, at the band's full builders pool. So the last leg's number equals the
+  // leg plus its own span, at the band's full build crew. So the last leg's number equals the
   // entry's own `buildTurnsRemaining`.
   //
   // The same negative vocabulary as `buildTurnsRemaining` - -1 no estimate, -2 holding, -3 rotting,
   // -4 blocked - because a leg cannot be dated when the entry carrying it cannot.
   turnsRemaining:int = -1;
-}
-
-// ONE ENTRY OF ONE BAND'S BUILD QUEUE (appended, docs/plan_standing_upkeep.md section 4.9 item 9a) -
-// a row of [PopulationCohortState].buildQueue, naming only the SOURCE the entry is a build on.
-//
-// AN ENTRY NAMES ITS SOURCE AND NOTHING ELSE, deliberately. The declared job, the kit, the
-// destination rung, the legs, the chained date and the blocked cause are all published on the
-// SOURCE row (ForagePatchState / the herd twin), and they agree across every band holding that
-// source BY CONSTRUCTION: `cultivate`/`sow`/`tame` enqueue the same declaration on every band
-// working it. Repeating any of
-// them here would be a second copy of a fact that already has a home, which is how two copies come
-// to disagree.
-table BuildQueueEntryState {
-  // WHICH WEB THIS ENTRY IS ON, in the LaborAssignment `kind` vocabulary - "forage" for a patch,
-  // "hunt" for a herd. The same token the band's own labor row publishes for the same source, so a
-  // client joins the two on ONE spelling rather than on two that merely happen to match.
-  kind:string;
-  // The patch's tile. `0,0` on a hunt entry, which names its herd in `faunaId` instead.
-  targetX:uint = 0;
-  targetY:uint = 0;
-  // The herd's id. "" on a forage entry.
-  faunaId:string;
-  // --- THIS BUILD'S MARK (appended last, docs/plan_site_crews.md section 2.4) --------------------
-  // "high" | "normal" | "low" - the entry's OWN rank for scarce tools and materials, set by
-  // `build_priority` and "normal" until the player sets it. It is the one per-entry fact that is NOT
-  // on the source row: the source row's `priority` is the SITE CREW'S rank, and a build no longer
-  // borrows it. The builders' tool claim and the build's pile rank at the HEAD entry's mark. The
-  // queue shows it read-only; it is set from the site's row.
-  buildPriority:string;
-  // --- WHICH SITE ON THE TILE (appended last, docs/plan_site_crews.md section 2.4) ---------------
-  // The entry states its own site in the command grammar's terms, so a client addresses it back
-  // with no join: `<x> <y> <material>` for a working, `<x> <y> branch=<id>` for a per-tile source.
-  // material = the deposit's material key on a WORKING's entry (`extraction.json` -> `deposits`) -
-  //            one hex can hold two workings, so the tile alone names neither. "" on a patch, herd,
-  //            road or tile-improvement entry.
-  // branch   = the LADDER BRANCH of a per-tile entry (a road: "route"; a tile improvement: its own
-  //            branch id), whose tile may also carry a patch. "" on a patch, herd or working entry.
-  //            It replaces the old `road` bool: a bool named one branch, and a second per-tile
-  //            branch had nowhere to say which it was.
-  material:string;
-  branch:string;
 }
 
 // ONE MATERIAL A COMMITMENT WOULD PAY, AND HOW MUCH OF IT PER TURN (appended, arc #527) - a row of
@@ -4195,7 +4145,7 @@ table HerdTelemetryState {
   //       turn"; it is NOT `-1` and it is NOT a warning.
   // Render -2/-3 as INFINITY, and not as each other. The boundary is WORK BANKED rather than
   // hands, so an unstaffed HALF-BUILT meter answers `-2`/`-3`; `-1` is a meter at zero with nobody
-  // on it, or a gate that refuses somewhere other than a staffed queue's head. The client cannot
+  // on it, or a gate that refuses somewhere other than a staffed build. The client cannot
   // compute any of them.
   //
   // ON THE ANIMAL WEB `-3` IS UNREACHABLE, and honestly so: neither animal rung declares a
@@ -4323,16 +4273,6 @@ table HerdTelemetryState {
   // See the ForagePatchState twin for why the field exists at all: the build's closed form nets the
   // ROT, never `<rung>UpkeepDemand`, and the client cannot derive the rot.
   meterRotPerTurn:float = 0;
-  // WHERE THIS HERD SITS IN THE WINNING BAND'S BUILD QUEUE (appended,
-  // docs/plan_standing_upkeep.md 4.6b) - 0-BASED, `-1` when no band has queued it. The animal twin
-  // of `ForagePatchState.buildQueuePosition`; that field carries the full rationale.
-  //
-  // *** IT IS NOT THE RANK, on this web either. *** Like its plant twin it is a source-addressed
-  // readout of the WINNING band's place in the WINNING band's line, for the map annotation, the
-  // tile card and the compose sheet - and a band's queue block ordered on it draws another band's
-  // order (docs/plan_standing_upkeep.md section 4.9 item 9a).
-  // *** `PopulationCohortState.buildQueue` IS THE RANK. ***
-  buildQueuePosition:int = -1;
   // WHY THE QUEUE IS BLOCKED HERE (appended) - the animal twin of
   // `ForagePatchState.buildBlockedReason`; that field carries the full key table and the rationale.
   // `escapement` is the key this web reaches most: an unkept flock's suppressed regrowth pins it at
@@ -4575,6 +4515,29 @@ table HerdTelemetryState {
   owner:uint = 0;
   // The BAND whose work last advanced this herd's build meter (`bandId` of its `PopulationCohortState` row), 0 = none. Set with `owner` and cleared with it, so a client can name a foreign build by band and people. Follows the row's own legibility (a wild-ground substitution carries 0). Appended.
   builderBand:ulong;
+  // --- THE BUILDERS ON THIS SOURCE'S DECLARED BUILD (appended last, docs/plan_labor_at_scale.md,
+  // "Builds join the site's crew") ----------------------------------------------------------------
+  // A build is worked by the site's own crew - there is no build queue and no Builders role. Every
+  // declared build is staffed every turn from the same pool as the band's rows, so builds on
+  // different sites run in parallel, each ranked by its site's one Priority.
+  //
+  // buildersStaffed - the builders on this build this turn, the bare-handed and the kitted together.
+  // buildersKitted  - of those, the ones holding the build kit the rung uses (every builder, when
+  //                   the rung asks for no tool).
+  // buildersCap     - the most builders the build could take THIS turn: the rung's `maxBuilders`,
+  //                   cut by the room the tile left (`tile_worker_cap` is shared by every band
+  //                   working the tile). 0 when nobody has declared a build here.
+  // buildToe        - the tools the build's builders asked the band for and what the settlement gave
+  //                   them, one line per tool (`pool` reads "build"): the shortfall a builder is
+  //                   bare-handed for. Absent when the rung asks for no tool.
+  //
+  // THE VIEWER'S OWN BANDS ONLY: a rival's crew on a source is the builder's internal state, the
+  // same class as the larder, and is withheld on the same rule as the rest of the build scratch.
+  // `isQueued` keeps its name and now means "a build is declared on this source".
+  buildersStaffed:uint = 0;
+  buildersKitted:uint = 0;
+  buildersCap:uint = 0;
+  buildToe:[PoolToeLine];
 }
 
 table CommandEventState {
@@ -4860,7 +4823,7 @@ table KitOption {
   //
   // THE LAST THREE ARE THE WORK JOBS, and they are what a KEEPING or BUILD kit is drawn from:
   // "agriculture" is the kit list for keeping a PLANT site, "husbandry" for keeping an ANIMAL one,
-  // and "builders" for a queue entry. There is no second roster for any of them.
+  // and "builders" for a declared build. There is no second roster for any of them.
   jobs:[string];
   // A fresh-kit hunter's combat `attack` under this kit — the number the combat gate
   // max(0, attack - defense) compares against a herd's `defense`. Below a species' defense that
@@ -5260,12 +5223,10 @@ table CraftSuggestion {
 //                  material), the LaborAssignment spelling.
 //   kind "take"  — a take row's kitToe. Same `job` + target keys as a site; a band-wide role
 //                  ("scout" | "warrior") carries no target.
-//   kind "build_queue" — a QUEUED BUILD behind the head of the build queue, which will need these
-//                  tools of the builders' hands. `queuePosition` is its place in the band's build
-//                  queue (the head is 0 and is the builders' own "pool" line, so this is >= 1) and
-//                  `job` + target keys are the BuildQueueEntryState's own (`kind` + targetX/Y |
-//                  faunaId | material), which is how the client joins to that row's label. "road"
-//                  entries read job "roadwork" with targetX/Y.
+//   kind "build" — a DECLARED BUILD whose builders are short of these tools (`buildToe` on the
+//                  source row). `job` + target keys name the build's source in the LaborAssignment
+//                  spelling ("forage" + targetX/Y | "hunt" + faunaId | "extract" + targetX/Y +
+//                  material); a road reads job "roadwork" with targetX/Y.
 table CraftSuggestionSource {
   kind:string;
   job:string;
@@ -5275,9 +5236,7 @@ table CraftSuggestionSource {
   material:string;
   missingUnits:float;          // (required − filled), never below 0, in units of the item
   workersWithout:float;        // missingUnits x the item's workers_per_unit
-  workPerTurn:float = 0;       // workersWithout x build_work on a pool, site or queued build; 0 on a take row
-  // The queued build's place in the build queue (kind "build_queue" only; 0 otherwise). Appended last.
-  queuePosition:uint = 0;
+  workPerTurn:float = 0;       // workersWithout x build_work on a pool, site or declared build; 0 on a take row
 }
 
 // ONE ROW PER RECIPE, ALWAYS — a row of PopulationCohortState.craftOffers.
@@ -5374,7 +5333,7 @@ table CraftOffer {
   // which says a pass can run NOW (drives the readouts and which recipe a row suggests).
   queueable:bool;
   // The material id this recipe makes ("hurdles"), "" when it makes equipment - the join key onto a
-  // `CraftSuggestion.itemId` that names a stock material (a queued build short of the goods it draws).
+  // `CraftSuggestion.itemId` that names a stock material (a declared build short of the goods it draws).
   outputMaterialId:string;
 }
 
@@ -5585,6 +5544,9 @@ table LadderRungState {
   // is `HerdTelemetryState.sizeTier`.
   sizeTiers:[SizeTierState];
   knowledgeGains:[KnowledgeGainState];
+  // --- HOW MANY HANDS CAN BUILD THIS RUNG AT ONCE (appended last, docs/plan_labor_at_scale.md) -----
+  // The rung's `build.max_builders`: "up to N builders at once". 0 on a rung with nothing to build.
+  maxBuilders:uint = 0;
 }
 
 // One size tier of an enclosed rung (LadderRungState.sizeTiers).
@@ -6211,7 +6173,7 @@ table DepositState {
   // *** "" IS NOT "FINE". *** A working nobody has queued is not blocked, it is simply not being
   // built - which is every working on the map until a player types `fell` or `quarry`.
   buildBlockedReason:string;
-  // IS THIS WORKING IN SOME BAND'S BUILD QUEUE RIGHT NOW? - the MEMBERSHIP flag, and the term
+  // IS A BUILD DECLARED ON THIS WORKING RIGHT NOW? - the MEMBERSHIP flag, and the term
   // `buildTurnsRemaining`'s -5 is separated from -1 by. It is resolved by a live walk of the bands'
   // queues, because the row's own scratch lags a command by a whole turn and this state exists
   // precisely in that frame.
@@ -6324,6 +6286,29 @@ table DepositState {
   // `filled < required`, and `upkeepToolsShort` is exactly "some line is short". Item ids only - the
   // client resolves each to its roster display name. Absent = the site's keeping claimed no tool.
   upkeepToe:[KitToeLine];
+  // --- THE BUILDERS ON THIS SOURCE'S DECLARED BUILD (appended last, docs/plan_labor_at_scale.md,
+  // "Builds join the site's crew") ----------------------------------------------------------------
+  // A build is worked by the site's own crew - there is no build queue and no Builders role. Every
+  // declared build is staffed every turn from the same pool as the band's rows, so builds on
+  // different sites run in parallel, each ranked by its site's one Priority.
+  //
+  // buildersStaffed - the builders on this build this turn, the bare-handed and the kitted together.
+  // buildersKitted  - of those, the ones holding the build kit the rung uses (every builder, when
+  //                   the rung asks for no tool).
+  // buildersCap     - the most builders the build could take THIS turn: the rung's `maxBuilders`,
+  //                   cut by the room the tile left (`tile_worker_cap` is shared by every band
+  //                   working the tile). 0 when nobody has declared a build here.
+  // buildToe        - the tools the build's builders asked the band for and what the settlement gave
+  //                   them, one line per tool (`pool` reads "build"): the shortfall a builder is
+  //                   bare-handed for. Absent when the rung asks for no tool.
+  //
+  // THE VIEWER'S OWN BANDS ONLY: a rival's crew on a source is the builder's internal state, the
+  // same class as the larder, and is withheld on the same rule as the rest of the build scratch.
+  // `isQueued` keeps its name and now means "a build is declared on this source".
+  buildersStaffed:uint = 0;
+  buildersKitted:uint = 0;
+  buildersCap:uint = 0;
+  buildToe:[PoolToeLine];
 }
 
 // --- Roads: the roads in the ground (arc #532, docs/plan_standing_upkeep.md 4.13b) --------------
@@ -6514,6 +6499,29 @@ table RouteState {
   // the worse rate, and a reader must not add the two shortfalls into a single severity.
   upkeepMaterialDemand:float = 0;
   upkeepMaterialSupplied:float = 0;
+  // --- THE BUILDERS ON THIS SOURCE'S DECLARED BUILD (appended last, docs/plan_labor_at_scale.md,
+  // "Builds join the site's crew") ----------------------------------------------------------------
+  // A build is worked by the site's own crew - there is no build queue and no Builders role. Every
+  // declared build is staffed every turn from the same pool as the band's rows, so builds on
+  // different sites run in parallel, each ranked by its site's one Priority.
+  //
+  // buildersStaffed - the builders on this build this turn, the bare-handed and the kitted together.
+  // buildersKitted  - of those, the ones holding the build kit the rung uses (every builder, when
+  //                   the rung asks for no tool).
+  // buildersCap     - the most builders the build could take THIS turn: the rung's `maxBuilders`,
+  //                   cut by the room the tile left (`tile_worker_cap` is shared by every band
+  //                   working the tile). 0 when nobody has declared a build here.
+  // buildToe        - the tools the build's builders asked the band for and what the settlement gave
+  //                   them, one line per tool (`pool` reads "build"): the shortfall a builder is
+  //                   bare-handed for. Absent when the rung asks for no tool.
+  //
+  // THE VIEWER'S OWN BANDS ONLY: a rival's crew on a source is the builder's internal state, the
+  // same class as the larder, and is withheld on the same rule as the rest of the build scratch.
+  // `isQueued` keeps its name and now means "a build is declared on this source".
+  buildersStaffed:uint = 0;
+  buildersKitted:uint = 0;
+  buildersCap:uint = 0;
+  buildToe:[PoolToeLine];
 }
 
 // ONE IMPROVEMENT ON ONE TILE OF A TILE-KIND BRANCH - a row of `RouteSection.tileImprovements`. The
@@ -6565,8 +6573,31 @@ table TileImprovementState {
   upkeepToolsShort:bool = false;
   // The viewer's keeping tools, one line per item the crews claimed.
   upkeepToe:[KitToeLine];
-  // Whether one of the viewer's own bands has a build queued on this improvement.
+  // Whether one of the viewer's own bands has a build declared on this improvement.
   isQueued:bool = false;
+  // --- THE BUILDERS ON THIS SOURCE'S DECLARED BUILD (appended last, docs/plan_labor_at_scale.md,
+  // "Builds join the site's crew") ----------------------------------------------------------------
+  // A build is worked by the site's own crew - there is no build queue and no Builders role. Every
+  // declared build is staffed every turn from the same pool as the band's rows, so builds on
+  // different sites run in parallel, each ranked by its site's one Priority.
+  //
+  // buildersStaffed - the builders on this build this turn, the bare-handed and the kitted together.
+  // buildersKitted  - of those, the ones holding the build kit the rung uses (every builder, when
+  //                   the rung asks for no tool).
+  // buildersCap     - the most builders the build could take THIS turn: the rung's `maxBuilders`,
+  //                   cut by the room the tile left (`tile_worker_cap` is shared by every band
+  //                   working the tile). 0 when nobody has declared a build here.
+  // buildToe        - the tools the build's builders asked the band for and what the settlement gave
+  //                   them, one line per tool (`pool` reads "build"): the shortfall a builder is
+  //                   bare-handed for. Absent when the rung asks for no tool.
+  //
+  // THE VIEWER'S OWN BANDS ONLY: a rival's crew on a source is the builder's internal state, the
+  // same class as the larder, and is withheld on the same rule as the rest of the build scratch.
+  // `isQueued` keeps its name and now means "a build is declared on this source".
+  buildersStaffed:uint = 0;
+  buildersKitted:uint = 0;
+  buildersCap:uint = 0;
+  buildToe:[PoolToeLine];
 }
 
 table RouteSection {

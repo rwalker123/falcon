@@ -15,7 +15,7 @@
 //! readers, all joining on `tile_x`/`tile_y`:
 //!
 //!   * `MapView._ingest_road_network` -> `MapView.road_network` / `road_tile_lookup`, the world-state
-//!     cache the other four read through;
+//!     cache the other readers go through;
 //!   * `TerrainRenderer.rebuild_shader_maps` -> the per-hex `road_map` splatmap, which
 //!     `terrain_blend.gdshader`'s road pass draws the road FROM. It packs `rung` and `build_fraction`
 //!     into two separate channels and the shader adds them into one ladder position, so a road
@@ -26,9 +26,8 @@
 //!   * `DrawerComposeController`'s road ladder (`RungLadder.route_track` / `RungGates.route_gates`),
 //!     which reads `rung`, `build_fraction`, `keeper_remoteness` and the `has_keeper` /
 //!     `keeper_band_id` pair to decide what a player may order on the tile;
-//!   * `BandPanelController._road_queue_models` -> the BUILD QUEUE's road rows, via
-//!     `HudBandLaborState.roads()`, joining each `roadwork` queue entry's `target_x`/`target_y` to a
-//!     row here for its rung, its meter and its `build_turns_remaining`.
+//!   * `BandPanelController`'s Roadwork roster rows, via `HudBandLaborState.roads()`: the road's rung,
+//!     its meter, its keeping and its build crew (`builders_*`).
 //!
 //! Already fog-filtered SIM-SIDE, and the gate is `Discovered` rather than the herd list's `Active`
 //! -- a road does not wander off, so remembering one is remembering something true. A road on ground
@@ -167,6 +166,13 @@ pub(crate) fn routes_to_array(list: Vector<'_, ForwardsUOffset<fb::RouteState<'_
         // — "a road has no source row for the sim to stamp an estimate on" — was never true of this
         // table, which is keyed by tile exactly as a patch row is.
         let _ = dict.insert("build_turns_remaining", route.buildTurnsRemaining() as i64);
+        crate::dict::population::insert_build_crew(
+            &mut dict,
+            route.buildersStaffed(),
+            route.buildersKitted(),
+            route.buildersCap(),
+            route.buildToe(),
+        );
         // ⛔ **WHAT HOLDING THIS ROAD COSTS IN GOODS, AND IT IS A SECOND CURRENCY RATHER THAN A
         // SECOND SIZE.** The STANDING material bill and what the keeper's stores actually paid of it
         // — the material twin of `upkeep_demand`/`upkeep_supplied` above, obeying the same identity:

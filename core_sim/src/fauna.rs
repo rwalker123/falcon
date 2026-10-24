@@ -511,17 +511,15 @@ pub struct Herd {
     /// and for its reason: the kit is re-read every turn, so no state may record *"this build was
     /// geared"*.
     pub build_work_from_gear: f32,
-    /// **WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, and
-    /// [`crate::intensification::NOT_IN_ANY_BUILD_QUEUE`] (`-1`) when no band has queued it
+    /// **THE ESTIMATE-PASS STAMP** — `ESTIMATE_PASS_RAN` (`systems::labor`) once the estimate
+    /// pass has dated a declared build on this source this turn, else
+    /// [`crate::intensification::NOT_IN_ANY_BUILD_QUEUE`] (`-1`, the neutral). It is what separates
+    /// "no pass has run for this build yet" from "the pass ran and had no number"
     /// (`docs/plan_standing_upkeep.md` §4.6b).
     ///
     /// **It rides the same winner as [`Self::build_turns_remaining`] and
-    /// [`Self::build_work_from_gear`]** — the three are read as one set, so a date from one band's
-    /// queue beside another band's position would be two answers pretending to be one.
-    ///
-    /// **Without it a chained date is a number with no explanation.** The whole builders pool goes
-    /// on the head of a queue, so an entry's turns are everything above it plus its own span — and
-    /// the player cannot tell forty turns of work from eight turns of work behind four other jobs.
+    /// [`Self::build_work_from_gear`]** — the three are read as one set, so a date from one band
+    /// beside another band's stamp would be two answers pretending to be one.
     ///
     /// Transient per-turn scratch on [`Self::build_turns_remaining`]'s cycle, and for its reason.
     pub build_queue_position: i32,
@@ -1442,7 +1440,7 @@ impl Herd {
     }
 
     /// **STOP AN UNFINISHED COMMITMENT AND CLEAR ITS METER** — the state a recommit leaves behind
-    /// when its queue entry goes, and [`Herd::cancel_pen_extension`]'s twin in every respect
+    /// when its declared build goes, and [`Herd::cancel_pen_extension`]'s twin in every respect
     /// including the discarded progress: [`Self::begin_output_recommit`] resets the meter on every
     /// start, so preserved progress could never be resumed by any path the game has. The live
     /// fraction is untouched — a withdrawn order leaves the herd producing exactly what it was.
@@ -1493,7 +1491,7 @@ impl Herd {
     }
 
     /// **STOP AN UNFINISHED RING AND CLEAR ITS METER** — the state a ring leaves behind when its
-    /// queue entry goes ([`crate::fauna::cancel_dropped_rings`]).
+    /// declared build goes ([`crate::fauna::cancel_dropped_rings`]).
     ///
     /// # THE BANKED PROGRESS IS DISCARDED, AND THAT IS THE HONEST STATE
     ///
@@ -4025,7 +4023,6 @@ pub fn advance_predation(
     let fauna = fauna_config.get();
     let width = config.grid_size.x.max(1);
     let wrap = config.map_topology.wrap_horizontal;
-    let escapement_floor_fraction = fauna.predators.predation_escapement_fraction;
     let radius = fauna.predators.prey_sense_radius;
     let default_defense = crate::combat::CombatStats::default().defense;
     let len = herds.herds.len();
@@ -4072,7 +4069,7 @@ pub fn advance_predation(
             if hex_distance_wrapped(pred_pos, prey.current_pos, width, wrap) > radius {
                 continue;
             }
-            let floor = escapement_floor_fraction * prey.carrying_capacity;
+            let floor = predation_escapement_floor(prey, &fauna);
             let available = (prey.biomass - floor).max(0.0);
             if available <= 0.0 {
                 continue;
@@ -4086,7 +4083,7 @@ pub fn advance_predation(
         let drawn_fraction = (demand / total_available).min(1.0);
         for j in prey_indices {
             let prey = &mut herds.herds[j];
-            let floor = escapement_floor_fraction * prey.carrying_capacity;
+            let floor = predation_escapement_floor(prey, &fauna);
             let available = (prey.biomass - floor).max(0.0);
             let drawn = available * drawn_fraction;
             prey.biomass -= drawn;
@@ -5263,7 +5260,7 @@ pub fn herd_build_rung(
     // The pen arm asked `standing.credit > 0`, and `animal:pen` is `partial_credit: on_completion`,
     // which `RungStanding::at` pins to `NO_RUNG_CREDIT` at **every** position short of full. So the
     // arm could never fire: a herd with real work banked on its fence and no live declaration (what
-    // `banking.declared_on` answers once the queue entry is gone) fell through and derived **no
+    // `banking.declared_on` answers once the declared build is gone) fell through and derived **no
     // verb**, where the retired two-meter walk answered `Corral`. `RungStanding::banked` is what a
     // meter carries rather than what it is worth, so it is positive from the first work banked on
     // either rung - which is also why one arm now serves both.
@@ -5292,7 +5289,7 @@ pub fn herd_build_verb(
     herd_build_rung(herd, ladder, declared).and_then(|rung| ladder.rung(rung).verb_id())
 }
 
-/// **IS THE RUNG THIS QUEUE ENTRY DECLARED ALREADY STANDING?** - the animal twin of
+/// **IS THE RUNG THIS DECLARED BUILD DECLARED ALREADY STANDING?** - the animal twin of
 /// `forage::patch_rung_already_built`, and the test that retires a **dead** entry
 /// (`docs/plan_standing_upkeep.md` §2.5).
 ///
@@ -5304,19 +5301,19 @@ pub fn herd_rung_already_built(herd: &Herd, ladder: &LadderConfig, declared: Run
     ladder.at_or_above(herd.standing().held, declared)
 }
 
-/// **CANCEL EVERY RING NAMED BY AN ENTRY THAT JUST LEFT A BUILD QUEUE.**
+/// **CANCEL EVERY RING NAMED BY AN ENTRY THAT JUST STOPPED BEING DECLARED.**
 ///
 /// `extend_pen` sets `Herd::pen_extending` **before** it queues, and only completion cleared it — so
 /// an entry dropped mid-ring left the flag set with nothing left to fund the ring, and
 /// [`Herd::begin_pen_extension`] refuses while it is set. That is a **permanent** dead end on that
 /// pen, one `✕` click away.
 ///
-/// Handed the entries a drop produced (`LaborAllocation::prune_build_queue` returns them; the two
+/// Handed the entries a drop produced (`LaborAllocation::prune_builds` returns them; the two
 /// command seams below read theirs before dropping), so every exit passes through one rule rather
 /// than each remembering it.
 pub fn cancel_dropped_rings(
     herds: &mut HerdRegistry,
-    dropped: &[crate::components::BuildQueueEntry],
+    dropped: &[crate::components::BuildDeclaration],
 ) {
     for entry in dropped {
         let crate::components::BuildSource::Herd(id) = &entry.source else {
@@ -5353,8 +5350,8 @@ pub fn unqueue_build_and_cancel_ring(
     let Some(mut allocation) = world.get_mut::<crate::components::LaborAllocation>(band) else {
         return false;
     };
-    let entry = allocation.build_queue_entry(source).cloned();
-    if !allocation.unqueue_build(source) {
+    let entry = allocation.build_declaration(source).cloned();
+    if !allocation.stop_build(source) {
         return false;
     }
     cancel_dropped_rings(&mut world.resource_mut::<HerdRegistry>(), entry.as_slice());
@@ -5375,7 +5372,7 @@ pub fn drop_holding_and_cancel_ring(
         return false;
     };
     let entry = crate::components::BuildSource::of(target)
-        .and_then(|source| allocation.build_queue_entry(&source).cloned());
+        .and_then(|source| allocation.build_declaration(&source).cloned());
     let Some(row) = allocation.drop_source_row(target) else {
         return false;
     };
@@ -6725,8 +6722,15 @@ impl HuntProjection {
         // Logistics: regrow first (sets `quarry.biomass_before_regrowth`, then grows
         // `quarry.biomass`) — unless this turn's regrowth already happened ([`ProjectionStart`]),
         // in which case this turn's growth is already standing and `growth_this_turn` reads it.
+        //
+        // **A between-turns first step also takes last turn's predation**, exactly as
+        // [`next_turns_quarry`] does (one helper), so the row's forecast and the crew curve read
+        // the same stock. `regrow_biomass` zeroes the stamp on the clone, so only the first step
+        // carries it; an `AfterRegrowth` start reads the turn's real post-predation stock.
         if !std::mem::take(&mut self.regrown) {
+            let predated_last_turn = quarry.predator_eaten_this_turn.max(0.0);
             regrow_biomass(quarry, fauna);
+            subtract_forecast_predation(quarry, predated_last_turn, fauna);
         }
         if quarry.biomass <= self.ecology.extinction_floor * self.capacity {
             return None; // `advance_herds` would despawn it here — the herd is gone.
@@ -11049,9 +11053,30 @@ pub struct HuntCrewCurveInputs<'a> {
 /// since next turn's take really will draw on less stock. A guard asserting the clone never shrinks
 /// looked obviously true and fired on the first thin-herd fixture it met.
 pub fn next_turns_quarry(herd: &Herd, fauna: &FaunaConfig) -> Herd {
+    // Read BEFORE regrowing: `regrow_biomass` resets the stamp on the clone.
+    let predated_last_turn = herd.predator_eaten_this_turn.max(0.0);
     let mut quarry = herd.clone();
     regrow_biomass(&mut quarry, fauna);
+    subtract_forecast_predation(&mut quarry, predated_last_turn, fauna);
     quarry
+}
+
+/// **Persistence forecast**: the packs that ate `predated_last_turn` are expected to eat the same
+/// again (`advance_predation` runs after regrowth), so the stock a crew will find is the regrown one
+/// less that bill, but never under the escapement floor predation itself stops at, and never raised
+/// (a stock already under the floor loses nothing). The one expression [`next_turns_quarry`] and
+/// [`HuntProjection::step`]'s first between-turns step share.
+fn subtract_forecast_predation(quarry: &mut Herd, predated_last_turn: f32, fauna: &FaunaConfig) {
+    if predated_last_turn > 0.0 {
+        let floor = predation_escapement_floor(quarry, fauna);
+        quarry.biomass = (quarry.biomass - predated_last_turn).max(floor.min(quarry.biomass));
+    }
+}
+
+/// **The biomass a prey herd is never predated below**: `predators.predation_escapement_fraction ×
+/// herd_capacity`. One expression for [`advance_predation`] and [`next_turns_quarry`]'s forecast of it.
+fn predation_escapement_floor(herd: &Herd, fauna: &FaunaConfig) -> f32 {
+    fauna.predators.predation_escapement_fraction * herd_capacity(herd, fauna)
 }
 
 /// **THE CREWS A BAND ACTUALLY FIELDS AT `workers` ON THIS ROW** — [`HuntCrewCurveInputs`]'s
@@ -15975,6 +16000,108 @@ mod tests {
         assert!(
             (quote - penned_there).abs() < 1e-6,
             "{quote} vs {penned_there}"
+        );
+    }
+
+    /// **THE FORECAST CARRIES LAST TURN'S PREDATION** (`next_turns_quarry`). A herd whose regrowth a
+    /// pack eats is forecast at regrown less what was eaten, never under the escapement floor,
+    /// and a herd nobody predated is forecast exactly as the bare regrowth.
+    #[test]
+    fn a_forecast_subtracts_the_predation_last_turn_suffered_down_to_the_floor() {
+        const RABBITS: &str = "Rabbit Warren";
+        const CAPACITY: f32 = 100.0;
+        /// Half the capacity: well above the escapement floor, so regrowth has room to show.
+        const STOCK: f32 = 50.0;
+        /// Far more than the regrowth: only the floor can stop it.
+        const EVERYTHING: f32 = 1_000.0;
+        /// A bite smaller than the regrowth, so the result stays above the floor.
+        const SMALL_BITE: f32 = 1.0;
+        let fauna = FaunaConfig::builtin();
+        let def = fauna.species_by_display(RABBITS).expect("shipped species");
+        let mut herd = Herd::new(
+            "game_prey".to_string(),
+            RABBITS.to_string(),
+            SizeClass::Small,
+            vec![UVec2::new(1, 1)],
+            STOCK,
+            CAPACITY,
+            def.fodder_per_biomass,
+            def.regrowth_rate.expect("a breeding species"),
+            def.body_mass,
+            shipped::root_standing(shipped::animal()),
+        );
+        let bare = next_turns_quarry(&herd, &fauna).biomass;
+        let floor = predation_escapement_floor(&herd, &fauna);
+        assert!(bare > STOCK && STOCK > floor, "fixture: regrowth has room");
+
+        herd.predator_eaten_this_turn = SMALL_BITE;
+        let bitten = next_turns_quarry(&herd, &fauna);
+        assert!((bitten.biomass - (bare - SMALL_BITE)).abs() < 1e-4);
+        assert_eq!(
+            bitten.predator_eaten_this_turn, 0.0,
+            "the clone's stamp resets"
+        );
+
+        herd.predator_eaten_this_turn = EVERYTHING;
+        let eaten = next_turns_quarry(&herd, &fauna).biomass;
+        assert!((eaten - floor).abs() < 1e-4, "{eaten} is the floor {floor}");
+
+        // Already under the floor after regrowth: nothing is subtracted, and nothing is raised.
+        herd.biomass = floor * 0.1;
+        herd.predator_eaten_this_turn = 0.0;
+        let regrown = next_turns_quarry(&herd, &fauna).biomass;
+        herd.predator_eaten_this_turn = EVERYTHING;
+        assert_eq!(next_turns_quarry(&herd, &fauna).biomass, regrown);
+    }
+
+    /// **THE ROW'S BETWEEN-TURNS PROJECTION TAKES LAST TURN'S PREDATION TOO.** A `BeforeRegrowth`
+    /// first step reads the stock the crew curve reads (`next_turns_quarry`: regrown, less the
+    /// predation), so `project_realized_hunt` over one turn equals the same projection started
+    /// `AfterRegrowth` on that clone, and sits below the unpredated herd's.
+    #[test]
+    fn a_between_turns_projection_takes_the_predation_the_curve_takes() {
+        const RABBITS: &str = "Rabbit Warren";
+        const CAPACITY: f32 = 100.0;
+        /// On the hunt floor, where only the regrowth is on offer.
+        const STOCK: f32 = 50.0;
+        /// A bite of most of the regrowth (~8.75), leaving a room that binds the reach.
+        const BITE: f32 = 8.0;
+        const ONE_TURN: u32 = 1;
+        const HUNTERS: f32 = 12.0;
+        const CARRY: f32 = 12.0;
+        const FLOOR: f32 = 0.5;
+        const OUTPUT: f32 = 1.0;
+        let fauna = FaunaConfig::builtin();
+        let def = fauna.species_by_display(RABBITS).expect("shipped species");
+        let mut herd = Herd::new(
+            "game_prey".to_string(),
+            RABBITS.to_string(),
+            SizeClass::Small,
+            vec![UVec2::new(1, 1)],
+            STOCK,
+            CAPACITY,
+            def.fodder_per_biomass,
+            def.regrowth_rate.expect("a breeding species"),
+            def.body_mass,
+            shipped::root_standing(shipped::animal()),
+        );
+        let party = mixed_party(HUNTERS, 0.0);
+        let project = |herd: &Herd, start: ProjectionStart| {
+            project_realized_hunt(
+                herd, &fauna, CARRY, &party, OUTPUT, HUNTERS, FLOOR, ONE_TURN, start,
+            )
+            .provisions
+        };
+        let unpredated = project(&herd, ProjectionStart::BeforeRegrowth);
+        herd.predator_eaten_this_turn = BITE;
+        let predated = project(&herd, ProjectionStart::BeforeRegrowth);
+        let curve_stock = next_turns_quarry(&herd, &fauna);
+        let from_curve = project(&curve_stock, ProjectionStart::AfterRegrowth);
+        assert!(predated > 0.0, "fixture: the predated herd still pays");
+        assert!(predated < unpredated, "{predated} is below {unpredated}");
+        assert!(
+            (predated - from_curve).abs() < 1e-5,
+            "{predated} vs the curve's stock {from_curve}"
         );
     }
 }

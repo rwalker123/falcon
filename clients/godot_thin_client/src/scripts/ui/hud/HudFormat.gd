@@ -362,21 +362,6 @@ static func join_tooltip_lines(lines: Array) -> String:
             parts.append(text)
     return SourceForecast.TOOLTIP_LINE_SEPARATOR.join(parts)
 
-## A rung's display FACE — its `FoodIcons` glyph welded to its name. The one policy vocabulary every
-## **A CLICKABLE RUN INSIDE A BBCODE LINE** — the `[url]` the host's `meta_clicked` dispatches on,
-## tinted and underlined so it reads as a link rather than as coloured prose.
-##
-## **IT IS A FORMAT HELPER, NOT A WIDGET, and that is the split it belongs on.** `HudWidgets`'
-## `build_inline_link` builds a whole `Button` for a link that stands ALONE on its row; this one is
-## for a link inside a SENTENCE, which structurally cannot be a sibling control — a wrapped line
-## cannot break inside an atomic child. The compose sheet's offered rung is the caller
-## (`docs/plan_standing_upkeep.md` §4.7a ①); `DetailFormat`'s disclosure carets spell the same run by
-## hand because theirs also carries a caret glyph and a per-row tint fork.
-##
-## The `[u]` is inside the `[color]` deliberately: Godot draws the underline in the CURRENT colour, so
-## the other nesting leaves a tinted word underscored in the label's default ink.
-static func bbcode_link(text: String, meta: String, hex: String) -> String:
-    return "[url=%s][color=#%s][u]%s[/u][/color][/url]" % [meta, hex, text]
 
 ## rung readout shares (the gate-reason lines, the work inspector's standing-investment line and its
 ## confirm), so a rung can never read one way beside the picker and another in the dialog.
@@ -441,13 +426,6 @@ static func floor_hint(floor: float, kind: String) -> String:
 ## A 0..1 progress track (knowledge / domestication) as a whole percent. 0 is a MEANINGFUL reading in
 ## a gate reason — it tells the player they haven't started the track at all.
 ##
-## ⛔ **IT FLOORS, AND `round()` HERE WAS A DEFECT.** Every caller of this helper is a COMPLETION
-## meter — a knowledge track, the crafting track, a pen's fencing, the four build meters, the rung
-## gates — and in all of them `100%` means *this is finished*. Rounding let an unfinished thing claim
-## it was: a Field at `49.612 / 49.624 work` (0.9997586) printed `100`, and because that Field had
-## gone feral the turn after it completed and its queue entry had already retired, the card read
-## `⚠ Stalled 100%` and stayed there with nothing able to move it. A player reading a full meter has
-## no reason to look for the work that is missing.
 ##
 ## **THE `clampf` ABOVE IS WHAT MAKES FLOORING SAFE AT THE TOP END, and it is not incidental.** A
 ## genuinely complete source publishes `>= 1.0` — often a hair over — so the clamp pins it to exactly

@@ -79,7 +79,7 @@ cannot have, which is why the command side answers the question a different way.
 
 | Goes out on | What | Why |
 |---|---|---|
-| the **seated link** | `DenialRaidForecast`, `HuntCrewTake`, `WorkPartyForecast`, `DepositCrewTake`, `ForageCrewTake` | Each carries a client-supplied `faction_id` and is answered with that faction's private state — a named band's live equipment wear, its idle workers, its take curve. Asked from an unseated connection that is the disclosure per-seat frames just closed, one channel over |
+| the **seated link** | `DenialRaidForecast`, `HuntCrewTake`, `WorkPartyForecast`, `DepositCrewTake`, `ForageCrewTake`, `StaffingPreview` | Each carries a client-supplied `faction_id` and is answered with that faction's private state — a named band's live equipment wear, its idle workers, its take curve. Asked from an unseated connection that is the disclosure per-seat frames just closed, one channel over |
 | a **connection per round trip** | `ListSaves`, `FactionCapacity`, and the three save verbs | They name no faction, and they are asked from `LandingScreen` **before `Main` exists and therefore before any seat is claimed**. The server answers both ahead of its `world_active` gate so the load menu opens with no world; routing them onto the link would make that menu wait on the seat machinery to answer a question no gate will ever apply to |
 
 **A query written on the link is fire-and-forget out and correlated by `request_id` back**, exactly
@@ -389,19 +389,19 @@ client is still trying, because after a server restart it is.
 
 A staffed row's count is the player's **Max** (`assign_labor`'s count slot, `0` = no Max), so a count of
 zero no longer removes it. `stop_labor <faction> <band> <source>` does. The client reaches it from a source
-sheet's `Stop working here` and the work inspector's `Unassign` (`BandPanelController._commit_stop_labor` /
-`DrawerComposeController._emit_stop_labor` → `stop_labor_requested` → `HudLayer` → `Main._on_hud_stop_labor`
+sheet's `Stop working here` (`DrawerComposeController._emit_stop_labor` → `stop_labor_requested` →
+`HudLayer._on_stop_labor_requested` → `Main._on_hud_stop_labor`
 → `Main.format_stop_labor`).
 
-- **It names its band by `BandId`** (`faction`, `band_id` in the payload), like `work_priority` and
-  `build_order`, and rides the one seated link every faction-bearing command does.
+- **It names its band by `BandId`** (`faction`, `band_id` in the payload), like `work_priority`, and
+  rides the one seated link every faction-bearing command does.
 - **The source is `Main.site_address`'s**: `<x> <y>` for a patch, a herd id, `<x> <y> <material>` for a
   working, and `<branch> <x> <y>` for a tile-improvement keeper row (the branch word leads, from the
   payload's `branch`). The Roadwork pool is the lone token `roadwork` (`payload.roadwork`), never a tile.
   A road BUILD has no crew row and builds no line.
 - **Stop records no overlay of its own, but it drops the pending assign for that source.** The row is
   captured live and the server restaffs the band at once, so the next snapshot carries the row's absence;
-  `_on_hud_stop_labor` is `_on_hud_work_priority`'s shape. Both emitters carry `kind` and `pending_entity`,
+  `_on_hud_stop_labor` is `_on_hud_work_priority`'s shape. The emitter carries `kind` and `pending_entity`,
   and `Hud._on_stop_labor_requested` drops that source's entry (key rebuilt as the assign built it; branch
   in the material slot on tile/band kinds) before relaying, because `reconcile_pending` only retires
   EARLIER-turn entries and an assign made earlier in the same turn would re-add the stopped row through

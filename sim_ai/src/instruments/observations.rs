@@ -15,8 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use sim_runtime::{
-    BuildQueueEntryState, ForagePatchState, HerdTelemetryState, LaborAssignmentState,
-    PopulationCohortState,
+    ForagePatchState, HerdTelemetryState, LaborAssignmentState, PopulationCohortState,
 };
 
 use crate::brain::BrainLens;
@@ -101,7 +100,9 @@ pub struct Ledger {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SourceBuild {
     pub destination_rung: String,
-    pub queue_position: i32,
+    /// The builders the sim put on the build this turn, and the most it could take.
+    pub builders_staffed: u32,
+    pub builders_cap: u32,
     pub turns_remaining: i32,
     pub blocked_reason: Option<String>,
 }
@@ -114,13 +115,6 @@ pub struct SourceUpkeep {
     pub supplied: f32,
     pub shortfall: f32,
     pub workers_needed: u32,
-}
-
-/// One entry of a band's build queue: the web and the source, as the wire names them.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BuildQueueObservation {
-    pub job: String,
-    pub target: Option<AssignmentTarget>,
 }
 
 /// A tile, as an assignment target or a move target.
@@ -198,8 +192,6 @@ pub struct BandObservation {
     /// reached it — so a viewer can mark a child band.
     #[serde(default)]
     pub born_by_split: Option<TilePos>,
-    /// The band's build queue, in the band's order; the declaration itself is on the source row.
-    pub build_queue: Vec<BuildQueueObservation>,
 }
 
 /// A herd standing on a neighbourhood tile.
@@ -421,11 +413,6 @@ impl Observation {
                         x: birth.target.x,
                         y: birth.target.y,
                     }),
-                    build_queue: band
-                        .build_queue
-                        .iter()
-                        .map(build_queue_observation)
-                        .collect(),
                 }
             })
             .collect();
@@ -591,30 +578,12 @@ fn owned_patches(view: &SeatView, faction: u32) -> impl Iterator<Item = &ForageP
         .filter(move |patch| patch.owner == Some(faction))
 }
 
-fn build_queue_observation(entry: &BuildQueueEntryState) -> BuildQueueObservation {
-    let target = if !entry.fauna_id.is_empty() {
-        Some(AssignmentTarget::Herd {
-            herd_id: entry.fauna_id.clone(),
-        })
-    } else if entry.kind == ROLE_HUNT {
-        None
-    } else {
-        Some(AssignmentTarget::Tile(TilePos {
-            x: entry.target_x,
-            y: entry.target_y,
-        }))
-    };
-    BuildQueueObservation {
-        job: entry.kind.clone(),
-        target,
-    }
-}
-
 /// The declared climb on a patch: present iff a destination rung is named.
 fn patch_build(patch: &ForagePatchState) -> Option<SourceBuild> {
     source_build(
         &patch.build_destination_rung,
-        patch.build_queue_position,
+        patch.builders_staffed,
+        patch.builders_cap,
         patch.build_turns_remaining,
         &patch.build_blocked_reason,
     )
@@ -623,7 +592,8 @@ fn patch_build(patch: &ForagePatchState) -> Option<SourceBuild> {
 fn herd_build(herd: &HerdTelemetryState) -> Option<SourceBuild> {
     source_build(
         &herd.build_destination_rung,
-        herd.build_queue_position,
+        herd.builders_staffed,
+        herd.builders_cap,
         herd.build_turns_remaining,
         &herd.build_blocked_reason,
     )
@@ -631,13 +601,15 @@ fn herd_build(herd: &HerdTelemetryState) -> Option<SourceBuild> {
 
 fn source_build(
     destination_rung: &str,
-    queue_position: i32,
+    builders_staffed: u32,
+    builders_cap: u32,
     turns_remaining: i32,
     blocked_reason: &str,
 ) -> Option<SourceBuild> {
     non_empty(destination_rung).map(|destination_rung| SourceBuild {
         destination_rung,
-        queue_position,
+        builders_staffed,
+        builders_cap,
         turns_remaining,
         blocked_reason: non_empty(blocked_reason),
     })
@@ -686,7 +658,7 @@ fn is_untargeted_role(row: &LaborAssignmentState) -> bool {
 /// snapshot row** is `LaborTarget::kind`'s band-wide arm (`core_sim/src/snapshot/population.rs`),
 /// which leaves `target_x` / `target_y` at the wire default `0, 0` for every one of them — a row
 /// whose kind is missing here is recorded as a crew working tile `0, 0`.
-const UNTARGETED_ROLES: [&str; 4] = ["scout", "warrior", "roadwork", "builders"];
+const UNTARGETED_ROLES: [&str; 3] = ["scout", "warrior", "roadwork"];
 
 #[cfg(test)]
 mod tests {
@@ -700,7 +672,7 @@ mod tests {
     use crate::specialists::land::INTENT_MOVE;
     use crate::specialists::{intent_key, Memo, SPECIALIST_FOOD, SPECIALIST_LAND};
     use crate::view::VISIBILITY_ACTIVE;
-    use sim_runtime::{BuildQueueEntryState, LaborAssignmentState, PopulationCohortState};
+    use sim_runtime::{LaborAssignmentState, PopulationCohortState};
 
     const HORIZON: u32 = 3;
     /// The turns a pending split waits for its child in these tests.
@@ -743,13 +715,6 @@ mod tests {
             floor: 0.5,
             take_species: vec!["wild_emmer".into()],
             improvement: "cultivate".into(),
-            ..Default::default()
-        }];
-        view.snapshot.populations[0].build_queue = vec![BuildQueueEntryState {
-            kind: "forage".into(),
-            target_x: 4,
-            target_y: 2,
-            fauna_id: String::new(),
             ..Default::default()
         }];
         if let Some(patch) = view
@@ -1126,7 +1091,7 @@ mod tests {
 
     /// The worked row carries the client's Forage/Hunt readout — staffing signals, kit, floor,
     /// take selection, the declared build — and the source it works carries the declared climb
-    /// and its upkeep; the band's build queue names the source; the ledger counts the seat's
+    /// and its upkeep; the ledger counts the seat's
     /// improved ground over the whole frame.
     #[test]
     fn the_worked_row_and_its_source_carry_the_readout_fields() {
@@ -1145,11 +1110,6 @@ mod tests {
         assert_eq!(row.species, None, "the tile's own pick");
         assert_eq!(row.take_species, vec!["wild_emmer"]);
         assert_eq!(row.improvement.as_deref(), Some("cultivate"));
-        assert_eq!(band.build_queue.len(), 1);
-        assert_eq!(
-            band.build_queue[0].target,
-            Some(AssignmentTarget::Tile(TilePos { x: 4, y: 2 }))
-        );
         let worked = observation
             .neighborhood
             .iter()

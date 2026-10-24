@@ -47,7 +47,8 @@
       "ceiling_required": null,
       "site_requirement": null,
       "build": {
-        "work_cost": 20.0
+        "work_cost": 20.0,
+        "max_builders": 5
       },
       "upkeep": {
         "work_per_turn": 1.0,

@@ -1,7 +1,7 @@
 //! **`Food`** — the food loop (`docs/plan_ai_driver.md` §4). Owns `runway_turns`; alarms
 //! `FoodShort` when the minimum own-band runway is below the profile's `food.runway_floor_turns`.
 //!
-//! Seven rules ([`rules`]), each a pure function of one band, the view, the plan's goals and the
+//! Eight rules ([`rules`]), each a pure function of one band, the view, the plan's goals and the
 //! memory, each producing at most one proposal per band whose `reason` names the rule and its
 //! subject — the §4 table, as shipped, in `propose` order:
 //!
@@ -19,6 +19,11 @@
 //!   keeps it first and gathers with the rest. On a completed rung it is a standing bill.
 //! - *upgrade the ground* — the rung known and a worked patch below it: declare the climb and
 //!   staff the builders, priced by the projection ledger ([`ledger`]).
+//! - *make room for the build* — a band with a climb in flight that holds its reserve (its steady
+//!   income projected over the horizon ends at or above the runway goal) places no free hand on food (rules 1, 3 and 4 are silent) and, while
+//!   the build reads under its builder cap, pauses its lowest-paying forage row other than the
+//!   build's own (floor 1.0: the row keeps its keepers, the build gets the rest); every paused row
+//!   harvests again once the build stands or the band no longer holds its reserve.
 //! - *draw down to survive* — the plan in force troughs at or below zero: lower a worked forage
 //!   row's harvest floor to the highest that survives, and put it back to Best once the runway
 //!   clears.
@@ -80,9 +85,6 @@ pub const ROLE_HUNT: &str = "hunt";
 /// sim staffs as many hands as help. The AI never caps a forage or hunt row.
 pub(crate) const NO_MAX: u32 = 0;
 
-/// The band-wide build pool: `assign_labor <faction> <band> builders <n>`, whose whole output goes
-/// on the head of the band's build queue (`command_text.rs` → `assign_labor`).
-pub const ROLE_BUILDERS: &str = "builders";
 /// The intent kinds, one per rule (*split to feed* has two: the split, then the child's settle).
 pub const INTENT_ASSIGN: &str = "assign";
 pub const INTENT_FEED_MOVE: &str = "feed_move";
@@ -92,6 +94,7 @@ pub const INTENT_HUNT: &str = "hunt";
 pub const INTENT_UPGRADE: &str = "upgrade";
 pub const INTENT_DRAWDOWN: &str = "drawdown";
 pub const INTENT_HOLD: &str = "hold";
+pub const INTENT_ROOM: &str = "room";
 
 pub struct Food {
     faction: u32,
@@ -419,16 +422,6 @@ impl Food {
         })
     }
 
-    /// `assign_labor` on a band-wide role (`builders`, …): no target, no kit, no floor.
-    fn assign_pool(
-        &self,
-        band: &PopulationCohortState,
-        role: &str,
-        workers: u32,
-    ) -> CommandPayload {
-        self.assign_role(band, role, workers, None, None, None, None)
-    }
-
     /// `assign_labor` on a forage patch **at a stated harvest floor** — *draw down to survive*'s
     /// command; `None` is the wire default, Best.
     fn assign_at_floor(
@@ -506,15 +499,6 @@ impl Food {
             .map_or(0, |row| row.workers)
     }
 
-    /// Workers on the band-wide `role` pool.
-    fn workers_in_pool(band: &PopulationCohortState, role: &str) -> u32 {
-        band.labor_assignments
-            .iter()
-            .filter(|row| row.kind == role)
-            .map(|row| row.workers)
-            .sum()
-    }
-
     /// **This specialist's slice of the plan**: the workers its share of the seat's working-age
     /// pool comes to this turn — the same arithmetic the arbiter charges, so a proposal sized to
     /// it is never `over_budget`. A specialist reads its budget, never the profile.
@@ -563,7 +547,7 @@ impl Specialist for Food {
         SPECIALIST_FOOD
     }
 
-    /// The seven rules per own band, in the table's order. Each yields at most one proposal per
+    /// The eight rules per own band, in the table's order. Each yields at most one proposal per
     /// band; the arbiter, ranking by goal gap closed, keeps every one whose claims — the labor
     /// rows it sets, the band's move, its split (`Cost::claimed`) — no higher-ranked proposal has
     /// taken. `ground` is the turn's land reading per band (`ground::read_all`); only the outfit's
@@ -590,12 +574,13 @@ impl Specialist for Food {
             out.proposals.extend(self.settle(view, plan, memory, band));
             // *Hold the ground* comes before *upgrade the ground*: holding what the band has
             // beats declaring the next rung.
-            let ruled: [Option<(Proposal, Reassignment)>; 5] = [
+            let ruled: [Option<(Proposal, Reassignment)>; 6] = [
                 self.feed_while_moving_change(view, plan, memory, band),
                 self.split_to_feed_change(view, plan, memory, band, &carried),
                 self.spare_hands_into_hunts_change(view, plan, memory, band, &carried),
                 self.hold_the_ground_change(view, plan, memory, band, &carried),
                 self.upgrade_the_ground_change(view, plan, memory, band, &carried),
+                self.make_room_change(view, plan, memory, band),
             ];
             let mut in_force = vec![carried];
             for (proposal, change) in ruled.into_iter().flatten() {
@@ -704,6 +689,9 @@ pub(crate) mod tests {
         memory
     }
 
+    /// The most hands the fixture's plant rungs take at once - well above any crew a test frees.
+    pub const RUNG_BUILDER_CAP: u32 = 12;
+
     /// The raster the fixture world is: 8 wide, 6 high, wrapped.
     pub const RASTER_WIDTH: u32 = 8;
     pub const RASTER_HEIGHT: u32 = 6;
@@ -715,6 +703,15 @@ pub(crate) mod tests {
             sim_runtime::fixture::saturated_snapshot().expect("the fixture builds");
         snapshot.header.tick = TICK;
         snapshot.header.wrap_horizontal = true;
+        // The two plant rungs the upgrade rule climbs, each able to take `RUNG_BUILDER_CAP` hands.
+        snapshot.ladder_rungs = [crate::rungs::PLANT_TENDED, crate::rungs::PLANT_FARM]
+            .into_iter()
+            .map(|rung_key| sim_runtime::LadderRungState {
+                rung_key: rung_key.to_owned(),
+                max_builders: RUNG_BUILDER_CAP,
+                ..Default::default()
+            })
+            .collect();
         snapshot.visibility_raster.width = RASTER_WIDTH;
         snapshot.visibility_raster.height = RASTER_HEIGHT;
         snapshot.visibility_raster.samples =

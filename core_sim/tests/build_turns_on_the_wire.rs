@@ -11,7 +11,7 @@
 //! | `BUILD_METER_ROTS` (`-3`) | the same build banking **less** than the bleed — work already bought is being lost |
 //! | `BUILD_QUEUE_BLOCKED` (`-4`) | the band's builders are **staffed and standing on this entry** and its own gate refuses it — nothing banks, and nothing behind it moves |
 //! | `NO_BUILD_TURNS_ESTIMATE` (`-1`) | the sim looked and there is genuinely no answer — nothing queued here, or a gate refusing a *waiting* entry |
-//! | `BUILD_NOT_YET_ESTIMATED` (`-5`) | the sim has not looked — the entry was queued since the last turn resolved. Driven in `build_queue.rs` on both webs |
+//! | `BUILD_NOT_YET_ESTIMATED` (`-5`) | the sim has not looked — the entry was queued since the last turn resolved. Driven in `builds.rs` on both webs |
 //!
 //! **THE ROT IS THE DENOMINATOR** (`docs/plan_standing_upkeep.md` §4.6a). A build crew supplies
 //! nothing toward the maintenance rate — the band's keeping pool owes that for every meter carrying
@@ -179,6 +179,27 @@ fn staff_the_keeping(app: &mut App, source: UVec2, keepers: u32) {
     if cohort.working.to_f32() < headroom as f32 {
         cohort.working = scalar_from_f32(headroom as f32);
     }
+}
+
+/// **HOLD THE TENDED RUNG TO NO BUILDERS** - for the arms that stage a half-built meter nobody is
+/// building.
+fn hold_the_build_to_nobody(app: &mut App) {
+    // A declared build is dealt its first builder ahead of its own priority group's hold crew, so any
+    // spare hand would become a builder and those arms would stop being "nobody building"; the
+    // measurement is the meter's keeping, not the staffing order (`staffing::tests` owns that).
+    let mut ladder = (*app.world.resource::<LadderConfigHandle>().get()).clone();
+    for rung in ladder
+        .rungs
+        .iter_mut()
+        .filter(|rung| rung.id == shipped::plant_tended().id.as_str())
+    {
+        if let Some(build) = rung.build.as_mut() {
+            build.max_builders = NOBODY_BUILDING;
+        }
+    }
+    app.world
+        .resource_mut::<LadderConfigHandle>()
+        .replace(std::sync::Arc::new(ladder));
 }
 
 /// **`plant:tended`'s keeping demand in whole hands** — what the holding arm staffs, read straight
@@ -408,7 +429,7 @@ fn spawn_the_holding_band(
             current_tile: tile,
             size: 30,
             children: scalar_zero(),
-            working: scalar_from_f32((gatherers + builders + 8) as f32),
+            working: scalar_from_f32((gatherers + builders) as f32),
             elders: scalar_zero(),
             stores: LocalStore::new(),
             morale: scalar_one(),
@@ -467,23 +488,11 @@ fn spawn_the_holding_band(
                 // the whole of it goes on the head of the queue below. `builders == 0` is the
                 // unstaffed arm — a role row still stands at zero, which is how a player says
                 // *stop building* without withdrawing what they declared.
-                LaborAssignment {
-                    party: None,
-                    muster_crew: 0,
-                    planned_crew: 0,
-                    max_workers: Some(builders),
-                    staffing: Default::default(),
-                    target: LaborTarget::Builders,
-                    workers: builders,
-                    kit: None,
-                    priority: SourcePriority::default(),
-                },
             ],
-            build_queue: declared
-                .map(|declared| core_sim::BuildQueueEntry {
+            builds: declared
+                .map(|declared| core_sim::BuildDeclaration {
                     source: core_sim::BuildSource::Patch(source),
                     declared: core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(declared)),
-                    priority: core_sim::SourcePriority::default(),
                 })
                 .into_iter()
                 .collect(),
@@ -737,7 +746,7 @@ fn a_plant_build_is_geared_by_the_rungs_own_tool_and_by_nothing_else() {
                 .query::<(bevy::prelude::Entity, &LaborAllocation)>();
             let building: Vec<bevy::prelude::Entity> = query
                 .iter(&app.world)
-                .filter(|(_, allocation)| !allocation.build_queue.is_empty())
+                .filter(|(_, allocation)| !allocation.builds.is_empty())
                 .map(|(entity, _)| entity)
                 .collect();
             assert!(
@@ -859,6 +868,7 @@ fn the_build_countdown_publishes_five_distinct_states_on_the_wire() {
         "fixture: the rung must cost something to hold, or both arms are the same arm"
     );
     staff_the_keeping(&mut app, source, keepers);
+    hold_the_build_to_nobody(&mut app);
     let span = turns_past_the_grace(&app);
     let mut holding = NO_BUILD_TURNS_ESTIMATE;
     for _ in 0..span {
@@ -908,8 +918,12 @@ fn the_build_countdown_publishes_five_distinct_states_on_the_wire() {
     // rather than an empty crew alone: work already banked promises as much as a crew does, so an
     // unstaffed half-built meter whose gate is OPEN is arm (2) or arm (3). The other no-answer
     // states — a meter at zero with nobody on it, and the top of the ladder — take this branch.
-    let (mut app, source) =
-        world_with_a_patch_knowing(NOBODY_BUILDING, HALF_BUILT, !THE_GATE_IS_OPEN, A_GATHERER);
+    let (mut app, source) = world_with_a_patch_knowing(
+        NOBODY_BUILDING,
+        NOTHING_BANKED,
+        !THE_GATE_IS_OPEN,
+        A_GATHERER,
+    );
     let refused = resolve_a_turn(&mut app, source);
     assert_eq!(
         refused, NO_BUILD_TURNS_ESTIMATE,
@@ -987,6 +1001,7 @@ fn an_abandoned_half_built_patch_publishes_rotting_and_a_kept_one_holding() {
     );
     let keepers = keeping_demand_in_hands(&app, source);
     staff_the_keeping(&mut app, source, keepers);
+    hold_the_build_to_nobody(&mut app);
     let span = turns_past_the_grace(&app);
     let mut parked = NO_BUILD_TURNS_ESTIMATE;
     for _ in 0..span {
@@ -1100,6 +1115,7 @@ fn the_published_rot_is_exactly_what_the_next_decay_pass_bleeds() {
     }
     let keepers = keeping_demand_in_hands(&app, source);
     staff_the_keeping(&mut app, source, keepers);
+    hold_the_build_to_nobody(&mut app);
     resolve_a_turn(&mut app, source);
     assert_eq!(
         rot_now(&app, source),
@@ -1496,9 +1512,8 @@ fn a_blocked_head_publishes_no_supply_against_the_zero_demand_it_publishes() {
                 if allocation.assignments.iter().any(|assignment| {
                     matches!(assignment.target, LaborTarget::Forage { tile, .. } if tile == source)
                 }) {
-                    allocation.build_queue.push(core_sim::BuildQueueEntry {
+                    allocation.builds.push(core_sim::BuildDeclaration {
                         source: core_sim::BuildSource::Patch(source),
-                        priority: core_sim::SourcePriority::default(),
                         declared: core_sim::BuildJob::Climb(shipped::plant_tended()),});
                     found = true;
                 }

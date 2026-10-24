@@ -104,15 +104,6 @@ const RUNG_BELOW_REASON_FORMATS := {
 static func _required_rung_quote(src: Dictionary, prefix: String, quote: Dictionary) -> Dictionary:
     return RungQuotes.quote_of_rung(src, prefix, String(quote.get(RungQuotes.KEY_REQUIRES_RUNG, "")))
 
-## **THE HERD AS THE VIEWING BAND SEES IT.** The enclosed rung's `pen_taken` refusal means *another band
-## holds this herd's Corral*. A band holds it when its OWN hunt row for the herd carries
-## `improvement == RungQuotes.enclosed_verb(herd)`: that field is derived at capture from the band's own
-## build queue (one entry per source per band), so it names the entry's job. A `build_queue` entry with the
-## herd's `fauna_id` is not enough — a `SetHerdOutput` commitment (allowed on any managed herd, queued on
-## every band working it) shares the herd id while a different band holds the Corral, and that band must
-## still be refused. For the holder the refusal is absent and it keeps its ordinary queued/progress state;
-## every other band (and a caller with no band) sees the source untouched, refusal and all. Returns a copy
-## only when it changes something.
 static func seen_by_band(src: Dictionary, band: Dictionary) -> Dictionary:
     if band.is_empty() or not _has_pen_taken(src):
         return src
@@ -658,25 +649,12 @@ static func rung_in_progress(kind: String, source: Dictionary, improvement: Stri
         source, HudComposeVocab.BARE_FORECAST_PREFIX, current)
     return answer
 
-## **THE SAME ANSWER RE-POINTED AT THE LEG IN FLIGHT** — `{policy, glyph, progress}` for the rung the
-## crew is standing on RIGHT NOW, rather than for the destination the queue entry names.
-##
 ## **A CLIMB IS ONE ENTRY AND SEVERAL RUNGS** (`docs/plan_standing_upkeep.md` §2.8). A `sow` ordered on
 ## untended ground clears the ground first, so `rung_in_progress` — which honours the declaration
 ## wherever the declared meter is at zero — answers `sow` at **0%** for as long as that clearing takes.
 ## Both numbers are correct and neither is the one the player is watching: reported from play as a
 ## Work tab reading `0%` in two places beside a tile card reading `18%`, for the same job, on the same
 ## turn. **A progress number must never sit at zero while work is going in.**
-##
-## **THE DESTINATION IS NOT LOST, it moves to where it was already stated** — the queue row's TITLE
-## names the job the player ordered and the date column is still the whole climb's. What this changes
-## is the rung the PERCENTAGE and its glyph are about.
-##
-## **IT RE-POINTS AN ANSWER, IT DOES NOT PRODUCE ONE — `building` is `rung_in_progress`'s, ASKED
-## rather than re-derived.** That is `SourceForecast.build_is_stalled`'s own discipline and it buys
-## the same thing: the caller keeps the declared rung it started from (the queue entry's PRICE is the
-## whole climb's and must not follow a leg), and no second resolution of the verb can drift from the
-## first. A caller with `{}` gets `{}` — a source building nothing has no leg in flight either.
 ##
 ## A source with no published legs falls straight through, which is the honest answer for an eroded
 ## rung being repaired, for a source no band has queued, and for a fixture that states none.

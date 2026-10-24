@@ -75,16 +75,6 @@ const KIND_COMMAND_ECHO := "command_echo"
 ## player looking for a rules problem that does not exist. A command the sim REFUSES has already been
 ## written to the socket, and its refusal arrives later on the server's own event stream.
 ##
-## ⛔ **AND IT IS NOT THE ONLY WAY A SEND CAN FAIL — THE COMMENT THAT SAID SO IS WHAT HID A BUG FOR A
-## WHOLE SLICE.** It read *"`CommandClient.send_line` returns `ERR_CANT_ACQUIRE_RESOURCE` when there
-## is no bridge and `ERR_CANT_CONNECT` when the bridge could not deliver, and those are the only two
-## values it can produce"* — true of the codes, and false about their meanings, because the bridge
-## PARSES a line before it sends it (`bridge/command.rs` → `parse_command_line`). A line the client
-## itself could not build comes back as `ERR_CANT_CONNECT` too, and this message then blamed the
-## network for it. Reported from play: the Builders pool's `+` emitted
-## `assign_labor 0 1 builders 1`, the text grammar did not know the `builders` role, and the dock
-## read *"Not connected to the server"* on a client that was connected — so the pool has never been
-## staffable since `docs/plan_standing_upkeep.md` §2.5 introduced it, and no build queue could move.
 ##
 ## **SO THIS CONST NARROWED RATHER THAN WIDENED.** It fires for `ERR_CANT_ACQUIRE_RESOURCE` alone —
 ## there is no bridge, nothing was attempted — and `COMMAND_REFUSED_FORMAT` below carries the case

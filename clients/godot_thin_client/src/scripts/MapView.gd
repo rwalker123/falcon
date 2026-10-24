@@ -503,19 +503,11 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# §8) travel with the fractions they decompose: they are live build state, and a remembered tile
 	# knows a build's price no better than it knows its progress.
 	"patch_build_turns_remaining", "patch_build_work_from_gear",
-	# WHERE THIS PATCH SITS IN THE WINNING BAND'S BUILD QUEUE (§4.6b). It rides the same winner as the
-	# pair above and is redacted with them: a queue position is live state about a band's declared
-	# work, which a remembered tile knows no better than it knows the countdown it explains.
-	"patch_build_queue_position",
-	# …and WHY that queue is blocked here. It names a gate refusing a band's declared job right
+	"patch_builders_staffed", "patch_builders_kitted", "patch_builders_cap", "patch_build_toe",
+	# …and WHY that build is blocked here. It names a gate refusing a band's declared job right
 	# now, so it is redacted with the countdown it explains rather than with the ground readings: a
 	# remembered tile knows no more about a live refusal than it knows the date behind it.
 	"patch_build_blocked_reason",
-	# WHERE THE QUEUED ENTRY IS TAKING THIS PATCH, and what is left of the climb
-	# (`docs/plan_standing_upkeep.md` §2.8). Both are facts about a band's DECLARED job — the
-	# destination it named and the legs still owed from where the patch stands — so they are redacted
-	# with the queue position and the countdown they belong to. A remembered tile knows where the
-	# ground has been taken no better than it knows how far along the job is.
 	"patch_build_destination_rung", "patch_build_legs",
 	# …and WHERE THE PATCH ITSELF STANDS on that ladder. It is redacted for the same reason
 	# `patch_carrying_capacity` above is: `plant:tended` / `plant:farm` state exactly the rung
@@ -3597,39 +3589,18 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# output_multiplier 1.0). Read by Hud._build_forage_assign_controls to show the live
 		# "Expected yield" row and to cap the forager stepper at the patch's max-useful workers.
 		info["patch_per_worker_yield"] = float(patch.get("per_worker_yield", 0.0))
-		# THE BUILD, PRICED IN WORK (docs/plan_unit_costed_work.md §8) — the two plant rungs' absolutes
-		# beside the fractions above, plus the ONE turn estimate and gear saving the source carries (at
-		# most one improvement is ever in flight on one patch). `work_done / work_cost` IS the
-		# `*_progress` fraction; both travel because the tile card and the compose sheet state the
-		# SIZE of the job, which a fraction structurally cannot. The COST rides even on a patch nobody
-		# is building: it is the resolved price of that job here, which is what lets the sheet quote a
-		# rung before the player commits.
-		# **THE NEGATIVES MUST SURVIVE THE COPY AS THEMSELVES** — `-1` no estimate, `-2` the meter
-		# holds, `-3` the meter rots, `-4` the queue is blocked on it, `-5` it is queued and the sim has
-		# not looked yet. A `0` default here would hand every unworked patch a "this build lands next
-		# turn" reading, and the int cast is what keeps the whole family intact; nothing on this path may
-		# collapse one negative into another (`SourceForecast.build_turns_remaining`), which is what put
-		# the `⚠ Stalled` hazard on a build queued one command ago.
 		info["patch_build_turns_remaining"] = int(patch.get(
 			"build_turns_remaining", SourceForecast.BUILD_TURNS_NO_ESTIMATE))
 		info["patch_build_work_from_gear"] = float(patch.get("build_work_from_gear", 0.0))
-		# **WHERE THIS PATCH SITS IN THE WINNING BAND'S QUEUE** — 0-based, `-1` = queued nowhere. The
-		# countdown two lines up is a CHAINED date (everything ahead of this entry plus its own span
-		# at the full builders pool), and this is what makes that number explicable. Its default is
-		# the sentinel, never `0`, which would put every unqueued patch at the head of a queue.
-		info["patch_build_queue_position"] = int(patch.get(
-			"build_queue_position", SourceForecast.NOT_IN_ANY_BUILD_QUEUE))
-		# **WHY THAT QUEUE IS BLOCKED HERE** — `""` when this patch is not a blocked build, else the
+		info["patch_builders_staffed"] = int(patch.get("builders_staffed", 0))
+		info["patch_builders_kitted"] = int(patch.get("builders_kitted", 0))
+		info["patch_builders_cap"] = int(patch.get("builders_cap", 0))
+		info["patch_build_toe"] = patch.get("build_toe", [])
+		# **WHY THAT BUILD IS BLOCKED HERE** — `""` when this patch is not a blocked build, else the
 		# sim's own cause key for the conjunct that refused (`escapement`, `knowledge`, `no_crop`,
 		# `site`, …). It crosses BESIDE the `-4` it explains: a countdown sentinel with no cause beside
 		# it is the state the field exists to end, and the client cannot re-derive the gate.
 		info["patch_build_blocked_reason"] = String(patch.get("build_blocked_reason", ""))
-		# **WHERE THE ENTRY IS TAKING THIS PATCH, AND WHAT IS LEFT OF THE CLIMB** (§2.8). A queue entry
-		# names a DESTINATION rung rather than a single rung, so a `sow` declared on untended ground is
-		# a two-leg climb that holds the head of the queue through its Cultivate leg. The legs travel
-		# WHOLE — each row's `work_remaining` is the leg's owing from where the patch stands NOW and
-		# each `turns_remaining` is chained behind the legs above it, so nothing on this path may
-		# narrow, re-order or re-derive them.
 		info["patch_build_destination_rung"] = String(patch.get("build_destination_rung", ""))
 		# **WHERE THE PATCH STANDS RIGHT NOW**, in the destination's own `<branch>:<id>` spelling —
 		# the one field a consumer asks instead of reading this web's private `is_cultivated` /

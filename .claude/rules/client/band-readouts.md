@@ -1132,7 +1132,7 @@ a name describing the KIT it sat in rather than the object, and the object is po
 you work a beast into. `DetailFormat.KIT_LABEL_HURDLES` moved with the id, so the popover row and the
 roster's own display name cannot disagree about one item; `hoes` joined `KIT_ITEM_LABELS` beside it
 and deliberately has **no breakdown row**, the build axis having no flat per-band field for a row to
-pair it with (`labor-ui.md` → "THE BUILDERS' KIT IS DERIVED PER QUEUE ENTRY" on the client side).
+pair it with (`labor-ui.md` → "A BUILD IS PRICED AT THE KIT ITS RUNG WANTS" on the client side).
 
 The crook raises what a worker delivers to the `Tame` and `Corral` builds (issue #515,
 `.claude/rules/core_sim/equipment.md` → "The build axis"). Its row states the job it does and, above
@@ -1166,8 +1166,7 @@ pen`.
   that gear is for.
   **The gear's worth is now qualified by a `build_work_branch`** — hurdles serve the ANIMAL web and
   hoes the PLANT one — and this row is unaffected, being about a herd either way; what reads the pair
-  is `KitRoster.build_kit_for_branch`, which the Builders card and the build queue's header both
-  resolve their stated kit through.
+  is `KitRoster.build_kit_for_branch`, which resolves the kit a build is priced at.
 - **The clause is appended only ABOVE NEUTRAL, and its absence is a real reading.** A contribution of
   `0` means the gear is changing no build — because it is spent, or because this band's hunt job is
   on a kit that does not carry it — and `0 work` costs a line's width to say *no*. The row's own
@@ -1500,8 +1499,7 @@ that exists, so the per-band rows carry it and the ALERT reaches the row.
 summary of an unbounded list — three of however many items the server publishes, dry-first, the rest
 behind a caret — because a fourth entry wrapped and overflowed `Zone_band` by 22px. The faction row was
 an alert and a drill-down over durabilities that never aggregated. The CRAFTING panel's kit ledger
-states every item in full, and the Builders card's own gear line was retired in §4.7 for exactly this
-reason.
+states every item in full.
 
 Gone with it: `BandDetailLines._band_kit_line`, `BAND_KIT_ROW_*` (including the `BAND_KIT_ROW_MAX_ENTRIES`
 budget and the 22px measurement it respected), `FactionRollup._kit_line` / `_kit_face`,

@@ -25,7 +25,7 @@ use core_sim::shipped;
 use core_sim::TakeSelection;
 use core_sim::{
     build_test_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
-    BuildJob, BuildQueueEntry, BuildSource, FactionId, GenerationId, LaborAllocation,
+    BuildDeclaration, BuildJob, BuildSource, FactionId, GenerationId, LaborAllocation,
     LaborAssignment, LaborTarget, LocalStore, MoraleCause, PopulationCohort, ResidentBand,
     SnapshotHistory, SourcePriority, StartingUnit, TileRegistry, UpkeepFundMode, VerbId,
     DEFAULT_ESCAPEMENT_FLOOR,
@@ -158,23 +158,11 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                     priority: SourcePriority::default(),
                 },
                 // …and so is the building, since §2.5.
-                LaborAssignment {
-                    party: None,
-                    muster_crew: 0,
-                    planned_crew: 0,
-                    max_workers: Some(BUILD_CREW),
-                    staffing: Default::default(),
-                    target: LaborTarget::Builders,
-                    workers: BUILD_CREW,
-                    kit: None,
-                    priority: SourcePriority::default(),
-                },
             ],
             // The declaration the source row's `improvement` token is derived from.
-            build_queue: vec![BuildQueueEntry {
+            builds: vec![BuildDeclaration {
                 source: BuildSource::Patch(source),
                 declared: BuildJob::Climb(core_sim::shipped::rung_of_verb(declared())),
-                priority: core_sim::SourcePriority::default(),
             }],
             upkeep_fund_mode: UpkeepFundMode::Priority,
             ..Default::default()
@@ -272,12 +260,7 @@ fn the_bands_standing_pools_reach_the_client_as_their_own_rows() {
         Some(KEEP_CREW),
         "the roadwork pool is an ordinary assignment row with its hands in `workers`"
     );
-    assert_eq!(
-        published_role(&app, "builders"),
-        Some(BUILD_CREW),
-        "and so is the builders pool — the band's only build staffing since §2.5"
-    );
-    for retired in ["agriculture", "husbandry", "quarrywork"] {
+    for retired in ["agriculture", "husbandry", "quarrywork", "builders"] {
         assert_eq!(
             published_role(&app, retired),
             None,
@@ -390,7 +373,8 @@ fn a_worked_rows_rank_reaches_the_client() {
         Some(fb::SourcePriority::Low),
         "the marked worked row publishes the player's own rank: {ranks:?}"
     );
-    for role in ["roadwork", "builders"] {
+    {
+        let role = "roadwork";
         assert_eq!(
             ranks
                 .iter()
@@ -400,127 +384,6 @@ fn a_worked_rows_rank_reaches_the_client() {
             "a band-wide role is not a worked source and publishes the default: {ranks:?}"
         );
     }
-}
-
-/// **A QUEUED BUILD'S OWN MARK REACHES THE CLIENT** (`docs/plan_site_crews.md` §2.4) — on the queue
-/// entry, as the command's own token, and apart from its site row's rank: the entry is marked
-/// `high` while the row stays `normal`, so a capture that copied the row's rank onto the entry
-/// would read `normal` here.
-#[test]
-fn a_queued_builds_mark_reaches_the_client() {
-    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
-
-    let (mut app, source) = world_with_a_keeping_band();
-    {
-        let mut allocation = app
-            .world
-            .query::<&mut LaborAllocation>()
-            .iter_mut(&mut app.world)
-            .find(|allocation| {
-                allocation
-                    .assignments
-                    .first()
-                    .is_some_and(|row| row.workers == TAKE_CREW)
-            })
-            .expect("the fixture band exists");
-        assert!(
-            allocation.set_build_priority(&BuildSource::Patch(source), SourcePriority::High),
-            "the fixture band has a build queued on the source"
-        );
-    }
-    recapture_snapshot_in_place(&mut app.world);
-
-    let bytes = encoded_snapshot(&app);
-    let envelope =
-        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
-    let marks: Vec<String> = envelope
-        .payload_as_snapshot()
-        .expect("the envelope carries a snapshot")
-        .population()
-        .and_then(|section| section.populations())
-        .expect("the population section carries the cohort list")
-        .iter()
-        .flat_map(|cohort| cohort.buildQueue().into_iter().flatten())
-        .map(|entry| entry.buildPriority().unwrap_or_default().to_string())
-        .collect();
-    assert_eq!(
-        marks,
-        vec![SourcePriority::High.as_str().to_string()],
-        "the entry publishes its own Build mark"
-    );
-}
-
-/// ⛔ **EACH QUEUED BUILD STATES ITS OWN SITE, IN THE COMMAND GRAMMAR'S TERMS**
-/// (`docs/plan_site_crews.md` §2.4). Two workings queued on one hex publish two entries that differ
-/// by their `material`, a road queued on the same hex says `road`, and the patch entry says
-/// neither — so a client can address each back as `<x> <y> <material>`, `road <x> <y>` or
-/// `<x> <y>` with no join, and two workings on one tile cannot be read as one.
-#[test]
-fn two_workings_and_a_road_on_one_tile_publish_distinguishable_entries() {
-    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
-    const WOOD: &str = "wood";
-    const STONE: &str = "stone";
-
-    let (mut app, source) = world_with_a_keeping_band();
-    {
-        let mut allocation = app
-            .world
-            .query::<&mut LaborAllocation>()
-            .iter_mut(&mut app.world)
-            .find(|allocation| !allocation.build_queue.is_empty())
-            .expect("the fixture band has a build queued on its patch");
-        // Pushed straight onto the queue: the capture is under test, not the declaration gates.
-        for site in [
-            BuildSource::Deposit {
-                tile: source,
-                material: WOOD.to_string(),
-            },
-            BuildSource::Deposit {
-                tile: source,
-                material: STONE.to_string(),
-            },
-            BuildSource::Road(source),
-        ] {
-            allocation.build_queue.push(BuildQueueEntry {
-                source: site,
-                declared: BuildJob::Climb(shipped::forestry_felling()),
-                priority: SourcePriority::default(),
-            });
-        }
-    }
-    recapture_snapshot_in_place(&mut app.world);
-
-    let bytes = encoded_snapshot(&app);
-    let envelope =
-        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
-    let sites: Vec<(u32, u32, String, bool)> = envelope
-        .payload_as_snapshot()
-        .expect("the envelope carries a snapshot")
-        .population()
-        .and_then(|section| section.populations())
-        .expect("the population section carries the cohort list")
-        .iter()
-        .flat_map(|cohort| cohort.buildQueue().into_iter().flatten())
-        .map(|entry| {
-            (
-                entry.targetX(),
-                entry.targetY(),
-                entry.material().unwrap_or_default().to_string(),
-                entry.branch().is_some_and(|branch| !branch.is_empty()),
-            )
-        })
-        .collect();
-    let at = |material: &str, road: bool| (source.x, source.y, material.to_string(), road);
-    assert_eq!(
-        sites,
-        vec![
-            at("", false),
-            at(WOOD, false),
-            at(STONE, false),
-            at("", true)
-        ],
-        "the patch, each working and the road on one tile are four distinguishable entries"
-    );
 }
 
 #[test]
@@ -553,7 +416,7 @@ fn a_bare_gathering_row_publishes_an_empty_job_token() {
             })
             .expect("the fixture band exists");
         assert!(
-            allocation.unqueue_build(&BuildSource::Patch(source)),
+            allocation.stop_build(&BuildSource::Patch(source)),
             "fixture: the band had a declaration to withdraw"
         );
     }

@@ -1064,22 +1064,19 @@ Each mark docks to the ring of the source's OWN secondary marker, via the slot
   wire's own rot verdict — were composed here while the board had no fork at all, so the map showed an
   alert the WORK tab did not. Neither surface re-derives it from a crew count or a percentage; a build
   merely PARKED with its keeping covered answers `false` and keeps its number.
-  **The build crew is the band's `builders` ROLE row now**
-  (`docs/plan_standing_upkeep.md` §2.5) — `_builders_pool_of_marker` reads it off the marker's own
-  `labor_assignments` and the renderer credits it to each source that band WORKS, because "nobody is
-  building this" is a claim about the source and not about one band's row. **A LOCAL copy of that
-  read, deliberately**: a renderer must not depend on the HUD's band-labor model, the rule
-  `_labor_assignments_of_marker` beside it already follows. Full rationale, and the other three
-  surfaces, in `selection-card.md` → "A build DECLARED with nobody on it is a fourth state". Frames:
-  `map_worked_ready` / `map_worked_unstaffed`, an A/B on ONE band with only its `builders` ROW moving.
+  **The build crew is the SOURCE's own** (`builders_staffed` on its row, read through
+  `SourceForecast.build_crew_staffed`), because "nobody is building this" is a claim about the source and
+  not about one band's row. Full rationale, and the other three surfaces, in `selection-card.md` → "A
+  build DECLARED with nobody on it is a fourth state". Frames: `map_worked_ready` /
+  `map_worked_unstaffed`, an A/B on ONE band with only the source's `builders_staffed` moving.
 - **THE RUNG IT REPORTS IS THE LEG IN FLIGHT, NOT THE ENTRY'S DESTINATION** (§2.8). A `sow` ordered
-  on untended ground is one queue entry and two legs, so the declared rung's own meter reads 0% for
+  on untended ground is one declared build and two legs, so the declared rung's own meter reads 0% for
   as long as the crew is clearing — the plate sat at `▦0%` beside a tile card reading 18%.
   `RungGates.leg_in_progress` re-points `rung_in_progress`'s answer at the first published leg still
   owing work, and this renderer takes it for the same reason it takes `build_is_stalled`: the plate
   and the WORK board are held to ONE verdict, so a leg-aware board beside a destination-bound badge
   is the two-surface disagreement that shared producer exists to stop. The autopsy is
-  `band-city-panel.md` → "THE PERCENTAGE IS THE LEG IN FLIGHT'S".
+  `band-city-panel.md` → "THE ROW'S PERCENTAGE IS THE LEG IN FLIGHT'S".
 - **The badge shows a rung ON OFFER or a rung UNDER WAY, never both** — one axis in two states,
   mutually exclusive by construction. Under way renders the verb GLYPH ALONE in
   `HudStyle.SIGNAL_DEEP` (`BADGE_BUILDING_FORMAT`) with **no chevron** (`⌃` offers; this reports); on

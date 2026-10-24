@@ -847,12 +847,6 @@ func _ready() -> void:
 	await _save("map_worked_ready")
 	var cultivate_key: String = _map.secondary_food_key(WORK_CULTIVATE_X, WORK_CULTIVATE_Y)
 	var ready_build_face := _badge_face(cultivate_key)
-	# State A-unstaffed — **THE SAME THREE SOURCES, with the mid-Cultivate patch's BUILD CREW taken
-	# off.** Only the band's `builders` ROW moves between this frame and the one above, so the ⌃ marks and
-	# the crew counts are held constant and the one thing that can differ is the building patch's own
-	# plate: `🌱42%` in the deep signal ink becomes `🌱⚠` in WARN. **The A/B is the claim** — a plate
-	# that always warned would pass this frame alone, and the percentage is what a build nobody is
-	# staffing must stop showing.
 	_display_snapshot(_snapshot_work_unstaffed())
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
@@ -4317,9 +4311,15 @@ func _snapshot_work() -> Dictionary:
 ## below can be spelled as its absence rather than as a second literal zero.
 const WORKED_READY_BUILDERS := 2
 
-## The band-level BUILD pool's row kind (`docs/plan_standing_upkeep.md` §2.5) — an ordinary standing
-## role, spelled here rather than reached for because this harness stands in for the decoder.
-const LABOR_KIND_BUILDERS := "builders"
+## Stamp the builders the sim staffed on the mid-Cultivate patch's build (`builders_staffed` /
+## `builders_kitted`); a declared build states a non-zero cap whatever the crew.
+func _stamp_patch_builders(snap: Dictionary, crew: int) -> void:
+	for patch_variant in snap["forage_patches"]:
+		var patch: Dictionary = patch_variant
+		if int(patch.get("x", -1)) == WORK_CULTIVATE_X and int(patch.get("y", -1)) == WORK_CULTIVATE_Y:
+			patch["builders_staffed"] = crew
+			patch["builders_kitted"] = crew
+			patch["builders_cap"] = WORKED_READY_BUILDERS
 
 ## **THE SAME PATCH WITH ITS BUILD CREW TAKEN OFF** — the map half of the declared-but-unstaffed
 ## readout. The rung is still declared and its meter still holds 42% of the job, and NOTHING is
@@ -4327,16 +4327,8 @@ const LABOR_KIND_BUILDERS := "builders"
 ## plate reads `🌱0%`, which is pixel-identical to a build that started this turn.
 func _snapshot_work_unstaffed() -> Dictionary:
 	var snap := _snapshot_work_ready()
-	# **THE POOL IS WHAT IS TAKEN OFF, NOT A PER-SOURCE CREW** (`docs/plan_standing_upkeep.md` §2.5).
-	# The `builders` ROLE ROW is dropped from the band's assignments, which is exactly how a band with
-	# nobody on the pool publishes: a row exists only where somebody is staffed.
-	var kept: Array = []
-	for entry_variant in snap["populations"][0]["labor_assignments"]:
-		if entry_variant is Dictionary \
-				and String((entry_variant as Dictionary).get("kind", "")) == LABOR_KIND_BUILDERS:
-			continue
-		kept.append(entry_variant)
-	snap["populations"][0]["labor_assignments"] = kept
+	# The crew is what is taken off the patch's build: nobody is staffed on it.
+	_stamp_patch_builders(snap, 0)
 	# ⛔ **AND THE PATCH CARRIES THE WIRE'S OWN ROT VERDICT, because dropping the pool is no longer
 	# enough on its own.** `BUILD_UNSTAFFED_SLIDING` — *work banked and nobody on it* — was RETIRED as
 	# an inference that is wrong under pooled keeping, so at this fixture's 42% meter
@@ -4396,14 +4388,9 @@ func _snapshot_work_ready() -> Dictionary:
 			# its floor while it cultivates, and the badge reads the second field.
 			entry["improvement"] = "cultivate"
 			entry["overdraws"] = false
-	# **AND HANDS ON THE BAND'S `builders` POOL, because a rung DECLARED with nobody building it is a
-	# third state and wears a different face** (`SourceForecast.unstaffed_build_state`). It is a
-	# standing ROLE ROW now, like `scout` — not a per-source count on the assignment above
-	# (`docs/plan_standing_upkeep.md` §2.5) — so the fixture staffs the pool rather than the tile.
-	snap["populations"][0]["labor_assignments"].append({
-		"kind": LABOR_KIND_BUILDERS, "workers": WORKED_READY_BUILDERS,
-		"target_x": -1, "target_y": -1, "fauna_id": "",
-	})
+	# A build is worked by its site's crew (`docs/plan_labor_at_scale.md`), so the sim states the
+	# staffed count on the SOURCE row.
+	_stamp_patch_builders(snap, WORKED_READY_BUILDERS)
 	for herd_variant in snap["herds"]:
 		var herd: Dictionary = herd_variant
 		if String(herd.get("id", "")) == "game_deer_07":
@@ -7371,7 +7358,7 @@ func _source_list_states() -> void:
 		WORKED_READY_BUILDERS,
 		HudFormat.progress_percent(float(overlays._badge_entry_for(building_key).get(
 			"building_progress", 0.0))),
-		SourceForecast.NOT_IN_ANY_BUILD_QUEUE)
+		false)
 	_assert_map("map_build_arc — the building ROW carries the finite countdown the plate no longer does (`%s`)"
 			% String(building_row.get("build_text", "")),
 		not building_row.is_empty()
