@@ -7484,11 +7484,14 @@ func _commit_stop_labor(band: Dictionary, model: Dictionary) -> void:
     emit_signal("stop_labor_requested", {
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
         "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+        "kind": String(model.get("kind", "")),
         "x": int(model.get("x", -1)),
         "y": int(model.get("y", -1)),
         "herd_id": String(model.get("herd_id", "")),
         "material": String(model.get("material", "")),
         "branch": String(model.get("branch", "")),
+        # Not a command token: `Hud._on_stop_labor_requested` drops this source's pending assign by it.
+        "pending_entity": int(band.get("entity", -1)),
         "roadwork": String(model.get("kind", "")) == HudConst.LABOR_KIND_ROADWORK,
     })
     _repage_work_zone()

@@ -2789,12 +2789,15 @@ func _emit_work_priority(band: Dictionary, _kind: String, x: int, y: int, herd_i
     })
 
 ## Relay `Stop working here` (`Main.format_stop_labor`).
-func _emit_stop_labor(band: Dictionary, _kind: String, x: int, y: int, herd_id: String,
+func _emit_stop_labor(band: Dictionary, kind: String, x: int, y: int, herd_id: String,
         material: String = "") -> void:
     stop_labor_requested.emit({
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
         "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+        "kind": kind,
         "x": x, "y": y, "herd_id": herd_id, "material": material,
+        # Not a command token: `Hud._on_stop_labor_requested` drops THIS source's pending assign by it.
+        "pending_entity": int(band.get("entity", -1)),
     })
 
 ## **THE READOUT** (§7.1, §7.2, §7.7) — the sheet's bottom half as ONE bounded box with four
