@@ -1511,7 +1511,7 @@ const ROAD_LADDER_TIP_TURNS_FORMAT := "%s with this band's builders."
 ## deleted one restated the row, and these state what pressing it would join.
 
 
-const ROAD_LADDER_NO_BUILDERS_ASIDE := "No spare hands — raise a food row's floor or stop a row"
+const ROAD_LADDER_NO_BUILDERS_ASIDE := "Nobody is building — every worker is busy on a work row. Lower a row's Max or stop working a row to free a builder."
 
 ## ⛔ **THE STALL WARNING FOR A ROAD, AND IT IS A ROUTE-ONLY SPELLING FOR ONE REASON: THE NOUN.**
 ## `HudWorkVocab.RUNG_TRACK_STALL_FORMAT` reads *"you have %s — it will stall at about %s"*, and its

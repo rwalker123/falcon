@@ -616,6 +616,17 @@ stretch, and widening it into that gap would put it over a live HUD column.
   (`18 working: Forage 9 · Hunt 6 · Build 3`, non-zero parts only, `HudBandLaborState.working_breakdown`
   through `HudWidgets.working_tooltip`). The bar, the idle card, the faction sums and the orb's
   "N idle workers" alert (`AttentionController`) all read `people_idle`, so they cannot disagree.
+  **BUILDERS ARE NOT IDLE** (`HudBandLaborState.builders_of`): a declared build is staffed by the sim
+  from the site's builders, who sit on no labor row, so `effective_idle` subtracts the residual of the
+  CONFIRMED wire, `working_age - idle_workers - Sum(confirmed rows) - bench - homeward` (a band dict with
+  no `idle_workers` reads 0). The same number is the `Build` part (`WORKING_PART_BUILD`) of
+  `working_breakdown`. **A BLANK PENDING `improvement` DEFERS TO THE CONFIRMED ROW'S**: a
+  pending assign records the improvement it was sent with (`assign_labor` never changes one, so a stop-then-
+  reassign records `""`), and letting that win hid a confirmed build behind the `⌃` offer. A non-blank one
+  is a declaration (the `⌃` press) and wins; a brand-new row keeps its pending value.
+  The no-builders chip (`BUILD_CREW_NO_HANDS`, `ROAD_LADDER_NO_BUILDERS_ASIDE`) names the controls:
+  `Nobody is building — every worker is busy on a work row. Lower a row's Max or stop working a row to
+  free a builder.` `band_panel_preview` pins these in `_assert_builders_leave_idle_and_confirmed_improvement_wins`.
   **PARTIES ARE A HEADER CLAUSE, NOT A SEGMENT** — `People 30 · 10 away`
   (`HudWorkVocab.PEOPLE_AWAY_FORMAT`, non-zero only, tooltipped `PEOPLE_AWAY_TOOLTIP_FORMAT`). The sim
   removes a party's members from the parent band's working-age cohort on launch, so they are not
@@ -2723,7 +2734,7 @@ means no build is declared there. The Work tab therefore draws a build where the
   staffed nobody, or the build's own tools are short (`DetailFormat.build_toe_is_short`). The road and
   working rows wear `ROADWORK_CHIP_FACE` / `ROADWORK_CHIP_WARN_FACE`, a road having no meter to quote.
 - **Its hover is the crew** (`DetailFormat.build_crew_tooltip`): `N building (up to M), done in ≈T`, or
-  `No spare hands — raise a food row's floor or stop a row` where the sim staffed nobody (the
+  `Nobody is building — every worker is busy on a work row. Lower a row's Max or stop working a row to free a builder.` where the sim staffed nobody (the
   sentence names the two levers that free a hand); then `⚠ Short of hoes.` from the build's own
   `build_toe` through the same `pool_toe_row_is_short` test the keeping rows ask; then
   `Click to stop this build.` The estimate comes off the same `SourceForecast.build_turns_remaining` the

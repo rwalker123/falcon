@@ -8509,13 +8509,14 @@ func _render_people_idle_states() -> void:
 	_push_bands([_band_fixture()])
 	await _settle()
 	await _assert_orb_idle_follows_pending()
+	_assert_builders_leave_idle_and_confirmed_improvement_wins()
 
 # =====================================================================================
 #  BUILDS JOIN THE SITE'S CREW (docs/plan_labor_at_scale.md) - the in-flight chip
 # =====================================================================================
 # A declared build is worked by its own site's crew, so the work row's in-flight chip states THAT crew
 # off the source row (`builders_staffed` / `builders_cap` / `build_toe`): `N building (up to M), done in
-# ≈T`, `No spare hands — raise a food row's floor or stop a row`, and the build's own tool shortfall. A press STOPS the build. The same
+# ≈T`, `Nobody is building — every worker is busy on a work row. Lower a row's Max or stop working a row to free a builder.`, and the build's own tool shortfall. A press STOPS the build. The same
 # chip rides a road build on the Roadwork roster.
 const CREW_STAFFED := 3
 const CREW_CAP := 4
@@ -8666,6 +8667,66 @@ func _assert_orb_idle_follows_pending() -> void:
 		idle > 0 and _orb_idle_count() == idle and card_number == HudWorkVocab.IDLE_CARD_NUMBER_FORMAT % idle)
 	_assert_band_panel("...and the pending overlay really was dropped by the snapshot (%s)"
 		% str(labor.pending_assigns_for(904)), labor.pending_assigns_for(904).is_empty())
+
+## **BUILDERS ARE NOT IDLE, AND A STALE PENDING COPY DOES NOT HIDE A CONFIRMED BUILD** (PNG-less, over a
+## constructed band). Fails without either fix: without `builders_of` in `effective_idle` the band below
+## reads 3 idle; without the confirmed-row precedence the merged row's improvement is `""`.
+const BUILDERS_FIXTURE_ENTITY := 9051
+const BUILDERS_FIXTURE_WORKING_AGE := 10
+const BUILDERS_FIXTURE_FORAGE_CREW := 7
+const BUILDERS_FIXTURE_CREW := 3
+const BUILDERS_FIXTURE_X := 40
+const BUILDERS_FIXTURE_Y := 12
+const BUILDERS_FIXTURE_NEW_X := 41
+func _assert_builders_leave_idle_and_confirmed_improvement_wins() -> void:
+	var labor: HudBandLaborState = _hud._band_labor
+	var band := {
+		"entity": BUILDERS_FIXTURE_ENTITY, "working_age": BUILDERS_FIXTURE_WORKING_AGE, "idle_workers": 0,
+		"labor_assignments": [{"kind": "forage", "workers": BUILDERS_FIXTURE_FORAGE_CREW,
+			"target_x": BUILDERS_FIXTURE_X, "target_y": BUILDERS_FIXTURE_Y, "improvement": "cultivate"}],
+	}
+	_assert_band_panel("builders_of is the wire residual (%d, want %d)" % [labor.builders_of(band), BUILDERS_FIXTURE_CREW],
+		labor.builders_of(band) == BUILDERS_FIXTURE_CREW)
+	_assert_band_panel("a band whose wire idle is 0 reports people_idle 0 with %d builders (read %d)"
+		% [BUILDERS_FIXTURE_CREW, labor.people_idle(band)], labor.people_idle(band) == 0)
+	_assert_band_panel("working_breakdown names the builders as Build (%s)" % str(labor.working_breakdown(band)),
+		int(labor.working_breakdown(band).get(HudWorkVocab.WORKING_PART_BUILD, 0)) == BUILDERS_FIXTURE_CREW)
+	labor.record_pending_assign(BUILDERS_FIXTURE_ENTITY, SourceForecast.LABOR_KIND_FORAGE,
+		BUILDERS_FIXTURE_FORAGE_CREW, BUILDERS_FIXTURE_X, BUILDERS_FIXTURE_Y, "", 0.5, "")
+	labor.record_pending_assign(BUILDERS_FIXTURE_ENTITY, SourceForecast.LABOR_KIND_FORAGE,
+		1, BUILDERS_FIXTURE_NEW_X, BUILDERS_FIXTURE_Y, "", 0.5, "cultivate")
+	var merged := labor.effective_worker_map(band)
+	var confirmed_key := labor.pending_key(SourceForecast.LABOR_KIND_FORAGE,
+		BUILDERS_FIXTURE_X, BUILDERS_FIXTURE_Y, "", "")
+	var new_key := labor.pending_key(SourceForecast.LABOR_KIND_FORAGE,
+		BUILDERS_FIXTURE_NEW_X, BUILDERS_FIXTURE_Y, "", "")
+	_assert_band_panel("a pending entry recorded with no improvement does not mask the confirmed one (%s)"
+		% str((merged.get(confirmed_key, {}) as Dictionary).get("improvement", "<none>")),
+		String((merged.get(confirmed_key, {}) as Dictionary).get("improvement", "")) == "cultivate")
+	_assert_band_panel("...and a pending-only new row keeps its pending improvement (%s)"
+		% str((merged.get(new_key, {}) as Dictionary).get("improvement", "<none>")),
+		String((merged.get(new_key, {}) as Dictionary).get("improvement", "")) == "cultivate")
+	# ...but a DECLARATION (non-blank) over a confirmed row with no build still wins, the `⌃` press's path.
+	labor.record_pending_assign(BUILDERS_FIXTURE_ENTITY, SourceForecast.LABOR_KIND_FORAGE,
+		BUILDERS_FIXTURE_FORAGE_CREW, BUILDERS_FIXTURE_X, BUILDERS_FIXTURE_Y, "", 0.5, "sow")
+	merged = labor.effective_worker_map(band)
+	_assert_band_panel("...and a declared rung (pending `sow`) still wins over the confirmed row (%s)"
+		% str((merged.get(confirmed_key, {}) as Dictionary).get("improvement", "<none>")),
+		String((merged.get(confirmed_key, {}) as Dictionary).get("improvement", "")) == "sow")
+	labor._pending_labor.erase(BUILDERS_FIXTURE_ENTITY)
+
+## **A FIXTURE THAT STATES ITS WORKFORCE MUST STATE IT CONSISTENTLY**: the sim's `idle_workers` is
+## `working_age` less every row's crew, the bench and the hands walking home, and
+## `HudBandLaborState.builders_of` reads the residual as the band's builders. A fixture that edits rows or
+## `working_age` after `_band_fixture()` therefore restates the idle the wire would carry (no builders).
+func _with_wire_idle(band: Dictionary) -> Dictionary:
+	var labor: HudBandLaborState = _hud._band_labor
+	var staffed := 0
+	for a in HudBandLaborState.labor_assignments_of(band):
+		staffed += HudBandLaborState.staffed_total(a as Dictionary)
+	band["idle_workers"] = maxi(int(band.get("working_age", 0)) - staffed - labor.bench_workers(band)
+		- labor.homeward_workers(band), 0)
+	return band
 
 func _label_children(card: Control) -> Array[Label]:
 	var found: Array[Label] = []
@@ -10321,7 +10382,7 @@ func _ready_band_fixture() -> Dictionary:
 			"fauna_id": "ready_never", "target_x": 69, "target_y": 19,
 			"actual_yield": 0.20, "sustainable_yield": 0.20},
 	]
-	return band
+	return _with_wire_idle(band)
 
 ## A TENDED patch on willing ground → its next rung is Sow.
 func _ready_patch_fixtures() -> Array:
@@ -12068,7 +12129,7 @@ func _need_band_fixture(muster: int, turns_until: int, lent_forage: int, lent_hu
 	rows.append({"kind": "forage", "workers": NEED_FORAGE_STANDING, "workers_needed": NEED_FORAGE_STANDING,
 		"floor": 0.5, "target_x": NEED_FORAGE_TILE.x, "target_y": NEED_FORAGE_TILE.y,
 		"actual_yield": 0.9, "sustainable_yield": 0.9, "lent_to_hunt": lent_forage})
-	return band
+	return _with_wire_idle(band)
 
 ## Render one need-row case and read the board back. `lines` are the party-block lines wanted (all of
 ## them, in order, ignoring any other row's), `count` the need row's count-slot text.
@@ -12192,7 +12253,7 @@ func _need_workforce_fixture(lending: bool) -> Dictionary:
 	band["size"] = int(band.get("children", 0)) + NEED_WF_WORKING_AGE + int(band.get("elders", 0))
 	band["bench"] = {"workers": NEED_WF_BENCH_STANDING,
 		"lent_to_hunt": NEED_WF_BENCH_LENT if lending else 0}
-	return band
+	return _with_wire_idle(band)
 
 ## **THE WORKING TOOLTIP MOVES EVERY LENT HAND OUT OF ITS HOME PART INTO ONE `Out hunting` PART**, and
 ## the one bar still sums to `size`. The parts are asserted by EQUALITY off the shared helper's
@@ -20807,8 +20868,8 @@ func _render_tile_crew_state() -> void:
 		if String((entry as Dictionary).get("kind", "")) != HudConst.LABOR_KIND_BAND:
 			kept_rows.append(entry)
 	without_rack["labor_assignments"] = kept_rows
-	var idle_with: int = _hud._band_labor.effective_idle(with_rack)
-	var idle_without: int = _hud._band_labor.effective_idle(without_rack)
+	var idle_with: int = _hud._band_labor.effective_idle(_with_wire_idle(with_rack))
+	var idle_without: int = _hud._band_labor.effective_idle(_with_wire_idle(without_rack))
 	_assert_band_panel("band improvement — its crew is netted out of idle (%d -> %d, slack staged)"
 			% [idle_without, idle_with],
 		idle_without > 0
@@ -21553,7 +21614,7 @@ func _row_rejoining_band_fixture() -> Dictionary:
 			row[HudWorkVocab.REJOINING_WORKERS_KEY] = ROW_REJOINING_WORKERS
 			row[HudWorkVocab.REJOINING_ALL_HOME_IN_KEY] = ROW_REJOINING_ALL_HOME_IN
 			row[HudWorkVocab.REJOINING_FOOD_KEY] = ROW_REJOINING_FOOD
-	return band
+	return _with_wire_idle(band)
 
 ## `band_panel_work_row_rejoining`: the hunt row's walking-back line, and the band's idle count.
 func _render_work_row_rejoining_state() -> void:

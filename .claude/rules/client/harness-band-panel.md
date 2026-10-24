@@ -1135,7 +1135,7 @@ in `band_panel_build_crew_road`; source-level crews come from `tools/ui_preview/
 - **`band_panel_build_crews`** — every declared build on the board wears ONE chip
   (`WORK_ROW_STOP_CHIP_META`), asserted by COUNT (at least three: a patch, a herd, a working). The hovers
   are asserted by their sentences: `N building (up to M), done in ≈T` on a staffed build,
-  `No spare hands — raise a food row's floor or stop a row` where the sim staffed nobody,
+  `Nobody is building — every worker is busy on a work row. Lower a row's Max or stop working a row to free a builder.` where the sim staffed nobody,
   `Short of hoes` on a build short of its own tool, and `Click to stop this build.` on every chip.
 - **A REAL click on a chip sends the stop** (`_drive_click`, never `pressed.emit()`, which cannot see a
   covered or zero-size control): the emitted payload is read back through `Main.format_unqueue` and

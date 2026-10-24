@@ -4023,7 +4023,6 @@ pub fn advance_predation(
     let fauna = fauna_config.get();
     let width = config.grid_size.x.max(1);
     let wrap = config.map_topology.wrap_horizontal;
-    let escapement_floor_fraction = fauna.predators.predation_escapement_fraction;
     let radius = fauna.predators.prey_sense_radius;
     let default_defense = crate::combat::CombatStats::default().defense;
     let len = herds.herds.len();
@@ -4070,7 +4069,7 @@ pub fn advance_predation(
             if hex_distance_wrapped(pred_pos, prey.current_pos, width, wrap) > radius {
                 continue;
             }
-            let floor = escapement_floor_fraction * prey.carrying_capacity;
+            let floor = predation_escapement_floor(prey, &fauna);
             let available = (prey.biomass - floor).max(0.0);
             if available <= 0.0 {
                 continue;
@@ -4084,7 +4083,7 @@ pub fn advance_predation(
         let drawn_fraction = (demand / total_available).min(1.0);
         for j in prey_indices {
             let prey = &mut herds.herds[j];
-            let floor = escapement_floor_fraction * prey.carrying_capacity;
+            let floor = predation_escapement_floor(prey, &fauna);
             let available = (prey.biomass - floor).max(0.0);
             let drawn = available * drawn_fraction;
             prey.biomass -= drawn;
@@ -11047,9 +11046,25 @@ pub struct HuntCrewCurveInputs<'a> {
 /// since next turn's take really will draw on less stock. A guard asserting the clone never shrinks
 /// looked obviously true and fired on the first thin-herd fixture it met.
 pub fn next_turns_quarry(herd: &Herd, fauna: &FaunaConfig) -> Herd {
+    // Read BEFORE regrowing: `regrow_biomass` resets the stamp on the clone.
+    let predated_last_turn = herd.predator_eaten_this_turn.max(0.0);
     let mut quarry = herd.clone();
     regrow_biomass(&mut quarry, fauna);
+    // **Persistence forecast**: the packs that ate last turn are expected to eat the same again
+    // (`advance_predation` runs after regrowth), so the stock a crew will find is the regrown one
+    // less that bill, but never under the escapement floor predation itself stops at, and never
+    // raised (a stock already under the floor loses nothing).
+    if predated_last_turn > 0.0 {
+        let floor = predation_escapement_floor(&quarry, fauna);
+        quarry.biomass = (quarry.biomass - predated_last_turn).max(floor.min(quarry.biomass));
+    }
     quarry
+}
+
+/// **The biomass a prey herd is never predated below**: `predators.predation_escapement_fraction ×
+/// herd_capacity`. One expression for [`advance_predation`] and [`next_turns_quarry`]'s forecast of it.
+fn predation_escapement_floor(herd: &Herd, fauna: &FaunaConfig) -> f32 {
+    fauna.predators.predation_escapement_fraction * herd_capacity(herd, fauna)
 }
 
 /// **THE CREWS A BAND ACTUALLY FIELDS AT `workers` ON THIS ROW** — [`HuntCrewCurveInputs`]'s
@@ -15974,5 +15989,56 @@ mod tests {
             (quote - penned_there).abs() < 1e-6,
             "{quote} vs {penned_there}"
         );
+    }
+
+    /// **THE FORECAST CARRIES LAST TURN'S PREDATION** (`next_turns_quarry`). A herd whose regrowth a
+    /// pack eats is forecast at regrown less what was eaten, never under the escapement floor,
+    /// and a herd nobody predated is forecast exactly as the bare regrowth.
+    #[test]
+    fn a_forecast_subtracts_the_predation_last_turn_suffered_down_to_the_floor() {
+        const RABBITS: &str = "Rabbit Warren";
+        const CAPACITY: f32 = 100.0;
+        /// Half the capacity: well above the escapement floor, so regrowth has room to show.
+        const STOCK: f32 = 50.0;
+        /// Far more than the regrowth: only the floor can stop it.
+        const EVERYTHING: f32 = 1_000.0;
+        /// A bite smaller than the regrowth, so the result stays above the floor.
+        const SMALL_BITE: f32 = 1.0;
+        let fauna = FaunaConfig::builtin();
+        let def = fauna.species_by_display(RABBITS).expect("shipped species");
+        let mut herd = Herd::new(
+            "game_prey".to_string(),
+            RABBITS.to_string(),
+            SizeClass::Small,
+            vec![UVec2::new(1, 1)],
+            STOCK,
+            CAPACITY,
+            def.fodder_per_biomass,
+            def.regrowth_rate.expect("a breeding species"),
+            def.body_mass,
+            shipped::root_standing(shipped::animal()),
+        );
+        let bare = next_turns_quarry(&herd, &fauna).biomass;
+        let floor = predation_escapement_floor(&herd, &fauna);
+        assert!(bare > STOCK && STOCK > floor, "fixture: regrowth has room");
+
+        herd.predator_eaten_this_turn = SMALL_BITE;
+        let bitten = next_turns_quarry(&herd, &fauna);
+        assert!((bitten.biomass - (bare - SMALL_BITE)).abs() < 1e-4);
+        assert_eq!(
+            bitten.predator_eaten_this_turn, 0.0,
+            "the clone's stamp resets"
+        );
+
+        herd.predator_eaten_this_turn = EVERYTHING;
+        let eaten = next_turns_quarry(&herd, &fauna).biomass;
+        assert!((eaten - floor).abs() < 1e-4, "{eaten} is the floor {floor}");
+
+        // Already under the floor after regrowth: nothing is subtracted, and nothing is raised.
+        herd.biomass = floor * 0.1;
+        herd.predator_eaten_this_turn = 0.0;
+        let regrown = next_turns_quarry(&herd, &fauna).biomass;
+        herd.predator_eaten_this_turn = EVERYTHING;
+        assert_eq!(next_turns_quarry(&herd, &fauna).biomass, regrown);
     }
 }

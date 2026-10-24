@@ -1471,7 +1471,16 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 			# The improvement the edit LEAVES IN PLACE. `assign_labor` no longer re-asserts (or
 			# clears) an improvement — that is the whole point of the split — so a pending crew edit
 			# on a cultivating patch must keep showing the build, not blank it for one turn.
-			"improvement": String(pd.get("improvement", "")), "pending": true,
+			#
+			# **A BLANK PENDING IMPROVEMENT DEFERS TO THE CONFIRMED ROW'S.** `assign_labor` never changes
+			# an improvement (the build is a separate `BuildRung` command), so a pending entry recorded
+			# right after a build was stopped carries `""` and, until the turn ends, masked the server's
+			# confirmed build (the Work row offered `⌃` while the tile panel said "not started"). A NON-
+			# blank one is a declaration (`Hud._on_work_row_improvement_requested` records the rung it
+			# just sent) and wins; with no confirmed row the pending value stands as it is.
+			"improvement": String(pd.get("improvement", "")) \
+				if String(pd.get("improvement", "")) != "" \
+				else String(settled_party.get("improvement", "")), "pending": true,
 			"priority": settled_priority,
 			# **THE KIT THE COMMAND JUST CARRIED, not the one the confirmed row states.** This is the
 			# opposite treatment to `priority` above and to the ceiling above that, and the difference
@@ -1617,7 +1626,26 @@ func effective_idle(band: Dictionary) -> int:
 	for key in merged:
 		assigned += staffed_total(merged[key] as Dictionary)
 	return max(0, int(band.get("working_age", 0)) - assigned - bench_workers(band)
-		- homeward_workers(band))
+		- homeward_workers(band) - builders_of(band))
+
+## **THE BAND'S BUILDERS, as the residual of the CONFIRMED wire** (`docs/plan_labor_at_scale.md`,
+## "Builds join the site's crew"). The sim staffs a declared build from the site's builders in its
+## pass 3 and publishes them on no labor row (`buildersStaffed` rides the source), so the only place
+## they exist band-wide is the gap between `working_age` and everything the wire accounts for:
+## `working_age - idle_workers - Sum(confirmed rows' workers) - bench - homeward`. `idle_workers` is the
+## sim's pass-3 leftover, so what it does not name is the builders. **CONFIRMED rows only** (never the
+## pending overlay): a pending edit moves a row's crew before `idle_workers` moves with it, and mixing
+## the two would read the player's own press as builders. A band dict with no `idle_workers` key is a
+## fixture that states no workforce, and reads as no builders.
+func builders_of(band: Dictionary) -> int:
+	if not band.has("idle_workers"):
+		return 0
+	var staffed := 0
+	for a in labor_assignments_of(band):
+		if a is Dictionary:
+			staffed += staffed_total(a as Dictionary)
+	return maxi(int(band.get("working_age", 0)) - int(band.get("idle_workers", 0)) - staffed
+		- bench_workers(band) - homeward_workers(band), 0)
 
 ## **THE HANDS THE NEXT HUNTING-BY-NEED MUSTER TAKES, AND WHICH SEGMENT EACH ONE COMES OUT OF.**
 ## The muster takes idle hands first, then lends hands off the band's local source rows and the
@@ -1693,6 +1721,7 @@ func working_breakdown(band: Dictionary) -> Dictionary:
 		[HudWorkVocab.WORKING_PART_HUNT, hunt_workers],
 		[HudWorkVocab.WORKING_PART_EXTRACT, extract_workers],
 		[HudWorkVocab.WORKING_PART_ROLES, role_workers],
+		[HudWorkVocab.WORKING_PART_BUILD, builders_of(band)],
 		[HudWorkVocab.WORKING_PART_BENCH, bench_workers(band) - int(muster_out["bench"])],
 		[HudWorkVocab.WORKING_PART_HOMEWARD, homeward_workers(band)],
 		[HudWorkVocab.WORKING_PART_OUT_HUNTING, int(muster_out["total"])],

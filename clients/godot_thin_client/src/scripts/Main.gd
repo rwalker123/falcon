@@ -2916,7 +2916,7 @@ func _on_hud_answer_fork(payload: Dictionary) -> void:
 ## **IT ANSWERS WHETHER THE LINE WENT, and that answer is load-bearing for any caller holding an
 ## OPTIMISTIC overlay.** It used to warn and return nothing, so a send the transport refused
 ## (`Inspector.gd`'s `err != OK` branch) left the HUD's pending write standing as fact until the next
-## turn reconciled it away — a crew card reading `3` beside a source reading `No spare hands`. Every
+## turn reconciled it away — a crew card reading `3` beside a source reading `Nobody is building`. Every
 ## caller that wrote something on the strength of this call must roll that write back on `false`; the
 ## rest may ignore it exactly as before.
 func _send_runtime_command(line: String, message: String,

@@ -4126,7 +4126,7 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var offers_rung := ready_face != "" and building_glyph == ""
     if building_glyph != "":
         # **A BUILD IN FLIGHT IS THE SITE'S OWN CREW CHIP**: its hover states the crew (`N building (up to
-        # M), done in ≈T` or `No spare hands — raise a food row's floor or stop a row`) and its own tool shortfall; a press STOPS the build.
+        # M), done in ≈T` or `Nobody is building — every worker is busy on a work row. Lower a row's Max or stop working a row to free a builder.`) and its own tool shortfall; a press STOPS the build.
         ready = _build_stop_chip(band, model, model.get("build_src", {}) as Dictionary, ready_face,
             ready_color)
     elif offers_rung:

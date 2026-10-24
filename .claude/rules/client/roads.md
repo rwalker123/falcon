@@ -412,7 +412,7 @@ routes table (`HudBandLaborState.roads()`), and its build crew chip is the one o
 
 The row being built states the progress AND the turns; a second note saying what the estimate runs
 from would qualify a figure nobody had to hunt for. The `ROAD_LADDER_NO_BUILDERS_ASIDE` warn aside
-("No spare hands — raise a food row's floor or stop a row") rides the row being built.
+("Nobody is building — every worker is busy on a work row. Lower a row's Max or stop working a row to free a builder.") rides the row being built.
 
 ### …and the `Road` row stops reading as un-declared
 
@@ -850,7 +850,7 @@ other build surface in the game states a turns estimate. `route_track` had carri
 - **The remoteness multiple is quoted apart from the estimate**, as it is from the price: folding it
   in would put a copy of the sim's pricing formula here.
 - ⛔ **ZERO BUILDERS IS AN ANSWER, NOT AN ABSENCE.** With no spare hands the row states its price
-  bare and the aside beneath it reads `No spare hands — raise a food row's floor or stop a row`
+  bare and the aside beneath it reads `Nobody is building — every worker is busy on a work row. Lower a row's Max or stop working a row to free a builder.`
   (`ROAD_LADDER_NO_BUILDERS_ASIDE`, `build_aside`, in the warn ink) — a blank column where every other row states a duration reads as a
   client that failed to work it out. **And the rung stays orderable**: declaring a road with no hands
   free is a legal, ordinary act (the build waits for them), so this is a note and never a gate.
