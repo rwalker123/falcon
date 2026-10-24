@@ -267,6 +267,36 @@
     "cooldown_turns": 3
   },
   {
+    "id": "tribe.forms",
+    "tier": "beat",
+    "soul": {
+      "question": "Bands that kept their own fires found they were keeping one memory, and the many became a people."
+    },
+    "when": {
+      "all": [
+        {
+          "signal": "tribes.formed_this_turn",
+          "gte": 1
+        }
+      ]
+    },
+    "nouns": {},
+    "wardrobe": [
+      {
+        "id": "tribe_forms.one_people",
+        "fit": {},
+        "voice": {
+          "mythic": "The bands that shared a ground and a road came to say we, and meant all of them. The many fires became one tribe.",
+          "warm": "The bands that shared a place and a road started saying we and meaning all of them. We were one tribe now."
+        }
+      }
+    ],
+    "gloss": [
+      "tribes.formed_this_turn"
+    ],
+    "cooldown_turns": 3
+  },
+  {
     "id": "knowledge.cultivation_learned",
     "tier": "beat",
     "soul": {

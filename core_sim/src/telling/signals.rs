@@ -25,6 +25,7 @@ use crate::{
     scalar::Scalar,
     sedentarization::SedentarizationScore,
     sites::DiscoveredSites,
+    tribe::TribeRegistry,
 };
 
 /// A content-facing signal name (e.g. `"sedentarization.score"`).
@@ -44,6 +45,10 @@ pub const SITES_DISCOVERED_TOTAL_KEY: &str = "internal.sites.discovered_total";
 /// for sites. Not a registered signal; it round-trips through the rollback snapshot for free.
 pub const GATHERINGS_HELD_TOTAL_KEY: &str = "internal.gatherings.held_total";
 
+/// The **cumulative** tribe-formation count for the player faction, the edge-state total
+/// `tribes.formed_this_turn` diffs (the [`GATHERINGS_HELD_TOTAL_KEY`] pattern).
+pub const TRIBES_FORMED_TOTAL_KEY: &str = "internal.tribes.formed_total";
+
 /// The narrator's attained medium, as a 0-based index into `voice.mediums`. **Set by
 /// `telling_tick`, not by [`sample_signals`]** — it is derived from the ledger's attained rung plus
 /// this turn's sample, so it is injected after the base sample exists (the `stance.*` idiom). It is
@@ -51,7 +56,7 @@ pub const GATHERINGS_HELD_TOTAL_KEY: &str = "internal.gatherings.held_total";
 pub const VOICE_MEDIUM_INDEX: &str = "voice.medium_index";
 
 /// Every signal id content may reference, other than the per-axis culture family.
-const BASE_SIGNALS: [&str; 12] = [
+const BASE_SIGNALS: [&str; 13] = [
     VOICE_MEDIUM_INDEX,
     "turn.index",
     "band.count",
@@ -59,6 +64,7 @@ const BASE_SIGNALS: [&str; 12] = [
     "sedentarization.score",
     "sites.discovered_this_turn",
     "gatherings.held_this_turn",
+    "tribes.formed_this_turn",
     "leadership.chiefs_emerged_this_turn",
     "leadership.councils_emerged_this_turn",
     "discovery.progress.cultivation",
@@ -127,6 +133,7 @@ pub struct SignalSources<'a> {
     pub sedentarization: &'a SedentarizationScore,
     pub discovered_sites: &'a DiscoveredSites,
     pub gatherings: &'a GatheringLedger,
+    pub tribes: &'a TribeRegistry,
     pub discovery_progress: &'a DiscoveryProgressLedger,
     pub herds: &'a HerdRegistry,
     pub culture: &'a CultureManager,
@@ -145,6 +152,7 @@ pub struct SignalSources<'a> {
 pub struct CumulativeTotals {
     pub discovered_sites: f64,
     pub gatherings_held: f64,
+    pub tribes_formed: f64,
 }
 
 impl CumulativeTotals {
@@ -159,6 +167,7 @@ impl CumulativeTotals {
         Self {
             discovered_sites: read(SITES_DISCOVERED_TOTAL_KEY),
             gatherings_held: read(GATHERINGS_HELD_TOTAL_KEY),
+            tribes_formed: read(TRIBES_FORMED_TOTAL_KEY),
         }
     }
 
@@ -171,6 +180,10 @@ impl CumulativeTotals {
         edge_state.insert(
             GATHERINGS_HELD_TOTAL_KEY.to_string(),
             Scalar::from_f32(self.gatherings_held as f32),
+        );
+        edge_state.insert(
+            TRIBES_FORMED_TOTAL_KEY.to_string(),
+            Scalar::from_f32(self.tribes_formed as f32),
         );
     }
 }
@@ -246,6 +259,13 @@ pub fn sample_signals(sources: &SignalSources<'_>) -> (SignalSample, CumulativeT
         (gatherings_total - sources.previous.gatherings_held).max(0.0),
     );
 
+    // Tribe formations are a cumulative per-people count as well; the same diff.
+    let tribes_total = sources.tribes.formed_by(sources.faction) as f64;
+    sample.set(
+        "tribes.formed_this_turn",
+        (tribes_total - sources.previous.tribes_formed).max(0.0),
+    );
+
     for (signal, discovery_id) in [
         ("discovery.progress.cultivation", CULTIVATION_DISCOVERY_ID),
         ("discovery.progress.herding", HERDING_DISCOVERY_ID),
@@ -285,6 +305,7 @@ pub fn sample_signals(sources: &SignalSources<'_>) -> (SignalSample, CumulativeT
         CumulativeTotals {
             discovered_sites: discovered_total,
             gatherings_held: gatherings_total,
+            tribes_formed: tribes_total,
         },
     )
 }

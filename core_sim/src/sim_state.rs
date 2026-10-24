@@ -88,6 +88,7 @@ use crate::{
     supply::{BandSupplyMembership, SupplyNetworkMembership},
     telling::BeatLedger,
     tile_improvement::TileImprovementRegistry,
+    tribe::TribeRegistry,
     victory::VictoryState,
     visibility::{VisibilityLedger, VisibilitySweepTracker},
 };
@@ -201,6 +202,10 @@ pub struct SimState {
     /// rebuilds a count of past meetings, and a restore that dropped it would read the whole
     /// history as one turn of new gatherings.
     pub gatherings: GatheringLedger,
+    /// Every tribe, with its members, name and leader, and how many each people has formed
+    /// (`tribe::TribeRegistry`). **State, not derived**: a tribe's identity and its leader persist
+    /// across turns, and the Telling diffs the formation count.
+    pub tribes: TribeRegistry,
     /// Every road in the world, one record per tile, with its keeper and its position on the route
     /// branch. **State, not derived** — for a stronger reason than the ties above it: a road is *in
     /// the ground* and outlives the bands that wore it in, so there is nothing to rebuild one
@@ -480,6 +485,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
         command_events: world.resource::<CommandEventLog>().clone(),
         connections: world.resource::<ConnectionLedger>().clone(),
         gatherings: world.resource::<GatheringLedger>().clone(),
+        tribes: world.resource::<TribeRegistry>().clone(),
         roads: world.resource::<RoadRegistry>().clone(),
         tile_improvements: world.resource::<TileImprovementRegistry>().clone(),
         corruption: world.resource::<CorruptionLedgers>().clone(),
@@ -720,6 +726,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.command_events.clone());
     world.insert_resource(state.connections.clone());
     world.insert_resource(state.gatherings.clone());
+    world.insert_resource(state.tribes.clone());
     world.insert_resource(state.roads.clone());
     world
         .resource_mut::<crate::routes::RoadRegistry>()

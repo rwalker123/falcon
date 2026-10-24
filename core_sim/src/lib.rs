@@ -117,6 +117,7 @@ mod terrain;
 pub mod tile_improvement;
 pub mod trade_history;
 pub mod treaties;
+mod tribe;
 mod turn_pipeline_config;
 pub mod turn_profile;
 mod victory;
@@ -500,6 +501,9 @@ pub use tile_improvement::{
     advance_tile_improvements, is_tile_branch, tile_rung_cost, tile_rung_span, tile_standing_at,
     TileImprovement, TileImprovementKey, TileImprovementRegistry, NO_HANDS_ON_THE_IMPROVEMENT,
     TILE_KEEPING_LOAD,
+};
+pub use tribe::{
+    advance_tribes, Tribe, TribeId, TribeLeader, TribeLeaderKind, TribeRegistry, MIN_TRIBE_BANDS,
 };
 pub use turn_pipeline_config::{
     load_turn_pipeline_config_from_env, PopulationPhaseConfig, PowerPhaseConfig,
@@ -1080,6 +1084,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(connections::ConnectionLedger::default())
         .insert_resource(connections::GatheringLedger::default())
+        .insert_resource(tribe::TribeRegistry::default())
         .insert_resource(systems::HeartLedger::default())
         .insert_resource(systems::CulturePressureLedger::default())
         .insert_resource(systems::BreedingBreakOffs::default())
@@ -1594,6 +1599,14 @@ pub fn build_headless_app() -> App {
                     .after(systems::advance_culture_splits)
                     .before(sedentarization::sedentarization_tick),
                 sedentarization::sedentarization_tick,
+                // **Tribes are read off what the whole stage settled**: the belief anchors
+                // (refreshed inside `simulate_population`), this turn's supply networks
+                // (`balance_supply_networks`, Logistics) and every band's final people, size and
+                // leader. It reads `PopulationCohort` and files on `CommandEventLog`, which most of
+                // the stage writes, so it takes the end of the spine and of the pressure/sedentarization
+                // tail: that one edge puts it after `advance_leadership`, migration, breeding shed,
+                // defection, independence and the culture splits.
+                tribe::advance_tribes.after(sedentarization::sedentarization_tick),
                 // The roaming counterpart: after `advance_band_movement`, which records the turn's
                 // steps following a herd (any roam state) and which this drains — that order is
                 // carried by the whole run between them, and the one edge declared here is the

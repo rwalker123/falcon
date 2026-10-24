@@ -1816,6 +1816,19 @@ pub enum CommandEventKind {
     /// the band's own people; detail `kind=chief|elder_council name=<name>`, and the entry carries
     /// the band (`with_band`). Appended last, after [`Self::Treaty`].
     LeaderEmerged,
+    /// **Linked bands that share a gathering place became a tribe** (`crate::tribe`). Filed under
+    /// the tribe's people against its largest band (`with_band`); detail
+    /// `tribe=<id> kind=paramount_chief|council_of_chiefs leader=<name>`.
+    /// Appended last, after [`Self::LeaderEmerged`].
+    TribeFormed,
+    /// **A band joined a tribe**: against that band; label "Band <id> joins the <tribe>", detail `tribe=<id> band=<BandId>`.
+    TribeBandJoined,
+    /// **A band left a tribe** (its link broke or it took another place): against that band, the
+    /// [`Self::TribeBandJoined`] shape. A band that died is not announced.
+    TribeBandLeft,
+    /// **A tribe dissolved**: against its largest former band still standing; detail
+    /// `tribe=<id>`.
+    TribeDissolved,
 }
 
 impl CommandEventKind {
@@ -1869,6 +1882,10 @@ impl CommandEventKind {
             CommandEventKind::Dealing => "dealing",
             CommandEventKind::Treaty => "treaty",
             CommandEventKind::LeaderEmerged => "leader_emerged",
+            CommandEventKind::TribeFormed => "tribe_formed",
+            CommandEventKind::TribeBandJoined => "tribe_band_joined",
+            CommandEventKind::TribeBandLeft => "tribe_band_left",
+            CommandEventKind::TribeDissolved => "tribe_dissolved",
         }
     }
 }

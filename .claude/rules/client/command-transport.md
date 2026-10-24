@@ -399,9 +399,13 @@ sheet's `Stop working here` and the work inspector's `Unassign` (`BandPanelContr
   working, and `<branch> <x> <y>` for a tile-improvement keeper row (the branch word leads, from the
   payload's `branch`). The Roadwork pool is the lone token `roadwork` (`payload.roadwork`), never a tile.
   A road BUILD has no crew row and builds no line.
-- **No optimistic overlay and no rollback.** The row is captured live and the server restaffs the band at
-  once, so the next snapshot carries the row's absence; `_on_hud_stop_labor` is `_on_hud_work_priority`'s
-  shape. A client copy of a row that is about to go would be a second statement of one value.
+- **Stop records no overlay of its own, but it drops the pending assign for that source.** The row is
+  captured live and the server restaffs the band at once, so the next snapshot carries the row's absence;
+  `_on_hud_stop_labor` is `_on_hud_work_priority`'s shape. Both emitters carry `kind` and `pending_entity`,
+  and `Hud._on_stop_labor_requested` drops that source's entry (key rebuilt as the assign built it; branch
+  in the material slot on tile/band kinds) before relaying, because `reconcile_pending` only retires
+  EARLIER-turn entries and an assign made earlier in the same turn would re-add the stopped row through
+  `effective_worker_map` until the turn advanced. Other pending edits on the band survive.
 - **`command_guard` drives all five forms** (`_drive_stop_labor`, expected count `5`) through the real server
   parser, so the grammar cannot drift from `sim_runtime/src/command_text.rs`.
 
