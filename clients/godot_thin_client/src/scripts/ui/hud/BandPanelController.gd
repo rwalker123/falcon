@@ -3307,7 +3307,7 @@ func _build_working_yield_line(text: String, ink: Color,
 ## **THE ROW'S PRIORITY MARKS** (`docs/plan_site_crews.md` §2.4 as amended): `Priority` where the row
 ## has a crew to rank (a harvest, hunt or working row — never a road), and `Build` only while its site
 ## has a build in this band's queue. Both CYCLE and send the site's own address (`Main.site_address`).
-func _add_priority_pills(line: HBoxContainer, band: Dictionary, model: Dictionary,
+func _add_priority_pills(line: Container, band: Dictionary, model: Dictionary,
         with_priority: bool) -> void:
     if with_priority:
         line.add_child(_build_priority_pill(HudWorkVocab.WORK_ROW_PRIORITY_PILL_FORMAT,
@@ -3331,9 +3331,14 @@ func _build_pill_line(band: Dictionary, model: Dictionary, with_priority: bool) 
     margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
     margin.add_theme_constant_override("margin_left", HudWorkVocab.WORK_ROW_ACCOUNTS_INDENT)
     margin.set_meta(HudWorkVocab.WORK_ROW_PILL_LINE_META, true)
-    var line := HBoxContainer.new()
+    # **A FLOW, NOT A ROW — THE PILLS WRAP RATHER THAN SET THE ROW'S MINIMUM WIDTH.** An HBox reported the
+    # sum of its pills (`Priority` + `Max N` + `Build`, ~200px) as the left column's minimum, which the
+    # strip then sat beside: the whole row asked for more than the zone and every right-hand control
+    # (strip, crew bar, `⋮`) was clipped. A flow's minimum is its widest single pill.
+    var line := HFlowContainer.new()
     line.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    line.add_theme_constant_override("h_separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    line.add_theme_constant_override("v_separation", HudWorkVocab.WORK_ROW_SEPARATION)
     margin.add_child(line)
     _add_priority_pills(line, band, model, with_priority)
     return margin

@@ -8128,6 +8128,13 @@ control the sheets used to mount; and it retired the Work inspector for source r
 - **`⚠` is ONE mark whose hover is every warning line**, joined: the overdraw, overstaffed, kit-short,
   pen-underfed and keeping-short sentences the row's producer already wrote (`warn_lines`). No new
   sentence exists for it. **`ⓘ`** carries the tools-short sentence, which stops nothing.
+- ⛔ **NO LINE OF TEXT OR PILLS MAY SET A ROW'S MINIMUM WIDTH.** The strip, crew bar and `⋮` sit to the right
+  of the row's left column, so whatever that column asks for is taken from the zone and the right end is
+  clipped. The pill line (`Priority` / `Max N` / `Build`) was an `HBoxContainer` asking ~220px, which put the
+  row at 349 of a 356 box; it is an `HFlowContainer` now (it wraps, minimum = its widest pill) and the row
+  asks ~237. Text lines elide with `text_overrun_behavior` and carry the full text on `set_label_tooltip`.
+  Guarded by `_assert_work_rows_leave_headroom` (every control under the work zone asks at most the zone width
+  less `WORK_ROW_WIDTH_HEADROOM` 48px, deepest offender named; sabotage-verified by restoring the `HBox`).
 - **The crew column** is the number over the `CrewSplitMarks` bar. The bar draws a FOURTH segment, the
   builders (`HudStyle.CREW_BUILD`), and the number counts them (`workers + builders`);
   `HudWorkVocab.crew_bar_words` gains an `N building` clause. A need row keeps its need-count label in the

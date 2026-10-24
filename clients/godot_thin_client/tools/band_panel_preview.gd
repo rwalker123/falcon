@@ -2549,7 +2549,6 @@ func _ready() -> void:
 	await _assert_dock_work_tab_link_routes()
 
 	await _render_build_queue_states()
-
 	await _render_work_build_state_states()
 
 	await _render_pending_queue_states()
@@ -8030,6 +8029,52 @@ func _assert_parties_list_scrolls_iff_it_overflows(state_name: String) -> void:
 ## while being silently sliced off the frame (the WORKFORCE key row cut mid-glyph, the role cards gone).
 ## Containment is not completeness: the invariant that matters is that the zone box is at least as tall
 ## as the content's own combined minimum size.
+## The width a Work-tab row's minimum must leave free, so a real font or a wider strip glyph than the
+## fixture's cannot push the row past the zone and clip the strip, crew bar and `⋮` (#877). Measured: the
+## pill line asked 349 of 356 before it wrapped (7px to spare, gone in play); wrapped, no row asks more
+## than ~237. The budget sits between the two.
+const WORK_ROW_WIDTH_HEADROOM := 48.0
+
+## GUARD: **NO LINE OF TEXT OR PILLS MAY SET A WORK ROW'S MINIMUM WIDTH.** Every visible control under the
+## work zone must ask at most the zone's width less `WORK_ROW_WIDTH_HEADROOM`; the DEEPEST offender is
+## named, so a row whose children fit while their sum does not is named as the row.
+func _assert_work_rows_leave_headroom() -> void:
+	var failures: Array[String] = []
+	var widest := 0.0
+	var widest_name := ""
+	for host_variant in _find_zone_hosts(_panel):
+		var host: Control = host_variant
+		if host.size.x <= 0.0:
+			continue
+		var limit := host.size.x - WORK_ROW_WIDTH_HEADROOM
+		_collect_headroom_overrun(host, limit, failures)
+		for node in host.find_children("*", "Control", true, false):
+			var control: Control = node
+			if control.is_visible_in_tree() and control.get_combined_minimum_size().x > widest:
+				widest = control.get_combined_minimum_size().x
+				widest_name = "%s %s" % [control.name, control.get_class()]
+		print("band_panel_preview: work rows widest ask %.0f of %.0f (limit %.0f) [%s]" % [
+			widest, host.size.x, limit, widest_name])
+	_assert_band_panel("every Work-tab control's minimum width leaves %.0fpx of headroom (%s)" % [
+		WORK_ROW_WIDTH_HEADROOM, "; ".join(failures)], failures.is_empty() and widest > 0.0)
+
+func _collect_headroom_overrun(node: Node, limit: float, failures: Array[String]) -> bool:
+	var overran := false
+	for child in node.get_children():
+		if not (child is Control) or not (child as Control).visible:
+			continue
+		var content: Control = child
+		if _collect_headroom_overrun(content, limit, failures):
+			overran = true
+			continue
+		var needed := content.get_combined_minimum_size().x
+		if needed > limit:
+			var text := (content as Label).text if content is Label else ""
+			failures.append("%s (%s \"%s\") asks %.0f, over by %.0f" % [
+				content.name, content.get_class(), text, needed, needed - limit])
+			overran = true
+	return overran
+
 func _assert_zone_content_fits() -> void:
 	var failures: Array[String] = []
 	for host_variant in _find_zone_hosts(_panel):
@@ -16835,6 +16880,7 @@ func _render_build_queue_states() -> void:
 	_assert_build_queue_dates_ascend()
 	_assert_build_queue_head_readout()
 	_assert_build_queue_states_no_cause()
+	_assert_work_rows_leave_headroom()
 
 	#   (b) THE HEAD IS BLOCKED, and every entry behind it carries the SAME sentinel — which is the
 	# sim's own behaviour (the whole pool stands on the head, so nothing behind it moves) and the
@@ -21517,6 +21563,7 @@ func _build_queue_band_fixture(entries: int) -> Dictionary:
 	band["build_queue"] = _build_queue_entries(entries)
 	var rows: Array = band["labor_assignments"]
 	var forage: Dictionary = (rows[0] as Dictionary).duplicate(true)
+	forage["max_workers"] = 5
 	forage["improvement"] = SourceForecast.IMPROVEMENT_CULTIVATE if entries >= 1 \
 		else SourceForecast.IMPROVEMENT_NONE
 	rows[0] = forage
