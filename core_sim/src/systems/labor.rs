@@ -352,19 +352,6 @@ impl BuildPlan {
     }
 }
 
-/// **THE RANK OF A DECLARED BUILD'S SITE** — the row working the source, the Roadwork row for a road,
-/// the band improvement's row when it has one, else Normal. A build has no mark of its own.
-fn build_site_priority(allocation: &LaborAllocation, source: &BuildSource) -> SourcePriority {
-    allocation
-        .assignments
-        .iter()
-        .find(|row| match source {
-            BuildSource::Road(_) => matches!(row.target, LaborTarget::Roadwork),
-            _ => source.names(&row.target),
-        })
-        .map_or(SourcePriority::default(), |row| row.priority)
-}
-
 /// **WHAT A BUILD'S BUILDERS' TOOLS ADD TO WHAT THEY DELIVER, RESOLVED PER BUILD.**
 ///
 /// Every declared build is worked by its own crew, and the tools are the **job's**, because a hoe
@@ -6654,7 +6641,10 @@ pub fn advance_labor_allocation(
                     crew,
                     legs,
                     funded,
-                    priority: build_site_priority(&allocation, &declaration.source),
+                    priority: crate::staffing::build_site_priority(
+                        &allocation,
+                        &declaration.source,
+                    ),
                 }
             })
             .collect();

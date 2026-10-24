@@ -56,7 +56,7 @@ every crew the player set by hand (the rows that are not staffed). Rows are grou
 is not free for the row that was just given it. The crews are applied to a copy and, while the
 hands committed (rows, bench, walkers) exceed the people the band has, one hand comes off the
 lowest-priority row whose crew is above the party already standing (a row cannot be shrunk below its
-party without cutting more hands loose). The near row waits for the walkers to arrive. Pinned by
+party without cutting more hands loose). A build ranks by its site's Priority through `staffing::build_site_priority` (a road build at the Roadwork row's), the same reading the passes and the labor pass use. At equal priority the rows' surplus goes before a build's builders (the passes deal a group's builds their first head before its hold crews, so the trim runs in reverse); within one kind the later index goes first. Pinned by `staffing::tests::{a_high_roadwork_build_is_trimmed_after_a_normal_row, a_low_roadwork_build_is_trimmed_before_a_normal_row, at_equal_priority_a_row_is_trimmed_before_the_build}`. The near row waits for the walkers to arrive. Pinned by
 `work_party_caravan::a_far_party_the_staffing_shrinks_walks_its_cut_hands_home_and_commits_no_hand_twice`.
 
 **Within a priority group every pass deals ONE head at a time, round-robin**, across the group's rows
@@ -172,7 +172,10 @@ regrowth, while the turn staffs after it, so a row's crew can move by a hand bet
 turn. The herd it reads is `fauna::next_turns_quarry`: regrown, then less the predation the herd
 suffered last turn (`Herd::predator_eaten_this_turn`, held at the predation escapement floor), so a
 warren a pack eats back to its floor every turn is not staffed for a regrowth the turn will not hand
-over (`predated_restaff`). Several bands working one source each staff their share of the keeping bill. A band's gear that
+over (`predated_restaff`). `HuntProjection::step`'s first between-turns step (`ProjectionStart::BeforeRegrowth`)
+takes the same predation through the same helper, so the row's published `realized` / arrivals and the
+crew curve read one stock; later projected steps carry none (the stamp resets on the clone), and an
+`AfterRegrowth` start reads the turn's real post-predation stock (`fauna::tests::a_between_turns_projection_takes_the_predation_the_curve_takes`). Several bands working one source each staff their share of the keeping bill. A band's gear that
 the turn settles after staffing (the pools' and the keeping's issue) is not in the staffing's shelf.
 
 Pinned by `staffing::tests` (the passes, in order, against a shelf), `labor_allocation` (the

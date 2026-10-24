@@ -840,63 +840,82 @@ pub fn staff_rows_settled<'a>(
         if committed <= available {
             return staffed;
         }
-        let standing = |target: &LaborTarget| -> u32 {
-            allocation
-                .assignments
-                .iter()
-                .find(|row| row.target.same_source(target))
-                .map_or(NOBODY, |row| {
-                    row.party
-                        .as_ref()
-                        .map_or(NOBODY, |party| party.workers)
-                        .max(allocation.rejoining_to(target))
-                })
-        };
-        let priority_of = |target: &LaborTarget| {
-            allocation
-                .assignments
-                .iter()
-                .find(|row| row.target.same_source(target))
-                .map_or(SourcePriority::default(), |row| row.priority)
-        };
-        // The lowest-priority hand that can go: a row's hand above the party it must keep, or a
-        // builder (builders stand on no party). Builds rank by their site's Priority.
-        let build_priority_of = |source: &BuildSource| {
-            allocation
-                .assignments
-                .iter()
-                .find(|row| source.names(&row.target))
-                .map_or(SourcePriority::default(), |row| row.priority)
-        };
-        let row_pick = staffed
-            .rows
+        if !trim_one_hand(allocation, &mut staffed) {
+            return staffed;
+        }
+    }
+}
+
+/// Take ONE hand off the lowest-priority row or build that can lose it (see the ties below), or
+/// answer `false` when nothing can give one.
+fn trim_one_hand(allocation: &LaborAllocation, staffed: &mut StaffedBand) -> bool {
+    let standing = |target: &LaborTarget| -> u32 {
+        allocation
+            .assignments
             .iter()
-            .enumerate()
-            .filter(|(_, (target, crew))| crew.total() > standing(target))
-            .map(|(index, (target, _))| (priority_of(target), std::cmp::Reverse(index), index))
-            .min();
-        let build_pick = staffed
-            .builds
-            .iter()
-            .enumerate()
-            .filter(|(_, (_, crew))| crew.total() > NOBODY)
-            .map(|(index, (source, _))| {
-                (build_priority_of(source), std::cmp::Reverse(index), index)
+            .find(|row| row.target.same_source(target))
+            .map_or(NOBODY, |row| {
+                row.party
+                    .as_ref()
+                    .map_or(NOBODY, |party| party.workers)
+                    .max(allocation.rejoining_to(target))
             })
-            .min();
-        match (row_pick, build_pick) {
-            (None, None) => return staffed,
-            (Some((_, _, at)), None) => take_one_row_hand(&mut staffed.rows[at].1),
-            (None, Some((_, _, at))) => take_one_builder(&mut staffed.builds[at].1),
-            (Some(row), Some(build)) => {
-                if (row.0, row.1) <= (build.0, build.1) {
-                    take_one_row_hand(&mut staffed.rows[row.2].1);
-                } else {
-                    take_one_builder(&mut staffed.builds[build.2].1);
-                }
+    };
+    let priority_of = |target: &LaborTarget| {
+        allocation
+            .assignments
+            .iter()
+            .find(|row| row.target.same_source(target))
+            .map_or(SourcePriority::default(), |row| row.priority)
+    };
+    // The lowest-priority hand that can go: a row's hand above the party it must keep, or a
+    // builder (builders stand on no party). Builds rank by their site's Priority.
+    let build_priority_of = |source: &BuildSource| build_site_priority(allocation, source);
+    // Ties at one priority: the rows' surplus goes before a build's builders. The passes deal
+    // a group's builds their first head before its hold crews, so the trim runs in reverse and
+    // the build's builders are the last hands of the group to go. Within one kind the later
+    // index goes first (the dealing's own reverse). Indices are never compared across kinds.
+    let row_pick = staffed
+        .rows
+        .iter()
+        .enumerate()
+        .filter(|(_, (target, crew))| crew.total() > standing(target))
+        .map(|(index, (target, _))| (priority_of(target), std::cmp::Reverse(index), index))
+        .min();
+    let build_pick = staffed
+        .builds
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, crew))| crew.total() > NOBODY)
+        .map(|(index, (source, _))| (build_priority_of(source), std::cmp::Reverse(index), index))
+        .min();
+    match (row_pick, build_pick) {
+        (None, None) => return false,
+        (Some((_, _, at)), None) => take_one_row_hand(&mut staffed.rows[at].1),
+        (None, Some((_, _, at))) => take_one_builder(&mut staffed.builds[at].1),
+        (Some(row), Some(build)) => {
+            if row.0 <= build.0 {
+                take_one_row_hand(&mut staffed.rows[row.2].1);
+            } else {
+                take_one_builder(&mut staffed.builds[build.2].1);
             }
         }
     }
+    true
+}
+
+/// **THE RANK OF A DECLARED BUILD'S SITE** - the row working the source, the Roadwork row for a
+/// road, the band improvement's row when it has one, else Normal. A build has no mark of its own.
+/// The one reading the staffing passes, the settle trim and the labor pass all share.
+pub fn build_site_priority(allocation: &LaborAllocation, source: &BuildSource) -> SourcePriority {
+    allocation
+        .assignments
+        .iter()
+        .find(|row| match source {
+            BuildSource::Road(_) => matches!(row.target, LaborTarget::Roadwork),
+            _ => source.names(&row.target),
+        })
+        .map_or(SourcePriority::default(), |row| row.priority)
 }
 
 /// Take one hand off a staffed row's crew: bare first, then kitted, then a keeper.
@@ -1207,16 +1226,7 @@ fn build_inputs<'a>(
             .rung_by_id(rung)
             .and_then(|def| def.build.as_ref())
             .map_or(NOBODY, |build| build.max_builders);
-        // A build ranks by its site's one Priority: the row working the source, the Roadwork row
-        // for a road, the band improvement's row when there is one, else Normal.
-        let priority = allocation
-            .assignments
-            .iter()
-            .find(|row| match source {
-                BuildSource::Road(_) => matches!(row.target, LaborTarget::Roadwork),
-                _ => source.names(&row.target),
-            })
-            .map_or(SourcePriority::default(), |row| row.priority);
+        let priority = build_site_priority(allocation, source);
         let tile = build_site_tile(source, sources.herds);
         let distance = match (&world.camp, tile) {
             (Some(camp), Some(site)) => camp.distance_to(site),
@@ -2188,6 +2198,74 @@ mod tests {
             vec![1, 1, 1, 0],
             "the Low build beats the Low hold crew, behind the High and Normal ones"
         );
+    }
+
+    /// An over-committed band: an empty Roadwork row, a forage row and a road build, the last two
+    /// holding two heads, at the given Roadwork and forage Priorities. Trims one hand.
+    fn trim_one_with(roadwork: SourcePriority, forage: SourcePriority) -> StaffedBand {
+        const HANDS: u32 = 2;
+        let forage_target = LaborTarget::Forage {
+            tile: UVec2::new(1, 1),
+            floor: 0.5,
+            species: None,
+            take_species: Default::default(),
+        };
+        let mut allocation = LaborAllocation::default();
+        assert!(allocation.set_staffed_row(LaborTarget::Roadwork, None, None));
+        assert!(allocation.set_staffed_row(forage_target.clone(), None, None));
+        allocation.set_source_priority(&LaborTarget::Roadwork, roadwork);
+        allocation.set_source_priority(&forage_target, forage);
+        let crew = StaffedCrew {
+            bare: HANDS,
+            ..StaffedCrew::default()
+        };
+        let mut staffed = StaffedBand {
+            rows: vec![
+                (LaborTarget::Roadwork, StaffedCrew::default()),
+                (forage_target, crew),
+            ],
+            builds: vec![(
+                BuildSource::Road(UVec2::new(3, 3)),
+                BuildCrew {
+                    kitted: 0,
+                    bare: HANDS,
+                    cap: HANDS,
+                },
+            )],
+        };
+        assert!(trim_one_hand(&allocation, &mut staffed));
+        staffed
+    }
+
+    /// **A ROAD BUILD TRIMS AT THE ROADWORK ROW'S PRIORITY**, not as Normal: with Roadwork High the
+    /// Normal forage row gives the hand and the road builders keep theirs.
+    #[test]
+    fn a_high_roadwork_build_is_trimmed_after_a_normal_row() {
+        let staffed = trim_one_with(SourcePriority::High, SourcePriority::Normal);
+        assert_eq!(staffed.rows[1].1.total(), 1, "the Normal row gave the hand");
+        assert_eq!(
+            staffed.builds[0].1.bare, 2,
+            "the High road keeps its builders"
+        );
+    }
+
+    /// The mirror: with Roadwork Low, the road build gives the hand before the Normal row does.
+    #[test]
+    fn a_low_roadwork_build_is_trimmed_before_a_normal_row() {
+        let staffed = trim_one_with(SourcePriority::Low, SourcePriority::Normal);
+        assert_eq!(
+            staffed.builds[0].1.bare, 1,
+            "the Low road build gave the hand"
+        );
+        assert_eq!(staffed.rows[1].1.total(), 2);
+    }
+
+    /// At equal priority the rows' surplus goes before a build's builders.
+    #[test]
+    fn at_equal_priority_a_row_is_trimmed_before_the_build() {
+        let staffed = trim_one_with(SourcePriority::Normal, SourcePriority::Normal);
+        assert_eq!(staffed.builds[0].1.bare, 2, "the build keeps its builders");
+        assert_eq!(staffed.rows[1].1.total(), 1, "the row gave the hand");
     }
 
     /// **THE KEEPING AND THE GATHERING ROUND ONCE**: 1.6 hands of keeping and 0.5 of gathering are

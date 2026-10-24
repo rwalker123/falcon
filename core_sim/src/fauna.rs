@@ -6722,8 +6722,15 @@ impl HuntProjection {
         // Logistics: regrow first (sets `quarry.biomass_before_regrowth`, then grows
         // `quarry.biomass`) — unless this turn's regrowth already happened ([`ProjectionStart`]),
         // in which case this turn's growth is already standing and `growth_this_turn` reads it.
+        //
+        // **A between-turns first step also takes last turn's predation**, exactly as
+        // [`next_turns_quarry`] does (one helper), so the row's forecast and the crew curve read
+        // the same stock. `regrow_biomass` zeroes the stamp on the clone, so only the first step
+        // carries it; an `AfterRegrowth` start reads the turn's real post-predation stock.
         if !std::mem::take(&mut self.regrown) {
+            let predated_last_turn = quarry.predator_eaten_this_turn.max(0.0);
             regrow_biomass(quarry, fauna);
+            subtract_forecast_predation(quarry, predated_last_turn, fauna);
         }
         if quarry.biomass <= self.ecology.extinction_floor * self.capacity {
             return None; // `advance_herds` would despawn it here — the herd is gone.
@@ -11050,15 +11057,20 @@ pub fn next_turns_quarry(herd: &Herd, fauna: &FaunaConfig) -> Herd {
     let predated_last_turn = herd.predator_eaten_this_turn.max(0.0);
     let mut quarry = herd.clone();
     regrow_biomass(&mut quarry, fauna);
-    // **Persistence forecast**: the packs that ate last turn are expected to eat the same again
-    // (`advance_predation` runs after regrowth), so the stock a crew will find is the regrown one
-    // less that bill, but never under the escapement floor predation itself stops at, and never
-    // raised (a stock already under the floor loses nothing).
+    subtract_forecast_predation(&mut quarry, predated_last_turn, fauna);
+    quarry
+}
+
+/// **Persistence forecast**: the packs that ate `predated_last_turn` are expected to eat the same
+/// again (`advance_predation` runs after regrowth), so the stock a crew will find is the regrown one
+/// less that bill, but never under the escapement floor predation itself stops at, and never raised
+/// (a stock already under the floor loses nothing). The one expression [`next_turns_quarry`] and
+/// [`HuntProjection::step`]'s first between-turns step share.
+fn subtract_forecast_predation(quarry: &mut Herd, predated_last_turn: f32, fauna: &FaunaConfig) {
     if predated_last_turn > 0.0 {
-        let floor = predation_escapement_floor(&quarry, fauna);
+        let floor = predation_escapement_floor(quarry, fauna);
         quarry.biomass = (quarry.biomass - predated_last_turn).max(floor.min(quarry.biomass));
     }
-    quarry
 }
 
 /// **The biomass a prey herd is never predated below**: `predators.predation_escapement_fraction ×
@@ -16040,5 +16052,56 @@ mod tests {
         let regrown = next_turns_quarry(&herd, &fauna).biomass;
         herd.predator_eaten_this_turn = EVERYTHING;
         assert_eq!(next_turns_quarry(&herd, &fauna).biomass, regrown);
+    }
+
+    /// **THE ROW'S BETWEEN-TURNS PROJECTION TAKES LAST TURN'S PREDATION TOO.** A `BeforeRegrowth`
+    /// first step reads the stock the crew curve reads (`next_turns_quarry`: regrown, less the
+    /// predation), so `project_realized_hunt` over one turn equals the same projection started
+    /// `AfterRegrowth` on that clone, and sits below the unpredated herd's.
+    #[test]
+    fn a_between_turns_projection_takes_the_predation_the_curve_takes() {
+        const RABBITS: &str = "Rabbit Warren";
+        const CAPACITY: f32 = 100.0;
+        /// On the hunt floor, where only the regrowth is on offer.
+        const STOCK: f32 = 50.0;
+        /// A bite of most of the regrowth (~8.75), leaving a room that binds the reach.
+        const BITE: f32 = 8.0;
+        const ONE_TURN: u32 = 1;
+        const HUNTERS: f32 = 12.0;
+        const CARRY: f32 = 12.0;
+        const FLOOR: f32 = 0.5;
+        const OUTPUT: f32 = 1.0;
+        let fauna = FaunaConfig::builtin();
+        let def = fauna.species_by_display(RABBITS).expect("shipped species");
+        let mut herd = Herd::new(
+            "game_prey".to_string(),
+            RABBITS.to_string(),
+            SizeClass::Small,
+            vec![UVec2::new(1, 1)],
+            STOCK,
+            CAPACITY,
+            def.fodder_per_biomass,
+            def.regrowth_rate.expect("a breeding species"),
+            def.body_mass,
+            shipped::root_standing(shipped::animal()),
+        );
+        let party = mixed_party(HUNTERS, 0.0);
+        let project = |herd: &Herd, start: ProjectionStart| {
+            project_realized_hunt(
+                herd, &fauna, CARRY, &party, OUTPUT, HUNTERS, FLOOR, ONE_TURN, start,
+            )
+            .provisions
+        };
+        let unpredated = project(&herd, ProjectionStart::BeforeRegrowth);
+        herd.predator_eaten_this_turn = BITE;
+        let predated = project(&herd, ProjectionStart::BeforeRegrowth);
+        let curve_stock = next_turns_quarry(&herd, &fauna);
+        let from_curve = project(&curve_stock, ProjectionStart::AfterRegrowth);
+        assert!(predated > 0.0, "fixture: the predated herd still pays");
+        assert!(predated < unpredated, "{predated} is below {unpredated}");
+        assert!(
+            (predated - from_curve).abs() < 1e-5,
+            "{predated} vs the curve's stock {from_curve}"
+        );
     }
 }

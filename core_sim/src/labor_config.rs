@@ -629,8 +629,7 @@ impl LaborConfig {
                 value: self.arrivals_horizon_turns.to_string(),
             });
         }
-        // A party walks at the band's own pace, so a zero would make a far posting's walk never
-        // end (`work_party::walk_turns` would divide by zero).
+        // A zero cap would leave every tile unworkable.
         if self.tile_worker_cap == 0 {
             return Err(LaborConfigError::Invalid {
                 field: "tile_worker_cap",
@@ -639,6 +638,8 @@ impl LaborConfig {
                 value: self.tile_worker_cap.to_string(),
             });
         }
+        // A party walks at the band's own pace, so a zero would make a far posting's walk never
+        // end (`work_party::walk_turns` would divide by zero).
         if self.band_move_tiles_per_turn == 0 {
             return Err(LaborConfigError::Invalid {
                 field: "band_move_tiles_per_turn",

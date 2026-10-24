@@ -528,7 +528,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > > command's restaff read the regrown, unpredated clone, saw ~8.7 of room, staffed the rows 4 + 2
 > > and swallowed hands the turn would not use, so a build got 0 builders. Every reader of the
 > > quarry (restaff, assign-time seed, crew-take query, capture, `ClaimSources::herd`) inherits it;
-> > `project_realized_hunt`'s multi-turn loop is unchanged. Pinned by
+> > `project_realized_hunt`'s first between-turns step (`ProjectionStart::BeforeRegrowth`) takes the same predation through the same helper (`subtract_forecast_predation`), so its `realized` and the crew curve read one stock; its later steps carry none. Pinned by
 > > `fauna::tests::a_forecast_subtracts_the_predation_last_turn_suffered_down_to_the_floor` and
 > > `tests/predated_restaff.rs`.
 > >
