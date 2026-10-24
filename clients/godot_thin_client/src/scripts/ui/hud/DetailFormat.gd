@@ -1563,25 +1563,6 @@ static func graze_range_label(range_radius: int) -> String:
         return "1 tile"
     return "%d tiles" % tiles
 
-## **THE BUILD METER'S VALUE — one spelling for both webs' four rungs** (`docs/plan_unit_costed_work.md`
-## §11): `Preparing 18 / 50 work (42%)`. The four `*_label` functions below compose through it, so a
-## plant rung and an animal rung state a job's size the same way.
-##
-## **THE PERCENTAGE IS THE CALLER'S, NEVER `work_done / work_cost`.** The wire ships the fraction and
-## the two absolutes as separate fields and they are exactly each other; dividing here would be a
-## second authority over one meter, and the first turn the two disagreed the row would say so.
-##
-## A `work_cost` at `BUILD_WORK_COST_NONE` states the percentage alone — the row this always was. That
-## is a source the wire prices no such job on, not a missing field: `18 / 0 work` reads as a defect
-## where a bare percentage reads as an unpriced job.
-static func build_meter_value(verb: String, progress: float,
-        work_done: float, work_cost: float) -> String:
-    if work_cost <= SourceForecast.BUILD_WORK_COST_NONE:
-        return HudSelectionVocab.BUILD_METER_PERCENT_FORMAT % [
-            verb, HudFormat.progress_percent(progress)]
-    return HudSelectionVocab.BUILD_METER_WORK_FORMAT % [
-        verb, format_work_units(work_done), format_work_units(work_cost),
-        HudFormat.progress_percent(progress)]
 
 ## **THE RUNG ROW'S WHOLE VALUE — one composer, four rungs, both webs** (issue #545). The tile card's
 ## plant rungs and the herd drawer's animal ones render through this and nothing else, so a rung's
@@ -2359,8 +2340,10 @@ static func build_turns_clause(turns: int,
 ## **THE BUILD CREW CHIP'S TOOLTIP** - what a declared build's own crew is doing: `N building (up to M),
 ## done in ≈T`, or `Nobody is building — every worker is busy on a work row. Lower a row's Max or stop working a row to free a builder.` when the sim staffed nobody; then the build's OWN tool
 ## shortfall (its `build_toe` lines, the same `pool_toe_row_is_short` test the keeping rows ask) and what
-## a press does. `item_names` is `{item_id: display name}` off the equipment roster.
-static func build_crew_tooltip(src: Dictionary, prefix: String, item_names: Dictionary) -> String:
+## a press does (`with_stop_hint`: a surface whose press opens the rung card, the work strip's chip, omits
+## it). `item_names` is `{item_id: display name}` off the equipment roster.
+static func build_crew_tooltip(src: Dictionary, prefix: String, item_names: Dictionary,
+        with_stop_hint: bool = true) -> String:
     var staffed := SourceForecast.build_crew_staffed(src, prefix)
     var lines: Array[String] = []
     if staffed <= SourceForecast.BUILD_CREW_NONE:
@@ -2377,7 +2360,8 @@ static func build_crew_tooltip(src: Dictionary, prefix: String, item_names: Dict
         var named := HudWorkVocab.toe_short_item_names(toe, item_names)
         lines.append(HudWorkVocab.BUILD_CREW_SHORT_FORMAT % named if named != "" \
             else HudWorkVocab.BUILD_CREW_SHORT_GENERIC)
-    lines.append(HudWorkVocab.BUILD_CREW_STOP_HINT)
+    if with_stop_hint:
+        lines.append(HudWorkVocab.BUILD_CREW_STOP_HINT)
     return "\n".join(PackedStringArray(lines))
 
 ## Is this build's own kit short? (`build_toe` carries a line the settlement filled less than required.)

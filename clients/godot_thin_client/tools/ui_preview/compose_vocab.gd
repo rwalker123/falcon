@@ -17,7 +17,7 @@ const COMPOSE_SPINE_POLICY := "policy"
 
 const COMPOSE_SPINE_STEPPER := "stepper"
 
-const COMPOSE_SPINE_IMPROVEMENT := "improvement"
+const COMPOSE_SPINE_STRIP := "strip"
 
 
 ## **THE ROWS A SHEET RENDERS OR NOT ACCORDING TO ITS SOURCE, never according to its WEB.** Empty
@@ -29,7 +29,7 @@ const COMPOSE_SPINE_SOURCE_CONDITIONAL: Array[String] = []
 ## What EVERY compose sheet must open with — both webs alike. The shared claim is the HEAD; the two
 ## sheets are additionally compared in full.
 const COMPOSE_SPINE_HEAD: Array[String] = [
-	COMPOSE_SPINE_BAND, COMPOSE_SPINE_POLICY, COMPOSE_SPINE_STEPPER,
+	COMPOSE_SPINE_BAND, COMPOSE_SPINE_POLICY, COMPOSE_SPINE_STRIP, COMPOSE_SPINE_STEPPER,
 ]
 
 ## The three sheets whose spines this run captures, as `_compose_spines` keys. Named consts because the
@@ -53,8 +53,8 @@ static func compose_spine(root: Node) -> Array[String]:
 static func collect_compose_spine(node: Node, spine: Array[String]) -> void:
 	if node == null:
 		return
-	if node is Control and (node as Control).has_meta(HudWidgets.IMPROVEMENT_CONTROL_META):
-		spine.append(COMPOSE_SPINE_IMPROVEMENT)
+	if node is Control and (node as Control).has_meta(HudWorkVocab.WORK_STRIP_META):
+		spine.append(COMPOSE_SPINE_STRIP)
 		return
 	if node is OptionButton:
 		spine.append(COMPOSE_SPINE_BAND)

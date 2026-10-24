@@ -661,21 +661,20 @@ func _drive_work_priority() -> void:
 		}).is_empty():
 		_fail("work_priority: a line was built for a ROAD, which has no crew to rank")
 
-## **`stop_labor` - A STAFFED ROW'S END** (#871), in the five forms it can name: the patch, the herd, the
-## working, a tile-branch row (`<branch> <x> <y>`, the word leading) and the lone `roadwork` token. A staffed
-## row's count slot is a Max now, so this is the only line that ends one - and it names its band by BandId.
+## **`stop_labor` - A STAFFED ROW'S END** (#871), in the three forms a live control can name: the patch, the
+## herd and the working. It is emitted by the compose sheet's `Stop working here`
+## (`DrawerComposeController._emit_stop_labor`, reached through the HUD's `_drawercompose`, relayed on
+## `HudLayer.stop_labor_requested`). The tile-branch, camp-stores and roadwork forms were the retired work
+## inspector's, so no control names them any more.
 func _drive_stop_labor() -> void:
 	var band: Dictionary = _hud._band_labor.panel_band()
 	for model in [
 			{"kind": SourceForecast.LABOR_KIND_FORAGE, "x": TARGET_X, "y": TARGET_Y, "herd_id": ""},
 			{"kind": SourceForecast.LABOR_KIND_HUNT, "x": -1, "y": -1, "herd_id": NEAR_HERD_ID},
 			{"kind": HudConst.LABOR_KIND_EXTRACT, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
-				"material": DEPOSIT_MATERIAL},
-			{"kind": HudConst.LABOR_KIND_TILE, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
-				"branch": "route"},
-			{"kind": HudConst.LABOR_KIND_BAND, "x": -1, "y": -1, "herd_id": "", "branch": "camp_stores"},
-			{"kind": HudConst.LABOR_KIND_ROADWORK, "x": -1, "y": -1, "herd_id": ""}]:
-		_hud._bandpanel._commit_stop_labor(band, model)
+				"material": DEPOSIT_MATERIAL}]:
+		_hud._drawercompose._emit_stop_labor(band, String(model["kind"]), int(model["x"]),
+			int(model["y"]), String(model["herd_id"]), String(model.get("material", "")))
 		await _settle()
 
 ## **`unqueue` — THE WITHDRAWAL**, in the four forms a queue row can name: patch, herd, working, road.
@@ -687,7 +686,7 @@ func _drive_unqueue() -> void:
 			{"kind": HudConst.LABOR_KIND_EXTRACT, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
 				"material": DEPOSIT_MATERIAL},
 			{"kind": HudConst.LABOR_KIND_ROADWORK, "x": TARGET_X, "y": TARGET_Y, "herd_id": "", "road": true}]:
-		_hud._bandpanel._emit_unqueue(band, model)
+		_hud._rungcard.emit_unqueue(band, model)
 		await _settle()
 	_hud._band_labor._pending_labor.clear()
 
@@ -1077,11 +1076,10 @@ func _drive_deposit_verbs() -> void:
 ## trailing position and the tail is closed — which is exactly what this guard proves, the two
 ## grammars being one arm apart and therefore able to drift apart in one edit.
 ##
-## **DRIVEN THROUGH `Main.format_abandon_working`, the pure static both controls reach** — the
-## workings roster row's `✕` and the deposit ladder card's put-down row, which converge on one
-## `HudLayer.abandon_working_requested` relay. Their CLICK PATH is asserted where it is real
-## (`band_panel_preview`), which is also the only place a wrong material could be caught: a line
-## naming the other working of the same hex parses perfectly here.
+## **DRIVEN THROUGH `Main.format_abandon_working`, the pure static.** No control emits it now: the
+## `HudLayer.abandon_working_requested` relay, the workings roster row's `✕` and the deposit ladder
+## card's put-down row were retired, and `Stop working here` (`stop_labor`) drops a working's holding.
+## What remains is the PARSE; a line naming the other working of the same hex parses perfectly here.
 ##
 ## The Rust half classifies it `PlaceAddressed` beside `abandon` and the three rung verbs, so what
 ## this asserts is the PARSE.
@@ -1345,8 +1343,9 @@ const EXPECTED_KINDS := {
 	"split_band": 1,
 	# THREE — the patch, the herd and the working; the road form is asserted to build NO line.
 	"work_priority": 3,
-	# FIVE — the patch, herd, working, tile-branch and roadwork forms of a staffed row's end (#871).
-	"stop_labor": 6,
+	# THREE — the patch, herd and working forms of a staffed row's end (#871), all from the sheet's
+	# `Stop working here`; the inspector's tile-branch / camp-stores / roadwork forms went with it.
+	"stop_labor": 3,
 	# FOUR — every form a queue row can withdraw.
 	"unqueue": 4,
 	# ONE — the Deny verb's sheet, opened on the herd its pick landed on, is the raid's only launch site.

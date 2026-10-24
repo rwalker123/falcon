@@ -101,6 +101,9 @@ const ROW_MAX_BUILDERS_KEY := "max_builders"
 
 ## Absent means `false`; only `route_track` writes it, and only on an ordered rung.
 const ROW_ROUTE_BUILDING_KEY := "route_building"
+## How far the rung being built has got, `0..1`, set beside `ROW_ROUTE_BUILDING_KEY` so the in-flight
+## row can fill to it. The row is then a STOP (`build_track`'s `on_stop`), not a pick.
+const ROW_PROGRESS_KEY := "progress"
 ## A LOCKED row's blocker — the craft's name, or the refusal's own short clause — as its `🔒` states
 ## it.
 const ROW_BLOCKER_KEY := "blocker"
@@ -248,7 +251,27 @@ static func track(kind: String, source: Dictionary, prefix: String, improvement:
             row[ROW_STATE_KEY] = STATE_OPEN
             row[ROW_SELECTABLE_KEY] = true
         rows.append(row)
+    _mark_building_row(rows, kind, source, prefix, improvement)
     return rows
+
+## **THE RUNG THE CREW IS RAISING RIGHT NOW** carries `ROW_ROUTE_BUILDING_KEY` and its progress, so
+## `build_track` can draw it as the stop button. It is the leg in flight (`RungGates.leg_in_progress`), the
+## same rung the work strip's chip fills for, so the chip and this row are about one rung. A banked,
+## standing or refused row is never marked.
+static func _mark_building_row(rows: Array[Dictionary], kind: String, source: Dictionary,
+        prefix: String, improvement: String) -> void:
+    var leg := RungGates.leg_in_progress(source, RungGates.rung_in_progress(kind, source, improvement))
+    if leg.is_empty():
+        return
+    var verb := String(leg.get("policy", ""))
+    for row in rows:
+        var state := String(row.get(ROW_STATE_KEY, ""))
+        if String(row.get(ROW_IMPROVEMENT_KEY, "")) != verb \
+                or state == STATE_BANKED or state == STATE_STANDING or state == STATE_LOCKED:
+            continue
+        row[ROW_ROUTE_BUILDING_KEY] = true
+        row[ROW_PROGRESS_KEY] = clampf(float(leg.get("progress", 0.0)), 0.0, 1.0)
+        return
 
 ## **IS THERE ANY DESTINATION TO OFFER ON THIS SOURCE?** — the one test a caller asks before opening a
 ## track, so an empty card is never floated. It is deliberately NOT `next_rung_ready`: that answer is
@@ -404,6 +427,7 @@ static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: 
             figure = HudRouteVocab.ROAD_LADDER_METER_FORMAT % HudRouteVocab.road_percent_of(
                 HudRouteVocab.queued_progress(road))
             row[ROW_ROUTE_BUILDING_KEY] = true
+            row[ROW_PROGRESS_KEY] = clampf(meter, 0.0, 1.0)
         if refusals.is_empty():
             # Buildable, and the second clause is **HOW LONG on the rung being built** and nothing at
             # all on a rung merely offered. The duration is an honest answer about a job the builders
@@ -629,7 +653,8 @@ static func _route_tooltip(entry: Dictionary, refusals: Array, road: Dictionary,
 ## `title` defaults to the plant/animal heading, so every existing call site is untouched.
 static func build_track(rows: Array[Dictionary], on_pick: Callable,
         title_text: String = HudWorkVocab.RUNG_TRACK_TITLE,
-        max_builders_by_rung: Dictionary = {}) -> VBoxContainer:
+        max_builders_by_rung: Dictionary = {},
+        on_stop: Callable = Callable()) -> VBoxContainer:
     var column := VBoxContainer.new()
     column.add_theme_constant_override("separation", HudWorkVocab.RUNG_TRACK_ROW_SEPARATION)
     column.custom_minimum_size = Vector2(HudWorkVocab.RUNG_TRACK_WIDTH, 0.0)
@@ -646,7 +671,7 @@ static func build_track(rows: Array[Dictionary], on_pick: Callable,
         if state != STATE_BANKED and state != STATE_STANDING:
             row[ROW_MAX_BUILDERS_KEY] = int(max_builders_by_rung.get(
                 String(row.get(ROW_RUNG_KEY, "")), 0))
-        column.add_child(_build_row(row, on_pick))
+        column.add_child(_build_row(row, on_pick, on_stop))
     return column
 
 ## The catalog's builder caps as `{rung_key: max_builders}` - the one table a rung card reads
@@ -735,10 +760,15 @@ static func build_ring_card(row: Dictionary, on_declare: Callable) -> VBoxContai
 ## ⛔ **THE ROW'S PRICE IS INSIDE THE ROW.** What the rung eats to raise, what the shelf will not cover
 ## and what it costs to hold render as quiet lines INSIDE the button (`_row_aside`), so a pile can never
 ## float under the list belonging to no rung in particular.
-static func _build_row(row: Dictionary, on_pick: Callable) -> Control:
+static func _build_row(row: Dictionary, on_pick: Callable,
+        on_stop: Callable = Callable()) -> Control:
     var state := String(row.get(ROW_STATE_KEY, ""))
     var locked := state == STATE_LOCKED
     var selectable := bool(row.get(ROW_SELECTABLE_KEY, false)) and on_pick.is_valid()
+    # **THE RUNG BEING RAISED IS A STOP** where the host can stop it: the same button, filling to the
+    # build's progress, whose press withdraws the declaration instead of picking a destination.
+    if bool(row.get(ROW_ROUTE_BUILDING_KEY, false)) and on_stop.is_valid() and not locked:
+        return _build_rung_button(row, on_stop, false, true)
     if selectable or locked:
         return _build_rung_button(row, on_pick, locked)
     var line := HBoxContainer.new()
@@ -784,12 +814,22 @@ static func _row_name_label(row: Dictionary, ink: Color) -> Label:
 ## is the hit area and the chrome (FIRST, so it draws beneath), and the content — name, face and the
 ## price lines — on top with `MOUSE_FILTER_IGNORE`, so every click lands on the button. The container
 ## sizes to its content, which a `Button` cannot do for children of its own.
-static func _build_rung_button(row: Dictionary, on_pick: Callable, locked: bool) -> PanelContainer:
+static func _build_rung_button(row: Dictionary, on_pick: Callable, locked: bool,
+        stop: bool = false) -> PanelContainer:
     var state := String(row.get(ROW_STATE_KEY, ""))
     var cell := PanelContainer.new()
     _stamp_row(cell, row, state)
     cell.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
     var verb := String(row.get(ROW_IMPROVEMENT_KEY, ""))
+    if stop:
+        # The hover ends in what the press does. A row with no hover of its own states the rung and
+        # how far it has got.
+        var said := cell.tooltip_text
+        if said == "":
+            said = "%s %d%%" % [String(row.get(ROW_NAME_KEY, "")),
+                HudFormat.progress_percent(float(row.get(ROW_PROGRESS_KEY, 0.0)))]
+        cell.tooltip_text = said + HudWorkVocab.WORK_STRIP_STOP_SUFFIX
+        cell.set_meta(HudWorkVocab.WORK_STRIP_STOP_META, true)
     var pick := Button.new()
     pick.focus_mode = Control.FOCUS_NONE
     pick.disabled = locked
@@ -797,8 +837,13 @@ static func _build_rung_button(row: Dictionary, on_pick: Callable, locked: bool)
     pick.set_meta(HudWorkVocab.RUNG_TRACK_BUTTON_META, verb)
     HudStyle.apply_button(pick, "ghost")
     if not locked:
-        pick.pressed.connect(func() -> void: on_pick.call(verb))
+        if stop:
+            pick.pressed.connect(func() -> void: on_pick.call())
+        else:
+            pick.pressed.connect(func() -> void: on_pick.call(verb))
     cell.add_child(pick)
+    if stop:
+        cell.add_child(WorkStrip.fill_layer(float(row.get(ROW_PROGRESS_KEY, 0.0))))
     var inner := MarginContainer.new()
     inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
     for side in ["margin_left", "margin_right"]:

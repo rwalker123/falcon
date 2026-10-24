@@ -11,9 +11,9 @@ class_name SourceForecast
 ##   • THE RAID — `denial_forecast` and friends: what a detached denial party does to a herd, over how
 ##     many turns, and what it hauls home.
 ##   • THE FLOOR'S INSTRUMENT — `floor_chart_model` and the layer under it (`regrowth_at`,
-##     `project_stock`, `crew_to_clear` / `crew_to_hold`, `harvest_verdict`): the projection the
-##     compose sheet's chart draws, the two crew targets beneath it and the sentence saying which of
-##     the crew and the floor is BINDING. One model, three readings, so they cannot disagree.
+##     `project_stock`, `crew_to_clear` / `crew_to_hold`): the projection the
+##     compose sheet's chart draws and the two crew targets beneath it. One model, two readings, so
+##     they cannot disagree.
 ##
 ## WHY IT IS ITS OWN FILE. The next phase lifts a `DrawerComposeController` out of `Hud.gd`, but this
 ## layer is called by the work zone and the parties zone TOO, so it cannot travel with the drawer. The
@@ -2965,42 +2965,6 @@ static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capac
 const VERDICT_OK := "ok"
 const VERDICT_SLOW := "slow"
 const VERDICT_BLOCKED := "blocked"
-# THE FLOOR BINDS — the crew is big enough, so the floor is what the source settles at.
-#
-# **IT STATES THE COUNTDOWN AND NOTHING ELSE.** Both readings once closed with *", then holds it —
-# taking only what grows back"*, and that clause is gone: what the source does once it ARRIVES is the
-# `VERDICT_HOLDS_AT_FLOOR` sentence's own job, said by the sheet the moment it is true, so a
-# countdown that also narrated the aftermath was answering a question the player had not reached yet.
-#
-# **AND THAT IS WHY THERE IS ONE PAIR HERE RATHER THAN TWO.** A STRIPPED twin of each existed solely
-# to drop that clause where there was no aftermath to promise — a herd taken to floor 0 is gone, and
-# the full sentence contradicted the sheet's own `0 hold it after`. With the clause off the base
-# form the two spellings were the same string, and a `regrows` flag choosing between identical
-# constants is a fork with one answer; `harvest_verdict` therefore takes no such flag. What stripping
-# costs is still said, by the aside's `FLOOR_STRIP_CONSEQUENCE`.
-const VERDICT_REACHES_FORMAT := "Reaches the floor in %d turns."
-# A crew big enough to clear the source in one turn is common (it is the `clear it now` target), so
-# "1 turns" is a reading the panel would print often rather than an edge case worth tolerating.
-const VERDICT_REACHES_ONE_TURN := "Reaches the floor next turn."
-# THE CREW BINDS — the take equals the regrowth somewhere ABOVE the floor, and that is where it stops.
-# The crew that WOULD reach it is named, because "add hands" is the remedy and a verdict that
-# withholds the number is a puzzle rather than an answer.
-const VERDICT_SETTLES_FORMAT := "This crew can't draw it that low. It settles at %d%% and holds there"
-const VERDICT_SETTLES_CREW_FORMAT := " — %d %s would reach the floor."
-const VERDICT_SETTLES_END := "."
-# NEITHER BINDS — there is nothing above the floor to take, so the crew's size is irrelevant until the
-# source grows back past it. The STOCK, not the percent, because the point is the quantity the source
-# has to reach — and in whatever unit the flag above it is flying (`stock_face`), because the two name
-# one threshold and a sheet reading "leave 50% · ≈11 Red Deer" over "grows past 1075" states it twice
-# in two currencies.
-const VERDICT_AT_FLOOR_FORMAT := "Already at or below the floor. This crew takes nothing until it grows past %s."
-# THE SOURCE IS AT ITS FLOOR AND THE CREW IS LIVING OFF THE REGROWTH — the equilibrium the *reaches*
-# branch below promises, seen from inside rather than counted down to. It states no turn count because
-# there is nothing left to wait for, and it wears the same words the reaching verdict closes with, so
-# arriving at the floor and standing on it read as one state rather than two.
-const VERDICT_HOLDS_AT_FLOOR := "At the floor and holding it — taking only what grows back."
-# No crew at all is its own reading and must not render as "reaches the floor in 0 turns".
-const VERDICT_NO_CREW := "No one assigned. Nothing is taken and it grows back on its own."
 
 # ---- THE DENIAL RAID — a MISSION, not a floor (`docs/plan_denial_raid.md`) -----------------------
 # **IT CARRIES NO FLOOR AND NO RATE.** A denial party publishes no delivery forecast, because its goal
@@ -3277,28 +3241,17 @@ static func _improvement_ladder(src: Dictionary, prefix: String) -> Array:
 static func improvement_ladder(src: Dictionary, prefix: String) -> Array:
     return RungQuotes.verbs(src, prefix)
 
-## **IS THIS CREW TAKING ANYTHING?** — the client's reading of the sim's work predicate
-## (`systems::labor::crew_is_working_the_source`, `standing_above_floor > 0`), plus the crew term the
-## sim gets for free (an assignment always has workers; a compose sheet dialled to 0 does not).
-## `STOCK_FRACTION_EPSILON` is the same display tolerance the verdict's at-the-floor branch uses, so
-## the two sentences can never disagree about whether the source is being worked.
-static func crew_is_taking(workers: int, biomass: float, capacity: float, floor: float) -> bool:
-    return workers > 0 \
-        and biomass > clamp_floor(floor) * capacity + STOCK_FRACTION_EPSILON * capacity
-
-## **IS THIS CREW TAKING ANYTHING NEXT TURN?** — the FORWARD-LOOKING twin of `crew_is_taking`, and the
-## only one a sentence about what the crew is EARNING may be keyed on.
-##
-## `crew_is_taking` tests the room standing right now, `B − floor·K`, against the wire's PUBLISHED
-## biomass — which is the POST-take stock, so on a source held at its floor it is false by
-## construction. That is the intended steady state of a Sustain policy, not an edge case: a patch
+## **IS THIS CREW TAKING ANYTHING NEXT TURN?** — the only reading a sentence about what the crew is
+## EARNING may be keyed on. A test of the room standing right now, `B − floor·K`, against the wire's
+## PUBLISHED biomass would be wrong: that is the POST-take stock, so on a source held at its floor it
+## is false by construction. That is the intended steady state of a Sustain policy, not an edge case: a patch
 ## publishing `+0.71 /turn` rendered *"Teaching nothing: nothing is being taken"* beside it, and the
 ## sim's own lesson gate was meanwhile firing at full multiplier off `biomass_before` — the
 ## post-regrowth, PRE-take stock (`systems::labor`), which on that patch stands well above the floor.
 ##
 ## `room_next_turn` is `escapement_room_next_turn` — this turn's growth first, then what stands above
-## the floor — which is the same room the readout's headline and the verdict's at-the-floor refusal
-## are composed from, so no two of the three can disagree about whether a take is happening.
+## the floor — which is the same room the readout's headline is composed from, so the two cannot
+## disagree about whether a take is happening.
 static func crew_is_taking_next_turn(workers: int, room_next_turn: float) -> bool:
     return workers > 0 and room_next_turn > 0.0
 
@@ -3356,64 +3309,8 @@ static func teaching_note(lesson: String, floor: float, taking: bool,
         "teaching": true,
     }
 
-## The verdict for a crew at a floor, as `{severity, text}`. `crew_noun` is the sheet's own word for
-## these workers (foragers / hunters / herders), lower-cased by the caller that owns it.
-##
-## **IT TAKES NO `regrows` TERM.** One existed to drop the reaching sentence's *"then holds it"*
-## clause where there was no aftermath to promise; the clause is off both readings now, so the flag
-## chose between two identical strings. See `VERDICT_REACHES_FORMAT`.
 ## `floor_chart_model`'s `take_crew` when every hand of the crew gathers.
 const WHOLE_CREW_TAKES := -1.0
-
-## **THE VERDICT'S CREW CLAUSE, RESTATED FOR A CONVERTED CREW** — `text` with its
-## `K <noun> would reach the floor` clause re-spelled at `crew` (or closed with `VERDICT_SETTLES_END`
-## where the conversion has no answer). Any other verdict passes through untouched.
-static func verdict_with_reaching_crew(verdict: Dictionary, reaching: int, crew: int,
-        crew_noun: String) -> Dictionary:
-    var text := String(verdict.get("text", ""))
-    if reaching <= 0:
-        return verdict
-    var clause := VERDICT_SETTLES_CREW_FORMAT % [reaching, crew_noun]
-    if not text.ends_with(clause):
-        return verdict
-    var out := verdict.duplicate()
-    out["text"] = text.left(text.length() - clause.length()) \
-        + ((VERDICT_SETTLES_CREW_FORMAT % [crew, crew_noun]) if crew > 0 else VERDICT_SETTLES_END)
-    return out
-
-static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capacity: float,
-        floor: float, reaching_crew: int, crew_noun: String,
-        body_mass: float = 0.0, quarry: String = "",
-        takes_next_turn: bool = true) -> Dictionary:
-    if workers <= 0:
-        return {"severity": VERDICT_BLOCKED, "text": VERDICT_NO_CREW}
-    var floor_stock := clamp_floor(floor) * capacity
-    # **THE AT-FLOOR REFUSAL IS FORWARD-LOOKING NOW, and it has to be**: the headline above it states
-    # what NEXT turn's take is, so a sentence keyed on the INSTANTANEOUS room would say *"takes
-    # nothing"* over a live figure on every source held at its floor — which is exactly the pair
-    # reported from play. `takes_next_turn` is the same room that headline is composed from, so the
-    # two cannot disagree, and the sentence is true precisely when it renders.
-    if not takes_next_turn:
-        return {
-            "severity": VERDICT_BLOCKED,
-            "text": VERDICT_AT_FLOOR_FORMAT % stock_face(floor_stock, body_mass, quarry),
-        }
-    # **STANDING AT THE FLOOR AND PAYING THE REGROWTH IS ITS OWN STATE**, and neither branch below can
-    # word it: the walk never "reaches" a floor it started on (`project_stock` requires a DESCENT), so
-    # this would fall through to *"this crew can't draw it that low"* about a source already there.
-    if not crew_is_taking(workers, biomass, capacity, floor):
-        return {"severity": VERDICT_OK, "text": VERDICT_HOLDS_AT_FLOOR}
-    var reached := int(walk.get("reached_turn", PROJECTION_REACHED_NONE))
-    if reached != PROJECTION_REACHED_NONE:
-        return {
-            "severity": VERDICT_OK,
-            "text": VERDICT_REACHES_ONE_TURN if reached == 1 else VERDICT_REACHES_FORMAT % reached,
-        }
-    var settled := int(round(float(walk.get("settled_fraction", 0.0)) * FLOOR_PERCENT_SCALE))
-    var text := VERDICT_SETTLES_FORMAT % settled
-    text += (VERDICT_SETTLES_CREW_FORMAT % [reaching_crew, crew_noun]) \
-        if reaching_crew > 0 else VERDICT_SETTLES_END
-    return {"severity": VERDICT_SLOW, "text": text}
 
 ## **THE WHOLE INSTRUMENT, COMPOSED ONCE** — everything the chart draws, the two crew targets, the
 ## verdict and the idle-crew note, from one forecast and one walk of the projection. It exists so the
@@ -3429,12 +3326,11 @@ static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capa
 ## (`rung_lesson_known`), and it is a PARAMETER because this layer is all-`static` and holds no
 ## snapshot: knowledge belongs to the faction, not to the source, so nothing here can look it up.
 ## **`per_crew` IS THE SIM'S TAKE CURVE, AND EVERY CREW ANSWER ON THIS MODEL IS A SEARCH OF IT** —
-## the walk's take arm, both pills, the reaching crew and therefore the verdict's *"settles at N%"*
-## and the count it offers as the remedy. Empty on the plant web, on the raid branch and for the one
+## the walk's take arm, both pills and the reaching crew. Empty on the plant web, on the raid branch and for the one
 ## frame before the reply lands, where every one of them falls back to the closed forms. See the
 ## curve-reading section above for why leaving them there was the panel being two models at once.
 static func floor_chart_model(src: Dictionary, kind: String, prefix: String, floor: float,
-        workers: int, crew_noun: String, lesson_known: bool,
+        workers: int, lesson_known: bool,
         per_crew: Array = [], take_crew: float = WHOLE_CREW_TAKES,
         knowledge: Dictionary = {}) -> Dictionary:
     var capacity := float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0))
@@ -3555,22 +3451,13 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry, reaching,
             body_mass, engage_rate, stay, per_crew),
         "crew_to_hold": hold,
-        # The verdict's `K <noun> would reach the floor` count and its noun, carried beside the sentence
-        # so a caller that converts the crew (a KEPT patch, `DrawerComposeController._kept_crew_targets`)
-        # can restate that one clause through the same conversion as the pills.
-        "reaching_crew": reaching,
-        "crew_noun": crew_noun,
-        # `takes_next_turn` from the SAME room the readout's headline is composed from
-        # (`escapement_room_next_turn`), so the sentence and the number above it are one answer.
-        "verdict": harvest_verdict(walk, workers, biomass, capacity, floor_value, reaching,
-            crew_noun, body_mass, quarry, room_next_turn > 0.0),
         # THE ASIDE'S SECOND LINE, composed HERE rather than at the render site for the same reason
         # the verdict and the idle note are: it is a function of the floor, so it has to be recomposed
         # by every live drag, and this model IS what a drag recomposes. **It takes no `improvement`**:
         # the line is about the LESSON alone now (`docs/plan_standing_upkeep.md` §2.2), and a build in
         # flight neither speeds it up nor is paced by it.
         # …and its `taking` term is the FORWARD room, the same one the verdict above is keyed on
-        # (`crew_is_taking_next_turn`). It read the instantaneous `crew_is_taking`, which is false by
+        # (`crew_is_taking_next_turn`). It read the instantaneous room, which is false by
         # construction on any source held at its floor — so a patch publishing a live take, whose
         # lesson the sim was crediting at full multiplier, was told *"nothing is being taken"* while
         # the verdict one row up correctly read *"At the floor and holding it"*.

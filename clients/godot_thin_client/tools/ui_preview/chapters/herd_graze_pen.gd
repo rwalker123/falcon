@@ -969,8 +969,8 @@ func run(harness) -> void:
 			"penning"))
 	# …and the rung it has already climbed reads as the STATE it is, above the one it cannot start.
 	h._assert_hud("…beneath the DONE label for the rung this herd has climbed",
-		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, HudConst.LABOR_POLICY_TAME).contains(
-			String(HudComposeVocab.IMPROVEMENT_DONE_LABELS[HudConst.LABOR_POLICY_TAME])))
+		ForageFx.improvement_state(h._hud._drawercompose._compose_sheet,
+			HudConst.LABOR_POLICY_TAME) == ForageFx.IMPROVEMENT_STATE_DONE)
 
 	# State 3c-corral-ungated — the SAME herd once Penning is fully known. Nothing about the ANIMAL
 	# changed, so if the box does not go live the gate is keyed to something it should not be.
@@ -987,7 +987,7 @@ func run(harness) -> void:
 	# from GATED to OFFERED. The gated frame above pins the other half.
 	h._assert_hud("Penning alone unlocks Corral — the same herd now OFFERS it",
 		corral_ungated != null and String(corral_ungated.get_meta(
-			HudWidgets.IMPROVEMENT_STATE_META, "")) == HudWidgets.IMPROVEMENT_STATE_OFFERED)
+			ForageFx.IMPROVEMENT_STATE_META, "")) == ForageFx.IMPROVEMENT_STATE_OFFERED)
 	# **AND THE ASIDE STOPS TEACHING IT, in the same breath.** This is the animal half of the A/B the
 	# plant web runs on `forage_lesson_known`: nothing about the herd moved between the two frames, so
 	# the gated one above naming `penning` and this one naming nothing is the whole claim that the line
@@ -1102,13 +1102,13 @@ func run(harness) -> void:
 	# throughout (the slot the paused-build line uses), because it is a warning about the RUNG. This
 	# frame is the only one that produces it, so it is where a silent loss would show. The zero is
 	# asserted beside it: a note over a suppressed payoff warns about a number the player cannot see.
-	h._assert_hud("a pen that would pay nothing says so, in the note slot under its own box",
-		Q.has_label_containing(h._hud._drawercompose._compose_sheet,
-			HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE))
 	h._assert_hud("…beside a readout row that still states the zero payoff, bare and unsubtracted",
 		Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet)
 			.contains(SourceForecast.PICKER_FOOD_PRODUCT_FORMAT
 				% SourceForecast.format_magnitude(0.0)))
+	h._assert_hud("…and the strip's ⚠ carries the `Too depleted to pen` warning the retired control wore",
+		(ForageFx.strip_model(h._hud._drawercompose._compose_sheet).get(WorkStrip.M_WARN_LINES, []) as Array)
+			.has(HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE))
 	h._assert_hud("…and the box's own face carries no payoff to state it a second time",
 		not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
 			SourceForecast.IMPROVEMENT_CORRAL).contains(ForageFx.IMPROVEMENT_PAYOFF_NEEDLE))

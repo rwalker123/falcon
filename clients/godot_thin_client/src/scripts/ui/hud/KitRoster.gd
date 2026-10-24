@@ -1597,26 +1597,6 @@ static func shortfall_line(kits: Array, kit: Dictionary, band: Dictionary, job: 
 		return ""
 	return shortfall_sentence(kit, covered, on_job)
 
-## **HOW MANY OF `crew` HANDS THE BAND'S STORE CAN KIT** (#871) - complete outfits (the scarcest of the
-## kit's items, net of what the band's committed rows already hold) capped at the crew. `0` for an itemless
-## kit (`none`) and for no crew; the whole crew where the store states no count, which is silence and not a
-## shortfall. The compose sheet's forecast split of a NEW source reads it; a source the band already works
-## states the snapshot row's `kitted_staffed` instead.
-static func covered_hands(kit: Dictionary, band: Dictionary, job: String, crew: int) -> int:
-	var items := kit_item_ids(kit)
-	if items.is_empty() or crew <= 0:
-		return 0
-	var held := -1
-	for item_variant in items:
-		var item_id := String(item_variant)
-		var owned := DetailFormat.kit_units_owned(band, item_id)
-		if owned == DetailFormat.KIT_UNITS_UNSTATED:
-			return crew
-		var free := maxi(owned - _published_workers_holding(band, item_id), 0) \
-			if job != JOB_EXPEDITION else owned
-		if held < 0 or free < held:
-			held = free
-	return mini(maxi(held, 0), crew)
 
 ## ⛔ **THE BAND'S GEAR STATE FOR ONE KIT, AS A CACHE KEY TERM** — `spears=9@17|sled=17@17`, or `""`
 ## for a kit that carries nothing. It is not rendered anywhere; its whole job is to be *different*

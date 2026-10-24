@@ -229,16 +229,7 @@ const ACTIVITY_MARK_FONT_SIZE := ROSTER_ROW_ICON_FONT_SIZE
 # build meters render — the tile card's plant rungs and the herd drawer's animal ones. The compose
 # sheet's pre-commit quote is `HudComposeVocab`'s, composed through the same shared formatters.
 
-# `Preparing 18 / 50 work (42%)` — the verb the row already led with, then the absolutes, then the
-# percentage the meter has always shown. **The percentage is NOT re-derived from the absolutes**: the
-# wire ships the fraction and the pair separately, and dividing here would be a second opinion about
-# one meter.
-const BUILD_METER_WORK_FORMAT := "%s %s / %s work (%d%%)"
 
-# The row as it always was, for a source the wire prices no such job on. Not a missing-field path: a
-# source can carry a meter for a rung it states no cost for, and `18 / 0 work` reads as a defect
-# where a bare percentage reads as an unpriced job.
-const BUILD_METER_PERCENT_FORMAT := "%s %d%%"
 
 # Work units read WHOLE where they are whole (`50`) and to one place where they are not (`17.6`).
 # The shipped costs are integers and a `50.0` beside them claims a precision the config lacks — the

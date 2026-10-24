@@ -2,6 +2,7 @@
 paths:
   - "clients/godot_thin_client/src/scripts/ui/{BandCityPanel,BandFoodStatus,PenStatus}.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/BandPanelController.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/{WorkStrip,RungCardController}.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/WorkInspectorDialog.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/DisclosureTriangle.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/{TradeZoneController,TradeLedger,TradeHoverCard,FactionMark,RungLinkIcon,hud_trade_vocab}.gd"
@@ -38,6 +39,8 @@ paths:
 | `ui/hud/TradeHoverCard.gd` | The Trade tab's hover card: a row's rating piles or a shipment's cargo, placed beside the row and never under the list panel |
 | `ui/hud/FactionMark.gd` | **The one faction mark** — a flag glyph in `MapView.faction_color`, on every counterparty; the slot a faction's flag (#647) fills |
 | `ui/hud/CrewSplitMarks.gd` | One small square per worker THE SIM STAFFED, **drawn** (a custom-draw `Control`, not glyphs): how a staffed row's crew divides into keepers, hands holding a whole kit and bare hands (`keepers_staffed` / `kitted_staffed` / `bare_staffed`) — see "THE CREW BAR" below. Mounted under the crew number of every staffed Work-tab row and under the crew number of the compose sheets |
+| `ui/hud/WorkStrip.gd` | **The work strip (#877)** — ONE control a source wears on its Work row AND on its compose sheet, built from one model (`model_from_row`) by one builder (`build`): the standing-rung mark, the ladder chip, the floor glyph, the one `⚠`, the `ⓘ`, then the crew number over a `CrewSplitMarks` bar. All-`static`. `build_chip` / `fill_layer` are shared with the rung card's stop row (`RungLadder`) |
+| `ui/hud/RungCardController.gd` | `RefCounted` owner of the ONE rung-card popup (#877): the plant / animal destination track, the ring card and the deposit track, opened from a row's strip or a sheet's strip alike, plus the crop step, the stop row, the declarations and the working put-down. It emits `improvement_requested`, `crop_chosen`, `extend_pen_requested`, and `unqueue_requested`; `BandPanelController` relays them. Hud holds it as `_rungcard` |
 | `ui/hud/LeaderPortrait.gd` | The leader block's 48px portrait square on the Band tab (#859): draws `res://assets/portraits/leader_placeholder.png` when that file exists (the seam for real art), else a faction-coloured head-and-shoulders silhouette; `empty` dims it, `council` adds the group badge. See "THE BAND TAB SHOWS WHO LEADS THE BAND" |
 | `ui/hud/RungLinkIcon.gd` | A pooling link's rung as a glyph (path dotted, trail dashed, dirt road solid pigment, paved road double; open ground a faint dot) |
 | `ui/hud/hud_trade_vocab.gd` | `HudTradeVocab` — the crossing codes (direction / link / cause), the tab's thresholds, words and sizes |
@@ -773,7 +776,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   set on the Window and is no longer DRAWN (the treatment is borderless) — it is the window's NAME,
   which only an unembedded dialog would show. **The `settle` prompt was the fourth** — it went with
   the retired arrival verb, and `split_band` deliberately has no prompt at all: the split sheet's own
-  verdict block already states what it costs, so a modal would ask the player to confirm a number
+  Workers tooltip already states what it costs, so a modal would ask the player to confirm a number
   they are looking at.
 - **The panel has no Clear all; Move is a verb.** Move is the first of the band verbs on the
   action bar (and on the tile panel's band drawer), arming `TargetingController.begin_move_band`
@@ -2725,10 +2728,11 @@ build from the SITE's own crew and publishes the result on the source itself —
 (`native-extension.md` → "The builders on a declared build ride the SOURCE row"). `builders_cap == 0`
 means no build is declared there. The Work tab therefore draws a build where the site is drawn.
 
-- **The control is the chip** (`BandPanelController._build_stop_chip`, meta
-  `HudWorkVocab.WORK_ROW_STOP_CHIP_META`): a ghost `Button` that takes the rung slot of a patch or herd
-  row while a build is under way, the dig slot of a GROUNDWORK row while `HudDepositVocab.is_queued`
-  holds, and a ROADWORK roster row while `SourceForecast.build_is_declared(road)` holds. Its face is the
+- **The control is the work strip's ladder chip on a row that has a strip** (a patch, herd or groundwork row:
+  "THE WORK STRIP" below; its press opens the rung card, whose in-flight row stops the build), and **the stop
+  chip on a ROADWORK roster row** (`BandPanelController._build_stop_chip`, meta
+  `HudWorkVocab.WORK_ROW_STOP_CHIP_META`) while `SourceForecast.build_is_declared(road)` holds, a ghost `Button`
+  whose press stops the build directly. Its face is the
   rung's glyph and how far in (`WORK_ROW_BUILDING_FORMAT`, `SIGNAL_DEEP`); it flips to the `⚠` face
   (`WORK_ROW_BUILDING_UNSTAFFED_FORMAT`, `WARN`) when the build is stalled (`build_stalled`), the sim
   staffed nobody, or the build's own tools are short (`DetailFormat.build_toe_is_short`). The road and
@@ -2750,9 +2754,8 @@ means no build is declared there. The Work tab therefore draws a build where the
   and it clears the improvement while leaving the take crew standing, so the row returns to its `⌃`
   offer face on the same frame. `unqueue` withdraws a DECLARATION: the banked meter
   survives it and re-declaring is one `⌃` press.
-- **The site sheet carries the same crew tooltip and stop** on its running face
-  (`DrawerComposeController._stop_build_callable`), for the same reason: one build, one control, one
-  sentence.
+- **The site sheet carries the same crew sentence** on its strip's chip (the sheet's strip is built from the
+  same producer as the row), for the same reason: one build, one control, one sentence.
 - **The rung card states its cap** — `up to N builders at once` (`RUNG_MAX_BUILDERS_FORMAT`) off the
   rung catalog's `maxBuilders` (`RungLadder.max_builders_by_rung`), beside the price, so the player
   sees how many hands a rung can use before declaring it.
@@ -2867,6 +2870,11 @@ is resolved ONCE per source in `_work_source_models`, and the model carries it a
 rather than the row builder asking the question a second way.
 
 ## THE WORK INSPECTOR IS A DIALOG, AND THE ZONE STOPS PAYING FOR IT (§4.9 item 12d)
+
+> **Since #877 the dialog hosts the ROADWORK roster row's card alone** (`_build_road_inspector`). A
+> forage, hunt, working or tile row opens its compose sheet on a click, and everything the dialog drew
+> for those rows is on the sheet or on the strip — see "THE WORK STRIP". The passages below describe
+> the dialog's own geometry, which is unchanged.
 
 `docs/plan_standing_upkeep.md` §4.9 item 12d. The board's inspector strip is a **persistent,
 viewport-centred, NON-MODAL `WorkInspectorDialog`** on its own `CanvasLayer`. It is a **rehost, not a
@@ -4735,10 +4743,12 @@ the same quantity the sim bounds the command by (`available_workers`), so the st
 the server's refusal cannot disagree. `BandPanelController.verb_enabled` holds both gates, so on zero
 idle the three expedition verbs grey while `⌂ Split` stays live (`band_panel_no_idle`).
 
-**THE SHEET SHOWS THE CONSEQUENCE, BECAUSE THE INPUT IS ONE NUMBER.** Workers stepper → the share it
-implies → what the new band would be (people, brackets, dependants/worker, provisions) → the home
-band beside its now → the button, live or disabled-carrying-its-reason → an after-note that never
-moves.
+**THE SHEET IS THE STEPPER AND THE BUTTON, AND THE CONSEQUENCE RIDES THE `Workers` LABEL'S TOOLTIP,
+BECAUSE THE INPUT IS ONE NUMBER.** The tooltip (`BandPanelController._split_tooltip`, plain text, one
+fact per line) states the share it implies, what the new band would be (people, brackets, provisions,
+families), the home band beside its now, the family limit and its warning where the people is under
+one, and the after-note. It is routed through `HudWidgets.set_label_tooltip` (a Label tooltip is
+otherwise a silent no-op) via the stepper row's `key_tooltip` parameter.
 The people, the larder and the material all divide on that one share. **The verdict is not a line of
 its own**: it hangs off the disabled button as a tooltip, for the height reason in "THE REFUSAL RIDES
 THE DISABLED BUTTON'S TOOLTIP" below.
@@ -4784,15 +4794,15 @@ joined by `SPLIT_BLOCKED_SEPARATOR`, because fixing one otherwise just reveals t
 holds no copy of the rule: a verdict cannot cross the wire when the sheet moves a stepper, since that
 would be one field per possible composition. See `.claude/rules/core_sim/fission.md`.
 
-**THE REFUSAL RIDES THE DISABLED BUTTON'S TOOLTIP; THE LAST LINE IS THE AFTER-NOTE, ALWAYS.** One
-hint label under `Form the band` swapping its text — the refusal while a floor held,
-`SPLIT_BAND_AFTER_NOTE` once the composition was legal — changes the sheet's height the moment the
-stepper crosses a floor, because the two run to different line counts, and moves the controls under
-the cursor that is still on the stepper. The after-note describes what the VERB does — where the band
-appears, that it moves like any band, that the outfit closes with the turn — and every word of that is
-true whether or not the current composition is legal, so it is drawn unconditionally and the sheet's
-last line is a fixed block. `confirm.tooltip_text` carries `split_blocked_reason` instead, which is the
-control the reason is about; the button is still visible-and-disabled, never hidden.
+**THE REFUSAL RIDES THE DISABLED BUTTON'S TOOLTIP; THE AFTER-NOTE IS THE LAST LINE OF THE `Workers`
+TOOLTIP, ALWAYS.** A hint label under `Form the band` swapping its text between the refusal and the
+after-note would change the sheet's height the moment the stepper crosses a floor, moving the controls
+under the cursor that is still on the stepper; the sheet draws no label under the button at all.
+`confirm.tooltip_text` carries `split_blocked_reason` (or `SPLIT_BAND_HINT` when legal), which is the
+control the reason is about; the button is visible-and-disabled, never hidden. The after-note
+(`SPLIT_BAND_AFTER_NOTE`) describes what the VERB does — where the band appears, that it moves like
+any band, that the outfit closes with the turn — which is true whether or not the composition is
+legal, so it is on the tooltip unconditionally.
 
 **THE STEPPER'S KEY IS A PARAMETER** on `HudWidgets.build_party_stepper_row`, defaulting to the word
 the expedition sheets want. This sheet passes `SPLIT_STEPPER_LABEL` (`Workers`): a sheet whose
@@ -6064,13 +6074,12 @@ priority list. A staffed row's `workers` is the SIM's answer, so the Work tab dr
   - A need row (hunting by need) draws no bar; its count slot is unchanged.
 - **THE MAX CHIP.** A static `Max N` label (`HudWidgets.build_max_chip`, `MAX_CHIP_META`) sits beside the
   Priority pill on the row's pill line, only while the row's `max_workers` is above zero. It is not a
-  control: the Max is set on the source's sheet or the inspector.
-- **THE INSPECTOR.** A staffed row's card draws a MAX section after Priority: the Max stepper
-  (`HudWidgets.add_max_stepper`, `No max` at 0, `Lower the max` / `Raise the max`, bounded above by the band's
-  working-age people), live. `WORK_INSPECTOR_MAX_SECTION_HEIGHT` is a term in `_work_inspector_height` and
-  `_working_inspector_height`, gated by `_work_inspector_has_max`, the builder's own predicate.
-  **`Unassign` sends `stop_labor`** (`_commit_stop_labor` → `stop_labor_requested` → `Hud` →
-  `Main.format_stop_labor`), never `assign_labor … 0`: on a staffed row a count of zero is a Max of none.
+  control: the Max is set on the source's sheet.
+- **THE MAX IS SET ON THE SHEET.** A staffed row's sheet draws the Max stepper after Priority
+  (`HudWidgets.add_max_stepper`, `No max` at 0, `Lower the max` / `Raise the max`, bounded above by the
+  band's working-age people), live (see "THE WORK STRIP"). **`Stop working here` sends `stop_labor`**
+  (`stop_labor_requested` → `Hud` → `Main.format_stop_labor`), never `assign_labor … 0`: on a staffed row a
+  count of zero is a Max of none.
 - ⛔ **A RESTATE MUST SEND THE MAX, NEVER THE CREW.** `_emit_work_assign` takes `RESTATE_STANDING_COUNT`
   (the default for the crop pick, the kit pick, the floor pick and the rung track's crop step) and resolves
   it to the row's `max_workers`. Restating the row's `workers` would turn the sim's staffing into a Max the
@@ -6098,6 +6107,107 @@ priority list. A staffed row's `workers` is the SIM's answer, so the Work tab dr
 
 The compose sheet's half is `labor-ui.md` → "STAFFED SOURCES ON THE COMPOSE SHEETS".
 
+## THE WORK STRIP — one control on the row and on the sheet (#877)
+
+A source's Work row and its compose sheet wear the SAME control, `WorkStrip`, built from the same
+model. It replaced the row's rung slot, marks run, kit mark, crew number and bar, and the improvement
+control the sheets used to mount; and it retired the Work inspector for source rows.
+
+- **Left to right:** the standing-rung mark (a ghost button opening the ring card on a penned herd), the
+  ladder slot, the floor glyph, the one `⚠`, the `ⓘ`, and the crew column.
+- **The ladder slot** is `⌃🌱` while the next rung is on offer, and the chip FILLING to the build's
+  progress while one is under way (`🌱60%`, `fill_layer`, stamped `WORK_STRIP_FILL_META` with the
+  amount). **The chip's border and its hover read ONE decision, `WorkStrip.build_phase(row)`**, on every
+  strip (forage, hunt and workings): a build is worked by its own site's crew, so the row's
+  `builders_staffed` picks between two phases. `stalled` (nobody is staffed on the site; WARN border and
+  ink, hover `BUILD_CREW_NO_HANDS`: every worker is busy on a work row) and `building` (at least one
+  builder; hover `N building (up to M), done in ≈T`). The hover is `DetailFormat.build_crew_tooltip`
+  without its stop hint (the producers store it as `build_tip`, with the build's own `⚠ Short of …` line
+  where its `build_toe` is short), the same words the road roster's chip uses. Both open the rung card, whose
+  in-flight row is the stop (`unqueue`); a chip carries `WORK_ROW_BUILD_KIND_META` /
+  `WORK_ROW_BUILD_STATE_META` / `WORK_ROW_MODEL_META` on the container (its `Button` is the child that
+  presses).
+- **`⚠` is ONE mark whose hover is every warning line**, joined: the overdraw, overstaffed, kit-short,
+  pen-underfed and keeping-short sentences the row's producer already wrote (`warn_lines`). No new
+  sentence exists for it. **`ⓘ`** carries the tools-short sentence, which stops nothing.
+- ⛔ **NO LINE OF TEXT OR PILLS MAY SET A ROW'S MINIMUM WIDTH.** The strip, crew bar and `⋮` sit to the right
+  of the row's left column, so whatever that column asks for is taken from the zone and the right end is
+  clipped. The pill line (`Priority` / `Max N` / `Build`) was an `HBoxContainer` asking ~220px, which put the
+  row at 349 of a 356 box; it is an `HFlowContainer` now (it wraps, minimum = its widest pill) and the row
+  asks ~237. Text lines elide with `text_overrun_behavior` and carry the full text on `set_label_tooltip`.
+  Guarded by `_assert_work_rows_leave_headroom` (every control under the work zone asks at most the zone width
+  less `WORK_ROW_WIDTH_HEADROOM` 48px, deepest offender named; sabotage-verified by restoring the `HBox`).
+- **The crew column** is the number over the `CrewSplitMarks` bar. The bar draws a FOURTH segment, the
+  builders (`HudStyle.CREW_BUILD`), and the number counts them (`workers + builders`);
+  `HudWorkVocab.crew_bar_words` gains an `N building` clause. A need row keeps its need-count label in the
+  number slot and draws no bar; a donor row keeps its struck-through count.
+- **Builders are the SITE's own** - the row's `builders_staffed` off the wire (a patch or herd row, or a
+  `deposits` row for a working), the count the crew bar's builders segment and the chip's `K building` both
+  show.
+- **THE ROW IS FOUND BY ITS RUNG SLOT.** A row with no rung mark stamps `WORK_ROW_RUNG_META` (blank) on
+  its marks run instead of drawing an empty column, so a harness finds every row without the row
+  paying width for it.
+- **THE STRIP'S WIDTH IS BUDGETED AGAINST THE NARROW DOCK.** `WORK_STRIP_CREW_WIDTH` (48) and
+  `WORK_STRIP_SEPARATION` (4) are what let the L-dock's 356px box hold the strip beside the pills line;
+  at 72 / 8 the Work column overflowed by up to 15px on rows with a chip.
+
+- **A CREW WIDER THAN ITS ROOM STILL SHOWS EVERY SEGMENT.** `CrewSplitMarks.drawn_segments(drawn)` shares the
+  drawn marks so each non-empty segment keeps at least one (keepers, builders, kit-holding, bare), the rest
+  going to the segments in proportion, and the `+N` counts the remainder; a plain "first N" hid the last
+  two segments on a crew of seven.
+- **THE CHIP'S HOVER IS THE ESTIMATE.** While builders are staffed on the site the chip says
+  `3 building (up to 4), done in ≈5 turns`, on the row and on the sheet alike, since both read the one
+  producer's `build_turns`; the sheet prints no turn figure of its own.
+- **"Too depleted to pen" rides the strip's `⚠`** (`HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE`, appended to
+  `warn_lines` where the Corral rung, on offer or in flight, would pay under the flow floor).
+
+**A ROW CLICK OPENS THE SOURCE'S SHEET.** The press selects the source exactly as `Show on map` does and
+opens its compose sheet (`BandPanelController._open_source_sheet` → `source_sheet_requested` →
+`DrawerComposeController.open_source_sheet`, which resolves the herd, tile or working). The strip's own
+buttons stop the press.
+
+**THE SHEET'S STRIP IS BUILT FROM THE SHEET'S OWN WIRE SOURCE** (`source_strip_row(..., source)` and
+`strip_handlers(..., wire_source)`), so the chip, the rung card it opens and the readout beside it read
+one dictionary; the board's rows read the controller's lookups. A source the band does not work yet goes
+through the same producer from an empty assignment, with a crew of zero.
+
+**WHAT THE INSPECTOR'S CONTENT BECAME** (every row of the old card has a home):
+
+| the inspector's | now |
+|---|---|
+| head (mark, name, rung) | the row, and the sheet's title |
+| `Jump to source` | `Show on map`, at the left of the worked source's action row |
+| `Unassign` | `Stop working here` on the sheet |
+| a working's `Stop holding this working` | `Stop working here` on the deposit sheet (`stop_labor` drops the holding); no put-down row remains anywhere on the client |
+| Priority, Max, floor presets, Kit | the sheet's own segments, steppers and kit row |
+| the take-kit picker and its shortfall | the sheet's Kit row and its `N of M available` line |
+| notes, arrivals ticks, the site's bill, a foreign build | `DrawerComposeController._mount_row_details` under the strip: `note` / `muted_note` (inked by severity), the `ArrivalStrip` and the `foreign_build` line (the site's tending line is the crew bar's and `⚠`'s hover) |
+
+**The worked-source action row is `Show on map` · `Done` · `Stop working here`.** `Done` closes the
+sheet and is kept because every edit on a worked sheet is live.
+
+**THE RUNG CARD IS A `PopupPanel`, so it draws above the sheet's `CanvasLayer`.** A running row's chip
+doubles as a STOP row on the card: `RungLadder.build_track(rows, on_pick, title, on_stop)` renders the
+in-flight leg as the filling chip with `— click to stop` and calls `on_stop`, which withdraws the queued
+build. The card is anchored to whichever control was pressed.
+
+**Retired with the inspector:** `_build_work_inspector`, `_build_working_inspector`,
+`_work_inspector_height` and the kit / upkeep / priority inspector helpers, `_commit_work_floor`,
+`_commit_stop_labor`, the row's `marks` string (`warn_lines` replaced it), the kit mark glyph, the
+improvement control and its pace colours (`HudWidgets.build_improvement_control`,
+`improvement_pace_color` / `_stops`), the sheet's pointer line, offer line and gear line
+(`_build_improvement_control`, `_build_deposit_offer_line`, `_build_gear_for`), the
+`STAFFED_*` crew-block constants, the sheet's own crew-split sentence and the turn-estimate face
+(`≈N turns`). The sim still prices a build; the strip states the progress and the rung card the pile.
+
+**Harnesses.** `band_panel_preview` drives the board's strips (the climbing chip, the stalled chip, the
+`⌃` offers, the strip's `⚠` for the kit shortfall) and every deposit-track claim through
+`_workings_marks()`, which stamps each Groundwork row's offer chip with its `(tile, material)` key;
+`ui_preview`'s `work_strip` chapter renders the forage, hunt and worked sheets and asserts the rung card
+is a visible window over the sheet. The inspector-dialog claims for source rows (sections, kits,
+priority picker, worst-case fit, ESC precedence) were retired with the card; the road inspector keeps
+its own.
+
 ## The faction page's Family limit row (issue #691)
 
 `FactionRollup._family_limit_lines`, directly after Growth. No schema field: it is derived from the
@@ -6122,26 +6232,26 @@ player's own RESIDENT bands (parties excluded), `HudLineageVocab.faction_groups`
   `FAINT_MARK`) that `DetailFormat.detail_bbcode` renders through `HudLineageVocab.line_bbcode`.
 - **Frames:** `family_limit_room` / `_near` / `_at` / `_lost_touch` / `_peoples` / `_lifted`.
 
-## The split sheet's families and FAMILY LIMIT block (issue #691)
+## The split sheet's families and family-limit lines (issue #691)
 
-`BandPanelController._fill_split_compose_sheet` states the founding lines each half would hold, from
-the SAME `share` as `N% of the band goes with them` (asked workers over the band's working-age):
+`BandPanelController._split_tooltip` states the founding lines each half would hold, from the SAME
+`share` as `N% of the band goes with them` (asked workers over the band's working-age):
 `taken = clamp(round_half_up(lines x share), 1, lines - 1)` (`HudLineageVocab.split_taken`), a
-one-line band taking 1 and keeping its 1.
+one-line band taking 1 and keeping its 1. Both ride the `Workers` label's tooltip; the sheet draws no
+rows.
 
-- A `Families` row on THE NEW BAND (`{taken}`) and on THE HOME BAND, AFTER (`{lines} -> {lines -
-  taken}`), whenever the band publishes `founding_lines`.
+- A `{taken} families` clause on the new-band line and `families {lines} -> {lines - taken}` on the
+  home-band line, whenever the band publishes `founding_lines`.
 - **Only while the people is under a limit** (`breeding_ceiling != 0`, projected reading, both world
-  constants known): a `FAMILY LIMIT` section with `Stays linked` (`{ceiling}, shared`) and `If it
-  loses touch` (`{new_limit} - home {home_limit}`), where `new_limit = min(taken x K, free)` and
+  constants known): a `Family limit: {ceiling}, shared while linked - {new_limit} - home
+  {home_limit} if it loses touch` line, where `new_limit = min(taken x K, free)` and
   `home_limit = min((union - taken) x K, free)` over the members' plus the other peoples' lines; a
-  one-line band prices at `floor(K/2)` and `(union - 1) x K + floor(K/2)`. One amber `◆` line: home
-  first (`breeding_population - new band people >= home_limit`), else the new band. Strings are in
-  `hud_compose_vocab.gd` (`SPLIT_*FAMIL*`, `SPLIT_LIMIT_*`), arithmetic in `hud_lineage_vocab.gd`.
-- The sheet scrolls inside the drawer, so `build_verb_form` wraps it in a right margin the
-  scrollbar's width, reserved unconditionally (as `StartingLoadoutPanel._scroll_gutter` does).
-- **Frames:** `family_limit_split`, `family_limit_split_free`; the harness scrolls the sheet to its
-  end before saving.
+  one-line band prices at `floor(K/2)` and `(union - 1) x K + floor(K/2)`. One `◆` warning line
+  follows: home first (`breeding_population - new band people >= home_limit`), else the new band.
+  Strings are in `hud_compose_vocab.gd` (`SPLIT_TIP_*`, `SPLIT_LIMIT_*`), arithmetic in
+  `hud_lineage_vocab.gd`.
+- **Frames:** `family_limit_split`, `family_limit_split_free`; the harness reads the `Workers` label's
+  tooltip and asserts the sheet's visible labels carry none of those strings.
 
 
 ## HUNTING BY NEED on the Work tab (issue #798)

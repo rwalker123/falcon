@@ -34,9 +34,8 @@ const START_ORDER_PENDING_VERB := "Starting"
 # one enumeration — `HudFormat.floor_hint` answers `""` and every consumer renders no line.
 #
 # The other four each state something the number does not. `strip`'s is LOAD-BEARING beyond its own
-# sentence: it is the only place the sheet says floor 0 is irreversible on the animal web. The
-# reaching verdict states a bare countdown and nothing about an aftermath (`VERDICT_REACHES_FORMAT`),
-# so this line is the whole of what says what arriving there costs.
+# sentence: it is the only place the sheet says floor 0 is irreversible on the animal web, so this
+# line is the whole of what says what arriving there costs.
 #
 # **EMPTYING AN ENTRY HERE SILENCES IT ON EVERY CONSUMER**: the compose readout's aside (forage and
 # hunt sheets) and the work-row hint. That is the intent for a line worth nothing anywhere, and it is
@@ -123,6 +122,9 @@ const SHEET_CREW_NUMBER_META := &"sheet_crew_number"
 ## The commit button of a source the band already works (#871): the count slot is a Max, so the only way
 ## to end a staffed row is `stop_labor`.
 const STOP_WORKING_BUTTON := "Stop working here"
+## The sheet's camera link, beside `Stop working here`: it recentres the map on the source and nothing else.
+const SHOW_ON_MAP_LABEL := "Show on map"
+const SHOW_ON_MAP_META := &"compose_show_on_map"
 
 ## **A WORKED SOURCE'S SHEET EDITS LIVE, AND SAYS SO.** `Done` only closes the sheet (it sends nothing);
 ## `Applied` shows after a setting's command went out, holds `APPLIED_HOLD_SECONDS`, then fades over
@@ -276,34 +278,6 @@ const POLICY_TOOLTIP_NAME_FORMAT := "%s — %s"
 # slice, and `extend_pen <faction> <x> <y>` is closed at three tokens again (§2.5).
 
 
-# WHAT COMMITTING TO AN IMPROVEMENT BUYS AND COSTS — the improvement control's tooltip, one entry per
-# rung, BOTH webs in one table.
-#
-# These four were rows of `FORAGE_POLICY_HINTS` / `LOCAL_HUNT_POLICY_HINTS` while the build verbs were
-# values of `policy`. They are their own table now for the reason the whole change exists: a stance
-# hint answers "how hard am I pulling?" and these answer "what am I building?", and the two questions
-# stopped sharing a control. The expedition/local split does not reach here at all — a detached party
-# builds nothing, so it has no improvement control to hang a hint on.
-const IMPROVEMENT_HINTS := {
-    "cultivate": "Cultivate — prepare this patch: a reduced take while you work it, then a much higher tended yield. It must stay staffed or it goes feral.",
-    # Sow is plant RUNG 3 — the twin of Corral. Its hint must carry the two things that make it a
-    # different bargain from Cultivate: it pays ~nothing while the crop is in the ground (there is no
-    # standing stand to take a fraction of), and it out-yields a tended patch ~2×. The "goes feral"
-    # warning is one rule for the whole plant web — an abandoned patch bleeds BOTH meters, so a
-    # neglected Field reverts to WILD, not to a free tended patch.
-    "sow": "Sow — plant a Farm on this ground: almost no food while the crop grows, then twice a tended patch's yield. It must stay staffed or it goes feral all the way back to wild.",
-    # Tame is animal RUNG 2 — the verb that replaced the hidden Sustain side effect. Its payoff is
-    # NOT "free food": 3b retired the passive rung, so the honest promise is yield PER WORKER (~1.5×
-    # off the same crew) plus proximity (the herd drifts to the band instead of being chased).
-    "tame": "Tame — gentle this herd into livestock: a reduced take while you work it, then it keeps to your band instead of roaming, and the same hunters bring back about half again as much. Your people still work it every turn.",
-    # Corral is the ladder's best yield AND its only rung with a running cost. The hint has to carry
-    # all three halves of that bargain — the ~25-turn investment dip, the top payoff, and the fact
-    # that a penned herd is a POPULATION YOU FEED: its food comes off the larder every turn, and an
-    # underfed herd shrinks (and takes its yield down with it). It also still escapes if unstaffed.
-    # The hint calls that store `storage`, not `larder`: a hint is read at a glance, and one food
-    # store carries one word across the panel (`DetailFormat.FERTILITY_LABEL_RESERVE` and its twins).
-    "corral": "Corral — pen this herd: half yield for ~25 turns while you build, then the best yield of any herd. But penned animals can't graze: you feed them from your storage every turn, and an underfed herd shrinks. It must stay staffed or the herd goes wild again.",
-}
 
 # The overhunting flag itself. **What it MEANS is `LaborAssignment.overdraws` and nothing else** —
 # the sim's own verdict, intent AND ability, read off the source's standing row by every surface that
@@ -351,14 +325,6 @@ const POLICY_PAYOFF_FULL_FORMAT := "builds toward %s/turn"
 #   4. DONE     — the state the finished rung leaves the source in, with the NEXT rung beneath it.
 #   (GATED replaces 1 wherever a prerequisite is unmet: the reason IS the line.)
 
-# What the rung COMMITS TO, per improvement — the verb phrased against its own subject, so
-# "Cultivate" reads as an act on this patch rather than as a rung name floating in a list.
-const IMPROVEMENT_OFFER_LABELS := {
-    "cultivate": "Cultivate this patch",
-    "sow": "Sow a farm here",
-    "tame": "Tame this herd",
-    "corral": "Pen this herd",
-}
 
 # What is HAPPENING while it builds — the present participle, so the running line reads as work under
 # way rather than as an option still on offer.
@@ -375,26 +341,8 @@ const IMPROVEMENT_RUNNING_LABELS := {
     "corral": "Penning",
 }
 
-# **THAT IS WHAT LETS A RUNG NAME ITSELF.** The ROUTE branch's verbs (`grade`, `pave`) arrive from the
-# published rung catalog, so a fifth rung added to `intensification_ladder.json` reads `Grading` /
-# `Paving` / its own participle in the Work row's date column with no client edit at all — the same
-# property the catalog's `display_name` already buys the row's FACE. A hard-coded pair here would have
-# had to be extended by hand for every rung the config ever grows.
-#
-# ⛔ **THE TABLE ABOVE IS AN OVERRIDE LIST, NOT THE ROSTER OF VERBS THAT MAY RUN.** It holds the four
-# whose participle English (or this game's own vocabulary) does not give for free — `corral` reads
-# `Penning`, which no morphology derives — and every other verb is gerunded here.
-#
-# **THE DERIVATION IS THE ONE REGULAR ENGLISH RULE and nothing more**: drop a silent trailing `e`,
-# append `ing`, capitalize. It is deliberately not a conjugator — a verb it gets wrong is a verb that
-# belongs in the override table above, which is what that table is for.
-#
-# `""` in and `""` out, because an entry with no verb has no participle and the callers' own bare
-# dated face is the right answer there (see `DetailFormat.build_completion_value`).
-# THE SHEET'S ONE LINE when ANOTHER people owns the source: the sim refuses an ownership-gated rung there, so
-# no live control is drawn. `%s` is the people's name, then the rung's participle (lowercased).
-const IMPROVEMENT_FOREIGN_RUNNING_FORMAT := "%s is %s this"
-const IMPROVEMENT_FOREIGN_HELD_FORMAT := "%s holds this ground"
+
+
 const IMPROVEMENT_RUNNING_SUFFIX := "ing"
 const IMPROVEMENT_RUNNING_SILENT_E := "e"
 
@@ -420,12 +368,6 @@ const IMPROVEMENT_DONE_LABELS := {
     "corral": "Penned",
 }
 
-# `<glyph> <verb phrase>` — the offered face, and the ONLY one it has. **THE PAYOFF IS NOT
-# ON IT**: the face's `· then <payoff>` sat directly above a PER TURN box quoting a DIFFERENT number
-# for the same source, and a player reading the two together had no way to know which question each
-# was answering. The payoff is now a labelled row inside that box (`IMPROVEMENT_PAYOFF_ROW_LABELS`),
-# beside the take it is meant to be compared against, and the box states nothing but the choice.
-const IMPROVEMENT_OFFER_BARE_FORMAT := "%s %s"
 
 # ---- THE JOB'S PRICE, QUOTED BEFORE THE PLAYER COMMITS (docs/plan_unit_costed_work.md §11) --------
 # **A VERB WITH NO PRICE WAS SURVIVABLE ONLY WHILE EVERY VERB COST THE SAME 25 TURNS.** A rung now
@@ -513,25 +455,8 @@ const BUILD_PRICE_UPKEEP_FORMAT := "%s · %s work a turn from %s to hold"
 # the shape is one line to write again if the `⌃`'s hover ever wants the price on the same line as
 # its sentence rather than beneath it.
 
-## A GATED rung's whole line: the rung's glyph, then the unmet prerequisite in the gate's own words.
-## The rung is NOT named here and that is the point — naming it ("Cultivate this patch") reads as an
-## offer, and this state exists precisely because there is no offer to make yet. The glyph keeps the
-## improvement axis visible and identifiable without making a promise.
-const IMPROVEMENT_GATED_FORMAT := "%s %s"
 
-# `<glyph> <participle> 18 / 50 work (42%)` — the running face, and the ONLY one it has.
-# The meter comes from `DetailFormat.build_meter_value`, i.e. the same composer the tile card's and
-# the herd drawer's rows use, over the same `SourceForecast.improvement_progress` the map badge and
-# the work board read — so no two surfaces can quote different meters or word them differently. The
-# payoff left this face with the offered one's, for the reason recorded on
-# `IMPROVEMENT_OFFER_BARE_FORMAT`; the meter is what this control uniquely knows.
-const IMPROVEMENT_RUNNING_BARE_FORMAT := "%s %s"
 
-# …and the estimate of what is left, appended where there is one. **It belongs on the FACE rather
-# than in the control's note slot** — those notes are WARN-inked (the pen's zero-payoff warning) and a
-# falling turn count is neither a warning nor a problem; it is the number the player watches drop as
-# they step the crew up one row above. Takes the clause already spelled, like the price format above.
-const IMPROVEMENT_RUNNING_TURNS_FORMAT := "%s — %s"
 
 # **THE DEAL'S ROW KEYS, one per rung** — the label the readout's payoff row wears, naming the STATE
 # the finished rung leaves the source in rather than the verb that gets it there (`ONCE TENDED`, not
@@ -563,6 +488,11 @@ const DEAL_LABEL_PAST_PREFIX := "once "
 # The pen's running upkeep, subtracted from the payoff on the row that states it (Corral only), so
 # the deal is never quoted gross on the register that commits to it. `corralYield` does NOT deduct
 # the feed, which is why this suffix has to be composed here rather than read off one wire field.
+## A pen that would pay nothing is a pure loss: the pen harvests by constant escapement, so a herd at or
+## below the MSY point pays 0.00 while still eating its footprint and its keeper's hay. A warning about the
+## RUNG, so it rides the work strip's `⚠` on the row and on the sheet (#877).
+const IMPROVEMENT_DEAL_DEPLETED_NOTE := "⚠ Too depleted to pen — it would eat feed and pay nothing until the herd rebuilds."
+
 # **RETIRED — `IMPROVEMENT_DEAL_FEED_FORMAT`** (`"%s − %s feed"`), the pre-commit Corral row's
 # running-cost column. It subtracted `pen_upkeep` from `corralYield`, and that food-unit pen bill is
 # retired: a pen eats pasture and hay, never the larder, so the payoff has nothing to be netted
@@ -579,8 +509,6 @@ const DEAL_LABEL_PAST_PREFIX := "once "
 # both are forbidden here. **The row states the payoff alone until the SIM publishes a projected
 # demand for an unpenned herd.**
 
-# `<glyph> <state noun>` — the done label. Static: there is nothing to uncheck and nothing to clear.
-const IMPROVEMENT_DONE_FORMAT := "%s %s"
 
 # **THE ONE ASYMMETRY BETWEEN THE TWO WEBS, and it is deliberate** (spec §4): a penned herd cannot
 # graze, so someone feeds it every turn. That standing obligation belongs with the standing state, so
@@ -610,94 +538,16 @@ const IMPROVEMENT_DONE_FORMAT := "%s %s"
 # that gate is read (`SourceForecast.build_turns_at`). A note claiming the floor sets the RATE would
 # send a player with a slow build to the wrong dial; the remedy is hands, on the site's crew.
 
-# A ZERO PAYOFF IS DATA, NOT A MISSING NUMBER — and it is the single most valuable thing the running
-# control can say. The pen's harvest is constant ESCAPEMENT (take only the biomass standing above
-# `K/2`), so a herd at or below the MSY point honestly pays **0.00** until it rebuilds: penning it
-# would eat feed every turn and pay nothing. That must never be suppressed, blanked, or em-dashed away
-# — a player who pens a depleted herd because the UI declined to show them a zero has been actively
-# misled. So the zero renders in full on the readout's payoff row, and this WARN-inked note names the
-# remedy (let it rebuild). The feed term still shows, because the feed is what makes a zero payoff a
-# net LOSS rather than merely a nothing.
-#
-# **IT HAS OUTLIVED TWO HOMES FOR THE ZERO IT EXPLAINS, DELIBERATELY.** The zero was a deal LINE's
-# third term, then the control's own face, and is now the readout's payoff row; this note has stayed
-# on `HudWidgets.build_improvement_control`'s note slot throughout — the same slot the paused-build
-# line uses, with the same WARN ink — because it is a warning about the RUNG, which is what the
-# control is, rather than a footnote to whichever register currently prints the number.
-# (The "is it zero" floor is the shared `SourceForecast.FOOD_FLOW_MIN` — one definition of "below
-# this, there is no flow here", used by the band ledger's rows and by this note alike.)
-const IMPROVEMENT_DEAL_DEPLETED_NOTE := "⚠ Too depleted to pen — it would eat feed and pay nothing until the herd rebuilds."
 
-# **A RUNG WITH NOBODY ON IT SAYS SO, IN THE SAME NOTE SLOT AND THE SAME AMBER**, keyed by
-# `SourceForecast.unstaffed_build_state`'s two answers. Declaring a build and staffing nobody is a
-# LEGAL, meaningful order — it commits the crop, and the player may staff it next turn — so this
-# never blocks the commit; what it fixes is that the order was invisible. The sheet quoted
-# `Cultivating 0 / 50 work (0%)` and nothing else, because a crew of nobody has no turn estimate to
-# print, and an honest absence of information read as *fine*.
-#
-# **THE TWO ANSWERS NEED DIFFERENT WORDS, which is the whole reason they are two.** Nothing has been
-# built yet — so nothing is being lost, and the remedy is simply hands — versus a meter that already
-# holds work and is bleeding it back, where the same hands are also stopping a loss. A single line
-# covering both would understate one and overstate the other. Neither is either `∞ turns` state one
-# rung over, both of which are a crew that EXISTS and is too small to outrun the meter's own rot
-# (`SourceForecast.BUILD_TURNS_HOLDS` matching it, `BUILD_TURNS_ROTS` under it).
-#
-# They are two flat consts rather than a state-keyed table because a table would put a live
-# `SourceForecast.*` reference in a `const` initializer here, and a vocabulary module is kept a
-# cycle-free LEAF; the two-branch pick lives at the one call site that already holds both states.
-# **IT NAMES THE ROLE, BECAUSE THERE IS NO STEPPER BELOW IT ANY MORE**
-# (`docs/plan_standing_upkeep.md` §2.5).
-const BUILD_UNSTARTED_NOTE := "⚠ Not started — no spare hands to build it."
 
-# **THE DECLARED STATE'S OWN WORD** (`docs/plan_standing_upkeep.md` §4.7a ①). Its face is the OFFER's
-# rung name, one composer for both states, so without this clause a queued rung and an unqueued one
-# would read identically — which is exactly the distinction the retired checkbox's TICK used to carry.
-#
-# **IT RIDES THE FACE RATHER THAN THE NOTE SLOT, and the note slot is why.** Both notes DECLARED can
-# carry (`BUILD_UNSTARTED_NOTE`, `IMPROVEMENT_DEAL_DEPLETED_NOTE`) are warnings, so that state passes
-# `warn_notes` and the whole array renders amber. A job waiting its turn is not a warning, and a
-# neutral fact in the warning register is how a player learns to stop reading the register.
-const BUILD_WAITING_CLAUSE := "◷ Waiting for hands"
 
-# `<rung> · ◷ Queued`. The `·` is the compose sheet's own separator between two facts about one rung.
-const IMPROVEMENT_DECLARED_FORMAT := "%s · %s"
 
-# **THE OFFERED LINE IS A POINTER, AND IT IS ONE LINE** (`docs/plan_standing_upkeep.md` §4.7a ①, ③).
-#
-# It shipped for a day as a FACT line (`🌱 Cultivate this patch — 50 work · 2 work a turn from
-# Agriculture to hold`) with a REMEDY note beneath it (`Queue it from the Work tab's ⌃.`). Reported
-# from play, twice over: the fact line **reads as an imperative** — as the button it used to be — and
-# the remedy under it is a second sentence saying the first one is not a control. One line says both.
-#
-# **`Work tab` IS A LINK**, rendered as a BBCode `[url]` on the one state that carries it — see
-# `WORK_TAB_LINK_META`. That is why these are BBCode-bearing strings rather than plain ones.
-#
-# **AND IT LANDS ON THE ACTING BAND'S BOARD, not merely on a Work tab.** It switched the tab alone
-# for one release, so from the FACTION page it arrived at the faction's Work ROLLUP — which has no
-# `⌃` on it at all, so the sentence delivered the player somewhere that could not do what it
-# promised. Reported from play on PR #562. The signal carries the band; see
-# `DrawerComposeController.work_tab_requested` and `BandPanelController.show_work_tab`.
-#
-# **THE UNWORKED FORM IS ONE SENTENCE TOO, and the limit it states is Ray's decision** (§4.7a ③): a
-# `⌃` lives on a WORK ROW, a band has a work row only for a source it already works, and that is the
-# sim's own rule that an improvement verb reaches only such bands. He chose to keep the rule and say
-# so where the player meets it, rather than relax it.
-#
-# **THREE FLAT CONSTS rather than a keyed table**, `BUILD_UNSTARTED_NOTE`'s own reasoning: a table
-# keyed on `SourceForecast.LABOR_KIND_*` would put a live cross-class reference in a `const`
-# initializer, and a vocabulary module is kept a cycle-free LEAF.
-const BUILD_OFFER_WORKED_FORMAT := "%s from the %s."
-
-const BUILD_OFFER_UNWORKED_PLANT_FORMAT := "Send gatherers here first, then %s from the %s."
-
-const BUILD_OFFER_UNWORKED_ANIMAL_FORMAT := "Send hunters here first, then %s from the %s."
 
 # The link's own words, and the `[url]` meta `DrawerComposeController` emits and its `meta_clicked`
 # handler parses. A distinct string from the tab's own label so the two cannot be confused by a reader
 # — this is the SENTENCE's word for the tab, and it happens to match.
 const WORK_TAB_LINK_TEXT := "Work tab"
 
-const WORK_TAB_LINK_META := "work_tab"
 
 # RETIRED — **`BUILD_SLIDING_NOTE`**, `⚠ No builders — this rung is sliding back. Set the builders
 # below to hold it.` (`docs/plan_standing_upkeep.md` §4.6a).
@@ -990,44 +840,29 @@ const SPLIT_STEPPER_LABEL := "Workers"
 ## The split stepper's greyed `+`: every working-age person is already in the new band.
 const SPLIT_AT_MAX_REASON := "That is every worker the band has."
 
-## What the share works out to, under the stepper. The player is choosing a size, so the size is what
-## the sheet echoes back.
+## What the share works out to. The player is choosing a size, so the size is what the sheet echoes
+## back - as the first line of the Workers label's tooltip, which carries every readout the sheet
+## used to draw as rows (the sheet itself is the stepper and the button).
 const SPLIT_SHARE_FORMAT := "%d%% of the band goes with them"
 
-## The two readouts, in the order the decision is made: what you are making, then what it costs.
-const SPLIT_NEW_BAND_HEADER := "The new band"
-const SPLIT_HOME_AFTER_HEADER := "The home band, after"
-
-const SPLIT_ROW_PEOPLE := "People"
-const SPLIT_ROW_BRACKETS := "Workers · children · elders"
-const SPLIT_ROW_PROVISIONS := "Provisions"
-
-## Provisions to one decimal. Food is not people, so it is not apportioned to whole units — the
+## Provisions to one decimal. Food is not people, so it is not apportioned to whole units - the
 ## larder genuinely divides on the share.
 const SPLIT_STOCK_FORMAT := "%.1f"
-const SPLIT_ROW_WORKERS := "Workers"
-const SPLIT_ROW_CHILDREN := "Children"
-const SPLIT_ROW_ELDERS := "Elders"
 
-## `workers · children · elders`, all three already apportioned to whole bodies.
-const SPLIT_BRACKETS_FORMAT := "%d · %d · %d"
-
-## A now → after pair. Both sides are whole people from the SAME apportionment pass, so the two
-## halves sum to the band's own displayed total.
-const SPLIT_BEFORE_AFTER_FORMAT := "%s → %s"
-
-## The families row on both halves (issue #691): the founding lines each half would carry. `Families`
-## on the new band is the count it takes; on the home band it is `before → after`.
-const SPLIT_ROW_FAMILIES := "Families"
-
-## The FAMILY LIMIT block - drawn only for a people still under a breeding ceiling. `Stays linked` is
-## the shared ceiling while the halves keep in touch; `If it loses touch` prices each half alone.
-const SPLIT_FAMILY_LIMIT_HEADER := "Family limit"
-const SPLIT_ROW_LIMIT_LINKED := "Stays linked"
-const SPLIT_LIMIT_LINKED_FORMAT := "%d, shared"
-const SPLIT_ROW_LIMIT_APART := "If it loses touch"
-const SPLIT_LIMIT_APART_FORMAT := "%d · home %d"
-## The one amber line under the block, by precedence (home first: it is the larger half).
+## The Workers label's tooltip, one fact per line. `new band` = people, then the three brackets
+## already apportioned to whole bodies (`workers children elders`), then the larder share.
+const SPLIT_TIP_NEW_FORMAT := "The new band: %d people (%d workers · %d children · %d elders) · %s provisions"
+## The families clauses (issue #691): the founding lines the new band takes, and the home band's
+## `before -> after`. Appended only where the band publishes founding lines.
+const SPLIT_TIP_NEW_FAMILIES_FORMAT := " · %d families"
+## Every `now` is the two halves added back up and every `after` is from the SAME apportionment
+## pass, so the halves sum to the band's own displayed total.
+const SPLIT_TIP_HOME_FORMAT := "The home band, after: workers %d → %d · children %d → %d · elders %d → %d · provisions %s → %s"
+const SPLIT_TIP_HOME_FAMILIES_FORMAT := " · families %d → %d"
+## The FAMILY LIMIT line - drawn only for a people still under a breeding ceiling: the shared
+## ceiling while the halves stay in touch, then each half priced alone (`new`, `home`).
+const SPLIT_TIP_LIMIT_FORMAT := "Family limit: %d, shared while linked · %d · home %d if it loses touch"
+## The amber warning under the limit, by precedence (home first: it is the larger half).
 const SPLIT_LIMIT_HOME_AT := "Home would be at its limit if they lose touch."
 const SPLIT_LIMIT_NEW_AT := "The new band would be at its limit if it loses touch."
 
@@ -1035,14 +870,13 @@ const SPLIT_BAND_BUTTON := "Form the band"
 
 const SPLIT_BAND_HINT := "Split this band in two where it stands. The new band moves like any other."
 
-## What the player is told under the button, VIABLE OR NOT — the things that are easy to miss about a
-## verb whose result appears on the tile you are already looking at. It describes the VERB, not this
-## composition, so the sheet draws it unconditionally and the footer is a fixed block; gating it on a
-## legal split grew the sheet the moment the stepper crossed a floor and jumped it under the cursor.
+## The last line of the Workers label's tooltip, VIABLE OR NOT - the things that are easy to miss about
+## a verb whose result appears on the tile you are already looking at. It describes the VERB, not this
+## composition, so it is the same sentence whether or not the split is legal.
 ##
-## **THE THIRD SENTENCE IS THE OUTFIT, and it is a fact this sheet no longer settles.** The worker
-## count still divides the people and the stores, but the splinter's GEAR is decided in the
-## outfitting card the split opens on it, and that card stays open until the turn advances
+## **THE THIRD SENTENCE IS THE OUTFIT, and it is a fact this sheet does not settle.** The worker
+## count divides the people and the stores, but the splinter's GEAR is decided in the outfitting card
+## the split opens on it, and that card stays open until the turn advances
 ## (`.claude/rules/client/starting-loadout.md`). One short declarative naming the deadline: the card
 ## opens itself, so what a player cannot otherwise learn here is that it can be revised and by when.
 const SPLIT_BAND_AFTER_NOTE := "It appears on this tile. Move it like any band. Outfit it before the turn ends."

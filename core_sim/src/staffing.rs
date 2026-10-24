@@ -1522,6 +1522,45 @@ fn with_band_staffing<R>(
 /// restaffs from the live state and is the authority. While the band's outfitting window is open it
 /// also refreshes the kit its work wants ([`WorkKitWants`]).
 pub fn restaff_band(world: &mut bevy::prelude::World, band: bevy::prelude::Entity) {
+    restaff_band_after_loss(world, band, NOBODY);
+}
+
+/// **THE STAFFED HANDS A BAND HOLDS PAST THE PEOPLE IT HAS** - what it commits (every row, the
+/// bench and the walkers) less its working-age head count, capped at the hands the staffed rows
+/// hold. This is the turn's `lost_to_staffed` for a command that removed people (a split) before
+/// any shed ran: a hand-set row's excess is the next turn's shed to take, so it is not counted.
+pub fn staffed_hands_lost(world: &bevy::prelude::World, band: bevy::prelude::Entity) -> u32 {
+    let Some(allocation) = world.get::<LaborAllocation>(band) else {
+        return NOBODY;
+    };
+    let Some(cohort) = world.get::<crate::components::PopulationCohort>(band) else {
+        return NOBODY;
+    };
+    let bench_workers = world
+        .get::<crate::components::BandBench>(band)
+        .map_or(NOBODY, |bench| bench.workers);
+    let committed = allocation.assigned_total() + bench_workers + allocation.walking_home();
+    let staffed_hands: u32 = allocation
+        .assignments
+        .iter()
+        .filter(|row| row.target.is_staffed())
+        .map(|row| row.workers)
+        .sum();
+    committed
+        .saturating_sub(crate::components::available_workers(cohort.working))
+        .min(staffed_hands)
+}
+
+/// **RESTAFF ONE BAND OUTSIDE THE TURN, AFTER IT LOST PEOPLE** - [`restaff_band`] for a command that
+/// removed people from the band (a split). `lost_people` is the head count of the staffed hands
+/// that left with them: a far party's share of those is discarded where it stands, exactly as the
+/// turn does, rather than walked home as hands the band no longer has (they would count against
+/// the pool until they "arrived").
+pub fn restaff_band_after_loss(
+    world: &mut bevy::prelude::World,
+    band: bevy::prelude::Entity,
+    lost_people: u32,
+) {
     let bench_workers = world
         .get::<crate::components::BandBench>(band)
         .map_or(NOBODY, |bench| bench.workers);
@@ -1536,14 +1575,14 @@ pub fn restaff_band(world: &mut bevy::prelude::World, band: bevy::prelude::Entit
                 pool,
                 available,
                 bench_workers,
-                NOBODY,
+                lost_people,
             )
         },
     ) else {
         return;
     };
     if let Some(mut allocation) = world.get_mut::<LaborAllocation>(band) {
-        allocation.apply_staffing(staffed.rows, NOBODY);
+        allocation.apply_staffing(staffed.rows, lost_people);
         allocation.apply_build_crews(staffed.builds);
     }
     refresh_band_work_kit_wants(world, band);

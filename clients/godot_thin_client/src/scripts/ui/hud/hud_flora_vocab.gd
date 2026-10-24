@@ -640,14 +640,9 @@ const TAKE_ROW_LABEL_SINGLE := "Crop"
 const TAKE_NOTE_CULTIVATE_NARROWED_FORMAT := "%s weeds the rest out of the ground."
 const TAKE_NOTE_CULTIVATE_DEFAULT_FORMAT := "Nothing picked — this ground would be committed to %s."
 
-# **THE GROUND IS ALREADY COMMITTED — say to what, and how far the rung in flight has got.** A patch
-# that already carries a crop (`patch_committed_species`) sends no crop on the next commit, so the
-# resolver answers `""` for it — and the DEFAULT line above, handed that `""`, read *"Nothing picked —
-# this ground would be committed to ."* on a Tended Patch of Wild Emmer 94% into its Sow. Reported
-# from play. "Nothing picked" was false as well as blank: the crop was chosen turns ago.
-# `%s` the crop's display name, `%s` the rung's participle (lowercased), `%d` the rung's meter.
-const TAKE_NOTE_COMMITTED_FORMAT := "Committed to %s — %s %d%%"
-
+# **THE GROUND IS ALREADY COMMITTED — and the sheet states nothing about it.** A patch that already carries
+# a crop (`patch_committed_species`) sends no crop on the next commit, so the resolver answers `""` for it;
+# the lit, disabled chip (below) says which crop, and no "Committed to …" line is drawn.
 # …and every chip on that ground is DISABLED, with this as its hover: the composition sends no crop
 # there, so a press could only move a pill that changes nothing. `%s` the committed crop's name.
 const TAKE_CHIP_COMMITTED_REASON_FORMAT := "This ground is committed to %s."

@@ -1311,46 +1311,6 @@ const DEPOSIT_REVERTING_TIP_FORMAT := "Going back %s"
 ## nothing: the ground slides back toward what it gives for free.
 const DEPOSIT_IDLE_TIP := "⚠ Unworked: decaying\nFix: assign cutters"
 
-# ---- PUTTING A WORKING DOWN — the undo a HELD working had nowhere else (issue #650) ---------------
-#
-# ⛔ **THE VERB IS `abandon_working`, AND IT IS NOT `abandon`.** `abandon <f> <x> <y>` names a PLACE:
-# it builds a `LaborTarget::Forage`, so it does not reach a working at all, and it drops every band of
-# the faction's holding on the tile, a forage assignment there included. `abandon_working` names the
-# `(tile, material)` PAIR and drops the holding on that ONE working. **This client must not send the
-# wider verb for the narrower act**, which is the road branch's own rule read in the other direction.
-#
-# ⛔ **AND `assign_labor … extract … 0` IS NOT AN UNDO EITHER.** A working raised above its free floor
-# is a holding, so a crew of zero is *"stop cutting"*: the row survives, the bill survives, and the
-# meter takes something like a hundred turns to rot back to the free floor. What ends the bill is this.
-
-## The control, at the BOTTOM of the working's ladder card — under the rows, because putting a working
-## down is the opposite end of the same decision they offer. **It names the ACT rather than the wire's
-## verb**, the road row's own rule: *abandon* reads as walking away from the ground, and a player who
-## walks away is exactly who has NOT pressed this.
-const WORKING_ABANDON_LABEL := "Stop holding this working"
-
-const WORKING_ABANDON_DROPS_FORMAT := "Drops this band's hold on the %s here, and any rung it is " \
-	+ "building. The work already banked is not given back: with nobody holding it, the ground " \
-	+ "slides back to what it gives for free."
-
-const WORKING_ABANDON_WHY := "It stays held until you do: any rung it is building stays declared, and its " \
-	+ "crew keeps it before they cut."
-
-## **ONE HOVER, ON BOTH EMITTERS.** The ladder card's row and the roster row's `✕` send the identical
-## command, so they state the identical consequence: roads.md's rule that *"a one-click destructive
-## action that under-states what it destroys is worse in a roster than on a card"* is kept by giving
-## the roster the CARD's whole hover rather than a shorter one.
-##
-## ⛔ **THERE IS NO SECOND WARN LINE, AND THAT IS A DECISION.** The road's `✕` carries one because
-## `abandon` names a place and takes a forage assignment down with the road — a consequence its label
-## does not name. `abandon_working` names the `(tile, material)` pair: it drops this band's hold on
-## THIS working and touches neither the other working on the same hex nor any forage row nor the road.
-## The blast radius is exactly what the label says, so a second line would be warning about a reach
-## the verb does not have.
-static func working_abandon_tooltip(deposit: Dictionary) -> String:
-	return HudFormat.join_tooltip_lines([
-		WORKING_ABANDON_DROPS_FORMAT % material_label(deposit).to_lower(),
-		WORKING_ABANDON_WHY])
 
 ## The material row's INK, forked on the hazard mark the composer put there rather than on a second
 ## reading of the working — `deposit_value_color`'s rule, and the same one.
@@ -1387,12 +1347,6 @@ const BRANCH_COMMIT_VERBS := {
 	BRANCH_EXTRACTION: "Dig",
 }
 
-## …and the NOUN the pointer line names the ground with — *this stand* for a wood, *this rock* for a
-## seam. It is per BRANCH for the crew noun's reason: the rung's own verb already says which rung.
-const BRANCH_GROUND_NOUNS := {
-	BRANCH_FORESTRY: "this stand",
-	BRANCH_EXTRACTION: "this rock",
-}
 
 ## The crew this branch staffs — `""` for a branch this client has never heard of, which every caller
 ## renders as no sheet rather than as an unnamed one.
@@ -1402,30 +1356,7 @@ static func crew_noun(branch: String) -> String:
 static func commit_verb(branch: String) -> String:
 	return String(BRANCH_COMMIT_VERBS.get(branch, ""))
 
-static func ground_noun(branch: String) -> String:
-	return String(BRANCH_GROUND_NOUNS.get(branch, ""))
 
-## ⛔ **THE SHEET EMITS NO IMPROVEMENT VERB — `assign_labor` is the only command it sends.** The rung
-## is declared from the Work board, exactly as `cultivate` and `sow` are, and this line is the pointer
-## that says so. `Work tab` is a live `[url]`; the verb and the ground's noun come off the NEXT rung's
-## catalog entry and this branch's own table.
-const DEPOSIT_OFFER_LABEL_FORMAT := "%s %s"
-
-## …and the form for a band that does not work this ground yet. The sim's rule is that an improvement
-## verb reaches only bands ALREADY working the source, so the sheet says so where the player meets it
-## rather than offering a link that would land on a board with no row to press.
-const DEPOSIT_OFFER_UNWORKED_FORMAT := "Send %s here first, then %s from the %s."
-
-## The rung a pointer line names — `Quarry this rock`. `""` where the working is at the top of its
-## branch or the next rung declares no verb, and the sheet then states no pointer at all.
-static func offer_label(entry: Dictionary, branch: String) -> String:
-	var verb := catalog_verb(entry)
-	if verb == RUNG_CATALOG_NONE:
-		return ""
-	var noun := ground_noun(branch)
-	if noun == "":
-		return ""
-	return DEPOSIT_OFFER_LABEL_FORMAT % [verb.capitalize(), noun]
 
 # ---- WHAT STANDING ON THIS RUNG TEACHES (issue #650) --------------------------------------------
 #
@@ -1612,21 +1543,19 @@ static func curve_useful_cutters(reply: Dictionary) -> int:
 
 ## Set on a chart model when the sheet has no curve to draw a crew's draw from — the reply is in
 ## flight or refused. Every reading that projects what the crew takes
-## (the walk, the two crew pills, the verdict) is withheld, never replaced by the bare rate.
+## (the walk, the two crew pills) is withheld, never replaced by the bare rate.
 const CHART_DRAW_WITHHELD_KEY := "draw_withheld"
 
 ## ⛔ **THE CHART'S CREW-DRAW READINGS, RECOMPOSED OFF THE CREW CURVE** (issue #663). `floor_chart_model`
 ## walks the stock down at `perWorkerBiomass × crew`, which is the bare rate — a crew with sleds and
-## axes drew on the chart as one without. This takes that model and replaces the four readings that
+## axes drew on the chart as one without. This takes that model and replaces the three readings that
 ## stand for *what this crew takes a turn*:
 ##
 ## - the WALK (`series` / `reached_turn` / `settled_fraction`) — `project_stock` at the curve's `take`
 ##   for the composed crew, with no carry cap of its own;
 ## - *hold it after* — the smallest crew whose take covers the regrowth at the floor;
 ## - *clear it now* — the smallest crew whose take covers the room above the floor, floored on the
-##   reaching crew exactly as the shared composer floors it;
-## - the VERDICT — the shared `harvest_verdict`, its "K would reach the floor" being the smallest crew
-##   in the curve whose projection reaches it, and its no-remedy ending where none does.
+##   reaching crew exactly as the shared composer floors it.
 ##
 ## **THE ROW'S TAKE IS A SAFE STAND-IN FOR THE CREW'S LIFT.** The sim caps it at the room next turn, so a row reads either
 ## the crew's whole lift (below the room) or the room itself (a crew that clears it in one turn), and a
@@ -1635,8 +1564,7 @@ const CHART_DRAW_WITHHELD_KEY := "draw_withheld"
 ##
 ## Everything else on the model (the regrowth curve, the room, the floor, the teaching note) is a fact
 ## about the ground and is left as `floor_chart_model` composed it.
-static func curve_chart_model(model: Dictionary, deposit: Dictionary, crew: int, view: Dictionary,
-		crew_noun: String) -> Dictionary:
+static func curve_chart_model(model: Dictionary, deposit: Dictionary, crew: int, view: Dictionary) -> Dictionary:
 	if not bool(model.get("known", false)):
 		return model
 	var out := model.duplicate()
@@ -1646,7 +1574,6 @@ static func curve_chart_model(model: Dictionary, deposit: Dictionary, crew: int,
 		out[CHART_DRAW_WITHHELD_KEY] = true
 		out["series"] = PackedFloat32Array()
 		out["reached_turn"] = SourceForecast.PROJECTION_REACHED_NONE
-		out["verdict"] = {}
 		out["crew_to_clear"] = SourceForecast.NO_CREW_ANSWER
 		out["crew_to_hold"] = SourceForecast.NO_CREW_ANSWER
 		return out
@@ -1672,9 +1599,6 @@ static func curve_chart_model(model: Dictionary, deposit: Dictionary, crew: int,
 	out["settled_fraction"] = float(walk["settled_fraction"])
 	out["crew_to_hold"] = hold
 	out["crew_to_clear"] = clear
-	out["verdict"] = SourceForecast.harvest_verdict(walk, crew, biomass, capacity, floor_value,
-		reaching, crew_noun, 0.0, "",
-		SourceForecast.escapement_room_next_turn(src, prefix, floor_value) > 0.0)
 	return out
 
 ## The smallest crew in the curve whose projection reaches the floor — `0` where the stock already

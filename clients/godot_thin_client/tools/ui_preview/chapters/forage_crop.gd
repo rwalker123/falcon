@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 69
+const EXPECTED_CHECKPOINTS := 66
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -357,9 +357,8 @@ func run(harness) -> void:
 	# answers null for a rung merely spelled differently, so a per-rung form of this passes on a sheet
 	# that renders some OTHER rung's control; `IMPROVEMENT_CONTROL_META` rides all four states the
 	# widget can be in, so this says "no improvement control, of any rung, in any state".
-	h._assert_hud("a rung blocked ONLY on knowledge renders NO improvement control on this sheet",
-		Q.find_meta_node(h._hud._drawercompose._compose_sheet,
-			HudWidgets.IMPROVEMENT_CONTROL_META) == null)
+	h._assert_hud("a rung blocked ONLY on knowledge offers NO `⌃` on this sheet's strip",
+		ForageFx.ladder_kind(h._hud._drawercompose._compose_sheet) == WorkStrip.LADDER_NONE)
 	# The visible symptom of getting this wrong, and why it is asserted separately: dropping the reason
 	# WITHOUT suppressing the control leaves an unchecked, live box over a live crop list — the sheet
 	# inviting a commitment the sim rejects, which is strictly worse than the line that was cut.
@@ -583,9 +582,8 @@ func run(harness) -> void:
 	# …and the improvement control is STILL OFFERED: the crew is the sim's, so a worked source has a rung
 	# to take it to (#871). Asked of the whole control family, so a rung merely spelled differently
 	# cannot satisfy it.
-	h._assert_hud("…and keeps its rung control",
-		Q.find_meta_node(h._hud._drawercompose._compose_sheet,
-			HudWidgets.IMPROVEMENT_CONTROL_META) != null)
+	h._assert_hud("…and keeps its work strip",
+		ForageFx.find_strip(h._hud._drawercompose._compose_sheet) != null)
 
 	# **A WORKED SOURCE'S SHEET EDITS LIVE AND SAYS SO** - `Done` beside `Stop working here` (it only closes
 	# the sheet), and `Applied` above them after a stepper change sends its command.
@@ -755,7 +753,7 @@ func run(harness) -> void:
 			!= HudFloraVocab.ECOLOGY_PHASE_THRIVING)
 	h._assert_hud("…yet Cultivate is OFFERED, not refused",
 		stressed_box != null and String(stressed_box.get_meta(
-			HudWidgets.IMPROVEMENT_STATE_META, "")) == HudWidgets.IMPROVEMENT_STATE_OFFERED)
+			ForageFx.IMPROVEMENT_STATE_META, "")) == ForageFx.IMPROVEMENT_STATE_OFFERED)
 	# **THE ABSENCE IS ASKED OF THE WHOLE SHEET, not of the control**, because the gated form put its
 	# lead reason in the control's own text while a second-and-later one lands on the note slot beneath
 	# — a sheet-wide search is the only one covering both places it could come back. The needle is the
@@ -772,65 +770,11 @@ func run(harness) -> void:
 	h._assert_hud("…and NO crop CHOICE on the sheet, this sheet composing a plain gather",
 		not Q.has_label_containing(h._hud._drawercompose._compose_sheet,
 			ForageFx.GATHER_SHEET_CROP_KEY_NEEDLE))
-	# **THE WORKED HALF OF THE OFFER PAIR** (§4.7a ①, ③). This band composes a crew on this patch, so
-	# it will have a work row for it and the `⌃` is one press away — the one-line pointer. Its twin is
-	# `compose_offer_no_hands` in `chapters/improvements.gd`, where the band can staff nobody and the
-	# line leads with sending gatherers. **Both halves are asserted with the OTHER's absence**, because
-	# a builder that always printed one sentence passes either positive alone.
-	#
-	# Read off the FACE rather than off a note: it is ONE line now, and the `Work tab` inside it is a
-	# `[url]`, so `improvement_face` reads the parsed text a player actually sees.
-	var stressed_face := ForageFx.improvement_face(
-		h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
-	h._assert_hud("the sheet staffs a crew here, which is what makes this the worked half",
-		Readout.stepper_value(h._hud._drawercompose._compose_sheet) > 0)
-	h._assert_hud("…so the offer is ONE line pointing at the Work tab (got \"%s\")" % stressed_face,
-		stressed_face == HudComposeVocab.IMPROVEMENT_OFFER_BARE_FORMAT % [
-			FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CULTIVATE),
-			HudComposeVocab.BUILD_OFFER_WORKED_FORMAT % [
-				String(HudComposeVocab.IMPROVEMENT_OFFER_LABELS[SourceForecast.IMPROVEMENT_CULTIVATE]),
-				HudComposeVocab.WORK_TAB_LINK_TEXT]])
-	# …and NO PRICE on it. Ray: *"That information should be on the work tab. No need to have it here,
-	# it is useless."* The needle is the price clause's own separator plus its unit, so a re-worded
-	# clause still trips it.
-	h._assert_hud("…and quotes no work cost, the price having moved to the Work tab's ⌃",
-		not stressed_face.contains(RETIRED_OFFER_PRICE_NEEDLE))
-	# **THE LINK IS LIVE, AND IT NAMES THE ACTING BAND** (`docs/plan_standing_upkeep.md` §4.7a ①).
-	# Driven through the control's REAL `meta_clicked` — the engine's own edge for a `[url]` — so this
-	# is the click the player makes and not the handler it reaches.
-	#
-	# **THE PAYLOAD IS THE CLAIM.** It carried NOTHING for a release, and the far end then switched to
-	# whatever page was up: on the FACTION page that is a rollup with no `⌃` on it, so the sentence
-	# sent the player somewhere that could not do what it promised. Reported from play on PR #562. The
-	# routing this payload feeds is asserted in `band_panel_preview`, which has a dock to route into.
-	var stressed_control := ForageFx.find_improvement_control(
-		h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
-	var link_bands: Array = []
-	var link_sink := func(entity: int) -> void: link_bands.append(entity)
-	h._hud._drawercompose.work_tab_requested.connect(link_sink)
-	if stressed_control is RichTextLabel:
-		(stressed_control as RichTextLabel).meta_clicked.emit(HudComposeVocab.WORK_TAB_LINK_META)
-	h._hud._drawercompose.work_tab_requested.disconnect(link_sink)
-	h._assert_hud("pressing the offer's `%s` link asks for the Work tab"
-		% HudComposeVocab.WORK_TAB_LINK_TEXT, link_bands.size() == 1)
-	# **A REAL BAND, resolved the way the far end resolves it** — `player_band_by_entity` is what
-	# `jump_to_band_entity` calls, so a payload that answers `{}` there would switch the tab and land
-	# the player on the wrong board in silence.
-	h._assert_hud("…naming a band the panel can actually resolve (entity %s)" % str(link_bands),
-		link_bands.size() == 1
-			and not h._hud._band_labor.player_band_by_entity(int(link_bands[0])).is_empty())
-	# …and it is the band this SHEET is composing for, which is the band whose ⌃ queues this rung.
-	h._assert_hud("…and it is the ACTING band, whose ⌃ is the control the sentence points at",
-		link_bands.size() == 1
-			and int(link_bands[0]) == int(h._hud._band_labor.player_band().get("entity", -1)))
-	# **AND THE PRESS PUT THE SHEET AWAY** (`DrawerComposeController._navigate_to_work_tab`). Compose
-	# surfaces draw on `HudLayer.COMPOSE_LAYER_INDEX`, above `BandCityPanel.LAYER_INDEX` (103), and
-	# `ComposeSheet` IS a full-viewport `MOUSE_FILTER_STOP` dismiss catcher — so a sheet left open
-	# would swallow the very `⌃` press this sentence just sent the player to the board to make. The
-	# link is the ONE control inside a compose surface that navigates rather than commits, so this is
-	# the whole of the claim.
-	h._assert_hud("…and the press CLOSED the sheet, so the board it sent the player to takes their next click",
-		not h._hud._drawercompose.is_compose_sheet_open())
+	# **THE STRIP OFFERS THE RUNG, AND ITS `⌃` OPENS THE SAME CARD THE WORK TAB'S ROW DOES** (issue #877).
+	# The one-line pointer at the Work tab, its price-free wording and its live link are gone with the
+	# control that carried them: the strip mounts the `⌃` itself.
+	h._assert_hud("…and the sheet's strip carries the `⌃` for it",
+		ForageFx.ladder_kind(h._hud._drawercompose._compose_sheet) == WorkStrip.LADDER_OFFER)
 
 	# ---- Sow + the Field: plant RUNG 3 (slice 6b) -------------------------------------------------
 	# State 6b-sow-locked — Seed Selection is only 12% learned AND this ordinary prairie refuses seed,
@@ -863,30 +807,14 @@ func run(harness) -> void:
 	h._compose_forage(TileFx.tended_tile_fixture())
 	await h._settle()
 	await h._save("forage_sow_locked")
-	# A rung blocked on the SOURCE still TEACHES IN FULL — the reason is the control's own text, which
-	# is the whole point of showing a gated improvement rather than hiding it.
-	var sow_box = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "sow")
-	h._assert_hud("a SOURCE-gated improvement is SHOWN, never hidden — the rung stays discoverable",
-		sow_box != null and String(sow_box.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
-			== HudWidgets.IMPROVEMENT_STATE_GATED)
-	var sow_knowledge_reason := HudFloraVocab.GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT % [
-		HudFormat.progress_percent(SOW_LOCKED_SEED_SELECTION),
-		FoodIcons.for_floor_zone(SourceForecast.FLOOR_ZONE_PEAK)]
-	h._assert_hud("…with the KNOWLEDGE prerequisite leading as the control's OWN text — the one a player can move",
-		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_SOW)
-			== HudComposeVocab.IMPROVEMENT_GATED_FORMAT % [
-				FoodIcons.for_policy(SourceForecast.IMPROVEMENT_SOW), sow_knowledge_reason])
-	# **AND THE SOURCE GATE SURVIVES BENEATH IT — asserted as the PAIR, because either alone is the
-	# bug.** Only the lead line would mean the ground's permanent refusal had been swallowed; only the
-	# presence of the knowledge reason somewhere would be satisfied by the old lead-with-the-source
-	# rendering. Asked of the whole sheet, since a reason "renders" wherever it lands.
-	h._assert_hud("…and the ground's own refusal still renders beneath it, not swallowed by the lead",
-		Q.has_label_containing(h._hud._drawercompose._compose_sheet,
-			String(HudFloraVocab.SOW_REFUSAL_REASONS[SOW_LOCKED_REFUSAL_KEY])))
-	# …and the rung BELOW it reads as the state it left behind, not as a second greyed option.
-	h._assert_hud("…above a DONE label for the rung already built",
-		String(ForageFx.improvement_state(h._hud._drawercompose._compose_sheet, "cultivate"))
-			== HudWidgets.IMPROVEMENT_STATE_DONE)
+	# A rung the SOURCE refuses offers no `⌃` either: the strip draws nothing for a refused rung, and the
+	# rung card (not this sheet) is where its refusal is stated.
+	h._assert_hud("a SOURCE-gated rung offers no `⌃` on the strip",
+		ForageFx.ladder_kind(h._hud._drawercompose._compose_sheet) == WorkStrip.LADDER_NONE)
+	# …and the rung BELOW it reads as the state it left behind: the strip's standing-rung mark.
+	h._assert_hud("…above the standing-rung mark for the rung already built",
+		String(ForageFx.strip_model(h._hud._drawercompose._compose_sheet).get(
+			WorkStrip.M_RUNG_MARK, "")) != "")
 
 	# Seed Selection completes → the one-shot feed nudge fires ("Seed Selection learned — The Sow
 	# policy is now available — but only on rich, well-watered ground.").

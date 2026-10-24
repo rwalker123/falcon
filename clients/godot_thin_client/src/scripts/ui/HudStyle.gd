@@ -108,12 +108,18 @@ const CREW_KITTED_LIGHTEN := 0.15
 const CREW_KITTED_LINE_LIGHTEN := 0.45
 const CREW_BARE_DARKEN := 0.3
 const CREW_BARE_LINE_DARKEN := 0.1
+# The BUILDERS segment: the cool written-ink blue, so hands raising a rung read apart from the earth
+# (keeping) and the greens (taking). Information, like the rest.
+const CREW_BUILD_DARKEN := 0.15
+const CREW_BUILD_LINE_LIGHTEN := 0.2
 static var CREW_TEND := VOICE_PIGMENT.darkened(CREW_TEND_DARKEN)
 static var CREW_TEND_LINE := VOICE_PIGMENT.darkened(CREW_TEND_LINE_DARKEN)
 static var CREW_KITTED := HEALTHY.lightened(CREW_KITTED_LIGHTEN)
 static var CREW_KITTED_LINE := HEALTHY.lightened(CREW_KITTED_LINE_LIGHTEN)
 static var CREW_BARE := HEALTHY.darkened(CREW_BARE_DARKEN)
 static var CREW_BARE_LINE := HEALTHY.darkened(CREW_BARE_LINE_DARKEN)
+static var CREW_BUILD := VOICE_INK.darkened(CREW_BUILD_DARKEN)
+static var CREW_BUILD_LINE := VOICE_INK.lightened(CREW_BUILD_LINE_LIGHTEN)
 
 # Hex strings for BBCode-based labels (RichTextLabel headers, command feed). DERIVED from the
 # colours above by `apply_palette` — never edit one of these to change a tint.
@@ -177,6 +183,8 @@ static func apply_palette(p: Dictionary) -> void:
 	CREW_KITTED_LINE = HEALTHY.lightened(CREW_KITTED_LINE_LIGHTEN)
 	CREW_BARE = HEALTHY.darkened(CREW_BARE_DARKEN)
 	CREW_BARE_LINE = HEALTHY.darkened(CREW_BARE_LINE_DARKEN)
+	CREW_BUILD = VOICE_INK.darkened(CREW_BUILD_DARKEN)
+	CREW_BUILD_LINE = VOICE_INK.lightened(CREW_BUILD_LINE_LIGHTEN)
 	SIGNAL_HEX = SIGNAL.to_html(false)
 	WARN_HEX = WARN.to_html(false)
 	DANGER_HEX = DANGER.to_html(false)
