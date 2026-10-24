@@ -3544,7 +3544,13 @@ fn band_allocation_mut(
 /// its pre-commit forecast exactly as the touched row always was, and a row left with nobody reads
 /// nothing rather than the reading of the crew it used to have.
 fn restaff_and_reseed(app: &mut bevy::prelude::App, band: Entity) {
-    core_sim::staffing::restaff_band(&mut app.world, band);
+    restaff_and_reseed_after_loss(app, band, 0);
+}
+
+/// [`restaff_and_reseed`] for a command that removed people from the band: `lost_people` staffed
+/// hands left with them and are discarded rather than walked home (`staffing::restaff_band_after_loss`).
+fn restaff_and_reseed_after_loss(app: &mut bevy::prelude::App, band: Entity, lost_people: u32) {
+    core_sim::staffing::restaff_band_after_loss(&mut app.world, band, lost_people);
     let rows: Vec<(LaborTarget, u32)> = app
         .world
         .get::<LaborAllocation>(band)
@@ -7988,7 +7994,10 @@ fn handle_split_band(
     // so the frame after this command shows crews fitted to the hands it kept rather than the
     // pre-split ones until the turn advances. The splinter starts with no rows (fission.rs), so it
     // has nothing to restaff; its outfitting-window wants are seeded by the split itself.
-    restaff_and_reseed(app, band.entity);
+    // The splinter's hands left with it, so the staffed hands past what the parent kept are
+    // discarded where they stand, as the turn's own pass does, not walked home.
+    let lost = core_sim::staffing::staffed_hands_lost(&app.world, band.entity);
+    restaff_and_reseed_after_loss(app, band.entity, lost);
     let tick = app.world.resource::<SimulationTick>().0;
     // Every token is numeric, so none of them has to be last (`.claude/rules/core_sim/event-feed.md`
     // — a multi-word value can only be the trailing remainder).
@@ -33943,6 +33952,95 @@ mod long_move_tests {
             staffed_after <= kept,
             "the parent's crews are fitted to the {kept} hands it kept, not the {hands} it had: \
              {staffed_after} staffed"
+        );
+    }
+
+    /// How far out (walk tiles and turns) the far party in the split fixture is posted.
+    const FIXTURE_PARTY_WALK: u32 = 4;
+
+    /// **A SPLIT DISCARDS THE HANDS THAT LEFT WITH THE SPLINTER, IT DOES NOT WALK THEM HOME.** A far
+    /// party the restaff shrinks hands its cut hands to `homeward`, and a walker counts against the
+    /// pool until it lands - but these hands are people the parent no longer has, so the turn's own
+    /// pass discards them where they stand (`lost_to_staffed`). The command-time restaff must too.
+    #[test]
+    fn a_split_discards_the_far_party_hands_that_left_with_the_splinter() {
+        let (mut app, home, home_id) = world();
+        let faction = app
+            .world
+            .get::<PopulationCohort>(home)
+            .expect("a cohort")
+            .faction;
+        let hands = core_sim::available_workers(
+            app.world
+                .get::<PopulationCohort>(home)
+                .expect("a cohort")
+                .working,
+        );
+        let camp = position(&app, home);
+        let mut patches: Vec<UVec2> = app
+            .world
+            .resource::<core_sim::ForageRegistry>()
+            .patches
+            .keys()
+            .copied()
+            .collect();
+        patches.sort_by_key(|at| (at.x.abs_diff(camp.x) + at.y.abs_diff(camp.y), at.x, at.y));
+        let at = *patches.first().expect("a seeded patch");
+        {
+            let mut registry = app.world.resource_mut::<core_sim::ForageRegistry>();
+            let patch = registry.patch_mut(at).expect("a seeded patch");
+            patch.biomass = patch.carrying_capacity;
+        }
+        handle_assign_labor(
+            &mut app,
+            faction,
+            Some(home_id),
+            "forage".to_string(),
+            hands,
+            Some(at.x),
+            Some(at.y),
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            false,
+        );
+        // The row is posted as a far party holding every staffed hand.
+        {
+            let mut allocation = app
+                .world
+                .get_mut::<LaborAllocation>(home)
+                .expect("labor rows");
+            let row = allocation
+                .assignments
+                .iter_mut()
+                .find(|row| row.target.is_staffed())
+                .expect("the staffed forage row");
+            let mut party = core_sim::WorkParty::posted(at, FIXTURE_PARTY_WALK, FIXTURE_PARTY_WALK);
+            party.workers = row.workers;
+            // Arrived: the hands at the source walk the whole way home if they are cut loose.
+            party.walk_out_remaining = 0;
+            row.party = Some(party);
+        }
+        split_off(&mut app, home, home_id);
+        let kept = core_sim::available_workers(
+            app.world
+                .get::<PopulationCohort>(home)
+                .expect("a cohort")
+                .working,
+        );
+        let allocation = app.world.get::<LaborAllocation>(home).expect("labor rows");
+        assert!(kept < hands, "fixture: the split took hands");
+        assert_eq!(
+            allocation.walking_home(),
+            0,
+            "hands that left with the splinter are not walking home"
+        );
+        assert!(
+            allocation.assigned_total() <= kept,
+            "{} staffed for the {kept} hands the parent kept",
+            allocation.assigned_total()
         );
     }
 

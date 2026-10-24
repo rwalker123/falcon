@@ -35,10 +35,24 @@ checkpoint path that re-attaches `ResidentBand` for a band worldgen never made.
 
 ## The split restaffs the parent at once
 
-`handle_split_band` calls `restaff_and_reseed` on the parent after the division, so the frame the
-command publishes shows crews fitted to the workers the parent kept, not the pre-split ones. The
-splinter starts with no rows and needs no restaff. Pinned by
-`server::long_move_tests::a_split_restaffs_the_parent_before_the_turn_advances`.
+`handle_split_band` restaffs and reseeds the parent after the division
+(`restaff_and_reseed_after_loss`), so the frame the command publishes shows crews and yields fitted
+to the workers the parent kept, not the pre-split ones. The splinter starts with no rows and needs
+no restaff.
+
+**The hands that left are discarded, not walked home.** The split has already taken the splinter's
+people out of the parent's cohort, so the staffed hands the parent holds past its head count
+(`staffing::staffed_hands_lost`, the turn's `lost_to_staffed` with no hand-set shed) are passed as
+`lost_people` to `staffing::restaff_band_after_loss`. Without it a far party's cut hands went onto
+`homeward` as walkers the band no longer has and held its pool short until they "arrived". A
+hand-set row's excess (Scout, Warrior, Builders) is left for the next turn's shed.
+
+**The reseed moves the AI.** The parent's rows read forecasts at the kept crew rather than last
+turn's actuals at the old one, and `sim_ai` reads those yields, so the reseed changed the bench
+baselines. A 20-seed paired sweep against restaff-without-reseed scattered around zero (food
++0.54 ± 2.72 se). Pinned by
+`server::long_move_tests::{a_split_restaffs_the_parent_before_the_turn_advances,
+a_split_discards_the_far_party_hands_that_left_with_the_splinter}`.
 
 ## The worker count decides the SHARE — and the share is a starting point, not the answer
 
