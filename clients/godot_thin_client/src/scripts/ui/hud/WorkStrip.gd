@@ -53,6 +53,22 @@ const LADDER_OFFER := HudWorkVocab.WORK_ROW_BUILD_KIND_OFFER
 const LADDER_BUILDING := HudWorkVocab.WORK_ROW_BUILD_KIND_BUILDING
 const LADDER_STALLED := HudWorkVocab.WORK_ROW_BUILD_KIND_STALLED
 
+## **A BUILD'S PHASE — THE ONE DECISION THE CHIP'S BORDER AND ITS HOVER BOTH READ.**
+## `stalled`: the build is in flight and the band's builder pool cannot advance it, either because the pool is
+## empty (on EVERY web) or because the producer's verdict (`row.build_stalled`, `SourceForecast.build_is_stalled`
+## against the pool) says so; the amber border and `no spare hands this turn`. `building`: hands are on THIS site
+## (`site_builders` > 0). `waiting`: the pool has builders, but they are on another queued build; not amber.
+const PHASE_STALLED := "stalled"
+const PHASE_BUILDING := "building"
+const PHASE_WAITING := "waiting"
+
+static func build_phase(row: Dictionary, site_builders: int) -> String:
+    if bool(row.get("build_stalled", false)) or int(row.get("build_pool", 0)) <= 0:
+        return PHASE_STALLED
+    if site_builders > 0:
+        return PHASE_BUILDING
+    return PHASE_WAITING
+
 ## **THE STRIP MODEL FOR ONE ROW.** `row` is the row-vocabulary dictionary the Work tab's producers
 ## fill (`BandPanelController._work_source_model` and its extract / tile / improvement siblings);
 ## `builders` is `site_builders` for that row.
@@ -71,13 +87,16 @@ static func model_from_row(row: Dictionary, builders: int) -> Dictionary:
     if building_glyph != "":
         glyph = building_glyph
         var verb := HudComposeVocab.improvement_running_label(String(row.get("building_policy", "")))
-        kind = LADDER_STALLED if bool(row.get("build_stalled", false)) else LADDER_BUILDING
-        if builders > 0 and kind == LADDER_BUILDING:
+        var phase := build_phase(row, builders)
+        kind = LADDER_STALLED if phase == PHASE_STALLED else LADDER_BUILDING
+        if phase == PHASE_BUILDING:
             tip = HudWorkVocab.WORK_STRIP_BUILD_HANDS_FORMAT % [verb, percent, builders]
             var done := DetailFormat.build_turns_clause(int(row.get("build_turns",
                 SourceForecast.BUILD_TURNS_NO_ESTIMATE)), builders)
             if done != "" and int(row.get("build_turns", 0)) > 0:
                 tip = HudWorkVocab.WORK_STRIP_BUILD_DONE_FORMAT % [tip, done]
+        elif phase == PHASE_WAITING:
+            tip = HudWorkVocab.WORK_STRIP_BUILD_WAITING_FORMAT % [verb, percent]
         else:
             tip = HudWorkVocab.WORK_STRIP_BUILD_NO_HANDS_FORMAT % [verb, percent]
     elif ready_glyph != "":

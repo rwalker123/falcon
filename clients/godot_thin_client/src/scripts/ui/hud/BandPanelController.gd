@@ -3152,18 +3152,14 @@ func _build_tile_row(band: Dictionary, model: Dictionary) -> PanelContainer:
 
 ## **ONE WORKING'S ROW — a harvest or hunt row's shape** (the site rows' shell, `_site_row_shell`).
 ## Line one is the icon (the MATERIAL's mark), the name (`Wood · 2 tiles SE`, one ink — it names the
-## working, the rung is line two's), the keeping mark, the `⌃` that opens its ladder and the crew
-## stepper; line two is the rung it stands on; line three its YIELD (`_working_yield_text`); line four
+## working, the rung is line two's) and the work strip at the row's trailing end (`_extract_strip_row`
+## through `_build_row_strip`: the ladder chip, the `⚠`, the crew number over its bar); line two is the
+## rung it stands on; line three its YIELD (`_working_yield_text`), or the loan / dig-load line; line four
 ## the `Priority` and (while a working build is queued here) `Build` pills.
 ##
-## **A CLICK ON THE ROW OPENS ITS INSPECTOR**, as a harvest row's does — and that card is where the
-## working is PUT DOWN (`_build_working_inspector`), so the row carries no `✕`.
-##
-## ⛔ **THE STEPPER IS THE WORKING'S OWN CREW**, and it re-sends the compose sheet's command with the
-## count moved: `assign_labor <f> <b> extract <x> <y> <material> [floor] <n>`, the material in the
-## species slot, the floor this band's row already carries on ground that renews and NO floor on ground
-## that does not (`FLOOR_UNNAMED`, the sheet's own sentinel), and the row's kit restated so a `+` never
-## re-kits a crew.
+## **A CLICK ON THE ROW OPENS THE WORKING'S COMPOSE SHEET** (`_open_source_sheet`), as a harvest row's
+## does; the sheet's `Stop working here` is where the working is put down, so the row carries no `✕`
+## and no stepper. The strip's own buttons stop the press and open the rung card.
 func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var tile: Vector2i = model["tile"]
     var deposit: Dictionary = model["deposit"]
@@ -3222,14 +3218,14 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
         col.add_child(load_node)
     col.add_child(_build_pill_line(band, model, true))
     (shell[SITE_ROW_SHELL_BODY] as HBoxContainer).add_child(_build_row_strip(band,
-        _extract_strip_row(model, deposit, ladder, cutters), deposit))
+        _extract_strip_row(model, deposit, ladder, cutters, builder_pool(band)), deposit))
     return row
 
 ## **A WORKING'S STRIP ROW** — the work-row vocabulary the strip reads, filled from the `deposits` row and
 ## the catalog: the next rung on offer (`⌃` + its verb glyph), the build in flight on this working, and
 ## the site's keeping. A working has no floor mark and no standing-rung mark, so those stay empty.
 func _extract_strip_row(model: Dictionary, deposit: Dictionary, ladder: Array[Dictionary],
-        cutters: int) -> Dictionary:
+        cutters: int, pool: int) -> Dictionary:
     var row := model.duplicate()
     var rung_after := HudDepositVocab.catalog_display_name(
         HudDepositVocab.ladder_next_entry(ladder, deposit)) \
@@ -3249,7 +3245,10 @@ func _extract_strip_row(model: Dictionary, deposit: Dictionary, ladder: Array[Di
         row["building_glyph"] = FoodIcons.for_policy(verb)
         row["building_policy"] = verb
         row["building_progress"] = meter
-        row["build_stalled"] = false
+        # No stall predicate exists for the deposit web (`build_is_stalled` reads a patch or herd's wire
+        # keys), so a working is stalled when the band's builder pool is empty.
+        row["build_stalled"] = pool <= 0
+        row["build_pool"] = pool
     else:
         var ready := RungGates.deposit_rung_ready(deposit, ladder, _player_knowledge(),
             _topbar.knowledge_labels() if _topbar != null else {}, cutters)
@@ -3403,6 +3402,10 @@ func site_builders(band: Dictionary, row_key: String) -> int:
     var keys := _band_labor.build_queue_keys(band)
     if keys.is_empty() or String(keys[0]) != row_key:
         return 0
+    return builder_pool(band)
+
+## The band's whole builder pool, the one figure the stall verdict and `site_builders` both start from.
+func builder_pool(band: Dictionary) -> int:
     return maxi(int(_band_labor.effective_role_workers(
         band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0)), 0)
 
@@ -3452,7 +3455,7 @@ func source_strip_row(band: Dictionary, kind: String, x: int, y: int, herd_id: S
         if model.is_empty():
             model = _unworked_extract_model(deposit, x, y, material)
         return {"row": _extract_strip_row(model, deposit, _deposit_ladder(),
-            int(model.get("workers", 0))), "deposit": deposit}
+            int(model.get("workers", 0)), builder_pool(band)), "deposit": deposit}
     var key := _band_labor.pending_key(kind, x, y, herd_id)
     var merged: Dictionary = _band_labor.effective_worker_map(band).get(key, {})
     var m: Dictionary = merged if not merged.is_empty() else {"kind": kind, "x": x, "y": y,
@@ -7070,6 +7073,8 @@ func _work_source_model(band: Dictionary, key: Variant, m: Dictionary, kind: Str
         # off the same two `SourceForecast` seams the map badge forks on, and carried as a flag
         # so the row builder cannot ask the question a second way (see `build_stalled`).
         "build_stalled": build_stalled,
+        # The band-wide builder pool, so `WorkStrip.build_phase` can tell waiting from stalled.
+        "build_pool": builders,
         "foreign_build": foreign_build,
         "foreign_band_id": foreign_band_id,
         "foreign_band_name": foreign_band_name,

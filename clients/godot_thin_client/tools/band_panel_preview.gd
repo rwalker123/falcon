@@ -2550,6 +2550,7 @@ func _ready() -> void:
 
 	await _render_build_queue_states()
 	await _render_work_build_state_states()
+	await _render_build_phase_states()
 
 	await _render_pending_queue_states()
 
@@ -22640,12 +22641,14 @@ func _build_state_patches() -> Array:
 
 ## **ALL FOUR FACES AND ALL FOUR INKS, BY EQUALITY.** The faces are composed from the vocabulary's own
 ## formats rather than typed out, so this asserts the FORK and not the format.
+## **THIS BAND HAS NO BUILDERS, SO EVERY IN-FLIGHT ROW IS AMBER** (`WorkStrip.build_phase`: an empty pool
+## stalls a build on every web), the climbing and the parked-with-keeping-covered rows included.
 func _assert_work_build_state_faces() -> void:
 	var glyph := FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CULTIVATE)
 	var cases := [
 		["climbing", BUILD_STATE_HEALTHY_TILE,
 			HudWorkVocab.WORK_ROW_BUILDING_FORMAT % [glyph,
-				HudFormat.progress_percent(BUILD_STATE_HEALTHY_METER)], HudStyle.INK],
+				HudFormat.progress_percent(BUILD_STATE_HEALTHY_METER)], HudStyle.WARN],
 		["declared with nobody on it", BUILD_STATE_UNSTAFFED_TILE,
 			HudWorkVocab.WORK_ROW_BUILDING_FORMAT % [glyph, 0], HudStyle.WARN],
 		["losing ground", BUILD_STATE_LOSING_TILE,
@@ -22653,7 +22656,7 @@ func _assert_work_build_state_faces() -> void:
 				HudFormat.progress_percent(BUILD_STATE_LOSING_METER)], HudStyle.WARN],
 		["parked with its keeping covered", BUILD_STATE_PARKED_TILE,
 			HudWorkVocab.WORK_ROW_BUILDING_FORMAT % [glyph,
-				HudFormat.progress_percent(BUILD_STATE_PARKED_METER)], HudStyle.INK],
+				HudFormat.progress_percent(BUILD_STATE_PARKED_METER)], HudStyle.WARN],
 	]
 	var faces := _work_row_build_faces()
 	for case in cases:
@@ -25778,3 +25781,125 @@ func _other_peoples_build_rows() -> void:
 	_set_world_herds(_rung_herd_fixtures())
 	FactionNames.reset()
 
+
+
+# ---- THE CHIP'S BORDER AND ITS HOVER READ ONE PHASE (`WorkStrip.build_phase`) ----------------------------
+
+## The two queued patches the phase states stage, head first.
+const PHASE_HEAD_PATCH := Vector2i(71, 18)
+const PHASE_SECOND_PATCH := Vector2i(72, 18)
+## The builders the staffed state puts on the band's pool.
+const PHASE_POOL_BUILDERS := 3
+## The queued working the empty-pool state stages.
+const PHASE_WORKING_TILE := Vector2i(70, 17)
+
+## **A BUILD WAITING ITS TURN IS NOT STALLED.** Two forage builds queued behind a pool of builders: the head
+## has the hands (`building`), the second has none on it but the pool is busy elsewhere (`waiting`, no amber,
+## no `no spare hands`). Then a band with NO builders and a queued working: amber, and `no spare hands`.
+## Both read `WorkStrip.build_phase`, so the border and the hover cannot disagree.
+func _render_build_phase_states() -> void:
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	_hud.update_intensification([_standing_knowledge_row()])
+	var patches: Array = []
+	for tile in [PHASE_HEAD_PATCH, PHASE_SECOND_PATCH]:
+		var patch: Dictionary = (_track_climbing_patch_fixtures()[0] as Dictionary).duplicate(true)
+		patch["x"] = (tile as Vector2i).x
+		patch["y"] = (tile as Vector2i).y
+		patches.append(patch)
+	_set_forage_patches(patches)
+	_set_world_herds([])
+	var band := _band_fixture()
+	band["idle_workers"] = 0
+	band["build_queue"] = [_queue_forage_entry(PHASE_HEAD_PATCH), _queue_forage_entry(PHASE_SECOND_PATCH)]
+	var rows: Array = []
+	for tile in [PHASE_HEAD_PATCH, PHASE_SECOND_PATCH]:
+		rows.append({"kind": SourceForecast.LABOR_KIND_FORAGE, "workers": 3, "workers_needed": 3,
+			"floor": 0.5, "target_x": (tile as Vector2i).x, "target_y": (tile as Vector2i).y,
+			"fauna_id": "", "improvement": SourceForecast.IMPROVEMENT_SOW,
+			"actual_yield": 0.48, "sustainable_yield": 0.48})
+	rows.append({"kind": "builders", "workers": PHASE_POOL_BUILDERS})
+	band["labor_assignments"] = rows
+	_push_bands([band])
+	await _settle()
+	await _save("band_panel_build_phase_waiting")
+	var building: Array = []
+	for chip in _collect_meta_controls(_panel, HudWorkVocab.WORK_STRIP_LADDER_META, []):
+		if String(chip.get_meta(HudWorkVocab.WORK_STRIP_LADDER_META)) in [
+				WorkStrip.LADDER_BUILDING, WorkStrip.LADDER_STALLED]:
+			building.append(chip)
+	_assert_band_panel("build phase — two queued forage builds draw two chips (got %d)" % building.size(),
+		building.size() == 2)
+	if building.size() == 2:
+		var head: Control = building[0]
+		var second: Control = building[1]
+		_assert_band_panel("build phase — the HEAD is building, not amber (kind `%s`, tip \"%s\")"
+				% [head.get_meta(HudWorkVocab.WORK_STRIP_LADDER_META), head.tooltip_text],
+			String(head.get_meta(HudWorkVocab.WORK_STRIP_LADDER_META)) == WorkStrip.LADDER_BUILDING
+				and head.tooltip_text.contains("building") and not head.tooltip_text.contains("no spare hands"))
+		_assert_band_panel("build phase — the SECOND is waiting: no amber border (kind `%s`)"
+				% second.get_meta(HudWorkVocab.WORK_STRIP_LADDER_META),
+			String(second.get_meta(HudWorkVocab.WORK_STRIP_LADDER_META)) == WorkStrip.LADDER_BUILDING)
+		_assert_band_panel("build phase — …and its hover says it waits its turn, not `no spare hands` (\"%s\")"
+				% second.tooltip_text,
+			second.tooltip_text.contains("waiting its turn") and not second.tooltip_text.contains("no spare hands"))
+
+	# A FORAGE build with an empty pool and its keeping covered (`BUILD_METER_HOLDS`) is stalled too: the rule
+	# is "no spare hands", not the producer's verdict alone.
+	_set_forage_patches([(_build_state_patches()[3] as Dictionary)])
+	var parked_band := _band_fixture()
+	parked_band["idle_workers"] = 0
+	parked_band["build_queue"] = [_queue_forage_entry(BUILD_STATE_PARKED_TILE)]
+	parked_band["labor_assignments"] = [{"kind": SourceForecast.LABOR_KIND_FORAGE, "workers": 3,
+		"workers_needed": 3, "floor": 0.5, "target_x": BUILD_STATE_PARKED_TILE.x,
+		"target_y": BUILD_STATE_PARKED_TILE.y, "fauna_id": "",
+		"improvement": SourceForecast.IMPROVEMENT_CULTIVATE, "actual_yield": 0.2, "sustainable_yield": 0.2}]
+	_push_bands([parked_band])
+	await _settle()
+	var parked_chip: Control = null
+	for chip in _collect_meta_controls(_panel, HudWorkVocab.WORK_STRIP_LADDER_META, []):
+		if String(chip.get_meta(HudWorkVocab.WORK_STRIP_LADDER_META)) in [
+				WorkStrip.LADDER_BUILDING, WorkStrip.LADDER_STALLED]:
+			parked_chip = chip
+	_assert_band_panel("build phase — a forage build with no builders and its keeping covered draws a build chip",
+		parked_chip != null)
+	if parked_chip != null:
+		_assert_band_panel("build phase — …amber (kind `%s`) and `no spare hands` (\"%s\")"
+				% [parked_chip.get_meta(HudWorkVocab.WORK_STRIP_LADDER_META), parked_chip.tooltip_text],
+			String(parked_chip.get_meta(HudWorkVocab.WORK_STRIP_LADDER_META)) == WorkStrip.LADDER_STALLED
+				and parked_chip.tooltip_text.contains("no spare hands"))
+
+	# A band with NO builders and a queued working: the pool cannot advance it.
+	_set_forage_patches([])
+	var working := _workings_row(PHASE_WORKING_TILE, WORKINGS_STONE, false, WORKINGS_STONE_TAKE)
+	working["is_queued"] = true
+	working["build_fraction"] = 0.4
+	_hud.update_deposit_rungs(_deposit_rung_catalog())
+	_hud.update_deposits([working])
+	var empty_band := _band_fixture()
+	empty_band["idle_workers"] = 0
+	empty_band["build_queue"] = [{"kind": HudConst.LABOR_KIND_EXTRACT, "target_x": PHASE_WORKING_TILE.x,
+		"target_y": PHASE_WORKING_TILE.y, "fauna_id": "", "material": WORKINGS_STONE}]
+	empty_band["labor_assignments"] = [{"kind": HudConst.LABOR_KIND_EXTRACT, "workers": 2,
+		"target_x": PHASE_WORKING_TILE.x, "target_y": PHASE_WORKING_TILE.y, "fauna_id": "",
+		"material": WORKINGS_STONE, "actual_yield": 0.0, "sustainable_yield": 0.0}]
+	_push_bands([empty_band])
+	await _settle()
+	await _save("band_panel_build_phase_stalled")
+	var stalled: Control = null
+	for chip in _collect_meta_controls(_panel, HudWorkVocab.WORK_STRIP_LADDER_META, []):
+		if String(chip.get_meta(HudWorkVocab.WORK_STRIP_LADDER_META)) in [
+				WorkStrip.LADDER_BUILDING, WorkStrip.LADDER_STALLED]:
+			stalled = chip
+	_assert_band_panel("build phase — a queued working on a band with no builders draws a build chip",
+		stalled != null)
+	if stalled != null:
+		_assert_band_panel("build phase — …amber (kind `%s`) and `no spare hands` (\"%s\")"
+				% [stalled.get_meta(HudWorkVocab.WORK_STRIP_LADDER_META), stalled.tooltip_text],
+			String(stalled.get_meta(HudWorkVocab.WORK_STRIP_LADDER_META)) == WorkStrip.LADDER_STALLED
+				and stalled.tooltip_text.contains("no spare hands"))
+	_hud.update_deposits([])
+	_set_forage_patches([])
+	_set_world_herds(_herd_fixtures())
+	_push_bands([_band_fixture()])
+	await _settle()

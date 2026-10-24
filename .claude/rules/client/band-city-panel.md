@@ -8121,8 +8121,14 @@ control the sheets used to mount; and it retired the Work inspector for source r
   ladder slot, the floor glyph, the one `⚠`, the `ⓘ`, and the crew column.
 - **The ladder slot** is `⌃🌱` while the next rung is on offer, and the chip FILLING to the build's
   progress while one is under way (`🌱60%`, `fill_layer`, stamped `WORK_STRIP_FILL_META` with the
-  amount). A stalled build is the same chip with a WARN border and ink; its hover says `no spare hands
-  this turn`. Both open the rung card; a chip carries `WORK_ROW_BUILD_KIND_META` /
+  amount). **The chip's border and its hover read ONE decision, `WorkStrip.build_phase(row, site_builders)`**,
+  on every strip (forage, hunt and workings): `stalled` (the build is in flight and the band's builder pool
+  cannot advance it: the pool is empty on EVERY web, or the row's `build_stalled` says so; WARN border and ink,
+  hover `no spare hands this turn`), `building` (`site_builders` > 0: the builders-and-turns hover) and
+  `waiting` (the pool has builders, but they are on an earlier queued build; no amber, hover `waiting its turn
+  in the build queue`). `build_stalled` is `SourceForecast.build_is_stalled` against the pool for a patch or
+  herd (`_work_source_model`) and `pool == 0` for a working (`_extract_strip_row`; no stall predicate exists for
+  the deposit web); the pool rides the row as `build_pool`. Both open the rung card; a chip carries `WORK_ROW_BUILD_KIND_META` /
   `WORK_ROW_BUILD_STATE_META` / `WORK_ROW_MODEL_META` on the container (its `Button` is the child that
   presses).
 - **`⚠` is ONE mark whose hover is every warning line**, joined: the overdraw, overstaffed, kit-short,

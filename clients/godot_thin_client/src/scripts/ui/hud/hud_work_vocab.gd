@@ -4234,6 +4234,8 @@ const WORK_STRIP_OFFER_TIP := "Take it to…"
 const WORK_STRIP_BUILD_HANDS_FORMAT := "%s %d%% · %d building"
 const WORK_STRIP_BUILD_DONE_FORMAT := "%s, done in %s"
 const WORK_STRIP_BUILD_NO_HANDS_FORMAT := "%s %d%% · no spare hands this turn"
+## A build the band's builders have not reached: the pool has hands, but they are on an earlier queued build.
+const WORK_STRIP_BUILD_WAITING_FORMAT := "%s %d%% · waiting its turn in the build queue"
 ## The in-flight rung's row on the rung card: its tooltip ends with this, and pressing it stops the build.
 const WORK_STRIP_STOP_SUFFIX := " — click to stop"
 const WORK_STRIP_STOP_META := &"work_strip_stop"

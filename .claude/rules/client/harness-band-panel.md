@@ -2413,7 +2413,9 @@ tell apart.
 ⛔ **NO FIXTURE IN THIS FILE HAD MORE THAN THREE WORKINGS, WHICH IS EXACTLY WHY NOTHING CAUGHT THE
 DEFECT.** Both rosters cap at `ROADWORK_ROSTER_ROWS_MAX`, every roster state staged exactly three
 rows, so the cap never truncated anything — and the thing it truncates is the only control that opens
-a working's ladder (`_open_deposit_track` has ONE caller and it is a roster ROW) and the only other
+a working's ladder (`_open_deposit_track` then had ONE caller and it was a roster ROW; since #877 the
+track is `RungCardController.open_deposit_track`, opened from the row's strip and the deposit sheet's
+alike) and the only other
 control that stops the band being billed for it. Two disjoint frame families with the defect living in
 the gap, one more time.
 

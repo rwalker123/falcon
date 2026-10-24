@@ -5,11 +5,12 @@ extends Control
 ## keepers (the site's keeping hands), builders (hands raising the site's next rung), hands holding a
 ## whole kit, and bare hands.
 ##
-## The keepers fill from the left in a muted earth, then the builders in a cool blue, then the kitted
-## hands in the bright green, then the bare hands in a quieter green. It is drawn, not glyphs, so the three read as a bar of colour.
+## The keepers fill in a muted earth, then the builders in a cool blue, then the kitted hands in the
+## bright green, then the bare hands in a quieter green; the whole run is aligned to the END of the
+## control, under the crew number. It is drawn, not glyphs, so the four read as a bar of colour.
 ##
-## **IT DRAWS; IT DOES NOT MODEL.** The three counts are the sim's — the row's own `keepers_staffed` /
-## `kitted_staffed` / `bare_staffed` on a Work-tab row or a working source's sheet, the client's
+## **IT DRAWS; IT DOES NOT MODEL.** The four counts are the sim's — the row's own `keepers_staffed` /
+## `kitted_staffed` / `bare_staffed` (and the build's hands) on a Work-tab row or a working source's sheet, the client's
 ## forecast crew on a source nobody works yet — and the caller hands them in. The words on its hover are
 ## `HudWorkVocab.crew_bar_words`, so the picture and the sentence are about one set of figures.
 ##
@@ -31,13 +32,13 @@ var _builders := 0
 var _mark_size := HudWorkVocab.CREW_SPLIT_MARK_SIZE
 var _gap := HudWorkVocab.CREW_SPLIT_MARK_GAP
 var _radius := HudWorkVocab.CREW_SPLIT_MARK_RADIUS
-var _align_end := true
 var _words := ""
 var _focus_card: PanelContainer = null
 
-## Build the bar for a crew of `keepers + kitted + bare`. `kit_names` is the kit's on-screen item words
-## (`baskets`), `hold_crew` the wire's hands-to-hold figure (`0` = none). `sheet` takes the compose
-## sheet's larger squares and aligns them to the start; a Work-tab row aligns them under its number.
+## Build the bar for a crew of `keepers + builders + kitted + bare` (four segments, drawn in that order,
+## always aligned to the end). `kit_names` is the kit's on-screen item words (`baskets`), `hold_crew` the
+## wire's hands-to-hold figure (`0` = none). `sheet` takes the compose sheet's larger squares; a Work-tab
+## row uses the smaller ones.
 static func build(keepers: int, kitted: int, bare: int, kit_names: String, hold_crew: int,
         sheet: bool, builders: int = 0) -> CrewSplitMarks:
     var marks := CrewSplitMarks.new()
@@ -54,7 +55,6 @@ func setup(keepers: int, kitted: int, bare: int, kit_names: String, hold_crew: i
         _mark_size = HudWorkVocab.CREW_SPLIT_SHEET_MARK_SIZE
         _gap = HudWorkVocab.CREW_SPLIT_SHEET_MARK_GAP
         _radius = HudWorkVocab.CREW_SPLIT_SHEET_MARK_RADIUS
-    _align_end = true
     _words = HudWorkVocab.crew_bar_words(_keepers, _kitted, _bare, kit_names, hold_crew, _builders)
     tooltip_text = _words
     if "accessibility_description" in self:
@@ -143,7 +143,7 @@ func _draw() -> void:
     var total := _row_width(drawn, mark, gap)
     if overflow > 0:
         total += gap + _overflow_width(overflow)
-    var x := size.x - total if _align_end else 0.0
+    var x := size.x - total
     var y := (size.y - mark) * 0.5
     for i in drawn:
         _draw_mark(Rect2(x, y, mark, mark), segments[i])

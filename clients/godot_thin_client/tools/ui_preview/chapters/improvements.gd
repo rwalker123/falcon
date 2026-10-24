@@ -2029,8 +2029,10 @@ func _the_sheet_asks_whose_head_the_pool_is_on() -> void:
 		waiting_box != null
 			and String(waiting_box.get_meta(ForageFx.IMPROVEMENT_STATE_META, ""))
 				== ForageFx.IMPROVEMENT_STATE_DECLARED)
-	h._assert_hud("…and its chip says nobody builds it, with builders in the pool and the source's own position reading 0",
-		ForageFx.strip_chip_tip(h._hud._drawercompose._compose_sheet).contains("no spare hands"))
+	# The pool HAS builders (they are on the head elsewhere), so this build is WAITING its turn, not stalled.
+	var waiting_tip := ForageFx.strip_chip_tip(h._hud._drawercompose._compose_sheet)
+	h._assert_hud("…and its chip says it waits its turn, with builders in the pool and the source's own position reading 0",
+		waiting_tip.contains("waiting its turn") and not waiting_tip.contains("no spare hands"))
 
 	# ---- (b) THE POSITIVE: the SAME everything, with this band's own head on this tile -----------
 	# Without it "reads as DECLARED" is satisfied by a sheet that had stopped rendering RUNNING at all.
