@@ -188,6 +188,19 @@ fn rung_quotes() -> Vec<RungQuoteState> {
         .collect()
 }
 
+/// **A declared build's tool lines**, seeded on every source row that carries them (`buildToe`) -
+/// keyed by item like `kit_toe`, so no duplicate.
+fn build_toe_rows() -> Vec<crate::state::population::PoolToeLineState> {
+    ["hoes", "crook"]
+        .iter()
+        .map(|item| crate::state::population::PoolToeLineState {
+            pool: "build".to_string(),
+            item_id: (*item).to_string(),
+            ..Default::default()
+        })
+        .collect()
+}
+
 fn rows_of<T: Clone>(blank: T) -> Vec<T> {
     vec![blank; ROWS]
 }
@@ -552,11 +565,6 @@ fn seed_snapshot() -> WorldSnapshot {
                 ..Default::default()
             })
             .collect();
-        // **THE BAND'S OWN BUILD QUEUE** (`docs/plan_standing_upkeep.md` §4.9 item 9a) — a repeated
-        // field on the cohort, seeded for the reason every other one here is: an empty vector
-        // carries no element type, so the decode guard would never see the field at all. The rank
-        // is the INDEX, so the golden's element ORDER is part of what it pins.
-        cohort.build_queue = rows();
         // **ONE ROW PER `SourcePriority`, WHICH IS WHY THIS LIST IS NOT `rows()`.**
         //
         // The rank is a serde *enum*, so saturation leaves it alone (a variant name is a non-empty
@@ -635,13 +643,11 @@ fn seed_snapshot() -> WorldSnapshot {
         // (see `PoolToeLineState::filled`).
         //
         // What the pairs still carry is the KEYING, which saturation does not touch: two pools
-        // sharing `stone_dressing` is the band-wide settlement's own case. Only `roadwork` and
-        // `builders` publish a line (`docs/plan_site_crews.md` §4).
+        // sharing `stone_dressing` is the band-wide settlement's own case. Only `roadwork` publishes a
+        // line (`docs/plan_site_crews.md` §4).
         cohort.pool_toe = [
             ("roadwork", "earthmoving", 4.0, 1.5),
             ("roadwork", "stone_dressing", 2.0, 0.0),
-            ("builders", "stone_dressing", 3.0, 3.0),
-            ("builders", "hoes", 2.0, 0.5),
         ]
         .iter()
         .map(|(pool, item, required, filled)| PoolToeLineState {
@@ -684,6 +690,7 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.band_improvements = rows_of(BandImprovementState {
             build_legs: vec![crate::state::subsistence::BuildLegState::default()],
             upkeep_toe: vec![KitToeLineState::default()],
+            build_toe: build_toe_rows(),
             ..Default::default()
         });
         cohort.pending_reveal_x = vec![0u32; ROWS];
@@ -765,6 +772,7 @@ fn seed_snapshot() -> WorldSnapshot {
         herd.upkeep_material_supplied = rows();
         // **WHICH KEEPING TOOLS THE SITE IS SHORT OF** — spelled out on `kit_toe`'s rule: keyed by
         // item, and a duplicate item on one site is not something the server can emit.
+        herd.build_toe = build_toe_rows();
         herd.upkeep_toe = ["hoes", "crook"]
             .iter()
             .map(|item| KitToeLineState {
@@ -868,6 +876,7 @@ fn seed_snapshot() -> WorldSnapshot {
         patch.upkeep_material_supplied = rows();
         // **WHICH KEEPING TOOLS THE SITE IS SHORT OF** — spelled out on `kit_toe`'s rule: keyed by
         // item, and a duplicate item on one site is not something the server can emit.
+        patch.build_toe = build_toe_rows();
         patch.upkeep_toe = ["hoes", "crook"]
             .iter()
             .map(|item| KitToeLineState {
@@ -958,11 +967,15 @@ fn seed_snapshot() -> WorldSnapshot {
     // **There are no nested repeated fields on this row any more.** The stored `path_x`/`path_y`
     // halves went with the path object — a road is a per-tile improvement, so the row carries its
     // own `tile_x`/`tile_y` scalars and nothing to walk.
-    s.routes = rows();
+    s.routes = rows_of(crate::state::routes::RouteState {
+        build_toe: build_toe_rows(),
+        ..Default::default()
+    });
     // A tile improvement's own `build_legs` is a nested repeated field, so it is seeded too.
     s.tile_improvements = rows_of(crate::state::routes::TileImprovementState {
         build_legs: vec![crate::state::subsistence::BuildLegState::default()],
         upkeep_toe: vec![crate::state::population::KitToeLineState::default()],
+        build_toe: build_toe_rows(),
         ..Default::default()
     });
 
@@ -1033,6 +1046,7 @@ fn seed_snapshot() -> WorldSnapshot {
         deposit.offered_kit_ids = rows();
         // **WHICH KEEPING TOOLS THE SITE IS SHORT OF** — spelled out on `kit_toe`'s rule: keyed by
         // item, and a duplicate item on one site is not something the server can emit.
+        deposit.build_toe = build_toe_rows();
         deposit.upkeep_toe = ["hoes", "crook"]
             .iter()
             .map(|item| KitToeLineState {

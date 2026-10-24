@@ -289,8 +289,43 @@ func _sow_too_poor_tile_fixture() -> Dictionary:
 	tile["patch_sow_site_refusal"] = "too_poor"
 	return tile
 
+## **THE DEAL ROW SAYS WHY IT READS ZERO** (PNG-less, an authored curve): a crew whose finished-rung
+## keeping bill takes every hand gets `all N keep it; M needed to gather`, with the crew that first
+## gathers as M; a crew that gathers gets no clause. Fails without the clause (empty note) and without
+## the keep-hands comparison (crew 3 would carry one).
+const ALL_KEEP_CREW := 2
+const ALL_KEEP_GATHER_CREW := 3
+const ALL_KEEP_GATHER_TAKE := 0.9
+func _assert_all_keepers_deal_note() -> void:
+	var take_key := SourceForecast.FORAGE_CREW_NEXT_RUNG_TAKE_KEY
+	var curve: Array = [
+		{"workers": ALL_KEEP_CREW, take_key: 0.0, SourceForecast.NEXT_RUNG_KEEP_HANDS_KEY: float(ALL_KEEP_CREW)},
+		{"workers": ALL_KEEP_GATHER_CREW, take_key: ALL_KEEP_GATHER_TAKE,
+			SourceForecast.NEXT_RUNG_KEEP_HANDS_KEY: float(ALL_KEEP_CREW)},
+	]
+	var compose: Object = h._hud._drawercompose
+	var held: Dictionary = compose._next_rung_keeping_note(curve, curve[0], ALL_KEEP_CREW, take_key)
+	var want := HudComposeVocab.DEAL_ALL_KEEP_FORMAT % [ALL_KEEP_CREW, ALL_KEEP_GATHER_CREW]
+	h._assert_hud("deal note: crew %d with next_rung_take 0 and keep %d reads `%s` (got %s)"
+		% [ALL_KEEP_CREW, ALL_KEEP_CREW, want, str(held)], String(held.get("text", "")) == want)
+	h._assert_hud("deal note: that text is `all 2 keep it; 3 needed to gather`",
+		String(held.get("text", "")).contains("all 2 keep it; 3 needed to gather"))
+	h._assert_hud("deal note: crew %d, which gathers, carries no clause" % ALL_KEEP_GATHER_CREW,
+		compose._next_rung_keeping_note(curve, curve[1], ALL_KEEP_GATHER_CREW, take_key).is_empty())
+	var none_curve: Array = [curve[0]]
+	h._assert_hud("deal note: a curve where nobody gathers states only `all N keep it`",
+		String(compose._next_rung_keeping_note(none_curve, curve[0], ALL_KEEP_CREW, take_key).get(
+			"text", "")) == HudComposeVocab.DEAL_ALL_KEEP_NONE_FORMAT % ALL_KEEP_CREW)
+	var block := HudWidgets.build_improvement_deal("once tended", "0.00 food", want, "tip")
+	var note: Node = Q.find_meta_node(block, HudWidgets.IMPROVEMENT_DEAL_NOTE_META)
+	h._assert_hud("deal note: the widget renders the clause in the WARN ink with its hover",
+		note is Label and (note as Label).text == want and (note as Label).tooltip_text == "tip"
+		and (note as Label).get_theme_color("font_color") == HudStyle.WARN)
+	block.free()
+
 func run(harness) -> void:
 	h = harness
+	_assert_all_keepers_deal_note()
 
 	# ---- Cultivate: the forage INVESTMENT rung (gated, then unlocked) ----------------------------
 	# State 2-cultivate-locked — **THE KNOWLEDGE-SUPPRESSION RULE'S OWN FRAME, on the plant web.** The
@@ -403,10 +438,6 @@ func run(harness) -> void:
 			SourceForecast.IMPROVEMENT_SOW) == null)
 	# **RETIRED — the CULTIVATE half of the picker's header pair** (`docs/plan_standing_upkeep.md`
 	# §4.7a ③). It pinned that this rung asked which crop to TEND while Sow asked which to COMMIT to —
-	# a real distinction (Cultivate weeds the favoured share upward and leaves the rest standing) —
-	# and it was a claim about a control that is no longer on this sheet. The header words survive in
-	# `HudFloraVocab` unread; whether the queue row's picker earns a per-rung question is a design
-	# call, not a repair, and it would be made in a 84px face rather than a section header.
 
 	# State 2-crop-then-a / -b — THE PICKER ACTUALLY MOVES THE PAYOFF. The payoff term used to quote
 	# a species-BLIND patch number, so committing to Ground Nut showed Wild Emmer's payoff and the picker
@@ -637,15 +668,6 @@ func run(harness) -> void:
 	h._compose_forage(_four_species_committed_tile_fixture())
 	await h._settle()
 	await h._save("forage_crop_committed")
-	# **RETIRED with the picker it headed** (§4.7a ③) — the committed-crop header and the
-	# `Already committed …` hint beneath it. What a committed patch is committed TO is still stated on
-	# the LAND CARD's own basket, which is a readout rather than a control and is untouched.
-	# **RETIRED — the four claims about the committed READOUT's rows** (`docs/plan_standing_upkeep.md`
-	# §4.7a ③). They pinned that a committed patch listed its WHOLE basket rather than the committed
-	# crop alone, that every row was locked, and that the committed one alone wore the marked-and-
-	# locked treatment — `HudStyle.apply_button`'s `selected_when_disabled`, whose LAST caller they
-	# were. The picker is off this sheet; the crop is the BUILD QUEUE row's setting, and an
-	# `OptionButton` marks its own selection natively.
 	#
 	# **The header and the hint above still render and are still asserted**, which is what keeps this
 	# state a claim about a committed patch rather than a frame with nothing left in it.
@@ -914,11 +936,6 @@ func run(harness) -> void:
 	# that a species shipping none wore no icon — a pair, since the positive passes on a picker that
 	# ices every row and the negative on one that resolves nothing.
 	#
-	# **The picker is off this sheet and its replacement carries no art at all**: the queue row's
-	# `OptionButton` deliberately has no per-entry icon (`HudWidgets.build_option_picker`'s own rule —
-	# neither caller has per-entry art, and one glyph repeated down a list is noise). So there is no
-	# surface left for the claim to be made on, and `FloraSprites.texture_for` has no caller — a fact
-	# recorded rather than acted on, the flora sprite family being the land card's to own.
 
 	# State F4 cash crop — a basket with a CASH crop under Sow. Flax pays a MATERIAL, not provisions or
 	# fodder, so its provisions ratio is 0 and the ordinary "N.N×" row would read it as worthless; the

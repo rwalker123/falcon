@@ -3227,28 +3227,6 @@ pub enum LaborTarget {
     /// **Several bands may pay one road**, and each pays a part — the same `+=` accumulation §2.5
     /// already requires of a source two bands work.
     Roadwork,
-    /// **RAISE WHATEVER THIS BAND HAS QUEUED** — the builders standing role
-    /// (`docs/plan_standing_upkeep.md` §2.5). Its workers are a **pool** whose whole output goes on
-    /// the **head** of [`LaborAllocation::build_queue`] until that entry's meter fills, then on the
-    /// next one.
-    ///
-    /// # ONE POOL FOR BOTH WEBS, unlike the keeping
-    ///
-    /// The two keeping roles split because the two webs are separate ladders and a keeping demand
-    /// is a *standing charge* on everything a band holds there. A build is a **job**, and the queue
-    /// already says which one is being worked — so a second axis would only ask the player to say
-    /// the same thing twice.
-    ///
-    /// # A VERB DECLARES; IT DOES NOT STAFF
-    ///
-    /// `cultivate` / `sow` / `tame` / `corral` / `extend_pen` append a
-    /// [`BuildQueueEntry`]; none of them names a crew. The hands are here, and `0` is how the
-    /// player says *stop building* — for the whole band rather than for one source.
-    ///
-    /// **Spread is deliberately not offered.** An under-kept improvement has something to ride out,
-    /// so spreading a short keeping pool loses nothing; splitting a builder pool across three jobs
-    /// just means nothing finishes.
-    Builders,
     /// **TAKE A MATERIAL OUT OF THE GROUND** — the two deposit branches' take row
     /// (`docs/plan_extraction.md` §6), and **the only row in the game that pays no food**.
     ///
@@ -3310,7 +3288,7 @@ pub enum LaborTarget {
     /// **The crew is the keeper.** The hands on this row keep the improvement first
     /// (`keep_hands = min(crew, bill / keep_rate)`, the same site-keeping claims a working's crew
     /// makes), through the keeping tools the improvement's rung derives. Hands beyond the bill do no
-    /// work: a build is raised by the band's `builders` pool, exactly as it is on a working, and a
+    /// work: a build is raised by the build's own crew, exactly as it is on a working, and a
     /// take has nothing to take. **A far crew is a work party, as a far working's is** - the row
     /// posts one past `band_work_range` like every other source row.
     ///
@@ -3330,7 +3308,7 @@ pub enum LaborTarget {
     Band { band: BandId, branch: BranchId },
 }
 
-/// The stable role key a **Forage** row publishes, and the one a plant-web build queue entry names
+/// The stable role key a **Forage** row publishes, and the one a plant-web build declared build names
 /// its source with. One constant rather than two literals, so [`LaborTarget::kind`] and
 /// [`BuildSource::kind`] cannot drift apart — a client joins a band's queue to its labor rows on
 /// this spelling.
@@ -3338,20 +3316,20 @@ pub const FORAGE_ROLE_KEY: &str = "forage";
 /// The **Hunt** twin of [`FORAGE_ROLE_KEY`].
 pub const HUNT_ROLE_KEY: &str = "hunt";
 /// The **Roadwork** twin of [`FORAGE_ROLE_KEY`] — the band-wide keeping role, and the row a road's
-/// build-queue entry names its web with. A road carries no *take* row of its own, so the keeping role
+/// declared build names its web with. A road carries no *take* row of its own, so the keeping role
 /// is what a client joins a queued `grade` to.
 pub const ROADWORK_ROLE_KEY: &str = "roadwork";
 /// The **Extract** twin of [`FORAGE_ROLE_KEY`] — the take row on a deposit, and the row a
-/// forestry/extraction build-queue entry names its branch with. **One key for both ladders**, for
+/// forestry/extraction declared build names its branch with. **One key for both ladders**, for
 /// the same reason there is one row kind: what a crew is doing is *taking a material out of the
 /// ground*, and which of the two skills that is, is the deposit's.
 pub const EXTRACT_ROLE_KEY: &str = "extract";
 /// The **Tile** twin of [`EXTRACT_ROLE_KEY`] - the crew row on a tile-kind improvement, and the row a
-/// tile build-queue entry names its source with. One key for every tile-kind branch, for the reason
+/// tile declared build names its source with. One key for every tile-kind branch, for the reason
 /// there is one row kind: which branch it is, is the improvement's.
 pub const TILE_ROLE_KEY: &str = "tile";
 /// The **Band** twin of [`TILE_ROLE_KEY`] - the crew row on a band-kind improvement, and the row a
-/// band build-queue entry names its source with. One key for every band-kind branch.
+/// band declared build names its source with. One key for every band-kind branch.
 pub const BAND_ROLE_KEY: &str = "band";
 
 impl LaborTarget {
@@ -3363,7 +3341,6 @@ impl LaborTarget {
             LaborTarget::Scout => "scout",
             LaborTarget::Warrior => "warrior",
             LaborTarget::Roadwork => ROADWORK_ROLE_KEY,
-            LaborTarget::Builders => "builders",
             LaborTarget::Extract { .. } => EXTRACT_ROLE_KEY,
             LaborTarget::Tile { .. } => TILE_ROLE_KEY,
             LaborTarget::Band { .. } => BAND_ROLE_KEY,
@@ -3385,13 +3362,12 @@ impl LaborTarget {
             LaborTarget::Scout => crate::equipment_config::KitJob::Scout,
             LaborTarget::Warrior => crate::equipment_config::KitJob::Warrior,
             LaborTarget::Roadwork => crate::equipment_config::KitJob::Roadwork,
-            LaborTarget::Builders => crate::equipment_config::KitJob::Builders,
             // **The shipped roster declares no take gear for either deposit branch**, so this job's
             // default is the empty `none` kit — exactly the opening `roadwork` has, and for the same
             // kind of reason. Forestry's natural tool is an axe and it would be bone-hafted while
             // stone tools are out of scope (`docs/plan_extraction.md` §9); the two quarry tools that
             // *do* ship (`earthmoving`, `stone_dressing`) declare `build_work`, which lands on the
-            // builders' pool that RAISES a working rather than on the crew that takes from it.
+            // build crew that RAISES a working rather than on the crew that takes from it.
             LaborTarget::Extract { .. } => crate::equipment_config::KitJob::Extraction,
             // **A tile crew takes nothing, so it has no take kit to choose**: its keeping tools
             // follow from the improvement's rung (`EquipmentConfig::pool_toe`), exactly as a
@@ -3416,7 +3392,6 @@ impl LaborTarget {
             (LaborTarget::Scout, LaborTarget::Scout) => true,
             (LaborTarget::Warrior, LaborTarget::Warrior) => true,
             (LaborTarget::Roadwork, LaborTarget::Roadwork) => true,
-            (LaborTarget::Builders, LaborTarget::Builders) => true,
             // **Keyed by tile AND material**, because a wooded highland holds two deposits and
             // working the timber is not working the rock — so the two are different sources on one
             // tile, not one source restated.
@@ -3498,7 +3473,7 @@ impl LaborTarget {
             | LaborTarget::Band { .. }
             | LaborTarget::Roadwork => true,
             LaborTarget::Hunt { move_with_herd, .. } => !move_with_herd,
-            LaborTarget::Scout | LaborTarget::Warrior | LaborTarget::Builders => false,
+            LaborTarget::Scout | LaborTarget::Warrior => false,
         }
     }
 
@@ -3508,7 +3483,7 @@ impl LaborTarget {
             | LaborTarget::Hunt { .. }
             // **A deposit is ground the band holds**, exactly as a patch is: zeroing the crew is
             // *stop cutting here*, never *this band has nothing here*, and the row has to survive it
-            // or the working loses its place in the build queue — and a row held at zero is a site
+            // or the working loses its place in the declared builds — and a row held at zero is a site
             // with no crew, so nothing keeps it.
             | LaborTarget::Extract { .. }
             // **A tile improvement is ground the band holds**, a working's reading exactly - and a
@@ -3518,7 +3493,7 @@ impl LaborTarget {
             LaborTarget::Scout
             | LaborTarget::Warrior
             | LaborTarget::Roadwork
-            | LaborTarget::Builders => false,
+            => false,
         }
     }
 
@@ -3536,7 +3511,7 @@ impl LaborTarget {
     /// Stated exhaustively so a new target has to answer the question rather than inherit a default.
     pub fn is_standing_pool(&self) -> bool {
         match self {
-            LaborTarget::Roadwork | LaborTarget::Builders => true,
+            LaborTarget::Roadwork => true,
             LaborTarget::Forage { .. }
             | LaborTarget::Hunt { .. }
             | LaborTarget::Extract { .. }
@@ -3622,8 +3597,8 @@ impl SourcePriority {
 ///
 /// **The build is not one of its axes any more** (`docs/plan_standing_upkeep.md` §2.5). A row used
 /// to carry the improvement the crew was building and that build's own crew; both retired with the
-/// per-source build crew. What a band is building is its **ordered queue**
-/// ([`LaborAllocation::build_queue`]), funded by the band-level [`LaborTarget::Builders`] pool — so
+/// per-source build crew. What a band is building is its **declared builds**
+/// ([`LaborAllocation::builds`]), each staffed with its own crew — so
 /// there is exactly one authority for *"what is being raised here"*, and a row states only the
 /// **take**.
 ///
@@ -3761,7 +3736,7 @@ impl PartialEq for LaborAssignment {
 //
 // **The build left the tile too** (`docs/plan_standing_upkeep.md` §2.5), for the reason the keeping
 // did one slice earlier: the hands stand on [`LaborTarget::Builders`], one band-level pool, and a
-// verb names no crew at all — it appends a [`BuildQueueEntry`]. With nothing per-source to restate
+// verb names no crew at all — it appends a [`BuildDeclaration`]. With nothing per-source to restate
 // there is no "which of this row's crews am I overwriting" question left to answer, so the enum, the
 // `idle_for` it parameterised and the five verbs' affordability gate all go together. A role's
 // stepper clamps on idle exactly as scout's and warrior's do, and `assign_labor` is the one
@@ -3857,8 +3832,8 @@ impl LaborAssignment {
     /// **EVERY HAND THIS ROW HOLDS** — the take crew, and nothing else.
     ///
     /// **Neither standing commitment is a term here.** A site's keeping is paid out of this very
-    /// crew (`docs/plan_site_crews.md` §2.1), and the building is a band-level role
-    /// ([`LaborTarget::Builders`]) — a *row* in the same list, counted by the same sum one level up
+    /// crew (`docs/plan_site_crews.md` §2.1), and the building is a declared build with a crew
+    /// of its own, counted by the same sum one level up
     /// ([`LaborAllocation::assigned_total`]). It survives as a named seam rather than collapsing
     /// into `workers` because *"every hand this row holds"* is the question `assigned_total` asks,
     /// and a future third allocation on a source would answer it here.
@@ -3924,7 +3899,7 @@ impl ShedSubject {
 /// The band could not field what it was holding, so the shedding pass took `lost` workers off
 /// `subject` and left `remaining` there. **[`Self::remaining`] is the whole of the difference
 /// between a trim and a lapse**: above zero the source is still worked by a smaller crew, at
-/// [`NO_CREW_ON_THIS_ACTIVITY`] the row is gone and its queue entry goes with it on the next prune.
+/// [`NO_CREW_ON_THIS_ACTIVITY`] the row is gone and its declared build goes with it on the next prune.
 ///
 /// It carries the subject by value rather than the whole [`LaborAssignment`] because a trimmed row
 /// is **still in the allocation** — handing back a copy of a live row would put a second, instantly
@@ -3945,7 +3920,7 @@ impl ShedCrew {
     /// shed gets, named so neither caller re-spells the comparison.
     ///
     /// **Its two readings differ by subject, and the caller must not collapse them.** A row at zero
-    /// is **gone**, its queue entry with it; a bench at zero is **stalled** — the recipe, the
+    /// is **gone**, its declared build with it; a bench at zero is **stalled** — the recipe, the
     /// progress and the drawn pile all stand, and re-staffing resumes. Nothing is destroyed, so the
     /// two states cannot share a status token.
     pub fn row_survived(&self) -> bool {
@@ -3990,13 +3965,6 @@ const ONE_WORKER: u32 = 1;
 /// Named rather than a bare `false` at the call site because the literal there would read as *"this
 /// row is not learning"* — a claim about the row — when what it says is *"this step does not ask"*.
 const NO_LESSON_AT_STAKE: bool = false;
-
-/// **THE BUILD POOL AT WHICH THE NEXT HAND TAKEN IS THE LAST ONE.** While a build is queued, step 4
-/// sheds a builder only *above* this; taking the last is step 11, at the bottom of the order,
-/// because every queued build stalls with it. **With an empty queue it does not apply** — there is
-/// no job for a last builder to stall, so step 4 tests the pool against
-/// [`NO_CREW_ON_THIS_ACTIVITY`] instead and takes them all before anything is lost.
-const LAST_BUILDER_STANDING: u32 = 1;
 
 /// **A ROW WITH NOBODY ON IT BRINGS NOTHING HOME PER HEAD** — what
 /// [`LaborAllocation::yield_per_worker`] answers for an unstaffed row instead of dividing by zero.
@@ -4182,7 +4150,7 @@ const A_CRAFT_PAYS_NO_ACCOUNT: bool = false;
 /// # THE THREE BANDS, AND THE SHARP LINE IS BETWEEN THE SECOND AND THE THIRD
 ///
 /// - **Nothing is lost** (1–4): a role stops, or a pool loses a hand it was not spending.
-/// - **Output falls, nothing ends** (5): a crew thins. The row, its improvement and its queue entry
+/// - **Output falls, nothing ends** (5): a crew thins. The row, its improvement and its declared build
 ///   all stand.
 /// - **Something ends** (6–11): a row is emptied and dropped, or the keeping goes short.
 ///
@@ -4212,15 +4180,6 @@ pub enum ShedStep {
     /// rots. Roadwork is the only keeping **pool**: a site's own keeping hands sit inside its row,
     /// and a hand above that line is step 5's (`docs/plan_site_crews.md` §2.6).
     SpareKeeper,
-    /// **4 — a builder the pool is not spending.** With something queued, every builder above the
-    /// last one: the queue slows and no job stops. With **nothing** queued, every builder there is,
-    /// down to and including the last — an idle pool builds nothing, so its hands are the plainest
-    /// case of *nothing is lost* in the whole order.
-    ///
-    /// ⛔ Gating this step on a **non-empty queue** put idle builders below steps 6, 9 and 10, so a
-    /// band with three builders and an empty queue answered a lost hand by dropping its only food
-    /// row. The queue decides *how many* builders are spare, never *whether* any are.
-    SpareBuilder,
     /// **5 — thin the least-productive worked source that has two or more hands**, on the player's
     /// rank, then the lesson, then least yield *per worker*. A source still accruing knowledge is
     /// passed over — a **level** of that ordering rather than a filter on it, so a row the player
@@ -4240,14 +4199,14 @@ pub enum ShedStep {
     ///
     /// **Above step 6 because a stalled craft ends nothing.** The recipe, the progress, the drawn
     /// pile and the finished count all stand and re-staffing resumes, where emptying a source drops
-    /// the row and takes its queued build with it.
+    /// the row and takes its declared build with it.
     ///
     /// **Yes, a `High`-marked bench stalls before a `Low`-marked source is emptied**, and that is the
     /// same rule already pinned for sources: an unimproved `High` row is emptied at step 6 before an
     /// improved `Normal` one is a candidate at step 9. **The steps encode consequence; the mark
     /// orders candidates within a step.**
     StallBench,
-    /// **6 — empty the least-productive source carrying no improvement and no queued build.** The row
+    /// **6 — empty the least-productive source carrying no improvement and no declared build.** The row
     /// ends, and nothing invested ends with it.
     EmptyUnimproved,
     /// **7 — a warrior, unconditionally.** Below step 6 because pulling the guard under a real threat
@@ -4261,22 +4220,15 @@ pub enum ShedStep {
     ///
     /// ⛔ **A SITE HAND HERE NEVER EMPTIES ITS ROW.** Only a row with two or more hands is a
     /// candidate: its last hand is the row itself, and emptying an improved row is step 9's (or
-    /// step 10's, with a queued build) — thinning beats emptying, at the keeping line as everywhere.
+    /// step 10's, with a declared build) — thinning beats emptying, at the keeping line as everywhere.
     NeededKeeper,
-    /// **9 — empty the least-productive improved source with no queued build.** Worse than step 8:
+    /// **9 — empty the least-productive improved source with no declared build.** Worse than step 8:
     /// an improved source with no take crew still owes its upkeep and now pays nothing, where rot is
     /// gradual and recoverable.
     EmptyImproved,
-    /// **10 — empty a source carrying a queued build.** The row drops and the declaration goes with
-    /// it on the next [`LaborAllocation::prune_build_queue`].
+    /// **10 — empty a source carrying a declared build.** The row drops and the declaration goes with
+    /// it on the next [`LaborAllocation::prune_builds`].
     EmptyQueued,
-    /// **11 — the last builder.** Every queued build stalls.
-    ///
-    /// It names the Builders row **unconditionally**, where step 4 leaves the last builder standing
-    /// whenever a build is queued, so the walk stays total: with a queue, the last builder is
-    /// reached only here, at the bottom. With an **empty** queue step 4 has already taken the whole
-    /// pool and this step finds nobody.
-    LastBuilder,
     /// **Terminal — the band is down to a single worker on a single row.** Take it; the row ends.
     ///
     /// Steps 6, 9 and 10 partition every staffed *source* row between them and steps 1–4, 7, 8 and
@@ -5948,7 +5900,8 @@ impl BandWorkforce {
                     .iter()
                     .filter(|row| row.target.is_staffed())
                     .map(|row| row.staffed_total())
-                    .sum()
+                    .sum::<u32>()
+                    + a.builders_total()
             }),
         }
     }
@@ -6240,28 +6193,13 @@ pub struct LaborAllocation {
     /// must stop republishing last turn's tools. **Excluded from equality** below, like the rest of
     /// the per-turn telemetry.
     pub last_pool_toe: Vec<PoolToeLine>,
-    /// **THE QUEUE ENTRY THE BUILDERS' [`Self::last_pool_toe`] LINES WERE STRUCK FOR** — the head
-    /// `(source, declared job)` the turn's `BuildersAsk` was built from, `None` when no ask was made
-    /// (no builders, or a head the ground refused).
-    ///
-    /// ⛔ **THE BUILDERS' LINES NAME THE QUEUE HEAD OR NOTHING.** A completed head retires in the
-    /// same pass that struck the claim on it, so the frame after a completion carries lines for a job
-    /// that is no longer at the head (and a `build_order` / `unqueue` between turns does the same by
-    /// hand). [`Self::published_pool_toe`] withholds the builders' lines unless this stamp is the
-    /// live head, so a reader sees a blank for that one frame rather than the previous job's tools.
-    /// Cleared with [`Self::last_pool_toe`] and rewritten beside it; **excluded from equality**.
-    pub last_pool_toe_head: Option<(BuildSource, BuildJob)>,
-    /// **THE TOOLS EACH QUEUED BUILD BEHIND THE HEAD WILL NEED OF THE BUILDERS' HANDS**, one line per
-    /// `(queue position, item)` for every entry after the head (the head's own claim is the builders'
-    /// [`Self::last_pool_toe`] line). Each is the same requirement the head's claim computes — the
-    /// entry's in-flight rung's `pool_toe` x the builders' hand count / the item's
-    /// `workers_per_unit` — struck by `systems::labor` from the entry's own quote.
-    ///
-    /// The craft suggestions walk these against the stock left after the turn's settlement
-    /// (`craft_suggestions::band_tool_shortfall_lines`), so a tool a later job will need is suggested
-    /// before that job reaches the head. Cleared before every early exit of the band's turn on
-    /// [`Self::last_pool_toe`]'s rule. **Excluded from equality** below.
-    pub last_queued_build_toe: Vec<QueuedBuildToe>,
+    /// **THE TOOLS EACH DECLARED BUILD'S BUILDERS ASKED FOR THIS TURN, AND WHAT THEY WERE GIVEN**,
+    /// one line per `(build, item)` — exported on each source row as `buildToe`, and read by the
+    /// craft suggestions (`craft_suggestions::band_tool_shortfall_lines`) so a tool a build is short
+    /// of is suggested. Struck from the settled plan (`systems::labor::plan_pool_tools`), cleared
+    /// before every early exit of the band's turn on [`Self::last_pool_toe`]'s rule. **Excluded from
+    /// equality** below.
+    pub last_build_toe: Vec<BuildToeLine>,
     /// **THE KEEPING TOOLS THIS BAND'S SITE CREWS WERE ISSUED THIS TURN**, one line per `(site, item)`
     /// — the units the band-wide settlement handed each site crew for its keeping hands
     /// (`docs/plan_site_crews.md` §2.3).
@@ -6286,10 +6224,9 @@ pub struct LaborAllocation {
     /// would report hands the sim has working (issue #714's own case).
     ///
     /// ⛔ **ONE POOL, `roadwork`, AND `builders` IS NOT ONE.** Roadwork is the only keeping pool
-    /// left (`docs/plan_site_crews.md` §1). The builders put their **whole** head count on the
-    /// queue head (`docs/plan_pool_toe.md` §2.4), so no builder is ever left standing by a plan that
-    /// wanted fewer; a builders pool with an empty *queue* is idle in a different sense and has no
-    /// line here.
+    /// left (`docs/plan_site_crews.md` §1). Staffing deals each build its
+    /// own builders up to the rung's cap, so no builder is ever left standing by a plan that
+    /// wanted fewer; builders have no line here.
     ///
     /// **A pool with a head count and no roads states its whole head count**, which is the common
     /// case. A cohort with no [`BandId`] keeps no roads (`settle_bands_roadwork` runs under one,
@@ -6320,11 +6257,12 @@ pub struct LaborAllocation {
     /// allocation's *identity* and rides the manual `PartialEq` below. It is `SimState` by the same
     /// route the assignments are: `capture_sim_state` clones the whole component.
     pub upkeep_fund_mode: crate::intensification::UpkeepFundMode,
-    /// **THE BUILDS THIS BAND HAS DECLARED, IN THE ORDER IT WILL RAISE THEM**
-    /// (`docs/plan_standing_upkeep.md` §2.5). The whole [`LaborTarget::Builders`] pool goes on
-    /// `build_queue[0]` until that entry's meter fills, then on the next.
+    /// **THE BUILDS THIS BAND HAS DECLARED** (`docs/plan_labor_at_scale.md` → "Builds join the site's
+    /// crew"). There is no queue and no order: every declared build is worked every turn by the
+    /// builders staffing puts on it ([`Self::build_crews`]), in parallel with the others, and ranked by
+    /// its site's one Priority. Insertion order is kept only so iteration is deterministic.
     ///
-    /// # THE QUEUE IS THE DECLARATION
+    /// # THE DECLARATION IS THE INTENT
     ///
     /// It replaces the retired per-row `improvement`, and there is exactly **one** authority
     /// (§2.4): two would drift, and the meter would go on creating entries nobody asked for. What
@@ -6333,13 +6271,17 @@ pub struct LaborAllocation {
     /// rather than stalled**, and the declaration answers only for a meter at zero.
     ///
     /// **Nothing enrols itself, and a rung that erodes back below its cost is not re-adopted.**
-    /// Repairing it is a fresh decision the player makes by queueing it again — which is what keeps
-    /// a one-percent-eroded Field from displacing the build they actually ordered off the head.
+    /// Repairing it is a fresh decision the player makes by declaring it again.
     ///
     /// **It is intent, not telemetry**, so it rides the manual `PartialEq` below beside the
     /// assignments and the fund mode, and it is `SimState` by the same route they are
     /// (`capture_sim_state` clones the whole component).
-    pub build_queue: Vec<BuildQueueEntry>,
+    pub builds: Vec<BuildDeclaration>,
+    /// **THE BUILDERS STAFFING PUT ON EACH DECLARED BUILD THIS TURN**, keyed by source — a road has
+    /// no labor row to carry a crew, which is why this is not a field of [`LaborAssignment`].
+    /// Restated whole by every staffing run ([`Self::apply_build_crews`]); **excluded from equality**
+    /// below, like the rest of the per-turn staffing telemetry.
+    pub build_crews: Vec<(BuildSource, BuildCrew)>,
     /// ⛔ **THIS BAND'S STOOD-DOWN WORK PARTIES, STILL WALKING HOME** (#706) — what
     /// [`crate::work_party::WorkParty::walk_home`] turned each ended posting into. It lives here, not
     /// on a row, because it outlives the row: an unassign, a lapse or `cancel_order` ends the row
@@ -6353,7 +6295,7 @@ pub struct LaborAllocation {
 }
 
 /// Equality is **intent only** — two allocations with equal `assignments`, `upkeep_fund_mode` and
-/// `build_queue` are equal regardless of the derived `last_yields` telemetry. This keeps the
+/// `builds` are equal regardless of the derived `last_yields` telemetry. This keeps the
 /// per-turn telemetry out of any state comparison (it is deliberately not part of the assignment's
 /// identity).
 ///
@@ -6365,7 +6307,7 @@ impl PartialEq for LaborAllocation {
     fn eq(&self, other: &Self) -> bool {
         self.assignments == other.assignments
             && self.upkeep_fund_mode == other.upkeep_fund_mode
-            && self.build_queue == other.build_queue
+            && self.builds == other.builds
     }
 }
 
@@ -6436,19 +6378,6 @@ pub struct KeepingIssue {
     pub required: f32,
 }
 
-/// **THE TOOLS A QUEUED BUILD WILL NEED** — one line of [`LaborAllocation::last_queued_build_toe`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct QueuedBuildToe {
-    /// The entry's place in the build queue; the head is `0` and never appears here.
-    pub position: u32,
-    /// The entry's source, which is how a client names the job.
-    pub source: BuildSource,
-    /// The equipment item id.
-    pub item: String,
-    /// Units the builders' hands would need of it for this job.
-    pub required: f32,
-}
-
 /// **ONE LINE OF ONE STANDING POOL'S TABLE OF EQUIPMENT** — a row of
 /// [`LaborAllocation::last_pool_toe`], and the shape the wire's `poolToe` is written from.
 ///
@@ -6516,7 +6445,7 @@ pub struct PoolCrewLine {
     pub keepers: f32,
 }
 
-/// **WHICH SOURCE A BUILD QUEUE ENTRY NAMES** — a patch by its tile, a herd by its id.
+/// **WHICH SOURCE A BUILD DECLARED BUILD NAMES** — a patch by its tile, a herd by its id.
 ///
 /// **Deliberately NOT a [`LaborTarget`]**, though the two name the same things. A target carries the
 /// take crew's **floor** and its **species selection**, which are facts about *gathering* the
@@ -6554,12 +6483,12 @@ pub enum BuildSource {
     Deposit { tile: UVec2, material: String },
     /// **AN IMPROVEMENT ON ONE TILE OF A TILE-KIND BRANCH** - `(tile, branch)`, the key of
     /// [`crate::tile_improvement::TileImprovementRegistry`]. **Backed by a labor row**, a working's
-    /// reading ([`LaborTarget::Tile`]): the band's `builders` pool raises it and the crew on the row
+    /// reading ([`LaborTarget::Tile`]): the build's own crew raises it and the crew on the row
     /// keeps it, so the entry is pruned exactly as a deposit's is - no row, no holding.
     Tile { tile: UVec2, branch: BranchId },
     /// **AN IMPROVEMENT A BAND HOLDS AT ITS CAMP** - `(band, branch)`, the key of the band half of
     /// [`crate::tile_improvement::TileImprovementRegistry`]. **Backed by a labor row**
-    /// ([`LaborTarget::Band`]), the tile kind's reading: the band's own `builders` pool raises it and
+    /// ([`LaborTarget::Band`]), the tile kind's reading: the build's own crew raises it and
     /// the crew on the row keeps it. The band id is part of the key so two bands' racks are two
     /// sources in every map the whole world shares (the site-crew denominators, the estimate claims).
     Band { band: BandId, branch: BranchId },
@@ -6597,16 +6526,13 @@ impl BuildSource {
                 band: *band,
                 branch: *branch,
             }),
-            LaborTarget::Scout
-            | LaborTarget::Warrior
-            | LaborTarget::Roadwork
-            | LaborTarget::Builders => None,
+            LaborTarget::Scout | LaborTarget::Warrior | LaborTarget::Roadwork => None,
         }
     }
 
     /// **The role key of the labor row that works this source** — [`FORAGE_ROLE_KEY`] for a patch,
     /// [`HUNT_ROLE_KEY`] for a herd, the same tokens [`LaborTarget::kind`] publishes. It is what a
-    /// published queue entry says its web is, so a client joins the band's queue to the band's
+    /// published declared build says its web is, so a client joins the band's queue to the band's
     /// labor rows on one spelling.
     pub fn kind(&self) -> &'static str {
         match self {
@@ -6619,7 +6545,7 @@ impl BuildSource {
             // its queued `fell` or `quarry` to the crew that is actually standing on it.
             BuildSource::Deposit { .. } => EXTRACT_ROLE_KEY,
             // **The crew row's own key**, a working's reading: a tile improvement has a row, so a
-            // client joins its queued build to the crew that is standing on it.
+            // client joins its declared build to the crew that is standing on it.
             BuildSource::Tile { .. } => TILE_ROLE_KEY,
             BuildSource::Band { .. } => BAND_ROLE_KEY,
         }
@@ -6700,7 +6626,7 @@ impl BuildJob {
     /// **WHERE THE PLAYER SAID THE LAND SHOULD END UP** — the rung this entry climbs *to*, which is
     /// not the same thing as the rung it is raising this turn.
     ///
-    /// # A QUEUE ENTRY NAMES A DESTINATION, NOT A RUNG
+    /// # A DECLARED BUILD NAMES A DESTINATION, NOT A RUNG
     ///
     /// The four verbs always were destinations — `cultivate` means *take it to Cultivated*, `sow`
     /// means *take it to Field* — and with one position per source (`docs/plan_standing_upkeep.md`
@@ -6735,43 +6661,55 @@ impl BuildJob {
     }
 }
 
-/// One declared build: which source, **where the player said the land should end up**
-/// ([`BuildJob::destination`]), and **how it ranks for scarce tools and materials**
-/// ([`Self::priority`]). What it is raised with is not the entry's to say: the builders' tools
-/// follow from the rung in flight (`docs/plan_pool_toe.md` §4).
+/// **ONE DECLARED BUILD** — which source, and **where the player said the land should end up**
+/// ([`BuildJob::destination`]). There is no queue: a declaration is worked by the site's own crew
+/// (`docs/plan_labor_at_scale.md` → "Builds join the site's crew"), ranked by the site's one
+/// Priority, and what it is raised with is not the declaration's to say — the tools follow from the
+/// rung in flight (`docs/plan_pool_toe.md` §4).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BuildQueueEntry {
+pub struct BuildDeclaration {
     pub source: BuildSource,
     pub declared: BuildJob,
-    /// **THE BUILD MARK** — where this build ranks when the band's tools or materials run short
-    /// (`docs/plan_site_crews.md` §2.4), set by `build_priority` and [`SourcePriority::default`]
-    /// (`Normal`) until the player sets it.
-    ///
-    /// ⛔ **IT IS THE ENTRY'S OWN, NOT ITS SITE ROW'S.** The builders' tool claim and the build's
-    /// material pile both rank at the **head** entry's mark. They used to borrow the head row's
-    /// `SourcePriority`, which welded two decisions together (#719): marking a Field's crew `High` so
-    /// it kept its hoes also pushed the Field's queued Sow ahead of every other build's pile. Within
-    /// one tier a site crew's keeping is still served before the build.
-    pub priority: SourcePriority,
+}
+
+/// **THE BUILDERS STAFFING PUT ON ONE DECLARED BUILD THIS TURN** — [`LaborAllocation::build_crews`].
+/// Derived telemetry (never intent, outside the allocation's equality), restated by every staffing
+/// run: the turn's and a command's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct BuildCrew {
+    /// Builders staffing counted as holding the rung's build kit (every builder, when the rung
+    /// asks for no tool).
+    pub kitted: u32,
+    /// Builders working with bare hands.
+    pub bare: u32,
+    /// **The most builders the build could take this turn** — the rung's own cap, cut by the room
+    /// the tile left. What the wire states beside the crew.
+    pub cap: u32,
+}
+
+impl BuildCrew {
+    /// Every builder on the build.
+    pub fn total(&self) -> u32 {
+        self.kitted.saturating_add(self.bare)
+    }
+}
+
+/// **ONE LINE OF ONE BUILD'S TABLE OF EQUIPMENT** — a row of [`LaborAllocation::last_build_toe`]:
+/// the tool its builders asked the band for this turn and what the settlement gave them. Read off the
+/// settled plan, never re-derived.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BuildToeLine {
+    /// The declared build the line belongs to.
+    pub source: BuildSource,
+    /// The equipment item id.
+    pub item: String,
+    /// Units the build's armed builders claimed.
+    pub required: f32,
+    /// Units the settlement handed the build.
+    pub filled: f32,
 }
 
 impl LaborAllocation {
-    /// **THE POOL TABLES OF EQUIPMENT AS THE WIRE STATES THEM** — [`Self::last_pool_toe`] with the
-    /// builders' lines dropped unless they were struck for the live queue head
-    /// ([`Self::last_pool_toe_head`]). The live head is read at call time, after every command, so a
-    /// reorder or an unqueue since the turn withholds them the same as a completion does.
-    pub fn published_pool_toe(&self) -> impl Iterator<Item = &PoolToeLine> + '_ {
-        let builders_current = match (&self.last_pool_toe_head, self.build_queue.first()) {
-            (Some((source, declared)), Some(head)) => {
-                *source == head.source && *declared == head.declared
-            }
-            _ => false,
-        };
-        self.last_pool_toe.iter().filter(move |line| {
-            line.pool != crate::equipment_config::KitJob::Builders || builders_current
-        })
-    }
-
     /// ⛔ **THE ONE WAY A CROSSING IS BOOKED** — the ledger arm (for `FOOD` / `FODDER`) and the
     /// crossings row, in one call, so the cause detail and the four arms it refines cannot disagree.
     ///
@@ -6873,7 +6811,11 @@ impl LaborAllocation {
     /// hands — and [`Self::normalize`] enforces the same bound against a band that *shrank*. The
     /// build verbs' own affordability refusal retired with the crew they used to name (§2.5).
     pub fn assigned_total(&self) -> u32 {
-        self.assignments.iter().map(|a| a.staffed_total()).sum()
+        self.assignments
+            .iter()
+            .map(|a| a.staffed_total())
+            .sum::<u32>()
+            + self.builders_total()
     }
 
     /// **Hands still walking home from a stood-down party** ([`Self::homeward`]) — away from the
@@ -7467,7 +7409,7 @@ impl LaborAllocation {
     /// an assignment that will in fact produce next turn.
     ///
     /// **A build already in flight on this source SURVIVES**, and now does so by construction: the
-    /// build lives in the band's [`Self::build_queue`], which this function does not touch at all
+    /// build lives in the band's [`Self::builds`], which this function does not touch at all
     /// (`docs/plan_standing_upkeep.md` §2.5). Editing the stance or the take crew is a stance-side
     /// edit; it must not re-assert — or silently drop — a build the player committed 25 turns to.
     /// Walking away from one is `unqueue` (drop the declaration) or `abandon` (put the whole source
@@ -7716,7 +7658,7 @@ impl LaborAllocation {
         self.last_yields.remove(idx);
         // A row going away cannot change a road's keeper, so road entries stand here and are judged
         // by the turn's own prune — [`road_holding_unchanged`].
-        let _ = self.prune_build_queue(&road_holding_unchanged);
+        let _ = self.prune_builds(&road_holding_unchanged);
         self.settle_rejoining(ExcessRejoining::WalkHomePlain);
         Some(row)
     }
@@ -7725,7 +7667,7 @@ impl LaborAllocation {
     /// (`docs/plan_standing_upkeep.md` §4.9 item 9b). Returns `false` when this band holds no row
     /// for that source, which the caller reports the way the queue verbs report the same miss.
     ///
-    /// **It touches nothing else on the row.** The take crew, the floor, the kit and the queue entry
+    /// **It touches nothing else on the row.** The take crew, the floor, the kit and the declared build
     /// are all statements the player made separately; this one says only *where this row stands when
     /// the band runs short*, so a rank is settable on a row held at zero exactly as it is on a
     /// staffed one.
@@ -7741,120 +7683,68 @@ impl LaborAllocation {
         true
     }
 
-    /// **Put a source in this band's build queue, or restate what it is building there** — the
-    /// whole of what the five build verbs do (`docs/plan_standing_upkeep.md` §2.5). Returns `false`
-    /// when the band has no row for that source, which the caller reports as *"staff it first"*.
+    /// **Declare a build on a source, or restate what it is building there** — the whole of what
+    /// the build verbs do. Returns `false` when the band has no holding for that source, which the
+    /// caller reports as *"staff it first"*.
     ///
-    /// # RE-ISSUING A VERB KEEPS THE ENTRY'S PLACE IN THE LINE
-    ///
-    /// At most **one** entry per source per band, so a second verb on an already-queued source
-    /// replaces [`BuildQueueEntry::declared`] **in place**. Changing `cultivate` → `sow` is a
-    /// correction, and costing the player their position for it would make the queue punish the
-    /// thing it exists to let them steer.
-    ///
-    /// **AND IT KEEPS THE ENTRY'S KIT AND ITS BUILD MARK**, for the same reason it keeps its place:
-    /// re-declaring is a correction to *what* is being raised, and silently clearing the tool or
-    /// the rank the player picked for that job is the same loss as sending it to the back of the
-    /// line. A new entry starts with `kit: None` (its own web's derivation) and a `Normal` mark.
-    ///
-    /// # AN ENTRY REQUIRES A ROW
-    ///
-    /// The row is the band's *holding* of the source; an entry against ground the band does not work
-    /// would draw the whole builders pool onto something no crew is standing on. Nothing enrols
-    /// itself either — a meter is never the thing that creates an entry (§2.4).
-    pub fn enqueue_build(&mut self, source: BuildSource, declared: BuildJob) -> bool {
+    /// At most **one** declaration per source per band, so a second verb on an already-declared
+    /// source replaces [`BuildDeclaration::declared`] **in place**: changing `cultivate` → `sow` is
+    /// a correction. A declaration requires a holding — the row is the band's *holding* of the
+    /// source — and nothing enrols itself (a meter is never the thing that creates a declaration,
+    /// §2.4).
+    pub fn declare_build(&mut self, source: BuildSource, declared: BuildJob) -> bool {
         // A road's holding is its keeper, and `grade` / `pave` write it immediately before declaring
-        // — the only path that can produce a `BuildSource::Road`, since the row-driven queue verb
+        // — the only path that can produce a `BuildSource::Road`, since the row-driven verb
         // cannot reach a source with no row. See [`road_holding_unchanged`].
         if !self.holds_build_source(&source, &road_holding_unchanged) {
             return false;
         }
-        match self
-            .build_queue
-            .iter_mut()
-            .find(|entry| entry.source == source)
-        {
+        match self.builds.iter_mut().find(|entry| entry.source == source) {
             Some(entry) => entry.declared = declared,
-            None => self.build_queue.push(BuildQueueEntry {
-                source,
-                declared,
-                priority: SourcePriority::default(),
-            }),
+            None => self.builds.push(BuildDeclaration { source, declared }),
         }
         true
     }
 
-    /// **SET ONE QUEUED BUILD'S MARK** — the whole of `build_priority` (`docs/plan_site_crews.md`
-    /// §2.4). Returns whether an entry was there to set it on.
-    ///
-    /// Nothing is minted for a source with no entry: the mark is a property of a declared job, and
-    /// an entry created here would enrol a build the player never declared — the refusal
-    /// [`Self::move_build_entry`] makes. **Re-declaring keeps the mark**, as it keeps the place
-    /// ([`Self::enqueue_build`]).
-    pub fn set_build_priority(&mut self, source: &BuildSource, priority: SourcePriority) -> bool {
-        let Some(entry) = self
-            .build_queue
-            .iter_mut()
-            .find(|entry| &entry.source == source)
-        else {
+    /// **Stop a build on a source**, leaving the row, its crew, its kit and the meter exactly as they
+    /// are — the `unqueue` command's whole effect. Returns whether a declaration was there.
+    pub fn stop_build(&mut self, source: &BuildSource) -> bool {
+        let Some(idx) = self.builds.iter().position(|entry| &entry.source == source) else {
             return false;
         };
-        entry.priority = priority;
+        self.builds.remove(idx);
+        self.build_crews.retain(|(held, _)| held != source);
         true
     }
 
-    /// **Take a source out of this band's build queue**, leaving the row, its take crew, its kit and
-    /// the meter exactly as they are — the `unqueue` command's whole effect. Returns whether an
-    /// entry was there.
-    ///
-    /// It is the **undo a declaration never had**. The verbs used to be the only way to state one
-    /// and had no zero that cleared it, so an unwanted `cultivate` was stuck on the row for the life
-    /// of the band; the queue makes withdrawing it an ordinary list edit.
-    pub fn unqueue_build(&mut self, source: &BuildSource) -> bool {
-        let Some(idx) = self
-            .build_queue
-            .iter()
-            .position(|entry| &entry.source == source)
-        else {
-            return false;
-        };
-        self.build_queue.remove(idx);
-        true
+    /// Whether this band has a build declared on the source — the wire's `isQueued`.
+    pub fn has_build(&self, source: &BuildSource) -> bool {
+        self.builds.iter().any(|entry| &entry.source == source)
     }
 
-    /// **Move a queued source to `position`** (0-based, clamped to the queue's length) — the
-    /// `build_order` command. The queue's defining input: with the whole pool on the head, the order
-    /// *is* the funding decision (§2.5).
-    ///
-    /// Returns `false` when the source is not queued; there is nothing to move and inventing an
-    /// entry here would enrol a build the player never declared.
-    pub fn move_build_entry(&mut self, source: &BuildSource, position: usize) -> bool {
-        let Some(from) = self
-            .build_queue
-            .iter()
-            .position(|entry| &entry.source == source)
-        else {
-            return false;
-        };
-        let entry = self.build_queue.remove(from);
-        let to = position.min(self.build_queue.len());
-        self.build_queue.insert(to, entry);
-        true
+    /// The declaration naming this source, if the band has one.
+    pub fn build_declaration(&self, source: &BuildSource) -> Option<&BuildDeclaration> {
+        self.builds.iter().find(|entry| &entry.source == source)
     }
 
-    /// This source's 0-based place in the queue, or `None` when it is not in it — the wire's
-    /// `buildQueuePosition`, and what the funding pass tests the head against.
-    pub fn build_queue_position(&self, source: &BuildSource) -> Option<usize> {
-        self.build_queue
+    /// **The builders staffing put on this source's build**, or `None` when it has none declared or
+    /// staffing has not run for it.
+    pub fn build_crew(&self, source: &BuildSource) -> Option<BuildCrew> {
+        self.build_crews
             .iter()
-            .position(|entry| &entry.source == source)
+            .find(|(held, _)| held == source)
+            .map(|(_, crew)| *crew)
     }
 
-    /// The entry naming this source, if the band has one.
-    pub fn build_queue_entry(&self, source: &BuildSource) -> Option<&BuildQueueEntry> {
-        self.build_queue
-            .iter()
-            .find(|entry| &entry.source == source)
+    /// **Write staffing's answer for every declared build** — the crews are restated whole, so a
+    /// declaration staffing did not mention reads no crew.
+    pub fn apply_build_crews(&mut self, crews: Vec<(BuildSource, BuildCrew)>) {
+        self.build_crews = crews;
+    }
+
+    /// **The builders on every declared build, summed** — the hands the builds hold this turn.
+    pub fn builders_total(&self) -> u32 {
+        self.build_crews.iter().map(|(_, crew)| crew.total()).sum()
     }
 
     /// **Drop every entry whose source this band no longer holds** — the per-turn sweep that makes
@@ -7868,18 +7758,15 @@ impl LaborAllocation {
     /// passes [`road_holding_unchanged`].
     ///
     /// Returns the entries it dropped, so a caller that wants to narrate the loss can.
-    pub fn prune_build_queue(
-        &mut self,
-        keeps_road: &dyn Fn(UVec2) -> bool,
-    ) -> Vec<BuildQueueEntry> {
+    pub fn prune_builds(&mut self, keeps_road: &dyn Fn(UVec2) -> bool) -> Vec<BuildDeclaration> {
         let mut dropped = Vec::new();
         let held: Vec<bool> = self
-            .build_queue
+            .builds
             .iter()
             .map(|entry| self.holds_build_source(&entry.source, keeps_road))
             .collect();
         let mut index = 0;
-        self.build_queue.retain(|entry| {
+        self.builds.retain(|entry| {
             let keep = held[index];
             index += 1;
             if !keep {
@@ -7887,6 +7774,9 @@ impl LaborAllocation {
             }
             keep
         });
+        let declared = &self.builds;
+        self.build_crews
+            .retain(|(source, _)| declared.iter().any(|entry| &entry.source == source));
         dropped
     }
 
@@ -7962,8 +7852,8 @@ impl LaborAllocation {
     ///
     /// **It trims ONE allocation per row, because a row now carries one** — the take crew. The
     /// build→take shedding order went with the per-source build crew
-    /// (`docs/plan_standing_upkeep.md` §2.5); the building and the road-keeping are **rows** of their
-    /// own ([`LaborTarget::Builders`] / [`LaborTarget::Roadwork`]), and a site's keeping hands sit
+    /// (`docs/plan_standing_upkeep.md` §2.5); the road-keeping is a **row** of its
+    /// own ([`LaborTarget::Roadwork`]), and a site's keeping hands sit
     /// inside its take row, split at [`SourceShedFacts::keeping_need`] (`docs/plan_site_crews.md`
     /// §2.6). The order names each of them explicitly.
     ///
@@ -7994,8 +7884,8 @@ impl LaborAllocation {
     /// The caller owns the feed line — `LaborAllocation` has no event log and should not grow one —
     /// so this hands back the evidence and `advance_labor_allocation` narrates it.
     ///
-    /// **A dropped row takes its queue entry with it**, on the next
-    /// [`Self::prune_build_queue`]: an entry requires a row (§3.2), and a band that has lost the
+    /// **A dropped row takes its declared build with it**, on the next
+    /// [`Self::prune_builds`]: an entry requires a row (§3.2), and a band that has lost the
     /// people to gather a patch has not thereby declared it is still building one.
     ///
     /// **They are dropped, not zeroed, and that is deliberate.** A zero-worker assignment is this
@@ -8136,18 +8026,6 @@ impl LaborAllocation {
                 return Some((ShedPick::Row(index), ShedStep::SpareKeeper));
             }
         }
-        // 4. A builder the pool is not spending: with something queued, every builder above the
-        //    last one; with nothing queued, every builder there is.
-        let builders_the_queue_needs = if self.build_queue.is_empty() {
-            NO_CREW_ON_THIS_ACTIVITY
-        } else {
-            LAST_BUILDER_STANDING
-        };
-        if self.workers_on(&LaborTarget::Builders) > builders_the_queue_needs {
-            if let Some(index) = self.staffed_role_row(&LaborTarget::Builders) {
-                return Some((ShedPick::Row(index), ShedStep::SpareBuilder));
-            }
-        }
 
         // ## Output falls, nothing ends
         // 5. Thin the least-productive worked source that has two or more hands — passing over a
@@ -8196,13 +8074,13 @@ impl LaborAllocation {
 
         // 5b. The bench's LAST hand — the job stalls, and nothing ends. Above step 6 because a
         //     stalled craft keeps its recipe, its progress and its drawn pile, where emptying a
-        //     source drops the row and takes its queued build with it.
+        //     source drops the row and takes its declared build with it.
         if bench.is_some_and(|bench| bench.workers > NO_CREW_ON_THIS_ACTIVITY) {
             return Some((ShedPick::Bench, ShedStep::StallBench));
         }
 
         // ## Something ends
-        // 6. Empty the least-productive source carrying no improvement and no queued build.
+        // 6. Empty the least-productive source carrying no improvement and no declared build.
         if let Some(index) = self.least_productive_row(|index, assignment| {
             self.staffed_source(assignment)
                 && !facts.source(index).improved
@@ -8228,7 +8106,7 @@ impl LaborAllocation {
         }) {
             return Some((ShedPick::Row(index), ShedStep::NeededKeeper));
         }
-        // 9. Empty the least-productive improved source with no queued build.
+        // 9. Empty the least-productive improved source with no declared build.
         if let Some(index) = self.least_productive_row(|index, assignment| {
             self.staffed_source(assignment)
                 && facts.source(index).improved
@@ -8236,18 +8114,13 @@ impl LaborAllocation {
         }) {
             return Some((ShedPick::Row(index), ShedStep::EmptyImproved));
         }
-        // 10. Empty a source carrying a queued build — the row drops and the declaration goes with
-        //     it on the next `prune_build_queue`.
+        // 10. Empty a source carrying a declared build — the row drops and the declaration goes with
+        //     it on the next `prune_builds`.
         if let Some(index) = self.least_productive_row(|_, assignment| {
             self.staffed_source(assignment) && self.row_carries_a_queued_build(assignment)
         }) {
             return Some((ShedPick::Row(index), ShedStep::EmptyQueued));
         }
-        // 11. The last builder — every queued build stalls.
-        if let Some(index) = self.staffed_role_row(&LaborTarget::Builders) {
-            return Some((ShedPick::Row(index), ShedStep::LastBuilder));
-        }
-
         // Terminal: a single worker on a single row. Take it; the row ends.
         self.least_productive_row(|_, assignment| assignment.workers > NO_CREW_ON_THIS_ACTIVITY)
             .map(|index| (ShedPick::Row(index), ShedStep::LastHand))
@@ -8268,11 +8141,11 @@ impl LaborAllocation {
         assignment.target.is_source() && assignment.workers > NO_CREW_ON_THIS_ACTIVITY
     }
 
-    /// Whether this row's source is named by an entry in the band's build queue — the term steps 6,
+    /// Whether this row's source is named by an entry declared by the band — the term steps 6,
     /// 9 and 10 partition on. Answered from the allocation's own queue, because that is where it
     /// lives; nothing about it needs the world.
     fn row_carries_a_queued_build(&self, assignment: &LaborAssignment) -> bool {
-        self.build_queue
+        self.builds
             .iter()
             .any(|entry| entry.source.names(&assignment.target))
     }
@@ -8474,12 +8347,12 @@ impl LaborAllocation {
 
     /// Clear every assignment (the repurposed `cancel_order` — band goes fully idle).
     ///
-    /// **The build queue goes with them**: an entry requires a row (§3.2), and a band with no rows
+    /// **The declared builds go with them**: an entry requires a row (§3.2), and a band with no rows
     /// at all holds nothing to build.
     pub fn clear(&mut self) {
         self.assignments.clear();
         self.last_yields.clear();
-        self.build_queue.clear();
+        self.builds.clear();
         self.settle_rejoining(ExcessRejoining::WalkHomePlain);
     }
 
@@ -8521,7 +8394,7 @@ impl LaborAllocation {
         // applied on the spot so `cancel_order … work` does not leave the band funding a build on
         // ground it no longer holds. Road entries stand here for the reason
         // [`road_holding_unchanged`] gives: clearing a row is not losing a keeper.
-        let _ = self.prune_build_queue(&road_holding_unchanged);
+        let _ = self.prune_builds(&road_holding_unchanged);
         self.settle_rejoining(ExcessRejoining::WalkHomePlain);
         freed
     }
@@ -9120,13 +8993,12 @@ mod tests {
         }
     }
 
-    /// A build queue entry naming `tile`, so a fixture can say *this row carries a declaration*.
+    /// A build declared build naming `tile`, so a fixture can say *this row carries a declaration*.
     #[cfg(test)]
-    fn queued_on(tile: bevy::math::UVec2) -> BuildQueueEntry {
-        BuildQueueEntry {
+    fn queued_on(tile: bevy::math::UVec2) -> BuildDeclaration {
+        BuildDeclaration {
             source: BuildSource::Patch(tile),
             declared: BuildJob::Climb(shipped::plant_tended()),
-            priority: SourcePriority::default(),
         }
     }
 
@@ -9270,23 +9142,22 @@ mod tests {
         );
     }
 
-    /// **STEP 3 — A ROAD KEEPER ABOVE THE DEMAND GIVES BEFORE A BUILDER.** Nothing rots: the road
-    /// bill is still met in full. Roadwork is the one keeping pool; a site's keeping hands sit in its
-    /// own row (`docs/plan_site_crews.md` §2.6).
+    /// **STEP 3 — A ROAD KEEPER ABOVE THE DEMAND GIVES BEFORE ANY SOURCE THINS.** Nothing rots: the
+    /// road bill is still met in full. Roadwork is the one keeping pool; a site's keeping hands sit
+    /// in its own row (`docs/plan_site_crews.md` §2.6).
     #[test]
-    fn a_spare_road_keeper_gives_before_a_builder() {
+    fn a_spare_road_keeper_gives_before_a_source_thins() {
         let mut allocation = LaborAllocation {
             assignments: vec![
                 staffed_forage(PATCH_A, 3),
-                staffed_role(LaborTarget::Builders, 2),
                 staffed_role(LaborTarget::Roadwork, 2),
             ],
-            build_queue: vec![queued_on(PATCH_A)],
+            builds: vec![queued_on(PATCH_A)],
             ..Default::default()
         };
         let shed = allocation.normalize(
             None,
-            6,
+            4,
             ShedFacts {
                 spare_roadwork_keepers: 1,
                 ..Default::default()
@@ -9294,9 +9165,9 @@ mod tests {
         );
         assert_eq!(shed_targets(&shed), vec![LaborTarget::Roadwork]);
         assert_eq!(
-            allocation.workers_on(&LaborTarget::Builders),
-            2,
-            "no hand comes off the queue while the road bill has slack in it"
+            allocation.workers_on(&staffed_forage(PATCH_A, 0).target),
+            3,
+            "no source thins while the road bill has slack in it"
         );
     }
 
@@ -9375,99 +9246,6 @@ mod tests {
             allocation.assignments.len(),
             2,
             "step 8 thinned the two-hand site; the one-hand Field keeps its row"
-        );
-    }
-
-    /// **STEP 4 — A BUILDER GIVES WHILE THE POOL HOLDS MORE THAN THE QUEUE NEEDS.** With a build
-    /// declared the queue slows and no job stops, which is why it outranks anything that costs
-    /// output — and the **last** builder is held back for step 11, where the queue stalls.
-    ///
-    /// The second half empties the queue and the same allocation gives **both** builders before the
-    /// gathering thins: with nothing declared no hand in that pool is doing anything, so there is no
-    /// last builder to protect.
-    #[test]
-    fn a_builder_gives_while_the_pool_holds_more_than_the_queue_needs() {
-        let allocation = LaborAllocation {
-            assignments: vec![
-                staffed_forage(PATCH_A, 3),
-                staffed_role(LaborTarget::Builders, 2),
-            ],
-            last_yields: vec![realized(9.0), SourceYield::ZERO],
-            ..Default::default()
-        };
-
-        let mut queued = LaborAllocation {
-            build_queue: vec![queued_on(PATCH_A)],
-            ..allocation.clone()
-        };
-        assert_eq!(
-            shed_targets(&queued.normalize(None, 4, ShedFacts::default())),
-            vec![LaborTarget::Builders],
-            "the queue slows before the gathering does"
-        );
-        assert_eq!(
-            queued.workers_on(&LaborTarget::Builders),
-            1,
-            "and only the spare one goes — the last builder of a live queue is step 11"
-        );
-
-        let mut unqueued = allocation;
-        assert_eq!(
-            shed_targets(&unqueued.normalize(None, 3, ShedFacts::default())),
-            vec![LaborTarget::Builders],
-            "with nothing queued every builder is idle, so both hands come off that pool first"
-        );
-        assert_eq!(
-            unqueued.workers_on(&LaborTarget::Builders),
-            NO_CREW_ON_THIS_ACTIVITY,
-            "including the last one — there is no job for it to stall"
-        );
-        assert_eq!(
-            unqueued.assignments[0].workers, 3,
-            "and the gathering never thins while an idle pool still has a hand"
-        );
-    }
-
-    /// **AN IDLE BUILDER GIVES BEFORE THE BAND'S ONLY FOOD ROW ENDS.** Gating step 4 on a non-empty
-    /// queue put idle builders *below* steps 6, 9 and 10, so this allocation — one gatherer on an
-    /// improved patch beside three builders with nothing declared — answered a single lost hand by
-    /// **dropping the food row** (step 9) while three idle builders kept theirs.
-    ///
-    /// The row is staffed with one, so step 5 cannot thin it: the only rows steps 6–10 can reach are
-    /// sources, which is what makes this the case the ordering inverted on.
-    #[test]
-    fn an_idle_builder_gives_before_the_bands_only_food_row_is_emptied() {
-        let mut allocation = LaborAllocation {
-            assignments: vec![
-                staffed_forage(PATCH_A, 1),
-                staffed_role(LaborTarget::Builders, 3),
-            ],
-            last_yields: vec![realized(6.0), SourceYield::ZERO],
-            ..Default::default()
-        };
-        let shed = allocation.normalize(
-            None,
-            3,
-            ShedFacts {
-                sources: vec![
-                    SourceShedFacts {
-                        improved: true,
-                        ..Default::default()
-                    },
-                    SourceShedFacts::default(),
-                ],
-                ..Default::default()
-            },
-        );
-        assert_eq!(
-            shed_targets(&shed),
-            vec![LaborTarget::Builders],
-            "an idle builder is the first tier — nothing is lost when a pool with nothing to build \
-             gives a hand"
-        );
-        assert_eq!(
-            allocation.assignments[0].workers, 1,
-            "and the band's only food row keeps its gatherer"
         );
     }
 
@@ -10113,7 +9891,7 @@ mod tests {
 
     /// **THINNING BEATS EMPTYING, AND THAT IS THE SHARP LINE.** A band with a candidate at step 5 and
     /// a candidate at step 6 thins the productive crew rather than ending the poor row — because a
-    /// row that ends takes its improvement, its queue entry and its holding with it, where a thinned
+    /// row that ends takes its improvement, its declared build and its holding with it, where a thinned
     /// crew loses only this turn's output.
     #[test]
     fn a_band_with_both_a_thin_and_an_empty_available_thins() {
@@ -10210,33 +9988,21 @@ mod tests {
         );
     }
 
-    /// **STEPS 9 → 10 → 11 — A DECLARATION IS THE LAST THING A SOURCE ROW LOSES, AND THE LAST BUILDER
-    /// IS THE LAST HAND OF ALL.** An entry requires a row, so emptying a queued row drops the
-    /// declaration with it; taking the last builder stalls every entry that is left.
+    /// **STEPS 9 → 10 — A DECLARATION IS THE LAST THING A SOURCE ROW LOSES.** A declared build
+    /// requires a row, so emptying a declared row drops the declaration with it.
     #[test]
-    fn an_improved_row_ends_before_a_queued_one_and_the_last_builder_goes_last() {
+    fn an_improved_row_ends_before_a_declared_one() {
         let mut allocation = LaborAllocation {
-            assignments: vec![
-                staffed_forage(PATCH_A, 1),
-                staffed_forage(PATCH_B, 1),
-                staffed_role(LaborTarget::Builders, 1),
-            ],
-            build_queue: vec![queued_on(PATCH_B)],
-            last_yields: vec![realized(9.0), realized(1.0), SourceYield::ZERO],
+            assignments: vec![staffed_forage(PATCH_A, 1), staffed_forage(PATCH_B, 1)],
+            builds: vec![queued_on(PATCH_B)],
+            last_yields: vec![realized(9.0), realized(1.0)],
             ..Default::default()
         };
         let facts = ShedFacts {
-            sources: vec![
-                SourceShedFacts {
-                    improved: true,
-                    ..Default::default()
-                },
-                SourceShedFacts {
-                    improved: true,
-                    ..Default::default()
-                },
-                SourceShedFacts::default(),
-            ],
+            sources: vec![SourceShedFacts {
+                improved: true,
+                ..Default::default()
+            }],
             threatened: true,
             ..Default::default()
         };
@@ -10246,10 +10012,9 @@ mod tests {
             vec![
                 staffed_forage(PATCH_A, 0).target,
                 staffed_forage(PATCH_B, 0).target,
-                LaborTarget::Builders,
             ],
-            "the un-queued improvement ends first even though it is the RICHER row, then the \
-             declaration, and the builders hold on longest"
+            "the undeclared improvement ends first even though it is the RICHER row, then the \
+             declaration goes with its row"
         );
         assert!(allocation.assignments.is_empty());
     }
@@ -10262,18 +10027,17 @@ mod tests {
             assignments: vec![
                 staffed_forage(PATCH_A, 2),
                 staffed_role(LaborTarget::Roadwork, 2),
-                staffed_role(LaborTarget::Builders, 2),
                 staffed_role(LaborTarget::Warrior, 1),
                 staffed_role(LaborTarget::Scout, 1),
             ],
-            build_queue: vec![queued_on(PATCH_A)],
-            last_yields: vec![realized(6.0); 5],
+            builds: vec![queued_on(PATCH_A)],
+            last_yields: vec![realized(6.0); 4],
             ..Default::default()
         };
-        assert_eq!(allocation.assigned_total(), 8);
+        assert_eq!(allocation.assigned_total(), 6);
         let shed = allocation.normalize(
             None,
-            3,
+            2,
             ShedFacts {
                 spare_roadwork_keepers: 1,
                 ..Default::default()
@@ -10285,10 +10049,9 @@ mod tests {
                 LaborTarget::Scout,
                 LaborTarget::Warrior,
                 LaborTarget::Roadwork,
-                LaborTarget::Builders,
                 staffed_forage(PATCH_A, 0).target,
             ],
-            "steps 1, 2, 3, 4 then 5 — and list position had nothing to do with any of it"
+            "steps 1, 2, 3 then 5 — and list position had nothing to do with any of it"
         );
     }
 
@@ -10373,10 +10136,10 @@ mod tests {
         allocation.set_assignment(LaborTarget::Roadwork, 5, BAND, None);
         assert_eq!(allocation.workers_on(&LaborTarget::Roadwork), 5);
 
-        // The two band pools are separate rows and never merge.
-        allocation.set_assignment(LaborTarget::Builders, 1, BAND, None);
+        // A second standing role is a separate row and never merges with it.
+        allocation.set_assignment(LaborTarget::Scout, 1, BAND, None);
         assert_eq!(allocation.workers_on(&LaborTarget::Roadwork), 5);
-        assert_eq!(allocation.workers_on(&LaborTarget::Builders), 1);
+        assert_eq!(allocation.workers_on(&LaborTarget::Scout), 1);
     }
 
     // **RETIRED: `restating_one_activitys_crew_only_needs_the_difference`** — it pinned
@@ -10458,9 +10221,9 @@ mod tests {
         assert_eq!(allocation.assignments[0].target, deplete);
     }
 
-    /// **A floor or crew edit leaves the QUEUED BUILD alone** (issue #442 §6, re-aimed by
+    /// **A floor or crew edit leaves the DECLARED BUILD alone** (issue #442 §6, re-aimed by
     /// `docs/plan_standing_upkeep.md` §2.5) — and now does so **by construction**: the build lives
-    /// in [`LaborAllocation::build_queue`] and `set_assignment` does not touch it at all, where it
+    /// in [`LaborAllocation::builds`] and `set_assignment` does not touch it at all, where it
     /// used to have to carry a field across a row it rebuilds.
     ///
     /// Unstaffing the take still leaves the band's *holding* standing, so the row is still there for
@@ -10477,13 +10240,13 @@ mod tests {
         let source = BuildSource::Patch(tile);
         let mut allocation = LaborAllocation::default();
         allocation.set_assignment(sustain.clone(), 4, 10, None);
-        assert!(allocation.enqueue_build(source.clone(), BuildJob::Climb(shipped::plant_tended())));
+        assert!(allocation.declare_build(source.clone(), BuildJob::Climb(shipped::plant_tended())));
 
         // Re-staffing the same source: the declaration survives, and so does its place in the line.
         allocation.set_assignment(sustain.clone(), 2, 10, None);
         assert_eq!(allocation.assignments[0].workers, 2);
         assert_eq!(
-            allocation.build_queue_entry(&source).map(|e| e.declared),
+            allocation.build_declaration(&source).map(|e| e.declared),
             Some(BuildJob::Climb(shipped::plant_tended())),
             "changing the crew must not abandon the build"
         );
@@ -10497,7 +10260,7 @@ mod tests {
         };
         allocation.set_assignment(deplete.clone(), 2, 10, None);
         assert_eq!(allocation.assignments[0].target, deplete);
-        assert_eq!(allocation.build_queue_position(&source), Some(0));
+        assert!(allocation.has_build(&source));
 
         // Unstaffing the TAKE leaves the band's holding of the source standing — the row survives at
         // zero gatherers with the build still queued on it, which is what lets a finished rung stay
@@ -10505,17 +10268,16 @@ mod tests {
         allocation.set_assignment(deplete.clone(), 0, 10, None);
         assert_eq!(allocation.assignments.len(), 1);
         assert_eq!(allocation.assignments[0].workers, 0);
-        assert_eq!(
-            allocation.build_queue_position(&source),
-            Some(0),
+        assert!(
+            allocation.has_build(&source),
             "unstaffing the gatherers must not withdraw the declaration beside them"
         );
 
         // **RE-ISSUING A VERB KEEPS THE ENTRY'S PLACE**, and `unqueue` is the undo.
-        assert!(allocation.enqueue_build(source.clone(), BuildJob::Climb(shipped::plant_farm())));
-        assert_eq!(allocation.build_queue_position(&source), Some(0));
-        assert!(allocation.unqueue_build(&source));
-        assert_eq!(allocation.build_queue_position(&source), None);
+        assert!(allocation.declare_build(source.clone(), BuildJob::Climb(shipped::plant_farm())));
+        assert!(allocation.has_build(&source));
+        assert!(allocation.stop_build(&source));
+        assert!(!allocation.has_build(&source));
     }
 
     /// A **role** is its head count, so `assign_labor … scout 0` really does remove the row — the
@@ -11151,7 +10913,6 @@ mod tests {
             muster_row(LaborTarget::Scout, 3, SourcePriority::Low),
             muster_row(LaborTarget::Warrior, 3, SourcePriority::Low),
             muster_row(LaborTarget::Roadwork, 3, SourcePriority::Low),
-            muster_row(LaborTarget::Builders, 3, SourcePriority::Low),
             muster_row(muster_hunt("other_need", true), 3, SourcePriority::Low),
             with_party,
             muster_row(muster_hunt("empty", false), 0, SourcePriority::Low),
@@ -11160,7 +10921,7 @@ mod tests {
         let plan = board.muster_donors(0, 0, 50, &|_| true, None, &MusterKit::default());
         assert_eq!(
             plan.from_rows,
-            vec![(8, 2)],
+            vec![(7, 2)],
             "only the plain source row lends"
         );
         assert_eq!(board.musterable_pool(7, 0, &|_| true, None), 7 + 2);

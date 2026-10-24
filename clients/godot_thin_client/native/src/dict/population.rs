@@ -29,6 +29,41 @@ pub(crate) fn kit_toe_to_array(
     out
 }
 
+/// One `PoolToeLine` vector as `[{pool, item_id, required, filled}]` -- the cohort's `pool_toe` and
+/// every build row's `build_toe` share this one line shape.
+pub(crate) fn pool_toe_to_array(
+    lines: Option<Vector<'_, ForwardsUOffset<fb::PoolToeLine<'_>>>>,
+) -> VarArray {
+    let mut out = VarArray::new();
+    if let Some(lines) = lines {
+        for line in lines.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("pool", line.pool().unwrap_or_default());
+            let _ = row.insert("item_id", line.itemId().unwrap_or_default());
+            let _ = row.insert("required", line.required() as f64);
+            let _ = row.insert("filled", line.filled() as f64);
+            out.push(&row.to_variant());
+        }
+    }
+    out
+}
+
+/// Writes the builders-on-a-declared-build block every build-carrying row shares: `builders_staffed`,
+/// `builders_kitted`, `builders_cap` and `build_toe` (that build's own tool lines, the viewer's own
+/// bands only). A build is worked by the site's own crew, so these ride the SOURCE row.
+pub(crate) fn insert_build_crew(
+    dict: &mut VarDictionary,
+    staffed: u32,
+    kitted: u32,
+    cap: u32,
+    toe: Option<Vector<'_, ForwardsUOffset<fb::PoolToeLine<'_>>>>,
+) {
+    let _ = dict.insert("builders_staffed", i64::from(staffed));
+    let _ = dict.insert("builders_kitted", i64::from(kitted));
+    let _ = dict.insert("builders_cap", i64::from(cap));
+    let _ = dict.insert("build_toe", &pool_toe_to_array(toe));
+}
+
 pub(crate) fn demographics_to_array(
     states: Vector<'_, ForwardsUOffset<fb::PopulationDemographicsState<'_>>>,
 ) -> VarArray {
@@ -820,9 +855,6 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // Neither field is on the wire, so this reader inserts no key — a client that read one
             // would be showing
             // a per-source crew the sim has stopped having.
-            //
-            // What survives per source is `improvement`, which the sim **derives** from that band's
-            // build queue: the resolved job token, or `""` when nothing is queued here.
             let _ = entry.insert("workers", assignment.workers() as i64);
             let _ = entry.insert("target_x", assignment.targetX() as i64);
             let _ = entry.insert("target_y", assignment.targetY() as i64);
@@ -1200,51 +1232,6 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         }
     }
     let _ = dict.insert("labor_assignments", &array);
-    // **THE BUILDS THIS BAND HAS DECLARED, IN THE ORDER IT WILL RAISE THEM**
-    // (`docs/plan_standing_upkeep.md` §4.9 item 9a). An Array of `{kind, target_x, target_y,
-    // fauna_id, build_priority, material, road}` Dictionaries — the first four are the SAME keys a
-    // `labor_assignments` entry spells its source with, deliberately, so a client keys both lists
-    // with one call and cannot join them on two spellings that merely happen to match.
-    //
-    // **THE RANK IS THE INDEX.** There is no `position` int on the wire and there must be none
-    // here: entry 0 is the head, and one ordered list has nothing to drift against. It is the
-    // BAND's own order, which `ForagePatchState.build_queue_position` is not — that field rides the
-    // winning band (the soonest estimate) and so publishes another band's place in another band's
-    // line, which is what drew band B's `[X, Y, Z]` as `[Y, X, Z]`.
-    //
-    // **CAPTURED LIVE** off `LaborAllocation::build_queue` rather than stamped by the turn, the same
-    // discipline `kit_id` above ships on, so a reorder arrives on its own command's recapture and a
-    // client needs no optimistic ordering overlay.
-    //
-    // Always inserted (an empty Array when the wire vector is absent), the `labor_assignments`
-    // rule directly above: the band dict has one shape whether or not the server serialized an
-    // empty vector.
-    let mut build_queue = VarArray::new();
-    if let Some(entries) = cohort.buildQueue() {
-        for wire_entry in entries {
-            let mut entry = VarDictionary::new();
-            let _ = entry.insert("kind", wire_entry.kind().unwrap_or_default());
-            let _ = entry.insert("target_x", wire_entry.targetX() as i64);
-            let _ = entry.insert("target_y", wire_entry.targetY() as i64);
-            let _ = entry.insert("fauna_id", wire_entry.faunaId().unwrap_or_default());
-            // **THE ENTRY'S OWN BUILD MARK** (`docs/plan_site_crews.md` §2.4) — `high` | `normal` |
-            // `low`, set by `build_priority`. It is the one per-entry fact NOT on the source row: a
-            // build no longer borrows its site row's `priority`. Passed through as the word the
-            // command takes, like `priority` on a labor row.
-            let _ = entry.insert(
-                "build_priority",
-                wire_entry.buildPriority().unwrap_or_default(),
-            );
-            // **THE SITE'S OWN ADDRESS HALVES** (`docs/plan_site_crews.md` §2.4) — `material` names
-            // a working (`""` for every other kind) and `branch` the ladder branch of a road or
-            // tile build (`""` for every other kind). The tile alone cannot say either: one hex can
-            // hold two workings, or a road and a patch.
-            let _ = entry.insert("material", wire_entry.material().unwrap_or_default());
-            let _ = entry.insert("branch", wire_entry.branch().unwrap_or_default());
-            build_queue.push(&entry.to_variant());
-        }
-    }
-    let _ = dict.insert("build_queue", &build_queue);
     let _ = dict.insert("idle_workers", cohort.idleWorkers() as i64);
     // **THE AGE BRACKETS ARE WHOLE PEOPLE, AND THERE ARE ONLY THREE NUMBERS HERE.**
     // `working_age` IS the working bracket — the count of assignable workers — so `children` +
@@ -1680,7 +1667,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                     let mut entry = VarDictionary::new();
                     // "pool" | "site" | "take"
                     let _ = entry.insert("kind", source.kind().unwrap_or(""));
-                    // A pool token ("roadwork" | "builders") or a labor-row kind ("hunt", "forage",
+                    // A pool token ("roadwork") or a labor-row kind ("hunt", "forage",
                     // "extract", "scout", "warrior") — the `LaborAssignment` spelling.
                     let _ = entry.insert("job", source.job().unwrap_or(""));
                     let _ = entry.insert("target_x", source.targetX() as i64);
@@ -1690,9 +1677,6 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                     let _ = entry.insert("missing_units", source.missingUnits() as f64);
                     let _ = entry.insert("workers_without", source.workersWithout() as f64);
                     let _ = entry.insert("work_per_turn", source.workPerTurn() as f64);
-                    // A QUEUED BUILD's place in the build queue (`kind == "build_queue"`; `0`
-                    // otherwise). With `job` + the target keys it joins to the build-queue row.
-                    let _ = entry.insert("queue_position", source.queuePosition() as i64);
                     sources.push(&entry.to_variant());
                 }
             }
@@ -1892,25 +1876,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // (by dropping filled rows on decode, say) destroys the only distinction the vector carries.
     // Nothing is filtered here; the client decides what to render.
     //
-    // **`pool` IS THE LABOR-ROLE TOKEN** — `roadwork` | `builders`, the only two band-wide pools
-    // left (`docs/plan_site_crews.md` §4; a site crew's keeping-tool shortfall rides its own source
-    // row as `upkeep_tools_short`). The same spelling `LaborAssignment.kind` publishes for the row,
-    // so a surface joins a line to its pool on a string it already holds.
-    //
     // **`required` is NEVER 0**, by the rule above, so a readout may divide by it; `filled` is a
     // float because the settlement divides a tier proportionally when the stock cannot cover it, and
     // `0` there is a pool the settlement reached with nothing (its sites work bare on that line).
-    let mut pool_toe = VarArray::new();
-    if let Some(lines) = cohort.poolToe() {
-        for line in lines.iter() {
-            let mut row = VarDictionary::new();
-            let _ = row.insert("pool", line.pool().unwrap_or_default());
-            let _ = row.insert("item_id", line.itemId().unwrap_or_default());
-            let _ = row.insert("required", line.required() as f64);
-            let _ = row.insert("filled", line.filled() as f64);
-            pool_toe.push(&row.to_variant());
-        }
-    }
+    let pool_toe = pool_toe_to_array(cohort.poolToe());
     let _ = dict.insert("pool_toe", &pool_toe);
 
     // --- WHAT EACH KEEPING POOL DID NOT USE (issue #715) ------------------------------------------
@@ -1926,11 +1895,6 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     //
     // **IN KEEPERS, AND FRACTIONAL** — `1.68` keepers left standing is an ordinary reading, not a
     // rounding artefact, because a pool's share arithmetic is continuous.
-    //
-    // **ONE POOL: `roadwork`** — the only keeping pool left (`docs/plan_site_crews.md` §4). `builders`
-    // is never one: the whole builders head count goes on the build queue's head, so no builder is
-    // ever left standing by a plan that wanted fewer; a builders pool with an EMPTY QUEUE is idle in
-    // a different sense and is deliberately not measured.
     //
     // **A ROW EXISTS FOR EVERY KEEPING POOL, STAFFED OR NOT** — unlike `pool_toe`'s, which exists
     // only where something is required. Three keepers on `roadwork` with no road kept are three

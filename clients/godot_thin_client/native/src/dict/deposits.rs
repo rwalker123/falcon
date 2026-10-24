@@ -188,11 +188,14 @@ pub(crate) fn deposits_to_array(
             "build_blocked_reason",
             deposit.buildBlockedReason().unwrap_or_default(),
         );
-        // IS THIS WORKING IN SOME BAND'S BUILD QUEUE RIGHT NOW? — the MEMBERSHIP flag, and the term
-        // `build_turns_remaining`'s `-5` is separated from `-1` by. Resolved by a live walk of the
-        // bands' queues, because the row's own scratch lags a command by a whole turn and this state
-        // exists precisely in that frame.
         let _ = dict.insert("is_queued", deposit.isQueued());
+        crate::dict::population::insert_build_crew(
+            &mut dict,
+            deposit.buildersStaffed(),
+            deposit.buildersKitted(),
+            deposit.buildersCap(),
+            deposit.buildToe(),
+        );
         // **WHAT THIS WORKING'S OWN CREW SPENT KEEPING IT** — the patch / herd pair
         // (`docs/plan_site_crews.md` §2.5): the hands spent keeping, and whether the band-wide
         // settlement filled less than the site's keeping-tool claim.

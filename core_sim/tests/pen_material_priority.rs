@@ -114,7 +114,12 @@ fn base_world() -> App {
     app.world.insert_resource(GrazeRegistry::default());
     app.world.insert_resource(ForageRegistry::default());
     app.world.insert_resource(FaunaConfigHandle::default());
-    app.world.insert_resource(LaborConfigHandle::default());
+    // **The tile is not what this fixture measures**: two pens and a ring stand on one hex, and the
+    // shipped tile cap would hand the ring nobody. Room for all of them is stated outright.
+    let mut labor = (*core_sim::LaborConfig::builtin()).clone();
+    labor.tile_worker_cap = ROOM_FOR_EVERY_ROW_ON_THE_TILE;
+    app.world
+        .insert_resource(LaborConfigHandle::new(std::sync::Arc::new(labor)));
     app.world
         .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     app.world
@@ -525,16 +530,19 @@ fn a_pen_holding_twice_the_herd_is_billed_twice_the_material() {
 // a **verb** question and a ring names no verb, so nothing bid for one and it was quoted at full
 // coverage. The claim is laid by `head_ring_leg` now, off the ring's own `pen_extending` gate.
 
-/// A builders pool small enough that one turn banks a **fraction** of the ring — a crew that closed
-/// the fence in a turn would draw the whole pile and leave no proportion to measure.
-const RING_BUILDERS: u32 = 25;
-
 /// How many times over the band is sized against the rows it staffs, so `normalize` sheds nobody and
 /// every arrangement drives the **same** crew.
 const BAND_HEADROOM: u32 = 2;
 
+/// The tile cap this fixture installs: more than every row and the ring could ever put on one hex.
+const ROOM_FOR_EVERY_ROW_ON_THE_TILE: u32 = 1000;
+
+/// Hands beyond the rows' own crews for the declared build to take: the sim staffs the rows first,
+/// then deals the build the hands left up to its rung's cap, so the fixture states them outright.
+const BUILD_HANDS: u32 = 4;
+
 /// A store no claim on it can bind — so a run measures the ring rather than the shelf.
-const AMPLE: f32 = 10_000.0;
+const AMPLE: f32 = 100.0;
 
 /// **THE SLACK A RESTOCKED STORE COSTS, in work units.** A `LocalStore` holds fixed-point `Scalar`
 /// batches, so a fixture that stocks *a measured fraction of a measured demand* quantises twice —
@@ -574,24 +582,13 @@ fn queue_a_build(
         .world
         .get_mut::<LaborAllocation>(keeper)
         .expect("the keeper band keeps its allocation");
-    allocation.assignments.push(LaborAssignment {
-        party: None,
-        muster_crew: 0,
-        planned_crew: 0,
-        max_workers: Some(RING_BUILDERS),
-        staffing: Default::default(),
-        target: LaborTarget::Builders,
-        workers: RING_BUILDERS,
-        kit: None,
-        priority: SourcePriority::default(),
-    });
     assert!(
-        allocation.enqueue_build(source.clone(), job),
+        allocation.declare_build(source.clone(), job),
         "the keeper band works the source it is building"
     );
-    // ⛔ **THE BUILDERS ROW SPENDS THE SAME POOL THE KEEPERS DO.** `normalize` sheds crews until
-    // `Σ assignments ≤ available`, so a band sized for its hunt rows alone has this row trimmed to a
-    // hand or two, and *which* rows it takes them from depends on the vector — so the arrangement
+    // ⛔ **A BUILD IS STAFFED FROM THE HANDS THE ROWS LEAVE.** `normalize` sheds crews until
+    // `Σ assignments ≤ available`, so a band sized for its hunt rows alone has no idle hand
+    // for the build, and which rows give depends on the vector — so the arrangement
     // sweep would be varying the crew as well as the layout. Widen the band past every row it was
     // just handed, with room to spare: `available_workers` floors a fixed-point `Scalar`, so a band
     // sized to the nose loses a hand to the rounding alone.
@@ -604,7 +601,7 @@ fn queue_a_build(
         .world
         .get_mut::<PopulationCohort>(keeper)
         .expect("the keeper band persists");
-    cohort.working = scalar_from_f32((staffed * BAND_HEADROOM) as f32);
+    cohort.working = scalar_from_f32((staffed * BAND_HEADROOM + BUILD_HANDS) as f32);
 }
 
 /// Put a ring in flight on `herd_id` and staff it.
@@ -694,19 +691,8 @@ fn run_ring_turn(
     };
     let keeper = spawn_keeper(&mut app, rows, tile);
     begin_a_ring(&mut app, keeper, "pen_big");
-    // **The ring's pile is claimed at its BUILD mark** (`docs/plan_site_crews.md` §2.4), the mark on
-    // the queue entry rather than the pen's hunt row — marked alike here, so "the ring's rank" is one
-    // statement about both the build and the pen it widens.
-    assert!(
-        app.world
-            .get_mut::<LaborAllocation>(keeper)
-            .expect("the keeper band keeps its allocation")
-            .set_build_priority(
-                &core_sim::BuildSource::Herd("pen_big".to_string()),
-                ring_rank
-            ),
-        "the ring was just queued, so its entry takes the mark"
-    );
+    // The ring's pile is claimed at the SITE ROW's priority: a build has no mark of its own, so the
+    // pen's hunt row above carries "the ring's rank" for both the build and the pen it widens.
     if arrangement == Arrangement::Edited {
         edit_the_big_row(&mut app, keeper, ring_rank);
     }

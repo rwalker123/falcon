@@ -159,12 +159,6 @@ const ROAD_PROGRESS_UNNAMED_FORMAT := "%d%% to the next rung"
 ## ⛔ **THE METER AT WHICH NOTHING HAS BEEN BANKED, AND IT IS THE ROW'S ONE FORK.** A MEANING — *this
 ## climb has not started* — rather than a rounding tolerance.
 ##
-## **AT ZERO THE ROW STATES A PERCENTAGE IFF SOMETHING IS DECLARED.** A road nobody has ordered
-## anything on has no climb to report, and a `0% to dirt road` there would invent one; a road with a
-## live BUILD QUEUE entry has a real climb standing at zero, and printing it is the whole of fix 3.
-## Ray: *"when it is in the queue, it should show a % complete in the road panel instead of continuing
-## to make it look like it isn't queued."*
-##
 ## **THERE IS NO SECOND PHRASING FOR IT.** `ROAD_PROGRESS_FORMAT` is the spelling above zero and it is
 ## the spelling at zero; a `queued for dirt road` clause beside it would be two wordings for one fact
 ## and would have to be told apart from the percentage it replaces.
@@ -529,11 +523,6 @@ static func is_material_upkeep_short(road: Dictionary) -> bool:
 static func build_blocked_reason_of(road: Dictionary) -> String:
 	return String(road.get("build_blocked_reason", "")).strip_edges()
 
-## The one cause this branch's material half mints. **`owned_by_other` and `no_keeper` are NOT one
-## cause** — a road nobody keeps reported as a rival's sends the player after somebody who does not
-## exist — and `no_keeper` has no wording anywhere in this client on purpose: `prune_build_queue`
-## drops the queue entry of any road its band does not keep, so no unkept road survives to publish
-## it. It is load-bearing for the sim's gate and dead on the wire.
 const ROAD_BLOCKED_MATERIALS := "materials"
 
 ## **IS THE STORE WHAT IS HOLDING THIS ROAD UP?** — either the shelf is bare and the sim blocked the
@@ -751,17 +740,9 @@ static func _row_of_rung_key(catalog: Array, rung_key: String) -> Dictionary:
 			return row
 	return {}
 
-# ---- THE BUILD QUEUE ENTRY'S BRANCH (`BuildQueueEntryState.branch`) -------------------------------
 
 ## The road branch's id in `intensification_ladder.json`, the token a road's queue address leads with.
 const ROAD_BRANCH := "route"
-const QUEUE_ENTRY_BRANCH_KEY := "branch"
-
-## Whether one wire build-queue entry is a ROAD build. `branch` replaced the retired `road` bool: a
-## road entry carries the road branch's id, a tile-kind entry carries its own branch (a different id,
-## so this answers false and the entry takes the generic path), and every other entry carries `""`.
-static func queue_entry_is_road(entry: Dictionary) -> bool:
-	return String(entry.get(QUEUE_ENTRY_BRANCH_KEY, "")) == ROAD_BRANCH
 
 ## The rung traffic is wearing in ABOVE the one held — `""` at the top of the branch and for a rung
 ## `RUNG_ORDER` does not know. Callers state the meter without a destination in that case rather than
@@ -769,9 +750,6 @@ static func queue_entry_is_road(entry: Dictionary) -> bool:
 static func next_rung_label(rung: String) -> String:
 	return rung_label(next_rung_key(rung))
 
-## …and the same step as a KEY, for a caller that needs the CATALOG's row rather than this table's
-## word — the queue block, which names a road by the rung it is being raised to and prices it from the
-## sim's own catalog entry. `""` at the top of the branch and for a rung `RUNG_ORDER` does not know.
 ##
 ## ⛔ **`RUNG_LABELS` MAY NOT NAME A LADDER ROW** (its own note), so a surface holding the catalog
 ## resolves the name through `ladder_rung_name` and only the tile card's readout reads the four-rung
@@ -792,6 +770,12 @@ static func road_percent_of(meter: float) -> int:
 ## `""` where nothing is rising: **`1.0` is the complete reading**, published exactly rather than
 ## derived by subtraction, so the test is a plain comparison and never a tolerance, and it covers both
 ## a rung just finished and the top of the ladder.
+##
+## **AT ZERO THE ROW STATES A PERCENTAGE IFF SOMETHING IS DECLARED.** A road nobody has ordered
+## anything on has no climb to report, and a `0% to dirt road` there would invent one; a road with a
+## build declared has a real climb standing at zero, and printing it is the point: *"when it is in the
+## queue, it should show a % complete in the road panel instead of continuing to make it look like it
+## isn't queued."*
 static func progress_clause(road: Dictionary, queued: bool = false) -> String:
 	# ⛔ **A QUEUED ROAD READS ITS METER THROUGH `queued_progress`, WHICH TURNS A FULL ONE INTO A
 	# ZERO** — a `grade` that landed this turn publishes `METER_FULL` for the rung it already HOLDS,
@@ -812,28 +796,18 @@ static func progress_clause(road: Dictionary, queued: bool = false) -> String:
 		return ROAD_PROGRESS_UNNAMED_FORMAT % percent
 	return ROAD_PROGRESS_FORMAT % [percent, destination.to_lower()]
 
-## ⛔ **IS THIS ROAD IN A BAND'S BUILD QUEUE? — the ONE predicate, and the join is the CALLER'S.**
+## ⛔ **IS A BUILD DECLARED ON THIS ROAD? — the ONE predicate, and the join is the CALLER'S.** The
+## tile card's `Road` row and the Work tab's road row both ask it, so the card cannot say a road is
+## un-queued while the Work tab is drawing a build for it.
 ##
-## `queued_tiles` is `{Vector2i: true}` over every road tile the player's bands have queued, derived
-## once by `HudBandLaborState.road_queue_tiles` and threaded in exactly as `keeper_label` and the
+## `queued_tiles` is `{Vector2i: true}` over every road tile the player's bands have a build declared
+## on, derived once by `HudBandLaborState.road_queue_tiles` and threaded in exactly as `keeper_label` and the
 ## branch's bare work rate already are. **This leaf holds no band roster and no queue**, and teaching
 ## it to walk one would give it both; what it can do is join a ROAD ROW to a set of tiles, which is
 ## arithmetic on the road's own identity.
-##
-## **The tile IS the join.** A queue entry publishes `kind: "roadwork"` with the road's `target_x` /
-## `target_y`, and the road row's identity is that same pair — the retired `RouteId` having gone with
-## the stored path — so the two lists meet on one spelling and no id has to be invented.
-##
-## **ONE PREDICATE, TWO SURFACES.** The tile card's `Road` row and the BUILD QUEUE block's road row
-## both ask it, so the card cannot say a road is un-queued while the queue is drawing a row for it.
 static func is_queued(road: Dictionary, queued_tiles: Dictionary) -> bool:
 	return queued_tiles.has(tile_of(road))
 
-## **THE QUEUE ROW'S NAME FOR A ROAD — the rung it is being RAISED TO, and the tile.** A patch and a
-## road can be queued on one hex, so the coordinates alone would draw two rows a player cannot tell
-## apart; the rung is what says which job this is. `HudWorkVocab.BUILD_QUEUE_PLANT_FACE_FORMAT`'s
-## shape, one branch over, so the three faces read as one list.
-const ROAD_QUEUE_FACE_FORMAT := "%s (%d, %d)"
 
 ## `Road:` — **the rung this road HOLDS**, plus what traffic is wearing in above it and the branch's
 ## hazard word where its upkeep is short, as middot clauses in that order.
@@ -1475,10 +1449,6 @@ const ROAD_LADDER_UPKEEP_FORMAT := "%s/turn upkeep"
 ## `DetailFormat.format_trimmed`, which strips the trailing zeros a fixed `%.2f` would leave.
 const ROAD_LADDER_RATE_DECIMALS := 2
 
-## ⛔ **WHAT A RUNG NOBODY HAS STARTED COSTS — the pile AND the bill, and no duration.** The turns
-## estimate used to ride here and was wrong twice over: it was divided by the acting band's CURRENT
-## builders, who in the reported game were all on a Tame, and it ignored the queue the press would
-## join. The two figures that do not move with a crew are what the row states now.
 ##
 ## **THE UPKEEP CLAUSE IS DROPPED WHERE THE RUNG DECLARES NONE.** The free floor holds for nothing, so
 ## `0/turn upkeep` would be a bill where there is no bill; `SourceForecast.UPKEEP_WORK_MIN` is the same
@@ -1511,37 +1481,19 @@ const ROAD_LADDER_TIP_REMOTE_FORMAT := "Far from your band, so it costs ×%s."
 ## removed.
 const ROAD_LADDER_TIP_PRICE_FORMAT := "%s work to build, %s work a turn to keep."
 
-## **HOW LONG, AT THE ACTING BAND'S OWN `builders` POOL.** `Dirt Road — 300 work` with one builder is
-## ~300 turns, and nothing on the card said so; every other build surface in the game states a turns
-## estimate. **It names the BAND because the answer is the band's** — a different pool is a different
-## number, which is why the estimate re-renders with the picker above it.
 ##
 ## ⛔ **ON A BUILDABLE ROW IT RIDES THE FACE, and on a refused one it rides the HOVER.** The face holds
 ## one clause beside the price, and on a refused rung that clause is the refusal — a row reading
 ## `300 work · ≈300 turns · needs Roadbuilding` is the wordiness this card was cut down from.
 const ROAD_LADDER_TIP_TURNS_FORMAT := "%s with this band's builders."
 
-# ---- WHERE THE PRESS LANDS — the queue, said at the moment of the decision ----------------------
-#
-# ⛔ **THE PRESS QUEUES A JOB AND THE CARD NEVER SAID SO.** Reported from play: a graded tile showed
-# nothing anywhere, and the ladder had not warned that the press was a DECLARATION taking its place in
-# a line rather than work starting on the spot. Ray: *"it isn't obvious that the road will show up in
-# the build queue, so we need something to indicate that when the job is selected."*
 #
 # ⛔ **AND THE TURNS ESTIMATE IMPLIED IT STARTS NOW.** `300 work · ≈100 turns` silently assumes the
 # builders are free; in the reported game they were on a Tame until turn 132. The figure is RIGHT and
 # it is not a completion date — so it is kept, and where anything is ahead of this road the row says
 # what the number is measured from.
 
-## An empty queue: the press really does start it, and saying so is what makes the other reading
-## legible when it appears.
-const ROAD_LADDER_QUEUE_EMPTY_ASIDE := "joins this band's build queue, and starts now"
 
-## …and a queue with something in it. **The HEAD is named because it is the whole question** — the
-## head takes every builder, so it alone decides when this road starts — and the rest are a count,
-## which is what a player reorders against.
-const ROAD_LADDER_QUEUE_MORE_FORMAT := " and %d more"
-const ROAD_LADDER_QUEUE_BEHIND_PLAIN_FORMAT := "joins this band's build queue behind %s%s"
 
 ## ⛔ **RETIRED — `ROAD_LADDER_QUEUE_WAITING_FORMAT` ("waiting behind %s%s — %s") AND
 ## `ROAD_LADDER_QUEUE_ESTIMATE_NOTE` ("the estimate runs from when it starts"), WITH THE
@@ -1558,15 +1510,8 @@ const ROAD_LADDER_QUEUE_BEHIND_PLAIN_FORMAT := "joins this band's build queue be
 ## row genuinely cannot: *what would this press do*. That is why they stay while this one went — the
 ## deleted one restated the row, and these state what pressing it would join.
 
-## The queue model the ladder is handed — how many entries stand ahead of a press, and what the head
-## is called. Named keys because a bare pair is two ints a caller can hand over the wrong way round.
-const ROAD_LADDER_QUEUE_AHEAD_KEY := "ahead"
-const ROAD_LADDER_QUEUE_HEAD_KEY := "head"
 
-## ⛔ **ZERO BUILDERS IS AN ANSWER, NOT AN ABSENCE.** With nobody on the pool there is no estimate to
-## state and the honest thing is the REMEDY, in the ladder's own aside shape — a blank column where
-## every other row states a duration reads as a client that failed to work it out.
-const ROAD_LADDER_NO_BUILDERS_ASIDE := "nobody on builders — staff the pool and it starts"
+const ROAD_LADDER_NO_BUILDERS_ASIDE := "Nobody is building — every worker is busy on a work row. Lower a row's Max or stop working a row to free a builder."
 
 ## ⛔ **THE STALL WARNING FOR A ROAD, AND IT IS A ROUTE-ONLY SPELLING FOR ONE REASON: THE NOUN.**
 ## `HudWorkVocab.RUNG_TRACK_STALL_FORMAT` reads *"you have %s — it will stall at about %s"*, and its

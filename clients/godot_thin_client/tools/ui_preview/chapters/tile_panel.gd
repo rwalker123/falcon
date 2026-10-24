@@ -540,8 +540,7 @@ func _assert_greyed_verbs_say_why(panel: BandCityPanel, roster: Array) -> void:
 				% [verb_id, staffed_button.tooltip_text if staffed_button != null else "<none>"],
 			staffed_button != null and not staffed_button.disabled
 				and staffed_button.tooltip_text == String(staffed_verb[HudComposeVocab.VERB_KEY_TOOLTIP]))
-	# …and the genuinely spent band: every hand on a PLAYER-SET row (the builders pool).
-	band["labor_assignments"] = [{"kind": HudConst.LABOR_KIND_BUILDERS, "workers": hands}]
+	band["labor_assignments"] = [{"kind": HudConst.LABOR_KIND_WARRIOR, "workers": hands}]
 	h._hud._selectioncard.select_roster_occupant("unit", TILE_PANEL_MOVE_BAND_ENTITY)
 	# The panel shows the SAME band, so its action bar is asked the same gate as the drawer row.
 	h._hud._bandpanel.render_band(band)

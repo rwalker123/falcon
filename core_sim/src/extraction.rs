@@ -334,13 +334,13 @@ pub struct DepositSource {
     /// render as a finished build.
     #[serde(default)]
     pub build_turns_remaining: Option<BuildTurns>,
-    /// **THIS WORKING'S 0-BASED PLACE IN ITS BAND'S BUILD QUEUE**, or
-    /// [`crate::intensification::NOT_IN_ANY_BUILD_QUEUE`] when no pass has placed it.
+    /// **THE ESTIMATE-PASS STAMP FOR THIS WORKING'S BUILD**, or
+    /// [`crate::intensification::NOT_IN_ANY_BUILD_QUEUE`] when no pass has dated it.
     ///
     /// **Scratch, not published**: its one reader is the countdown's *"has an estimate pass ever run
-    /// for this entry"* test, which is what separates a build queued a second ago from one that is
+    /// for this entry"* test, which is what separates a build declared a second ago from one that is
     /// genuinely stalled — both sit at `0%`. Cleared every turn with the pair above, which is what
-    /// makes *"live-queued and still cleared"* mean *"queued since the last pass"*.
+    /// makes *"declared and still cleared"* mean *"declared since the last pass"*.
     #[serde(default = "not_in_any_build_queue")]
     pub build_queue_position: i32,
     /// **THE RUNG IN FLIGHT, AS A PACE** — the in-flight leg of the entry that dated this working,

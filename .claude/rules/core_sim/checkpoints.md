@@ -527,7 +527,7 @@ reordering. The sets that *were* order-unstable are gone: `DiscoveredSites::seen
 `GreatDiscoveryLedger::index` are `BTreeSet`s, both pure membership indices that nothing iterates.
 
 **`PartialEq` is not the instrument for any of this.** `LaborAllocation` has a hand-written impl that
-compares assignments, upkeep mode and build queue and skips all of its telemetry — correct for
+compares assignments, upkeep mode and declared builds and skips all of its telemetry — correct for
 comparing intent, and silently blind to exactly the class of field a checkpoint is most likely to
 drop. serde walks every field regardless of what `PartialEq` thinks.
 
@@ -556,4 +556,4 @@ simulating.
 
 ## A restore clears every source's per-turn build scratch
 
-`restore_sim_state` (a save load and a rollback alike) clears the transient build estimate on all five source registries (`HerdRegistry`, `ForageRegistry`, `DepositRegistry`, `RoadRegistry`, `TileImprovementRegistry`, each `clear_build_scratch`). The checkpoint carries the registries whole, scratch included, and nothing recomputes it before the first frame, so without the clear a loaded world republished the last turn's countdown (a pre-fix `2101109` outlived the fix). The first frame after a restore reads "not yet estimated" (`-5`); the next turn restamps it. Pinned by `build_queue::a_load_clears_a_corral_heads_stale_date_and_the_next_turn_blocks_it`.
+`restore_sim_state` (a save load and a rollback alike) clears the transient build estimate on all five source registries (`HerdRegistry`, `ForageRegistry`, `DepositRegistry`, `RoadRegistry`, `TileImprovementRegistry`, each `clear_build_scratch`). The checkpoint carries the registries whole, scratch included, and nothing recomputes it before the first frame, so without the clear a loaded world republished the last turn's countdown (a pre-fix `2101109` outlived the fix). The first frame after a restore reads "not yet estimated" (`-5`); the next turn restamps it.

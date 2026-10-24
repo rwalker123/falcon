@@ -137,7 +137,8 @@ fn spawn_world() -> App {
     app.world
         .resource_mut::<FaunaConfigHandle>()
         .hold_wariness_at_zero();
-    app.world.insert_resource(LaborConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::labor_config_with_room_on_the_tile());
     app.world
         .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     app.world.insert_resource(FloraConfigHandle::default());
@@ -759,30 +760,15 @@ fn spawn_resident_crew(
                     kit: None,
                     priority: SourcePriority::default(),
                 })
-                // **The build's hands are a band-level pool** since
-                // `docs/plan_standing_upkeep.md` §2.5, staffed at the same count the take is so the
-                // declared build is genuinely running beside the hunters — and staffed **only when
-                // something is declared**, because a builders row with an empty queue is hands the
-                // band is paying for and nobody is spending.
-                .chain((build_crew > 0).then_some(LaborAssignment {
-                    party: None,
-                    muster_crew: 0,
-                    planned_crew: 0,
-                    max_workers: Some(build_crew),
-                    staffing: Default::default(),
-                    target: LaborTarget::Builders,
-                    workers: build_crew,
-                    kit: None,
-                    priority: SourcePriority::default(),
-                }))
+                // **The build's hands are the band's idle ones**: `working` above leaves `build_crew`
+                // beyond the take, so a declared build runs beside the hunters.
                 .collect(),
-                build_queue: improvement
-                    .map(|declared| core_sim::BuildQueueEntry {
+                builds: improvement
+                    .map(|declared| core_sim::BuildDeclaration {
                         source: core_sim::BuildSource::Herd(fauna_id.to_string()),
                         declared: core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(
                             declared,
                         )),
-                        priority: core_sim::SourcePriority::default(),
                     })
                     .into_iter()
                     .collect(),

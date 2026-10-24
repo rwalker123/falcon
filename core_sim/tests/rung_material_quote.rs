@@ -445,7 +445,10 @@ const RING_BUILDERS: u32 = 400;
 const BAND_WORKERS: f32 = 5_000.0;
 
 /// A store no claim on it can bind, so the turn measures the **ring** rather than the shelf.
-const AMPLE_MATERIAL: f32 = 10_000.0;
+const AMPLE_MATERIAL: f32 = 100.0;
+
+/// A watchdog on the ring's run, far above the handful of turns a capped crew needs.
+const TURNS_TO_CLOSE_A_RING: u32 = 60;
 
 /// The slack a claim routed through the **store** costs: a `LocalStore` holds fixed-point `Scalar`
 /// batches, so stating an amount and reading it back quantises twice. [`EPSILON`] is the right bar
@@ -556,20 +559,9 @@ fn begin_a_ring(app: &mut App, band: Entity) {
         kit: None,
         priority: SourcePriority::default(),
     });
-    allocation.assignments.push(LaborAssignment {
-        party: None,
-        muster_crew: 0,
-        planned_crew: 0,
-        max_workers: Some(RING_BUILDERS),
-        staffing: Default::default(),
-        target: LaborTarget::Builders,
-        workers: RING_BUILDERS,
-        kit: None,
-        priority: SourcePriority::default(),
-    });
-    allocation.build_queue.clear();
+    allocation.builds.clear();
     assert!(
-        allocation.enqueue_build(source.clone(), BuildJob::ExtendPen),
+        allocation.declare_build(source.clone(), BuildJob::ExtendPen),
         "the band works the pen it is ringing"
     );
 }
@@ -699,7 +691,28 @@ fn the_published_pile_is_what_a_completed_ring_actually_eats() {
     let band = the_band_on(&mut app, tile);
     begin_a_ring(&mut app, band);
     stock_hurdles(&mut app, band, AMPLE_MATERIAL);
-    resolve_and_publish(&mut app);
+    // **A ring is raised by at most its rung's builders a turn**, so the whole ring is a run of
+    // turns: each turn's fall in the shelf, less the pen's standing keeping, is summed until the
+    // ring closes.
+    let mut drawn = 0.0_f32;
+    let mut closed = false;
+    for _ in 0..TURNS_TO_CLOSE_A_RING {
+        // The Logistics decay pass between labour passes, which clears the turn's keeping scratch.
+        app.world.run_system_once(core_sim::advance_husbandry);
+        let before = store_holds(&app, band);
+        resolve_and_publish(&mut app);
+        drawn += before - store_holds(&app, band) - upkeep_paid(&app);
+        let still_extending = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(CORRALLED_HERD)
+            .expect("the pen is still seated")
+            .pen_extending;
+        if !still_extending {
+            closed = true;
+            break;
+        }
+    }
 
     let quoted = amount_of(
         &published_herd_field(&app, CORRALLED_HERD, |row| {
@@ -712,24 +725,16 @@ fn the_published_pile_is_what_a_completed_ring_actually_eats() {
     )
     .expect("the penned herd is quoted the ring's pile");
 
-    let (extending, banked) = {
-        let herd = app
-            .world
-            .resource::<HerdRegistry>()
-            .find(CORRALLED_HERD)
-            .expect("the pen is still seated");
-        (herd.pen_extending, herd.pen_extend_progress)
-    };
     assert!(
-        !extending,
-        "fixture: the crew must CLOSE the ring this turn, or this measures a fraction of one \
-         (banked {banked} of {})",
+        closed,
+        "fixture: the crew must CLOSE the ring within {TURNS_TO_CLOSE_A_RING} turns, or this \
+         measures a fraction of one (a ring costs {})",
         pen_build_cost()
     );
 
-    // The fall in the shelf, less the pen's own standing keeping — the only other claim on the good
-    // in this world, because the herd registry was cleared and no plant rung declares a material.
-    let drawn = AMPLE_MATERIAL - store_holds(&app, band) - upkeep_paid(&app);
+    // `drawn` is the fall in the shelf over the whole ring, less the pen's own standing keeping -
+    // the only other claim on the good in this world, because the herd registry was cleared and no
+    // plant rung declares a material.
     assert!(
         (drawn - quoted).abs() < STORE_QUANTUM_SLACK,
         "a whole ring swallows exactly the quoted pile: drew {drawn} against a quote of {quoted}"

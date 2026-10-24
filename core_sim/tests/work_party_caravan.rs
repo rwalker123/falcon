@@ -1896,18 +1896,7 @@ fn a_far_workings_rate_home_on_the_turn_it_completes_a_rung_is_the_querys() {
             .world
             .get_mut::<LaborAllocation>(band)
             .expect("the fixture band has an allocation");
-        allocation.assignments.push(LaborAssignment {
-            party: None,
-            muster_crew: 0,
-            planned_crew: 0,
-            max_workers: Some(BUILDERS),
-            staffing: Default::default(),
-            target: LaborTarget::Builders,
-            workers: BUILDERS,
-            kit: None,
-            priority: SourcePriority::default(),
-        });
-        assert!(allocation.enqueue_build(
+        assert!(allocation.declare_build(
             core_sim::BuildSource::Deposit {
                 tile,
                 material: WOOD.to_string(),

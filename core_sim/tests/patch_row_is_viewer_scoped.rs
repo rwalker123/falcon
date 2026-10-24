@@ -31,7 +31,7 @@ use core_sim::shipped;
 mod faction_support;
 
 use core_sim::{
-    patch_carrying_capacity, publish_baseline_snapshot, run_turn, BuildJob, BuildQueueEntry,
+    patch_carrying_capacity, publish_baseline_snapshot, run_turn, BuildDeclaration, BuildJob,
     BuildSource, BuildTurns, ForagePatch, ForageRegistry, LaborAllocation, LaborConfigHandle,
     LadderConfigHandle, PopulationCohort, SnapshotHistory, VisibilityLedger,
 };
@@ -41,13 +41,11 @@ use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 /// The finish date every staged build is stamped with, and the place in the line beside it. Distinct
 /// values so a leaked figure is unmistakable in a failure message rather than a plausible one.
 const STAGED_BUILD_TURNS: u32 = 7;
-const STAGED_QUEUE_POSITION: i32 = 0;
 /// What the crew's tools add per turn — a third distinct figure, for the same reason.
 const STAGED_BUILD_GEAR: f32 = 3.0;
 
 /// The wire's *"there is no answer"* countdown and *"no band has queued this"* place.
 const NO_BUILD_TURNS: i32 = sim_schema::NO_BUILD_TURNS_ESTIMATE;
-const NOT_QUEUED: i32 = sim_schema::NOT_IN_ANY_BUILD_QUEUE;
 
 /// The three tiles the fixture stages, and which faction improved each.
 struct StagedTiles {
@@ -206,10 +204,8 @@ fn fingerprint(row: &fb::ForagePatchState<'_>) -> PatchFingerprint {
             "buildTurnsRemaining",
             format!("{}", row.buildTurnsRemaining()),
         ),
-        (
-            "buildQueuePosition",
-            format!("{}", row.buildQueuePosition()),
-        ),
+        ("buildersStaffed", format!("{}", row.buildersStaffed())),
+        ("buildersCap", format!("{}", row.buildersCap())),
         ("buildWorkFromGear", format!("{}", row.buildWorkFromGear())),
         (
             "composition",
@@ -332,7 +328,6 @@ fn raise_to_a_field(
     // **The per-turn scratch the labor arm stamps for whichever band worked the source** — written
     // after the last turn resolved, because `advance_cultivation` clears it every Logistics pass.
     patch.build_turns_remaining = Some(BuildTurns::Turns(STAGED_BUILD_TURNS));
-    patch.build_queue_position = STAGED_QUEUE_POSITION;
     patch.build_work_from_gear = STAGED_BUILD_GEAR;
 }
 
@@ -428,10 +423,9 @@ fn a_world_where_both_peoples_farm() -> (App, StagedTiles) {
                 &[rival_explored, rival_unexplored]
             };
             for tile in tiles {
-                allocation.build_queue.push(BuildQueueEntry {
+                allocation.builds.push(BuildDeclaration {
                     source: BuildSource::Patch(*tile),
                     declared: BuildJob::Climb(shipped::plant_farm()),
-                    priority: core_sim::SourcePriority::default(),
                 });
             }
         }
@@ -477,10 +471,6 @@ fn the_viewers_own_field_reads_through_in_every_field() {
         field_of(own, "buildTurnsRemaining"),
         STAGED_BUILD_TURNS.to_string(),
         "the viewer's own builder state reads through"
-    );
-    assert_eq!(
-        field_of(own, "buildQueuePosition"),
-        STAGED_QUEUE_POSITION.to_string()
     );
     assert_eq!(
         field_of(own, "buildWorkFromGear"),
@@ -569,9 +559,9 @@ fn a_rivals_build_on_unexplored_ground_publishes_no_date_or_place() {
         "a rival's finish date is not the viewer's to read"
     );
     assert_eq!(
-        field_of(row, "buildQueuePosition"),
-        NOT_QUEUED.to_string(),
-        "a rival's place in their own line is not the viewer's to read"
+        field_of(row, "buildersStaffed"),
+        "0",
+        "a rival's builders on the source are not the viewer's to read"
     );
     assert_eq!(field_of(row, "buildWorkFromGear"), "0");
     assert_eq!(field_of(row, "buildDestinationRung"), "");
@@ -612,6 +602,6 @@ fn a_rivals_field_on_explored_ground_reads_improved_but_not_who_is_building_it()
         NO_BUILD_TURNS.to_string(),
         "a rival's finish date is not the viewer's to read, explored ground or not"
     );
-    assert_eq!(field_of(row, "buildQueuePosition"), NOT_QUEUED.to_string());
+    assert_eq!(field_of(row, "buildersStaffed"), "0");
     assert_eq!(field_of(row, "buildWorkFromGear"), "0");
 }

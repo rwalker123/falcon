@@ -193,7 +193,7 @@ paths:
     per-source `maintain` crew — and then the band's `husbandry` POOL. **The pool is retired too**
     (`docs/plan_site_crews.md`): the herd's own hunt crew keeps it before it hunts, and the hands that
     keeping took ride the herd as `upkeepHands`; the work row states them as
-    `keeps <kept> of <demand> · <n> hunting` (`band-city-panel.md` → "THE WORK TAB IS FIVE
+    `keeps <kept> of <demand> · <n> hunting` (`band-city-panel.md` → "THE WORK TAB IS FOUR
     SECTIONS"). `round(herded_fraction · needed)` remains
     forbidden for its own older reason: it reads last turn's RESOLVED fraction.
   - **A PART-BUILT RUNG NOBODY IS BUILDING SHEDS TOO, and it is a different reading.** The sim's shed
@@ -214,7 +214,7 @@ paths:
   through the same `is_under_kept` call: the established overhunt ⚠ (amber marks + severity stripe +
   the row's own keeping mark) and the `WORK_ROW_UNDER_HERDED_NOTE` ("Animals drifting off — add hands
   to this row's crew.") in its inspector strip, so the shed reads WHEREVER the herd is listed, not
-  only in its drawer — see `band-city-panel.md` → "THE WORK TAB IS FIVE SECTIONS".
+  only in its drawer — see `band-city-panel.md` → "THE WORK TAB IS FOUR SECTIONS".
   band_panel_preview `band_panel_under_herded` / `band_panel_keepers_short` /
   `band_panel_keepers_staffed`.
 - **Per-species husbandry ceiling — gate the ladder by species** (Grazing 2d-δ,
@@ -391,7 +391,7 @@ paths:
     **What survives here is the history the control accumulated**, which is about the COMMAND rather
     than about the button: the ring gained a crew in §2.2 and lost it again in §2.5. It rides the same
     `animal:pen` rung as the pen it widens, so it cannot be the one build in the game that is free —
-    but what it costs is the band's `builders` POOL, not a crew named on the verb, and the grammar is
+    but what it costs is the pen site's own crew, not a crew named on the verb, and the grammar is
     **closed at three tokens** (a fourth is a parse error). The stepper, its `idleWorkers` clamp, the
     disabled-at-zero button and `_pen_extend_crew` all went with that. The server still rejects an
     extend at max radius / unowned / Herding-unknown with a feed message, and the client still does not

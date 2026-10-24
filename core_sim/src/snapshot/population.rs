@@ -91,7 +91,7 @@ pub(crate) fn labor_assignment_to_state(
         // **WHAT IS BEING RAISED ON THIS SOURCE**, `""` for a row with nothing queued. Written for
         // every kind, because a band-wide role never carries one.
         //
-        // **It is DERIVED at capture from the band's build queue** (`docs/plan_standing_upkeep.md`
+        // **It is DERIVED at capture from the band's declared builds** (`docs/plan_standing_upkeep.md`
         // §2.4), which is the single authority: the row itself stopped carrying a verb when the
         // per-source build crew retired, so there is no second store for this to drift from.
         improvement: build_job,
@@ -101,7 +101,7 @@ pub(crate) fn labor_assignment_to_state(
         // because neither had a kit axis, and the roster giving them one is what changed.
         //
         // **The builders' resolution is handed in**, because theirs is the one default that is not
-        // a property of the row: it is derived from the head queue entry's web, which a single
+        // a property of the row: it is derived from the declared build's web, which a single
         // assignment cannot see.
         kit_id: resolved_kit.id().to_string(),
         // **HOW MANY HANDS THIS QUARRY CAN USE, FIGHT INCLUDED** — `0` on every non-hunt row, which
@@ -252,10 +252,7 @@ pub(crate) fn labor_assignment_to_state(
         }
         // The seven band-wide roles carry no source and no floor: their whole content is the head
         // count already on the row.
-        LaborTarget::Scout
-        | LaborTarget::Warrior
-        | LaborTarget::Roadwork
-        | LaborTarget::Builders => {}
+        LaborTarget::Scout | LaborTarget::Warrior | LaborTarget::Roadwork => {}
     }
     state
 }
@@ -508,7 +505,6 @@ pub(crate) fn hunt_turn_lines(
         &pass.allocation,
         take_rows,
         equipment,
-        wear,
     ))
 }
 
@@ -1197,7 +1193,7 @@ pub(crate) struct PopulationStateInputs<'a> {
     pub(crate) held_preservation: crate::spoilage::HeldPreservation,
 }
 
-/// The two webs' registries, for resolving a queue entry's **live** rung. No ladder: both
+/// The two webs' registries, for resolving a declared build's **live** rung. No ladder: both
 /// `patch_build_verb` and `herd_build_verb` derive the rung from the source's own meters, so the
 /// config has nothing to say here.
 pub(crate) struct BuildSourceInputs<'a> {
@@ -1228,7 +1224,7 @@ pub(crate) struct BuildSourceInputs<'a> {
     pub(crate) grid: (u32, bool),
 }
 
-/// **THE JOB TOKEN A ROW PUBLISHES** — the rung this band's queue entry for `source` is actually
+/// **THE JOB TOKEN A ROW PUBLISHES** — the rung this band's declared build for `source` is actually
 /// raising, or `""` when the band has no entry for it.
 ///
 /// **Resolved, not declared.** `BuildJob::Rung` is the player's declaration and it answers only
@@ -1289,7 +1285,7 @@ fn resolved_build_job(
     let Some(source) = crate::components::BuildSource::of(target) else {
         return String::new();
     };
-    let Some(entry) = allocation.build_queue_entry(&source) else {
+    let Some(entry) = allocation.build_declaration(&source) else {
         return String::new();
     };
     match (&entry.declared, &source) {
@@ -1352,7 +1348,7 @@ fn resolved_build_job(
 /// **EMPTY REGISTRIES, for a fixture that asserts on a band's derived readouts** — the two webs'
 /// `BuildSourceInputs` when no source is seeded.
 ///
-/// A queue entry on a source neither registry carries resolves to `""`, which is the honest answer:
+/// A declared build on a source neither registry carries resolves to `""`, which is the honest answer:
 /// the sim cannot say what is being raised on ground it does not have. Fixtures that assert on the
 /// **job token** seed real registries instead.
 /// A fixture with no map: every tile is off it.
@@ -1616,7 +1612,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // **THE KIT EACH WORK ROW IS PRICED AT, AND HOW FAR THAT KIT REACHES — ONE EXPRESSION FOR EVERY
     // ROW**, in `assignments` order. The two halves are resolved together because the defect this
     // shape exists to prevent is them answering about *different* kits: the builders' row was
-    // kitted from the build queue here and then cut a share of a budget that had resolved that same
+    // kitted from the declared builds here and then cut a share of a budget that had resolved that same
     // row as `default_kits.builders` (`none`), so the row put **no demand** on the very item it was
     // then issued a share of — a band owning six hoes published twelve workers holding them.
     //
@@ -2008,7 +2004,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 .enumerate()
                 .map(|(i, assignment)| {
                     // **The builders row is the one whose default is not on the row.** Its kit is
-                    // derived from the head queue entry's web, so a card reading this field states
+                    // derived from the declared build's web, so a card reading this field states
                     // what the pool is holding this turn rather than a stored `none`.
                     // **Resolved ONCE, above** (`row_gear`), in the same match arm as the coverage
                     // beside it — so the kit this row publishes and the reach published beside it
@@ -2455,8 +2451,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     materials: craft_inputs.materials,
                 }),
             );
-            // **A QUEUED BUILD SHORT OF THE GOODS IT DRAWS** (hurdles for a pen) is something to make
-            // next too, ranked with the build-queue shortages.
+            // **A DECLARED BUILD SHORT OF THE GOODS IT DRAWS** (hurdles for a pen) is something to make
+            // next too, ranked with the declared-build shortages.
             crate::craft_suggestions::merge_build_material_suggestions(
                 &mut suggestions,
                 crate::craft_suggestions::build_material_suggestions_in_world(
@@ -2510,7 +2506,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 alloc,
                 take_rows,
                 craft_inputs.equipment,
-                &kit,
             );
             crate::snapshot::crafting::kit_need_states(
                 crate::craft_suggestions::band_kit_needs(
@@ -2732,31 +2727,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .unwrap_or_default()
             .as_str()
             .to_string(),
-        // **THE BAND'S OWN BUILD QUEUE, IN THE BAND'S OWN ORDER** (`docs/plan_standing_upkeep.md`
-        // §4.9 item 9a) — the rank a client reads, where position is the vector INDEX.
-        //
-        // **It is the answer `ForagePatchState::build_queue_position` cannot give.** That one is
-        // source-addressed and rides the *winning* band, so it states another band's place in
-        // another band's line whenever two bands hold the source — which is ordinary. One int per
-        // source cannot carry two bands' ranks; this list is per band and carries each.
-        //
-        // **Captured LIVE off the allocation, never turn-written** — the same discipline as
-        // `is_queued` on a working's row. A `build_order` / `unqueue` / declaration mutates the
-        // allocation at command time and `recapture_snapshot_in_place` re-reads it, so the new order
-        // ships on that command's own frame and the client needs no optimistic ordering overlay.
-        //
-        // **Unfiltered and unsorted**: exactly what the band holds, in the band's order.
-        // `prune_build_queue` is what keeps it honest, and re-deriving that here would be a second
-        // producer of one verdict.
-        build_queue: allocation
-            .map(|alloc| {
-                alloc
-                    .build_queue
-                    .iter()
-                    .map(|entry| build_queue_entry_to_state(entry, hunt_crew_levers.ladder))
-                    .collect()
-            })
-            .unwrap_or_default(),
         // **THE BAND'S HAY LEDGER** — the fodder twins of `food_income` / `food_consumption` /
         // `turns_of_food` above, resolved here for the same reason they are: the client renders, it
         // does not sum. `fodder_need` is the roll-up the labor pass struck across every pen this
@@ -2841,7 +2811,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         pool_toe: allocation
             .map(|alloc| {
                 alloc
-                    .published_pool_toe()
+                    .last_pool_toe
+                    .iter()
                     .map(|line| sim_schema::state::PoolToeLineState {
                         pool: line.pool.as_str().to_string(),
                         item_id: line.item.clone(),
@@ -3078,65 +3049,6 @@ fn material_payoffs(ledger: &BTreeMap<String, f32>) -> Vec<sim_runtime::Material
             amount: *amount,
         })
         .collect()
-}
-
-/// **Publish one build-queue entry's SOURCE** — the whole of what a row of
-/// [`PopulationCohortState::build_queue`] carries.
-///
-/// The declared job, the kit, the destination rung and the estimate are all published on the
-/// **source** row and agree across every band holding the source by construction, so an entry that
-/// repeated them would be a second copy of a fact that already has a home. What it does state is
-/// **which site** it is — tile, herd, working material or road — in the command grammar's terms.
-fn build_queue_entry_to_state(
-    entry: &crate::components::BuildQueueEntry,
-    ladder: &crate::intensification::LadderConfig,
-) -> SchemaBuildQueueEntryState {
-    let source = &entry.source;
-    let mut state = SchemaBuildQueueEntryState {
-        // The same token the band's Forage/Hunt labor row publishes for this source
-        // (`LaborTarget::kind`), so a client joins the two lists on one spelling.
-        kind: source.kind().to_string(),
-        // **The entry's own Build mark** (`docs/plan_site_crews.md` §2.4) — the one per-entry fact
-        // the source row does not carry, because the row's `priority` is its crew's.
-        build_priority: entry.priority.as_str().to_string(),
-        ..Default::default()
-    };
-    match source {
-        BuildSource::Patch(tile) => {
-            state.target_x = tile.x;
-            state.target_y = tile.y;
-        }
-        BuildSource::Herd(fauna_id) => fauna_id.clone_into(&mut state.fauna_id),
-        // **Each entry states its own site in the command grammar's terms**
-        // (`docs/plan_site_crews.md` §2.4) — `road <x> <y>` for a road, whose tile may also carry a
-        // patch, and `<x> <y> <material>` for a working, since one hex can hold two.
-        BuildSource::Road(tile) => {
-            state.target_x = tile.x;
-            state.target_y = tile.y;
-            // The road's own branch, off the ladder - a per-tile entry names its branch so a
-            // second per-tile branch has somewhere to say which it is.
-            state.branch = ladder
-                .branch_of_kind(crate::intensification::SourceKind::Road)
-                .as_str()
-                .to_string();
-        }
-        BuildSource::Deposit { tile, material } => {
-            state.target_x = tile.x;
-            state.target_y = tile.y;
-            material.clone_into(&mut state.material);
-        }
-        // A tile improvement names its own branch, exactly as a road does.
-        BuildSource::Tile { tile, branch } => {
-            state.target_x = tile.x;
-            state.target_y = tile.y;
-            state.branch = branch.as_str().to_string();
-        }
-        // A band improvement names its branch and no tile: it stands where the band does.
-        BuildSource::Band { branch, .. } => {
-            state.branch = branch.as_str().to_string();
-        }
-    }
-    state
 }
 
 pub(crate) fn generation_state(profile: &GenerationProfile) -> GenerationState {
@@ -3463,7 +3375,6 @@ static EMPTY_PARENT_STORE: std::sync::OnceLock<LocalStore> = std::sync::OnceLock
 mod tests {
     use super::*;
     use crate::expedition_config::ExpeditionConfig;
-    use crate::ladder_ids::shipped;
 
     // Test-only since the restore path that shared them was deleted.
     use crate::components::{
@@ -4061,179 +3972,6 @@ mod tests {
         );
         assert_eq!(state.size, 30);
     }
-
-    /// An allocation holding `queue` as its build queue, with a take row on each source so the
-    /// fixture is a band that could really have declared them.
-    fn allocation_queueing(queue: &[BuildSource]) -> LaborAllocation {
-        LaborAllocation {
-            assignments: queue
-                .iter()
-                .map(|source| LaborAssignment {
-                    party: None,
-                    muster_crew: 0,
-                    planned_crew: 0,
-                    max_workers: Some(1),
-                    staffing: Default::default(),
-                    target: match source {
-                        BuildSource::Patch(tile) => LaborTarget::Forage {
-                            tile: *tile,
-                            floor: 0.5,
-                            species: None,
-                            take_species: crate::components::TakeSelection::EVERYTHING,
-                        },
-                        BuildSource::Herd(fauna_id) => LaborTarget::Hunt {
-                            fauna_id: fauna_id.clone(),
-                            floor: 0.5,
-                            move_with_herd: false,
-                        },
-                        // A road carries no take row at all — its keeper is on the road, not on a
-                        // labor target — so a fixture that queued one would be describing a band
-                        // this helper cannot build.
-                        BuildSource::Road(_) | BuildSource::Tile { .. } | BuildSource::Band { .. } => {
-                            unreachable!(
-                                "a road, a tile improvement or a band improvement has no take row, so it cannot be a source in this fixture"
-                            )
-                        }
-                        BuildSource::Deposit { tile, material } => LaborTarget::Extract {
-                            tile: *tile,
-                            material: material.clone(),
-                            floor: crate::components::DEFAULT_ESCAPEMENT_FLOOR,
-                        },
-                    },
-                    workers: 1,
-                    kit: None,
-                    priority: SourcePriority::default(),
-                })
-                .collect(),
-            build_queue: queue
-                .iter()
-                .map(|source| crate::components::BuildQueueEntry {
-                    source: source.clone(),
-                    declared: crate::components::BuildJob::Climb(shipped::plant_tended()),
-                    priority: SourcePriority::default(),
-                })
-                .collect(),
-            ..Default::default()
-        }
-    }
-
-    /// The published queue as `(kind, x, y, fauna_id)` tuples, in the order the wire carries them.
-    fn published_queue(state: &PopulationCohortState) -> Vec<(String, u32, u32, String)> {
-        state
-            .build_queue
-            .iter()
-            .map(|entry| {
-                (
-                    entry.kind.clone(),
-                    entry.target_x,
-                    entry.target_y,
-                    entry.fauna_id.clone(),
-                )
-            })
-            .collect()
-    }
-
-    /// **TWO BANDS SHARING ONE SOURCE PUBLISH TWO DIFFERENT ORDERS, and each publishes its own**
-    /// (`docs/plan_standing_upkeep.md` §4.9 item 9a).
-    ///
-    /// This is the defect pinned rather than merely fixed. `ForagePatchState::build_queue_position`
-    /// is **one int per source**, written by whichever band has the sooner estimate — so with band B
-    /// holding `Y` second and band C holding it first, that int can state `1` or `0` and *cannot
-    /// state both*. Whichever it states, the other band's queue block draws a list that is not its
-    /// own, and the drag gesture computes its insert index off that wrong list. The per-band vector
-    /// carries both answers because there are two vectors.
-    #[test]
-    fn two_bands_sharing_a_source_each_publish_their_own_queue_order() {
-        let cohort = cohort(TEST_LARDER);
-        // **The tiles are deliberately out of key order.** B declares X, Y, Z in that order, and
-        // their coordinates sort the other way — so a capture that published *any* order derived
-        // from the sources rather than from the band (a global rank, the client's old tie-break on
-        // the key string) lands on `[Y, Z, X]` and is caught. Equal-and-ascending coordinates would
-        // make this fixture pass under exactly the defect it exists to forbid.
-        let x = UVec2::new(3, 3);
-        let y = UVec2::new(1, 1);
-        let z = UVec2::new(2, 2);
-
-        let band_b = allocation_queueing(&[
-            BuildSource::Patch(x),
-            BuildSource::Patch(y),
-            BuildSource::Patch(z),
-        ]);
-        let band_c = allocation_queueing(&[BuildSource::Patch(y)]);
-
-        let published_b = captured(&cohort, Some(&band_b), None);
-        let published_c = captured(&cohort, Some(&band_c), None);
-
-        assert_eq!(
-            published_queue(&published_b),
-            vec![
-                ("forage".to_string(), x.x, x.y, String::new()),
-                ("forage".to_string(), y.x, y.y, String::new()),
-                ("forage".to_string(), z.x, z.y, String::new()),
-            ],
-            "band B publishes B's queue, in B's order"
-        );
-        assert_eq!(
-            published_queue(&published_c),
-            vec![("forage".to_string(), y.x, y.y, String::new())],
-            "band C publishes C's queue, in C's order"
-        );
-
-        // …and the thing the retired signal cannot express: the SAME source ranks differently in
-        // the two bands, so no single per-source int is a correct rank for both.
-        let rank_of = |state: &PopulationCohortState, tile: UVec2| {
-            state
-                .build_queue
-                .iter()
-                .position(|entry| (entry.target_x, entry.target_y) == (tile.x, tile.y))
-                .expect("the fixture band has this source queued")
-        };
-        assert_eq!(rank_of(&published_b, y), 1, "Y is second in B's line");
-        assert_eq!(rank_of(&published_c, y), 0, "…and first in C's");
-        assert_ne!(
-            rank_of(&published_b, y),
-            rank_of(&published_c, y),
-            "ONE per-source int cannot carry both ranks — that is the defect, and the per-band \
-             vector is what carries them"
-        );
-    }
-
-    /// **A HERD ENTRY NAMES ITS HERD, a patch entry names its tile**, on the same `kind` vocabulary
-    /// the band's own labor rows publish — so a client joins the queue to the rows on one spelling
-    /// rather than two that happen to match.
-    #[test]
-    fn a_queue_entry_names_its_source_in_the_labor_row_vocabulary() {
-        let cohort = cohort(TEST_LARDER);
-        let tile = UVec2::new(4, 7);
-        let allocation = allocation_queueing(&[
-            BuildSource::Herd("aurochs-3".to_string()),
-            BuildSource::Patch(tile),
-        ]);
-        let state = captured(&cohort, Some(&allocation), None);
-        assert_eq!(
-            published_queue(&state),
-            vec![
-                ("hunt".to_string(), 0, 0, "aurochs-3".to_string()),
-                ("forage".to_string(), tile.x, tile.y, String::new()),
-            ]
-        );
-        // The tokens are the labor rows' own, not a second copy that happens to spell the same.
-        assert_eq!(
-            state.build_queue[0].kind, state.labor_assignments[0].kind,
-            "the herd entry and the Hunt row say the same word"
-        );
-        assert_eq!(
-            state.build_queue[1].kind, state.labor_assignments[1].kind,
-            "the patch entry and the Forage row say the same word"
-        );
-    }
-
-    /// A band with no allocation at all publishes an empty queue, not a phantom entry.
-    #[test]
-    fn a_band_with_no_allocation_publishes_an_empty_queue() {
-        let cohort = cohort(TEST_LARDER);
-        assert!(captured(&cohort, None, None).build_queue.is_empty());
-    }
 }
 
 /// **ONE BAND'S IMPROVEMENTS ON THE WIRE** (#708) - a row per band-kind branch the band holds, in
@@ -4267,8 +4005,16 @@ pub(crate) fn band_improvement_rows(
                 branch: improvement.branch,
             };
             let queued = allocation
-                .and_then(|allocation| allocation.build_queue_entry(&source))
+                .and_then(|allocation| allocation.build_declaration(&source))
                 .is_some();
+            let crew = allocation.map_or_else(
+                crate::snapshot::subsistence::PublishedBuildCrew::default,
+                |allocation| {
+                    crate::snapshot::subsistence::PublishedBuildCrew::of_allocation(
+                        allocation, &source,
+                    )
+                },
+            );
             sim_schema::BandImprovementState {
                 branch: improvement.branch.as_str().to_string(),
                 current_rung: improvement.held_rung().wire_key(),
@@ -4317,6 +4063,10 @@ pub(crate) fn band_improvement_rows(
                     &improvement.upkeep_toe,
                     viewer,
                 ),
+                builders_staffed: crew.staffed,
+                builders_kitted: crew.kitted,
+                builders_cap: crew.cap,
+                build_toe: crew.toe,
                 is_queued: queued,
             }
         })

@@ -239,39 +239,25 @@ fn spawn_the_farming_band(app: &mut App, tile: bevy::prelude::Entity, source: UV
         },
         ResidentBand,
         LaborAllocation {
-            assignments: vec![
-                LaborAssignment {
-                    party: None,
-                    muster_crew: 0,
-                    planned_crew: 0,
-                    max_workers: Some(A_GATHERER + A_FULL_KEEPING_CREW),
-                    staffing: Default::default(),
-                    target: LaborTarget::Forage {
-                        tile: source,
-                        floor: DEFAULT_ESCAPEMENT_FLOOR,
-                        species: None,
-                        take_species: TakeSelection::EVERYTHING,
-                    },
-                    workers: A_GATHERER + A_FULL_KEEPING_CREW,
-                    kit: None,
-                    priority: SourcePriority::default(),
+            assignments: vec![LaborAssignment {
+                party: None,
+                muster_crew: 0,
+                planned_crew: 0,
+                max_workers: Some(A_GATHERER + A_FULL_KEEPING_CREW),
+                staffing: Default::default(),
+                target: LaborTarget::Forage {
+                    tile: source,
+                    floor: DEFAULT_ESCAPEMENT_FLOOR,
+                    species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
-                LaborAssignment {
-                    party: None,
-                    muster_crew: 0,
-                    planned_crew: 0,
-                    max_workers: Some(A_MEASURED_BUILD_POOL),
-                    staffing: Default::default(),
-                    target: LaborTarget::Builders,
-                    workers: A_MEASURED_BUILD_POOL,
-                    kit: None,
-                    priority: SourcePriority::default(),
-                },
-            ],
-            build_queue: vec![core_sim::BuildQueueEntry {
+                workers: A_GATHERER + A_FULL_KEEPING_CREW,
+                kit: None,
+                priority: SourcePriority::default(),
+            }],
+            builds: vec![core_sim::BuildDeclaration {
                 source: core_sim::BuildSource::Patch(source),
                 declared: core_sim::BuildJob::Climb(shipped::plant_farm()),
-                priority: core_sim::SourcePriority::default(),
             }],
             ..Default::default()
         },

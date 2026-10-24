@@ -294,6 +294,7 @@ fn set_forage_improvement(app: &mut App, band: bevy::prelude::Entity, improvemen
         .world
         .get_mut::<LaborAllocation>(band)
         .expect("band forages");
+    let declared_now = improvement.is_some();
     let LaborTarget::Forage { tile, .. } = allocation
         .assignments
         .first()
@@ -306,35 +307,17 @@ fn set_forage_improvement(app: &mut App, band: bevy::prelude::Entity, improvemen
     let source = core_sim::BuildSource::Patch(tile);
     match improvement {
         Some(declared) => {
-            assert!(allocation.enqueue_build(
+            assert!(allocation.declare_build(
                 source,
                 core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(declared))
             ));
-            match allocation
-                .assignments
-                .iter_mut()
-                .find(|assignment| assignment.target == LaborTarget::Builders)
-            {
-                Some(row) => row.workers = builders,
-                None => allocation.assignments.push(LaborAssignment {
-                    party: None,
-                    muster_crew: 0,
-                    planned_crew: 0,
-                    max_workers: Some(builders),
-                    staffing: Default::default(),
-                    target: LaborTarget::Builders,
-                    workers: builders,
-                    kit: None,
-                    priority: SourcePriority::default(),
-                }),
-            }
         }
         None => {
-            allocation.unqueue_build(&source);
-            allocation
-                .assignments
-                .retain(|assignment| assignment.target != LaborTarget::Builders);
+            allocation.stop_build(&source);
         }
+    }
+    if declared_now {
+        core_sim::seat_builders(&mut app.world, band, builders);
     }
 }
 
@@ -345,7 +328,7 @@ fn declared_rung(app: &App, band: bevy::prelude::Entity, tile: UVec2) -> Option<
         .world
         .get::<LaborAllocation>(band)
         .expect("the fixture band keeps its allocation")
-        .build_queue_entry(&core_sim::BuildSource::Patch(tile))
+        .build_declaration(&core_sim::BuildSource::Patch(tile))
         .map(|entry| entry.declared)
     {
         Some(job) => job
@@ -477,34 +460,15 @@ fn spawn_forager_at(
                 // **THE ROW'S CREW KEEPS FIRST** (`docs/plan_site_crews.md` §2.1). A meter still
                 // being raised is owed its keeping (§2.4); a caller that wants keeping hands on top
                 // of the gatherers states them with `set_maintain_workers`.
-                assignments: improvement
-                    .map(|_| {
-                        vec![
-                            forage_row(patch, policy, foragers),
-                            LaborAssignment {
-                                party: None,
-                                muster_crew: 0,
-                                planned_crew: 0,
-                                max_workers: Some(foragers),
-                                staffing: Default::default(),
-                                target: LaborTarget::Builders,
-                                workers: foragers,
-                                kit: None,
-                                priority: SourcePriority::default(),
-                            },
-                        ]
-                    })
-                    .unwrap_or_else(|| vec![forage_row(patch, policy, foragers)]),
-                build_queue: improvement
-                    .map(|declared| core_sim::BuildQueueEntry {
+                assignments: vec![forage_row(patch, policy, foragers)],
+                builds: improvement
+                    .map(|declared| core_sim::BuildDeclaration {
                         source: core_sim::BuildSource::Patch(patch),
                         declared: core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(
                             declared,
                         )),
-                        // ⛔ **AN ENTRY'S KIT PRICES NOTHING** since `docs/plan_pool_toe.md`: a
-                        // pool's tools follow from the rung. The gear axis is held on the LEDGER
-                        // below.
-                        priority: core_sim::SourcePriority::default(),
+                        // ⛔ **A BUILD'S TOOLS FOLLOW FROM THE RUNG** (`docs/plan_pool_toe.md`). The
+                        // gear axis is held on the LEDGER below.
                     })
                     .into_iter()
                     .collect(),
@@ -519,6 +483,7 @@ fn spawn_forager_at(
     // with no declaration has no build to hold at its identity and keeps its tools.
     if improvement.is_some() {
         core_sim::disarm_the_builders(&mut app.world, band, shipped::plant_tended());
+        core_sim::seat_builders(&mut app.world, band, foragers);
     }
     band
 }
@@ -527,6 +492,7 @@ fn spawn_forager_at(
 /// (labor allocation resolves the take and accrues the investment).
 fn run_turns_with_forage(app: &mut App, turns: u32) {
     for _ in 0..turns {
+        core_sim::reseat_builders(&mut app.world);
         app.world.run_system_once(advance_forage_regrowth);
         app.world.run_system_once(advance_cultivation);
         app.world.run_system_once(advance_labor_allocation);
@@ -562,6 +528,35 @@ fn keep_patch_for_a_turn(app: &mut App, coord: UVec2) {
     let mut registry = app.world.resource_mut::<ForageRegistry>();
     let patch = registry.patch_mut(coord).expect("patch");
     patch.upkeep_supplied = core_sim::patch_upkeep_demand(patch, &ladder, tile_capacity, &forage);
+}
+
+/// **Make the build's crew EXACTLY `builders` hands**: every take row stands at nobody and the
+/// band is just those hands, so the declared build is staffed from them and nothing else. A build
+/// is dealt its hands before a source's reach in the same priority group, so a fixture that leaves
+/// hands beside a staffed row cannot pin a count below the rung's `max_builders`.
+fn staff_builders_alone(app: &mut App, band: bevy::prelude::Entity, builders: u32) {
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band has an allocation");
+        for row in allocation.assignments.iter_mut() {
+            row.set_crew_and_max(NO_CREW_ON_THIS_ACTIVITY);
+        }
+    }
+    core_sim::seat_builders(&mut app.world, band, builders);
+}
+
+/// [`run_turns_with_forage`] with the patch's keeping met every turn, by stamping the supply a
+/// keeper crew would have put on it - for the fixtures whose hands are all builders.
+fn run_turns_kept(app: &mut App, coord: UVec2, turns: u32) {
+    for _ in 0..turns {
+        core_sim::reseat_builders(&mut app.world);
+        app.world.run_system_once(advance_forage_regrowth);
+        keep_patch_for_a_turn(app, coord);
+        app.world.run_system_once(advance_cultivation);
+        app.world.run_system_once(advance_labor_allocation);
+    }
 }
 
 /// Turns with no active band: only the Logistics-stage systems run.
@@ -663,7 +658,7 @@ const WELL_PAST_ANY_GRACE: u16 = 32;
 fn build_crew(_app: &App) -> u32 {
     /// The staffing the shipped `plant:tended` `work_cost` was priced at, so `50 / 2 = 25` turns is
     /// what this file measures.
-    const THE_REFERENCE_CREW: u32 = 2;
+    const THE_REFERENCE_CREW: u32 = 3;
     THE_REFERENCE_CREW
 }
 
@@ -3082,7 +3077,7 @@ fn a_tended_patch_that_recovers_and_slips_again_is_announced_twice() {
 /// nothing. `crew_needed` survives as the staffing FLOOR alone
 /// (`a_running_build_demands_at_least_its_crew` below).
 #[test]
-fn over_crewing_a_build_is_no_longer_capped() {
+fn a_build_crew_is_capped_at_the_rungs_max_builders() {
     let crew = build_crew(&spawn_world());
     assert!(
         crew >= 2,
@@ -3093,7 +3088,8 @@ fn over_crewing_a_build_is_no_longer_capped() {
         let mut app = spawn_world();
         let (tile, coord) = prime_thriving_patch(&mut app);
         grant_cultivation_knowledge(&mut app, FactionId(0));
-        spawn_forager_of(&mut app, tile, coord, Some(shipped::cultivate()), workers);
+        let band = spawn_forager_of(&mut app, tile, coord, Some(shipped::cultivate()), workers);
+        staff_builders_alone(&mut app, band, workers);
         run_turns_with_forage(&mut app, 1);
         progress_of(&app, coord)
     };
@@ -3119,8 +3115,9 @@ fn over_crewing_a_build_is_no_longer_capped() {
         "a crew of {crew} banks its {crew} worker-turns: {full}"
     );
     assert!(
-        (over - (crew * OVER_CREWED) as f32 * PER_WORKER_OUTPUT).abs() < 1e-6,
-        "and {OVER_CREWED}x the crew banks {OVER_CREWED}x the work — there is no cap: {over}"
+        (over - full).abs() < 1e-6,
+        "and {OVER_CREWED}x the crew banks no more than the rung's `max_builders` can work it: \
+         {over} against {full}"
     );
 }
 
@@ -3167,7 +3164,8 @@ fn the_build_estimate_is_the_sims_own_and_falls_as_hands_are_added() {
         let mut app = spawn_world();
         let (tile, coord) = prime_thriving_patch(&mut app);
         grant_cultivation_knowledge(&mut app, FactionId(0));
-        spawn_forager_of(&mut app, tile, coord, Some(shipped::cultivate()), workers);
+        let band = spawn_forager_of(&mut app, tile, coord, Some(shipped::cultivate()), workers);
+        staff_builders_alone(&mut app, band, workers);
         run_turns_with_forage(&mut app, 1);
         published_count(
             app.world
@@ -3185,7 +3183,7 @@ fn the_build_estimate_is_the_sims_own_and_falls_as_hands_are_added() {
     assert_eq!(
         estimate(NO_CREW_ON_THIS_ACTIVITY),
         None,
-        "nobody on the job has promised nothing — the one no-answer state"
+        "nobody on the job has promised nothing - the one no-answer state"
     );
     let lightly = estimate(1).expect("a running build quotes a finish date");
     let fully = estimate(crew).expect("a running build quotes a finish date");
@@ -3237,21 +3235,7 @@ fn an_unstarted_patch_quotes_the_next_rungs_job_and_the_quote_halves_with_the_cr
         // the projection no longer falls back to the gatherers beside it — so the fixture stands
         // one at exactly the crew under test.
         let band = spawn_forager_of(&mut app, tile, coord, None, workers);
-        app.world
-            .get_mut::<LaborAllocation>(band)
-            .expect("the fixture band keeps its allocation")
-            .assignments
-            .push(LaborAssignment {
-                party: None,
-                muster_crew: 0,
-                planned_crew: 0,
-                max_workers: Some(workers),
-                staffing: Default::default(),
-                target: LaborTarget::Builders,
-                workers,
-                kit: None,
-                priority: SourcePriority::default(),
-            });
+        staff_builders_alone(&mut app, band, workers);
         // ⛔ **AN EMPTY LEDGER IS WHAT HOLDS THE GEAR AXIS AT ITS IDENTITY HERE.** Nothing is
         // queued on this patch, so there is no entry to carry the bare kit the pace fixtures use
         // (`docs/plan_standing_upkeep.md` §4.7a ②) — and an *absent* `BandEquipment` is read as a
@@ -3270,25 +3254,25 @@ fn an_unstarted_patch_quotes_the_next_rungs_job_and_the_quote_halves_with_the_cr
         )
     };
 
+    // **A patch nobody has declared a build on is quoted at ONE assumed builder**, whatever hands
+    // the band has idle: the crew a build gets is dealt when it is declared, so a compose sheet
+    // cannot promise a size of crew nobody has been asked for.
+    let one_builder = core_sim::build_turns_remaining(
+        cultivate_cost(&spawn_world()),
+        core_sim::RUNG_UNSTARTED,
+        PER_WORKER_OUTPUT,
+    )
+    .expect("a one-builder crew finishes");
     let crew = build_crew(&spawn_world());
-    let quoted =
-        projection(crew).expect("an unstarted patch with a crew on it quotes the next rung");
     assert_eq!(
-        quoted,
-        turns_to_prepare(&spawn_world()),
-        "the projection is the rung's whole job at this crew — the same number a started build \
-         counts down from"
+        projection(crew).expect("an unstarted patch quotes the next rung"),
+        one_builder,
+        "the projection is the rung's whole job at the assumed one builder"
     );
-
-    // **Twice the crew, half the turns — restored** (`docs/plan_standing_upkeep.md` §4.6a). It was
-    // briefly twice the *net*, the maintenance rate having come off the top first; a build crew pays
-    // no rate, and on ground nobody has started there is nothing banked and so nothing to rot.
-    let doubled_crew = crew * 2;
-    let doubled = projection(doubled_crew).expect("a bigger crew is still quotable");
     assert_eq!(
-        doubled,
-        quoted.div_ceil(2),
-        "twice the crew, half the turns: {quoted} at a crew of {crew}, {doubled} at {doubled_crew}"
+        projection(crew * 2),
+        projection(crew),
+        "and idle hands beside an undeclared build change nothing in it"
     );
 
     // And a patch nobody is working is quoted nothing — there is no crew to quote at.
@@ -3630,22 +3614,10 @@ fn spawn_band_holding_one_patch_and_queueing_a_build(
         allocation
             .assignments
             .push(forage_row(build, FOOD_PEAK_FLOOR, GATHERERS));
-        allocation.assignments.push(LaborAssignment {
-            party: None,
-            muster_crew: 0,
-            planned_crew: 0,
-            max_workers: Some(builders),
-            staffing: Default::default(),
-            target: LaborTarget::Builders,
-            workers: builders,
-            kit: None,
-            priority: SourcePriority::default(),
-        });
-        let headroom = allocation.assigned_total();
-        allocation.build_queue.push(core_sim::BuildQueueEntry {
+        let headroom = allocation.assigned_total() + builders;
+        allocation.builds.push(core_sim::BuildDeclaration {
             source: core_sim::BuildSource::Patch(build),
             declared: core_sim::BuildJob::Climb(shipped::plant_tended()),
-            priority: core_sim::SourcePriority::default(),
         });
         headroom
     };
@@ -4170,12 +4142,11 @@ fn every_staffed_build_crew_climbs_when_the_keeping_is_met() {
         }
         let started = progress_of(&app, coord);
         let band = spawn_forager_of(&mut app, tile, coord, Some(shipped::cultivate()), builders);
-        set_forage_workers(&mut app, band, builders);
         // **The keeping is MET**, so the meter is not rotting and what is measured is the build's
         // own arithmetic. An unkept arm would be measuring the rot, which is the countdown's claim
         // rather than the meter's.
-        set_maintain_workers(&mut app, band, tended_keeping_crew());
-        run_turns_with_forage(&mut app, TURNS);
+        staff_builders_alone(&mut app, band, builders);
+        run_turns_kept(&mut app, coord, TURNS);
         (started, progress_of(&app, coord))
     };
 
@@ -4223,7 +4194,7 @@ fn the_build_pace_is_the_cost_over_the_crew() {
         let band = spawn_forager_of(&mut app, tile, coord, Some(shipped::cultivate()), builders);
         // **The keeping is met**, so the pace under measurement is the build's own and not the
         // rot's — an unkept build is slower for a reason this test is not about.
-        set_maintain_workers(&mut app, band, tended_keeping_crew());
+        staff_builders_alone(&mut app, band, builders);
         let mut turns = 0;
         while !app
             .world
@@ -4232,14 +4203,14 @@ fn the_build_pace_is_the_cost_over_the_crew() {
             .expect("patch")
             .is_cultivated()
         {
-            run_turns_with_forage(&mut app, 1);
+            run_turns_kept(&mut app, coord, 1);
             turns += 1;
             assert!(turns < 500, "a staffed build must finish");
         }
         turns
     };
 
-    for builders in [1_u32, 2, 5, 10] {
+    for builders in [1_u32, 2, 3] {
         let work = builders as f32 * PER_WORKER_OUTPUT;
         assert_eq!(
             turns_at(builders),
@@ -4434,21 +4405,10 @@ fn a_rung_completes_erodes_and_is_repaired_only_by_re_queueing_it() {
             .get_mut::<LaborAllocation>(band)
             .expect("band exists");
         assert!(
-            allocation.build_queue.is_empty(),
+            allocation.builds.is_empty(),
             "fixture: completion retired the entry and nothing has re-enrolled it"
         );
-        allocation.assignments.push(LaborAssignment {
-            party: None,
-            muster_crew: 0,
-            planned_crew: 0,
-            max_workers: Some(builders),
-            staffing: Default::default(),
-            target: LaborTarget::Builders,
-            workers: builders,
-            kit: None,
-            priority: SourcePriority::default(),
-        });
-        assert!(allocation.enqueue_build(
+        assert!(allocation.declare_build(
             core_sim::BuildSource::Patch(coord),
             core_sim::BuildJob::Climb(shipped::plant_tended()),
         ));
@@ -4457,6 +4417,7 @@ fn a_rung_completes_erodes_and_is_repaired_only_by_re_queueing_it() {
     // §4.6a the meter is billed while it is raised, so a repair run with the role empty is racing
     // its own rot and would top out below the cost it is climbing back to.
     set_maintain_workers(&mut app, band, tended_keeping_crew());
+    core_sim::seat_builders(&mut app.world, band, builders);
     run_turns_with_forage(&mut app, 1);
     assert!(
         progress_of(&app, coord) > eroded,

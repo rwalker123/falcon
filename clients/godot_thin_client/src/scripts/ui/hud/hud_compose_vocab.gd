@@ -149,16 +149,8 @@ const CREW_ROW_SEPARATION := 6
 # stated by `DetailFormat.at_risk_lines` where the source itself is described — and only when it is
 # going UNPAID, the standing bill having been retired with the `Keeping:` row (issue #545).
 #
-# RETIRED — **`CREW_ROW_BUILD_LABEL`** (`BUILDERS`), the row label of the build crew's own stepper
-# (`docs/plan_standing_upkeep.md` §2.5). A verb DECLARES and names no hands: the stepper is gone with
-# the trailing worker count the improvement commands used to take, and the pool it would have staffed
-# is a standing role card on the Band panel.
-# The crew row's note separation, beside its label.
 const CREW_ROW_NOTE_SEPARATION := 5
 
-# RETIRED — **`CREW_BUILD_FLOOR_TOOLTIP`**, `%s work a turn holds this rung — only the surplus is
-# progress`, the BUILDERS row's threshold (`docs/plan_standing_upkeep.md` §2.4).
-#
 # **THE THRESHOLD IT NAMED NO LONGER EXISTS.** It was the quoted rung's maintenance rate, which the
 # build crew supplied while the meter was below its cost, so a crew under it banked nothing. The
 # keeping pool owes that rate at every fullness now and a builder's whole output is progress — there
@@ -170,11 +162,9 @@ const CREW_ROW_NOTE_SEPARATION := 5
 # (`BUILD_PRICE_UPKEEP_FORMAT`), beside the build's one-off one, which is what it always was.
 
 # RETIRED — **`BUILD_NO_HANDS_REASON`**, the reason a dead improvement box carried
-# (`docs/plan_standing_upkeep.md` §2.5). Declaring a rung used to declare a build WITH a crew, and the
-# sim refused a count the band could not staff — so an empty build pool greyed the offer out. A verb
-# names no crew now: declaring APPENDS a queue entry, which is legal and free whether or not anybody
-# is on the `builders` role. What says nobody is on it is the DECLARED state's *not started* warning.
-# (The offer stopped being a control at all in §4.7a — the `⌃` on the Work board declares.)
+# (`docs/plan_standing_upkeep.md` §2.5). What says nobody is on it is the DECLARED state's *not
+# started* warning. (The offer stopped being a control at all in §4.7a — the `⌃` on the Work board
+# declares.)
 
 # ---- THE READOUT: ONE BOX, FOUR REGISTERS (docs/plan_harvest_floor.md §7.1/§7.2) ----------------
 # The take, the verdict and the asides answer three different questions, and the panel's bottom half
@@ -277,10 +267,6 @@ const POLICY_TOOLTIP_NAME_FORMAT := "%s — %s"
 # server still rejects an extend at max radius / unowned / Herding-unknown with a feed message, so the
 # client still does not pre-gate on those (max radius is not on the wire).
 #
-# **`pen_extend_progress` IS WORK, NOT A FRACTION**, banked against `pen_extend_cost` on the same herd
-# dict, so every percentage of it is `SourceForecast.pen_extend_fraction` — the build queue row's and
-# the work row's mark hover — and never the bare field scaled by `PROGRESS_PERCENT_SCALE`, which reads
-# 69 banked work units as `6900%`.
 # ⛔ RETIRED — **`PEN_EXTEND_LABEL` (`Extend pen`), `PEN_EXTEND_TOOLTIP` AND `PEN_FENCING_LABEL`**
 # (`docs/plan_standing_upkeep.md` §4.9 item 12c), with the tile-card control that wore them
 # (`DrawerComposeController`, where the whole retirement is recorded). The button was the one build
@@ -288,21 +274,9 @@ const POLICY_TOOLTIP_NAME_FORMAT := "%s — %s"
 # now, and it opens a PRICE rather than committing on the click, a ring drawing `animal:pen`'s own
 # hurdle pile since §2.7.
 #
-# The dead tooltip, quoted because it is the only place the ring's MECHANICS were ever written down
-# for the player: *"Queue another ring around the pen. A ring is the same job as the pen it widens, so
-# it joins the band's build queue like any other job and its builders raise it when it reaches the
-# head. Then the pen grazes more land and feeds itself further. Rejected at the pen-radius maximum."*
-# The ring card states the first two sentences as PRICES now; the pen-radius refusal is still the
-# server's feed message, max radius not being on the wire.
-#
 # `PEN_EXTEND_CREW_LABEL` (`Fencers`) went earlier: the verb took a trailing worker count for one
 # slice, and `extend_pen <faction> <x> <y>` is closed at three tokens again (§2.5).
 
-# …and **`PEN_FENCING_VERB` (`Fencing`) RETIRES WITH THEM**, which was worth checking rather than
-# assuming: the badge's face and its `DetailFormat.build_meter_value` hover were its only readers, and
-# the BUILD QUEUE row — the one surface that quotes a ring's meter now — states a bare percentage
-# beside the rung's own verb (`Corral <herd>`, a ring deriving the verb of the rung it widens). No
-# surface left needs a word for the ring's meter.
 
 
 # The overhunting flag itself. **What it MEANS is `LaborAssignment.overdraws` and nothing else** —
@@ -357,10 +331,9 @@ const POLICY_PAYOFF_FULL_FORMAT := "builds toward %s/turn"
 #
 # **FOUR SINGLE WORDS, and the Corral's used to be a PHRASE** (`Building the pen`). It is the craft's
 # own name — the rung earns `Penning` — so the set is uniform without inventing a word, and the
-# phrase's extra width was a real cost on the BUILD QUEUE's date column, which states a participle
-# beside a percentage and a turn in one clipping slot (`HudSelectionVocab.RUNG_COMPLETES_LEG_FORMAT`).
-# There the phrase pushed the column past what the row can afford, and what a clip takes off the end
-# of that string is the DATE.
+# phrase's extra width was a real cost on the Work row's date column, which states a participle beside
+# a percentage and a turn in one clipping slot (`HudSelectionVocab.RUNG_COMPLETES_LEG_FORMAT`). What a
+# clip takes off the end of that string is the DATE.
 const IMPROVEMENT_RUNNING_LABELS := {
     "cultivate": "Cultivating",
     "sow": "Sowing",
@@ -478,11 +451,6 @@ const BUILD_PRICE_UPKEEP_FORMAT := "%s · %s work a turn from %s to hold"
 # `🌱 Cultivate this patch — 50 work, ≈25 turns · 2 work a turn from Agriculture to hold`
 # (`docs/plan_standing_upkeep.md` §4.7a ①).
 #
-# **The price left this sheet** — Ray, from play: *"That information should be on the work tab. No
-# need to have it here, it is useless."* — so the pile and the standing rate ride the `⌃` mark's own
-# tooltip and the turn count rides the BUILD QUEUE row's date. `DetailFormat.build_price_clause` still
-# composes the pair; only this JOIN had nothing left to join.
-#
 # It is retired rather than left standing because a caller-less format const reads as live code, and
 # the shape is one line to write again if the `⌃`'s hover ever wants the price on the same line as
 # its sentence rather than beneath it.
@@ -500,6 +468,21 @@ const IMPROVEMENT_PAYOFF_ROW_LABELS := {
     "tame": "once tamed",
     "corral": "once penned",
 }
+
+# ---- WHY THE DEAL READS ZERO: THE CREW IS ALL KEEPERS -------------------------------------------
+# A crew too small to hold the finished rung's keeping bill spends every hand keeping it, so the crew
+# curve's `next_rung_take` is exactly 0 - and `ONCE TENDED 0.00 food` read as "tending pays nothing".
+# The clause is appended to the deal row's value in the WARN ink; `%d` is the stepper's crew, and the
+# second `%d` the smallest crew on the curve that gathers anything once the rung stands. The noun-free
+# form keeps the row to the two-line panel rule.
+const DEAL_ALL_KEEP_FORMAT := "— all %d keep it; %d needed to gather"
+## …and the same clause where NO crew on the curve gathers.
+const DEAL_ALL_KEEP_NONE_FORMAT := "— all %d keep it"
+## The hover: `%s` is the rung's past-tense word (`tended` / `sown` / `tamed` / `penned`) and `%s` the
+## row's own label (`once tended`), both taken from `IMPROVEMENT_PAYOFF_ROW_LABELS`.
+const DEAL_ALL_KEEP_TOOLTIP_FORMAT := "Holding %s ground takes work every turn. This crew spends every hand keeping it, so it gathers nothing %s."
+## The prefix the row label wears over the rung's past-tense word.
+const DEAL_LABEL_PAST_PREFIX := "once "
 
 
 # The pen's running upkeep, subtracted from the payoff on the row that states it (Corral only), so
@@ -535,11 +518,6 @@ const IMPROVEMENT_DEAL_DEPLETED_NOTE := "⚠ Too depleted to pen — it would ea
 # bare `IMPROVEMENT_DONE_FORMAT`, and the standing price a built rung really carries is WORK, stated
 # on the work row's `⌃` tooltip for every rung alike.
 
-# **RETIRED — `IMPROVEMENT_ABANDON_HINTS`** (`docs/plan_standing_upkeep.md` §2.4). Two per-web
-# sentences described what UNCHECKING a running build did, and there is no uncheck: the running
-# control is a state Label now, because `abandon_improvement` cleared a STORED verb and the verb is
-# derived from the meter. Walking away is taking the BUILDERS to zero, which the stepper beneath the
-# control says in the only way that cannot go stale — a number the player sets.
 #
 # **What the two lines said is still TRUE and still differs by web**, which is why the retirement is
 # recorded rather than the strings quietly deleted: unstaffing a plant build lets its meter BLEED at
@@ -548,18 +526,17 @@ const IMPROVEMENT_DEAL_DEPLETED_NOTE := "⚠ Too depleted to pen — it would ea
 # reaches the player through the source's own `Keeping:` / `At risk:` rows, which state the live
 # shortfall and the turns of grace left rather than a hypothetical about a control.
 #
-# **THERE IS NO PHASE-KEYED PAUSE LINE, and `IMPROVEMENT_PAUSED_FORMAT` is not coming back.** It read
-# "⚠ Paused — the source is Stressed, and this only advances while Thriving. … ease off and it
+# **THERE IS NO PHASE-KEYED PAUSE LINE, and `IMPROVEMENT_PAUSED_FORMAT` is not coming back.** It
+# read "⚠ Paused — the source is Stressed, and this only advances while Thriving. … ease off and it
 # resumes", which was true of a sim that gated every build on `EcologyPhase::Thriving`.
 # `docs/plan_harvest_floor.md` §3.2 removed that gate, so the line rendered a WARN "Paused" beneath a
-# meter the same face showed advancing. Nothing replaced it, and nothing should: since the build crew
-# left the tile (`docs/plan_standing_upkeep.md` §2.2) `build_supply` is the builders' own output and
-# reads neither the phase nor the floor, so there is no pace here to state. **The one thing the floor
-# still does to a build it does BACKWARDS** — a higher floor empties the escapement room sooner, and
-# an empty room closes the `eligible` gate on `plant:tended` / `animal:pastoral` — and the sheet says
-# THAT by dropping its turn estimate entirely, which is where that gate is read
-# (`SourceForecast.build_turns_at`). A note claiming the floor sets the RATE would send a player with
-# a slow build to the wrong dial; the remedy is hands, on the band's Builders role.
+# meter the same face showed advancing. Nothing replaced it, and nothing should: `build_supply` is the
+# site crew's own output and reads neither the phase nor the floor, so there is no pace here to state.
+# **The one thing the floor still does to a build it does BACKWARDS** — a higher floor empties the
+# escapement room sooner, and an empty room closes the `eligible` gate on `plant:tended` /
+# `animal:pastoral` — and the sheet says THAT by dropping its turn estimate entirely, which is where
+# that gate is read (`SourceForecast.build_turns_at`). A note claiming the floor sets the RATE would
+# send a player with a slow build to the wrong dial; the remedy is hands, on the site's crew.
 
 
 

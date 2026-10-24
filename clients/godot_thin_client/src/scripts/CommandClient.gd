@@ -51,12 +51,6 @@ func ensure_connected() -> Error:
 ## **WHY THE LAST FAILURE'S REASON IS RETAINED** — `""` while the last send succeeded or none has
 ## been made.
 ##
-## `send_line` answers an `Error`, which is two bits of information about a bridge that returns a
-## SENTENCE. That sentence is the only thing that says WHICH of the bridge's failures happened, and
-## it was being dropped on the floor after a `push_warning` no player ever sees — so `Inspector`
-## reported a line the bridge had REFUSED as *"Not connected to the server"*. Reported from play: the
-## Builders pool's `+` emitted `assign_labor 0 1 builders 1`, `parse_command_line` did not know the
-## role, and the client blamed the network for its own line.
 ##
 ## **IT IS A FIELD RATHER THAN A RETURN SHAPE** because `send_line`'s `Error` is what every caller
 ## already branches on, and widening it to a Dictionary would move a decision that belongs to ONE

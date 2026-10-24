@@ -5,6 +5,7 @@
 ## `.claude/rules/client/test-harnesses.md`.
 
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
+const CrewFx := preload("res://tools/ui_preview/fixtures_crew.gd")
 
 ## The shipped `expedition_config.hunt.forecast_horizon_turns` — how far the sim simulates a raid before
 ## giving up on it, echoed onto every cohort as `expedition_forecast_horizon_turns`. **It is not a trip
@@ -219,30 +220,28 @@ static func forage_range_bands() -> Array:
 ## overstaff flags; this one is a plain, healthy Cultivate crew, so the unassign frame is judged on the
 ## button/forecast pair and nothing else.
 ##
-## It is also the fixture behind the two STANDING-BUT-GATED frames (issue #420), which is why the tile
-## is a PARAMETER: a standing assignment is matched by TILE, so a frame selecting a patch other than
-## the (66,10) reference — the finished Tended Patch at (67,11) — would read as UNSTAFFED there, i.e.
-## exactly the "not standing" case those frames must not render. Both defaults keep every existing
-## caller on the reference tile.
-## **`workers_needed` IS THE SIM'S OWN ANSWER, AND IT IS WHAT THE COMPOSE CAP IS JUDGED AGAINST.**
-## Derived here by the sim's rule rather than picked, so the assertion on `improvement_build_crew` has a
-## control it did not write itself.
-## For this patch under Sustain + Cultivate
-## (`BaseFx.food_tile_fixture`: per-worker 0.32, Sustain ceiling 0.96):
-##   take           = min(w × 0.32, 0.96)      (`forage::forage_take`)
-##   workers_needed = ceil(0.96 / 0.32) = 3    (`systems::labor::workers_needed_for_take`)
-## **IT IS THE TAKE CREW AND NOTHING ELSE NOW** (`docs/plan_standing_upkeep.md` §2.2). It used to be
-## `max(build crew, take crew)` over a take dipped to a quarter, which read 12 — a number that said
-## more about the retired dip than about the patch. With each activity stating its own crew there is
-## no blended count for a rung's floor to raise, and the build's hands answer through the improvement
-## verb's own stepper.
-## **THE BAND'S `builders` POOL** (`docs/plan_standing_upkeep.md` §2.5). A running build is STAFFED,
-## and the hands are a band-level standing ROLE — not a count on the source, `improvementWorkers`
-## having left the wire with the per-source crew. A fixture that staffs nobody stages a build nobody
-## is paying for, which is a different frame and a warned one.
+## It is also the fixture behind the two STANDING-BUT-GATED frames (issue #420), which is why the
+## tile is a PARAMETER: a standing assignment is matched by TILE, so a frame selecting a patch other
+## than the (66,10) reference — the finished Tended Patch at (67,11) — would read as UNSTAFFED
+## there, i.e. exactly the "not standing" case those frames must not render. Both defaults keep
+## every existing caller on the reference tile. **`workers_needed` IS THE SIM'S OWN ANSWER, AND IT
+## IS WHAT THE COMPOSE CAP IS JUDGED AGAINST.** Derived here by the sim's rule rather than picked,
+## so the assertion on `improvement_build_crew` has a control it did not write itself. For this
+## patch under Sustain + Cultivate (`BaseFx.food_tile_fixture`: per-worker 0.32, Sustain ceiling
+## 0.96): take           = min(w × 0.32, 0.96)      (`forage::forage_take`) workers_needed =
+## ceil(0.96 / 0.32) = 3    (`systems::labor::workers_needed_for_take`) **IT IS THE TAKE CREW AND
+## NOTHING ELSE NOW** (`docs/plan_standing_upkeep.md` §2.2). It used to be `max(build crew, take
+## crew)` over a take dipped to a quarter, which read 12 — a number that said more about the retired
+## dip than about the patch. With each activity stating its own crew there is no blended count for a
+## rung's floor to raise, and the build's hands answer through the improvement verb's own stepper. A
+## running build is STAFFED, and the hands are a band-level standing ROLE — not a count on the
+## source, `improvementWorkers` having left the wire with the per-source crew. A fixture that staffs
+## nobody stages a build nobody is paying for, which is a different frame and a warned one.
 const CULTIVATING_BAND_BUILDERS := 3
 
 static func cultivating_forage_band_fixture(x: int = 66, y: int = 10) -> Dictionary:
+	# The running build is STAFFED: the sim put its crew on the source (`CrewFx`), not on a band role.
+	CrewFx.staffed = CULTIVATING_BAND_BUILDERS
 	var band: Dictionary = forage_range_bands()[0]
 	band["labor_assignments"] = [{
 		"kind": "forage", "workers": ForageFx.CULTIVATE_SIM_WORKERS_NEEDED, "target_x": x, "target_y": y, "floor": 0.5,
@@ -252,75 +251,29 @@ static func cultivating_forage_band_fixture(x: int = 66, y: int = 10) -> Diction
 		"bare_staffed": 1, "useful_crew": 3,
 		"actual_yield": 0.08, "sustainable_yield": 0.96, "realized_yield": 0.08,
 		"workers_needed": ForageFx.CULTIVATE_SIM_WORKERS_NEEDED, "overdraws": false,
-	}, builders_role_row(CULTIVATING_BAND_BUILDERS)]
+	}]
 	return band
 
-## **THE `builders` ROLE ROW** — the band-level build pool, as an ordinary `labor_assignments` entry
-## of kind `builders`, exactly as the sim publishes it (`docs/plan_standing_upkeep.md` §2.5). Shared
-## rather than spelled per fixture, because a role row that omitted a key one chapter reads would
-## stage a pool the client cannot see while the frame's own comment says it is staffed.
-##
-## **`kit_id` IS THE ROW'S OWN, AND THE SIM PUBLISHES IT RESOLVED** (`equipment.md` → "THE WIRE
-## STATES THE DERIVED KIT"): a kit named on the row, else the roster's answer for the queue HEAD's
-## web. `""` — the default — is the honest fixture for a band whose builders the sim has not resolved
-## a kit for, which is what a client derives from for itself.
-static func builders_role_row(workers: int, kit_id: String = "") -> Dictionary:
-	return {
-		"kind": HudConst.LABOR_KIND_BUILDERS, "workers": workers,
-		"target_x": -1, "target_y": -1, "fauna_id": "", "kit_id": kit_id,
-	}
+## This walks the forage patches and the world herds the model holds, so a chapter that staged a
+## source quotes its build at `workers` builders whichever band works it. `kit_id` is accepted for
+## call sites that dial a kit and carries no state: the kit is the rung's own, never a band role's.
+static func staff_builders(band_labor, workers: int, _kit_id: String = "") -> void:
+	CrewFx.staffed = workers
+	for patch_variant in band_labor.forage_patch_lookup().values():
+		if patch_variant is Dictionary:
+			_staff_source(patch_variant as Dictionary, workers)
+	for herd_variant in band_labor.world_herds():
+		if herd_variant is Dictionary:
+			_staff_source(herd_variant as Dictionary, workers)
 
-## **DIAL THE PLAYER BANDS' BUILD POOL** — the harness's replacement for the retired compose-sheet
-## BUILDERS stepper (`docs/plan_standing_upkeep.md` §2.5). A chapter that used to dial
-## `ComposeState.set_forage_build_count(n)` staffs the ROLE instead, because that is where the hands
-## are now and it is what `SourceForecast.build_turns_at` is quoted at.
-##
-## It rewrites every player band's row rather than one, so a chapter that stages a roster gets the
-## same answer whichever band the source resolves through; `build_crew_forage` / `_hunt` then restrict
-## it to the bands that actually work the source.
-##
-## **`kit_id` DIALS WHAT THE POOL IS HOLDING**, the same field the sim publishes resolved: `""` leaves
-## the client to derive per queue entry, and a named kit is a player's pin.
-static func staff_builders(band_labor, workers: int, kit_id: String = "") -> void:
-	# **THE SINGLE `player_band()` IS COVERED TOO, and forgetting it is silent.** Several chapters set
-	# `_player_band` and leave `_player_bands` holding whatever the previous state left, and the compose
-	# sheet resolves its actor through the single one — so a helper that walked the roster alone edited
-	# a band the sheet never reads and the frame quoted the PREVIOUS fixture's pool.
-	var bands: Array = band_labor.player_bands().duplicate()
-	var single: Dictionary = band_labor.player_band()
-	if not single.is_empty() and not bands.has(single):
-		bands.append(single)
-	for band_variant in bands:
-		if not (band_variant is Dictionary):
-			continue
-		var band: Dictionary = band_variant
-		var rows: Array = band.get("labor_assignments", []) as Array
-		var found := false
-		for row_variant in rows:
-			if row_variant is Dictionary \
-					and String((row_variant as Dictionary).get("kind", "")) \
-						== HudConst.LABOR_KIND_BUILDERS:
-				(row_variant as Dictionary)["workers"] = workers
-				(row_variant as Dictionary)["kit_id"] = kit_id
-				found = true
-		if not found:
-			rows.append(builders_role_row(workers, kit_id))
-		band["labor_assignments"] = rows
+static func _staff_source(source: Dictionary, workers: int) -> void:
+	source["builders_staffed"] = workers
+	source["builders_kitted"] = workers
 
-## **A BAND WITH NOBODY ON THE BUILD POOL** — the role row DROPPED, which is how the sim publishes a
-## band that has staffed nobody (a row exists only where somebody is). Its predecessor was
-## `erase("improvement_workers")` on the source's own assignment; dropping the row by KIND rather
-## than by index is what keeps a fixture that gains another role row from silently unstaffing that
-## one instead.
+## A band with nobody building: a band dict carries no builders any more, so this is the band unchanged;
+## staffing is a property of the SOURCES (`staff_builders`).
 static func without_builders(band: Dictionary) -> Dictionary:
-	var kept: Array = []
-	for row_variant in (band.get("labor_assignments", []) as Array):
-		if row_variant is Dictionary \
-				and String((row_variant as Dictionary).get("kind", "")) \
-					== HudConst.LABOR_KIND_BUILDERS:
-			continue
-		kept.append(row_variant)
-	band["labor_assignments"] = kept
+	CrewFx.staffed = 0
 	return band
 
 ## The band the herd-panel LOCAL preview states staff: it sits ON the (66,10) herd (distance 0, inside
@@ -448,9 +401,6 @@ const KIT_CONDITION_BASKETS := 31.0
 ## with their rows swapped.
 const KIT_CONDITION_CROOK := 45.0
 
-## The hoes' own, and — like every condition here — a number no other item carries, so a readout that
-## paired the Builders card with the wrong item's clock reads as a different figure rather than as a
-## coincidence.
 const KIT_CONDITION_HOES := 38.0
 
 const KIT_CONDITION_WAYFINDING := 66.0
@@ -560,8 +510,6 @@ static func kit_condition_rows(spears_holding: float = KIT_HUNT_HEADCOUNT,
 			KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_UNITS_OWNED),
 		# **THE PLANT WEB'S BUILD TOOL RIDES THE LIST TOO, because the wire's list is the CONFIG's item
 		# table and not the band's own holdings** — an item a band owns none of publishes `remaining 0`
-		# rather than vanishing. Omitting it made the Builders card read `Hoes dry` on a band that had
-		# simply never been asked about them, which is the reassuring lie one item over.
 		kit_condition_row(KIT_ITEM_HOES, KIT_CONDITION_HOES,
 			KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_UNITS_OWNED),
 		kit_condition_row(KIT_ITEM_WAYFINDING, KIT_CONDITION_WAYFINDING, KIT_SCOUT_HEADCOUNT,
@@ -618,10 +566,6 @@ const KIT_ID_NONE := "none"
 ## exactly as `equipment.json`'s `default_kits` does.
 const KIT_ID_WAYFINDING := "wayfinding"
 const KIT_ID_WARRIOR := "warrior"
-## **THE TWO BUILDERS KITS, ONE PER WEB** (`equipment.json`). They list `builders` alone, so they
-## change no hunt or forage picker in either harness — the roster grew by two entries and only the
-## Builders role card can see them. The wire names no `defaultBuildersKitId`, so neither is a default:
-## which one a queue entry gets is DERIVED from that entry's own web.
 const KIT_ID_HURDLING := "hurdling"
 const KIT_ID_TILLAGE := "tillage"
 ## **THE RANGING KIT — the only entry on the `expedition` job** (`equipment.json`). It lists that job
@@ -715,12 +659,6 @@ static func kit_roster_fixture() -> Array:
 			"item_ids": [KIT_ITEM_CLUBS],
 		},
 		{
-			# **THE ANIMAL WEB'S BUILDERS KIT** (`equipment.json`) — the CROOK and nothing else, since
-			# nothing is hauled during a build. **It lists `husbandry` beside `builders`**, which is the
-			# shipped roster's own pair: one animal kit serves both the pen builds and the turn-by-turn
-			# keeping, the shape `tillage` already has on the plant web. Neither job is `hunt` or
-			# `forage`, so it still appears in no hunt or forage picker in either harness — the surfaces
-			# that list it are the Builders role card and the per-site keeping picker.
 			"id": KIT_ID_HURDLING, "display_name": "Hurdling kit",
 			"jobs": ["builders", "husbandry"],
 			"attack": KIT_ATTACK_BARE,
@@ -756,6 +694,21 @@ static func kit_roster_fixture() -> Array:
 			"item_ids": [KIT_ITEM_HOES],
 		},
 		{
+			# The rung-bound ROAD kit: serves the route branch at the paved rung alone, so a build's kit is
+			# DERIVED from the rung it raises (`KitRoster.build_kit_for_branch`) and a `grade` is not helped.
+			"id": "paving", "display_name": "Paving kit",
+			"jobs": ["builders"],
+			"attack": KIT_ATTACK_BARE,
+			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
+			"expedition_sight_range": KIT_EXPEDITION_SIGHT_BARE,
+			"build_work_per_worker": KIT_BUILD_WORK_HANDLING,
+			"build_work_branch": KitRoster.BUILD_BRANCH_ROUTE,
+			"build_work_rung": HudRouteVocab.RUNG_KEY_PAVED_ROAD,
+			"item_ids": [KIT_ITEM_HOES],
+		},
+		{
 			# **THE RANGING KIT — FOUR items, two food webs, ONE crew** (`equipment.json`). It is the
 			# `expedition` job's default and the only kit on this roster that lifts the attack, the
 			# hunt's carry, the forage web's carry AND the marching party's sight above bare at once,
@@ -786,18 +739,6 @@ static func kit_roster_fixture() -> Array:
 		},
 		{
 			"id": KIT_ID_NONE, "display_name": "No kit",
-			# **`builders` IS ON THIS LIST BECAUSE THE SHIPPED ROSTER PUTS IT THERE**
-			# (`equipment.json`'s `none` lists every job, and `default_kits.builders` IS `none`). It is
-			# what a player picks to send the pool out bare-handed, and — being the one entry carrying
-			# nothing — it is the one the branch greying may never withhold.
-			# …and so are the two KEEPING roles, for the same reason and against the same config: the
-			# comment above says `none` lists every job and the list named five of the seven. `none`
-			# is the bare-handed pick on a keeping row too — how a player conserves the tool on one
-			# site while its neighbour goes on using it — and `default_kits.agriculture` /
-			# `.husbandry` are BOTH `none`, so the roster was contradicting the defaults it ships with.
-			# …and `expedition` too, for the same reason and against the same config: `none` is what a
-			# player picks to send a ranging party out bare-handed, and a roster that omitted it would
-			# leave the scout sheet's picker a one-entry list with no choice to make.
 			"jobs": ["hunt", "forage", "scout", "warrior", "builders",
 				"agriculture", "husbandry",
 				KitRoster.JOB_EXPEDITION],

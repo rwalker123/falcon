@@ -319,7 +319,6 @@ const OUTCOMES_MOVED: Array[String] = [OUTCOME_EXCHANGED, OUTCOME_GIFT_GIVEN, OU
 const OUTCOMES_DANGER: Array[String] = [OUTCOME_DECLINED, OUTCOME_REFUSED, OUTCOME_FAILED]
 const OUTCOMES_FAINT: Array[String] = [OUTCOME_EXPIRED, OUTCOME_WITHDRAWN]
 
-# ---- PURE TEXT BUILDERS ---------------------------------------------------------------------------------------
 
 ## `true` when a decoded goods dict names nothing in any account.
 static func goods_are_empty(goods: Dictionary) -> bool:

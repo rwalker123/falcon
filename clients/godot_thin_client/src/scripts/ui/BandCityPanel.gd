@@ -51,90 +51,15 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 ## Cross-axis size of the expanded panel when docked L/R. FIXED — it is never fitted to the band
 ## content, so the reserved strip (and therefore the map inset) cannot move when a section grows.
 const PANEL_WIDTH := 380.0
-## Cross-axis size of the expanded panel when docked T/B. Likewise fixed; tall enough for the three
-## zones' rows without eating the map.
-##
-## **IT IS THE BODY'S BUDGET, NOT THE STRIP'S HEIGHT** — `_horizontal_panel_height()` adds whatever the
-## ACTIVE SHELL spends on its own chrome (the narrow shell's tab bar) before clamping to
-## `MAX_WIDE_HEIGHT_FRACTION`, so both shells hand their zones the same box. Read as a flat strip
-## height it is 35px short in the narrow shell, which is the zone the tab bar used to be paid out of.
-##
-## **IT IS THE ONE-COLUMN BUDGET SINCE THE FLANK LEARNED TO WIDEN.** A two-column flank needs far less
-## stacking room than a one-column one, so `_horizontal_panel_height()` picks
-## `PANEL_HEIGHT_WIDE_TWO_COLUMN` there instead — declared below, beside the column cap it keys off.
-##
-## **IT WAS 360, AND §4.7's POOLS BLOCK IS WHAT RAISED IT.** That block costs the WORK zone 82px (110
-## with its fund-mode row), which is more than any cap on the BUILD QUEUE could give back: at 360 the
-## zone's own worst case — a band short of keepers AND with a build queued — wanted 331px of the 300px
-## box it was handed, and a four-entry queue could draw ONE row. The number is MEASURED against two
-## criteria on the 1920 bottom dock, not rounded to taste:
-##
-##   1. the worst case fits with `HudWorkVocab.build_queue_rows_max` resolving to the authored ceiling
-##      of 3 — it needs a **348px** box;
-##   2. the board still pages at least the **2 rows** it drew before the slice — the binding one, at
-##      **376px**: a four-entry queue at the full ceiling costs 132, and the board's second row has to
-##      clear the pager as well.
-##
-## 440 handed the zones a 380px box, which cleared both with 4px of slack.
-##
-## **IT WAS 456, AND THE WORK INSPECTOR IS WHAT RAISED IT — the same trade a third time.** ⛔ **That
-## justification is DEAD, and it is quoted rather than deleted because it is the record of why the number
-## moved a third time**: *"The pools block took the strip 360 → 440; selecting a work row opens the
-## inspector strip, a FOURTH fixed-height block in that zone, and the worst case with a row selected
-## measured 396px of the 380px box — the panel visibly running past the bottom of the screen, reported
-## from play as happening only when something is selected in the work list. Everything inside the zone
-## that could give had already given (the board is floored at one row, the queue at one entry row plus its
-## overflow, and the strip's own reservation was re-measured off what it draws), so the remaining lever
-## was this budget. 456 hands the zones a 396px box, which is the measurement exactly."*
-## `docs/plan_standing_upkeep.md` §4.9 item 12d rehosted that strip as a viewport-centred
-## `WorkInspectorDialog`, so **NO inspector term survives anywhere in this zone's budget** — not in
-## `BandPanelController._work_board_capacity`, not in `HudWorkVocab.build_queue_rows_max`, and
-## `WORK_ZONE_GAP_COUNT` and `BUILD_QUEUE_ROOM_GAP_COUNT` each lost the gap that went with it. The 396 the
-## paragraph above was measured against describes a zone that no longer exists.
-##
-## **IT IS 418, AND THIS IS THE FIRST TIME THIS CONSTANT HAS GONE DOWN.** Reported from play: the bottom
-## strip is too tall — the band flank, the workforce and the work column all end well above the bottom of
-## it, and only the parties column reaches it, its action grid being bottom-anchored. Item 12d's rehost is
-## why there was room to give: the raise the inspector had paid for was only PARTLY re-claimed by what
-## replaced it, leaving the budget over-provisioned by 38px.
-##
-## **THE BINDING TERM IS THE BUILD QUEUE'S SETTINGS STRIP NOW, NOT THE INSPECTOR** — which is why this is
-## a 38px correction rather than the ~104 the retired strip would suggest. Taking the inspector out of
-## `build_queue_rows_max` exposed a defect one block over: the queue had been claiming rows the zone could
-## only afford while that reservation covered the settings strip by accident, so
-## `HudWorkVocab.BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` (56, the strip's WRAPPED control pair) arrived to pay
-## for it honestly. The work zone's floor is therefore **358px**, and it decomposes exactly:
-##
-##   * `HudWorkVocab.ZONE_HEAD_HEIGHT` 20 + `WORK_CHIPS_HEIGHT` 26
-##   * the POOLS block **82** (`pools_block_height(false)`; fund mode's 110 buys the queue fewer rows and
-##     does not raise the floor)
-##   * the BUILD QUEUE at its floor with a settings strip open — **132** = its own head 20 + one entry row
-##     and the overflow row (2 × `WORK_ROW_HEIGHT`) + `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` 56
-##   * one un-droppable board row **44** (`WORK_ROW_TWO_LINE_HEIGHT`; `_work_board_capacity` floors at
-##     `maxi(1, …)`)
-##   * `WORK_PAGER_HEIGHT` 24, and five `ZONE_BLOCK_SEPARATION` gaps **30**
-##
-## **418 = 358 + `HORIZONTAL_BODY_CHROME`**, and it is MEASURED rather than derived: swept against the
-## whole `band_panel_preview` run, **416** hands the zones a 356px box and `band_panel_build_queue_wide`
-## fails with `needs 358px … short by 2`, while 418 clips nothing at any dock or viewport in the matrix.
-## **What the 38px costs is one BUILD QUEUE entry row** — a wide dock draws one entry and `+3 more` where
-## it drew two and `+2 more`. The board's row count does not move (2 rows at 1920/1600/1024, 4 at
-## 1440/1366/1280/1152), and no other zone binds: the band flank SCROLLS (its one-column content is 442px
-## at any budget) and the parties zone's floor is 226.
-##
-## **NO TIER BOUNDARY IS CROSSED ON THE WAY DOWN, which is what makes the drop cheap.**
-## `BandPanelController._band_zone_tier_height()` is the box times the COLUMN COUNT, so a ONE-column flank
-## was already COMPACT at 396 (`HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT` is 420 and nothing here ever
-## reached it) and a two-column one stays TALL until the box halves. `BAND_ZONE_CHART_MIN_HEIGHT` (340) is
-## crossed at a budget of **402** — BELOW this floor, so the work zone clips before the flank can re-tier.
-## And a tier drops no content in any case: that constant's own note is that the zone scrolls instead.
-##
-## **IT IS STILL ABOVE `PANEL_HEIGHT_WIDE_TWO_COLUMN` (335)**, so `_horizontal_panel_height()`'s `maxf`
-## resolves to this budget at both column counts and the two-column branch stays inert.
-##
-## At a 1080-high viewport the strip is **39% of the window** against the 42% 456 took, inside
-## `MAX_WIDE_HEIGHT_FRACTION` (0.6) with room.
-
+## Cross-axis size of the expanded panel when docked T/B. Fixed, so a content edit never moves the
+## reservation. It is the BODY's budget: `_horizontal_panel_height()` adds whatever the active shell spends
+## on its own chrome (the narrow shell's tab bar) before clamping to `MAX_WIDE_HEIGHT_FRACTION`, so both
+## shells hand their zones the same box. It is the one-column budget: a two-column flank needs far less
+## stacking room, so `_horizontal_panel_height()` picks `PANEL_HEIGHT_WIDE_TWO_COLUMN` there instead,
+## declared below beside the column cap it keys off. 418 is MEASURED against the whole `band_panel_preview`
+## matrix (nothing clips at any dock or viewport in it) and stays above `PANEL_HEIGHT_WIDE_TWO_COLUMN`
+## (335), so that function's `maxf` resolves to it at both column counts. The box it hands the zones stays
+## under `HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT` (420), so a one-column flank stays COMPACT.
 const PANEL_HEIGHT_WIDE := 418.0
 ## FLOOR on the cross-axis size when collapsed to a thin rail (both orientations) — the rail is at
 ## least this thin, and thicker when its own chrome needs more (`_collapsed_cross_axis_size`).
@@ -291,67 +216,11 @@ const HORIZONTAL_BODY_CHROME := 60.0
 ## band HOLDS would re-emit `reservation_changed` → `MapView.set_reserved_inset` on every `+` press,
 ## which is the map flicker the fixed cross-axis size exists to prevent.
 ##
-## **DERIVED FROM WHAT THE ZONES NEED AT TWO COLUMNS, never a round number.** The saving is unlocked
-## by the parties LIST learning to scroll (`BandPanelController.build_parties_zone`), which retires
-## the 294px worst case that used to pin this budget for both counts. What is left, per zone:
-##
-##   * **band flank** — `BAND_ZONE_TWO_COLUMN_EXTENT`, the binding one.
-##   * **parties zone** — its fixed chrome only now: the head and `HudWorkVocab.PARTIES_LIST_MIN_HEIGHT`
-##     (the command footer left for the action bar, issue #529). Well under the flank, so it cannot bind.
-##   * **work zone** — ⛔ **IT BINDS NOW, AND THIS BULLET USED TO SAY IT COULD NOT.** The old reading
-##     was *"pages itself against `work_zone_size()`, so a shorter box costs it a board row rather than
-##     overflowing — it never binds by construction"*, and that was TRUE while the zone was head +
-##     chips + board + pager: every part of it either paged or was one row, so a shorter box only ever
-##     meant fewer rows. `docs/plan_standing_upkeep.md` §4.7 put two FIXED-height blocks in it — the
-##     POOLS block (82px, 110 with its fund-mode row) and the BUILD QUEUE block — and neither pages.
-##     The zone therefore has a HARD FLOOR: its head, the pools block, the queue's head and one entry
-##     row and the overflow row, the chips, one board row, the pager and the gaps between them.
-##     **Measured at 284px** on the worst case a band can reach (short of keepers AND something
-##     queued), against the 275px this budget offered — so it was clipping, silently, on exactly the
-##     wide monitors the two-column flank exists for. `_body_budget()` takes the MAX of the two budgets
-##     for that reason, and `band_panel_pools_wide_two_column` is the frame that fails if it stops.
-##
-##     **The reasoning that expired is the thing to watch, not the number**: "it pages, so it cannot
-##     bind" holds only while every part of a zone either pages or is one row. Adding a block that does
-##     neither ends it, and the block will look harmless because the ONE-column budget absorbs it.
-##
-##     ⛔ **AND THAT 284 IS THE FLOOR WITH NOTHING SELECTED — the WORK INSPECTOR is a fourth block
-##     that does not page, and the floor with a row selected is 396px, against the 380px box this
-##     budget used to hand out.** Reported from play: the panel runs past the bottom of the screen
-##     *only when something is selected in the work list*. `band_panel_pools_wide_selected` is that
-##     frame; it MEASURED the shortfall (`-16 spare`) rather than describing it, and it reads
-##     **396 of a 396px box, 0 spare** against the raised budget.
-##
-##     **396 is what is left after everything that CAN give has given.** The board is floored at one
-##     row (`_work_board_capacity`'s `maxi(1, …)`); the queue is floored at one entry row plus its
-##     overflow (`BUILD_QUEUE_ROWS_MIN`), and `HudWorkVocab.build_queue_rows_max` now budgets the
-##     inspector's HEIGHT rather than only its gap; and the strip's own reservation was re-measured off
-##     what it draws (`WORK_INSPECTOR_EXTENT`), which gave 34px back and is what took this figure from
-##     430 to 396. There is nothing further to trim inside the zone; the remaining lever is this budget.
-##
-##     **The queue's re-budgeting does not show in the 396 and is the same defect one block over.**
-##     That fixture queues ONE entry, so its cap never binds; the frame it binds on is
-##     `band_panel_build_queue_wide`, whose four-entry queue measured **380 of a 380px box, 0 spare,
-##     with nothing selected** (that figure is from before the raise) — i.e. the authored three entry
-##     rows were being drawn on credit against a zone that had no room left for a selection. Its cap is
-##     one entry row plus the overflow now, and it reads 340 of the 396px box.
-##
-##     **THE LEVER WAS PULLED TO THE FIRST OF TWO VALUES, and the second is still on the table.**
-##     `PANEL_HEIGHT_WIDE` is **456** — 396 + `HORIZONTAL_BODY_CHROME` — which clears the overflow
-##     exactly and is the cheap move: the box it hands the zones is 396, still under
-##     `HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT` (420), so the band flank stays COMPACT and no tier
-##     flips. **540** would additionally restore the queue's authored three entry rows — a 480px box
-##     (20 head + 110 pools + 132 queue + 26 chips + 28 board + 24 pager + 104 inspector + 36 of gaps)
-##     — and that one DOES cross 420 and flips the band zone to TALL, on top of costing another 84px of
-##     live map. It was weighed and declined: a queue that shows one entry and `+3 more` is legible,
-##     and half the screen is not what this defect earns.
-##
-##     **One term above is the STAGED worst case rather than the arithmetic one**: the selected row
-##     there carries a `note` and nothing else, so its strip reserves 104. A row stating every
-##     conditional child at once — the overdraw line, the note, the muted note, the arrival strip and
-##     an open policy picker — reserves 190, i.e. **86px more than any figure above**. No fixture
-##     reaches that combination and it is not known to be reachable in play; if it is, both levers move
-##     by that 86.
+## **DERIVED FROM WHAT THE ZONES NEED AT TWO COLUMNS, never a round number.** The saving is unlocked by
+## the parties LIST learning to scroll (`BandPanelController.build_parties_zone`). The binding zone is
+## the band flank (`BAND_ZONE_TWO_COLUMN_EXTENT`); the parties zone's fixed chrome is well under it, and
+## the work zone pages its board, so a shorter box costs it board rows. `_body_budget()` takes the MAX of
+## the two budgets so the work zone is never handed less than the one-column floor.
 ##
 ## **A ONE-column horizontal dock keeps `PANEL_HEIGHT_WIDE` EXACTLY**, and must: its flank still
 ## stacks 299px into the 300px box, and a flat lower budget would slice it. Top docks are one column
@@ -2180,17 +2049,6 @@ func _horizontal_panel_height() -> float:
 
 ## The body budget for the CURRENT flank layout: a two-column flank stacks its blocks side by side and
 ## needs a shorter box than the one-column stack does, so it may take `PANEL_HEIGHT_WIDE_TWO_COLUMN`.
-##
-## ⛔ **BUT NEVER LESS THAN THE ONE-COLUMN BUDGET, and that MAX is the whole of this function's job.**
-## The two-column saving is a claim about the BAND FLANK alone, and it hands its shorter box to EVERY
-## zone. That was safe while the WORK zone could absorb it — it paged, so a shorter box cost it a board
-## row — and `docs/plan_standing_upkeep.md` §4.7 ended that: the POOLS block and the BUILD QUEUE block
-## are FIXED-height blocks that do not page, so the work zone now has a hard floor and can BIND. It
-## does: its worst case with NOTHING SELECTED measures **284px** and the two-column budget offers
-## **275**, which the zone would have CLIPPED silently — no overflow, no warning, just fewer board rows
-## than the pager thinks it drew. See `PANEL_HEIGHT_WIDE_TWO_COLUMN` for the floor, for why its old
-## "never binds by construction" reasoning expired, and for the **396px** the same worst case measures
-## once a work row is SELECTED — which is what `PANEL_HEIGHT_WIDE`'s 456 was raised to hand it.
 ##
 ## **AT THE CURRENT NUMBERS THE TWO-COLUMN BRANCH IS INERT** (329 against 440) and this always answers
 ## `PANEL_HEIGHT_WIDE`. It is written as a MAX rather than deleted because the branch is a live

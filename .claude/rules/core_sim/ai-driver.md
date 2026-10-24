@@ -216,8 +216,8 @@ a proposal walks (`move_band`), `Cost::splits` the bands it splits (`split_band`
 collides with a move of the band, a band walking does not split, and never with another split of
 it: the sim applies each `split_band` as it arrives against the floors as they then stand, so two
 splits of one band in a turn are two orders, not one claim), `Cost::rows` the labor rows it sets,
-keyed as `view::row_key` — every `assign_labor` it emits, donors and targets both, a `builders`
-pool as much as a forage row, and the patch's forage row for a `cultivate` / `sow`.
+keyed as `view::row_key` — every `assign_labor` it emits, donors and targets both, and the
+patch's forage row for a `cultivate` / `sow`.
 `Cost::claimed` reads them off the commands themselves, so a proposal cannot claim less than it
 sends. The sim takes several labor orders for one band in a turn, so two proposals on one band
 collide only where they set the same row or both walk it — the old one-order-per-band rule cost
@@ -312,8 +312,7 @@ reading's shape, "The land reading" below; nothing when the band has no reading)
 shape's first planned band that holds a patch with `tended_food > 0`, its richest such patch:
 hoes wanted = `Site::tended_keepers_hoed` (the keeping crew alone, hoed — the take crew gathers
 and needs none) + `founding_min_workers` builders (the wire's founding floor stands in for the
-crew the first cultivate would run with — a crew the sim would let stand on its own), one hoe
-each; materials = `HOE_RECIPE_BONE` (1) bone + `HOE_RECIPE_FIBRE` (2) fibre per hoe
+crew the first cultivate would be dealt), one hoe each; materials = `HOE_RECIPE_BONE` (1) bone + `HOE_RECIPE_FIBRE` (2) fibre per hoe
 (`recipes.json` → `hoes`); and a `Resource::Craft { item: "hoes", start_tick }` for that many,
 where the turn cultivation is expected known is `CULTIVATION_LESSON_COST / (LADDER_LEARN_RATE ×
 the patch sites the shape works)` turns from now (`intensification_ladder.json`:
@@ -383,7 +382,7 @@ big_game 9` on the tick its loadout was sent (read off the `orchestrator:outfit`
 Decisions tabs gain `orchestrator` the moment such a decision exists, since the tab set is the
 decision log's specialist names.
 
-### `Food` (`specialists/food/`: `mod.rs` the plumbing, `rules.rs` the seven rules, `ledger.rs` the projection, `sources.rs` the source vocabulary)
+### `Food` (`specialists/food/`: `mod.rs` the plumbing, `rules.rs` the eight rules, `ledger.rs` the projection, `sources.rs` the source vocabulary)
 
 Owns `runway_turns`; alarms `food_short` when the minimum own-band `turns_of_food` is below
 `food.runway_floor_turns`. **The AI asks for a source and the sim staffs it (#871).** A forage or
@@ -393,8 +392,9 @@ leaves (`.claude/rules/core_sim/work-party.md`, *Three staffing passes*). The co
 (`Cost::workers`, the ledger projection, the reason's `x6`) is the ledger's, never on the wire; the
 row's `workers` read back next frame is the sim's crew. A rule that empties a row sends `stop_labor`
 (`Food::release`), never `assign_labor ... 0`; a rule that only thins one sends nothing, so the
-"donor reduction" lines are gone from every rule's commands. The `builders` pool (and the other
-band-wide roles) stays a count - `assign_labor ... builders <n>` is player-set and sized by the rule.
+"donor reduction" lines are gone from every rule's commands. The band-wide roles
+(`scout`, `warrior`, `roadwork`) stay a count the player sets. A build names no count at all: the
+declaration is the whole order and the sim deals the builders.
 Every assignment is `assign_labor` with kit and floor left `None` (the
 job's default on the wire) — except *draw down to survive*'s, which states the floor; `policy` is
 left `None` too, because the field is **retired** —
@@ -406,8 +406,7 @@ holds is staffed by the sim from the pool whatever count or floor-less order is 
 `assign` onto a held row is dropped from its commands: *negative income*'s dealt hands, the single
 best source, a row emptied onto a source, *feed while moving*, *spare hands into hunts* and *hold the
 ground*'s raise all go through `open`. The hands dealt onto held rows still price the change (the pool
-they leave is real), and the donor side stays real - `stop_labor` for an emptied row, `builders <n>`
-for a pool cut - so a candidate whose commands are all dropped is discarded (`reassignments` retains
+they leave is real), and the donor side stays real - `stop_labor` for an emptied row - so a candidate whose commands are all dropped is discarded (`reassignments` retains
 only candidates with a command), and *hold the ground* answers nothing when the sim already keeps the
 row first. Idle hands beside rows at their floor therefore produce no *negative income* order; they
 are *draw down to survive*'s case, which now also considers a forage row the sim staffed with nobody
@@ -491,30 +490,20 @@ binding constraint was not labor, so the extra workers were idle"*, so a row's s
 so the surplus needs no correction for keeping. `Food::draw` never takes a row below its keeping
 hands on either tier (`keeping_hands`: the source's `upkeepHands`, rounded up): a hand drawn under
 that line comes out of the keeping and rots the site.
-`Food::draw` frees hands in four tiers — idle, then **the pools with hands to spare**
-(`Food::pool_releases`, below; at no cost, like the idle), then the surplus on the rows offered
-for it (each down to its `workers_needed`, at no cost), then the rows named until each is empty
-— a row the caller names in `keep` is never drawn below the crew given for it on either tier
-(*hold the ground*'s harvesters) — and every rule that moves hands draws through it, so every
-rule sees the released pool hands
-(*spare hands into hunts* excepted: it draws off the forage rows alone, the free hands being rule
-1's to place). A pool a draw cuts is reduced with the deal — `assign_labor … builders 0` — beside
-the row reductions, and the reason names them (`3 off builders hands`).
-Before this a band that had parked all seventeen hands on a patch needing eight read `idle 0`,
-so no rule could find a hand to move and the seat went silent for fifty turns.
+`Food::draw` frees hands in three tiers — idle, then the surplus on the rows offered for it (each
+down to its `workers_needed`, at no cost), then the rows named until each is empty — a row the
+caller names in `keep` is never drawn below the crew given for it on either tier (*hold the
+ground*'s harvesters) — and every rule that moves hands draws through it.
+Before the surplus tier a band that had parked all seventeen hands on a patch needing eight read
+`idle 0`, so no rule could find a hand to move and the seat went silent for fifty turns.
 
-**The builders pool releases its spare hands** (`Food::pool_releases`). No rule could reach into a
-band-wide pool: on seed 27 the parent ended at t29 with every hand on `builders` (3) and the
-since-retired `agriculture` pool (3), income 0.00 for twenty turns and 17 hunger deaths, and rule 1
-was silent for want of a row to draw from. The whole `builders` pool is free when the band's
-`build_queue` is empty (nothing to raise) or when its head's source row publishes a non-empty
-`build_blocked_reason` (*"WHY THE BAND'S BUILDERS ARE STUCK ON THIS SOURCE"*; the whole pool goes
-on the head, so a blocked head idles all of it); a head the frame does not carry is not read as
-blocked, and a live unblocked head keeps its builders. *Upgrade the ground* restaffs the pool
-itself, so it keeps a builders cut out of its reductions and sizes `builders` from what the cut
-left. **There is no keeping pool to trim**: a patch is kept by its own forage row, which keeps first
-and gathers with the rest (`docs/plan_site_crews.md` §2.1), so a keeping hand the bill does not need
-is already gathering.
+**There is no builders pool to release.** A declared build is dealt its hands by the sim from what
+the rows leave (`docs/plan_labor_at_scale.md`, *Builds join the site's crew*), so a build that cannot
+progress holds none and a rule never reaches into a band-wide pool. *Upgrade the ground* declares and
+sizes nothing: it frees the hands the build is priced on by reducing the rows. **There is no keeping
+pool to trim** either: a patch is kept by its own forage row, which keeps first and gathers with the
+rest (`docs/plan_site_crews.md` §2.1), so a keeping hand the bill does not need is already
+gathering.
 
 **The cluster is one reading, shared.** `cluster_take(view, memory, band, standing, hands,
 is_dead)` (`sources.rs`) is what a band of `hands` would take per turn from **every** workable site
@@ -682,7 +671,7 @@ fired and what the ledger said. The rules, in `propose` order:
   count is `ceil`ed by (49,5 on seed 23: `need 1, supplied 0.98, short 0.92`), and one more hand is
   what closes it. The reason reads `hold the ground: N hands keeping …`. One proposal per band
   naming every short patch; the kit left `None` — the keeping's tools follow from the patch's rung.
-  The hands come from the idle first, then the builders pool with nothing to do, then the surplus,
+  The hands come from the idle first, then the surplus,
   then the lowest rows — **never from a short row itself** (raising a row by hands drawn off the
   same row keeps nothing) and **never the harvesters**: every kept patch keeps its sustained crew on
   its row (`sustained_hands` at the band's rate, at least `HOLD_MIN_HANDS`; `Food::draw`'s `keep`
@@ -718,33 +707,59 @@ fired and what the ledger said. The rules, in `propose` order:
   (`docs/plan_site_crews.md` §2.1). The finished rung's bill (`rungQuotes[plant:tended].upkeepDemand` /
   `rungQuotes[plant:farm].upkeepDemand`, above what the patch owes today), in bare hands (`/ buildWorkPerWorkerTurn`),
   on top of what the band already owes (`Food::keeping_owed`: every site its rows hold, a build in
-  flight at its **finished** bill, a herd's `rungQuotes[animal:pastoral].upkeepDemand` / `rungQuotes[animal:pen].upkeepDemand` while queued)
+  flight at its **finished** bill, a herd's `rungQuotes[animal:pastoral].upkeepDemand` / `rungQuotes[animal:pen].upkeepDemand` while declared)
   must fit in the free hands plus the hands already keeping (`upkeepHands`), or the climb is not
   proposed. It is a gate, not a price: nothing about the ranking of the climbs that pass moves.
 - **upgrade the ground** (`food:upgrade:<band>`) — `goals.ground_rung > wild`, the rung's gate
-  knowledge known, and a worked forage patch below it with nothing queued (`build_destination_rung`
-  is *"empty when no band has queued it"*, plus the band's own `build_queue`; not
-  `build_queue_position`, which is a source-addressed readout of the *winning* band and defaults
-  to `0` off the wire). Knowledge is `snapshot.intensification_knowledge[faction].knowledges[id]
+  knowledge known, and a worked forage patch below it with nothing declared (`build_destination_rung`
+  is *"empty when no band has declared it"*; a patch of the band's own with a destination named holds
+  the seat's single climb, since **the rule declares one climb at a time** — a second declaration
+  would split the free hands the first was priced to have). Knowledge is `snapshot.intensification_knowledge[faction].knowledges[id]
   .progress >= KNOWLEDGE_COMPLETE` (1.0) — the row is *"0..1 (1.0 = known)"*, there is no `known`
   flag on the ladder row (`CraftKnowledgeState` has one; `LadderKnowledgeProgress` does not), and
   `FloraShareInfo::can_cultivate` is the **species ceiling**, not the gate. Tended if the patch is
   not `is_cultivated` and `cultivation` is known; field if the goal is `field`, the patch is
   cultivated, `seed_selection` is known and `sow_site_refusal` is empty. Priced by the ledger:
   `income_gained` = the committed (else largest legal share) plant's `cultivate_payoff` /
-  `sow_payoff` minus the row's take today; `income_lost` = the builders' rows; `payoff_turn` =
+  `sow_payoff` minus the row's take today; `income_lost` = the rows the builders' hands are drawn
+  from; `payoff_turn` =
   `ceil((work_cost − work_done) / (builders × build_work_per_worker_turn))` — there is **no**
-  reduced yield during the build (`yield_fraction_while_building` is retired in the ladder JSON:
+  reduced yield during the build (`yield_fraction_while_building` is not in the ladder JSON:
   *"the gatherers on a source take exactly what their hands carry whatever is being built beside
   them"*). Builders = the free hands (idle plus every row's surplus — **the patch's own row
   included**, cut to its `workers_needed`, which is what keeps the declaration attached), all of
-  them since they cost nothing, then the smallest crew up to the budget whose projection survives
-  and whose payoff is inside `food.projection_horizon_turns`, drawn from the hunt rows, then the
-  lowest forage rows.
-  Commands: `cultivate`/`sow`, **then the row reductions, then** `assign_labor … builders <n>` —
-  in that order, because `assign_labor` clamps a role to the band's idle hands at dispatch
-  (`" (clamped from {} — only {} idle)"`, `core_sim/src/bin/server.rs`): builders named before the
-  hands are freed would be clamped to zero.
+  them since they cost nothing, then the smallest crew up to the rung's `max_builders`
+  (`ladder_rungs[].max_builders`) whose projection survives and whose payoff is inside
+  `food.projection_horizon_turns`, drawn from the hunt rows, then the lowest forage rows.
+  Commands: `cultivate`/`sow`, **then the row reductions** (`stop_labor` for an emptied row) — the
+  declaration is the whole order, and the sim deals the builders from the hands the rows leave.
+- **make room for the build** (`food:room:<band>`) — the sim staffs every food row's keepers and
+  hold crew before any builder, so a fed band whose rows take every hand leaves its build with
+  nobody. **Room is wanted** (`Food::room_wanted`) when the band has a climb in flight (a patch
+  one of its forage rows works, with a build declared and `builders_cap > 0`) and it **holds its
+  reserve** (`Food::holds_the_reserve`): the band's book at its **steady** income
+  (`Food::steady_book`: Σ `realized_yield` over its rows — `food_income` pulses with every hunt
+  kill, and a reserve read on it was undone the turn after it was spent), projected over
+  `food.projection_horizon_turns`, survives and ends lasting at least `goals.runway_turns`, the
+  personality's reserve. ⛔ One test for both halves: a larder-only runway (stock ÷ drain) kept a
+  row paused on sweep seed 5 from t24 to t40 while *draw down to survive* was stripping the band's
+  other patch, because the two rules read the band's food two ways. While room is wanted
+  *negative income*, *split to feed* and *spare hands into hunts* are silent, so no free hand is
+  placed on food and the hands the sim leaves over go to the build; with no build in flight spare
+  hands go to food as before. While the build reads `builders_staffed < builders_cap` the rule
+  **pauses** the band's lowest-paying forage row (`Food::row_rate`) — `assign_labor` at floor
+  `PAUSED_FLOOR` (1.0), so the stand is never above the floor and the sim staffs the row's keepers
+  only — one row a turn, and only where the band still holds its reserve with that row's
+  `realized_yield` gone. ⛔ **Never a
+  patch with a build declared on it**: a climb needs take room on its own patch
+  (`requires_work_room`), and pausing it blocked the build it was paused for (`blocked_reason:
+  escapement`, bench seed 59 t19). Once room is no longer wanted — the build stands, or the
+  band no longer holds its reserve — every paused row goes back to Best in one proposal (`harvest
+  again: forage x,y, …`). Both proposals are `standing` at `MAKE_ROOM_SCORE` (1.0 × the weight):
+  the declared build's hands are a bill, not a bid. *Draw down to survive* never touches a paused
+  row. Without the rule, the AI's rule 1 put every hand the staffing freed onto a new food tile
+  (seed 59 band 2 at t23: food income 1.96 against a need of 1.51, *"1 surplus hands … -> forage
+  4,14"*), and the build sat at 0 builders from t22 to t49.
 - **draw down to survive** (`food:drawdown:<band>`) — the projection of **the plan in force** —
   the band's book plus every change rules 1–5 proposed this turn (rules 2–5 answer their change
   through `*_change`, and `propose` collects them) — troughs at or below zero. Candidates: each
@@ -1236,7 +1251,7 @@ and `rover` (expand). Each key has one consumer:
 | `food.near_positive_fraction` | `Food` | how far under the net-income goal *spare hands into hunts* still fires |
 | `food.survival_floor` | `Food` | the lowest harvest floor *draw down to survive* may set, `0 ≤ f ≤ BEST_FLOOR` (the forager's and the rover's are `0`: survival outranks the peak) |
 | `goals.net_income_per_turn` | `ConstantStance` → `Food` | the net-income target `Food` scores toward (positive: build stock) |
-| `goals.runway_turns` | `ConstantStance` → `Food` | the runway target `Food` scores toward — the goal, where `food.runway_floor_turns` is the alarm |
+| `goals.runway_turns` | `ConstantStance` → `Food` | the runway target `Food` scores toward — the goal, where `food.runway_floor_turns` is the alarm — and the reserve *make room for the build* holds while it pauses a row |
 | `goals.ground_rung` (`wild` / `tended` / `field`) | `ConstantStance` → `Food` | the rung *upgrade the ground* climbs toward |
 | `land.known_tiles_floor` | `Land` | *blind*'s floor |
 | `land.split_size` | `Land` | *room*'s band size |
@@ -1327,7 +1342,7 @@ bands: `band_id`, `x`, `y`, `size`, `working_age`, `idle_workers`, `turns_of_foo
 and the readout the client's Forage/Hunt sheets show — `workers_needed`, `wasted_yield`,
 `overdraws`, `kit_id` (null on a band-wide role), `floor`, `species` (the commit crop, null for
 the tile's pick), `take_species` (empty = the whole basket), `improvement` (the declared build
-verb, null when none)], `build_queue` [`job`, `target`] in the band's order, `intent_in_force` —
+verb, null when none)], `intent_in_force` —
 the intent the memory holds a move target under, `land:move:<band>` or `food:settle:<band>` —
 `move_target`, and `born_by_split` — the site a child band was split toward, while it has not
 reached it), and `neighborhood`:
@@ -1337,7 +1352,7 @@ every **discovered** tile within `radius` hex steps of any own band, sorted `(y,
 forecast), `rated_per_worker_yield` (`food::patch_per_worker_yield` for the nearest own band — the
 number `Food` and `Land` actually rank on), `owner`, `cultivated`, `field`,
 `cultivation_progress`, `field_progress`, `build` (the climb declared on the source —
-`destination_rung`, `queue_position`, `turns_remaining`, `blocked_reason`, `kit_id`; null when no
+`destination_rung`, `builders_staffed`, `builders_cap`, `turns_remaining`, `blocked_reason`; null when no
 rung is named), `upkeep` (`demand`, `supplied`, `shortfall`, `workers_needed`, `kit_id`; null when
 the source demands nothing), `herd` (`id`, `species`, `biomass`, `per_worker_yield`, `huntable`,
 `corralled`, `corral_progress`, and its own `build` / `upkeep`; the first herd on the tile),
@@ -1527,6 +1542,19 @@ band in the top two are a seeded coin flip. Seat 2 is Pass, starves on every see
 marked `degenerate` on all eight by the writer. `Land` wins on all eight seeds (6 to 15 moves
 accepted), so the file's `declined` list is empty.
 
+**Builds join the site's crew (#872) moved the entry.** Every declared build is dealt its own hands
+(no queue, no head), so `food`'s upgrade rule declares **one climb at a time** (a second declaration
+would split the free hands the first was priced to have). Against the entry it replaced, at t60 working
+population by seed 54 / 18 / 22 / 59 / 50 / 20 / 3 / 37 went 26 / 22 / 20 / 26 / 22 / 24 / 9 / 24 to
+33 / 25 / 21 / 26 / 25 / 24 / 12 / 26, hunger deaths stayed 0 on every `stay`/`split`/`short` seed
+but 3 (15 to 14), and `patches_improved` reads 2 / 0 / 0 / 1 / 0 / 0 / 0 / 1. The sim staffs every
+food row's hold crew before a builder, so the climb finishes only because *make room for the build*
+pauses a row for it; without that rule `patches_improved` fell to 0 on seeds 22 / 59 / 50 / 37. On
+a 20-seed sweep (seeds 1–24 less the bench's 3 / 18 / 20 / 22) the rule moved `patches_improved`
+1 → 3 and hunger deaths 121 → 120 at an unchanged working population of 373. Runway holds near 999
+turns on seeds 50 and 54, so `Land` (which needs a falling runway) never proposes there: both are `declined`
+rows with a note; seed 37's `declined` row was withdrawn because `Land` wins there again.
+
 ⛔ **The start kinds above are what the seeds read NOW, not what they were chosen for.** The
 eight were picked to span `stay` / `split_local` / `split_far` / `short`; the sim changes since
 (the work party, site crews, spoilage) moved the tick-2 ground reading, and the set now covers
@@ -1606,8 +1634,8 @@ commit, declared build), plus the tile's progress meters, build and upkeep; the 
 six numbers, then a row per band with its worked rows in that same form and the intent in force);
 the **Work** panel under it — per band, workers by every job kind its rows name (so a new role
 appears with no template change) and idle of working-age, then the seat's improved ground
-(owned / cultivated / fields off the ledger), every band's build queue joined to the source's
-declared climb, and every upkeep row in view (owned patches, herds); the **seat scoreboard** under
+(owned / cultivated / fields off the ledger), each source's
+declared climb with the builders staffed on it and their cap, and every upkeep row in view (owned patches, herds); the **seat scoreboard** under
 that — every `ScoreRow` field for the tick, captioned as the seat's ratchet
 numbers and not a tile score; the **orchestrator** panel — the plan in force (stance, since tick,
 a row per specialist with budget share, priority and its goals — `net +1.0/turn · runway 12t ·

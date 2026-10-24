@@ -90,12 +90,6 @@ var _forage_band: int = NO_BAND_ENTITY
 # band's standing assignment, so switching the actor invalidates them exactly as switching the source
 # does — see `seed_forage`.
 var _forage_seeded_band: int = NO_BAND_ENTITY
-# **THERE IS NO BUILD COUNT HERE, AND NO KEEPING COUNT EITHER** (`docs/plan_standing_upkeep.md`
-# §2.5). A source carried a second, per-source BUILD crew for one slice — `_forage_build_count`, the
-# stepper on the improvement control — and both it and the keeping crew before it have left the tile:
-# the keeping is `agriculture` / `husbandry` and the building is `builders`, three band-level standing
-# roles staffed from the Band panel. **A verb declares and names no hands**, so a compose sheet
-# composes ONE crew: the take.
 
 # ---- Hunt compose (the herd drawer's "assign hunters/herders" block) -----------------------------
 # ---- Deposit compose (the tile card's "assign foresters / diggers" sheets) ----------------------

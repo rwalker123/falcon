@@ -527,11 +527,11 @@ fn auto_crafts_the_tools_a_queued_build_will_need() {
             .expect("a spawned band carries an allocation");
         allocation.last_pool_toe.clear();
         allocation.last_keeping_issued.clear();
-        allocation.last_queued_build_toe = vec![core_sim::QueuedBuildToe {
-            position: 1,
+        allocation.last_build_toe = vec![core_sim::BuildToeLine {
             source: BuildSource::Patch(FIRST_SITE),
             item: HOES.to_string(),
             required: 2.0,
+            filled: 0.0,
         }];
     }
     bank_hide_and_fibre(&mut app, band);

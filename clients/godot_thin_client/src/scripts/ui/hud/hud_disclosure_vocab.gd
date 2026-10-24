@@ -47,13 +47,6 @@ const BREAKDOWN_KIND_FAMILY_LIMIT := "family_limit"
 # goods were the second product of the same worked sources the Food breakdown itemizes, and that
 # account no longer exists.
 
-# **`BREAKDOWN_KIND_KIT` IS RETIRED** (`docs/plan_standing_upkeep.md` §4.9 item 12) with the `Gear`
-# row it opened. A band's item conditions do not compress to a vitals line and the CRAFTING panel's
-# kit ledger already owns them in full — the Builders card's own gear line was retired in §4.7 for
-# exactly this reason. What replaces the row is NOTIFICATION: `equipment.json`'s `life_readout` seams
-# now reach the event dock as `kit_life` (warn → Notable, danger → Alert).
-# **`DisclosureController.kit_breakdown_lines` and the `DetailFormat` kit LEAVES stay** — the crafting
-# panel and the compose sheet still read them.
 
 # The band's STANDING MATERIAL BILL (`docs/plan_standing_upkeep.md` §2.7) — what its holdings swallow
 # per turn in goods, what arrives, and what is on the shelf, ONE BLOCK PER GOOD. It is a disclosure

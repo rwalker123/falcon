@@ -148,7 +148,10 @@ lands. Pinned by `server::tests::a_never_renewing_dig_with_no_count_is_refused_a
 
 **Approximations to know.** The command-time restaff reads the world before the coming turn's
 regrowth, while the turn staffs after it, so a row's crew can move by a hand between the seed and the
-turn. Several bands working one source each staff their share of the keeping bill. A band's gear that
+turn. The herd it reads is `fauna::next_turns_quarry`: regrown, then less the predation the herd
+suffered last turn (`Herd::predator_eaten_this_turn`, held at the predation escapement floor), so a
+warren a pack eats back to its floor every turn is not staffed for a regrowth the turn will not hand
+over (`predated_restaff`). Several bands working one source each staff their share of the keeping bill. A band's gear that
 the turn settles after staffing (the pools' and the keeping's issue) is not in the staffing's shelf.
 
 Pinned by `staffing::tests` (the passes, in order, against a shelf), `labor_allocation` (the

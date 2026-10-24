@@ -141,23 +141,17 @@ func _building_herd_band_fixture() -> Dictionary:
 		"activity": "hunt", "labor_assignments": [],
 	})
 
-## The band STANDING on Tame on that herd — the fixture the re-admission frame turns on. Everything
-## else about `BandFx.band_fixture` is kept; only the assignment list is replaced, by the single hunt
-## assignment whose `fauna_id` matches `HerdFx.fully_tamed_herd_fixture`'s and whose policy is the rung the
-## ceiling pass has since hidden.
-## The BAND'S `builders` POOL — the animal twin of `BandFx.CULTIVATING_BAND_BUILDERS`, and staffed
-## for the same reason: a running build is STAFFED, so a fixture that puts nobody on the pool stages a
-## build nobody is paying for (`docs/plan_standing_upkeep.md` §2.5).
 const TAME_STANDING_BUILDERS := 3
 
 func _tame_standing_band_fixture() -> Dictionary:
 	var band := BandFx.band_fixture()
+	BandFx.CrewFx.staffed = TAME_STANDING_BUILDERS
 	band["labor_assignments"] = [{
 		"kind": "hunt", "workers": HerdFx.TAMED_HERD_CREW, "fauna_id": HerdFx.taming_herd_fixture()["id"],
 		"floor": 0.5, "improvement": "tame", "target_x": 70, "target_y": 17,
 		"actual_yield": 0.45, "sustainable_yield": 0.45,
 		"workers_needed": HerdFx.TAMED_HERD_CREW, "overdraws": false,
-	}, BandFx.builders_role_row(TAME_STANDING_BUILDERS)]
+	}]
 	return band
 
 func run(harness) -> void:
@@ -206,9 +200,6 @@ func run(harness) -> void:
 		not Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(Readout.TEACHING_LESSON_NEEDLE))
 	h._assert_hud("…and no BUILD half survives it here either, as on the plant sheet",
 		not Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(Readout.TEACHING_BUILD_NEEDLE))
-	# **THE BUILDERS STEPPER IS THE LEVER NOW, ON BOTH WEBS**, so what has to be present is the row —
-	# the running control states the meter and the stepper beneath it is the whole of what a player can
-	# change about the build.
 	h._assert_hud("a running Tame mounts its BUILDERS stepper — the lever the uncheck used to be",
 		Readout.stepper_count(h._hud._drawercompose._compose_sheet)
 			== Readout.COMPOSE_STEPPERS_PER_SHEET)

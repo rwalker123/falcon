@@ -613,10 +613,10 @@ wild stand and its row goes.
 ## The three verbs — `fell`, `coppice`, `quarry`
 
 `build fell <faction> <x> <y> <material>`, and the same shape for the other two (`build coppice`,
-`build quarry`; one `build` verb carries every rung since #175). Each **declares**: an
-entry on the build queue of every band of the faction that already has an `extract` row on
-`(tile, material)`, raised by that band's `builders` pool at the head of the queue — so none of them
-names workers, exactly as no rung verb has since `plan_standing_upkeep.md` §2.5.
+`build quarry`; one `build` verb carries every rung since #175). Each **declares**: a
+build on every band of the faction that already has an `extract` row on `(tile, material)`, raised
+by the builders staffing deals it — so none of them names workers, exactly as no rung verb has since
+`plan_standing_upkeep.md` §2.5.
 
 **It is `cultivate`/`sow`'s grammar and not `grade`/`pave`'s, and the section above is the reason.** A
 road belongs to nobody until a band is named, so the route verbs carry a band token and stamp a
@@ -666,7 +666,7 @@ for the verb to declare for, and the verb's own rejection names the crew.
 
 `abandon_working <faction> <x> <y> <material>`, on the three rung verbs' grammar exactly: no band
 token, the material as the closed trailing token, and the same *"no band of yours works this"*
-rejection. It drops the band's **holding** — the `extract` row and its build-queue entry — on every
+rejection. It drops the band's **holding** — the `extract` row and its declared build — on every
 band of the faction working `(tile, material)`, through the same `drop_holding_and_cancel_ring` a
 patch's `abandon` goes through, and **leaves the working's meter alone** to slide back at the rung's
 own rate. Nothing is destroyed on the spot, so it needs no confirmation, and there is no `validate_*`
@@ -696,7 +696,7 @@ and the row prunes itself — **104 turns**. `forestry:felling` is the same shap
 > command, and rides `command_text.rs`'s `fell | coppice | quarry` arm so the material's position
 > and the closed tail cannot drift from the rung verbs'; `abandon`'s material form carries the same
 > token in the same place (`command_text::parse_site_source`). `unqueue <faction> <x> <y>
-> <material>` withdraws a queued `fell` / `coppice` / `quarry` and leaves the row.
+> <material>` stops a declared `fell` / `coppice` / `quarry` and leaves the row.
 >
 > `server::tests::abandon_working_drops_one_workings_holding_and_leaves_its_neighbour` drives the
 > line through the **encoded** envelope on a hex carrying timber and rock at once, both staffed and
@@ -790,9 +790,6 @@ while the next pass takes more off it than the builders put on.
 
 ⛔ **It passed `NO_UPKEEP_DECAY` for one slice**, on a comment that was true when slice 1 shipped
 (*"neither deposit branch declares an `upkeep`"*) and that this slice falsified without updating.
-**The blast radius is the whole queue, not the working**: `publish_build_chain` accumulates the
-head's turns into `cumulative`, so an understated deposit head carried its error onto **every entry
-behind it** — including the patch, herd and road entries that do reach the wire.
 `a_working_whose_keeping_is_short_quotes_a_rotting_meter` pins both halves, because *"it said
 Rotting"* also passes against a rot that is simply always larger than the crew.
 
@@ -1091,27 +1088,27 @@ just not while it stands idle — which is deliberately a different sentinel fro
 ### The countdown goes through a claims set, where the road's does not
 
 `DepositSource` gained the road's four scratch fields — `last_take`, `build_blocked_reason`,
-`build_turns_remaining`, `build_queue_position` — all cleared by `advance_deposits` phase 3 on the
-one-turn cycle, which is what makes *"live-queued and still cleared"* mean *"queued since the last
-pass"*.
+`build_turns_remaining`, `build_queue_position` (the estimate-pass stamp) — all cleared by
+`advance_deposits` phase 3 on the one-turn cycle, which is what makes *"declared and still cleared"*
+mean *"declared since the last pass"*.
 
 `publish_entry`'s deposit arm publishes through `BuildEstimateClaims<(UVec2, String)>` — the road's
 own reason read the other way. **A road has one keeper per tile**, so at most one band can hold an
-entry for it and there is nothing to arbitrate; **a deposit verb enqueues on every band of the
+declaration for it and there is nothing to arbitrate; **a deposit verb declares on every band of the
 faction working the source**, so several bands really can quote one working and the sooner answer
 must win. It uses `publish_countdown` rather than the six-field `publish_running`: `DepositState`
-carries the date, its cause and the place in the line and nothing else, and giving `DepositSource`
+carries the date, its cause and the estimate stamp and nothing else, and giving `DepositSource`
 gear/destination/leg fields so it could pass a `BuildEstimateSlots` would be writing state no capture
 reads.
 
-The unqueued tail takes the **food webs'** arm rather than the road's silence — a working the band
-cuts but has not queued is dated at the back of the line, which is where a build ordered now would
-actually go.
+The undeclared tail takes the **food webs'** arm rather than the road's silence — a working the band
+cuts but has not declared is dated at a full crew, which is the crew a build declared now would be
+dealt on an otherwise idle band.
 
 ### The capture indexes carry the working's membership
 
 `QueuedBuildSources` gains `deposits: HashSet<(UVec2, String)>`, keyed both ways because one tile can
-hold two workings and a `fell` queued on the timber is not a `quarry` queued on the rock beneath it.
+hold two workings and a `fell` declared on the timber is not a `quarry` declared on the rock beneath it.
 Its presence is the row's `isQueued` **and** the `queued_live` term of the build countdown — one
 index answering both rather than two that could disagree.
 
@@ -1121,7 +1118,7 @@ index answering both rather than two that could disagree.
 > ladders. `docs/plan_pool_toe.md` §4 retires both ids: a site's tools follow from its rung, are
 > settled band-wide by priority, and are published per pool as `PopulationCohortState.poolToe`. The
 > values and the wire fields went, and only the membership stayed. **A worked-deposit set went with them** — the deposit row gates its build scratch on the
-> queue alone, so `WorkedSources` indexes the two food webs and nothing else.
+> declaration alone, so `WorkedSources` indexes the two food webs and nothing else.
 
 ### The rung catalog — what a wood or a rock body MAY become, once per world
 

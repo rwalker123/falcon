@@ -280,9 +280,8 @@ discriminator rather than a heuristic: an `_input` notification seen while it is
 harness, and one seen while it is down came from somewhere else. `band_panel_preview` routes every
 pushed event through one `_push_input` wrapper and counts the rest, asserting once at `_finish` that
 the count is **zero** — paired with the pushed count, since zero foreign events is free on a run that
-drove no input. The one legitimate foreign source is excused **by condition, not by shape**: the
-panel's own `_resolve_queue_drag_hover` pushes through `Input.parse_input_event`, and only ever
-between `NOTIFICATION_DRAG_BEGIN` and `DRAG_END`, so `gui_is_dragging()` is the exemption.
+drove no input. A legitimate foreign source, if the panel grows one, is excused **by condition, not by
+shape** (for example `gui_is_dragging()` between `NOTIFICATION_DRAG_BEGIN` and `DRAG_END`).
 
 **That guard is what turns this whole class from an intermittent flake into one named failure on the
 run that suffers it** — it reports the first foreign event and the state it landed in.
@@ -290,16 +289,14 @@ run that suffers it** — it reports the first foreign event and the state it la
 ### How each half was falsified
 
 - **The click half.** A motion event injected between a simulated press and its release reproduces
-  **29 failures**, including four of the reported ones verbatim (*"a REAL click on row 0's `▼`
-  emitted no build_order at all"*, the withdraw pair's *"3 rows → 3"* and *"the source's effective
-  improvement is blank again (got \"cultivate\")"*, and *"pressing it sends `abandon 0 72 18` … (got
+  **29 failures**, including four of the reported ones verbatim (a REAL click that emitted nothing, a
+  withdrawal whose row count did not change, and *"pressing it sends `abandon 0 72 18` … (got
   \"\")"*). With the window foregrounded and the real cursor moved during a run, foreign events
   reaching the viewport went **41 → 163** and the run failed; with the seal in place the same
   adversary delivers **zero** and the run is green.
 - **The hold half.** With the physical pointer held elsewhere for the duration, dropping the
-  per-frame re-warp fails **4 runs out of 4** with *"the pump carried the list 1 → 4px"*, *"the drop
-  mark MOVED under a stationary pointer"* and a drop that named the wrong wire index; with it, **12
-  runs out of 12** are clean under the identical adversary.
+  per-frame re-warp failed every run of a held-gesture state; with it, the same adversary left every
+  run clean.
 
 ⛔ **`Input.warp_mouse` IS NOT A REPRODUCTION ON ITS OWN, AND THAT COST AN AFTERNOON.** Under
 `scripts/preview.sh` the window is `no_focus`, so macOS delivers it no `mouseMoved` at all — moving

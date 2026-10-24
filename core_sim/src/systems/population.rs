@@ -2966,8 +2966,7 @@ mod food_flow_tests {
             last_roadwork_supplied: 0.0,
             last_keeping_issued: Default::default(),
             last_pool_toe: Vec::new(),
-            last_pool_toe_head: None,
-            last_queued_build_toe: Vec::new(),
+            last_build_toe: Vec::new(),
             last_pool_crew: Vec::new(),
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
@@ -2980,7 +2979,8 @@ mod food_flow_tests {
             last_fodder_transfers: Default::default(),
             last_transfer_crossings: Vec::new(),
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
-            build_queue: Vec::new(),
+            builds: Vec::new(),
+            build_crews: Vec::new(),
             homeward: Vec::new(),
         };
         assert!(
@@ -3022,8 +3022,7 @@ mod food_flow_tests {
             last_roadwork_supplied: 0.0,
             last_keeping_issued: Default::default(),
             last_pool_toe: Vec::new(),
-            last_pool_toe_head: None,
-            last_queued_build_toe: Vec::new(),
+            last_build_toe: Vec::new(),
             last_pool_crew: Vec::new(),
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
@@ -3036,7 +3035,8 @@ mod food_flow_tests {
             last_fodder_transfers: Default::default(),
             last_transfer_crossings: Vec::new(),
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
-            build_queue: Vec::new(),
+            builds: Vec::new(),
+            build_crews: Vec::new(),
             homeward: Vec::new(),
         };
         let flow = band_food_flow(Some(&labor)).expect("projected telemetry is real data");

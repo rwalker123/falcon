@@ -107,6 +107,9 @@ const SEED: u64 = 119_304_647;
 
 fn headless_with_species(display_name: &str) -> (App, String, UVec2) {
     let mut app = build_test_app();
+    // The crew under test stands on one hex; the shipped per-tile cap would cut it.
+    app.world
+        .insert_resource(core_sim::labor_config_with_room_on_the_tile());
     app.world
         .resource_mut::<core_sim::SimulationConfig>()
         .map_seed = SEED;

@@ -263,7 +263,7 @@ message ExtendPenCommand {
   uint32 target_x = 2;
   uint32 target_y = 3;
   // 4 was `workers`, THE RING'S OWN CREW. A ring rides the same animal:pen rung as the pen it
-  // widens, so it waits in the same queue and is funded by the same `builders` pool - see
+  // widens, so it is a declared build staffed like every other - see
   // BuildRungCommand.
   reserved 4;
   reserved "workers";
@@ -687,30 +687,6 @@ message UnqueueCommand {
   optional string branch = 7;
 }
 
-// Move one band's build-queue entry to a 0-based position, clamped to the queue's length.
-//
-// THIS IS THE QUEUE'S DEFINING INPUT. The whole `builders` pool goes on the HEAD until that entry's
-// meter fills, so the ORDER IS THE FUNDING DECISION - re-ordering is the one input a list can carry
-// that a stepper cannot. Without it "all hands on the head" cannot be steered at all.
-message BuildOrderCommand {
-  uint32 faction_id = 1;
-  uint64 band_id = 2;
-  optional uint32 target_x = 3;
-  optional uint32 target_y = 4;
-  optional string herd_id = 5;
-  uint32 position = 6;
-  // A WORKING (docs/plan_site_crews.md 2.4): with the tile pair, names the deposit's material
-  // (`extraction.json` -> `deposits`) - one hex can hold two workings, so the tile alone names
-  // neither. Absent = the tile's forage patch.
-  optional string material = 7;
-  // 8 was `road`, a bool - see AbandonCommand.branch. Never reuse the number.
-  reserved 8;
-  reserved "road";
-  // With the tile pair, names the queue entry on THAT branch (a road branch build has no labor row,
-  // so `work_priority` refuses it by name) rather than the tile's patch. Absent = the patch.
-  optional string branch = 9;
-}
-
 // Mark ONE WORKED ROW of one band with the player's own rank - `high` | `normal` | `low`, defaulting
 // to normal.
 //
@@ -720,38 +696,10 @@ message BuildOrderCommand {
 // first. It orders candidates and never creates or removes one, so a rank cannot move a row between
 // the walk's steps, and with every row at the default the behaviour is exactly what it was.
 //
-// SOURCE ADDRESSING is the band-scoped family's (`build_order`, `work_priority`, `build_priority`):
+// SOURCE ADDRESSING is the band-scoped family's (`work_priority`):
 // two integer tokens name a TILE, one token names a HERD id, `<x> <y> <material>` names a WORKING
 // and `road <x> <y>` names a ROAD.
 message WorkPriorityCommand {
-  uint32 faction_id = 1;
-  uint64 band_id = 2;
-  optional uint32 target_x = 3;
-  optional uint32 target_y = 4;
-  optional string herd_id = 5;
-  string level = 6;     // "high" | "normal" | "low"
-  // A WORKING (docs/plan_site_crews.md 2.4): with the tile pair, names the deposit's material
-  // (`extraction.json` -> `deposits`) - one hex can hold two workings, so the tile alone names
-  // neither. Absent = the tile's forage patch.
-  optional string material = 7;
-  // 8 was `road`, a bool - see AbandonCommand.branch. Never reuse the number.
-  reserved 8;
-  reserved "road";
-  // With the tile pair, names the queue entry on THAT branch (a road branch build has no labor row,
-  // so `work_priority` refuses it by name) rather than the tile's patch. Absent = the patch.
-  optional string branch = 9;
-}
-
-// Mark ONE QUEUED BUILD of one band with the player's own BUILD MARK - `high` | `normal` | `low`,
-// defaulting to normal (docs/plan_site_crews.md section 2.4).
-//
-// IT IS THE QUEUE ENTRY'S OWN, NOT ITS SITE ROW'S. The builders' claim on scarce tools and the
-// build's claim on scarce materials both rank at the HEAD entry's mark; the site row's
-// `work_priority` ranks that site's own crew. A mark is only settable on a declared build - an
-// unqueued source is refused rather than enrolled.
-//
-// SOURCE ADDRESSING is `work_priority`'s: two integer tokens name a TILE, one token names a HERD id.
-message BuildPriorityCommand {
   uint32 faction_id = 1;
   uint64 band_id = 2;
   optional uint32 target_x = 3;
@@ -1698,10 +1646,13 @@ message CommandEnvelope {
   //      clear used to be).
   //   37 `cultivate`, 38 `corral`, 40 `tame`, 41 `sow`, 64 `grade`, 65 `pave`, 72 `fell`, 73 `coppice`
   //   and 74 `quarry` - retired into `build_rung` (issue #175): the verbs are ladder config.
-  reserved 2, 5, 6, 7, 8, 9, 10, 24, 30, 37, 38, 40, 41, 46, 52, 53, 60, 63, 64, 65, 72, 73, 74;
+  //   59 `build_order` and 77 `build_priority` - retired with the build queue (docs/plan_labor_at_scale.md,
+  //      "Builds join the site's crew"): builds run in parallel, so there is no order to set and a
+  //      build ranks by its site's own `work_priority`.
+  reserved 2, 5, 6, 7, 8, 9, 10, 24, 30, 37, 38, 40, 41, 46, 52, 53, 59, 60, 63, 64, 65, 72, 73, 74, 77;
   reserved "cultivate", "corral", "tame", "sow", "grade", "pave", "fell", "coppice", "quarry";
   reserved "found_camp", "domesticate", "abandon_improvement", "build_kit", "upkeep_kit";
-  reserved "set_bench", "clear_bench";
+  reserved "set_bench", "clear_bench", "build_order", "build_priority";
   reserved "heat", "axis_bias", "support_influencer", "suppress_influencer";
   reserved "support_channel", "spawn_influencer", "inject_corruption";
 
@@ -1764,7 +1715,6 @@ message CommandEnvelope {
     // is a different verb with a different meaning - takes a fresh number).
     AbandonCommand abandon = 57;
     UnqueueCommand unqueue = 58;
-    BuildOrderCommand build_order = 59;
     // 60 was `build_kit` (RESERVED - retired, see above); the worked row's rank takes 61
     // (append-only; never renumber).
     WorkPriorityCommand work_priority = 61;
@@ -1796,8 +1746,7 @@ message CommandEnvelope {
     SetOpenBordersCommand set_open_borders = 76;
     // 76 is held by `set_open_borders`, so the queued build's mark takes 77 (append-only; never
     // renumber).
-    BuildPriorityCommand build_priority = 77;
-    // 77 is held by `build_priority`, so the bench queue's four verbs take 78-81 (append-only;
+    // 77 was `build_priority` (RESERVED - retired), so the bench queue's four verbs take 78-81 (append-only;
     // never renumber). They replace the retired `set_bench` (52) / `clear_bench` (53).
     BenchEnqueueCommand bench_enqueue = 78;
     BenchOrderCountCommand bench_order_count = 79;
