@@ -1003,6 +1003,29 @@ class Context extends RefCounted:
     ## renderer sniffing the value for a hazard word would need a new guess per hazard. A key with no
     ## entry renders exactly the BBCode it always did.
     var row_tooltips: Dictionary = {}
+    ## ⛔ **WHICH LINES ARE DOORS** (the tile card's rows that open a sheet) — `{line index: door meta}`,
+    ## filled by the producer as it emits them. **KEYED BY THE LINE'S INDEX, NEVER BY THE ROW KEY**: keys
+    ## repeat (a hex with two roads carries two `Road` rows) and a door is one row, not every row that
+    ## shares its name. The meta (`HudDisclosureVocab.door_meta`) is unique per door.
+    var door_metas: Dictionary = {}
+    ## The door the pointer is over and the door whose sheet is open (metas, `""` for none). The renderer
+    ## washes BOTH cells of the row: `HudStyle.DOOR_HOVER_WASH_HEX` for the first, the stronger
+    ## `DOOR_SELECTED_WASH_HEX` for the second, and the second wins where both hold.
+    var hovered_door: String = ""
+    var selected_door: String = ""
+    ## ⛔ **THE LAND CARD'S WASH SPANS THE LABEL** (`fill_width` > 0 turns it on). `[cell expand=N]` was
+    ## measured and does NOT widen a table in this Godot (4.7.2) -- it only squeezes the other column -- so
+    ## a door row's value cell is padded with non-breaking spaces up to the label's inner width instead,
+    ## from the label's own font (`fill_font` / `fill_font_size`), its `table_h_separation`, and the widest
+    ## key of the SAME table (a basket sub-row closes a table and the next one has its own key column).
+    ## `0.0` (the default) leaves every other surface exactly as it was.
+    var fill_width: float = 0.0
+    var fill_font: Font = null
+    var fill_font_size: int = 0
+    var fill_h_separation: float = 0.0
+    ## OUT-PARAMETER of the render: each door's hover sentence (`row_tooltips` of its row, which the door's
+    ## url replaced the `hover:` run of). `wire_row_hovers` cannot answer a door, so the host reads this.
+    var door_tooltips: Dictionary = {}
 
 
 # =====================================================================================
@@ -1019,8 +1042,13 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
     var context := ctx if ctx != null else Context.new()
     var out := ""
     var table_open := false
-    for raw in lines:
-        var line := String(raw)
+    # The wash-spanning pad (see `Context.fill_width`): the table a row sits in, each table's widest key,
+    # and a token per door value that the pad replaces once every table's key column is known.
+    var table_index := -1
+    var table_key_widths: Array[float] = []
+    var fills := context.fill_width > 0.0 and context.fill_font != null
+    for line_index in range(lines.size()):
+        var line := String(lines[line_index])
         if line == "":
             if table_open:
                 out += "[/table]"
@@ -1113,18 +1141,74 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
             if not table_open:
                 out += "[table=2]"
                 table_open = true
+                table_index += 1
+                table_key_widths.append(0.0)
             var row_key := String(kv[0])
+            if fills:
+                table_key_widths[table_index] = maxf(table_key_widths[table_index],
+                    context.fill_font.get_string_size(row_key, HORIZONTAL_ALIGNMENT_LEFT, -1,
+                        context.fill_font_size).x)
             var value_run := "[color=#%s]%s[/color]" % [_value_hex(row_key, String(kv[1]), context), kv[1]]
-            # A value already carrying a clickable run (a merged disclosure clause) is not wrapped: the
-            # engine has no nested metas, and that clause states its own hover where it needs one.
-            if not String(kv[1]).contains(DISCLOSURE_URL_OPEN):
-                value_run = hover_wrap(row_key, value_run, context)
             var key_run := _key_cell(row_key, context)
-            if not context.disclosures.has(row_key):
-                key_run = hover_wrap(row_key, key_run, context)
-            out += "[cell]%s[/cell][cell]%s[/cell]" % [key_run, value_run]
+            var cell_open := "[cell]"
+            var value_cell_open := "[cell]"
+            var door := String(context.door_metas.get(line_index, ""))
+            if door != "":
+                # ⛔ **A DOOR ROW: ONE `[url]` OVER EACH CELL, AND IT REPLACES THE `hover:` RUN** — the
+                # engine has no nested metas, so the door's own meta answers the click AND the hover (its
+                # sentence is `row_tooltips[row_key]`, handed to the host through `door_tooltips`). The
+                # faint ` ▸` closes the value so the row reads as something that opens.
+                context.door_tooltips[door] = String(context.row_tooltips.get(row_key, ""))
+                value_run += "[color=#%s]%s[/color]" % [HudStyle.INK_FAINT_HEX, HudDisclosureVocab.DOOR_ARROW]
+                if fills:
+                    value_run += "%s%d|%f%s" % [FILL_TOKEN, table_index, context.fill_font.get_string_size(
+                        String(kv[1]) + HudDisclosureVocab.DOOR_ARROW, HORIZONTAL_ALIGNMENT_LEFT, -1,
+                        context.fill_font_size).x, FILL_TOKEN]
+                value_run = door_wrap(door, value_run)
+                key_run = door_wrap(door, key_run)
+                # **THE WASH IS A `[cell bg=…]` ON BOTH CELLS** (measured: it paints one continuous band
+                # across the pair, no seam), the selected wash outranking the hover wash.
+                if door == context.selected_door:
+                    cell_open = "[cell bg=#%s]" % HudStyle.DOOR_SELECTED_WASH_HEX
+                    value_cell_open = cell_open
+                elif door == context.hovered_door:
+                    cell_open = "[cell bg=#%s]" % HudStyle.DOOR_HOVER_WASH_HEX
+                    value_cell_open = cell_open
+            else:
+                # A value already carrying a clickable run (a merged disclosure clause) is not wrapped: the
+                # engine has no nested metas, and that clause states its own hover where it needs one.
+                if not String(kv[1]).contains(DISCLOSURE_URL_OPEN):
+                    value_run = hover_wrap(row_key, value_run, context)
+                if not context.disclosures.has(row_key):
+                    key_run = hover_wrap(row_key, key_run, context)
+            out += "%s%s[/cell]%s%s[/cell]" % [cell_open, key_run, value_cell_open, value_run]
     if table_open:
         out += "[/table]"
+    if fills and out.contains(FILL_TOKEN):
+        out = _fill_door_values(out, context, table_key_widths)
+    return out
+
+## Marks where a door value's pad goes (`<table>|<value width>` between two of them) until every table's
+## widest key is known. A control character, so no row's own text can collide with it.
+const FILL_TOKEN := "\u0001"
+## Slack left at the right edge so font rounding can never push the table past the label and wrap a value.
+const FILL_SAFETY_MARGIN := 6.0
+
+static func _fill_door_values(markup: String, context: Context, key_widths: Array[float]) -> String:
+    var pad_unit := context.fill_font.get_string_size("\u00a0", HORIZONTAL_ALIGNMENT_LEFT, -1,
+        context.fill_font_size).x
+    var parts := markup.split(FILL_TOKEN)
+    var out := ""
+    for i in range(parts.size()):
+        if i % 2 == 0:
+            out += parts[i]
+            continue
+        var spec := parts[i].split("|")
+        var key_width := key_widths[int(spec[0])]
+        var room := context.fill_width - key_width - context.fill_h_separation \
+            - float(spec[1]) - FILL_SAFETY_MARGIN
+        if pad_unit > 0.0 and room >= pad_unit:
+            out += "\u00a0".repeat(int(floor(room / pad_unit)))
     return out
 
 ## **THE HOVER A ROW CARRIES SHOWS ONLY OVER THAT ROW** — `ctx.row_tooltips` (keyed by the row's own
@@ -1151,6 +1235,10 @@ static func hover_wrap(key: String, inner: String, ctx: Context) -> String:
     if ctx == null or String(ctx.row_tooltips.get(key, "")) == "":
         return inner
     return "[url=%s%s]%s[/url]" % [HudDisclosureVocab.ROW_HOVER_META_PREFIX, key, inner]
+
+## A door row's cell content under its `door:` meta (see `Context.door_metas`).
+static func door_wrap(meta: String, inner: String) -> String:
+    return "[url=%s]%s[/url]" % [meta, inner]
 
 ## Make a detail label answer a row's hover with that row's sentence alone. Safe to call on every
 ## render: the signals are connected once and the sentences are re-stored each time.

@@ -3920,3 +3920,26 @@ per branch, and the dry-store stall as an amber aside on a still-open rung.
 (`route:paved_road`), so the press helper filters rung rows by `<branch>:` — pressing "the first enabled
 button" fires the road's. ⛔ **The map's belief lookup is pushed by hand** (`update_tile_beliefs`): the
 chapter has no `MapView`, and a Work-tab row has no `tile_info`, so without it the site gate reads zero.
+
+
+## The tile card's DOOR rows are asserted through `ui_preview/door_query.gd`
+
+`DoorQ` (an all-`static` helper, preloaded by the chapters that need it) reads the markup `%TileDetail`
+actually holds: `meta_for(hud, row_key, nth)` finds the door meta wrapping a row's key cell (`nth` for a
+repeated key such as two `Road` rows), `press` emits the label's own `meta_clicked` with that meta,
+`hover_text` drives `meta_hover_started` / `ended` and reads the tooltip, `washed(hud, wash_hex)` lists
+the doors wearing a given `[cell bg=` wash, and `all_metas` counts the doors on the card. **A claim made
+through it is about what is drawn and what a click does, never about the producer's own registry.**
+
+- `chapters/tile_branches.gd`: the Ancestors / `Food stores` doors (no door before the lesson, a readout
+  with the refusal on its hover, the exact crew line emitted after opening the sheet through the row),
+  the hover wash, the ended -> started churn guard (zero markup writes), the selected wash and its removal
+  on close, and the absence of the retired foot containers.
+- `chapters/workings.gd` (`_assert_every_door_opens_its_sheet`): Foraging, Wood, Stone and two `Road`
+  rows each open THEIR sheet / card (`ComposeState` kind + subject, the road card's index), readout rows
+  carry no door meta and open nothing, and the card holds exactly five doors.
+- `chapters/tile_panel.gd` (`tile_panel_standing`): the standing summary's facts on the Foraging row —
+  the `⚒4 ⚠` clause and the hover's text, note and tooltip.
+
+Sabotaged: an `open_door` arm that does nothing fails the Wood / Stone claims; a silenced
+`door_selection_changed` fails every selected-wash claim.

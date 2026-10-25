@@ -15,6 +15,7 @@ const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
+const DoorQ := preload("res://tools/ui_preview/door_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
@@ -300,13 +301,7 @@ func _assert_plant_crew_noun(state_name: String, tile: Dictionary, want_label: S
 		improvement: String = SourceForecast.IMPROVEMENT_NONE) -> void:
 	h._hud._compose.reset_forage_source()
 	h._show_tile(tile)
-	# Drop the previous tile's button so this state gets a FRESH drawer build rather than the
-	# same-shape patch path — the noun must be right on both, and the patch path is covered by
-	# `forage_assign_button_targets_selected_tile`.
-	h._hud._drawercompose._clear_forage_drawer()
 	await h._settle()
-	h._hud._drawercompose.build_forage_drawer_actions(
-		ForageFx.floorify(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX))
 	h._compose_forage(tile)
 	if improvement != SourceForecast.IMPROVEMENT_NONE:
 		# **DIAL THE VERB AFTER THE FIRST OPEN, THEN RE-OPEN — the herd sheet's contract, and the
@@ -328,7 +323,6 @@ func _assert_plant_crew_noun(state_name: String, tile: Dictionary, want_label: S
 	var eyebrow := _compose_sheet_eyebrow()
 	var stepper_label := Readout.crew_row_label(sheet)
 	var commit := Q.compose_commit_button(sheet)
-	var open_btn: Button = h._forage_open_button()
 	var want_eyebrow := (HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % want_label.to_lower()).to_upper()
 	# ⛔ **THE LIVENESS HALF, and it is what keeps this set worth anything now that all five states
 	# expect ONE noun** (§4.9 item 12c). Every claim below is an EQUALITY against strings resolved from
@@ -345,11 +339,8 @@ func _assert_plant_crew_noun(state_name: String, tile: Dictionary, want_label: S
 	h._assert_hud("%s: the commit button reads `%s`" % [state_name,
 			String(HudComposeVocab.PLANT_ASSIGN_BUTTONS.get(want_label, ""))],
 		commit != null and commit.text == String(HudComposeVocab.PLANT_ASSIGN_BUTTONS.get(want_label, "")))
-	h._assert_hud("%s: the drawer opens with `%s`" % [state_name,
-			HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % want_label.to_lower()],
-		open_btn != null
-			and Q.action_button_face(open_btn)
-				== HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % want_label.to_lower())
+	h._assert_hud("%s: the card's Foraging row is the door to this sheet" % state_name,
+		h._forage_door_meta() != "")
 	# THE CONSISTENCY CLAIM, stated without naming the noun — a header and a stepper that resolve
 	# through one function cannot disagree, and a frame where they do is the defect itself.
 	h._assert_hud("%s: the eyebrow and the stepper name the SAME crew on one frame" % state_name,
@@ -2129,8 +2120,8 @@ func run(harness) -> void:
 	h._assert_hud("…and its tooltip names the account it credits (got \"%s\")"
 		% String(fodder_readout["tooltip"]),
 		String(fodder_readout["tooltip"]).contains(FODDER_STANDING_TOOLTIP_CLAUSE))
-	h._assert_hud("…and the rendered drawer summary carries it",
-		Q.has_label_containing(h._hud, FODDER_STANDING_CLAUSE))
+	h._assert_hud("…and the Foraging row's hover (the standing summary's new home) carries it",
+		DoorQ.hover_text(h._hud, HudFloraVocab.FORAGING_KEY).contains(FODDER_STANDING_CLAUSE))
 	# Hand the chapter's own subject and roster back, so the states after this one render against the
 	# band and the tile this block borrowed rather than against a hay Field nobody after it works.
 	h._hud._band_labor._player_bands = standing_roster

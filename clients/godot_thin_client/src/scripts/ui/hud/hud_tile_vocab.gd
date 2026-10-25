@@ -81,25 +81,36 @@ static func site_of(row: Dictionary, ladder: Array[Dictionary], branch: String, 
 
 # ---- THE TILE CARD'S ROW ---------------------------------------------------------------------------
 
-## `Raise a monument` / `Dig a storage pit`: the verb the branch's first buildable rung declares, then the
-## catalog's own noun phrase for that rung (`label_fallback` carries its article).
-const ACTION_FORMAT := "%s %s"
-const ACTION_ARTICLE := "a "
-const ACTION_OPEN_FORMAT := "%s ▸"
+## ⛔ **THE BRANCH'S ROW ON THE TILE CARD IS ITS DOOR** (`SubjectDrawerController` registers it): the crew
+## sheet opens from the row that states the branch, not from a button beneath the card. Which row that
+## is comes off the CATALOG and nothing here names a branch:
+##   * a branch whose site term asks the tile's belief (`min_belief`) is stated by the row the dead
+##     already have, `DetailFormat.ANCESTORS_ROW` -- a tile branch whose readout row exists keeps it;
+##   * any other tile branch gets a row of its own, keyed by the branch's display name
+##     (`HudRouteVocab.branch_name`) and valued by the rung the tile stands at.
+static func readout_row_key(entry: Dictionary, branches: Array) -> String:
+	if catalog_min_belief(entry) > BELIEF_NONE:
+		return DetailFormat.ANCESTORS_ROW
+	return HudRouteVocab.branch_name(branches, HudDepositVocab.catalog_branch(entry))
 
-static func action_label(entry: Dictionary) -> String:
-	if entry.is_empty():
-		return ""
-	var phrase := String(entry.get("label_fallback", "")).strip_edges()
-	if phrase == "":
-		phrase = ACTION_ARTICLE + HudDepositVocab.catalog_display_name(entry).to_lower()
-	return ACTION_FORMAT % [HudDepositVocab.catalog_verb(entry).capitalize(), phrase]
+## `Storage pit`, `Unstored`: the rung the tile STANDS at on a branch -- the placed improvement's, else
+## the branch root's -- named as the catalog names it. `""` where the catalog carries no rung for it.
+static func standing_rung_name(ladder: Array[Dictionary], branch: String, improvement: Dictionary,
+		x: int, y: int) -> String:
+	var site := site_of(improvement, ladder, branch, x, y)
+	return HudDepositVocab.ladder_rung_name(ladder, String(site.get("rung", "")))
 
-## The crew button's face. The crew is what places the improvement, so its label says what it is for.
-const CREW_BUTTON_LABEL := "Assign crew ▸"
+## The refusal's hover: the short reason, then the long one, so the row says on hover everything the
+## greyed amber line beside the retired step button said.
+const REFUSAL_HOVER_SEPARATOR := "\n"
 
-## The crew button once a crew stands on the tile: `Crew 2 ▸`.
-const CREW_BUTTON_FORMAT := "Crew %d ▸"
+static func refusal_hover(refusal: Dictionary) -> String:
+	var parts: Array[String] = []
+	for key in ["short", "long"]:
+		var part := String(refusal.get(key, "")).strip_edges()
+		if part != "":
+			parts.append(part)
+	return REFUSAL_HOVER_SEPARATOR.join(parts)
 
 ## Sheet: eyebrow `ASSIGN CREW` (through `HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT`), the branch's
 ## catalog noun as the title, a `Crew` stepper, one hint line, the commit.
@@ -108,13 +119,10 @@ const CREW_STEPPER_LABEL := "Crew"
 const CREW_HINT := "They place it and keep it. The band's builders raise the next step."
 const COMMIT_LABEL := "Assign crew"
 
-## Handles the harnesses find the tile card's pieces by (the value is the `x,y:branch` subject key).
-const ROW_META := "tile_branch_row"
-const STEP_META := "tile_branch_step"
-const CREW_META := "tile_branch_crew"
-const REASON_META := "tile_branch_reason"
+## Handle the harnesses find the crew sheet's stepper row by (the value is the `x,y:branch` subject key).
 const CREW_ROW_META := "tile_branch_crew_row"
-const ROW_SEPARATION := 4
+## ...and the crew sheet's work strip (its ladder chip is the way to the step card).
+const STRIP_META := "tile_branch_strip"
 
 ## Does this tile's card offer the branch at all? The first buildable rung's lesson is known, or the tile
 ## already holds an improvement of the branch -- so a fresh game's tile card does not carry two greyed

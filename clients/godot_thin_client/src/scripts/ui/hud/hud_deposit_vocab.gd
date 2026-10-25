@@ -1141,12 +1141,13 @@ const DEPOSIT_REGROWTH_DECIMALS := 1
 ## on it against the MATERIAL row's key — never the payoff row's, which two materials on one hex would
 ## both claim.
 static func deposit_lines(deposit: Dictionary, ladder: Array[Dictionary],
-		ctx: DetailFormat.Context = null, cutters: int = CUTTERS_UNSTATED) -> Array[String]:
+		ctx: DetailFormat.Context = null, cutters: int = CUTTERS_UNSTATED,
+		overdraws: bool = false) -> Array[String]:
 	var lines: Array[String] = []
 	var key := material_label(deposit)
 	if key == "":
 		return lines
-	lines.append("%s: %s" % [key, deposit_land_value(deposit, ladder, cutters)])
+	lines.append("%s: %s" % [key, deposit_land_value(deposit, ladder, cutters, overdraws)])
 	if ctx != null:
 		ctx.deposit_rows[key] = true
 		var figures := deposit_card_tooltip(deposit)
@@ -1168,14 +1169,9 @@ static func deposit_lines(deposit: Dictionary, ladder: Array[Dictionary],
 ## nobody has opened. **The clauses they share are shared functions** (`ladder_rung_name`,
 ## `hazard_clause`), so the rung's word and the hazard's cannot drift between them.
 static func deposit_land_value(deposit: Dictionary, ladder: Array[Dictionary],
-		cutters: int = CUTTERS_UNSTATED) -> String:
+		cutters: int = CUTTERS_UNSTATED, overdraws: bool = false) -> String:
 	var clauses: Array[String] = [deposit_stock_clause(deposit),
 		ladder_rung_name(ladder, rung_of(deposit))]
-	# **THE CREW, BETWEEN THE RUNG AND THE HAZARD** — what is standing here, what stands on it, who
-	# is on it, and last what is wrong with it. The hazard keeps the tail it has on both surfaces.
-	var crew := crew_clause(deposit, cutters)
-	if crew != "":
-		clauses.append(crew)
 	var hazard := hazard_clause(deposit)
 	if hazard == "" and renews(deposit) and actual_take_of(deposit) > sustainable_take_of(deposit):
 		# **THE OVER-CUT WORD IS THE SECOND HAZARD THIS ROW CAN CARRY**, and it is the food webs' own
@@ -1184,6 +1180,14 @@ static func deposit_land_value(deposit: Dictionary, ladder: Array[Dictionary],
 		# the row holds one qualifier.
 		hazard = DEPOSIT_HAZARD_CLAUSE_FORMAT % [
 			HudSelectionVocab.RUNG_HAZARD_GLYPH, over_cut_word()]
+	# **THE CREW, BETWEEN THE RUNG AND THE HAZARD** — what is standing here, what stands on it, who
+	# is on it, and last what is wrong with it. The hazard keeps the tail it has on both surfaces.
+	# **THE STANDING SUMMARY'S `⚠` RIDES THE CREW CLAUSE** (`overdraws`) unless the hazard clause already
+	# leads with the mark, so one row never states the warning twice.
+	var crew := crew_clause(deposit, cutters,
+		overdraws and not hazard.begins_with(HudSelectionVocab.RUNG_HAZARD_GLYPH))
+	if crew != "":
+		clauses.append(crew)
 	if hazard != "":
 		clauses.append(hazard)
 	return DEPOSIT_CLAUSE_SEPARATOR.join(clauses)
@@ -1230,12 +1234,13 @@ static func deposit_stock_clause(deposit: Dictionary) -> String:
 ##     staffed one, so "nobody is on this" reads at a glance instead of needing a comparison.
 ## Untouched ground gets nothing at all — `deposit_row_value`'s rule, that every clause about a
 ## working being worked is a reading of an event that has not happened there.
-static func crew_clause(deposit: Dictionary, cutters: int) -> String:
+static func crew_clause(deposit: Dictionary, cutters: int, warn: bool = false) -> String:
 	if cutters <= CUTTERS_UNSTATED:
 		return ""
 	if cutters <= CUTTERS_NONE and is_unopened(deposit):
 		return ""
-	return DEPOSIT_CREW_CLAUSE_FORMAT % [HudSelectionVocab.SOURCE_CREW_MARK, cutters]
+	var clause := DEPOSIT_CREW_CLAUSE_FORMAT % [HudSelectionVocab.SOURCE_CREW_MARK, cutters]
+	return clause + HudSelectionVocab.DOOR_WARN_SUFFIX if warn else clause
 
 ## The crew clause's face — the shared mark, then the count, with nothing between them, so it reads
 ## as one token in a `·`-joined row rather than as two clauses.

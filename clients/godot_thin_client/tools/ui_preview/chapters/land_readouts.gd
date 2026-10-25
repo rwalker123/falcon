@@ -22,6 +22,7 @@ const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 ## The generic node/text finders, and the REAL command formatter — the road ladder's press is asserted
 ## through `Main.format_improvement`, the pure static `Main._on_hud_improvement` dispatches to.
 const Q := preload("res://tools/ui_preview/node_query.gd")
+const DoorQ := preload("res://tools/ui_preview/door_query.gd")
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 ## …and real pointer input, for the ladder's rung press. **A rung is pressed through the viewport and
 ## never by `pressed.emit()`**: a faked signal passes on a button the engine would refuse to route to,
@@ -1911,7 +1912,7 @@ func run(harness) -> void:
 	h._show_tile(_river_tile_fixture(RIVER_MASK_NONE))
 	await h._settle()
 	h._assert_hud("a hex with no road offers no road action at all",
-		_road_ladder_action() == null and not h._hud.road_ladder_controls.visible)
+		not DoorQ.is_door(h._hud, HudRouteVocab.ROAD_ROW))
 
 	# ⛔ **STATE road-ladder-gated — THE FLOOR, WITH EVERY RUNG ABOVE IT REFUSED, ONE LINE EACH.**
 	# This is the readout a player meets first: a path worn in by their own traffic, a trail rising
@@ -2944,20 +2945,12 @@ func _collect_meta(root: Node, meta: String, out: Array[Control] = []) -> Array[
 		_collect_meta(child, meta, out)
 	return out
 
-## The tile card's `Road ▸` action, found by META — its face is one word a future rung could change.
-func _road_ladder_action() -> Button:
-	for control in _collect_meta(h._hud, HudRouteVocab.ROAD_LADDER_ACTION_META, []):
-		if control is Button:
-			return control as Button
-	return null
-
-## Press the action and let the card land. `false` when there was nothing to press, which every
-## caller reports as its own failure rather than going on to assert about an empty card.
+## Press the card's `Road` door -- the label's own `meta_clicked` with the meta the row's markup carries --
+## and let the card land. `false` when there was nothing to press, which every caller reports as its own
+## failure rather than going on to assert about an empty card.
 func _open_road_ladder() -> bool:
-	var action := _road_ladder_action()
-	if action == null:
+	if not DoorQ.press(h._hud, HudRouteVocab.ROAD_ROW):
 		return false
-	action.pressed.emit()
 	await h._settle()
 	return not _road_ladder_states().is_empty()
 

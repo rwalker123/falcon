@@ -2617,6 +2617,10 @@ func _tile_card_hovers() -> String:
 	var hovers: Dictionary = h._hud.tile_detail.get_meta(DetailFormat.ROW_HOVERS_META, {})
 	var sentences: Array[String] = []
 	for key in hovers:
+		# The Foraging door's hover carries the standing summary (its facts, not a remedy), which this
+		# probe is not about.
+		if key == HudFloraVocab.FORAGING_KEY:
+			continue
 		var sentence := String(hovers[key])
 		if sentence != "" and not sentences.has(sentence):
 			sentences.append(sentence)

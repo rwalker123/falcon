@@ -18,6 +18,7 @@ const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 ## harness never instances it. See the fan-out below.
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
+const DoorQ := preload("res://tools/ui_preview/door_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 const WorldFx := preload("res://tools/ui_preview/fixtures_world.gd")
@@ -344,14 +345,7 @@ func _chip_text(strip: Node, index: int) -> String:
 ## a sibling row above it, so the read goes through the stacked cell rather than through the host's
 ## child 0 — which is that cell.
 func _forage_summary_text() -> String:
-	var controls = h._hud.forage_assign_controls
-	if controls == null or controls.get_child_count() == 0:
-		return ""
-	var flow = Q.stacked_action_summary(controls.get_child(0))
-	if flow == null or flow.get_child_count() == 0:
-		return ""
-	var label = flow.get_child(0) as Label
-	return label.text if label != null else ""
+	return DoorQ.summary_line(h._hud, HudFloraVocab.FORAGING_KEY)
 
 func _standing_forage_band_fixture() -> Dictionary:
 	var band: Dictionary = BandFx.forage_range_bands()[0]
@@ -1042,7 +1036,7 @@ func run(harness) -> void:
 	await h._settle()
 	var flash_chip_ids = _child_instance_ids(h._hud.tile_chips)
 	var flash_row_ids = _child_instance_ids(h._hud.subject_list)
-	var flash_action_ids = _child_instance_ids(h._hud.forage_assign_controls)
+	var flash_door_meta: String = DoorQ.meta_for(h._hud, HudFloraVocab.FORAGING_KEY)
 	var flash_chip_before = _chip_text(h._hud.tile_chips, 1)          # the habitability chip
 	var flash_summary_before := _forage_summary_text()
 	# A SECOND snapshot of the SAME tile with different numbers (habitability rating, patch biomass,
@@ -1055,8 +1049,8 @@ func run(harness) -> void:
 		_child_instance_ids(h._hud.tile_chips) == flash_chip_ids and not flash_chip_ids.is_empty())
 	h._assert_hud("same-tile restate REUSES the roster-row nodes (no teardown)",
 		_child_instance_ids(h._hud.subject_list) == flash_row_ids and not flash_row_ids.is_empty())
-	h._assert_hud("same-tile restate REUSES the forage drawer-action nodes (no teardown)",
-		_child_instance_ids(h._hud.forage_assign_controls) == flash_action_ids and not flash_action_ids.is_empty())
+	h._assert_hud("same-tile restate keeps the Foraging door on the same source",
+		flash_door_meta != "" and DoorQ.meta_for(h._hud, HudFloraVocab.FORAGING_KEY) == flash_door_meta)
 	h._assert_hud("…and the reused chip's value updated to the new number (Hospitable → Harsh)",
 		_chip_text(h._hud.tile_chips, 1) != flash_chip_before and _chip_text(h._hud.tile_chips, 1) != "")
 	h._assert_hud("…and the reused drawer summary updated to the new worker count/rate",
@@ -1357,6 +1351,16 @@ func run(harness) -> void:
 	h._show_tile(BaseFx.food_tile_fixture())
 	await h._settle()
 	await h._save("tile_panel_standing")
+	# The standing summary's facts now live on the Foraging ROW: the crew (and the over-take's `⚠`) as a
+	# clause, every line of the summary on the row's hover -- crew count, rate, the overstaff note.
+	var standing_text := String(h._hud.tile_detail.text)
+	var standing_hover: String = DoorQ.hover_text(h._hud, HudFloraVocab.FORAGING_KEY)
+	h._assert_hud("the Foraging row carries the hex's crew and the over-take warning (⚒4 ⚠)",
+		standing_text.contains("%s4%s" % [HudSelectionVocab.SOURCE_CREW_MARK, HudSelectionVocab.DOOR_WARN_SUFFIX]))
+	h._assert_hud("…its hover opens with the summary: crew and rate (%s)" % standing_hover,
+		standing_hover.split("\n")[0].contains("4 ") and standing_hover.split("\n")[0].contains("+2.74"))
+	h._assert_hud("…and carries the overstaff note (only 2 of 4 bring anything home) and the overdraw tooltip (%s)" % standing_hover.replace("\n", " | "),
+		standing_hover.contains("only 2 of 4 bring anything home") and standing_hover.split("\n").size() >= 3)
 
 	# tile_panel_land_sticky — THE BEHAVIOURAL ASSERTION for the sticky land selection, driven
 	# through the REAL client path, because the bug does not live where a hand-picked

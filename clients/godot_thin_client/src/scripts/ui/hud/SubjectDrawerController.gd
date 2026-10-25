@@ -48,7 +48,8 @@ var _band_labor: HudBandLaborState = null
 var _topbar: FactionReadouts = null
 # Roster/emptiness reads (`tile_contents_unseen`) + the vitals row's `selected_terrain_label`.
 var _selectioncard: SelectionCardController = null
-# The compose half's drawer-action fill (`build_forage_drawer_actions` / `build_herd_drawer_actions`)
+# The compose half's herd drawer-action fill (`build_herd_drawer_actions`), the land card's doors
+# (`open_door` / `open_door_meta` / the gates and standing facts) 
 # and the per-snapshot sheet refresh (`refresh_compose_sheet`).
 var _drawercompose: DrawerComposeController = null
 # The band/city panel: the player-band fork (`has_panel` / `render_band`), the flat host's three zone
@@ -69,13 +70,6 @@ var _tile_detail: RichTextLabel = null
 var _occupant_detail: RichTextLabel = null
 var _allocation_panel: VBoxContainer = null
 var _herd_assign_controls: VBoxContainer = null
-var _forage_assign_controls: VBoxContainer = null
-# …and the LAND drawer's road action, hidden alongside `_forage_assign_controls` on every branch that
-# is not the land: a road is a property of the GROUND, so it belongs to exactly one subject.
-var _road_ladder_controls: VBoxContainer = null
-# …and the LAND drawer's WORKINGS action (arc #583), hidden and shown beside the road's.
-var _forestry_assign_controls: VBoxContainer = null
-var _extraction_assign_controls: VBoxContainer = null
 var _subject_body: VBoxContainer = null
 var _subject_scroll: ScrollContainer = null
 # The fit ceiling — read only, the room the drawer may claim in the dock beneath the card.
@@ -99,15 +93,22 @@ var _subject_fit_force_requested: bool = false
 # per render; what the diff is protecting against is the `.text` REPARSE and the
 # `minimum_size_changed` that follows it, which is the expensive half.
 var _tile_detail_lines_cache: String = ""
+# The last land render's lines + context, held so a hover / selection change re-renders the markup alone.
+var _land_lines: Array[String] = []
+var _land_ctx: DetailFormat.Context = null
+# The door under the pointer, a clear queued by a hover-ended, and whether the markup is being written
+# (the label fires a hover-ended of its own on a text reset).
+var _hovered_door: String = ""
+var _pending_hover_clear: String = ""
+var _writing_markup: bool = false
+var _markup_writes: int = 0
 var _subject_fit_last_height: float = NAN
 
 func _init(selection: HudSelectionState, band_labor: HudBandLaborState,
         selectioncard: SelectionCardController, drawercompose: DrawerComposeController,
         bandpanel: BandPanelController, banddetail: BandDetailLines, host: Node,
         tile_detail: RichTextLabel, occupant_detail: RichTextLabel, allocation_panel: VBoxContainer,
-        herd_assign_controls: VBoxContainer, forage_assign_controls: VBoxContainer,
-        road_ladder_controls: VBoxContainer,
-        forestry_assign_controls: VBoxContainer, extraction_assign_controls: VBoxContainer,
+        herd_assign_controls: VBoxContainer,
         subject_body: VBoxContainer, subject_scroll: ScrollContainer, left_dock_scroll: ScrollContainer,
         targeting: TargetingController, topbar: FactionReadouts) -> void:
     _selection = selection
@@ -122,14 +123,11 @@ func _init(selection: HudSelectionState, band_labor: HudBandLaborState,
     _occupant_detail = occupant_detail
     _allocation_panel = allocation_panel
     _herd_assign_controls = herd_assign_controls
-    _forage_assign_controls = forage_assign_controls
-    _road_ladder_controls = road_ladder_controls
-    _forestry_assign_controls = forestry_assign_controls
-    _extraction_assign_controls = extraction_assign_controls
     _subject_body = subject_body
     _subject_scroll = subject_scroll
     _left_dock_scroll = left_dock_scroll
     _targeting = targeting
+    _wire_doors()
 
 # ---- The drawer render dispatch --------------------------------------------------------------
 
@@ -199,27 +197,12 @@ func _render_land_drawer() -> void:
     # its line height and the drawer's separation, so it would read as a blank gap between the land
     # row and that note.
     _tile_detail.visible = not lines.is_empty()
-    var markup := DetailFormat.detail_bbcode(lines, ctx)
-    if markup != _tile_detail_lines_cache:
-        _tile_detail.text = markup
-        _tile_detail_lines_cache = markup
-    # **THE REMEDY IS THE ROW'S HOVER** — `DetailFormat.wire_row_hovers` shows each registered sentence
-    # over its own row only. Written on EVERY render rather than inside the markup diff: it is one string assignment,
-    # and the shortfall it answers to can move while every rendered line stands still (a patch mid-Sow
-    # states a countdown on the row being billed whether or not its keeping is short).
-    DetailFormat.wire_row_hovers(_tile_detail, ctx)
-    _drawercompose.build_forage_drawer_actions(_selection.tile_info())
-    # …and the ROAD action beneath it, at the bottom of the card with the other verbs. It appears
-    # exactly where the `Road` readout row above does — a tile carrying a road — so nothing shows on
-    # ground with no road; the builder decides that from the same `roads` key the rows are drawn from.
-    _drawercompose.build_road_drawer_actions(_selection.tile_info())
-    # …and the two DEPOSIT actions beside it (issue #650) — `Assign foresters ▸` and
-    # `Assign diggers ▸`, each appearing exactly where its branch's readout ROW above does, off the
-    # same `deposits` key. **One container per BRANCH**, because a wooded highland offers both at once
-    # and putting foresters on the timber is not putting diggers on the rock.
-    _drawercompose.build_deposit_drawer_actions(_selection.tile_info())
-    # …and the tile-sourced branches' rows (belief's monument, food stores' pit, ...), off the catalog.
-    _drawercompose.build_tile_drawer_actions(_selection.tile_info())
+    _land_lines = lines
+    _land_ctx = ctx
+    # A hovered door that this render no longer carries is not hovered.
+    if not ctx.door_metas.values().has(_hovered_door):
+        _hovered_door = ""
+    _apply_land_markup()
     if _allocation_panel != null:
         _allocation_panel.visible = false
     if _herd_assign_controls != null:
@@ -228,6 +211,101 @@ func _render_land_drawer() -> void:
     # rows, no compose block and no note, every child of the drawer is hidden and the land subject
     # renders as a blank capped area under the divider.
     _render_unknown_contents_note(lines.is_empty())
+
+## ⛔ **THE LAND CARD'S DOORS** — the rows that open a sheet (`DetailFormat.Context.door_metas`).
+##
+## The producer (`_tile_terrain_lines`) says which lines are doors; this half renders them with the hover
+## and selected washes, answers a click by opening the sheet (`DrawerComposeController.open_door`) and a
+## hover by showing the row's sentence. The lines and context of the last render are held so a hover or a
+## sheet opening/closing re-renders the MARKUP only -- no line is recomposed.
+func _wire_doors() -> void:
+    if _tile_detail != null:
+        _tile_detail.meta_clicked.connect(_on_door_clicked)
+        _tile_detail.meta_hover_started.connect(_on_door_hover_started)
+        _tile_detail.meta_hover_ended.connect(_on_door_hover_ended)
+        _tile_detail.resized.connect(_on_detail_resized)
+    if _drawercompose != null:
+        _drawercompose.door_selection_changed.connect(_on_door_selection_changed)
+
+## Write the held lines through the renderer with the current hover and selected doors. The markup diff
+## (`_tile_detail_lines_cache`) skips an identical string, and the `.text` reset it avoids is also the
+## one that can make the label fire a hover-ended under a still cursor, which `_writing_markup` ignores.
+func _apply_land_markup() -> void:
+    if _tile_detail == null or _land_ctx == null:
+        return
+    # The wash spans the label (see `DetailFormat.Context.fill_width`), measured in the label's own font.
+    _land_ctx.fill_width = _tile_detail.size.x
+    _land_ctx.fill_font = _tile_detail.get_theme_font("normal_font")
+    _land_ctx.fill_font_size = _tile_detail.get_theme_font_size("normal_font_size")
+    _land_ctx.fill_h_separation = float(_tile_detail.get_theme_constant("table_h_separation"))
+    _land_ctx.hovered_door = _hovered_door
+    _land_ctx.selected_door = _drawercompose.open_door_meta()
+    _land_ctx.door_tooltips.clear()
+    var markup := DetailFormat.detail_bbcode(_land_lines, _land_ctx)
+    if markup != _tile_detail_lines_cache:
+        _writing_markup = true
+        _markup_writes += 1
+        _tile_detail.text = markup
+        _writing_markup = false
+        _tile_detail_lines_cache = markup
+    # **THE REMEDY IS THE ROW'S HOVER** -- `DetailFormat.wire_row_hovers` shows each registered sentence
+    # over its own row only. Written on EVERY render rather than inside the markup diff: it is one string
+    # assignment, and the shortfall it answers to can move while every rendered line stands still.
+    DetailFormat.wire_row_hovers(_tile_detail, _land_ctx)
+    # (it clears the tooltip, so a door still under the cursor gets its sentence back)
+    if _hovered_door != "":
+        _tile_detail.tooltip_text = String(_land_ctx.door_tooltips.get(_hovered_door, ""))
+
+## The label's width settles after the first render (and moves with the dock), and the wash spans it.
+func _on_detail_resized() -> void:
+    if _land_ctx != null and not is_equal_approx(_tile_detail.size.x, _land_ctx.fill_width) \
+            and _selection.subject() == HudSelectionState.SUBJECT_LAND:
+        _apply_land_markup()
+
+func _on_door_clicked(meta: Variant) -> void:
+    var payload := String(meta)
+    if not payload.begins_with(HudDisclosureVocab.DOOR_META_PREFIX):
+        return
+    _drawercompose.open_door(payload, _tile_detail)
+
+func _on_door_hover_started(meta: Variant) -> void:
+    var payload := String(meta)
+    if not payload.begins_with(HudDisclosureVocab.DOOR_META_PREFIX) or _land_ctx == null:
+        return
+    # A started that follows an ended for the same door is the pair a text reset produces under a still
+    # cursor: it cancels the pending clear and changes nothing.
+    _pending_hover_clear = ""
+    _tile_detail.tooltip_text = String(_land_ctx.door_tooltips.get(payload, ""))
+    if payload != _hovered_door:
+        _hovered_door = payload
+        _apply_land_markup()
+
+func _on_door_hover_ended(meta: Variant) -> void:
+    var payload := String(meta)
+    if not payload.begins_with(HudDisclosureVocab.DOOR_META_PREFIX) or _writing_markup:
+        return
+    _tile_detail.tooltip_text = ""
+    _pending_hover_clear = payload
+    # Deferred, so an ended -> started pair for one meta costs no re-render at all.
+    _clear_hover_if_still_ended.call_deferred(payload)
+
+func _clear_hover_if_still_ended(payload: String) -> void:
+    if _pending_hover_clear != payload:
+        return
+    _pending_hover_clear = ""
+    if _hovered_door == payload:
+        _hovered_door = ""
+        _apply_land_markup()
+
+## A land sheet opened or closed: the selected wash follows. Only the land card carries doors.
+func _on_door_selection_changed() -> void:
+    if _selection.subject() == HudSelectionState.SUBJECT_LAND:
+        _apply_land_markup()
+
+## How many times the land markup was actually rewritten (the harness asserts a repeated ended -> started
+## costs at most one).
+func land_markup_writes() -> int:
+    return _markup_writes
 
 ## An EMPTY occupant list is a claim of emptiness the client cannot back up, so on a hex the player
 ## cannot see the list carries the land row and nothing else, and the drawer says so out loud. This
@@ -386,6 +464,78 @@ func fit_subject_drawer(force: bool = false) -> void:
 ## `show_tooltip`), so the trim is local to the drawer.
 
 
+## Append the held road lines, registering each road's `Road` row as a door at its index in the FINAL
+## lines (the local index plus where the block lands).
+func _append_road_lines(lines: Array[String], road_lines: Array[String], road_doors: Dictionary,
+        ctx: DetailFormat.Context) -> void:
+    if ctx != null:
+        for local in road_doors:
+            ctx.door_metas[lines.size() + int(local)] = String(road_doors[local])
+    lines.append_array(road_lines)
+
+## State a sentence on a row's hover, AFTER any sentence the row already registered (joined on a newline).
+func _add_row_hover(ctx: DetailFormat.Context, row_key: String, sentence: String) -> void:
+    if ctx == null or sentence == "":
+        return
+    var existing := String(ctx.row_tooltips.get(row_key, ""))
+    ctx.row_tooltips[row_key] = sentence if existing == "" \
+        else existing + HudSelectionVocab.DOOR_HOVER_SEPARATOR + sentence
+
+## ⛔ **THE FORAGERS ON ONE HEX, summed across every player band, PENDING-AWARE** -- the forage twin of
+## `_cutters_on_working`, for its reason: the row states the hex's staffing whichever band is picked, and
+## the card is where the player lands back after the sheet closes.
+func _crew_on_forage(x: int, y: int) -> int:
+    if _band_labor == null or x < 0 or y < 0:
+        return 0
+    var bands: Array = _band_labor.player_bands() if not _band_labor.player_bands().is_empty() \
+        else [_band_labor.player_band()]
+    var total := 0
+    for band_variant in bands:
+        if band_variant is Dictionary and not (band_variant as Dictionary).is_empty():
+            total += _band_labor.effective_forage_workers(band_variant as Dictionary, x, y)
+    return total
+
+## **THE TILE-SOURCED BRANCHES' ROWS** (belief's monument, food stores' pit, ...). Nothing names a branch:
+## each offered branch (`DrawerComposeController.tile_branch_models`) is stated by the row the catalog
+## says (`HudTileVocab.readout_row_key`) -- the dead's own `Ancestors` row where the branch's site term is
+## belief, else a row keyed by the branch's display name and valued by the rung the tile stands at. The
+## crew rides the row as `⚒N`. The row is the door to the crew sheet where the branch can be worked
+## here; where the site term refuses it stays a readout and the refusal is its hover.
+func _append_tile_branch_rows(lines: Array[String], tile_info: Dictionary,
+        ctx: DetailFormat.Context) -> void:
+    var models := _drawercompose.tile_branch_models(tile_info)
+    var ancestors := DetailFormat.ancestors_line(tile_info)
+    if ancestors != "":
+        var belief_model := _tile_model_for_row(models, DetailFormat.ANCESTORS_ROW)
+        _append_tile_row(lines, ctx, ancestors, belief_model)
+    for model in models:
+        var row_key := String(model["row_key"])
+        if row_key == DetailFormat.ANCESTORS_ROW:
+            continue
+        _append_tile_row(lines, ctx, "%s: %s" % [row_key, String(model["rung_name"])], model)
+
+func _tile_model_for_row(models: Array[Dictionary], row_key: String) -> Dictionary:
+    for model in models:
+        if String(model["row_key"]) == row_key:
+            return model
+    return {}
+
+func _append_tile_row(lines: Array[String], ctx: DetailFormat.Context, base_line: String,
+        model: Dictionary) -> void:
+    var line := base_line
+    if not model.is_empty():
+        var clause := HudSelectionVocab.door_crew_clause(int(model["crew"]))
+        if clause != "":
+            line += HudSelectionVocab.DOOR_CLAUSE_SEPARATOR + clause
+        if ctx != null:
+            if bool(model["door"]):
+                ctx.door_metas[lines.size()] = HudDisclosureVocab.door_meta(
+                    HudDisclosureVocab.DOOR_KIND_TILE, String(model["branch"]))
+            else:
+                var refusal: Dictionary = model["refusal"]
+                _add_row_hover(ctx, String(model["row_key"]), HudTileVocab.refusal_hover(refusal))
+    lines.append(line)
+
 ## The box the basket rows' crop-role art is drawn in — the HOST LABEL's own resolved font size, so
 ## a mark is the size of the text it leads and tracks it if that size ever changes.
 ##
@@ -494,8 +644,15 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # which the rung rows' hovers are registered on as they are composed) happens right here on the
     # fog-safe side of the return; only the APPEND is deferred to the end of each branch.
     var road_lines: Array[String] = []
+    # …and which of those lines are DOORS (local index -> meta): every road's `Road` row opens the ladder
+    # card for that road's index in `_tile_roads`, so the index counts the same Dictionaries it does.
+    var road_doors: Dictionary = {}
+    var road_index := 0
     for road in Array(tile_info.get("roads", [])):
         if road is Dictionary:
+            road_doors[road_lines.size()] = HudDisclosureVocab.door_meta(
+                HudDisclosureVocab.DOOR_KIND_ROAD, str(road_index))
+            road_index += 1
             var keeper_label := ""
             if _band_labor != null and HudRouteVocab.has_keeper(road):
                 keeper_label = _band_labor.band_label_for_id(
@@ -536,14 +693,25 @@ func _tile_terrain_lines(tile_info: Dictionary,
     for deposit_variant in Array(tile_info.get("deposits", [])):
         if deposit_variant is Dictionary:
             var working: Dictionary = deposit_variant
-            lines.append_array(HudDepositVocab.deposit_lines(
-                working, deposit_ladder, ctx, _cutters_on_working(working)))
+            # **THE ROW IS THE DOOR TO ITS WORKING'S SHEET** where the retired button would have shown, and
+            # that button's standing summary now rides the row: its `⚠` on the crew clause, every line of it
+            # on the row's hover.
+            var working_door := _drawercompose.deposit_door_open(working)
+            var working_facts: Dictionary = _drawercompose.deposit_standing_facts(working) \
+                if working_door else {}
+            if ctx != null and working_door:
+                ctx.door_metas[lines.size()] = HudDisclosureVocab.door_meta(
+                    HudDisclosureVocab.DOOR_KIND_DEPOSIT, _drawercompose.deposit_subject_key(working))
+            var working_lines := HudDepositVocab.deposit_lines(working, deposit_ladder, ctx,
+                _cutters_on_working(working), bool(working_facts.get("warn", false)))
+            lines.append_array(working_lines)
+            if not working_lines.is_empty():
+                _add_row_hover(ctx, HudDepositVocab.material_label(working),
+                    String(working_facts.get("hover", "")))
     # THE DEAD THIS PLACE HOLDS (issue #699) — belief is a property of the PLACE, so it is a land row,
     # and it is emitted here, above the discovered early-return, for the deposits' reason: the dead do
     # not wander off, so a remembered hex states them truly. No dead, no row.
-    var ancestors := DetailFormat.ancestors_line(tile_info)
-    if ancestors != "":
-        lines.append(ancestors)
+    _append_tile_branch_rows(lines, tile_info, ctx)
     # (A discovered Wondrous Site is a standing condition of the ground — it rides the chip strip.)
     #
     # A REMEMBERED TILE KEEPS BOTH WEBS' CAPACITIES AND LOSES BOTH THEIR STOCKS (issue #462). The rule
@@ -581,7 +749,7 @@ func _tile_terrain_lines(tile_info: Dictionary,
         # …AND THE ROAD LAST HERE TOO. A remembered hex keeps its road (the sim publishes one under
         # this very fog gate), so this append is what makes "Road is last" true in BOTH fog states
         # rather than only on the live card.
-        lines.append_array(road_lines)
+        _append_road_lines(lines, road_lines, road_doors, ctx)
         return lines
     # FORAGING — the HUMAN-edible stock, and the first of the pair. Standing biomass over the patch's
     # ceiling, with the ecology phase inline: the phase is a condition OF this stock and gates whether
@@ -612,7 +780,20 @@ func _tile_terrain_lines(tile_info: Dictionary,
     var patch_biomass := float(tile_info.get("patch_biomass", 0.0))
     var crop_species := String(tile_info.get("patch_committed_species", "")).strip_edges()
     if workable and patch_capacity > 0.0:
-        lines.append_array(_forage_stock_lines(tile_info, true))
+        # **THE FORAGING ROW IS THE DOOR TO THE FORAGE SHEET** where the retired `Assign harvesters ▸`
+        # would have shown, carrying that button's second line: the hex's crew as a clause (`⚒N`, with the
+        # `⚠` of an over-take) and the summary's lines on the hover.
+        var forage_door := _drawercompose.forage_door_open(tile_info)
+        var forage_facts: Dictionary = _drawercompose.forage_standing_facts(tile_info) \
+            if forage_door else {}
+        var forage_clause := HudSelectionVocab.door_crew_clause(
+            _crew_on_forage(int(tile_info.get("x", -1)), int(tile_info.get("y", -1))),
+            bool(forage_facts.get("warn", false)))
+        if ctx != null and forage_door:
+            ctx.door_metas[lines.size()] = HudDisclosureVocab.door_meta(
+                HudDisclosureVocab.DOOR_KIND_FORAGE, _drawercompose.forage_subject_key(tile_info))
+        lines.append_array(_forage_stock_lines(tile_info, true, forage_clause))
+        _add_row_hover(ctx, HudFloraVocab.FORAGING_KEY, String(forage_facts.get("hover", "")))
         # …AND WHAT THAT STOCK IS MADE OF — one indented row per realized plant, always visible and
         # never behind a disclosure, each led by an icon for what the plant is FOR (staple / cash /
         # fodder) and closing with the biomass its share amounts to. The indent is what says these
@@ -745,7 +926,7 @@ func _tile_terrain_lines(tile_info: Dictionary,
     #
     # THE ROAD BLOCK CLOSES THE CARD, composed far above beside the rivers and held until now — see
     # the placement note there. Last on the live branch as it is on the remembered one.
-    lines.append_array(road_lines)
+    _append_road_lines(lines, road_lines, road_doors, ctx)
     return lines
 
 ## The FORAGING row (or nothing) — the human-edible web's stock over its ceiling. The exact twin of
@@ -761,14 +942,17 @@ func _tile_terrain_lines(tile_info: Dictionary,
 ## — and this row states `patch_tile_capacity`, the ground beneath it, instead. Reading the ceiling
 ## key directly would find `0` on every remembered hex and drop the `Foraging` row from the card
 ## entirely, which is the failure `_assert_fog_stock_parity` exists to catch.
-func _forage_stock_lines(tile_info: Dictionary, stock_known: bool) -> Array[String]:
+func _forage_stock_lines(tile_info: Dictionary, stock_known: bool,
+        crew_clause: String = "") -> Array[String]:
     var lines: Array[String] = []
     var capacity := DetailFormat.patch_capacity(tile_info)
     if capacity <= 0.0:
         return lines
-    lines.append("%s: %s" % [HudFloraVocab.FORAGING_KEY, _stock_value(
-        float(tile_info.get("patch_biomass", 0.0)), capacity,
-        String(tile_info.get("patch_ecology_phase", "")), stock_known)])
+    var value := _stock_value(float(tile_info.get("patch_biomass", 0.0)), capacity,
+        String(tile_info.get("patch_ecology_phase", "")), stock_known)
+    if crew_clause != "":
+        value += HudSelectionVocab.DOOR_CLAUSE_SEPARATOR + crew_clause
+    lines.append("%s: %s" % [HudFloraVocab.FORAGING_KEY, value])
     return lines
 
 ## The GRAZING row (or nothing), built once and emitted by BOTH visibility branches — the remembered
@@ -823,15 +1007,6 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
         return
     if _tile_detail != null:
         _tile_detail.visible = false
-    if _forage_assign_controls != null:
-        _forage_assign_controls.visible = false
-    if _road_ladder_controls != null:
-        _road_ladder_controls.visible = false
-    if _forestry_assign_controls != null:
-        _forestry_assign_controls.visible = false
-    if _extraction_assign_controls != null:
-        _extraction_assign_controls.visible = false
-    _drawercompose.hide_tile_drawer()
     # This render's tint context, constructed LOCALLY: the band line producers below fill it as they
     # emit rows, and it is handed to the formatter at the bottom. Nothing outlives this call.
     var ctx := DetailFormat.Context.new()

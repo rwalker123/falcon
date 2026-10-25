@@ -24,7 +24,7 @@ here are its traps, arriving one layer out.
 | `ui/TerrainRenderer.gd` → the `ROAD_*` family + `_pack_road_texel` | Builds the per-hex **`road_map`** splatmap (RGBA8: R connection mask / G rung index / B build fraction / A flags) inside `rebuild_shader_maps`, derived client-side from `MapView.road_tile_lookup` — there is no road mask on the wire and none is wanted, a road row being per-TILE with computable neighbours. Also binds the `road_tex` array and pushes the `roads` config block's uniforms, including `road_at_risk_color` read LIVE off `HudStyle.DANGER` so a theme swap is picked up. `_road_tile_known` is the fog gate, reproducing the retired `AnnotationRenderer._road_tile_known` exactly |
 | `ui/hud/RungLadder.gd` → `route_track` / `build_track`'s `title` (a locked row is a disabled button reading `🔒 Roadbuilding`: `labor-ui.md` → "EVERY LADDER CARD'S RUNGS ARE BUTTONS") | **THE ROUTE BRANCH'S ROW PRODUCER, a SIBLING of `track` and never a widening of it** — `track` takes a labor `kind` and a wire source dict, and a road has neither. It emits `track`'s own `ROW_*` shape so the RENDERER is shared (`build_track` gained one optional heading argument and nothing else), walks `HudRouteVocab.route_ladder`'s ordered catalog, and owns the branch's seventh state, `STATE_UNORDERED` — the rung nobody declares. Its private leaves are `_route_meter_clause` (the meter, on the row DIRECTLY above the standing rung and no other), `_route_pile` / `_route_stall_clause` (the pile and its shortfall, through the SHARED `_build_price_asides`). ⛔ **The STANDING bill is on the row's HOVER (`_route_tooltip`), not on a `hold_asides` leaf** — `route_track` leaves `ROW_HOLD_ASIDES_KEY` empty on every row, deliberately: the plant and animal branches' `_hold_price_asides` reads a prefixed forecast SOURCE dict, and a road is not one |
 | `ui/hud/RungGates.gd` → `route_gates` / `route_knowledge_reason` | **THE ROUTE ARM of the shared gate layer**, keyed **RUNG KEY** rather than verb (two route rungs declare none, so a verb-keyed table cannot tell `path` from `trail`). Four gates in reading order — the ground, the un-orderable rung, the craft, the keeper — each carrying its own remedy. The craft's NAME is threaded in as a `{knowledge_id: display_name}` parameter off the ladder's knowledge roster, never a table here; its REMEDY is the rung whose `earns_knowledge` names that craft, **looked up through `HudRouteVocab.ladder_rung_teaching` and never inferred from `requires_rung`** |
-| `ui/hud/DrawerComposeController.gd` → the `build_road_drawer_actions` family | The tile card's `Road ▸` action and the `PopupPanel` it opens (`_open_road_ladder` / `_emit_road_improvement` / `_ensure_road_ladder` / `_road_ladder_anchor_rect` / `_dismiss_road_ladder`), filling `%RoadLadderControls` — its own container at the BOTTOM of the card, since `%ForageAssignControls` is gated on a gathering site with a band in hand. It emits `road_improvement_requested`, which `HudLayer` relays straight onto `improvement_requested`, and `road_abandon_requested`, which it relays onto `abandon_requested` — both with **no** optimistic overlay write. `_fill_road_ladder` is the card's re-render seam (the band picker calls it) and `_default_road_band` decides which band it opens on |
+| `ui/hud/DrawerComposeController.gd` → the road door (`open_door` / `_open_road_ladder`) | The tile card's `Road` row is the door to the ladder `PopupPanel` (`_open_road_ladder` / `_emit_road_improvement` / `_ensure_road_ladder` / `_road_ladder_anchor_rect` / `_dismiss_road_ladder`), anchored under `%TileDetail`. It emits `road_improvement_requested`, which `HudLayer` relays straight onto `improvement_requested`, and `road_abandon_requested`, which it relays onto `abandon_requested` — both with **no** optimistic overlay write. `_fill_road_ladder` is the card's re-render seam (the band picker calls it) and `_default_road_band` decides which band it opens on. The card's open state + index are what the Road row's selected wash follows (`open_door_meta`; `popup_hide` announces a close) |
 | `ui/hud/BandPanelController.gd` → the `_roadwork_roster_*` family | **THE ROADWORK ROSTER** — `_roadwork_roster_models` (the `has_keeper`-before-`keeper_band_id` filter, the distance/bearing locator, the stable nearest-first sort), `_roadwork_roster_unseen` (case 2, off the cohort's published `roadwork_demand` and never a sum of the fog-filtered rows), `_build_roadwork_roster_block` / `_row` / `_abandon_button`. It emits its OWN `road_abandon_requested`, relayed by `HudLayer` onto `abandon_requested` — the same path the drawer's button takes, never a second builder. Its reserved height is resolved once in `_fill_work_zone_column` and spent in `_work_board_capacity` |
 | `ui/hud/hud_work_vocab.gd` → the `ROADWORK_ROSTER_*` family | The roster's words, metas and its `roadwork_roster_height` — the one expression the block reserves AND draws at, `pools_block_height`'s rule one block down. It lives here rather than in `HudRouteVocab` because the geometry of the Work zone belongs beside the two blocks it shares that zone with |
 | `ui/hud/SourceForecast.gd` → `compass_bearing` + `COMPASS_*` | The roster's 8-point bearing, beside `hex_distance_wrapped` and using the same private wrap-aware column delta. **Taken in DRAWN space** (`sqrt(3)` across a column, `1.5` down a row) — an angle off raw offset coordinates skews every diagonal by up to a whole sector |
@@ -1208,34 +1208,25 @@ roster with no name states the progress anyway; **a branch where nothing teaches
 remedy clause entirely**, that being a real state (a route rung may be gated on a craft another
 branch earns) and a dangling *"keep a  carrying traffic"* being worse than a head alone.
 
-### Where the action sits, and what decides that it is there at all
+### Where the door sits, and what decides that it is there at all
 
-**THE BOTTOM OF THE TILE CARD, with the Forage and Hunt actions** — `%RoadLadderControls`, its own
-`VBoxContainer`, and it is now the **LAST child of `%SubjectBody`**, after `%ExtractionAssignControls`.
-It sat mid-list (after `%HerdAssignControls`) until Ray asked for the road to go last: that groups the
-three `Assign …` actions — harvesters, foresters, diggers — and lets the road's ladder close the card,
-the same argument that moved the `Road` READOUT row to the end of `_tile_terrain_lines` (above).
-**Nothing depends on the ordinal** — `SubjectDrawerController` and `DrawerComposeController` both hold
-`%`-name references, and the `ui_preview` harnesses find the action by
-`HudRouteVocab.ROAD_LADDER_ACTION_META` — so the child order is free to state the reading order and
-nothing else. Not a row inside `%ForageAssignControls`:
-that container is gated on the tile being a GATHERING SITE with a band in hand, and a road crosses
-ground that is neither. Not a button inside the `Road` readout row either — the card's rows are
-readouts and a control in one would make it the only place on the card where a stat line is also a
-control.
+**THE `Road` READOUT ROW IS THE DOOR.** There is no `Road ▸` button and no `%RoadLadderControls`: the
+key and value cells of each road's `Road` row are one `[url=door:road:<index>]` run and the value ends
+in a faint ` ▸` (`selection-card.md` → "THE LAND CARD'S ROWS ARE THE DOORS"). A hex with two roads has
+two `Road` rows, each a door for ITS index in `DrawerComposeController._tile_roads`, which is why doors
+are registered by line index rather than by row key. Pressing one opens the ladder card on that index
+through `_open_road_ladder`, hung under `%TileDetail`; while the card is open that row wears the
+selected wash and dismissing it by any route (a pick, Esc, a click outside) takes it down.
 
 **IT IS SHAPED LIKE A PLAIN ACTION, NOT LIKE FORAGE OR HUNT.** Those open a COMPOSE sheet because
 they take a worker count; `grade` / `pave` take none and a trailing count is a parse error — they
 DECLARE, and the sim staffs the road from the band's road crew.
 
-**LABELLED `Road ▸`, THE BRANCH'S NOUN**, matching the `Road` readout row's own key. Never a verb:
-`grade` stops being the whole story the day a non-road rung lands, and the control would then be
-named after one of its steps.
-
-⛔ **IT APPEARS EXACTLY WHERE THE `Road` READOUT ROW APPEARS** — a tile carrying a road — so nothing
-grows on a hex with no road. **The GATING is carried by the ROWS INSIDE the ladder**, each disabled
-with its own reason, and never by hiding the action: a branch a player cannot climb today is still a
-branch they must be able to read and plan against.
+⛔ **IT APPEARS EXACTLY WHERE THE `Road` READOUT ROW APPEARS** — a tile carrying a road — and the
+**GATING is carried by the ROWS INSIDE the ladder**, each disabled with its own reason, and never by
+hiding the door: a branch a player cannot climb today is still a branch they must be able to read and
+plan against. The road readout still renders LAST on the card, which is also what keeps its door the
+bottom row.
 
 **THE CARD IS A `PopupPanel`, the destination track's own idiom.** The selection card is
 height-capped and scrolls internally, so a ladder drawn as a block would push the card's own rows out
@@ -1602,7 +1593,7 @@ from `ladder_branches`, the rung it stands on from `ladder_rungs` x `tile_improv
 improvement row yet, the branch's root rung via `branch_root_name`, or `—` for a branch the catalog
 lacks — never `Wild`, which is plant vocabulary), its crew count, its keeping mark off the row's `upkeep_*` keys and a far
 posting's party block, and the strip's ladder chip that opens the tile step card. No stepper and no
-inspector: the crew is set from the tile card's `Assign crew ▸` sheet (`extraction-workings.md` → "THE
+inspector: the crew is set from the tile card's `Ancestors` / branch door (the crew sheet) (`extraction-workings.md` → "THE
 TILE-SOURCED BRANCHES"). A tile build is `build <verb> <faction> <x> <y>` (no band token; only road verbs name a
 band). `band_panel_work_tile_crews` is the frame, over a fixture `orchard` / `grafted` catalog and a
 branch the catalog does not carry.

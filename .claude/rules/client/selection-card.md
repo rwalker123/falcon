@@ -118,34 +118,82 @@ paths:
     `docs/plan_tile_panel_layout.md`, §10-§17). Capping the drawer bounded the card but did not make
     it SMALL — the two compose blocks were still ~270px of always-expanded picker sitting permanently
     in a column that also has to show the land, the roster and the detail rows. Composing is **modal
-    by nature** (open, decide, commit, done), so `%ForageAssignControls` / `%HerdAssignControls` now
-    end at a single **`Assign harvesters ▸` / `Assign hunters ▸` / `Assign herders ▸`** control
-    (`build_forage_drawer_actions` / `build_herd_drawer_actions`), and the block itself renders into
-    the floating `ui/hud/ComposeSheet.gd`. `%AllocationPanel` stays INLINE (for an expedition it is
-    two buttons and a callout).
-    - ⛔ **THE STANDING SUMMARY IS THAT CONTROL'S SECOND LINE, NOT A ROW ABOVE IT.** It was a sibling
-      row for the whole life of this layout, and Ray retired that shape on sight of the deposit
-      drawer: *"See the 2 foresters +0.60 wood. That looks strange there, I know that is the existing
-      pattern with foragers and hunters … I think that would look more at home inside the button. We
-      should make it the second line on the button."* **The pattern was what he was objecting to**, so
-      every web moved together — forage, hunt, herd, forestry and extraction — rather than the deposit
-      one alone; two shapes for one readout is the inconsistency this whole rework keeps removing.
-      The mechanism and its three traps (the empty-`text` button under a painted face, the
-      `MOUSE_FILTER_IGNORE` sweep that keeps it pressable, and the re-mute the in-place patch owes)
-      are on `HudWidgets.build_stacked_action_button`.
-    - **A SOURCE NOBODY WORKS KEEPS ITS SINGLE LINE** and grows no blank second one: a summary exists
-      only where this faction already holds a standing assignment on the source, and the face is built
-      with `null` there.
+    by nature** (open, decide, commit, done), so the herd drawer's `%HerdAssignControls` ends at a
+    single **`Assign hunters ▸` / `Assign herders ▸`** control (`build_herd_drawer_actions`), the LAND
+    drawer has **no action container at all** (its sheets open from the card's door rows, below), and
+    the block itself renders into the floating `ui/hud/ComposeSheet.gd`. `%AllocationPanel` stays
+    INLINE (for an expedition it is two buttons and a callout).
+    - ⛔ **THE HERD CONTROL'S STANDING SUMMARY IS ITS SECOND LINE, NOT A ROW ABOVE IT.** Ray, on the
+      deposit drawer: *"See the 2 foresters +0.60 wood. That looks strange there … I think that would
+      look more at home inside the button. We should make it the second line on the button."* The
+      mechanism and its three traps (the empty-`text` button under a painted face, the
+      `MOUSE_FILTER_IGNORE` sweep that keeps it pressable, and the re-mute the in-place patch owes) are
+      on `HudWidgets.build_stacked_action_button`. **A herd nobody works keeps its single line** and
+      grows no blank second one: a summary exists only where this faction holds a standing assignment.
+      The LAND's summary has since moved onto its door rows' crew clause and hover, see "THE LAND
+      CARD'S ROWS ARE THE DOORS" below.
     - **EVERY BUTTON THE TILE CARD RENDERS DRAWS ITS LABEL AT `HudComposeVocab.TILE_ACTION_LABEL_FONT_SIZE`**
-      — the five `Assign … ▸` faces, `Road ▸` and `Move`. Ray: *"we are getting more buttons now …
-      make the font for the `Assign …` label smaller, let's try 25% to see how it looks. Make that
-      change for all the buttons in the TILE panel."* It is 25% off Godot's stock theme size, which is
-      what these buttons drew at (`HudStyle.apply_button` writes styleboxes and colours and no font
-      size), and it is ONE const because it is being tuned. The second line has its own
-      (`TILE_ACTION_SUMMARY_FONT_SIZE`), smaller again, so retuning the label cannot leave the readout
-      competing with it. ⛔ **THAT ONE IS NOT THE SAME RATIO APPLIED TWICE** — the label's 25% lands
-      it at 9, and the Options pane's `ui_scale` floor of 0.75 draws a 9 at under 7px, so it is 10.
-      Ray specified the ratio for the LABEL; the readout under it is sized to stay readable.
+      — the herd's `Assign … ▸` face and `Move` (the land has no buttons). Ray: *"we are getting more
+      buttons now … make the font for the `Assign …` label smaller, let's try 25% to see how it
+      looks. Make that change for all the buttons in the TILE panel."* It is 25% off Godot's stock
+      theme size, which is what these buttons drew at (`HudStyle.apply_button` writes styleboxes and
+      colours and no font size), and it is ONE const because it is being tuned. The second line has its
+      own (`TILE_ACTION_SUMMARY_FONT_SIZE`), smaller again, so retuning the label cannot leave the
+      readout competing with it. ⛔ **THAT ONE IS NOT THE SAME RATIO APPLIED TWICE** — the label's 25%
+      lands it at 9, and the Options pane's `ui_scale` floor of 0.75 draws a 9 at under 7px, so it is
+      10. Ray specified the ratio for the LABEL; the readout under it is sized to stay readable.
+    - ⛔ **THE LAND CARD'S ROWS ARE THE DOORS** to the sheets that used to hang beneath it as a stack of
+      foot buttons (`Assign harvesters ▸`, `Assign foresters ▸` / `Assign diggers ▸`, `Road ▸`, the
+      tile branches' step and crew buttons). The rows of `%TileDetail`'s one `[table=2]` that name a
+      source ARE the controls, and every sheet they open (`open_forage_compose`, `open_deposit_compose`,
+      `open_tile_compose`, `_open_road_ladder`) is unchanged:
+
+      | row | opens | is a door exactly when |
+      |---|---|---|
+      | `Foraging` | the forage sheet | `_forage_compose_available` |
+      | each deposit's material row | THAT working's deposit sheet | `_deposit_compose_available` |
+      | each `Road` row | the ladder card for that road's index | the road exists |
+      | `Ancestors` / the branch row | the tile crew sheet | the branch is offered and `_tile_compose_available` |
+
+      The tile-sourced rows are driven off the catalog (`DrawerComposeController.tile_branch_models`,
+      `HudTileVocab.readout_row_key`): a branch whose site term is belief is stated by the dead's own
+      `Ancestors` row, any other branch gets a row keyed by its display name (`Food stores`) valued by
+      the rung the tile stands at. Nothing names a branch. Where a gate is false the row stays a plain
+      readout; the readouts (Height, Grazing, the basket, `Cultivation`, rivers, the blank-key payoff
+      rows) are never doors.
+      - **The markup**: the key cell and the value cell are each one `[url=door:<kind>:<subject>]`
+        (`HudDisclosureVocab.door_meta`; the engine has no nested metas, so it REPLACES the `hover:`
+        run on that row and `DetailFormat.Context.door_tooltips` hands the row's `row_tooltips`
+        sentence to the host), and the value ends in a faint ` ▸` (`HudStyle.INK_FAINT_HEX`). Doors are
+        registered by LINE INDEX (`Context.door_metas`), never by row key, since keys repeat (`Road` x N).
+      - **The washes**: both cells of a hovered door wear `[cell bg=#…]` `HudStyle.DOOR_HOVER_WASH_HEX`
+        (a neutral faint `INK` tint), of the door whose sheet is open `DOOR_SELECTED_WASH_HEX` (`SIGNAL`,
+        this HUD's LIVE ink, the same family the compose-open button's `primary` wears while its sheet is
+        open); selected outranks hovered. `[cell bg=]` paints one continuous band across the pair, and the
+        table is still ONE `[table=` per run of rows. **`[cell expand=N]` was measured in Godot 4.7.2 and
+        does NOT widen a table** (it only squeezes the other column), so the band is made to span the label
+        by padding each door value with non-breaking spaces up to the label's inner width
+        (`Context.fill_width`, measured in the label's own font against the widest key of the SAME table;
+        `DetailFormat._fill_door_values`). The host re-renders on the label's `resized`. Readout rows are
+        untouched.
+      - **Dispatch and state live in `SubjectDrawerController`** (`meta_clicked` → `open_door`, which
+        re-resolves the live tile / working at press time and never captures a dict). **Hover
+        re-renders only when the hovered door CHANGES**; a hover-ended defers its clear one frame so an
+        ended -> started pair for one meta costs nothing, and an ended the label fires during our own
+        `.text` write is ignored. **The selected wash follows the OPEN SHEET, never a click memo**:
+        `DrawerComposeController.open_door_meta` reads the compose sheet's `ComposeState` kind +
+        subject (or the road card's open state + index), and `door_selection_changed` fires from
+        `refresh_drawer_actions` / the road card's `popup_hide` only when that answer moved.
+      - **THE STANDING SUMMARY IS THE ROW'S**: the crew as a clause `⚒N` (every player band summed,
+        pending-aware, `HudSelectionVocab.door_crew_clause`; the deposit rows' own `crew_clause` already
+        carried it and gained the `⚠`), the `⚠` of an over-take appended to it, and on the row's HOVER
+        the summary's text line, its `note`, its `muted_note` and its tooltip, in that order, after any
+        sentence the row already registers. They come from the same `_standing_summary_model` call the
+        retired button made. A tile branch the site term refuses stays a readout whose hover is the
+        refusal (`HudTileVocab.refusal_hover`: the short reason, then the long one).
+      - **THE TILE BRANCH STEP CARD** (Monument / Storage pit) is reached row → crew sheet → the sheet's work-strip
+        ladder chip (`DrawerComposeController._mount_tile_strip`), the same chip the Work tab's tile row wears
+        (`BandPanelController.tile_strip_row`, `RungCardController.open_tile_track`).
     - **The builders were NOT reparented — they were PARAMETERISED.** `_build_forage_assign_controls(
       tile_info, target)` / `_build_herd_assign_controls(herd, target)` take an explicit target
       container, because reparenting a `%Name` node silently clears `unique_name_in_owner` and breaks

@@ -112,22 +112,9 @@ var _selectioncard: SelectionCardController = null
 var _host: Node = null
 
 # --- Scene nodes (handed in by HudLayer) ---
-# The two drawer-action containers this controller FILLS. They keep their names and their place in
-# the drawer — the compose block moved out of them, the nodes did not move.
+# The HERD drawer-action container this controller FILLS. (The LAND drawer has no container: its sheets
+# open from the door rows of `%TileDetail`, see `open_door`.)
 var _herd_assign_controls: VBoxContainer = null
-var _forage_assign_controls: VBoxContainer = null
-# …and the LAND drawer's road action, at the BOTTOM of the card with the other verbs. Its own node
-# rather than a row inside `%ForageAssignControls`: that container is gated on the tile being a
-# GATHERING SITE with a band in hand, and a road crosses ground that is neither.
-var _road_ladder_controls: VBoxContainer = null
-# …and the LAND drawer's two DEPOSIT actions (issue #650), beside the road's and for the same reason:
-# a working is a tile-keyed source reached by a tile-first pick, and the ground it is on is not
-# necessarily a gathering site with a band in hand.
-#
-# ⛔ **ONE CONTAINER PER BRANCH, not one per hex.** `Assign foresters ▸` and `Assign diggers ▸` are
-# two different crews on two different ladders, and a wooded highland offers both at once.
-var _forestry_assign_controls: VBoxContainer = null
-var _extraction_assign_controls: VBoxContainer = null
 # The selection card, READ-ONLY: the rect the sheet floats beside (`_compose_anchor_rect`).
 var _tile_panel: PanelCard = null
 ## The Band panel (the work strip's row producer) and the shared rung card, set by `Hud` once both exist.
@@ -176,14 +163,8 @@ var _compose_sheet: ComposeSheet = null
 # The drawer-actions diff caches: the shape signature last rendered for each drawer, so an unchanged
 # per-snapshot restate PATCHES the existing nodes instead of freeing + rebuilding them (the reflow
 # that flashes). Zero readers outside this controller, so they travelled with the builders.
-var _forage_drawer_shape: Array = []
 var _herd_drawer_shape: Array = []
-var _road_drawer_shape: Array = []
-## …and the deposit drawers', keyed by BRANCH, because the two containers appear and disappear
-## independently: a hex with only rock rebuilds the extraction container and must not force the
-## forestry one, which is not drawn at all.
-var _deposit_drawer_shapes: Dictionary = {}
-## The road ladder's Window and its inner `MarginContainer`, built on the first press of a `Road ▸`
+## The road ladder's Window and its inner `MarginContainer`, built on the first press of a `Road` door
 ## and reused thereafter. **A Window renders over the dock and changes no layout**, which is why the
 ## height-capped selection card can host a ladder at all; the margin is held so a re-open clears the
 ## TRACK rather than the chrome that hosts it (`queue_free` is deferred, so freeing the margin renders
@@ -261,10 +242,7 @@ func set_forecast_query(query: ForecastQuery) -> void:
 
 func _init(compose: ComposeState, band_labor: HudBandLaborState, selection: HudSelectionState,
         topbar: FactionReadouts, selectioncard: SelectionCardController, host: Node,
-        herd_assign_controls: VBoxContainer, forage_assign_controls: VBoxContainer,
-        road_ladder_controls: VBoxContainer,
-        forestry_assign_controls: VBoxContainer, extraction_assign_controls: VBoxContainer,
-        tile_panel: PanelCard,
+        herd_assign_controls: VBoxContainer, tile_panel: PanelCard,
         resolve_assign_band: Callable, herd_label_for_id: Callable, emit_assign_labor: Callable) -> void:
     _compose = compose
     _band_labor = band_labor
@@ -273,10 +251,6 @@ func _init(compose: ComposeState, band_labor: HudBandLaborState, selection: HudS
     _selectioncard = selectioncard
     _host = host
     _herd_assign_controls = herd_assign_controls
-    _forage_assign_controls = forage_assign_controls
-    _road_ladder_controls = road_ladder_controls
-    _forestry_assign_controls = forestry_assign_controls
-    _extraction_assign_controls = extraction_assign_controls
     _tile_panel = tile_panel
     _resolve_assign_band_fn = resolve_assign_band
     _herd_label_for_id_fn = herd_label_for_id
@@ -4644,79 +4618,127 @@ func refresh_compose_sheet(may_close: bool = true) -> void:
             if may_close:
                 close_compose_sheet()
 
-## Re-render whichever subject's drawer actions are showing (the standing summary + the `Assign … ▸`
-## button), so a turn's staffing change lands in the read state as well as in the open sheet.
+## Re-render whichever subject's drawer actions are showing (the herd's standing summary + its
+## `Assign … ▸` button), so a turn's staffing change lands in the read state as well as in the open sheet.
+## The LAND has no actions to rebuild: its doors are rows of `%TileDetail`, and what this announces for
+## it is whether the sheet a door opened has opened or closed (`door_selection_changed`).
 func refresh_drawer_actions() -> void:
     if not _selection.herd().is_empty():
         build_herd_drawer_actions(_selection.herd())
-    elif not _selection.tile_info().is_empty() and _selection.unit().is_empty():
-        build_forage_drawer_actions(_selection.tile_info())
-        # The road action rides the LAND drawer with them: a road is a property of the ground, so its
-        # control appears on exactly the renders the terrain rows do.
-        build_road_drawer_actions(_selection.tile_info())
-        # …and the two DEPOSIT actions beside it, for the identical reason (issue #650). They were
-        # missing from this path while the branch had a popup, so a turn's staffing change reached the
-        # tile card's `Workings ▸` button only through a full drawer render.
-        build_deposit_drawer_actions(_selection.tile_info())
-        # …and the tile-sourced branches' rows (belief's monument, food stores' pit, ...).
-        build_tile_drawer_actions(_selection.tile_info())
+    _note_door_selection()
 
-## The LAND drawer's read state: the standing forage summary (when the player already works this
-## patch) and the `Assign harvesters ▸` button that opens the sheet. Fills `%ForageAssignControls`,
-## which is why that node keeps its name and its place in the drawer — the compose block MOVED out
-## of it, the node did not move.
-func build_forage_drawer_actions(tile_info: Dictionary) -> void:
-    if _forage_assign_controls == null:
+# ---- THE LAND CARD'S DOORS (the rows that open a sheet) --------------------------------------------
+#
+# ⛔ **A DOOR IS A ROW OF `%TileDetail`, NOT A BUTTON BENEATH IT.** `SubjectDrawerController` registers
+# which rows are doors and renders them; this controller answers the three questions it cannot:
+# *is this source openable* (the same gates the retired buttons used), *what does the standing summary
+# say* (the SAME `_standing_summary_model` call the retired button's second line made), and *what does a
+# press open* (`open_door`, through the live-resolution the buttons used, never a captured dict).
+#
+# **WHICH ROW IS SELECTED IS THE OPEN SHEET'S TO SAY** (`open_door_meta`), never a click memo: every
+# way a sheet closes (commit, ✕, Esc, catcher click, a selection change) reaches
+# `_on_compose_sheet_closed` or the road card's `popup_hide`, and both announce through
+# `door_selection_changed` when the answer moved.
+
+## The open sheet / road card changed, so the land card's selected wash should follow.
+signal door_selection_changed
+
+## The meta last announced, so an unchanged answer (every snapshot's refresh) costs no redraw.
+var _announced_door_meta: String = ""
+
+func _note_door_selection() -> void:
+    var meta := open_door_meta()
+    if meta == _announced_door_meta:
         return
-    var available := _forage_compose_available(tile_info)
-    _forage_assign_controls.visible = available
-    if not available:
-        _clear_forage_drawer()
+    _announced_door_meta = meta
+    door_selection_changed.emit()
+
+## The door meta of whichever land sheet is open right now, `""` for none: a forage / deposit / tile
+## compose sheet (its `ComposeState` kind + subject) or the road ladder card (its open state + index).
+func open_door_meta() -> String:
+    if is_compose_sheet_open():
+        match _compose.kind():
+            ComposeState.KIND_FORAGE:
+                return HudDisclosureVocab.door_meta(HudDisclosureVocab.DOOR_KIND_FORAGE, _compose.subject())
+            ComposeState.KIND_DEPOSIT:
+                return HudDisclosureVocab.door_meta(HudDisclosureVocab.DOOR_KIND_DEPOSIT, _compose.subject())
+            ComposeState.KIND_TILE:
+                return HudDisclosureVocab.door_meta(HudDisclosureVocab.DOOR_KIND_TILE,
+                    _tile_branch_of_key(_compose.subject()))
+        return ""
+    if _road_ladder != null and is_instance_valid(_road_ladder) and _road_ladder.visible:
+        return HudDisclosureVocab.door_meta(HudDisclosureVocab.DOOR_KIND_ROAD, str(_road_ladder_index))
+    return ""
+
+## Open the sheet a door row stands for. **Everything is re-resolved off the LIVE selection at press
+## time** (`_live_tile_info` / `_live_deposit`, the retired buttons' own rule), so a door whose row was
+## drawn a turn ago opens against this turn's figures. `anchor` is the control a road card hangs under.
+func open_door(meta: String, anchor: Control) -> void:
+    var parts := HudDisclosureVocab.parse_door_meta(meta)
+    if parts.is_empty():
         return
+    var kind := String(parts[0])
+    var subject := String(parts[1])
+    var tile := _selection.tile_info()
+    match kind:
+        HudDisclosureVocab.DOOR_KIND_FORAGE:
+            open_forage_compose(_live_tile_info(subject, tile))
+        HudDisclosureVocab.DOOR_KIND_DEPOSIT:
+            open_deposit_compose(_live_deposit(subject, {}))
+        HudDisclosureVocab.DOOR_KIND_ROAD:
+            _open_road_ladder(tile, int(subject), anchor)
+        HudDisclosureVocab.DOOR_KIND_TILE:
+            open_tile_compose(tile, subject)
+
+## Does the Foraging row open the forage sheet? The retired `Assign harvesters ▸` button's own gate.
+func forage_door_open(tile_info: Dictionary) -> bool:
+    return _forage_compose_available(tile_info)
+
+## Does a working's row open its deposit sheet? The retired deposit button's own gate.
+func deposit_door_open(working: Dictionary) -> bool:
+    return _deposit_compose_available(working)
+
+## The forage subject key a door meta carries.
+func forage_subject_key(tile_info: Dictionary) -> String:
+    return _forage_source_key(tile_info)
+
+## The deposit subject key (`x,y:material`) a door meta carries.
+func deposit_subject_key(working: Dictionary) -> String:
+    return _deposit_source_key(working)
+
+## What the retired `Assign harvesters ▸` button's SECOND LINE said, as the row's facts:
+## `{warn: bool, hover: String}`. `{}` where nobody works the patch. The model is the SAME
+## `_standing_summary_model` call, so nothing is re-derived.
+func forage_standing_facts(tile_info: Dictionary) -> Dictionary:
     var x := int(tile_info.get("x", -1))
     var y := int(tile_info.get("y", -1))
     var standing := _standing_assignment(SourceForecast.LABOR_KIND_FORAGE, x, y, "")
-    var summary_model: Dictionary = {}
-    # The read state names the crew by the patch's own rung, exactly as the sheet it opens does.
+    if standing.is_empty():
+        return {}
     var crew_label := HudFormat.plant_crew_label(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)
-    if not standing.is_empty():
-        summary_model = _standing_summary_model(standing, SourceForecast.LABOR_KIND_FORAGE, crew_label.to_lower())
-    var subject_key := _forage_source_key(tile_info)
-    # THE SIGNATURE CARRIES IDENTITY ONLY, AND THE CLOSURE CARRIES NOTHING. Two halves:
-    #   • The subject key LEADS the shape signature, so switching to a different tile — even one of
-    #     identical structure — forces a full rebuild rather than a positional patch onto another
-    #     tile's nodes.
-    #   • The compose-open button's `pressed` closure does NOT capture `tile_info`; it re-resolves the
-    #     live tile through `_live_tile_info(subject_key, …)` when pressed. The same-shape patch path
-    #     deliberately keeps that connection intact across per-snapshot restates, and this signature
-    #     cannot carry the patch's live state (its `patch_*` forecast/progress fields move every turn
-    #     without changing the drawer's STRUCTURE) — nor should it try, since that would rebuild the
-    #     drawer on every tick and reintroduce the reflow flash the patch path exists to remove.
-    var shape := [subject_key] + _standing_actions_shape(summary_model)
-    # **ONE CHILD, because the summary is the button's own second line now** — it was a sibling row
-    # above it until Ray moved it inside the control.
-    var expected_children := 1
-    # Same shape (summary present + its warn/note structure) → patch the cell's two lines in place, so
-    # the per-snapshot restate never tears down the drawer (the "worst around Forage" flash). The
-    # compose button's primary/ghost flip lands in place too.
-    if shape == _forage_drawer_shape and _forage_assign_controls.get_child_count() == expected_children:
-        _update_compose_open_button(_forage_assign_controls.get_child(0) as Control,
-            crew_label, subject_key, summary_model)
-        return
-    _clear_forage_drawer()
-    _forage_assign_controls.add_child(_build_compose_open_button(
-        crew_label, subject_key,
-        func() -> void: open_forage_compose(_live_tile_info(subject_key, tile_info)),
-        summary_model))
-    _forage_drawer_shape = shape
+    return _door_facts_of(_standing_summary_model(standing, SourceForecast.LABOR_KIND_FORAGE,
+        crew_label.to_lower()))
 
-## Free the forage drawer-actions and forget its shape, so the next build always rebuilds.
-func _clear_forage_drawer() -> void:
-    if _forage_assign_controls == null:
-        return
-    for child in _forage_assign_controls.get_children():
-        child.queue_free()
-    _forage_drawer_shape = []
+## …and the working's (`Assign foresters ▸` / `Assign diggers ▸` second line). `{}` where nobody cuts it.
+func deposit_standing_facts(working: Dictionary) -> Dictionary:
+    var tile := HudDepositVocab.tile_of(working)
+    var standing := _standing_assignment_extract(tile.x, tile.y, HudDepositVocab.material_of(working))
+    if standing.is_empty():
+        return {}
+    var crew_label := HudDepositVocab.crew_noun(HudDepositVocab.branch_of(working))
+    return _door_facts_of(_standing_summary_model(standing, HudConst.LABOR_KIND_EXTRACT,
+        crew_label.to_lower(), working))
+
+## A standing-summary model as a door row's facts. **The hover carries EVERY line the retired control
+## drew**, in the order it drew them: the summary text, the overstaff / material-short note, the muted
+## note, then the readout's own tooltip. The `⚠` rides the row's crew clause (`warn`).
+func _door_facts_of(model: Dictionary) -> Dictionary:
+    var parts: Array[String] = []
+    for key in ["text", "note", "muted_note", "tooltip"]:
+        var part := String(model.get(key, "")).strip_edges()
+        if part != "":
+            parts.append(part)
+    return {"warn": bool(model.get("warn", false)), "hover": HudSelectionVocab.DOOR_HOVER_SEPARATOR.join(parts)}
 
 ## The HERD drawer's read state: the Extend-pen action (a one-click standing action on a built pen —
 ## NOT a compose, so it stays here rather than hiding behind a sheet), the standing hunt summary, and
@@ -4766,66 +4788,27 @@ func _clear_herd_drawer() -> void:
         child.queue_free()
     _herd_drawer_shape = []
 
-# ---- THE TILE CARD'S ROAD ACTION (arc #532 slice 13) -----------------------------------------------
+# ---- THE TILE CARD'S ROAD DOOR (arc #532 slice 13) -----------------------------------------------
 #
-# ⛔ **THE UNIT THE PLAYER PRESSES IS THE LADDER, NOT THE VERB.** One button per verb does not scale —
-# highways and railways are RUNGS, not new controls — and a single verb-named button forces ONE
-# refusal string, which cannot answer *"paving is out of reach but railroad is not"*. So the action
+# ⛔ **THE UNIT THE PLAYER OPENS IS THE LADDER, NOT THE VERB.** One button per verb does not scale —
+# highways and railways are RUNGS, not new controls — and a single verb-named control forces ONE
+# refusal string, which cannot answer *"paving is out of reach but railroad is not"*. So the door
 # opens the whole branch, one row per rung in climb order, each carrying its own price, its own payoff
 # and its own gate. A rung added to `intensification_ladder.json` appears as a row with no client edit.
 #
 # ⛔ **IT IS NOT SHAPED LIKE FORAGE OR HUNT.** Those open a COMPOSE sheet because they take a worker
 # count; `grade` / `pave` take none and a trailing count is a parse error — they DECLARE, and the
-# hands come separately from `assign_labor <faction> <band> builders <n>`. So this is a plain action
-# that opens a card, the shape the pen's ring price card takes on the work board.
+# hands come separately from `assign_labor <faction> <band> builders <n>`. So this is a plain card, the
+# shape the pen's ring price card takes on the work board.
 #
-# ⛔ **IT APPEARS EXACTLY WHERE THE `Road` READOUT ROW APPEARS** — a tile carrying a road — so nothing
-# shows on ground with no road and no dead control grows on every hex in the world. **The GATING is
-# carried by the rows inside the ladder**, each disabled with its own reason, never by hiding the
-# action: a branch a player cannot climb today is still a branch they must be able to read.
+# ⛔ **THE DOOR IS THE `Road` READOUT ROW ITSELF** (`SubjectDrawerController` registers it), one per road
+# on the hex, so nothing opens on ground with no road. **The GATING is carried by the rows inside the
+# ladder**, each disabled with its own reason, never by hiding the door: a branch a player cannot climb
+# today is still a branch they must be able to read.
 
 ## The tile-card key the road rows travel under, stamped by `MapView._tile_info_at` off
-## `road_tile_lookup`. Spelled once here because a typo is a silently absent action.
+## `road_tile_lookup`. Spelled once here because a typo is a silently absent door.
 const TILE_ROADS_KEY := "roads"
-
-## **THE LAND drawer's ROAD ACTION — one `Road ▸` per road crossing this hex.**
-##
-## Per tile the registry holds exactly one road, so this is one button; the loop is the block loop's
-## own shape (`SubjectDrawerController._tile_terrain_lines` renders ONE BLOCK PER ROAD) rather than a
-## case being handled twice. A duplicated row would then render twice rather than vanish silently.
-func build_road_drawer_actions(tile_info: Dictionary) -> void:
-    if _road_ladder_controls == null:
-        return
-    var roads := _tile_roads(tile_info)
-    _road_ladder_controls.visible = not roads.is_empty()
-    if roads.is_empty():
-        _clear_road_drawer()
-        return
-    # THE SIGNATURE CARRIES IDENTITY ONLY, the two drawer builders' own rule: the subject key LEADS so
-    # a different hex forces a rebuild rather than a positional patch onto another tile's node, and the
-    # ROAD's live state (its rung, its meter, its keeper) is deliberately absent — those move every
-    # turn without changing this drawer's structure, and the card is read at PRESS time anyway.
-    var subject_key := _forage_source_key(tile_info)
-    var shape := [subject_key, roads.size()]
-    if shape == _road_drawer_shape and _road_ladder_controls.get_child_count() == roads.size():
-        return
-    _clear_road_drawer()
-    for index in range(roads.size()):
-        # The closure captures the road's INDEX, never the road dict: the same-shape patch keeps a
-        # button's connection across snapshots, so a captured dict would be frozen at whatever turn
-        # this drawer was last rebuilt — `_live_tile_info`'s own rule, one subject over.
-        _road_ladder_controls.add_child(_build_road_ladder_button(
-            func(anchor: Control) -> void:
-                _open_road_ladder(_live_tile_info(subject_key, tile_info), index, anchor)))
-    _road_drawer_shape = shape
-
-## Free the road drawer-actions and forget its shape, so the next build always rebuilds.
-func _clear_road_drawer() -> void:
-    if _road_ladder_controls == null:
-        return
-    for child in _road_ladder_controls.get_children():
-        child.queue_free()
-    _road_drawer_shape = []
 
 ## The road rows on this hex, as typed dicts. `[]` on a tile with no road, which is most of the world.
 func _tile_roads(tile_info: Dictionary) -> Array[Dictionary]:
@@ -4834,25 +4817,6 @@ func _tile_roads(tile_info: Dictionary) -> Array[Dictionary]:
         if road_variant is Dictionary:
             roads.append(road_variant as Dictionary)
     return roads
-
-## The action itself — a ghost button in the `Assign … ▸` register, because it is the same KIND of
-## thing: a control on the card's bottom that opens a surface. **Labelled for the BRANCH's noun**
-## (`Road`), matching the readout row's key one block up, never for a verb — `grade` stops being the
-## whole story the day a non-road rung lands, and the row would then be named after one of its steps.
-##
-## `on_press` takes the button ITSELF, so the card can anchor to the control that was pressed.
-func _build_road_ladder_button(on_press: Callable) -> Button:
-    var button := Button.new()
-    button.text = HudRouteVocab.ROAD_LADDER_ACTION_LABEL
-    button.set_meta(HudRouteVocab.ROAD_LADDER_ACTION_META, true)
-    HudStyle.apply_button(button, "ghost")
-    # **THE TILE CARD'S ONE LABEL SIZE**, the same const the `Assign … ▸` faces read. `Road ▸` carries
-    # no second line, so it is set on the button's own `text` rather than through
-    # `HudWidgets.build_stacked_action_button`.
-    button.add_theme_font_size_override("font_size",
-        HudComposeVocab.TILE_ACTION_LABEL_FONT_SIZE)
-    button.pressed.connect(func() -> void: on_press.call(button))
-    return button
 
 ## **THE LADDER CARD — floated over the dock, never drawn into it.**
 ##
@@ -4889,6 +4853,7 @@ func _open_road_ladder(tile_info: Dictionary, index: int, anchor: Control) -> vo
     var card := _ensure_road_ladder()
     _fill_road_ladder()
     card.popup(_road_ladder_anchor_rect(anchor))
+    _note_door_selection()
 
 ## **THE CARD'S CONTENTS, REBUILT IN PLACE** — the band row, the track, and the abandon row beneath it.
 ##
@@ -5121,31 +5086,26 @@ func _ensure_road_ladder() -> PopupPanel:
     for side in DisclosureController.POPOVER_MARGIN_SIDES:
         margin.add_theme_constant_override("margin_%s" % side, HudWorkVocab.RUNG_TRACK_PADDING)
     card.add_child(margin)
+    # The card closing by ANY route (a pick, Esc, a click outside) takes the Road row's selected wash down.
+    card.popup_hide.connect(_note_door_selection)
     _host.add_child(card)
     _road_ladder = card
     _road_ladder_body = margin
     return card
 
 
-# ---- THE TILE CARD'S TILE-BRANCH ACTIONS (belief's monument, food stores' pit, ...) ----------------
+# ---- THE TILE CARD'S TILE-BRANCH DOORS (belief's monument, food stores' pit, ...) ----------------
 #
-# ⛔ **NOTHING HERE NAMES A BRANCH.** One row per `source_kind == "tile"` branch the catalog carries, its
-# words (verb, noun, lesson, site term) read off the rung rows by `HudTileVocab`. Each row is a step button
-# (`Raise a monument ▸`, opening the shared rung card) beside `Assign crew ▸` (a compose sheet whose commit
-# is the crew line that also PLACES the improvement). A branch shows when its first buildable rung's lesson
-# is known or the tile already holds an improvement of it, so a fresh game's card carries neither; a tile
-# that fails the site term keeps the row, greyed, with the reason beneath it in plain words.
+# ⛔ **NOTHING HERE NAMES A BRANCH.** One row model per `source_kind == "tile"` branch the catalog carries
+# and the card offers, its words (rung, noun, lesson, site term) read off the rung rows by `HudTileVocab`.
+# The branch's row on the card is its door: pressing it opens the crew sheet (`open_tile_compose`), whose
+# commit is the crew line that also PLACES the improvement. A branch is offered when its first buildable
+# rung's lesson is known or the tile already holds an improvement of it, so a fresh game's card carries
+# neither; a tile that fails the site term keeps the row as a plain readout and states the reason on its
+# hover.
 
 ## `12,7:belief` -- one tile improvement's compose subject key. The branch is half of it.
 const TILE_BRANCH_SUBJECT_KEY_FORMAT := "%d,%d:%s"
-
-## The container the tile card's tile-branch rows live in, handed in by `Hud` after the scene node exists.
-var _tile_branch_controls: VBoxContainer = null
-## The shape signature last rendered, so an unchanged per-snapshot restate patches nothing.
-var _tile_branch_shape: Array = []
-
-func set_tile_branch_controls(host: VBoxContainer) -> void:
-    _tile_branch_controls = host
 
 static func _tile_subject_key(tile_info: Dictionary, branch: String) -> String:
     return TILE_BRANCH_SUBJECT_KEY_FORMAT % [
@@ -5155,23 +5115,25 @@ static func _tile_branch_of_key(subject_key: String) -> String:
     var at := subject_key.find(":")
     return subject_key.substr(at + 1) if at >= 0 else ""
 
-## The branches this tile's card offers, as row models. `[]` on an unseen hex, with no band to staff and
-## before the catalog has arrived.
-func _tile_branch_models(tile_info: Dictionary) -> Array[Dictionary]:
+## The branches this tile's card states, as row models. `[]` on an unseen hex and before the catalog has
+## arrived. Each model: `branch`, `row_key` (the card row that states it), `rung_name` (the rung the tile
+## stands at), `crew` (every player band's hands on it), `refusal` (`{short, long}` of a site term the
+## tile fails, `{}` if it suits) and `door` (the row opens the crew sheet: a band to staff it and a tile
+## that suits the branch -- `_tile_compose_available`).
+func tile_branch_models(tile_info: Dictionary) -> Array[Dictionary]:
     var models: Array[Dictionary] = []
     if _topbar == null:
         return models
     var x := int(tile_info.get("x", -1))
     var y := int(tile_info.get("y", -1))
-    if x < 0 or y < 0 or _selectioncard.tile_contents_unseen(tile_info) \
-            or _resolve_assign_band().is_empty():
+    if x < 0 or y < 0 or _selectioncard.tile_contents_unseen(tile_info):
         return models
     var ladder := HudTileVocab.tile_ladder(_topbar.ladder_rungs())
     var knowledge := _player_knowledge()
     for branch in HudTileVocab.branches(ladder):
         var crew := _band_labor.tile_crew_total(x, y, branch)
-        var holds := crew > HudTileVocab.CREW_NONE \
-            or not _band_labor.tile_improvement_at(x, y, branch).is_empty()
+        var improvement := _band_labor.tile_improvement_at(x, y, branch)
+        var holds := crew > HudTileVocab.CREW_NONE or not improvement.is_empty()
         if not HudTileVocab.is_offered(ladder, branch, knowledge, holds):
             continue
         var entry := HudTileVocab.first_buildable(ladder, branch)
@@ -5179,103 +5141,13 @@ func _tile_branch_models(tile_info: Dictionary) -> Array[Dictionary]:
             continue
         models.append({
             "branch": branch,
-            "label": HudTileVocab.action_label(entry),
+            "row_key": HudTileVocab.readout_row_key(entry, _topbar.ladder_branches()),
+            "rung_name": HudTileVocab.standing_rung_name(ladder, branch, improvement, x, y),
             "crew": crew,
             "refusal": HudTileVocab.site_refusal(entry, tile_info),
+            "door": _tile_compose_available(tile_info, branch),
         })
     return models
-
-## The LAND drawer's tile-branch rows. Rebuilt only when the structure moves (a branch appearing, a crew
-## appearing or leaving, the site verdict flipping); a closure captures the subject key, never the tile.
-func build_tile_drawer_actions(tile_info: Dictionary) -> void:
-    if _tile_branch_controls == null:
-        return
-    var models := _tile_branch_models(tile_info)
-    _tile_branch_controls.visible = not models.is_empty()
-    if models.is_empty():
-        _clear_tile_drawer()
-        return
-    var shape: Array = [_forage_source_key(tile_info)]
-    for model in models:
-        shape.append([model["branch"], model["label"], int(model["crew"]),
-            String((model["refusal"] as Dictionary).get("short", ""))])
-    if shape == _tile_branch_shape and _tile_branch_controls.get_child_count() == models.size():
-        return
-    _clear_tile_drawer()
-    for model in models:
-        _tile_branch_controls.add_child(_build_tile_branch_row(tile_info, model))
-    _tile_branch_shape = shape
-
-## The occupant drawer fills the card instead of the land: take the rows down without forgetting them.
-func hide_tile_drawer() -> void:
-    if _tile_branch_controls != null:
-        _tile_branch_controls.visible = false
-
-func _clear_tile_drawer() -> void:
-    if _tile_branch_controls == null:
-        return
-    for child in _tile_branch_controls.get_children():
-        child.queue_free()
-    _tile_branch_shape = []
-
-func _build_tile_branch_row(tile_info: Dictionary, model: Dictionary) -> Control:
-    var branch := String(model["branch"])
-    var subject_key := _tile_subject_key(tile_info, branch)
-    var refusal: Dictionary = model["refusal"]
-    var refused := not refusal.is_empty()
-    var column := VBoxContainer.new()
-    column.set_meta(HudTileVocab.ROW_META, subject_key)
-    column.add_theme_constant_override("separation", HudTileVocab.ROW_SEPARATION)
-    var line := HBoxContainer.new()
-    line.add_theme_constant_override("separation", HudTileVocab.ROW_SEPARATION)
-    var step := Button.new()
-    step.text = HudTileVocab.ACTION_OPEN_FORMAT % String(model["label"])
-    step.set_meta(HudTileVocab.STEP_META, subject_key)
-    step.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    step.disabled = refused
-    if refused:
-        step.tooltip_text = String(refusal.get("long", ""))
-    HudStyle.apply_button(step, "ghost")
-    step.add_theme_font_size_override("font_size", HudComposeVocab.TILE_ACTION_LABEL_FONT_SIZE)
-    step.pressed.connect(func() -> void: _open_tile_step(subject_key, step))
-    line.add_child(step)
-    if not refused:
-        var crew := int(model["crew"])
-        var crew_button := Button.new()
-        crew_button.text = HudTileVocab.CREW_BUTTON_LABEL if crew <= HudTileVocab.CREW_NONE \
-            else HudTileVocab.CREW_BUTTON_FORMAT % crew
-        crew_button.set_meta(HudTileVocab.CREW_META, subject_key)
-        HudStyle.apply_button(crew_button, "ghost")
-        crew_button.add_theme_font_size_override("font_size",
-            HudComposeVocab.TILE_ACTION_LABEL_FONT_SIZE)
-        crew_button.pressed.connect(func() -> void:
-            open_tile_compose(_selection.tile_info(), _tile_branch_of_key(subject_key)))
-        line.add_child(crew_button)
-    column.add_child(line)
-    if refused:
-        # Beside the thing it explains, amber: a site no crew or lesson will close.
-        var reason := Label.new()
-        reason.text = String(refusal.get("short", ""))
-        reason.tooltip_text = String(refusal.get("long", ""))
-        reason.mouse_filter = Control.MOUSE_FILTER_STOP
-        reason.set_meta(HudTileVocab.REASON_META, subject_key)
-        reason.add_theme_color_override("font_color", HudStyle.WARN)
-        reason.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
-        column.add_child(reason)
-    return column
-
-## Open the shared rung card on one tile branch. The acting band is only the faction carrier for `build`
-## (it names no band): the band already crewing the tile, else the shared ladder's answer.
-func _open_tile_step(subject_key: String, anchor: Control) -> void:
-    var tile_info := _selection.tile_info()
-    var branch := _tile_branch_of_key(subject_key)
-    if tile_info.is_empty() or _tile_subject_key(tile_info, branch) != subject_key or _rung == null:
-        return
-    var x := int(tile_info.get("x", -1))
-    var y := int(tile_info.get("y", -1))
-    var band := _band_working_source(func(candidate: Dictionary) -> bool:
-        return _band_labor.has_tile_row(candidate, x, y, branch))
-    _rung.open_tile_track(band, tile_info, branch, _band_labor.tile_crew_total(x, y, branch), anchor)
 
 ## Can a crew sheet be composed on this tile improvement? A real tile, a band to spend, a branch the
 ## catalog carries a buildable rung for, and ground that meets the branch's site term.
@@ -5342,6 +5214,10 @@ func _build_tile_assign_controls(tile_info: Dictionary, branch: String, target: 
     target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
         _compose.set_tile_band(int(picked.get("entity", ComposeState.NO_BAND_ENTITY)))
         rebuild.call()))
+    # **THE WORK STRIP's LADDER CHIP** -- the deposit and forage sheets' own control, built from the Work
+    # tab's tile row (`tile_strip_row`), so Monument / Storage pit are one press from the sheet. It draws
+    # on every state, a band not yet crewing the tile included: the rung card names the missing crew.
+    _mount_tile_strip(target, band, x, y, branch)
     var max_row := HBoxContainer.new()
     max_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     max_row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
@@ -5367,6 +5243,19 @@ func _build_tile_assign_controls(tile_info: Dictionary, branch: String, target: 
         close_compose_sheet())
     _mount_commit_row(target, commit, is_working)
 
+## The tile crew sheet's strip, mounted exactly as `_mount_work_strip` mounts a source's: the strip model
+## off the Work tab's row producer, its handlers the board's own (the chip opens `open_tile_track`).
+func _mount_tile_strip(parent: VBoxContainer, band: Dictionary, x: int, y: int, branch: String) -> void:
+    if _bandpanel == null:
+        return
+    var row := _bandpanel.tile_strip_row(band, x, y, branch)
+    if row.is_empty():
+        return
+    var strip := WorkStrip.build(WorkStrip.model_from_row(row), _bandpanel.strip_handlers(band, row), true)
+    strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    strip.set_meta(HudTileVocab.STRIP_META, "%d,%d:%s" % [x, y, branch])
+    parent.add_child(strip)
+
 ## `assign_labor <f> <band> tile <branch> <x> <y> <n>` -- the crew line, which also places the improvement.
 func _send_tile_assignment(band: Dictionary, x: int, y: int, branch: String) -> void:
     _note_applied()
@@ -5382,7 +5271,7 @@ func _emit_tile_stop(band: Dictionary, x: int, y: int, branch: String) -> void:
     })
 
 
-# ---- THE TILE CARD'S DEPOSIT ACTIONS (issue #650) -------------------------------------------------
+# ---- THE TILE CARD'S DEPOSIT DOORS (issue #650) -------------------------------------------------
 #
 # ⛔ **RETIRED — THE `Workings ▸` POPUP, ITS CARD AND EVERY BUILDER UNDER IT** (`_open_workings_card`
 # / `_fill_workings_card` / `_build_workings_block` / `_workings_row` / `_build_workings_crew_row` /
@@ -5398,11 +5287,11 @@ func _emit_tile_stop(band: Dictionary, x: int, y: int, branch: String) -> void:
 #   • *take it up a rung* — the shared `RungLadder` TRACK, on the Work board where `cultivate` and
 #     `sow` are pressed.
 #
-# ⛔ **ONE SHEET PER *WORKING*, AND THE CONTAINER IS PER BRANCH.** The registry key is
+# ⛔ **ONE SHEET PER *WORKING*, AND THE DOOR IS THE WORKING'S OWN ROW.** The registry key is
 # `(tile, material)`: a wooded highland carries timber AND rock, and putting foresters on the timber
-# is not putting diggers on the rock. So the hex grows one `Assign foresters ▸` and one
-# `Assign diggers ▸`, each in its own container, and each opens a sheet about ONE working. A single
-# action for the pair is exactly the tile-keyed collapse the `material` field exists to prevent.
+# is not putting diggers on the rock. So each material's row on the tile card is a door to a sheet
+# about ONE working. A single door for the pair is exactly the tile-keyed collapse the `material`
+# field exists to prevent.
 #
 # ⛔ **THE WORD "QUARRY" APPEARS ON NOTHING HERE.** `Quarry` is ONE RUNG of ONE branch, and a sheet
 # that opens on any working of either would be naming a coppice after a pit — so the crew nouns are
@@ -5421,70 +5310,6 @@ const DEPOSIT_SUBJECT_KEY_FORMAT := "%d,%d:%s"
 static func _deposit_source_key(deposit: Dictionary) -> String:
     var tile := HudDepositVocab.tile_of(deposit)
     return DEPOSIT_SUBJECT_KEY_FORMAT % [tile.x, tile.y, HudDepositVocab.material_of(deposit)]
-
-## **THE LAND drawer's TWO DEPOSIT ACTIONS** — one container per BRANCH, each holding the standing
-## summary (where this faction already works the source) and the `Assign … ▸` button that opens the
-## sheet. `build_road_drawer_actions`' own shape, and `build_forage_drawer_actions`' read state.
-func build_deposit_drawer_actions(tile_info: Dictionary) -> void:
-    _fill_deposit_branch(_forestry_assign_controls, HudDepositVocab.BRANCH_FORESTRY, tile_info)
-    _fill_deposit_branch(_extraction_assign_controls, HudDepositVocab.BRANCH_EXTRACTION, tile_info)
-
-## One branch's container. **One button per deposit of that branch the hex carries**, which is one
-## today and is not assumed to be: a second wood-bearing material on one tile is a config away, and
-## the loop costs nothing where the branch holds one row.
-func _fill_deposit_branch(host: VBoxContainer, branch: String, tile_info: Dictionary) -> void:
-    if host == null:
-        return
-    var workings := _tile_workings_of_branch(tile_info, branch)
-    host.visible = not workings.is_empty()
-    if workings.is_empty():
-        _clear_deposit_branch(host, branch)
-        return
-    var crew_label := HudDepositVocab.crew_noun(branch)
-    # THE SIGNATURE CARRIES IDENTITY ONLY, the drawer builders' own rule: the subject keys LEAD so a
-    # different hex forces a rebuild rather than a positional patch onto another tile's node, and the
-    # workings' LIVE state (their rung, their stock, their crew) is deliberately absent — that moves
-    # every turn without changing this drawer's structure.
-    var shape: Array = []
-    var models: Array[Dictionary] = []
-    for working in workings:
-        var subject_key := _deposit_source_key(working)
-        var tile := HudDepositVocab.tile_of(working)
-        var standing := _standing_assignment_extract(tile.x, tile.y,
-            HudDepositVocab.material_of(working))
-        var summary_model: Dictionary = {}
-        if not standing.is_empty():
-            summary_model = _standing_summary_model(standing, HudConst.LABOR_KIND_EXTRACT,
-                crew_label.to_lower(), working)
-        models.append({"key": subject_key, "summary": summary_model, "working": working})
-        shape.append([subject_key] + _standing_actions_shape(summary_model))
-    # **ONE CHILD PER WORKING, summary or not** — it is the button's own second line since Ray moved
-    # it inside the control, so a working this band has opened costs exactly what an untouched one does.
-    var expected := models.size()
-    if shape == _deposit_drawer_shapes.get(branch, []) and host.get_child_count() == expected:
-        for idx in range(models.size()):
-            var model: Dictionary = models[idx]
-            _update_compose_open_button(host.get_child(idx) as Control, crew_label,
-                String(model["key"]), model["summary"] as Dictionary)
-        return
-    _clear_deposit_branch(host, branch)
-    for model in models:
-        # The closure captures the SUBJECT KEY, never the working dict: the same-shape patch keeps a
-        # button's connection across snapshots, so a captured dict would be frozen at whatever turn
-        # this drawer was last rebuilt — `_live_tile_info`'s own rule.
-        var subject_key := String(model["key"])
-        host.add_child(_build_compose_open_button(crew_label, subject_key,
-            func() -> void: open_deposit_compose(
-                _live_deposit(subject_key, model["working"] as Dictionary)),
-            model["summary"] as Dictionary))
-    _deposit_drawer_shapes[branch] = shape
-
-func _clear_deposit_branch(host: VBoxContainer, branch: String) -> void:
-    if host == null:
-        return
-    for child in host.get_children():
-        child.queue_free()
-    _deposit_drawer_shapes[branch] = []
 
 ## The deposit rows on this hex, as typed dicts. **`[]` MEANS THIS GROUND HOLDS NOTHING** (or the
 ## faction has never seen it): the section publishes a row for every discovered tile that holds a
