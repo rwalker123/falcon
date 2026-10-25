@@ -268,8 +268,9 @@ that today only changes a label or an icon now changes what the player manages.
 
 - **Every people reaches every level.** Hierarchical or Egalitarian changes the kind of leader, not
   whether there is one. A Hierarchical leader carries orders out fully and tolerates long stretches
-  of directed work that feeds no one; an Egalitarian council carries out the same orders and grows
-  restless sooner under unfed directed work — the existing step-5 rule. So there is no dead end, and
+  of directed work; an Egalitarian council carries out the same orders and grows restless sooner
+  under directed work — the consent rule (`docs/plan_civilization_steps.md` → "Directed labor and
+  consent"). So there is no dead end, and
   the culture still costs something.
 - **A leader is a named person.** The Telling narrates them (*a chief, then a line of chiefs*).
   Leaders carry no stats yet.
@@ -398,15 +399,14 @@ list every band. It is the same panel, rows and work strip, rolled up:
   since they never forage. Full-time builders go to great works first, then to the city's other builds.
   The people bar gains a Trades part.
 - **Each trade has an Auto, on by default.** Auto sizes the trade to what the city needs — crafters
-  to the bench's workable orders up to their crafter caps, builders to the great works' caps as far as
-  the granary can feed them, traders to the trade routes' cargo — but only from people the food does
+  to the bench's workable orders up to their crafter caps, builders to the great works' caps, traders to the trade routes' cargo — but only from people the food does
   not need: the hold crews and the scouts are taken first, so a great work never pulls the harvesters
   off the fields. **It moves each trade by at most one person a turn** toward that need, so a
   full-time trade stays a career rather than a turn's posting. Switching Auto off keeps the share the
   player sets.
-- **Great works** — walls, palisades, monuments — are ordinary builds with a far larger builder cap,
-  started from the same rung card. Their crew is fed from the granary: while it can feed them the work
-  runs, and when it is empty the work stops. The row states how many turns the granary can feed its crew.
+- **Great works** — walls, palisades — are ordinary builds with a far larger builder cap, started from
+  the same rung card. (The monument is not one: it is a band's tile rung, `belief:monument`, built by
+  a crew of three — `docs/plan_civilization_steps.md`.)
 - **Rations:** a ration level on the city's food — Full, Short, Starvation. Short stretches the
   granary at a cost in morale; Starvation stretches it further and costs health too. It is the choice
   before a hard winter or during a great work.

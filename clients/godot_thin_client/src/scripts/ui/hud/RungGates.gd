@@ -930,3 +930,85 @@ static func _deposit_craft_refusal(unlock: String, progress: float, labels: Dict
     var record := _route_refusal(HudDepositVocab.GATE_KIND_CRAFT, short, long)
     record[HudRouteVocab.GATE_NAME_KEY] = name
     return record
+
+# ==================================================================================================
+#  THE TILE-SOURCED BRANCHES (belief's monument, food stores' pit, ...) -- may this rung be raised HERE?
+# ==================================================================================================
+#
+# ⛔ **NOTHING IN THIS ARM NAMES A BRANCH.** The catalog row supplies the lesson, the rung beneath and the
+# site term; the tile supplies its belief and its crew. Records are the deposit arm's `{kind, short, long}`.
+#
+# Four gates, appended in `HudTileVocab.GATE_ROW_PRIORITY` order:
+#   1. THE SITE -- `min_belief` against the belief standing on the tile (`tile_info.belief`). Outranks the
+#      rest because no crew or lesson closes it.
+#   2. THE CREW -- `build <verb>` declares on every band crewing the tile and the sim refuses with
+#      *Assign a crew first* when none does. The crew line also PLACES the improvement at the root rung,
+#      so "no crew" and "the rung beneath is not held yet" are one remedy for the first rung.
+#   3. THE LESSON -- `unlock_knowledge`, named from the knowledge roster.
+#   4. THE RUNG BENEATH -- `requires_rung`, for a rung above the first.
+#
+# ⛔ **THE STONE PILE IS NOT A GATE.** The sim draws it from the band's store as the meter climbs and a dry
+# store STALLS the build; the track states it as an amber aside beside the cost.
+static func tile_gates(site: Dictionary, ladder: Array[Dictionary], knowledge: Dictionary,
+        labels: Dictionary, crew: int, tile_info: Dictionary) -> Dictionary:
+    var gates := {}
+    var branch := HudDepositVocab.branch_of(site)
+    var rows := HudDepositVocab.branch_ladder(ladder, branch)
+    var standing_order := HudDepositVocab.ladder_order_of(rows, HudDepositVocab.rung_of(site))
+    for entry in rows:
+        if HudDepositVocab.catalog_order(entry) <= standing_order:
+            continue
+        var refusals: Array[Dictionary] = []
+        if HudDepositVocab.catalog_verb(entry) == HudDepositVocab.RUNG_CATALOG_NONE:
+            refusals.append(_route_refusal(HudDepositVocab.GATE_KIND_WORN_IN, "",
+                HudDepositVocab.GATE_LONG_WORN_IN))
+            gates[HudDepositVocab.catalog_rung_key(entry)] = refusals
+            continue
+        var site_refusal := HudTileVocab.site_refusal(entry, tile_info)
+        if not site_refusal.is_empty():
+            refusals.append(_route_refusal(HudTileVocab.GATE_KIND_SITE,
+                String(site_refusal["short"]), String(site_refusal["long"])))
+        if crew <= HudTileVocab.CREW_NONE:
+            refusals.append(_route_refusal(HudTileVocab.GATE_KIND_CREW,
+                HudTileVocab.GATE_SHORT_NO_CREW, HudTileVocab.GATE_LONG_NO_CREW))
+        var unlock := HudDepositVocab.catalog_unlock_knowledge(entry)
+        if unlock != HudDepositVocab.RUNG_CATALOG_NONE \
+                and track(knowledge, unlock) < HudConst.KNOWLEDGE_COMPLETE:
+            refusals.append(_deposit_craft_refusal(unlock, track(knowledge, unlock), labels,
+                HudDepositVocab.ladder_rung_teaching(ladder, branch, unlock)))
+        var requires := HudDepositVocab.catalog_requires_rung(entry)
+        if requires != HudDepositVocab.RUNG_CATALOG_NONE \
+                and HudDepositVocab.ladder_order_of(rows, requires) > standing_order:
+            var beneath := HudDepositVocab.ladder_rung_name(rows, requires).to_lower()
+            refusals.append(_route_refusal(HudTileVocab.GATE_KIND_GROUND,
+                HudDepositVocab.GATE_SHORT_NEEDS_RUNG_FORMAT % beneath,
+                HudDepositVocab.GATE_LONG_NEEDS_RUNG_FORMAT % beneath))
+        if not refusals.is_empty():
+            gates[HudDepositVocab.catalog_rung_key(entry)] = refusals
+    return gates
+
+static func tile_gates_for(gates: Dictionary, rung: String) -> Array[Dictionary]:
+    return route_gates_for(gates, rung)
+
+static func tile_row_refusal_record(refusals: Array[Dictionary]) -> Dictionary:
+    return _row_refusal_record(refusals, HudTileVocab.GATE_ROW_PRIORITY)
+
+## The CATALOG ENTRY of the rung a press could land right now, or `{}` -- `deposit_rung_ready`'s twin.
+## The crew refusal is FORGIVEN (the press is available and the card it opens is the surface that names the
+## missing crew); every other refusal is a rung no press can reach.
+static func tile_rung_ready(site: Dictionary, ladder: Array[Dictionary], knowledge: Dictionary,
+        labels: Dictionary, crew: int, tile_info: Dictionary) -> Dictionary:
+    var gates := tile_gates(site, ladder, knowledge, labels, crew, tile_info)
+    var rows := HudDepositVocab.branch_ladder(ladder, HudDepositVocab.branch_of(site))
+    var standing_order := HudDepositVocab.ladder_order_of(rows, HudDepositVocab.rung_of(site))
+    for entry in rows:
+        if HudDepositVocab.catalog_order(entry) <= standing_order:
+            continue
+        var apart_from_crew := false
+        for refusal in tile_gates_for(gates, HudDepositVocab.catalog_rung_key(entry)):
+            if String(refusal.get(HudRouteVocab.GATE_KIND_KEY, "")) != HudTileVocab.GATE_KIND_CREW:
+                apart_from_crew = true
+        if apart_from_crew:
+            continue
+        return entry
+    return {}

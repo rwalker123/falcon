@@ -78,5 +78,9 @@
   "drives": {
     "discovery_id": 2021,
     "observability": 0.6
+  },
+  "ritual": {
+    "discovery_id": 2024,
+    "observability": 0.8
   }
 }

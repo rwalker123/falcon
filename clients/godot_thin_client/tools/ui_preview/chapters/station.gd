@@ -21,6 +21,7 @@ const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 const EVENT_DOCK_SCENE := preload("res://src/ui/EventDockPanel.tscn")
+const InputProbe := preload("res://tools/ui_preview/input_probe.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -46,6 +47,12 @@ const STATIONED_SEEN := Vector2i(60, 24)
 const OPEN_SEEN := Vector2i(63, 21)
 const WALKING_SEEN := Vector2i(66, 20)
 const PARKED_SEEN := Vector2i(44, 9)
+## A band the HOME band holds NO row to: only its sibling (the walking band) has met it. The people
+## knows it, so its row lists under `Known through <sibling>` with both links enabled.
+const SIBLING_SUBJECT_ENTITY := 1186
+const SIBLING_SUBJECT_NAME := "Sedgemoor"
+const SIBLING_SEEN := Vector2i(52, 14)
+const SIBLING_SEEN_AGE := 4
 
 ## The turn the frames are rendered on, and how stale the stationed row's news is.
 const TURN := 40
@@ -107,7 +114,8 @@ func run(harness) -> void:
 	var block := panel.find_child(HudConnectionsVocab.BLOCK_NAME, true, false) as Control
 	h._assert_hud("station: the band page carries a Peoples roster", block != null)
 	var rows := _roster_rows(block)
-	h._assert_hud("station: the roster holds all four ties (%d)" % rows.size(), rows.size() == 4)
+	h._assert_hud("station: the roster holds the four ties plus the band known through a sibling (%d)" % rows.size(),
+		rows.size() == 5)
 	var stationed_row := _row_for(rows, STATIONED_NAME)
 	var walking_row := _row_for(rows, WALKING_NAME)
 	var open_row := _row_for(rows, OPEN_NAME)
@@ -141,12 +149,86 @@ func run(harness) -> void:
 		open_link != null and open_link.text == HudConnectionsVocab.STATION_LINK
 			and not open_link.disabled)
 	var parked_link := _link_of(parked_row)
-	h._assert_hud("station: a PARKED tie shows the link greyed with its reason",
-		parked_link != null and parked_link.disabled
-			and parked_link.tooltip_text == HudConnectionsVocab.STATION_LINK_PARKED_REASON)
+	h._assert_hud("station: a PARKED tie's `Station people` link is ENABLED — the tie does not gate it",
+		parked_link != null and not parked_link.disabled
+			and parked_link.tooltip_text == HudConnectionsVocab.STATION_LINK_TOOLTIP)
 	for row in rows:
 		h._assert_hud("station: no row prints a raw band id (%s)" % _text_of(row).left(40),
 			not _text_of(row).contains(str(BandFx.FIXTURE_BAND_ID_OFFSET)))
+
+	# ---- (b2) THE `Trade` LINK, beside `Station people` on the same rows ----------------------------
+	for row in rows:
+		var trade_link := _trade_link_of(row)
+		h._assert_hud("station: every row carries a `Trade` link beside its `Station people` one (%s)"
+				% _text_of(row).left(24),
+			trade_link != null and _link_of(row) != null)
+	var open_trade := _trade_link_of(open_row)
+	var trade_verb := HudComposeVocab.verb_for_mission(HudComposeVocab.COMPOSE_MISSION_TRADE)
+	h._assert_hud("station: a live tie's link reads `Trade`, is pressable, and wears the Trade verb's own mark",
+		open_trade != null and not open_trade.disabled
+			and open_trade.text == HudConnectionsVocab.TRADE_LINK
+			and open_trade.icon == HudSprites.for_mark(String(trade_verb[HudComposeVocab.VERB_KEY_MARK]))
+			and open_trade.icon != null)
+	var parked_trade := _trade_link_of(parked_row)
+	h._assert_hud("station: a PARKED tie's `Trade` link is ENABLED too",
+		parked_trade != null and not parked_trade.disabled
+			and parked_trade.tooltip_text == HudConnectionsVocab.TRADE_LINK_TOOLTIP)
+	# **A BAND KNOWN ONLY THROUGH A SIBLING HAS A ROW**, naming the sibling and the sighting, with both links
+	# enabled; its Trade link opens the sheet with To already set (clicked like a player would).
+	var sibling_row := _row_for(rows, SIBLING_SUBJECT_NAME)
+	h._assert_hud("station: a band only a sibling has met appears in the roster",
+		sibling_row != null)
+	var through_line: String = HudConnectionsVocab.KNOWN_THROUGH_FORMAT % [WALKING_NAME,
+		SIBLING_SEEN.x, SIBLING_SEEN.y, RESOLVED - SIBLING_SEEN_AGE]
+	h._assert_hud("station: …reading `%s`" % through_line,
+		sibling_row != null and _text_of(sibling_row).contains(through_line))
+	var sibling_trade := _trade_link_of(sibling_row)
+	var sibling_station := _link_of(sibling_row)
+	h._assert_hud("station: …with BOTH links enabled",
+		sibling_trade != null and not sibling_trade.disabled
+			and sibling_station != null and not sibling_station.disabled)
+	h._assert_hud("station: …and it stays two lines",
+		sibling_row != null and sibling_row.get_child_count() == 2)
+	await h._save("station_peoples_known_through")
+	if sibling_trade != null:
+		await _real_click(sibling_trade)
+	var sibling_form := Q.find_meta_node(h._hud.allocation_panel, HudWidgets.VERB_FORM_META) as Control
+	var sibling_to := Q.find_meta_node(h._hud.allocation_panel, HudWidgets.READ_ONLY_FIELD_META)
+	h._assert_hud("station: the sibling-known row's Trade link opens the sheet with To = %s" % SIBLING_SUBJECT_NAME,
+		sibling_form != null and String(sibling_form.get_meta(HudWidgets.VERB_FORM_META, ""))
+			== HudComposeVocab.COMPOSE_MISSION_TRADE
+			and sibling_to != null and _text_of(sibling_to).contains(SIBLING_SUBJECT_NAME))
+	h._hud.close_verb_form()
+	await h._settle()
+	# **THE STATION SEND IS ENABLED FOR A PARKED-ONLY HOST.**
+	var live_parked_link := _find_link(panel, BandFx.FIXTURE_BAND_ID_OFFSET + PARKED_ENTITY)
+	if live_parked_link != null:
+		live_parked_link.emit_signal("pressed")
+		await h._settle()
+	var parked_send := Q.find_meta_node(h._hud.allocation_panel, HudWidgets.SEND_STATION_CONFIRM_META) as Button
+	h._assert_hud("station: the Station send for a parked-only host is enabled",
+		parked_send != null and not parked_send.disabled)
+	h._hud.close_verb_form()
+	await h._settle()
+	# A REAL pointer click on the row's link, not a synthesised `pressed`: the Trade sheet opens on the
+	# sender's drawer with the row's band already its `To`, and a `✕` to clear it.
+	# The rows were rebuilt by the sheets opened above: find the live tie's link again.
+	var fresh_block := panel.find_child(HudConnectionsVocab.BLOCK_NAME, true, false) as Control
+	open_trade = _trade_link_of(_row_for(_roster_rows(fresh_block), OPEN_NAME))
+	if open_trade != null:
+		await _real_click(open_trade)
+	var trade_form := Q.find_meta_node(h._hud.allocation_panel, HudWidgets.VERB_FORM_META) as Control
+	h._assert_hud("station: a click on the row's Trade link opens the Trade sheet in the sender's drawer",
+		trade_form != null and String(trade_form.get_meta(HudWidgets.VERB_FORM_META, ""))
+			== HudComposeVocab.COMPOSE_MISSION_TRADE)
+	var to_row := Q.find_meta_node(h._hud.allocation_panel, HudWidgets.READ_ONLY_FIELD_META)
+	h._assert_hud("station: …with `To` already set to that row's band (%s)" % OPEN_NAME,
+		to_row != null and _text_of(to_row).contains(OPEN_NAME))
+	h._assert_hud("station: …carrying the ✕ that clears it",
+		Q.find_meta_node(h._hud.allocation_panel, HudWidgets.FIELD_CLEAR_META) != null)
+	await h._save("station_trade_from_peoples")
+	h._hud.close_verb_form()
+	await h._settle()
 
 	# ---- (c) THE PARTIES ZONE: an outbound and a stationed party -----------------------------------
 	panel.set_active_tab(BandCityPanel.ZONE_PARTIES)
@@ -394,6 +476,28 @@ func _row_for(rows: Array, name: String) -> Control:
 			return row
 	return null
 
+## A real pointer click on a control: hover, press, release through the engine's own dispatch.
+func _real_click(control: Control) -> void:
+	var viewport: Viewport = h.get_viewport()
+	var point := InputProbe.canvas_to_window(viewport, h.get_window(), control.get_global_rect().get_center())
+	InputProbe.hover(viewport, point)
+	await h.get_tree().process_frame
+	InputProbe.press_left(viewport, point)
+	await h.get_tree().process_frame
+	InputProbe.release_left(viewport, point)
+	await h.get_tree().process_frame
+	await h._settle()
+
+## The `Trade` link under `row`.
+func _trade_link_of(row: Node) -> Button:
+	if row is Button and (row as Button).has_meta(HudConnectionsVocab.TRADE_LINK_META):
+		return row as Button
+	for child in row.get_children() if row != null else []:
+		var found := _trade_link_of(child)
+		if found != null:
+			return found
+	return null
+
 func _link_of(row: Control) -> Button:
 	if row == null:
 		return null
@@ -561,7 +665,10 @@ func _ties() -> Array:
 	var parked := _tie(PARKED_ENTITY, TIE_PARKED, PARKED_SEEN, 12, 12)
 	parked["subject_name"] = PARKED_NAME
 	var walking := _tie(WALKING_ENTITY, 0.5, WALKING_SEEN, RESOLVED - 1, RESOLVED - 1)
-	return [stationed, open, walking, parked]
+	var sibling := _tie(SIBLING_SUBJECT_ENTITY, 0.5, SIBLING_SEEN, RESOLVED - SIBLING_SEEN_AGE, RESOLVED - SIBLING_SEEN_AGE)
+	sibling["subject_name"] = SIBLING_SUBJECT_NAME
+	sibling["observer_band_id"] = BandFx.FIXTURE_BAND_ID_OFFSET + WALKING_ENTITY
+	return [stationed, open, walking, parked, sibling]
 
 func _tie(subject_entity: int, strength: float, seen: Vector2i, seen_turn: int,
 		contact_turn: int) -> Dictionary:

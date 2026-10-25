@@ -809,6 +809,7 @@ fn the_quarry_rung_refuses_ground_with_no_rock_and_a_scatter_alike() {
             0.0,
             true,
             tile_deposit_capacity(&config, STONE, &ground),
+            core_sim::NO_BELIEF,
         )
     };
 

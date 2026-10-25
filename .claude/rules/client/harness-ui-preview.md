@@ -3906,3 +3906,17 @@ Frames and what only each can say:
 terms, no destination, no party, no people, no state) are asserted too. **Fixture destinations differ in
 `BandId` and entity**: the standing link's far end is the Brackwater tie, and the envoy people's band is
 known only through a dealing.
+
+## `chapters/tile_branches.gd` — the tile-sourced branches (monument and storage pit)
+
+Appended LAST in `CHAPTERS`; six frames (`tile_branches_hidden` / `_rows` / `_site_greyed` /
+`_crew_sheet` / `_step_card` / `_step_card_no_crew`) and `EXPECTED_CHECKPOINTS` 35. It transcribes both
+shipped tile branches into one catalog and makes every claim per branch. It asserts the exact strings the
+real builders make of the emitted payloads (`assign_labor 0 <band> tile belief 33 9 2`, `... food_stores
+33 9 1`, `build raise 0 33 9`, `build dig 0 33 9`), each gate at the producer (`RungLadder.tile_track`)
+per branch, and the dry-store stall as an amber aside on a still-open rung.
+
+⛔ **A stale card is in the tree.** The road ladder's popup from earlier chapters still holds open rows
+(`route:paved_road`), so the press helper filters rung rows by `<branch>:` — pressing "the first enabled
+button" fires the road's. ⛔ **The map's belief lookup is pushed by hand** (`update_tile_beliefs`): the
+chapter has no `MapView`, and a Work-tab row has no `tile_info`, so without it the site gate reads zero.

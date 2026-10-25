@@ -577,12 +577,13 @@ func foreign_factions() -> Array:
 			factions.append(faction)
 	return factions
 
-## The peoples of the bands a LIVE tie remembers (`subject_faction`), for `known_peoples`' `extra` -- a
-## people met only through a past sighting still has a band an envoy can be sent to.
+## The peoples of the bands ANY tie of the player's people remembers (`subject_faction`), live or parked,
+## for `known_peoples`' `extra` -- a people met only through a past sighting still has a band an envoy can
+## be sent to (`ConnectionLedger::launch_aim` accepts any edge from any band of the sender's people).
 func remembered_factions() -> Array:
 	var factions: Array = []
 	for row_variant in _connections:
-		if not (row_variant is Dictionary) or not tie_is_live(row_variant):
+		if not (row_variant is Dictionary):
 			continue
 		var faction := int((row_variant as Dictionary).get("subject_faction", HudConst.NO_FACTION_ID))
 		if faction != HudConst.NO_FACTION_ID and not factions.has(faction):
@@ -613,8 +614,9 @@ func treaty_with(faction: int) -> Dictionary:
 
 ## **THE BANDS OF `faction` THIS CLIENT CAN NAME**, as `[{band_id, label}]` by band id: the foreign bands
 ## in sight, the far ends of the standing links, and the bands a pending dealing names -- the only places
-## the wire states which people a band belongs to -- then, after those, the bands a LIVE tie remembers
-## under that people (`subject_faction`, clock 1). An envoy's destination is picked from these.
+## the wire states which people a band belongs to -- then, after those, the bands any tie of the people
+## remembers under that people (`subject_faction`, clock 1), live or PARKED. An envoy's destination is picked
+## from these; it is the people-level knowledge the Trade and Station surfaces read (`people_knows_band`).
 func known_bands_of_people(faction: int) -> Array:
 	var ids: Dictionary = {}
 	for band_id in _foreign_bands:
@@ -635,8 +637,9 @@ func known_bands_of_people(faction: int) -> Array:
 	ids.erase(HudConst.NO_BAND_ID)
 	var sorted_ids: Array = ids.keys()
 	sorted_ids.sort()
-	# Remembered bands follow, filed under their people by the tie's `subject_faction` (clock 1). A
-	# parked tie (strength 0) is left out: the sim refuses an envoy to a band we hold no tie with.
+	# Remembered bands follow, filed under their people by the tie's `subject_faction` (clock 1). A parked
+	# tie (strength 0) counts: the sim accepts any edge, live or parked, from any band of the sender's people
+	# (`ConnectionLedger::launch_aim`), so the envoy surface asks what the people knows, not what is live.
 	var remembered_ids: Array = []
 	for row_variant in _connections:
 		if not (row_variant is Dictionary):
@@ -645,7 +648,7 @@ func known_bands_of_people(faction: int) -> Array:
 		var subject := int(tie.get("subject_band_id", HudConst.NO_BAND_ID))
 		if subject == HudConst.NO_BAND_ID or ids.has(subject) or remembered_ids.has(subject):
 			continue
-		if int(tie.get("subject_faction", HudConst.NO_FACTION_ID)) == faction and tie_is_live(tie):
+		if int(tie.get("subject_faction", HudConst.NO_FACTION_ID)) == faction:
 			remembered_ids.append(subject)
 	remembered_ids.sort()
 	sorted_ids.append_array(remembered_ids)
@@ -700,23 +703,20 @@ func host_label_for_id(band_id: int) -> String:
 	var label := band_label_for_id(band_id)
 	if label != "":
 		return label
-	for row_variant in _connections:
-		if not (row_variant is Dictionary):
-			continue
-		var row: Dictionary = row_variant
-		if int(row.get("subject_band_id", HudConst.NO_BAND_ID)) != band_id:
-			continue
-		var remembered := String(row.get("subject_name", ""))
-		if remembered != "":
-			return remembered
-		return HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_LABEL_FORMAT % [
-			int(row.get("last_seen_x", -1)), int(row.get("last_seen_y", -1))]
-	return ""
+	if _foreign_bands.has(band_id):
+		return HudFormat.band_name(_foreign_bands[band_id])
+	var row := freshest_tie_to(band_id)
+	if row.is_empty():
+		return ""
+	var remembered := String(row.get("subject_name", ""))
+	if remembered != "":
+		return remembered
+	return HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_LABEL_FORMAT % [
+		int(row.get("last_seen_x", -1)), int(row.get("last_seen_y", -1))]
 
 ## **A LIVE TIE IS ONE WITH STRENGTH ABOVE ZERO** — the sim's own gate (`strength > NO_TIE`), read in
 ## one place so the shipment sheet's destination, its live re-resolve and the map's pre-selection
-## click (`TargetingController.trade_destination_at`) can never disagree about which bands a shipment may
-## name.
+## click can never disagree about which tie is the live one.
 static func tie_is_live(tie: Dictionary) -> bool:
 	return float(tie.get("strength", 0.0)) > HudConst.TIE_STRENGTH_NONE
 
@@ -740,6 +740,109 @@ func connections_for_band(band_id: int) -> Array:
 		if int(row.get("observer_band_id", HudConst.NO_BAND_ID)) == band_id:
 			rows.append(row)
 	return rows
+
+## **WHAT THE PEOPLE KNOWS ABOUT A BAND — the ONE reading every send surface asks.** Knowing WHERE a band
+## is belongs to the whole people; tie STRENGTH stays per band. The people knows a band when ANY of these
+## holds: it is one of the player's own bands, it is visible this frame (a population row), or ANY of the
+## player's bands holds a connection row to it, live or parked. `{}` is a band it has never met.
+##
+## Otherwise `{tile, turn, visible, tie}`: `tile` is where it STANDS when visible and else where the
+## freshest sighting put it (`Vector2i(-1, -1)` for a row that never recorded one), `turn` the turn that
+## position is from (`current_turn()` when visible), and `tie` the freshest connection row to it across
+## every observer (`freshest_tie_to`), `{}` for a band known by sight alone. The sim's own aim rule,
+## read back: the live tile if visible, else the freshest `last_seen_turn`, ties to the lower observer id.
+func people_last_known(band_id: int) -> Dictionary:
+	if band_id == HudConst.NO_BAND_ID:
+		return {}
+	var tie := freshest_tie_to(band_id)
+	var standing := player_band_by_band_id(band_id)
+	if standing.is_empty():
+		standing = foreign_band(band_id)
+	if not standing.is_empty():
+		return {"tile": SourceForecast.band_tile(standing), "turn": current_turn(), "visible": true,
+			"tie": tie}
+	if tie.is_empty():
+		return {}
+	return {"tile": Vector2i(int(tie.get("last_seen_x", -1)), int(tie.get("last_seen_y", -1))),
+		"turn": int(tie.get("last_seen_turn", 0)), "visible": false, "tie": tie}
+
+func people_knows_band(band_id: int) -> bool:
+	return not people_last_known(band_id).is_empty()
+
+## The connection row to `subject` with the newest `last_seen_turn`, across EVERY observer (each one is a
+## band of the player's people); equal turns go to the lower observer id. `{}` when none holds one.
+## `MapView.remembered_bands` picks its ghost's tie by this same rule.
+func freshest_tie_to(subject: int) -> Dictionary:
+	var best: Dictionary = {}
+	for row_variant in _connections:
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if int(row.get("subject_band_id", HudConst.NO_BAND_ID)) != subject:
+			continue
+		if best.is_empty() or is_fresher_sighting(row, best):
+			best = row
+	return best
+
+## Is connection row `a` a fresher sighting than `b`? Newer `last_seen_turn`, then the lower observer id.
+static func is_fresher_sighting(a: Dictionary, b: Dictionary) -> bool:
+	var turn_a := int(a.get("last_seen_turn", 0))
+	var turn_b := int(b.get("last_seen_turn", 0))
+	if turn_a != turn_b:
+		return turn_a > turn_b
+	return int(a.get("observer_band_id", HudConst.NO_BAND_ID)) \
+		< int(b.get("observer_band_id", HudConst.NO_BAND_ID))
+
+## Every band the people knows other than `except_band_id` (the sender), each its `people_last_known`
+## reading plus `band_id`, in a stable order: visible first, then by band id. The Trade sheet's rings and
+## the click resolving them read this and nothing else. A detached party is not a band and is never listed.
+func known_bands(except_band_id: int) -> Array:
+	var ids: Array[int] = []
+	for band_variant in current_player_bands():
+		ids.append(int((band_variant as Dictionary).get("band_id", HudConst.NO_BAND_ID)))
+	for band_id in _foreign_bands:
+		ids.append(int(band_id))
+	for row_variant in _connections:
+		if row_variant is Dictionary:
+			ids.append(int((row_variant as Dictionary).get("subject_band_id", HudConst.NO_BAND_ID)))
+	var known: Array = []
+	var seen: Dictionary = {}
+	for band_id in ids:
+		if band_id == HudConst.NO_BAND_ID or band_id == except_band_id or seen.has(band_id):
+			continue
+		seen[band_id] = true
+		var reading := people_last_known(band_id)
+		if reading.is_empty():
+			continue
+		reading["band_id"] = band_id
+		known.append(reading)
+	known.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if bool(a["visible"]) != bool(b["visible"]):
+			return bool(a["visible"])
+		return int(a["band_id"]) < int(b["band_id"]))
+	return known
+
+## The bands the people knows only THROUGH A SIBLING: `band_id` holds no connection row to them, another
+## of the player's bands does, and they are not one of the player's own. Each `{band_id, tie}` where `tie`
+## is the freshest row across every observer (its `observer_band_id` names the sibling that holds the
+## freshest sighting). The Peoples tab lists them so their send links are reachable.
+func known_through_siblings(band_id: int) -> Array:
+	var mine: Dictionary = {}
+	var out: Array = []
+	for row_variant in connections_for_band(band_id):
+		mine[int((row_variant as Dictionary).get("subject_band_id", HudConst.NO_BAND_ID))] = true
+	var seen: Dictionary = {}
+	for row_variant in _connections:
+		if not (row_variant is Dictionary):
+			continue
+		var subject := int((row_variant as Dictionary).get("subject_band_id", HudConst.NO_BAND_ID))
+		if subject == HudConst.NO_BAND_ID or subject == band_id or mine.has(subject) or seen.has(subject) \
+				or not player_band_by_band_id(subject).is_empty():
+			continue
+		seen[subject] = true
+		out.append({"band_id": subject, "tie": freshest_tie_to(subject)})
+	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a["band_id"]) < int(b["band_id"]))
+	return out
 
 ## Ingest the world's kit roster and the SIX job defaults. **They ride ONE call**, because they are
 ## one fact: a roster whose defaults name kits it does not contain would let every picker open on an
@@ -819,6 +922,20 @@ var _tile_temperature: Dictionary = {}
 ## Ingest the forwarded per-tile temperatures. A non-Dictionary input is ignored (the last value
 ## stands), matching every other catalogue setter here: a delta carries a section only when it
 ## CHANGED, so absence means unchanged and never "the world has no temperatures".
+## The belief standing on each tile (`{Vector2i: float}`, `MapView.tile_belief`, held by reference). A tile
+## with none has NO entry, so absence reads as zero. A tile-sourced branch's site gate (`min_belief`) reads
+## it for a Work-tab row, which has no `tile_info` of its own.
+var _tile_belief: Dictionary = {}
+
+func set_tile_beliefs(beliefs_variant: Variant) -> void:
+	if not (beliefs_variant is Dictionary):
+		return
+	_tile_belief = beliefs_variant
+	changed.emit(&"tile_beliefs")
+
+func tile_belief_at(x: int, y: int) -> float:
+	return float(_tile_belief.get(Vector2i(x, y), 0.0))
+
 func set_tile_temperatures(temperatures_variant: Variant) -> void:
 	if not (temperatures_variant is Dictionary):
 		return
@@ -936,6 +1053,34 @@ func tile_assignments_of(band: Dictionary) -> Array:
 				and String((entry as Dictionary).get("kind", "")).to_lower() == HudConst.LABOR_KIND_TILE:
 			rows.append(entry)
 	return rows
+
+## This band's confirmed `tile` labor row at `(x, y)` on `branch`, `{}` when it crews no such improvement.
+func tile_assignment_of(band: Dictionary, x: int, y: int, branch: String) -> Dictionary:
+	for entry in tile_assignments_of(band):
+		var a: Dictionary = entry
+		if int(a.get("target_x", -1)) == x and int(a.get("target_y", -1)) == y \
+				and String(a.get("branch", "")) == branch:
+			return a
+	return {}
+
+## The sim's crew (or, before the snapshot confirms, the player's pending count) this band has on the tile
+## improvement at `(x, y)` -- the branch rides `pending_key`'s material slot.
+func effective_tile_workers(band: Dictionary, x: int, y: int, branch: String) -> int:
+	return int(effective_worker_map(band).get(
+		pending_key(HudConst.LABOR_KIND_TILE, x, y, "", branch), {}).get("workers", 0))
+
+## Does this band hold a tile row (confirmed or pending) on the improvement? A row at zero Max still counts.
+func has_tile_row(band: Dictionary, x: int, y: int, branch: String) -> bool:
+	return effective_worker_map(band).has(pending_key(HudConst.LABOR_KIND_TILE, x, y, "", branch))
+
+## The player's crew on the tile improvement across EVERY player band: the hands that make the build
+## declarable at all (the sim declares on every band crewing the tile).
+func tile_crew_total(x: int, y: int, branch: String) -> int:
+	var total := 0
+	for band_variant in current_player_bands():
+		if band_variant is Dictionary:
+			total += effective_tile_workers(band_variant as Dictionary, x, y, branch)
+	return total
 
 ## The `deposits` row at `(x, y)` holding `material`, `{}` where the frame carries none — the working
 ## a deposit command is ABOUT, which is what `KitRoster.default_kit_for` reads the working's own

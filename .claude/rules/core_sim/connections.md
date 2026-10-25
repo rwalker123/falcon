@@ -29,7 +29,7 @@ directed, persisting, decaying tie. Logistics, culture, knowledge and cargo are 
 
 | File | Purpose |
 |------|---------|
-| `src/data/connections_config.json` | `strength.gain_per_contact` (0.25 — four turns of contact reach a full tie), `strength.decay_per_turn` (0.02 — a full tie bleeds to nothing over fifty quiet turns), `forget_turns` (200 — how long after the last contact the edge itself is reaped). The `1.0` ceiling is **not** here: strength is a `0..=1` fraction by definition, so its top is the named constant `connections::FULL_TIE`, and tuning it would change the unit rather than the balance. No hot-reload kind. |
+| `src/data/connections_config.json` | `strength.gain_per_contact` (0.25 — four turns of contact reach a full tie), `strength.decay_per_turn` (0.02 — a full tie bleeds to nothing over fifty quiet turns), `forget_turns` (200 — how long after the last contact the edge itself is reaped). `kin_relay.max_hops` (2 — longest chain of this turn's direct contacts, within one people, a tie is relayed across; below 2 turns relay off; unsigned, so a negative or fractional value is a boot panic). The `1.0` ceiling is **not** here: strength is a `0..=1` fraction by definition, so its top is the named constant `connections::FULL_TIE`, and tuning it would change the unit rather than the balance. No hot-reload kind. |
 | `src/data/knowledge_contact_config.json` | **The knowledge rider's channel rates**, in practice units per turn (the unit `learn_rate` 1.0 is paid in): `channel_rates.watching` (**0.1**), `.trade` (**0.4**), `.road` (**0.6**). All three required, validated finite and `>= 0` (`0` switches a channel off); no global multiplier on top. Loader `knowledge_contact_config.rs` on the shared boot seam, env override `KNOWLEDGE_CONTACT_CONFIG_PATH`. No hot-reload kind. **Never `connections_config.json`**, which has no rider vocabulary |
 | `src/data/start_profile_knowledge_tags.json` | Each knowledge tag's `discovery_id`, its start-profile seed `progress`, and **`observability`** (`0..=1`, required, no default — how much being around the discovery teaches: a pen `1.0`, seed selection `0.2`). `deny_unknown_fields`, so the retired `fidelity` key fails to parse. Every tag must also have an `intensification_ladder.json` `knowledge.lesson_costs` entry — a boot panic otherwise |
 
@@ -217,6 +217,11 @@ stamps `last_contact_turn` with the landed turn, and moves clock 1 (`last_seen_t
 turn: `last_seen_turn` trails `last_contact_turn` by the walk (zero inside the effective comm range).
 Reports in transit are `Expedition` state and ride the checkpoint with it.
 
+**A report also carries who the host knows**: the host's live, freshly contacted outgoing ties, one hop, landed as
+news by the same `record_report` path (`expeditions.md` -> "A stationed party", "The runner also
+carries who the host knows"). They form or refresh `home -> X` edges at the host's remembered
+position and turn, fire no gathering, and feed the knowledge rider's watching channel.
+
 **There is no live credit, and that is the point.** Strength is how well the people know the host,
 and freshness is clock 1 (`last_seen_turn`). A credit with no news home would make the strength
 current while the remembered position is a walk old: the tie read 100% the moment a post arrived
@@ -235,17 +240,32 @@ What follows from it, all intended:
   no post.
 - A posted edge is reaped on the ordinary third clock (`forget_turns` from the last landed report)
   and only if reports stop landing for that long.
+- **`last_seen_turn` trails `last_contact_turn` by the runner's walk, and the walk is not constant.**
+  The delay is `station_report_delay` of the party's distance to the home band's LIVE tile at
+  dispatch, so a home band that walks away stretches it. A reading of `contact 203, seen 194` is a
+  nine-turn walk, not a stuck clock; a stuck clock is `seen` not rising across landed reports.
+- **A landed report is a contact only when it is NEWS**: its observed turn is strictly greater than
+  the `last_seen_turn` home already holds for that subject. The stationed landing loop
+  (`advance_expeditions`) drops a sighting that is not. A direct sighting is news every turn (one
+  turn newer than the last); the case it exists for is a CARRIED tie, which re-delivers the host's
+  one remembered observation every turn the host's edge stays freshly contacted. Without the test
+  that re-delivery raised strength by `gain_per_contact` and refreshed clock 3 each turn, holding
+  home's tie full beside a clock 1 that never moved. A scout's returning flush is not filtered
+  (`record_contact` still raises strength on a stale report, as its guard above states).
 
 ## A traveling party aims at what its people know
 
 The keystone applied to a walk. A stationed party and a shipment (`expeditions.md`) never home on a
 band's live tile for free: `Expedition::aim` is the tile the party is walking toward, set at launch
 by `ConnectionLedger::launch_aim` (the target's live tile when the sender's people know it — the
-target is the sender's own people, or its tile is `Active` on the sender's map — otherwise this
-ledger's `last_seen_position` for the `home -> target` edge) and refreshed each `Outbound` turn only
+target is the sender's own people, or its tile is `Active` on the sender's map — otherwise the
+freshest `last_seen_position` across every edge from any resident band of the sender's people to the
+target, live or parked) and refreshed each `Outbound` turn only
 when the target is the sender's own people or the party itself sees it that turn. Where the target
-cannot be seen, the party walks to the remembered tile and, finding nothing there, turns home. A
-`Stationed` party is standing with its host, which is presence, so it follows the host's live tile.
+cannot be seen, the party walks to the remembered tile and, finding nothing there, turns home (a
+shipment with its cargo). **Knowing where a band is belongs to the PEOPLE; tie strength stays per
+band**: a launch is refused only when the people has never met the target (see "The question a rider
+asks the ledger"). A `Stationed` party is standing with its host, which is presence, so it follows the host's live tile.
 
 ## The three clocks
 
@@ -380,8 +400,9 @@ in-process assertion, and a client reader only notices a missing field once it r
 ## The first rider exists, and it is an expedition
 
 **Cargo (#517)** is the first thing built on top of this primitive. A shipment is a **party that
-walks it** — `ExpeditionMission::Trade`, gated at launch on `ConnectionLedger::get(..).strength >
-NO_TIE` and on nothing about either endpoint's faction. There is no `LogisticsLink` component: what
+walks it** — `ExpeditionMission::Trade`, gated at launch on the sender's PEOPLE
+knowing the destination (`ConnectionLedger::launch_aim` answers; a band of the people holding an
+edge to it, live or parked, is enough) and on nothing about either endpoint's faction. There is no `LogisticsLink` component: what
 maintains a link is a route, and the route ladder is what will hold that state.
 
 Two things the rider does that this module deliberately does not know about: it carries its own
@@ -421,6 +442,43 @@ This module's discipline is about the *edge*: no faction field on `ConnectionKey
 in `connections.rs`. A rider's policy is the rider's.
 `.claude/rules/core_sim/campaign.md` → "Supply Network" has the as-built detail.
 
+## Kin relay a tie, within one people
+
+A tie used to refresh only when the observing band itself sighted the subject. Three bands of one
+people strung in a chain (A sees B, B sees C, A cannot see C) therefore left A to C parked while
+independence, which groups a people's bands by tie *chains* (`lineage.rs`), already counted all
+three as one group. A Trade shipment gates on the sender to target edge, so A could not ship to its
+own kin. Relay makes the two consistent.
+
+**What it is.** `relay_among_kin`, called from `advance_connections` after this turn's direct
+contacts are folded in and before `decay_all`. The graph is exactly this turn's DIRECT contacts: the
+keys of `ContactsThisTurn` (sightings and landed reports), taken before the record loop, DIRECTED
+observer to subject, between resident bands of one people. Band `a` learns of `b` when a directed
+path `a to m to ... to b` of length `2..=kin_relay.max_hops` runs over those edges: kin `m` saw `b`
+this turn and told `a`; `a to b` is then refreshed with `record_contact` at `b`'s live position,
+name and people. A length-one path is `a`'s own contact and is never relayed, so relay cannot create
+a reverse edge and a band that sees nobody hears nothing. A relayed write is never a graph edge,
+this turn or later: a tie with no fresh direct news anywhere along its chain drains on the ordinary
+clock. Walks are in `BandId` order, and a relay that forms a missing edge counts in
+`connections_formed`.
+
+**It is news, never a sighting.** Relay writes the ledger directly and never goes through
+`ContactsThisTurn::record`, and the gathering's `meetings` set is read before it runs. So a relayed
+write never fires a gathering, and gives no belief and no ritual lesson. It refreshes strength,
+clock 1 and clock 3 exactly as an expedition's report does, which leaves the kin tie **live**: a
+later direct meeting between relayed kin is therefore not a gathering, because a gathering is a
+meeting after no live tie. Kin who stay in touch through news have not been apart
+(`tests/kin_relay.rs`).
+
+**Within one people only.** A chain through another people's band relays nothing, and a detached
+party (no `ResidentBand`) is neither a node nor a relayer. A cross-people chain would tie you to
+strangers you never met, and the knowledge rider reads the ledger, so it would teach through that
+tie. This is the one place `advance_connections` branches on faction; the edge itself still carries
+none.
+
+`kin_relay.max_hops` below 2 (`0` or `1`) turns relay off, since the shortest relayed path is
+two. Pinned by `tests/kin_relay.rs`.
+
 ## The question a rider asks the ledger
 
 It lives on `ConnectionLedger` rather than in a rider, because a second copy of *"what counts as a
@@ -433,6 +491,18 @@ live tie"* is a second answer free to drift.
   the source band itself, because contact is band-to-band and one scout meeting one rival camp does
   not make every band of both peoples eligible (`factions.md` → "Defection is the unhappy trickle
   with the same-people filter lifted").
+
+- **`launch_aim(visibility, sender_faction, people, target, target_faction, target_live_tile) ->
+  Option<UVec2>`** — *does the sender's PEOPLE know this band, and where does it go to find it?*
+  `people` is every resident band of the sender's people (`dealings::sender_people_bands`; the edge
+  carries no faction). The target's live tile when it is the sender's own people or `Active` on the
+  faction's map; otherwise the position of the FRESHEST edge (max `last_seen_turn`, a tie to the lower
+  observer `BandId`) from any of `people` to the target, live or parked (any edge not yet forgotten);
+  `None` when none holds — the launch gate's refusal, *"your people has never met band <id>"* — the id the command carried, never the band's name,
+  which a people that never met it does not know. It is the
+  one launch-knowledge question (`check_destination`, the station post). **It does not widen tie
+  strength**: the gatherings, the knowledge rider, supply pooling, defection, independence, station
+  reports and culture pressure keep reading the band's own edge.
 
 - **`edges_between(a, b)`** — the two directed edges as they stand, for a reader that folds them
   itself. Independence reads the strongest strength and the latest `last_contact_turn` between a band

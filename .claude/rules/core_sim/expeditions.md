@@ -847,9 +847,11 @@ does not — and across a faction line, where free equalization deliberately doe
 
 ### The connection gates the LAUNCH, and arrival is not re-gated
 
-`ConnectionLedger::get(ConnectionKey::new(home_band, destination_band))` must exist with
-`strength > NO_TIE` — the arc's *"at zero, nothing flows"*. A **parked** edge (strength `0`, meaning
-*"we know such a people exist and have no current dealings"*) refuses exactly as a missing one does.
+The sender's PEOPLE must know where the destination is: `ConnectionLedger::launch_aim` (via
+`dealings::check_destination`) answers for the sender's own people, a band visible on the people's map,
+or any edge — **live or parked** — from any band of the people, and returns `None` only for a band the
+people never met, which is the one refusal. Knowing where a band is belongs to the people; tie
+STRENGTH stays per band (see "A party aims at what its people know" below).
 
 **If the tie decayed to nothing while the party walked, the shipment still lands.** The party is
 standing in their camp; presence beats the ledger, and the decision to send was made turns ago.
@@ -1277,8 +1279,9 @@ one half keeps the post.
 `server::resolve_post` refuses, each as a command failure with a reason, and a refused launch leaves
 the band exactly as it stood: the shared resident-band and party-size gate
 (`outfit_detached_party`); a host that is not a resident band (a detached party is not one); the host
-being the home band; no edge `home -> host` in the `ConnectionLedger`, or a **parked** one
-(`strength > NO_TIE` is the gate, exactly the shipment's); and, for a host of **another people**, that
+being the home band; a host the home band's **people** never met (`ConnectionLedger::launch_aim`
+returns `None` — exactly the shipment's gate; a parked edge from any band of the people passes); and,
+for a host of **another people**, that
 people's Open Borders. A same-people host never asks it. **The one faction comparison on the whole
 path** is `FactionBorderPolicies::admits_posting(host, from)` — `host == from || is_open(host)` —
 asked at launch and again every turn of the post. A launch draws workers and the kit and nothing
@@ -1335,6 +1338,35 @@ config, derived at capture, never saved. A client quoting a report's delay reads
 `bandMoveTilesPerTurn` and `station_report_delay`'s two branches above. Pinned by
 `station_expedition::the_comm_range_is_published_on_every_cohort_row`.
 
+- **The runner also carries who the host knows, one hop.** When a turn's report is bundled, the
+  host's LIVE and FRESH outgoing ties (`ConnectionLedger::live_sightings_of(host, since_turn)`:
+  every edge `host -> X` with `strength > NO_TIE` and `last_contact_turn >= since_turn`) are merged into its `sightings`, except the home band itself, the host
+  and any band the party sighted directly that turn (a direct sighting is fresher and wins, via
+  `or_insert`). Each is a `Sighting` taken from the HOST's edge: its `last_seen_position`,
+  `subject_name`, `subject_faction` and `last_seen_turn` as the observed turn. It lands exactly like
+  the party's own sightings, as `ContactsThisTurn::record_report(home, X, ..)`: news, never a
+  meeting, so no gathering and no belief; clock 1 holds the host's memory (and the never-backwards
+  guard protects a fresher one home already holds) and clocks 2 and 3 hold the landing turn. Never
+  X's own ties. **Fresh means contacted last turn**: `since_turn = current_turn -
+  LEDGER_CONTACT_LAG_TURNS` (1), because `advance_expeditions` runs in `Population` and
+  `advance_connections` stamps a turn's contacts later in `Visibility`, so the newest contact the
+  ledger can hold at bundling is the previous turn's. A live but stale host tie is not carried:
+  carrying it every turn would pin home's `home -> X` at full while the host's own bleeds out, so
+  home would know X better than the host does. A host of another people carries too: the post is gated on open borders, and these
+  ties feed the knowledge rider's watching channel (`connections.md` -> "Knowledge is the third
+  rider"). The carried sightings live inside `StationReport::sightings`, so they ride the
+  checkpoint with the `Expedition` and no saved shape changed. Pinned by `station_expedition.rs`:
+  a far band's tie lands on the landing turn and not before; a parked tie, the tie back to the home
+  band and a gathering are all absent; a band seen directly and known to the host lands once at
+  the direct position.
+- **A landed sighting counts only when it is news.** The landing loop passes a sighting to
+  `record_report` only if its observed turn is greater than the home edge's `last_seen_turn` (or
+  there is no edge). A carried tie re-delivers the host's memory every turn its edge is kept fresh;
+  the same old observation is not a contact, so it neither raises strength nor refreshes clock 3,
+  and an observation nobody renews bleeds out on the ordinary clock. The party's own direct
+  sighting of its host is a turn newer each turn, so it always passes. Pinned by
+  `station_expedition::{a_stationed_posts_landed_reports_advance_clock_one_every_turn,
+  a_carried_tie_that_is_not_news_does_not_hold_the_home_tie_up}`.
 - **The fold-back lands every report still in transit** (`Returning` and near home, or home
   unresolvable) — the party carries its own news home. A party with no home band to report to
   simply loses it, as a scout loses its findings.
@@ -1395,7 +1427,11 @@ the party is walking toward, and it rides the checkpoint with the `Expedition`.
 - **At launch** (`resolve_post`, `resolve_shipment`) the aim is `ConnectionLedger::launch_aim`: the
   target's live tile when the sender knows it (the target is the sender's own people — your own
   bands are always visible to you — or the target's tile is `Active` on the sender's fog map),
-  otherwise the `last_seen_position` of the `home -> target` edge, which the launch gate guarantees.
+  otherwise the freshest `last_seen_position` across every edge from any resident band of the sender's
+  people to the target, live or parked (`launch_aim` returns `None` when there is none, and the launch
+  gate refuses with *"your people has never met <band>"*). **The shipment (`check_destination`) and the
+  station post (`resolve_post`) share this gate**: knowing the target is the people's, so a band whose
+  own edge is parked or absent can still launch when a sibling holds one or the target is on the map.
 - **Each `Outbound` turn** the aim becomes the target's live tile only if the target is the sender's
   own people, or the party sees the target this turn (its BandId is among the observe pass's
   sightings, read before the station bundle drains `pending_contacts`). Otherwise the aim is kept

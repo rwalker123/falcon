@@ -20,6 +20,10 @@ var _band_banner_box: StyleBoxFlat = null
 # nothing to collide with.
 var _label_rects: Array[Rect2] = []
 var _label_grants: Dictionary = {}   # Vector2i -> Rect2
+var _ghost_label_rects: Dictionary = {}   # subject band id -> Rect2, the ghosts' pills (see draw_remembered_bands)
+var _ghost_pill_box: StyleBoxFlat = null
+var _station_badge_geometry: Dictionary = {}   # Vector2i -> {center, radius, token_center}, the badge drawn this frame
+var _station_badge_tiles: Dictionary = {}   # Vector2i -> true, tiles whose host token wore the anchor badge this frame
 # …and the same pass's FOOTPRINTS, expressed RELATIVE to the token centre they were measured from —
 # see `name_pill_offset`, the one consumer.
 var _label_offsets: Dictionary = {}   # Vector2i -> Rect2
@@ -33,6 +37,15 @@ func _init(view: MapView) -> void:
 ## the active band reads by brightness alone; selection is the hex-shape outline. Beyond
 ## _view.BAND_STACK_MAX_CARDS a `×N` count badge notes the hidden bands.
 func draw_primary_bands(radius: float, origin: Vector2) -> void:
+	_station_badge_tiles.clear()
+	_station_badge_geometry.clear()
+	# A party stationed ON its host's drawn token is badged onto it, not drawn as a card
+	# (`MapView.station_badges`, the one predicate; it stays in `units`, so it is still selectable).
+	var badged_parties: Dictionary = {}   # entity -> true
+	var badge_sources: Dictionary = _view.station_badges()
+	for badge_tile in badge_sources.keys():
+		for entity in badge_sources[badge_tile]:
+			badged_parties[int(entity)] = true
 	# Group _view.units by tile, preserving snapshot order (deterministic stack order).
 	var by_tile: Dictionary = {}   # Vector2i -> Array[Dictionary]
 	var order: Array = []          # tiles in first-seen order
@@ -40,6 +53,8 @@ func draw_primary_bands(radius: float, origin: Vector2) -> void:
 		# Fog: a FOREIGN band on a hex you can't currently see isn't drawn (it used to render straight
 		# through the fog). Your OWN bands always draw — see `_view._unit_hidden_by_fog`.
 		if _view._unit_hidden_by_fog(unit):
+			continue
+		if badged_parties.has(int(unit.get("entity", -1))):
 			continue
 		var pos: Array = Array(unit.get("pos", []))
 		if pos.size() != 2:
@@ -57,20 +72,41 @@ func draw_primary_bands(radius: float, origin: Vector2) -> void:
 	_reserve_name_pills(by_tile, order, radius, origin)
 	for tile in order:
 		_draw_band_stack(by_tile[tile], radius, origin)
+		if badge_sources.has(tile):
+			_draw_station_badge_on_active(by_tile[tile], tile, radius, origin, badge_sources)
 
 ## **REMEMBERED BANDS** — a ghost token for every people the viewer holds a tie to and cannot
 ## currently see (`MapView.remembered_bands`), at the tile it was last seen on. Same stage art a band
 ## token wears, desaturated, at faded by the age of the news (`REMEMBERED_FADE_TURNS`). Drawn in
-## the live `_draw` (above the fog tint, which is a terrain tint), no nameplate and no decorations.
+## the live `_draw` (above the fog tint, which is a terrain tint), no decorations but the anchor badge of a
+## delegate of ours stationed on the ghost's tile (`MapView.station_badges`).
+##
+## **A GHOST NAMES ITSELF, IN THE LIVE NAMEPLATE FAMILY, DIMMED.** Same gate and shape as a live band's
+## plate: the NAME PILL (same font, same anchor under the token, same footprint maths) at/above
+## `BAND_NAME_PILL_MIN_RADIUS`, the scaled bar between that and `ICON_MIN_DETAIL_RADIUS`, nothing below.
+## Everything the plate inks takes the ghost's own `news_age` alpha, so it reads as remembered. The text
+## is `ConnectionsRoster.subject_label` (the Peoples tab's rule; never a raw BandId). The border/bar is
+## the subject's faction colour when the tie carries `subject_faction`, else the neutral fallback.
+## Live pills are reserved first (`_reserve_name_pills`); a ghost pill whose footprint hits a placed
+## rect (live or ghost) is SKIPPED, ghosts placing newest sighting first, then by subject band id.
 func draw_remembered_bands(radius: float, origin: Vector2) -> void:
+	_ghost_label_rects.clear()
 	var rows: Array = _view.remembered_bands()
 	if rows.is_empty():
 		return
 	var tex := _grey_stage_texture(_view.REMEMBERED_STAGE_ID)
 	if tex == null:
 		return
+	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var turn_a := int(a.get("last_seen_turn", 0))
+		var turn_b := int(b.get("last_seen_turn", 0))
+		if turn_a != turn_b:
+			return turn_a > turn_b
+		return int(a.get("subject_band_id", 0)) < int(b.get("subject_band_id", 0)))
 	var token_radius := radius * _view.BAND_TOKEN_RADIUS_FACTOR
 	var glyph_size := int(maxf(_view.SECONDARY_ICON_MIN_SIZE, token_radius * _view.BAND_STAGE_GLYPH_SIZE_FACTOR))
+	var plates: Array = []   # [Rect2, name, border colour, alpha], drawn after every token
+	var station_sources: Dictionary = _view.station_badges()
 	for tie in rows:
 		var alpha := lerpf(_view.REMEMBERED_MAX_ALPHA, _view.REMEMBERED_MIN_ALPHA,
 			clampf(float(tie.get("news_age", 0)) / float(_view.REMEMBERED_FADE_TURNS), 0.0, 1.0))
@@ -81,6 +117,65 @@ func draw_remembered_bands(radius: float, origin: Vector2) -> void:
 		shadow.a *= alpha
 		_view.draw_texture_rect(tex, Rect2(box.position + _view.MARKER_GLYPH_SHADOW_OFFSET, box.size), false, shadow)
 		_view.draw_texture_rect(tex, box, false, Color(1.0, 1.0, 1.0, alpha))
+		# Our delegate stationed with this remembered host rides its ghost token as the anchor badge,
+		# at full alpha: it is live news about OUR party, not part of the remembered picture.
+		var ghost_tile := Vector2i(int(tie.get("last_seen_x", 0)), int(tie.get("last_seen_y", 0)))
+		var ghost_party := _badged_party_for(station_sources, ghost_tile, int(tie.get("subject_band_id", HudConst.NO_BAND_ID)))
+		if ghost_party >= 0:
+			_draw_station_badge(center, token_radius, radius, ghost_tile, _station_badge_color(ghost_party))
+		if radius < _view.ICON_MIN_DETAIL_RADIUS:
+			continue
+		var faction_color: Color = MapView.faction_color(tie.get("subject_faction", ""),
+			_view.BAND_FACTION_FALLBACK_COLOR)
+		if radius < _view.BAND_NAME_PILL_MIN_RADIUS:
+			_draw_band_banner(center, token_radius, faction_color, alpha)
+			continue
+		var band_name := ConnectionsRoster.subject_label(tie, _view._label_roster)
+		var footprint: Rect2 = _name_pill_rects(center, token_radius, band_name, 1)[NAME_PILL_FOOTPRINT]
+		if footprint.size == Vector2.ZERO or _hits_placed_pill(footprint):
+			continue
+		_ghost_label_rects[int(tie.get("subject_band_id", HudConst.NO_BAND_ID))] = footprint
+		plates.append([footprint, band_name, faction_color, alpha])
+	for plate in plates:
+		_draw_ghost_name_pill(plate[0], plate[1], plate[2], plate[3])
+
+## The subject band id -> footprint of every ghost pill the last `draw_remembered_bands` placed.
+func ghost_label_rects() -> Dictionary:
+	return _ghost_label_rects
+
+func _hits_placed_pill(footprint: Rect2) -> bool:
+	for placed in _label_rects:
+		if placed.intersects(footprint):
+			return true
+	for placed in _ghost_label_rects.values():
+		if placed.intersects(footprint):
+			return true
+	return false
+
+## The live pill's plate and text at the ghost's alpha. ONE rounded StyleBoxFlat rather than
+## `_draw_pill_plate`: that plate is a rect plus two circles (plus a border plate under the fill), whose
+## overlaps would double up at alpha < 1 and show seams. Same inked extent (`footprint` is the plate's).
+func _draw_ghost_name_pill(footprint: Rect2, band_name: String, border: Color, alpha: float) -> void:
+	var font: Font = ThemeDB.fallback_font
+	if font == null:
+		return
+	if _ghost_pill_box == null:
+		_ghost_pill_box = StyleBoxFlat.new()
+		_ghost_pill_box.set_border_width_all(int(ceilf(_view.BAND_NAME_PILL_BORDER_WIDTH)))
+	var bg: Color = _view.MARKER_BADGE_BG
+	bg.a *= alpha
+	border.a = alpha
+	_ghost_pill_box.bg_color = bg
+	_ghost_pill_box.border_color = border
+	_ghost_pill_box.set_corner_radius_all(int(ceilf(footprint.size.y * 0.5)))
+	_view.draw_style_box(_ghost_pill_box, footprint)
+	var text_size := _name_text_size(band_name)
+	var fg: Color = _view.MARKER_BADGE_FG
+	fg.a *= alpha
+	var middle := footprint.get_center()
+	_view.draw_string(font,
+		Vector2(middle.x - text_size.x * 0.5, middle.y + text_size.y * NAME_PILL_BASELINE_FACTOR),
+		band_name, HORIZONTAL_ALIGNMENT_LEFT, -1, _view.BAND_NAME_PILL_FONT_SIZE, fg)
 
 var _grey_textures: Dictionary = {}   # stage id -> ImageTexture
 
@@ -414,7 +509,7 @@ const NAME_PILL_BASELINE_FACTOR := 0.32
 ## cannot hold text at any legible size, and above `BAND_NAME_PILL_MIN_RADIUS` the name pill replaces
 ## it at the same anchor. Returns the bar Rect2 so the caller can anchor the `×N` count pill to its
 ## right end.
-func _draw_band_banner(center: Vector2, token_radius: float, faction_color: Color) -> Rect2:
+func _draw_band_banner(center: Vector2, token_radius: float, faction_color: Color, alpha: float = 1.0) -> Rect2:
 	var width := token_radius * _view.BAND_BANNER_WIDTH_FACTOR
 	var height := token_radius * _view.BAND_BANNER_HEIGHT_FACTOR
 	var top := center.y + token_radius + token_radius * _view.BAND_BANNER_GAP_FACTOR
@@ -424,6 +519,11 @@ func _draw_band_banner(center: Vector2, token_radius: float, faction_color: Colo
 		_band_banner_box = StyleBoxFlat.new()
 		_band_banner_box.border_color = _view.BAND_BANNER_OUTLINE_COLOR
 		_band_banner_box.set_border_width_all(int(_view.BAND_BANNER_OUTLINE_WIDTH))
+	# `alpha` < 1 is a remembered band's bar; a live band's is 1.0 and draws exactly as before.
+	var outline: Color = _view.BAND_BANNER_OUTLINE_COLOR
+	outline.a *= alpha
+	_band_banner_box.border_color = outline
+	faction_color.a *= alpha
 	_band_banner_box.bg_color = faction_color
 	_band_banner_box.set_corner_radius_all(int(maxf(0.0, height * _view.BAND_BANNER_CORNER_RADIUS_FACTOR)))
 	_view.draw_style_box(_band_banner_box, rect)
@@ -544,6 +644,74 @@ func _draw_band_lethal_mark(unit: Dictionary, center: Vector2, token_radius: flo
 	var mark_center := center + Vector2(-1.0, -1.0).normalized() \
 		* (token_radius + float(size) * _view.BAND_LETHAL_MARK_CLEARANCE_FACTOR)
 	_view._draw_marker_glyph(mark_center, _view.BAND_LETHAL_MARK_GLYPH, size, HudStyle.DANGER)
+
+## **THE ANCHOR BADGE** — a light disc with the station art (⚓ fallback) on a host token's UPPER-LEFT shoulder (overlapping the glyph, not out at the hex corner),
+## standing for our delegate stationed on that host's tile (`MapView.station_badges`). The party draws no
+## card of its own there. Follow-badge house style (light disc, `PANEL_SOLID`-weight rim) but the rim is OUR
+## faction's colour. Gated on `ICON_MIN_DETAIL_RADIUS`; full alpha even on a ghost. Foreign hosts carry
+## neither the player-only ⚠ nor any other upper-left decoration, so the corner is free.
+func _draw_station_badge(center: Vector2, token_radius: float, radius: float, tile: Vector2i,
+		rim_color: Color) -> void:
+	if radius < _view.ICON_MIN_DETAIL_RADIUS:
+		return
+	_station_badge_tiles[tile] = true
+	var glyph_half := token_radius * _view.BAND_STAGE_GLYPH_SIZE_FACTOR * 0.5
+	var badge_center := center + Vector2(-1.0, -1.0) * glyph_half * _view.BAND_STATION_BADGE_OFFSET_FACTOR
+	var disc_radius: float = token_radius * _view.BAND_STATION_BADGE_DISC_FACTOR
+	_station_badge_geometry[tile] = {"center": badge_center, "radius": disc_radius, "token_center": center,
+		"token_radius": token_radius}
+	_view.draw_circle(badge_center, disc_radius, Color(HudStyle.INK, 0.95))
+	_view.draw_arc(badge_center, disc_radius, 0, TAU, _view.BAND_FOLLOW_BADGE_RIM_SEGMENTS,
+		rim_color, _view.BAND_STATION_BADGE_RIM_WIDTH)
+	var glyph_size := int(maxf(_view.SECONDARY_ICON_MIN_SIZE, token_radius * _view.BAND_STATION_BADGE_SIZE_FACTOR))
+	var art := ExpeditionSprites.for_mission(_view.EXPEDITION_STATION_MISSION)
+	if art != null:
+		_view._draw_marker_sprite(badge_center, art, glyph_size)
+	else:
+		_view._draw_marker_glyph(badge_center, _view.EXPEDITION_STATION_GLYPH, glyph_size, HudStyle.PANEL_SOLID)
+
+## The badge on a LIVE host's stack: worn by the tile's active card, where the nameplate hangs. Only a
+## party whose host is a live band standing in this very group badges here (a ghost host's badge is the
+## ghost's, even when another band of ours happens to share the hex).
+func _draw_station_badge_on_active(group: Array, tile: Vector2i, radius: float, origin: Vector2,
+		sources: Dictionary) -> void:
+	var party_entity := -1
+	for unit in group:
+		if bool((unit as Dictionary).get("is_expedition", false)):
+			continue
+		party_entity = _badged_party_for(sources, tile, int((unit as Dictionary).get("band_id", HudConst.NO_BAND_ID)))
+		if party_entity >= 0:
+			break
+	if party_entity < 0:
+		return
+	var center: Vector2 = _view._hex_center_wrapped(tile.x, tile.y, radius, origin)
+	_draw_station_badge(center, radius * _view.BAND_TOKEN_RADIUS_FACTOR, radius, tile, _station_badge_color(party_entity))
+
+## The badged party (entity) on `tile` whose destination host is `host_band`, or -1.
+func _badged_party_for(sources: Dictionary, tile: Vector2i, host_band: int) -> int:
+	if not sources.has(tile):
+		return -1
+	for entity in sources[tile]:
+		for unit in _view.units:
+			if int(unit.get("entity", -1)) == int(entity) \
+					and int(unit.get("expedition_destination_band", HudConst.NO_BAND_ID)) == host_band:
+				return int(entity)
+	return -1
+
+## Rim colour: the badged party's own faction colour.
+func _station_badge_color(party_entity: int) -> Color:
+	for unit in _view.units:
+		if int(unit.get("entity", -1)) == party_entity:
+			return _band_faction_color(unit)
+	return HudStyle.PANEL_SOLID
+
+## Where the badge drew, per tile: `{center, radius, token_center, token_radius}` (harness probe).
+func station_badge_geometry() -> Dictionary:
+	return _station_badge_geometry
+
+## Tiles whose host token wore the anchor badge in the last draw pass.
+func station_badge_tiles() -> Array:
+	return _station_badge_tiles.keys()
 
 ## The migration-mode badge: a small 👣 on a dark disc at the token's upper-right, shown while any of the
 ## band's hunt rows moves its camp with a herd. Gated on the detail radius like the nameplate — below

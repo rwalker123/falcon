@@ -364,12 +364,12 @@ func _sheet_states(panel: BandCityPanel) -> void:
 		h._assert_hud("sheet: …`%s` (got `%s`)" % [want, line], line == want)
 
 	# ---- nobody of theirs is known: the send is greyed with its reason ------------------------------------
-	# Moorfolk's tie is parked for this frame: a band known only by a tie with no strength is refused.
+	# Moorfolk has no tie of any strength (live or parked) on this frame, so the people knows no band of theirs.
 	var parked_ties: Array = []
 	for tie_variant in _fx._ties():
 		var tie: Dictionary = (tie_variant as Dictionary).duplicate()
 		if int(tie.get("subject_faction", -1)) == DEALINGS.MOOR_FACTION:
-			tie["strength"] = DEALINGS.MOOR_TIE_PARKED
+			continue
 		parked_ties.append(tie)
 	h._hud.update_connections(parked_ties)
 	panel.set_active_tab(BandCityPanel.ZONE_PEOPLES)
@@ -420,6 +420,17 @@ func _sheet_states(panel: BandCityPanel) -> void:
 			ash_send != null and not ash_send.disabled
 				and _text(_form()).contains(HudDealingsVocab.TREATY_VIA_ENVOY_FORMAT % DEALINGS.ASH_NAME))
 		h._hud.close_verb_form() if h._hud.has_method("close_verb_form") else null
+	# ...and a people known ONLY through a PARKED tie (strength 0) is offered too: the sim's launch aim accepts
+	# any edge from any band of the sender's people, so the envoy surface asks what the people knows.
+	var parked_envoy_ties: Array = _fx._ties()
+	parked_envoy_ties.append(_fx._tie(DEALINGS.ASH_ENTITY, DEALINGS.ASH_NAME, DEALINGS.ASH_SEEN,
+		DEALINGS.ASH_FACTION, 0.0))
+	h._hud.update_connections(parked_envoy_ties)
+	h._hud.show_unit_selection(_fx._home_band())
+	await h._settle()
+	h._assert_hud("parked: the people known only through a parked tie is an envoy destination",
+		h._hud._band_labor.known_bands_of_people(DEALINGS.ASH_FACTION).size() == 1
+			and h._hud._band_labor.remembered_factions().has(DEALINGS.ASH_FACTION))
 	h._hud.update_connections(_fx._ties())
 	panel.set_active_tab(BandCityPanel.ZONE_PEOPLES)
 	await h._settle()

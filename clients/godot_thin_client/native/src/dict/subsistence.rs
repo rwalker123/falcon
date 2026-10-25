@@ -1379,6 +1379,8 @@ pub(crate) fn ladder_rungs_to_array(
         let _ = dict.insert("work_cost", f64::from(rung.workCost()));
         // "Up to N builders at once" -- the rung's own builder cap (0 on a rung with no build).
         let _ = dict.insert("max_builders", i64::from(rung.maxBuilders()));
+        // The belief the tile must hold for the rung to be placed there (0 = asks nothing of it).
+        let _ = dict.insert("min_belief", f64::from(rung.minBelief()));
         let _ = dict.insert("upkeep_work_per_turn", f64::from(rung.upkeepWorkPerTurn()));
         // The rung's declared pile and its noun are ONE reading: decoded together, read together.
         let _ = dict.insert("build_material_cost", f64::from(rung.buildMaterialCost()));

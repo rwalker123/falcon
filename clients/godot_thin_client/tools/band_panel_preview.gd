@@ -13115,12 +13115,22 @@ func _guard_frame_rung_offers(state: String) -> void:
 		if kind == HudConst.LABOR_KIND_EXTRACT:
 			continue
 		_rung_offer_slots += 1
-		var rows := RungLadder.track(kind, _hud._rungcard.source_of(model),
-			HudComposeVocab.BARE_FORECAST_PREFIX, String(model.get("improvement", "")),
-			# **THE PANEL'S OWN BAND, for fidelity with `_open_rung_track` rather than out of
-			# necessity** — `has_track` is a function of the SOURCE's standing alone; the band is read
-			# only for the material asides on the rows above it.
-			_hud._rungcard._player_knowledge(), _hud._band_labor._panel_band)
+		var rows: Array[Dictionary] = []
+		if kind == HudConst.LABOR_KIND_TILE:
+			# A tile improvement's ⌃ opens the tile branches' own track (`open_tile_track`), asked
+			# through the very rows function the card renders from.
+			rows = _hud._rungcard.tile_track_rows(_hud._band_labor._panel_band,
+				{"x": int(model.get("x", -1)), "y": int(model.get("y", -1))},
+				String(model.get("branch", "")),
+				_hud._band_labor.tile_crew_total(int(model.get("x", -1)), int(model.get("y", -1)),
+					String(model.get("branch", ""))))
+		else:
+			rows = RungLadder.track(kind, _hud._rungcard.source_of(model),
+				HudComposeVocab.BARE_FORECAST_PREFIX, String(model.get("improvement", "")),
+				# **THE PANEL'S OWN BAND, for fidelity with `_open_rung_track` rather than out of
+				# necessity** — `has_track` is a function of the SOURCE's standing alone; the band is
+				# read only for the material asides on the rows above it.
+				_hud._rungcard._player_knowledge(), _hud._band_labor._panel_band)
 		if RungLadder.has_track(rows):
 			_rung_offer_tracks += 1
 			continue

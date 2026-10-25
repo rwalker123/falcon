@@ -68,6 +68,7 @@ use bevy::prelude::Resource;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::belief::NO_BELIEF;
 use crate::config_load::{load_config_from_env, ConfigLoadError};
 use crate::equipment_config::KitJob;
 pub use crate::ladder_ids::{BranchId, RungId, VerbId};
@@ -1995,6 +1996,13 @@ pub struct RungSiteRequirement {
     /// zero, it is a rung that has never heard of deposits.
     #[serde(default)]
     pub min_deposit_capacity: f32,
+    /// **THE BELIEF FLOOR - "a gathering ground is a tile that holds belief"** (#692). The belief
+    /// standing on the tile (`BeliefRegistry::get`) must reach this for the rung to be placed there,
+    /// judged through the same [`Self::refusal`] seam as every other site term. [`NO_BELIEF`] = no
+    /// floor, which is every rung but a belief branch's; **absent => [`NO_BELIEF`]**, so every other
+    /// shipped record stays byte-identical.
+    #[serde(default)]
+    pub min_belief: f32,
 }
 
 /// **ONE SIZE TIER OF AN ENCLOSED RUNG** ([`RungDef::size_tiers`]): a derived standing, read off how
@@ -2065,6 +2073,10 @@ pub enum SiteRefusal {
     /// collide in practice — a deposit rung asks nothing of fertility or water, and a plant rung asks
     /// nothing of rock — but the order is stated rather than left to whichever check runs first.
     NoDeposit,
+    /// **THE TILE HOLDS TOO LITTLE BELIEF** - the belief standing on it falls short of the rung's
+    /// [`RungSiteRequirement::min_belief`]: nobody has gathered, buried or prayed here enough for a
+    /// monument. Ranked beside [`Self::NoDeposit`], ahead of the two ground readings.
+    NoBelief,
     /// The ground is watered, but too thin to take a crop without fertilization.
     TooPoor,
     /// The ground is rich, but too dry to farm without irrigation.
@@ -2093,6 +2105,7 @@ impl SiteRefusal {
         match self {
             SiteRefusal::NotGatheringSite => "not_gathering_site",
             SiteRefusal::NoDeposit => "no_deposit",
+            SiteRefusal::NoBelief => "no_belief",
             SiteRefusal::TooPoor => "too_poor",
             SiteRefusal::TooDry => "too_dry",
             SiteRefusal::TooPoorAndTooDry => "too_poor_and_too_dry",
@@ -2153,12 +2166,16 @@ impl RungSiteRequirement {
         forage_capacity: f32,
         fresh_water: bool,
         deposit_capacity: f32,
+        belief: f32,
     ) -> Option<SiteRefusal> {
         if self.requires_gathering_site && !gathering_site {
             return Some(SiteRefusal::NotGatheringSite);
         }
         if deposit_capacity < self.min_deposit_capacity {
             return Some(SiteRefusal::NoDeposit);
+        }
+        if belief < self.min_belief {
+            return Some(SiteRefusal::NoBelief);
         }
         let too_poor = forage_capacity < self.min_forage_capacity;
         let too_dry = self.requires_fresh_water && !fresh_water;
@@ -2796,6 +2813,7 @@ impl RungDef {
         forage_capacity: f32,
         fresh_water: bool,
         deposit_capacity: f32,
+        belief: f32,
     ) -> Option<&str> {
         self.site_relaxations
             .iter()
@@ -2808,6 +2826,7 @@ impl RungDef {
                         forage_capacity,
                         fresh_water,
                         deposit_capacity,
+                        belief,
                     )
                     .is_none()
             })
@@ -3528,6 +3547,22 @@ pub struct LadderKnowledge {
     /// by a gathering band (fibre is everywhere) and Bone-working slowly by anyone (bone is the
     /// scarcest yield on the roster), with no per-craft dial saying so.
     pub craft_lesson_per_item: f32,
+    /// **What one GATHERING is worth toward the ritual lesson, in PRACTICE UNITS** (#692) - the
+    /// gathering twin of [`Self::craft_lesson_per_item`]: a gathering (two bands meeting after no
+    /// live tie) pays this much practice, through [`Self::ledger_credit`], to the people of EACH
+    /// band in the pair (a pair of one people pays it once). At `4.0` against a `ritual` cost of
+    /// `20`, the lesson is learned in **5 gatherings**. A sibling of `learn_rate` rather than a
+    /// reading of it because the quantum differs: a gathering is a discrete event, not a worked turn
+    /// with a floor to scale by. PLAYTEST DIAL; validated finite and `> 0`.
+    pub ritual_lesson_per_gathering: f32,
+    /// **What living near your dead is worth toward the ritual lesson, per turn, in PRACTICE
+    /// UNITS** - the slow second way to learn `ritual` for a people whose gatherings have dried up.
+    /// Each turn a people is credited this times the strongest ancestor tie
+    /// (`CultureConfig::ancestor_tie`, `0..1`) among its RESIDENT bands - the MAX, never the sum,
+    /// so parking more bands by one grave does not multiply it - through [`Self::ledger_credit`].
+    /// At `0.4`, ten dead at the anchor with the band standing on it (tie `0.5`) pays `0.2` a turn.
+    /// `0` switches the trickle off. PLAYTEST DIAL; validated finite and `>= 0`.
+    pub ritual_lesson_per_turn_at_full_tie: f32,
     /// **How much rot is one full turn of STORAGE practice** (#707), in turns of the band's OWN
     /// need: food rotting in one turn equal to this many turns of need counts as one full turn of
     /// practice (`learn_rate` worth). A sibling of [`Self::learn_rate`] because the quantum differs;
@@ -4991,10 +5026,12 @@ impl LadderConfig {
         let taught = self.rungs.iter().flat_map(|rung| rung.taught_lessons());
         let rot_taught = std::iter::once(crate::spoilage::STORAGE_KNOWLEDGE);
         let roaming = crate::roaming_skills::ROAMING_SKILLS.iter().copied();
+        let gathering_taught = std::iter::once(crate::belief::RITUAL_KNOWLEDGE);
         for name in taught
             .chain(crate::crafting::CRAFTS_WITH_A_DISCOVERY.iter().copied())
             .chain(rot_taught)
             .chain(roaming)
+            .chain(gathering_taught)
         {
             if self.knowledge.lesson_cost(name).is_none() {
                 return Err(LadderConfigError::Invalid {
@@ -5468,6 +5505,35 @@ fn validate_knowledge(knowledge: &LadderKnowledge) -> Result<(), LadderConfigErr
             ),
         });
     }
+    if !knowledge.ritual_lesson_per_gathering.is_finite()
+        || knowledge.ritual_lesson_per_gathering <= 0.0
+    {
+        return Err(LadderConfigError::Invalid {
+            field: "knowledge".to_string(),
+            constraint: "pay a positive amount of practice per gathering - at \
+                         `ritual_lesson_per_gathering <= 0` no gathering ever teaches ritual and \
+                         the monument stays permanently unreachable"
+                .to_string(),
+            value: format!(
+                "ritual_lesson_per_gathering = {}",
+                knowledge.ritual_lesson_per_gathering
+            ),
+        });
+    }
+    if !knowledge.ritual_lesson_per_turn_at_full_tie.is_finite()
+        || knowledge.ritual_lesson_per_turn_at_full_tie < 0.0
+    {
+        return Err(LadderConfigError::Invalid {
+            field: "knowledge".to_string(),
+            constraint: "pay a finite, non-negative amount of practice per turn at full ancestor \
+                         tie - `0` switches the trickle off, a negative rate would unlearn ritual"
+                .to_string(),
+            value: format!(
+                "ritual_lesson_per_turn_at_full_tie = {}",
+                knowledge.ritual_lesson_per_turn_at_full_tie
+            ),
+        });
+    }
     if !knowledge.storage_lesson_rot_turns.is_finite() || knowledge.storage_lesson_rot_turns <= 0.0
     {
         return Err(LadderConfigError::Invalid {
@@ -5599,12 +5665,12 @@ fn validate_route_payoff(
     Ok(())
 }
 
-/// **A TILE RUNG IS BUILT AND KEPT WITH WORK ALONE, AND THE REFUSAL IS THE POINT.** A tile
-/// improvement's keeping is paid out of the keeper band's `Roadwork` pool, which settles work, and
-/// its build is struck against the build crew with no material pile (`tile_improvement`'s module
-/// note). A material on a tile rung would parse, validate, publish a demand and be paid by nobody -
-/// the *"looks live but isn't"* failure this file is written against - so it is refused until a
-/// settle pass exists to pay it, and this check is then deleted deliberately.
+/// **A TILE OR BAND RUNG IS KEPT WITH WORK ALONE, AND THE REFUSAL IS THE POINT.** A tile improvement's
+/// keeping is paid by its crew row, which settles work only, so a standing material RATE on either
+/// kind would parse, validate, publish a demand and be paid by nobody - the *"looks live but isn't"*
+/// failure this file is written against. A BUILD pile is another matter: the build settlement is
+/// source-kind blind (the building band's builders draw the pile from that band's own store as the
+/// meter climbs, the pen's hurdles exactly), so a tile or band rung may carry one.
 fn validate_tile_rung_is_work_only(
     rung: &RungDef,
     source: SourceKind,
@@ -5613,26 +5679,19 @@ fn validate_tile_rung_is_work_only(
     if !matches!(source, SourceKind::Tile | SourceKind::Band) {
         return Ok(());
     }
-    // **A band rung may carry a BUILD pile** - the band's builders draw it from the band's own store
-    // as the meter climbs, the pen's hurdles exactly - but a standing material RATE is paid by
-    // nobody on either kind, so it is refused on both.
-    let build_materials = match source {
-        SourceKind::Band => 0,
-        _ => rung.build.as_ref().map_or(0, |build| build.materials.len()),
-    };
     let upkeep_materials = rung
         .upkeep
         .as_ref()
         .map_or(0, |upkeep| upkeep.materials.len());
-    if build_materials + upkeep_materials > 0 {
+    if upkeep_materials > 0 {
         return Err(LadderConfigError::Invalid {
-            field: format!("{where_}.materials"),
+            field: format!("{where_}.upkeep.materials"),
             constraint:
-                "build and keep a tile improvement with WORK alone - the tile kind settles \
-                         no material, so a pile or a rate here would publish a demand that nothing \
-                         ever pays"
+                "keep a tile improvement with WORK alone - the keeping crew settles no material, \
+                 so a standing rate here would publish a demand that nothing ever pays (a BUILD \
+                 pile is allowed: the builders draw it)"
                     .to_string(),
-            value: format!("{} material(s)", build_materials + upkeep_materials),
+            value: format!("{upkeep_materials} material(s)"),
         });
     }
     Ok(())
@@ -5996,8 +6055,19 @@ fn validate_one_site_requirement(
             value: format!("min_deposit_capacity = {}", site.min_deposit_capacity),
         });
     }
+    if !site.min_belief.is_finite() || site.min_belief < NO_BELIEF {
+        return Err(LadderConfigError::Invalid {
+            field: where_.to_string(),
+            constraint: format!(
+                "set a finite belief floor of at least {NO_BELIEF} - the floor is compared against \
+                 the belief standing on the tile, which is never negative"
+            ),
+            value: format!("min_belief = {}", site.min_belief),
+        });
+    }
     if site.min_forage_capacity <= NO_FORAGE_CAPACITY
         && site.min_deposit_capacity <= NO_DEPOSIT_FLOOR
+        && site.min_belief <= NO_BELIEF
         && !site.requires_fresh_water
         && !site.requires_gathering_site
     {
@@ -6005,7 +6075,7 @@ fn validate_one_site_requirement(
             field: where_.to_string(),
             constraint: "require SOMETHING of the site, or state `site_requirement: null` — a                          requirement that admits every tile reads as a placement rule while being                          none, which is how a rung's scarcity silently evaporates"
                 .to_string(),
-            value: "min_forage_capacity = 0 and min_deposit_capacity = 0 with \
+            value: "min_forage_capacity = 0, min_deposit_capacity = 0 and min_belief = 0 with \
                     requires_fresh_water = false and requires_gathering_site = false"
                 .to_string(),
         });
@@ -6830,6 +6900,12 @@ mod tests {
             ("camp_stores:drying_rack", "Drying rack", "a drying rack"),
             ("food_stores:unstored", "No store", "no store"),
             ("food_stores:storage_pit", "Storage pit", "a storage pit"),
+            (
+                "belief:gathering_ground",
+                "Gathering ground",
+                "a gathering ground",
+            ),
+            ("belief:monument", "Monument", "a monument"),
         ];
         assert_eq!(words.len(), ladder.rungs.len());
         for (key, label, fallback) in words {
@@ -6934,10 +7010,15 @@ mod tests {
             .map(RungDef::rung_id);
         assert_eq!(above_root, Some(graft.rung_id()));
         assert!(graft.trait_set().has(RungTrait::Managed));
-        // The shipped `food_stores` branch is a tile branch too; the novel one joins it.
+        // The shipped `food_stores` and `belief` branches are tile branches too; the novel one joins
+        // them.
         assert_eq!(
             ladder.branches_of(SourceKind::Tile).collect::<Vec<_>>(),
-            [BranchId::new("food_stores"), orchard]
+            [
+                BranchId::new("food_stores"),
+                BranchId::new("belief"),
+                orchard
+            ]
         );
     }
 
@@ -7045,7 +7126,11 @@ mod tests {
     /// `match` the name lookup used to be.
     #[test]
     fn every_knowledge_name_resolves_through_the_tag_table_to_its_coded_id() {
-        let coded: [(&str, u32); 14] = [
+        let coded: [(&str, u32); 15] = [
+            (
+                crate::belief::RITUAL_KNOWLEDGE,
+                crate::belief::RITUAL_DISCOVERY_ID,
+            ),
             ("cultivation", crate::forage::CULTIVATION_DISCOVERY_ID),
             ("herding", crate::fauna::HERDING_DISCOVERY_ID),
             ("seed_selection", crate::forage::SEED_SELECTION_DISCOVERY_ID),
@@ -9481,34 +9566,35 @@ mod tests {
             min_forage_capacity: 0.0,
             requires_fresh_water: true,
             min_deposit_capacity: 0.0,
+            min_belief: NO_BELIEF,
         };
         let farm_own = LadderConfig::builtin()
             .rung(shipped::plant_farm())
             .site_requirement
             .expect("rung 3 has a site requirement");
         assert_eq!(
-            farm_own.refusal(true, 0.0, false, NO_DEPOSIT_FLOOR),
+            farm_own.refusal(true, 0.0, false, NO_DEPOSIT_FLOOR, NO_BELIEF),
             None,
             "a dry gathering site takes the Farm: water is asked only of new ground"
         );
 
         assert_eq!(
-            site.refusal(true, 0.0, true, NO_DEPOSIT_FLOOR),
+            site.refusal(true, 0.0, true, NO_DEPOSIT_FLOOR, NO_BELIEF),
             None,
             "a watered gathering site takes seed"
         );
         assert_eq!(
-            site.refusal(true, 0.0, false, NO_DEPOSIT_FLOOR),
+            site.refusal(true, 0.0, false, NO_DEPOSIT_FLOOR, NO_BELIEF),
             Some(SiteRefusal::TooDry),
             "a dry gathering site is refused on water alone"
         );
         assert_eq!(
-            site.refusal(false, 0.0, true, NO_DEPOSIT_FLOOR),
+            site.refusal(false, 0.0, true, NO_DEPOSIT_FLOOR, NO_BELIEF),
             Some(SiteRefusal::NotGatheringSite),
             "ground nobody gathers is refused before anything else is asked of it"
         );
         assert_eq!(
-            site.refusal(false, 0.0, false, NO_DEPOSIT_FLOOR),
+            site.refusal(false, 0.0, false, NO_DEPOSIT_FLOOR, NO_BELIEF),
             Some(SiteRefusal::NotGatheringSite),
             "the gathering-site fault SUPERSEDES the others — a tile that is also dry must not be \
              told two things it cannot act on"
@@ -9521,13 +9607,14 @@ mod tests {
             min_forage_capacity: 40.0,
             requires_fresh_water: true,
             min_deposit_capacity: NO_DEPOSIT_FLOOR,
+            min_belief: NO_BELIEF,
         };
         assert_eq!(
-            farm.refusal(false, 39.0, true, NO_DEPOSIT_FLOOR),
+            farm.refusal(false, 39.0, true, NO_DEPOSIT_FLOOR, NO_BELIEF),
             Some(SiteRefusal::TooPoor)
         );
         assert_eq!(
-            farm.refusal(false, 39.0, false, NO_DEPOSIT_FLOOR),
+            farm.refusal(false, 39.0, false, NO_DEPOSIT_FLOOR, NO_BELIEF),
             Some(SiteRefusal::TooPoorAndTooDry)
         );
     }
@@ -9542,6 +9629,7 @@ mod tests {
             min_forage_capacity: 40.0,
             requires_fresh_water: true,
             min_deposit_capacity: NO_DEPOSIT_FLOOR,
+            min_belief: NO_BELIEF,
         };
         // Fertile, watered ground that simply is not a gathering site: refused at rung 3, farmable
         // at rung 4. That difference IS what Farm unlocks.
@@ -9550,10 +9638,13 @@ mod tests {
                 .rung(shipped::plant_farm())
                 .site_requirement
                 .expect("rung 3 has a site requirement")
-                .refusal(false, 195.0, true, NO_DEPOSIT_FLOOR),
+                .refusal(false, 195.0, true, NO_DEPOSIT_FLOOR, NO_BELIEF),
             Some(SiteRefusal::NotGatheringSite)
         );
-        assert_eq!(farm.refusal(false, 195.0, true, NO_DEPOSIT_FLOOR), None);
+        assert_eq!(
+            farm.refusal(false, 195.0, true, NO_DEPOSIT_FLOOR, NO_BELIEF),
+            None
+        );
     }
 
     #[test]
