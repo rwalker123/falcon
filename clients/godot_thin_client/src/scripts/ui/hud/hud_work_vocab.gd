@@ -2883,6 +2883,10 @@ const RUNG_TRACK_STALL_STEPS := [
 ## boundary rather than a dial: a store under it is nearer to nothing than to a tenth.
 const RUNG_TRACK_STALL_BARELY := "barely at all"
 
+## The sentence a store under that cut reads as. It replaces `RUNG_TRACK_STALL_FORMAT` rather than
+## filling its second slot, because "it will stall at about barely at all" is not English.
+const RUNG_TRACK_STALL_BARELY_FORMAT := "you have %s — it will stall almost at once"
+
 ## `then 1 work · 0.05 hurdles a turn to hold` — the STANDING price of the rung being offered, beside
 ## the one-off pile above it. **Every rung above the standing one states it, materials or not**: what
 ## a player is agreeing to is a one-off cost AND a bill for as long as the thing stands, and the

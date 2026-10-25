@@ -450,28 +450,21 @@ characteristic axes (`docs/plan_crafting_and_materials.md`). Not a per-species t
 and a storehouse is not; folding them into one ladder would make "raise the granary" also mean "store
 hide". (Named with Ray; rung costs and capacities are not set.)
 
-**After the granary: directed labor and consent.** The band's leader is not what step 5 adds — a
-chief (or an elders' council) comes earlier, from work that needs an organiser, granary or no granary
-(the last bullet below). What step 5 models is the **band's consent to labor that feeds no one,
-bought with surplus**:
+**Directed labor and consent.** The band's leader is not what this adds — a chief (or an elders'
+council) comes earlier, from work that needs an organiser (the last bullet below). What it models is
+the **band's consent to directed labor**:
 
-- **Labor that feeds no one is paid from the granary.** Workers on a monument or a wall eat and
-  produce nothing; the work runs while the granary can carry them and ends when it empties. An empty
-  larder stops the work, not a rule.
 - **The band sets how much direction it tolerates.** The manual's Hierarchical↔Egalitarian axis
   (§7c: acceptance of stratification, ease of command-chain mobilization) is exactly this. An
-  egalitarian band bears a short stretch of non-food labor and then grievance climbs — the leveling
+  egalitarian band bears a short stretch of directed labor and then grievance climbs — the leveling
   mechanism in our vocabulary. A hierarchical band bears far more.
-- **Each fed completion pushes the axis toward Hierarchical.** Temporary prestige becoming rank is the
+- **Each completion pushes the axis toward Hierarchical.** Temporary prestige becoming rank is the
   axis drifting until direction is simply accepted — the band's leader ruling more and consulting
   less. The axis decides which kind of leader the band has; The Telling narrates it, then a line of
   them. No king button, the same emergent shape as the settlement label.
-- **The reserved `leadership` morale contributor** is positive while directed work is fed and
-  completing, negative when the granary runs dry under it — a chief who delivers is followed, a chief
-  who cannot feed is mocked.
-- **Not modelled:** who within the band holds the granary. That is The Telling's to narrate; a second
-  political layer inside a thirty-person band is more than the early game can carry.
-- **The chief comes before the granary.** A band gains a chief (or, Egalitarian, an elders'
+- **The reserved `leadership` morale contributor** is positive while directed work is completing —
+  a chief who delivers is followed.
+- **The chief comes first.** A band gains a chief (or, Egalitarian, an elders'
   council) once it has done enough that needs an organiser — finished Cultivates and Tames, a split,
   the hexes it walks following a herd, reaching a settlement stage — so migratory peoples get one
   too. The axis above
@@ -479,8 +472,8 @@ bought with surplus**:
   band orders from the player: `docs/plan_labor_at_scale.md` → "Leaders: four levels of orders".
 
 **Order for the arc (leaning):** spoilage with the storage lesson → the tile-source seam
-(settlement arc) with storage as its first branch → the granary as a tether → directed labor and the
-`leadership` term. The chief itself is not on this line: it arrives once a band has done enough work
+(settlement arc) with storage as its first branch → the granary as a tether. Directed labor and the
+`leadership` term do not wait on the granary. The chief itself is not on this line: it arrives once a band has done enough work
 that needs an organiser (#859), before any of it.
 **Measured (#705):** a starting band on its starting tiles runs **no** surplus — net ≈0 once its
 starting larder is spent, on every biome measured (see "The push is depletion" above). The storage

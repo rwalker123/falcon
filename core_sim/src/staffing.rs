@@ -1572,6 +1572,7 @@ pub(crate) fn with_band_staffing_over<R>(
     }
     let no_discovery = crate::resources::DiscoveryProgressLedger::default();
     let no_sites = crate::resources::FoodSiteRegistry::default();
+    let no_belief = crate::belief::BeliefRegistry::default();
     let stores = &cohort.stores;
     Some(crate::take_claims::with_world_sources(
         world,
@@ -1605,6 +1606,9 @@ pub(crate) fn with_band_staffing_over<R>(
                 grid,
                 wrap_horizontal,
                 stores,
+                belief: world
+                    .get_resource::<crate::belief::BeliefRegistry>()
+                    .unwrap_or(&no_belief),
             };
             let can_progress = |declaration: &crate::components::BuildDeclaration| {
                 crate::systems::declared_build_can_progress(

@@ -266,12 +266,36 @@ func run(harness) -> void:
 			and waiting_send.tooltip_text == HudComposeVocab.TRADE_SEND_NEEDS_DESTINATION)
 	h._assert_hud("…and the same reason is written under the button",
 		_send_reason_text() == HudComposeVocab.TRADE_SEND_NEEDS_DESTINATION)
-	# **A PARKED TIE IS NOT A DESTINATION**: a click on where it was last seen sets nothing — the ring
-	# never offered it.
+	# **A PARKED-ONLY TIE IS A DESTINATION**: where a band is belongs to the whole people, and tie strength
+	# gates nothing here. The band is out of sight, so the ring and the click sit where the tie last saw it.
+	var parked_label: String = h._hud._band_labor.host_label_for_id(
+		BandFx.FIXTURE_BAND_ID_OFFSET + PARKED_ENTITY)
 	h._hud.notify_targeting_click(_tile_info(PARKED_LAST_SEEN))
 	await h._settle()
-	h._assert_hud("a click on a PARKED tie's band sets no destination",
-		Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META) == null)
+	var parked_to := Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META)
+	h._assert_hud("a click on a PARKED-only tie's out-of-sight band sets To = %s" % parked_label,
+		parked_to != null and _collect_text(parked_to).contains(parked_label))
+	h._hud.close_verb_form()
+	await h._settle()
+
+	# **A DENY SHEET CAPTURES NO BAND CLICK.** The band-click capture is the Trade descriptor's alone:
+	# under an open Deny sheet a click on a band's hex still selects it. Judged on the REAL descriptor
+	# the controller hands MapView, against a real MapView holding the bands.
+	var capture_map: MapView = h.MAP_VIEW_SCRIPT.new()
+	h.add_child(capture_map)
+	capture_map.set_fow_enabled(false)
+	capture_map.units = _capture_units()
+	var deny_button := _verb_button(HudComposeVocab.VERB_DENY)
+	h._assert_hud("the band drawer offers Deny", deny_button != null)
+	if deny_button != null:
+		deny_button.emit_signal("pressed")
+	await h._settle()
+	capture_map.set_targeting(h._hud._targeting._current_targeting_info())
+	h._assert_hud("(e) with a Deny sheet open, a band's hex is NOT captured",
+		h._hud._targeting.is_preselect_on()
+			and not capture_map.targeting_click_captures(PARKED_STANDS_AT.x, PARKED_STANDS_AT.y)
+			and not capture_map.targeting_click_captures(STRANGER_TILE.x, STRANGER_TILE.y))
+	capture_map.set_targeting({})
 	h._hud.close_verb_form()
 	await h._settle()
 
@@ -286,10 +310,98 @@ func run(harness) -> void:
 	await _load_reference_manifest()
 	var highlight: Array = h._hud._targeting._current_targeting_info().get(
 		TargetingController.TARGETING_HIGHLIGHT_TILES_KEY, [])
-	h._assert_hud("the open sheet rings the live tie's band, not the parked one (%s)" % str(highlight),
+	# Everything the people knows: the neighbour where it stands, the parked-only band at its last sighting,
+	# the visible foreign band with no tie at all, and the live-tie band where it stands (not where its
+	# tie filed it) — and neither the sender's hex nor the party's.
+	h._hud._band_labor.set_foreign_bands([_stranger_unit(), _live_away_unit()])
+	h._hud._targeting.refresh_live_targets()
+	highlight = h._hud._targeting._current_targeting_info().get(
+		TargetingController.TARGETING_HIGHLIGHT_TILES_KEY, [])
+	h._assert_hud("the open sheet rings every band the people knows (%s)" % str(highlight),
 		h._hud._targeting.is_preselect_on() and highlight.has(NEIGHBOUR_LAST_SEEN)
-			and not highlight.has(PARKED_LAST_SEEN))
+			and highlight.has(PARKED_LAST_SEEN) and highlight.has(STRANGER_TILE)
+			and highlight.has(LIVE_AWAY_TILE) and not highlight.has(LIVE_AWAY_LAST_SEEN)
+			and not highlight.has(SHIPPER_TILE) and not highlight.has(PARTY_TILE))
 	h._assert_hud("…and the ring is not targeting — nothing is armed", not h._hud.is_targeting_active())
+	# **A CLICK ON ANY KNOWN BAND CHOOSES IT — no refusal path is left.** The parked-only band is now
+	# visible where it stands (a foreign population row), and the stranger has no tie anywhere.
+	capture_map.set_targeting(h._hud._targeting._current_targeting_info())
+	var notes: Array = []
+	var real_sink: Callable = h._hud._targeting._note_sink
+	h._hud._targeting._note_sink = func(title: String, text: String) -> void: notes.append([title, text])
+	h._hud._band_labor.set_foreign_bands([_parked_unit(), _stranger_unit(), _live_away_unit()])
+	h._hud._targeting.refresh_live_targets()
+	capture_map.set_targeting(h._hud._targeting._current_targeting_info())
+	h._assert_hud("(a) a parked-tie band is ringed where it STANDS and its hex is captured",
+		capture_map.targeting_click_captures(PARKED_STANDS_AT.x, PARKED_STANDS_AT.y)
+			and not capture_map.targeting_click_captures(PARKED_LAST_SEEN.x, PARKED_LAST_SEEN.y))
+	h._hud.notify_targeting_click(_tile_info_with_units(PARKED_STANDS_AT, [_parked_unit()]))
+	await h._settle()
+	var parked_visible_to := Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META)
+	h._assert_hud("…and the click sets To = %s, posting nothing (%s)" % [PARKED_DISPLAY_NAME, str(notes)],
+		parked_visible_to != null and _collect_text(parked_visible_to).contains(PARKED_DISPLAY_NAME)
+			and notes.is_empty())
+	var parked_clear := Q.find_meta_node(_parties_zone(), HudWidgets.FIELD_CLEAR_META) as Button
+	if parked_clear != null:
+		parked_clear.emit_signal("pressed")
+	await h._settle()
+	h._assert_hud("(b) a visible band with NO tie anywhere is ringed and its hex captured",
+		capture_map.targeting_click_captures(STRANGER_TILE.x, STRANGER_TILE.y))
+	h._hud.notify_targeting_click(_tile_info_with_units(STRANGER_TILE, [_stranger_unit()]))
+	await h._settle()
+	var stranger_to := Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META)
+	h._assert_hud("…and the click sets To = %s, posting nothing (%s)" % [STRANGER_DISPLAY_NAME, str(notes)],
+		stranger_to != null and _collect_text(stranger_to).contains(STRANGER_DISPLAY_NAME) and notes.is_empty())
+	var stranger_clear := Q.find_meta_node(_parties_zone(), HudWidgets.FIELD_CLEAR_META) as Button
+	if stranger_clear != null:
+		stranger_clear.emit_signal("pressed")
+	await h._settle()
+	h._assert_hud("…neither choice selected a band or closed the sheet",
+		_verb_form() != null and int(h._hud._selection.unit().get("entity", -1)) == SHIPPER_ENTITY)
+	h._assert_hud("(d) the sender's own hex is NOT captured",
+		not capture_map.targeting_click_captures(SHIPPER_TILE.x, SHIPPER_TILE.y))
+	h._hud.notify_targeting_click(_tile_info_with_units(SHIPPER_TILE, [_shipper_unit()]))
+	await h._settle()
+	h._assert_hud("…and a click on it posts nothing", notes.is_empty())
+	capture_map.units.append(_party_unit())
+	h._assert_hud("a hex holding only the sender's own party is NOT captured",
+		not capture_map.targeting_click_captures(PARTY_TILE.x, PARTY_TILE.y))
+	h._hud.notify_targeting_click(_tile_info_with_units(PARTY_TILE, [_party_unit()]))
+	await h._settle()
+	h._assert_hud("…and a click on it posts nothing (%s)" % str(notes), notes.is_empty())
+	# A LIVE tie whose band no longer stands where the tie last saw it: clicked where it stands now, it
+	# is CHOSEN, not refused as lost touch.
+	var live_ties := _connections()
+	var away_tie := _tie(LIVE_AWAY_ENTITY, TIE_STRENGTH_LIVE, LIVE_AWAY_LAST_SEEN, NEIGHBOUR_LAST_SEEN_TURN)
+	away_tie["subject_name"] = LIVE_AWAY_DISPLAY_NAME
+	live_ties.append(away_tie)
+	h._hud.update_connections(live_ties)
+	await h._settle()
+	h._hud.notify_targeting_click(_tile_info_with_units(LIVE_AWAY_TILE, [_live_away_unit()]))
+	await h._settle()
+	var away_row := Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META)
+	h._assert_hud("a LIVE-tie band clicked where it stands (not its filed hex) sets the destination and posts no note (%s)" % str(notes),
+		away_row != null and _collect_text(away_row).contains(LIVE_AWAY_DISPLAY_NAME) and notes.is_empty())
+	var away_clear := Q.find_meta_node(_parties_zone(), HudWidgets.FIELD_CLEAR_META) as Button
+	if away_clear != null:
+		away_clear.emit_signal("pressed")
+	h._hud.update_connections(_connections())
+	await h._settle()
+	h._hud._targeting._note_sink = real_sink
+	h._assert_hud("(c) a live-tie band's hex is captured",
+		capture_map.targeting_click_captures(NEIGHBOUR_LAST_SEEN.x, NEIGHBOUR_LAST_SEEN.y))
+	h._hud.notify_targeting_click(_tile_info_with_units(NEIGHBOUR_LAST_SEEN, [_neighbour_unit()]))
+	await h._settle()
+	var live_row := Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META)
+	h._assert_hud("…and still chosen as the destination",
+		live_row != null and _collect_text(live_row).contains(NEIGHBOUR_DISPLAY_NAME))
+	var live_clear := Q.find_meta_node(_parties_zone(), HudWidgets.FIELD_CLEAR_META) as Button
+	if live_clear != null:
+		live_clear.emit_signal("pressed")
+	await h._settle()
+	await _run_ghost_destination_states(capture_map)
+	capture_map.queue_free()
+
 	var preselect_sent: Array[Dictionary] = []
 	var record_preselect := func(payload: Dictionary) -> void: preselect_sent.append(payload)
 	h._hud.send_trade_expedition_requested.connect(record_preselect)
@@ -299,9 +411,10 @@ func run(harness) -> void:
 	var to_row := Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META)
 	h._assert_hud("a click on the ringed band sets the destination — the To row names it",
 		to_row != null and _collect_text(to_row).contains(NEIGHBOUR_DISPLAY_NAME))
-	# THE KEYSTONE: the position under the destination is where they WERE, and its hover says so.
-	h._assert_hud("…with where it was last seen worded as REMEMBERED, on its hover",
-		_destination_tooltip().contains(HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
+	# A band in sight stands where it stands: its hover claims no remembered sighting (the ghost state
+	# below is where the position is worded as REMEMBERED).
+	h._assert_hud("…a band in sight is not worded as remembered",
+		not _destination_tooltip().contains(HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
 			NEIGHBOUR_LAST_SEEN.x, NEIGHBOUR_LAST_SEEN.y, NEIGHBOUR_LAST_SEEN_TURN]))
 	h._assert_hud("…and the walk quoted from it approximate", _destination_tooltip().contains(
 		TRADE_APPROXIMATE_MARK))
@@ -821,6 +934,94 @@ func _run_typed_cargo_states() -> void:
 		not _cargo_control_is_disabled(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL,
 			HudWidgets.CARGO_CONTROL_MINUS))
 ## The pack this chapter's party carries — `party × per_worker_carry`, the sim's own product.
+## **A REMEMBERED (GHOST) BAND WITH A LIVE TIE IS RINGED AND CLICKABLE, FOG OR NO FOG.** The subject is
+## foreign, so it is in no roster and in no `populations` row: the map draws it as a ghost at the tile
+## the tie last saw it, and that tile is by definition not one the viewer can currently see. The ring
+## set and the click capture were gated on `_is_tile_visible`, so with fog ON the one band the picker
+## can offer from memory was neither ringed nor clickable. The gate belongs to the HERD glow (a herd
+## the viewer cannot see is a leak); a live tie's last-seen hex is the viewer's own memory.
+##
+## The click goes through `MapView.targeting_click_captures` -> `_emit_targeting_click` (the redacted
+## `tile_info` the live path emits) -> `notify_targeting_click`, `tile_panel`'s idiom; a window-pixel
+## press needs a laid-out grid this harness does not stand up.
+const GHOST_ENTITY := 986
+const GHOST_TILE := Vector2i(43, 38)
+const GHOST_NAME := "Sorrelbank"
+const GHOST_STRENGTH := 0.25
+const GHOST_LAST_SEEN_TURN := 194
+const GHOST_FACTION := 8
+const GHOST_GRID := Vector2i(80, 52)
+
+func _ghost_tie() -> Dictionary:
+	var tie := _tie(GHOST_ENTITY, GHOST_STRENGTH, GHOST_TILE, GHOST_LAST_SEEN_TURN)
+	tie["subject_name"] = GHOST_NAME
+	tie["subject_faction"] = GHOST_FACTION
+	return tie
+
+func _run_ghost_destination_states(map: MapView) -> void:
+	var ties := _connections()
+	ties.append(_ghost_tie())
+	h._hud.update_connections(ties)
+	map.units = []
+	map.grid_width = GHOST_GRID.x
+	map.grid_height = GHOST_GRID.y
+	map.set_connections(ties)
+	map.set_fow_enabled(true)
+	map.set_current_turn(GHOST_LAST_SEEN_TURN + 1)
+	# The sheet is already open (with its manifest) from the click states above; the ghost tie only
+	# has to reach it, which `update_connections` has just done.
+	await h._settle()
+	var info: Dictionary = h._hud._targeting._current_targeting_info()
+	map.set_targeting(info)
+	var is_ghost := false
+	for row in map.remembered_bands():
+		if int(row["subject_band_id"]) == BandFx.FIXTURE_BAND_ID_OFFSET + GHOST_ENTITY:
+			is_ghost = true
+	h._assert_hud("ghost - precondition: the tie's subject is a ghost on a tile the viewer cannot see",
+		is_ghost and not map._is_tile_visible(GHOST_TILE.x, GHOST_TILE.y))
+	h._assert_hud("ghost - the Trade highlight set rings the live-tie ghost's hex",
+		(info.get(TargetingController.TARGETING_HIGHLIGHT_TILES_KEY, []) as Array).has(GHOST_TILE))
+	h._assert_hud("ghost - MapView counts that hex as highlighted (the ring draws there)",
+		map._annotations.highlighted_at(GHOST_TILE.x, GHOST_TILE.y))
+	h._assert_hud("ghost - a click on the ghost's hex is captured, not left to select",
+		map.targeting_click_captures(GHOST_TILE.x, GHOST_TILE.y))
+	var routed: Array[Dictionary] = []
+	var record := func(tile_info: Dictionary) -> void:
+		routed.append(tile_info)
+		h._hud.notify_targeting_click(tile_info)
+	map.targeting_clicked.connect(record)
+	map._emit_targeting_click(GHOST_TILE.x, GHOST_TILE.y)
+	map.targeting_clicked.disconnect(record)
+	await h._settle()
+	var to_row := Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META)
+	h._assert_hud("ghost - the click reached the HUD (%d) and set To = %s" % [routed.size(), GHOST_NAME],
+		routed.size() == 1 and to_row != null and _collect_text(to_row).contains(GHOST_NAME))
+	h._assert_hud("ghost - its position is worded as REMEMBERED on the To row's hover",
+		_destination_tooltip().contains(ConnectionsRoster.remembered_line(_ghost_tie(),
+			h._hud._band_labor.current_turn())))
+	# **OUR DELEGATE STATIONED ON THAT HEX CHANGES NOTHING ABOUT WHAT A CLICK CHOOSES**: the party is not a
+	# band, so the hex still resolves to the host.
+	var posted_party := _party_unit()
+	posted_party["pos"] = [GHOST_TILE.x, GHOST_TILE.y]
+	posted_party["faction"] = 0
+	posted_party["expedition_mission"] = HudExpeditionVocab.EXPEDITION_MISSION_STATION
+	posted_party["expedition_phase"] = HudExpeditionVocab.EXPEDITION_PHASE_STATIONED
+	posted_party["expedition_destination_band"] = BandFx.FIXTURE_BAND_ID_OFFSET + GHOST_ENTITY
+	h._hud.update_band_alerts([_shipper_band(), _neighbour_band(), posted_party])
+	h._assert_hud("ghost - with our party stationed on its hex a click there still resolves to the host",
+		h._hud._targeting.trade_destination_at(_shipper_band(), GHOST_TILE.x, GHOST_TILE.y)
+			== BandFx.FIXTURE_BAND_ID_OFFSET + GHOST_ENTITY)
+	h._hud.update_band_alerts([_shipper_band(), _neighbour_band()])
+	await h._save("trade_sheet_ghost_destination")
+	var ghost_clear := Q.find_meta_node(_parties_zone(), HudWidgets.FIELD_CLEAR_META) as Button
+	if ghost_clear != null:
+		ghost_clear.emit_signal("pressed")
+	map.set_targeting({})
+	map.set_fow_enabled(false)
+	map.set_connections([])
+	h._hud.update_connections(_connections())
+	await h._settle()
+
 func _trade_cargo_cap() -> float:
 	return float(TRADE_PARTY_WORKERS) * TRADE_PER_WORKER_CARRY
 
@@ -1000,6 +1201,57 @@ func _press_send() -> void:
 		send.emit_signal("pressed")
 
 ## A map click's `tile_info` for `tile` — all the verb pick reads off one.
+## Where the parked tie's band STANDS now — deliberately not `PARKED_LAST_SEEN`, which is where the
+## tie remembers it, so a lookup keyed by tile finds nothing.
+const PARKED_STANDS_AT := Vector2i(50, 12)
+const PARKED_DISPLAY_NAME := "Thornwick"
+## A band the sender holds NO tie with, and where it stands.
+const STRANGER_ENTITY := 984
+const STRANGER_TILE := Vector2i(55, 14)
+const STRANGER_DISPLAY_NAME := "Marrowdeep"
+
+## A band with a LIVE tie that stands somewhere other than where the tie last saw it.
+const LIVE_AWAY_ENTITY := 985
+const LIVE_AWAY_DISPLAY_NAME := "Redmarsh"
+const LIVE_AWAY_LAST_SEEN := Vector2i(40, 5)
+const LIVE_AWAY_TILE := Vector2i(58, 16)
+
+func _live_away_unit() -> Dictionary:
+	return _unit_marker(LIVE_AWAY_ENTITY, LIVE_AWAY_DISPLAY_NAME, LIVE_AWAY_TILE)
+
+## The sender's own expedition party, on a hex the sender does not stand on.
+const PARTY_TILE := Vector2i(66, 16)
+
+func _party_unit() -> Dictionary:
+	var party := _unit_marker(TRADE_PARTY_ENTITY, "Traders 1", PARTY_TILE)
+	party["is_expedition"] = true
+	return party
+
+func _unit_marker(entity: int, display_name: String, tile: Vector2i) -> Dictionary:
+	return {"entity": entity, "band_id": BandFx.FIXTURE_BAND_ID_OFFSET + entity, "name": display_name,
+		"pos": [tile.x, tile.y]}
+
+func _shipper_unit() -> Dictionary:
+	return _unit_marker(SHIPPER_ENTITY, SHIPPER_DISPLAY_NAME, SHIPPER_TILE)
+
+func _neighbour_unit() -> Dictionary:
+	return _unit_marker(NEIGHBOUR_ENTITY, NEIGHBOUR_DISPLAY_NAME, NEIGHBOUR_LAST_SEEN)
+
+func _parked_unit() -> Dictionary:
+	return _unit_marker(PARKED_ENTITY, PARKED_DISPLAY_NAME, PARKED_STANDS_AT)
+
+func _stranger_unit() -> Dictionary:
+	return _unit_marker(STRANGER_ENTITY, STRANGER_DISPLAY_NAME, STRANGER_TILE)
+
+## Every band on the capture test's MapView.
+func _capture_units() -> Array:
+	return [_shipper_unit(), _neighbour_unit(), _parked_unit(), _stranger_unit()]
+
+func _tile_info_with_units(tile: Vector2i, tile_units: Array) -> Dictionary:
+	var info := _tile_info(tile)
+	info["units"] = tile_units
+	return info
+
 func _tile_info(tile: Vector2i) -> Dictionary:
 	return {"x": tile.x, "y": tile.y, "visibility_state": "active"}
 
@@ -1543,6 +1795,7 @@ func _render_connections_roster(panel: BandCityPanel, home_band: Dictionary) -> 
 	await h._settle()
 
 	# **THE EMPTY STATE** — the neighbour knows nobody: one line, no rows.
+	h._hud.update_connections([])
 	h._hud.show_unit_selection(_neighbour_band())
 	await h._settle()
 	await h._save("connections_roster_empty")

@@ -17,6 +17,9 @@ paths:
   - "core_sim/src/sedentarization_config.rs"
   - "core_sim/src/data/sedentarization_config.json"
   - "core_sim/tests/belief.rs"
+  - "core_sim/tests/belief_monument.rs"
+  - "core_sim/tests/ritual_trickle.rs"
+  - "core_sim/src/tile_improvement.rs"
   - "core_sim/tests/belief_culture.rs"
 ---
 
@@ -40,7 +43,9 @@ consumers (issue #701) are "The ancestor pull" and "Belief feeds the tether".
 | | `relay_per_hop` (**0.5**) — how much of the reach each hop of kin relays: a band tied in through `n` bands of its own people is near at `relay_per_hop ^ n`. PLAYTEST DIAL; validated finite and in `[0, 1]`; `0` turns relaying off and reproduces the unrelayed term exactly |
 | `src/data/belief_config.json` | `belief_per_death` (**1.0**) — belief added to the tile a band stands on, per person who dies there. At `1.0` the unit of belief **is** the dead-equivalent: a place reading `12` holds twelve people's worth of ancestors, and later sources are priced in that unit. Loader `belief_config.rs` on the shared boot seam (`config-loading.md`), env override `BELIEF_CONFIG_PATH`. No hot-reload kind. **There is deliberately no decay lever** |
 | | `belief_per_gathering` (**1.0**) — belief added to the tile a gathering is held on, in the same dead-equivalents: one gathering is worth one death's ancestors. Validated finite and `>= 0` at parse (`0` switches the source off). PLAYTEST DIAL |
+| | `improvement_belief` (**`[{ rung: "belief:monument", per_turn: 0.1 }]`**) — the belief a HELD tile improvement of each named rung credits to its own tile each turn, in dead-equivalents. A strict row (`deny_unknown_fields`, both keys required); `per_turn` finite and `> 0`; each `rung` is reconciled against the ladder at boot (`BeliefConfig::validate_improvement_belief`: it must exist, stand on a `tile` branch, be a rung something raises, and appear once). The engine names no rung, so any tile rung can be a source with a JSON edit. An empty list switches the source off (and is the serde default, since the engine cannot name the shipped rung). OPENING VALUE, PLAYTEST DIAL |
 | | `ancestor_pull` (**`{ secular_devout: 0.3, traditionalist_revisionist: -0.3 }`**) — the signed offset each named culture axis takes at full tie (`s → 1`, `r = 1`). Keys are the `culture.axis.*` snake_case keys (`culture::culture_axis_key`, the one mapping); an unknown key or a non-finite value is a parse error; an axis not named takes no pull, so `{}` turns the pull off. PLAYTEST DIAL: at `0.3` a band stays under the `0.6` band soft divergence threshold on the pull alone |
+| `src/data/intensification_ladder.json` → `knowledge` | `ritual_lesson_per_turn_at_full_tie` (**0.4**) — practice a people is credited per turn at full ancestor tie (`s x r = 1`), scaled by its strongest resident band's tie; `0` switches it off. PLAYTEST DIAL; validated finite and `>= 0`. Sibling of `ritual_lesson_per_gathering` (**4.0**) |
 | `src/data/sedentarization_config.json` | `weights.belief` (**0.10**) and `references.belief` (**20.0** dead-equivalents) — the tether's belief input (see "Belief feeds the tether"); `weights.resource_density` went `0.20 → 0.10` to keep the weights summing to `1.0` |
 
 ## The store: `BeliefRegistry`
@@ -54,14 +59,57 @@ holding belief has an entry, so an untouched map checkpoints an empty map.
 - **It is monotone.** Nothing subtracts from it and nothing decays it: an abandoned place keeps its
   dead, and a band that walks away leaves the stock where it accrued. The registry has no `remove` or
   `set`.
-- **`add(position, amount)` is THE seam every source writes through** — deaths, gatherings, and
-  (#692) the monument later, all on the same seam. An `amount <= 0` is ignored,
+- **`add(position, amount)` is THE seam every source writes through** — deaths, gatherings and a
+  held monument (#692), all on the same seam. An `amount <= 0` is ignored,
   which is what keeps the stock monotone and the map sparse. `get(position)` answers `NO_BELIEF`
   (`0.0`) where nothing has accrued.
 - **`credit_deaths(position, deaths, config)`** is the deaths source's one expression,
   `deaths × belief_per_death`, so no call site restates it.
 - **`credit_gathering(position, config)`** is the gatherings source's, `belief_per_gathering`
   once, for the same reason.
+- **`credit_improvement(position, per_turn)`** is the monument's, see "The monument source" below.
+
+## The monument source: a held improvement adds belief to its own tile
+
+Design of record: `docs/plan_civilization_steps.md` §"Belief is a property of a place" (#692).
+`belief::advance_improvement_belief` runs in the Logistics chain right after
+`advance_tile_improvements` (and the band pass, which shares the registry), so the turn's decay has
+settled. For every tile improvement, in the registry's `(y, x, branch)` order, whose **held** rung
+`belief_config.json` -> `improvement_belief` lists, it credits `per_turn` to the improvement's own tile
+through `BeliefRegistry::credit_improvement` (-> `add`). Consequences, all falling out of the registry
+rather than a rule: a half-built monument pays nothing (`partial_credit: on_completion` holds the rung
+beneath until the meter tops out), a decayed one pays nothing, and the belief it already added stays
+because the stock is monotone.
+
+**The monument is an ordinary tile rung** (`belief:monument`, verb `raise`, `intensification.md` ->
+"The tile kind"): built by builders joining the site's crew (`max_builders` 3) with 20 stone drawn from the band's own store as the meter
+climbs, kept by a tile crew, decaying to `belief:gathering_ground` after its grace when unkept. Two
+things are specific to it, both config: `site_requirement.min_belief` (**1.0**) - the tile must hold
+belief, judged through `forage::rung_site_refusal` with the `BeliefRegistry` reading threaded in beside
+the deposit capacity - and `unlock_knowledge: ritual`.
+
+**Ritual is learned by gatherings.** `advance_connections` pays `knowledge.ritual_lesson_per_gathering`
+(**4.0**, `intensification_ladder.json`) practice toward the `ritual` lesson (`lesson_costs.ritual`
+**20.0**, so five gatherings) to the people of EACH band in the gathering pair - a pair of one people
+pays it once - through `LadderKnowledge::ledger_credit`, the seam the crafts' per-item lesson and the
+rot-taught `storage` use (`belief::credit_ritual_lesson`; discovery id **2024**,
+`start_profile_knowledge_tags.json`). `ritual` is filed on the knowledge screen under the standalone
+branch `rites` in area `lore`. Tests: `core_sim/tests/belief_monument.rs`.
+
+**Ritual is also learned, slowly, by living near the dead.** Gatherings dry up after the opening, so
+`belief::advance_ritual_trickle` (Population stage, `.after(simulate_population)`, which stores the
+turn's `last_belief_relay_hops`; `rot_band_larders` and the rest of the stage follow it) credits each
+people `knowledge.ritual_lesson_per_turn_at_full_tie` (**0.4**, `intensification_ladder.json`; `0`
+switches it off; validated finite and `>= 0`) x the strongest ancestor tie among its RESIDENT bands,
+through `belief::credit_ritual_practice` -> `ledger_credit`, the seam a gathering uses. The tie is
+`CultureConfig::ancestor_tie` (`s x r`, read as `culture::band_ancestor_pulls` reads it); a band
+with no anchor, or none reached by kin, ties at 0. **MAX across a people's bands, never the sum**:
+parking more bands by one grave does not multiply the lesson. The ledger clamps, so a people that
+already knows ritual is credited harmlessly. **Why the saturating curve**: `s = b / (b + half)`
+means one famine's burials barely move the tie, so no single catastrophe teaches ritual in a turn;
+ten dead at the anchor with the band on it (tie 0.5) pays 0.2 practice a turn (100 turns of the
+20-practice cost), a deep cemetery approaches 0.4. Tests: `core_sim/tests/ritual_trickle.rs` (credit
+proportional to tie, unreached and anchorless pay nothing, max not sum, lever 0).
 
 ## The deaths source: where the band STANDS, never its home
 
@@ -288,7 +336,7 @@ no channel of their own for that) — so the band layer's target is `parent + mo
 accumulates: a band that walks away from its dead (`r → 0`) relaxes back to its province at the band
 scope's elasticity, and a band that returns is pulled again. An accumulating drift would need its own
 state, its own checkpoint, and its own decay lever. (What IS stored is only the map the last reconcile
-applied, `CultureManager::applied_band_pull` — a record for the wire, never read back into the layer.) Gatherings and the monument (#692) add
+applied, `CultureManager::applied_band_pull` — a record for the wire, never read back into the layer.) Gatherings and a held monument add
 belief through `BeliefRegistry::add`; they raise `s`, and so the pull, with no further code.
 
 **Where it shows.** The faction's `culture.axis.secular_devout` / `…traditionalist_revisionist`
@@ -415,6 +463,7 @@ is in `campaign.md` §Sedentarization.
 | `belief_culture::the_secular_devout_signal_rises_for_a_faction_tied_to_its_dead` | the `culture.axis.secular_devout` sample The Telling records rises when every band is tied to its dead |
 | `belief_culture::belief_underfoot_raises_the_sedentarization_score_and_belief_beside_does_not` | belief on every band's standing tile adds exactly `(1 − smoothing) × 100 × weights.belief` on the first tick; belief on a tile beside adds nothing |
 | `belief_culture::the_belief_contribution_saturates_at_the_reference` | five times `references.belief` scores the same as `references.belief`; half scores half |
+| `ritual_trickle::*` | a band on ten dead is credited `lever x tie` through the ledger seam (derived from config); unreached (`r = 0`), anchorless and lever-0 pay nothing; two bands of one people pay the stronger tie alone (max, not sum) |
 | `belief_config::tests::*` | an unknown `ancestor_pull` key and a non-finite value are parse errors; the vector places each value on its axis; the shipped JSON equals the default |
 | `belief_culture::a_tied_bands_ancestor_pull_and_traits_are_on_the_encoded_snapshot` | on the envelope, `cultureAncestorPull` equals `applied_band_pull` and `tie × ancestor_pull` on Devout/Traditionalist, and `cultureTraits[SecularDevout]` is the layer's value |
 | `belief_culture::an_untied_bands_pull_is_empty_on_the_encoded_snapshot` | a band with no anchor publishes 15 traits and an empty pull |

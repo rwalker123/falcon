@@ -56,13 +56,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use bevy::prelude::*;
 
 use crate::{
-    belief::BeliefRegistry,
+    belief::{credit_ritual_lesson, BeliefRegistry},
     belief_config::BeliefConfigHandle,
     components::{BandId, BandName, PopulationCohort, ResidentBand, Tile},
     connections_config::{ConnectionsConfig, ConnectionsConfigHandle},
+    intensification::LadderConfigHandle,
     metrics::SimulationMetrics,
     orders::FactionId,
-    resources::{CommandEventEntry, CommandEventKind, CommandEventLog, SimulationTick},
+    resources::{
+        CommandEventEntry, CommandEventKind, CommandEventLog, DiscoveryProgressLedger,
+        SimulationTick,
+    },
     scalar::Scalar,
     systems::band_label,
 };
@@ -174,32 +178,79 @@ pub struct ConnectionLedger {
 }
 
 impl ConnectionLedger {
-    /// **The tile a traveling party sets out toward** — what its people know of where `target` is,
-    /// never where it really is. The target's live tile when the sender knows it: the target is the
-    /// sender's own people (your own bands are always visible to you), or its tile is `Active` on the
-    /// sending faction's map. Otherwise the `home -> target` edge's `last_seen_position`; with no
-    /// edge at all (the launch gate prevents it), the live tile is the only position there is.
+    /// **The tile a traveling party sets out toward, or `None` when its PEOPLE has never met the
+    /// target** - what the sender's people know of where `target` is, never where it really is.
+    /// Knowing is the people's, not the launching band's: `people` is every resident band of the
+    /// sender's people (the edge carries no faction, so the caller passes the set).
+    ///
+    /// - the target is the sender's own people (your own bands are always visible to you), or its
+    ///   tile is `Active` on the sending faction's map: the target's live tile;
+    /// - otherwise the FRESHEST remembered position across every edge from any of `people` to
+    ///   `target`, live or parked (max `last_seen_turn`, a tie to the lower observer `BandId`);
+    /// - no edge from any of them and not visible: `None`, the launch gate's refusal.
+    ///
+    /// Tie STRENGTH stays per band everywhere else; this is the one question about *where*.
     pub fn launch_aim(
         &self,
         visibility: &crate::visibility::VisibilityLedger,
         sender_faction: FactionId,
-        home: BandId,
+        people: &[BandId],
         target: BandId,
         target_faction: FactionId,
         target_live_tile: UVec2,
-    ) -> UVec2 {
-        let known = sender_faction == target_faction
-            || visibility.is_visible(sender_faction, target_live_tile.x, target_live_tile.y);
-        if known {
-            return target_live_tile;
+    ) -> Option<UVec2> {
+        if sender_faction == target_faction
+            || visibility.is_visible(sender_faction, target_live_tile.x, target_live_tile.y)
+        {
+            return Some(target_live_tile);
         }
-        self.get(&ConnectionKey::new(home, target))
-            .map(|connection| connection.last_seen_position)
-            .unwrap_or(target_live_tile)
+        let mut observers: Vec<BandId> = people.to_vec();
+        observers.sort();
+        observers.dedup();
+        let mut freshest: Option<&Connection> = None;
+        for observer in observers {
+            let Some(edge) = self.get(&ConnectionKey::new(observer, target)) else {
+                continue;
+            };
+            // Strictly fresher wins, so a tie stays with the lower observer (visited first).
+            if freshest.is_none_or(|best| edge.last_seen_turn > best.last_seen_turn) {
+                freshest = Some(edge);
+            }
+        }
+        freshest.map(|edge| edge.last_seen_position)
     }
 
     pub fn get(&self, key: &ConnectionKey) -> Option<&Connection> {
         self.edges.get(key)
+    }
+
+    /// **What `observer` holds a live tie to, as it last saw it** - every edge `observer -> X` with
+    /// `strength > NO_TIE`, in `X` order, each as the [`Sighting`] the observer's own memory holds
+    /// (clock 1: position, observed turn, name, people). A parked tie is not live and is skipped.
+    /// Only edges whose `last_contact_turn` is `since_turn` or later count: a tie that is live but
+    /// stale is not fresh news. The news a stationed delegate's runner carries about who its host
+    /// knows.
+    pub fn live_sightings_of(
+        &self,
+        observer: BandId,
+        since_turn: u64,
+    ) -> impl Iterator<Item = (BandId, Sighting)> + '_ {
+        let from = ConnectionKey::new(observer, BandId(u64::MIN));
+        let to = ConnectionKey::new(observer, BandId(u64::MAX));
+        self.edges
+            .range(from..=to)
+            .filter(move |(_, edge)| edge.strength > NO_TIE && edge.last_contact_turn >= since_turn)
+            .map(|(key, edge)| {
+                (
+                    key.subject,
+                    Sighting::new(
+                        edge.last_seen_position,
+                        edge.last_seen_turn,
+                        edge.subject_name.clone(),
+                        edge.subject_faction,
+                    ),
+                )
+            })
     }
 
     /// Every edge, in key order. Deterministic by construction — see the type's note on `BTreeMap`.
@@ -422,6 +473,88 @@ impl ContactsThisTurn {
     }
 }
 
+/// **Kin relay a tie, within one people.** Runs after this turn's direct contacts are folded in and
+/// before the decay. The graph is exactly this turn's DIRECT contacts (`direct`: the keys of
+/// [`ContactsThisTurn`], sightings and landed reports), directed observer to subject, between
+/// resident bands of one people. Band `a` learns of `b` when a directed path `a -> m -> ... -> b` of
+/// length `2..=kin_relay.max_hops` runs over those edges: kin `m` saw `b` this turn and told `a`.
+/// A length-one path is `a`'s own contact, so it is never relayed (no reverse edge, and a band that
+/// sees nobody hears nothing). A relayed write is never a graph edge, this turn or later, so a tie
+/// with no fresh direct news along its chain drains on the ordinary clock.
+///
+/// It is **news, never a sighting**: it goes straight to [`ConnectionLedger::record_contact`] and
+/// never through [`ContactsThisTurn`], and it runs after the gathering's `meetings` were read, so a
+/// relayed write never fires a gathering. It does leave the kin tie live, though, so a later direct
+/// meeting between relayed kin is not a gathering either: a gathering is a meeting after no live
+/// tie, and kin who stay in touch through news have not been apart.
+fn relay_among_kin(
+    ledger: &mut ConnectionLedger,
+    direct: &BTreeSet<ConnectionKey>,
+    residents: &Query<(&BandId, &PopulationCohort, Option<&BandName>), With<ResidentBand>>,
+    tiles: &Query<&Tile>,
+    turn: u64,
+    cfg: &ConnectionsConfig,
+    formed: &mut u32,
+) {
+    let max_hops = cfg.kin_relay.max_hops;
+    if max_hops < MIN_RELAY_HOPS {
+        return;
+    }
+    // Bands by id (sorted), so every walk below is deterministic.
+    let bands: BTreeMap<BandId, (FactionId, Sighting)> = residents
+        .iter()
+        .filter_map(|(id, cohort, name)| {
+            let position = tiles.get(cohort.current_tile).ok()?.position;
+            let name = name.map_or_else(|| band_label(*id), |name| name.0.clone());
+            Some((
+                *id,
+                (
+                    cohort.faction,
+                    Sighting::new(position, turn, name, cohort.faction),
+                ),
+            ))
+        })
+        .collect();
+    let mut sees: BTreeMap<BandId, Vec<BandId>> = BTreeMap::new();
+    for key in direct {
+        if let (Some((from, _)), Some((to, _))) =
+            (bands.get(&key.observer), bands.get(&key.subject))
+        {
+            if from == to {
+                sees.entry(key.observer).or_default().push(key.subject);
+            }
+        }
+    }
+    let mut relays: Vec<(ConnectionKey, Sighting)> = Vec::new();
+    for a in bands.keys() {
+        let mut reached: BTreeSet<BandId> = BTreeSet::from([*a]);
+        let mut frontier = vec![*a];
+        for hops in 1..=max_hops {
+            let mut next = Vec::new();
+            for at in &frontier {
+                for b in sees.get(at).into_iter().flatten() {
+                    if reached.insert(*b) {
+                        next.push(*b);
+                        if hops >= MIN_RELAY_HOPS {
+                            relays.push((ConnectionKey::new(*a, *b), bands[b].1.clone()));
+                        }
+                    }
+                }
+            }
+            frontier = next;
+        }
+    }
+    for (key, sighting) in relays {
+        if ledger.record_contact(key, &sighting, turn, cfg) {
+            *formed += 1;
+        }
+    }
+}
+
+/// The shortest chain that is news rather than a band's own contact: `a` hears of `b` from a kin
+/// who saw `b`.
+const MIN_RELAY_HOPS: u32 = 2;
+
 /// **How many gatherings each people has held** — a cumulative per-faction count, the total the
 /// Telling diffs into `gatherings.held_this_turn` (the `sites.discovered_this_turn` pattern).
 /// Checkpoint state: nothing rebuilds a count of past meetings.
@@ -497,6 +630,8 @@ pub fn advance_connections(
     mut belief: ResMut<BeliefRegistry>,
     mut gatherings: ResMut<GatheringLedger>,
     mut event_log: ResMut<CommandEventLog>,
+    ladder: Res<LadderConfigHandle>,
+    mut discovery: ResMut<DiscoveryProgressLedger>,
 ) {
     let cfg = config.get();
     let turn = tick.0;
@@ -512,6 +647,7 @@ pub fn advance_connections(
         .map(|key| band_pair(key.observer, key.subject))
         .collect();
 
+    let direct: BTreeSet<ConnectionKey> = contacts.iter().map(|(key, _)| *key).collect();
     let mut formed = 0u32;
     for (key, sighting) in contacts.iter() {
         // **Observed then, received now.** A sight-sweep contact observed this very turn passes the
@@ -521,11 +657,21 @@ pub fn advance_connections(
             formed += 1;
         }
     }
+    relay_among_kin(
+        &mut ledger,
+        &direct,
+        &residents,
+        &tiles,
+        turn,
+        &cfg,
+        &mut formed,
+    );
     let reaped = ledger.decay_all(turn, &cfg);
     contacts.clear();
 
     if !meetings.is_empty() {
         let belief_cfg = belief_config.get();
+        let ladder = ladder.get();
         let attendee = |band: BandId| -> Option<Attendee> {
             residents
                 .iter()
@@ -556,6 +702,12 @@ pub fn advance_connections(
                 continue;
             };
             belief.credit_gathering(place.position, &belief_cfg);
+            // **A gathering teaches ritual to the people of EACH band in the pair** - and a pair of
+            // one people pays it once, not twice (`belief::credit_ritual_lesson`).
+            credit_ritual_lesson(&ladder.knowledge, low.faction, &mut discovery);
+            if high.faction != low.faction {
+                credit_ritual_lesson(&ladder.knowledge, high.faction, &mut discovery);
+            }
             for (own, other) in [(&low, &high), (&high, &low)] {
                 // One line per people: a pair of one people is told once, from its lower band.
                 if own.faction == other.faction && own.band != low.band {
@@ -624,14 +776,16 @@ mod tests {
         let aim = |ledger: &ConnectionLedger,
                    visibility: &crate::visibility::VisibilityLedger,
                    target_faction: FactionId| {
-            ledger.launch_aim(
-                visibility,
-                MINE,
-                OBSERVER,
-                SUBJECT,
-                target_faction,
-                ELSEWHERE,
-            )
+            ledger
+                .launch_aim(
+                    visibility,
+                    MINE,
+                    &[OBSERVER],
+                    SUBJECT,
+                    target_faction,
+                    ELSEWHERE,
+                )
+                .expect("the people has met the subject")
         };
         assert_eq!(
             aim(&ledger, &visibility, THEIRS),
@@ -651,6 +805,53 @@ mod tests {
             aim(&ledger, &visibility, THEIRS),
             ELSEWHERE,
             "a foreign band on a tile you see is where it is"
+        );
+    }
+
+    #[test]
+    fn a_launch_aim_is_the_peoples_freshest_sighting_and_none_when_never_met() {
+        const MINE: FactionId = FactionId(0);
+        const THEIRS: FactionId = FactionId(1);
+        const MAP_SIDE: u32 = 16;
+        const LOWER: BandId = BandId(1);
+        const HIGHER: BandId = BandId(2);
+        const TARGET: BandId = BandId(7);
+        const LOWER_SAW: UVec2 = UVec2::new(2, 2);
+        const HIGHER_SAW: UVec2 = UVec2::new(5, 5);
+        const FRESHER_TURN: u64 = 9;
+        const OLDER_TURN: u64 = 3;
+        let cfg = config();
+        let mut visibility = crate::visibility::VisibilityLedger::default();
+        let _ = visibility.ensure_faction(MINE, MAP_SIDE, MAP_SIDE);
+        let people = [HIGHER, LOWER];
+        let aim = |ledger: &ConnectionLedger| {
+            ledger.launch_aim(&visibility, MINE, &people, TARGET, THEIRS, ELSEWHERE)
+        };
+        let mut ledger = ConnectionLedger::default();
+        assert_eq!(aim(&ledger), None, "no edge and out of sight is never met");
+        ledger.record_contact(
+            ConnectionKey::new(LOWER, TARGET),
+            &seen(LOWER_SAW, OLDER_TURN),
+            OLDER_TURN,
+            &cfg,
+        );
+        ledger.record_contact(
+            ConnectionKey::new(HIGHER, TARGET),
+            &seen(HIGHER_SAW, FRESHER_TURN),
+            FRESHER_TURN,
+            &cfg,
+        );
+        assert_eq!(aim(&ledger), Some(HIGHER_SAW), "the fresher sighting wins");
+        ledger.record_contact(
+            ConnectionKey::new(LOWER, TARGET),
+            &seen(LOWER_SAW, FRESHER_TURN),
+            FRESHER_TURN,
+            &cfg,
+        );
+        assert_eq!(
+            aim(&ledger),
+            Some(LOWER_SAW),
+            "equally fresh: the lower observer's memory"
         );
     }
 

@@ -317,8 +317,16 @@ overlays `pursue` on a **wild carnivore** (the husbandry rungs are diet-orthogon
 one rung shared by a deer and a wolf — so a carnivore's food-seeking movement can't be a rung-record
 field today; a future tamed wolf→dog would keep its rung's `drift_to_owner`).
 - **`roam`** (wild herbivore) — the graze-wander / loiter-migrate machine below, over its own full range.
-- **`drift_to_owner`** (pastoral) — each turn the herd first tries **one step toward the nearest band
-  of its owning faction** (`ResidentBand` only — a camp, not a passing expedition party). It
+- **`drift_to_owner`** (pastoral) — each turn the herd first tries **one step toward the camp of the
+  band that KEEPS it**: a `ResidentBand` of the owning faction whose `LaborAllocation` holds a Hunt
+  row on the herd with workers above zero (a near crew and a far work party alike). With several
+  keepers the one with the most workers on the herd wins, ties to the lower `BandId`. With no keeper
+  of the owner's people the target is the **nearest band of its owning faction** (ties by `(y, x)`),
+  and with none at all the herd roams. A band of another people working the herd is never the
+  target. `fauna::keeper_camp_tiles` builds the `herd id -> faction -> camp tile` map each turn
+  (derived, nothing checkpointed) and `fauna::herd_camp_targets` is the ONE resolver the drift, the
+  pastoral `K`'s range (`herd_wander_points`) and the snapshot's destination quote all read, so they
+  name the same camp. A camp is a `ResidentBand` only — not a passing expedition party. It
   **composes with, never replaces, the 2b-i graze-aware roam**: the candidates are exactly the roam's
   own acceptable steps (`acceptable_steps` — land, and not barren), ordered by **(hex distance to the
   nearest camp ASC, graze capacity DESC, y ASC, x ASC)** — a *preference ordering*, so there is **no

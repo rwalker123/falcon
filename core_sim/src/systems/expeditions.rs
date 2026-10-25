@@ -15,6 +15,13 @@ const DESTINATION_GONE_MID_TRADE: &str = "destination_gone";
 /// [`DESTINATION_GONE_MID_TRADE`].
 const DESTINATION_NOT_FOUND_MID_TRADE: &str = "destination_not_found";
 
+/// **How many turns behind the current turn the newest contact in the ledger is when
+/// `advance_expeditions` runs.** It runs in `Population`; `advance_connections` stamps a turn's
+/// contacts in `Visibility`, later in the same tick, so the latest `last_contact_turn` a bundling
+/// party can read is the previous turn's. A host tie is FRESH when contacted on or after
+/// `current_turn - LEDGER_CONTACT_LAG_TURNS`.
+const LEDGER_CONTACT_LAG_TURNS: u64 = 1;
+
 /// **The reason tokens a stationed party's post ends on** (`ExpeditionMission::Station`), carried in
 /// the `reason=` of the `ExpeditionRecalled` line beside `host=<id>`. A recall by the player is the
 /// third, written by `handle_recall_expedition` (`POST_RECALLED`).
@@ -1834,10 +1841,28 @@ pub fn advance_expeditions(
                             comm_range,
                             labor.band_move_tiles_per_turn,
                         );
+                        let mut carried = std::mem::take(&mut expedition.pending_contacts);
+                        // **Who the host knows rides the same runner**, one hop: the host's live
+                        // outgoing ties, taken from the host's own memory of them. Never the home
+                        // band or the host itself, and a direct sighting is fresher and wins.
+                        if let (Some(connections), ExpeditionMission::Station { host_band, .. }) =
+                            (configs.dealings.connections.as_deref(), &mission)
+                        {
+                            // Only the host's FRESH ties: a stale one would pin home's tie to X at
+                            // full while the host's own bleeds out.
+                            let fresh_since = current_turn.saturating_sub(LEDGER_CONTACT_LAG_TURNS);
+                            for (known, sighting) in
+                                connections.live_sightings_of(*host_band, fresh_since)
+                            {
+                                if Some(known) != home_band_id && known != *host_band {
+                                    carried.entry(known).or_insert(sighting);
+                                }
+                            }
+                        }
                         let report = StationReport {
                             land_turn: current_turn + delay,
                             tiles: std::mem::take(&mut expedition.pending_reveal),
-                            sightings: std::mem::take(&mut expedition.pending_contacts),
+                            sightings: carried,
                             goodwill: std::mem::take(&mut expedition.goodwill_news),
                         };
                         expedition.station_reports.push(report);
@@ -1864,7 +1889,24 @@ pub fn advance_expeditions(
                         map.discover(pos.x, pos.y, current_turn);
                     }
                     for (subject, sighting) in report.sightings {
-                        contacts.record_report(observer, subject, sighting);
+                        // **A landed report is a contact only when it is NEWS**: observed after
+                        // what home already remembers of the subject. A carried tie re-delivers
+                        // the host's memory every turn, and without this test an observation
+                        // that never changes would refresh the tie's strength and clock 3 for as
+                        // long as the host's own edge was kept fresh, pinning it full while clock
+                        // 1 never moved.
+                        let is_news = configs
+                            .dealings
+                            .connections
+                            .as_deref()
+                            .and_then(|ledger| {
+                                ledger
+                                    .get(&crate::connections::ConnectionKey::new(observer, subject))
+                            })
+                            .is_none_or(|edge| sighting.observed_turn > edge.last_seen_turn);
+                        if is_news {
+                            contacts.record_report(observer, subject, sighting);
+                        }
                     }
                     if let Some(known) = configs.dealings.known_goodwill.as_deref_mut() {
                         for (other, news) in report.goodwill {

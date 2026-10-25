@@ -1352,3 +1352,363 @@ fn an_aim_set_mid_walk_survives_a_checkpoint_round_trip() {
         Some(last_seen)
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// The runner also carries who the host knows (one hop)
+// ---------------------------------------------------------------------------------------------
+
+/// Bands the host holds ties to that are not on the map as residents - the ledger needs only ids.
+const KNOWN_BAND: BandId = BandId(9_001);
+const PARKED_BAND: BandId = BandId(9_002);
+/// Where the host remembers `KNOWN_BAND`, far outside the delegate's sight.
+const KNOWN_BAND_POS: UVec2 = UVec2::new(3, 3);
+/// Turns to run past the first landing, long enough for any carried tie to have shown.
+const TURNS_PAST_LANDING: u64 = 6;
+/// A budget of turns for the first carried report to land.
+const LANDING_BUDGET: u64 = 80;
+/// How far from the host a band stands to be seen directly by the party, in tiles.
+const NEXT_DOOR_TILES: u32 = 2;
+
+fn step(rig: &mut Rig) {
+    feed(&mut rig.app, rig.home);
+    feed(&mut rig.app, rig.host);
+    run_turn(&mut rig.app);
+}
+
+/// The host's own memory of `subject`, seeded as a full tie observed this turn.
+fn host_knows(rig: &mut Rig, subject: BandId, at: UVec2, name: &str) {
+    let turn = tick(&rig.app);
+    rig.app
+        .world
+        .resource_mut::<ConnectionLedger>()
+        .insert_full_tie(
+            ConnectionKey::new(rig.host_id, subject),
+            &Sighting::new(at, turn, name, HOST_FACTION),
+            turn,
+        );
+}
+
+/// The host's memory of `subject`, last contacted `turns_ago` turns ago and still live.
+fn host_knew(rig: &mut Rig, subject: BandId, turns_ago: u64) {
+    let now = tick(&rig.app);
+    let then = now.saturating_sub(turns_ago);
+    rig.app
+        .world
+        .resource_mut::<ConnectionLedger>()
+        .insert_full_tie(
+            ConnectionKey::new(rig.host_id, subject),
+            &Sighting::new(KNOWN_BAND_POS, then, "the Old Ones", HOST_FACTION),
+            then,
+        );
+}
+
+/// A tie the host formed and let bleed to nothing: present, parked.
+fn host_parked(rig: &mut Rig, subject: BandId) {
+    let cfg = rig.app.world.resource::<ConnectionsConfigHandle>().get();
+    let mut ledger = rig.app.world.resource_mut::<ConnectionLedger>();
+    let key = ConnectionKey::new(rig.host_id, subject);
+    ledger.record_contact(
+        key,
+        &Sighting::new(KNOWN_BAND_POS, 0, "", HOST_FACTION),
+        0,
+        &cfg,
+    );
+    for turn in 1..=(1.0 / cfg.strength.decay_per_turn).ceil() as u64 + 1 {
+        ledger.decay_all(turn, &cfg);
+    }
+    assert_eq!(ledger.get(&key).map(|c| c.strength), Some(NO_TIE));
+}
+
+/// Run until `watched` exists on the home band's ledger; returns the report's landing turn.
+fn run_until_landed(rig: &mut Rig, watched: BandId) -> u64 {
+    for _ in 0..LANDING_BUDGET {
+        step(rig);
+        if edge(&rig.app, rig.home_id, watched).is_some() {
+            return tick(&rig.app) - 1;
+        }
+    }
+    panic!("the carried tie to {watched:?} never landed");
+}
+
+#[test]
+fn a_hosts_tie_to_a_far_band_lands_home_on_the_reports_landing_turn_and_not_before() {
+    let mut rig = same_faction_rig();
+    // Post the party at the host first, so the report it carries has a real walk to make.
+    let (home, host, party) = (rig.home, rig.host, rig.party);
+    let host_pos = band_position(&rig.app, host);
+    run_until_stationed(&mut rig.app, party, &[home, host]);
+    for _ in 0..ARRIVAL_BUDGET {
+        if band_position(&rig.app, party) == host_pos {
+            break;
+        }
+        step(&mut rig);
+    }
+    let stale = tick(&rig.app);
+    host_knows(&mut rig, KNOWN_BAND, KNOWN_BAND_POS, "the Hill People");
+    let dispatch = tick(&rig.app);
+    let landed = run_until_landed(&mut rig, KNOWN_BAND);
+    assert!(
+        landed > dispatch,
+        "the runner walks: the tie lands after the turn it was bundled ({dispatch} -> {landed})"
+    );
+    let carried = edge(&rig.app, rig.home_id, KNOWN_BAND).expect("the carried tie");
+    assert_eq!(
+        carried.last_contact_turn, landed,
+        "clocks 2 and 3 hold the landing turn"
+    );
+    assert_eq!(
+        carried.last_seen_position, KNOWN_BAND_POS,
+        "clock 1 holds the host's remembered tile"
+    );
+    assert_eq!(
+        carried.last_seen_turn, stale,
+        "and the host's own observed turn"
+    );
+    assert_eq!(carried.subject_name, "the Hill People");
+    assert_eq!(carried.subject_faction, HOST_FACTION);
+    assert!(carried.strength > NO_TIE);
+}
+
+/// Turns since the host last met a band it still holds a live tie to, past the one-turn lag.
+const STALE_CONTACT_TURNS: u64 = 5;
+
+#[test]
+fn only_the_hosts_fresh_ties_are_carried_not_its_stale_live_ones() {
+    let mut rig = same_faction_rig();
+    // Let the clock run past the stale age, so "turns ago" is a real turn and not clamped at zero.
+    for _ in 0..=STALE_CONTACT_TURNS {
+        step(&mut rig);
+    }
+    host_knew(&mut rig, PARKED_BAND, STALE_CONTACT_TURNS);
+    host_knows(&mut rig, KNOWN_BAND, KNOWN_BAND_POS, "the Hill People");
+    let stale = rig
+        .app
+        .world
+        .resource::<ConnectionLedger>()
+        .get(&ConnectionKey::new(rig.host_id, PARKED_BAND))
+        .cloned()
+        .expect("seeded");
+    assert!(stale.strength > NO_TIE, "the stale tie is live");
+    run_until_landed(&mut rig, KNOWN_BAND);
+    for _ in 0..TURNS_PAST_LANDING {
+        step(&mut rig);
+    }
+    assert!(
+        edge(&rig.app, rig.home_id, PARKED_BAND).is_none(),
+        "a live but stale host tie is not news"
+    );
+}
+
+#[test]
+fn a_parked_tie_the_host_holds_is_not_carried() {
+    let mut rig = same_faction_rig();
+    host_parked(&mut rig, PARKED_BAND);
+    host_knows(&mut rig, KNOWN_BAND, KNOWN_BAND_POS, "the Hill People");
+    let landed = run_until_landed(&mut rig, KNOWN_BAND);
+    for _ in 0..TURNS_PAST_LANDING {
+        step(&mut rig);
+    }
+    assert!(landed > 0, "liveness: the live tie did land");
+    assert!(
+        edge(&rig.app, rig.home_id, PARKED_BAND).is_none(),
+        "a parked tie is not news"
+    );
+}
+
+#[test]
+fn the_hosts_tie_back_to_the_home_band_is_not_carried() {
+    let mut rig = same_faction_rig();
+    host_knows(&mut rig, KNOWN_BAND, KNOWN_BAND_POS, "the Hill People");
+    let home_id = rig.home_id;
+    host_knows(&mut rig, home_id, KNOWN_BAND_POS, "home");
+    run_until_landed(&mut rig, KNOWN_BAND);
+    for _ in 0..TURNS_PAST_LANDING {
+        step(&mut rig);
+    }
+    assert!(
+        edge(&rig.app, rig.home_id, rig.home_id).is_none(),
+        "a band never holds a tie to itself"
+    );
+}
+
+#[test]
+fn a_carried_tie_fires_no_gathering() {
+    let mut rig = same_faction_rig();
+    host_knows(&mut rig, KNOWN_BAND, KNOWN_BAND_POS, "the Hill People");
+    let before = rig
+        .app
+        .world
+        .resource::<core_sim::GatheringLedger>()
+        .held_by(HOME);
+    run_until_landed(&mut rig, KNOWN_BAND);
+    assert!(
+        rig.app
+            .world
+            .resource::<core_sim::SimulationMetrics>()
+            .connections_formed
+            > 0,
+        "liveness: the carried tie formed a new edge on the landing turn"
+    );
+    assert_eq!(
+        rig.app
+            .world
+            .resource::<core_sim::GatheringLedger>()
+            .held_by(HOME),
+        before,
+        "news of a band is not a meeting"
+    );
+}
+
+#[test]
+fn a_band_seen_directly_and_known_to_the_host_lands_once_at_the_direct_position() {
+    let mut rig = same_faction_rig();
+    // The host sees nobody itself, so its memory of the band stays exactly as seeded.
+    rig.app.world.entity_mut(rig.host).remove::<StartingUnit>();
+    // Post the party at the host first, so it is there to see the band directly.
+    let (home, host, party) = (rig.home, rig.host, rig.party);
+    let post = band_position(&rig.app, host);
+    run_until_stationed(&mut rig.app, party, &[home, host]);
+    for _ in 0..ARRIVAL_BUDGET {
+        if band_position(&rig.app, party) == post {
+            break;
+        }
+        step(&mut rig);
+    }
+    let (seen, seen_id) = split_off(&mut rig.app, rig.home);
+    // The split's kinship ties would put the band on the home ledger already.
+    rig.app.world.insert_resource(ConnectionLedger::default());
+    let host_pos = band_position(&rig.app, rig.host);
+    let beside = offset_from(&rig.app, host_pos, NEXT_DOOR_TILES);
+    walk_to(&mut rig.app, seen, beside);
+    pin_people(&mut rig.app, seen);
+    let home_pos = band_position(&rig.app, rig.home);
+    host_knows(&mut rig, seen_id, home_pos, "stale");
+    assert_ne!(home_pos, beside, "the host's memory is somewhere else");
+
+    run_until_landed(&mut rig, seen_id);
+    let landed = edge(&rig.app, rig.home_id, seen_id).expect("the tie landed");
+    let gain = rig
+        .app
+        .world
+        .resource::<ConnectionsConfigHandle>()
+        .get()
+        .strength
+        .gain_per_contact;
+    assert_eq!(
+        landed.strength,
+        scalar_from_f32(gain),
+        "one landing, one contact"
+    );
+    assert_eq!(
+        landed.last_seen_position, beside,
+        "the party's own sighting is fresher and wins"
+    );
+}
+
+/// Turns a post is watched for once its first report has landed.
+const WATCHED_POST_TURNS: u32 = 25;
+
+/// **A STATIONED POST'S LANDED REPORTS MOVE CLOCK 1 EVERY TURN.** The party stands on its host, sees
+/// it each turn, and each turn's report lands a runner's walk later with the turn it was observed:
+/// `last_seen_turn` rises by one per landed report and trails `last_contact_turn` by the walk, a
+/// constant. (The live "stuck at 194" reading was this lag: `contact 203 - seen 194` is the walk.)
+#[test]
+fn a_stationed_posts_landed_reports_advance_clock_one_every_turn() {
+    let mut rig = cross_faction_rig_with_a_fresh_tie();
+    let (home, host, home_id, host_id, party) =
+        (rig.home, rig.host, rig.home_id, rig.host_id, rig.party);
+    let formed = edge(&rig.app, home_id, host_id)
+        .expect("the fresh tie")
+        .last_contact_turn;
+    run_until_stationed(&mut rig.app, party, &[home, host]);
+    let mut landed = None;
+    for _ in 0..ARRIVAL_BUDGET {
+        feed(&mut rig.app, home);
+        feed(&mut rig.app, host);
+        run_turn(&mut rig.app);
+        let now = edge(&rig.app, home_id, host_id).expect("the tie");
+        if now.last_contact_turn > formed {
+            landed = Some(now);
+            break;
+        }
+    }
+    let first = landed.expect("the first report lands");
+    let mut previous = first.clone();
+    for _ in 0..WATCHED_POST_TURNS {
+        feed(&mut rig.app, home);
+        feed(&mut rig.app, host);
+        run_turn(&mut rig.app);
+        let now = edge(&rig.app, home_id, host_id).expect("the tie");
+        if now.last_contact_turn > previous.last_contact_turn {
+            assert!(
+                now.last_seen_turn > previous.last_seen_turn,
+                "a landed report advances clock 1 to the turn it was observed \
+                 (landing {}: seen {} -> {})",
+                now.last_contact_turn,
+                previous.last_seen_turn,
+                now.last_seen_turn
+            );
+        } else {
+            assert_eq!(now.last_seen_turn, previous.last_seen_turn);
+        }
+        assert!(
+            now.last_seen_turn < now.last_contact_turn,
+            "an observation is older than the report that carried it home"
+        );
+        previous = now;
+    }
+    assert!(
+        previous.last_seen_turn >= first.last_seen_turn + WATCHED_POST_TURNS as u64 / 2,
+        "clock 1 keeps up with the post: it is not pinned at the first observation"
+    );
+}
+
+/// **A CARRIED TIE IS NEWS ONCE.** The host's edge to a far band is kept fresh by contact (as a
+/// second people's runner keeps one) while its observation never changes. The runner re-delivers
+/// that one old observation every turn; it must not refresh the home tie's strength or contact clock,
+/// which would hold it at full beside a clock 1 that never moves.
+#[test]
+fn a_carried_tie_that_is_not_news_does_not_hold_the_home_tie_up() {
+    let mut rig = same_faction_rig();
+    let (home, host, party) = (rig.home, rig.host, rig.party);
+    run_until_stationed(&mut rig.app, party, &[home, host]);
+    let observed = tick(&rig.app);
+    let cfg = rig.app.world.resource::<ConnectionsConfigHandle>().get();
+    let keep_host_edge_fresh = |rig: &mut Rig| {
+        let now = tick(&rig.app);
+        rig.app
+            .world
+            .resource_mut::<ConnectionLedger>()
+            .record_contact(
+                ConnectionKey::new(rig.host_id, KNOWN_BAND),
+                &Sighting::new(KNOWN_BAND_POS, observed, "the Hill People", HOST_FACTION),
+                now,
+                &cfg,
+            );
+    };
+    let mut first_strength = None;
+    let mut strongest = Scalar::zero();
+    for _ in 0..LANDING_BUDGET {
+        keep_host_edge_fresh(&mut rig);
+        step(&mut rig);
+        if let Some(carried) = edge(&rig.app, rig.home_id, KNOWN_BAND) {
+            first_strength.get_or_insert(carried.strength);
+            strongest = strongest.max(carried.strength);
+            assert_eq!(
+                carried.last_seen_turn, observed,
+                "clock 1 holds the host's one observation"
+            );
+        }
+    }
+    let first = first_strength.expect("the carried tie landed once");
+    assert_eq!(
+        strongest, first,
+        "re-delivering an observation home already holds is not a contact: strength never rises \
+         past the one landing"
+    );
+    let end = edge(&rig.app, rig.home_id, KNOWN_BAND).map(|e| e.strength);
+    assert!(
+        end.is_none_or(|strength| strength < first),
+        "and with no fresh news the tie bleeds"
+    );
+}

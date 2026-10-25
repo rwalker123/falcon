@@ -504,22 +504,33 @@ fn an_improvement_on_unexplored_ground_is_not_published() {
     assert_eq!(count, 0, "ground nobody has explored publishes nothing");
 }
 
-/// **A TILE RUNG IS WORK ALONE**: the ladder refuses a material on one, loudly, rather than
-/// publishing a bill nothing pays.
+/// **A TILE RUNG IS KEPT WITH WORK ALONE**: the ladder refuses a standing material RATE on one,
+/// loudly, rather than publishing a bill nothing pays - while a BUILD pile loads (the builders draw
+/// it from their own band's store, #692).
 #[test]
-fn a_material_on_a_tile_rung_is_refused() {
-    let mut ladder: Value = serde_json::from_str(BUILTIN_INTENSIFICATION_LADDER)
-        .expect("the builtin ladder parses as json");
-    let overlay: Value = serde_json::from_str(include_str!("fixtures/orchard_tile_branch.json"))
-        .expect("the fixture parses as json");
-    ladder["branches"][BRANCH] = overlay["branches"][BRANCH].clone();
-    let mut rungs: Vec<Value> = overlay["rungs"].as_array().expect("rungs").clone();
-    rungs[1]["build"]["materials"] = serde_json::json!({ "stone": 4.0 });
-    ladder["rungs"].as_array_mut().expect("rungs").extend(rungs);
-    let refusal = LadderConfig::from_json_str(&ladder.to_string())
-        .expect_err("a material on a tile rung must not load");
+fn a_standing_material_on_a_tile_rung_is_refused_and_a_build_pile_is_not() {
+    let ladder_with = |edit: &dyn Fn(&mut Value)| {
+        let mut ladder: Value = serde_json::from_str(BUILTIN_INTENSIFICATION_LADDER)
+            .expect("the builtin ladder parses as json");
+        let overlay: Value =
+            serde_json::from_str(include_str!("fixtures/orchard_tile_branch.json"))
+                .expect("the fixture parses as json");
+        ladder["branches"][BRANCH] = overlay["branches"][BRANCH].clone();
+        let mut rungs: Vec<Value> = overlay["rungs"].as_array().expect("rungs").clone();
+        edit(&mut rungs[1]);
+        ladder["rungs"].as_array_mut().expect("rungs").extend(rungs);
+        LadderConfig::from_json_str(&ladder.to_string())
+    };
+    let refusal = ladder_with(&|rung| {
+        rung["upkeep"]["materials"] = serde_json::json!({ "stone": 4.0 });
+    })
+    .expect_err("a standing material on a tile rung must not load");
     assert!(
         refusal.to_string().contains("WORK alone"),
         "the refusal names the rule: {refusal}"
     );
+    ladder_with(&|rung| {
+        rung["build"]["materials"] = serde_json::json!({ "stone": 4.0 });
+    })
+    .expect("a build pile on a tile rung loads");
 }

@@ -4712,6 +4712,8 @@ fn plant_rung_site_refusal(
         // **A plant rung asks nothing of a deposit** — every rung off the two deposit branches
         // leaves `min_deposit_capacity` at this neutral, so the term cannot refuse one.
         core_sim::NO_DEPOSIT_FLOOR,
+        // **A plant rung asks nothing of belief** - only a belief branch's rungs set `min_belief`.
+        core_sim::NO_BELIEF,
         // **The acting faction's lessons**: a rung's `site_relaxations` loosen its site rule for a
         // people that holds the lesson, and every gate reads the same answer.
         &|name| {
@@ -4783,6 +4785,7 @@ fn validate_deposit_verb(
         true,
         true,
         core_sim::extraction::tile_deposit_capacity(&extraction, material, ground),
+        core_sim::NO_BELIEF,
         // A deposit rung declares no `site_relaxations`, so no lesson changes its rule.
         &|_| false,
     ) {
@@ -4827,6 +4830,11 @@ fn site_refusal_message(refusal: SiteRefusal, tile: UVec2, verb: &str) -> String
             "Nothing will grow at ({}, {}) — that ground is too thin and too dry to take a crop. \
              Your people can carry seed, but not yet water or feed the land.",
             tile.x, tile.y
+        ),
+        SiteRefusal::NoBelief => format!(
+            "({}, {}) does not hold enough belief to {} - belief gathers where people have buried \
+             their dead and met, so hold more gatherings and bury your dead there first.",
+            tile.x, tile.y, verb
         ),
         SiteRefusal::NeedsLesson => format!(
             "Your people have not learned how to {} ground beyond the sites they already gather, \
@@ -7128,26 +7136,6 @@ fn resolve_post(
         );
         return None;
     };
-    let tie = app
-        .world
-        .resource::<core_sim::connections::ConnectionLedger>()
-        .get(&core_sim::connections::ConnectionKey::new(
-            home_band, host_band,
-        ))
-        .map(|connection| connection.strength)
-        .unwrap_or(core_sim::connections::NO_TIE);
-    if tie <= core_sim::connections::NO_TIE {
-        emit_command_failure(
-            app,
-            CommandEventKind::ExpeditionSent,
-            faction,
-            format!(
-                "{VERB}: no dealings with band {host_band_id} — meet them before you station a \
-                 party with them."
-            ),
-        );
-        return None;
-    }
     let admitted = app.world.resource::<FactionBorderPolicies>().admits(
         app.world.resource::<core_sim::Treaties>(),
         host_faction,
@@ -7162,17 +7150,23 @@ fn resolve_post(
         );
         return None;
     }
-    let aim = app
+    let people = core_sim::dealings::sender_people_bands(&mut app.world, faction);
+    let Some(aim) = app
         .world
         .resource::<core_sim::connections::ConnectionLedger>()
         .launch_aim(
             app.world.resource::<core_sim::VisibilityLedger>(),
             faction,
-            home_band,
+            &people,
             host_band,
             host_faction,
             host_pos,
-        );
+        )
+    else {
+        let reason = core_sim::dealings::never_met_reason(VERB, host_band, "station a party with");
+        emit_command_failure(app, CommandEventKind::ExpeditionSent, faction, reason);
+        return None;
+    };
     let home_pos = app
         .world
         .get::<PopulationCohort>(home_entity)
@@ -8641,6 +8635,37 @@ fn validate_tile_verb(
         .below_id(destination)
         .expect("a rung a verb raises stands on the rung beneath it");
     let label = rung.label.to_lowercase();
+    // **The ground, through the one `rung_site_refusal` seam** every other source's command and
+    // gate resolve: a rung that states a `site_requirement` (a belief branch's monument asks the
+    // tile for `min_belief`) is judged against the tile and the belief standing on it.
+    if rung.site_requirement.is_some() {
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let registry = app.world.resource::<TileRegistry>();
+        let Some(ground) = registry
+            .index(tile.x, tile.y)
+            .and_then(|entity| app.world.get::<Tile>(entity))
+        else {
+            return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
+        };
+        if let Some(refusal) = rung_site_refusal(
+            rung,
+            ground,
+            &labor.forage,
+            // A tile rung asks nothing about gathering or water: both are passed permissive.
+            true,
+            true,
+            core_sim::NO_DEPOSIT_FLOOR,
+            app.world.resource::<core_sim::BeliefRegistry>().get(tile),
+            // A tile rung declares no `site_relaxations`, so no lesson changes its rule.
+            &|_| false,
+        ) {
+            return Err(site_refusal_message(
+                refusal,
+                tile,
+                rung.verb.as_deref().unwrap_or(&label),
+            ));
+        }
+    }
     let improvements = app.world.resource::<core_sim::TileImprovementRegistry>();
     match improvements.get(tile, branch) {
         Some(improvement) if improvement.faction != faction => Err(format!(
@@ -19636,6 +19661,7 @@ mod tests {
             app.world.resource::<FoodSiteRegistry>().is_site(coord),
             fresh_water,
             core_sim::NO_DEPOSIT_FLOOR,
+            core_sim::NO_BELIEF,
             &|_| false,
         ))
     }
@@ -19671,8 +19697,15 @@ mod tests {
             min_forage_capacity: 0.0,
             requires_fresh_water: true,
             min_deposit_capacity: core_sim::NO_DEPOSIT_FLOOR,
+            min_belief: core_sim::NO_BELIEF,
         }
-        .refusal(false, 0.0, fresh_water, core_sim::NO_DEPOSIT_FLOOR)
+        .refusal(
+            false,
+            0.0,
+            fresh_water,
+            core_sim::NO_DEPOSIT_FLOOR,
+            core_sim::NO_BELIEF,
+        )
     }
 
     /// The first tile matching `accept`, scanned in a **totally ordered** `(y, x)` sweep — never map
@@ -27197,6 +27230,279 @@ mod tests {
         OTHER_PEOPLE
     }
 
+    // ------------------------------------------------------------------------------------------
+    // Knowing WHERE a band is belongs to the PEOPLE (`connections.md` -> "A traveling party aims
+    // at what its people know"): a launch is allowed when the sender's people knows the target -
+    // its own people, visible on the map, or held by an edge (live or parked) from ANY resident
+    // band of the sending people.
+    // ------------------------------------------------------------------------------------------
+
+    /// The people the launch rig's foreign host belongs to.
+    const FOREIGN_PEOPLE: FactionId = FactionId(1);
+    /// Where the siblings remember the host: two distinct tiles, so an aim can say whose memory it is.
+    const SEEN_BY_FIRST: UVec2 = UVec2::new(3, 4);
+    const SEEN_BY_SECOND: UVec2 = UVec2::new(9, 6);
+    /// The turns the siblings saw it on - the second sighting is the fresher.
+    const OLDER_SIGHTING: u64 = 5;
+    const FRESHER_SIGHTING: u64 = 9;
+
+    /// A sender with two sibling bands of its own people and a host of ANOTHER people standing on a
+    /// tile that is not `Active` on the sender's map; the connection ledger is empty.
+    struct LaunchRig {
+        app: bevy::prelude::App,
+        sender: Entity,
+        sender_id: core_sim::BandId,
+        siblings: [core_sim::BandId; 2],
+        host: core_sim::BandId,
+        host_tile: UVec2,
+        faction: FactionId,
+    }
+
+    fn launch_rig() -> LaunchRig {
+        let mut app = build_world_app();
+        let (sender, faction) = {
+            let mut query = app
+                .world
+                .query_filtered::<(Entity, &PopulationCohort), With<ResidentBand>>();
+            let (entity, cohort) = query
+                .iter(&app.world)
+                .next()
+                .expect("the campaign spawns a resident band");
+            (entity, cohort.faction)
+        };
+        stock_trade_band(&mut app, sender);
+        let settle = core_sim::SettleConfig {
+            min_founding_workers: 1,
+            parent_min_workers: 0,
+        };
+        let split = |app: &mut bevy::prelude::App| {
+            core_sim::split_band_from_parent(&mut app.world, sender, TRADE_SPLIT_WORKERS, &settle)
+                .expect("a stocked parent can split")
+                .band
+        };
+        let first = split(&mut app);
+        let second = split(&mut app);
+        let host = split(&mut app);
+        let host_tile_position = {
+            let visibility = app.world.resource::<core_sim::VisibilityLedger>();
+            let registry = app.world.resource::<TileRegistry>();
+            (0..registry.height)
+                .flat_map(|y| (0..registry.width).map(move |x| UVec2::new(x, y)))
+                .find(|at| !visibility.is_visible(faction, at.x, at.y))
+                .expect("some tile is out of the sender's sight")
+        };
+        let host_tile = app
+            .world
+            .resource::<TileRegistry>()
+            .index(host_tile_position.x, host_tile_position.y)
+            .expect("on the map");
+        let host_entity = {
+            let mut query = app.world.query::<(Entity, &core_sim::BandId)>();
+            query
+                .iter(&app.world)
+                .find(|(_, id)| **id == host)
+                .map(|(entity, _)| entity)
+                .expect("the host exists")
+        };
+        {
+            let mut cohort = app
+                .world
+                .get_mut::<PopulationCohort>(host_entity)
+                .expect("the host cohort");
+            cohort.faction = FOREIGN_PEOPLE;
+            cohort.current_tile = host_tile;
+        }
+        stock_trade_band(&mut app, sender);
+        app.world
+            .insert_resource(core_sim::connections::ConnectionLedger::default());
+        let sender_id = *app.world.get::<core_sim::BandId>(sender).expect("an id");
+        LaunchRig {
+            app,
+            sender,
+            sender_id,
+            siblings: [first, second],
+            host,
+            host_tile: host_tile_position,
+            faction,
+        }
+    }
+
+    /// `observer` saw the host at `position` on `turn`, and the tie has since bled to a PARKED edge.
+    fn park_a_sighting(
+        app: &mut bevy::prelude::App,
+        observer: core_sim::BandId,
+        host: core_sim::BandId,
+        position: UVec2,
+        turn: u64,
+    ) {
+        let cfg = app
+            .world
+            .resource::<core_sim::ConnectionsConfigHandle>()
+            .get();
+        let mut ledger = app
+            .world
+            .resource_mut::<core_sim::connections::ConnectionLedger>();
+        let key = core_sim::connections::ConnectionKey::new(observer, host);
+        ledger.record_contact(
+            key,
+            &core_sim::Sighting::new(position, turn, "", FOREIGN_PEOPLE),
+            turn,
+            &cfg,
+        );
+        for later in turn + 1..=turn + (1.0 / cfg.strength.decay_per_turn).ceil() as u64 + 1 {
+            ledger.decay_all(later, &cfg);
+        }
+        assert_eq!(
+            ledger.get(&key).map(|edge| edge.strength),
+            Some(core_sim::connections::NO_TIE),
+            "the fixture really parks the edge"
+        );
+    }
+
+    fn launched_aim(app: &mut bevy::prelude::App) -> Option<UVec2> {
+        let party = launched_party(app)?;
+        app.world.get::<Expedition>(party).and_then(|e| e.aim)
+    }
+
+    fn send_trade(rig: &mut LaunchRig) {
+        handle_send_trade_expedition(
+            &mut rig.app,
+            rig.faction,
+            Some(rig.sender_id.0),
+            TRADE_PARTY,
+            rig.host.0,
+            food_cargo(TRADE_CARGO_FOOD),
+            None,
+            false,
+        );
+    }
+
+    fn station(rig: &mut LaunchRig) {
+        handle_station_expedition(
+            &mut rig.app,
+            rig.faction,
+            Some(rig.sender_id.0),
+            TRADE_PARTY,
+            rig.host.0,
+            None,
+        );
+    }
+
+    /// **A SIBLING'S PARKED EDGE LETS THE SENDER LAUNCH, AIMED AT WHERE THE SIBLING SAW THE HOST.**
+    /// The sender has no edge of its own; the same order from a rig with no edge anywhere refuses.
+    #[test]
+    fn a_launch_is_allowed_on_a_siblings_parked_edge_and_aims_at_its_memory() {
+        for verb in [send_trade as fn(&mut LaunchRig), station] {
+            let mut rig = launch_rig();
+            verb(&mut rig);
+            assert!(
+                launched_party(&mut rig.app).is_none(),
+                "control: no edge anywhere and out of sight is refused"
+            );
+            let (first, host) = (rig.siblings[0], rig.host);
+            park_a_sighting(&mut rig.app, first, host, SEEN_BY_FIRST, OLDER_SIGHTING);
+            assert!(
+                rig.app
+                    .world
+                    .resource::<core_sim::connections::ConnectionLedger>()
+                    .get(&core_sim::connections::ConnectionKey::new(
+                        rig.sender_id,
+                        host
+                    ))
+                    .is_none(),
+                "the sender itself holds no edge to the host"
+            );
+            verb(&mut rig);
+            assert_eq!(
+                launched_aim(&mut rig.app),
+                Some(SEEN_BY_FIRST),
+                "the party walks to the sibling's remembered tile"
+            );
+        }
+    }
+
+    /// **THE AIM IS THE PEOPLE'S FRESHEST SIGHTING**, not any one band's.
+    #[test]
+    fn a_launch_aims_at_the_freshest_sighting_among_the_siblings() {
+        let mut rig = launch_rig();
+        let host = rig.host;
+        let [first, second] = rig.siblings;
+        park_a_sighting(&mut rig.app, first, host, SEEN_BY_FIRST, OLDER_SIGHTING);
+        park_a_sighting(&mut rig.app, second, host, SEEN_BY_SECOND, FRESHER_SIGHTING);
+        send_trade(&mut rig);
+        assert_eq!(launched_aim(&mut rig.app), Some(SEEN_BY_SECOND));
+    }
+
+    /// **A HOST ON A TILE THE FACTION SEES IS KNOWN WITH NO EDGE ANYWHERE**, aimed at its live tile.
+    #[test]
+    fn a_visible_host_is_launchable_with_no_edge_and_aimed_at_its_live_tile() {
+        for verb in [send_trade as fn(&mut LaunchRig), station] {
+            let mut rig = launch_rig();
+            let at = rig.host_tile;
+            rig.app
+                .world
+                .resource_mut::<core_sim::VisibilityLedger>()
+                .get_faction_mut(rig.faction)
+                .expect("the faction has a map")
+                .mark_active(at.x, at.y, 1);
+            verb(&mut rig);
+            assert_eq!(launched_aim(&mut rig.app), Some(at));
+        }
+    }
+
+    /// **NO EDGE ANYWHERE AND OUT OF SIGHT: REFUSED, SAYING THE PEOPLE NEVER MET THE BAND.** Nothing
+    /// leaves and the band stands as it did.
+    #[test]
+    fn a_host_the_people_has_never_met_is_refused_with_the_never_met_reason() {
+        let mut rig = launch_rig();
+        let before = band_fingerprint(&rig.app, rig.sender);
+        send_trade(&mut rig);
+        let detail = last_expedition_detail(&rig.app);
+        assert!(detail.contains("never met"), "{detail}");
+        station(&mut rig);
+        let detail = last_expedition_detail(&rig.app);
+        assert!(detail.contains("never met"), "{detail}");
+        assert_eq!(parties_out(&mut rig.app), 0);
+        assert_eq!(band_fingerprint(&rig.app, rig.sender), before);
+    }
+
+    /// **CONTROL: TIE STRENGTH STAYS PER BAND.** A sibling's live tie to the host leaves the sender's
+    /// own tie parked and its own live sightings empty - what the knowledge rider, supply pooling
+    /// and the other readers of the ledger consult is the band's OWN edge.
+    #[test]
+    fn a_siblings_live_tie_is_not_the_senders_own() {
+        let mut rig = launch_rig();
+        let (host, first) = (rig.host, rig.siblings[0]);
+        let cfg = rig
+            .app
+            .world
+            .resource::<core_sim::ConnectionsConfigHandle>()
+            .get();
+        rig.app
+            .world
+            .resource_mut::<core_sim::connections::ConnectionLedger>()
+            .record_contact(
+                core_sim::connections::ConnectionKey::new(first, host),
+                &core_sim::Sighting::new(SEEN_BY_FIRST, 1, "", FOREIGN_PEOPLE),
+                1,
+                &cfg,
+            );
+        let ledger = rig
+            .app
+            .world
+            .resource::<core_sim::connections::ConnectionLedger>();
+        assert!(
+            ledger.tie_is_live(first, host),
+            "liveness: the sibling's tie"
+        );
+        assert!(
+            !ledger.tie_is_live(rig.sender_id, host),
+            "the sender's own tie is untouched"
+        );
+        assert_eq!(ledger.live_sightings_of(rig.sender_id, 0).count(), 0);
+        assert_eq!(ledger.live_sightings_of(first, 0).count(), 1);
+    }
+
     /// **A launch posts the party, draws no provisions and loads no cargo.** The band loses its
     /// workers and its larder is untouched to the micro-unit — the party's rations are the band's
     /// ordinary meal from here on.
@@ -27262,52 +27568,21 @@ mod tests {
         );
     }
 
-    /// **Every gate refuses before anything is drawn.** No edge, a parked edge, closed borders
+    /// **Every gate refuses before anything is drawn.** A host never met, closed borders
     /// (another people's host), the band itself as host, a host that is not a resident band, and an
     /// oversized party — each leaves the band exactly as it stood.
     #[test]
     fn every_station_refusal_leaves_the_band_as_it_stood() {
-        // No edge at all.
-        let mut app = build_world_app();
-        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
-        app.world
-            .insert_resource(core_sim::connections::ConnectionLedger::default());
-        assert_station_refused(&mut app, faction, sender, host.0, TRADE_PARTY, "no edge");
-
-        // A parked edge: a tie formed and then bled to nothing.
-        let mut app = build_world_app();
-        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
-        {
-            let sender_id = *app.world.get::<core_sim::BandId>(sender).expect("an id");
-            let cfg = app
-                .world
-                .resource::<core_sim::ConnectionsConfigHandle>()
-                .get();
-            let mut ledger = core_sim::connections::ConnectionLedger::default();
-            let key = core_sim::connections::ConnectionKey::new(sender_id, host);
-            ledger.record_contact(
-                key,
-                &core_sim::Sighting::new(UVec2::new(0, 0), 0, "", core_sim::FactionId(0)),
-                0,
-                &cfg,
-            );
-            for turn in 1..=(1.0 / cfg.strength.decay_per_turn).ceil() as u64 + 1 {
-                ledger.decay_all(turn, &cfg);
-            }
-            assert_eq!(
-                ledger.get(&key).map(|c| c.strength),
-                Some(core_sim::connections::NO_TIE),
-                "the fixture really parks the edge"
-            );
-            app.world.insert_resource(ledger);
-        }
+        // A host the people has never met: no edge anywhere and out of sight.
+        let mut rig = launch_rig();
+        let (host, faction, sender) = (rig.host, rig.faction, rig.sender);
         assert_station_refused(
-            &mut app,
+            &mut rig.app,
             faction,
             sender,
             host.0,
             TRADE_PARTY,
-            "parked edge",
+            "never met",
         );
 
         // Another people's host with its borders closed.
@@ -29952,6 +30227,8 @@ mod tests {
             // The storage branches' verbs: the pit is a tile verb, the rack names the band.
             matched_ if matched_ == VerbId::new("dig") => "build dig 0 1 1".to_string(),
             matched_ if matched_ == VerbId::new("rack") => format!("build rack 0 {ROAD_BAND_ID}"),
+            // The belief branch's verb is a tile verb, the pit's shape.
+            matched_ if matched_ == VerbId::new("raise") => "build raise 0 1 1".to_string(),
             other => panic!("no canonical command line is stated for the verb `{other:?}`"),
         }
     }
@@ -30056,6 +30333,43 @@ mod tests {
                 extraction_failure_reasons(&app)
             );
         }
+    }
+
+    /// **`build raise` IS REFUSED BEFORE THE RITUAL LESSON, AND ON A TILE THAT HOLDS TOO LITTLE BELIEF**
+    /// (#692) - the tile verb's command gate, with the ground judged through the one
+    /// `rung_site_refusal` seam the labor arm's gate also reads.
+    #[test]
+    fn raise_is_refused_before_ritual_and_below_the_belief_floor() {
+        const SHORT_OF_ONE: f32 = 0.5;
+        const ENOUGH: f32 = 1.0;
+        let (mut app, faction, _band) = deposit_world(TWO_DEPOSIT_TERRAIN, "wood");
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let rung = ladder
+            .rung_for_verb(VerbId::new("raise"))
+            .expect("the belief branch's verb");
+        let branch = rung.branch;
+        let ask =
+            |app: &bevy::prelude::App| validate_tile_verb(app, faction, WORKING, branch, rung);
+
+        app.world
+            .resource_mut::<core_sim::BeliefRegistry>()
+            .add(WORKING, ENOUGH);
+        let unlearned = ask(&app).expect_err("ritual is not learned");
+        assert!(unlearned.contains("Ritual"), "{unlearned}");
+
+        grant_deposit_knowledge(&mut app, faction, core_sim::RITUAL_DISCOVERY_ID);
+        assert_eq!(
+            ask(&app),
+            Ok(()),
+            "a learned lesson on a tile holding belief"
+        );
+
+        *app.world.resource_mut::<core_sim::BeliefRegistry>() = core_sim::BeliefRegistry::default();
+        app.world
+            .resource_mut::<core_sim::BeliefRegistry>()
+            .add(WORKING, SHORT_OF_ONE);
+        let short = ask(&app).expect_err("half a dead-equivalent is not a gathering ground");
+        assert!(short.contains("belief"), "{short}");
     }
 
     /// ⛔ **`abandon_working` PUTS ONE WORKING DOWN AND LEAVES ITS NEIGHBOUR ON THE SAME HEX

@@ -2663,8 +2663,8 @@ func _put_staffed_fields(model: Dictionary, merged: Dictionary, assignment: Dict
         assignment.get(SourceForecast.ASSIGNMENT_KIT_TOE_KEY, []) as Array, _item_display_names)
 
 ## **THE TILE CREW ROWS THIS BAND HOLDS** (issue #175) -- one model per `tile` labor row, nearest
-## first. No tile branch ships yet, so this is empty on every shipped world; it exists so the FIRST one
-## renders with no edit here. **Everything a row says comes off the catalog**: the branch's name from
+## first. Empty until a band crews a tile improvement; a branch added to the config renders with no edit
+## here. **Everything a row says comes off the catalog**: the branch's name from
 ## `ladder_branches`, the rung it stands on from `ladder_rungs`, and the standing bill and tools from the
 ## `tile_improvements` row, which carries the keys a deposit's does. A branch or rung the catalog does
 ## not carry reads as its humanised id, never blank.
@@ -2763,8 +2763,9 @@ func _build_band_improvement_row(band: Dictionary, model: Dictionary) -> PanelCo
 
 ## **ONE TILE CREW'S ROW** -- a site row's shell (`_site_row_shell`) carrying the catalog's name for the
 ## branch and its rung, the keeping mark off the standing bill, the crew count and, on a far posting, the
-## party block a deposit crew draws. READ-ONLY: there is no stepper and no inspector, because assigning a
-## tile crew has no UI until the first tile branch ships.
+## party block a deposit crew draws, and the strip's ladder chip, which opens the tile branch's step card
+## (`RungCardController.open_tile_track`). No stepper and no inspector: the crew is set from the tile card's
+## `Assign crew ▸` sheet.
 func _build_tile_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var tile: Vector2i = model["tile"]
     var branch := String(model["branch"])
@@ -2809,8 +2810,35 @@ func _build_tile_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     strip_row["keep_tools_named"] = _site_short_tool_names(improvement) if tools_short else ""
     strip_row["tending"] = HudWorkVocab.tending_of(improvement,
         HudComposeVocab.BARE_FORECAST_PREFIX, "")
+    _put_tile_ladder_chip(strip_row, improvement, tile, branch, int(model.get("workers", 0)))
     (shell[SITE_ROW_SHELL_BODY] as HBoxContainer).add_child(_build_row_strip(band, strip_row))
     return row
+
+## **THE TILE ROW'S LADDER CHIP** -- the deposit row's twin, off the tile branch's catalog rows: a build
+## declared on the improvement shows the verb being raised, otherwise the rung a press could land right now
+## is offered (a missing crew is forgiven: the card the chip opens is what names it).
+func _put_tile_ladder_chip(strip_row: Dictionary, improvement: Dictionary, tile: Vector2i,
+        branch: String, crew: int) -> void:
+    var ladder := HudTileVocab.tile_ladder(_topbar.ladder_rungs() if _topbar != null else [])
+    if ladder.is_empty():
+        return
+    var site := HudTileVocab.site_of(improvement, ladder, branch, tile.x, tile.y)
+    var next_entry := HudDepositVocab.ladder_next_entry(ladder, site)
+    if HudDepositVocab.is_queued(site) and not next_entry.is_empty():
+        var verb := HudDepositVocab.catalog_verb(next_entry)
+        strip_row["building_glyph"] = FoodIcons.for_policy(verb)
+        strip_row["building_policy"] = verb
+        strip_row["building_progress"] = HudDepositVocab.build_fraction_of(site)
+        strip_row[WorkStrip.ROW_BUILDERS_KEY] = SourceForecast.build_crew_staffed(improvement,
+            SourceForecast.BARE_SOURCE_PREFIX)
+        strip_row[WorkStrip.ROW_BUILD_TIP_KEY] = DetailFormat.build_crew_tooltip(improvement,
+            SourceForecast.BARE_SOURCE_PREFIX, _item_display_names, false)
+        return
+    var tile_info := {"x": tile.x, "y": tile.y, "belief": _band_labor.tile_belief_at(tile.x, tile.y)}
+    var ready := RungGates.tile_rung_ready(site, ladder, _player_knowledge(),
+        _topbar.knowledge_labels() if _topbar != null else {}, crew, tile_info)
+    if not ready.is_empty():
+        strip_row["ready_glyph"] = FoodIcons.for_policy(HudDepositVocab.catalog_verb(ready))
 
 ## **ONE WORKING'S ROW — a harvest or hunt row's shape** (the site rows' shell, `_site_row_shell`).
 ## Line one is the icon (the MATERIAL's mark), the name (`Wood · 2 tiles SE`, one ink — it names the
@@ -3064,6 +3092,16 @@ func strip_handlers(band: Dictionary, row: Dictionary, deposit: Dictionary = {},
         wire_source: Dictionary = {}) -> Dictionary:
     var source := _bare_patch_of(wire_source) \
         if String(row.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE else wire_source
+    if String(row.get("kind", "")) == HudConst.LABOR_KIND_TILE:
+        var tile_x := int(row.get("x", -1))
+        var tile_y := int(row.get("y", -1))
+        var tile_branch := String(row.get("branch", ""))
+        return {
+            "on_ladder": func(anchor: Control) -> void:
+                _rung.open_tile_track(band, {"x": tile_x, "y": tile_y}, tile_branch,
+                    _band_labor.tile_crew_total(tile_x, tile_y, tile_branch), anchor),
+            "on_ring": func(_anchor: Control) -> void: pass,
+        }
     return {
         "on_ladder": func(anchor: Control) -> void:
             if deposit.is_empty():
@@ -6229,31 +6267,26 @@ static func _plain_text(bbcode: String) -> String:
 ## pack space is a property of the goods, not of who is carrying them.
 func _fill_trade_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int) -> void:
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
-    var live_ties := _band_labor.connections_for_band(band_id).filter(
-        func(tie: Variant) -> bool: return HudBandLaborState.tie_is_live(tie as Dictionary))
-    if live_ties.is_empty():
-        # Visible-and-disabled-with-its-reason: a shipment needs a band to go to, and a band with no
-        # live tie has nobody the pick could accept. The sentence says how a tie FORMS, because that is
-        # the action the player has to take and no control on this sheet can take it for them.
+    if _band_labor.known_bands(band_id).is_empty():
+        # Visible-and-disabled-with-its-reason: a shipment needs a band to go to, and a people that has
+        # met nobody else has nobody the pick could accept. The sentence says how a band becomes known,
+        # because that is the action the player has to take and no control on this sheet can take it.
         sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_DESTINATION_NO_TIES))
         sheet.add_child(_blocked_trade_send(HudComposeVocab.COMPOSE_DESTINATION_NO_TIES))
         return
     # **THE DESTINATION IS PICKED ON THE MAP, AND IT IS WHAT THE SEND WAITS FOR.** While this sheet is
-    # open the map rings every band tied LIVE to this one (`TargetingController.set_preselect`), and a
-    # click on one sets it here without committing or selecting. Re-resolved LIVE each render: a tie
-    # that has parked since drops the destination.
+    # open the map rings every band the PEOPLE knows (`TargetingController.set_preselect`) -- visible ones
+    # where they stand, remembered ones at the freshest sighting any of its bands holds -- and a click on
+    # one sets it here without committing or selecting. Re-resolved LIVE each render: a band the people
+    # no longer knows drops the destination.
     _targeting.set_preselect(band, HudComposeVocab.COMPOSE_MISSION_TRADE,
         func(target: Dictionary) -> void:
             _set_trade_destination(int(target.get(TargetingController.PICK_DESTINATION_KEY,
                 HudConst.NO_BAND_ID))))
-    var tie: Dictionary = {}
-    for tie_variant in live_ties:
-        if int((tie_variant as Dictionary).get("subject_band_id", HudConst.NO_BAND_ID)) \
-                == _trade_destination:
-            tie = tie_variant as Dictionary
-    if tie.is_empty():
+    var known := _band_labor.people_last_known(_trade_destination)
+    if _trade_destination == band_id or known.is_empty():
         _trade_destination = HudConst.NO_BAND_ID
-    sheet.add_child(_build_trade_destination_row(band, tie))
+    sheet.add_child(_build_trade_destination_row(band, _trade_destination, known))
     # **HOW IT IS SENT** (early diplomacy): a gift, an offer, or -- where the sim published a standing
     # link between this band and the destination -- a proposed trade. The link is never derived here.
     _settle_trade_mode(band)
@@ -6822,6 +6855,8 @@ func _peoples_diplomacy() -> Dictionary:
             HudDealingsVocab.PEOPLE_ACTION_END: Callable(self, "_on_people_end_treaty_pressed"),
             HudDealingsVocab.PEOPLE_ACTION_BORDERS: Callable(self, "_on_people_borders_pressed"),
         },
+        # The `Trade` link on each row (rides this bundle rather than a fifth parameter on every builder).
+        HudConnectionsVocab.TRADE_PRESS_KEY: Callable(self, "_on_trade_link_pressed"),
     }
 
 ## **ENDING A TREATY IS A BREACH, so it confirms** -- and the prompt says what the breach costs.
@@ -7093,8 +7128,8 @@ func _clear_trade_destination() -> void:
 ## SAW them, and the remembered sighting and its walk ride the value's hover
 ## (`_trade_destination_notes`). Only the picked row carries `READ_ONLY_FIELD_META`, so "is a
 ## destination set" stays one meta lookup.
-func _build_trade_destination_row(band: Dictionary, tie: Dictionary) -> HBoxContainer:
-    if tie.is_empty():
+func _build_trade_destination_row(band: Dictionary, destination: int, known: Dictionary) -> HBoxContainer:
+    if known.is_empty():
         var unset := HBoxContainer.new()
         unset.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
         unset.add_child(HudWidgets.build_field_key(HudComposeVocab.COMPOSE_FIELD_DESTINATION))
@@ -7105,23 +7140,24 @@ func _build_trade_destination_row(band: Dictionary, tie: Dictionary) -> HBoxCont
         unset.add_child(hint)
         unset.set_meta(TRADE_DESTINATION_UNSET_META, true)
         return unset
-    var label := ConnectionsRoster.subject_label(tie, _band_labor)
-    var where := _trade_destination_where(band, tie)
+    var label := _band_labor.host_label_for_id(destination)
+    var where := _trade_destination_where(band, known)
     var row := HudWidgets.build_read_only_field(HudComposeVocab.COMPOSE_FIELD_DESTINATION,
         label if where == "" else HudComposeVocab.TRADE_DESTINATION_FORMAT % [label, where])
     var value := row.get_child(row.get_child_count() - 1) as Label
     if value != null:
-        HudWidgets.set_label_tooltip(value, "\n".join(_trade_destination_notes(band, tie)))
+        HudWidgets.set_label_tooltip(value, "\n".join(_trade_destination_notes(band, known)))
     row.add_child(_build_field_clear_button(HudComposeVocab.COMPOSE_DESTINATION_CLEAR_TOOLTIP,
         _clear_trade_destination))
     return row
 
 ## `8 tiles NE` — the wrap-aware distance from this band to where the tie last saw the destination,
 ## and the compass bearing to it; `here` on the band's own tile; `""` where either tile is unknown.
-func _trade_destination_where(band: Dictionary, tie: Dictionary) -> String:
+func _trade_destination_where(band: Dictionary, known: Dictionary) -> String:
     var home := SourceForecast.band_tile(band)
-    var x := int(tie.get("last_seen_x", -1))
-    var y := int(tie.get("last_seen_y", -1))
+    var tile: Vector2i = known.get("tile", Vector2i(-1, -1))
+    var x := tile.x
+    var y := tile.y
     if home.x < 0 or home.y < 0 or x < 0 or y < 0:
         return ""
     var distance := SourceForecast.hex_distance_wrapped(home.x, home.y, x, y,
@@ -7164,18 +7200,22 @@ func _on_station_link_pressed(band_id: int, host_id: int) -> void:
     _select_band_on_map(band)
     rerender()
 
+## **THE `Trade` PRESS** — the Peoples roster's link. Opens the band's Trade sheet exactly as the action
+## bar's Trade verb does (`dispatch_verb`), then hands the row's band to the sheet through the
+## pre-selection `choose` the sheet registered on that render: the same seam a map click on a ringed
+## band uses, so the `To` row, its `✕` and the live-tie re-resolve are the sheet's own. A band with
+## nobody free opens nothing (the link is greyed with its reason, `_build_trade_link`); a parked tie's link is
+## live, since the sim accepts any edge the people holds.
+func _on_trade_link_pressed(band_id: int, host_id: int) -> void:
+    var band := _band_labor.player_band_by_band_id(band_id)
+    if band.is_empty() or host_id == HudConst.NO_BAND_ID:
+        return
+    dispatch_verb(HudComposeVocab.COMPOSE_MISSION_TRADE, band)
+    _targeting.choose_preselected({TargetingController.PICK_DESTINATION_KEY: host_id})
+
 ## The callable the roster's link calls back through (band id, host band id).
 func _station_press() -> Callable:
     return Callable(self, "_on_station_link_pressed")
-
-## The tie `band` holds to the open sheet's host, or `{}` when it is parked, gone or none is open.
-func _station_tie(band: Dictionary) -> Dictionary:
-    for tie_variant in _band_labor.connections_for_band(int(band.get("band_id", HudConst.NO_BAND_ID))):
-        var tie: Dictionary = tie_variant as Dictionary
-        if int(tie.get("subject_band_id", HudConst.NO_BAND_ID)) == _station_host \
-                and HudBandLaborState.tie_is_live(tie):
-            return tie
-    return {}
 
 ## The open sheet's host, named as the Peoples tab names it (`HudBandLaborState.host_label_for_id`).
 func _station_host_label() -> String:
@@ -7199,18 +7239,19 @@ func _station_host_label() -> String:
 ## the line says `a walk` rather than inventing a number.
 func _fill_station_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int) -> void:
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
-    var tie := _station_tie(band)
-    if tie.is_empty():
-        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.STATION_SEND_NO_TIE_REASON))
-        sheet.add_child(_blocked_station_send(HudComposeVocab.STATION_SEND_NO_TIE_REASON))
+    var known := _band_labor.people_last_known(_station_host)
+    if known.is_empty():
+        # Only a band the people has never met reaches here (the Peoples tab lists none of them).
+        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.STATION_SEND_UNKNOWN_REASON))
+        sheet.add_child(_blocked_station_send(HudComposeVocab.STATION_SEND_UNKNOWN_REASON))
         return
-    var label := ConnectionsRoster.subject_label(tie, _band_labor)
-    var where := _trade_destination_where(band, tie)
+    var label := _band_labor.host_label_for_id(_station_host)
+    var where := _trade_destination_where(band, known)
     var with_row := HudWidgets.build_read_only_field(HudComposeVocab.STATION_FIELD_WITH,
         label if where == "" else HudComposeVocab.TRADE_DESTINATION_FORMAT % [label, where])
     var value := with_row.get_child(with_row.get_child_count() - 1) as Label
     if value != null:
-        HudWidgets.set_label_tooltip(value, "\n".join(_trade_destination_notes(band, tie)))
+        HudWidgets.set_label_tooltip(value, "\n".join(_trade_destination_notes(band, known)))
     sheet.add_child(with_row)
     var party_max: int = maxi(idle, HudConst.WORKER_STEP)
     _send_expedition_count = clampi(_send_expedition_count, HudConst.WORKER_STEP, party_max)
@@ -7221,8 +7262,8 @@ func _fill_station_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: i
         HudComposeVocab.STATION_PEOPLE_LABEL, HudComposeVocab.STATION_PEOPLE_AT_MAX_REASON))
     sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.STATION_PEOPLE_SUB_FORMAT % [
         _send_expedition_count, idle, HudFormat.band_name(band)]))
-    var seen_x := int(tie.get("last_seen_x", -1))
-    var seen_y := int(tie.get("last_seen_y", -1))
+    var seen_x: int = (known["tile"] as Vector2i).x
+    var seen_y: int = (known["tile"] as Vector2i).y
     var late_turns := SourceForecast.station_news_delay_turns(band, seen_x, seen_y,
         _band_labor.grid_width(), _band_labor.wrap_horizontal())
     var host_distance := SourceForecast.station_host_distance(band, seen_x, seen_y,
@@ -7268,12 +7309,7 @@ func _blocked_station_send(reason: String) -> Button:
 ## **THE TRADE ORDER** — `send_trade_expedition` to `destination` with the party and the manifest the
 ## sheet composed: the pre-selected destination's Send, or the armed pick's click.
 func _commit_trade(band: Dictionary, destination: int, workers: int, cargo: Array) -> String:
-    var label := _band_labor.band_label_for_id(destination)
-    for tie_variant in _band_labor.connections_for_band(int(band.get("band_id", HudConst.NO_BAND_ID))):
-        var tie: Dictionary = tie_variant as Dictionary
-        if int(tie.get("subject_band_id", HudConst.NO_BAND_ID)) == destination:
-            label = ConnectionsRoster.subject_label(tie, _band_labor)
-            break
+    var label := _band_labor.host_label_for_id(destination)
     emit_signal("send_trade_expedition_requested", {
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
         "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
@@ -7309,13 +7345,16 @@ func _blocked_send_button(face: String, reason: String) -> Button:
 ## **WHAT IS KNOWN ABOUT WHERE THEY ARE, WORDED AS SOMETHING REMEMBERED.** One line for the sighting
 ## the tie recorded, and — only where the band publishes a move rate and both tiles are known — one
 ## for the approximate walk. Never a live position and never a bare number of turns.
-func _trade_destination_notes(band: Dictionary, tie: Dictionary) -> Array[String]:
+func _trade_destination_notes(band: Dictionary, known: Dictionary) -> Array[String]:
     var lines: Array[String] = []
-    var x := int(tie.get("last_seen_x", -1))
-    var y := int(tie.get("last_seen_y", -1))
+    var tile: Vector2i = known.get("tile", Vector2i(-1, -1))
+    var x := tile.x
+    var y := tile.y
     if x < 0 or y < 0:
         return lines
-    lines.append(ConnectionsRoster.remembered_line(tie, _band_labor.current_turn()))
+    # A band in sight stands where it stands; only a remembered position is worded as remembered.
+    if not bool(known.get("visible", false)):
+        lines.append(ConnectionsRoster.remembered_line(known["tie"], _band_labor.current_turn()))
     # **ONE DEFINITION OF TRAVEL IN THIS CLIENT.** `outbound_travel_turns` is the walk OUT, the same
     # reading the denial verdict takes, asked here about the REMEMBERED tile — which is why the
     # sentence says "if they are still there" rather than quoting the arrival as a fact.

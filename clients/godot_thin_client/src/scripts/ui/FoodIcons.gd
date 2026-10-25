@@ -134,6 +134,10 @@ const POLICY_ICONS := {
 	"fell": "🪓",
 	"coppice": "🌲",
 	"quarry": "⛏",
+	# **THE TILE-SOURCED BRANCHES' VERBS** (belief's monument, food stores' pit): text-presentation
+	# symbols, so they take the label's ink like the four investment marks above.
+	"raise": "▲",
+	"dig": "▼",
 }
 
 ## Icon for an improvement verb ("" for an unknown/absent one, so callers render bare text).

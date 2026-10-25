@@ -1530,6 +1530,10 @@ const ROAD_LADDER_NO_BUILDERS_ASIDE := "Nobody is building — every worker is b
 ## at all on it blocks the head, and that arrives as `ROAD_BLOCKED_MATERIALS`.
 const ROAD_LADDER_STALL_FORMAT := "the store is short — it will stall at about %s"
 
+## The same clause for a store under `RungLadder._stall_fraction_word`'s lowest cut, a whole sentence
+## for the reason `HudWorkVocab.RUNG_TRACK_STALL_BARELY_FORMAT` gives.
+const ROAD_LADDER_STALL_BARELY := "the store is short — it will stall almost at once"
+
 ## The tooltip's lines, one fact each. **Newline rather than a middot**, because these are sentences
 ## and a hover has the room a 292px row does not.
 const ROAD_LADDER_TIP_SEPARATOR := "\n"

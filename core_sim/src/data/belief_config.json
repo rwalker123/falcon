@@ -4,5 +4,8 @@
   "ancestor_pull": {
     "secular_devout": 0.3,
     "traditionalist_revisionist": -0.3
-  }
+  },
+  "improvement_belief": [
+    { "rung": "belief:monument", "per_turn": 0.1 }
+  ]
 }

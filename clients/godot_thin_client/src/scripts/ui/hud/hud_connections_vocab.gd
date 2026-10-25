@@ -66,7 +66,7 @@ const STATE_WORDS := {
 const STATE_TOOLTIPS := {
 	STATE_GROWING: "In contact this turn — the tie is strengthening.",
 	STATE_FADING: "Not seen this turn — the tie weakens every turn without contact.",
-	STATE_PARKED: "No tie left. Nothing can flow until they are met again.",
+	STATE_PARKED: "This band has no tie to them. Another of your bands can still send to them.",
 	STATE_STATIONED: "Your people are posted with them — their news keeps the tie strong.",
 }
 
@@ -80,7 +80,7 @@ const STRENGTH_FORMAT := "%d%%"
 const PARKED_HINT_FORMAT := "No tie — meet them again. Last seen at (%d, %d), turn %d."
 
 ## …and the same row when no position was ever recorded.
-const PARKED_HINT := "No tie — meet them again before anything can flow."
+const PARKED_HINT := "No tie — meet them again."
 
 ## Line 2 of a row whose band was seen in the turn that just resolved: it is in sight, so no "may have
 ## moved". Older sightings keep the remembered sentence (`HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT`).
@@ -121,8 +121,6 @@ const STATION_LINK := "Station people"
 const STATION_LINK_DONE := "Stationed"
 const STATION_LINK_TOOLTIP := "Post some of your people with them. Their news keeps the tie strong."
 const STATION_LINK_DONE_TOOLTIP := "Your people are already posted with them. Recall them from the Parties tab."
-## A PARKED tie has nothing to post people at — the link stays so the row teaches that the tie is the gate.
-const STATION_LINK_PARKED_REASON := "No tie — meet them again first."
 const STATION_LINK_NO_FREE_REASON := "No free workers — take someone off a work row to station them."
 
 ## The hover line added to a stationed row: how many are posted, and how stale their news is.
@@ -132,3 +130,23 @@ const STATION_TURN_MANY := "turns"
 
 ## Metadata the harness finds the link by (value: the subject's `band_id`).
 const STATION_LINK_META := &"connections_station_link"
+
+# ---- TRADE LINK -------------------------------------------------------------------------------
+# The `Trade` link beside `Station people` on a row: it opens the band's Trade sheet with this row's band
+# already its destination. Its face is the Trade band verb's own mark (`HudComposeVocab.BAND_VERBS`).
+const TRADE_LINK := "Trade"
+const TRADE_LINK_TOOLTIP := "Open a trade shipment to them."
+## Max width of the verb's mark on the link, so a 256px source cannot size the row around itself.
+const TRADE_LINK_ICON_MAX_WIDTH := 14
+## The callable's key in the `diplomacy` bundle the roster is handed beside the Station press.
+const TRADE_PRESS_KEY := "trade_press"
+## **A BAND THE PEOPLE KNOWS ONLY THROUGH A SIBLING** — this band holds no row to it, another of the
+## player's bands does. Line 2 of its row names that sibling (the one holding the freshest sighting) and
+## the sighting.
+const KNOWN_THROUGH_FORMAT := "Known through %s · last seen at (%d, %d), turn %d"
+## …and the same when that row never recorded a position.
+const KNOWN_THROUGH_NO_SIGHTING_FORMAT := "Known through %s"
+## The state cell on such a row, in place of a strength and a state word this band does not have.
+const KNOWN_THROUGH_WORD := "known"
+## Metadata the harness finds the link by (value: the subject's `band_id`).
+const TRADE_LINK_META := &"connections_trade_link"

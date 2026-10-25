@@ -1016,6 +1016,7 @@ mod tests {
             wrap_horizontal: false,
             graze: &graze,
             owner_camps: &std::collections::BTreeMap::new(),
+            keeper_camps: &std::collections::BTreeMap::new(),
             visibility,
             viewer: VIEWER,
             herd_lore_known: false,

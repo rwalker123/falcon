@@ -4142,6 +4142,7 @@ func _on_compose_sheet_closed() -> void:
     # …and the deposit composition with them, for the identical reason: an uncommitted crew that
     # outlives its sheet is a promise nothing in the game is keeping.
     _compose.reset_deposit_source()
+    _compose.reset_tile_source()
     _end_floor_drag()
     refresh_drawer_actions()
 
@@ -4267,6 +4268,9 @@ func open_source_sheet(kind: String, x: int, y: int, herd_id: String, material: 
             if working.is_empty():
                 working = _band_labor.find_deposit(x, y, material)
             open_deposit_compose(working)
+        HudConst.LABOR_KIND_TILE:
+            # The branch rides the `material` slot, as it does in `pending_key`.
+            open_tile_compose(_selection.tile_info(), material)
 
 func open_forage_compose(tile_info: Dictionary) -> void:
     if not _forage_compose_available(tile_info):
@@ -4630,6 +4634,15 @@ func refresh_compose_sheet(may_close: bool = true) -> void:
                     close_compose_sheet()
                 return
             _build_deposit_assign_controls(working, _compose_sheet.content())
+        ComposeState.KIND_TILE:
+            var tile_branch := _tile_branch_of_key(_compose.subject())
+            var live_tile := _selection.tile_info()
+            if live_tile.is_empty() or _tile_subject_key(live_tile, tile_branch) != _compose.subject() \
+                    or not _tile_compose_available(live_tile, tile_branch):
+                if may_close:
+                    close_compose_sheet()
+                return
+            _build_tile_assign_controls(live_tile, tile_branch, _compose_sheet.content())
         _:
             if may_close:
                 close_compose_sheet()
@@ -4648,6 +4661,8 @@ func refresh_drawer_actions() -> void:
         # missing from this path while the branch had a popup, so a turn's staffing change reached the
         # tile card's `Workings ▸` button only through a full drawer render.
         build_deposit_drawer_actions(_selection.tile_info())
+        # …and the tile-sourced branches' rows (belief's monument, food stores' pit, ...).
+        build_tile_drawer_actions(_selection.tile_info())
 
 ## The LAND drawer's read state: the standing forage summary (when the player already works this
 ## patch) and the `Assign harvesters ▸` button that opens the sheet. Fills `%ForageAssignControls`,
@@ -5113,6 +5128,261 @@ func _ensure_road_ladder() -> PopupPanel:
     _road_ladder = card
     _road_ladder_body = margin
     return card
+
+
+# ---- THE TILE CARD'S TILE-BRANCH ACTIONS (belief's monument, food stores' pit, ...) ----------------
+#
+# ⛔ **NOTHING HERE NAMES A BRANCH.** One row per `source_kind == "tile"` branch the catalog carries, its
+# words (verb, noun, lesson, site term) read off the rung rows by `HudTileVocab`. Each row is a step button
+# (`Raise a monument ▸`, opening the shared rung card) beside `Assign crew ▸` (a compose sheet whose commit
+# is the crew line that also PLACES the improvement). A branch shows when its first buildable rung's lesson
+# is known or the tile already holds an improvement of it, so a fresh game's card carries neither; a tile
+# that fails the site term keeps the row, greyed, with the reason beneath it in plain words.
+
+## `12,7:belief` -- one tile improvement's compose subject key. The branch is half of it.
+const TILE_BRANCH_SUBJECT_KEY_FORMAT := "%d,%d:%s"
+
+## The container the tile card's tile-branch rows live in, handed in by `Hud` after the scene node exists.
+var _tile_branch_controls: VBoxContainer = null
+## The shape signature last rendered, so an unchanged per-snapshot restate patches nothing.
+var _tile_branch_shape: Array = []
+
+func set_tile_branch_controls(host: VBoxContainer) -> void:
+    _tile_branch_controls = host
+
+static func _tile_subject_key(tile_info: Dictionary, branch: String) -> String:
+    return TILE_BRANCH_SUBJECT_KEY_FORMAT % [
+        int(tile_info.get("x", -1)), int(tile_info.get("y", -1)), branch]
+
+static func _tile_branch_of_key(subject_key: String) -> String:
+    var at := subject_key.find(":")
+    return subject_key.substr(at + 1) if at >= 0 else ""
+
+## The branches this tile's card offers, as row models. `[]` on an unseen hex, with no band to staff and
+## before the catalog has arrived.
+func _tile_branch_models(tile_info: Dictionary) -> Array[Dictionary]:
+    var models: Array[Dictionary] = []
+    if _topbar == null:
+        return models
+    var x := int(tile_info.get("x", -1))
+    var y := int(tile_info.get("y", -1))
+    if x < 0 or y < 0 or _selectioncard.tile_contents_unseen(tile_info) \
+            or _resolve_assign_band().is_empty():
+        return models
+    var ladder := HudTileVocab.tile_ladder(_topbar.ladder_rungs())
+    var knowledge := _player_knowledge()
+    for branch in HudTileVocab.branches(ladder):
+        var crew := _band_labor.tile_crew_total(x, y, branch)
+        var holds := crew > HudTileVocab.CREW_NONE \
+            or not _band_labor.tile_improvement_at(x, y, branch).is_empty()
+        if not HudTileVocab.is_offered(ladder, branch, knowledge, holds):
+            continue
+        var entry := HudTileVocab.first_buildable(ladder, branch)
+        if entry.is_empty():
+            continue
+        models.append({
+            "branch": branch,
+            "label": HudTileVocab.action_label(entry),
+            "crew": crew,
+            "refusal": HudTileVocab.site_refusal(entry, tile_info),
+        })
+    return models
+
+## The LAND drawer's tile-branch rows. Rebuilt only when the structure moves (a branch appearing, a crew
+## appearing or leaving, the site verdict flipping); a closure captures the subject key, never the tile.
+func build_tile_drawer_actions(tile_info: Dictionary) -> void:
+    if _tile_branch_controls == null:
+        return
+    var models := _tile_branch_models(tile_info)
+    _tile_branch_controls.visible = not models.is_empty()
+    if models.is_empty():
+        _clear_tile_drawer()
+        return
+    var shape: Array = [_forage_source_key(tile_info)]
+    for model in models:
+        shape.append([model["branch"], model["label"], int(model["crew"]),
+            String((model["refusal"] as Dictionary).get("short", ""))])
+    if shape == _tile_branch_shape and _tile_branch_controls.get_child_count() == models.size():
+        return
+    _clear_tile_drawer()
+    for model in models:
+        _tile_branch_controls.add_child(_build_tile_branch_row(tile_info, model))
+    _tile_branch_shape = shape
+
+## The occupant drawer fills the card instead of the land: take the rows down without forgetting them.
+func hide_tile_drawer() -> void:
+    if _tile_branch_controls != null:
+        _tile_branch_controls.visible = false
+
+func _clear_tile_drawer() -> void:
+    if _tile_branch_controls == null:
+        return
+    for child in _tile_branch_controls.get_children():
+        child.queue_free()
+    _tile_branch_shape = []
+
+func _build_tile_branch_row(tile_info: Dictionary, model: Dictionary) -> Control:
+    var branch := String(model["branch"])
+    var subject_key := _tile_subject_key(tile_info, branch)
+    var refusal: Dictionary = model["refusal"]
+    var refused := not refusal.is_empty()
+    var column := VBoxContainer.new()
+    column.set_meta(HudTileVocab.ROW_META, subject_key)
+    column.add_theme_constant_override("separation", HudTileVocab.ROW_SEPARATION)
+    var line := HBoxContainer.new()
+    line.add_theme_constant_override("separation", HudTileVocab.ROW_SEPARATION)
+    var step := Button.new()
+    step.text = HudTileVocab.ACTION_OPEN_FORMAT % String(model["label"])
+    step.set_meta(HudTileVocab.STEP_META, subject_key)
+    step.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    step.disabled = refused
+    if refused:
+        step.tooltip_text = String(refusal.get("long", ""))
+    HudStyle.apply_button(step, "ghost")
+    step.add_theme_font_size_override("font_size", HudComposeVocab.TILE_ACTION_LABEL_FONT_SIZE)
+    step.pressed.connect(func() -> void: _open_tile_step(subject_key, step))
+    line.add_child(step)
+    if not refused:
+        var crew := int(model["crew"])
+        var crew_button := Button.new()
+        crew_button.text = HudTileVocab.CREW_BUTTON_LABEL if crew <= HudTileVocab.CREW_NONE \
+            else HudTileVocab.CREW_BUTTON_FORMAT % crew
+        crew_button.set_meta(HudTileVocab.CREW_META, subject_key)
+        HudStyle.apply_button(crew_button, "ghost")
+        crew_button.add_theme_font_size_override("font_size",
+            HudComposeVocab.TILE_ACTION_LABEL_FONT_SIZE)
+        crew_button.pressed.connect(func() -> void:
+            open_tile_compose(_selection.tile_info(), _tile_branch_of_key(subject_key)))
+        line.add_child(crew_button)
+    column.add_child(line)
+    if refused:
+        # Beside the thing it explains, amber: a site no crew or lesson will close.
+        var reason := Label.new()
+        reason.text = String(refusal.get("short", ""))
+        reason.tooltip_text = String(refusal.get("long", ""))
+        reason.mouse_filter = Control.MOUSE_FILTER_STOP
+        reason.set_meta(HudTileVocab.REASON_META, subject_key)
+        reason.add_theme_color_override("font_color", HudStyle.WARN)
+        reason.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
+        column.add_child(reason)
+    return column
+
+## Open the shared rung card on one tile branch. The acting band is only the faction carrier for `build`
+## (it names no band): the band already crewing the tile, else the shared ladder's answer.
+func _open_tile_step(subject_key: String, anchor: Control) -> void:
+    var tile_info := _selection.tile_info()
+    var branch := _tile_branch_of_key(subject_key)
+    if tile_info.is_empty() or _tile_subject_key(tile_info, branch) != subject_key or _rung == null:
+        return
+    var x := int(tile_info.get("x", -1))
+    var y := int(tile_info.get("y", -1))
+    var band := _band_working_source(func(candidate: Dictionary) -> bool:
+        return _band_labor.has_tile_row(candidate, x, y, branch))
+    _rung.open_tile_track(band, tile_info, branch, _band_labor.tile_crew_total(x, y, branch), anchor)
+
+## Can a crew sheet be composed on this tile improvement? A real tile, a band to spend, a branch the
+## catalog carries a buildable rung for, and ground that meets the branch's site term.
+func _tile_compose_available(tile_info: Dictionary, branch: String) -> bool:
+    if tile_info.is_empty() or _topbar == null or _resolve_assign_band().is_empty():
+        return false
+    if int(tile_info.get("x", -1)) < 0 or int(tile_info.get("y", -1)) < 0 \
+            or _selectioncard.tile_contents_unseen(tile_info):
+        return false
+    var ladder := HudTileVocab.tile_ladder(_topbar.ladder_rungs())
+    var entry := HudTileVocab.first_buildable(ladder, branch)
+    return not entry.is_empty() and HudTileVocab.site_refusal(entry, tile_info).is_empty()
+
+func open_tile_compose(tile_info: Dictionary, branch: String) -> void:
+    if not _tile_compose_available(tile_info, branch):
+        return
+    _ensure_compose_sheet()
+    var subject_key := _tile_subject_key(tile_info, branch)
+    _compose.set_composing(ComposeState.KIND_TILE, subject_key)
+    var content := _compose_sheet.open(
+        HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % HudTileVocab.CREW_SHEET_NOUN,
+        HudRouteVocab.branch_name(_topbar.ladder_branches(), branch), subject_key,
+        _compose_anchor_rect())
+    _build_tile_assign_controls(tile_info, branch, content)
+    refresh_drawer_actions()
+
+## **THE TILE CREW SHEET, TOP TO BOTTOM**: the `Band:` picker, the crew stepper, a one-line hint, the
+## commit. The count the player dials is the count sent -- no cap is invented here beyond the band's own
+## working-age hands. A tile the band already crews edits live (the stepper re-sends) and offers
+## `Done` / `Stop working here`.
+func _build_tile_assign_controls(tile_info: Dictionary, branch: String, target: VBoxContainer) -> void:
+    if target == null:
+        return
+    for child in target.get_children():
+        child.queue_free()
+    if not _tile_compose_available(tile_info, branch):
+        return
+    var x := int(tile_info.get("x", -1))
+    var y := int(tile_info.get("y", -1))
+    var subject_key := _tile_subject_key(tile_info, branch)
+    var resolved := _band_working_source(func(candidate: Dictionary) -> bool:
+        return _band_labor.has_tile_row(candidate, x, y, branch))
+    var source_changed := _compose.tile_key() != subject_key
+    if source_changed:
+        _compose.begin_tile_source(subject_key,
+            int(resolved.get("entity", ComposeState.NO_BAND_ENTITY)))
+    var band := _band_labor.player_band_by_entity(_compose.tile_band())
+    if band.is_empty():
+        band = resolved
+        _compose.set_tile_band(int(band.get("entity", ComposeState.NO_BAND_ENTITY)))
+    var band_entity := int(band.get("entity", ComposeState.NO_BAND_ENTITY))
+    if source_changed or _compose.tile_seeded_band() != band_entity:
+        # Seeded from THIS band's own row (its Max, else the crew the sim struck), else a crew of one.
+        var standing := _band_labor.tile_assignment_of(band, x, y, branch)
+        var seed := int(standing.get("max_workers", 0))
+        if seed <= 0:
+            seed = _band_labor.effective_tile_workers(band, x, y, branch)
+        _compose.seed_tile(maxi(seed, HudTileVocab.CREW_DEFAULT))
+    var is_working := _band_labor.has_tile_row(band, x, y, branch)
+    var hands := maxi(int(band.get("working_age", 0)), 0)
+    _compose.clamp_tile_max(hands, HudTileVocab.CREW_DEFAULT)
+    var rebuild := func() -> void:
+        _build_tile_assign_controls(_selection.tile_info(), branch, target)
+    target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
+        _compose.set_tile_band(int(picked.get("entity", ComposeState.NO_BAND_ENTITY)))
+        rebuild.call()))
+    var max_row := HBoxContainer.new()
+    max_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    max_row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    max_row.set_meta(HudTileVocab.CREW_ROW_META, subject_key)
+    max_row.add_child(HudWidgets.build_field_key(HudTileVocab.CREW_STEPPER_LABEL))
+    HudWidgets.add_max_stepper(max_row, _compose.tile_max(), hands, func(n: int) -> void:
+        _compose.set_tile_max(n)
+        if is_working:
+            _send_tile_assignment(band, x, y, branch)
+        rebuild.call(), false, HudTileVocab.CREW_DEFAULT)
+    target.add_child(max_row)
+    target.add_child(HudWidgets.alloc_hint_label(HudTileVocab.CREW_HINT))
+    var commit := Button.new()
+    commit.set_meta(HudWidgets.COMPOSE_COMMIT_META, true)
+    commit.text = HudComposeVocab.STOP_WORKING_BUTTON if is_working else HudTileVocab.COMMIT_LABEL
+    commit.disabled = hands < HudTileVocab.CREW_DEFAULT
+    HudStyle.apply_button(commit, "primary")
+    commit.pressed.connect(func() -> void:
+        if is_working:
+            _emit_tile_stop(band, x, y, branch)
+        else:
+            _send_tile_assignment(band, x, y, branch)
+        close_compose_sheet())
+    _mount_commit_row(target, commit, is_working)
+
+## `assign_labor <f> <band> tile <branch> <x> <y> <n>` -- the crew line, which also places the improvement.
+func _send_tile_assignment(band: Dictionary, x: int, y: int, branch: String) -> void:
+    _note_applied()
+    _emit_assign_labor(band, HudConst.LABOR_KIND_TILE, _compose.tile_max(), x, y, "",
+        SourceForecast.FLOOR_UNNAMED, branch)
+
+## `stop_labor <f> <band> <branch> <x> <y>` -- `Main.site_address` leads a tile improvement with its branch.
+func _emit_tile_stop(band: Dictionary, x: int, y: int, branch: String) -> void:
+    stop_labor_requested.emit({
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+        "x": x, "y": y, "herd_id": "", "material": "", "branch": branch,
+    })
 
 
 # ---- THE TILE CARD'S DEPOSIT ACTIONS (issue #650) -------------------------------------------------

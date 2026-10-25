@@ -2,8 +2,10 @@
 //! §"Belief is a property of a place", §"The first pulls are not productive").
 //!
 //! A tile accrues belief from the things that happen *there*: deaths while a band stands on it (the
-//! cemetery — evidence of returning), gatherings held on it, and a monument raised on it. Deaths and
-//! gatherings are wired; every source writes through the one seam, [`BeliefRegistry::add`].
+//! cemetery — evidence of returning), gatherings held on it, and a monument held on it. Every source
+//! writes through the one seam, [`BeliefRegistry::add`]; the monument's is
+//! [`advance_improvement_belief`], which credits whatever `belief_config.json` ->
+//! `improvement_belief` names, so the engine names no rung.
 //!
 //! # Belief is monotone
 //!
@@ -17,11 +19,27 @@
 //! Dead-equivalents: at the shipped `belief_per_death` of `1.0`, a place reading `12` holds twelve
 //! people's worth of ancestors. Later sources are priced in that unit.
 
-use bevy::prelude::{Resource, UVec2};
+use bevy::prelude::{Query, Res, ResMut, Resource, UVec2, With};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::belief_config::BeliefConfig;
+use crate::belief_config::{BeliefConfig, BeliefConfigHandle};
+use crate::components::{PopulationCohort, ResidentBand};
+use crate::intensification::{LadderConfigHandle, LadderKnowledge};
+use crate::orders::FactionId;
+use crate::resources::DiscoveryProgressLedger;
+use crate::scalar::scalar_from_f32;
+use crate::tile_improvement::TileImprovementRegistry;
+use crate::wellbeing_config::WellbeingConfigHandle;
+
+/// The ritual lesson's name in `intensification_ladder.json` (`knowledge.lesson_costs`,
+/// `standalone_knowledges`) and in `start_profile_knowledge_tags.json`.
+pub const RITUAL_KNOWLEDGE: &str = "ritual";
+
+/// The discovery-ledger id of the ritual lesson. Taught by gatherings rather than by a rung, so it is
+/// coded beside the system that teaches it ([`credit_ritual_lesson`]); 2023 is the last id the tag
+/// table had given out.
+pub const RITUAL_DISCOVERY_ID: u32 = 2024;
 
 /// What a tile with no entry holds — no belief has ever accrued there.
 pub const NO_BELIEF: f32 = 0.0;
@@ -80,6 +98,12 @@ impl BeliefRegistry {
         self.add(position, config.belief_per_gathering);
     }
 
+    /// **The improvement source.** A held improvement of a rung `improvement_belief` names credits its
+    /// own tile `per_turn`, through the same [`Self::add`] seam. See [`advance_improvement_belief`].
+    pub fn credit_improvement(&mut self, position: UVec2, per_turn: f32) {
+        self.add(position, per_turn);
+    }
+
     /// Every place holding belief, in row-major order.
     pub fn iter(&self) -> impl Iterator<Item = (UVec2, f32)> + '_ {
         self.tiles
@@ -93,6 +117,113 @@ impl BeliefRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.tiles.is_empty()
+    }
+}
+
+/// **A HELD MONUMENT ADDS BELIEF** (#692) - every tile improvement whose current HELD rung
+/// `belief_config.json` -> `improvement_belief` lists credits `per_turn` to its own tile, through
+/// [`BeliefRegistry::add`].
+///
+/// Run right after `advance_tile_improvements` has settled the turn (decay included), so a rung that
+/// has just slipped back to its root pays nothing and one that has just been completed pays this very
+/// turn. **Only the held rung pays**: a half-built monument holds the ground beneath it
+/// (`partial_credit: on_completion`) and credits nothing. Belief is monotone, so a decayed monument
+/// leaves what it already added. The registry iterates in `(y, x, branch)` order, so the credits
+/// land in a fixed order.
+pub fn advance_improvement_belief(
+    improvements: Res<TileImprovementRegistry>,
+    config: Res<BeliefConfigHandle>,
+    mut belief: ResMut<BeliefRegistry>,
+) {
+    let config = config.get();
+    if config.improvement_belief.is_empty() {
+        return;
+    }
+    for improvement in improvements.iter() {
+        let held = improvement.held_rung();
+        if let Some(source) = config
+            .improvement_belief
+            .iter()
+            .find(|source| source.rung == held)
+        {
+            belief.credit_improvement(improvement.tile, source.per_turn);
+        }
+    }
+}
+
+/// **A GATHERING TEACHES RITUAL** (#692) - one gathering is `ritual_lesson_per_gathering` practice
+/// toward the [`RITUAL_KNOWLEDGE`] lesson, credited to `faction` through the ladder's one
+/// practice-to-ledger seam ([`LadderKnowledge::ledger_credit`]). The caller pays each PEOPLE in the
+/// pair once.
+pub fn credit_ritual_lesson(
+    knowledge: &LadderKnowledge,
+    faction: FactionId,
+    ledger: &mut DiscoveryProgressLedger,
+) {
+    credit_ritual_practice(
+        knowledge,
+        faction,
+        knowledge.ritual_lesson_per_gathering,
+        ledger,
+    );
+}
+
+/// **ANY PRACTICE TOWARD RITUAL, through the one seam** - `practice` units converted by
+/// [`LadderKnowledge::ledger_credit`] and added to `faction`'s ledger. A gathering's
+/// ([`credit_ritual_lesson`]) and the dead's trickle ([`advance_ritual_trickle`]) both land here.
+/// A practice at or below zero credits nothing.
+pub fn credit_ritual_practice(
+    knowledge: &LadderKnowledge,
+    faction: FactionId,
+    practice: f32,
+    ledger: &mut DiscoveryProgressLedger,
+) {
+    if practice <= 0.0 {
+        return;
+    }
+    let Some(amount) = knowledge.ledger_credit(RITUAL_KNOWLEDGE, practice) else {
+        return;
+    };
+    ledger.add_progress(faction, RITUAL_DISCOVERY_ID, scalar_from_f32(amount));
+}
+
+/// **LIVING NEAR YOUR DEAD TEACHES RITUAL, SLOWLY** - each turn, every people is credited
+/// `knowledge.ritual_lesson_per_turn_at_full_tie` x the strongest ancestor tie among its RESIDENT
+/// bands. The tie is the culture code's own (`CultureConfig::ancestor_tie`: the anchor's saturating
+/// weight x the kin-relay strength decoded from `last_belief_relay_hops`), read the way
+/// [`crate::culture::band_ancestor_pulls`] reads it.
+///
+/// **MAX, never the sum**: parking more bands by one grave must not multiply the lesson. A people
+/// whose strongest tie is zero (no anchor, or nothing reaches its bands) gets nothing, and a lever
+/// of `0` is a no-op. The hop count is the one `simulate_population` stored this turn, so the
+/// system runs right after it. A people that already knows ritual is credited as usual - the ledger
+/// clamps, exactly as a further gathering's credit does. `BTreeMap` by faction keeps the credit
+/// order fixed.
+pub fn advance_ritual_trickle(
+    bands: Query<&PopulationCohort, With<ResidentBand>>,
+    belief: Res<BeliefRegistry>,
+    wellbeing: Res<WellbeingConfigHandle>,
+    ladder: Res<LadderConfigHandle>,
+    mut discovery: ResMut<DiscoveryProgressLedger>,
+) {
+    let knowledge = &ladder.get().knowledge;
+    let per_turn = knowledge.ritual_lesson_per_turn_at_full_tie;
+    if per_turn <= 0.0 {
+        return;
+    }
+    let culture = &wellbeing.get().culture;
+    let mut strongest: BTreeMap<FactionId, f32> = BTreeMap::new();
+    for cohort in bands.iter() {
+        let hops = crate::belief_relay::hops_from_wire(
+            cohort.belief_anchor,
+            cohort.last_belief_relay_hops,
+        );
+        let tie = culture.ancestor_tie(cohort.belief_anchor.map(|anchor| belief.get(anchor)), hops);
+        let entry = strongest.entry(cohort.faction).or_insert(tie);
+        *entry = entry.max(tie);
+    }
+    for (faction, tie) in strongest {
+        credit_ritual_practice(knowledge, faction, per_turn * tie, &mut discovery);
     }
 }
 

@@ -248,7 +248,7 @@ func _refresh_targeting() -> void:
 
 ## **THE HIGHLIGHT AND THE PICK FOLLOW THE WORLD, NOT THE MOMENT THE FORM OPENED.** Called by HudLayer
 ## whenever a snapshot re-ingests the bands, the herds or the ties. The Trade rings are an explicit
-## tile set (`live_tie_tiles`) and the herd glow is measured from the band's tile, so both go stale
+## tile set (`known_band_tiles`) and the herd glow is measured from the band's tile, so both go stale
 ## the turn a tied band or the sender moves — and `MapView.highlighted_at` captures clicks off that
 ## set while `_try_preselect` resolves live, so a stale set is a click the map captures and the sheet
 ## then ignores. Each armed or passive flow's band is re-read from the live roster, the descriptor is
@@ -349,6 +349,17 @@ func set_preselect(band: Dictionary, mission: String, choose: Callable) -> void:
 	if not same or _current_targeting_info() != _last_targeting_info:
 		_refresh_targeting()
 
+## **HAND THE OPEN SHEET A TARGET AS IF THE MAP HAD CLICKED IT** — the `choose` callable the sheet
+## registered with `set_preselect`, called with the dictionary a pre-selection click would send (for
+## Trade, `PICK_DESTINATION_KEY`). The Peoples tab's `Trade` link is its caller. False with no sheet
+## open to take it.
+func choose_preselected(target: Dictionary) -> bool:
+	var choose: Callable = _preselect.get(PICK_COMMIT_KEY, Callable())
+	if not choose.is_valid():
+		return false
+	choose.call(target)
+	return true
+
 ## The sheet closed: the highlight and its pre-selection go with it.
 func clear_preselect() -> void:
 	if _preselect.is_empty():
@@ -361,16 +372,13 @@ func clear_preselect() -> void:
 func is_preselect_on() -> bool:
 	return bool(_current_targeting_info().get(TARGETING_PASSIVE_KEY, false))
 
-## The hexes holding a band `band` holds a LIVE tie with — where a Trade pick would resolve, and so
-## what the Trade sheet highlights. `tie_at`'s position rule: where the band stands if the roster holds
-## it, else where the tie last saw it.
-func live_tie_tiles(band: Dictionary) -> Array[Vector2i]:
+## The hexes holding a band the PEOPLE knows other than `band` itself — where a Trade pick would resolve,
+## and so what the Trade sheet highlights. Visible bands where they stand, remembered ones at the freshest
+## sighting any of the player's bands holds (`HudBandLaborState.known_bands`, the one reading).
+func known_band_tiles(band: Dictionary) -> Array[Vector2i]:
 	var tiles: Array[Vector2i] = []
-	for tie_variant in _band_labor.connections_for_band(int(band.get("band_id", HudConst.NO_BAND_ID))):
-		var tie: Dictionary = tie_variant as Dictionary
-		if not HudBandLaborState.tie_is_live(tie):
-			continue
-		var tile := _tie_tile(tie)
+	for known in _band_labor.known_bands(int(band.get("band_id", HudConst.NO_BAND_ID))):
+		var tile: Vector2i = (known as Dictionary)["tile"]
 		if tile.x >= 0 and tile.y >= 0 and not tiles.has(tile):
 			tiles.append(tile)
 	return tiles
@@ -439,7 +447,7 @@ func _current_targeting_info() -> Dictionary:
 		if mission == HudComposeVocab.COMPOSE_MISSION_TRADE:
 			passive["command"] = VERB_PICK_COMMAND_TRADE
 			passive["need"] = "tile"
-			passive[TARGETING_HIGHLIGHT_TILES_KEY] = live_tie_tiles(band)
+			passive[TARGETING_HIGHLIGHT_TILES_KEY] = known_band_tiles(band)
 		else:
 			passive["command"] = DENY_PICK_COMMAND
 			passive["need"] = "herd"
@@ -672,38 +680,15 @@ func _commit_pick(pending: Dictionary, target: Dictionary, title: String) -> voi
 		return
 	disarm_verb_picks()
 
-## The durable `band_id` of a band `band` holds a LIVE tie with, standing on (x, y) — or
-## `HudConst.NO_BAND_ID`. The candidates are exactly the shipment sheet's: `connections_for_band`,
-## live ties only. What the Trade sheet's pre-selection click resolves.
+## The durable `band_id` of the band the PEOPLE knows at (x, y) other than `band` itself, or
+## `HudConst.NO_BAND_ID` — what the Trade sheet's pre-selection click resolves. The candidates are exactly
+## the ringed ones (`known_band_tiles`); a hex holding several takes the first of `known_bands`' order
+## (visible before remembered, then by band id).
 func trade_destination_at(band: Dictionary, x: int, y: int) -> int:
-	var tie := tie_at(band, x, y)
-	if tie.is_empty() or not HudBandLaborState.tie_is_live(tie):
-		return HudConst.NO_BAND_ID
-	return int(tie.get("subject_band_id", HudConst.NO_BAND_ID))
-
-## The tie `band` holds with a band standing on (x, y), live or parked, `{}` where none stands — a live
-## tie ahead of a parked one on a shared hex. A tied band still in the roster is found where it stands;
-## one that is not is found where the tie last saw it, which is the only position the client has for it.
-## The Trade sheet's pre-selection click resolves through this (`trade_destination_at`).
-func tie_at(band: Dictionary, x: int, y: int) -> Dictionary:
-	var parked: Dictionary = {}
-	for tie_variant in _band_labor.connections_for_band(int(band.get("band_id", HudConst.NO_BAND_ID))):
-		var tie: Dictionary = tie_variant as Dictionary
-		if _tie_tile(tie) != Vector2i(x, y):
-			continue
-		if HudBandLaborState.tie_is_live(tie):
-			return tie
-		if parked.is_empty():
-			parked = tie
-	return parked
-
-## Where a tie's band is: where it stands if the roster holds it, else where the tie last saw it.
-func _tie_tile(tie: Dictionary) -> Vector2i:
-	var subject := int(tie.get("subject_band_id", HudConst.NO_BAND_ID))
-	var standing := _band_labor.player_band_by_band_id(subject)
-	if not standing.is_empty():
-		return SourceForecast.band_tile(standing)
-	return Vector2i(int(tie.get("last_seen_x", -1)), int(tie.get("last_seen_y", -1)))
+	for known in _band_labor.known_bands(int(band.get("band_id", HudConst.NO_BAND_ID))):
+		if (known as Dictionary)["tile"] == Vector2i(x, y):
+			return int((known as Dictionary)["band_id"])
+	return HudConst.NO_BAND_ID
 
 ## Send a scouting party of `party_workers` from `band` to `tile` — what the Scout pick's click commits.
 ##

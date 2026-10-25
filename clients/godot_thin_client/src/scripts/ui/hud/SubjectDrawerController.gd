@@ -218,6 +218,8 @@ func _render_land_drawer() -> void:
     # same `deposits` key. **One container per BRANCH**, because a wooded highland offers both at once
     # and putting foresters on the timber is not putting diggers on the rock.
     _drawercompose.build_deposit_drawer_actions(_selection.tile_info())
+    # …and the tile-sourced branches' rows (belief's monument, food stores' pit, ...), off the catalog.
+    _drawercompose.build_tile_drawer_actions(_selection.tile_info())
     if _allocation_panel != null:
         _allocation_panel.visible = false
     if _herd_assign_controls != null:
@@ -829,6 +831,7 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
         _forestry_assign_controls.visible = false
     if _extraction_assign_controls != null:
         _extraction_assign_controls.visible = false
+    _drawercompose.hide_tile_drawer()
     # This render's tint context, constructed LOCALLY: the band line producers below fill it as they
     # emit rows, and it is handed to the formatter at the bottom. Nothing outlives this call.
     var ctx := DetailFormat.Context.new()

@@ -14,7 +14,7 @@ paths:
 
 A band is given a leader by what it has to organise, not by a button and not by winning. Design:
 `docs/plan_labor_at_scale.md` ("How a chief emerges: work that needs an organiser") and
-`docs/plan_civilization_steps.md` ("The chief comes before the granary"). This file states what the
+`docs/plan_civilization_steps.md` ("The chief comes first"). This file states what the
 code does.
 
 ## The record

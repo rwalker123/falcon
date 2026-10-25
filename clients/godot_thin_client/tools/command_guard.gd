@@ -262,6 +262,7 @@ func _ready() -> void:
 	await _drive_send_trade_expedition()
 	_drive_road_verbs()
 	_drive_deposit_verbs()
+	_drive_tile_verbs()
 	_drive_abandon_working()
 	await _drive_road_abandon()
 	await _drive_set_starting_loadout()
@@ -624,6 +625,15 @@ func _drive_assign_labor_kits() -> void:
 		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, DEPOSIT_MATERIAL,
 		SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
 	await _settle()
+	# **THE FIFTH GRAMMAR — A TILE-SOURCED IMPROVEMENT'S CREW ROW** (belief's monument, food stores' pit).
+	# `assign_labor <f> <b> tile <branch> <x> <y> <n>`, the BRANCH riding the `species` token and not
+	# optional, and NO kit token (the sim refuses one on a tile row). Both shipped branches are driven:
+	# the grammar is the catalog's, so two branches are one grammar asked twice.
+	for tile_branch in TILE_BRANCHES:
+		_hud._emit_assign_labor(band, HudConst.LABOR_KIND_TILE, PARTY_WORKERS,
+			TARGET_X, TARGET_Y, "", SourceForecast.FLOOR_UNNAMED, String(tile_branch),
+			SourceForecast.IMPROVEMENT_NONE, KitRoster.NO_KIT_ID)
+		await _settle()
 	# **THE THIRD GRAMMAR — A BAND-WIDE ROLE, AND EVERY ROLE, NOT A REPRESENTATIVE ONE.**
 	# `assign_labor <faction> <band> <role> <workers>` takes no tile, no herd, no floor and no
 	# species, so its tail is CLOSED but for the kit token.
@@ -994,6 +1004,10 @@ func _connect_recorders() -> void:
 ## command by (issue #175). The verb lists are HARNESS DATA here, not client routing.
 const ROAD_VERBS := ["grade", "pave"]
 const DEPOSIT_VERBS := ["fell", "coppice", "quarry"]
+## The tile-sourced branches' ids and their build verbs, as the catalog declares them. `build <verb> <f> <x> <y>`
+## names no band and no material; the crew row names the branch.
+const TILE_BRANCHES := ["belief", "food_stores"]
+const TILE_VERBS := ["raise", "dig"]
 
 func _ladder_catalog() -> Array:
 	var rows: Array = []
@@ -1001,7 +1015,21 @@ func _ladder_catalog() -> Array:
 		rows.append({"verb": verb, "source_kind": HudRouteVocab.SOURCE_KIND_ROAD})
 	for verb in DEPOSIT_VERBS:
 		rows.append({"verb": verb, "source_kind": HudRouteVocab.SOURCE_KIND_DEPOSIT})
+	for verb in TILE_VERBS:
+		rows.append({"verb": verb, "source_kind": HudRouteVocab.SOURCE_KIND_TILE})
 	return rows
+
+## `build raise|dig <faction> <x> <y>` -- a tile improvement names a bare tile: no band, no material.
+## Driven through `Main.format_improvement`, the pure static the step card's press reaches.
+func _drive_tile_verbs() -> void:
+	for improvement in TILE_VERBS:
+		var payload := {
+			"improvement": improvement,
+			"faction": HudConst.PLAYER_FACTION_ID,
+			"x": TARGET_X,
+			"y": TARGET_Y,
+		}
+		_record(String(improvement), payload, MAIN_SCRIPT.format_improvement(payload, _ladder_catalog()))
 
 func _drive_road_verbs() -> void:
 	for improvement in ROAD_VERBS:
@@ -1233,7 +1261,7 @@ const ASSIGN_LABOR_UNKNOWN_ROLE := "stonemason"
 ## a tile, a material AND an optional floor, where every role in that list takes a bare worker count. It is
 ## driven here for the reason the whole sweep exists: a grammar the server's dispatch takes and
 ## `sim_runtime::command_text` does not is refused INSIDE the client, with nothing failing anywhere.
-const ASSIGN_LABOR_GRAMMAR_DRIVES := 9
+const ASSIGN_LABOR_GRAMMAR_DRIVES := 11
 
 ## …and the BARE `builders` line beside its tailed one — the exact line the pool's `+` emits — plus the
 ## FAR HERD's commit (`_drive_far_herd_assign_labor`), the hunt line a sheet past the apron sends.
@@ -1241,7 +1269,7 @@ const ASSIGN_LABOR_BARE_DRIVES := 1
 
 ## What `EXPECTED_KINDS` must say for `assign_labor`. Spelled here because a `const` initializer
 ## cannot call `Array.size()`, and re-derived at runtime so the two cannot drift.
-const ASSIGN_LABOR_EXPECTED := 13
+const ASSIGN_LABOR_EXPECTED := 15
 
 ## **THE LIST ABOVE IS THE WHOLE OF WHAT THE CLIENT CAN SAY, ASSERTED RATHER THAN TRUSTED.**
 ##
@@ -1374,6 +1402,9 @@ const EXPECTED_KINDS := {
 	"fell": 1,
 	"coppice": 1,
 	"quarry": 1,
+	# ONE EACH — the tile-sourced branches' build verbs (`build raise|dig <f> <x> <y>`): a bare tile, no band.
+	"raise": 1,
+	"dig": 1,
 	# ONE — the roadwork roster's `✕`, the route branch's only `abandon` emitter and the only command
 	# here that names a PLACE rather than a band.
 	"abandon": 1,

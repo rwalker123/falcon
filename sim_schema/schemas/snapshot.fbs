@@ -5547,6 +5547,11 @@ table LadderRungState {
   // --- HOW MANY HANDS CAN BUILD THIS RUNG AT ONCE (appended last, docs/plan_labor_at_scale.md) -----
   // The rung's `build.max_builders`: "up to N builders at once". 0 on a rung with nothing to build.
   maxBuilders:uint = 0;
+  // --- THE BELIEF FLOOR (appended last) --------------------------------------------------------------
+  // The belief the tile must hold for this rung to be placed there - the rung's
+  // `site_requirement.min_belief`; 0 where it asks nothing of the tile's belief (every rung off a
+  // belief branch). Published so a client can say WHY a monument is refused.
+  minBelief:float = 0;
 }
 
 // One size tier of an enclosed rung (LadderRungState.sizeTiers).

@@ -506,8 +506,10 @@ static func _route_pile(entry: Dictionary) -> Array[Dictionary]:
 static func _route_stall_clause(road: Dictionary, is_building: bool) -> String:
     if not is_building or not HudRouteVocab.is_material_short(road):
         return ""
-    return HudRouteVocab.ROAD_LADDER_STALL_FORMAT % _stall_fraction_word(
-        HudRouteVocab.material_coverage_of(road))
+    var word := _stall_fraction_word(HudRouteVocab.material_coverage_of(road))
+    if word == HudWorkVocab.RUNG_TRACK_STALL_BARELY:
+        return HudRouteVocab.ROAD_LADDER_STALL_BARELY
+    return HudRouteVocab.ROAD_LADDER_STALL_FORMAT % word
 
 static func _route_climbing(meter: float, queued: bool) -> bool:
     if queued:
@@ -1058,10 +1060,14 @@ static func _build_price_asides(pile: Array[Dictionary],
             worst = id
     if worst == "":
         return asides
+    var held := _material_term(worst, float(store.get(worst, 0.0)))
+    var word := _stall_fraction_word(worst_share)
+    # The barely arm is a whole clause of its own: "stall at about barely at all" is not a sentence.
+    var stall := HudWorkVocab.RUNG_TRACK_STALL_BARELY_FORMAT % held \
+        if word == HudWorkVocab.RUNG_TRACK_STALL_BARELY \
+        else HudWorkVocab.RUNG_TRACK_STALL_FORMAT % [held, word]
     asides.append({
-        RUNG_ASIDE_TEXT_KEY: HudWorkVocab.RUNG_TRACK_STALL_FORMAT % [
-            _material_term(worst, float(store.get(worst, 0.0))),
-            _stall_fraction_word(worst_share)],
+        RUNG_ASIDE_TEXT_KEY: stall,
         RUNG_ASIDE_WARN_KEY: true,
     })
     return asides
@@ -1710,4 +1716,116 @@ static func _deposit_tooltip(entry: Dictionary, refusals: Array,
 ## is a property of the ROW rather than of the branch that wrote it, so a caller that needs to tell a
 ## press on the row being raised from a press on one merely offered reads one answer either way.
 static func deposit_building_verb(rows: Array[Dictionary]) -> String:
+    return route_building_verb(rows)
+
+# ---- THE TILE-SOURCED BRANCHES -- a FOURTH sibling of `track`, `deposit_track`'s twin ---------------
+#
+# ⛔ **NOTHING HERE NAMES A BRANCH.** Every label, price, pile and gate comes off the catalog rows of the
+# branch (`HudTileVocab.tile_ladder`) and the tile (`tile_info.belief`, the band's crew), so a tile branch
+# added to `intensification_ladder.json` appears with no client edit.
+
+## **ONE TILE BRANCH ON ONE HEX, BOTTOM RUNG FIRST -- ONE LINE PER RUNG.**
+##
+## `site` is the `HudTileVocab.site_of` normalisation of the `tile_improvements` row (the root rung where
+## nothing is placed yet), `ladder` the WHOLE catalog, `crew` the take crew on the tile (pending-aware),
+## `tile_info` the land card's dict (the belief the site gate reads) and `band` the acting band, whose store
+## the stone pile is weighed against.
+##
+## ⛔ **THE PILE IS AN AMBER ASIDE, NEVER A REFUSAL.** The sim draws it from the store as the meter climbs
+## and a dry store stalls the build, so the aside states the stall and the press stays live.
+static func tile_track(site: Dictionary, ladder: Array[Dictionary], knowledge: Dictionary,
+        labels: Dictionary, crew: int, tile_info: Dictionary,
+        builders: int = SourceForecast.BUILD_CREW_NONE,
+        band: Dictionary = {}) -> Array[Dictionary]:
+    var rows: Array[Dictionary] = []
+    var branch := HudDepositVocab.branch_of(site)
+    var catalog := HudDepositVocab.branch_ladder(ladder, branch)
+    var gates := RungGates.tile_gates(site, ladder, knowledge, labels, crew, tile_info)
+    var standing_order := HudDepositVocab.ladder_order_of(catalog, HudDepositVocab.rung_of(site))
+    var floor_entry := HudDepositVocab.branch_floor_entry(ladder, branch)
+    var store := _material_store(band)
+    var climbing := HudDepositVocab.is_queued(site)
+    var approach_placed := false
+    for entry in catalog:
+        var rung_key := HudDepositVocab.catalog_rung_key(entry)
+        var row := {
+            ROW_RUNG_KEY: rung_key,
+            ROW_IMPROVEMENT_KEY: HudDepositVocab.catalog_verb(entry),
+            ROW_NAME_KEY: HudDepositVocab.catalog_display_name(entry),
+            ROW_NAME_WIDTH_KEY: HudTileVocab.TILE_LADDER_NAME_WIDTH,
+            ROW_WORK_KEY: WORK_UNKNOWN,
+            ROW_TURNS_KEY: SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+            ROW_REASONS_KEY: [] as Array[String],
+            ROW_BUILD_ASIDES_KEY: [] as Array[Dictionary],
+            ROW_HOLD_ASIDES_KEY: [] as Array[Dictionary],
+            ROW_SELECTABLE_KEY: false,
+        }
+        var order := HudDepositVocab.catalog_order(entry)
+        if order < standing_order:
+            row[ROW_STATE_KEY] = STATE_BANKED
+            rows.append(row)
+            continue
+        if order == standing_order:
+            row[ROW_STATE_KEY] = STATE_STANDING
+            rows.append(row)
+            continue
+        var is_approach_row := not approach_placed
+        approach_placed = true
+        var is_building := is_approach_row and climbing
+        var refusals := RungGates.tile_gates_for(gates, rung_key)
+        row[ROW_TOOLTIP_KEY] = _tile_tooltip(entry, refusals, floor_entry)
+        if HudDepositVocab.catalog_verb(entry) == HudDepositVocab.RUNG_CATALOG_NONE:
+            row[ROW_STATE_KEY] = STATE_UNORDERED
+            row[ROW_FACE_KEY] = HudWorkVocab.RUNG_TRACK_STATE_GROUND_GIVES
+            rows.append(row)
+            continue
+        row[ROW_WORK_KEY] = HudDepositVocab.catalog_work_cost(entry)
+        var figure := HudDepositVocab.deposit_ladder_price_face(entry)
+        if is_building:
+            var progress := HudDepositVocab.build_value(site, builders)
+            if progress != "":
+                figure = progress
+            row[ROW_ROUTE_BUILDING_KEY] = true
+        if refusals.is_empty():
+            row[ROW_STATE_KEY] = STATE_OPEN
+            row[ROW_SELECTABLE_KEY] = true
+            row[ROW_FACE_KEY] = figure
+            var asides := _build_price_asides(_deposit_pile(entry), store)
+            if is_building and builders <= SourceForecast.BUILD_CREW_NONE:
+                asides.append({
+                    RUNG_ASIDE_TEXT_KEY: HudRouteVocab.ROAD_LADDER_NO_BUILDERS_ASIDE,
+                    RUNG_ASIDE_WARN_KEY: true,
+                })
+            row[ROW_BUILD_ASIDES_KEY] = asides
+            rows.append(row)
+            continue
+        row[ROW_STATE_KEY] = STATE_LOCKED
+        _lock_row(row, _record_lock(RungGates.tile_row_refusal_record(refusals),
+            String(row[ROW_NAME_KEY])),
+            "" if HudDepositVocab.catalog_upkeep(entry) >= SourceForecast.UPKEEP_WORK_MIN else figure)
+        # A refused rung states its pile too (a price hidden behind a refusal is one nobody can plan
+        # against), with no stall clause: the shelf is weighed against a build that is not happening.
+        row[ROW_BUILD_ASIDES_KEY] = _build_price_asides(_deposit_pile(entry),
+            NO_MATERIAL_STORE, "", false)
+        rows.append(row)
+    return rows
+
+## Everything the row stopped saying, as one hover: the price to raise and keep, what it buys, then every
+## refusal in the gate layer's order. `deposit_payoff_clause` is the deposit branches' payoff (a recovery
+## fraction and a regrowth multiplier); a tile rung buys neither, so it answers `""` and adds no line.
+static func _tile_tooltip(entry: Dictionary, refusals: Array, floor_entry: Dictionary) -> String:
+    var lines: Array[String] = []
+    var upkeep := HudDepositVocab.catalog_upkeep(entry)
+    if upkeep >= SourceForecast.UPKEEP_WORK_MIN:
+        lines.append(HudDepositVocab.DEPOSIT_LADDER_TIP_PRICE_FORMAT % [
+            DetailFormat.format_work_units(HudDepositVocab.catalog_work_cost(entry)),
+            DetailFormat.format_trimmed(upkeep, HudDepositVocab.DEPOSIT_LADDER_RATE_DECIMALS)])
+    var payoff := HudDepositVocab.deposit_payoff_clause(entry, floor_entry)
+    if payoff != "":
+        lines.append(payoff)
+    lines.append_array(RungGates.deposit_tooltip_refusals(refusals))
+    return HudTileVocab.TILE_LADDER_TIP_SEPARATOR.join(lines)
+
+## The rung being raised, for a caller that follows it instead of re-declaring it.
+static func tile_building_verb(rows: Array[Dictionary]) -> String:
     return route_building_verb(rows)

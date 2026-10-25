@@ -2134,6 +2134,8 @@ func _ready() -> void:
 	# APPENDED, so no earlier frame moves.
 	await _band_ancestors_states()
 	await _remembered_band_states()
+	await _station_badge_states()
+	await _remembered_band_name_states()
 
 	_finish()
 
@@ -7730,9 +7732,9 @@ const REMEMBERED_TILES := [Vector2i(5, 3), Vector2i(8, 3), Vector2i(11, 3)]
 # strongest tie must be the faintest ghost (strength is how well you know them, not how fresh).
 const REMEMBERED_STRENGTHS := [0.0, 0.5, 1.0]
 const REMEMBERED_NEWS_AGES := [0, 15, 30]   # turns old at REMEMBERED_TURN (fresh / halfway / fully faded)
-const REMEMBERED_POSTED_HOST_ID := 930      # the viewer has people STATIONED with this band: no ghost
+const REMEMBERED_POSTED_HOST_ID := 930      # the viewer has people STATIONED with this band: it is still drawn, and named
 const REMEMBERED_POSTED_HOST_TILE := Vector2i(8, 8)
-const REMEMBERED_POSTED_PARTY_TILE := Vector2i(9, 8)
+const REMEMBERED_POSTED_PARTY_TILE := REMEMBERED_POSTED_HOST_TILE   # the party stands WITH its host
 const REMEMBERED_OUTBOUND_HOST_ID := 931    # a party is only WALKING there: the ghost stays
 const REMEMBERED_OUTBOUND_HOST_TILE := Vector2i(5, 8)
 const REMEMBERED_OUTBOUND_PARTY_TILE := Vector2i(4, 8)
@@ -7779,7 +7781,7 @@ func _remembered_ties() -> Array:
 	return ties
 
 ## A station party (issue #774): `host` rides the expedition's destination band, `phase` decides whether
-## it has arrived (stationed: the host's ghost is suppressed) or is still walking (outbound: it is not).
+## it has arrived (stationed: the host's ghost still draws, under the party's marker) or is still walking (outbound: it is not).
 func _remembered_station_party(entity: int, tile: Vector2i, host: int, phase: String) -> Dictionary:
 	var party := _expedition(entity, tile.x, tile.y, phase)
 	party["expedition_mission"] = HudExpeditionVocab.EXPEDITION_MISSION_STATION
@@ -7820,8 +7822,8 @@ func _remembered_band_states() -> void:
 	_assert_map("remembered - news a full fade window old still shows faintly (%.4f)" % deltas[2], deltas[2] > 0.0)
 	_assert_map("remembered - opacity grades by news AGE, against strength (%.4f > %.4f > %.4f)" % [deltas[0], deltas[1], deltas[2]],
 		deltas[0] > deltas[1] and deltas[1] > deltas[2])
-	_assert_map("remembered - a subject we are stationed with draws no ghost",
-		_count_changed_pixels(bare, ghosts, _hex_probe_rect(ghosts, REMEMBERED_POSTED_HOST_TILE, REMEMBERED_PROBE_RADII)) == 0)
+	_assert_map("remembered - a host we are stationed with is still drawn (the party's flag names nobody)",
+		_count_changed_pixels(bare, ghosts, _hex_probe_rect(ghosts, REMEMBERED_POSTED_HOST_TILE, REMEMBERED_PROBE_RADII)) > 0)
 	_assert_map("remembered - a host a party is only walking to keeps its ghost",
 		_mean_abs_delta(bare, ghosts, _hex_probe_rect(ghosts, REMEMBERED_OUTBOUND_HOST_TILE, REMEMBERED_PROBE_RADII)) > 0.0)
 	_assert_map("remembered - an older sighting of the same subject draws nothing",
@@ -7829,7 +7831,7 @@ func _remembered_band_states() -> void:
 	_assert_map("remembered - a subject with a live band marker draws no ghost",
 		_count_changed_pixels(bare, ghosts, _hex_probe_rect(ghosts, REMEMBERED_LIVE_TILE, REMEMBERED_PROBE_RADII)) == 0)
 	var rows: Array = _map.remembered_bands()
-	_assert_map("remembered - one row per unseen subject", rows.size() == REMEMBERED_TILES.size() + 1)   # + the outbound host
+	_assert_map("remembered - one row per unseen subject", rows.size() == REMEMBERED_TILES.size() + 2)   # + the stationed host + the outbound host
 	var faded: Dictionary = {}
 	for row in rows:
 		if int(row["subject_band_id"]) == REMEMBERED_FADED_SUBJECT_ID:
@@ -7843,7 +7845,257 @@ func _remembered_band_states() -> void:
 	var hover := ConnectionsRoster.remembered_hover_line(faded, HudBandLaborState.new())
 	_assert_map("remembered - hover line names the band and when (%s)" % hover,
 		hover == "Goosefen — last seen turn %d, may have moved" % (REMEMBERED_RESOLVED_TURN - REMEMBERED_NEWS_AGES[1]))
+	# A remembered host with our party stationed on its tile: ghost token + badge, the party drawn as no card
+	# of its own (but still in the tile's occupant list); the outbound party's tile wears none.
+	_assert_map("remembered - the stationed host's ghost wears the anchor badge",
+		_map.station_badge_tiles().has(REMEMBERED_POSTED_HOST_TILE)
+			and not _map.station_badge_tiles().has(REMEMBERED_OUTBOUND_PARTY_TILE)
+			and not _map.station_badge_tiles().has(REMEMBERED_OUTBOUND_HOST_TILE))
+	_assert_map("remembered - the badged party stays selectable (still in the tile's occupants)",
+		_map._units_on_tile(REMEMBERED_POSTED_HOST_TILE.x, REMEMBERED_POSTED_HOST_TILE.y).size() == 1)
 	_map.set_connections([])
+
+## **STATE "station badge" - A STATIONED DELEGATE IS A BADGE ON ITS HOST'S TOKEN.** Three hexes: a LIVE
+## foreign host with our party stationed on it (host token + badge, no party card), a REMEMBERED host with
+## our party on its tile (ghost token + pill + badge), and a STALE ghost whose host our party is stationed
+## with ELSEWHERE (different tiles: no badge anywhere, the party draws its own disc, the ghost is ordinary).
+const STATION_LIVE_HOST_ID := 960
+const STATION_LIVE_TILE := Vector2i(7, 5)
+const STATION_GHOST_HOST_ID := 961
+const STATION_GHOST_TILE := Vector2i(3, 6)
+const STATION_STALE_HOST_ID := 962
+const STATION_STALE_GHOST_TILE := Vector2i(11, 5)
+const STATION_STALE_PARTY_TILE := Vector2i(11, 8)
+const STATION_ENTITY_BASE := 7000
+const STATION_CROP_HALF := 70.0
+const STATION_BADGE_MAX_TOKEN_RADII := 1.2  # the badge centre stays within about one token radius of the token's
+const STATION_FOOD_SITE_MODULE := "berry_patch"
+
+## The anchor badge hugs the TOKEN: its centre within ~1 token radius of the token's, and its disc clear of
+## every corner secondary slot's marker box (a food site is staged on each host hex).
+func _assert_station_badge_on_token(label: String, radius: float) -> void:
+	var geometry: Dictionary = _map._band_markers.station_badge_geometry()
+	_assert_map("station badge (%s) - both hosts drew a badge" % label,
+		geometry.has(STATION_LIVE_TILE) and geometry.has(STATION_GHOST_TILE))
+	for tile in [STATION_LIVE_TILE, STATION_GHOST_TILE]:
+		if not geometry.has(tile):
+			continue
+		var entry: Dictionary = geometry[tile]
+		var token_r: float = entry["token_radius"]
+		var offset: float = (entry["center"] as Vector2).distance_to(entry["token_center"])
+		_assert_map("station badge (%s) - the badge centre rides on its token (%.1f px, token radius %.1f)" % [label, offset, token_r],
+			offset <= token_r * STATION_BADGE_MAX_TOKEN_RADII)
+		var icon_half: float = maxf(MAP_VIEW.SECONDARY_ICON_MIN_SIZE, MAP_VIEW.SECONDARY_ICON_SIZE_FACTOR * radius) * 0.5
+		var clear := true
+		for slot in range(MAP_VIEW.SECONDARY_SLOT_OFFSETS.size()):
+			var slot_center: Vector2 = _map.secondary_slot_center(entry["token_center"], slot, radius)
+			var nearest := Vector2(
+				clampf((entry["center"] as Vector2).x, slot_center.x - icon_half, slot_center.x + icon_half),
+				clampf((entry["center"] as Vector2).y, slot_center.y - icon_half, slot_center.y + icon_half))
+			if nearest.distance_to(entry["center"]) < float(entry["radius"]):
+				clear = false
+		_assert_map("station badge (%s) - the disc clears every secondary slot's marker box on %s" % [label, tile], clear)
+
+func _station_badge_states() -> void:
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	var snapshot := _snapshot_stack(1)
+	var host := _band_at(STATION_ENTITY_BASE, STATION_LIVE_TILE.x, STATION_LIVE_TILE.y, STAGE_NOMADIC, 1)
+	host["band_id"] = STATION_LIVE_HOST_ID
+	snapshot["populations"].append(host)
+	snapshot["populations"].append(_remembered_station_party(STATION_ENTITY_BASE + 1,
+		STATION_LIVE_TILE, STATION_LIVE_HOST_ID, "stationed"))
+	snapshot["populations"].append(_remembered_station_party(STATION_ENTITY_BASE + 2,
+		STATION_GHOST_TILE, STATION_GHOST_HOST_ID, "stationed"))
+	snapshot["populations"].append(_remembered_station_party(STATION_ENTITY_BASE + 3,
+		STATION_STALE_PARTY_TILE, STATION_STALE_HOST_ID, "stationed"))
+	snapshot["turn"] = GHOST_NAME_TURN
+	var sites: Array = snapshot.get("food_modules", [])
+	for site_tile in [STATION_LIVE_TILE, STATION_GHOST_TILE]:
+		sites.append({"x": site_tile.x, "y": site_tile.y, "module": STATION_FOOD_SITE_MODULE, "kind": "forage"})
+	snapshot["food_modules"] = sites
+	_map.set_connections([
+		_ghost_tie(STATION_GHOST_HOST_ID, STATION_GHOST_TILE, "Sorrelbank", 1, 1),
+		_ghost_tie(STATION_STALE_HOST_ID, STATION_STALE_GHOST_TILE, "Staleford", 3, 2),
+	])
+	_display_snapshot(snapshot)
+	_map.set_current_turn(GHOST_NAME_TURN)
+	_map.selected_unit_id = -1
+	_map._fit_map_to_view()
+	await _settle()
+	var tiles: Array = _map.station_badge_tiles()
+	_assert_map("station badge - a live host wears the badge on its own tile", tiles.has(STATION_LIVE_TILE))
+	_assert_map("station badge - a remembered host wears it on its ghost's tile", tiles.has(STATION_GHOST_TILE))
+	_assert_map("station badge - a party on a different tile from its stale ghost badges nothing",
+		not tiles.has(STATION_STALE_GHOST_TILE) and not tiles.has(STATION_STALE_PARTY_TILE) and tiles.size() == 2)
+	var badges: Dictionary = _map.station_badges()
+	_assert_map("station badge - the predicate names the two parties on their host tiles",
+		badges.has(STATION_LIVE_TILE) and badges.has(STATION_GHOST_TILE) and badges.size() == 2)
+	_assert_map("station badge - a badged party stays in its tile's occupants (selectable)",
+		_map._units_on_tile(STATION_LIVE_TILE.x, STATION_LIVE_TILE.y).size() == 2)
+	_assert_map("station badge - the stale ghost still names itself",
+		_map._band_markers.ghost_label_rects().has(STATION_STALE_HOST_ID))
+	var fitted_radius: float = _map.last_hex_radius
+	_assert_station_badge_on_token("pill zoom", fitted_radius)
+	await _save("map_station_badge")
+	for entry in [["live", STATION_LIVE_TILE], ["ghost", STATION_GHOST_TILE], ["stale_party", STATION_STALE_PARTY_TILE]]:
+		var center: Vector2 = _map._hex_center(entry[1].x, entry[1].y, _map.last_hex_radius, _map.last_origin)
+		await _save_crop_px("map_station_badge_" + String(entry[0]), center, STATION_CROP_HALF)
+	# ...and just above ICON_MIN_DETAIL_RADIUS, the smallest zoom the badge draws at.
+	var low_terrain: Array = []
+	low_terrain.resize(NAME_PILL_GATE_BELOW_GRID_W * NAME_PILL_GATE_BELOW_GRID_H)
+	low_terrain.fill(TERRAIN_ID)
+	snapshot["grid"] = {"width": NAME_PILL_GATE_BELOW_GRID_W, "height": NAME_PILL_GATE_BELOW_GRID_H, "wrap_horizontal": false}
+	snapshot["overlays"] = {"terrain": low_terrain}
+	_display_snapshot(snapshot)
+	_map._fit_map_to_view()
+	await _settle()
+	_assert_map("premise: the low-zoom frame sits just above the detail gate (radius %.1f)" % _map.last_hex_radius,
+		_map.last_hex_radius >= MAP_VIEW.ICON_MIN_DETAIL_RADIUS
+			and _map.last_hex_radius < MAP_VIEW.BAND_NAME_PILL_MIN_RADIUS)
+	_assert_station_badge_on_token("low zoom", _map.last_hex_radius)
+	await _save("map_station_badge_lowzoom")
+	_map.set_connections([])
+
+## **STATE "remembered band names" - A GHOST WEARS A DIMMED NAME PILL.** The crowded 35x32 grid (pill
+## zoom). A live band sits at the west tile; ghost A stands on the ADJACENT tile (its long name collides
+## with the live pill: skipped); ghost B stands six tiles out (clear: placed, faction-coloured border);
+## ghost C stands next to B with OLDER news (ghost-vs-ghost: skipped); ghost D is far east with no
+## remembered name (falls back to the Peoples tab's `Band near (x, y)`).
+const GHOST_NAME_LIVE_BAND_ID := 950
+const GHOST_NAME_A_ID := 951
+const GHOST_NAME_B_ID := 952
+const GHOST_NAME_C_ID := 953
+const GHOST_NAME_D_ID := 954
+const GHOST_NAME_SHARED_ID := 955
+const GHOST_NAME_POSTED_ID := 956           # a host our stationed party stands WITH, absent from populations
+const GHOST_NAME_POSTED_NAME := "Sorrelbank"
+const GHOST_NAME_POSTED_TILE := Vector2i(13, 19)
+const GHOST_NAME_POSTED_PARTY_ENTITY := 9560
+const GHOST_NAME_B_COLS_WEST := 6
+const GHOST_NAME_D_COLS_EAST := 7
+const GHOST_NAME_B_FACTION := 2
+const GHOST_NAME_TURN := 40
+const GHOST_NAME_B_AGE := 6      # turns old; the pill takes this age's alpha
+const GHOST_NAME_C_AGE := 9      # older than B, so B places first
+
+func _ghost_tie(subject: int, tile: Vector2i, name: String, age: int, faction: Variant) -> Dictionary:
+	var tie := {"observer_band_id": GHOST_NAME_LIVE_BAND_ID, "subject_band_id": subject,
+		"subject_name": name, "strength": 0.5,
+		"last_seen_x": tile.x, "last_seen_y": tile.y,
+		"last_seen_turn": GHOST_NAME_TURN - HudConnectionsVocab.RESOLVED_TURN_LAG - age}
+	if faction != null:
+		tie["subject_faction"] = faction
+	return tie
+
+func _remembered_band_name_states() -> void:
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	var snapshot := _snapshot_band_names_crowded()
+	var west: Dictionary = snapshot["populations"][0]
+	west["band_id"] = GHOST_NAME_LIVE_BAND_ID
+	var posted_party := _expedition(GHOST_NAME_POSTED_PARTY_ENTITY, GHOST_NAME_POSTED_TILE.x,
+		GHOST_NAME_POSTED_TILE.y, "stationed")
+	posted_party["expedition_mission"] = HudExpeditionVocab.EXPEDITION_MISSION_STATION
+	posted_party["expedition_destination_band"] = GHOST_NAME_POSTED_ID
+	posted_party["band_id"] = GHOST_NAME_POSTED_ID + 1
+	snapshot["populations"] = [west, posted_party]
+	snapshot["turn"] = GHOST_NAME_TURN
+	_map.set_connections([])
+	_display_snapshot(snapshot)
+	_map.set_current_turn(GHOST_NAME_TURN)
+	_map.selected_unit_id = -1
+	_map.selected_tile = Vector2i(-1, -1)
+	_map._fit_map_to_view()
+	var row := NAME_PILL_CULL_WEST_TILE.y
+	var tile_a := NAME_PILL_CULL_EAST_TILE
+	var tile_b := Vector2i(NAME_PILL_CULL_WEST_TILE.x - GHOST_NAME_B_COLS_WEST, row)
+	var tile_c := Vector2i(tile_b.x - 1, row)
+	var tile_d := Vector2i(NAME_PILL_CULL_WEST_TILE.x + GHOST_NAME_D_COLS_EAST, row)
+	_map.set_connections([
+		_ghost_tie(GHOST_NAME_A_ID, tile_a, NAME_PILL_LONG_NAME, 1, 0),
+		_ghost_tie(GHOST_NAME_B_ID, tile_b, NAME_PILL_LONG_NAME, GHOST_NAME_B_AGE, GHOST_NAME_B_FACTION),
+		_ghost_tie(GHOST_NAME_C_ID, tile_c, NAME_PILL_LONG_NAME, GHOST_NAME_C_AGE, 1),
+		_ghost_tie(GHOST_NAME_D_ID, tile_d, "", 2, null),
+		_ghost_tie(GHOST_NAME_POSTED_ID, GHOST_NAME_POSTED_TILE, GHOST_NAME_POSTED_NAME, 1, 8),
+	])
+	await _settle()
+	_assert_map("premise: the ghost-name frame is at pill zoom (radius %.1f >= %.1f)"
+			% [_map.last_hex_radius, MAP_VIEW.BAND_NAME_PILL_MIN_RADIUS],
+		_map.last_hex_radius >= MAP_VIEW.BAND_NAME_PILL_MIN_RADIUS)
+	await _save("map_remembered_band_names")
+	var rects: Dictionary = _map._band_markers.ghost_label_rects()
+	_assert_map("ghost names - a clear ghost's pill rect was placed", rects.has(GHOST_NAME_B_ID))
+	_assert_map("ghost names - a ghost whose pill would cover a live band's pill is skipped",
+		not rects.has(GHOST_NAME_A_ID) and _map.band_label_tiles().has(NAME_PILL_CULL_WEST_TILE))
+	_assert_map("ghost names - of two colliding ghosts the newer sighting keeps its pill",
+		rects.has(GHOST_NAME_B_ID) and not rects.has(GHOST_NAME_C_ID))
+	_assert_map("ghost names - a host with our party stationed on its hex is NAMED there (its flag is nameless)",
+		rects.has(GHOST_NAME_POSTED_ID))
+	_assert_map("ghost names - a nameless tie still gets a pill (the Peoples tab's fallback label)",
+		rects.has(GHOST_NAME_D_ID))
+	var label_d := ""
+	for r in _map.remembered_bands():
+		if int(r["subject_band_id"]) == GHOST_NAME_D_ID:
+			label_d = ConnectionsRoster.subject_label(r, HudBandLaborState.new())
+	_assert_map("ghost names - the fallback is never a raw BandId (%s)" % label_d,
+		label_d != "" and label_d.find(str(GHOST_NAME_D_ID)) < 0)
+	var live_off: Rect2 = _map._band_markers.name_pill_offset(NAME_PILL_CULL_WEST_TILE)
+	var live_center: Vector2 = _map._hex_center_wrapped(NAME_PILL_CULL_WEST_TILE.x,
+		NAME_PILL_CULL_WEST_TILE.y, _map.last_hex_radius, _map.last_origin)
+	var live_rect := Rect2(live_center + live_off.position, live_off.size)
+	var hits_live := false
+	for rect in rects.values():
+		if (rect as Rect2).intersects(live_rect):
+			hits_live = true
+	_assert_map("ghost names - no ghost pill overlaps a live pill", not hits_live)
+	# Dimmed: the ghost plate's brightest pixel (its text) sits below the live plate's.
+	var frame: Image = await _capture()
+	var px_scale := float(frame.get_width()) / maxf(get_viewport().get_visible_rect().size.x, 1.0)
+	var ghost_peak := _peak_luma(frame, rects[GHOST_NAME_B_ID], px_scale)
+	var live_peak := _peak_luma(frame, live_rect, px_scale)
+	_assert_map("ghost names - the ghost's text is dimmer than a live pill's (%.3f < %.3f)" % [ghost_peak, live_peak],
+		ghost_peak < live_peak)
+	# A Trade sheet's passive highlight rings the live-tie ghost's hex like a visible band's, and a click on
+	# it is captured (fog is exercised by ui_preview's `trade` chapter, which owns the descriptor).
+	_map.set_targeting({
+		"active": true, TargetingController.TARGETING_PASSIVE_KEY: true,
+		"command": TargetingController.VERB_PICK_COMMAND_TRADE, "need": "tile",
+		"origin_x": NAME_PILL_CULL_WEST_TILE.x, "origin_y": NAME_PILL_CULL_WEST_TILE.y,
+		"context_label": "Band 1",
+		TargetingController.TARGETING_HIGHLIGHT_TILES_KEY: [tile_b],
+	})
+	await _settle()
+	await _save("map_remembered_band_ring")
+	_assert_map("ghost names - a live-tie ghost's hex is ringed and its click captured under the Trade highlight",
+		_map._annotations.highlighted_at(tile_b.x, tile_b.y) and _map.targeting_click_captures(tile_b.x, tile_b.y))
+	_map.set_targeting({})
+	# THE GHOST SITS WHERE THE PEOPLE LAST KNOWS THE BAND IS: of two bands' ties to one subject, the freshest
+	# `last_seen_turn` places it, and on equal turns the lower observer id does.
+	var tie_turn := GHOST_NAME_TURN - HudConnectionsVocab.RESOLVED_TURN_LAG - 1
+	var older := {"observer_band_id": 2, "subject_band_id": GHOST_NAME_SHARED_ID, "strength": 0.0,
+		"last_seen_x": 1, "last_seen_y": 1, "last_seen_turn": tie_turn - 3}
+	var tied_high := {"observer_band_id": 9, "subject_band_id": GHOST_NAME_SHARED_ID, "strength": 0.0,
+		"last_seen_x": 4, "last_seen_y": 4, "last_seen_turn": tie_turn}
+	var tied_low := {"observer_band_id": 5, "subject_band_id": GHOST_NAME_SHARED_ID, "strength": 0.25,
+		"last_seen_x": 6, "last_seen_y": 6, "last_seen_turn": tie_turn}
+	_map.set_connections([older, tied_high, tied_low])
+	var shared_row: Dictionary = {}
+	for ghost_row in _map.remembered_bands():
+		if int(ghost_row["subject_band_id"]) == GHOST_NAME_SHARED_ID:
+			shared_row = ghost_row
+	_assert_map("ghost names - across observers the freshest sighting places the ghost, ties to the lower observer id",
+		int(shared_row.get("last_seen_x", -1)) == 6 and int(shared_row.get("observer_band_id", -1)) == 5)
+	_map.set_connections([])
+
+func _peak_luma(image: Image, rect: Rect2, px_scale: float) -> float:
+	var peak := 0.0
+	for y in range(maxi(int(rect.position.y * px_scale), 0), mini(int(rect.end.y * px_scale), image.get_height())):
+		for x in range(maxi(int(rect.position.x * px_scale), 0), mini(int(rect.end.x * px_scale), image.get_width())):
+			peak = maxf(peak, image.get_pixel(x, y).get_luminance())
+	return peak
 
 ## Mean per-pixel |dL| between two same-size frames inside `rect` - a perceptible-magnitude measure,
 ## not a changed-pixel count (a count passes on an invisible 1-level wash).

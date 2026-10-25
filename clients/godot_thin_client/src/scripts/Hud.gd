@@ -295,6 +295,8 @@ var _server_build: String = "?"
 ## gathering site nor a hex with a band in hand.
 @onready var forestry_assign_controls: VBoxContainer = %ForestryAssignControls
 @onready var extraction_assign_controls: VBoxContainer = %ExtractionAssignControls
+## …and the tile-sourced branches' rows (belief's monument, food stores' pit, ...), one per catalog branch.
+@onready var tile_branch_controls: VBoxContainer = %TileBranchControls
 @onready var left_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack
 @onready var right_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack
 @onready var right_dock_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll
@@ -684,6 +686,7 @@ func _ready() -> void:
         forestry_assign_controls, extraction_assign_controls,
         tile_panel,
         _resolve_assign_band, _herd_label_for_id, _emit_assign_labor)
+    _drawercompose.set_tile_branch_controls(tile_branch_controls)
     # A priority mark / `Stop working here` from a source sheet go straight out (#871): live on the
     # allocation, so no overlay of their own. A stop does drop the source's pending assign first.
     _drawercompose.work_priority_requested.connect(
@@ -1361,6 +1364,10 @@ func update_connections(connections_variant: Variant) -> void:
 func update_tile_temperatures(temperatures_variant: Variant) -> void:
     _band_labor.set_tile_temperatures(temperatures_variant)
 
+## The per-tile belief the map ingested (`MapView.tile_belief`), for a tile branch's site gate.
+func update_tile_beliefs(beliefs_variant: Variant) -> void:
+    _band_labor.set_tile_beliefs(beliefs_variant)
+
 func update_food_modules(modules_variant: Variant) -> void:
     _band_labor.set_food_modules(modules_variant)
 
@@ -1633,7 +1640,9 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
     # `(tile, material)` exactly as the confirmed row is — without it a Wood edit and a Stone edit on
     # one hex overwrite each other. It is read on that kind ALONE: on a forage row the same token is
     # the CROP COMMIT, which is not part of that row's identity and must not enter its key.
-    var material := species if kind == HudConst.LABOR_KIND_EXTRACT else ""
+    # …and on a `tile` row it is the BRANCH, which is half that row's key (`pending_key`).
+    var material := species if kind == HudConst.LABOR_KIND_EXTRACT \
+        or kind == HudConst.LABOR_KIND_TILE else ""
     # ⛔ **A SHEET THAT OFFERED NO DIAL NAMES NO FLOOR, AND THE COMMAND THEN CARRIES NO TOKEN**
     # (issue #650). `SourceForecast.FLOOR_UNNAMED` arrives from the deposit sheet's finite arm and from
     # nowhere else; what an omitted token MEANS is the sim's to answer, and on ground that never renews
@@ -2316,6 +2325,8 @@ func _hide_drawer_blocks() -> void:
         forestry_assign_controls.visible = false
     if extraction_assign_controls != null:
         extraction_assign_controls.visible = false
+    if tile_branch_controls != null:
+        tile_branch_controls.visible = false
     if allocation_panel != null:
         allocation_panel.visible = false
     if herd_assign_controls != null:
@@ -3038,6 +3049,11 @@ func show_tooltip(info: Dictionary) -> void:
         pos.y = mouse_pos.y - panel_size.y - 16
         
     tooltip_panel.position = pos
+
+## The roster state `ConnectionsRoster.subject_label` reads, handed to the map so a remembered band's
+## ghost names itself by the Peoples tab's own rule. `Main` pushes it once at wiring.
+func band_labor_state() -> HudBandLaborState:
+    return _band_labor
 
 ## Returns the minimap container for embedding the minimap panel.
 ## Returns null if container not found.

@@ -680,6 +680,15 @@ const BAND_FOLLOW_BADGE_OFFSET_FACTOR := 1.55
 const BAND_FOLLOW_BADGE_DISC_FACTOR := 0.6
 const BAND_FOLLOW_BADGE_RIM_WIDTH := 1.2
 const BAND_FOLLOW_BADGE_RIM_SEGMENTS := 16
+# The anchor badge (a delegate stationed on a host's token) shares the disc/size/offset factors above, mirrored
+# to the upper-left, and wears our faction's colour on a heavier rim so the colour reads.
+const BAND_STATION_BADGE_RIM_WIDTH := 2.0
+# Where the anchor badge sits: ON the token's upper-left shoulder, like a notification badge on an app icon.
+# The offset is a share of the stage glyph's half-extent per axis (`BAND_STAGE_GLYPH_SIZE_FACTOR` x token radius / 2),
+# so the centre rides just inside the glyph box's corner at every zoom and clears the corner secondary slots.
+const BAND_STATION_BADGE_OFFSET_FACTOR := 0.5
+const BAND_STATION_BADGE_DISC_FACTOR := 0.4   # disc radius, in token radii
+const BAND_STATION_BADGE_SIZE_FACTOR := 0.75   # art/glyph size, in token radii
 # The followed herd's dashed ring: radius in hex radii (just outside the harvest ring), the number of
 # dashes round it, and the share of each dash-and-gap period that is drawn.
 const HERD_FOLLOW_RING_FACTOR := 0.44
@@ -938,6 +947,7 @@ var terrain_palette: Dictionary = {}
 var terrain_tags_overlay: PackedInt32Array = PackedInt32Array()
 var terrain_tag_labels: Dictionary = {}
 var units: Array = []
+var _label_roster: HudBandLaborState = HudBandLaborState.new()   # see set_label_roster
 var _current_turn: int = 0   # snapshot turn; ages the remembered ghosts (see set_current_turn)
 var _connection_ties: Array = []   # the viewer's contact ties (see set_connections)
 var herds: Array = []
@@ -3014,20 +3024,14 @@ func set_connections(rows: Variant) -> void:
 
 ## **THE REMEMBERED BANDS — one row per subject band the viewer knows of but does not currently see.**
 ## A subject with a band marker drawn this frame (`units`, fog-gated by `_unit_hidden_by_fog`) is live
-## and gets none; nor does a subject the viewer has people STATIONED with (a station party in phase
-## `stationed` whose `expedition_destination_band` is that subject) — the party's own marker already
-## shows where the host is, live. Outbound/returning station parties do not suppress it. Of several ties
-## to one subject the LATEST sighting places it. Rows are the winning tie dict plus `news_age` (turns,
+## and gets none. **A host the viewer has people stationed with is drawn like any remembered band**: the
+## party's own marker is a nameless expedition flag, so suppressing the host's ghost left nothing on the
+## map naming it. Of several ties to one subject the freshest sighting places it. Rows are the winning tie dict plus `news_age` (turns,
 ## `HudConnectionsVocab.age_of` — the turn that just resolved less `last_seen_turn`, floored at 0) which is what fades the marker; strength never does.
 ## Pure over `units` + `_connection_ties` + `_current_turn`, so the draw and the hover cannot disagree.
 func remembered_bands() -> Array:
 	var live_ids: Dictionary = {}
-	var posted_ids: Dictionary = {}
 	for unit in units:
-		if HudConst.is_player_unit(unit) \
-				and String(unit.get("expedition_mission", "")) == HudExpeditionVocab.EXPEDITION_MISSION_STATION \
-				and String(unit.get("expedition_phase", "")) == HudExpeditionVocab.EXPEDITION_PHASE_STATIONED:
-			posted_ids[int(unit.get("expedition_destination_band", HudConst.NO_BAND_ID))] = true
 		if _unit_hidden_by_fog(unit):
 			continue
 		live_ids[int(unit.get("band_id", HudConst.NO_BAND_ID))] = true
@@ -3037,12 +3041,11 @@ func remembered_bands() -> Array:
 			continue
 		var tie: Dictionary = tie_variant
 		var subject := int(tie.get("subject_band_id", HudConst.NO_BAND_ID))
-		if subject == HudConst.NO_BAND_ID or live_ids.has(subject) or posted_ids.has(subject):
+		if subject == HudConst.NO_BAND_ID or live_ids.has(subject):
 			continue
 		if int(tie.get("last_seen_x", -1)) < 0 or int(tie.get("last_seen_y", -1)) < 0:
 			continue
-		if not best.has(subject) \
-				or int(tie.get("last_seen_turn", 0)) > int((best[subject] as Dictionary).get("last_seen_turn", 0)):
+		if not best.has(subject) or HudBandLaborState.is_fresher_sighting(tie, best[subject]):
 			best[subject] = tie
 	var rows: Array = []
 	for subject in best.keys():
@@ -3050,6 +3053,59 @@ func remembered_bands() -> Array:
 		row["news_age"] = HudConnectionsVocab.age_of(int(row.get("last_seen_turn", 0)), _current_turn)
 		rows.append(row)
 	return rows
+
+## **THE ONE PREDICATE: WHICH STATIONED PARTIES ARE BADGED ONTO THEIR HOST'S TOKEN.** Answers
+## `{tile: [party entity, ...]}` for every player party with mission `station`, phase `stationed` and
+## `expedition_destination_band` = a host whose DRAWN token (the live band marker if seen, else the
+## remembered ghost) stands on the party's OWN tile. The marker pass leaves those parties out of the
+## tile's draw group and wears an anchor badge on the host's token for them, both reading this, so the
+## suppression and the badge cannot disagree. A party on a different tile from its host's drawn token
+## (a stale ghost) is absent and draws its own disc. Draw-only: the parties stay in `units`, so the
+## select-then-cycle ring and Occupants still list them. Pure over `units` + `remembered_bands()`.
+func station_badges() -> Dictionary:
+	var parties: Array = []
+	for unit in units:
+		if HudConst.is_player_unit(unit) \
+				and String(unit.get("expedition_mission", "")) == HudExpeditionVocab.EXPEDITION_MISSION_STATION \
+				and String(unit.get("expedition_phase", "")) == HudExpeditionVocab.EXPEDITION_PHASE_STATIONED:
+			parties.append(unit)
+	var badges: Dictionary = {}
+	if parties.is_empty():
+		return badges
+	var host_tiles: Dictionary = {}   # host band id -> tile its token is drawn on
+	for unit in units:
+		if bool(unit.get("is_expedition", false)) or _unit_hidden_by_fog(unit):
+			continue
+		var pos: Array = Array(unit.get("pos", []))
+		if pos.size() == 2:
+			host_tiles[int(unit.get("band_id", HudConst.NO_BAND_ID))] = Vector2i(int(pos[0]), int(pos[1]))
+	for row in remembered_bands():
+		host_tiles[int(row.get("subject_band_id", HudConst.NO_BAND_ID))] = \
+			Vector2i(int(row.get("last_seen_x", -1)), int(row.get("last_seen_y", -1)))
+	for party in parties:
+		var host := int(party.get("expedition_destination_band", HudConst.NO_BAND_ID))
+		var pos: Array = Array(party.get("pos", []))
+		if not host_tiles.has(host) or pos.size() != 2:
+			continue
+		var tile := Vector2i(int(pos[0]), int(pos[1]))
+		if host_tiles[host] != tile:
+			continue
+		if not badges.has(tile):
+			badges[tile] = []
+		(badges[tile] as Array).append(int(party.get("entity", -1)))
+	return badges
+
+## Tiles whose host token wore the anchor badge in the last draw pass (harness probe).
+func station_badge_tiles() -> Array:
+	return _band_markers.station_badge_tiles()
+
+## Coordinator push (Main ← HUD): the roster state a remembered band's NAME is resolved against
+## (`ConnectionsRoster.subject_label`). Defaults to an empty one, which skips the roster tier and
+## still names a ghost by its remembered name or its last-seen tile.
+func set_label_roster(roster: HudBandLaborState) -> void:
+	if roster != null:
+		_label_roster = roster
+		queue_redraw()
 
 ## Coordinator push (Main ← snapshot `turn`): the clock the remembered ghosts age against.
 func set_current_turn(turn: int) -> void:
@@ -3424,11 +3480,13 @@ func _draw_arrowhead(start: Vector2, end: Vector2, color: Color, size: float = 8
 ## **DOES A LEFT CLICK ON (col, row) GO TO `targeting_clicked` RATHER THAN SELECT?** Every click while a
 ## command is targeting; and, under the PASSIVE highlight an open Deny or Trade sheet draws, a click on
 ## a highlighted target only — it pre-selects the sheet's target, and every other click selects as
-## usual.
+## usual. The Trade sheet rings every band the people knows, so a click on any of them chooses it.
 func targeting_click_captures(col: int, row: int) -> bool:
 	if _annotations.is_targeting_active():
 		return true
-	return _annotations.is_passive_highlight() and _annotations.highlighted_at(col, row)
+	if not _annotations.is_passive_highlight():
+		return false
+	return _annotations.highlighted_at(col, row)
 
 ## The targeting twin of `_emit_tile_selection`: the same visibility-redacted `tile_info`, and NO
 ## `selected_tile` write — see `targeting_clicked`.

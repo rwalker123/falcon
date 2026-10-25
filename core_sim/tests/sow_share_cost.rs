@@ -117,6 +117,7 @@ fn an_informatively_priced_sowable_site(app: &mut App) -> UVec2 {
                     .is_site(coord),
                 fresh_water,
                 core_sim::NO_DEPOSIT_FLOOR,
+                core_sim::NO_BELIEF,
                 &|_| false,
             )
             .is_some()

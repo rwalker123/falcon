@@ -885,6 +885,15 @@ off `domain_label`'s capitalized fallback. Copy: `KNOWLEDGE_UNLOCK_NOTES["storag
 `PRACTISE_NOTES["storage"]`. Harness: `fixtures_knowledge.gd` carries the row (`BRANCH_STORES`), and
 `knowledge_panel.gd` expects FOOD to gather `plant`, `animal`, `stores` (three drawn rows).
 
+## `ritual` IS A STANDALONE STEP ROW UNDER `lore` (#692)
+
+`ritual` rides the roster as branch `rites`, area `lore`, `is_step = true` (it gates the monument),
+taught by gatherings: two bands meeting with no live tie between them. Neither `rites` nor `lore` has a
+label entry, so the row reads **Rites** under **LORE** off the capitalized fallbacks. Copy:
+`KNOWLEDGE_UNLOCK_NOTES["ritual"]` and `PRACTISE_NOTES["ritual"]`. A standalone knowledge with no entry
+in those two tables draws with empty "What it lets you do" and "How it is learned" columns, which is how
+this one first shipped.
+
 ## Worked Land and Selective breeding (issue #175)
 
 Both lessons are roster rows. Where the hand-written `KNOWLEDGE_UNLOCK_NOTES` has no sentence the node
