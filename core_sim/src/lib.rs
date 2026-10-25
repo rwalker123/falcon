@@ -141,8 +141,8 @@ pub use band_names::{
     BandNamesError, BAND_NAME_SALT, BUILTIN_BAND_NAMES,
 };
 pub use belief::{
-    advance_improvement_belief, credit_ritual_lesson, BeliefRegistry, NO_BELIEF,
-    RITUAL_DISCOVERY_ID, RITUAL_KNOWLEDGE,
+    advance_improvement_belief, advance_ritual_trickle, credit_ritual_lesson,
+    credit_ritual_practice, BeliefRegistry, NO_BELIEF, RITUAL_DISCOVERY_ID, RITUAL_KNOWLEDGE,
 };
 pub use belief_config::{
     load_belief_config_from_env, BeliefConfig, BeliefConfigHandle, BeliefConfigMetadata,
@@ -1466,7 +1466,13 @@ pub fn build_headless_app() -> App {
                 // (#706): what the band could not eat in time is measured against the food it
                 // carried into the turn, and resets this turn's `last_food_spoiled`, which the
                 // labor pass's caravan transit rot then adds to.
-                spoilage::rot_band_larders.after(systems::simulate_population),
+                spoilage::rot_band_larders
+                    .after(systems::simulate_population)
+                    .after(belief::advance_ritual_trickle),
+                // **LIVING NEAR YOUR DEAD TEACHES RITUAL** - reads the ancestor hop counts
+                // `simulate_population` just stored, and sits before the rest of the stage's
+                // writers of the cohort and the discovery ledger.
+                belief::advance_ritual_trickle.after(systems::simulate_population),
                 // **The opening band is outfitted on the world-build pass, after its meal** —
                 // its fixed larder counts against its carry, and this is the larder the first
                 // frame publishes (`starting_loadout::outfit_opening_bands`). A splinter's

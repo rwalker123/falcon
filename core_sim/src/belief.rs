@@ -19,16 +19,18 @@
 //! Dead-equivalents: at the shipped `belief_per_death` of `1.0`, a place reading `12` holds twelve
 //! people's worth of ancestors. Later sources are priced in that unit.
 
-use bevy::prelude::{Res, ResMut, Resource, UVec2};
+use bevy::prelude::{Query, Res, ResMut, Resource, UVec2, With};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::belief_config::{BeliefConfig, BeliefConfigHandle};
-use crate::intensification::LadderKnowledge;
+use crate::components::{PopulationCohort, ResidentBand};
+use crate::intensification::{LadderConfigHandle, LadderKnowledge};
 use crate::orders::FactionId;
 use crate::resources::DiscoveryProgressLedger;
 use crate::scalar::scalar_from_f32;
 use crate::tile_improvement::TileImprovementRegistry;
+use crate::wellbeing_config::WellbeingConfigHandle;
 
 /// The ritual lesson's name in `intensification_ladder.json` (`knowledge.lesson_costs`,
 /// `standalone_knowledges`) and in `start_profile_knowledge_tags.json`.
@@ -158,12 +160,71 @@ pub fn credit_ritual_lesson(
     faction: FactionId,
     ledger: &mut DiscoveryProgressLedger,
 ) {
-    let Some(amount) =
-        knowledge.ledger_credit(RITUAL_KNOWLEDGE, knowledge.ritual_lesson_per_gathering)
-    else {
+    credit_ritual_practice(
+        knowledge,
+        faction,
+        knowledge.ritual_lesson_per_gathering,
+        ledger,
+    );
+}
+
+/// **ANY PRACTICE TOWARD RITUAL, through the one seam** - `practice` units converted by
+/// [`LadderKnowledge::ledger_credit`] and added to `faction`'s ledger. A gathering's
+/// ([`credit_ritual_lesson`]) and the dead's trickle ([`advance_ritual_trickle`]) both land here.
+/// A practice at or below zero credits nothing.
+pub fn credit_ritual_practice(
+    knowledge: &LadderKnowledge,
+    faction: FactionId,
+    practice: f32,
+    ledger: &mut DiscoveryProgressLedger,
+) {
+    if practice <= 0.0 {
+        return;
+    }
+    let Some(amount) = knowledge.ledger_credit(RITUAL_KNOWLEDGE, practice) else {
         return;
     };
     ledger.add_progress(faction, RITUAL_DISCOVERY_ID, scalar_from_f32(amount));
+}
+
+/// **LIVING NEAR YOUR DEAD TEACHES RITUAL, SLOWLY** - each turn, every people is credited
+/// `knowledge.ritual_lesson_per_turn_at_full_tie` x the strongest ancestor tie among its RESIDENT
+/// bands. The tie is the culture code's own (`CultureConfig::ancestor_tie`: the anchor's saturating
+/// weight x the kin-relay strength decoded from `last_belief_relay_hops`), read the way
+/// [`crate::culture::band_ancestor_pulls`] reads it.
+///
+/// **MAX, never the sum**: parking more bands by one grave must not multiply the lesson. A people
+/// whose strongest tie is zero (no anchor, or nothing reaches its bands) gets nothing, and a lever
+/// of `0` is a no-op. The hop count is the one `simulate_population` stored this turn, so the
+/// system runs right after it. A people that already knows ritual is credited as usual - the ledger
+/// clamps, exactly as a further gathering's credit does. `BTreeMap` by faction keeps the credit
+/// order fixed.
+pub fn advance_ritual_trickle(
+    bands: Query<&PopulationCohort, With<ResidentBand>>,
+    belief: Res<BeliefRegistry>,
+    wellbeing: Res<WellbeingConfigHandle>,
+    ladder: Res<LadderConfigHandle>,
+    mut discovery: ResMut<DiscoveryProgressLedger>,
+) {
+    let knowledge = &ladder.get().knowledge;
+    let per_turn = knowledge.ritual_lesson_per_turn_at_full_tie;
+    if per_turn <= 0.0 {
+        return;
+    }
+    let culture = &wellbeing.get().culture;
+    let mut strongest: BTreeMap<FactionId, f32> = BTreeMap::new();
+    for cohort in bands.iter() {
+        let hops = crate::belief_relay::hops_from_wire(
+            cohort.belief_anchor,
+            cohort.last_belief_relay_hops,
+        );
+        let tie = culture.ancestor_tie(cohort.belief_anchor.map(|anchor| belief.get(anchor)), hops);
+        let entry = strongest.entry(cohort.faction).or_insert(tie);
+        *entry = entry.max(tie);
+    }
+    for (faction, tie) in strongest {
+        credit_ritual_practice(knowledge, faction, per_turn * tie, &mut discovery);
+    }
 }
 
 #[cfg(test)]

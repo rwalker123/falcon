@@ -3555,6 +3555,14 @@ pub struct LadderKnowledge {
     /// reading of it because the quantum differs: a gathering is a discrete event, not a worked turn
     /// with a floor to scale by. PLAYTEST DIAL; validated finite and `> 0`.
     pub ritual_lesson_per_gathering: f32,
+    /// **What living near your dead is worth toward the ritual lesson, per turn, in PRACTICE
+    /// UNITS** - the slow second way to learn `ritual` for a people whose gatherings have dried up.
+    /// Each turn a people is credited this times the strongest ancestor tie
+    /// (`CultureConfig::ancestor_tie`, `0..1`) among its RESIDENT bands - the MAX, never the sum,
+    /// so parking more bands by one grave does not multiply it - through [`Self::ledger_credit`].
+    /// At `0.4`, ten dead at the anchor with the band standing on it (tie `0.5`) pays `0.2` a turn.
+    /// `0` switches the trickle off. PLAYTEST DIAL; validated finite and `>= 0`.
+    pub ritual_lesson_per_turn_at_full_tie: f32,
     /// **How much rot is one full turn of STORAGE practice** (#707), in turns of the band's OWN
     /// need: food rotting in one turn equal to this many turns of need counts as one full turn of
     /// practice (`learn_rate` worth). A sibling of [`Self::learn_rate`] because the quantum differs;
@@ -5509,6 +5517,20 @@ fn validate_knowledge(knowledge: &LadderKnowledge) -> Result<(), LadderConfigErr
             value: format!(
                 "ritual_lesson_per_gathering = {}",
                 knowledge.ritual_lesson_per_gathering
+            ),
+        });
+    }
+    if !knowledge.ritual_lesson_per_turn_at_full_tie.is_finite()
+        || knowledge.ritual_lesson_per_turn_at_full_tie < 0.0
+    {
+        return Err(LadderConfigError::Invalid {
+            field: "knowledge".to_string(),
+            constraint: "pay a finite, non-negative amount of practice per turn at full ancestor \
+                         tie - `0` switches the trickle off, a negative rate would unlearn ritual"
+                .to_string(),
+            value: format!(
+                "ritual_lesson_per_turn_at_full_tie = {}",
+                knowledge.ritual_lesson_per_turn_at_full_tie
             ),
         });
     }
