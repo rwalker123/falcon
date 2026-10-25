@@ -22,6 +22,7 @@ var _label_rects: Array[Rect2] = []
 var _label_grants: Dictionary = {}   # Vector2i -> Rect2
 var _ghost_label_rects: Dictionary = {}   # subject band id -> Rect2, the ghosts' pills (see draw_remembered_bands)
 var _ghost_pill_box: StyleBoxFlat = null
+var _station_badge_geometry: Dictionary = {}   # Vector2i -> {center, radius, token_center}, the badge drawn this frame
 var _station_badge_tiles: Dictionary = {}   # Vector2i -> true, tiles whose host token wore the anchor badge this frame
 # …and the same pass's FOOTPRINTS, expressed RELATIVE to the token centre they were measured from —
 # see `name_pill_offset`, the one consumer.
@@ -37,6 +38,7 @@ func _init(view: MapView) -> void:
 ## _view.BAND_STACK_MAX_CARDS a `×N` count badge notes the hidden bands.
 func draw_primary_bands(radius: float, origin: Vector2) -> void:
 	_station_badge_tiles.clear()
+	_station_badge_geometry.clear()
 	# A party stationed ON its host's drawn token is badged onto it, not drawn as a card
 	# (`MapView.station_badges`, the one predicate; it stays in `units`, so it is still selectable).
 	var badged_parties: Dictionary = {}   # entity -> true
@@ -643,7 +645,7 @@ func _draw_band_lethal_mark(unit: Dictionary, center: Vector2, token_radius: flo
 		* (token_radius + float(size) * _view.BAND_LETHAL_MARK_CLEARANCE_FACTOR)
 	_view._draw_marker_glyph(mark_center, _view.BAND_LETHAL_MARK_GLYPH, size, HudStyle.DANGER)
 
-## **THE ANCHOR BADGE** — a light disc with the station art (⚓ fallback) at a host token's UPPER-LEFT,
+## **THE ANCHOR BADGE** — a light disc with the station art (⚓ fallback) on a host token's UPPER-LEFT shoulder (overlapping the glyph, not out at the hex corner),
 ## standing for our delegate stationed on that host's tile (`MapView.station_badges`). The party draws no
 ## card of its own there. Follow-badge house style (light disc, `PANEL_SOLID`-weight rim) but the rim is OUR
 ## faction's colour. Gated on `ICON_MIN_DETAIL_RADIUS`; full alpha even on a ghost. Foreign hosts carry
@@ -653,12 +655,15 @@ func _draw_station_badge(center: Vector2, token_radius: float, radius: float, ti
 	if radius < _view.ICON_MIN_DETAIL_RADIUS:
 		return
 	_station_badge_tiles[tile] = true
-	var badge_center := center + Vector2(-token_radius, -token_radius) * _view.BAND_FOLLOW_BADGE_OFFSET_FACTOR
-	var disc_radius: float = token_radius * _view.BAND_FOLLOW_BADGE_DISC_FACTOR
+	var glyph_half := token_radius * _view.BAND_STAGE_GLYPH_SIZE_FACTOR * 0.5
+	var badge_center := center + Vector2(-1.0, -1.0) * glyph_half * _view.BAND_STATION_BADGE_OFFSET_FACTOR
+	var disc_radius: float = token_radius * _view.BAND_STATION_BADGE_DISC_FACTOR
+	_station_badge_geometry[tile] = {"center": badge_center, "radius": disc_radius, "token_center": center,
+		"token_radius": token_radius}
 	_view.draw_circle(badge_center, disc_radius, Color(HudStyle.INK, 0.95))
 	_view.draw_arc(badge_center, disc_radius, 0, TAU, _view.BAND_FOLLOW_BADGE_RIM_SEGMENTS,
 		rim_color, _view.BAND_STATION_BADGE_RIM_WIDTH)
-	var glyph_size := int(maxf(_view.SECONDARY_ICON_MIN_SIZE, token_radius * _view.BAND_FOLLOW_BADGE_SIZE_FACTOR))
+	var glyph_size := int(maxf(_view.SECONDARY_ICON_MIN_SIZE, token_radius * _view.BAND_STATION_BADGE_SIZE_FACTOR))
 	var art := ExpeditionSprites.for_mission(_view.EXPEDITION_STATION_MISSION)
 	if art != null:
 		_view._draw_marker_sprite(badge_center, art, glyph_size)
@@ -699,6 +704,10 @@ func _station_badge_color(party_entity: int) -> Color:
 		if int(unit.get("entity", -1)) == party_entity:
 			return _band_faction_color(unit)
 	return HudStyle.PANEL_SOLID
+
+## Where the badge drew, per tile: `{center, radius, token_center, token_radius}` (harness probe).
+func station_badge_geometry() -> Dictionary:
+	return _station_badge_geometry
 
 ## Tiles whose host token wore the anchor badge in the last draw pass.
 func station_badge_tiles() -> Array:

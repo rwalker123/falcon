@@ -683,6 +683,12 @@ const BAND_FOLLOW_BADGE_RIM_SEGMENTS := 16
 # The anchor badge (a delegate stationed on a host's token) shares the disc/size/offset factors above, mirrored
 # to the upper-left, and wears our faction's colour on a heavier rim so the colour reads.
 const BAND_STATION_BADGE_RIM_WIDTH := 2.0
+# Where the anchor badge sits: ON the token's upper-left shoulder, like a notification badge on an app icon.
+# The offset is a share of the stage glyph's half-extent per axis (`BAND_STAGE_GLYPH_SIZE_FACTOR` x token radius / 2),
+# so the centre rides just inside the glyph box's corner at every zoom and clears the corner secondary slots.
+const BAND_STATION_BADGE_OFFSET_FACTOR := 0.5
+const BAND_STATION_BADGE_DISC_FACTOR := 0.4   # disc radius, in token radii
+const BAND_STATION_BADGE_SIZE_FACTOR := 0.75   # art/glyph size, in token radii
 # The followed herd's dashed ring: radius in hex radii (just outside the harvest ring), the number of
 # dashes round it, and the share of each dash-and-gap period that is drawn.
 const HERD_FOLLOW_RING_FACTOR := 0.44

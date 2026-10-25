@@ -1524,6 +1524,6 @@ live plate's. A host with our stationed party on its tile is named there like an
 tile, a REMEMBERED host with our party on its ghost's tile, and a STALE ghost whose host our party is stationed
 with on a different tile. Structural asserts: `MapView.station_badge_tiles()` holds exactly the first two tiles,
 `station_badges()` (the one predicate) names the two parties, the badged party is still in
-`_units_on_tile` (selectable), and the stale ghost still places its pill. Look at the crops
+`_units_on_tile` (selectable), the stale ghost still places its pill, and at the pill zoom AND just above `ICON_MIN_DETAIL_RADIUS` (a food site staged on each host hex) the badge centre stays within ~1 token radius of its token and its disc clears every secondary slot's marker box (`station_badge_geometry()`). Look at the crops
 `map_station_badge_live` / `_ghost` / `_stale_party`: the anchor disc with our faction's rim sits upper-left on
 the host token, and the stale party draws its own ⚓ expedition disc.

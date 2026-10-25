@@ -7868,6 +7868,33 @@ const STATION_STALE_GHOST_TILE := Vector2i(11, 5)
 const STATION_STALE_PARTY_TILE := Vector2i(11, 8)
 const STATION_ENTITY_BASE := 7000
 const STATION_CROP_HALF := 70.0
+const STATION_BADGE_MAX_TOKEN_RADII := 1.2  # the badge centre stays within about one token radius of the token's
+const STATION_FOOD_SITE_MODULE := "berry_patch"
+
+## The anchor badge hugs the TOKEN: its centre within ~1 token radius of the token's, and its disc clear of
+## every corner secondary slot's marker box (a food site is staged on each host hex).
+func _assert_station_badge_on_token(label: String, radius: float) -> void:
+	var geometry: Dictionary = _map._band_markers.station_badge_geometry()
+	_assert_map("station badge (%s) - both hosts drew a badge" % label,
+		geometry.has(STATION_LIVE_TILE) and geometry.has(STATION_GHOST_TILE))
+	for tile in [STATION_LIVE_TILE, STATION_GHOST_TILE]:
+		if not geometry.has(tile):
+			continue
+		var entry: Dictionary = geometry[tile]
+		var token_r: float = entry["token_radius"]
+		var offset: float = (entry["center"] as Vector2).distance_to(entry["token_center"])
+		_assert_map("station badge (%s) - the badge centre rides on its token (%.1f px, token radius %.1f)" % [label, offset, token_r],
+			offset <= token_r * STATION_BADGE_MAX_TOKEN_RADII)
+		var icon_half: float = maxf(MAP_VIEW.SECONDARY_ICON_MIN_SIZE, MAP_VIEW.SECONDARY_ICON_SIZE_FACTOR * radius) * 0.5
+		var clear := true
+		for slot in range(MAP_VIEW.SECONDARY_SLOT_OFFSETS.size()):
+			var slot_center: Vector2 = _map.secondary_slot_center(entry["token_center"], slot, radius)
+			var nearest := Vector2(
+				clampf((entry["center"] as Vector2).x, slot_center.x - icon_half, slot_center.x + icon_half),
+				clampf((entry["center"] as Vector2).y, slot_center.y - icon_half, slot_center.y + icon_half))
+			if nearest.distance_to(entry["center"]) < float(entry["radius"]):
+				clear = false
+		_assert_map("station badge (%s) - the disc clears every secondary slot's marker box on %s" % [label, tile], clear)
 
 func _station_badge_states() -> void:
 	_map.set_fow_enabled(false)
@@ -7885,6 +7912,10 @@ func _station_badge_states() -> void:
 	snapshot["populations"].append(_remembered_station_party(STATION_ENTITY_BASE + 3,
 		STATION_STALE_PARTY_TILE, STATION_STALE_HOST_ID, "stationed"))
 	snapshot["turn"] = GHOST_NAME_TURN
+	var sites: Array = snapshot.get("food_modules", [])
+	for site_tile in [STATION_LIVE_TILE, STATION_GHOST_TILE]:
+		sites.append({"x": site_tile.x, "y": site_tile.y, "module": STATION_FOOD_SITE_MODULE, "kind": "forage"})
+	snapshot["food_modules"] = sites
 	_map.set_connections([
 		_ghost_tie(STATION_GHOST_HOST_ID, STATION_GHOST_TILE, "Sorrelbank", 1, 1),
 		_ghost_tie(STATION_STALE_HOST_ID, STATION_STALE_GHOST_TILE, "Staleford", 3, 2),
@@ -7906,10 +7937,26 @@ func _station_badge_states() -> void:
 		_map._units_on_tile(STATION_LIVE_TILE.x, STATION_LIVE_TILE.y).size() == 2)
 	_assert_map("station badge - the stale ghost still names itself",
 		_map._band_markers.ghost_label_rects().has(STATION_STALE_HOST_ID))
+	var fitted_radius: float = _map.last_hex_radius
+	_assert_station_badge_on_token("pill zoom", fitted_radius)
 	await _save("map_station_badge")
 	for entry in [["live", STATION_LIVE_TILE], ["ghost", STATION_GHOST_TILE], ["stale_party", STATION_STALE_PARTY_TILE]]:
 		var center: Vector2 = _map._hex_center(entry[1].x, entry[1].y, _map.last_hex_radius, _map.last_origin)
 		await _save_crop_px("map_station_badge_" + String(entry[0]), center, STATION_CROP_HALF)
+	# ...and just above ICON_MIN_DETAIL_RADIUS, the smallest zoom the badge draws at.
+	var low_terrain: Array = []
+	low_terrain.resize(NAME_PILL_GATE_BELOW_GRID_W * NAME_PILL_GATE_BELOW_GRID_H)
+	low_terrain.fill(TERRAIN_ID)
+	snapshot["grid"] = {"width": NAME_PILL_GATE_BELOW_GRID_W, "height": NAME_PILL_GATE_BELOW_GRID_H, "wrap_horizontal": false}
+	snapshot["overlays"] = {"terrain": low_terrain}
+	_display_snapshot(snapshot)
+	_map._fit_map_to_view()
+	await _settle()
+	_assert_map("premise: the low-zoom frame sits just above the detail gate (radius %.1f)" % _map.last_hex_radius,
+		_map.last_hex_radius >= MAP_VIEW.ICON_MIN_DETAIL_RADIUS
+			and _map.last_hex_radius < MAP_VIEW.BAND_NAME_PILL_MIN_RADIUS)
+	_assert_station_badge_on_token("low zoom", _map.last_hex_radius)
+	await _save("map_station_badge_lowzoom")
 	_map.set_connections([])
 
 ## **STATE "remembered band names" - A GHOST WEARS A DIMMED NAME PILL.** The crowded 35x32 grid (pill

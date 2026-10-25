@@ -337,12 +337,14 @@ and trade parties, and asserts the station art resolves and differs from the sco
 a player party with mission `station`, phase `stationed` and `expedition_destination_band` = a host whose DRAWN token
 (the live band marker if seen, else the remembered ghost) stands on the party's own tile. `draw_primary_bands`
 leaves such parties out of the tile's draw group (neither a back card nor counted in `×N`) and the host's token
-wears the anchor badge instead (`_draw_station_badge`): the follow badge's light disc, mirrored to the token's
-UPPER-LEFT (a foreign host carries no player-only ⚠ and a ghost no decoration, so the corner is free), the station
-art (⚓ fallback) inside, a rim in the party's faction colour (`BAND_STATION_BADGE_RIM_WIDTH`), gated on
-`ICON_MIN_DETAIL_RADIUS`, full alpha even on a ghost. The party stays in `units`, so the select-then-cycle ring and
-Occupants still list it. A party on a different tile from its host's drawn token (a stale ghost) is not badged and
-draws its own disc. `BandMarkerRenderer.station_badge_tiles()` reports where the badge drew
+wears the anchor badge instead (`_draw_station_badge`): a light disc with the station art (⚓ fallback) ON the
+token's upper-left shoulder, like a notification badge on an app icon. Its centre sits `BAND_STATION_BADGE_OFFSET_FACTOR`
+of the way to the stage glyph box's corner (so it overlaps the glyph at every zoom and stays ~1 token radius from the token's
+centre), which is well inside the corner secondary slots: it adorns the BAND, never the hex corner a food-site icon
+owns. The rim is the party's faction colour (`BAND_STATION_BADGE_RIM_WIDTH`), the disc and art are token-relative
+(`BAND_STATION_BADGE_DISC_FACTOR` / `_SIZE_FACTOR`), gated on `ICON_MIN_DETAIL_RADIUS`, full alpha even on a ghost.
+The party stays in `units`, so the select-then-cycle ring and Occupants still list it. A party on a different tile from
+its host's drawn token (a stale ghost) is not badged and draws its own disc. `BandMarkerRenderer.station_badge_tiles()` / `station_badge_geometry()` report where the badge drew
 (`harness-map-probes.md` → `map_station_badge`).
 
 **THE MAP MARKER DRAWS ART, THE GLYPH IS ITS FALLBACK.** Scout, deny, trade and station resolve bundled PNGs
