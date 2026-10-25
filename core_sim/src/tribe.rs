@@ -116,6 +116,38 @@ fn band_pair(a: BandId, b: BandId) -> BandPair {
     }
 }
 
+use sim_schema::{
+    TRIBE_STANDING_ALONE, TRIBE_STANDING_LOCAL, TRIBE_STANDING_NO_NETWORK, TRIBE_STANDING_NO_URN,
+};
+
+/// Why a band is or is not in reach of a tribe this turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TribeStanding {
+    Local,
+    NoUrn,
+    NoNetwork,
+    Alone,
+}
+
+impl TribeStanding {
+    /// The wire byte (`TRIBE_STANDING_*`).
+    pub fn wire(self) -> u8 {
+        match self {
+            TribeStanding::Local => TRIBE_STANDING_LOCAL,
+            TribeStanding::NoUrn => TRIBE_STANDING_NO_URN,
+            TribeStanding::NoNetwork => TRIBE_STANDING_NO_NETWORK,
+            TribeStanding::Alone => TRIBE_STANDING_ALONE,
+        }
+    }
+}
+
+/// One pair's scoring this turn: whether it was local and the inputs to its closeness.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PairScore {
+    pub local: bool,
+    pub inputs: CloseInputs,
+}
+
 /// **Every tribe, every pair's shared history, and how many tribes each people has formed.**
 /// Checkpoint state: identity, the leader and the histories persist across turns and nothing
 /// rebuilds them. Keyed by [`BandId`], never `Entity`.
@@ -129,9 +161,46 @@ pub struct TribeRegistry {
     /// Cumulative formations per people, the total the Telling diffs into
     /// `tribes.formed_this_turn`.
     formed: BTreeMap<FactionId, u64>,
+    /// This turn's scoring, rebuilt from scratch each turn: every local pair, and every non-local
+    /// pair with surviving shared history. Kept here (checkpoint state) so a snapshot published
+    /// right after a load still shows progress.
+    scores: BTreeMap<BandPair, PairScore>,
+    /// Each resident band's standing this turn, rebuilt each turn.
+    standing: BTreeMap<BandId, TribeStanding>,
+    /// The resident bands that have a leader of their own this turn, rebuilt each turn.
+    chiefed: BTreeSet<BandId>,
 }
 
 impl TribeRegistry {
+    /// Every scored pair `band` is in, as `(partner, score)`, partner id ascending.
+    pub fn pairs_of(&self, band: BandId) -> impl Iterator<Item = (BandId, &PairScore)> {
+        let mut found: Vec<(BandId, &PairScore)> = self
+            .scores
+            .iter()
+            .filter_map(|(pair, score)| {
+                if pair.0 == band {
+                    Some((pair.1, score))
+                } else if pair.1 == band {
+                    Some((pair.0, score))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        found.sort_by_key(|(partner, _)| *partner);
+        found.into_iter()
+    }
+
+    /// Whether `band` had a leader of its own when last scored.
+    pub fn has_leader(&self, band: BandId) -> bool {
+        self.chiefed.contains(&band)
+    }
+
+    /// The band's standing this turn, if it was resident when last scored.
+    pub fn standing_of(&self, band: BandId) -> Option<TribeStanding> {
+        self.standing.get(&band).copied()
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &Tribe> {
         self.tribes.values()
     }
@@ -304,7 +373,7 @@ pub fn likeness(a: &CultureLayer, b: &CultureLayer) -> f64 {
 }
 
 /// The seven inputs to a pair's closeness score, each in `[0, 1]`.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct CloseInputs {
     /// 1 when the two bands' founding lines share an origin band, else 0.
     pub origin: f64,
@@ -419,6 +488,40 @@ fn tribe_entry(
     CommandEventEntry::new(tick, kind, tribe.faction, label, Some(detail)).with_band(band)
 }
 
+/// The inputs of a pair that need no shared urn: origin, likeness, tie and history.
+fn pair_inputs(
+    facts: &BTreeMap<BandId, BandFacts>,
+    culture: &CultureManager,
+    ledger: &ConnectionLedger,
+    registry: &TribeRegistry,
+    a: BandId,
+    b: BandId,
+) -> CloseInputs {
+    let layers = (
+        culture.band_layer_by_owner(CultureOwner::from_band(a)),
+        culture.band_layer_by_owner(CultureOwner::from_band(b)),
+    );
+    let tie = ledger
+        .edges_between(a, b)
+        .iter()
+        .flatten()
+        .map(|connection| f64::from(connection.strength.to_f32()))
+        .fold(0.0, f64::max);
+    CloseInputs {
+        origin: f64::from(u8::from(shares_origin(
+            &facts[&a].origins,
+            &facts[&b].origins,
+        ))),
+        likeness: match layers {
+            (Some(la), Some(lb)) => likeness(la, lb),
+            _ => 0.0,
+        },
+        tie,
+        history: registry.shared_history(a, b),
+        ..CloseInputs::default()
+    }
+}
+
 /// The belief anchor a bucket's bands share.
 fn bucket_anchor(bucket: &BandGroup, facts: &BTreeMap<BandId, BandFacts>) -> Option<UVec2> {
     bucket
@@ -502,7 +605,9 @@ pub fn advance_tribes(
     let belief_config = belief_config.get();
     let mut facts: BTreeMap<BandId, BandFacts> = BTreeMap::new();
     let mut rows = Vec::new();
+    let mut networks: BTreeMap<BandId, u32> = BTreeMap::new();
     for (entity, band, cohort, name, leadership) in bands.iter() {
+        networks.insert(*band, supply.network_of(entity));
         facts.insert(
             *band,
             BandFacts {
@@ -546,6 +651,7 @@ pub fn advance_tribes(
 
     // 2. Closeness of every local pair, then the candidate groups: close components with a chief.
     let mut close_pairs: BTreeSet<BandPair> = BTreeSet::new();
+    let mut scores: BTreeMap<BandPair, PairScore> = BTreeMap::new();
     for bucket in &buckets {
         let anchor = bucket_anchor(bucket, &facts);
         let urn_belief = anchor_weight(anchor, &belief, &wellbeing);
@@ -553,40 +659,70 @@ pub fn advance_tribes(
         let members: Vec<BandId> = bucket.members.iter().copied().collect();
         for (i, a) in members.iter().enumerate() {
             for b in &members[i + 1..] {
-                let layers = (
-                    culture.band_layer_by_owner(CultureOwner::from_band(*a)),
-                    culture.band_layer_by_owner(CultureOwner::from_band(*b)),
-                );
-                let tie = ledger
-                    .edges_between(*a, *b)
-                    .iter()
-                    .flatten()
-                    .map(|connection| f64::from(connection.strength.to_f32()))
-                    .fold(0.0, f64::max);
                 let same_tribe = registry
                     .tribe_of(*a)
                     .is_some_and(|tribe| tribe.members.contains(b));
-                let inputs = CloseInputs {
-                    origin: f64::from(u8::from(shares_origin(
-                        &facts[a].origins,
-                        &facts[b].origins,
-                    ))),
-                    likeness: match layers {
-                        (Some(la), Some(lb)) => likeness(la, lb),
-                        _ => 0.0,
+                let mut inputs = pair_inputs(&facts, &culture, &ledger, &registry, *a, *b);
+                inputs.belief = urn_belief;
+                inputs.monument = monument;
+                inputs.acting = acting_as_a_tribe(same_tribe);
+                scores.insert(
+                    (*a, *b),
+                    PairScore {
+                        local: true,
+                        inputs,
                     },
-                    tie,
-                    history: registry.shared_history(*a, *b),
-                    belief: urn_belief,
-                    monument,
-                    acting: acting_as_a_tribe(same_tribe),
-                };
+                );
                 if closeness(&config, &inputs) >= config.tribe_score_threshold {
                     close_pairs.insert((*a, *b));
                 }
             }
         }
     }
+    // Pairs that parted but kept some history are shown fading: the cheap inputs only, since belief
+    // and monument need a shared urn.
+    let parted: Vec<BandPair> = registry
+        .history
+        .keys()
+        .filter(|pair| !local.contains(pair))
+        .copied()
+        .collect();
+    for pair in parted {
+        let inputs = pair_inputs(&facts, &culture, &ledger, &registry, pair.0, pair.1);
+        scores.insert(
+            pair,
+            PairScore {
+                local: false,
+                inputs,
+            },
+        );
+    }
+    let local_bands: BTreeSet<BandId> = buckets
+        .iter()
+        .flat_map(|bucket| bucket.members.iter().copied())
+        .collect();
+    let standing = facts
+        .iter()
+        .map(|(band, f)| {
+            let standing = if local_bands.contains(band) {
+                TribeStanding::Local
+            } else if f.anchor.is_none() {
+                TribeStanding::NoUrn
+            } else if networks.get(band).copied().unwrap_or(0) == 0 {
+                TribeStanding::NoNetwork
+            } else {
+                TribeStanding::Alone
+            };
+            (*band, standing)
+        })
+        .collect();
+    registry.scores = scores;
+    registry.standing = standing;
+    registry.chiefed = facts
+        .iter()
+        .filter(|(_, f)| f.leader.is_some())
+        .map(|(band, _)| *band)
+        .collect();
     let groups = close_groups(
         &buckets,
         |a, b| close_pairs.contains(&band_pair(a, b)),

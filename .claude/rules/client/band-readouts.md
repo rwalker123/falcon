@@ -1815,3 +1815,33 @@ ceiling"). The Band tab states its EFFECT on growth; the limit itself is a FACTI
   `Main._reset_per_world_state`.
 - **Frames:** `family_limit_band_tab` (row absent, `Births stopped`, the breakdown's fourth row;
   `band_panel_family_limit.gd`, see `harness-band-panel.md`).
+
+## THE TRIBE READOUT — progress toward a tribe, under the leader block (#861)
+
+The Band tab's `BandTribeBlock` (`BandPanelController._build_tribe_block`) is the block directly after
+the leader block, in the same column. It answers "how do I see my progress toward a tribe", and it
+shows with or without a leader: the bar is progress toward a tribe, and a leader is one of the
+conditions. It reads own-band cohort keys only (`tribe_standing`, `tribe_threshold`,
+`tribe_history_build_turns`, `tribe_weights`, `tribe_pairs`, decoded in `dict/population.rs`); a
+foreign row carries a threshold of 0 and gets no block. All the shaping is pure `HudFormat` statics
+(`band_tribe_progress`, `tribe_row_tooltip`, `tribe_next_step`, `tribe_bar_bbcode`) so it is
+harness-assertable without a node.
+
+- **One row per local partner**, best score first (ties by name), at most three: `Tribe  <name>
+  <split bar> 8.2 / 9`. The bar is one cell per point of the threshold, each input in its own hue in
+  wire order (origin, culture, tie, history, belief, monument, acting), zero inputs skipped, a
+  positive input at least one cell, a score over the threshold filling the bar. The score truncates
+  to one decimal while not close, so `8.96` cannot read `9.0 / 9`. Partners past the cap fold into a
+  `+N more` line whose tooltip names each with its score.
+- **Parted partners** (not local, history above 0) are one dim line, `Apart from <names>: shared
+  history fading`. **No local partner** is one dim standing note (no urn / no supply network / alone;
+  a standing of 0 with no rows reads as alone). Amber is kept for warnings: only `needs a chief`,
+  appended when a pair is at the threshold, not yet one tribe, and neither band has a leader.
+- **The hover is what makes it progress**: the headline, one `got / most — what feeds it` line per
+  input, and a `Next:` line. Acting is omitted while its contribution is 0 (its weight still counts in
+  the threshold). `Next` is close-enough / already-one-tribe at the threshold; else
+  `ceil(gap / (history weight / build turns))` turns when history alone can close the gap; else the
+  largest unfilled of monument, belief, tie. The client never recomputes a score: it sums the wire's
+  per-input contributions, which the sim built as input times weight.
+- **Frames:** `tribe_pairs`, `tribe_no_urn` in `band_expedition` (docked right, Band tab), with the
+  tooltip text, the turns estimate, the cap and the foreign-row assertions.

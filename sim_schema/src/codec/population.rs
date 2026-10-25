@@ -19,7 +19,8 @@ use crate::state::population::{
     KitNeedRecipeState, KitNeedState, KitToeLineState, LaborAssignmentState, MaterialAmountState,
     MaterialBatchState, MaterialShortfallState, PoolCrewLineState, PoolToeLineState,
     PoolingLinkState, PopulationCohortState, PopulationDemographicsState, ScoutTaskState,
-    SettlementStageViewState, SourcePriorityState, TransferCrossingState, WorkKitWantState,
+    SettlementStageViewState, SourcePriorityState, TransferCrossingState, TribeClosenessState,
+    TribePairState, WorkKitWantState,
 };
 use crate::state::subsistence::BuildLegState;
 use crate::world::{WorldDelta, WorldSnapshot};
@@ -939,6 +940,8 @@ fn create_populations<'a>(
             let envoy_terms = crate::codec::treaties::create_terms(builder, &cohort.envoy_terms);
             let leader_name = builder.create_string(&cohort.leader_name);
             let band_improvements = create_band_improvements(builder, &cohort.band_improvements);
+            let tribe_weights = create_tribe_closeness(builder, &cohort.tribe_weights);
+            let tribe_pairs = create_tribe_pairs(builder, &cohort.tribe_pairs);
             let culture_ancestor_pull = (!cohort.culture_ancestor_pull.is_empty())
                 .then(|| builder.create_vector(&cohort.culture_ancestor_pull));
             let belief_reach_y = if cohort.belief_reach_y.is_empty() {
@@ -1237,6 +1240,11 @@ fn create_populations<'a>(
                     leadershipFromHerd: cohort.leadership_from_herd,
                     leadershipFromStages: cohort.leadership_from_stages,
                     bandImprovements: Some(band_improvements),
+                    tribeStanding: cohort.tribe_standing,
+                    tribeThreshold: cohort.tribe_threshold,
+                    tribeHistoryBuildTurns: cohort.tribe_history_build_turns,
+                    tribeWeights: Some(tribe_weights),
+                    tribePairs: Some(tribe_pairs),
                 },
             )
         })
@@ -2150,6 +2158,25 @@ fn decode_population(
             build_toe: decode_build_toe(row.buildToe()),
             is_queued: row.isQueued(),
         }),
+        tribe_standing: cohort.tribeStanding(),
+        tribe_threshold: cohort.tribeThreshold(),
+        tribe_history_build_turns: cohort.tribeHistoryBuildTurns(),
+        tribe_weights: cohort
+            .tribeWeights()
+            .map(decode_tribe_closeness)
+            .unwrap_or_default(),
+        tribe_pairs: map_rows(cohort.tribePairs(), |row| TribePairState {
+            partner_band: row.partnerBand(),
+            partner_name: text(row.partnerName()),
+            local: row.local(),
+            same_tribe: row.sameTribe(),
+            partner_has_leader: row.partnerHasLeader(),
+            history: row.history(),
+            contribution: row
+                .contribution()
+                .map(decode_tribe_closeness)
+                .unwrap_or_default(),
+        }),
     })
 }
 
@@ -2242,6 +2269,64 @@ fn create_breeding_peoples<'a>(
         })
         .collect();
     builder.create_vector(&rows)
+}
+
+/// A `TribeClosenessState` table.
+fn create_tribe_closeness<'a>(
+    builder: &mut FbBuilder<'a>,
+    inputs: &TribeClosenessState,
+) -> WIPOffset<fb::TribeClosenessState<'a>> {
+    fb::TribeClosenessState::create(
+        builder,
+        &fb::TribeClosenessStateArgs {
+            origin: inputs.origin,
+            likeness: inputs.likeness,
+            tie: inputs.tie,
+            history: inputs.history,
+            belief: inputs.belief,
+            monument: inputs.monument,
+            acting: inputs.acting,
+        },
+    )
+}
+
+fn decode_tribe_closeness(table: fb::TribeClosenessState<'_>) -> TribeClosenessState {
+    TribeClosenessState {
+        origin: table.origin(),
+        likeness: table.likeness(),
+        tie: table.tie(),
+        history: table.history(),
+        belief: table.belief(),
+        monument: table.monument(),
+        acting: table.acting(),
+    }
+}
+
+/// `PopulationCohortState.tribePairs`.
+fn create_tribe_pairs<'a>(
+    builder: &mut FbBuilder<'a>,
+    rows: &[TribePairState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::TribePairState<'a>>>> {
+    let offsets: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            let partner_name = builder.create_string(&row.partner_name);
+            let contribution = create_tribe_closeness(builder, &row.contribution);
+            fb::TribePairState::create(
+                builder,
+                &fb::TribePairStateArgs {
+                    partnerBand: row.partner_band,
+                    partnerName: Some(partner_name),
+                    local: row.local,
+                    sameTribe: row.same_tribe,
+                    partnerHasLeader: row.partner_has_leader,
+                    history: row.history,
+                    contribution: Some(contribution),
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
 }
 
 /// `PopulationCohortState.bandImprovements`.

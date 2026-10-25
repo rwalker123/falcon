@@ -892,6 +892,7 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     var vitals: Control = _build_vitals_label(band) if with_vitals else null
     # The leader block is FIRST in the flat stack and in the left column (#859).
     var leader: Control = _build_leader_block(band) if with_vitals else null
+    var tribe: Control = _build_tribe_block(band) if with_vitals else null
     var people := _build_people_block(band)
     # The chart is ALWAYS built; only its height answers the tier. `TALL` gets the full series, every
     # shorter tier the compact one — same series, same empty marker, drawn denser.
@@ -926,6 +927,8 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     var blocks: Array[Dictionary] = []
     if leader != null:
         blocks.append({"control": leader, "column": BAND_COLUMN_LARDER})
+    if tribe != null:
+        blocks.append({"control": tribe, "column": BAND_COLUMN_LARDER})
     if vitals != null:
         blocks.append({"control": vitals, "column": BAND_COLUMN_LARDER})
     if people != null:
@@ -1248,6 +1251,46 @@ func _build_leader_block(band: Dictionary) -> Control:
         text.tooltip_text = block.tooltip_text
     block.add_child(text)
     return block
+
+## **THE TRIBE BLOCK** (#861), directly under the leader block: one line per local partner band (the
+## split bar of what closes the two, `8.2 / 9`, hovering to what makes it progress), a `+N more` line,
+## one dim line for parted partners, or one dim standing note when none is local. `null` for a band
+## with no tribe threshold (a foreign cohort). See `HudFormat.band_tribe_progress`.
+func _build_tribe_block(band: Dictionary) -> Control:
+    var view := HudFormat.band_tribe_progress(band)
+    if view.is_empty():
+        return null
+    var block := VBoxContainer.new()
+    block.name = HudWorkVocab.BAND_TRIBE_BLOCK_NAME
+    block.set_meta(HudWorkVocab.BAND_TRIBE_BLOCK_META, true)
+    block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    block.mouse_filter = Control.MOUSE_FILTER_PASS
+    block.add_theme_constant_override("separation", HudWorkVocab.BAND_TRIBE_BLOCK_SEPARATION)
+    for row in view.get("rows", []):
+        block.add_child(_tribe_line(HudFormat.tribe_row_bbcode(row), String(row.get("tooltip", ""))))
+    var more: Dictionary = view.get("more", {})
+    if not more.is_empty():
+        block.add_child(_tribe_line(HudFormat.tribe_note_bbcode(String(more.get("text", ""))),
+            String(more.get("tooltip", ""))))
+    for key in ["apart", "note"]:
+        if String(view.get(key, "")) != "":
+            block.add_child(_tribe_line(HudFormat.tribe_note_bbcode(String(view[key])), ""))
+    return block
+
+## One autowrapping BBCode line of the Tribe block; the tooltip rides the line itself.
+func _tribe_line(bbcode: String, tooltip: String) -> RichTextLabel:
+    var line := RichTextLabel.new()
+    line.name = HudWorkVocab.BAND_TRIBE_LINE_NAME
+    line.set_meta(HudWorkVocab.BAND_TRIBE_LINE_META, true)
+    line.bbcode_enabled = true
+    line.fit_content = true
+    line.scroll_active = false
+    line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    line.mouse_filter = Control.MOUSE_FILTER_PASS if tooltip == "" else Control.MOUSE_FILTER_STOP
+    line.text = bbcode
+    line.tooltip_text = tooltip
+    return line
 
 ## The vitals readout — Food, Fodder, Morale and Growth, of which Food / Morale / Growth carry the
 ## click-to-expand disclosures (Fodder is a plain row, and there is no Output row: productivity reads

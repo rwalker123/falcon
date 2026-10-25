@@ -507,7 +507,8 @@ pub use tile_improvement::{
     TILE_KEEPING_LOAD,
 };
 pub use tribe::{
-    advance_tribes, Tribe, TribeId, TribeLeader, TribeLeaderKind, TribeRegistry, MIN_TRIBE_BANDS,
+    advance_tribes, closeness, CloseInputs, PairScore, Tribe, TribeId, TribeLeader,
+    TribeLeaderKind, TribeRegistry, TribeStanding, MIN_TRIBE_BANDS,
 };
 pub use turn_pipeline_config::{
     load_turn_pipeline_config_from_env, PopulationPhaseConfig, PowerPhaseConfig,

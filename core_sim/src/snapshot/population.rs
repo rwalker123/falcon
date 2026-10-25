@@ -1096,6 +1096,80 @@ pub(crate) struct HuntCrewLevers<'a> {
     pub(crate) drives_known: bool,
 }
 
+/// **A band's progress toward a tribe, as published** — the standing, the lever echoes and one row
+/// per partner band of its people. Built by [`tribe_progress`] off the checkpointed registry.
+pub(crate) struct TribeProgress {
+    pub(crate) standing: u8,
+    pub(crate) threshold: f32,
+    pub(crate) history_build_turns: f32,
+    pub(crate) weights: sim_schema::TribeClosenessState,
+    pub(crate) pairs: Vec<sim_schema::TribePairState>,
+}
+
+/// Each input times its weight, as the wire's `TribeClosenessState`.
+fn tribe_contribution(
+    weights: &crate::leadership_config::LeadershipConfig,
+    inputs: &crate::tribe::CloseInputs,
+) -> sim_schema::TribeClosenessState {
+    sim_schema::TribeClosenessState {
+        origin: (weights.tribe_weight_origin * inputs.origin) as f32,
+        likeness: (weights.tribe_weight_likeness * inputs.likeness) as f32,
+        tie: (weights.tribe_weight_tie * inputs.tie) as f32,
+        history: (weights.tribe_weight_history * inputs.history) as f32,
+        belief: (weights.tribe_weight_belief * inputs.belief) as f32,
+        monument: (weights.tribe_weight_monument * inputs.monument) as f32,
+        acting: (weights.tribe_weight_acting * inputs.acting) as f32,
+    }
+}
+
+/// **The tribe fields of one own band's row**, or `None` when the registry has no standing for it
+/// (a band no turn has scored yet). `names` is the live-band name lookup; a nameless partner reads
+/// as the same `Band <id>` label `tribe.rs` uses.
+pub(crate) fn tribe_progress(
+    registry: &crate::tribe::TribeRegistry,
+    config: &crate::leadership_config::LeadershipConfig,
+    band: BandId,
+    names: &BandNameLookup,
+) -> Option<TribeProgress> {
+    let standing = registry.standing_of(band)?;
+    let pairs = registry
+        .pairs_of(band)
+        .map(|(partner, score)| sim_schema::TribePairState {
+            partner_band: partner.0,
+            partner_name: names
+                .get(&partner)
+                .filter(|name| !name.is_empty())
+                .cloned()
+                .unwrap_or_else(|| crate::systems::band_label(partner)),
+            local: score.local,
+            same_tribe: registry
+                .tribe_of(band)
+                .is_some_and(|tribe| tribe.members.contains(&partner)),
+            partner_has_leader: registry.has_leader(partner),
+            history: score.inputs.history as f32,
+            contribution: tribe_contribution(config, &score.inputs),
+        })
+        .collect();
+    Some(TribeProgress {
+        standing: standing.wire(),
+        threshold: config.tribe_score_threshold as f32,
+        history_build_turns: config.tribe_history_build_turns as f32,
+        weights: tribe_contribution(
+            config,
+            &crate::tribe::CloseInputs {
+                origin: 1.0,
+                likeness: 1.0,
+                tie: 1.0,
+                history: 1.0,
+                belief: 1.0,
+                monument: 1.0,
+                acting: 1.0,
+            },
+        ),
+        pairs,
+    })
+}
+
 /// `BandId → name` over every live band, the lookup a crossing's counterparty is named from.
 pub(crate) type BandNameLookup = std::collections::HashMap<BandId, String>;
 
@@ -1113,6 +1187,9 @@ pub(crate) struct PopulationStateInputs<'a> {
     pub(crate) leadership: Option<&'a crate::leadership::BandLeadership>,
     /// `leadership_config.json -> practice_threshold`, echoed on every own row.
     pub(crate) leadership_threshold: f32,
+    /// The band's progress toward a tribe (`crate::tribe`); `None` for a foreign or detached row and
+    /// for a hand-built fixture, which publish the defaults.
+    pub(crate) tribe: Option<TribeProgress>,
     pub(crate) cohort: &'a PopulationCohort,
     pub(crate) allocation: Option<&'a LaborAllocation>,
     pub(crate) expedition: Option<&'a Expedition>,
@@ -1506,6 +1583,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         band_name,
         leadership,
         leadership_threshold,
+        tribe,
         cohort,
         allocation,
         expedition,
@@ -2981,6 +3059,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         independence_grievance_threshold: wellbeing.independence.grievance_threshold,
         culture_pressures,
         band_improvements,
+        tribe_standing: tribe.as_ref().map_or(0, |t| t.standing),
+        tribe_threshold: tribe.as_ref().map_or(0.0, |t| t.threshold),
+        tribe_history_build_turns: tribe.as_ref().map_or(0.0, |t| t.history_build_turns),
+        tribe_weights: tribe.as_ref().map(|t| t.weights).unwrap_or_default(),
+        tribe_pairs: tribe.map(|t| t.pairs).unwrap_or_default(),
         culture_traits,
         culture_ancestor_pull,
         culture_drift_source_band: culture_drift.map_or(0, |pull| pull.source),
@@ -3507,6 +3590,7 @@ mod tests {
             band_name: None,
             leadership: None,
             leadership_threshold: 0.0,
+            tribe: None,
             // No world, so no outfitting window either.
             loadout_window: None,
             heart: None,

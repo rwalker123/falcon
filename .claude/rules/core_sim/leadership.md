@@ -86,8 +86,8 @@ gets one — once, permanently.
 ## A tribe is earned: close bands that share a gathering place, one of them chiefed
 
 Design: `docs/plan_labor_at_scale.md` ("Leaders: four levels of orders", level 2). Code:
-`core_sim/src/tribe.rs`, `tests/tribe.rs`. No wire, snapshot or client change: the tribe is sim state
-until a later slice puts it on screen.
+`core_sim/src/tribe.rs`, `tests/tribe.rs`. The tribe itself is sim state; each own band's
+progress toward one is on the wire ("On the wire" below).
 
 **Local.** Two bands are *local* on a turn when they are one people, in the same supply network
 (id not 0), holding the same belief anchor tile (`PopulationCohort::belief_anchor`, the urn on the
@@ -170,5 +170,21 @@ the end of the spine and the pressure/sedentarization tail it follows `simulate_
 refreshes the anchors), `advance_leadership` (so a band crowned this turn counts this turn),
 migration, defection, independence and the culture splits.
 
-**Checkpoint.** `SimState::tribes` (`TribeRegistry`: tribes, shared histories, `next_id`, `formed`;
+**On the wire.** Each own band's progress toward a tribe rides `PopulationCohortState`, appended
+last: `tribeStanding` (0 local, 1 no urn, 2 no supply network, 3 alone; `sim_schema::TRIBE_STANDING_*`),
+`tribeThreshold` (`tribe_score_threshold`), `tribeHistoryBuildTurns` (`tribe_history_build_turns`),
+`tribeWeights` (a `TribeClosenessState`: the seven weights, the most each input can add) and
+`tribePairs` (one `TribePairState` per partner band of the band's people, partner id ascending:
+`partnerBand`, `partnerName`, `local`, `sameTribe`, `partnerHasLeader`, raw `history`, and
+`contribution`, each input times its weight, summing to the pair's score). A partner is a pair
+scored this turn: every local pair, plus every parted pair whose shared history has not yet faded
+to nothing (`local: false`, with origin, likeness, tie and history read and belief, monument and
+acting 0, since those need a shared urn). Own bands only; a foreign or party row carries the
+defaults. The scoring lives in `TribeRegistry` (`scores`, `standing`, `chiefed`), rebuilt from
+scratch each turn by `advance_tribes`, rather than in a derived resource: the registry is
+checkpoint state, so a snapshot published right after a load still shows progress. The capture
+reads it through `snapshot::population::tribe_progress`.
+
+**Checkpoint.** `SimState::tribes` (`TribeRegistry`: tribes, shared histories, `next_id`, `formed`,
+this turn's `scores`, `standing` and `chiefed`;
 `SIM_STATE_RESOURCES`); `SAVE_FORMAT_VERSION` 56.

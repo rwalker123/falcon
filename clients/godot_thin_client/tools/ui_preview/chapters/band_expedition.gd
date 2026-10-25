@@ -2176,6 +2176,97 @@ func _hay_ledger_states() -> void:
 		var reserved := leader_panel.current_reservation_size()
 		h._assert_hud("%s: the card's minimum width (%.0fpx) fits the docked strip (%.0fpx)"
 			% [leader_case[0], card_min, reserved], card_min <= reserved)
+	# State tribe-* -- **PROGRESS TOWARD A TRIBE** (#861): the Tribe block directly under the leader
+	# block. A band with two local partners (one close, neither with a leader), one parted partner, and
+	# a band with no urn (standing 1). Read off the panel's own controls.
+	var tribe_weights := {"origin": 3.0, "likeness": 3.0, "tie": 2.0, "history": 5.0, "belief": 1.0,
+		"monument": 2.0, "acting": 1.0}
+	var tribe_base := {"leader_name": "", "leader_kind": 0, "leadership_practice": 0.0,
+		"leadership_threshold": 10.0, "leadership_from_builds": 0.0, "leadership_from_splits": 0.0,
+		"leadership_from_herd": 0.0, "leadership_from_stages": 0.0, "tribe_threshold": 9.0,
+		"tribe_history_build_turns": 20.0, "tribe_weights": tribe_weights}
+	var tribe_pairs_case := tribe_base.duplicate(true)
+	tribe_pairs_case.merge({"tribe_standing": 0, "tribe_pairs": [
+		{"partner_band": 7, "partner_name": "Ridgeway", "local": true, "same_tribe": false,
+			"partner_has_leader": false, "history": 0.4, "contribution": {"origin": 0.0,
+			"likeness": 2.2, "tie": 1.0, "history": 1.9, "belief": 0.0, "monument": 0.0, "acting": 0.0}},
+		{"partner_band": 8, "partner_name": "Sablemoor", "local": true, "same_tribe": false,
+			"partner_has_leader": false, "history": 0.4, "contribution": {"origin": 3.0,
+			"likeness": 2.6, "tie": 2.0, "history": 1.8, "belief": 0.0, "monument": 0.0, "acting": 0.0}},
+		{"partner_band": 9, "partner_name": "Dunmere", "local": false, "same_tribe": false,
+			"partner_has_leader": false, "history": 0.3, "contribution": {}},
+	]}, true)
+	var tribe_urn_case := tribe_base.duplicate(true)
+	tribe_urn_case.merge({"tribe_standing": 1, "tribe_pairs": []}, true)
+	for tribe_case in [["tribe_pairs", tribe_pairs_case], ["tribe_no_urn", tribe_urn_case]]:
+		var tribe_band := BandFx.band_fixture()
+		tribe_band.merge(tribe_case[1], true)
+		h._hud.update_band_alerts([tribe_band])
+		h._hud.show_unit_selection(tribe_band)
+		await h._settle()
+		await h._save(String(tribe_case[0]))
+		var tribe_blocks := _find_all_meta(leader_panel, HudWorkVocab.BAND_TRIBE_BLOCK_META)
+		var tribe_block: Node = tribe_blocks[0] if not tribe_blocks.is_empty() else null
+		var leader_blocks := _find_all_meta(leader_panel, HudWorkVocab.BAND_LEADER_BLOCK_META)
+		h._assert_hud("%s: one Tribe block, directly after the leader block" % tribe_case[0],
+			tribe_blocks.size() == 1 and leader_blocks.size() == 1
+			and tribe_block.get_parent() == leader_blocks[0].get_parent()
+			and tribe_block.get_index() == leader_blocks[0].get_index() + 1)
+		var tribe_lines: Array = tribe_block.find_children("*", "RichTextLabel", true, false) if tribe_block != null else []
+		var tribe_plain := ""
+		for tribe_line in tribe_lines:
+			tribe_plain += (tribe_line as RichTextLabel).get_parsed_text() + "\n"
+		if String(tribe_case[0]) == "tribe_pairs":
+			h._assert_hud("tribe_pairs: Sablemoor (best) above Ridgeway, then the Apart line (%s)" % tribe_plain.replace("\n", " | "),
+				tribe_lines.size() == 3
+				and tribe_plain.find("Sablemoor") < tribe_plain.find("Ridgeway")
+				and tribe_plain.contains("9.4 / 9") and tribe_plain.contains("5.1 / 9")
+				and tribe_plain.contains("Apart from Dunmere: shared history fading"))
+			h._assert_hud("tribe_pairs: the close pair says it needs a chief, the other does not",
+				tribe_plain.count(HudFormat.TRIBE_NEEDS_CHIEF) == 1
+				and (tribe_lines[0] as RichTextLabel).get_parsed_text().contains(HudFormat.TRIBE_NEEDS_CHIEF))
+			h._assert_hud("tribe_pairs: the row hovers to the progress sentence",
+				(tribe_lines[0] as RichTextLabel).tooltip_text.contains("Shared origin 3.0 / 3"))
+		else:
+			h._assert_hud("tribe_no_urn: one dim standing note (%s)" % tribe_plain.strip_edges(),
+				tribe_lines.size() == 1 and tribe_plain.contains("no urn yet — needs a place where belief stands")
+				and not tribe_plain.contains(HudFormat.TRIBE_NEEDS_CHIEF))
+	# The tooltip text and the turns estimate (spec example: 8.2 of 9, history 0.6 / 5 over 20 turns).
+	var spec_entry := tribe_base.duplicate(true)
+	var spec_pair := {"partner_name": "Sablemoor", "local": true, "same_tribe": false,
+		"partner_has_leader": false, "history": 0.12, "contribution": {"origin": 3.0, "likeness": 2.6,
+		"tie": 2.0, "history": 0.6, "belief": 0.0, "monument": 0.0, "acting": 0.0}}
+	var spec_tip := HudFormat.tribe_row_tooltip(spec_entry, spec_pair)
+	h._assert_hud("tribe tooltip: headline, per-input lines, no acting line, and the turns estimate (%s)" % spec_tip.replace("\n", " | "),
+		spec_tip.begins_with("Sablemoor: 8.2 of 9 to form a tribe")
+		and spec_tip.contains("Shared origin 3.0 / 3 — both descend from the same founding band")
+		and spec_tip.contains("History 0.6 / 5 — grows each turn you share an urn and supply network (full after 20 turns)")
+		and spec_tip.contains("Monument 0.0 / 2 — a kept monument at the shared urn")
+		and not spec_tip.contains("Acting")
+		and spec_tip.ends_with("Next: about 4 more turns together"))
+	var spec_far := spec_pair.duplicate(true)
+	spec_far["contribution"]["origin"] = 0.0
+	spec_far["contribution"]["history"] = 4.0
+	spec_far["contribution"]["tie"] = 0.0
+	h._assert_hud("tribe next step: history alone cannot close it -> the biggest unfilled input",
+		HudFormat.tribe_next_step(spec_entry, spec_far) == HudFormat.TRIBE_NEXT_MONUMENT)
+	var spec_close := spec_pair.duplicate(true)
+	spec_close["contribution"]["history"] = 1.4
+	var spec_one_tribe := spec_close.duplicate(true)
+	spec_one_tribe["same_tribe"] = true
+	h._assert_hud("tribe next step: close enough / already one tribe",
+		HudFormat.tribe_next_step(spec_entry, spec_close) == HudFormat.TRIBE_NEXT_CLOSE
+		and HudFormat.tribe_next_step(spec_entry, spec_one_tribe) == HudFormat.TRIBE_NEXT_ONE_TRIBE)
+	var many_entry := tribe_pairs_case.duplicate(true)
+	for extra in range(3):
+		many_entry["tribe_pairs"].append({"partner_band": 20 + extra, "partner_name": "Extra%d" % extra,
+			"local": true, "same_tribe": false, "partner_has_leader": false, "history": 0.1,
+			"contribution": {"history": 0.5}})
+	var many_view := HudFormat.band_tribe_progress(many_entry)
+	h._assert_hud("tribe: rows cap at 3 and the rest fold into '+N more' naming each",
+		many_view["rows"].size() == 3 and many_view["more"]["text"] == "+2 more"
+		and String(many_view["more"]["tooltip"]).contains("Extra1 0.5 / 9"))
+	h._assert_hud("a foreign band (no threshold) has no Tribe readout", HudFormat.band_tribe_progress({}).is_empty())
 	var tip: String = HudFormat.band_chief_progress(leader_cases[0][1]).get("tooltip", "")
 	h._assert_hud("the bar's tooltip names every source with its points",
 		tip.contains("Cultivate, Farm, Tame or Corral: 3") and tip.contains("Splits: 3")

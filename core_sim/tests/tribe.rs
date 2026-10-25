@@ -15,14 +15,17 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::{Entity, With};
 
+use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
-    advance_tribes, reconcile_band_culture_layers, tile_rung_span, BandId, BandLeader,
-    BandLeadership, BandName, BandSupplyMembership, BeliefRegistry, BranchId, CommandEventEntry,
-    CommandEventKind, CommandEventLog, ConnectionKey, ConnectionLedger, CultureManager,
-    CultureOwner, FactionId, FoundingLines, LadderConfigHandle, LeaderKind, PopulationCohort,
-    ResidentBand, RungId, Sighting, SimulationConfig, SimulationTick, SupplyNetworkMembership,
-    TileImprovementRegistry, TribeLeaderKind, TribeRegistry, CULTURE_TRAIT_AXES,
+    advance_tribes, closeness, publish_baseline_snapshot, reconcile_band_culture_layers,
+    tile_rung_span, BandId, BandLeader, BandLeadership, BandName, BandSupplyMembership,
+    BeliefRegistry, BranchId, CommandEventEntry, CommandEventKind, CommandEventLog, ConnectionKey,
+    ConnectionLedger, CultureManager, CultureOwner, FactionId, FoundingLines, LadderConfigHandle,
+    LeaderKind, LeadershipConfigHandle, PopulationCohort, ResidentBand, RungId, Sighting,
+    SimulationConfig, SimulationTick, SnapshotHistory, SupplyNetworkMembership,
+    TileImprovementRegistry, TribeLeaderKind, TribeRegistry, TribeStanding, CULTURE_TRAIT_AXES,
     CULTURE_TRAIT_SPAN,
 };
 
@@ -656,4 +659,204 @@ fn the_telling_tells_a_formation_once() {
         core_sim::run_turn(&mut app);
     }
     assert_eq!(told(&app), 1, "and not again");
+}
+
+// ---- Progress toward a tribe, as published (#861) ----
+
+/// The published row of band `entity`: encode the frame and read its cohort row.
+fn publish_rows(app: &mut App) -> Vec<u8> {
+    publish_baseline_snapshot(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref()).to_vec()
+}
+
+/// Run `read` over band `n`'s decoded cohort row.
+fn with_row<T>(app: &mut App, n: u64, read: impl FnOnce(fb::PopulationCohortState<'_>) -> T) -> T {
+    let bytes = publish_rows(app);
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot payload")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the cohort list is published")
+        .iter()
+        .find(|row| row.bandId() == id(n).0)
+        .expect("the band is on the wire");
+    read(row)
+}
+
+#[test]
+fn a_local_pair_publishes_each_input_times_its_weight_and_they_sum_to_the_score() {
+    let (mut app, _, _) = kin_pair();
+    turns(&mut app, 3);
+    let config = app.world.resource::<LeadershipConfigHandle>().get();
+    let stored = registry(&app)
+        .pairs_of(id(1))
+        .map(|(partner, score)| (partner, *score))
+        .collect::<Vec<_>>();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].0, id(2));
+    assert!(stored[0].1.local);
+    let expected = closeness(&config, &stored[0].1.inputs);
+
+    with_row(&mut app, 1, |row| {
+        assert_eq!(row.tribeStanding(), 0, "local");
+        assert_eq!(row.tribeThreshold(), config.tribe_score_threshold as f32);
+        assert_eq!(
+            row.tribeHistoryBuildTurns(),
+            config.tribe_history_build_turns as f32
+        );
+        let w = row.tribeWeights().expect("weights are published");
+        assert_eq!(w.origin(), config.tribe_weight_origin as f32);
+        assert_eq!(w.likeness(), config.tribe_weight_likeness as f32);
+        assert_eq!(w.tie(), config.tribe_weight_tie as f32);
+        assert_eq!(w.history(), config.tribe_weight_history as f32);
+        assert_eq!(w.belief(), config.tribe_weight_belief as f32);
+        assert_eq!(w.monument(), config.tribe_weight_monument as f32);
+        assert_eq!(w.acting(), config.tribe_weight_acting as f32);
+        let pairs = row.tribePairs().expect("pairs are published");
+        assert_eq!(pairs.len(), 1);
+        let pair = pairs.get(0);
+        assert_eq!(pair.partnerBand(), id(2).0);
+        assert_eq!(pair.partnerName(), Some("Test2"));
+        assert!(pair.local());
+        assert!(!pair.sameTribe());
+        assert!(pair.partnerHasLeader());
+        let c = pair.contribution().expect("contribution");
+        assert_eq!(c.origin(), w.origin(), "kin: origin input is 1");
+        assert!((c.tie() - w.tie()).abs() < 1e-6, "full tie");
+        assert!(c.history() > 0.0 && c.history() < w.history());
+        assert!((pair.history() * w.history() - c.history()).abs() < 1e-4);
+        let sum = c.origin()
+            + c.likeness()
+            + c.tie()
+            + c.history()
+            + c.belief()
+            + c.monument()
+            + c.acting();
+        assert!(
+            (f64::from(sum) - expected).abs() < 1e-4,
+            "{sum} vs {expected}"
+        );
+    });
+    // The other band sees the same pair from its side.
+    with_row(&mut app, 2, |row| {
+        let pair = row.tribePairs().unwrap().get(0);
+        assert_eq!(pair.partnerBand(), id(1).0);
+        assert_eq!(pair.partnerName(), Some("Test1"));
+    });
+}
+
+#[test]
+fn a_formed_tribe_marks_its_pairs_as_the_same_tribe() {
+    let (mut app, _, _) = kin_pair();
+    until_formed(&mut app);
+    with_row(&mut app, 1, |row| {
+        assert!(row.tribePairs().unwrap().get(0).sameTribe());
+    });
+}
+
+#[test]
+fn standing_says_why_a_band_is_not_in_reach() {
+    let mut app = spawn_world();
+    member(&mut app, 1, 50, Some(PLACE_A), NET_1, 1); // alone at its place
+    member(&mut app, 2, 50, Some(PLACE_B), NET_2, 1); // alone too
+    member(&mut app, 3, 50, None, NET_1, 1); // no urn
+    member(&mut app, 4, 50, Some(PLACE_A), 0, 1); // no network
+    member(&mut app, 5, 50, None, 0, 1); // neither: no urn is named first
+    turn(&mut app);
+    let r = registry(&app);
+    assert_eq!(r.standing_of(id(1)), Some(TribeStanding::Alone));
+    assert_eq!(r.standing_of(id(2)), Some(TribeStanding::Alone));
+    assert_eq!(r.standing_of(id(3)), Some(TribeStanding::NoUrn));
+    assert_eq!(r.standing_of(id(4)), Some(TribeStanding::NoNetwork));
+    assert_eq!(r.standing_of(id(5)), Some(TribeStanding::NoUrn));
+    for (n, wire) in [(1, 3u8), (3, 1), (4, 2), (5, 1)] {
+        with_row(&mut app, n, |row| {
+            assert_eq!(row.tribeStanding(), wire, "band {n}");
+            assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
+        });
+    }
+}
+
+#[test]
+fn a_pair_that_drifted_apart_keeps_a_fading_row_that_is_not_local() {
+    let (mut app, _, two) = kin_pair();
+    turns(&mut app, TURNS_TO_FILL_HISTORY);
+    set_anchor(&mut app, two, Some(PLACE_B));
+    turn(&mut app);
+    let first = with_row(&mut app, 1, |row| {
+        assert_eq!(row.tribeStanding(), 3, "alone now");
+        let pairs = row.tribePairs().expect("pairs");
+        assert_eq!(pairs.len(), 1, "the parted partner keeps a row");
+        let pair = pairs.get(0);
+        assert!(!pair.local());
+        assert!(!pair.sameTribe());
+        let c = pair.contribution().unwrap();
+        assert_eq!(c.belief(), 0.0);
+        assert_eq!(c.monument(), 0.0);
+        pair.history()
+    });
+    turns(&mut app, 10);
+    let later = with_row(&mut app, 1, |row| {
+        row.tribePairs().unwrap().get(0).history()
+    });
+    assert!(later < first && later > 0.0, "fading: {first} -> {later}");
+    // Long enough apart and the row is gone.
+    turns(&mut app, 120);
+    with_row(&mut app, 1, |row| {
+        assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
+    });
+}
+
+#[test]
+fn a_foreign_band_publishes_the_defaults() {
+    let (mut app, _, _) = kin_pair();
+    let foreign = band(&mut app, 3, 50, Some(PLACE_A), NET_1);
+    app.world
+        .get_mut::<PopulationCohort>(foreign)
+        .unwrap()
+        .faction = FactionId(1);
+    let mut config = app.world.resource::<SimulationConfig>().clone();
+    config.fog_enabled = false;
+    app.world.insert_resource(config);
+    turns(&mut app, 3);
+    with_row(&mut app, 3, |row| {
+        assert_eq!(row.tribeStanding(), 0);
+        assert_eq!(row.tribeThreshold(), 0.0);
+        assert_eq!(row.tribeHistoryBuildTurns(), 0.0);
+        assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
+        assert_eq!(row.tribeWeights().map_or(0.0, |w| w.origin()), 0.0);
+    });
+    // The foreign band is no partner of the viewer's bands either.
+    with_row(&mut app, 1, |row| {
+        assert_eq!(row.tribePairs().unwrap().len(), 1)
+    });
+}
+
+#[test]
+fn the_scores_round_trip_the_checkpoint_so_a_load_publishes_progress() {
+    let (mut app, _, _) = kin_pair();
+    turns(&mut app, 3);
+    let before: Vec<_> = registry(&app)
+        .pairs_of(id(1))
+        .map(|(p, s)| (p, *s))
+        .collect();
+    let state = capture_sim_state(&app.world);
+    restore_sim_state(&mut app.world, &state);
+    let after: Vec<_> = registry(&app)
+        .pairs_of(id(1))
+        .map(|(p, s)| (p, *s))
+        .collect();
+    assert_eq!(before, after);
+    assert_eq!(
+        registry(&app).standing_of(id(1)),
+        Some(TribeStanding::Local)
+    );
 }

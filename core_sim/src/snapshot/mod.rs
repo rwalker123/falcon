@@ -1503,6 +1503,7 @@ mod tests {
             band_name: None,
             leadership: None,
             leadership_threshold: 0.0,
+            tribe: None,
             // No world, so no outfitting window either.
             loadout_window: None,
             heart: None,

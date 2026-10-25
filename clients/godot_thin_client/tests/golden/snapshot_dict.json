@@ -9330,6 +9330,71 @@
       "transfer_sent_turn": 44.07,
       "travel_target_x": 79,
       "travel_target_y": 90,
+      "tribe_history_build_turns": 17.290001,
+      "tribe_pairs": [
+        {
+          "contribution": {
+            "acting": 61.860001,
+            "belief": 86.919998,
+            "history": 70.800003,
+            "likeness": 18.549999,
+            "monument": 36.25,
+            "origin": 0.16,
+            "tie": 68.889999
+          },
+          "history": 53.16,
+          "local": true,
+          "partner_band": 188,
+          "partner_has_leader": false,
+          "partner_name": "populations[0].tribe_pairs[0].partner_name",
+          "same_tribe": false
+        },
+        {
+          "contribution": {
+            "acting": 31.17,
+            "belief": 48.380001,
+            "history": 52.630001,
+            "likeness": 66.989998,
+            "monument": 12.86,
+            "origin": 30.74,
+            "tie": 31.809999
+          },
+          "history": 54.509998,
+          "local": false,
+          "partner_band": 65,
+          "partner_has_leader": true,
+          "partner_name": "populations[0].tribe_pairs[1].partner_name",
+          "same_tribe": true
+        },
+        {
+          "contribution": {
+            "acting": 75.190002,
+            "belief": 28.93,
+            "history": 85.43,
+            "likeness": 110.959999,
+            "monument": 96.610001,
+            "origin": 10.03,
+            "tie": 103.519997
+          },
+          "history": 57.98,
+          "local": false,
+          "partner_band": 6,
+          "partner_has_leader": true,
+          "partner_name": "populations[0].tribe_pairs[2].partner_name",
+          "same_tribe": false
+        }
+      ],
+      "tribe_standing": 79,
+      "tribe_threshold": 15.5,
+      "tribe_weights": {
+        "acting": 61.549999,
+        "belief": 80.599998,
+        "history": 67.150002,
+        "likeness": 50.040001,
+        "monument": 33.610001,
+        "origin": 99.529999,
+        "tie": 73.129997
+      },
       "turns_of_fodder": 29.93,
       "turns_of_food": 62.830002,
       "upkeep_fund_mode": "populations[0].upkeep_fund_mode",
@@ -11702,6 +11767,71 @@
       "transfer_sent_turn": 70.910004,
       "travel_target_x": 128,
       "travel_target_y": 117,
+      "tribe_history_build_turns": 2.63,
+      "tribe_pairs": [
+        {
+          "contribution": {
+            "acting": 54.02,
+            "belief": 47.43,
+            "history": 34.139999,
+            "likeness": 66.139999,
+            "monument": 75.629997,
+            "origin": 59.810001,
+            "tie": 63.02
+          },
+          "history": 102.989998,
+          "local": true,
+          "partner_band": 19,
+          "partner_has_leader": false,
+          "partner_name": "populations[1].tribe_pairs[0].partner_name",
+          "same_tribe": false
+        },
+        {
+          "contribution": {
+            "acting": 66.510002,
+            "belief": 111.529999,
+            "history": 22.59,
+            "likeness": 66.120003,
+            "monument": 49.43,
+            "origin": 101.25,
+            "tie": 83.779999
+          },
+          "history": 32.880001,
+          "local": false,
+          "partner_band": 174,
+          "partner_has_leader": true,
+          "partner_name": "populations[1].tribe_pairs[1].partner_name",
+          "same_tribe": true
+        },
+        {
+          "contribution": {
+            "acting": 8.61,
+            "belief": 48.32,
+            "history": 100.989998,
+            "likeness": 9.25,
+            "monument": 56.98,
+            "origin": 36.66,
+            "tie": 86.730003
+          },
+          "history": 110.57,
+          "local": false,
+          "partner_band": 169,
+          "partner_has_leader": true,
+          "partner_name": "populations[1].tribe_pairs[2].partner_name",
+          "same_tribe": false
+        }
+      ],
+      "tribe_standing": 78,
+      "tribe_threshold": 90.18,
+      "tribe_weights": {
+        "acting": 7.69,
+        "belief": 68.900002,
+        "history": 27.280001,
+        "likeness": 46.0,
+        "monument": 74.370003,
+        "origin": 9.31,
+        "tie": 6.29
+      },
       "turns_of_fodder": 8.24,
       "turns_of_food": 103.459999,
       "upkeep_fund_mode": "populations[1].upkeep_fund_mode",
@@ -14164,6 +14294,71 @@
       "transfer_sent_turn": 0.49,
       "travel_target_x": 101,
       "travel_target_y": 112,
+      "tribe_history_build_turns": 106.699997,
+      "tribe_pairs": [
+        {
+          "contribution": {
+            "acting": 35.799999,
+            "belief": 21.540001,
+            "history": 106.720001,
+            "likeness": 95.370003,
+            "monument": 93.959999,
+            "origin": 55.48,
+            "tie": 106.269997
+          },
+          "history": 39.130001,
+          "local": true,
+          "partner_band": 182,
+          "partner_has_leader": false,
+          "partner_name": "populations[2].tribe_pairs[0].partner_name",
+          "same_tribe": false
+        },
+        {
+          "contribution": {
+            "acting": 5.15,
+            "belief": 74.32,
+            "history": 45.389999,
+            "likeness": 54.610001,
+            "monument": 96.360001,
+            "origin": 64.0,
+            "tie": 25.049999
+          },
+          "history": 20.68,
+          "local": false,
+          "partner_band": 155,
+          "partner_has_leader": true,
+          "partner_name": "populations[2].tribe_pairs[1].partner_name",
+          "same_tribe": true
+        },
+        {
+          "contribution": {
+            "acting": 107.449997,
+            "belief": 99.269997,
+            "history": 98.949997,
+            "likeness": 2.82,
+            "monument": 35.709999,
+            "origin": 106.889999,
+            "tie": 99.779999
+          },
+          "history": 16.33,
+          "local": false,
+          "partner_band": 84,
+          "partner_has_leader": true,
+          "partner_name": "populations[2].tribe_pairs[2].partner_name",
+          "same_tribe": false
+        }
+      ],
+      "tribe_standing": 165,
+      "tribe_threshold": 52.619999,
+      "tribe_weights": {
+        "acting": 106.690002,
+        "belief": 34.150002,
+        "history": 96.57,
+        "likeness": 47.459999,
+        "monument": 43.59,
+        "origin": 50.43,
+        "tie": 79.82
+      },
       "turns_of_fodder": 108.470001,
       "turns_of_food": 63.139999,
       "upkeep_fund_mode": "populations[2].upkeep_fund_mode",
