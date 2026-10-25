@@ -275,6 +275,27 @@ func run(harness) -> void:
 	h._hud.close_verb_form()
 	await h._settle()
 
+	# **A DENY SHEET CAPTURES NO BAND CLICK.** The band-click capture is the Trade descriptor's alone:
+	# under an open Deny sheet a click on a band's hex still selects it. Judged on the REAL descriptor
+	# the controller hands MapView, against a real MapView holding the bands.
+	var capture_map: MapView = h.MAP_VIEW_SCRIPT.new()
+	h.add_child(capture_map)
+	capture_map.set_fow_enabled(false)
+	capture_map.units = _capture_units()
+	var deny_button := _verb_button(HudComposeVocab.VERB_DENY)
+	h._assert_hud("the band drawer offers Deny", deny_button != null)
+	if deny_button != null:
+		deny_button.emit_signal("pressed")
+	await h._settle()
+	capture_map.set_targeting(h._hud._targeting._current_targeting_info())
+	h._assert_hud("(e) with a Deny sheet open, a band's hex is NOT captured",
+		h._hud._targeting.is_preselect_on()
+			and not capture_map.targeting_click_captures(PARKED_STANDS_AT.x, PARKED_STANDS_AT.y)
+			and not capture_map.targeting_click_captures(STRANGER_TILE.x, STRANGER_TILE.y))
+	capture_map.set_targeting({})
+	h._hud.close_verb_form()
+	await h._settle()
+
 	# **STATE — THE DESTINATION PRE-SELECTED ON THE MAP.** While the sheet is open, armed or not, the
 	# map rings every band tied LIVE to the sender — the neighbour, never the parked tie — and a click
 	# on a ringed band sets the sheet's destination without sending or selecting. The `To` row then
@@ -290,6 +311,64 @@ func run(harness) -> void:
 		h._hud._targeting.is_preselect_on() and highlight.has(NEIGHBOUR_LAST_SEEN)
 			and not highlight.has(PARKED_LAST_SEEN))
 	h._assert_hud("…and the ring is not targeting — nothing is armed", not h._hud.is_targeting_active())
+	# **A CLICK ON ANY OTHER BAND IS REFUSED WITH A REASON, not let fall through to select it** (which
+	# would move the selection and close this sheet, losing the setup). Real MapView capture and real
+	# `try_dispatch`. The parked tie's band stands somewhere DIFFERENT from where the tie last saw it,
+	# so a lookup keyed by tile finds nothing and the lost-touch note could not be written.
+	capture_map.set_targeting(h._hud._targeting._current_targeting_info())
+	var notes: Array = []
+	var real_sink: Callable = h._hud._targeting._note_sink
+	h._hud._targeting._note_sink = func(title: String, text: String) -> void: notes.append([title, text])
+	var sender_name := SHIPPER_DISPLAY_NAME
+	h._assert_hud("(a) a parked-tie band's hex is captured",
+		capture_map.targeting_click_captures(PARKED_STANDS_AT.x, PARKED_STANDS_AT.y))
+	h._hud.notify_targeting_click(_tile_info_with_units(PARKED_STANDS_AT, [_parked_unit()]))
+	await h._settle()
+	var lost_touch := HudComposeVocab.TRADE_PICK_LOST_TOUCH_FORMAT % [
+		sender_name, PARKED_DISPLAY_NAME, PARKED_LAST_SEEN_TURN]
+	h._assert_hud("…and posts the lost-touch note with the turn (%s)" % str(notes),
+		notes.size() == 1 and notes[0][1] == lost_touch and str(notes[0][1]).contains(
+			"turn %d" % PARKED_LAST_SEEN_TURN)
+			and notes[0][0] == String(HudComposeVocab.verb_for_mission(
+				HudComposeVocab.COMPOSE_MISSION_TRADE)[HudComposeVocab.VERB_KEY_TOOLTIP]))
+	notes.clear()
+	h._assert_hud("(b) a no-tie band's hex is captured",
+		capture_map.targeting_click_captures(STRANGER_TILE.x, STRANGER_TILE.y))
+	h._hud.notify_targeting_click(_tile_info_with_units(STRANGER_TILE, [_stranger_unit()]))
+	await h._settle()
+	h._assert_hud("…and posts the not-met note (%s)" % str(notes),
+		notes.size() == 1 and notes[0][1] == HudComposeVocab.TRADE_PICK_NOT_MET_FORMAT % [
+			sender_name, STRANGER_DISPLAY_NAME])
+	notes.clear()
+	h._assert_hud("…neither refusal chose a destination, selected a band or closed the sheet",
+		Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META) == null
+			and _verb_form() != null
+			and int(h._hud._selection.unit().get("entity", -1)) == SHIPPER_ENTITY)
+	h._assert_hud("(d) the sender's own hex is NOT captured",
+		not capture_map.targeting_click_captures(SHIPPER_TILE.x, SHIPPER_TILE.y))
+	h._hud.notify_targeting_click(_tile_info_with_units(SHIPPER_TILE, [_shipper_unit()]))
+	await h._settle()
+	h._assert_hud("…and a click on it posts nothing", notes.is_empty())
+	capture_map.units.append(_party_unit())
+	h._assert_hud("a hex holding only the sender's own party is NOT captured",
+		not capture_map.targeting_click_captures(PARTY_TILE.x, PARTY_TILE.y))
+	h._hud.notify_targeting_click(_tile_info_with_units(PARTY_TILE, [_party_unit()]))
+	await h._settle()
+	h._assert_hud("…and a click on it posts nothing (%s)" % str(notes), notes.is_empty())
+	h._hud._targeting._note_sink = real_sink
+	h._assert_hud("(c) a live-tie band's hex is captured",
+		capture_map.targeting_click_captures(NEIGHBOUR_LAST_SEEN.x, NEIGHBOUR_LAST_SEEN.y))
+	h._hud.notify_targeting_click(_tile_info_with_units(NEIGHBOUR_LAST_SEEN, [_neighbour_unit()]))
+	await h._settle()
+	var live_row := Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META)
+	h._assert_hud("…and still chosen as the destination",
+		live_row != null and _collect_text(live_row).contains(NEIGHBOUR_DISPLAY_NAME))
+	var live_clear := Q.find_meta_node(_parties_zone(), HudWidgets.FIELD_CLEAR_META) as Button
+	if live_clear != null:
+		live_clear.emit_signal("pressed")
+	await h._settle()
+	capture_map.queue_free()
+
 	var preselect_sent: Array[Dictionary] = []
 	var record_preselect := func(payload: Dictionary) -> void: preselect_sent.append(payload)
 	h._hud.send_trade_expedition_requested.connect(record_preselect)
@@ -1000,6 +1079,48 @@ func _press_send() -> void:
 		send.emit_signal("pressed")
 
 ## A map click's `tile_info` for `tile` — all the verb pick reads off one.
+## Where the parked tie's band STANDS now — deliberately not `PARKED_LAST_SEEN`, which is where the
+## tie remembers it, so a lookup keyed by tile cannot write the lost-touch note.
+const PARKED_STANDS_AT := Vector2i(50, 12)
+const PARKED_DISPLAY_NAME := "Thornwick"
+## A band the sender holds NO tie with, and where it stands.
+const STRANGER_ENTITY := 984
+const STRANGER_TILE := Vector2i(55, 14)
+const STRANGER_DISPLAY_NAME := "Marrowdeep"
+
+## The sender's own expedition party, on a hex the sender does not stand on.
+const PARTY_TILE := Vector2i(66, 16)
+
+func _party_unit() -> Dictionary:
+	var party := _unit_marker(TRADE_PARTY_ENTITY, "Traders 1", PARTY_TILE)
+	party["is_expedition"] = true
+	return party
+
+func _unit_marker(entity: int, display_name: String, tile: Vector2i) -> Dictionary:
+	return {"entity": entity, "band_id": BandFx.FIXTURE_BAND_ID_OFFSET + entity, "name": display_name,
+		"pos": [tile.x, tile.y]}
+
+func _shipper_unit() -> Dictionary:
+	return _unit_marker(SHIPPER_ENTITY, SHIPPER_DISPLAY_NAME, SHIPPER_TILE)
+
+func _neighbour_unit() -> Dictionary:
+	return _unit_marker(NEIGHBOUR_ENTITY, NEIGHBOUR_DISPLAY_NAME, NEIGHBOUR_LAST_SEEN)
+
+func _parked_unit() -> Dictionary:
+	return _unit_marker(PARKED_ENTITY, PARKED_DISPLAY_NAME, PARKED_STANDS_AT)
+
+func _stranger_unit() -> Dictionary:
+	return _unit_marker(STRANGER_ENTITY, STRANGER_DISPLAY_NAME, STRANGER_TILE)
+
+## Every band on the capture test's MapView.
+func _capture_units() -> Array:
+	return [_shipper_unit(), _neighbour_unit(), _parked_unit(), _stranger_unit()]
+
+func _tile_info_with_units(tile: Vector2i, tile_units: Array) -> Dictionary:
+	var info := _tile_info(tile)
+	info["units"] = tile_units
+	return info
+
 func _tile_info(tile: Vector2i) -> Dictionary:
 	return {"x": tile.x, "y": tile.y, "visibility_state": "active"}
 

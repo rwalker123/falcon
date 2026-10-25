@@ -3424,11 +3424,27 @@ func _draw_arrowhead(start: Vector2, end: Vector2, color: Color, size: float = 8
 ## **DOES A LEFT CLICK ON (col, row) GO TO `targeting_clicked` RATHER THAN SELECT?** Every click while a
 ## command is targeting; and, under the PASSIVE highlight an open Deny or Trade sheet draws, a click on
 ## a highlighted target only — it pre-selects the sheet's target, and every other click selects as
-## usual.
+## usual. The Trade sheet's descriptor also captures a click on any visible band that is not the
+## sender, so the controller can refuse it with a reason.
 func targeting_click_captures(col: int, row: int) -> bool:
 	if _annotations.is_targeting_active():
 		return true
-	return _annotations.is_passive_highlight() and _annotations.highlighted_at(col, row)
+	if not _annotations.is_passive_highlight():
+		return false
+	if _annotations.highlighted_at(col, row):
+		return true
+	return _annotations.captures_band_clicks() and _band_other_than_sender_at(col, row)
+
+## Does a visible band (an expedition party is not one) other than the passive descriptor's sender stand on (col, row)? The Trade sheet
+## captures such a click to refuse it with a reason rather than let it select the band and close the sheet.
+func _band_other_than_sender_at(col: int, row: int) -> bool:
+	var sender_id := _annotations.targeting_sender_band_id()
+	for unit in _units_on_tile(col, row):
+		if bool((unit as Dictionary).get("is_expedition", false)):
+			continue
+		if int((unit as Dictionary).get("band_id", HudConst.NO_BAND_ID)) != sender_id:
+			return true
+	return false
 
 ## The targeting twin of `_emit_tile_selection`: the same visibility-redacted `tile_info`, and NO
 ## `selected_tile` write — see `targeting_clicked`.

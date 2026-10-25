@@ -1337,6 +1337,12 @@ const COMPOSE_FIELD_POLICY := "Policy"
 const PREY_PICK_NOTE_TITLE := "Pick prey"
 const PREY_PICK_MISS := "No huntable herd there — click on a herd."
 
+## The Trade sheet's refusal when the map click lands on a band the sender cannot ship to: a tie that
+## is not live (sender, target, the turn the tie was last in contact), and no tie at all (sender,
+## target). Posted under the Trade verb's name (`TargetingController._refuse_trade_click`).
+const TRADE_PICK_LOST_TOUCH_FORMAT := "%s lost touch with %s on turn %d — move closer to trade with them."
+const TRADE_PICK_NOT_MET_FORMAT := "%s has not met %s — move closer to trade with them."
+
 const COMPOSE_OF_IDLE_FORMAT := "of %d idle"
 
 # ---- THE KIT (`docs/plan_denial_raid.md`, `equipment.json` `kits`) -------------------------------

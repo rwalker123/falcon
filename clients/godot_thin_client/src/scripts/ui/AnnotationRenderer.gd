@@ -209,6 +209,14 @@ func highlighted_at(col: int, row: int) -> bool:
 			return true
 	return false
 
+## Does the passive descriptor capture a click on ANY visible band's hex (the Trade sheet's), and
+## whose is the sender? `MapView.targeting_click_captures` reads both.
+func captures_band_clicks() -> bool:
+	return bool(_targeting.get(TargetingController.TARGETING_CAPTURES_BANDS_KEY, false))
+
+func targeting_sender_band_id() -> int:
+	return int(_targeting.get(TargetingController.TARGETING_SENDER_BAND_KEY, HudConst.NO_BAND_ID))
+
 ## The descriptor's explicit highlight set (a Trade sheet's live-tie bands), `[]` when it carries none.
 func _highlight_tiles() -> Array:
 	var tiles: Variant = _targeting.get(TargetingController.TARGETING_HIGHLIGHT_TILES_KEY, [])

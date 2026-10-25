@@ -53,8 +53,17 @@ for which band, anchored on which hex — is shared state on `ComposeState` (`op
   the same target dictionary a commit gets — the herd (the chooser first for a hex holding several), or
   the tied band standing there. Nothing is sent and nothing is selected; the sheet then shows its `Prey`
   or `To` row with a `✕` to clear it, and its Send commits straight away. **Trade has no armed pick**:
-  the pre-selection click is the only way its destination is set, and a parked tie's band is never
-  ringed, so a click on it sets nothing.
+  the pre-selection click is the only way its destination is set. Only live-tie bands are ringed, but
+  the Trade descriptor also carries `TARGETING_CAPTURES_BANDS_KEY` and `TARGETING_SENDER_BAND_KEY`
+  (never Deny's, never an armed pick's), so `targeting_click_captures` takes a click on ANY visible
+  band's hex that is not the sender's. A fall-through click selected that band, which moved the
+  selection and closed the sheet with its setup lost. `_try_preselect` instead refuses with a note
+  under the Trade verb's name: the first non-sender band on the hex is named, and the sender's tie to
+  it is found by `subject_band_id` (never by tile, since a parked tie to a foreign band is filed at its
+  stale last-seen hex) — `TRADE_PICK_LOST_TOUCH_FORMAT` with the tie's `last_contact_turn`, or
+  `TRADE_PICK_NOT_MET_FORMAT` when there is no tie. Nothing is chosen or selected and the sheet is
+  untouched. A hex holding only the sender, or only expedition parties (`is_expedition`, which are not bands
+  here), keeps its old click behaviour.
 - **The send arms the pick with the sheet's values captured** as a `commit` Callable
   (`TargetingController.PICK_COMMIT_KEY`), and the sheet stays open with its send drawn `armed` (a
   toggle, `HudComposeVocab.VERB_SEND_ARMED_STYLE`); pressing it again takes the pick down. The sheet

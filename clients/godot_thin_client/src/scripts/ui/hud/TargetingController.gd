@@ -117,6 +117,14 @@ const TARGETING_PASSIVE_KEY := "passive"
 ## highlight, captures a click on one. The herd glow needs no list: MapView derives it from `need:
 ## "herd"` and `min_distance`.
 const TARGETING_HIGHLIGHT_TILES_KEY := "highlight_tiles"
+## Set (true) on the Trade sheet's passive descriptor ONLY: a left click on a hex holding ANY band the
+## player can see is captured, not just one on a ringed hex, so a click on a band the sender has no
+## live tie with is refused with a reason (`_try_preselect`) instead of falling through to select that
+## band and close the sheet. Deny's descriptor and every armed pick omit it.
+const TARGETING_CAPTURES_BANDS_KEY := "captures_bands"
+## …and the sender's `band_id` that rides with it: a hex where every band standing is the sender itself
+## keeps its old click behaviour.
+const TARGETING_SENDER_BAND_KEY := "sender_band_id"
 ## Where `set_preselect` files the open sheet's mission (Deny or Trade), which decides what the passive
 ## highlight glows and what a click on it resolves.
 const PRESELECT_MISSION_KEY := "mission"
@@ -440,6 +448,8 @@ func _current_targeting_info() -> Dictionary:
 			passive["command"] = VERB_PICK_COMMAND_TRADE
 			passive["need"] = "tile"
 			passive[TARGETING_HIGHLIGHT_TILES_KEY] = live_tie_tiles(band)
+			passive[TARGETING_CAPTURES_BANDS_KEY] = true
+			passive[TARGETING_SENDER_BAND_KEY] = int(band.get("band_id", HudConst.NO_BAND_ID))
 		else:
 			passive["command"] = DENY_PICK_COMMAND
 			passive["need"] = "herd"
@@ -949,6 +959,8 @@ func _try_preselect(tile_info: Dictionary) -> void:
 		var destination := trade_destination_at(band, x, y)
 		if destination != HudConst.NO_BAND_ID:
 			choose.call({PICK_TILE_KEY: Vector2i(x, y), PICK_DESTINATION_KEY: destination})
+			return
+		_refuse_trade_click(band, tile_info)
 		return
 	var candidates := eligible_quarries_on_tile(band, x, y)
 	if candidates.is_empty():
@@ -958,6 +970,41 @@ func _try_preselect(tile_info: Dictionary) -> void:
 		return
 	_open_quarry_chooser(candidates, func(herd: Dictionary) -> void:
 		choose.call({PICK_HERD_KEY: herd}))
+
+## **A CLICK ON A BAND THE SENDER CANNOT TRADE WITH SAYS WHY.** MapView captures every visible band's
+## hex under the Trade sheet, so the click lands here rather than selecting the band (which would move
+## the selection and close the sheet). The first band on the hex that is not the sender is named, and
+## the sender's tie to THAT band is looked up by `subject_band_id` — never by tile, since a parked tie
+## to a foreign band is filed at its stale last-seen hex. Nothing is chosen; the sheet is untouched.
+func _refuse_trade_click(band: Dictionary, tile_info: Dictionary) -> void:
+	var sender_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+	var units_variant: Variant = tile_info.get("units", [])
+	if not (units_variant is Array):
+		return
+	for unit_variant in (units_variant as Array):
+		if not (unit_variant is Dictionary):
+			continue
+		var unit: Dictionary = unit_variant as Dictionary
+		if bool(unit.get("is_expedition", false)):
+			continue
+		var unit_id := int(unit.get("band_id", HudConst.NO_BAND_ID))
+		if unit_id == sender_id:
+			continue
+		var tie: Dictionary = {}
+		for tie_variant in _band_labor.connections_for_band(sender_id):
+			var candidate: Dictionary = tie_variant as Dictionary
+			if int(candidate.get("subject_band_id", HudConst.NO_BAND_ID)) == unit_id:
+				tie = candidate
+				break
+		var title := _pick_note_title_for(HudComposeVocab.COMPOSE_MISSION_TRADE)
+		if tie.is_empty():
+			_note_sink.call(title, HudComposeVocab.TRADE_PICK_NOT_MET_FORMAT
+				% [HudFormat.band_name(band), HudFormat.band_name(unit)])
+		else:
+			_note_sink.call(title, HudComposeVocab.TRADE_PICK_LOST_TOUCH_FORMAT % [
+				HudFormat.band_name(band), HudFormat.band_name(unit),
+				int(tie.get("last_contact_turn", HudConnectionsVocab.NO_TURN))])
+		return
 
 ## Wrap-aware odd-r hex distance between two offset tiles, supplying the snapshot's grid geometry to
 ## the ONE implementation (`SourceForecast.hex_distance_wrapped`). The grid pair lives on `_band_labor`
