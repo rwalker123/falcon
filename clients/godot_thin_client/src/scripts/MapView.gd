@@ -680,6 +680,9 @@ const BAND_FOLLOW_BADGE_OFFSET_FACTOR := 1.55
 const BAND_FOLLOW_BADGE_DISC_FACTOR := 0.6
 const BAND_FOLLOW_BADGE_RIM_WIDTH := 1.2
 const BAND_FOLLOW_BADGE_RIM_SEGMENTS := 16
+# The anchor badge (a delegate stationed on a host's token) shares the disc/size/offset factors above, mirrored
+# to the upper-left, and wears our faction's colour on a heavier rim so the colour reads.
+const BAND_STATION_BADGE_RIM_WIDTH := 2.0
 # The followed herd's dashed ring: radius in hex radii (just outside the harvest ring), the number of
 # dashes round it, and the share of each dash-and-gap period that is drawn.
 const HERD_FOLLOW_RING_FACTOR := 0.44
@@ -3044,6 +3047,51 @@ func remembered_bands() -> Array:
 		row["news_age"] = HudConnectionsVocab.age_of(int(row.get("last_seen_turn", 0)), _current_turn)
 		rows.append(row)
 	return rows
+
+## **THE ONE PREDICATE: WHICH STATIONED PARTIES ARE BADGED ONTO THEIR HOST'S TOKEN.** Answers
+## `{tile: [party entity, ...]}` for every player party with mission `station`, phase `stationed` and
+## `expedition_destination_band` = a host whose DRAWN token (the live band marker if seen, else the
+## remembered ghost) stands on the party's OWN tile. The marker pass leaves those parties out of the
+## tile's draw group and wears an anchor badge on the host's token for them, both reading this, so the
+## suppression and the badge cannot disagree. A party on a different tile from its host's drawn token
+## (a stale ghost) is absent and draws its own disc. Draw-only: the parties stay in `units`, so the
+## select-then-cycle ring and Occupants still list them. Pure over `units` + `remembered_bands()`.
+func station_badges() -> Dictionary:
+	var parties: Array = []
+	for unit in units:
+		if HudConst.is_player_unit(unit) \
+				and String(unit.get("expedition_mission", "")) == HudExpeditionVocab.EXPEDITION_MISSION_STATION \
+				and String(unit.get("expedition_phase", "")) == HudExpeditionVocab.EXPEDITION_PHASE_STATIONED:
+			parties.append(unit)
+	var badges: Dictionary = {}
+	if parties.is_empty():
+		return badges
+	var host_tiles: Dictionary = {}   # host band id -> tile its token is drawn on
+	for unit in units:
+		if bool(unit.get("is_expedition", false)) or _unit_hidden_by_fog(unit):
+			continue
+		var pos: Array = Array(unit.get("pos", []))
+		if pos.size() == 2:
+			host_tiles[int(unit.get("band_id", HudConst.NO_BAND_ID))] = Vector2i(int(pos[0]), int(pos[1]))
+	for row in remembered_bands():
+		host_tiles[int(row.get("subject_band_id", HudConst.NO_BAND_ID))] = \
+			Vector2i(int(row.get("last_seen_x", -1)), int(row.get("last_seen_y", -1)))
+	for party in parties:
+		var host := int(party.get("expedition_destination_band", HudConst.NO_BAND_ID))
+		var pos: Array = Array(party.get("pos", []))
+		if not host_tiles.has(host) or pos.size() != 2:
+			continue
+		var tile := Vector2i(int(pos[0]), int(pos[1]))
+		if host_tiles[host] != tile:
+			continue
+		if not badges.has(tile):
+			badges[tile] = []
+		(badges[tile] as Array).append(int(party.get("entity", -1)))
+	return badges
+
+## Tiles whose host token wore the anchor badge in the last draw pass (harness probe).
+func station_badge_tiles() -> Array:
+	return _band_markers.station_badge_tiles()
 
 ## Coordinator push (Main ← HUD): the roster state a remembered band's NAME is resolved against
 ## (`ConnectionsRoster.subject_label`). Defaults to an empty one, which skips the roster tier and

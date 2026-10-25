@@ -333,6 +333,18 @@ One mission, one glyph, on all three surfaces it appears on — the map marker, 
 the scout FLAG and sprite. `map_preview`'s `map_expedition_art` frame stages one beside the scout, deny
 and trade parties, and asserts the station art resolves and differs from the scout's.
 
+**A STATIONED PARTY ON ITS HOST'S TILE IS A BADGE, NOT A DISC.** `MapView.station_badges()` is the one predicate:
+a player party with mission `station`, phase `stationed` and `expedition_destination_band` = a host whose DRAWN token
+(the live band marker if seen, else the remembered ghost) stands on the party's own tile. `draw_primary_bands`
+leaves such parties out of the tile's draw group (neither a back card nor counted in `×N`) and the host's token
+wears the anchor badge instead (`_draw_station_badge`): the follow badge's light disc, mirrored to the token's
+UPPER-LEFT (a foreign host carries no player-only ⚠ and a ghost no decoration, so the corner is free), the station
+art (⚓ fallback) inside, a rim in the party's faction colour (`BAND_STATION_BADGE_RIM_WIDTH`), gated on
+`ICON_MIN_DETAIL_RADIUS`, full alpha even on a ghost. The party stays in `units`, so the select-then-cycle ring and
+Occupants still list it. A party on a different tile from its host's drawn token (a stale ghost) is not badged and
+draws its own disc. `BandMarkerRenderer.station_badge_tiles()` reports where the badge drew
+(`harness-map-probes.md` → `map_station_badge`).
+
 **THE MAP MARKER DRAWS ART, THE GLYPH IS ITS FALLBACK.** Scout, deny, trade and station resolve bundled PNGs
 through `ExpeditionSprites.for_mission` (`assets/icons/expeditions/` — the footprints, the animal
 skull and the cloth bundle, the band verb's `hud/` subjects redrawn in the map-marker house style),
@@ -445,10 +457,10 @@ The Peoples tab lists a band at "Last seen at (x, y), turn N"; the map used to s
 `update_connections`) that has **no band marker drawn this frame** (`units`, fog-gated by
 `_unit_hidden_by_fog` — a foreign band on a fogged tile counts as not drawn, so its ghost shows). Of
 several ties to one subject — across every observer, each one a band of the viewer's people — the **freshest `last_seen_turn`** places it, equal turns going to the lower observer id (`HudBandLaborState.is_fresher_sighting`), so the ghost sits where the Trade ring and the sim's aim are. **A host the viewer has people
-stationed with is drawn like any other**: the party's own marker is a nameless expedition flag, so a suppressed
-ghost left nothing on the map naming the host (the original suppression, #774, only guarded against a doubled
-token on the party's hex). On a hex that already holds a live marker the ghost draws its NAME PILL and skips its
-own token, so the party's disc stands for the people and the pill says whose hex it is. **The ghost fades by the AGE OF THE NEWS, never by tie
+stationed with is drawn like any other**: its dimmed ghost token and name pill always draw. Our party stationed
+ON the ghost's tile is badged onto it (see the expedition-disc section); a party on a different tile from the ghost
+draws its own disc. Any other live marker sharing a ghost's hex stacks with it like any two tokens.
+**The ghost fades by the AGE OF THE NEWS, never by tie
 strength**: `news_age` = `HudConnectionsVocab.age_of(last_seen_turn, _current_turn)` (`MapView.set_current_turn`,
 pushed by `Main` from the snapshot `turn`, which runs one ahead of every contact stamp — see
 `band-city-panel.md` → the Peoples tab — so a band seen in the turn that just resolved is age 0), floored at 0, and

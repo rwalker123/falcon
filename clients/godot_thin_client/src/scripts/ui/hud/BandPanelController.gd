@@ -7166,7 +7166,8 @@ func _on_station_link_pressed(band_id: int, host_id: int) -> void:
 ## bar's Trade verb does (`dispatch_verb`), then hands the row's band to the sheet through the
 ## pre-selection `choose` the sheet registered on that render: the same seam a map click on a ringed
 ## band uses, so the `To` row, its `✕` and the live-tie re-resolve are the sheet's own. A band with
-## nobody free, or a tie that is not live, opens nothing (the link is greyed with its reason).
+## nobody free opens nothing (the link is greyed with its reason, `_build_trade_link`); a parked tie's link is
+## live, since the sim accepts any edge the people holds.
 func _on_trade_link_pressed(band_id: int, host_id: int) -> void:
     var band := _band_labor.player_band_by_band_id(band_id)
     if band.is_empty() or host_id == HudConst.NO_BAND_ID:

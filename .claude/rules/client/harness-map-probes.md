@@ -1492,7 +1492,8 @@ and no badge, the pair without which "the badge draws" passes on a renderer that
 `map_preview._remembered_band_states` — turn 40; one live band (own tile), three ghosts whose news is
 0 / 15 / 30 turns old at tie strengths 0.0 / 0.5 / 1.0 (strength runs opposite to freshness on purpose),
 a subject that is live (no ghost), an older sighting of the 15-turn subject (no ghost there), a host the
-viewer has a `stationed` party with (no ghost) and one a party is only `outbound` to (ghost stays).
+viewer has a `stationed` party with on its tile (ghost token drawn, the party badged onto it; `station_badge_tiles()`
+holds that tile) and one a party is only `outbound` to (ghost stays, no badge).
 Asserts the mean |dL| against the tie-less frame grades by age (fresh > middle > oldest > 0), the
 suppression pair, the latest-sighting / `news_age` resolution, the tile-info rows and the hover sentence.
 `ui_preview/chapters/station.gd` renders the HUD tooltip for the same shape (`remembered_band_hover.png`).
@@ -1515,4 +1516,14 @@ rung under way or on offer, never one already held).
 band, a ghost on the adjacent tile (skipped against the live pill), a clear ghost with a faction border
 (placed), an older ghost beside it (skipped, ghost-vs-ghost), and a nameless tie (the `Band near (x, y)`
 fallback). Asserts read `ghost_label_rects()`, and the dimming is the ghost plate's peak luminance under the
-live plate's.
+live plate's. A host with our stationed party on its tile is named there like any other.
+
+## `map_station_badge` — a stationed delegate is a badge on its host's token
+
+`_station_badge_states` (after `map_remembered_bands`): a LIVE foreign host with our party stationed on its
+tile, a REMEMBERED host with our party on its ghost's tile, and a STALE ghost whose host our party is stationed
+with on a different tile. Structural asserts: `MapView.station_badge_tiles()` holds exactly the first two tiles,
+`station_badges()` (the one predicate) names the two parties, the badged party is still in
+`_units_on_tile` (selectable), and the stale ghost still places its pill. Look at the crops
+`map_station_badge_live` / `_ghost` / `_stale_party`: the anchor disc with our faction's rim sits upper-left on
+the host token, and the stale party draws its own ⚓ expedition disc.

@@ -507,7 +507,7 @@ amending is proposing again, and dropping a term that way is **not** a breach. T
 | | `Road` (`propose_treaty`) | `Envoy` (`send_envoy`) |
 |---|---|---|
 | posted | the turn it is made, `dealings::propose_treaty` | when the envoy reaches the receiver's camp (the `Arrived` arm of `advance_expeditions`) |
-| gates | the proposer's resident band, a live tie to the destination (`check_destination`), a **standing link** (`bands_have_standing_link`), a band of **another** people, at least one term, every bundle valid | the same gates but the link, checked at launch (`handle_send_envoy`); the destination must be another people's |
+| gates | the proposer's resident band, a destination the proposer's people knows — own people, visible, or any live or parked edge from any of its bands (`check_destination` → `launch_aim`), a **standing link** (`bands_have_standing_link`), a band of **another** people, at least one term, every bundle valid | the same gates but the link, checked at launch (`handle_send_envoy`); the destination must be another people's |
 | the receiver answers | only while the standing link still holds, else it is withdrawn (`reason=link_broken`) | while the envoy stands in the camp (`AwaitingOrders`); needs nothing else |
 | the proposer learns | **at once** | **when the envoy folds home**, as one feed line (`reported=envoy`) |
 | silence | refuses it at `expires_turn` (`offer_wait_turns`), told to both | the envoy waits `offer_wait_turns`, then walks home with `Expired` |

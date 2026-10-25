@@ -2134,6 +2134,7 @@ func _ready() -> void:
 	# APPENDED, so no earlier frame moves.
 	await _band_ancestors_states()
 	await _remembered_band_states()
+	await _station_badge_states()
 	await _remembered_band_name_states()
 
 	_finish()
@@ -7844,6 +7845,71 @@ func _remembered_band_states() -> void:
 	var hover := ConnectionsRoster.remembered_hover_line(faded, HudBandLaborState.new())
 	_assert_map("remembered - hover line names the band and when (%s)" % hover,
 		hover == "Goosefen — last seen turn %d, may have moved" % (REMEMBERED_RESOLVED_TURN - REMEMBERED_NEWS_AGES[1]))
+	# A remembered host with our party stationed on its tile: ghost token + badge, the party drawn as no card
+	# of its own (but still in the tile's occupant list); the outbound party's tile wears none.
+	_assert_map("remembered - the stationed host's ghost wears the anchor badge",
+		_map.station_badge_tiles().has(REMEMBERED_POSTED_HOST_TILE)
+			and not _map.station_badge_tiles().has(REMEMBERED_OUTBOUND_PARTY_TILE)
+			and not _map.station_badge_tiles().has(REMEMBERED_OUTBOUND_HOST_TILE))
+	_assert_map("remembered - the badged party stays selectable (still in the tile's occupants)",
+		_map._units_on_tile(REMEMBERED_POSTED_HOST_TILE.x, REMEMBERED_POSTED_HOST_TILE.y).size() == 1)
+	_map.set_connections([])
+
+## **STATE "station badge" - A STATIONED DELEGATE IS A BADGE ON ITS HOST'S TOKEN.** Three hexes: a LIVE
+## foreign host with our party stationed on it (host token + badge, no party card), a REMEMBERED host with
+## our party on its tile (ghost token + pill + badge), and a STALE ghost whose host our party is stationed
+## with ELSEWHERE (different tiles: no badge anywhere, the party draws its own disc, the ghost is ordinary).
+const STATION_LIVE_HOST_ID := 960
+const STATION_LIVE_TILE := Vector2i(7, 5)
+const STATION_GHOST_HOST_ID := 961
+const STATION_GHOST_TILE := Vector2i(3, 6)
+const STATION_STALE_HOST_ID := 962
+const STATION_STALE_GHOST_TILE := Vector2i(11, 5)
+const STATION_STALE_PARTY_TILE := Vector2i(11, 8)
+const STATION_ENTITY_BASE := 7000
+const STATION_CROP_HALF := 70.0
+
+func _station_badge_states() -> void:
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	var snapshot := _snapshot_stack(1)
+	var host := _band_at(STATION_ENTITY_BASE, STATION_LIVE_TILE.x, STATION_LIVE_TILE.y, STAGE_NOMADIC, 1)
+	host["band_id"] = STATION_LIVE_HOST_ID
+	snapshot["populations"].append(host)
+	snapshot["populations"].append(_remembered_station_party(STATION_ENTITY_BASE + 1,
+		STATION_LIVE_TILE, STATION_LIVE_HOST_ID, "stationed"))
+	snapshot["populations"].append(_remembered_station_party(STATION_ENTITY_BASE + 2,
+		STATION_GHOST_TILE, STATION_GHOST_HOST_ID, "stationed"))
+	snapshot["populations"].append(_remembered_station_party(STATION_ENTITY_BASE + 3,
+		STATION_STALE_PARTY_TILE, STATION_STALE_HOST_ID, "stationed"))
+	snapshot["turn"] = GHOST_NAME_TURN
+	_map.set_connections([
+		_ghost_tie(STATION_GHOST_HOST_ID, STATION_GHOST_TILE, "Sorrelbank", 1, 1),
+		_ghost_tie(STATION_STALE_HOST_ID, STATION_STALE_GHOST_TILE, "Staleford", 3, 2),
+	])
+	_display_snapshot(snapshot)
+	_map.set_current_turn(GHOST_NAME_TURN)
+	_map.selected_unit_id = -1
+	_map._fit_map_to_view()
+	await _settle()
+	var tiles: Array = _map.station_badge_tiles()
+	_assert_map("station badge - a live host wears the badge on its own tile", tiles.has(STATION_LIVE_TILE))
+	_assert_map("station badge - a remembered host wears it on its ghost's tile", tiles.has(STATION_GHOST_TILE))
+	_assert_map("station badge - a party on a different tile from its stale ghost badges nothing",
+		not tiles.has(STATION_STALE_GHOST_TILE) and not tiles.has(STATION_STALE_PARTY_TILE) and tiles.size() == 2)
+	var badges: Dictionary = _map.station_badges()
+	_assert_map("station badge - the predicate names the two parties on their host tiles",
+		badges.has(STATION_LIVE_TILE) and badges.has(STATION_GHOST_TILE) and badges.size() == 2)
+	_assert_map("station badge - a badged party stays in its tile's occupants (selectable)",
+		_map._units_on_tile(STATION_LIVE_TILE.x, STATION_LIVE_TILE.y).size() == 2)
+	_assert_map("station badge - the stale ghost still names itself",
+		_map._band_markers.ghost_label_rects().has(STATION_STALE_HOST_ID))
+	await _save("map_station_badge")
+	for entry in [["live", STATION_LIVE_TILE], ["ghost", STATION_GHOST_TILE], ["stale_party", STATION_STALE_PARTY_TILE]]:
+		var center: Vector2 = _map._hex_center(entry[1].x, entry[1].y, _map.last_hex_radius, _map.last_origin)
+		await _save_crop_px("map_station_badge_" + String(entry[0]), center, STATION_CROP_HALF)
 	_map.set_connections([])
 
 ## **STATE "remembered band names" - A GHOST WEARS A DIMMED NAME PILL.** The crowded 35x32 grid (pill

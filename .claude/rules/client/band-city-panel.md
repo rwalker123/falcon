@@ -4442,7 +4442,8 @@ party launches from the herd drawer's sheet.
   changes. The sheet is detached synchronously (`detach_verb_form`) before the drawer rebuilds, because
   a Trade sheet can hold a focused cargo field whose `focus_exited` must land inside
   `_trade_cargo_zones_rebuilding`.
-- **The Trade sheet cannot be armed without a live tie.** With none, it shows
+- **The Trade sheet cannot be armed while the people knows no band to send to** (`known_bands(band_id)` empty;
+  a parked tie and a band known only through a sibling both count). With none, it shows
   `COMPOSE_DESTINATION_NO_TIES` over a visible-and-disabled send; a pick armed for a manifest that
   becomes unsendable (no stores, empty, over cap) comes down with it (`_blocked_trade_send`).
 

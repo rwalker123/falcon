@@ -847,9 +847,11 @@ does not — and across a faction line, where free equalization deliberately doe
 
 ### The connection gates the LAUNCH, and arrival is not re-gated
 
-`ConnectionLedger::get(ConnectionKey::new(home_band, destination_band))` must exist with
-`strength > NO_TIE` — the arc's *"at zero, nothing flows"*. A **parked** edge (strength `0`, meaning
-*"we know such a people exist and have no current dealings"*) refuses exactly as a missing one does.
+The sender's PEOPLE must know where the destination is: `ConnectionLedger::launch_aim` (via
+`dealings::check_destination`) answers for the sender's own people, a band visible on the people's map,
+or any edge — **live or parked** — from any band of the people, and returns `None` only for a band the
+people never met, which is the one refusal. Knowing where a band is belongs to the people; tie
+STRENGTH stays per band (see "A party aims at what its people know" below).
 
 **If the tie decayed to nothing while the party walked, the shipment still lands.** The party is
 standing in their camp; presence beats the ledger, and the decision to send was made turns ago.
@@ -1277,8 +1279,9 @@ one half keeps the post.
 `server::resolve_post` refuses, each as a command failure with a reason, and a refused launch leaves
 the band exactly as it stood: the shared resident-band and party-size gate
 (`outfit_detached_party`); a host that is not a resident band (a detached party is not one); the host
-being the home band; no edge `home -> host` in the `ConnectionLedger`, or a **parked** one
-(`strength > NO_TIE` is the gate, exactly the shipment's); and, for a host of **another people**, that
+being the home band; a host the home band's **people** never met (`ConnectionLedger::launch_aim`
+returns `None` — exactly the shipment's gate; a parked edge from any band of the people passes); and,
+for a host of **another people**, that
 people's Open Borders. A same-people host never asks it. **The one faction comparison on the whole
 path** is `FactionBorderPolicies::admits_posting(host, from)` — `host == from || is_open(host)` —
 asked at launch and again every turn of the post. A launch draws workers and the kit and nothing

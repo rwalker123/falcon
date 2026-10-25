@@ -577,12 +577,13 @@ func foreign_factions() -> Array:
 			factions.append(faction)
 	return factions
 
-## The peoples of the bands a LIVE tie remembers (`subject_faction`), for `known_peoples`' `extra` -- a
-## people met only through a past sighting still has a band an envoy can be sent to.
+## The peoples of the bands ANY tie of the player's people remembers (`subject_faction`), live or parked,
+## for `known_peoples`' `extra` -- a people met only through a past sighting still has a band an envoy can
+## be sent to (`ConnectionLedger::launch_aim` accepts any edge from any band of the sender's people).
 func remembered_factions() -> Array:
 	var factions: Array = []
 	for row_variant in _connections:
-		if not (row_variant is Dictionary) or not tie_is_live(row_variant):
+		if not (row_variant is Dictionary):
 			continue
 		var faction := int((row_variant as Dictionary).get("subject_faction", HudConst.NO_FACTION_ID))
 		if faction != HudConst.NO_FACTION_ID and not factions.has(faction):
@@ -613,8 +614,9 @@ func treaty_with(faction: int) -> Dictionary:
 
 ## **THE BANDS OF `faction` THIS CLIENT CAN NAME**, as `[{band_id, label}]` by band id: the foreign bands
 ## in sight, the far ends of the standing links, and the bands a pending dealing names -- the only places
-## the wire states which people a band belongs to -- then, after those, the bands a LIVE tie remembers
-## under that people (`subject_faction`, clock 1). An envoy's destination is picked from these.
+## the wire states which people a band belongs to -- then, after those, the bands any tie of the people
+## remembers under that people (`subject_faction`, clock 1), live or PARKED. An envoy's destination is picked
+## from these; it is the people-level knowledge the Trade and Station surfaces read (`people_knows_band`).
 func known_bands_of_people(faction: int) -> Array:
 	var ids: Dictionary = {}
 	for band_id in _foreign_bands:
@@ -635,8 +637,9 @@ func known_bands_of_people(faction: int) -> Array:
 	ids.erase(HudConst.NO_BAND_ID)
 	var sorted_ids: Array = ids.keys()
 	sorted_ids.sort()
-	# Remembered bands follow, filed under their people by the tie's `subject_faction` (clock 1). A
-	# parked tie (strength 0) is left out: the sim refuses an envoy to a band we hold no tie with.
+	# Remembered bands follow, filed under their people by the tie's `subject_faction` (clock 1). A parked
+	# tie (strength 0) counts: the sim accepts any edge, live or parked, from any band of the sender's people
+	# (`ConnectionLedger::launch_aim`), so the envoy surface asks what the people knows, not what is live.
 	var remembered_ids: Array = []
 	for row_variant in _connections:
 		if not (row_variant is Dictionary):
@@ -645,7 +648,7 @@ func known_bands_of_people(faction: int) -> Array:
 		var subject := int(tie.get("subject_band_id", HudConst.NO_BAND_ID))
 		if subject == HudConst.NO_BAND_ID or ids.has(subject) or remembered_ids.has(subject):
 			continue
-		if int(tie.get("subject_faction", HudConst.NO_FACTION_ID)) == faction and tie_is_live(tie):
+		if int(tie.get("subject_faction", HudConst.NO_FACTION_ID)) == faction:
 			remembered_ids.append(subject)
 	remembered_ids.sort()
 	sorted_ids.append_array(remembered_ids)
