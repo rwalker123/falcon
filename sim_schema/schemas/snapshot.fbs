@@ -7045,12 +7045,8 @@ table TribePairState {
   partnerBand:ulong;
   // The partner's band name (its BandName, else the "Band <id>" label).
   partnerName:string;
-  // The two share an urn and a supply network this turn.
-  local:bool = false;
   // The two are already in one tribe together.
   sameTribe:bool = false;
-  // The partner band has a leader of its own.
-  partnerHasLeader:bool = false;
   // Raw shared history, 0..1 (for the turns-remaining estimate).
   history:float = 0;
   // Each input times its weight; the sum is the pair's score.

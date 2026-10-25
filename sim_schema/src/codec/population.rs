@@ -2168,9 +2168,7 @@ fn decode_population(
         tribe_pairs: map_rows(cohort.tribePairs(), |row| TribePairState {
             partner_band: row.partnerBand(),
             partner_name: text(row.partnerName()),
-            local: row.local(),
             same_tribe: row.sameTribe(),
-            partner_has_leader: row.partnerHasLeader(),
             history: row.history(),
             contribution: row
                 .contribution()
@@ -2317,9 +2315,7 @@ fn create_tribe_pairs<'a>(
                 &fb::TribePairStateArgs {
                     partnerBand: row.partner_band,
                     partnerName: Some(partner_name),
-                    local: row.local,
                     sameTribe: row.same_tribe,
-                    partnerHasLeader: row.partner_has_leader,
                     history: row.history,
                     contribution: Some(contribution),
                 },

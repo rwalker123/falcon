@@ -1927,9 +1927,7 @@ pub struct TribeClosenessState {
 pub struct TribePairState {
     pub partner_band: u64,
     pub partner_name: String,
-    pub local: bool,
     pub same_tribe: bool,
-    pub partner_has_leader: bool,
     pub history: f32,
     pub contribution: TribeClosenessState,
 }

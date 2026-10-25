@@ -9343,11 +9343,9 @@
             "tie": 68.889999
           },
           "history": 53.16,
-          "local": true,
           "partner_band": 188,
-          "partner_has_leader": false,
           "partner_name": "populations[0].tribe_pairs[0].partner_name",
-          "same_tribe": false
+          "same_tribe": true
         },
         {
           "contribution": {
@@ -9360,11 +9358,9 @@
             "tie": 31.809999
           },
           "history": 54.509998,
-          "local": false,
           "partner_band": 65,
-          "partner_has_leader": true,
           "partner_name": "populations[0].tribe_pairs[1].partner_name",
-          "same_tribe": true
+          "same_tribe": false
         },
         {
           "contribution": {
@@ -9377,9 +9373,7 @@
             "tie": 103.519997
           },
           "history": 57.98,
-          "local": false,
           "partner_band": 6,
-          "partner_has_leader": true,
           "partner_name": "populations[0].tribe_pairs[2].partner_name",
           "same_tribe": false
         }
@@ -11780,11 +11774,9 @@
             "tie": 63.02
           },
           "history": 102.989998,
-          "local": true,
           "partner_band": 19,
-          "partner_has_leader": false,
           "partner_name": "populations[1].tribe_pairs[0].partner_name",
-          "same_tribe": false
+          "same_tribe": true
         },
         {
           "contribution": {
@@ -11797,11 +11789,9 @@
             "tie": 83.779999
           },
           "history": 32.880001,
-          "local": false,
           "partner_band": 174,
-          "partner_has_leader": true,
           "partner_name": "populations[1].tribe_pairs[1].partner_name",
-          "same_tribe": true
+          "same_tribe": false
         },
         {
           "contribution": {
@@ -11814,9 +11804,7 @@
             "tie": 86.730003
           },
           "history": 110.57,
-          "local": false,
           "partner_band": 169,
-          "partner_has_leader": true,
           "partner_name": "populations[1].tribe_pairs[2].partner_name",
           "same_tribe": false
         }
@@ -14307,11 +14295,9 @@
             "tie": 106.269997
           },
           "history": 39.130001,
-          "local": true,
           "partner_band": 182,
-          "partner_has_leader": false,
           "partner_name": "populations[2].tribe_pairs[0].partner_name",
-          "same_tribe": false
+          "same_tribe": true
         },
         {
           "contribution": {
@@ -14324,11 +14310,9 @@
             "tie": 25.049999
           },
           "history": 20.68,
-          "local": false,
           "partner_band": 155,
-          "partner_has_leader": true,
           "partner_name": "populations[2].tribe_pairs[1].partner_name",
-          "same_tribe": true
+          "same_tribe": false
         },
         {
           "contribution": {
@@ -14341,9 +14325,7 @@
             "tie": 99.779999
           },
           "history": 16.33,
-          "local": false,
           "partner_band": 84,
-          "partner_has_leader": true,
           "partner_name": "populations[2].tribe_pairs[2].partner_name",
           "same_tribe": false
         }

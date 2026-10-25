@@ -602,57 +602,46 @@ static func meter_bar(score: float, cells: int) -> String:
     return "▰".repeat(filled) + "▱".repeat(cells - filled)
 
 # ---------------------------------------------------------------------------------------------------
-# PROGRESS TOWARD A TRIBE (#861) -- the Band tab's Tribe readout, under the leader block.
+# PROGRESS TOWARD A TRIBE (#861) -- the Band tab's one-line Tribe readout, under the leader block.
 # ---------------------------------------------------------------------------------------------------
 
-## The wire's `tribe_standing` for a band with no local partner: 1 no urn, 2 no supply network, 3 alone
-## (0 = a partner is local; a 0 with no rows cannot happen and reads as alone).
-const TRIBE_STANDING_NO_URN := 1
+## The wire's `tribe_standing` when no partner lives with the band: 1 no ancestors' place yet, 2 not in
+## a pooling network, 3 alone (0 with no partner cannot happen and reads as alone).
+const TRIBE_STANDING_NO_PLACE := 1
 const TRIBE_STANDING_NO_NETWORK := 2
-## The word before a row's bar in the Tribe readout: `Tribe  Sablemoor <bar> 8.2 / 9`.
+## `Tribe <bar> with Snowreach · 4 turns`: the word, the split bar, the partner and one short phrase.
+const TRIBE_LINE_FORMAT := "%s %s with %s · %s"
 const TRIBE_ROW_LABEL := "Tribe"
-const TRIBE_SCORE_FORMAT := "%.1f / %s"
-const TRIBE_NUMBER_FORMAT := "%.1f"
-const TRIBE_WHOLE_FORMAT := "%d"
-## Rows drawn before the rest fold into a `+N more` line (whose tooltip names every one).
-const TRIBE_MAX_ROWS := 3
-const TRIBE_MORE_FORMAT := "+%d more"
-const TRIBE_MORE_LINE_FORMAT := "%s %s"
-const TRIBE_NEEDS_CHIEF := "needs a chief"
-const TRIBE_APART_FORMAT := "Apart from %s: shared history fading"
-const TRIBE_NAME_SEPARATOR := ", "
-const TRIBE_NOTE_NO_URN := "Tribe: no urn yet — needs a place where belief stands"
-const TRIBE_NOTE_NO_NETWORK := "Tribe: not in a supply network"
-const TRIBE_NOTE_ALONE := "Tribe: no other band of your people shares this urn and network"
+const TRIBE_NO_PARTNER_LINE := "Tribe: no band lives with you"
 ## A score within this of the threshold counts as reaching it (float noise from summing seven terms).
 const TRIBE_SCORE_EPSILON := 0.001
-const TRIBE_HEADLINE_FORMAT := "%s: %s of %s to form a tribe"
-const TRIBE_INPUT_LINE_FORMAT := "%s %s / %s — %s"
-const TRIBE_NEXT_FORMAT := "Next: %s"
-const TRIBE_NEXT_CLOSE := "Close enough — a tribe forms with a chief among you"
-const TRIBE_NEXT_ONE_TRIBE := "already one tribe"
-const TRIBE_NEXT_TURNS_FORMAT := "about %d more turns together"
-const TRIBE_NEXT_ONE_TURN := "about 1 more turn together"
-const TRIBE_NEXT_MONUMENT := "Raise a monument at the shared urn"
-const TRIBE_NEXT_BELIEF := "More belief at the urn"
-const TRIBE_NEXT_TIE := "A stronger tie"
-## The closeness inputs in the wire's (and the bar's) order: key, words, what feeds it. `history`'s
-## sentence is a format taking the turns that fill it; `acting` is dropped while it contributes 0.
+const TRIBE_SUFFIX_ONE_TRIBE := "one tribe"
+const TRIBE_SUFFIX_FORMING := "forming"
+const TRIBE_SUFFIX_TURNS_FORMAT := "%d turns"
+const TRIBE_SUFFIX_ONE_TURN := "1 turn"
+const TRIBE_SUFFIX_MONUMENT := "needs a monument"
+const TRIBE_SUFFIX_BELIEF := "needs more belief"
+const TRIBE_SUFFIX_TIE := "needs a stronger tie"
+const TRIBE_TOOLTIP_RULE := "Two of your bands become a tribe by living together: the same ancestors and one pooling network."
+const TRIBE_TOOLTIP_FORMING := "Forms next turn"
+const TRIBE_TOOLTIP_ONE_TRIBE := "Already one tribe"
+const TRIBE_TOOLTIP_TURNS_FORMAT := "Live together %d more turns"
+const TRIBE_TOOLTIP_ONE_TURN := "Live together 1 more turn"
+const TRIBE_TOOLTIP_MONUMENT := "Raise a monument at the ancestors"
+const TRIBE_TOOLTIP_BELIEF := "More belief at the ancestors"
+const TRIBE_TOOLTIP_TIE_FORMAT := "A stronger tie with %s"
+const TRIBE_TOOLTIP_NO_PLACE := "No place of the ancestors yet"
+const TRIBE_TOOLTIP_NO_NETWORK := "Not in a pooling network"
+const TRIBE_TOOLTIP_ALONE := "No other band of your people lives here"
+const TRIBE_TOOLTIP_ALSO_FORMAT := "Also: %s"
+const TRIBE_NAME_SEPARATOR := ", "
+## The closeness inputs in the wire's (and the bar's) order, one hue each.
 const TRIBE_INPUT_KEYS := ["origin", "likeness", "tie", "history", "belief", "monument", "acting"]
-const TRIBE_INPUT_LABELS := ["Shared origin", "Culture", "Tie", "History", "Belief", "Monument", "Acting"]
-const TRIBE_INPUT_HINTS := [
-    "both descend from the same founding band",
-    "how alike your ways are",
-    "how strong your connection is",
-    "grows each turn you share an urn and supply network (full after %d turns)",
-    "belief standing at the shared urn",
-    "a kept monument at the shared urn",
-    "bands acting together",
-]
 const TRIBE_KEY_HISTORY := "history"
-const TRIBE_KEY_ACTING := "acting"
+const TRIBE_KEY_TIE := "tie"
+const TRIBE_KEY_BELIEF := "belief"
+const TRIBE_KEY_MONUMENT := "monument"
 
-## One hue per input, in `TRIBE_INPUT_KEYS` order. Runtime-read for the palette, as the chief bar's.
 static func tribe_input_colors() -> Array:
     return [HudStyle.HEALTHY, HudStyle.READY, HudStyle.SIGNAL, HudStyle.VOICE_PIGMENT,
         HudStyle.BELIEF, HudStyle.TRADE, HudStyle.HUNT_DANGER_ACCENT]
@@ -665,158 +654,131 @@ static func tribe_pair_score(pair: Dictionary) -> float:
         total += float(contribution.get(key, 0.0))
     return total
 
-## One decimal, rounded.
-static func tribe_decimal(value: float) -> String:
-    return TRIBE_NUMBER_FORMAT % value
-
-## A "most"/threshold figure: whole when it is whole (`9`), one decimal otherwise.
-static func tribe_most(value: float) -> String:
-    if absf(value - roundf(value)) < TRIBE_SCORE_EPSILON:
-        return TRIBE_WHOLE_FORMAT % int(roundf(value))
-    return tribe_decimal(value)
-
-## The score as shown: truncated (never rounded UP) to one decimal, so `8.96 / 9` cannot read `9.0 / 9`
-## while the pair is not yet close.
-static func tribe_score_text(score: float, threshold: float) -> String:
-    var shown := score if score >= threshold - TRIBE_SCORE_EPSILON else floorf(score * 10.0) / 10.0
-    return TRIBE_SCORE_FORMAT % [shown, tribe_most(threshold)]
-
-## **THE NEXT STEP** sentence for one pair, `""` when nothing is unfilled to name. Close enough (score
-## at the threshold) says so, or that the pair is already one tribe. Otherwise, if history alone can
-## close the gap at its per-turn rate (weight / build turns) it names the turns, `ceil(gap / rate)`;
-## failing that it names the biggest unfilled input among monument / belief / tie.
-static func tribe_next_step(entry: Dictionary, pair: Dictionary) -> String:
-    var threshold := float(entry.get("tribe_threshold", 0.0))
-    var score := tribe_pair_score(pair)
-    if score >= threshold - TRIBE_SCORE_EPSILON:
-        return TRIBE_NEXT_ONE_TRIBE if bool(pair.get("same_tribe", false)) else TRIBE_NEXT_CLOSE
+## Turns of living together that fill `needed` points of history, rounded up; 0 when it cannot be said.
+static func _tribe_turns_for(entry: Dictionary, needed: float) -> int:
     var weights: Dictionary = entry.get("tribe_weights", {})
-    var contribution: Dictionary = pair.get("contribution", {})
-    var gap := threshold - score
     var build_turns := float(entry.get("tribe_history_build_turns", 0.0))
     var history_weight := float(weights.get(TRIBE_KEY_HISTORY, 0.0))
-    var history_room := history_weight - float(contribution.get(TRIBE_KEY_HISTORY, 0.0))
-    if build_turns > 0.0 and history_weight > 0.0 and history_room >= gap - TRIBE_SCORE_EPSILON:
-        var turns := int(ceil(gap / (history_weight / build_turns) - TRIBE_SCORE_EPSILON))
-        return TRIBE_NEXT_ONE_TURN if turns <= 1 else TRIBE_NEXT_TURNS_FORMAT % turns
-    var best := ""
-    var best_room := TRIBE_SCORE_EPSILON
-    for candidate in [["monument", TRIBE_NEXT_MONUMENT], ["belief", TRIBE_NEXT_BELIEF],
-            ["tie", TRIBE_NEXT_TIE]]:
-        var room := float(weights.get(candidate[0], 0.0)) - float(contribution.get(candidate[0], 0.0))
-        if room > best_room:
-            best_room = room
-            best = candidate[1]
-    return best
+    if build_turns <= 0.0 or history_weight <= 0.0:
+        return 0
+    return int(ceil(needed / (history_weight / build_turns) - TRIBE_SCORE_EPSILON))
 
-## The hover for one pair's row: the headline, one line per input (`got / most — what feeds it`, acting
-## omitted while it contributes 0) and the next step.
-static func tribe_row_tooltip(entry: Dictionary, pair: Dictionary) -> String:
-    var threshold := float(entry.get("tribe_threshold", 0.0))
+## Points of one input still unfilled for a pair (weight minus contribution).
+static func _tribe_room(entry: Dictionary, pair: Dictionary, key: String) -> float:
     var weights: Dictionary = entry.get("tribe_weights", {})
     var contribution: Dictionary = pair.get("contribution", {})
-    var lines: Array[String] = [TRIBE_HEADLINE_FORMAT % [String(pair.get("partner_name", "")),
-        tribe_decimal(tribe_pair_score(pair)), tribe_most(threshold)]]
-    for i in range(TRIBE_INPUT_KEYS.size()):
-        var key: String = TRIBE_INPUT_KEYS[i]
-        var got := float(contribution.get(key, 0.0))
-        if key == TRIBE_KEY_ACTING and got <= 0.0:
-            continue
-        var hint: String = TRIBE_INPUT_HINTS[i]
-        if key == TRIBE_KEY_HISTORY:
-            hint = hint % int(roundf(float(entry.get("tribe_history_build_turns", 0.0))))
-        lines.append(TRIBE_INPUT_LINE_FORMAT % [TRIBE_INPUT_LABELS[i], tribe_decimal(got),
-            tribe_most(float(weights.get(key, 0.0))), hint])
-    var next_step := tribe_next_step(entry, pair)
-    if next_step != "":
-        lines.append(TRIBE_NEXT_FORMAT % next_step)
-    return "\n".join(lines)
+    return float(weights.get(key, 0.0)) - float(contribution.get(key, 0.0))
+
+## The input a pair is most missing among monument / belief / tie: `[key, suffix, tooltip]` or `[]`.
+static func _tribe_biggest_missing(entry: Dictionary, pair: Dictionary) -> Array:
+    var best := []
+    var best_room := TRIBE_SCORE_EPSILON
+    for candidate in [[TRIBE_KEY_MONUMENT, TRIBE_SUFFIX_MONUMENT, TRIBE_TOOLTIP_MONUMENT],
+            [TRIBE_KEY_BELIEF, TRIBE_SUFFIX_BELIEF, TRIBE_TOOLTIP_BELIEF],
+            [TRIBE_KEY_TIE, TRIBE_SUFFIX_TIE, TRIBE_TOOLTIP_TIE_FORMAT % String(pair.get("partner_name", ""))]]:
+        var room := _tribe_room(entry, pair, candidate[0])
+        if room > best_room:
+            best_room = room
+            best = candidate
+    return best
+
+## **THE ONE SHORT PHRASE** after the partner: one tribe / forming / `N turns` when history alone can
+## close the gap at its per-turn rate (weight / build turns) / the biggest missing of monument, belief,
+## tie. `""` when there is nothing to name.
+static func tribe_suffix(entry: Dictionary, pair: Dictionary) -> String:
+    if bool(pair.get("same_tribe", false)):
+        return TRIBE_SUFFIX_ONE_TRIBE
+    var gap := float(entry.get("tribe_threshold", 0.0)) - tribe_pair_score(pair)
+    if gap <= TRIBE_SCORE_EPSILON:
+        return TRIBE_SUFFIX_FORMING
+    if _tribe_room(entry, pair, TRIBE_KEY_HISTORY) >= gap - TRIBE_SCORE_EPSILON:
+        var turns := _tribe_turns_for(entry, gap)
+        if turns > 0:
+            return TRIBE_SUFFIX_ONE_TURN if turns <= 1 else TRIBE_SUFFIX_TURNS_FORMAT % turns
+    var missing := _tribe_biggest_missing(entry, pair)
+    return String(missing[1]) if not missing.is_empty() else ""
+
+## What is still missing for a pair, as actions, one per line: `Forms next turn` / `Already one tribe`
+## when close, else the turns of history left, then monument, belief and tie where unfilled. Shared
+## origin and culture are not listed: the player cannot change them.
+static func tribe_missing_lines(entry: Dictionary, pair: Dictionary) -> Array[String]:
+    var lines: Array[String] = []
+    if bool(pair.get("same_tribe", false)):
+        lines.append(TRIBE_TOOLTIP_ONE_TRIBE)
+        return lines
+    var gap := float(entry.get("tribe_threshold", 0.0)) - tribe_pair_score(pair)
+    if gap <= TRIBE_SCORE_EPSILON:
+        lines.append(TRIBE_TOOLTIP_FORMING)
+        return lines
+    var history_room := _tribe_room(entry, pair, TRIBE_KEY_HISTORY)
+    if history_room > TRIBE_SCORE_EPSILON:
+        var turns := _tribe_turns_for(entry, minf(gap, history_room))
+        if turns > 0:
+            lines.append(TRIBE_TOOLTIP_ONE_TURN if turns <= 1 else TRIBE_TOOLTIP_TURNS_FORMAT % turns)
+    if _tribe_room(entry, pair, TRIBE_KEY_MONUMENT) > TRIBE_SCORE_EPSILON:
+        lines.append(TRIBE_TOOLTIP_MONUMENT)
+    if _tribe_room(entry, pair, TRIBE_KEY_BELIEF) > TRIBE_SCORE_EPSILON:
+        lines.append(TRIBE_TOOLTIP_BELIEF)
+    if _tribe_room(entry, pair, TRIBE_KEY_TIE) > TRIBE_SCORE_EPSILON:
+        lines.append(TRIBE_TOOLTIP_TIE_FORMAT % String(pair.get("partner_name", "")))
+    return lines
 
 ## The split bar for one pair as BBCode: one cell per point of the threshold, each input's cells in its
-## own hue (at least one cell for a positive input, never past the width), zero inputs skipped, the
-## remainder `▱`. A score over the threshold fills the bar.
+## own hue (cells from the rounded running total), zero inputs skipped, the remainder `▱`.
 static func tribe_bar_bbcode(entry: Dictionary, pair: Dictionary) -> String:
     var contribution: Dictionary = pair.get("contribution", {})
     var colors := tribe_input_colors()
     var segments: Array = []
+    var running := 0.0
+    var used := 0
     for i in range(TRIBE_INPUT_KEYS.size()):
         var points := float(contribution.get(TRIBE_INPUT_KEYS[i], 0.0))
         if points <= 0.0:
             continue
-        var cells := maxi(int(roundf(points)), 1)
-        segments.append({"key": TRIBE_INPUT_KEYS[i], "points": float(cells), "color": colors[i]})
+        # Cells come from the ROUNDED RUNNING TOTAL, so the bar's length is the score rounded once and
+        # never a sum of per-input roundings (which read 8.2 of 9 as a full bar).
+        running += points
+        var cells := int(roundf(running)) - used
+        used += cells
+        if cells > 0:
+            segments.append({"key": TRIBE_INPUT_KEYS[i], "points": float(cells), "color": colors[i]})
     return chief_bar_bbcode({"total": float(entry.get("tribe_threshold", 0.0)), "segments": segments})
 
-## **THE TRIBE READOUT** for a band, or `{}` for a band with no threshold (a foreign row). Otherwise
-## `{rows, more, apart, note}`: `rows` is up to `TRIBE_MAX_ROWS` of `{name, score, label, bar, tooltip,
-## needs_chief}` for the LOCAL partners, best score first; `more` is `{text, tooltip}` or `{}` for the
-## partners past the cap (every one named, no content lost); `apart` the one line for parted partners
-## whose shared history still fades, `""` for none; `note` the dim standing line when no partner is
-## local, `""` otherwise.
+## **THE TRIBE READOUT**, or `{}` when the band carries no threshold (no leader yet, or a foreign
+## row). Otherwise `{line, tooltip, has_partner}`: `line` the one BBCode line, `tooltip` the rule, what
+## is still missing (or why no partner), and the other partners by name.
 static func band_tribe_progress(entry: Dictionary) -> Dictionary:
     var threshold := float(entry.get("tribe_threshold", 0.0))
     if threshold <= 0.0:
         return {}
-    var local_pairs: Array = []
-    var apart_names: Array[String] = []
-    for pair in entry.get("tribe_pairs", []):
-        if bool(pair.get("local", false)):
-            local_pairs.append(pair)
-        elif float(pair.get("history", 0.0)) > 0.0:
-            apart_names.append(String(pair.get("partner_name", "")))
-    local_pairs.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+    var pairs: Array = (entry.get("tribe_pairs", []) as Array).duplicate()
+    pairs.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
         var score_a := tribe_pair_score(a)
         var score_b := tribe_pair_score(b)
         if absf(score_a - score_b) < TRIBE_SCORE_EPSILON:
             return String(a.get("partner_name", "")) < String(b.get("partner_name", ""))
         return score_a > score_b)
-    var no_leader := int(entry.get("leader_kind", LEADER_KIND_NONE)) == LEADER_KIND_NONE
-    var rows: Array = []
-    var more_lines: Array[String] = []
-    for i in range(local_pairs.size()):
-        var pair: Dictionary = local_pairs[i]
-        var score := tribe_pair_score(pair)
-        if i >= TRIBE_MAX_ROWS:
-            more_lines.append(TRIBE_MORE_LINE_FORMAT % [String(pair.get("partner_name", "")),
-                tribe_score_text(score, threshold)])
-            continue
-        rows.append({
-            "name": String(pair.get("partner_name", "")),
-            "score": score,
-            "label": tribe_score_text(score, threshold),
-            "bar": tribe_bar_bbcode(entry, pair),
-            "tooltip": tribe_row_tooltip(entry, pair),
-            "needs_chief": score >= threshold - TRIBE_SCORE_EPSILON and not bool(pair.get("same_tribe", false))
-                and no_leader and not bool(pair.get("partner_has_leader", false)),
-        })
-    var more := {}
-    if not more_lines.is_empty():
-        more = {"text": TRIBE_MORE_FORMAT % more_lines.size(), "tooltip": "\n".join(more_lines)}
-    var note := ""
-    if rows.is_empty():
+    var tooltip: Array[String] = [TRIBE_TOOLTIP_RULE]
+    if pairs.is_empty():
         match int(entry.get("tribe_standing", 0)):
-            TRIBE_STANDING_NO_URN:
-                note = TRIBE_NOTE_NO_URN
+            TRIBE_STANDING_NO_PLACE:
+                tooltip.append(TRIBE_TOOLTIP_NO_PLACE)
             TRIBE_STANDING_NO_NETWORK:
-                note = TRIBE_NOTE_NO_NETWORK
+                tooltip.append(TRIBE_TOOLTIP_NO_NETWORK)
             _:
-                note = TRIBE_NOTE_ALONE
-    return {
-        "rows": rows,
-        "more": more,
-        "apart": TRIBE_APART_FORMAT % TRIBE_NAME_SEPARATOR.join(apart_names) if not apart_names.is_empty() else "",
-        "note": note,
-    }
-
-## One row's BBCode: dim `Tribe`, the partner, the bar, the number, then an amber `needs a chief` when
-## the pair is close but no one leads either band.
-static func tribe_row_bbcode(row: Dictionary) -> String:
-    var text := "[color=#%s]%s[/color] %s %s %s" % [HudStyle.INK_DIM.to_html(false), TRIBE_ROW_LABEL,
-        String(row.get("name", "")), String(row.get("bar", "")), String(row.get("label", ""))]
-    if bool(row.get("needs_chief", false)):
-        text += " [color=#%s]%s[/color]" % [HudStyle.WARN.to_html(false), TRIBE_NEEDS_CHIEF]
-    return text
-
-## A dim one-line note's BBCode.
-static func tribe_note_bbcode(text: String) -> String:
-    return "[color=#%s]%s[/color]" % [HudStyle.INK_FAINT.to_html(false), text]
+                tooltip.append(TRIBE_TOOLTIP_ALONE)
+        return {"line": "[color=#%s]%s[/color]" % [HudStyle.INK_FAINT.to_html(false), TRIBE_NO_PARTNER_LINE],
+            "tooltip": "\n".join(tooltip), "has_partner": false}
+    var best: Dictionary = pairs[0]
+    tooltip.append_array(tribe_missing_lines(entry, best))
+    var others: Array[String] = []
+    for i in range(1, pairs.size()):
+        others.append(String(pairs[i].get("partner_name", "")))
+    if not others.is_empty():
+        tooltip.append("")
+        tooltip.append(TRIBE_TOOLTIP_ALSO_FORMAT % TRIBE_NAME_SEPARATOR.join(others))
+    var suffix := tribe_suffix(entry, best)
+    var line := "[color=#%s]%s[/color] %s [color=#%s]with %s%s[/color]" % [HudStyle.INK_DIM.to_html(false),
+        TRIBE_ROW_LABEL, tribe_bar_bbcode(entry, best), HudStyle.INK.to_html(false),
+        String(best.get("partner_name", "")), " · " + suffix if suffix != "" else ""]
+    return {"line": line, "tooltip": "\n".join(tooltip), "has_partner": true}

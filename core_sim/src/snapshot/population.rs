@@ -1141,13 +1141,11 @@ pub(crate) fn tribe_progress(
                 .filter(|name| !name.is_empty())
                 .cloned()
                 .unwrap_or_else(|| crate::systems::band_label(partner)),
-            local: score.local,
             same_tribe: registry
                 .tribe_of(band)
                 .is_some_and(|tribe| tribe.members.contains(&partner)),
-            partner_has_leader: registry.has_leader(partner),
-            history: score.inputs.history as f32,
-            contribution: tribe_contribution(config, &score.inputs),
+            history: score.history as f32,
+            contribution: tribe_contribution(config, score),
         })
         .collect();
     Some(TribeProgress {

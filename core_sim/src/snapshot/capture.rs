@@ -3459,21 +3459,22 @@ pub fn capture_snapshot(
                         band_name,
                         leadership,
                         leadership_threshold,
-                        // Own bands only (a foreign row returned redacted above); a party row, which
-                        // carries its home band's id, publishes the defaults.
-                        tribe: expedition
-                            .is_none()
-                            .then(|| {
-                                band_id.zip(tribes.as_deref()).and_then(|(band, registry)| {
-                                    crate::snapshot::population::tribe_progress(
-                                        registry,
-                                        &leadership_cfg,
-                                        *band,
-                                        &band_names,
-                                    )
-                                })
+                        // Own bands with a leader only (a foreign row returned redacted above); a
+                        // chiefless band and a party row, which carries its home band's id,
+                        // publish the defaults.
+                        tribe: (expedition.is_none()
+                            && leadership.is_some_and(|l| l.leader.is_some()))
+                        .then(|| {
+                            band_id.zip(tribes.as_deref()).and_then(|(band, registry)| {
+                                crate::snapshot::population::tribe_progress(
+                                    registry,
+                                    &leadership_cfg,
+                                    *band,
+                                    &band_names,
+                                )
                             })
-                            .flatten(),
+                        })
+                        .flatten(),
                         cohort,
                         allocation,
                         expedition,

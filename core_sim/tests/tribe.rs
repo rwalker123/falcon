@@ -293,7 +293,7 @@ fn equal_sized_chiefed_bands_promote_the_lowest_band_id() {
 }
 
 #[test]
-fn no_chief_no_tribe_however_high_the_score_and_it_forms_the_turn_one_is_crowned() {
+fn no_chief_no_history_no_tribe_and_it_forms_once_one_is_crowned_and_history_builds() {
     let mut app = spawn_world();
     band(&mut app, 1, 50, Some(PLACE_A), NET_1);
     let two = band(&mut app, 2, 50, Some(PLACE_A), NET_1);
@@ -304,14 +304,15 @@ fn no_chief_no_tribe_however_high_the_score_and_it_forms_the_turn_one_is_crowned
         .founding_lines = FoundingLines::founded(id(1), 2);
     tie_all(&mut app, &[1, 2]);
     turns(&mut app, TURNS_TO_FILL_HISTORY + 10);
-    assert!(registry(&app).shared_history(id(1), id(2)) >= 1.0 - 1e-9);
-    assert!(
-        registry(&app).is_empty(),
-        "13 points of score, nobody to follow"
+    assert_eq!(
+        registry(&app).shared_history(id(1), id(2)),
+        0.0,
+        "nothing builds with nobody to follow"
     );
+    assert!(registry(&app).is_empty());
 
     crown(&mut app, two, "Hale", LeaderKind::Chief);
-    turn(&mut app);
+    until_formed(&mut app);
     assert_eq!(registry(&app).tribe_of(id(1)).unwrap().leader.name, "Hale");
     assert_eq!(events(&app, CommandEventKind::TribeFormed).len(), 1);
 }
@@ -698,12 +699,11 @@ fn a_local_pair_publishes_each_input_times_its_weight_and_they_sum_to_the_score(
     let config = app.world.resource::<LeadershipConfigHandle>().get();
     let stored = registry(&app)
         .pairs_of(id(1))
-        .map(|(partner, score)| (partner, *score))
+        .map(|(partner, inputs)| (partner, *inputs))
         .collect::<Vec<_>>();
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].0, id(2));
-    assert!(stored[0].1.local);
-    let expected = closeness(&config, &stored[0].1.inputs);
+    let expected = closeness(&config, &stored[0].1);
 
     with_row(&mut app, 1, |row| {
         assert_eq!(row.tribeStanding(), 0, "local");
@@ -725,9 +725,7 @@ fn a_local_pair_publishes_each_input_times_its_weight_and_they_sum_to_the_score(
         let pair = pairs.get(0);
         assert_eq!(pair.partnerBand(), id(2).0);
         assert_eq!(pair.partnerName(), Some("Test2"));
-        assert!(pair.local());
         assert!(!pair.sameTribe());
-        assert!(pair.partnerHasLeader());
         let c = pair.contribution().expect("contribution");
         assert_eq!(c.origin(), w.origin(), "kin: origin input is 1");
         assert!((c.tie() - w.tie()).abs() < 1e-6, "full tie");
@@ -785,32 +783,72 @@ fn standing_says_why_a_band_is_not_in_reach() {
     }
 }
 
+/// Two local bands, neither with a leader.
+fn chiefless_pair() -> (App, Entity, Entity) {
+    let mut app = spawn_world();
+    let one = band(&mut app, 1, 40, Some(PLACE_A), NET_1);
+    let two = band(&mut app, 2, 90, Some(PLACE_A), NET_1);
+    tie_all(&mut app, &[1, 2]);
+    (app, one, two)
+}
+
 #[test]
-fn a_pair_that_drifted_apart_keeps_a_fading_row_that_is_not_local() {
-    let (mut app, _, two) = kin_pair();
-    turns(&mut app, TURNS_TO_FILL_HISTORY);
-    set_anchor(&mut app, two, Some(PLACE_B));
-    turn(&mut app);
-    let first = with_row(&mut app, 1, |row| {
-        assert_eq!(row.tribeStanding(), 3, "alone now");
-        let pairs = row.tribePairs().expect("pairs");
-        assert_eq!(pairs.len(), 1, "the parted partner keeps a row");
-        let pair = pairs.get(0);
-        assert!(!pair.local());
-        assert!(!pair.sameTribe());
-        let c = pair.contribution().unwrap();
-        assert_eq!(c.belief(), 0.0);
-        assert_eq!(c.monument(), 0.0);
-        pair.history()
-    });
-    turns(&mut app, 10);
-    let later = with_row(&mut app, 1, |row| {
-        row.tribePairs().unwrap().get(0).history()
-    });
-    assert!(later < first && later > 0.0, "fading: {first} -> {later}");
-    // Long enough apart and the row is gone.
-    turns(&mut app, 120);
+fn nothing_builds_toward_a_tribe_until_a_chief_exists() {
+    let (mut app, one, _) = chiefless_pair();
+    turns(&mut app, 8);
+    assert_eq!(
+        registry(&app).shared_history(id(1), id(2)),
+        0.0,
+        "held, not built"
+    );
+    for n in [1, 2] {
+        with_row(&mut app, n, |row| {
+            assert_eq!(row.tribeThreshold(), 0.0, "no progress is published");
+            assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
+        });
+    }
+
+    // One band is crowned: history builds from that turn, and only the chiefed row shows it.
+    crown(&mut app, one, "Chief1", LeaderKind::Chief);
+    turns(&mut app, 3);
+    let built = registry(&app).shared_history(id(1), id(2));
+    assert!(built > 0.1 && built < 0.2, "three steps of 1/25: {built}");
     with_row(&mut app, 1, |row| {
+        assert!(row.tribeThreshold() > 0.0);
+        let pairs = row.tribePairs().expect("pairs");
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs.get(0).partnerBand(), id(2).0);
+        assert!((pairs.get(0).history() - built as f32).abs() < 1e-6);
+    });
+    with_row(&mut app, 2, |row| {
+        assert_eq!(
+            row.tribeThreshold(),
+            0.0,
+            "the chiefless partner shows nothing"
+        );
+        assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
+        assert_eq!(row.tribeWeights().map_or(0.0, |w| w.origin()), 0.0);
+    });
+}
+
+#[test]
+fn a_local_pair_with_no_leader_left_holds_its_history_and_a_parted_one_fades() {
+    let (mut app, one, two) = kin_pair();
+    turns(&mut app, 5);
+    let built = registry(&app).shared_history(id(1), id(2));
+    // Both leaders go: the history holds while the pair stays local.
+    for e in [one, two] {
+        app.world.get_mut::<BandLeadership>(e).unwrap().leader = None;
+    }
+    turns(&mut app, 10);
+    assert_eq!(registry(&app).shared_history(id(1), id(2)), built);
+    // Parted, it fades; and the parted pair is no row on the wire.
+    crown(&mut app, one, "Chief1", LeaderKind::Chief);
+    set_anchor(&mut app, two, Some(PLACE_B));
+    turns(&mut app, 10);
+    assert!(registry(&app).shared_history(id(1), id(2)) < built);
+    with_row(&mut app, 1, |row| {
+        assert_eq!(row.tribeStanding(), 3, "alone now");
         assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
     });
 }

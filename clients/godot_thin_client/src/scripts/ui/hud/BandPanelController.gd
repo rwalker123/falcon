@@ -1252,10 +1252,10 @@ func _build_leader_block(band: Dictionary) -> Control:
     block.add_child(text)
     return block
 
-## **THE TRIBE BLOCK** (#861), directly under the leader block: one line per local partner band (the
-## split bar of what closes the two, `8.2 / 9`, hovering to what makes it progress), a `+N more` line,
-## one dim line for parted partners, or one dim standing note when none is local. `null` for a band
-## with no tribe threshold (a foreign cohort). See `HudFormat.band_tribe_progress`.
+## **THE TRIBE LINE** (#861), directly under the leader block: ONE line, `Tribe <split bar> with
+## <partner> · <one short phrase>`, hovering to the rule and what is still missing; or one dim line when
+## no band lives with this one. `null` for a band with no tribe threshold (no leader yet, or a foreign
+## cohort). See `HudFormat.band_tribe_progress`.
 func _build_tribe_block(band: Dictionary) -> Control:
     var view := HudFormat.band_tribe_progress(band)
     if view.is_empty():
@@ -1265,32 +1265,19 @@ func _build_tribe_block(band: Dictionary) -> Control:
     block.set_meta(HudWorkVocab.BAND_TRIBE_BLOCK_META, true)
     block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     block.mouse_filter = Control.MOUSE_FILTER_PASS
-    block.add_theme_constant_override("separation", HudWorkVocab.BAND_TRIBE_BLOCK_SEPARATION)
-    for row in view.get("rows", []):
-        block.add_child(_tribe_line(HudFormat.tribe_row_bbcode(row), String(row.get("tooltip", ""))))
-    var more: Dictionary = view.get("more", {})
-    if not more.is_empty():
-        block.add_child(_tribe_line(HudFormat.tribe_note_bbcode(String(more.get("text", ""))),
-            String(more.get("tooltip", ""))))
-    for key in ["apart", "note"]:
-        if String(view.get(key, "")) != "":
-            block.add_child(_tribe_line(HudFormat.tribe_note_bbcode(String(view[key])), ""))
-    return block
-
-## One autowrapping BBCode line of the Tribe block; the tooltip rides the line itself.
-func _tribe_line(bbcode: String, tooltip: String) -> RichTextLabel:
     var line := RichTextLabel.new()
     line.name = HudWorkVocab.BAND_TRIBE_LINE_NAME
     line.set_meta(HudWorkVocab.BAND_TRIBE_LINE_META, true)
     line.bbcode_enabled = true
     line.fit_content = true
     line.scroll_active = false
-    line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    line.autowrap_mode = TextServer.AUTOWRAP_OFF
     line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    line.mouse_filter = Control.MOUSE_FILTER_PASS if tooltip == "" else Control.MOUSE_FILTER_STOP
-    line.text = bbcode
-    line.tooltip_text = tooltip
-    return line
+    line.mouse_filter = Control.MOUSE_FILTER_STOP
+    line.text = String(view.get("line", ""))
+    line.tooltip_text = String(view.get("tooltip", ""))
+    block.add_child(line)
+    return block
 
 ## The vitals readout — Food, Fodder, Morale and Growth, of which Food / Morale / Growth carry the
 ## click-to-expand disclosures (Fodder is a plain row, and there is no Output row: productivity reads

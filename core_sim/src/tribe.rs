@@ -141,40 +141,31 @@ impl TribeStanding {
     }
 }
 
-/// One pair's scoring this turn: whether it was local and the inputs to its closeness.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct PairScore {
-    pub local: bool,
-    pub inputs: CloseInputs,
-}
-
 /// **Every tribe, every pair's shared history, and how many tribes each people has formed.**
 /// Checkpoint state: identity, the leader and the histories persist across turns and nothing
 /// rebuilds them. Keyed by [`BandId`], never `Entity`.
 #[derive(Resource, Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TribeRegistry {
     tribes: BTreeMap<TribeId, Tribe>,
-    /// Each pair's shared history in `(0, 1]`: built while the pair is local, faded while it is
-    /// not, never reset. A pair absent has none.
+    /// Each pair's shared history in `(0, 1]`: built while the pair is local and at least one of
+    /// the two has a leader, held while it is local with none, faded while it is not local, never
+    /// reset. A pair absent has none.
     history: BTreeMap<BandPair, f64>,
     next_id: u64,
     /// Cumulative formations per people, the total the Telling diffs into
     /// `tribes.formed_this_turn`.
     formed: BTreeMap<FactionId, u64>,
-    /// This turn's scoring, rebuilt from scratch each turn: every local pair, and every non-local
-    /// pair with surviving shared history. Kept here (checkpoint state) so a snapshot published
-    /// right after a load still shows progress.
-    scores: BTreeMap<BandPair, PairScore>,
+    /// This turn's scoring, rebuilt from scratch each turn: the inputs of every local pair. Kept
+    /// here (checkpoint state) so a snapshot published right after a load still shows progress.
+    scores: BTreeMap<BandPair, CloseInputs>,
     /// Each resident band's standing this turn, rebuilt each turn.
     standing: BTreeMap<BandId, TribeStanding>,
-    /// The resident bands that have a leader of their own this turn, rebuilt each turn.
-    chiefed: BTreeSet<BandId>,
 }
 
 impl TribeRegistry {
-    /// Every scored pair `band` is in, as `(partner, score)`, partner id ascending.
-    pub fn pairs_of(&self, band: BandId) -> impl Iterator<Item = (BandId, &PairScore)> {
-        let mut found: Vec<(BandId, &PairScore)> = self
+    /// Every local pair `band` is in, as `(partner, inputs)`, partner id ascending.
+    pub fn pairs_of(&self, band: BandId) -> impl Iterator<Item = (BandId, &CloseInputs)> {
+        let mut found: Vec<(BandId, &CloseInputs)> = self
             .scores
             .iter()
             .filter_map(|(pair, score)| {
@@ -189,11 +180,6 @@ impl TribeRegistry {
             .collect();
         found.sort_by_key(|(partner, _)| *partner);
         found.into_iter()
-    }
-
-    /// Whether `band` had a leader of its own when last scored.
-    pub fn has_leader(&self, band: BandId) -> bool {
-        self.chiefed.contains(&band)
     }
 
     /// The band's standing this turn, if it was resident when last scored.
@@ -632,15 +618,19 @@ pub fn advance_tribes(
         ));
     }
 
-    // 1. Shared history: built a step by being local, faded a step by not; never reset. An
-    //    exhausted entry or one naming a band that is gone is pruned.
+    // 1. Shared history: built a step by being local with a chief on at least one side, held while
+    //    local with none, faded a step by not being local; never reset. An exhausted entry or one
+    //    naming a band that is gone is pruned.
     let buckets = local_buckets(rows);
     let local = local_pairs(&buckets);
     let build = 1.0 / config.tribe_history_build_turns;
     let fade = 1.0 / config.tribe_history_fade_turns;
+    let has_leader = |band: &BandId| facts.get(band).is_some_and(|f| f.leader.is_some());
     for pair in &local {
-        let entry = registry.history.entry(*pair).or_insert(0.0);
-        *entry = (*entry + build).min(1.0);
+        if has_leader(&pair.0) || has_leader(&pair.1) {
+            let entry = registry.history.entry(*pair).or_insert(0.0);
+            *entry = (*entry + build).min(1.0);
+        }
     }
     registry.history.retain(|pair, value| {
         if !local.contains(pair) {
@@ -651,7 +641,7 @@ pub fn advance_tribes(
 
     // 2. Closeness of every local pair, then the candidate groups: close components with a chief.
     let mut close_pairs: BTreeSet<BandPair> = BTreeSet::new();
-    let mut scores: BTreeMap<BandPair, PairScore> = BTreeMap::new();
+    let mut scores: BTreeMap<BandPair, CloseInputs> = BTreeMap::new();
     for bucket in &buckets {
         let anchor = bucket_anchor(bucket, &facts);
         let urn_belief = anchor_weight(anchor, &belief, &wellbeing);
@@ -666,36 +656,12 @@ pub fn advance_tribes(
                 inputs.belief = urn_belief;
                 inputs.monument = monument;
                 inputs.acting = acting_as_a_tribe(same_tribe);
-                scores.insert(
-                    (*a, *b),
-                    PairScore {
-                        local: true,
-                        inputs,
-                    },
-                );
+                scores.insert((*a, *b), inputs);
                 if closeness(&config, &inputs) >= config.tribe_score_threshold {
                     close_pairs.insert((*a, *b));
                 }
             }
         }
-    }
-    // Pairs that parted but kept some history are shown fading: the cheap inputs only, since belief
-    // and monument need a shared urn.
-    let parted: Vec<BandPair> = registry
-        .history
-        .keys()
-        .filter(|pair| !local.contains(pair))
-        .copied()
-        .collect();
-    for pair in parted {
-        let inputs = pair_inputs(&facts, &culture, &ledger, &registry, pair.0, pair.1);
-        scores.insert(
-            pair,
-            PairScore {
-                local: false,
-                inputs,
-            },
-        );
     }
     let local_bands: BTreeSet<BandId> = buckets
         .iter()
@@ -718,11 +684,6 @@ pub fn advance_tribes(
         .collect();
     registry.scores = scores;
     registry.standing = standing;
-    registry.chiefed = facts
-        .iter()
-        .filter(|(_, f)| f.leader.is_some())
-        .map(|(band, _)| *band)
-        .collect();
     let groups = close_groups(
         &buckets,
         |a, b| close_pairs.contains(&band_pair(a, b)),

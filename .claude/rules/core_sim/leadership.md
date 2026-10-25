@@ -104,7 +104,7 @@ share a tribe-candidate group.
 | Shared origin | 1 if the two bands' `PopulationCohort::founding_lines` share any `LineId::origin_band` (both descend from one starting band: a split from one another or from a common ancestor), else 0 | `tribe_weight_origin` 3.0 |
 | Culture likeness | `likeness(a, b) = clamp(1 - gap / (2 * CULTURE_TRAIT_SPAN), 0, 1)` with `gap = culture::max_axis_gap` of the two bands' own culture layers: the one existing culture-distance metric, normalised by the full axis range. 0 if either band has no layer | `tribe_weight_likeness` 3.0 |
 | Knowing each other | `ConnectionLedger::edges_between(a, b)`: the larger of the two directions' `Connection::strength` (`FULL_TIE` = 1) | `tribe_weight_tie` 2.0 |
-| Shared history | `TribeRegistry::shared_history`: a per-pair stock in `(0, 1]`, `+ 1 / tribe_history_build_turns` each turn the pair is local, `- 1 / tribe_history_fade_turns` each turn it is not, clamped. **Never reset on parting.** An entry is pruned at 0 or when either band no longer exists. Checkpoint state | `tribe_weight_history` 5.0; `tribe_history_build_turns` 25.0; `tribe_history_fade_turns` 100.0 |
+| Shared history | `TribeRegistry::shared_history`: a per-pair stock in `(0, 1]`, `+ 1 / tribe_history_build_turns` each turn the pair is local and at least one of the two bands has a leader (`BandLeadership.leader.is_some()`), unchanged on a local turn where neither has one, `- 1 / tribe_history_fade_turns` each turn it is not local, clamped. **Never reset on parting.** An entry is pruned at 0 or when either band no longer exists. Checkpoint state | `tribe_weight_history` 5.0; `tribe_history_build_turns` 25.0; `tribe_history_fade_turns` 100.0 |
 | Belief on the shared urn | `CultureConfig::anchor_weight(BeliefRegistry::get(anchor))`, the weight belief already uses (`belief / (belief + belief_half_saturation)`), at the pair's shared anchor | `tribe_weight_belief` 1.0 |
 | A kept monument on the shared urn | `kept_monument`: 1 while the anchor tile's `TileImprovementRegistry` entry HOLDS a rung `belief_config.json` -> `improvement_belief` lists (the shipped list is `belief:monument`, `belief.md`), else 0. The engine names no rung: the list that says which rungs add belief also says which make a monument. Held, not built: a half-raised monument (`partial_credit: on_completion`) reads 0, and an unkept one reads 0 the turn it decays to `gathering_ground` | `tribe_weight_monument` 2.0 |
 | Acting as a tribe | `acting_as_a_tribe(same_tribe)`: 0 for now, and 0 for any pair outside one tribe. The tribe-level orders (#862, #864) and shared works are what will feed it | `tribe_weight_acting` 3.0 |
@@ -114,8 +114,10 @@ belief) is under 9 on the split turn, and closes after about five turns of share
 with different origins and a full tie need about 0.8 of the history (20 turns); different origins
 with no tie can never close (3 + 5 = 8) unless a kept monument stands on their urn (+ 2: they close
 at 0.8 of the history, 20 turns); a half-alike kin pair needs half the history. A kept monument
-also closes a fresh split on the split turn (8 + 2). A pair that parts keeps its history minus 1% a
-turn, so a short parting re-closes at once on return and a long one has to rebuild it.
+also closes a fresh split on the split turn (8 + 2). With no chief on either side a local pair
+builds no history at all, so nothing counts toward a tribe until a chief exists. A pair that parts
+keeps its history minus 1% a turn, so a short parting re-closes at once on return and a long one has
+to rebuild it.
 
 **Who forms one.** Within each (people, network, anchor) set of local bands, take the connected
 components of the close pairs. A component is a tribe-candidate iff it has `MIN_TRIBE_BANDS` (2,
@@ -170,21 +172,21 @@ the end of the spine and the pressure/sedentarization tail it follows `simulate_
 refreshes the anchors), `advance_leadership` (so a band crowned this turn counts this turn),
 migration, defection, independence and the culture splits.
 
-**On the wire.** Each own band's progress toward a tribe rides `PopulationCohortState`, appended
-last: `tribeStanding` (0 local, 1 no urn, 2 no supply network, 3 alone; `sim_schema::TRIBE_STANDING_*`),
-`tribeThreshold` (`tribe_score_threshold`), `tribeHistoryBuildTurns` (`tribe_history_build_turns`),
-`tribeWeights` (a `TribeClosenessState`: the seven weights, the most each input can add) and
-`tribePairs` (one `TribePairState` per partner band of the band's people, partner id ascending:
-`partnerBand`, `partnerName`, `local`, `sameTribe`, `partnerHasLeader`, raw `history`, and
-`contribution`, each input times its weight, summing to the pair's score). A partner is a pair
-scored this turn: every local pair, plus every parted pair whose shared history has not yet faded
-to nothing (`local: false`, with origin, likeness, tie and history read and belief, monument and
-acting 0, since those need a shared urn). Own bands only; a foreign or party row carries the
-defaults. The scoring lives in `TribeRegistry` (`scores`, `standing`, `chiefed`), rebuilt from
+**On the wire.** A chiefed own band's progress toward a tribe rides `PopulationCohortState`,
+appended last: `tribeStanding` (0 local, 1 no urn, 2 no supply network, 3 alone;
+`sim_schema::TRIBE_STANDING_*`), `tribeThreshold` (`tribe_score_threshold`),
+`tribeHistoryBuildTurns` (`tribe_history_build_turns`), `tribeWeights` (a `TribeClosenessState`: the
+seven weights, the most each input can add) and `tribePairs` (one `TribePairState` per local partner
+band of the band's people, partner id ascending: `partnerBand`, `partnerName`, `sameTribe`, raw
+`history`, and `contribution`, each input times its weight, summing to the pair's score). Parted
+pairs are not published, and neither is whether the partner has a chief: a chiefless partner is
+listed like any other. A chiefless own band, a foreign band and an expedition party carry the
+defaults (threshold 0, which a client reads as nothing to show). The scoring lives in
+`TribeRegistry` (`scores`, the inputs of this turn's local pairs, and `standing`), rebuilt from
 scratch each turn by `advance_tribes`, rather than in a derived resource: the registry is
 checkpoint state, so a snapshot published right after a load still shows progress. The capture
 reads it through `snapshot::population::tribe_progress`.
 
 **Checkpoint.** `SimState::tribes` (`TribeRegistry`: tribes, shared histories, `next_id`, `formed`,
-this turn's `scores`, `standing` and `chiefed`;
+this turn's `scores` and `standing`;
 `SIM_STATE_RESOURCES`); `SAVE_FORMAT_VERSION` 56.
