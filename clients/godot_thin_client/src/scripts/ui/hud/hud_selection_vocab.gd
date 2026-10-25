@@ -212,21 +212,11 @@ const ACTIVITY_MARKS := {
 # label's font colour, so it dims with a dimmed row instead of staying stubbornly coloured.
 const SOURCE_CREW_MARK := "⚒"
 
-## **THE CREW CLAUSE A DOOR ROW CARRIES** (the tile card's rows that open a sheet): `⚒3`, or `⚒3 ⚠` where the
-## source's standing summary warns it is over-taken. `""` for no crew — a row states a crew only where one
-## stands (the deposit rows' stated `⚒0` on an opened working is `HudDepositVocab.crew_clause`'s own rule).
-const DOOR_CREW_CLAUSE_FORMAT := "%s%d"
+## The warning suffix a crewed door row's mark wears where the source's standing summary warns it is over-taken.
 const DOOR_WARN_SUFFIX := " ⚠"
-const DOOR_CLAUSE_SEPARATOR := " · "
 
 ## Joins the facts a door row's hover states: its own sentence, then the standing summary's lines.
 const DOOR_HOVER_SEPARATOR := "\n"
-
-static func door_crew_clause(crew: int, warn: bool = false) -> String:
-	if crew <= 0:
-		return ""
-	var clause := DOOR_CREW_CLAUSE_FORMAT % [SOURCE_CREW_MARK, crew]
-	return clause + DOOR_WARN_SUFFIX if warn else clause
 
 # The activity mark's box and glyph size, the pair `HudWidgets.build_marker_icon` needs. Sized to the
 # roster's own row mark (`ROSTER_ROW_ICON_BOX`) so the leading subject mark and the trailing activity

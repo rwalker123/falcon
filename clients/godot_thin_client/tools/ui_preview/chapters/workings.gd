@@ -307,14 +307,13 @@ func run(harness) -> void:
 	# one the sim charges for: with nobody cutting it nobody keeps it, and the rung slides. The zero form
 	# is parallel to the staffed one for the forage land row's own reason — *nobody is on this* reads
 	# at a glance instead of needing a comparison with a row that has a number.
-	h._assert_hud("…the wood row reads `stock of capacity · rung · crew · hazard` (%s)"
+	h._assert_hud("…the wood row reads `stock of capacity · rung · hazard` (the crew is the trailing hand) (%s)"
 			% Readout.detail_row_value(lines, "Wood"),
 		Readout.detail_row_value(lines, "Wood") == HudDepositVocab.DEPOSIT_CLAUSE_SEPARATOR.join([
 			HudDepositVocab.DEPOSIT_STOCK_DRAWN_FORMAT % [
 				DetailFormat.format_trimmed(WOOD_STOCK, HudDepositVocab.CARD_STOCK_DECIMALS),
 				DetailFormat.format_trimmed(WOOD_CAPACITY, HudDepositVocab.CARD_STOCK_DECIMALS)],
 			CATALOG_FELLING_NAME,
-			HudDepositVocab.crew_clause(_wood_working(WOOD_OVER_CUT), HudDepositVocab.CUTTERS_NONE),
 			HudDepositVocab.DEPOSIT_HAZARD_CLAUSE_FORMAT % [
 				HudSelectionVocab.RUNG_HAZARD_GLYPH, HudDepositVocab.DEPOSIT_UNDER_KEPT_WORD]]))
 	# ⛔ **THE RUNG'S NAME IS THE CATALOG'S OWN WORD**, never a client table: `RUNG_LABELS` is retired,
@@ -365,9 +364,7 @@ func run(harness) -> void:
 					DetailFormat.format_trimmed(QUARRY_STOCK, HudDepositVocab.CARD_STOCK_DECIMALS),
 					DetailFormat.format_trimmed(STONE_CAPACITY,
 						HudDepositVocab.CARD_STOCK_DECIMALS)],
-				CATALOG_QUARRY_NAME,
-				HudDepositVocab.crew_clause(_quarried_stone(),
-					HudDepositVocab.CUTTERS_NONE)]))
+				CATALOG_QUARRY_NAME]))
 	# ⛔ **THE BLANK KEY IS SEARCHED FOR ACROSS THE BLOCK, NOT TAKEN AS THE FIRST MATCH.** A hex
 	# carrying two RAISED deposits emits two payoff rows, both keyed `" "` — which is exactly what this
 	# state stages — so a reader that took `detail_row_value`'s first hit would answer the wood's
@@ -1275,7 +1272,7 @@ func run(harness) -> void:
 	# what makes it the minimal level: `SelectionCardController._forage_workers_on_tile` sums the
 	# foragers on the hex across EVERY player band, so the land row states what the faction has on
 	# this ground whichever subject is picked. `SubjectDrawerController._cutters_on_working` is that
-	# function for a working, and `HudDepositVocab.crew_clause` is the pair.
+	# function for a working, and `HudDepositVocab.crew_mark` is the pair.
 	#
 	# ⛔ **TWO WORKINGS ON ONE HEX STAY TWO, AND THE COUNTS DIFFER SO THAT IT CAN BE PROVEN.** Equal
 	# crews would pass a card that composed one number and printed it on both rows — the tile-keyed
@@ -1287,20 +1284,17 @@ func run(harness) -> void:
 	var crew_lines: Array[String] = h._hud._drawer._tile_terrain_lines(
 		h._hud._selection.tile_info(), crew_ctx)
 	await h._save("workings_tile_crews")
-	h._assert_hud("the wood row states its own crew (%s)"
-			% Readout.detail_row_value(crew_lines, "Wood"),
-		Readout.detail_row_value(crew_lines, "Wood").contains(
-			HudDepositVocab.crew_clause(_wood_working(WOOD_OVER_CUT), CARD_WOOD_CUTTERS)))
-	h._assert_hud("…and the rock states a DIFFERENT one on the same hex (%s)"
-			% Readout.detail_row_value(crew_lines, "Stone"),
-		Readout.detail_row_value(crew_lines, "Stone").contains(
-			HudDepositVocab.crew_clause(_stone_working(STONE_TAKE), CARD_STONE_CUTTERS)))
-	# **THE DISTINCTNESS, STATED AS A NEGATIVE TOO**: neither row may carry the other's count.
-	h._assert_hud("…and neither row wears the other's crew",
-		not Readout.detail_row_value(crew_lines, "Wood").contains(
-				HudDepositVocab.crew_clause(_stone_working(STONE_TAKE), CARD_STONE_CUTTERS))
-			and not Readout.detail_row_value(crew_lines, "Stone").contains(
-				HudDepositVocab.crew_clause(_wood_working(WOOD_OVER_CUT), CARD_WOOD_CUTTERS)))
+	DoorQ.assert_marks(h, "workings_tile_crews", ["Wood", "Stone"])
+	h._assert_hud("the wood row states its own crew after the full-ink hand (%s | %s)"
+			% [DoorQ.mark_text(h._hud, "Wood"), DoorQ.mark_tint(h._hud, "Wood")],
+		DoorQ.mark_text(h._hud, "Wood") == str(CARD_WOOD_CUTTERS)
+			and DoorQ.mark_tint(h._hud, "Wood") == HudStyle.INK_HEX + "ff")
+	h._assert_hud("…and the rock states a DIFFERENT one on the same hex (%s)" % DoorQ.mark_text(h._hud, "Stone"),
+		DoorQ.mark_text(h._hud, "Stone") == str(CARD_STONE_CUTTERS))
+	# **THE DISTINCTNESS, STATED AS A NEGATIVE TOO**: the two counts differ, so neither row can wear the other's.
+	h._assert_hud("…and the two crews differ, so neither row wears the other's",
+		CARD_WOOD_CUTTERS != CARD_STONE_CUTTERS
+			and DoorQ.mark_text(h._hud, "Wood") != DoorQ.mark_text(h._hud, "Stone"))
 	# ⛔ **A MARK AND A COUNT — NEVER A BILL.** The keeping figure and the neglect countdown are
 	# retired from this card, and staffing it must not smuggle either back on.
 	h._assert_hud("…and the crew arrives with no bill and no countdown beside it",
@@ -1328,12 +1322,9 @@ func run(harness) -> void:
 				h._hud._band_labor.player_band(), WORKING_TILE_X, WORKING_TILE_Y,
 				STONE_MATERIAL_ID) == 0)
 	h._assert_hud("…and both rows still state the crews the OTHER band has on them (%s | %s)"
-			% [Readout.detail_row_value(other_lines, "Wood"),
-				Readout.detail_row_value(other_lines, "Stone")],
-		Readout.detail_row_value(other_lines, "Wood").contains(
-				HudDepositVocab.crew_clause(_wood_working(WOOD_OVER_CUT), CARD_WOOD_CUTTERS))
-			and Readout.detail_row_value(other_lines, "Stone").contains(
-				HudDepositVocab.crew_clause(_stone_working(STONE_TAKE), CARD_STONE_CUTTERS)))
+			% [DoorQ.mark_text(h._hud, "Wood"), DoorQ.mark_text(h._hud, "Stone")],
+		DoorQ.mark_text(h._hud, "Wood") == str(CARD_WOOD_CUTTERS)
+			and DoorQ.mark_text(h._hud, "Stone") == str(CARD_STONE_CUTTERS))
 	# ⛔ **AND UNTOUCHED GROUND SAYS NOTHING ABOUT A CREW AT ALL** — `deposit_row_value`'s rule: every
 	# clause about a working being worked is, on ground nobody has opened, a reading of an event that
 	# has not happened. The stated ZERO is for a working someone HAS opened, which is the forage land
@@ -1349,13 +1340,11 @@ func run(harness) -> void:
 	await h._settle()
 	var untouched_lines: Array[String] = h._hud._drawer._tile_terrain_lines(
 		h._hud._selection.tile_info())
-	h._assert_hud("untouched ground carries no crew mark of any count (%s | %s)"
-			% [Readout.detail_row_value(untouched_lines, "Wood"),
-				Readout.detail_row_value(untouched_lines, "Stone")],
-		not Readout.detail_row_value(untouched_lines, "Wood").contains(
-				HudSelectionVocab.SOURCE_CREW_MARK)
-			and not Readout.detail_row_value(untouched_lines, "Stone").contains(
-				HudSelectionVocab.SOURCE_CREW_MARK))
+	h._assert_hud("untouched ground shows the dim hand and no crew count (%s | %s)"
+			% [DoorQ.mark_text(h._hud, "Wood"), DoorQ.mark_text(h._hud, "Stone")],
+		DoorQ.mark_text(h._hud, "Wood") == "" and DoorQ.mark_text(h._hud, "Stone") == ""
+			and DoorQ.mark_tint(h._hud, "Wood") != HudStyle.INK_HEX + "ff"
+			and DoorQ.mark_tint(h._hud, "Stone") != HudStyle.INK_HEX + "ff")
 
 	# **THE HEX IS HANDED BACK BARE**, so a chapter appended after this one starts where every other
 	# one does. **An empty `deposits` array means the GROUND HOLDS NOTHING** — not *nobody has worked

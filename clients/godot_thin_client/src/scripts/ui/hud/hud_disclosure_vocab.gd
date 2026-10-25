@@ -112,8 +112,21 @@ const DOOR_KIND_ROAD := "road"
 const DOOR_KIND_TILE := "tile"
 const DOOR_PAYLOAD_SEPARATOR := ":"
 
-## The faint glyph a door row's value ends in, marking the row as something that opens.
-const DOOR_ARROW := " ▸"
+## The trailing mark a door row's value ends in, marking the row as something that opens: the open hand
+## (`HudSprites` mark `workers`) boxed square at the label's text height, then the crew count where a crew
+## is on the source. `[img=WxH color=#RRGGBBAA]path[/img]`; the engine's default inline alignment centres
+## it on the text line.
+const DOOR_MARK_ICON_ID := "workers"
+const DOOR_MARK_ICON_PX := 16
+const DOOR_MARK_IMG_FORMAT := "[img=%dx%d color=#%s]%s[/img]"
+const DOOR_MARK_OPAQUE_ALPHA_HEX := "ff"
+## The count beside a crewed hand; the leading NON-BREAKING space is the gap between the two and keeps the
+## count on the hand's line (a plain space let `2` wrap away from the hand it counts).
+const DOOR_MARK_COUNT_FORMAT := "\u00a0%d"
+const DOOR_MARK_NBSP := "\u00a0"
+## The pad's remainder (under one NBSP) is filled with NBSPs at this font size, which are a fraction of a pixel
+## wide each: every no-break, so the tail never splits, and the hands land within about a pixel of one x.
+const DOOR_FINE_PAD_FONT_SIZE := 3
 
 ## A door meta from its kind and subject.
 static func door_meta(kind: String, subject: String) -> String:

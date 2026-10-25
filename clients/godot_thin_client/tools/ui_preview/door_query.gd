@@ -97,3 +97,97 @@ static func washed(hud: Node, wash_hex: String) -> Array[String]:
 
 static func _markup(hud: Node) -> String:
 	return hud.tile_detail.text
+
+# ---- THE TRAILING WORKERS MARK (the open hand + crew count every door row ends in) -------------------
+# Read off the RENDERED markup of one row, never the producer's registry. A row is cut out of the markup from its
+# key cell to the end of its value cell.
+
+const IMG_OPEN := "[img="
+const MARK_PATH_SPRITE_ID := "workers"
+const IMG_CLOSE := "[/img]"
+const NBSP := " "
+
+## The markup of the `nth` row named `key` -- both cells, door or readout. `""` when there is no such row.
+static func row_markup(hud: Node, key: String, nth: int = 0) -> String:
+	var markup := _markup(hud)
+	var needle := "[color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, key]
+	var at := markup.find(needle)
+	for _i in range(nth):
+		if at < 0:
+			break
+		at = markup.find(needle, at + needle.length())
+	if at < 0:
+		return ""
+	# key, value and mark cells (the land card is a `[table=3]`).
+	var end := at
+	for _i in range(3):
+		end = markup.find("[/cell]", end + 1)
+		if end < 0:
+			return ""
+	return markup.substr(at, end - at)
+
+## How many workers images the row carries.
+static func mark_images(hud: Node, key: String, nth: int = 0) -> int:
+	return row_markup(hud, key, nth).count(_mark_path())
+
+## The row's image tint as the 8-digit `RRGGBBAA` hex, `""` for no image.
+static func mark_tint(hud: Node, key: String, nth: int = 0) -> String:
+	var row := row_markup(hud, key, nth)
+	var img := row.find(IMG_OPEN + "")
+	if img < 0 or not row.contains(_mark_path()):
+		return ""
+	var at := row.find("color=#", img)
+	return row.substr(at + 7, 8) if at >= 0 else ""
+
+## The plain text after the row's image (BBCode tags stripped, spaces trimmed): the crew count and any warn mark.
+static func mark_text(hud: Node, key: String, nth: int = 0) -> String:
+	var row := row_markup(hud, key, nth)
+	var at := row.find(IMG_CLOSE)
+	if at < 0:
+		return ""
+	var tail := row.substr(at + IMG_CLOSE.length())
+	var plain := ""
+	var in_tag := false
+	for ch in tail:
+		if ch == "[":
+			in_tag = true
+		elif ch == "]":
+			in_tag = false
+		elif not in_tag:
+			plain += ch
+	return plain.replace(NBSP, " ").strip_edges()
+
+## True when the warn glyph is wrapped in the WARN ink.
+static func warn_mark_in_warn_ink(hud: Node, key: String, nth: int = 0) -> bool:
+	return row_markup(hud, key, nth).contains("[color=#%s]%s[/color]" % [
+		HudStyle.WARN_HEX, HudSelectionVocab.DOOR_WARN_SUFFIX.replace(" ", NBSP)])
+
+## True when the image sits in the row's THIRD cell (the mark column), i.e. after two closed cells: every hand shares
+## that column's left edge.
+static func mark_in_column(hud: Node, key: String, nth: int = 0) -> bool:
+	var row := row_markup(hud, key, nth)
+	var img := row.find(IMG_OPEN)
+	return img > 0 and row.substr(0, img).count("[/cell]") == 2
+
+## The card-wide claims every chapter that renders door rows makes: each named door row carries the workers image
+## EXACTLY once and sits behind its pad, and the whole card carries as many images as it has doors, so a readout
+## row carries none.
+static func assert_marks(h: Object, label: String, door_keys: Array, aligned: bool = true,
+		crewed_readouts: int = 0) -> void:
+	for key in door_keys:
+		var k := String(key)
+		h._assert_hud("%s: door row `%s` carries the workers image exactly once (%d)" % [label, k,
+				mark_images(h._hud, k)],
+			mark_images(h._hud, k) == 1)
+		if aligned:
+			h._assert_hud("%s: door row `%s` wears its mark in the shared mark column" % [label, k],
+				mark_in_column(h._hud, k))
+	var images: int = _markup(h._hud).count(_mark_path())
+	var doors: int = all_metas(h._hud).size()
+	h._assert_hud("%s: one workers image per door, plus one per readout that states a crew, none on any other readout (%d images, %d doors, %d crewed readouts)"
+			% [label, images, doors, crewed_readouts],
+		images == doors + crewed_readouts)
+
+## The workers sprite's `res://` path, the needle that tells a door's mark from the basket rows' `[img]`s.
+static func _mark_path() -> String:
+	return String(HudSprites.SPRITE_PATHS.get(MARK_PATH_SPRITE_ID, "no-such-mark"))

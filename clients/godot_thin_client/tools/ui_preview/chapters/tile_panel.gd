@@ -1355,8 +1355,12 @@ func run(harness) -> void:
 	# clause, every line of the summary on the row's hover -- crew count, rate, the overstaff note.
 	var standing_text := String(h._hud.tile_detail.text)
 	var standing_hover: String = DoorQ.hover_text(h._hud, HudFloraVocab.FORAGING_KEY)
-	h._assert_hud("the Foraging row carries the hex's crew and the over-take warning (⚒4 ⚠)",
-		standing_text.contains("%s4%s" % [HudSelectionVocab.SOURCE_CREW_MARK, HudSelectionVocab.DOOR_WARN_SUFFIX]))
+	h._assert_hud("the Foraging row carries the hex's crew after the full-ink hand, and the over-take warning in WARN ink (%s | %s)"
+			% [DoorQ.mark_tint(h._hud, HudFloraVocab.FORAGING_KEY), DoorQ.mark_text(h._hud, HudFloraVocab.FORAGING_KEY)],
+		DoorQ.mark_text(h._hud, HudFloraVocab.FORAGING_KEY) == "4" + HudSelectionVocab.DOOR_WARN_SUFFIX
+			and DoorQ.mark_tint(h._hud, HudFloraVocab.FORAGING_KEY) == HudStyle.INK_HEX + "ff"
+			and DoorQ.warn_mark_in_warn_ink(h._hud, HudFloraVocab.FORAGING_KEY))
+	DoorQ.assert_marks(h, "tile_panel_standing", [HudFloraVocab.FORAGING_KEY])
 	h._assert_hud("…its hover opens with the summary: crew and rate (%s)" % standing_hover,
 		standing_hover.split("\n")[0].contains("4 ") and standing_hover.split("\n")[0].contains("+2.74"))
 	h._assert_hud("…and carries the overstaff note (only 2 of 4 bring anything home) and the overdraw tooltip (%s)" % standing_hover.replace("\n", " | "),

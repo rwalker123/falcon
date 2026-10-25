@@ -299,6 +299,31 @@ func run(harness) -> void:
 	h._assert_hud("…and pressing nothing opens no sheet (a readout row carries no door meta)",
 		not _press_door(BELIEF_BRANCH) and not h._hud.is_compose_sheet_open())
 	await h._save("tile_branches_site_greyed")
+	# ⛔ A refused branch is a readout, but a crew standing on it is still a stated fact: full-ink hand + count,
+	# outside any url. No sim state produces it (belief never decays and the site term is checked when a crew is
+	# put on), so the claim forces ONLY the model's crew on the REAL refused model and drives the real producer.
+	var refused: Dictionary = {}
+	for model in h._hud._drawercompose.tile_branch_models(h._hud._selection.tile_info()):
+		if String(model["branch"]) == BELIEF_BRANCH:
+			refused = model.duplicate()
+	var refused_ctx := DetailFormat.Context.new()
+	var refused_lines: Array[String] = []
+	refused["crew"] = CREW_TWO
+	h._hud._drawer._append_tile_row(refused_lines, refused_ctx, "%s: 1 dead" % DetailFormat.ANCESTORS_ROW, refused)
+	var refused_markup := DetailFormat.detail_bbcode(refused_lines, refused_ctx)
+	h._assert_hud("a refused (readout) branch with a crew states it: full-ink hand and the count, outside any url (%s)"
+			% refused_markup.substr(0, 40),
+		not refused["door"] and refused_ctx.door_metas.is_empty()
+			and refused_markup.count(HudSprites.SPRITE_PATHS["workers"]) == 1
+			and refused_markup.contains("color=#%sff" % HudStyle.INK_HEX)
+			and refused_markup.contains("\u00a0%d" % CREW_TWO)
+			and not refused_markup.contains("[url=door:"))
+	refused["crew"] = CREW_NONE
+	var bare_lines: Array[String] = []
+	var bare_ctx := DetailFormat.Context.new()
+	h._hud._drawer._append_tile_row(bare_lines, bare_ctx, "%s: 1 dead" % DetailFormat.ANCESTORS_ROW, refused)
+	h._assert_hud("…and a refused readout with no crew carries no mark",
+		DetailFormat.detail_bbcode(bare_lines, bare_ctx).count(HudSprites.SPRITE_PATHS["workers"]) == 0)
 
 	# ---- THE CREW SHEET ---------------------------------------------------------------------------
 	_stage(band, [], 1.0, 1.0)
@@ -438,9 +463,7 @@ func _door_state_claims() -> void:
 	h._assert_hud("at rest no door row wears a wash",
 		DoorQ.washed(h._hud, HudStyle.DOOR_HOVER_WASH_HEX).is_empty()
 			and DoorQ.washed(h._hud, HudStyle.DOOR_SELECTED_WASH_HEX).is_empty())
-	h._assert_hud("…a door's value ends in the faint arrow",
-		String(h._hud.tile_detail.text).contains("[color=#%s]%s[/color]" % [
-			HudStyle.INK_FAINT_HEX, HudDisclosureVocab.DOOR_ARROW]))
+	DoorQ.assert_marks(h, "tile_branches", [ancestors, stores])
 	# -- hover: starts washes that row on BOTH cells and only that row; ended clears it
 	h._hud.tile_detail.meta_hover_started.emit(meta_a)
 	await h._settle()
@@ -496,18 +519,17 @@ func _door_state_claims() -> void:
 	_stage(_band(CREW_TWO, CREW_NONE), [], 1.0, 1.0)
 	h._show_tile(_tile(BELIEF_PRESENT))
 	await h._settle()
-	h._assert_hud("a crew on the belief branch rides the Ancestors row as the crew clause",
-		String(h._hud.tile_detail.text).contains("%s%d" % [HudSelectionVocab.SOURCE_CREW_MARK, CREW_TWO]))
-	h._assert_hud("…and the store row, with nobody on it, carries no crew clause",
-		not _store_row_has_crew())
+	h._assert_hud("a crew on the belief branch shows its count after the full-ink hand on the Ancestors row (%s | %s)"
+			% [DoorQ.mark_tint(h._hud, ancestors), DoorQ.mark_text(h._hud, ancestors)],
+		DoorQ.mark_text(h._hud, ancestors) == str(CREW_TWO)
+			and DoorQ.mark_tint(h._hud, ancestors) == HudStyle.INK_HEX + "ff")
+	h._assert_hud("…and the store row, with nobody on it, shows the dim hand alone and no count (%s | %s)"
+			% [DoorQ.mark_tint(h._hud, stores), DoorQ.mark_text(h._hud, stores)],
+		DoorQ.mark_text(h._hud, stores) == ""
+			and DoorQ.mark_images(h._hud, stores) == 1
+			and DoorQ.mark_tint(h._hud, stores) == HudStyle.INK_DIM_HEX + "ff")
+	await h._save("tile_branches_door_crews")
 	_stage(_band(CREW_NONE, CREW_NONE), [], 0.0, 0.0)
-
-func _store_row_has_crew() -> bool:
-	var markup := String(h._hud.tile_detail.text)
-	var at := markup.find("[color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, _row_key(STORES_BRANCH)])
-	if at < 0:
-		return false
-	return markup.substr(at, markup.find("[/table]", at) - at).contains(HudSelectionVocab.SOURCE_CREW_MARK)
 
 ## The crew sheet's work-strip LADDER CHIP: on every state of the sheet, the same face as the Work tab's row
 ## for the same tile + branch, and a press opens the rung card for THAT branch.

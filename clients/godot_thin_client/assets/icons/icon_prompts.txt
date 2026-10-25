@@ -1296,7 +1296,7 @@ cave_fungi: Flat vector game icon of a single mushroom seen from the side, one s
 # **ONE FILE SERVES EVERY SURFACE THAT MEANS THE SAME THING**, which is what the id being the
 # ACTIVITY buys: `hunt.png` is the roster's herd row, the work board's hunt chip, the kit picker's
 # hunt face and the mission grid's Hunt button — four surfaces, one drawing, and no way for them to
-# drift. `workers.png` is two turn-orb kinds. `warrior.png` is a roster row and a kit face.
+# drift. `workers.png` is two turn-orb kinds AND the tile card's door rows (16px, inline `[img]` tinted INK / INK_DIM). `warrior.png` is a roster row and a kit face.
 #
 # **THE MARK ID IS THE ACTIVITY, NOT THE SURFACE** — `hunt` is ONE file behind the chip and the
 # roster row alike, which is what `hunt.png`'s own note below asked for when it collapsed the 🦌
@@ -1769,6 +1769,8 @@ split: Flat vector interface mark of a single round pebble-like disc split verti
 # `KIND_ICON` already spells them with the same 🛠 because both rows are about the HANDS — one
 # says nobody is using them, the other says they have moved to another job.
 # STATUS: SHIPPED at `assets/icons/hud/workers.png` and WIRED on BOTH turn-orb kinds.
+# SECOND SURFACE: the tile card's DOOR ROWS wear it as their trailing mark (`DetailFormat.door_mark`,
+# `HudDisclosureVocab.DOOR_MARK_ICON_PX` = 16px, tinted INK for a crewed door and INK_DIM for an uncrewed one).
 # Keyed `--size 256 --lo 85 --hi 200`; coverage 38.1%, magenta residual 0.
 # ⛔ **THIS ONE DRAWS AT 30px, NOT 13** — `TurnOrb.ROW_ICON_SIZE` is 30, so the prompt's "merge the
 # fingers into one broad blade" clause was OVER-CAUTIOUS: it applies the 13px piece-count lesson to

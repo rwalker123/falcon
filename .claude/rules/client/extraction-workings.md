@@ -222,7 +222,7 @@ folded into the road network's, which is where it sat while it was invisible.
 
 ## ⛔ THE ROW'S STANDING SUMMARY IS IN THE WORKING'S OWN ACCOUNT, NEVER IN FOOD
 
-The standing summary on the working's row hover (its text line, notes and tooltip; the crew count and `⚠` ride the row's own `⚒N` clause) is the shared standing summary
+The standing summary on the working's row hover (its text line, notes and tooltip; the crew count and `⚠` ride the row's trailing workers mark) is the shared standing summary
 (`DrawerComposeController._standing_summary_model` → `SourceForecast.source_yield_readout`), the same
 one a patch and a herd render. **A working pays no food**, so its zero belongs to its MATERIAL:
 `♻ 2 foresters · +0.00 wood`, never `· +0.00 /turn`. The mechanism is one rule shared with the
@@ -396,16 +396,16 @@ whichever subject the player has picked, or none. The band-specific level is the
 workings roster, whose value cell takes the panel band's own `cutters` and adds its bill, its runway
 and its countdown (`deposit_row_value` / `deposit_roster_tooltip`).
 
-The working's half of that pair is `HudDepositVocab.crew_clause`, threaded in from
+The working's half of that pair is `HudDepositVocab.crew_mark` (the trailing hand and count of the row's door, `DetailFormat.door_mark`; the value text carries no crew), threaded in from
 `SubjectDrawerController._cutters_on_working` — the catalog join's own rule, since the vocab leaf
 holds no band roster. Three answers:
 
 | `cutters` | clause | why |
 |---|---|---|
-| `CUTTERS_UNSTATED` | none | a caller with no band roster must not announce a crew of nobody — `deposit_row_value`'s idle-clause rule |
-| `> 0` | `⚒N`, **even where the wire still reads the working as unopened** | a crew put here this turn has taken nothing yet off a full seam, which is field-for-field `is_unopened`; suppressing the mark there would mute it at the one moment the player is looking for it |
-| `0`, on a working someone HAS opened | `⚒0` | the STATED ZERO, `HudSelectionVocab.LAND_META_WORKERS_FORMAT`'s own rule: the zero form is parallel to the staffed one, so *nobody is on this* reads at a glance instead of needing a comparison. On a working that owes keeping, a crew of zero keeps nothing, so its meter rots |
-| `0`, on untouched ground | none | `deposit_row_value`'s rule that every clause about a working being worked is, there, a reading of an event that has not happened |
+| `CUTTERS_UNSTATED` | the dim hand alone | a caller with no band roster must not announce a crew of nobody — `deposit_row_value`'s idle-clause rule |
+| `> 0` | the full-ink hand and `N`, **even where the wire still reads the working as unopened** | a crew put here this turn has taken nothing yet off a full seam, which is field-for-field `is_unopened`; suppressing the mark there would mute it at the one moment the player is looking for it |
+| `0`, on a working someone HAS opened | the dim hand alone, no number | *nobody is on this* reads at a glance as a faint hand, and it replaced the stated `⚒0`. On a working that owes keeping, a crew of zero keeps nothing, so its meter rots |
+| `0`, on untouched ground | the dim hand alone (the same mark: the row is a door) | `deposit_row_value`'s rule that every clause about a working being worked is, there, a reading of an event that has not happened |
 
 ⛔ **TWO WORKINGS ON ONE HEX CANNOT COLLAPSE INTO ONE MARK.** The clause rides the per-MATERIAL row,
 so a wood crew and a stone crew are two counts on two rows keyed `(tile, material)` — the distinction

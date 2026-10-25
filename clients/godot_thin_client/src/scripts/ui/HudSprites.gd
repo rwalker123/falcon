@@ -16,7 +16,7 @@ class_name HudSprites
 ##
 ## **THE TABLE CARRIES ALL SEVENTEEN MARKS `assets/icons/hud/` SHIPS** — the `cairn` of issue #581,
 ## the twelve wired by issue #249: `forage` / `hunt` / `scout` / `warrior` (activities and kit
-## faces), `deny` / `trade` (band verbs, which are also the party MISSION marks the Parties rows and the selection card's party rows draw, with `station` the stationed party's),  `workers` / `starving` (turn-orb rows), `children` /
+## faces), `deny` / `trade` (band verbs, which are also the party MISSION marks the Parties rows and the selection card's party rows draw, with `station` the stationed party's),  `workers` (turn-orb rows, and the tile card's door rows at 16px, `DetailFormat.door_mark`) / `starving` (turn-orb rows), `children` /
 ## `working_age` / `elders` (the PEOPLE key) and `kit_fallback`; and `move` / `split`, which close
 ## the band verb row of issue #529; and `gathering` (the turn orb's `gathering_held` row, issue #698). It held the cairn alone while the
 ## rest had no call site, because a path nothing loads is dead data rather than coverage; giving

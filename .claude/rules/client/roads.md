@@ -1212,7 +1212,7 @@ branch earns) and a dangling *"keep a  carrying traffic"* being worse than a hea
 
 **THE `Road` READOUT ROW IS THE DOOR.** There is no `Road ▸` button and no `%RoadLadderControls`: the
 key and value cells of each road's `Road` row are one `[url=door:road:<index>]` run and the value ends
-in a faint ` ▸` (`selection-card.md` → "THE LAND CARD'S ROWS ARE THE DOORS"). A hex with two roads has
+in the trailing workers hand, dim because no crew rides a road (`selection-card.md` → "THE LAND CARD'S ROWS ARE THE DOORS"). A hex with two roads has
 two `Road` rows, each a door for ITS index in `DrawerComposeController._tile_roads`, which is why doors
 are registered by line index rather than by row key. Pressing one opens the ladder card on that index
 through `_open_road_ladder`, hung under `%TileDetail`; while the card is open that row wears the

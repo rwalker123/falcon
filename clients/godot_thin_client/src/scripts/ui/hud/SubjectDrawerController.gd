@@ -238,6 +238,7 @@ func _apply_land_markup() -> void:
     _land_ctx.fill_font = _tile_detail.get_theme_font("normal_font")
     _land_ctx.fill_font_size = _tile_detail.get_theme_font_size("normal_font_size")
     _land_ctx.fill_h_separation = float(_tile_detail.get_theme_constant("table_h_separation"))
+    _land_ctx.fill_scale = _tile_detail.get_global_transform_with_canvas().get_scale().x
     _land_ctx.hovered_door = _hovered_door
     _land_ctx.selected_door = _drawercompose.open_door_meta()
     _land_ctx.door_tooltips.clear()
@@ -524,16 +525,17 @@ func _append_tile_row(lines: Array[String], ctx: DetailFormat.Context, base_line
         model: Dictionary) -> void:
     var line := base_line
     if not model.is_empty():
-        var clause := HudSelectionVocab.door_crew_clause(int(model["crew"]))
-        if clause != "":
-            line += HudSelectionVocab.DOOR_CLAUSE_SEPARATOR + clause
         if ctx != null:
             if bool(model["door"]):
                 ctx.door_metas[lines.size()] = HudDisclosureVocab.door_meta(
                     HudDisclosureVocab.DOOR_KIND_TILE, String(model["branch"]))
+                ctx.door_crews[lines.size()] = {"crew": int(model["crew"]), "warn": false}
             else:
                 var refusal: Dictionary = model["refusal"]
                 _add_row_hover(ctx, String(model["row_key"]), HudTileVocab.refusal_hover(refusal))
+                # A refused branch is a readout, but a crew standing on it is still a fact the card states.
+                if int(model["crew"]) > 0:
+                    ctx.door_crews[lines.size()] = {"crew": int(model["crew"]), "warn": false}
     lines.append(line)
 
 ## The box the basket rows' crop-role art is drawn in — the HOST LABEL's own resolved font size, so
@@ -702,8 +704,9 @@ func _tile_terrain_lines(tile_info: Dictionary,
             if ctx != null and working_door:
                 ctx.door_metas[lines.size()] = HudDisclosureVocab.door_meta(
                     HudDisclosureVocab.DOOR_KIND_DEPOSIT, _drawercompose.deposit_subject_key(working))
-            var working_lines := HudDepositVocab.deposit_lines(working, deposit_ladder, ctx,
-                _cutters_on_working(working), bool(working_facts.get("warn", false)))
+                ctx.door_crews[lines.size()] = HudDepositVocab.crew_mark(working,
+                    _cutters_on_working(working), bool(working_facts.get("warn", false)))
+            var working_lines := HudDepositVocab.deposit_lines(working, deposit_ladder, ctx)
             lines.append_array(working_lines)
             if not working_lines.is_empty():
                 _add_row_hover(ctx, HudDepositVocab.material_label(working),
@@ -786,13 +789,13 @@ func _tile_terrain_lines(tile_info: Dictionary,
         var forage_door := _drawercompose.forage_door_open(tile_info)
         var forage_facts: Dictionary = _drawercompose.forage_standing_facts(tile_info) \
             if forage_door else {}
-        var forage_clause := HudSelectionVocab.door_crew_clause(
-            _crew_on_forage(int(tile_info.get("x", -1)), int(tile_info.get("y", -1))),
-            bool(forage_facts.get("warn", false)))
         if ctx != null and forage_door:
             ctx.door_metas[lines.size()] = HudDisclosureVocab.door_meta(
                 HudDisclosureVocab.DOOR_KIND_FORAGE, _drawercompose.forage_subject_key(tile_info))
-        lines.append_array(_forage_stock_lines(tile_info, true, forage_clause))
+            ctx.door_crews[lines.size()] = {
+                "crew": _crew_on_forage(int(tile_info.get("x", -1)), int(tile_info.get("y", -1))),
+                "warn": bool(forage_facts.get("warn", false))}
+        lines.append_array(_forage_stock_lines(tile_info, true))
         _add_row_hover(ctx, HudFloraVocab.FORAGING_KEY, String(forage_facts.get("hover", "")))
         # …AND WHAT THAT STOCK IS MADE OF — one indented row per realized plant, always visible and
         # never behind a disclosure, each led by an icon for what the plant is FOR (staple / cash /
@@ -942,16 +945,13 @@ func _tile_terrain_lines(tile_info: Dictionary,
 ## — and this row states `patch_tile_capacity`, the ground beneath it, instead. Reading the ceiling
 ## key directly would find `0` on every remembered hex and drop the `Foraging` row from the card
 ## entirely, which is the failure `_assert_fog_stock_parity` exists to catch.
-func _forage_stock_lines(tile_info: Dictionary, stock_known: bool,
-        crew_clause: String = "") -> Array[String]:
+func _forage_stock_lines(tile_info: Dictionary, stock_known: bool) -> Array[String]:
     var lines: Array[String] = []
     var capacity := DetailFormat.patch_capacity(tile_info)
     if capacity <= 0.0:
         return lines
     var value := _stock_value(float(tile_info.get("patch_biomass", 0.0)), capacity,
         String(tile_info.get("patch_ecology_phase", "")), stock_known)
-    if crew_clause != "":
-        value += HudSelectionVocab.DOOR_CLAUSE_SEPARATOR + crew_clause
     lines.append("%s: %s" % [HudFloraVocab.FORAGING_KEY, value])
     return lines
 
