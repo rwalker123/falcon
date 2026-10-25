@@ -444,7 +444,7 @@ The Peoples tab lists a band at "Last seen at (x, y), turn N"; the map used to s
 **subject band** in the viewer's `connections` ties (`MapView.set_connections`, pushed by `Main` beside
 `update_connections`) that has **no band marker drawn this frame** (`units`, fog-gated by
 `_unit_hidden_by_fog` — a foreign band on a fogged tile counts as not drawn, so its ghost shows). Of
-several ties to one subject the **latest `last_seen_turn`** places it. **A subject the viewer has people
+several ties to one subject — across every observer, each one a band of the viewer's people — the **freshest `last_seen_turn`** places it, equal turns going to the lower observer id (`HudBandLaborState.is_fresher_sighting`), so the ghost sits where the Trade ring and the sim's aim are. **A subject the viewer has people
 stationed with gets none either**: one of the viewer's own expeditions with mission `station`, phase
 `stationed` and `expedition_destination_band` = that subject suppresses it, because the party's own
 marker already shows where the host is, live (an outbound or returning station party does not suppress
@@ -458,7 +458,16 @@ real stage is unknown) desaturated (`REMEMBERED_GREY_AMOUNT`, a cached `ImageTex
 (`REMEMBERED_FADE_TURNS` = 30, the playtest lever; a plain `MapView` const because the client has no
 display-tuning surface). Strength is how well you know them, not how fresh the news is, so it does not
 touch the marker. Called right after `draw_primary_bands`, in the live `_draw`, so above the fog tint
-(a terrain tint); no nameplate, no decorations. MAX stays under 1 so a ghost never reads "live"; MIN
+(a terrain tint); no decorations. **A ghost names itself, in the live nameplate family, dimmed**: at/above
+`BAND_NAME_PILL_MIN_RADIUS` the same NAME PILL (same font, anchor and `_name_pill_rects` footprint),
+between that and `ICON_MIN_DETAIL_RADIUS` the scaled bar, nothing below — each at the ghost's own `news_age`
+alpha (the ghost pill is one rounded `StyleBoxFlat`, because `_draw_pill_plate`'s rect-plus-circles overlap
+would double up at alpha < 1). The text is `ConnectionsRoster.subject_label` (a raw BandId never shows), read
+against the HUD's roster state that `Main` hands the map (`MapView.set_label_roster`); the border is
+`MapView.faction_color(subject_faction)`, neutral when the tie carries none. **Live pills are reserved first**;
+a ghost pill whose footprint hits any placed rect (live or ghost) is skipped outright, ghosts placing newest
+`last_seen_turn` first then lowest `subject_band_id` (`BandMarkerRenderer.ghost_label_rects()` reports the
+placed ones by subject band id). MAX stays under 1 so a ghost never reads "live"; MIN
 stays above 0 so old news still shows faintly — the ghost leaves only when the edge drops off the wire.
 `_tile_info_at` stamps `remembered_bands` (the tie rows on that hex); `Hud.show_tooltip` adds
 `ConnectionsRoster.remembered_hover_line` (`HudConnectionsVocab.REMEMBERED_HOVER_FORMAT`, name via

@@ -3023,6 +3023,11 @@ func show_tooltip(info: Dictionary) -> void:
         
     tooltip_panel.position = pos
 
+## The roster state `ConnectionsRoster.subject_label` reads, handed to the map so a remembered band's
+## ghost names itself by the Peoples tab's own rule. `Main` pushes it once at wiring.
+func band_labor_state() -> HudBandLaborState:
+    return _band_labor
+
 ## Returns the minimap container for embedding the minimap panel.
 ## Returns null if container not found.
 func get_minimap_container() -> Control:

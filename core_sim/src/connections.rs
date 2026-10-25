@@ -178,28 +178,46 @@ pub struct ConnectionLedger {
 }
 
 impl ConnectionLedger {
-    /// **The tile a traveling party sets out toward** — what its people know of where `target` is,
-    /// never where it really is. The target's live tile when the sender knows it: the target is the
-    /// sender's own people (your own bands are always visible to you), or its tile is `Active` on the
-    /// sending faction's map. Otherwise the `home -> target` edge's `last_seen_position`; with no
-    /// edge at all (the launch gate prevents it), the live tile is the only position there is.
+    /// **The tile a traveling party sets out toward, or `None` when its PEOPLE has never met the
+    /// target** - what the sender's people know of where `target` is, never where it really is.
+    /// Knowing is the people's, not the launching band's: `people` is every resident band of the
+    /// sender's people (the edge carries no faction, so the caller passes the set).
+    ///
+    /// - the target is the sender's own people (your own bands are always visible to you), or its
+    ///   tile is `Active` on the sending faction's map: the target's live tile;
+    /// - otherwise the FRESHEST remembered position across every edge from any of `people` to
+    ///   `target`, live or parked (max `last_seen_turn`, a tie to the lower observer `BandId`);
+    /// - no edge from any of them and not visible: `None`, the launch gate's refusal.
+    ///
+    /// Tie STRENGTH stays per band everywhere else; this is the one question about *where*.
     pub fn launch_aim(
         &self,
         visibility: &crate::visibility::VisibilityLedger,
         sender_faction: FactionId,
-        home: BandId,
+        people: &[BandId],
         target: BandId,
         target_faction: FactionId,
         target_live_tile: UVec2,
-    ) -> UVec2 {
-        let known = sender_faction == target_faction
-            || visibility.is_visible(sender_faction, target_live_tile.x, target_live_tile.y);
-        if known {
-            return target_live_tile;
+    ) -> Option<UVec2> {
+        if sender_faction == target_faction
+            || visibility.is_visible(sender_faction, target_live_tile.x, target_live_tile.y)
+        {
+            return Some(target_live_tile);
         }
-        self.get(&ConnectionKey::new(home, target))
-            .map(|connection| connection.last_seen_position)
-            .unwrap_or(target_live_tile)
+        let mut observers: Vec<BandId> = people.to_vec();
+        observers.sort();
+        observers.dedup();
+        let mut freshest: Option<&Connection> = None;
+        for observer in observers {
+            let Some(edge) = self.get(&ConnectionKey::new(observer, target)) else {
+                continue;
+            };
+            // Strictly fresher wins, so a tie stays with the lower observer (visited first).
+            if freshest.is_none_or(|best| edge.last_seen_turn > best.last_seen_turn) {
+                freshest = Some(edge);
+            }
+        }
+        freshest.map(|edge| edge.last_seen_position)
     }
 
     pub fn get(&self, key: &ConnectionKey) -> Option<&Connection> {
@@ -758,14 +776,16 @@ mod tests {
         let aim = |ledger: &ConnectionLedger,
                    visibility: &crate::visibility::VisibilityLedger,
                    target_faction: FactionId| {
-            ledger.launch_aim(
-                visibility,
-                MINE,
-                OBSERVER,
-                SUBJECT,
-                target_faction,
-                ELSEWHERE,
-            )
+            ledger
+                .launch_aim(
+                    visibility,
+                    MINE,
+                    &[OBSERVER],
+                    SUBJECT,
+                    target_faction,
+                    ELSEWHERE,
+                )
+                .expect("the people has met the subject")
         };
         assert_eq!(
             aim(&ledger, &visibility, THEIRS),
@@ -785,6 +805,53 @@ mod tests {
             aim(&ledger, &visibility, THEIRS),
             ELSEWHERE,
             "a foreign band on a tile you see is where it is"
+        );
+    }
+
+    #[test]
+    fn a_launch_aim_is_the_peoples_freshest_sighting_and_none_when_never_met() {
+        const MINE: FactionId = FactionId(0);
+        const THEIRS: FactionId = FactionId(1);
+        const MAP_SIDE: u32 = 16;
+        const LOWER: BandId = BandId(1);
+        const HIGHER: BandId = BandId(2);
+        const TARGET: BandId = BandId(7);
+        const LOWER_SAW: UVec2 = UVec2::new(2, 2);
+        const HIGHER_SAW: UVec2 = UVec2::new(5, 5);
+        const FRESHER_TURN: u64 = 9;
+        const OLDER_TURN: u64 = 3;
+        let cfg = config();
+        let mut visibility = crate::visibility::VisibilityLedger::default();
+        let _ = visibility.ensure_faction(MINE, MAP_SIDE, MAP_SIDE);
+        let people = [HIGHER, LOWER];
+        let aim = |ledger: &ConnectionLedger| {
+            ledger.launch_aim(&visibility, MINE, &people, TARGET, THEIRS, ELSEWHERE)
+        };
+        let mut ledger = ConnectionLedger::default();
+        assert_eq!(aim(&ledger), None, "no edge and out of sight is never met");
+        ledger.record_contact(
+            ConnectionKey::new(LOWER, TARGET),
+            &seen(LOWER_SAW, OLDER_TURN),
+            OLDER_TURN,
+            &cfg,
+        );
+        ledger.record_contact(
+            ConnectionKey::new(HIGHER, TARGET),
+            &seen(HIGHER_SAW, FRESHER_TURN),
+            FRESHER_TURN,
+            &cfg,
+        );
+        assert_eq!(aim(&ledger), Some(HIGHER_SAW), "the fresher sighting wins");
+        ledger.record_contact(
+            ConnectionKey::new(LOWER, TARGET),
+            &seen(LOWER_SAW, FRESHER_TURN),
+            FRESHER_TURN,
+            &cfg,
+        );
+        assert_eq!(
+            aim(&ledger),
+            Some(LOWER_SAW),
+            "equally fresh: the lower observer's memory"
         );
     }
 

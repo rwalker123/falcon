@@ -246,11 +246,14 @@ What follows from it, all intended:
 The keystone applied to a walk. A stationed party and a shipment (`expeditions.md`) never home on a
 band's live tile for free: `Expedition::aim` is the tile the party is walking toward, set at launch
 by `ConnectionLedger::launch_aim` (the target's live tile when the sender's people know it — the
-target is the sender's own people, or its tile is `Active` on the sender's map — otherwise this
-ledger's `last_seen_position` for the `home -> target` edge) and refreshed each `Outbound` turn only
+target is the sender's own people, or its tile is `Active` on the sender's map — otherwise the
+freshest `last_seen_position` across every edge from any resident band of the sender's people to the
+target, live or parked) and refreshed each `Outbound` turn only
 when the target is the sender's own people or the party itself sees it that turn. Where the target
-cannot be seen, the party walks to the remembered tile and, finding nothing there, turns home. A
-`Stationed` party is standing with its host, which is presence, so it follows the host's live tile.
+cannot be seen, the party walks to the remembered tile and, finding nothing there, turns home (a
+shipment with its cargo). **Knowing where a band is belongs to the PEOPLE; tie strength stays per
+band**: a launch is refused only when the people has never met the target (see "The question a rider
+asks the ledger"). A `Stationed` party is standing with its host, which is presence, so it follows the host's live tile.
 
 ## The three clocks
 
@@ -385,8 +388,9 @@ in-process assertion, and a client reader only notices a missing field once it r
 ## The first rider exists, and it is an expedition
 
 **Cargo (#517)** is the first thing built on top of this primitive. A shipment is a **party that
-walks it** — `ExpeditionMission::Trade`, gated at launch on `ConnectionLedger::get(..).strength >
-NO_TIE` and on nothing about either endpoint's faction. There is no `LogisticsLink` component: what
+walks it** — `ExpeditionMission::Trade`, gated at launch on the sender's PEOPLE
+knowing the destination (`ConnectionLedger::launch_aim` answers; a band of the people holding an
+edge to it, live or parked, is enough) and on nothing about either endpoint's faction. There is no `LogisticsLink` component: what
 maintains a link is a route, and the route ladder is what will hold that state.
 
 Two things the rider does that this module deliberately does not know about: it carries its own
@@ -475,6 +479,18 @@ live tie"* is a second answer free to drift.
   the source band itself, because contact is band-to-band and one scout meeting one rival camp does
   not make every band of both peoples eligible (`factions.md` → "Defection is the unhappy trickle
   with the same-people filter lifted").
+
+- **`launch_aim(visibility, sender_faction, people, target, target_faction, target_live_tile) ->
+  Option<UVec2>`** — *does the sender's PEOPLE know this band, and where does it go to find it?*
+  `people` is every resident band of the sender's people (`dealings::sender_people_bands`; the edge
+  carries no faction). The target's live tile when it is the sender's own people or `Active` on the
+  faction's map; otherwise the position of the FRESHEST edge (max `last_seen_turn`, a tie to the lower
+  observer `BandId`) from any of `people` to the target, live or parked (any edge not yet forgotten);
+  `None` when none holds — the launch gate's refusal, *"your people has never met band <id>"* — the id the command carried, never the band's name,
+  which a people that never met it does not know. It is the
+  one launch-knowledge question (`check_destination`, the station post). **It does not widen tie
+  strength**: the gatherings, the knowledge rider, supply pooling, defection, independence, station
+  reports and culture pressure keep reading the band's own edge.
 
 - **`edges_between(a, b)`** — the two directed edges as they stand, for a reader that folds them
   itself. Independence reads the strongest strength and the latest `last_contact_turn` between a band

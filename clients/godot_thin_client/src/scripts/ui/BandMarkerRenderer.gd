@@ -20,6 +20,8 @@ var _band_banner_box: StyleBoxFlat = null
 # nothing to collide with.
 var _label_rects: Array[Rect2] = []
 var _label_grants: Dictionary = {}   # Vector2i -> Rect2
+var _ghost_label_rects: Dictionary = {}   # subject band id -> Rect2, the ghosts' pills (see draw_remembered_bands)
+var _ghost_pill_box: StyleBoxFlat = null
 # …and the same pass's FOOTPRINTS, expressed RELATIVE to the token centre they were measured from —
 # see `name_pill_offset`, the one consumer.
 var _label_offsets: Dictionary = {}   # Vector2i -> Rect2
@@ -61,16 +63,33 @@ func draw_primary_bands(radius: float, origin: Vector2) -> void:
 ## **REMEMBERED BANDS** — a ghost token for every people the viewer holds a tie to and cannot
 ## currently see (`MapView.remembered_bands`), at the tile it was last seen on. Same stage art a band
 ## token wears, desaturated, at faded by the age of the news (`REMEMBERED_FADE_TURNS`). Drawn in
-## the live `_draw` (above the fog tint, which is a terrain tint), no nameplate and no decorations.
+## the live `_draw` (above the fog tint, which is a terrain tint), no decorations.
+##
+## **A GHOST NAMES ITSELF, IN THE LIVE NAMEPLATE FAMILY, DIMMED.** Same gate and shape as a live band's
+## plate: the NAME PILL (same font, same anchor under the token, same footprint maths) at/above
+## `BAND_NAME_PILL_MIN_RADIUS`, the scaled bar between that and `ICON_MIN_DETAIL_RADIUS`, nothing below.
+## Everything the plate inks takes the ghost's own `news_age` alpha, so it reads as remembered. The text
+## is `ConnectionsRoster.subject_label` (the Peoples tab's rule; never a raw BandId). The border/bar is
+## the subject's faction colour when the tie carries `subject_faction`, else the neutral fallback.
+## Live pills are reserved first (`_reserve_name_pills`); a ghost pill whose footprint hits a placed
+## rect (live or ghost) is SKIPPED, ghosts placing newest sighting first, then by subject band id.
 func draw_remembered_bands(radius: float, origin: Vector2) -> void:
+	_ghost_label_rects.clear()
 	var rows: Array = _view.remembered_bands()
 	if rows.is_empty():
 		return
 	var tex := _grey_stage_texture(_view.REMEMBERED_STAGE_ID)
 	if tex == null:
 		return
+	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var turn_a := int(a.get("last_seen_turn", 0))
+		var turn_b := int(b.get("last_seen_turn", 0))
+		if turn_a != turn_b:
+			return turn_a > turn_b
+		return int(a.get("subject_band_id", 0)) < int(b.get("subject_band_id", 0)))
 	var token_radius := radius * _view.BAND_TOKEN_RADIUS_FACTOR
 	var glyph_size := int(maxf(_view.SECONDARY_ICON_MIN_SIZE, token_radius * _view.BAND_STAGE_GLYPH_SIZE_FACTOR))
+	var plates: Array = []   # [Rect2, name, border colour, alpha], drawn after every token
 	for tie in rows:
 		var alpha := lerpf(_view.REMEMBERED_MAX_ALPHA, _view.REMEMBERED_MIN_ALPHA,
 			clampf(float(tie.get("news_age", 0)) / float(_view.REMEMBERED_FADE_TURNS), 0.0, 1.0))
@@ -81,6 +100,59 @@ func draw_remembered_bands(radius: float, origin: Vector2) -> void:
 		shadow.a *= alpha
 		_view.draw_texture_rect(tex, Rect2(box.position + _view.MARKER_GLYPH_SHADOW_OFFSET, box.size), false, shadow)
 		_view.draw_texture_rect(tex, box, false, Color(1.0, 1.0, 1.0, alpha))
+		if radius < _view.ICON_MIN_DETAIL_RADIUS:
+			continue
+		var faction_color: Color = MapView.faction_color(tie.get("subject_faction", ""),
+			_view.BAND_FACTION_FALLBACK_COLOR)
+		if radius < _view.BAND_NAME_PILL_MIN_RADIUS:
+			_draw_band_banner(center, token_radius, faction_color, alpha)
+			continue
+		var band_name := ConnectionsRoster.subject_label(tie, _view._label_roster)
+		var footprint: Rect2 = _name_pill_rects(center, token_radius, band_name, 1)[NAME_PILL_FOOTPRINT]
+		if footprint.size == Vector2.ZERO or _hits_placed_pill(footprint):
+			continue
+		_ghost_label_rects[int(tie.get("subject_band_id", HudConst.NO_BAND_ID))] = footprint
+		plates.append([footprint, band_name, faction_color, alpha])
+	for plate in plates:
+		_draw_ghost_name_pill(plate[0], plate[1], plate[2], plate[3])
+
+## The subject band id -> footprint of every ghost pill the last `draw_remembered_bands` placed.
+func ghost_label_rects() -> Dictionary:
+	return _ghost_label_rects
+
+func _hits_placed_pill(footprint: Rect2) -> bool:
+	for placed in _label_rects:
+		if placed.intersects(footprint):
+			return true
+	for placed in _ghost_label_rects.values():
+		if placed.intersects(footprint):
+			return true
+	return false
+
+## The live pill's plate and text at the ghost's alpha. ONE rounded StyleBoxFlat rather than
+## `_draw_pill_plate`: that plate is a rect plus two circles (plus a border plate under the fill), whose
+## overlaps would double up at alpha < 1 and show seams. Same inked extent (`footprint` is the plate's).
+func _draw_ghost_name_pill(footprint: Rect2, band_name: String, border: Color, alpha: float) -> void:
+	var font: Font = ThemeDB.fallback_font
+	if font == null:
+		return
+	if _ghost_pill_box == null:
+		_ghost_pill_box = StyleBoxFlat.new()
+		_ghost_pill_box.set_border_width_all(int(ceilf(_view.BAND_NAME_PILL_BORDER_WIDTH)))
+	var bg: Color = _view.MARKER_BADGE_BG
+	bg.a *= alpha
+	border.a = alpha
+	_ghost_pill_box.bg_color = bg
+	_ghost_pill_box.border_color = border
+	_ghost_pill_box.set_corner_radius_all(int(ceilf(footprint.size.y * 0.5)))
+	_view.draw_style_box(_ghost_pill_box, footprint)
+	var text_size := _name_text_size(band_name)
+	var fg: Color = _view.MARKER_BADGE_FG
+	fg.a *= alpha
+	var middle := footprint.get_center()
+	_view.draw_string(font,
+		Vector2(middle.x - text_size.x * 0.5, middle.y + text_size.y * NAME_PILL_BASELINE_FACTOR),
+		band_name, HORIZONTAL_ALIGNMENT_LEFT, -1, _view.BAND_NAME_PILL_FONT_SIZE, fg)
 
 var _grey_textures: Dictionary = {}   # stage id -> ImageTexture
 
@@ -414,7 +486,7 @@ const NAME_PILL_BASELINE_FACTOR := 0.32
 ## cannot hold text at any legible size, and above `BAND_NAME_PILL_MIN_RADIUS` the name pill replaces
 ## it at the same anchor. Returns the bar Rect2 so the caller can anchor the `×N` count pill to its
 ## right end.
-func _draw_band_banner(center: Vector2, token_radius: float, faction_color: Color) -> Rect2:
+func _draw_band_banner(center: Vector2, token_radius: float, faction_color: Color, alpha: float = 1.0) -> Rect2:
 	var width := token_radius * _view.BAND_BANNER_WIDTH_FACTOR
 	var height := token_radius * _view.BAND_BANNER_HEIGHT_FACTOR
 	var top := center.y + token_radius + token_radius * _view.BAND_BANNER_GAP_FACTOR
@@ -424,6 +496,11 @@ func _draw_band_banner(center: Vector2, token_radius: float, faction_color: Colo
 		_band_banner_box = StyleBoxFlat.new()
 		_band_banner_box.border_color = _view.BAND_BANNER_OUTLINE_COLOR
 		_band_banner_box.set_border_width_all(int(_view.BAND_BANNER_OUTLINE_WIDTH))
+	# `alpha` < 1 is a remembered band's bar; a live band's is 1.0 and draws exactly as before.
+	var outline: Color = _view.BAND_BANNER_OUTLINE_COLOR
+	outline.a *= alpha
+	_band_banner_box.border_color = outline
+	faction_color.a *= alpha
 	_band_banner_box.bg_color = faction_color
 	_band_banner_box.set_corner_radius_all(int(maxf(0.0, height * _view.BAND_BANNER_CORNER_RADIUS_FACTOR)))
 	_view.draw_style_box(_band_banner_box, rect)

@@ -938,6 +938,7 @@ var terrain_palette: Dictionary = {}
 var terrain_tags_overlay: PackedInt32Array = PackedInt32Array()
 var terrain_tag_labels: Dictionary = {}
 var units: Array = []
+var _label_roster: HudBandLaborState = HudBandLaborState.new()   # see set_label_roster
 var _current_turn: int = 0   # snapshot turn; ages the remembered ghosts (see set_current_turn)
 var _connection_ties: Array = []   # the viewer's contact ties (see set_connections)
 var herds: Array = []
@@ -3041,8 +3042,7 @@ func remembered_bands() -> Array:
 			continue
 		if int(tie.get("last_seen_x", -1)) < 0 or int(tie.get("last_seen_y", -1)) < 0:
 			continue
-		if not best.has(subject) \
-				or int(tie.get("last_seen_turn", 0)) > int((best[subject] as Dictionary).get("last_seen_turn", 0)):
+		if not best.has(subject) or HudBandLaborState.is_fresher_sighting(tie, best[subject]):
 			best[subject] = tie
 	var rows: Array = []
 	for subject in best.keys():
@@ -3050,6 +3050,14 @@ func remembered_bands() -> Array:
 		row["news_age"] = HudConnectionsVocab.age_of(int(row.get("last_seen_turn", 0)), _current_turn)
 		rows.append(row)
 	return rows
+
+## Coordinator push (Main ← HUD): the roster state a remembered band's NAME is resolved against
+## (`ConnectionsRoster.subject_label`). Defaults to an empty one, which skips the roster tier and
+## still names a ghost by its remembered name or its last-seen tile.
+func set_label_roster(roster: HudBandLaborState) -> void:
+	if roster != null:
+		_label_roster = roster
+		queue_redraw()
 
 ## Coordinator push (Main ← snapshot `turn`): the clock the remembered ghosts age against.
 func set_current_turn(turn: int) -> void:
@@ -3424,27 +3432,13 @@ func _draw_arrowhead(start: Vector2, end: Vector2, color: Color, size: float = 8
 ## **DOES A LEFT CLICK ON (col, row) GO TO `targeting_clicked` RATHER THAN SELECT?** Every click while a
 ## command is targeting; and, under the PASSIVE highlight an open Deny or Trade sheet draws, a click on
 ## a highlighted target only — it pre-selects the sheet's target, and every other click selects as
-## usual. The Trade sheet's descriptor also captures a click on any visible band that is not the
-## sender, so the controller can refuse it with a reason.
+## usual. The Trade sheet rings every band the people knows, so a click on any of them chooses it.
 func targeting_click_captures(col: int, row: int) -> bool:
 	if _annotations.is_targeting_active():
 		return true
 	if not _annotations.is_passive_highlight():
 		return false
-	if _annotations.highlighted_at(col, row):
-		return true
-	return _annotations.captures_band_clicks() and _band_other_than_sender_at(col, row)
-
-## Does a visible band (an expedition party is not one) other than the passive descriptor's sender stand on (col, row)? The Trade sheet
-## captures such a click to refuse it with a reason rather than let it select the band and close the sheet.
-func _band_other_than_sender_at(col: int, row: int) -> bool:
-	var sender_id := _annotations.targeting_sender_band_id()
-	for unit in _units_on_tile(col, row):
-		if bool((unit as Dictionary).get("is_expedition", false)):
-			continue
-		if int((unit as Dictionary).get("band_id", HudConst.NO_BAND_ID)) != sender_id:
-			return true
-	return false
+	return _annotations.highlighted_at(col, row)
 
 ## The targeting twin of `_emit_tile_selection`: the same visibility-redacted `tile_info`, and NO
 ## `selected_tile` write — see `targeting_clicked`.

@@ -1509,3 +1509,10 @@ session's decoded frames (every frame, fog on and off, selected and not) and wor
 meter on the building patch throughout; a held rung draws no badge glyph by design (`badge_rung` states a
 rung under way or on offer, never one already held).
 
+## `map_remembered_band_names` — a ghost's dimmed name pill
+
+`_remembered_band_name_states` runs after `map_remembered_bands` on the crowded 35x32 grid (pill zoom): a live
+band, a ghost on the adjacent tile (skipped against the live pill), a clear ghost with a faction border
+(placed), an older ghost beside it (skipped, ghost-vs-ghost), and a nameless tie (the `Band near (x, y)`
+fallback). Asserts read `ghost_label_rects()`, and the dimming is the ghost plate's peak luminance under the
+live plate's.

@@ -4988,19 +4988,20 @@ Pick a band on the map to trade with. Load something first.   (WARN, also the Se
 > The tie gate, the remembered-position keystone, the typed field's rules, the floors and the three
 > mass terms below all stand.
 
-### THE TIE IS THE GATE, AND THE PICK TEACHES IT RATHER THAN ENFORCING IT SILENTLY
+### KNOWING WHERE A BAND IS BELONGS TO THE PEOPLE; THE TIE IS PER BAND
 
 A shipment has one site: its subject is a band, reached on the map — pre-selected by a click while
-the sheet is open — and the herd drawer's hunting-party branch has nothing to stay in step with. The
-click resolves only a band the sender holds a LIVE tie to
-(`TargetingController.trade_destination_at` over `HudBandLaborState.connections_for_band`, keyed on the
-durable `band_id`, and `tie_is_live`), because `ConnectionLedger::get(..).strength > NO_TIE` is what the
-sim gates the launch on.
+the sheet is open. The click resolves any band the PEOPLE knows (`TargetingController.trade_destination_at`
+over `HudBandLaborState.known_bands`, keyed on the durable `band_id`): an own band, a visible band, or one
+any of the player's bands holds a connection row to — live or parked. Tie strength is per band and stays
+the readout of the selected band's own row; it does not gate a send, and the sim aims the party at the
+live tile if the band is visible, else the freshest sighting across all the player's bands.
 
-- **Only LIVE ties are ringed** (`TargetingController.live_tie_tiles`), so a PARKED tie's band
-  (strength 0 — *"we know such a people exist and have no current dealings"*) is never offered, and a
-  click on it sets nothing.
-- **The `📦 Trade` verb is gated on IDLE WORKERS and never on the ties**; a sender with no live tie
+- **A GHOST IS RINGED AND CLICKABLE LIKE A VISIBLE BAND.** A known band that is not in `populations`
+  is drawn as a remembered (ghost) band at the freshest sighting, and that hex is unseen by definition,
+  so the explicit highlight set (`AnnotationRenderer.highlighted_at` and the ring draw) is NOT fog-gated — only
+  the herd glow is, because a herd the viewer cannot see would be a leak.
+- **The `📦 Trade` verb is gated on IDLE WORKERS and never on the ties**; a people that knows no other band
   gets `COMPOSE_DESTINATION_NO_TIES` on the sheet over a visible-and-disabled send, since no click could
   be accepted.
 - **The `To` row states a pre-selected destination** — named as the cycler names it
@@ -5776,8 +5777,7 @@ zone is declared on band pages only (`BAND_ZONE_LAYOUT`); the faction page has n
   is above `HudConst.TIE_STRENGTH_NONE`; `parked` (WARN) at that strength.
 - **A parked tie is shown.** Its second line is amber and says what to do and where:
   `No tie — meet them again. Last seen at (x, y), turn N.` A parked tie with no recorded tile reads
-  `No tie — meet them again before anything can flow.` The full sighting sentence is on that line's
-  hover.
+  `No tie — meet them again.` The full sighting sentence is on that line's hover.
 - **Order**: live ties by strength, strongest first; then parked ties by `last_contact_turn`, most
   recent first; ties on either key by `subject_band_id`.
 - **The name** (`ConnectionsRoster.subject_label`, also the shipment picker's): the player's own
@@ -5803,19 +5803,33 @@ bottom dock's wide shell, the section under Parties after Trade's), in `band_pan
 
 ### STATION PEOPLE — the roster's link, and the sheet it opens (issue #774)
 
-A band posts some of its people at a band it holds a LIVE tie with (sim half:
+A band posts some of its people at any band its people knows (a parked tie, or a tie held only by a sibling, still counts; sim half:
 `.claude/rules/core_sim/expeditions.md` → "A stationed party"). The client half is four small pieces,
 none of them a new panel.
 
 - **The link.** Line 2 of every roster row carries `Station people` at its right end
   (`ConnectionsRoster._build_station_link`), so a row stays two lines and the remembered-sighting
-  sentence ellipsises first. It is ALWAYS drawn and greys WITH ITS REASON, in this precedence: people
-  already posted or walking there (`Stationed`), a PARKED tie (`No tie — meet them again first.`), no
-  free workers. **Borders are the server's to refuse and the client does not gate on them**: a tie
-  carries no faction on its subject, and `FactionPolicyState` publishes only the viewer's OWN
-  `openBorders`, so a closed host surfaces as the server's refusal in the feed. One post per host per
-  band is the client's offer (`HudBandLaborState.station_party_for_host`, outbound or stationed); no
-  server rule backs it.
+  sentence ellipsises first. It is ALWAYS drawn, and the TIE does not gate it: it greys only for people
+  already posted or walking there (`Stationed`) and for no free workers. **Borders are the server's to
+  refuse and the client does not gate on them**: a tie carries no faction on its subject, and
+  `FactionPolicyState` publishes only the viewer's OWN `openBorders`, so a closed host surfaces as the
+  server's refusal in the feed. One post per host per band is the client's offer
+  (`HudBandLaborState.station_party_for_host`, outbound or stationed); no server rule backs it.
+- **The `Trade` link beside it** (`ConnectionsRoster._build_trade_link`), on the same rows, wearing the
+  Trade band verb's own mark (`HudSprites.for_mark` of the `BAND_VERBS` entry, the verb's glyph where the art
+  fails to load) and the word `Trade`. A press (`BandPanelController._on_trade_link_pressed`) opens the
+  band's Trade sheet through `dispatch_verb`, then hands the row's band to the sheet through the
+  pre-selection `choose` seam a map click uses (`TargetingController.choose_preselected`), so the `To` row and
+  its `✕` are the sheet's own. It rides the `diplomacy` bundle (`HudConnectionsVocab.TRADE_PRESS_KEY`) rather
+  than a fifth parameter on every builder. Greyed only with the verb's no-idle-workers sentence. Guarded by
+  `ui_preview`'s `station` chapter with a real pointer click on the link.
+- **BANDS KNOWN ONLY THROUGH A SIBLING HAVE A ROW TOO** (`HudBandLaborState.known_through_siblings`,
+  `ConnectionsRoster._build_known_row`): a band this one holds no row to, another of the player's bands does,
+  and which is not one of the player's own. Line 1 is its name and the word `known`; line 2 reads
+  `Known through <sibling> · last seen at (x, y), turn N` (`HudConnectionsVocab.KNOWN_THROUGH_FORMAT`), the
+  sibling being the observer of the freshest sighting, with both links enabled. These rows count in the head
+  and the badge. The selected band's OWN tie readout (strength, state word, `No tie — meet them again`) is
+  unchanged on its own rows: it is that band's tie, still meaningful.
 - **The row while posted.** `stationed` (HEALTHY) replaces growing / fading once the party has
   ARRIVED (phase `stationed`) — a party still walking leaves the tie's own word, since saying
   `stationed` over a tie that is still fading would be untrue. A post no longer tops its tie up live: the

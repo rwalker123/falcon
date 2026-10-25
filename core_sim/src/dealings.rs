@@ -49,7 +49,7 @@ use crate::{
         PopulationCohort, ResidentBand, ShipmentTerms, StrangersOrder, Tile, TransferCause,
         TransferCounterparty, TransferCrossing, TransferDirection,
     },
-    connections::{ConnectionKey, ConnectionLedger, NO_TIE},
+    connections::ConnectionLedger,
     materials_config::MaterialsConfigHandle,
     orders::FactionId,
     resources::{
@@ -1091,10 +1091,34 @@ pub struct ShipmentGate {
     pub aim: UVec2,
 }
 
-/// **The destination is a real, resident band, and the home band holds a live tie to it.** Faction is
-/// never asked: faction is a property of the endpoint (`connections.md`), so a destination in
-/// another people works by construction. A parked tie refuses exactly as a missing one does —
-/// *"at zero, nothing flows"* (`docs/plan_contact_and_logistics.md` §Q6).
+/// **Every resident band of `faction`** - the people whose memory a launch aims from
+/// (`ConnectionLedger::launch_aim`), in `BandId` order.
+pub fn sender_people_bands(world: &mut World, faction: FactionId) -> Vec<BandId> {
+    let mut query = world.query_filtered::<(&BandId, &PopulationCohort), With<ResidentBand>>();
+    let mut bands: Vec<BandId> = query
+        .iter(world)
+        .filter(|(_, cohort)| cohort.faction == faction)
+        .map(|(id, _)| *id)
+        .collect();
+    bands.sort();
+    bands
+}
+
+/// **The refusal when a people has never met the band it would send to** - names it `band <id>`,
+/// never its `BandName`: a people that has never met a band does not know what it is called, and the
+/// id is the one the command itself carried, so the refusal discloses nothing the sender did not send.
+pub fn never_met_reason(verb: &str, band: BandId, action: &str) -> String {
+    format!(
+        "{verb}: your people has never met band {} - meet them before you {action} them.",
+        band.0
+    )
+}
+
+/// **The destination is a real, resident band that the sender's PEOPLE knows.** Faction is
+/// never asked of the destination: faction is a property of the endpoint (`connections.md`), so a
+/// destination in another people works by construction. Knowing is the people's: the destination is
+/// the sender's own people, visible on its map, or held by an edge (live or parked) from ANY
+/// resident band of the sender's people (`ConnectionLedger::launch_aim`). Otherwise it refuses.
 pub fn check_destination(
     world: &mut World,
     faction: FactionId,
@@ -1120,30 +1144,22 @@ pub fn check_destination(
             "{verb}: band {destination_band_id} is not standing anywhere."
         ));
     };
-    let Some(&home_band) = world.get::<BandId>(home_entity) else {
+    if world.get::<BandId>(home_entity).is_none() {
         return Err(format!(
             "{verb}: the sending band has no id to trade under."
         ));
-    };
-    let tie = world
-        .resource::<ConnectionLedger>()
-        .get(&ConnectionKey::new(home_band, destination_band))
-        .map(|connection| connection.strength)
-        .unwrap_or(NO_TIE);
-    if tie <= NO_TIE {
-        return Err(format!(
-            "{verb}: no dealings with band {destination_band_id} — meet them before you ship to \
-             them."
-        ));
     }
-    let aim = world.resource::<ConnectionLedger>().launch_aim(
+    let people = sender_people_bands(world, faction);
+    let Some(aim) = world.resource::<ConnectionLedger>().launch_aim(
         world.resource::<crate::visibility::VisibilityLedger>(),
         faction,
-        home_band,
+        &people,
         destination_band,
         destination_faction,
         destination_pos,
-    );
+    ) else {
+        return Err(never_met_reason(verb, destination_band, "ship to"));
+    };
     Ok(ShipmentGate {
         destination_band,
         destination_faction,

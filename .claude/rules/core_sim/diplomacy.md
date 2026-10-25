@@ -231,8 +231,8 @@ reads as met (the shipped rule), which is why a fixture that never runs a turn c
 `ProposeTradeCommand`; the lists are `TradeCargoItem`s). `dealings::propose_trade` records a
 `DealingKind::Proposal` **the turn it is made**, addressed to the destination's people, and fails
 closed before recording anything: the band is the proposer's resident band with the workers; the
-destination passes `check_destination` (the shipment launch's own tie gate — a live tie, faction
-never asked); a **standing link** holds; the sender holds the give and it fits the party's pack
+destination passes `check_destination` (the shipment launch's own gate — the sender's people knows the
+destination, faction never asked); a **standing link** holds; the sender holds the give and it fits the party's pack
 (`check_cargo`, the trade verb's own carry computation); the proposal names something. **Nothing is
 drawn.** The legs are `GoodsLines` (`food`, `fodder`, one total per material) — unrated, because no
 batch exists to rate yet — held in `Dealing::agreement` beside the shipper and consignee.

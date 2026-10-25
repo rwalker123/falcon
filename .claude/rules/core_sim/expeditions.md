@@ -1416,7 +1416,11 @@ the party is walking toward, and it rides the checkpoint with the `Expedition`.
 - **At launch** (`resolve_post`, `resolve_shipment`) the aim is `ConnectionLedger::launch_aim`: the
   target's live tile when the sender knows it (the target is the sender's own people — your own
   bands are always visible to you — or the target's tile is `Active` on the sender's fog map),
-  otherwise the `last_seen_position` of the `home -> target` edge, which the launch gate guarantees.
+  otherwise the freshest `last_seen_position` across every edge from any resident band of the sender's
+  people to the target, live or parked (`launch_aim` returns `None` when there is none, and the launch
+  gate refuses with *"your people has never met <band>"*). **The shipment (`check_destination`) and the
+  station post (`resolve_post`) share this gate**: knowing the target is the people's, so a band whose
+  own edge is parked or absent can still launch when a sibling holds one or the target is on the map.
 - **Each `Outbound` turn** the aim becomes the target's live tile only if the target is the sender's
   own people, or the party sees the target this turn (its BandId is among the observe pass's
   sightings, read before the station bundle drains `pending_contacts`). Otherwise the aim is kept

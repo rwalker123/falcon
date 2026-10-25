@@ -881,7 +881,7 @@ Nothing is gained by walking them home; the player recalls them when they choose
 
 #### Who may host, and what ends a post
 
-- **Any band the sender holds a live tie with**, of any people. A splinter of your own is the
+- **Any band the sender's people knows** (its own people, visible on the map, or held by an edge from any of its bands, live or parked), of any people. A splinter of your own is the
   plainest case: it is the band most likely to fade from you.
 - **Another people's band requires that people's Open Borders** (`FactionBorderPolicies`). Your own
   bands never ask it, the same rule as moving between your own camps (`factions.md`).

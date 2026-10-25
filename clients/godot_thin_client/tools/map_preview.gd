@@ -2134,6 +2134,7 @@ func _ready() -> void:
 	# APPENDED, so no earlier frame moves.
 	await _band_ancestors_states()
 	await _remembered_band_states()
+	await _remembered_band_name_states()
 
 	_finish()
 
@@ -7844,6 +7845,132 @@ func _remembered_band_states() -> void:
 	_assert_map("remembered - hover line names the band and when (%s)" % hover,
 		hover == "Goosefen — last seen turn %d, may have moved" % (REMEMBERED_RESOLVED_TURN - REMEMBERED_NEWS_AGES[1]))
 	_map.set_connections([])
+
+## **STATE "remembered band names" - A GHOST WEARS A DIMMED NAME PILL.** The crowded 35x32 grid (pill
+## zoom). A live band sits at the west tile; ghost A stands on the ADJACENT tile (its long name collides
+## with the live pill: skipped); ghost B stands six tiles out (clear: placed, faction-coloured border);
+## ghost C stands next to B with OLDER news (ghost-vs-ghost: skipped); ghost D is far east with no
+## remembered name (falls back to the Peoples tab's `Band near (x, y)`).
+const GHOST_NAME_LIVE_BAND_ID := 950
+const GHOST_NAME_A_ID := 951
+const GHOST_NAME_B_ID := 952
+const GHOST_NAME_C_ID := 953
+const GHOST_NAME_D_ID := 954
+const GHOST_NAME_SHARED_ID := 955
+const GHOST_NAME_B_COLS_WEST := 6
+const GHOST_NAME_D_COLS_EAST := 7
+const GHOST_NAME_B_FACTION := 2
+const GHOST_NAME_TURN := 40
+const GHOST_NAME_B_AGE := 6      # turns old; the pill takes this age's alpha
+const GHOST_NAME_C_AGE := 9      # older than B, so B places first
+
+func _ghost_tie(subject: int, tile: Vector2i, name: String, age: int, faction: Variant) -> Dictionary:
+	var tie := {"observer_band_id": GHOST_NAME_LIVE_BAND_ID, "subject_band_id": subject,
+		"subject_name": name, "strength": 0.5,
+		"last_seen_x": tile.x, "last_seen_y": tile.y,
+		"last_seen_turn": GHOST_NAME_TURN - HudConnectionsVocab.RESOLVED_TURN_LAG - age}
+	if faction != null:
+		tie["subject_faction"] = faction
+	return tie
+
+func _remembered_band_name_states() -> void:
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	var snapshot := _snapshot_band_names_crowded()
+	var west: Dictionary = snapshot["populations"][0]
+	west["band_id"] = GHOST_NAME_LIVE_BAND_ID
+	snapshot["populations"] = [west]
+	snapshot["turn"] = GHOST_NAME_TURN
+	_map.set_connections([])
+	_display_snapshot(snapshot)
+	_map.set_current_turn(GHOST_NAME_TURN)
+	_map.selected_unit_id = -1
+	_map.selected_tile = Vector2i(-1, -1)
+	_map._fit_map_to_view()
+	var row := NAME_PILL_CULL_WEST_TILE.y
+	var tile_a := NAME_PILL_CULL_EAST_TILE
+	var tile_b := Vector2i(NAME_PILL_CULL_WEST_TILE.x - GHOST_NAME_B_COLS_WEST, row)
+	var tile_c := Vector2i(tile_b.x - 1, row)
+	var tile_d := Vector2i(NAME_PILL_CULL_WEST_TILE.x + GHOST_NAME_D_COLS_EAST, row)
+	_map.set_connections([
+		_ghost_tie(GHOST_NAME_A_ID, tile_a, NAME_PILL_LONG_NAME, 1, 0),
+		_ghost_tie(GHOST_NAME_B_ID, tile_b, NAME_PILL_LONG_NAME, GHOST_NAME_B_AGE, GHOST_NAME_B_FACTION),
+		_ghost_tie(GHOST_NAME_C_ID, tile_c, NAME_PILL_LONG_NAME, GHOST_NAME_C_AGE, 1),
+		_ghost_tie(GHOST_NAME_D_ID, tile_d, "", 2, null),
+	])
+	await _settle()
+	_assert_map("premise: the ghost-name frame is at pill zoom (radius %.1f >= %.1f)"
+			% [_map.last_hex_radius, MAP_VIEW.BAND_NAME_PILL_MIN_RADIUS],
+		_map.last_hex_radius >= MAP_VIEW.BAND_NAME_PILL_MIN_RADIUS)
+	await _save("map_remembered_band_names")
+	var rects: Dictionary = _map._band_markers.ghost_label_rects()
+	_assert_map("ghost names - a clear ghost's pill rect was placed", rects.has(GHOST_NAME_B_ID))
+	_assert_map("ghost names - a ghost whose pill would cover a live band's pill is skipped",
+		not rects.has(GHOST_NAME_A_ID) and _map.band_label_tiles().has(NAME_PILL_CULL_WEST_TILE))
+	_assert_map("ghost names - of two colliding ghosts the newer sighting keeps its pill",
+		rects.has(GHOST_NAME_B_ID) and not rects.has(GHOST_NAME_C_ID))
+	_assert_map("ghost names - a nameless tie still gets a pill (the Peoples tab's fallback label)",
+		rects.has(GHOST_NAME_D_ID))
+	var label_d := ""
+	for r in _map.remembered_bands():
+		if int(r["subject_band_id"]) == GHOST_NAME_D_ID:
+			label_d = ConnectionsRoster.subject_label(r, HudBandLaborState.new())
+	_assert_map("ghost names - the fallback is never a raw BandId (%s)" % label_d,
+		label_d != "" and label_d.find(str(GHOST_NAME_D_ID)) < 0)
+	var live_off: Rect2 = _map._band_markers.name_pill_offset(NAME_PILL_CULL_WEST_TILE)
+	var live_center: Vector2 = _map._hex_center_wrapped(NAME_PILL_CULL_WEST_TILE.x,
+		NAME_PILL_CULL_WEST_TILE.y, _map.last_hex_radius, _map.last_origin)
+	var live_rect := Rect2(live_center + live_off.position, live_off.size)
+	var hits_live := false
+	for rect in rects.values():
+		if (rect as Rect2).intersects(live_rect):
+			hits_live = true
+	_assert_map("ghost names - no ghost pill overlaps a live pill", not hits_live)
+	# Dimmed: the ghost plate's brightest pixel (its text) sits below the live plate's.
+	var frame: Image = await _capture()
+	var px_scale := float(frame.get_width()) / maxf(get_viewport().get_visible_rect().size.x, 1.0)
+	var ghost_peak := _peak_luma(frame, rects[GHOST_NAME_B_ID], px_scale)
+	var live_peak := _peak_luma(frame, live_rect, px_scale)
+	_assert_map("ghost names - the ghost's text is dimmer than a live pill's (%.3f < %.3f)" % [ghost_peak, live_peak],
+		ghost_peak < live_peak)
+	# A Trade sheet's passive highlight rings the live-tie ghost's hex like a visible band's, and a click on
+	# it is captured (fog is exercised by ui_preview's `trade` chapter, which owns the descriptor).
+	_map.set_targeting({
+		"active": true, TargetingController.TARGETING_PASSIVE_KEY: true,
+		"command": TargetingController.VERB_PICK_COMMAND_TRADE, "need": "tile",
+		"origin_x": NAME_PILL_CULL_WEST_TILE.x, "origin_y": NAME_PILL_CULL_WEST_TILE.y,
+		"context_label": "Band 1",
+		TargetingController.TARGETING_HIGHLIGHT_TILES_KEY: [tile_b],
+	})
+	await _settle()
+	await _save("map_remembered_band_ring")
+	_assert_map("ghost names - a live-tie ghost's hex is ringed and its click captured under the Trade highlight",
+		_map._annotations.highlighted_at(tile_b.x, tile_b.y) and _map.targeting_click_captures(tile_b.x, tile_b.y))
+	_map.set_targeting({})
+	# THE GHOST SITS WHERE THE PEOPLE LAST KNOWS THE BAND IS: of two bands' ties to one subject, the freshest
+	# `last_seen_turn` places it, and on equal turns the lower observer id does.
+	var tie_turn := GHOST_NAME_TURN - HudConnectionsVocab.RESOLVED_TURN_LAG - 1
+	var older := {"observer_band_id": 2, "subject_band_id": GHOST_NAME_SHARED_ID, "strength": 0.0,
+		"last_seen_x": 1, "last_seen_y": 1, "last_seen_turn": tie_turn - 3}
+	var tied_high := {"observer_band_id": 9, "subject_band_id": GHOST_NAME_SHARED_ID, "strength": 0.0,
+		"last_seen_x": 4, "last_seen_y": 4, "last_seen_turn": tie_turn}
+	var tied_low := {"observer_band_id": 5, "subject_band_id": GHOST_NAME_SHARED_ID, "strength": 0.25,
+		"last_seen_x": 6, "last_seen_y": 6, "last_seen_turn": tie_turn}
+	_map.set_connections([older, tied_high, tied_low])
+	var shared_row: Dictionary = {}
+	for ghost_row in _map.remembered_bands():
+		if int(ghost_row["subject_band_id"]) == GHOST_NAME_SHARED_ID:
+			shared_row = ghost_row
+	_assert_map("ghost names - across observers the freshest sighting places the ghost, ties to the lower observer id",
+		int(shared_row.get("last_seen_x", -1)) == 6 and int(shared_row.get("observer_band_id", -1)) == 5)
+	_map.set_connections([])
+
+func _peak_luma(image: Image, rect: Rect2, px_scale: float) -> float:
+	var peak := 0.0
+	for y in range(maxi(int(rect.position.y * px_scale), 0), mini(int(rect.end.y * px_scale), image.get_height())):
+		for x in range(maxi(int(rect.position.x * px_scale), 0), mini(int(rect.end.x * px_scale), image.get_width())):
+			peak = maxf(peak, image.get_pixel(x, y).get_luminance())
+	return peak
 
 ## Mean per-pixel |dL| between two same-size frames inside `rect` - a perceptible-magnitude measure,
 ## not a changed-pixel count (a count passes on an invisible 1-level wash).

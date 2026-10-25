@@ -972,7 +972,7 @@ const STATION_NEWS_LATE_UNKNOWN := "Keeps the tie from fading. Their news reache
 const STATION_SEND_BUTTON := "Station them"
 const STATION_SEND_HINT := "Post these people with them. You feed them; they come home when you recall them."
 const STATION_SEND_NO_FREE_REASON := "No free workers — take someone off a work row to station them."
-const STATION_SEND_NO_TIE_REASON := "No live tie with them — meet them again first."
+const STATION_SEND_UNKNOWN_REASON := "Your people have not met them yet."
 const STATION_SEND_ALREADY_REASON := "Your people are already posted with them."
 
 # =====================================================================================
@@ -1121,7 +1121,7 @@ const COMPOSE_DESTINATION_CLEAR_TOOLTIP := "Clear the destination, then pick ano
 
 ## **WHY A SHIPMENT HAS NOWHERE TO GO, WHEN IT HAS NOT.** A band holding no live tie has no band the
 ## map could ring, so the sheet states the gate in the sim's own terms.
-const COMPOSE_DESTINATION_NO_TIES := "This band knows no other band yet. Ties form by standing where you can see each other."
+const COMPOSE_DESTINATION_NO_TIES := "Your people know no other band yet. Bands become known by standing where you can see each other."
 
 
 
@@ -1336,12 +1336,6 @@ const COMPOSE_FIELD_POLICY := "Policy"
 ## teach.
 const PREY_PICK_NOTE_TITLE := "Pick prey"
 const PREY_PICK_MISS := "No huntable herd there — click on a herd."
-
-## The Trade sheet's refusal when the map click lands on a band the sender cannot ship to: a tie that
-## is not live (sender, target, the turn the tie was last in contact), and no tie at all (sender,
-## target). Posted under the Trade verb's name (`TargetingController._refuse_trade_click`).
-const TRADE_PICK_LOST_TOUCH_FORMAT := "%s lost touch with %s on turn %d — move closer to trade with them."
-const TRADE_PICK_NOT_MET_FORMAT := "%s has not met %s — move closer to trade with them."
 
 const COMPOSE_OF_IDLE_FORMAT := "of %d idle"
 

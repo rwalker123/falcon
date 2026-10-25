@@ -200,7 +200,10 @@ func is_passive_highlight() -> bool:
 ## descriptor's `TARGETING_HIGHLIGHT_TILES_KEY` set? The click MapView captures under the PASSIVE
 ## highlight is exactly this set, so a click can only pre-select a target the map glowed.
 func highlighted_at(col: int, row: int) -> bool:
-	if _highlight_tiles().has(Vector2i(col, row)) and _view._is_tile_visible(col, row):
+	# NOT fog-gated: the explicit set is the viewer's own live ties at the hex each was last seen, and a
+	# remembered (ghost) band stands on a hex the viewer cannot currently see by definition. The herd
+	# glow below keeps its gate — a herd the viewer cannot see would be a leak.
+	if _highlight_tiles().has(Vector2i(col, row)):
 		return true
 	if String(_targeting.get("need", "")) != TARGETING_NEED_HERD:
 		return false
@@ -208,14 +211,6 @@ func highlighted_at(col: int, row: int) -> bool:
 		if int(herd.get("x", -1)) == col and int(herd.get("y", -1)) == row and _herd_glows(herd):
 			return true
 	return false
-
-## Does the passive descriptor capture a click on ANY visible band's hex (the Trade sheet's), and
-## whose is the sender? `MapView.targeting_click_captures` reads both.
-func captures_band_clicks() -> bool:
-	return bool(_targeting.get(TargetingController.TARGETING_CAPTURES_BANDS_KEY, false))
-
-func targeting_sender_band_id() -> int:
-	return int(_targeting.get(TargetingController.TARGETING_SENDER_BAND_KEY, HudConst.NO_BAND_ID))
 
 ## The descriptor's explicit highlight set (a Trade sheet's live-tie bands), `[]` when it carries none.
 func _highlight_tiles() -> Array:
@@ -460,11 +455,9 @@ func draw_targeting(radius: float, origin: Vector2) -> void:
 				_view._hovered_tile.x, _view._hovered_tile.y, radius, origin)
 			_view._draw_reticle(reticle_center, radius * TARGETING_RETICLE_FACTOR, cyan, pulse)
 	# The explicit highlight set (a Trade sheet's live-tie bands) rings each hex the way the herd glow
-	# rings a herd, fog-gated the same way.
+	# rings a herd. Not fog-gated (see `highlighted_at`): a ghost's hex is fogged by definition.
 	for tile_variant in _highlight_tiles():
 		var tile: Vector2i = tile_variant
-		if not _view._is_tile_visible(tile.x, tile.y):
-			continue
 		var tcenter: Vector2 = _view._hex_center_wrapped(tile.x, tile.y, radius, origin)
 		var tring_radius: float = radius * (TARGETING_HERD_RING_FACTOR + TARGETING_RING_PULSE_FACTOR * pulse)
 		var tring_color := Color(cyan.r, cyan.g, cyan.b,

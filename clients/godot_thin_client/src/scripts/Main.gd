@@ -521,6 +521,10 @@ func _ready() -> void:
         if hud != null and map_view.has_signal("work_tab_requested") and hud.has_method("show_band_work_tab_for_entity"):
             if not map_view.is_connected("work_tab_requested", Callable(hud, "show_band_work_tab_for_entity")):
                 map_view.connect("work_tab_requested", Callable(hud, "show_band_work_tab_for_entity"))
+        # A remembered band's ghost names itself by the Peoples tab's rule (`ConnectionsRoster.subject_label`),
+        # which reads the HUD's roster state; hand the map that same instance.
+        if hud != null and hud.has_method("band_labor_state") and map_view.has_method("set_label_roster"):
+            map_view.set_label_roster(hud.band_labor_state())
         if hud != null and hud.has_signal("faction_knowledge_changed") and map_view.has_method("set_faction_knowledge"):
             if not hud.is_connected("faction_knowledge_changed", Callable(map_view, "set_faction_knowledge")):
                 hud.connect("faction_knowledge_changed", Callable(map_view, "set_faction_knowledge"))
