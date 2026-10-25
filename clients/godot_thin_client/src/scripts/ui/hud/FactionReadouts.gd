@@ -138,6 +138,8 @@ const KNOWLEDGE_UNLOCK_NOTES := {
 	"drives": "Hunters take more from a big herd.",
 	# Storage (#707/#708): taught by rot, unlocks both stores.
 	"storage": "Build a drying rack at camp and dig storage pits, so food keeps longer.",
+	# Ritual (#692): taught by gatherings, unlocks the monument.
+	"ritual": "Raise a monument at a gathering ground, a place where your dead lie or bands have met.",
 }
 
 # --- Owned state (moved off HudLayer) ---

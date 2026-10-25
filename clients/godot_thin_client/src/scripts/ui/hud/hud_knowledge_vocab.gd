@@ -435,6 +435,8 @@ const PRACTISE_NOTES := {
 	"drives": "Learned from camp kills on a herd you follow.",
 	# Storage (#707, #708) — taught by keeping food, fastest when it rots; not by a rung.
 	"storage": "Learned by keeping food your people don't eat right away, and fastest when it rots.",
+	# Ritual (#692) — taught by gatherings, two bands meeting with no live tie between them.
+	"ritual": "Learned each time your bands meet a band they had no tie to.",
 }
 
 ## The craft half, which needs no table: every craft is learned the same way, and the sim charges the
