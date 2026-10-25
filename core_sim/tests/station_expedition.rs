@@ -1604,3 +1604,111 @@ fn a_band_seen_directly_and_known_to_the_host_lands_once_at_the_direct_position(
         "the party's own sighting is fresher and wins"
     );
 }
+
+/// Turns a post is watched for once its first report has landed.
+const WATCHED_POST_TURNS: u32 = 25;
+
+/// **A STATIONED POST'S LANDED REPORTS MOVE CLOCK 1 EVERY TURN.** The party stands on its host, sees
+/// it each turn, and each turn's report lands a runner's walk later with the turn it was observed:
+/// `last_seen_turn` rises by one per landed report and trails `last_contact_turn` by the walk, a
+/// constant. (The live "stuck at 194" reading was this lag: `contact 203 - seen 194` is the walk.)
+#[test]
+fn a_stationed_posts_landed_reports_advance_clock_one_every_turn() {
+    let mut rig = cross_faction_rig_with_a_fresh_tie();
+    let (home, host, home_id, host_id, party) =
+        (rig.home, rig.host, rig.home_id, rig.host_id, rig.party);
+    let formed = edge(&rig.app, home_id, host_id)
+        .expect("the fresh tie")
+        .last_contact_turn;
+    run_until_stationed(&mut rig.app, party, &[home, host]);
+    let mut landed = None;
+    for _ in 0..ARRIVAL_BUDGET {
+        feed(&mut rig.app, home);
+        feed(&mut rig.app, host);
+        run_turn(&mut rig.app);
+        let now = edge(&rig.app, home_id, host_id).expect("the tie");
+        if now.last_contact_turn > formed {
+            landed = Some(now);
+            break;
+        }
+    }
+    let first = landed.expect("the first report lands");
+    let mut previous = first.clone();
+    for _ in 0..WATCHED_POST_TURNS {
+        feed(&mut rig.app, home);
+        feed(&mut rig.app, host);
+        run_turn(&mut rig.app);
+        let now = edge(&rig.app, home_id, host_id).expect("the tie");
+        if now.last_contact_turn > previous.last_contact_turn {
+            assert!(
+                now.last_seen_turn > previous.last_seen_turn,
+                "a landed report advances clock 1 to the turn it was observed \
+                 (landing {}: seen {} -> {})",
+                now.last_contact_turn,
+                previous.last_seen_turn,
+                now.last_seen_turn
+            );
+        } else {
+            assert_eq!(now.last_seen_turn, previous.last_seen_turn);
+        }
+        assert!(
+            now.last_seen_turn < now.last_contact_turn,
+            "an observation is older than the report that carried it home"
+        );
+        previous = now;
+    }
+    assert!(
+        previous.last_seen_turn >= first.last_seen_turn + WATCHED_POST_TURNS as u64 / 2,
+        "clock 1 keeps up with the post: it is not pinned at the first observation"
+    );
+}
+
+/// **A CARRIED TIE IS NEWS ONCE.** The host's edge to a far band is kept fresh by contact (as a
+/// second people's runner keeps one) while its observation never changes. The runner re-delivers
+/// that one old observation every turn; it must not refresh the home tie's strength or contact clock,
+/// which would hold it at full beside a clock 1 that never moves.
+#[test]
+fn a_carried_tie_that_is_not_news_does_not_hold_the_home_tie_up() {
+    let mut rig = same_faction_rig();
+    let (home, host, party) = (rig.home, rig.host, rig.party);
+    run_until_stationed(&mut rig.app, party, &[home, host]);
+    let observed = tick(&rig.app);
+    let cfg = rig.app.world.resource::<ConnectionsConfigHandle>().get();
+    let keep_host_edge_fresh = |rig: &mut Rig| {
+        let now = tick(&rig.app);
+        rig.app
+            .world
+            .resource_mut::<ConnectionLedger>()
+            .record_contact(
+                ConnectionKey::new(rig.host_id, KNOWN_BAND),
+                &Sighting::new(KNOWN_BAND_POS, observed, "the Hill People", HOST_FACTION),
+                now,
+                &cfg,
+            );
+    };
+    let mut first_strength = None;
+    let mut strongest = Scalar::zero();
+    for _ in 0..LANDING_BUDGET {
+        keep_host_edge_fresh(&mut rig);
+        step(&mut rig);
+        if let Some(carried) = edge(&rig.app, rig.home_id, KNOWN_BAND) {
+            first_strength.get_or_insert(carried.strength);
+            strongest = strongest.max(carried.strength);
+            assert_eq!(
+                carried.last_seen_turn, observed,
+                "clock 1 holds the host's one observation"
+            );
+        }
+    }
+    let first = first_strength.expect("the carried tie landed once");
+    assert_eq!(
+        strongest, first,
+        "re-delivering an observation home already holds is not a contact: strength never rises \
+         past the one landing"
+    );
+    let end = edge(&rig.app, rig.home_id, KNOWN_BAND).map(|e| e.strength);
+    assert!(
+        end.is_none_or(|strength| strength < first),
+        "and with no fresh news the tie bleeds"
+    );
+}

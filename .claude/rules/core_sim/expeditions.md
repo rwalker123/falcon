@@ -1356,6 +1356,14 @@ config, derived at capture, never saved. A client quoting a report's delay reads
   a far band's tie lands on the landing turn and not before; a parked tie, the tie back to the home
   band and a gathering are all absent; a band seen directly and known to the host lands once at
   the direct position.
+- **A landed sighting counts only when it is news.** The landing loop passes a sighting to
+  `record_report` only if its observed turn is greater than the home edge's `last_seen_turn` (or
+  there is no edge). A carried tie re-delivers the host's memory every turn its edge is kept fresh;
+  the same old observation is not a contact, so it neither raises strength nor refreshes clock 3,
+  and an observation nobody renews bleeds out on the ordinary clock. The party's own direct
+  sighting of its host is a turn newer each turn, so it always passes. Pinned by
+  `station_expedition::{a_stationed_posts_landed_reports_advance_clock_one_every_turn,
+  a_carried_tie_that_is_not_news_does_not_hold_the_home_tie_up}`.
 - **The fold-back lands every report still in transit** (`Returning` and near home, or home
   unresolvable) — the party carries its own news home. A party with no home band to report to
   simply loses it, as a scout loses its findings.

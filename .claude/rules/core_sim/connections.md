@@ -240,6 +240,18 @@ What follows from it, all intended:
   no post.
 - A posted edge is reaped on the ordinary third clock (`forget_turns` from the last landed report)
   and only if reports stop landing for that long.
+- **`last_seen_turn` trails `last_contact_turn` by the runner's walk, and the walk is not constant.**
+  The delay is `station_report_delay` of the party's distance to the home band's LIVE tile at
+  dispatch, so a home band that walks away stretches it. A reading of `contact 203, seen 194` is a
+  nine-turn walk, not a stuck clock; a stuck clock is `seen` not rising across landed reports.
+- **A landed report is a contact only when it is NEWS**: its observed turn is strictly greater than
+  the `last_seen_turn` home already holds for that subject. The stationed landing loop
+  (`advance_expeditions`) drops a sighting that is not. A direct sighting is news every turn (one
+  turn newer than the last); the case it exists for is a CARRIED tie, which re-delivers the host's
+  one remembered observation every turn the host's edge stays freshly contacted. Without the test
+  that re-delivery raised strength by `gain_per_contact` and refreshed clock 3 each turn, holding
+  home's tie full beside a clock 1 that never moved. A scout's returning flush is not filtered
+  (`record_contact` still raises strength on a stale report, as its guard above states).
 
 ## A traveling party aims at what its people know
 

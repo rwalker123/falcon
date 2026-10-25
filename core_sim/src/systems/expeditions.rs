@@ -1889,7 +1889,24 @@ pub fn advance_expeditions(
                         map.discover(pos.x, pos.y, current_turn);
                     }
                     for (subject, sighting) in report.sightings {
-                        contacts.record_report(observer, subject, sighting);
+                        // **A landed report is a contact only when it is NEWS**: observed after
+                        // what home already remembers of the subject. A carried tie re-delivers
+                        // the host's memory every turn, and without this test an observation
+                        // that never changes would refresh the tie's strength and clock 3 for as
+                        // long as the host's own edge was kept fresh, pinning it full while clock
+                        // 1 never moved.
+                        let is_news = configs
+                            .dealings
+                            .connections
+                            .as_deref()
+                            .and_then(|ledger| {
+                                ledger
+                                    .get(&crate::connections::ConnectionKey::new(observer, subject))
+                            })
+                            .is_none_or(|edge| sighting.observed_turn > edge.last_seen_turn);
+                        if is_news {
+                            contacts.record_report(observer, subject, sighting);
+                        }
                     }
                     if let Some(known) = configs.dealings.known_goodwill.as_deref_mut() {
                         for (other, news) in report.goodwill {
