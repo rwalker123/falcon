@@ -309,6 +309,31 @@ fn relay_fires_no_gathering_and_teaches_no_ritual() {
     );
 }
 
+/// **Relayed kin who then meet have not been apart**: the relayed tie is live, so a direct sighting
+/// between them is no gathering. The control (relay off) has no A to C tie, and the same meeting IS
+/// a gathering.
+#[test]
+fn relayed_kin_who_later_meet_directly_hold_no_gathering() {
+    fn gatherings_the_meeting_adds(max_hops: u32) -> u64 {
+        let mut t = trio(max_hops);
+        let chain = chain_sightings(&t);
+        turn(&mut t.app, FIRST_TURN, &chain);
+        let before = t.app.world.resource::<GatheringLedger>().held_by(t.people);
+        let meeting = [(t.a, t.c), (t.c, t.a)];
+        turn(&mut t.app, FIRST_TURN + 1, &meeting);
+        t.app.world.resource::<GatheringLedger>().held_by(t.people) - before
+    }
+    assert_eq!(
+        gatherings_the_meeting_adds(2),
+        0,
+        "A and C were tied by news, so meeting is not a gathering"
+    );
+    assert!(
+        gatherings_the_meeting_adds(0) > 0,
+        "control: without relay the same meeting is a gathering"
+    );
+}
+
 // The Trade-shipment launch gate lives in the `server` binary's command handler
 // (`bin/server.rs`, which reads `ConnectionLedger::get(home -> target).strength > NO_TIE`) and is
 // not reachable from an integration test. The first test above asserts exactly that predicate on

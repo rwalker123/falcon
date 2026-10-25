@@ -448,8 +448,11 @@ clock. Walks are in `BandId` order, and a relay that forms a missing edge counts
 
 **It is news, never a sighting.** Relay writes the ledger directly and never goes through
 `ContactsThisTurn::record`, and the gathering's `meetings` set is read before it runs. So a relayed
-tie neither makes nor suppresses a gathering, and gives no belief and no ritual lesson. It refreshes
-strength, clock 1 and clock 3 exactly as an expedition's report does.
+write never fires a gathering, and gives no belief and no ritual lesson. It refreshes strength,
+clock 1 and clock 3 exactly as an expedition's report does, which leaves the kin tie **live**: a
+later direct meeting between relayed kin is therefore not a gathering, because a gathering is a
+meeting after no live tie. Kin who stay in touch through news have not been apart
+(`tests/kin_relay.rs`).
 
 **Within one people only.** A chain through another people's band relays nothing, and a detached
 party (no `ResidentBand`) is neither a node nor a relayer. A cross-people chain would tie you to

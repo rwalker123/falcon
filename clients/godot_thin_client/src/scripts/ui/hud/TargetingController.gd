@@ -960,7 +960,7 @@ func _try_preselect(tile_info: Dictionary) -> void:
 		if destination != HudConst.NO_BAND_ID:
 			choose.call({PICK_TILE_KEY: Vector2i(x, y), PICK_DESTINATION_KEY: destination})
 			return
-		_refuse_trade_click(band, tile_info)
+		_refuse_trade_click(band, tile_info, choose)
 		return
 	var candidates := eligible_quarries_on_tile(band, x, y)
 	if candidates.is_empty():
@@ -975,8 +975,10 @@ func _try_preselect(tile_info: Dictionary) -> void:
 ## hex under the Trade sheet, so the click lands here rather than selecting the band (which would move
 ## the selection and close the sheet). The first band on the hex that is not the sender is named, and
 ## the sender's tie to THAT band is looked up by `subject_band_id` — never by tile, since a parked tie
-## to a foreign band is filed at its stale last-seen hex. Nothing is chosen; the sheet is untouched.
-func _refuse_trade_click(band: Dictionary, tile_info: Dictionary) -> void:
+## to a foreign band is filed at its stale last-seen hex. A tie that is LIVE is chosen (the band can be
+## traded with; only its filed hex is stale), exactly as the ringed path does; otherwise nothing is
+## chosen and the sheet is untouched.
+func _refuse_trade_click(band: Dictionary, tile_info: Dictionary, choose: Callable) -> void:
 	var sender_id := int(band.get("band_id", HudConst.NO_BAND_ID))
 	var units_variant: Variant = tile_info.get("units", [])
 	if not (units_variant is Array):
@@ -996,6 +998,10 @@ func _refuse_trade_click(band: Dictionary, tile_info: Dictionary) -> void:
 			if int(candidate.get("subject_band_id", HudConst.NO_BAND_ID)) == unit_id:
 				tie = candidate
 				break
+		if not tie.is_empty() and HudBandLaborState.tie_is_live(tie):
+			choose.call({PICK_TILE_KEY: Vector2i(int(tile_info.get("x", -1)), int(tile_info.get("y", -1))),
+				PICK_DESTINATION_KEY: unit_id})
+			return
 		var title := _pick_note_title_for(HudComposeVocab.COMPOSE_MISSION_TRADE)
 		if tie.is_empty():
 			_note_sink.call(title, HudComposeVocab.TRADE_PICK_NOT_MET_FORMAT

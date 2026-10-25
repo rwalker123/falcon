@@ -355,6 +355,24 @@ func run(harness) -> void:
 	h._hud.notify_targeting_click(_tile_info_with_units(PARTY_TILE, [_party_unit()]))
 	await h._settle()
 	h._assert_hud("…and a click on it posts nothing (%s)" % str(notes), notes.is_empty())
+	# A LIVE tie whose band no longer stands where the tie last saw it: clicked where it stands now, it
+	# is CHOSEN, not refused as lost touch.
+	var live_ties := _connections()
+	var away_tie := _tie(LIVE_AWAY_ENTITY, TIE_STRENGTH_LIVE, LIVE_AWAY_LAST_SEEN, NEIGHBOUR_LAST_SEEN_TURN)
+	away_tie["subject_name"] = LIVE_AWAY_DISPLAY_NAME
+	live_ties.append(away_tie)
+	h._hud.update_connections(live_ties)
+	await h._settle()
+	h._hud.notify_targeting_click(_tile_info_with_units(LIVE_AWAY_TILE, [_live_away_unit()]))
+	await h._settle()
+	var away_row := Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META)
+	h._assert_hud("a LIVE-tie band clicked where it stands (not its filed hex) sets the destination and posts no note (%s)" % str(notes),
+		away_row != null and _collect_text(away_row).contains(LIVE_AWAY_DISPLAY_NAME) and notes.is_empty())
+	var away_clear := Q.find_meta_node(_parties_zone(), HudWidgets.FIELD_CLEAR_META) as Button
+	if away_clear != null:
+		away_clear.emit_signal("pressed")
+	h._hud.update_connections(_connections())
+	await h._settle()
 	h._hud._targeting._note_sink = real_sink
 	h._assert_hud("(c) a live-tie band's hex is captured",
 		capture_map.targeting_click_captures(NEIGHBOUR_LAST_SEEN.x, NEIGHBOUR_LAST_SEEN.y))
@@ -1087,6 +1105,15 @@ const PARKED_DISPLAY_NAME := "Thornwick"
 const STRANGER_ENTITY := 984
 const STRANGER_TILE := Vector2i(55, 14)
 const STRANGER_DISPLAY_NAME := "Marrowdeep"
+
+## A band with a LIVE tie that stands somewhere other than where the tie last saw it.
+const LIVE_AWAY_ENTITY := 985
+const LIVE_AWAY_DISPLAY_NAME := "Redmarsh"
+const LIVE_AWAY_LAST_SEEN := Vector2i(40, 5)
+const LIVE_AWAY_TILE := Vector2i(58, 16)
+
+func _live_away_unit() -> Dictionary:
+	return _unit_marker(LIVE_AWAY_ENTITY, LIVE_AWAY_DISPLAY_NAME, LIVE_AWAY_TILE)
 
 ## The sender's own expedition party, on a hex the sender does not stand on.
 const PARTY_TILE := Vector2i(66, 16)

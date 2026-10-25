@@ -51,9 +51,9 @@ pub struct ConnectionsConfig {
 #[serde(default)]
 pub struct KinRelayConfig {
     /// How many tie-hops along a chain of live ties, within one people, a band's tie is refreshed
-    /// across. `0` switches relay off (a tie then refreshes only from the band's own sighting);
-    /// `1` relays only to a kin's direct tie. An unsigned integer, so a negative or fractional
-    /// value fails to parse and is a boot panic.
+    /// across. The shortest relayed chain is two hops (kin `m` saw `b` and told `a`), so below that
+    /// (`0` or `1`) relay is off and a tie refreshes only from the band's own sighting. An unsigned
+    /// integer, so a negative or fractional value fails to parse and is a boot panic.
     pub max_hops: u32,
 }
 

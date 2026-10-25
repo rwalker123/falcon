@@ -5665,7 +5665,9 @@ fn validate_tile_rung_is_work_only(
         return Err(LadderConfigError::Invalid {
             field: format!("{where_}.upkeep.materials"),
             constraint:
-                "keep a tile improvement with WORK alone - the keeping crew settles no material,                  so a standing rate here would publish a demand that nothing ever pays (a BUILD                  pile is allowed: the builders draw it)"
+                "keep a tile improvement with WORK alone - the keeping crew settles no material, \
+                 so a standing rate here would publish a demand that nothing ever pays (a BUILD \
+                 pile is allowed: the builders draw it)"
                     .to_string(),
             value: format!("{upkeep_materials} material(s)"),
         });

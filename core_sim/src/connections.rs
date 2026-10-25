@@ -465,8 +465,10 @@ impl ContactsThisTurn {
 /// with no fresh direct news along its chain drains on the ordinary clock.
 ///
 /// It is **news, never a sighting**: it goes straight to [`ConnectionLedger::record_contact`] and
-/// never through [`ContactsThisTurn`], and it runs after the gathering's `meetings` were read, so it
-/// can neither make nor suppress a gathering.
+/// never through [`ContactsThisTurn`], and it runs after the gathering's `meetings` were read, so a
+/// relayed write never fires a gathering. It does leave the kin tie live, though, so a later direct
+/// meeting between relayed kin is not a gathering either: a gathering is a meeting after no live
+/// tie, and kin who stay in touch through news have not been apart.
 fn relay_among_kin(
     ledger: &mut ConnectionLedger,
     direct: &BTreeSet<ConnectionKey>,

@@ -60,9 +60,10 @@ for which band, anchored on which hex — is shared state on `ComposeState` (`op
   selection and closed the sheet with its setup lost. `_try_preselect` instead refuses with a note
   under the Trade verb's name: the first non-sender band on the hex is named, and the sender's tie to
   it is found by `subject_band_id` (never by tile, since a parked tie to a foreign band is filed at its
-  stale last-seen hex) — `TRADE_PICK_LOST_TOUCH_FORMAT` with the tie's `last_contact_turn`, or
-  `TRADE_PICK_NOT_MET_FORMAT` when there is no tie. Nothing is chosen or selected and the sheet is
-  untouched. A hex holding only the sender, or only expedition parties (`is_expedition`, which are not bands
+  stale last-seen hex). A LIVE tie found that way is CHOSEN like a ringed click (the band is
+  tradeable; only its filed hex is stale); otherwise
+  `TRADE_PICK_LOST_TOUCH_FORMAT` with the tie's `last_contact_turn`, or `TRADE_PICK_NOT_MET_FORMAT`
+  when there is no tie, and nothing is chosen or selected. A hex holding only the sender, or only expedition parties (`is_expedition`, which are not bands
   here), keeps its old click behaviour.
 - **The send arms the pick with the sheet's values captured** as a `commit` Callable
   (`TargetingController.PICK_COMMIT_KEY`), and the sheet stays open with its send drawn `armed` (a
