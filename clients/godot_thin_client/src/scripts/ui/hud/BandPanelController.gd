@@ -2663,8 +2663,8 @@ func _put_staffed_fields(model: Dictionary, merged: Dictionary, assignment: Dict
         assignment.get(SourceForecast.ASSIGNMENT_KIT_TOE_KEY, []) as Array, _item_display_names)
 
 ## **THE TILE CREW ROWS THIS BAND HOLDS** (issue #175) -- one model per `tile` labor row, nearest
-## first. No tile branch ships yet, so this is empty on every shipped world; it exists so the FIRST one
-## renders with no edit here. **Everything a row says comes off the catalog**: the branch's name from
+## first. Empty until a band crews a tile improvement; a branch added to the config renders with no edit
+## here. **Everything a row says comes off the catalog**: the branch's name from
 ## `ladder_branches`, the rung it stands on from `ladder_rungs`, and the standing bill and tools from the
 ## `tile_improvements` row, which carries the keys a deposit's does. A branch or rung the catalog does
 ## not carry reads as its humanised id, never blank.
@@ -2763,8 +2763,9 @@ func _build_band_improvement_row(band: Dictionary, model: Dictionary) -> PanelCo
 
 ## **ONE TILE CREW'S ROW** -- a site row's shell (`_site_row_shell`) carrying the catalog's name for the
 ## branch and its rung, the keeping mark off the standing bill, the crew count and, on a far posting, the
-## party block a deposit crew draws. READ-ONLY: there is no stepper and no inspector, because assigning a
-## tile crew has no UI until the first tile branch ships.
+## party block a deposit crew draws, and the strip's ladder chip, which opens the tile branch's step card
+## (`RungCardController.open_tile_track`). No stepper and no inspector: the crew is set from the tile card's
+## `Assign crew ▸` sheet.
 func _build_tile_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var tile: Vector2i = model["tile"]
     var branch := String(model["branch"])
@@ -2809,8 +2810,35 @@ func _build_tile_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     strip_row["keep_tools_named"] = _site_short_tool_names(improvement) if tools_short else ""
     strip_row["tending"] = HudWorkVocab.tending_of(improvement,
         HudComposeVocab.BARE_FORECAST_PREFIX, "")
+    _put_tile_ladder_chip(strip_row, improvement, tile, branch, int(model.get("workers", 0)))
     (shell[SITE_ROW_SHELL_BODY] as HBoxContainer).add_child(_build_row_strip(band, strip_row))
     return row
+
+## **THE TILE ROW'S LADDER CHIP** -- the deposit row's twin, off the tile branch's catalog rows: a build
+## declared on the improvement shows the verb being raised, otherwise the rung a press could land right now
+## is offered (a missing crew is forgiven: the card the chip opens is what names it).
+func _put_tile_ladder_chip(strip_row: Dictionary, improvement: Dictionary, tile: Vector2i,
+        branch: String, crew: int) -> void:
+    var ladder := HudTileVocab.tile_ladder(_topbar.ladder_rungs() if _topbar != null else [])
+    if ladder.is_empty():
+        return
+    var site := HudTileVocab.site_of(improvement, ladder, branch, tile.x, tile.y)
+    var next_entry := HudDepositVocab.ladder_next_entry(ladder, site)
+    if HudDepositVocab.is_queued(site) and not next_entry.is_empty():
+        var verb := HudDepositVocab.catalog_verb(next_entry)
+        strip_row["building_glyph"] = FoodIcons.for_policy(verb)
+        strip_row["building_policy"] = verb
+        strip_row["building_progress"] = HudDepositVocab.build_fraction_of(site)
+        strip_row[WorkStrip.ROW_BUILDERS_KEY] = SourceForecast.build_crew_staffed(improvement,
+            SourceForecast.BARE_SOURCE_PREFIX)
+        strip_row[WorkStrip.ROW_BUILD_TIP_KEY] = DetailFormat.build_crew_tooltip(improvement,
+            SourceForecast.BARE_SOURCE_PREFIX, _item_display_names, false)
+        return
+    var tile_info := {"x": tile.x, "y": tile.y, "belief": _band_labor.tile_belief_at(tile.x, tile.y)}
+    var ready := RungGates.tile_rung_ready(site, ladder, _player_knowledge(),
+        _topbar.knowledge_labels() if _topbar != null else {}, crew, tile_info)
+    if not ready.is_empty():
+        strip_row["ready_glyph"] = FoodIcons.for_policy(HudDepositVocab.catalog_verb(ready))
 
 ## **ONE WORKING'S ROW — a harvest or hunt row's shape** (the site rows' shell, `_site_row_shell`).
 ## Line one is the icon (the MATERIAL's mark), the name (`Wood · 2 tiles SE`, one ink — it names the
@@ -3064,6 +3092,16 @@ func strip_handlers(band: Dictionary, row: Dictionary, deposit: Dictionary = {},
         wire_source: Dictionary = {}) -> Dictionary:
     var source := _bare_patch_of(wire_source) \
         if String(row.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE else wire_source
+    if String(row.get("kind", "")) == HudConst.LABOR_KIND_TILE:
+        var tile_x := int(row.get("x", -1))
+        var tile_y := int(row.get("y", -1))
+        var tile_branch := String(row.get("branch", ""))
+        return {
+            "on_ladder": func(anchor: Control) -> void:
+                _rung.open_tile_track(band, {"x": tile_x, "y": tile_y}, tile_branch,
+                    _band_labor.tile_crew_total(tile_x, tile_y, tile_branch), anchor),
+            "on_ring": func(_anchor: Control) -> void: pass,
+        }
     return {
         "on_ladder": func(anchor: Control) -> void:
             if deposit.is_empty():

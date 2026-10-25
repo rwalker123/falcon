@@ -160,6 +160,8 @@ func emit_unqueue(band: Dictionary, model: Dictionary) -> void:
         # The site's address halves (`Main.site_address`): a working carries its material and a road
         # says it is a road, or the server reads the bare tile as the PATCH on that hex.
         "material": String(model.get("material", "")),
+        # A tile-kind improvement is addressed by its branch, which leads (`Main.site_address`).
+        "branch": String(model.get("branch", "")),
         "road": bool(model.get("road", false)),
         # The optimistic half's two keys, neither a command token.
         "kind": String(model.get("kind", "")),
@@ -261,6 +263,72 @@ func _emit_deposit_declaration(band: Dictionary, deposit: Dictionary, verb: Stri
         "x": tile.x,
         "y": tile.y,
         "material": material,
+        "herd_id": "",
+    })
+
+# ---- the tile-branch track -------------------------------------------------------------------------
+
+## The tile-sourced branches' catalog rows, `[]` before any snapshot has arrived.
+func tile_ladder() -> Array[Dictionary]:
+    return HudTileVocab.tile_ladder(_topbar.ladder_rungs() if _topbar != null else [])
+
+## A tile improvement's destination track (belief's monument, food stores' pit, ...): the same Window,
+## renderer and press the deposit track uses. `crew` is the take crew on the tile (pending-aware) and
+## `tile_info` the land card's dict, whose `belief` the site gate reads. The press emits
+## `build <verb> <f> <x> <y>` through `improvement_requested`; no `assign_labor` rides with it.
+func open_tile_track(band: Dictionary, tile_info: Dictionary, branch: String, crew: int,
+        anchor: Control) -> void:
+    if tile_ladder().is_empty():
+        push_warning("RungCardController: a tile branch's step card was opened with no tile rung " +
+            "catalog on the wire -- the track cannot state a single rung")
+        return
+    var x := int(tile_info.get("x", -1))
+    var y := int(tile_info.get("y", -1))
+    var rows := tile_track_rows(band, tile_info, branch, crew)
+    if not RungLadder.has_track(rows):
+        return
+    var building := RungLadder.tile_building_verb(rows)
+    _fresh_body().add_child(RungLadder.build_track(rows,
+        func(verb: String) -> void:
+            dismiss()
+            # The rung being raised is only followed: the sim refuses a rung already stood at or above.
+            if verb != building:
+                _emit_tile_declaration(band, x, y, verb),
+        HudWorkVocab.RUNG_TRACK_TITLE, _max_builders_by_rung(),
+        func() -> void:
+            dismiss()
+            emit_unqueue(band, {"x": x, "y": y, "herd_id": "", "branch": branch,
+                "material": branch, "kind": HudConst.LABOR_KIND_TILE})))
+    _popup.popup(_anchor_rect(anchor))
+
+## The rows of one tile branch's track on one hex -- what the card renders, and what a harness re-asks of
+## a drawn `⌃` to prove its press opens something.
+func tile_track_rows(band: Dictionary, tile_info: Dictionary, branch: String,
+        crew: int) -> Array[Dictionary]:
+    var ladder := tile_ladder()
+    var x := int(tile_info.get("x", -1))
+    var y := int(tile_info.get("y", -1))
+    var row := _band_labor.tile_improvement_at(x, y, branch)
+    var site := HudTileVocab.site_of(row, ladder, branch, x, y)
+    # A Work-tab row has no land card behind it: the belief standing on the tile comes off the map's
+    # lookup (a tile with none has no entry, which reads as zero).
+    if not tile_info.has("belief"):
+        tile_info = tile_info.duplicate()
+        tile_info["belief"] = _band_labor.tile_belief_at(x, y)
+    return RungLadder.tile_track(site, ladder, _player_knowledge(), _knowledge_labels(), crew,
+        tile_info, SourceForecast.build_crew_staffed(row, SourceForecast.BARE_SOURCE_PREFIX), band)
+
+## `build <verb> <faction> <x> <y>` -- a tile improvement names a bare tile (its crew is the site crew, so
+## no band token). It carries no `pending_entity`: the declaration lands on the improvement's own meter.
+func _emit_tile_declaration(band: Dictionary, x: int, y: int, verb: String) -> void:
+    if verb == SourceForecast.IMPROVEMENT_NONE or band.is_empty() or x < 0 or y < 0:
+        return
+    improvement_requested.emit({
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "improvement": verb,
+        "kind": HudConst.LABOR_KIND_TILE,
+        "x": x,
+        "y": y,
         "herd_id": "",
     })
 

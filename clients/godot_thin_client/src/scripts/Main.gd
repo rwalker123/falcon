@@ -1044,6 +1044,7 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # reaches none of the food or morale decline reasons.
     if map_view != null and snapshot.has("tiles") and SnapshotSections.changed(snapshot, "tiles"):
         _hud_invoke("update_tile_temperatures", [map_view.tile_temperature])
+        _hud_invoke("update_tile_beliefs", [map_view.tile_belief])
     if snapshot.has("herds") and SnapshotSections.changed(snapshot, "herds"):
         # The HUD needs the live herd positions (herds migrate) to jump the map to a hunted herd
         # from the band panel's Current-actions rows, and to name it. Same array MapView renders.
@@ -1528,6 +1529,24 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             return {
                 "line": "%s %d%s" % [extract_head, workers, _kit_token(payload)],
                 "message": extract_message,
+            }
+        "tile":
+            # **A TILE-SOURCED IMPROVEMENT'S CREW ROW** (belief's monument, food stores' pit, ...) --
+            # `assign_labor <f> <b> tile <branch> <x> <y> <n>`, and the crew line also PLACES the
+            # improvement at the branch's root rung. The BRANCH rides the `species` token (the one
+            # free-form string this command carries) and is not optional: a line with no branch names
+            # no improvement. The sim refuses a `kit` token on it, so none is built; the player's count
+            # is what is sent, with no cap invented here.
+            var tx := int(payload.get("x", -1))
+            var ty := int(payload.get("y", -1))
+            var tbranch := String(payload.get("species", "")).strip_edges().to_lower()
+            if tx < 0 or ty < 0 or tbranch == "":
+                return {}
+            return {
+                "line": "assign_labor %d %d tile %s %d %d %d" % [
+                    faction, band_id, tbranch, tx, ty, workers],
+                "message": "Assign %d worker%s to the %s at (%d, %d)." % [
+                    workers, "" if workers == 1 else "s", tbranch, tx, ty],
             }
         "scout", "warrior", "roadwork":
             # **A BAND-WIDE ROLE CARRIES THE KIT TOKEN TOO, and it is the only optional token these

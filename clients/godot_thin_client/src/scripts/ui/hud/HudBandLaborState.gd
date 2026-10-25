@@ -922,6 +922,20 @@ var _tile_temperature: Dictionary = {}
 ## Ingest the forwarded per-tile temperatures. A non-Dictionary input is ignored (the last value
 ## stands), matching every other catalogue setter here: a delta carries a section only when it
 ## CHANGED, so absence means unchanged and never "the world has no temperatures".
+## The belief standing on each tile (`{Vector2i: float}`, `MapView.tile_belief`, held by reference). A tile
+## with none has NO entry, so absence reads as zero. A tile-sourced branch's site gate (`min_belief`) reads
+## it for a Work-tab row, which has no `tile_info` of its own.
+var _tile_belief: Dictionary = {}
+
+func set_tile_beliefs(beliefs_variant: Variant) -> void:
+	if not (beliefs_variant is Dictionary):
+		return
+	_tile_belief = beliefs_variant
+	changed.emit(&"tile_beliefs")
+
+func tile_belief_at(x: int, y: int) -> float:
+	return float(_tile_belief.get(Vector2i(x, y), 0.0))
+
 func set_tile_temperatures(temperatures_variant: Variant) -> void:
 	if not (temperatures_variant is Dictionary):
 		return
@@ -1039,6 +1053,34 @@ func tile_assignments_of(band: Dictionary) -> Array:
 				and String((entry as Dictionary).get("kind", "")).to_lower() == HudConst.LABOR_KIND_TILE:
 			rows.append(entry)
 	return rows
+
+## This band's confirmed `tile` labor row at `(x, y)` on `branch`, `{}` when it crews no such improvement.
+func tile_assignment_of(band: Dictionary, x: int, y: int, branch: String) -> Dictionary:
+	for entry in tile_assignments_of(band):
+		var a: Dictionary = entry
+		if int(a.get("target_x", -1)) == x and int(a.get("target_y", -1)) == y \
+				and String(a.get("branch", "")) == branch:
+			return a
+	return {}
+
+## The sim's crew (or, before the snapshot confirms, the player's pending count) this band has on the tile
+## improvement at `(x, y)` -- the branch rides `pending_key`'s material slot.
+func effective_tile_workers(band: Dictionary, x: int, y: int, branch: String) -> int:
+	return int(effective_worker_map(band).get(
+		pending_key(HudConst.LABOR_KIND_TILE, x, y, "", branch), {}).get("workers", 0))
+
+## Does this band hold a tile row (confirmed or pending) on the improvement? A row at zero Max still counts.
+func has_tile_row(band: Dictionary, x: int, y: int, branch: String) -> bool:
+	return effective_worker_map(band).has(pending_key(HudConst.LABOR_KIND_TILE, x, y, "", branch))
+
+## The player's crew on the tile improvement across EVERY player band: the hands that make the build
+## declarable at all (the sim declares on every band crewing the tile).
+func tile_crew_total(x: int, y: int, branch: String) -> int:
+	var total := 0
+	for band_variant in current_player_bands():
+		if band_variant is Dictionary:
+			total += effective_tile_workers(band_variant as Dictionary, x, y, branch)
+	return total
 
 ## The `deposits` row at `(x, y)` holding `material`, `{}` where the frame carries none — the working
 ## a deposit command is ABOUT, which is what `KitRoster.default_kit_for` reads the working's own

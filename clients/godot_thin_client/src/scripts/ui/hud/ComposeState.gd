@@ -30,6 +30,9 @@ const KIND_HERD := "herd"
 ## a CREW on a working and the branch decides only the noun on the button: a `KIND_FORESTRY` beside a
 ## `KIND_EXTRACTION` would be two identical groups keyed apart by a word.
 const KIND_DEPOSIT := "deposit"
+## …and the tile-sourced branches' crew sheet (belief's monument, food stores' pit, ...). One kind for
+## every tile branch: what a sheet composes is a band and a crew on an improvement, keyed `x,y:branch`.
+const KIND_TILE := "tile"
 
 ## "No band" for every band-ENTITY slot here — the picked actor and the band a composition was last
 ## seeded for. Distinct from `HudConst.NO_BAND_ID`, which is the WIRE's band id; these hold the
@@ -115,6 +118,14 @@ var _deposit_band: int = NO_BAND_ENTITY
 ## crew the newly-picked band really has on the working.
 var _deposit_seeded_band: int = NO_BAND_ENTITY
 var _deposit_kit_id: String = KitRoster.NO_KIT_ID
+
+# **THE TILE-BRANCH CREW SHEET'S COMPOSITION** -- a source key (`x,y:branch`), the picked band, the count
+# the player has dialled and the band that count was seeded from. No floor, kit, priority or species: a
+# tile crew line takes none of them.
+var _tile_key: String = ""
+var _tile_max: int = 0
+var _tile_band: int = NO_BAND_ENTITY
+var _tile_seeded_band: int = NO_BAND_ENTITY
 
 var _hunt_key: String = ""
 var _hunt_max: int = 0
@@ -231,6 +242,42 @@ func raise_deposit_max_to(minimum: int) -> bool:
 		return false
 	_deposit_max = minimum
 	return true
+
+func tile_key() -> String:
+	return _tile_key
+
+func tile_max() -> int:
+	return _tile_max
+
+func tile_band() -> int:
+	return _tile_band
+
+func tile_seeded_band() -> int:
+	return _tile_seeded_band
+
+## Begin composing a tile crew on a new source, acting band as resolved by the caller; `seed_tile` follows.
+func begin_tile_source(key: String, band_entity: int) -> void:
+	_tile_key = key
+	_tile_band = band_entity
+
+func seed_tile(count: int) -> void:
+	_tile_max = count
+	_tile_seeded_band = _tile_band
+
+## Forget which tile improvement the composition belongs to, so the NEXT render re-seeds from the band's row.
+func reset_tile_source() -> void:
+	_tile_key = ""
+
+func set_tile_band(entity: int) -> void:
+	_tile_band = entity
+
+func set_tile_max(count: int) -> void:
+	_tile_max = count
+
+## Clamp the composed crew to the band's hands, floored at `minimum` (a crew of one is the least that
+## places the improvement; a stop is its own button).
+func clamp_tile_max(cap: int, minimum: int) -> void:
+	_tile_max = clampi(_tile_max, minimum, maxi(cap, minimum))
 
 # ---- The open sheet's subject identity -----------------------------------------------------------
 var _kind: String = KIND_NONE

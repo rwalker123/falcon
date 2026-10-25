@@ -8,6 +8,9 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/hud/DrawerComposeController.gd"
   - "clients/godot_thin_client/src/scripts/Main.gd"
   - "clients/godot_thin_client/src/scripts/MapView.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/hud_tile_vocab.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/RungCardController.gd"
+  - "clients/godot_thin_client/tools/ui_preview/chapters/tile_branches.gd"
 ---
 
 # Workings — the client half of the wood-and-stone producers
@@ -1529,6 +1532,32 @@ path is real only on the Band panel. The pair is the materialless refusal beside
 builder rather than left to the parser. `EXPECTED_KINDS` gained the verb, and `xtask`'s own
 `band_handle` classifies `CommandPayload::AbandonWorking` `PlaceAddressed` beside the three rung
 verbs — an unlisted variant answers `NotBandAddressed`, which that gate fails.
+
+## THE TILE-SOURCED BRANCHES — monument and storage pit, and every `source_kind == "tile"` branch
+
+Belief's `gathering_ground → monument` (verb `raise`, lesson `ritual`, `min_belief`) and food stores'
+`unstored → storage_pit` (verb `dig`, lesson `storage`) are improvements standing ON a hex that a crew
+keeps. The client path is the deposit path's shape, generic over the catalog: **no code names a branch,
+a verb or a lesson** — `HudTileVocab` filters the catalog to `source_kind == "tile"` and every noun, verb,
+cost and gate is read off its rows.
+
+| surface | what it does |
+|---|---|
+| the tile card's rows (`DrawerComposeController.build_tile_drawer_actions`, filling `%TileBranchControls`) | one row per tile branch: a step button worded from the catalog (`Raise a monument ▸` = the first buildable rung's verb + its `label_fallback`, which carries the article) beside `Assign crew ▸` / `Crew N ▸`. A branch shows when its first buildable rung's unlock lesson is known **or** the tile already holds an improvement or crew of it (`HudTileVocab.is_offered`), so a fresh card carries neither. A tile failing the site term keeps the row **greyed** (step button disabled, no crew button) with the reason in amber beneath it (`No dead are buried here` / `Too few dead are buried here`, worded by the TERM `min_belief`, never by the branch) |
+| the crew sheet (`open_tile_compose` / `_build_tile_assign_controls`, `ComposeState.KIND_TILE`) | `Band:` picker + `Crew` stepper (floor `HudTileVocab.CREW_DEFAULT` = 1, ceiling the band's working-age people — no cap invented) + commit. A band already crewing the tile edits live and offers `Done` / `Stop working here`. Emits `assign_labor <f> <band> tile <branch> <x> <y> <n>` (the branch rides the `species` token; `Main.format_assign_labor`'s `tile` arm refuses an empty branch and sends no kit token). Stop is `stop_labor <f> <band> <branch> <x> <y>` (`Main.site_address` leads a tile improvement with its branch) |
+| the step card (`RungCardController.open_tile_track` → `RungLadder.tile_track`, gated by `RungGates.tile_gates`) | the shared rung card. Gates in `HudTileVocab.GATE_ROW_PRIORITY` order: the **site** (`min_belief` against `tile_info.belief`), the **crew** (`Put a crew on this tile first` — the sim refuses `build` with no crew), the **lesson** (named from the knowledge roster), the **rung beneath**. **The stone pile is an amber stall aside beside the cost, never a refusal** (the sim stalls a dry store). A press emits `build <verb> <f> <x> <y>` through `Main.format_improvement` (the catalog's `tile` source kind), with no `pending_entity` |
+| the Work tab's tile row (`BandPanelController._build_tile_row` / `_put_tile_ladder_chip`) | the strip's ladder chip, off `RungGates.tile_rung_ready` (the crew refusal forgiven, as on a working) or the declared build |
+
+**BELIEF IS NOT ON A WORK ROW'S `tile_info`.** The row has no land card, so `HudBandLaborState.tile_belief_at`
+reads the map's `tile_belief` lookup (pushed beside the temperatures by `Main`; absent = zero), and
+`RungCardController.tile_track_rows` fills `belief` from it where the dict carries none.
+
+**`min_belief` IS A FLAT CATALOG FIELD** (`ladder_rungs_to_array`), not part of the site-rule dict.
+
+Gates: `cargo xtask command-guard` drives both crew lines (one per shipped branch) and both build verbs
+through the real server parser; `chapters/tile_branches.gd` (ui_preview) asserts the card rows (hidden
+before the lesson / shown / greyed with the belief reason), the exact emitted strings, each gate per
+branch at the producer, the amber stone aside, and the Work tab's chip.
 
 ## See Also
 
