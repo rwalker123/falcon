@@ -3989,6 +3989,16 @@ pub fn capture_snapshot(
                     .push(*position);
             }
         }
+        // **Each herd's keeping band's camp**, the same map `advance_herds` steers by.
+        let keeper_camps = crate::fauna::keeper_camp_tiles(populations.iter().filter_map(
+            |(entity, cohort, allocation, _, _, band_id, ..)| {
+                if !resident_bands.contains(entity) {
+                    return None;
+                }
+                let position = tile_positions.get(&cohort.current_tile.to_bits())?;
+                Some((*band_id?, cohort.faction, *position, allocation?))
+            },
+        ));
         let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
             current_turn: tick.0,
             telemetry: &herds,
@@ -4008,6 +4018,7 @@ pub fn capture_snapshot(
             // live `K` is summed from, so the two are one seam at two standings.
             graze: &graze_registry,
             owner_camps: &owner_camps,
+            keeper_camps: &keeper_camps,
             visibility: &visibility_ledger,
             viewer,
             herd_lore_known: crate::intensification::knows(

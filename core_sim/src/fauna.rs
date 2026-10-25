@@ -15,7 +15,10 @@ use crate::{
         self, CombatStats, CombatTuning, Contingent, ContingentId, DamageLedger, FightPayload,
         Force, ForceId, Posture,
     },
-    components::{take_overdraws, PopulationCohort, ResidentBand, SourceYield, Tile, YieldRange},
+    components::{
+        take_overdraws, BandId, LaborAllocation, LaborTarget, PopulationCohort, ResidentBand,
+        SourceYield, Tile, YieldRange,
+    },
     fauna_config::{
         default_loiter_radius, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle, GrazeConfig,
         HuntYield, SizeClass, SpeciesDef, YieldAccounts, YieldAxis, DEFAULT_HUSBANDRY_DENSITY,
@@ -2980,7 +2983,9 @@ pub fn advance_herds(
     // The camps a `drift_to_owner` herd drifts toward. `With<ResidentBand>`: the herd seeks its
     // owner's *settled* bands, not a detached expedition party that happens to be passing (the
     // positive-marker isolation convention — see `components::ResidentBand`).
-    bands: Query<&PopulationCohort, With<ResidentBand>>,
+    // Beside the cohort, the band's id and labor rows: which band KEEPS a herd (a Hunt row on it
+    // with workers) is the camp it drifts to (`herd_camp_targets`).
+    bands: HerdCampBands,
     // Optional so the many hand-built fauna test harnesses that run `advance_herds` in isolation
     // don't have to stand up a graze layer; a `None`/empty registry falls back to plain land movement
     // (the pre-2b-i behaviour). The live app always carries a seeded `GrazeRegistry`.
@@ -3013,6 +3018,10 @@ pub fn advance_herds(
     let graze = graze.as_deref().unwrap_or(&empty_graze);
     let roads = road_registry.as_deref();
     let owner_camps = owner_camp_tiles(&bands, &tiles);
+    let keeper_camps = keeper_camp_tiles(bands.iter().filter_map(|(cohort, id, allocation)| {
+        let tile = tiles.get(cohort.current_tile).ok()?;
+        Some((*id?, cohort.faction, tile.position, allocation?))
+    }));
     // **The prey index** (Predators Phase 1a) — a start-of-turn snapshot of every herbivore herd, built
     // in this immutable pass *before* the mutable loop below so a carnivore's `K` (computed inside that
     // loop, which cannot read the other live herds) can read it. It reads start-of-turn prey biomass,
@@ -3065,11 +3074,11 @@ pub fn advance_herds(
             // `drift_to_owner`: the herd biases its step toward its owner's nearest camp. No owner,
             // or an owner with no bands → `None`, i.e. a plain roam (the fallback is the `Option`).
             RungMovement::DriftToOwner => {
-                let camps = herd.owner.and_then(|owner| owner_camps.get(&owner));
+                let camps = herd_camp_targets(herd, herd.owner, &owner_camps, &keeper_camps);
                 advance_herd_roam(
                     herd,
                     def,
-                    camps.map(|c| c.as_slice()),
+                    (!camps.is_empty()).then_some(camps),
                     &tile_registry,
                     &tiles,
                     graze,
@@ -3160,9 +3169,7 @@ pub fn advance_herds(
                 height,
                 wrap,
                 CapacityStanding::live(herd),
-                herd.owner
-                    .and_then(|owner| owner_camps.get(&owner))
-                    .map_or(&[][..], Vec::as_slice),
+                herd_camp_targets(herd, herd.owner, &owner_camps, &keeper_camps),
             ),
             herd.is_corralled(),
             herd.carrying_capacity,
@@ -4514,15 +4521,97 @@ fn nearest_target_distance(from: UVec2, targets: &[UVec2], width: u32, wrap: boo
         .unwrap_or(u32::MAX)
 }
 
+/// The resident bands a herd's camp target is read from: the cohort (people, tile), the band id and
+/// its labor rows (whether it keeps a herd).
+type HerdCampBands<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static PopulationCohort,
+        Option<&'static BandId>,
+        Option<&'static LaborAllocation>,
+    ),
+    With<ResidentBand>,
+>;
+
+/// **Where a tamed herd's KEEPER stands** — herd id → owning faction → the camp tile of the band
+/// that keeps it. Derived each turn from the bands' labor rows, never checkpointed.
+pub type KeeperCamps = BTreeMap<String, BTreeMap<FactionId, UVec2>>;
+
+/// **The keeping band of each herd, per faction.** A band keeps a herd when its `LaborAllocation`
+/// holds a Hunt row on it with workers (a near crew and a far work party alike). Per `(herd,
+/// faction)` the keeper is the band with the most workers on the herd, ties to the lower `BandId`.
+/// Fed `(band, faction, camp tile, allocation)` for every resident band, in any order.
+pub fn keeper_camp_tiles<'a>(
+    bands: impl IntoIterator<Item = (BandId, FactionId, UVec2, &'a LaborAllocation)>,
+) -> KeeperCamps {
+    // Per (herd, faction): the best keeper so far as (workers, band, camp).
+    let mut best: BTreeMap<String, BTreeMap<FactionId, (u32, BandId, UVec2)>> = BTreeMap::new();
+    for (band, faction, camp, allocation) in bands {
+        let mut on_herd: BTreeMap<&str, u32> = BTreeMap::new();
+        for assignment in &allocation.assignments {
+            if let LaborTarget::Hunt { fauna_id, .. } = &assignment.target {
+                if assignment.workers > 0 {
+                    *on_herd.entry(fauna_id.as_str()).or_default() += assignment.workers;
+                }
+            }
+        }
+        for (herd, workers) in on_herd {
+            let slot = best
+                .entry(herd.to_string())
+                .or_default()
+                .entry(faction)
+                .or_insert((workers, band, camp));
+            // More workers wins; equal workers go to the lower band id.
+            if (workers, std::cmp::Reverse(band)) > (slot.0, std::cmp::Reverse(slot.1)) {
+                *slot = (workers, band, camp);
+            }
+        }
+    }
+    best.into_iter()
+        .map(|(herd, by_faction)| {
+            let camps = by_faction
+                .into_iter()
+                .map(|(faction, (_, _, camp))| (faction, camp))
+                .collect();
+            (herd, camps)
+        })
+        .collect()
+}
+
+/// **THE CAMP A TAMED HERD DRIFTS TO — the one resolver.** The drift (`advance_herds`), the range
+/// the pastoral `K` is struck over ([`herd_wander_points`]) and the snapshot's destination quote all
+/// read their targets through this, so they cannot name different camps. `faction` is the people
+/// whose camps count (the herd's owner; a herd being tamed passes the builder). With a keeping band
+/// of that people (`keepers`) the target is that one camp; otherwise every camp of the people, from
+/// which the drift and [`nearest_camp`] pick the nearest; with no people, none.
+pub fn herd_camp_targets<'a>(
+    herd: &Herd,
+    faction: Option<FactionId>,
+    owner_camps: &'a BTreeMap<FactionId, Vec<UVec2>>,
+    keepers: &'a KeeperCamps,
+) -> &'a [UVec2] {
+    let Some(faction) = faction else {
+        return &[];
+    };
+    if let Some(camp) = keepers
+        .get(herd.id.as_str())
+        .and_then(|by_faction| by_faction.get(&faction))
+    {
+        return std::slice::from_ref(camp);
+    }
+    owner_camps.get(&faction).map_or(&[][..], Vec::as_slice)
+}
+
 /// Every faction's **camps** — the tiles its resident bands stand on this turn, which is what a
 /// `drift_to_owner` herd steers by. Keyed by faction for an O(1) lookup per herd; each faction's
 /// Vec order is irrelevant by construction ([`nearest_target_distance`] mins over it).
 fn owner_camp_tiles(
-    bands: &Query<&PopulationCohort, With<ResidentBand>>,
+    bands: &HerdCampBands,
     tiles: &Query<&Tile>,
 ) -> BTreeMap<FactionId, Vec<UVec2>> {
     let mut camps: BTreeMap<FactionId, Vec<UVec2>> = BTreeMap::new();
-    for cohort in bands.iter() {
+    for (cohort, ..) in bands.iter() {
         if let Ok(tile) = tiles.get(cohort.current_tile) {
             camps.entry(cohort.faction).or_default().push(tile.position);
         }
@@ -15245,48 +15334,87 @@ mod tests {
     }
 
     /// Plant a resident band of `faction` on the strip's tile `x` — the camp a tamed herd drifts to.
-    fn camp_at(world: &mut bevy::prelude::World, x: u32, faction: FactionId) {
+    fn camp_at(
+        world: &mut bevy::prelude::World,
+        x: u32,
+        faction: FactionId,
+    ) -> bevy::prelude::Entity {
         let tile = world.resource::<TileRegistry>().index(x, 0).expect("tile");
-        world.spawn((
-            ResidentBand,
-            PopulationCohort {
-                home: tile,
-                current_tile: tile,
-                size: 30,
-                children: scalar_zero(),
-                working: scalar_from_f32(30.0),
-                elders: scalar_zero(),
-                stores: crate::components::LocalStore::new(),
-                morale: scalar_one(),
-                last_food_consumption: 0.0,
-                last_food_need: 0.0,
-                fed_party_workers: Default::default(),
-                last_food_spoiled: 0.0,
-                last_food_kept: 0.0,
-                last_turn_food_transfers: Default::default(),
-                last_turn_fodder_transfers: Default::default(),
-                last_turn_transfer_crossings: Vec::new(),
-                last_morale_delta: scalar_zero(),
-                last_morale_cause: crate::components::MoraleCause::None,
-                last_morale_contributions: Default::default(),
-                last_fertility_factors: Default::default(),
-                last_breeding: Default::default(),
-                discontent_fraction: scalar_zero(),
-                grievance: scalar_zero(),
-                last_emigrated: 0,
-                last_immigrated: 0,
-                age_turns: 0,
-                generation: 0,
-                faction,
-                knowledge: Vec::new(),
-                founding_lines: crate::lineage::FoundingLines::founded(
-                    crate::components::BandId(0),
-                    crate::lineage::MIN_BAND_LINES,
-                ),
-                belief_anchor: None,
-                last_belief_relay_hops: 0,
+        world
+            .spawn((
+                ResidentBand,
+                PopulationCohort {
+                    home: tile,
+                    current_tile: tile,
+                    size: 30,
+                    children: scalar_zero(),
+                    working: scalar_from_f32(30.0),
+                    elders: scalar_zero(),
+                    stores: crate::components::LocalStore::new(),
+                    morale: scalar_one(),
+                    last_food_consumption: 0.0,
+                    last_food_need: 0.0,
+                    fed_party_workers: Default::default(),
+                    last_food_spoiled: 0.0,
+                    last_food_kept: 0.0,
+                    last_turn_food_transfers: Default::default(),
+                    last_turn_fodder_transfers: Default::default(),
+                    last_turn_transfer_crossings: Vec::new(),
+                    last_morale_delta: scalar_zero(),
+                    last_morale_cause: crate::components::MoraleCause::None,
+                    last_morale_contributions: Default::default(),
+                    last_fertility_factors: Default::default(),
+                    last_breeding: Default::default(),
+                    discontent_fraction: scalar_zero(),
+                    grievance: scalar_zero(),
+                    last_emigrated: 0,
+                    last_immigrated: 0,
+                    age_turns: 0,
+                    generation: 0,
+                    faction,
+                    knowledge: Vec::new(),
+                    founding_lines: crate::lineage::FoundingLines::founded(
+                        crate::components::BandId(0),
+                        crate::lineage::MIN_BAND_LINES,
+                    ),
+                    belief_anchor: None,
+                    last_belief_relay_hops: 0,
+                },
+            ))
+            .id()
+    }
+
+    /// A camp whose band holds a Hunt row of `workers` hands on the strip's herd - the band that
+    /// KEEPS it.
+    fn keeping_camp_at(
+        world: &mut bevy::prelude::World,
+        x: u32,
+        faction: FactionId,
+        band: u64,
+        workers: u32,
+    ) {
+        let herd_id = world.resource::<HerdRegistry>().herds[0].id.clone();
+        let mut allocation = LaborAllocation::default();
+        allocation.set_assignment(
+            LaborTarget::Hunt {
+                fauna_id: herd_id,
+                floor: crate::components::DEFAULT_ESCAPEMENT_FLOOR,
+                move_with_herd: false,
             },
-        ));
+            workers,
+            workers,
+            None,
+        );
+        let camp = camp_at(world, x, faction);
+        world.entity_mut(camp).insert((BandId(band), allocation));
+    }
+
+    /// The strip world's herd stands mid-strip at x=2 with grass on every tile, tamed for `owner`.
+    fn tamed_mid_strip(owner: FactionId) -> bevy::prelude::World {
+        let mut world = roam_world(false);
+        world.resource_mut::<HerdRegistry>().herds[0].current_pos = UVec2::new(2, 0);
+        tame_the_herd(&mut world, owner);
+        world
     }
 
     fn herd_x(world: &bevy::prelude::World) -> u32 {
@@ -15381,6 +15509,100 @@ mod tests {
             herd_x(&world),
             3,
             "it drifts as near the camp as the pasture allows, and stops at the gap"
+        );
+    }
+
+    /// **The herd drifts to the band that KEEPS it, not the nearest band of its people.** The
+    /// non-keeping band stands one hex off the herd, the keeper two hexes away on the other side.
+    #[test]
+    fn a_tamed_herd_drifts_toward_its_keeper_not_the_nearest_band() {
+        let faction = FactionId(0);
+        let mut world = tamed_mid_strip(faction);
+        camp_at(&mut world, 1, faction);
+        keeping_camp_at(&mut world, 4, faction, 2, 5);
+        run_roam_turns(&mut world, 1);
+        assert_eq!(herd_x(&world), 3, "one step toward the keeper at x=4");
+    }
+
+    /// With no keeper the nearest band still wins - the rule as it was.
+    #[test]
+    fn a_tamed_herd_with_no_keeper_drifts_to_the_nearest_band() {
+        let faction = FactionId(0);
+        let mut world = tamed_mid_strip(faction);
+        camp_at(&mut world, 1, faction);
+        camp_at(&mut world, 4, faction);
+        run_roam_turns(&mut world, 1);
+        assert_eq!(herd_x(&world), 1, "one step toward the nearest camp at x=1");
+    }
+
+    /// Two keepers: the herd follows the one with more workers on it.
+    #[test]
+    fn a_herd_with_two_keepers_follows_the_one_with_more_workers() {
+        let faction = FactionId(0);
+        let mut world = tamed_mid_strip(faction);
+        keeping_camp_at(&mut world, 0, faction, 1, 2);
+        keeping_camp_at(&mut world, 4, faction, 2, 5);
+        run_roam_turns(&mut world, 1);
+        assert_eq!(herd_x(&world), 3, "toward the five-hand keeper at x=4");
+    }
+
+    /// A band of ANOTHER people working the herd is never the target.
+    #[test]
+    fn a_foreign_band_hunting_the_herd_is_not_followed() {
+        let faction = FactionId(0);
+        let mut world = tamed_mid_strip(faction);
+        camp_at(&mut world, 1, faction);
+        keeping_camp_at(&mut world, 4, FactionId(1), 2, 5);
+        run_roam_turns(&mut world, 1);
+        assert_eq!(
+            herd_x(&world),
+            1,
+            "toward its own people's camp, not the foreigner's"
+        );
+    }
+
+    /// The range the pastoral `K` is struck over names the same camp the drift steers to: both
+    /// read `herd_camp_targets`.
+    #[test]
+    fn the_range_reader_agrees_with_the_drift_target() {
+        let faction = FactionId(0);
+        let mut world = tamed_mid_strip(faction);
+        camp_at(&mut world, 1, faction);
+        keeping_camp_at(&mut world, 4, faction, 2, 5);
+
+        let mut bands =
+            world.query::<(&PopulationCohort, Option<&BandId>, Option<&LaborAllocation>)>();
+        let mut tiles = world.query::<&Tile>();
+        let mut owner_camps: BTreeMap<FactionId, Vec<UVec2>> = BTreeMap::new();
+        let mut keepers_in = Vec::new();
+        for (cohort, id, allocation) in bands.iter(&world) {
+            let position = tiles.get(&world, cohort.current_tile).unwrap().position;
+            owner_camps
+                .entry(cohort.faction)
+                .or_default()
+                .push(position);
+            if let (Some(id), Some(allocation)) = (id, allocation) {
+                keepers_in.push((*id, cohort.faction, position, allocation.clone()));
+            }
+        }
+        let keepers = keeper_camp_tiles(keepers_in.iter().map(|(b, f, p, a)| (*b, *f, *p, a)));
+
+        let herd = world.resource::<HerdRegistry>().herds[0].clone();
+        let targets = herd_camp_targets(&herd, herd.owner, &owner_camps, &keepers);
+        assert_eq!(targets, &[UVec2::new(4, 0)], "the keeper's camp alone");
+
+        let points = herd_wander_points(
+            &herd,
+            None,
+            &CapacityStanding::live(&herd),
+            targets,
+            5,
+            false,
+        );
+        assert_eq!(
+            points[0].0,
+            UVec2::new(4, 0),
+            "K is struck over the same camp"
         );
     }
 

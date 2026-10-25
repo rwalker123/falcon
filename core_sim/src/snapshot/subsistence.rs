@@ -605,6 +605,10 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     /// tamed reads the camps of the faction building it: the herd's owner, else the viewer (the
     /// builder state on a herd row is the viewer's own).
     pub(crate) owner_camps: &'a std::collections::BTreeMap<FactionId, Vec<UVec2>>,
+    /// **Each herd's keeping band's camp**, which overrides `owner_camps` for that herd: the camp a
+    /// herd drifts to is resolved by [`crate::fauna::herd_camp_targets`] for the drift, the live `K`
+    /// and this quote alike.
+    pub(crate) keeper_camps: &'a crate::fauna::KeeperCamps,
     /// The same ledger `visibility_raster_from_ledger` renders the client's fog from, read for the
     /// same faction — so a herd can never be drawn on a tile the raster paints black.
     pub(crate) visibility: &'a crate::visibility::VisibilityLedger,
@@ -699,6 +703,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         wrap_horizontal,
         graze,
         owner_camps,
+        keeper_camps,
         parties,
         penned_parties,
         fallback_party,
@@ -1325,9 +1330,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // seam that writes the live `carrying_capacity` above, evaluated at the destination
                 // standing — never a second expression that happens to agree today.
                 build_destination_capacity: herd.and_then(|herd| {
-                    let camps = owner_camps
-                        .get(&herd.owner.unwrap_or(viewer))
-                        .map_or(&[][..], Vec::as_slice);
+                    let camps = crate::fauna::herd_camp_targets(
+                        herd,
+                        Some(herd.owner.unwrap_or(viewer)),
+                        owner_camps,
+                        keeper_camps,
+                    );
                     crate::fauna::herd_destination_capacity(
                         herd,
                         species_def,
