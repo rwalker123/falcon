@@ -17,11 +17,12 @@ use bevy::prelude::{Entity, With};
 
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
-    advance_tribes, reconcile_band_culture_layers, BandId, BandLeader, BandLeadership, BandName,
-    BandSupplyMembership, BeliefRegistry, CommandEventEntry, CommandEventKind, CommandEventLog,
-    ConnectionKey, ConnectionLedger, CultureManager, CultureOwner, FactionId, FoundingLines,
-    LeaderKind, PopulationCohort, ResidentBand, Sighting, SimulationConfig, SimulationTick,
-    SupplyNetworkMembership, TribeLeaderKind, TribeRegistry, CULTURE_TRAIT_AXES,
+    advance_tribes, reconcile_band_culture_layers, tile_rung_span, BandId, BandLeader,
+    BandLeadership, BandName, BandSupplyMembership, BeliefRegistry, BranchId, CommandEventEntry,
+    CommandEventKind, CommandEventLog, ConnectionKey, ConnectionLedger, CultureManager,
+    CultureOwner, FactionId, FoundingLines, LadderConfigHandle, LeaderKind, PopulationCohort,
+    ResidentBand, RungId, Sighting, SimulationConfig, SimulationTick, SupplyNetworkMembership,
+    TileImprovementRegistry, TribeLeaderKind, TribeRegistry, CULTURE_TRAIT_AXES,
     CULTURE_TRAIT_SPAN,
 };
 
@@ -358,6 +359,40 @@ fn belief_on_the_shared_urn_closes_the_gap_sooner() {
     assert!(
         registry(&app).tribe_of(id(1)).is_some(),
         "8 + 0.2 history + ~1 belief clears 9 on the first turn"
+    );
+}
+
+/// Raise the monument on `tile` to `fraction` of its own span (1.0 = held).
+fn raise_monument(app: &mut App, tile: UVec2, fraction: f32) {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let branch = BranchId::new("belief");
+    let (base, width) = tile_rung_span(RungId::new(branch, "monument"), &ladder);
+    app.world
+        .resource_mut::<TileImprovementRegistry>()
+        .place(tile, branch, FactionId(0), &ladder)
+        .set_position(base + width * fraction, &ladder);
+}
+
+#[test]
+fn a_kept_monument_on_the_shared_urn_closes_a_fresh_split_at_once() {
+    let (mut app, _, _) = kin_pair();
+    raise_monument(&mut app, PLACE_A, 1.0);
+    turn(&mut app);
+    assert!(
+        registry(&app).tribe_of(id(1)).is_some(),
+        "8 + 0.2 history + monument 2 clears 9 on the first turn"
+    );
+}
+
+#[test]
+fn a_half_raised_monument_or_one_elsewhere_adds_nothing() {
+    let (mut app, _, _) = kin_pair();
+    raise_monument(&mut app, PLACE_A, 0.5);
+    raise_monument(&mut app, PLACE_B, 1.0);
+    turn(&mut app);
+    assert!(
+        registry(&app).is_empty(),
+        "a half-raised monument is not held, and one off the urn is not theirs"
     );
 }
 

@@ -46,6 +46,8 @@ pub struct LeadershipConfig {
     pub tribe_weight_belief: f64,
     /// Weight of the acting-as-a-tribe input.
     pub tribe_weight_acting: f64,
+    /// Weight of the kept-monument-on-the-shared-urn input.
+    pub tribe_weight_monument: f64,
     /// Turns of being local that build a pair's shared history from 0 to 1.
     pub tribe_history_build_turns: f64,
     /// Turns of not being local that fade a pair's shared history from 1 to 0.
@@ -115,6 +117,7 @@ impl LeadershipConfig {
             ("tribe_weight_history", self.tribe_weight_history),
             ("tribe_weight_belief", self.tribe_weight_belief),
             ("tribe_weight_acting", self.tribe_weight_acting),
+            ("tribe_weight_monument", self.tribe_weight_monument),
         ] {
             if !(value.is_finite() && value >= 0.0) {
                 return Err(format!("{name} must be finite and >= 0, got {value}"));
@@ -222,6 +225,7 @@ mod tests {
             config.tribe_weight_history,
             config.tribe_weight_belief,
             config.tribe_weight_acting,
+            config.tribe_weight_monument,
             config.tribe_history_build_turns,
             config.tribe_history_fade_turns,
             config.tribe_score_threshold,

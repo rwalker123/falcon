@@ -334,7 +334,7 @@ opening values.
 | Shared history | how long they have lived local to each other: builds over about 25 turns, fades over about 100 apart — history is not erased, it is forgotten | 5 |
 | Belief on the shared urn | a stronger sacred place pulls harder | 1 |
 | Acting as a tribe | work done at the tribe level — the shared pool (#862), the tribe bench (#864), shared works; only a tribe has it, so a working tribe holds together | 3 |
-| A kept monument at the urn | the plainest case of a place they walk to and work on (#692, which sets its weight) | — |
+| A kept monument at the urn | the plainest case of a place they walk to and work on (#692); 1 while it stands kept, 0 half-raised or decayed | 2 |
 
 - **A tribe forms at 9 and dissolves below it.** A band joins when its score with a member reaches the
   line, and leaves when it falls under.

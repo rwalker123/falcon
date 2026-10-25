@@ -587,6 +587,16 @@
           "step": 0.5,
           "default": 3.0,
           "hint": "Closeness a tribe gets from work done at the tribe level. No tribe-level work exists yet, so this has no effect until it does."
+        },
+        {
+          "pointer": "/tribe_weight_monument",
+          "label": "Monument at the urn",
+          "type": "float",
+          "min": 0,
+          "max": 10,
+          "step": 0.5,
+          "default": 2.0,
+          "hint": "Closeness two bands get while a monument stands kept on their shared urn."
         }
       ]
     }

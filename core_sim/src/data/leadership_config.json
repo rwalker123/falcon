@@ -10,6 +10,7 @@
   "tribe_weight_history": 5.0,
   "tribe_weight_belief": 1.0,
   "tribe_weight_acting": 3.0,
+  "tribe_weight_monument": 2.0,
   "tribe_history_build_turns": 25.0,
   "tribe_history_fade_turns": 100.0,
   "tribe_score_threshold": 9.0

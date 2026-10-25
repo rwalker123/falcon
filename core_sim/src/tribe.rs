@@ -1,8 +1,8 @@
 //! **A tribe is earned.** Every pair of bands that are *local* to one another (one people, one
 //! supply network that is not 0, one belief-anchor tile) gets a **closeness score** each turn: the
-//! weighted sum of six inputs in `[0, 1]` ([`CloseInputs`], [`closeness`]) -- shared origin,
+//! weighted sum of seven inputs in `[0, 1]` ([`CloseInputs`], [`closeness`]) -- shared origin,
 //! culture likeness, the connection tie, a shared history built by being local and faded by being
-//! apart, belief on the shared urn, and acting as a tribe. A pair is *close* at
+//! apart, belief on the shared urn, a kept monument on it, and acting as a tribe. A pair is *close* at
 //! `leadership_config.json -> tribe_score_threshold`. A tribe-candidate is a connected component
 //! of close pairs within one (people, network, anchor) set, of [`MIN_TRIBE_BANDS`] or more bands,
 //! at least one of which has a chief of its own.
@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     belief::BeliefRegistry,
+    belief_config::{BeliefConfig, BeliefConfigHandle},
     components::{BandId, BandName, PopulationCohort, ResidentBand},
     connections::ConnectionLedger,
     culture::{max_axis_gap, CultureLayer, CultureManager, CultureOwner, CULTURE_TRAIT_SPAN},
@@ -27,6 +28,7 @@ use crate::{
     resources::{CommandEventEntry, CommandEventKind, CommandEventLog, SimulationTick},
     supply::SupplyNetworkMembership,
     systems::band_label,
+    tile_improvement::TileImprovementRegistry,
     wellbeing_config::WellbeingConfigHandle,
 };
 
@@ -301,7 +303,7 @@ pub fn likeness(a: &CultureLayer, b: &CultureLayer) -> f64 {
     f64::from((1.0 - gap / CULTURE_AXIS_RANGE).clamp(0.0, 1.0))
 }
 
-/// The six inputs to a pair's closeness score, each in `[0, 1]`.
+/// The seven inputs to a pair's closeness score, each in `[0, 1]`.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct CloseInputs {
     /// 1 when the two bands' founding lines share an origin band, else 0.
@@ -314,6 +316,8 @@ pub struct CloseInputs {
     pub history: f64,
     /// The anchor weight of the belief standing on their shared urn; 0 when not local.
     pub belief: f64,
+    /// 1 while a monument stands kept on their shared urn ([`kept_monument`]), else 0.
+    pub monument: f64,
     /// [`acting_as_a_tribe`].
     pub acting: f64,
 }
@@ -326,6 +330,7 @@ pub fn closeness(config: &LeadershipConfig, inputs: &CloseInputs) -> f64 {
         + config.tribe_weight_tie * inputs.tie
         + config.tribe_weight_history * inputs.history
         + config.tribe_weight_belief * inputs.belief
+        + config.tribe_weight_monument * inputs.monument
         + config.tribe_weight_acting * inputs.acting
 }
 
@@ -414,22 +419,54 @@ fn tribe_entry(
     CommandEventEntry::new(tick, kind, tribe.faction, label, Some(detail)).with_band(band)
 }
 
-/// The anchor weight of the belief standing on a bucket's shared urn: the weight belief already
-/// uses (`CultureConfig::anchor_weight`), read at the anchor the bucket's bands share.
-fn bucket_anchor_weight(
-    bucket: &BandGroup,
-    belief: &BeliefRegistry,
-    wellbeing: &crate::wellbeing_config::WellbeingConfig,
-    facts: &BTreeMap<BandId, BandFacts>,
-) -> f64 {
-    let anchor = bucket
+/// The belief anchor a bucket's bands share.
+fn bucket_anchor(bucket: &BandGroup, facts: &BTreeMap<BandId, BandFacts>) -> Option<UVec2> {
+    bucket
         .members
         .iter()
-        .find_map(|member| facts.get(member).and_then(|f| f.anchor));
+        .find_map(|member| facts.get(member).and_then(|f| f.anchor))
+}
+
+/// The anchor weight of the belief standing on a shared urn: the weight belief already uses
+/// (`CultureConfig::anchor_weight`), read at the anchor.
+fn anchor_weight(
+    anchor: Option<UVec2>,
+    belief: &BeliefRegistry,
+    wellbeing: &crate::wellbeing_config::WellbeingConfig,
+) -> f64 {
     anchor.map_or(0.0, |anchor| {
         f64::from(wellbeing.culture.anchor_weight(belief.get(anchor)))
     })
 }
+
+/// **A kept monument on the shared urn**: 1 while the anchor tile's improvement HOLDS a rung that
+/// `belief_config.json -> improvement_belief` lists, else 0. The list is the one that already says
+/// which rungs make a place a place of belief (the monument), so the engine names no rung here
+/// either. Held, not built: a half-raised monument reads 0, and an unkept one that has slipped back
+/// to its root reads 0 the turn it slips.
+pub fn kept_monument(
+    anchor: Option<UVec2>,
+    improvements: &TileImprovementRegistry,
+    belief: &BeliefConfig,
+) -> f64 {
+    let Some(anchor) = anchor else {
+        return NO_MONUMENT;
+    };
+    let kept = belief.improvement_belief.iter().any(|source| {
+        improvements
+            .get(anchor, source.rung.branch)
+            .is_some_and(|improvement| improvement.held_rung() == source.rung)
+    });
+    if kept {
+        MONUMENT_KEPT
+    } else {
+        NO_MONUMENT
+    }
+}
+
+/// The monument input's two readings.
+const MONUMENT_KEPT: f64 = 1.0;
+const NO_MONUMENT: f64 = 0.0;
 
 /// What the tribe system reads of each resident band: entity, id, people, name and leadership.
 type TribeBandParts = (
@@ -451,6 +488,8 @@ pub fn advance_tribes(
     culture: Res<CultureManager>,
     ledger: Res<ConnectionLedger>,
     belief: Res<BeliefRegistry>,
+    belief_config: Res<BeliefConfigHandle>,
+    improvements: Res<TileImprovementRegistry>,
     wellbeing: Res<WellbeingConfigHandle>,
     supply: Res<SupplyNetworkMembership>,
     mut registry: ResMut<TribeRegistry>,
@@ -460,6 +499,7 @@ pub fn advance_tribes(
     let turn = tick.0;
     let config = config.get();
     let wellbeing = wellbeing.get();
+    let belief_config = belief_config.get();
     let mut facts: BTreeMap<BandId, BandFacts> = BTreeMap::new();
     let mut rows = Vec::new();
     for (entity, band, cohort, name, leadership) in bands.iter() {
@@ -507,7 +547,9 @@ pub fn advance_tribes(
     // 2. Closeness of every local pair, then the candidate groups: close components with a chief.
     let mut close_pairs: BTreeSet<BandPair> = BTreeSet::new();
     for bucket in &buckets {
-        let anchor_weight = bucket_anchor_weight(bucket, &belief, &wellbeing, &facts);
+        let anchor = bucket_anchor(bucket, &facts);
+        let urn_belief = anchor_weight(anchor, &belief, &wellbeing);
+        let monument = kept_monument(anchor, &improvements, &belief_config);
         let members: Vec<BandId> = bucket.members.iter().copied().collect();
         for (i, a) in members.iter().enumerate() {
             for b in &members[i + 1..] {
@@ -535,7 +577,8 @@ pub fn advance_tribes(
                     },
                     tie,
                     history: registry.shared_history(*a, *b),
-                    belief: anchor_weight,
+                    belief: urn_belief,
+                    monument,
                     acting: acting_as_a_tribe(same_tribe),
                 };
                 if closeness(&config, &inputs) >= config.tribe_score_threshold {
@@ -773,6 +816,7 @@ mod tests {
             tie,
             history,
             belief,
+            monument: 0.0,
             acting: 0.0,
         }
     }
@@ -807,6 +851,25 @@ mod tests {
             base - 3.0
         );
         assert_eq!(closeness(&config, &inputs(1.0, 1.0, 1.0, 1.0, 1.0)), 14.0);
+    }
+
+    #[test]
+    fn a_kept_monument_closes_a_fresh_split_on_its_own() {
+        let config = shipped();
+        let fresh = inputs(1.0, 1.0, 1.0, 0.0, 0.0);
+        let with_monument = CloseInputs {
+            monument: 1.0,
+            ..fresh
+        };
+        // 8 + monument 2 = 10: over the line with no history and no belief.
+        assert_eq!(closeness(&config, &with_monument), 10.0);
+        assert!(closeness(&config, &with_monument) >= config.tribe_score_threshold);
+        // Unrelated, alike, no tie: 3 + full history 5 = 8 never closes; a monument makes it 10.
+        let strangers = CloseInputs {
+            monument: 1.0,
+            ..inputs(0.0, 1.0, 0.0, 1.0, 0.0)
+        };
+        assert_eq!(closeness(&config, &strangers), 10.0);
     }
 
     #[test]
