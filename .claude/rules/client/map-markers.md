@@ -444,11 +444,11 @@ The Peoples tab lists a band at "Last seen at (x, y), turn N"; the map used to s
 **subject band** in the viewer's `connections` ties (`MapView.set_connections`, pushed by `Main` beside
 `update_connections`) that has **no band marker drawn this frame** (`units`, fog-gated by
 `_unit_hidden_by_fog` — a foreign band on a fogged tile counts as not drawn, so its ghost shows). Of
-several ties to one subject — across every observer, each one a band of the viewer's people — the **freshest `last_seen_turn`** places it, equal turns going to the lower observer id (`HudBandLaborState.is_fresher_sighting`), so the ghost sits where the Trade ring and the sim's aim are. **A subject the viewer has people
-stationed with gets none either**: one of the viewer's own expeditions with mission `station`, phase
-`stationed` and `expedition_destination_band` = that subject suppresses it, because the party's own
-marker already shows where the host is, live (an outbound or returning station party does not suppress
-it — the host is still only remembered). **The ghost fades by the AGE OF THE NEWS, never by tie
+several ties to one subject — across every observer, each one a band of the viewer's people — the **freshest `last_seen_turn`** places it, equal turns going to the lower observer id (`HudBandLaborState.is_fresher_sighting`), so the ghost sits where the Trade ring and the sim's aim are. **A host the viewer has people
+stationed with is drawn like any other**: the party's own marker is a nameless expedition flag, so a suppressed
+ghost left nothing on the map naming the host (the original suppression, #774, only guarded against a doubled
+token on the party's hex). On a hex that already holds a live marker the ghost draws its NAME PILL and skips its
+own token, so the party's disc stands for the people and the pill says whose hex it is. **The ghost fades by the AGE OF THE NEWS, never by tie
 strength**: `news_age` = `HudConnectionsVocab.age_of(last_seen_turn, _current_turn)` (`MapView.set_current_turn`,
 pushed by `Main` from the snapshot `turn`, which runs one ahead of every contact stamp — see
 `band-city-panel.md` → the Peoples tab — so a band seen in the turn that just resolved is age 0), floored at 0, and

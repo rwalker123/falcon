@@ -63,7 +63,8 @@ func draw_primary_bands(radius: float, origin: Vector2) -> void:
 ## **REMEMBERED BANDS** — a ghost token for every people the viewer holds a tie to and cannot
 ## currently see (`MapView.remembered_bands`), at the tile it was last seen on. Same stage art a band
 ## token wears, desaturated, at faded by the age of the news (`REMEMBERED_FADE_TURNS`). Drawn in
-## the live `_draw` (above the fog tint, which is a terrain tint), no decorations.
+## the live `_draw` (above the fog tint, which is a terrain tint), no decorations. A hex already holding a live
+## marker (a party stationed with the host) gets the name pill but not a second token.
 ##
 ## **A GHOST NAMES ITSELF, IN THE LIVE NAMEPLATE FAMILY, DIMMED.** Same gate and shape as a live band's
 ## plate: the NAME PILL (same font, same anchor under the token, same footprint maths) at/above
@@ -90,16 +91,26 @@ func draw_remembered_bands(radius: float, origin: Vector2) -> void:
 	var token_radius := radius * _view.BAND_TOKEN_RADIUS_FACTOR
 	var glyph_size := int(maxf(_view.SECONDARY_ICON_MIN_SIZE, token_radius * _view.BAND_STAGE_GLYPH_SIZE_FACTOR))
 	var plates: Array = []   # [Rect2, name, border colour, alpha], drawn after every token
+	var occupied: Dictionary = {}   # tiles holding a live marker drawn this frame
+	for unit in _view.units:
+		if _view._unit_hidden_by_fog(unit):
+			continue
+		var pos: Array = Array(unit.get("pos", []))
+		if pos.size() == 2:
+			occupied[Vector2i(int(pos[0]), int(pos[1]))] = true
 	for tie in rows:
 		var alpha := lerpf(_view.REMEMBERED_MAX_ALPHA, _view.REMEMBERED_MIN_ALPHA,
 			clampf(float(tie.get("news_age", 0)) / float(_view.REMEMBERED_FADE_TURNS), 0.0, 1.0))
 		var center: Vector2 = _view._hex_center_wrapped(
 			int(tie.get("last_seen_x", 0)), int(tie.get("last_seen_y", 0)), radius, origin)
-		var box := Rect2(center - Vector2(glyph_size, glyph_size) * 0.5, Vector2(glyph_size, glyph_size))
-		var shadow: Color = _view.MARKER_GLYPH_SHADOW_COLOR
-		shadow.a *= alpha
-		_view.draw_texture_rect(tex, Rect2(box.position + _view.MARKER_GLYPH_SHADOW_OFFSET, box.size), false, shadow)
-		_view.draw_texture_rect(tex, box, false, Color(1.0, 1.0, 1.0, alpha))
+		# A live marker already stands on this hex (a delegate stationed with the host, say): the ghost
+		# gives it its NAME and not a second token drawn over the first.
+		if not occupied.has(Vector2i(int(tie.get("last_seen_x", 0)), int(tie.get("last_seen_y", 0)))):
+			var box := Rect2(center - Vector2(glyph_size, glyph_size) * 0.5, Vector2(glyph_size, glyph_size))
+			var shadow: Color = _view.MARKER_GLYPH_SHADOW_COLOR
+			shadow.a *= alpha
+			_view.draw_texture_rect(tex, Rect2(box.position + _view.MARKER_GLYPH_SHADOW_OFFSET, box.size), false, shadow)
+			_view.draw_texture_rect(tex, box, false, Color(1.0, 1.0, 1.0, alpha))
 		if radius < _view.ICON_MIN_DETAIL_RADIUS:
 			continue
 		var faction_color: Color = MapView.faction_color(tie.get("subject_faction", ""),

@@ -3015,20 +3015,14 @@ func set_connections(rows: Variant) -> void:
 
 ## **THE REMEMBERED BANDS — one row per subject band the viewer knows of but does not currently see.**
 ## A subject with a band marker drawn this frame (`units`, fog-gated by `_unit_hidden_by_fog`) is live
-## and gets none; nor does a subject the viewer has people STATIONED with (a station party in phase
-## `stationed` whose `expedition_destination_band` is that subject) — the party's own marker already
-## shows where the host is, live. Outbound/returning station parties do not suppress it. Of several ties
-## to one subject the LATEST sighting places it. Rows are the winning tie dict plus `news_age` (turns,
+## and gets none. **A host the viewer has people stationed with is drawn like any remembered band**: the
+## party's own marker is a nameless expedition flag, so suppressing the host's ghost left nothing on the
+## map naming it. Of several ties to one subject the freshest sighting places it. Rows are the winning tie dict plus `news_age` (turns,
 ## `HudConnectionsVocab.age_of` — the turn that just resolved less `last_seen_turn`, floored at 0) which is what fades the marker; strength never does.
 ## Pure over `units` + `_connection_ties` + `_current_turn`, so the draw and the hover cannot disagree.
 func remembered_bands() -> Array:
 	var live_ids: Dictionary = {}
-	var posted_ids: Dictionary = {}
 	for unit in units:
-		if HudConst.is_player_unit(unit) \
-				and String(unit.get("expedition_mission", "")) == HudExpeditionVocab.EXPEDITION_MISSION_STATION \
-				and String(unit.get("expedition_phase", "")) == HudExpeditionVocab.EXPEDITION_PHASE_STATIONED:
-			posted_ids[int(unit.get("expedition_destination_band", HudConst.NO_BAND_ID))] = true
 		if _unit_hidden_by_fog(unit):
 			continue
 		live_ids[int(unit.get("band_id", HudConst.NO_BAND_ID))] = true
@@ -3038,7 +3032,7 @@ func remembered_bands() -> Array:
 			continue
 		var tie: Dictionary = tie_variant
 		var subject := int(tie.get("subject_band_id", HudConst.NO_BAND_ID))
-		if subject == HudConst.NO_BAND_ID or live_ids.has(subject) or posted_ids.has(subject):
+		if subject == HudConst.NO_BAND_ID or live_ids.has(subject):
 			continue
 		if int(tie.get("last_seen_x", -1)) < 0 or int(tie.get("last_seen_y", -1)) < 0:
 			continue

@@ -7731,9 +7731,9 @@ const REMEMBERED_TILES := [Vector2i(5, 3), Vector2i(8, 3), Vector2i(11, 3)]
 # strongest tie must be the faintest ghost (strength is how well you know them, not how fresh).
 const REMEMBERED_STRENGTHS := [0.0, 0.5, 1.0]
 const REMEMBERED_NEWS_AGES := [0, 15, 30]   # turns old at REMEMBERED_TURN (fresh / halfway / fully faded)
-const REMEMBERED_POSTED_HOST_ID := 930      # the viewer has people STATIONED with this band: no ghost
+const REMEMBERED_POSTED_HOST_ID := 930      # the viewer has people STATIONED with this band: it is still drawn, and named
 const REMEMBERED_POSTED_HOST_TILE := Vector2i(8, 8)
-const REMEMBERED_POSTED_PARTY_TILE := Vector2i(9, 8)
+const REMEMBERED_POSTED_PARTY_TILE := REMEMBERED_POSTED_HOST_TILE   # the party stands WITH its host
 const REMEMBERED_OUTBOUND_HOST_ID := 931    # a party is only WALKING there: the ghost stays
 const REMEMBERED_OUTBOUND_HOST_TILE := Vector2i(5, 8)
 const REMEMBERED_OUTBOUND_PARTY_TILE := Vector2i(4, 8)
@@ -7780,7 +7780,7 @@ func _remembered_ties() -> Array:
 	return ties
 
 ## A station party (issue #774): `host` rides the expedition's destination band, `phase` decides whether
-## it has arrived (stationed: the host's ghost is suppressed) or is still walking (outbound: it is not).
+## it has arrived (stationed: the host's ghost still draws, under the party's marker) or is still walking (outbound: it is not).
 func _remembered_station_party(entity: int, tile: Vector2i, host: int, phase: String) -> Dictionary:
 	var party := _expedition(entity, tile.x, tile.y, phase)
 	party["expedition_mission"] = HudExpeditionVocab.EXPEDITION_MISSION_STATION
@@ -7821,8 +7821,8 @@ func _remembered_band_states() -> void:
 	_assert_map("remembered - news a full fade window old still shows faintly (%.4f)" % deltas[2], deltas[2] > 0.0)
 	_assert_map("remembered - opacity grades by news AGE, against strength (%.4f > %.4f > %.4f)" % [deltas[0], deltas[1], deltas[2]],
 		deltas[0] > deltas[1] and deltas[1] > deltas[2])
-	_assert_map("remembered - a subject we are stationed with draws no ghost",
-		_count_changed_pixels(bare, ghosts, _hex_probe_rect(ghosts, REMEMBERED_POSTED_HOST_TILE, REMEMBERED_PROBE_RADII)) == 0)
+	_assert_map("remembered - a host we are stationed with is still drawn (the party's flag names nobody)",
+		_count_changed_pixels(bare, ghosts, _hex_probe_rect(ghosts, REMEMBERED_POSTED_HOST_TILE, REMEMBERED_PROBE_RADII)) > 0)
 	_assert_map("remembered - a host a party is only walking to keeps its ghost",
 		_mean_abs_delta(bare, ghosts, _hex_probe_rect(ghosts, REMEMBERED_OUTBOUND_HOST_TILE, REMEMBERED_PROBE_RADII)) > 0.0)
 	_assert_map("remembered - an older sighting of the same subject draws nothing",
@@ -7830,7 +7830,7 @@ func _remembered_band_states() -> void:
 	_assert_map("remembered - a subject with a live band marker draws no ghost",
 		_count_changed_pixels(bare, ghosts, _hex_probe_rect(ghosts, REMEMBERED_LIVE_TILE, REMEMBERED_PROBE_RADII)) == 0)
 	var rows: Array = _map.remembered_bands()
-	_assert_map("remembered - one row per unseen subject", rows.size() == REMEMBERED_TILES.size() + 1)   # + the outbound host
+	_assert_map("remembered - one row per unseen subject", rows.size() == REMEMBERED_TILES.size() + 2)   # + the stationed host + the outbound host
 	var faded: Dictionary = {}
 	for row in rows:
 		if int(row["subject_band_id"]) == REMEMBERED_FADED_SUBJECT_ID:
@@ -7857,6 +7857,10 @@ const GHOST_NAME_B_ID := 952
 const GHOST_NAME_C_ID := 953
 const GHOST_NAME_D_ID := 954
 const GHOST_NAME_SHARED_ID := 955
+const GHOST_NAME_POSTED_ID := 956           # a host our stationed party stands WITH, absent from populations
+const GHOST_NAME_POSTED_NAME := "Sorrelbank"
+const GHOST_NAME_POSTED_TILE := Vector2i(13, 19)
+const GHOST_NAME_POSTED_PARTY_ENTITY := 9560
 const GHOST_NAME_B_COLS_WEST := 6
 const GHOST_NAME_D_COLS_EAST := 7
 const GHOST_NAME_B_FACTION := 2
@@ -7879,7 +7883,12 @@ func _remembered_band_name_states() -> void:
 	var snapshot := _snapshot_band_names_crowded()
 	var west: Dictionary = snapshot["populations"][0]
 	west["band_id"] = GHOST_NAME_LIVE_BAND_ID
-	snapshot["populations"] = [west]
+	var posted_party := _expedition(GHOST_NAME_POSTED_PARTY_ENTITY, GHOST_NAME_POSTED_TILE.x,
+		GHOST_NAME_POSTED_TILE.y, "stationed")
+	posted_party["expedition_mission"] = HudExpeditionVocab.EXPEDITION_MISSION_STATION
+	posted_party["expedition_destination_band"] = GHOST_NAME_POSTED_ID
+	posted_party["band_id"] = GHOST_NAME_POSTED_ID + 1
+	snapshot["populations"] = [west, posted_party]
 	snapshot["turn"] = GHOST_NAME_TURN
 	_map.set_connections([])
 	_display_snapshot(snapshot)
@@ -7897,6 +7906,7 @@ func _remembered_band_name_states() -> void:
 		_ghost_tie(GHOST_NAME_B_ID, tile_b, NAME_PILL_LONG_NAME, GHOST_NAME_B_AGE, GHOST_NAME_B_FACTION),
 		_ghost_tie(GHOST_NAME_C_ID, tile_c, NAME_PILL_LONG_NAME, GHOST_NAME_C_AGE, 1),
 		_ghost_tie(GHOST_NAME_D_ID, tile_d, "", 2, null),
+		_ghost_tie(GHOST_NAME_POSTED_ID, GHOST_NAME_POSTED_TILE, GHOST_NAME_POSTED_NAME, 1, 8),
 	])
 	await _settle()
 	_assert_map("premise: the ghost-name frame is at pill zoom (radius %.1f >= %.1f)"
@@ -7909,6 +7919,8 @@ func _remembered_band_name_states() -> void:
 		not rects.has(GHOST_NAME_A_ID) and _map.band_label_tiles().has(NAME_PILL_CULL_WEST_TILE))
 	_assert_map("ghost names - of two colliding ghosts the newer sighting keeps its pill",
 		rects.has(GHOST_NAME_B_ID) and not rects.has(GHOST_NAME_C_ID))
+	_assert_map("ghost names - a host with our party stationed on its hex is NAMED there (its flag is nameless)",
+		rects.has(GHOST_NAME_POSTED_ID))
 	_assert_map("ghost names - a nameless tie still gets a pill (the Peoples tab's fallback label)",
 		rects.has(GHOST_NAME_D_ID))
 	var label_d := ""

@@ -999,6 +999,19 @@ func _run_ghost_destination_states(map: MapView) -> void:
 	h._assert_hud("ghost - its position is worded as REMEMBERED on the To row's hover",
 		_destination_tooltip().contains(ConnectionsRoster.remembered_line(_ghost_tie(),
 			h._hud._band_labor.current_turn())))
+	# **OUR DELEGATE STATIONED ON THAT HEX CHANGES NOTHING ABOUT WHAT A CLICK CHOOSES**: the party is not a
+	# band, so the hex still resolves to the host.
+	var posted_party := _party_unit()
+	posted_party["pos"] = [GHOST_TILE.x, GHOST_TILE.y]
+	posted_party["faction"] = 0
+	posted_party["expedition_mission"] = HudExpeditionVocab.EXPEDITION_MISSION_STATION
+	posted_party["expedition_phase"] = HudExpeditionVocab.EXPEDITION_PHASE_STATIONED
+	posted_party["expedition_destination_band"] = BandFx.FIXTURE_BAND_ID_OFFSET + GHOST_ENTITY
+	h._hud.update_band_alerts([_shipper_band(), _neighbour_band(), posted_party])
+	h._assert_hud("ghost - with our party stationed on its hex a click there still resolves to the host",
+		h._hud._targeting.trade_destination_at(_shipper_band(), GHOST_TILE.x, GHOST_TILE.y)
+			== BandFx.FIXTURE_BAND_ID_OFFSET + GHOST_ENTITY)
+	h._hud.update_band_alerts([_shipper_band(), _neighbour_band()])
 	await h._save("trade_sheet_ghost_destination")
 	var ghost_clear := Q.find_meta_node(_parties_zone(), HudWidgets.FIELD_CLEAR_META) as Button
 	if ghost_clear != null:
