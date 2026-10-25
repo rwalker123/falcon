@@ -206,6 +206,35 @@ impl ConnectionLedger {
         self.edges.get(key)
     }
 
+    /// **What `observer` holds a live tie to, as it last saw it** - every edge `observer -> X` with
+    /// `strength > NO_TIE`, in `X` order, each as the [`Sighting`] the observer's own memory holds
+    /// (clock 1: position, observed turn, name, people). A parked tie is not live and is skipped.
+    /// Only edges whose `last_contact_turn` is `since_turn` or later count: a tie that is live but
+    /// stale is not fresh news. The news a stationed delegate's runner carries about who its host
+    /// knows.
+    pub fn live_sightings_of(
+        &self,
+        observer: BandId,
+        since_turn: u64,
+    ) -> impl Iterator<Item = (BandId, Sighting)> + '_ {
+        let from = ConnectionKey::new(observer, BandId(u64::MIN));
+        let to = ConnectionKey::new(observer, BandId(u64::MAX));
+        self.edges
+            .range(from..=to)
+            .filter(move |(_, edge)| edge.strength > NO_TIE && edge.last_contact_turn >= since_turn)
+            .map(|(key, edge)| {
+                (
+                    key.subject,
+                    Sighting::new(
+                        edge.last_seen_position,
+                        edge.last_seen_turn,
+                        edge.subject_name.clone(),
+                        edge.subject_faction,
+                    ),
+                )
+            })
+    }
+
     /// Every edge, in key order. Deterministic by construction — see the type's note on `BTreeMap`.
     pub fn iter(&self) -> impl Iterator<Item = (&ConnectionKey, &Connection)> {
         self.edges.iter()

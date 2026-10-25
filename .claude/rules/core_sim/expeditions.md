@@ -1335,6 +1335,27 @@ config, derived at capture, never saved. A client quoting a report's delay reads
 `bandMoveTilesPerTurn` and `station_report_delay`'s two branches above. Pinned by
 `station_expedition::the_comm_range_is_published_on_every_cohort_row`.
 
+- **The runner also carries who the host knows, one hop.** When a turn's report is bundled, the
+  host's LIVE and FRESH outgoing ties (`ConnectionLedger::live_sightings_of(host, since_turn)`:
+  every edge `host -> X` with `strength > NO_TIE` and `last_contact_turn >= since_turn`) are merged into its `sightings`, except the home band itself, the host
+  and any band the party sighted directly that turn (a direct sighting is fresher and wins, via
+  `or_insert`). Each is a `Sighting` taken from the HOST's edge: its `last_seen_position`,
+  `subject_name`, `subject_faction` and `last_seen_turn` as the observed turn. It lands exactly like
+  the party's own sightings, as `ContactsThisTurn::record_report(home, X, ..)`: news, never a
+  meeting, so no gathering and no belief; clock 1 holds the host's memory (and the never-backwards
+  guard protects a fresher one home already holds) and clocks 2 and 3 hold the landing turn. Never
+  X's own ties. **Fresh means contacted last turn**: `since_turn = current_turn -
+  LEDGER_CONTACT_LAG_TURNS` (1), because `advance_expeditions` runs in `Population` and
+  `advance_connections` stamps a turn's contacts later in `Visibility`, so the newest contact the
+  ledger can hold at bundling is the previous turn's. A live but stale host tie is not carried:
+  carrying it every turn would pin home's `home -> X` at full while the host's own bleeds out, so
+  home would know X better than the host does. A host of another people carries too: the post is gated on open borders, and these
+  ties feed the knowledge rider's watching channel (`connections.md` -> "Knowledge is the third
+  rider"). The carried sightings live inside `StationReport::sightings`, so they ride the
+  checkpoint with the `Expedition` and no saved shape changed. Pinned by `station_expedition.rs`:
+  a far band's tie lands on the landing turn and not before; a parked tie, the tie back to the home
+  band and a gathering are all absent; a band seen directly and known to the host lands once at
+  the direct position.
 - **The fold-back lands every report still in transit** (`Returning` and near home, or home
   unresolvable) — the party carries its own news home. A party with no home band to report to
   simply loses it, as a scout loses its findings.

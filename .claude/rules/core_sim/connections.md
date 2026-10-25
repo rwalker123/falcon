@@ -217,6 +217,11 @@ stamps `last_contact_turn` with the landed turn, and moves clock 1 (`last_seen_t
 turn: `last_seen_turn` trails `last_contact_turn` by the walk (zero inside the effective comm range).
 Reports in transit are `Expedition` state and ride the checkpoint with it.
 
+**A report also carries who the host knows**: the host's live, freshly contacted outgoing ties, one hop, landed as
+news by the same `record_report` path (`expeditions.md` -> "A stationed party", "The runner also
+carries who the host knows"). They form or refresh `home -> X` edges at the host's remembered
+position and turn, fire no gathering, and feed the knowledge rider's watching channel.
+
 **There is no live credit, and that is the point.** Strength is how well the people know the host,
 and freshness is clock 1 (`last_seen_turn`). A credit with no news home would make the strength
 current while the remembered position is a walk old: the tie read 100% the moment a post arrived
