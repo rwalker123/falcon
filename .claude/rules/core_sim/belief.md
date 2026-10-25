@@ -145,15 +145,23 @@ tied to the second. Edges are directed, so the pair is deduplicated on its UNORD
 is at most one gathering a turn. A pair that camps together stays tied and never re-fires. Bands of
 one people count as well as bands of different peoples. `metrics.connections_formed` is untouched.
 
-**The world's opening sightings are a gathering; a later-founded band's first turn is not.** Bands
-in sight of each other when the game starts met "at turn 0": on the world's first resolved turn
+**The world's opening sightings are a gathering; a later-founded band sees only where it started.**
+Bands in sight of each other when the game starts met "at turn 0": on the world's first resolved turn
 (`SimulationTick` reads `0`, the `OPENING_TURN` constant in `connections.rs`; `advance_tick` runs in
-`Snapshot`, behind the turn) the founding-age skip does not apply, so those pairs hold a gathering.
-On any later turn a pair with either band in its first turn (`age_turns <= 1` at the Visibility pass,
-since `simulate_population` bumps it first) is skipped: a band founded later — a split's child —
-sees only where it started, not a meeting. The ties still form that turn, so they are live afterwards
-and do not fire later while the bands stay in contact; a re-meeting after the tie parks fires as
-usual. `age_turns` is existing cohort state, so no new checkpoint field.
+`Snapshot`, behind the turn) the founding-turn skip does not apply, so those pairs hold a gathering.
+On any later turn a band in its first turn (`age_turns <= 1` at the Visibility pass, since
+`simulate_population` bumps it first) holds no gathering with a band **its people already knew**:
+another resident band of its people (the parent it split from, a sibling) held a live tie to that band
+before this turn's contacts were folded in (`connections::saw_where_it_started`). That is the camp it
+was born into. **A band its people had never met is a meeting**, founding turn or not: a split's child
+that is first to see a stranger people announces it. The ties still form that turn, so they are live
+afterwards and do not fire later while the bands stay in contact; a re-meeting after the tie parks
+fires as usual. `age_turns` is existing cohort state, so no new checkpoint field.
+
+> **Why the skip was narrowed.** It used to skip every pair with a founding-turn band. In a playtest
+> two turn-1 splits were a people's first bands to see three other peoples, on their founding turn,
+> and the skip swallowed all three first contacts. With the tie formed they could never fire later,
+> so the player was never told.
 
 **Only a live sighting counts.** `ContactsThisTurn::record` is the sight sweep's entry and marks the
 edge as a live sighting; an expedition's report goes through `record_report`, which refreshes the tie
@@ -181,7 +189,8 @@ gatherings; it is checkpoint state (`SimState::gatherings`, `SAVE_FORMAT_VERSION
 
 Pinned by `tests/gathering.rs`: a first meeting credits the larger band's tile once; bands in sight
 at world start hold a gathering on the opening turn (tick `0`, founding ages and all); a band
-founded after the opening turn holds none on its founding turn; a gathering is held where the band
+founded after the opening turn holds none on its founding turn with a band its people already knew,
+and does hold one with a people its own had never met; a gathering is held where the band
 stands, not its home; a pair that stays in contact does not re-fire; a pair whose
 tie parked and re-meets fires again; a same-people pair fires and is told once; an expedition report
 does not fire; a size tie goes to the lower band id; each people's line carries the band it met and its
