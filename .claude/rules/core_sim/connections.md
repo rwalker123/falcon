@@ -29,7 +29,7 @@ directed, persisting, decaying tie. Logistics, culture, knowledge and cargo are 
 
 | File | Purpose |
 |------|---------|
-| `src/data/connections_config.json` | `strength.gain_per_contact` (0.25 — four turns of contact reach a full tie), `strength.decay_per_turn` (0.02 — a full tie bleeds to nothing over fifty quiet turns), `forget_turns` (200 — how long after the last contact the edge itself is reaped). The `1.0` ceiling is **not** here: strength is a `0..=1` fraction by definition, so its top is the named constant `connections::FULL_TIE`, and tuning it would change the unit rather than the balance. No hot-reload kind. |
+| `src/data/connections_config.json` | `strength.gain_per_contact` (0.25 — four turns of contact reach a full tie), `strength.decay_per_turn` (0.02 — a full tie bleeds to nothing over fifty quiet turns), `forget_turns` (200 — how long after the last contact the edge itself is reaped). `kin_relay.max_hops` (2 — longest chain of this turn's direct contacts, within one people, a tie is relayed across; below 2 turns relay off; unsigned, so a negative or fractional value is a boot panic). The `1.0` ceiling is **not** here: strength is a `0..=1` fraction by definition, so its top is the named constant `connections::FULL_TIE`, and tuning it would change the unit rather than the balance. No hot-reload kind. |
 | `src/data/knowledge_contact_config.json` | **The knowledge rider's channel rates**, in practice units per turn (the unit `learn_rate` 1.0 is paid in): `channel_rates.watching` (**0.1**), `.trade` (**0.4**), `.road` (**0.6**). All three required, validated finite and `>= 0` (`0` switches a channel off); no global multiplier on top. Loader `knowledge_contact_config.rs` on the shared boot seam, env override `KNOWLEDGE_CONTACT_CONFIG_PATH`. No hot-reload kind. **Never `connections_config.json`**, which has no rider vocabulary |
 | `src/data/start_profile_knowledge_tags.json` | Each knowledge tag's `discovery_id`, its start-profile seed `progress`, and **`observability`** (`0..=1`, required, no default — how much being around the discovery teaches: a pen `1.0`, seed selection `0.2`). `deny_unknown_fields`, so the retired `fidelity` key fails to parse. Every tag must also have an `intensification_ladder.json` `knowledge.lesson_costs` entry — a boot panic otherwise |
 
@@ -420,6 +420,40 @@ yours because they camped nearby is not trade — that is a shipment's job, or a
 This module's discipline is about the *edge*: no faction field on `ConnectionKey`, no faction branch
 in `connections.rs`. A rider's policy is the rider's.
 `.claude/rules/core_sim/campaign.md` → "Supply Network" has the as-built detail.
+
+## Kin relay a tie, within one people
+
+A tie used to refresh only when the observing band itself sighted the subject. Three bands of one
+people strung in a chain (A sees B, B sees C, A cannot see C) therefore left A to C parked while
+independence, which groups a people's bands by tie *chains* (`lineage.rs`), already counted all
+three as one group. A Trade shipment gates on the sender to target edge, so A could not ship to its
+own kin. Relay makes the two consistent.
+
+**What it is.** `relay_among_kin`, called from `advance_connections` after this turn's direct
+contacts are folded in and before `decay_all`. The graph is exactly this turn's DIRECT contacts: the
+keys of `ContactsThisTurn` (sightings and landed reports), taken before the record loop, DIRECTED
+observer to subject, between resident bands of one people. Band `a` learns of `b` when a directed
+path `a to m to ... to b` of length `2..=kin_relay.max_hops` runs over those edges: kin `m` saw `b`
+this turn and told `a`; `a to b` is then refreshed with `record_contact` at `b`'s live position,
+name and people. A length-one path is `a`'s own contact and is never relayed, so relay cannot create
+a reverse edge and a band that sees nobody hears nothing. A relayed write is never a graph edge,
+this turn or later: a tie with no fresh direct news anywhere along its chain drains on the ordinary
+clock. Walks are in `BandId` order, and a relay that forms a missing edge counts in
+`connections_formed`.
+
+**It is news, never a sighting.** Relay writes the ledger directly and never goes through
+`ContactsThisTurn::record`, and the gathering's `meetings` set is read before it runs. So a relayed
+tie neither makes nor suppresses a gathering, and gives no belief and no ritual lesson. It refreshes
+strength, clock 1 and clock 3 exactly as an expedition's report does.
+
+**Within one people only.** A chain through another people's band relays nothing, and a detached
+party (no `ResidentBand`) is neither a node nor a relayer. A cross-people chain would tie you to
+strangers you never met, and the knowledge rider reads the ledger, so it would teach through that
+tie. This is the one place `advance_connections` branches on faction; the edge itself still carries
+none.
+
+`kin_relay.max_hops` below 2 (`0` or `1`) turns relay off, since the shortest relayed path is
+two. Pinned by `tests/kin_relay.rs`.
 
 ## The question a rider asks the ledger
 

@@ -189,7 +189,7 @@ pub use connections::{
 };
 pub use connections_config::{
     load_connections_config_from_env, ConnectionStrengthConfig, ConnectionsConfig,
-    ConnectionsConfigHandle, ConnectionsConfigMetadata, BUILTIN_CONNECTIONS_CONFIG,
+    ConnectionsConfigHandle, ConnectionsConfigMetadata, KinRelayConfig, BUILTIN_CONNECTIONS_CONFIG,
 };
 pub use creatures_config::{
     load_creatures_config_from_env, CreatureDef, CreaturesConfig, CreaturesConfigHandle,

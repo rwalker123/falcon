@@ -426,6 +426,86 @@ impl ContactsThisTurn {
     }
 }
 
+/// **Kin relay a tie, within one people.** Runs after this turn's direct contacts are folded in and
+/// before the decay. The graph is exactly this turn's DIRECT contacts (`direct`: the keys of
+/// [`ContactsThisTurn`], sightings and landed reports), directed observer to subject, between
+/// resident bands of one people. Band `a` learns of `b` when a directed path `a -> m -> ... -> b` of
+/// length `2..=kin_relay.max_hops` runs over those edges: kin `m` saw `b` this turn and told `a`.
+/// A length-one path is `a`'s own contact, so it is never relayed (no reverse edge, and a band that
+/// sees nobody hears nothing). A relayed write is never a graph edge, this turn or later, so a tie
+/// with no fresh direct news along its chain drains on the ordinary clock.
+///
+/// It is **news, never a sighting**: it goes straight to [`ConnectionLedger::record_contact`] and
+/// never through [`ContactsThisTurn`], and it runs after the gathering's `meetings` were read, so it
+/// can neither make nor suppress a gathering.
+fn relay_among_kin(
+    ledger: &mut ConnectionLedger,
+    direct: &BTreeSet<ConnectionKey>,
+    residents: &Query<(&BandId, &PopulationCohort, Option<&BandName>), With<ResidentBand>>,
+    tiles: &Query<&Tile>,
+    turn: u64,
+    cfg: &ConnectionsConfig,
+    formed: &mut u32,
+) {
+    let max_hops = cfg.kin_relay.max_hops;
+    if max_hops < MIN_RELAY_HOPS {
+        return;
+    }
+    // Bands by id (sorted), so every walk below is deterministic.
+    let bands: BTreeMap<BandId, (FactionId, Sighting)> = residents
+        .iter()
+        .filter_map(|(id, cohort, name)| {
+            let position = tiles.get(cohort.current_tile).ok()?.position;
+            let name = name.map_or_else(|| band_label(*id), |name| name.0.clone());
+            Some((
+                *id,
+                (
+                    cohort.faction,
+                    Sighting::new(position, turn, name, cohort.faction),
+                ),
+            ))
+        })
+        .collect();
+    let mut sees: BTreeMap<BandId, Vec<BandId>> = BTreeMap::new();
+    for key in direct {
+        if let (Some((from, _)), Some((to, _))) =
+            (bands.get(&key.observer), bands.get(&key.subject))
+        {
+            if from == to {
+                sees.entry(key.observer).or_default().push(key.subject);
+            }
+        }
+    }
+    let mut relays: Vec<(ConnectionKey, Sighting)> = Vec::new();
+    for a in bands.keys() {
+        let mut reached: BTreeSet<BandId> = BTreeSet::from([*a]);
+        let mut frontier = vec![*a];
+        for hops in 1..=max_hops {
+            let mut next = Vec::new();
+            for at in &frontier {
+                for b in sees.get(at).into_iter().flatten() {
+                    if reached.insert(*b) {
+                        next.push(*b);
+                        if hops >= MIN_RELAY_HOPS {
+                            relays.push((ConnectionKey::new(*a, *b), bands[b].1.clone()));
+                        }
+                    }
+                }
+            }
+            frontier = next;
+        }
+    }
+    for (key, sighting) in relays {
+        if ledger.record_contact(key, &sighting, turn, cfg) {
+            *formed += 1;
+        }
+    }
+}
+
+/// The shortest chain that is news rather than a band's own contact: `a` hears of `b` from a kin
+/// who saw `b`.
+const MIN_RELAY_HOPS: u32 = 2;
+
 /// **How many gatherings each people has held** — a cumulative per-faction count, the total the
 /// Telling diffs into `gatherings.held_this_turn` (the `sites.discovered_this_turn` pattern).
 /// Checkpoint state: nothing rebuilds a count of past meetings.
@@ -518,6 +598,7 @@ pub fn advance_connections(
         .map(|key| band_pair(key.observer, key.subject))
         .collect();
 
+    let direct: BTreeSet<ConnectionKey> = contacts.iter().map(|(key, _)| *key).collect();
     let mut formed = 0u32;
     for (key, sighting) in contacts.iter() {
         // **Observed then, received now.** A sight-sweep contact observed this very turn passes the
@@ -527,6 +608,15 @@ pub fn advance_connections(
             formed += 1;
         }
     }
+    relay_among_kin(
+        &mut ledger,
+        &direct,
+        &residents,
+        &tiles,
+        turn,
+        &cfg,
+        &mut formed,
+    );
     let reaped = ledger.decay_all(turn, &cfg);
     contacts.clear();
 

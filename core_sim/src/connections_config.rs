@@ -41,6 +41,31 @@ pub struct ConnectionsConfig {
     /// *"we know such a people exist and have no current tie"*, which is a different reading from
     /// having forgotten them, and the gap between the two clocks is what keeps it one.
     pub forget_turns: u64,
+    /// Kin relay: how a tie is carried between bands of one people. See [`KinRelayConfig`].
+    pub kin_relay: KinRelayConfig,
+}
+
+/// Kin relay - the news one band of a people passes to its own kin about a third band they all
+/// know, so a people's ties stay consistent with the chains independence already groups them by.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct KinRelayConfig {
+    /// How many tie-hops along a chain of live ties, within one people, a band's tie is refreshed
+    /// across. `0` switches relay off (a tie then refreshes only from the band's own sighting);
+    /// `1` relays only to a kin's direct tie. An unsigned integer, so a negative or fractional
+    /// value fails to parse and is a boot panic.
+    pub max_hops: u32,
+}
+
+/// Shipped relay depth: a band hears of kin two ties away, which spans a three-band chain.
+pub const DEFAULT_KIN_RELAY_MAX_HOPS: u32 = 2;
+
+impl Default for KinRelayConfig {
+    fn default() -> Self {
+        Self {
+            max_hops: DEFAULT_KIN_RELAY_MAX_HOPS,
+        }
+    }
 }
 
 /// Clock 2 — how a tie is raised, and how it drains.
@@ -60,6 +85,7 @@ impl Default for ConnectionsConfig {
         Self {
             strength: ConnectionStrengthConfig::default(),
             forget_turns: 200,
+            kin_relay: KinRelayConfig::default(),
         }
     }
 }
@@ -185,5 +211,14 @@ mod tests {
             config.forget_turns > 0,
             "forgetting on the turn of contact would delete every edge as it formed"
         );
+        assert_eq!(config.kin_relay.max_hops, DEFAULT_KIN_RELAY_MAX_HOPS);
+    }
+
+    #[test]
+    fn a_negative_or_fractional_relay_depth_does_not_parse() {
+        for bad in ["-1", "1.5"] {
+            let json = format!(r#"{{ "kin_relay": {{ "max_hops": {bad} }} }}"#);
+            assert!(ConnectionsConfig::from_json_str(&json).is_err(), "{bad}");
+        }
     }
 }
