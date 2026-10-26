@@ -437,6 +437,7 @@ static func add_range_stepper(row: HBoxContainer, value_tiles: int, upper: int,
     value.custom_minimum_size = Vector2(HudWorkVocab.SCOUT_RANGE_VALUE_WIDTH, 0)
     value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     value.add_theme_color_override("font_color", HudStyle.INK if value_tiles > 0 else HudStyle.INK_FAINT)
+    value.set_meta(HudWorkVocab.SCOUT_RANGE_VALUE_META, true)
     row.add_child(value)
     var plus := Button.new()
     plus.text = HudWorkVocab.STEPPER_PLUS_FACE

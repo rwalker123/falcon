@@ -2708,7 +2708,7 @@ measured 332 and the charted split failed the floor at 74%.
 cannot make, each sabotage-verified against a DISJOINT mutation — `_assert_role_cards_are_level`
 compares the two cards' RENDERED heights behind a precondition that their CONTENT heights differ (two
 cards of equal content are level for free) —
-`_assert_role_card_gear` compares both cards' face and gear line by EQUALITY against expectations
+`_assert_role_card_gear` compares both cards' face and gear line by EQUALITY (the Scout card's gear line now rides its `+N tiles` tooltip, asserted there instead) against expectations
 that name their item LABEL outright (composing them through `item_for_axis` would assert only that
 the derivation agrees with itself; dropping the job override fails the WARRIOR card alone, naming
 `attack 6 defending the camp · Spears 74`), and `_assert_role_kit_command_carries_the_pick` drives
@@ -6538,10 +6538,10 @@ line falls back to the people (`Lothari cultivating · 86%`) and draws no link. 
 
 ### The Scout card is the `Scouting range` card (#875)
 
-In the band zone's role cards the Scout card is a range stepper (`+N tiles`) over its kit picker and a
-status line; the wording and the pending-overlay rules are in `labor-ui.md` -> "THE SCOUT CARD STATES A
-RANGE, NOT A HEADCOUNT". Its status line is as tall as the Warrior's hint (both reserve
-`ROLE_CARD_HINT_HEIGHT`), so the two cards' contents can measure the same height, and the chartless band
-flank's balance floor is 0.60.
-The Scout card's optional second dim line (`Keeping N packs off watched ground`, only when
-`predators_kept_off > 0`) sits under the status line; it is asserted in `_assert_scouting_range_card`.
+In the band zone's role cards the Scout card is a range stepper (`+N tiles`) over its kit picker and ONE
+line (`N scouts`, amber `N scouts · K tiles short` when short, none at +0). Everything else - the watched
+radius, the gear count, the kit's sight line, the kept-off packs, the shortfall sentence - is the
+tooltip on the `+N tiles` value (`labor-ui.md` -> "THE SCOUT CARD STATES A RANGE, NOT A HEADCOUNT").
+The card's content is therefore shorter than the Warrior's; the pair still renders level (the row
+stretches them), and the chartless band flank's balance floor is 0.60 (measured 61% in
+`band_panel_band_columns_two`). Asserted in `_assert_scouting_range_card`.
