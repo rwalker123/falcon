@@ -47,6 +47,8 @@ const BELIEF_FEW := 0.5
 ## The crew the step card is asked at: nobody, and two hands.
 const CREW_NONE := 0
 const CREW_TWO := 2
+## A turn past any the harness stages an assign on, so `reconcile_pending` retires every un-acknowledged crew.
+const PENDING_RETIRED_TURN := 1000000
 const STONE_PILE := 20.0
 
 func _catalog() -> Array:
@@ -90,6 +92,18 @@ func _band(crew_on_belief: int, crew_on_pit: int) -> Dictionary:
 		assignments.append(_tile_assignment(BELIEF_BRANCH, crew_on_belief))
 	if crew_on_pit > 0:
 		assignments.append(_tile_assignment(STORES_BRANCH, crew_on_pit))
+	band["labor_assignments"] = assignments
+	return band
+
+## A band HOLDING a tile row on each branch at ZERO staffed (Max 1) -- the sim's state before any build is
+## declared, since a tile improvement has no take and the builders are dealt only to a declared build.
+func _band_held_unstaffed() -> Dictionary:
+	var band := _band(CREW_NONE, CREW_NONE)
+	var assignments: Array = (band.get("labor_assignments", []) as Array).duplicate()
+	for branch in [BELIEF_BRANCH, STORES_BRANCH]:
+		var row := _tile_assignment(branch, CREW_NONE)
+		row["max_workers"] = 1
+		assignments.append(row)
 	band["labor_assignments"] = assignments
 	return band
 
@@ -210,8 +224,11 @@ func _press_step(branch: String) -> String:
 
 ## The step card (Monument / Storage pit) opens from the Work tab's tile row chip -- the same
 ## `RungCardController.open_tile_track` that chip calls -- not from the tile card.
+## The gate's input is the REAL `tile_rows_held` (what the chip passes), so a held row at zero staffed and
+## a hex with no row are told apart by the band staged, not by a literal here.
 func _open_step_card(branch: String) -> void:
-	h._hud._rungcard.open_tile_track(_band(CREW_TWO, CREW_TWO), _tile(BELIEF_PRESENT), branch, CREW_TWO,
+	var held: int = h._hud._band_labor.tile_rows_held(TILE_X, TILE_Y, branch)
+	h._hud._rungcard.open_tile_track(_band(CREW_TWO, CREW_TWO), _tile(BELIEF_PRESENT), branch, held,
 		h._hud.tile_detail)
 
 func _site(branch: String, row: Dictionary = {}) -> Dictionary:
@@ -405,6 +422,38 @@ func run(harness) -> void:
 	var dig_line := await _press_step(STORES_BRANCH)
 	h._assert_hud("pressing the pit rung emits the exact build line (%s)" % dig_line,
 		dig_line == "build dig %d %d %d" % [HudConst.PLAYER_FACTION_ID, TILE_X, TILE_Y])
+
+	# ⛔ A row HELD at zero staffed (the sim's state until a build is declared) is a live press: the gate asks
+	# whether a band holds the row, never the staffed count -- else the press that declares the build can
+	# never be made.
+	# The crew sheets above left their un-acknowledged crews in the overlay; a turn's snapshot retires them.
+	h._hud._band_labor.reconcile_pending(PENDING_RETIRED_TURN)
+	_stage(_band_held_unstaffed(), [], 1.0, 1.0)
+	h._show_tile(_tile(BELIEF_PRESENT))
+	await h._settle()
+	var band_probe: Dictionary = h._hud._band_labor.current_player_bands()[0]
+	h._assert_hud("a held tile row at zero staffed counts as held (rows held = 1, staffed = 0)",
+		h._hud._band_labor.tile_rows_held(TILE_X, TILE_Y, STORES_BRANCH) == 1
+			and (h._hud._band_labor.effective_tile_workers(band_probe, TILE_X, TILE_Y, STORES_BRANCH)) == 0)
+	var held_dig := await _press_step(STORES_BRANCH)
+	h._assert_hud("a held-but-unstaffed row: the Storage pit press emits the build line (%s)" % held_dig,
+		held_dig == "build dig %d %d %d" % [HudConst.PLAYER_FACTION_ID, TILE_X, TILE_Y])
+	var held_raise := await _press_step(BELIEF_BRANCH)
+	h._assert_hud("…and the monument press too (%s)" % held_raise,
+		held_raise == "build raise %d %d %d" % [HudConst.PLAYER_FACTION_ID, TILE_X, TILE_Y])
+	_open_step_card(STORES_BRANCH)
+	await h._settle()
+	await h._save("tile_branches_step_card_held_unstaffed")
+	h._hud._rungcard.dismiss()
+	await h._settle()
+
+	# No row at all keeps the refusal.
+	_stage(band, [], 1.0, 1.0)
+	h._show_tile(_tile(BELIEF_PRESENT))
+	await h._settle()
+	var no_row_dig := await _press_step(STORES_BRANCH)
+	h._assert_hud("a hex with no tile row still refuses the press (%s)" % no_row_dig,
+		no_row_dig == "<nothing emitted>")
 
 	# Without a crew the card still opens and explains: the press is available, the rung is not.
 	_stage(band, [], 1.0, 1.0)

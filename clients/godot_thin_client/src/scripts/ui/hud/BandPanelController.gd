@@ -3151,7 +3151,7 @@ func strip_handlers(band: Dictionary, row: Dictionary, deposit: Dictionary = {},
         return {
             "on_ladder": func(anchor: Control) -> void:
                 _rung.open_tile_track(band, {"x": tile_x, "y": tile_y}, tile_branch,
-                    _band_labor.tile_crew_total(tile_x, tile_y, tile_branch), anchor),
+                    _band_labor.tile_rows_held(tile_x, tile_y, tile_branch), anchor),
             "on_ring": func(_anchor: Control) -> void: pass,
         }
     return {
