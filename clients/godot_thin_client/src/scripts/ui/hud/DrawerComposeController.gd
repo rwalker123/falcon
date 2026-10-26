@@ -4719,7 +4719,7 @@ func forage_standing_facts(tile_info: Dictionary) -> Dictionary:
     return _door_facts_of(_standing_summary_model(standing, SourceForecast.LABOR_KIND_FORAGE,
         crew_label.to_lower()))
 
-## …and the working's (`Assign foresters ▸` / `Assign diggers ▸` second line). `{}` where nobody cuts it.
+## …and the working's (the Wood / Stone row's crew mark and hover). `{}` where nobody cuts it.
 func deposit_standing_facts(working: Dictionary) -> Dictionary:
     var tile := HudDepositVocab.tile_of(working)
     var standing := _standing_assignment_extract(tile.x, tile.y, HudDepositVocab.material_of(working))
@@ -4838,7 +4838,7 @@ func _open_road_ladder(tile_info: Dictionary, index: int, anchor: Control) -> vo
         # **THE CATALOG IS PER WORLD AND ARRIVES WITH THE FIRST SNAPSHOT**, so an empty one is a wire
         # this client has not been sent rather than a branch with nothing on it. A card of no rows
         # would read as *this road can never be raised*, which is a claim about the world.
-        push_warning("DrawerComposeController: a Road ▸ was pressed with no route rung catalog on " +
+        push_warning("DrawerComposeController: a Road row was pressed with no route rung catalog on " +
             "the wire — the ladder cannot state a single rung")
         return
     # ⛔ **THE ACTING BAND IS PICKED HERE AND THE PLAYER CAN CHANGE IT.** It was
@@ -5924,8 +5924,8 @@ func _mount_deposit_readout(target: VBoxContainer, hosts: Array, deposit: Dictio
 ## has_muted]` — the full set of optional summary child slots, so any structural change (summary
 ## appearing/disappearing, a warn/note/muted label appearing) moves the signature and forces a rebuild
 ## rather than a stale positional patch. Each caller PREPENDS its own subject key (the forage tile key /
-## the herd id) so a subject change also forces a rebuild — see `build_forage_drawer_actions` /
-## `_herd_actions_shape`.
+## the herd id) so a subject change also forces a rebuild — see `_herd_actions_shape`
+## (the land card's door rows, `open_door`, replaced the forage drawer's foot buttons).
 func _standing_actions_shape(summary_model: Dictionary) -> Array:
     if summary_model.is_empty():
         return [false, false, false, false]

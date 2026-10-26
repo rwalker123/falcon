@@ -693,7 +693,7 @@ static func deposit_value_color(deposit: Dictionary, ladder: Array[Dictionary] =
 # `CARD_BLOCK_HEAD_FORMAT`, `CARD_STOCK_ROW` / `CARD_STOCK_FORMAT` / `stock_value`, `CARD_CREW_ROW`,
 # `CARD_BUILD_ROW`, `CARD_UPKEEP_ROW` and `CARD_REVERTING_ROW`. That card was a FOURTH UX pattern for
 # a branch whose three surfaces already ship, and it has been replaced by them: the tile card's
-# per-material ROW, the `Assign foresters ▸` / `Assign diggers ▸` COMPOSE SHEETS, and the shared
+# per-material ROW, the foresters / diggers COMPOSE SHEETS (eyebrow `Assign foresters` / `Assign diggers`, opened from the Wood / Stone row), and the shared
 # `RungLadder` TRACK on the Work board.
 #
 # ⛔ **THE THREE-NUMBER STOCK ROW WENT WITH IT, AND ITS ARGUMENT DID NOT.** `stock`, `capacity` and
@@ -1294,7 +1294,7 @@ static func deposit_land_value_hex(value: String) -> String:
 	return HudStyle.INK_HEX
 
 # ==================================================================================================
-#  THE TWO COMPOSE SHEETS — `Assign foresters ▸` and `Assign diggers ▸`
+#  THE TWO COMPOSE SHEETS — foresters and diggers (eyebrow `Assign foresters` / `Assign diggers`)
 # ==================================================================================================
 #
 # ⛔ **THE CREW NOUN IS PER BRANCH, NEVER PER RUNG** — the `Harvesters` rule

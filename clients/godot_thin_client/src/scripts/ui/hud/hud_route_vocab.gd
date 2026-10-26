@@ -1387,11 +1387,6 @@ static func ladder_rung_teaching(ladder: Array[Dictionary], knowledge_id: String
 # refusal string, which cannot answer *"paving is out of reach but railroad is not"*. The action opens
 # the whole branch and every rung carries its own price and its own gate.
 
-## The tile card's road action. `Road` is the branch's noun and matches the readout row's key one
-## section up, so the control and the row it acts on are called the same thing. The chevron is the
-## card's own *opens something* mark, as `HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT` wears it.
-const ROAD_LADDER_ACTION_LABEL := "Road ▸"
-
 ## …and the two stable HANDLES a harness reaches those nodes by. **Never by face text**: the action's
 ## label is one word a future rung could change, and the card carries no text of its own at all.
 const ROAD_LADDER_ACTION_META := &"road_ladder_action"

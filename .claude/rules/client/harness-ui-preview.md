@@ -3239,21 +3239,20 @@ opens on `woodcutting` rather than the job's `none`. The far wood authors a curv
 sheet's `DEPOSIT_TAKE_AT_SOURCE_META` line must read the curve row's take at the stepper's crew by
 equality — *Cut at the working: 2.35 wood a turn*.
 
-### ⛔ AND `workings_worked_buttons` IS THE PAIR THE STACKED BUTTON IS JUDGED ON
+### ⛔ AND `workings_worked_buttons` IS THE WORKED/UNWORKED PAIR ON THE LAND CARD
 
-Appended after the two ORDER frames. The standing summary is the `Assign … ▸` control's own SECOND
-LINE now (`selection-card.md`), and this is the one state in the corpus that stages a WORKED deposit —
-Ray's own card, two foresters on the wood — so it is where that face can be read at all.
+Appended after the two ORDER frames. The land's foot buttons are retired; a working's standing crew
+now rides its DOOR ROW (`selection-card.md` → "THE LAND CARD'S ROWS ARE THE DOORS"), and this is the one
+state in the corpus that stages a WORKED deposit — Ray's own card, two foresters on the wood — so it is
+where that row can be read at all. The frame keeps its button-era name.
 
 - **THE PAIR IS ON ONE HEX, which is what makes it a claim rather than a sample**: the band works the
-  wood and not the rock, so `Assign foresters ▸` carries a second line and `Assign diggers ▸` carries
-  none. A control that grew a blank second line on every source satisfies the presence half on its
-  own, and the blank gap is exactly what the single-line rule forbids.
-- **THE LABEL IS ASSERTED ON THE FIRST LINE**, which is what says the summary JOINED the control
-  rather than replacing its face.
-- ⛔ **AND THE FACE IS ASSERTED INERT, because no picture can show a swallowed click.** Every control
-  in a stacked face is `MOUSE_FILTER_IGNORE`; the summary's note labels have been through
-  `set_label_tooltip`, which sets **STOP**, so each would be a dead patch over the button.
+  wood and not the rock, so the Wood row wears the full-ink workers figure and its count while the
+  Stone row wears the dim figure alone. A mark that stated a count on every row satisfies the presence
+  half on its own.
+- **BOTH ROWS ARE STILL DOORS**: a crew of zero changes the mark, never whether the row opens its sheet.
+
+The stacked-button machinery below survives for the HERD's `Assign … ▸` cell, which is still a button.
 
 **THE HARNESS SIDE OF THE MOVE IS FOUR REPOINTINGS, NOT FOUR DELETIONS.** Every claim survived; what
 changed is where it is read from. `Q.find_button_by_text` matches a stacked cell on its first line

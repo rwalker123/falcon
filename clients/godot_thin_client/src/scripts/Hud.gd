@@ -1114,7 +1114,7 @@ func update_ladder_branches(branches_variant: Variant) -> void:
 ## A thin delegator for `update_ladder_knowledge`'s reason: `Main` reaches it BY NAME through
 ## `_hud_invoke`, whose `has_method` probe fails silently.
 ##
-## **IT PUSHES NO RE-RENDER.** The catalog is read at the moment the tile card's `Road ▸` action is
+## **IT PUSHES NO RE-RENDER.** The catalog is read at the moment the tile card's Road row is
 ## PRESSED, not at render, so a snapshot carrying it moves nothing on screen — and a world's catalog
 ## lands long before any road exists to open a ladder on.
 func update_route_rungs(catalog_variant: Variant) -> void:

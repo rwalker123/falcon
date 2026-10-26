@@ -1310,8 +1310,7 @@ static func hover_wrap(key: String, inner: String, ctx: Context) -> String:
 
 ## ⛔ **THE DOOR MARK -- the worker figure and the crew count, right-aligned at the end of a door row's value.**
 ## `crew_info` is the row's `Context.door_crews` entry (`{}` for none). Returns `bbcode` (the run to append
-## AFTER the fill pad), `plain` (the text beside the image, for measuring) and `image_px` (the image's
-## width). A crewed door wears the full-ink figure, the count in `INK`, and the `WARN` suffix where the
+## AFTER the fill pad), and `plain` (the text beside the image, for measuring). A crewed door wears the full-ink figure, the count in `INK`, and the `WARN` suffix where the
 ## standing summary warns; an uncrewed door wears the figure alone in `INK_DIM` -- the dim figure is the
 ## "nobody is on this" read. The image is `HudSprites`' `workers` mark, resolved through its path table.
 static func door_mark(crew_info: Dictionary) -> Dictionary:
@@ -1331,7 +1330,7 @@ static func door_mark(crew_info: Dictionary) -> Dictionary:
             var warn := HudSelectionVocab.DOOR_WARN_SUFFIX.replace(" ", HudDisclosureVocab.DOOR_MARK_NBSP)
             plain += warn
             text += "[color=#%s]%s[/color]" % [HudStyle.WARN_HEX, warn]
-    return {"bbcode": img + text, "plain": plain, "image_px": float(px) if path != "" else 0.0}
+    return {"bbcode": img + text, "plain": plain}
 
 ## A door row's cell content under its `door:` meta (see `Context.door_metas`).
 static func door_wrap(meta: String, inner: String) -> String:

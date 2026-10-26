@@ -1927,7 +1927,7 @@ func run(harness) -> void:
 		ROAD_FRICTION_PATH, ROAD_LINK_PATH)))
 	await h._settle()
 	if not await _open_road_ladder():
-		h._assert_hud("the road ladder opens from the tile card's `Road ▸`", false)
+		h._assert_hud("the road ladder opens from the tile card's Road row", false)
 	else:
 		var gated_states := _road_ladder_states()
 		var gated_faces := _road_ladder_faces()

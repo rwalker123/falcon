@@ -973,7 +973,7 @@ a real zone belonging to a floor it never chose. What a finite working's warning
 RUNWAY, which the tile card and the roster state and a hex-sized pill has never had room for.
 
 **The same fork reaches the drawer's standing summary** (`DrawerComposeController._standing_summary_model`
-takes the `deposits` row on its `extract` calls), so `Assign diggers ▸`'s second line and the working's
+takes the `deposits` row on its `extract` calls), so the Stone row's hover on the tile card and the working's
 row in `BandSourceList` cannot answer differently about one working. An `extract` row arriving without a row answers the finite
 reading, which is the safe way round: the failure being forbidden is a quarry claiming `♻`.
 

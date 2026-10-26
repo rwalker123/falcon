@@ -390,7 +390,7 @@ func run(harness) -> void:
 		DetailFormat.detail_bbcode(payoff_lines).count(TABLE_OPEN_TAG) == 1)
 	await h._save("workings_payoff_rows")
 
-	# ⛔ **STATE workings-forestry-sheet — `Assign foresters ▸`, THE FORAGE SHEET'S SPINE WITH THE
+	# ⛔ **STATE workings-forestry-sheet — the foresters sheet (opened from the Wood row), THE FORAGE SHEET'S SPINE WITH THE
 	# ELEMENTS A DEPOSIT HAS NO CONCEPT FOR ABSENT.** No floor presets, no chart, no species chips: a
 	# deposit has no escapement floor, and the chart IS the floor dial.
 	h._show_tile(_workings_tile([_wood_working(WOOD_OVER_CUT), _stone_working(STONE_TAKE)]))
@@ -476,7 +476,7 @@ func run(harness) -> void:
 		h._hud._drawercompose.close_compose_sheet()
 		await h._settle()
 
-	# ⛔ **STATE workings-extraction-sheet — `Assign diggers ▸`, AND THE VERDICT THE BRANCH TURNS ON.**
+	# ⛔ **STATE workings-extraction-sheet — the diggers sheet (opened from the Stone row), AND THE VERDICT THE BRANCH TURNS ON.**
 	# `Gathering reaches 330 of 2,200. A quarry would reach 1,870.` is the sentence the whole finite
 	# ladder exists to make, and it is composed from the CATALOG's reach against the ground's capacity
 	# — never from `reachable / capacity`, which falls as the rock is worked.
@@ -741,15 +741,13 @@ func run(harness) -> void:
 				< Readout.detail_row_index(remembered_lines, HudRouteVocab.ROAD_ROW))
 	await h._save("workings_road_remembered")
 
-	# ⛔ **STATE workings-worked-buttons — THE STANDING SUMMARY IS THE BUTTON'S SECOND LINE.** Ray, on
-	# a Rolling Hills card whose `♻ 2 foresters · +0.60 wood` sat in a row of its own above the button:
-	# *"That looks strange there … I think that would look more at home inside the button. We should
-	# make it the second line on the button."*
+	# ⛔ **STATE workings-worked-buttons — THE CREW MARK IS THE ROW'S TRAILING MARK.** (The state name is
+	# from the button era, when the standing summary was the deposit button's second line.)
 	#
 	# ⛔ **IT IS THE PAIR THAT IS THE CLAIM, ON ONE HEX.** This band works the WOOD and not the rock, so
-	# `Assign foresters ▸` carries a second line and `Assign diggers ▸` carries none — a control that
-	# grew a blank second line on every source would satisfy the presence half on its own, and the
-	# blank gap is exactly what Ray's *"a source nobody works keeps its single line"* forbids.
+	# the Wood row wears the full-ink workers figure and a count and the Stone row wears the dim figure
+	# alone — a mark that grew a count on every source would satisfy the presence half on its own, and
+	# an uncrewed source must stay a bare dim figure (Ray, button era: *"a source nobody works keeps its single line"*).
 	h._hud.update_band_alerts([_working_band_fixture()])
 	h._show_tile(_full_land_tile(TileFx.VIS_ACTIVE))
 	await h._settle()
@@ -2107,8 +2105,8 @@ func _full_land_tile(visibility_state: String) -> Dictionary:
 	tile["roads"] = [_worn_path()]
 	return tile
 
-## **A BAND WORKING THE WOOD AND NOT THE ROCK** — the one shape that puts a standing summary on ONE of
-## the hex's two deposit buttons, which is what makes `workings_worked_buttons` a pair rather than a
+## **A BAND WORKING THE WOOD AND NOT THE ROCK** — the one shape that puts a crew mark on ONE of
+## the hex's two deposit rows, which is what makes `workings_worked_buttons` a pair rather than a
 ## sample. The `extract` row names its MATERIAL because `(tile, material)` is the assignment's whole
 ## identity and a row without it stages an assignment `LaborTarget::Extract` cannot produce.
 func _working_band_fixture() -> Dictionary:

@@ -2781,7 +2781,8 @@ docstring has always recorded. The fix is the documented one: open, dial, re-ope
 #### THE STANDING-CREW LINE IS GONE
 
 The sheet's first control is its `Band:` picker. There is no `Now N` line above it — the drawer's own
-one-line summary states the standing crew in the read state the `Assign … ▸` button opens from, and
+read state states the standing crew (the herd's `Assign … ▸` button; on the land, the door row's crew
+count and hover), and
 the sheet states the composition being dialed. `COMPOSE_NOW_STAFFED_FORMAT` and
 `COMPOSE_PENDING_SUFFIX` are deleted with it.
 
@@ -6798,8 +6799,7 @@ the frames that exist to show three live accounts would mute the third.
 > | work row / strip head | VERB | `Harvest (28, 16)` |
 > | commit button | VERB | `Harvest` |
 > | sheet eyebrow | NOUN | `Assign harvesters` |
-> | drawer open button | NOUN | `Assign harvesters ▸` |
-> | standing summary | NOUN | `♻ 3 harvesters · +2.74 /turn` |
+> | standing summary (the `Foraging` door row's hover) | NOUN | `♻ 3 harvesters · +2.74 /turn` |
 > | dead-button hint | NOUN (singular) | `Nobody assigned yet — send at least one harvester.` |
 >
 > **ONE STRING CANNOT FILL BOTH** — `Assign harvest` and `♻ 3 harvest` are the readings that prove
@@ -7799,8 +7799,8 @@ plant web renders exactly what it did.
 
 ## A THIRD AND FOURTH SHEET: the two deposit branches (issue #650)
 
-`ComposeState` grew a `deposit_*` group and `DrawerComposeController` two more `Assign … ▸` actions —
-`Assign foresters ▸` and `Assign diggers ▸`, one per deposit branch. **The whole rationale is
+`ComposeState` grew a `deposit_*` group and `DrawerComposeController` two more sheets — the foresters
+and diggers sheets, one per deposit branch, opened from the tile card's Wood and Stone rows. **The whole rationale is
 `.claude/rules/client/extraction-workings.md`**; this section exists because `ComposeState.gd` is
 gated by THIS file and a reader editing the compose spine would otherwise never load it.
 

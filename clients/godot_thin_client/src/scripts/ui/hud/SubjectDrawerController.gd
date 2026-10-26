@@ -500,7 +500,7 @@ func _crew_on_forage(x: int, y: int) -> int:
 ## each offered branch (`DrawerComposeController.tile_branch_models`) is stated by the row the catalog
 ## says (`HudTileVocab.readout_row_key`) -- the dead's own `Ancestors` row where the branch's site term is
 ## belief, else a row keyed by the branch's display name and valued by the rung the tile stands at. The
-## crew rides the row as `⚒N`. The row is the door to the crew sheet where the branch can be worked
+## crew rides `Context.door_crews` and is drawn as the workers mark plus its count. The row is the door to the crew sheet where the branch can be worked
 ## here; where the site term refuses it stays a readout and the refusal is its hover.
 func _append_tile_branch_rows(lines: Array[String], tile_info: Dictionary,
         ctx: DetailFormat.Context) -> void:
@@ -784,8 +784,8 @@ func _tile_terrain_lines(tile_info: Dictionary,
     var crop_species := String(tile_info.get("patch_committed_species", "")).strip_edges()
     if workable and patch_capacity > 0.0:
         # **THE FORAGING ROW IS THE DOOR TO THE FORAGE SHEET** where the retired `Assign harvesters ▸`
-        # would have shown, carrying that button's second line: the hex's crew as a clause (`⚒N`, with the
-        # `⚠` of an over-take) and the summary's lines on the hover.
+        # would have shown, carrying that button's second line: the hex's crew (with the `⚠` of an over-take) rides
+        # `Context.door_crews` and is drawn as the workers mark plus count; the summary's lines are the hover.
         var forage_door := _drawercompose.forage_door_open(tile_info)
         var forage_facts: Dictionary = _drawercompose.forage_standing_facts(tile_info) \
             if forage_door else {}

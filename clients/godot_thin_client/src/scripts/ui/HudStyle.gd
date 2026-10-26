@@ -129,7 +129,6 @@ static var DANGER_HEX := "e8746a"
 static var HEALTHY_HEX := "76cd80"
 static var INK_HEX := "e9efe9"
 static var INK_DIM_HEX := "9db0ad"
-static var INK_FAINT_HEX := "6f8380"
 ## **THE DOOR ROW'S TWO WASHES** (`[cell bg=#RRGGBBAA]`, the tile card's rows that open a sheet). They
 ## differ in KIND, not just strength, so the pair reads at a glance: hover is a neutral faint `INK` tint
 ## (the pointer is merely over it), selected is `SIGNAL` (this HUD's LIVE state, the ink the compose-open
@@ -201,7 +200,6 @@ static func apply_palette(p: Dictionary) -> void:
 	HEALTHY_HEX = HEALTHY.to_html(false)
 	INK_HEX = INK.to_html(false)
 	INK_DIM_HEX = INK_DIM.to_html(false)
-	INK_FAINT_HEX = INK_FAINT.to_html(false)
 	DOOR_HOVER_WASH_HEX = Color(INK, DOOR_HOVER_WASH_OPACITY).to_html(true)
 	DOOR_SELECTED_WASH_HEX = Color(SIGNAL, DOOR_SELECTED_WASH_OPACITY).to_html(true)
 	# The GENERATED ICON RASTERS bake INK/SIGNAL into pixels, so a palette swap has to drop them; each

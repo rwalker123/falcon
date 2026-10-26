@@ -3644,7 +3644,7 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["patch_per_worker_biomass"] = float(patch.get("per_worker_biomass", 0.0))
 		info["patch_regrowth_samples"] = patch.get("regrowth_samples", PackedFloat32Array())
 		# Pre-commit yield forecast (food/turn at the patch's current biomass, at
-		# output_multiplier 1.0). Read by Hud._build_forage_assign_controls to show the live
+		# output_multiplier 1.0). Read by DrawerComposeController._build_forage_assign_controls to show the live
 		# "Expected yield" row and to cap the forager stepper at the patch's max-useful workers.
 		info["patch_per_worker_yield"] = float(patch.get("per_worker_yield", 0.0))
 		info["patch_build_turns_remaining"] = int(patch.get(
