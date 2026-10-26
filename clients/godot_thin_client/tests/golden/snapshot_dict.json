@@ -9357,6 +9357,7 @@
           },
           "history": 53.16,
           "partner_band": 188,
+          "partner_has_leader": true,
           "partner_name": "populations[0].tribe_pairs[0].partner_name"
         },
         {
@@ -9371,6 +9372,7 @@
           },
           "history": 54.509998,
           "partner_band": 65,
+          "partner_has_leader": false,
           "partner_name": "populations[0].tribe_pairs[1].partner_name"
         },
         {
@@ -9385,6 +9387,7 @@
           },
           "history": 57.98,
           "partner_band": 6,
+          "partner_has_leader": false,
           "partner_name": "populations[0].tribe_pairs[2].partner_name"
         }
       ],
@@ -11798,6 +11801,7 @@
           },
           "history": 102.989998,
           "partner_band": 19,
+          "partner_has_leader": true,
           "partner_name": "populations[1].tribe_pairs[0].partner_name"
         },
         {
@@ -11812,6 +11816,7 @@
           },
           "history": 32.880001,
           "partner_band": 174,
+          "partner_has_leader": false,
           "partner_name": "populations[1].tribe_pairs[1].partner_name"
         },
         {
@@ -11826,6 +11831,7 @@
           },
           "history": 110.57,
           "partner_band": 169,
+          "partner_has_leader": false,
           "partner_name": "populations[1].tribe_pairs[2].partner_name"
         }
       ],
@@ -14329,6 +14335,7 @@
           },
           "history": 39.130001,
           "partner_band": 182,
+          "partner_has_leader": true,
           "partner_name": "populations[2].tribe_pairs[0].partner_name"
         },
         {
@@ -14343,6 +14350,7 @@
           },
           "history": 20.68,
           "partner_band": 155,
+          "partner_has_leader": false,
           "partner_name": "populations[2].tribe_pairs[1].partner_name"
         },
         {
@@ -14357,6 +14365,7 @@
           },
           "history": 16.33,
           "partner_band": 84,
+          "partner_has_leader": false,
           "partner_name": "populations[2].tribe_pairs[2].partner_name"
         }
       ],

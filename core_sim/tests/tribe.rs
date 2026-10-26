@@ -803,8 +803,8 @@ fn every_member_of_a_formed_tribe_publishes_it_chiefless_ones_included() {
     for n in [1, 2, 3] {
         assert_eq!(tribe_fields(&mut app, n), expected, "band {n}");
     }
-    // The chiefless members carry the formed tribe but no progress.
-    with_row(&mut app, 2, |row| assert_eq!(row.tribeThreshold(), 0.0));
+    // Chiefless members publish their progress too: a chiefless band can join a tribe.
+    with_row(&mut app, 2, |row| assert!(row.tribeThreshold() > 0.0));
 }
 
 #[test]
@@ -900,14 +900,19 @@ fn nothing_builds_toward_a_tribe_until_a_chief_exists() {
         0.0,
         "held, not built"
     );
-    for n in [1, 2] {
+    // Two chiefless local bands each publish the pair, and neither partner has a leader.
+    for (n, partner) in [(1, 2), (2, 1)] {
         with_row(&mut app, n, |row| {
-            assert_eq!(row.tribeThreshold(), 0.0, "no progress is published");
-            assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
+            assert!(row.tribeThreshold() > 0.0, "progress is published");
+            let pairs = row.tribePairs().expect("pairs");
+            assert_eq!(pairs.len(), 1);
+            assert_eq!(pairs.get(0).partnerBand(), id(partner).0);
+            assert!(!pairs.get(0).partnerHasLeader(), "band {n}");
+            assert_eq!(pairs.get(0).history(), 0.0);
         });
     }
 
-    // One band is crowned: history builds from that turn, and only the chiefed row shows it.
+    // One band is crowned: history builds from that turn, and both rows show it.
     crown(&mut app, one, "Chief1", LeaderKind::Chief);
     turns(&mut app, 3);
     let built = registry(&app).shared_history(id(1), id(2));
@@ -918,15 +923,17 @@ fn nothing_builds_toward_a_tribe_until_a_chief_exists() {
         assert_eq!(pairs.len(), 1);
         assert_eq!(pairs.get(0).partnerBand(), id(2).0);
         assert!((pairs.get(0).history() - built as f32).abs() < 1e-6);
+        assert!(!pairs.get(0).partnerHasLeader(), "band 2 has no chief");
     });
+    // The chiefless band publishes its pair with the chiefed partner, history and all.
     with_row(&mut app, 2, |row| {
-        assert_eq!(
-            row.tribeThreshold(),
-            0.0,
-            "the chiefless partner shows nothing"
-        );
-        assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
-        assert_eq!(row.tribeWeights().map_or(0.0, |w| w.origin()), 0.0);
+        assert!(row.tribeThreshold() > 0.0);
+        assert!(row.tribeWeights().is_some_and(|w| w.origin() > 0.0));
+        let pairs = row.tribePairs().expect("pairs");
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs.get(0).partnerBand(), id(1).0);
+        assert!((pairs.get(0).history() - built as f32).abs() < 1e-6);
+        assert!(pairs.get(0).partnerHasLeader(), "band 1 has a chief");
     });
 }
 

@@ -7074,4 +7074,7 @@ table TribePairState {
   history:float = 0;
   // Each input times its weight; the sum is the pair's score.
   contribution:TribeClosenessState;
+  // Whether the partner band has a leader of its own. Shared history builds only while at least one
+  // of the two bands has one, so a chiefless band reads its turns-remaining estimate off this.
+  partnerHasLeader:bool = false;
 }

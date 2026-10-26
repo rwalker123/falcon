@@ -1835,7 +1835,7 @@ only: `partner_name`, `history`, `contribution`), decoded in `dict/population.rs
   line gains an amber ` · stretched`; a member with no leader of its own (`leader_reach` 0) and
   `orders_carried_out` above 0 also gets `<Band> has no chief of its own: N% of each order is carried
   out here.`
-- **Not in a tribe, band has a leader** (the sim publishes `tribe_threshold` above 0 only then):
+- **Not in a tribe, with a threshold** (the sim publishes `tribe_threshold` above 0 on every own band, chiefless ones included; `BandPanelController` does not gate on a leader):
   `Tribe <split bar> · <phrase>` for the best-scoring partner (highest summed contribution, ties by
   name), with no partner name and no numeric score. The bar is one cell per point of the threshold,
   each input in its own hue in wire order, with cells taken from the rounded RUNNING total so its
@@ -1843,8 +1843,13 @@ only: `partner_name`, `history`, `contribution`), decoded in `dict/population.rs
   `forming` (score at the threshold), `N turns` / `1 turn` (history alone can close the gap at weight /
   build turns, rounded up), else the biggest missing of monument / belief / tie: `needs a monument`,
   `needs more belief`, `needs a stronger tie`.
-- **Not in a tribe, leader, no partner**: dim `Tribe: no band lives with you`.
-- **No leader and no tribe**: no block.
+  **A pair "can build"** (`HudFormat.tribe_pair_can_build`) when this band has a leader (`leader_name`)
+  or the pair's `partner_has_leader` is true; shared history builds only then. The partner shown is the
+  best of the pairs that can build (score, then name), else the best score overall. When the chosen
+  pair cannot build the phrase is `needs a chief` (no turn count, no `forming`) and the hover's
+  missing lines are the single `Neither band has a chief: nothing builds until one of them has one.`
+- **Not in a tribe, no partner**: dim `Tribe: no band lives with you`.
+- **No threshold and no tribe** (a foreign cohort): no block.
 
 The hover of the progress line is the rule (`Two of your bands become a tribe by living together: the
 same ancestors and one pooling network.`), then only what is still missing as actions, one per line

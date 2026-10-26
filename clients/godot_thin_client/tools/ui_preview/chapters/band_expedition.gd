@@ -2303,6 +2303,42 @@ func _hay_ledger_states() -> void:
 			h._assert_hud("tribe_no_partner: one dim line and the reason on hover (%s)" % tribe_text,
 				tribe_text == HudFormat.TRIBE_NO_PARTNER_LINE
 				and tribe_line.tooltip_text == HudFormat.TRIBE_TOOLTIP_RULE + "\n" + HudFormat.TRIBE_TOOLTIP_NO_PLACE)
+	# A chiefless band's pull (#870): the Tribe row shows on every band with a threshold.
+	var joiner_base := tribe_chiefless_case.duplicate(true)
+	joiner_base.merge({"tribe_threshold": 9.0, "tribe_history_build_turns": 20.0, "tribe_weights": tribe_weights,
+		"tribe_standing": 0}, true)
+	var joiner_pair := {"partner_band": 7, "partner_name": "Ridgeway", "history": 0.4,
+		"contribution": {"origin": 3.0, "likeness": 2.2, "tie": 1.0, "history": 1.9, "belief": 0.0,
+		"monument": 0.0, "acting": 0.0}}
+	var joiner_led := joiner_base.duplicate(true)
+	joiner_led["tribe_pairs"] = [joiner_pair.merged({"partner_has_leader": true})]
+	var joiner_unled := joiner_base.duplicate(true)
+	joiner_unled["tribe_pairs"] = [joiner_pair.merged({"partner_has_leader": false})]
+	var joiner_alone := joiner_base.duplicate(true)
+	joiner_alone["tribe_pairs"] = []
+	joiner_alone["tribe_standing"] = 1
+	for joiner_case in [["tribe_joiner_partner_led", joiner_led, " · 4 turns", "Live together 4 more turns"],
+			["tribe_joiner_needs_chief", joiner_unled, " · needs a chief", HudFormat.TRIBE_TOOLTIP_NEEDS_CHIEF],
+			["tribe_joiner_no_partner", joiner_alone, "", HudFormat.TRIBE_TOOLTIP_NO_PLACE]]:
+		var joiner_band := BandFx.band_fixture()
+		joiner_band.merge(joiner_case[1], true)
+		h._hud.update_band_alerts([joiner_band])
+		h._hud.show_unit_selection(joiner_band)
+		await h._settle()
+		await h._save(String(joiner_case[0]))
+		var joiner_blocks := _find_all_meta(leader_panel, HudWorkVocab.BAND_TRIBE_BLOCK_META)
+		var joiner_line: RichTextLabel = null
+		if not joiner_blocks.is_empty():
+			joiner_line = joiner_blocks[0].find_child(HudWorkVocab.BAND_TRIBE_LINE_NAME, true, false) as RichTextLabel
+		var joiner_text := joiner_line.get_parsed_text() if joiner_line != null else ""
+		var joiner_suffix := String(joiner_case[2])
+		h._assert_hud("%s: one line (%s) with the right phrase and hover" % [joiner_case[0], joiner_text],
+			joiner_line != null and joiner_line.get_line_count() == 1
+			and (joiner_text == HudFormat.TRIBE_NO_PARTNER_LINE if joiner_suffix == "" else joiner_text.ends_with(joiner_suffix))
+			and joiner_line.tooltip_text.contains(String(joiner_case[3])))
+		if String(joiner_case[0]) == "tribe_joiner_needs_chief":
+			h._assert_hud("tribe_joiner_needs_chief: no turn count anywhere in the hover",
+				not joiner_line.tooltip_text.contains("turn"))
 	# Each suffix, off the pure statics.
 	var suffix_entry := tribe_base.duplicate(true)
 	var suffix_base := {"partner_name": "Snowreach", "contribution": {"origin": 3.0,

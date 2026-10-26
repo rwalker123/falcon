@@ -191,15 +191,16 @@ the end of the spine and the pressure/sedentarization tail it follows `simulate_
 refreshes the anchors), `advance_leadership` (so a band crowned this turn counts this turn),
 migration, defection, independence and the culture splits.
 
-**On the wire.** A chiefed own band's progress toward a tribe rides `PopulationCohortState`,
-appended last: `tribeStanding` (0 local, 1 no urn, 2 no supply network, 3 alone;
+**On the wire.** Every own band's progress toward a tribe (a chiefless band can join one) rides
+`PopulationCohortState`, appended last: `tribeStanding` (0 local, 1 no urn, 2 no supply network, 3 alone;
 `sim_schema::TRIBE_STANDING_*`), `tribeThreshold` (`tribe_score_threshold`),
 `tribeHistoryBuildTurns` (`tribe_history_build_turns`), `tribeWeights` (a `TribeClosenessState`: the
 seven weights, the most each input can add) and `tribePairs` (one `TribePairState` per local partner
 band of the band's people, partner id ascending: `partnerBand`, `partnerName`, raw
-`history`, and `contribution`, each input times its weight, summing to the pair's score). Parted
-pairs are not published, and neither is whether the partner has a chief: a chiefless partner is
-listed like any other. Membership in a *formed* tribe is separate and is published to every member
+`history`, `contribution`, each input times its weight, summing to the pair's score, and
+`partnerHasLeader`, whether the partner has a leader of its own: shared history builds only while at
+least one of a pair does, so a chiefless band reads its turns-remaining estimate off it). Parted
+pairs are not published. Membership in a *formed* tribe is separate and is published to every member
 band, chiefless ones included, as `tribeName`, `tribeMemberNames` (every member's name, largest
 band first, ties by band id), `tribeLeaderName` and `tribeLeaderKind`
 (`sim_schema::TRIBE_LEADER_*`: 0 none, 1 paramount chief, 2 council of chiefs); all four are empty
@@ -211,13 +212,14 @@ tribe, the `tribeLeaderName` rule) and `ordersCarriedOut` (the factor this band'
 `tribe_orders_carried_out_for_member` for a tribe member, the band leader's own
 `orders_carried_out` for a chiefed band in no tribe, 0 with neither leader nor tribe). A foreign
 band and an expedition party carry the defaults; the capture builds them in
-`snapshot::population::reach_readout`. A chiefless own band, a foreign band and an expedition party carry the
-defaults of the progress fields (threshold 0, which a client reads as nothing to show); a foreign
-band and a party carry the defaults of the tribe fields too. The scoring lives in
+`snapshot::population::reach_readout`. A foreign band and an expedition party carry the defaults of
+the progress fields (threshold 0, which a client reads as nothing to show) and of the tribe fields
+too; an own band the registry has not scored yet carries the progress defaults. The scoring lives in
 `TribeRegistry` (`scores`, the inputs of this turn's local pairs, and `standing`), rebuilt from
 scratch each turn by `advance_tribes`, rather than in a derived resource: the registry is
 checkpoint state, so a snapshot published right after a load still shows progress. The capture
-reads it through `snapshot::population::tribe_progress`.
+reads it through `snapshot::population::tribe_progress`, which takes the set of live bands with a
+leader (`BandLeaderLookup`) for `partnerHasLeader`.
 
 **Checkpoint.** `SimState::tribes` (`TribeRegistry`: tribes, shared histories, `next_id`, `formed`,
 this turn's `scores` and `standing`;

@@ -2122,6 +2122,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = row.insert("partner_band", pair.partnerBand() as i64);
             let _ = row.insert("partner_name", pair.partnerName().unwrap_or(""));
             let _ = row.insert("history", f64::from(pair.history()));
+            let _ = row.insert("partner_has_leader", pair.partnerHasLeader());
             let _ = row.insert(
                 "contribution",
                 &tribe_closeness_to_dict(pair.contribution()),

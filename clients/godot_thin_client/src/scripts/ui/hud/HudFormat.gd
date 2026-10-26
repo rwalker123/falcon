@@ -645,6 +645,7 @@ const TRIBE_NO_PARTNER_LINE := "Tribe: no band lives with you"
 ## A score within this of the threshold counts as reaching it (float noise from summing seven terms).
 const TRIBE_SCORE_EPSILON := 0.001
 const TRIBE_SUFFIX_FORMING := "forming"
+const TRIBE_SUFFIX_NEEDS_CHIEF := "needs a chief"
 const TRIBE_SUFFIX_TURNS_FORMAT := "%d turns"
 const TRIBE_SUFFIX_ONE_TURN := "1 turn"
 const TRIBE_SUFFIX_MONUMENT := "needs a monument"
@@ -652,6 +653,7 @@ const TRIBE_SUFFIX_BELIEF := "needs more belief"
 const TRIBE_SUFFIX_TIE := "needs a stronger tie"
 const TRIBE_TOOLTIP_RULE := "Two of your bands become a tribe by living together: the same ancestors and one pooling network."
 const TRIBE_TOOLTIP_FORMING := "Forms next turn"
+const TRIBE_TOOLTIP_NEEDS_CHIEF := "Neither band has a chief: nothing builds until one of them has one."
 const TRIBE_TOOLTIP_TURNS_FORMAT := "Live together %d more turns"
 const TRIBE_TOOLTIP_ONE_TURN := "Live together 1 more turn"
 const TRIBE_TOOLTIP_MONUMENT := "Raise a monument at the ancestors"
@@ -721,10 +723,17 @@ static func _tribe_biggest_missing(entry: Dictionary, pair: Dictionary) -> Array
             best = candidate
     return best
 
+## Whether shared history can build for a pair: this band has a leader, or the partner does. A pair
+## with neither stands still, so no turn count is true of it.
+static func tribe_pair_can_build(entry: Dictionary, pair: Dictionary) -> bool:
+    return String(entry.get("leader_name", "")).strip_edges() != "" or bool(pair.get("partner_has_leader", false))
+
 ## **THE ONE SHORT PHRASE** after the partner: forming / `N turns` when history alone can
 ## close the gap at its per-turn rate (weight / build turns) / the biggest missing of monument, belief,
 ## tie. `""` when there is nothing to name.
 static func tribe_suffix(entry: Dictionary, pair: Dictionary) -> String:
+    if not tribe_pair_can_build(entry, pair):
+        return TRIBE_SUFFIX_NEEDS_CHIEF
     var gap := float(entry.get("tribe_threshold", 0.0)) - tribe_pair_score(pair)
     if gap <= TRIBE_SCORE_EPSILON:
         return TRIBE_SUFFIX_FORMING
@@ -740,6 +749,9 @@ static func tribe_suffix(entry: Dictionary, pair: Dictionary) -> String:
 ## origin and culture are not listed: the player cannot change them.
 static func tribe_missing_lines(entry: Dictionary, pair: Dictionary) -> Array[String]:
     var lines: Array[String] = []
+    if not tribe_pair_can_build(entry, pair):
+        lines.append(TRIBE_TOOLTIP_NEEDS_CHIEF)
+        return lines
     var gap := float(entry.get("tribe_threshold", 0.0)) - tribe_pair_score(pair)
     if gap <= TRIBE_SCORE_EPSILON:
         lines.append(TRIBE_TOOLTIP_FORMING)
@@ -794,7 +806,11 @@ static func band_tribe_progress(entry: Dictionary) -> Dictionary:
     if threshold <= 0.0:
         return {}
     var pairs: Array = (entry.get("tribe_pairs", []) as Array).duplicate()
+    # Pairs that can build come first (best score, then name); when none can, the best score alone.
     pairs.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+        var can_a := tribe_pair_can_build(entry, a)
+        if can_a != tribe_pair_can_build(entry, b):
+            return can_a
         var score_a := tribe_pair_score(a)
         var score_b := tribe_pair_score(b)
         if absf(score_a - score_b) < TRIBE_SCORE_EPSILON:

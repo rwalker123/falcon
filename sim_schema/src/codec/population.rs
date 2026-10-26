@@ -2190,6 +2190,7 @@ fn decode_population(
                 .contribution()
                 .map(decode_tribe_closeness)
                 .unwrap_or_default(),
+            partner_has_leader: row.partnerHasLeader(),
         }),
         tribe_name: text(cohort.tribeName()),
         tribe_member_names: decode_strings(cohort.tribeMemberNames()),
@@ -2342,6 +2343,7 @@ fn create_tribe_pairs<'a>(
                     partnerName: Some(partner_name),
                     history: row.history,
                     contribution: Some(contribution),
+                    partnerHasLeader: row.partner_has_leader,
                 },
             )
         })

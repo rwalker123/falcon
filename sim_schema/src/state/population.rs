@@ -1966,6 +1966,9 @@ pub struct TribePairState {
     pub partner_name: String,
     pub history: f32,
     pub contribution: TribeClosenessState,
+    /// Whether the partner has a leader of its own. Appended last.
+    #[serde(default)]
+    pub partner_has_leader: bool,
 }
 
 /// **ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH** — a row of

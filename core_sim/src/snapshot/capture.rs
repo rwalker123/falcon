@@ -3323,6 +3323,14 @@ pub fn capture_snapshot(
             .iter()
             .filter_map(|(_, cohort, _, _, _, band_id, ..)| Some((*band_id?, cohort.size)))
             .collect();
+        // **Every live band with a leader of its own**, for a tribe pair row's `partnerHasLeader`.
+        let band_leaders: crate::snapshot::population::BandLeaderLookup = populations
+            .iter()
+            .filter_map(|(_, _, _, _, _, band_id, _, _, _, leadership)| {
+                let has_leader = leadership.is_some_and(|l| l.leader.is_some());
+                band_id.copied().filter(|_| has_leader)
+            })
+            .collect();
         // **The ground under a tile**, for an `extract` row's crew curve (`usefulCutters`).
         let ground_of = |pos: UVec2| {
             tile_registry
@@ -3493,19 +3501,20 @@ pub fn capture_snapshot(
                         // Own bands with a leader only (a foreign row returned redacted above); a
                         // chiefless band and a party row, which carries its home band's id,
                         // publish the defaults.
-                        tribe: (expedition.is_none()
-                            && leadership.is_some_and(|l| l.leader.is_some()))
-                        .then(|| {
-                            band_id.zip(tribes.as_deref()).and_then(|(band, registry)| {
-                                crate::snapshot::population::tribe_progress(
-                                    registry,
-                                    &leadership_cfg,
-                                    *band,
-                                    &band_names,
-                                )
+                        tribe: expedition
+                            .is_none()
+                            .then(|| {
+                                band_id.zip(tribes.as_deref()).and_then(|(band, registry)| {
+                                    crate::snapshot::population::tribe_progress(
+                                        registry,
+                                        &leadership_cfg,
+                                        *band,
+                                        &band_names,
+                                        &band_leaders,
+                                    )
+                                })
                             })
-                        })
-                        .flatten(),
+                            .flatten(),
                         tribe_membership,
                         reach,
                         cohort,

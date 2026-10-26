@@ -1160,6 +1160,10 @@ pub(crate) fn reach_readout(
 /// `BandId -> people` over every live band, the order a tribe's members are listed in.
 pub(crate) type BandSizeLookup = std::collections::HashMap<BandId, u32>;
 
+/// Every live band that has a leader of its own: shared history builds only while at least one of a
+/// pair is in it, so a pair row states whether its partner is.
+pub(crate) type BandLeaderLookup = std::collections::HashSet<BandId>;
+
 /// The tribe `band` belongs to, or `None` in no tribe. `names` and `sizes` are the live-band
 /// lookups; a nameless member reads as the same `Band <id>` label `tribe.rs` uses.
 pub(crate) fn tribe_membership(
@@ -1225,6 +1229,7 @@ pub(crate) fn tribe_progress(
     config: &crate::leadership_config::LeadershipConfig,
     band: BandId,
     names: &BandNameLookup,
+    leaders: &BandLeaderLookup,
 ) -> Option<TribeProgress> {
     let standing = registry.standing_of(band)?;
     let pairs = registry
@@ -1238,6 +1243,7 @@ pub(crate) fn tribe_progress(
                 .unwrap_or_else(|| crate::systems::band_label(partner)),
             history: score.history as f32,
             contribution: tribe_contribution(config, score),
+            partner_has_leader: leaders.contains(&partner),
         })
         .collect();
     Some(TribeProgress {
