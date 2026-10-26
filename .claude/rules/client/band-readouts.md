@@ -568,7 +568,7 @@ which is a property of the tier and not of the merge.
   a trend arrow (`▼` falling / `▲` rising / none when `|morale_delta| < MORALE_TREND_EPSILON`) and, when
   falling, the plain-language cause via `_morale_cause_label` — `Terrain`→"harsh terrain", `Cold`→"harsh
   climate" (the server penalty fires on hot **or** cold deviation, so not literally "cold"),
-  `Unrest`→"unrest", `Crowding`→"crowded" (`DetailFormat.MORALE_CAUSE_CROWDING` / `MORALE_CAUSE_LABEL_CROWDING`: the band's co-located people outnumber their group's cohesion ceiling), `Culture`→"far from the ancestors" (`DetailFormat.MORALE_CAUSE_CULTURE` /
+  `Unrest`→"unrest", `Cohesion`→"too many to hold together" (`DetailFormat.MORALE_CAUSE_COHESION` / `MORALE_CAUSE_LABEL_COHESION`: the band's head-count exceeds its cohesion ceiling), `Culture`→"far from the ancestors" (`DetailFormat.MORALE_CAUSE_CULTURE` /
   `MORALE_CAUSE_LABEL_CULTURE`: the band stands beyond walking reach of the belief place it remembers).
   Every surface that names a cause — this headline, the faction morale rollup, the turn orb's
   `AttentionController._decline_reason` — reads it through the one `DetailFormat.morale_cause_label`.
@@ -581,10 +581,10 @@ which is a property of the tier and not of the merge.
   `docs/plan_civ_wellbeing.md`; snapshot `PopulationCohortState.outputMultiplier` /
   `discontentFraction` / `lastEmigrated` / `lastImmigrated` / `grievance` + the six signed
   Layer-1 contributions `moraleSettling` / `moraleTerrain` / `moraleClimate` / `moraleUnrest` /
-  `moraleCulture` / `moraleCrowding`,
+  `moraleCulture` / `moraleCohesion`,
   decoded in `native/src/lib.rs population_to_dict` as `output_multiplier` / `discontent_fraction`
   / `last_emigrated` / `last_immigrated` / `grievance` (telemetry only, not displayed in P1) /
-  `morale_settling` / `morale_terrain` / `morale_climate` / `morale_unrest` / `morale_culture` / `morale_crowding`, all
+  `morale_settling` / `morale_terrain` / `morale_climate` / `morale_unrest` / `morale_culture` / `morale_cohesion`, all
   flowed onto the
   MapView unit marker in `_rebuild_unit_markers`). Player-band drawer only (`_unit_summary_lines`):
   - **Productivity is NOT a detail row — it reads on the Band panel's WORK zone head** as
@@ -633,12 +633,14 @@ which is a property of the tier and not of the merge.
     always compute so the good state can be opened too; the disclosure is offered only when there's
     actually something to show (a contribution above epsilon, or the concerning recovery line) —
     `_register_disclosure` declines an empty payload and no caret renders.
-    **The crowding row** (`morale_crowding`, never positive, so one label): `crowded (182 here, room for
-    150)` (`BandDetailLines._crowded_label`, `MORALE_CONTRIB_CROWDED_FORMAT`) — `cohesion_group` is the
-    people in the band's co-located group, `cohesion_ceiling` that group's ceiling; past it some leave for
-    another band. The numbers ride on the row itself (as the ancestors row carries its anchor tile), so the
-    row wraps to two lines in the popover and no more. A cohort publishing no group (`cohesion_group` 0)
-    gets the bare `crowded`; a band at zero crowding draws no row, under the same epsilon.
+    **The cohesion row** (`morale_cohesion`, never positive, so one label): `too many to hold together
+    (182 in the band, holds 150)` (`BandDetailLines._cohesion_label`, `MORALE_CONTRIB_COHESION_FORMAT`) —
+    `cohesion_headcount` is the band's opening head-count the term was priced from (not `size`),
+    `cohesion_ceiling` the ceiling it is held against (about 150; belief on the band's tile lifts it); past
+    it some leave for another band. The numbers ride on the row itself (as the ancestors row carries its
+    anchor tile), so the row wraps to at most one extra line in the popover. A band publishing no
+    head-count (`cohesion_headcount` 0) gets the bare `too many to hold together`; a band at zero cohesion
+    term draws no row, under the same epsilon.
   - **Recovery guidance** (`RECOVERY_GUIDANCE_TEXT`): a dim `↑ Recover: move to Hospitable ground ·
     Scout · Hunt` line (the real levers, NOT harvest), appended under the breakdown **only when
     morale is concerning** (a healthy band that manually expands its breakdown is not told to

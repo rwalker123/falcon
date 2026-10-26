@@ -1504,49 +1504,43 @@ fn resolve_culture_terms(
         .collect()
 }
 
-/// One band's crowding term and the group and ceiling it was priced from.
+/// One band's cohesion term and the head-count and ceiling it was priced from.
 #[derive(Debug, Clone, Copy)]
-struct CrowdingReading {
+struct CohesionTerm {
     term: Scalar,
     cohesion: CohesionReading,
 }
 
-/// **The crowding pre-pass.** Group every resident band by `(people, standing tile)` — the
-/// co-located group, a lone band being a group of one — sum each group's members' fixed-point
-/// head-counts at the turn's OPENING (before any death or birth), round the sum once, price the
-/// group's ceiling off the belief on the tile it stands on (`current_tile`, never `home`), and give
-/// every member the same term. Read before anything mutates a bracket, so no band's term depends on
-/// query order. A band whose standing tile does not resolve is in no group and reads nothing.
-fn resolve_crowding_terms(
+/// **The cohesion pre-pass.** Price every resident band on its OWN size: the band's fixed-point
+/// head-count at the turn's OPENING (before any death or birth), rounded once, against a ceiling
+/// taken off the belief on the tile it stands on (`current_tile`, never `home`). Another band on
+/// the same tile changes nothing — Dunbar's number is how many people one group can keep track of,
+/// not how many a tile holds (tile capacity is a separate lever). Read before anything mutates a
+/// bracket or writes belief, so no band's term depends on query order. A band whose standing tile
+/// does not resolve reads nothing.
+fn resolve_cohesion_terms(
     cohorts: &DemographicBands,
     tiles: &Query<&Tile>,
     belief: &BeliefRegistry,
-    crowding: &crate::wellbeing_config::CrowdingConfig,
-) -> BTreeMap<Entity, CrowdingReading> {
-    let mut totals: BTreeMap<(FactionId, Entity), (Scalar, UVec2)> = BTreeMap::new();
-    let mut members: Vec<(Entity, (FactionId, Entity))> = Vec::new();
-    for (entity, cohort, _, _, _) in cohorts.iter() {
-        let Ok(standing) = tiles.get(cohort.current_tile).map(|tile| tile.position) else {
-            continue;
-        };
-        let key = (cohort.faction, cohort.current_tile);
-        totals.entry(key).or_insert((scalar_zero(), standing)).0 += cohort.total();
-        members.push((entity, key));
-    }
-    members
-        .into_iter()
-        .map(|(entity, key)| {
-            let (total, standing) = totals[&key];
-            let group = total.to_u32();
-            let ceiling = crowding.ceiling(belief.get(standing));
-            let reading = CrowdingReading {
-                term: scalar_from_f32(crowding.term(group as f32, ceiling)),
+    cohesion: &crate::wellbeing_config::CohesionConfig,
+) -> BTreeMap<Entity, CohesionTerm> {
+    cohorts
+        .iter()
+        .filter_map(|(entity, cohort, _, _, _)| {
+            let standing = tiles
+                .get(cohort.current_tile)
+                .map(|tile| tile.position)
+                .ok()?;
+            let headcount = cohort.total().to_u32();
+            let ceiling = cohesion.ceiling(belief.get(standing));
+            let reading = CohesionTerm {
+                term: scalar_from_f32(cohesion.term(headcount as f32, ceiling)),
                 cohesion: CohesionReading {
-                    group,
+                    headcount,
                     ceiling: ceiling.round() as u32,
                 },
             };
-            (entity, reading)
+            Some((entity, reading))
         })
         .collect()
 }
@@ -1656,7 +1650,7 @@ pub fn simulate_population(
         walk_inputs.rights.treaties(),
         &wellbeing.culture,
     );
-    let crowding_terms = resolve_crowding_terms(&cohorts, &tiles, &belief, &wellbeing.crowding);
+    let cohesion_terms = resolve_cohesion_terms(&cohorts, &tiles, &belief, &wellbeing.cohesion);
     for (entity, mut cohort, labor, band_id, mut accumulator) in cohorts.iter_mut() {
         // Age the band every turn, before any early-out, so a band whose home tile briefly can't be
         // resolved still reports how long it has been simulated.
@@ -1679,12 +1673,12 @@ pub fn simulate_population(
             (scalar_zero(), crate::belief_relay::DIRECT_HOPS as u8),
             |reading| (reading.term, reading.relay_hops),
         );
-        // **Too many of one people on one tile**, resolved by the pre-pass: the co-located group's
-        // opening head-count against its cohesion ceiling. A band the pre-pass could not place reads `0`.
-        let crowding = crowding_terms
+        // **A band too big to hold together**, resolved by the pre-pass: the band's own opening
+        // head-count against its cohesion ceiling. A band the pre-pass could not place reads `0`.
+        let cohesion = cohesion_terms
             .get(&entity)
             .copied()
-            .unwrap_or(CrowdingReading {
+            .unwrap_or(CohesionTerm {
                 term: scalar_zero(),
                 cohesion: CohesionReading::default(),
             });
@@ -1699,7 +1693,7 @@ pub fn simulate_population(
             climate: -pressure.cold,
             unrest: impacts.morale_delta + effects.morale_bias,
             culture,
-            crowding: crowding.term,
+            cohesion: cohesion.term,
         };
         let morale_delta = contributions.total();
         // Attribute the dominant *negative* driver when morale fell (else `None`). Starvation is
@@ -1714,8 +1708,8 @@ pub fn simulate_population(
         // The hop count `culture` was priced from — what the frame publishes, so it cannot be a
         // recount on positions this turn's movement changes later.
         cohort.last_belief_relay_hops = relay_hops;
-        // The group and ceiling `crowding` was priced from, published as priced.
-        cohort.last_cohesion = crowding.cohesion;
+        // The group and ceiling `cohesion` was priced from, published as priced.
+        cohort.last_cohesion = cohesion.cohesion;
         cohort.morale = (cohort.morale + morale_delta).clamp(scalar_zero(), scalar_one());
 
         // Layer 2 (wellbeing): map morale → the discontented share of the band. `0` at/above

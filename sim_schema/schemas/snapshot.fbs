@@ -537,7 +537,7 @@ table PopulationCohortState {
   // This turn's signed morale delta (fixed-point, FIXED_POINT_SCALE = 1e6) — trend arrow source.
   moraleDelta:long = 0;
   // Dominant negative morale driver when falling: 0=None, 1=Terrain, 2=Cold, 3=Unrest, 4=Culture,
-  // 5=Crowding.
+  // 5=Cohesion.
   moraleCause:ubyte = 0;
   // Civilization Wellbeing (docs/plan_civ_wellbeing.md). All fixed-point (FIXED_POINT_SCALE = 1e6)
   // except the two head-counts. Derived per-turn unless noted.
@@ -1613,17 +1613,17 @@ table PopulationCohortState {
   tribeLeaderName:string;
   // 0 none, 1 paramount chief, 2 council of chiefs.
   tribeLeaderKind:ubyte = 0;
-  // --- CROWDING (appended last, #700) ---
-  // The crowding morale contributor: -drag x max(0, group - ceiling) / ceiling for the co-located
-  // group of this band's own people (resident bands of one people on one tile; a lone band is a group
-  // of one), the same value on every member. Signed (<= 0), fixed-point (FIXED_POINT_SCALE = 1e6),
+  // --- COHESION (appended last, #700) ---
+  // The cohesion morale contributor: -drag x max(0, size - ceiling) / ceiling for this band's own
+  // size (a band can only hold together at about 150 people; belief on its tile lifts the ceiling;
+  // other bands on the tile do not count). Signed (<= 0), fixed-point (FIXED_POINT_SCALE = 1e6),
   // part of the moraleSettling/Terrain/Climate/Unrest/Culture breakdown whose signed sum IS
   // moraleDelta. moraleCause 5 names it. Derived per-turn.
-  moraleCrowding:long = 0;
-  // The group (members' opening head-counts summed, rounded once) and the cohesion ceiling the term
+  moraleCohesion:long = 0;
+  // The band's opening head-count (before the turn's births and deaths, rounded once) and the cohesion ceiling the term
   // was priced from - stored by the sim (PopulationCohort.last_cohesion), never recounted at capture.
   // 0 / 0 for a detached party and for a cohort no turn has priced.
-  cohesionGroup:uint = 0;
+  cohesionHeadcount:uint = 0;
   cohesionCeiling:uint = 0;
 }
 

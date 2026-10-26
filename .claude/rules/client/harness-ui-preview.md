@@ -2063,17 +2063,18 @@ the preceding block (`_ancestors_states`) so no earlier frame moves.
 The row needles are LITERALS, matched within one popover line, so a row that drew the other sign's
 label or glyph fails.
 
-## `chapters/band_expedition.gd` — the crowding morale term (#700)
+## `chapters/band_expedition.gd` — the cohesion morale term (#700)
 
 `EXPECTED_CHECKPOINTS` **172**, RE-MEASURED: one frame and four claims, appended after
-`_belief_culture_states` (`_crowding_states`) so no earlier frame moves.
+`_belief_culture_states` (`_cohesion_states`) so no earlier frame moves.
 
-- **CROWDED** — the low-morale band (entity 920) with `morale_crowding` −0.012, `morale_cause` 5
-  (`DetailFormat.MORALE_CAUSE_CROWDING`), `cohesion_group` 182 and `cohesion_ceiling` 150: the headline
-  reads `— crowded`, and the popover itemizes `▼ −1.2%  crowded (182 here, room for 150)` — frame
-  **`band_morale_crowded`**. The two-lines-max copy rule is asserted by DIFFERENCE: the same band with the
+- **COHESION** — the low-morale band (entity 920) with `morale_cohesion` −0.012, `morale_cause` 5
+  (`DetailFormat.MORALE_CAUSE_COHESION`), `cohesion_headcount` 182 and `cohesion_ceiling` 150: the
+  headline reads `— too many to hold together`, and the popover itemizes
+  `▼ −1.2%  too many to hold together (182 in the band, holds 150)` — frame
+  **`band_morale_cohesion`**. The two-lines-max copy rule is asserted by DIFFERENCE: the same band with the
   term zeroed is re-opened and the popover's extra wrapped lines must differ by at most one.
-- **ABSENT** — a band at zero crowding draws no `crowded` row.
+- **ABSENT** — a band at zero cohesion term draws no `too many to hold together` row.
 
 ## `chapters/land_readouts.gd` — the tile card's Ancestors row (#699)
 

@@ -60,8 +60,8 @@ const MORALE_CAUSE_UNREST := 3
 # The band stands beyond walking reach of the belief place it remembers (where its dead lie).
 const MORALE_CAUSE_CULTURE := 4
 
-# The band's co-located people outnumber their group's cohesion ceiling.
-const MORALE_CAUSE_CROWDING := 5
+# The band's head-count exceeds its cohesion ceiling (about 150; belief on its tile lifts it).
+const MORALE_CAUSE_COHESION := 5
 
 # Plain-language cause labels, shared by the drawer morale line and the alert reason.
 # Cold reads "harsh climate" because the server penalty fires on hot OR cold deviation.
@@ -74,7 +74,7 @@ const MORALE_CAUSE_LABEL_UNREST := "unrest"
 # Deliberately not "culture": the positive-unrest breakdown row already reads "culture" (cohesion).
 const MORALE_CAUSE_LABEL_CULTURE := "far from the ancestors"
 
-const MORALE_CAUSE_LABEL_CROWDING := "crowded"
+const MORALE_CAUSE_LABEL_COHESION := "too many to hold together"
 
 # |morale_delta| below this (0.5%/turn) reads as flat (no arrow), so trivial drift — nearly every tile
 # bleeds a hair today — isn't shown as a decline. (The ▲/▼ ARROWS are `BandDetailLines`', the only
@@ -3135,7 +3135,7 @@ static func ancestors_line(tile_info: Dictionary) -> String:
     var count := ANCESTORS_UNDER_ONE if belief < ANCESTORS_WHOLE_PERSON else str(int(round(belief)))
     return "%s: %s" % [ANCESTORS_ROW, ANCESTORS_DEAD_FORMAT % count]
 
-## Plain-language label for a morale cause (0=None,1=Terrain,2=Cold,3=Unrest,4=Culture,5=Crowding); "" for None or
+## Plain-language label for a morale cause (0=None,1=Terrain,2=Cold,3=Unrest,4=Culture,5=Cohesion); "" for None or
 ## unknown. Shared by the drawer morale line and the losing-population alert reason.
 static func morale_cause_label(cause: int) -> String:
     match cause:
@@ -3147,8 +3147,8 @@ static func morale_cause_label(cause: int) -> String:
             return DetailFormat.MORALE_CAUSE_LABEL_UNREST
         DetailFormat.MORALE_CAUSE_CULTURE:
             return DetailFormat.MORALE_CAUSE_LABEL_CULTURE
-        DetailFormat.MORALE_CAUSE_CROWDING:
-            return DetailFormat.MORALE_CAUSE_LABEL_CROWDING
+        DetailFormat.MORALE_CAUSE_COHESION:
+            return DetailFormat.MORALE_CAUSE_LABEL_COHESION
         _:
             return ""
 

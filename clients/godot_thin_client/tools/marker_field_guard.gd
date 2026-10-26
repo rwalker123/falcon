@@ -87,7 +87,7 @@ const FRACTIONAL_ROUND_TRIP_KEYS := {
 	"morale_climate": -0.0154,
 	"morale_unrest": -0.0061,
 	"morale_culture": 0.0089,
-	"morale_crowding": -0.0074,
+	"morale_cohesion": -0.0074,
 	# Wellbeing scalars — fixed-point.
 	"output_multiplier": 0.7225,
 	"discontent_fraction": 0.1837,

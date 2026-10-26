@@ -280,10 +280,10 @@ const MORALE_CONTRIB_LABEL_CULTURE := "culture"
 # A positive `morale_culture` (within walking reach of the remembered belief place) reads as "near the
 # ancestors"; a negative one reads `DetailFormat.MORALE_CAUSE_LABEL_CULTURE` ("far from the ancestors").
 const MORALE_CONTRIB_LABEL_ANCESTORS_NEAR := "near the ancestors"
-# The crowding row names its numbers on the row itself, as the ancestors row names its anchor tile:
-# `crowded (182 here, room for 150)` -- the people in this band's co-located group, and that group's
-# cohesion ceiling. Past the ceiling some of them leave for another band.
-const MORALE_CONTRIB_CROWDED_FORMAT := "%s (%d here, room for %d)"
+# The cohesion row names its numbers on the row itself, as the ancestors row names its anchor tile:
+# `too many to hold together (182 in the band, holds 150)` -- the band's opening head-count and the
+# ceiling it is held against. Past the ceiling some of them leave for another band.
+const MORALE_CONTRIB_COHESION_FORMAT := "%s (%d in the band, holds %d)"
 # The negative row NAMES THE PLACE — "far from the ancestors (x, y)", the anchor tile in the `Position`
 # row's coordinate form — so the player knows where to walk back to. Only when the band has an anchor.
 const MORALE_CONTRIB_ANCESTORS_FAR_FORMAT := "%s (%d, %d)"
@@ -1224,13 +1224,13 @@ func _ancestors_near_label(unit_data: Dictionary) -> String:
         count_format = MORALE_CONTRIB_KIN_HOPS_LONGEST_FORMAT
     return MORALE_CONTRIB_LABEL_ANCESTORS_NEAR + MORALE_CONTRIB_THROUGH_KIN + count_format % hops
 
-## The crowding row's label: `crowded (182 here, room for 150)`, or the bare label when the cohort
-## publishes no group (a party, or a foreign band).
-func _crowded_label(unit_data: Dictionary) -> String:
-    var group := int(unit_data.get("cohesion_group", 0))
-    if group <= 0:
-        return DetailFormat.MORALE_CAUSE_LABEL_CROWDING
-    return MORALE_CONTRIB_CROWDED_FORMAT % [DetailFormat.MORALE_CAUSE_LABEL_CROWDING, group,
+## The cohesion row's label: `too many to hold together (182 in the band, holds 150)`, or the bare
+## label when the band publishes no head-count (a party, or a foreign band).
+func _cohesion_label(unit_data: Dictionary) -> String:
+    var headcount := int(unit_data.get("cohesion_headcount", 0))
+    if headcount <= 0:
+        return DetailFormat.MORALE_CAUSE_LABEL_COHESION
+    return MORALE_CONTRIB_COHESION_FORMAT % [DetailFormat.MORALE_CAUSE_LABEL_COHESION, headcount,
         int(unit_data.get("cohesion_ceiling", 0))]
 
 ## The band's kin-relay hop count, or `BELIEF_RELAY_DIRECT` when it is not tied in through kin — no
@@ -1263,7 +1263,7 @@ func _morale_breakdown_lines(unit_data: Dictionary, terrain_label: String) -> Ar
         [float(unit_data.get("morale_climate", 0.0)), DetailFormat.MORALE_CAUSE_LABEL_COLD],
         [unrest_value, MORALE_CONTRIB_LABEL_CULTURE if unrest_value > 0.0 else DetailFormat.MORALE_CAUSE_LABEL_UNREST],
         [culture_value, _ancestors_near_label(unit_data) if culture_value > 0.0 else _ancestors_far_label(unit_data)],
-        [float(unit_data.get("morale_crowding", 0.0)), _crowded_label(unit_data)],
+        [float(unit_data.get("morale_cohesion", 0.0)), _cohesion_label(unit_data)],
     ]
     var epsilon := BandFoodStatus.morale_breakdown_epsilon()
     for entry in contributions:

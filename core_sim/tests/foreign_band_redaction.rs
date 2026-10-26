@@ -67,9 +67,9 @@ struct PublishedRow {
     /// The band's own culture and the ancestor pull on it (#701) — own-band readouts.
     culture_traits: usize,
     culture_ancestor_pull: usize,
-    /// The crowding term and the group and ceiling it was priced from (#700) — own-band readouts.
-    morale_crowding: i64,
-    cohesion_group: u32,
+    /// The cohesion term and the head-count and ceiling it was priced from (#700) — own-band readouts.
+    morale_cohesion: i64,
+    cohesion_headcount: u32,
     cohesion_ceiling: u32,
 }
 
@@ -146,8 +146,8 @@ fn published_rows(app: &App) -> Vec<PublishedRow> {
             has_loadout_window: row.loadoutWindow().is_some(),
             culture_traits: row.cultureTraits().map(|v| v.len()).unwrap_or(0),
             culture_ancestor_pull: row.cultureAncestorPull().map(|v| v.len()).unwrap_or(0),
-            morale_crowding: row.moraleCrowding(),
-            cohesion_group: row.cohesionGroup(),
+            morale_cohesion: row.moraleCohesion(),
+            cohesion_headcount: row.cohesionHeadcount(),
             cohesion_ceiling: row.cohesionCeiling(),
         })
         .collect()

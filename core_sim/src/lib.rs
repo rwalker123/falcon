@@ -530,7 +530,7 @@ pub use visibility_config::{
 };
 pub use visibility_systems::terrain_sight_modifier;
 pub use wellbeing_config::{
-    load_wellbeing_config_from_env, CrowdingConfig, CultureConfig, DiscontentConfig,
+    load_wellbeing_config_from_env, CohesionConfig, CultureConfig, DiscontentConfig,
     MigrationConfig, ProductivityConfig, WellbeingConfig, WellbeingConfigHandle,
     WellbeingConfigMetadata, BUILTIN_WELLBEING_CONFIG,
 };

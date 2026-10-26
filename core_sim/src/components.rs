@@ -1800,9 +1800,9 @@ pub struct PopulationCohort {
     /// `PopulationCohortState.beliefRelayHops`, so the hop count a frame shows is the one its
     /// `moraleCulture` was priced from — not a recount on positions the turn's movement changed.
     pub last_belief_relay_hops: u8,
-    /// **The co-located group and ceiling the crowding term was priced from this turn** (see
+    /// **The band size and ceiling the cohesion term was priced from this turn** (see
     /// [`CohesionReading`]). Recomputed each turn beside `last_morale_contributions` and published as
-    /// `PopulationCohortState.cohesionGroup` / `cohesionCeiling`.
+    /// `PopulationCohortState.cohesionHeadcount` / `cohesionCeiling`.
     pub last_cohesion: CohesionReading,
     /// The three named fertility factors behind this turn's births — `hunger` (did we eat) ×
     /// `reserve` (is there a cushion) × `trend` (is the cushion growing or shrinking), the
@@ -1869,7 +1869,7 @@ pub struct PopulationCohort {
 /// Starvation is deliberately excluded — it is surfaced through the days-of-food path, not morale.
 ///
 /// Snapshot wire encoding (see [`MoraleCause::as_u8`]): `0 = None, 1 = Terrain, 2 = Cold,
-/// 3 = Unrest, 4 = Culture, 5 = Crowding`.
+/// 3 = Unrest, 4 = Culture, 5 = Cohesion`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum MoraleCause {
     /// Morale rose or held this turn — no dominant negative driver.
@@ -1885,9 +1885,9 @@ pub enum MoraleCause {
     /// `belief_anchor`) at full strength — beyond its own walking reach and reached only weakly (or
     /// not at all) through its kin.
     Culture,
-    /// The crowding term dominated: the band's co-located group of its own people is over its
+    /// The cohesion term dominated: the band itself is over its
     /// cohesion ceiling.
-    Crowding,
+    Cohesion,
 }
 
 /// Which mortality term did most of the killing in one age bracket on one turn.
@@ -2004,7 +2004,7 @@ impl DemographicFlowAccumulator {
 
 impl MoraleCause {
     /// Encode for the snapshot's `moraleCause:ubyte` field: `0=None, 1=Terrain, 2=Cold, 3=Unrest,
-    /// 4=Culture, 5=Crowding`.
+    /// 4=Culture, 5=Cohesion`.
     pub fn as_u8(self) -> u8 {
         match self {
             MoraleCause::None => 0,
@@ -2012,7 +2012,7 @@ impl MoraleCause {
             MoraleCause::Cold => 2,
             MoraleCause::Unrest => 3,
             MoraleCause::Culture => 4,
-            MoraleCause::Crowding => 5,
+            MoraleCause::Cohesion => 5,
         }
     }
 }
@@ -2034,9 +2034,9 @@ pub enum MoraleFactor {
     Unrest,
     /// Near (`+`) or far (`−`) from the band's ancestors — its `belief_anchor` (signed).
     Culture,
-    /// Too many of the band's own people on one tile: a co-located group over its cohesion ceiling
+    /// The band is too big to hold together: its own size over its cohesion ceiling
     /// (≤ 0).
-    Crowding,
+    Cohesion,
 }
 
 /// The Phase-1 named morale contributions for a cohort this turn (each signed; their sum IS
@@ -2058,22 +2058,22 @@ pub struct MoraleContributions {
     /// (`+near_bonus × s`), `relay_per_hop ^ n` tied in through `n` bands of kin, `0` unreached
     /// (`−away_drag × s`); `0` with no anchor (signed; `wellbeing_config.json` → `culture`).
     pub culture: Scalar,
-    /// crowding: `−drag × max(0, group − ceiling) / ceiling` for the co-located group of the band's
-    /// own people (≤ 0; `wellbeing_config.json` → `crowding`). The same value on every member band.
-    pub crowding: Scalar,
+    /// cohesion: `−drag × max(0, size − ceiling) / ceiling` for the band's own size
+    /// (≤ 0; `wellbeing_config.json` → `cohesion`). Another band on the same tile does not count.
+    pub cohesion: Scalar,
 }
 
-/// **The group and ceiling a band's crowding term was priced from** — the co-located group's
+/// **The head-count and ceiling a band's cohesion term was priced from** — the band's
 /// opening head-count and its cohesion ceiling, each rounded to whole people. Parked on the cohort
 /// (`last_cohesion`) beside `last_morale_contributions` and published as
-/// `PopulationCohortState.cohesionGroup` / `cohesionCeiling`, so the frame says what was priced and
+/// `PopulationCohortState.cohesionHeadcount` / `cohesionCeiling`, so the frame says what was priced and
 /// never recounts on positions the turn's movement changed. `0 / 0` is the not-priced default (a
 /// party, a fresh splinter, a cohort no turn has run).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CohesionReading {
-    /// The co-located group's head-count at the turn's opening (members' totals summed, rounded once).
-    pub group: u32,
-    /// The group's cohesion ceiling, in whole people.
+    /// The band's head-count at the turn's opening (before the turn's births and deaths), rounded once.
+    pub headcount: u32,
+    /// The band's cohesion ceiling, in whole people.
     pub ceiling: u32,
 }
 
@@ -2125,7 +2125,7 @@ impl FertilityFactors {
 impl MoraleContributions {
     /// The active contributions as `(factor, signed value)` pairs — the itemized breakdown the
     /// client can render and the single source both `total` and cause attribution iterate. Ordered
-    /// by the tie-break priority (Terrain ≥ Climate ≥ Unrest ≥ Culture ≥ Crowding) so the dominant-cause scan
+    /// by the tie-break priority (Terrain ≥ Climate ≥ Unrest ≥ Culture ≥ Cohesion) so the dominant-cause scan
     /// is a stable first-max.
     pub fn contributions(&self) -> [(MoraleFactor, Scalar); 6] {
         [
@@ -2133,7 +2133,7 @@ impl MoraleContributions {
             (MoraleFactor::Climate, self.climate),
             (MoraleFactor::Unrest, self.unrest),
             (MoraleFactor::Culture, self.culture),
-            (MoraleFactor::Crowding, self.crowding),
+            (MoraleFactor::Cohesion, self.cohesion),
             (MoraleFactor::Settling, self.settling),
         ]
     }
@@ -2147,7 +2147,7 @@ impl MoraleContributions {
 
     /// The dominant *negative* contributor as a [`MoraleCause`] (the "why morale fell" label). The
     /// most-negative labeled contribution wins; `Settling` is base growth (never a negative cause),
-    /// and ties resolve by `contributions()` order (Terrain ≥ Climate ≥ Unrest ≥ Culture ≥ Crowding).
+    /// and ties resolve by `contributions()` order (Terrain ≥ Climate ≥ Unrest ≥ Culture ≥ Cohesion).
     pub fn dominant_negative_cause(&self) -> MoraleCause {
         let mut best: Option<(MoraleFactor, Scalar)> = None;
         for (factor, value) in self.contributions() {
@@ -2163,7 +2163,7 @@ impl MoraleContributions {
             Some((MoraleFactor::Climate, _)) => MoraleCause::Cold,
             Some((MoraleFactor::Unrest, _)) => MoraleCause::Unrest,
             Some((MoraleFactor::Culture, _)) => MoraleCause::Culture,
-            Some((MoraleFactor::Crowding, _)) => MoraleCause::Crowding,
+            Some((MoraleFactor::Cohesion, _)) => MoraleCause::Cohesion,
             _ => MoraleCause::None,
         }
     }

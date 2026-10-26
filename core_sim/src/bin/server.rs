@@ -6194,9 +6194,9 @@ fn handle_send_scout(
     // remembers no ancestors' place; the band it left keeps the anchor (`belief.md`).
     expedition_cohort.belief_anchor = None;
     expedition_cohort.last_belief_relay_hops = core_sim::belief_relay::DIRECT_HOPS as u8;
-    // A party is in no co-located group: it takes no crowding term and no cohesion reading.
+    // A party is no band of its own people: it takes no cohesion term and no cohesion reading.
     expedition_cohort.last_cohesion = core_sim::CohesionReading::default();
-    expedition_cohort.last_morale_contributions.crowding = Scalar::from_i64(0);
+    expedition_cohort.last_morale_contributions.cohesion = Scalar::from_i64(0);
     expedition_cohort.sync_size();
 
     // A detached party is a band in its own right, so it takes its own durable id.

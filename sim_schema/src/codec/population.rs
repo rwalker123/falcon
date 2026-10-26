@@ -1257,8 +1257,8 @@ fn create_populations<'a>(
                     tribeMemberNames: Some(tribe_member_names),
                     tribeLeaderName: Some(tribe_leader_name),
                     tribeLeaderKind: cohort.tribe_leader_kind,
-                    moraleCrowding: cohort.morale_crowding,
-                    cohesionGroup: cohort.cohesion_group,
+                    moraleCohesion: cohort.morale_cohesion,
+                    cohesionHeadcount: cohort.cohesion_headcount,
                     cohesionCeiling: cohort.cohesion_ceiling,
                 },
             )
@@ -2193,8 +2193,8 @@ fn decode_population(
         tribe_member_names: decode_strings(cohort.tribeMemberNames()),
         tribe_leader_name: text(cohort.tribeLeaderName()),
         tribe_leader_kind: cohort.tribeLeaderKind(),
-        morale_crowding: cohort.moraleCrowding(),
-        cohesion_group: cohort.cohesionGroup(),
+        morale_cohesion: cohort.moraleCohesion(),
+        cohesion_headcount: cohort.cohesionHeadcount(),
         cohesion_ceiling: cohort.cohesionCeiling(),
     })
 }

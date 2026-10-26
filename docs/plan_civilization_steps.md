@@ -219,13 +219,13 @@ next ceiling takes over.
 ~35 turns at the reserve and trend bonuses (`demographics_config.json`). A starting band of 30
 reaches its ~150 ceiling in about three generations.
 
-**Two ceilings on two different units.** The inbreeding ceiling caps a *people*; cohesion caps a
-*group standing in one place*. For a lone band they land on the same ~150:
+**Two ceilings on two different units.** The inbreeding ceiling caps a *people*; cohesion caps
+*one band*. For a lone band they land on the same ~150:
 
 | Ceiling | Unit | Lifted by | Video step |
 |---|---|---|---|
 | Lines × `K` (inbreeding) | the **breeding population** — bands linked by live ties | staying in touch with other peoples | 1 → 2 |
-| Cohesion (~150) | the **co-located group** — a band, or a cluster on one site | belief on the tile | 2 → 3 |
+| Cohesion (~150) | **one band** — how many people can keep track of each other | belief on the tile it stands on | 2 → 3 |
 | Management (a count of stores and routes) | the **things that hold goods** — stores and trade routes | writing / record-keeping | 7 |
 
 **Shedding goes along routes, not into the void.** Births stop at the ceiling; a group pushed above
@@ -300,16 +300,23 @@ Belief does not decay. An abandoned place keeps its dead.
 
 ### Cohesion is a property of a group
 
-A co-located group — a band, or the cluster on one site — has a cohesion ceiling (the video's
-~150; config). Belief on the tile it stands on raises it. This is the second row of the ceiling
-ladder, and it is soft: nothing stops at 150, the leak starts there.
+**A band can only hold together at about 150 people** (the video's ~150; config) — past that, not
+everyone knows everyone. Above that its morale falls and unhappy people drift off to a smaller band
+of their own people; with no such band, splitting it is the player's remedy. **Belief on the tile it
+stands on lets it grow bigger and still hold together** — shared dead and a sacred place give people
+a reason to stay one group. That is the step from band to tribe. This is the second row of the
+ceiling ladder, and it is soft: nothing stops at 150, the leak starts there.
+
+**It is not a limit on how many people a tile holds.** Two bands sharing a tile each answer to their
+own ceiling. A tile's capacity — housing, sanitation — is a civilization lever on a different unit
+(#277, the per-hex cap that improvements raise).
 
 ### What belief does, through seams that exist
 
 | Effect | Seam | What the player sees |
 |---|---|---|
 | Standing on or within reach of your belief is a positive morale term; being away is a negative one, scaled by how much is there | the reserved `culture` morale contributor | "far from the ancestors" on the morale breakdown |
-| Above the cohesion ceiling, morale falls; belief on the tile raises the ceiling | the reserved `crowding` morale contributor | "crowded" on the breakdown; people leaving for a connected band |
+| Above the cohesion ceiling, morale falls; belief on the tile raises the ceiling | the reserved `crowding` slot, built as the `cohesion` morale contributor | "too many to hold together" on the breakdown; people leaving for a connected band |
 | Honouring the dead and gathering push Devout and Traditionalist (the manual already names memorialization and ritual authority on those axes) | culture trait vector | The Telling's `sacred_secular` stance reads that axis today |
 | Belief is an input to the tether beside stored food and improvements | `SedentarizationScore` | the `roam_settle` stance, the settle prompts |
 
