@@ -62,7 +62,7 @@ gets one — once, permanently.
 
 | File | Purpose |
 |---|---|
-| `src/data/leadership_config.json` (env `LEADERSHIP_CONFIG_PATH`; `leadership_config.rs`) | `practice_threshold` (10.0), `practice_per_directed_build` (3.0), `practice_per_split` (3.0), `practice_per_herd_hex` (1.0), `practice_per_stage_reached` (5.0); and the tribe levers `tribe_weight_origin` (3.0), `tribe_weight_likeness` (3.0), `tribe_weight_tie` (2.0), `tribe_weight_history` (5.0), `tribe_weight_belief` (1.0), `tribe_weight_acting` (3.0), `tribe_weight_monument` (2.0), `tribe_history_build_turns` (25.0), `tribe_history_fade_turns` (100.0), `tribe_score_threshold` (9.0). Strict: every key required, unknown keys rejected; the practice levers, the two history turns and the threshold finite and `> 0`, the seven weights finite and `>= 0`. All are Workbench levers (`ConfigOverrideKind::Leadership`, proto 11) |
+| `src/data/leadership_config.json` (env `LEADERSHIP_CONFIG_PATH`; `leadership_config.rs`) | `practice_threshold` (10.0), `practice_per_directed_build` (3.0), `practice_per_split` (3.0), `practice_per_herd_hex` (1.0), `practice_per_stage_reached` (5.0); and the tribe levers `tribe_weight_origin` (3.0), `tribe_weight_likeness` (3.0), `tribe_weight_tie` (2.0), `tribe_weight_history` (5.0), `tribe_weight_belief` (1.0), `tribe_weight_acting` (3.0), `tribe_weight_monument` (2.0), `tribe_history_build_turns` (25.0), `tribe_history_fade_turns` (100.0), `tribe_score_threshold` (9.0); and the reach levers `reach_chief_people` (150.0), `reach_paramount_bands` (4.0), `over_reach_efficiency` (0.5). Strict: every key required, unknown keys rejected; the practice levers, the two history turns and the threshold and the two reaches finite and `> 0`, the seven weights finite and `>= 0`, `over_reach_efficiency` finite and in `(0, 1]`. All are Workbench levers (`ConfigOverrideKind::Leadership`, proto 11) |
 | `src/data/leader_names.json` (env `LEADER_NAMES_PATH`; `leader_names.rs`) | The leader-name pool — content, not tuning. A duplicate or empty pool is refused at load |
 | `intensification_ladder.json` → `rungs[].directed_work` | `true` on `cultivate`, `sow`, `tame` and `corral` |
 
@@ -75,13 +75,32 @@ gets one — once, permanently.
   echoed so a client can say "N of M"), and the four per-source parts `leadershipFromBuilds`,
   `leadershipFromSplits`, `leadershipFromHerd`, `leadershipFromStages` (they sum to
   `leadershipPractice`, which is what a split bar draws). Own bands only; a foreign row carries the
-  defaults.
+  defaults. Reach rides after the tribe fields (below).
 - **The Telling**: signals `leadership.chiefs_emerged_this_turn` / `leadership.councils_emerged_this_turn`
   and nouns `leadership.newest_chief` / `leadership.newest_council` (kind-scoped, so a chief and a
   council emerging together each name their own leader; see `telling.md`), driving the beats
   `leadership.chief_rises` and
   `leadership.council_forms` (not `once`; each band may get one). The prose says the band grew too
   many, too spread out and too much on the move for everyone to just know what to do.
+
+## A leader's reach
+
+Design: `docs/plan_labor_at_scale.md` ("A leader can only run so much well"). Code:
+`LeaderReach` and its constructors in `leadership.rs`. Each leader has a **reach** (how much it runs
+well) and a **load** (how much it actually runs). Past the reach orders are carried out worse, never
+refused. Reach is a pure function of current state and config: no sim state, nothing saved.
+
+| Level | Reach | Load |
+|---|---|---|
+| Band leader (chief or elders' council) | `reach_chief_people` people | the band's total people (`PopulationCohort::size`, the headcount the tribe code ranks bands by) |
+| Tribe leader (paramount chief or council of chiefs) | `reach_paramount_bands` member bands | the tribe's member count |
+
+Kind (hierarchical or egalitarian) does not change reach. `LeaderReach::orders_carried_out(config)` is `1` when
+`load <= reach` (and for load 0), else
+`(reach + over_reach_efficiency * (load - reach)) / load`, always in `(0, 1]`: reach 4, load 5,
+efficiency 0.5 gives 0.9. `tribe_orders_carried_out_for_member` is the tribe leader's factor times
+`over_reach_efficiency` again when the member band has no leader of its own, the same lossy shape.
+Tax, aid and tribe staffing read `orders_carried_out`.
 
 ## A tribe is earned: close bands that share a gathering place, one of them chiefed
 
@@ -185,7 +204,14 @@ band, chiefless ones included, as `tribeName`, `tribeMemberNames` (every member'
 band first, ties by band id), `tribeLeaderName` and `tribeLeaderKind`
 (`sim_schema::TRIBE_LEADER_*`: 0 none, 1 paramount chief, 2 council of chiefs); all four are empty
 in no tribe. Whether a pair is already in one tribe is not on the wire: a band in a tribe shows the
-tribe, not progress. A chiefless own band, a foreign band and an expedition party carry the
+tribe, not progress. **Reach** is appended after `tribeLeaderKind` (floats, 0 = nothing to show):
+`leaderReach` / `leaderLoad` (people; set only for an own band with a leader of its own),
+`tribeLeaderReach` / `tribeLeaderLoad` (member bands; set for every own member band of a formed
+tribe, the `tribeLeaderName` rule) and `ordersCarriedOut` (the factor this band's orders arrive at:
+`tribe_orders_carried_out_for_member` for a tribe member, the band leader's own
+`orders_carried_out` for a chiefed band in no tribe, 0 with neither leader nor tribe). A foreign
+band and an expedition party carry the defaults; the capture builds them in
+`snapshot::population::reach_readout`. A chiefless own band, a foreign band and an expedition party carry the
 defaults of the progress fields (threshold 0, which a client reads as nothing to show); a foreign
 band and a party carry the defaults of the tribe fields too. The scoring lives in
 `TribeRegistry` (`scores`, the inputs of this turn's local pairs, and `standing`), rebuilt from

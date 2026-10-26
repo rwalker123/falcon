@@ -2176,6 +2176,57 @@ func _hay_ledger_states() -> void:
 		var reserved := leader_panel.current_reservation_size()
 		h._assert_hud("%s: the card's minimum width (%.0fpx) fits the docked strip (%.0fpx)"
 			% [leader_case[0], card_min, reserved], card_min <= reserved)
+	# State reach_* -- **A LEADER'S REACH** (#870): the line under the leader phrase (dim within reach,
+	# amber over it, one tooltip), and the tribe leader's reach on the formed-tribe line and its hover.
+	var reach_tribe := {"tribe_name": "Sandreach tribe", "tribe_member_names": ["Sandreach", "Harehollow", "Woodfen", "Ridgeway", "Dunmere"],
+		"tribe_leader_name": "Wynne", "tribe_leader_kind": 1}
+	var reach_cases := [
+		["reach_within", {"leader_name": "Orrin", "leader_kind": 1, "leader_reach": 150.0, "leader_load": 32.0,
+			"orders_carried_out": 1.0}, "Runs all 32 people well",
+			"A chief runs about 150 people well. Past that, orders still go out, but less of each one is carried out."],
+		["reach_over", {"leader_name": "Orrin", "leader_kind": 2, "leader_reach": 150.0, "leader_load": 170.0,
+			"orders_carried_out": 0.94}, "Runs 150 of 170 people well",
+			"The council runs about 150 people well. Past that, orders still go out, but less of each one is carried out — 94% now."],
+		["reach_tribe_over", reach_tribe.merged({"leader_name": "Orrin", "leader_kind": 1, "leader_reach": 150.0,
+			"leader_load": 90.0, "tribe_leader_reach": 4.0, "tribe_leader_load": 5.0, "orders_carried_out": 0.9}),
+			"Runs all 90 people well", "Wynne runs 4 of 5 bands well — orders past that are carried out worse"],
+		["reach_chiefless_member", reach_tribe.merged({"leader_name": "", "leader_kind": 0, "leader_reach": 0.0,
+			"leader_load": 0.0, "tribe_leader_reach": 4.0, "tribe_leader_load": 3.0, "orders_carried_out": 0.5}),
+			"", "has no chief of its own: 50% of each order is carried out here."],
+	]
+	for reach_case in reach_cases:
+		var reach_band := BandFx.band_fixture()
+		reach_band.merge(reach_case[1], true)
+		h._hud.update_band_alerts([reach_band])
+		h._hud.show_unit_selection(reach_band)
+		await h._settle()
+		await h._save(String(reach_case[0]))
+		var reach_leader_blocks := _find_all_meta(leader_panel, HudWorkVocab.BAND_LEADER_BLOCK_META)
+		var reach_text: RichTextLabel = null
+		if not reach_leader_blocks.is_empty():
+			reach_text = reach_leader_blocks[0].find_child(HudWorkVocab.BAND_LEADER_TEXT_NAME, true, false) as RichTextLabel
+		var reach_plain := reach_text.get_parsed_text() if reach_text != null else ""
+		var reach_tip := reach_text.tooltip_text if reach_text != null else ""
+		var reach_tribe_blocks := _find_all_meta(leader_panel, HudWorkVocab.BAND_TRIBE_BLOCK_META)
+		var reach_tribe_line: RichTextLabel = null
+		if not reach_tribe_blocks.is_empty():
+			reach_tribe_line = reach_tribe_blocks[0].find_child(HudWorkVocab.BAND_TRIBE_LINE_NAME, true, false) as RichTextLabel
+		match String(reach_case[0]):
+			"reach_within", "reach_over":
+				h._assert_hud("%s: reach line '%s' and its hover" % [reach_case[0], reach_case[2]],
+					reach_plain.contains(String(reach_case[2])) and reach_tip == String(reach_case[3]))
+				h._assert_hud("%s: the line is %s" % [reach_case[0], "amber" if reach_case[0] == "reach_over" else "dim"],
+					reach_text.text.contains(("[color=#%s]" % HudStyle.WARN.to_html(false)) if reach_case[0] == "reach_over"
+						else ("[color=#%s]%s" % [HudStyle.INK_DIM.to_html(false), reach_case[2]])))
+			"reach_tribe_over":
+				h._assert_hud("reach_tribe_over: band reach line + one-line tribe line stretched (%s)" % reach_tribe_line.get_parsed_text(),
+					reach_plain.contains(String(reach_case[2])) and reach_tribe_line.get_line_count() == 1
+					and reach_tribe_line.get_parsed_text().ends_with(" · stretched")
+					and reach_tribe_line.tooltip_text.contains(String(reach_case[3])))
+			_:
+				h._assert_hud("reach_chiefless_member: no reach line, the chiefless-orders hover (%s)" % reach_tribe_line.tooltip_text.replace("\n", " | "),
+					reach_tribe_line.tooltip_text.contains("runs all 3 bands well")
+					and reach_tribe_line.tooltip_text.contains(String(reach_case[3])))
 	# State tribe-* -- **THE ONE-LINE TRIBE READOUT** (#861): directly under the leader block. A formed
 	# tribe shows its name and band count on every member, chiefless or not; a leader's band not yet in
 	# one shows `Tribe <bar> · <phrase>`, or one dim line with no partner; a chiefless band in no tribe

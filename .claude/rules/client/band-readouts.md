@@ -1830,6 +1830,11 @@ only: `partner_name`, `history`, `contribution`), decoded in `dict/population.rs
 - **In a tribe** (`tribe_name` set), on every member band, led or chiefless: `Tribe: Sandreach tribe ·
   3 bands` (a tribe has at least two). The hover is the member names, then `Led by paramount chief
   Wynne` or `Led by a council of chiefs — Wynne speaks`. This replaces the progress line.
+  **Reach (#870)**: with `tribe_leader_reach` above 0 the hover adds `Wynne runs all 3 bands well` or,
+  over reach, `Wynne runs 4 of 5 bands well — orders past that are carried out worse` and the visible
+  line gains an amber ` · stretched`; a member with no leader of its own (`leader_reach` 0) and
+  `orders_carried_out` above 0 also gets `<Band> has no chief of its own: N% of each order is carried
+  out here.`
 - **Not in a tribe, band has a leader** (the sim publishes `tribe_threshold` above 0 only then):
   `Tribe <split bar> · <phrase>` for the best-scoring partner (highest summed contribution, ties by
   name), with no partner name and no numeric score. The bar is one cell per point of the threshold,

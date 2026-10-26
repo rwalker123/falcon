@@ -202,6 +202,64 @@ pub fn emergence_entry(
     .with_band(band)
 }
 
+/// **How much a leader runs well, and how much it actually runs** (`docs/plan_labor_at_scale.md` ->
+/// "A leader can only run so much well"). `reach` and `load` are in the leader's own unit: people
+/// for a band leader, member bands for a tribe leader. Past the reach an order is carried out
+/// worse, never refused: [`Self::orders_carried_out`] is the factor tax, aid and tribe staffing
+/// apply. A pure function of current state and config, so nothing here is saved.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LeaderReach {
+    /// What the leader runs well (`reach_chief_people` or `reach_paramount_bands`).
+    pub reach: f64,
+    /// What the leader actually runs: the band's people, or the tribe's member bands.
+    pub load: f64,
+}
+
+impl LeaderReach {
+    /// The share of an order carried out, in `(0, 1]`: all of it within the reach, and past it the
+    /// reach in full plus `over_reach_efficiency` of the excess, over the whole load.
+    pub fn orders_carried_out(&self, config: &LeadershipConfig) -> f64 {
+        if self.load <= self.reach {
+            return 1.0;
+        }
+        (self.reach + config.over_reach_efficiency * (self.load - self.reach)) / self.load
+    }
+}
+
+/// A band leader's reach (chief or elders' council alike): `reach_chief_people` against the band's
+/// total people.
+pub fn band_leader_reach(config: &LeadershipConfig, people: f64) -> LeaderReach {
+    LeaderReach {
+        reach: config.reach_chief_people,
+        load: people,
+    }
+}
+
+/// A tribe leader's reach (paramount chief or council of chiefs alike): `reach_paramount_bands`
+/// against the number of member bands.
+pub fn tribe_leader_reach(config: &LeadershipConfig, member_bands: usize) -> LeaderReach {
+    LeaderReach {
+        reach: config.reach_paramount_bands,
+        load: member_bands as f64,
+    }
+}
+
+/// The factor a tribe member band's orders arrive at: the tribe leader's own
+/// [`LeaderReach::orders_carried_out`], times `over_reach_efficiency` again when the band has no
+/// leader of its own (the same lossy shape as over-reach).
+pub fn tribe_orders_carried_out_for_member(
+    config: &LeadershipConfig,
+    tribe: &LeaderReach,
+    member_has_own_leader: bool,
+) -> f64 {
+    let carried = tribe.orders_carried_out(config);
+    if member_has_own_leader {
+        carried
+    } else {
+        carried * config.over_reach_efficiency
+    }
+}
+
 /// **Bank this turn's passive practice, then give every ready band its leader.** Runs right after
 /// `advance_labor_allocation` in the same turn, so a build finished this turn counts this turn.
 ///
@@ -264,6 +322,53 @@ mod tests {
 
     fn config() -> LeadershipConfig {
         LeadershipConfig::default()
+    }
+
+    #[test]
+    fn orders_are_whole_within_and_at_the_reach_and_for_no_load() {
+        let config = config();
+        for load in [0.0, 3.0, 4.0] {
+            let reach = LeaderReach { reach: 4.0, load };
+            assert_eq!(reach.orders_carried_out(&config), 1.0);
+        }
+    }
+
+    #[test]
+    fn over_the_reach_the_excess_is_carried_out_at_the_efficiency() {
+        let config = LeadershipConfig {
+            over_reach_efficiency: 0.5,
+            ..config()
+        };
+        let reach = LeaderReach {
+            reach: 4.0,
+            load: 5.0,
+        };
+        assert!((reach.orders_carried_out(&config) - 0.9).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_chiefless_member_multiplies_by_the_efficiency() {
+        let config = config();
+        let tribe = tribe_leader_reach(&config, 2);
+        assert_eq!(
+            tribe_orders_carried_out_for_member(&config, &tribe, true),
+            1.0
+        );
+        assert_eq!(
+            tribe_orders_carried_out_for_member(&config, &tribe, false),
+            config.over_reach_efficiency
+        );
+    }
+
+    #[test]
+    fn the_constructors_read_the_levers_for_their_level() {
+        let config = config();
+        let band = band_leader_reach(&config, 200.0);
+        assert_eq!(band.reach, config.reach_chief_people);
+        assert_eq!(band.load, 200.0);
+        let tribe = tribe_leader_reach(&config, 6);
+        assert_eq!(tribe.reach, config.reach_paramount_bands);
+        assert_eq!(tribe.load, 6.0);
     }
 
     #[test]

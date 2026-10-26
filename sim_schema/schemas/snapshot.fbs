@@ -1612,6 +1612,19 @@ table PopulationCohortState {
   tribeLeaderName:string;
   // 0 none, 1 paramount chief, 2 council of chiefs.
   tribeLeaderKind:ubyte = 0;
+  // A leader's REACH: how many people (a band leader) it runs well, and how many it actually runs
+  // (the band's people). Set only for an own band with a leader of its own; 0 / 0 otherwise, which a
+  // client reads as nothing to show.
+  leaderReach:float = 0;
+  leaderLoad:float = 0;
+  // The tribe leader's reach in member bands, and the member bands it actually runs. Set for every
+  // own member band of a formed tribe (chiefless ones included); 0 / 0 in no tribe.
+  tribeLeaderReach:float = 0;
+  tribeLeaderLoad:float = 0;
+  // The share of this band's orders that arrive, in (0, 1]: the tribe leader's factor for a tribe
+  // member (times the over-reach efficiency again when the band has no leader of its own), else the
+  // band leader's own factor. 0 when the band has neither a leader nor a tribe (nothing to show).
+  ordersCarriedOut:float = 0;
 }
 
 // ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH - a row of `PopulationCohortState.bandImprovements`,

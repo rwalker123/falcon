@@ -1114,6 +1114,47 @@ pub(crate) struct TribeMembership {
     pub(crate) member_names: Vec<String>,
     pub(crate) leader_name: String,
     pub(crate) leader_kind: u8,
+    /// How many bands the tribe has: the tribe leader's load.
+    pub(crate) member_count: usize,
+}
+
+/// **A band's leader reach fields, as published** (`crate::leadership::LeaderReach`): all zero
+/// (the default) is nothing to show.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct ReachReadout {
+    pub(crate) leader_reach: f32,
+    pub(crate) leader_load: f32,
+    pub(crate) tribe_leader_reach: f32,
+    pub(crate) tribe_leader_load: f32,
+    pub(crate) orders_carried_out: f32,
+}
+
+/// The reach fields of one own band: its own leader's reach and load when it has a leader, the
+/// tribe leader's when it is in a formed tribe, and the factor its orders arrive at. `people` is
+/// the band's head-count, the same measure the tribe code ranks bands by.
+pub(crate) fn reach_readout(
+    config: &crate::leadership_config::LeadershipConfig,
+    has_own_leader: bool,
+    people: u32,
+    tribe_member_count: Option<usize>,
+) -> ReachReadout {
+    use crate::leadership::{
+        band_leader_reach, tribe_leader_reach, tribe_orders_carried_out_for_member,
+    };
+    let own = has_own_leader.then(|| band_leader_reach(config, f64::from(people)));
+    let tribe = tribe_member_count.map(|count| tribe_leader_reach(config, count));
+    let orders_carried_out = match (&tribe, &own) {
+        (Some(tribe), _) => tribe_orders_carried_out_for_member(config, tribe, has_own_leader),
+        (None, Some(own)) => own.orders_carried_out(config),
+        (None, None) => 0.0,
+    };
+    ReachReadout {
+        leader_reach: own.map_or(0.0, |r| r.reach as f32),
+        leader_load: own.map_or(0.0, |r| r.load as f32),
+        tribe_leader_reach: tribe.map_or(0.0, |r| r.reach as f32),
+        tribe_leader_load: tribe.map_or(0.0, |r| r.load as f32),
+        orders_carried_out: orders_carried_out as f32,
+    }
 }
 
 /// `BandId -> people` over every live band, the order a tribe's members are listed in.
@@ -1156,6 +1197,7 @@ pub(crate) fn tribe_membership(
                 sim_schema::TRIBE_LEADER_COUNCIL_OF_CHIEFS
             }
         },
+        member_count: tribe.members.len(),
     })
 }
 
@@ -1241,6 +1283,9 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// The formed tribe the band belongs to; `None` in no tribe, for a foreign or detached row and
     /// for a hand-built fixture.
     pub(crate) tribe_membership: Option<TribeMembership>,
+    /// The band's leader reach and the factor its orders arrive at (default for a foreign row, a
+    /// party and a hand-built fixture).
+    pub(crate) reach: ReachReadout,
     pub(crate) cohort: &'a PopulationCohort,
     pub(crate) allocation: Option<&'a LaborAllocation>,
     pub(crate) expedition: Option<&'a Expedition>,
@@ -1636,6 +1681,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         leadership_threshold,
         tribe,
         tribe_membership,
+        reach,
         cohort,
         allocation,
         expedition,
@@ -3127,6 +3173,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         tribe_leader_kind: tribe_membership
             .as_ref()
             .map_or(sim_schema::TRIBE_LEADER_NONE, |t| t.leader_kind),
+        leader_reach: reach.leader_reach,
+        leader_load: reach.leader_load,
+        tribe_leader_reach: reach.tribe_leader_reach,
+        tribe_leader_load: reach.tribe_leader_load,
+        orders_carried_out: reach.orders_carried_out,
         tribe_member_names: tribe_membership.map(|t| t.member_names).unwrap_or_default(),
         culture_traits,
         culture_ancestor_pull,
@@ -3656,6 +3707,7 @@ mod tests {
             leadership_threshold: 0.0,
             tribe: None,
             tribe_membership: None,
+            reach: ReachReadout::default(),
             // No world, so no outfitting window either.
             loadout_window: None,
             heart: None,

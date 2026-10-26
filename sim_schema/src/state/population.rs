@@ -1911,6 +1911,22 @@ pub struct PopulationCohortState {
     /// The tribe leader's kind (`TRIBE_LEADER_*`). Appended last.
     #[serde(default)]
     pub tribe_leader_kind: u8,
+    /// People the band's own leader runs well (0 when it has no leader). Appended last.
+    #[serde(default)]
+    pub leader_reach: f32,
+    /// People the band's own leader actually runs (0 when it has no leader). Appended last.
+    #[serde(default)]
+    pub leader_load: f32,
+    /// Member bands the tribe leader runs well (0 in no tribe). Appended last.
+    #[serde(default)]
+    pub tribe_leader_reach: f32,
+    /// Member bands the tribe leader actually runs (0 in no tribe). Appended last.
+    #[serde(default)]
+    pub tribe_leader_load: f32,
+    /// The share of the band's orders that arrive, `(0, 1]` (0 with no leader and no tribe).
+    /// Appended last.
+    #[serde(default)]
+    pub orders_carried_out: f32,
 }
 
 /// `PopulationCohortState::tribe_leader_kind`: the band is in no tribe.

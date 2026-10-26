@@ -1244,6 +1244,12 @@ func _build_leader_block(band: Dictionary) -> Control:
     text.mouse_filter = Control.MOUSE_FILTER_PASS
     if phrase != "":
         text.text = "[color=#%s]%s[/color]" % [HudStyle.INK.to_html(false), phrase]
+        var reach := HudFormat.band_leader_reach(band)
+        if not reach.is_empty():
+            var reach_ink: Color = HudStyle.WARN if bool(reach["over"]) else HudStyle.INK_DIM
+            text.text += "\n[color=#%s]%s[/color]" % [reach_ink.to_html(false), String(reach["line"])]
+            block.tooltip_text = String(reach["tooltip"])
+            text.tooltip_text = block.tooltip_text
     else:
         text.text = "[color=#%s]%s[/color] %s %s" % [HudStyle.INK_DIM.to_html(false),
             HudFormat.CHIEF_ROW_LABEL, HudFormat.chief_bar_bbcode(progress), String(progress.get("label", ""))]

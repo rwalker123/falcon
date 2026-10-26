@@ -13,5 +13,8 @@
   "tribe_weight_monument": 2.0,
   "tribe_history_build_turns": 25.0,
   "tribe_history_fade_turns": 100.0,
-  "tribe_score_threshold": 9.0
+  "tribe_score_threshold": 9.0,
+  "reach_chief_people": 150.0,
+  "reach_paramount_bands": 4.0,
+  "over_reach_efficiency": 0.5
 }

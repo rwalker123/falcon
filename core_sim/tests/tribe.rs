@@ -997,3 +997,50 @@ fn the_scores_round_trip_the_checkpoint_so_a_load_publishes_progress() {
         Some(TribeStanding::Local)
     );
 }
+
+#[test]
+fn reach_is_published_for_a_chiefed_band_a_tribe_member_and_a_chiefless_member() {
+    // Band 1 (chiefed, 40 people) and 2 (chiefed, 90) form a tribe with chiefless kin band 3.
+    let mut app = spawn_world();
+    member(&mut app, 1, 40, Some(PLACE_A), NET_1, 1);
+    member(&mut app, 2, 90, Some(PLACE_A), NET_1, 1);
+    band(&mut app, 3, 60, Some(PLACE_A), NET_1);
+    set_origin(&mut app, 3, 1);
+    // A chiefed band in no tribe, over its reach.
+    member(&mut app, 4, 200, Some(PLACE_B), NET_2, 4);
+    // A chiefless band in no tribe.
+    band(&mut app, 5, 30, None, 0);
+    tie_all(&mut app, &[1, 2, 3]);
+    turns(&mut app, TURNS_TO_FILL_HISTORY);
+    assert_eq!(registry(&app).tribe_of(id(1)).unwrap().members.len(), 3);
+    let config = app.world.resource::<LeadershipConfigHandle>().get();
+    let read = |row: fb::PopulationCohortState<'_>| {
+        (
+            row.leaderReach(),
+            row.leaderLoad(),
+            row.tribeLeaderReach(),
+            row.tribeLeaderLoad(),
+            row.ordersCarriedOut(),
+        )
+    };
+    let reach = config.reach_chief_people as f32;
+    let tribe_reach = config.reach_paramount_bands as f32;
+    let eff = config.over_reach_efficiency as f32;
+    // Chiefed tribe member: its own reach and the tribe's; three bands is within reach 4.
+    assert_eq!(
+        with_row(&mut app, 1, read),
+        (reach, 40.0, tribe_reach, 3.0, 1.0)
+    );
+    // Chiefless tribe member: no own reach, the tribe's, and the efficiency applied once.
+    assert_eq!(
+        with_row(&mut app, 3, read),
+        (0.0, 0.0, tribe_reach, 3.0, eff)
+    );
+    // Chiefed, no tribe, over its reach: (150 + 0.5 * 50) / 200.
+    let over = ((config.reach_chief_people
+        + config.over_reach_efficiency * (200.0 - config.reach_chief_people))
+        / 200.0) as f32;
+    assert_eq!(with_row(&mut app, 4, read), (reach, 200.0, 0.0, 0.0, over));
+    // Neither leader nor tribe: nothing to show.
+    assert_eq!(with_row(&mut app, 5, read), (0.0, 0.0, 0.0, 0.0, 0.0));
+}

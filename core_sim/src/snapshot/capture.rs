@@ -3444,6 +3444,32 @@ pub fn capture_snapshot(
                         .and_then(|owner| culture.applied_band_pull(owner))
                         .map(|pull| pull.iter().map(|v| v.to_f32()).collect())
                         .unwrap_or_default();
+                    // The formed tribe is published to every member, chiefless ones included.
+                    let tribe_membership = expedition
+                        .is_none()
+                        .then(|| {
+                            band_id.zip(tribes.as_deref()).and_then(|(band, registry)| {
+                                crate::snapshot::population::tribe_membership(
+                                    registry,
+                                    *band,
+                                    &band_names,
+                                    &band_sizes,
+                                )
+                            })
+                        })
+                        .flatten();
+                    // Reach: only an own band row (a party carries its home band's id and
+                    // leadership, so it is excluded), the defaults otherwise.
+                    let reach = if expedition.is_none() {
+                        crate::snapshot::population::reach_readout(
+                            &leadership_cfg,
+                            leadership.is_some_and(|l| l.leader.is_some()),
+                            cohort.size,
+                            tribe_membership.as_ref().map(|t| t.member_count),
+                        )
+                    } else {
+                        crate::snapshot::population::ReachReadout::default()
+                    };
                     Some(population_state(PopulationStateInputs {
                         belief_reach,
                         belief_relay_region,
@@ -3480,20 +3506,8 @@ pub fn capture_snapshot(
                             })
                         })
                         .flatten(),
-                        // The formed tribe is published to every member, chiefless ones included.
-                        tribe_membership: expedition
-                            .is_none()
-                            .then(|| {
-                                band_id.zip(tribes.as_deref()).and_then(|(band, registry)| {
-                                    crate::snapshot::population::tribe_membership(
-                                        registry,
-                                        *band,
-                                        &band_names,
-                                        &band_sizes,
-                                    )
-                                })
-                            })
-                            .flatten(),
+                        tribe_membership,
+                        reach,
                         cohort,
                         allocation,
                         expedition,

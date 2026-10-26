@@ -102,6 +102,17 @@ const LEADER_KIND_CHIEF := 1
 const LEADER_KIND_ELDER_COUNCIL := 2
 const BAND_LEADER_CHIEF_FORMAT := "Chief %s"
 const BAND_LEADER_COUNCIL_FORMAT := "Elders' council — %s speaks"
+## A leader's reach (#870), the line under the leader phrase: within reach it says everyone is run
+## well, over reach how many of the band's people are. Hover: what a leader runs well and what past
+## that costs; the `— N% now` clause is appended only when over reach.
+const BAND_REACH_WITHIN_FORMAT := "Runs all %d people well"
+const BAND_REACH_OVER_FORMAT := "Runs %d of %d people well"
+const BAND_REACH_TIP_CHIEF_SUBJECT := "A chief"
+const BAND_REACH_TIP_COUNCIL_SUBJECT := "The council"
+const BAND_REACH_TIP_FORMAT := "%s runs about %d people well. Past that, orders still go out, but less of each one is carried out"
+const BAND_REACH_TIP_NOW_FORMAT := " — %d%% now"
+const BAND_REACH_TIP_END := "."
+const REACH_PERCENT_SCALE := 100.0
 ## **THE CHIEF-PROGRESS BAR** (#859) under the header's sub line, while a band has no leader. Four
 ## sources in this order, each a distinct hue; the remainder to the threshold is the empty cell.
 const CHIEF_LABEL_FORMAT := "%d / %d"
@@ -230,6 +241,25 @@ static func band_leader_phrase(entry: Dictionary) -> String:
         LEADER_KIND_ELDER_COUNCIL:
             return BAND_LEADER_COUNCIL_FORMAT % leader_name
     return ""
+
+## **A LEADER'S REACH** (#870): `{line, tooltip, over}` under the leader phrase, or `{}` when the band has
+## no leader (`leader_reach` 0). `over` is true when the band's people exceed the reach; `line` carries
+## no colour (the caller tints it: amber when `over`, dim otherwise). Numbers are whole people.
+static func band_leader_reach(entry: Dictionary) -> Dictionary:
+    var reach := float(entry.get("leader_reach", 0.0))
+    if reach <= 0.0:
+        return {}
+    var load_people := float(entry.get("leader_load", 0.0))
+    var over := load_people > reach
+    var line := BAND_REACH_OVER_FORMAT % [int(roundf(reach)), int(roundf(load_people))] if over \
+        else BAND_REACH_WITHIN_FORMAT % int(roundf(load_people))
+    var subject := BAND_REACH_TIP_COUNCIL_SUBJECT \
+        if int(entry.get("leader_kind", LEADER_KIND_NONE)) == LEADER_KIND_ELDER_COUNCIL \
+        else BAND_REACH_TIP_CHIEF_SUBJECT
+    var tooltip := BAND_REACH_TIP_FORMAT % [subject, int(roundf(reach))]
+    if over:
+        tooltip += BAND_REACH_TIP_NOW_FORMAT % int(roundf(float(entry.get("orders_carried_out", 1.0)) * REACH_PERCENT_SCALE))
+    return {"line": line, "tooltip": tooltip + BAND_REACH_TIP_END, "over": over}
 
 ## The segment hues, in `CHIEF_SOURCE_KEYS` order. Read at call time because `HudStyle`'s palette is
 ## installed at runtime.
@@ -636,6 +666,11 @@ const TRIBE_FORMED_FORMAT := "Tribe: %s · %d bands"
 const TRIBE_LED_PARAMOUNT_FORMAT := "Led by paramount chief %s"
 const TRIBE_LED_COUNCIL_FORMAT := "Led by a council of chiefs — %s speaks"
 ## The wire's `tribe_leader_kind`: 0 none, 1 paramount chief, 2 council of chiefs.
+## The tribe leader's reach (#870): a tooltip line, and a short amber suffix on the visible line.
+const TRIBE_REACH_WITHIN_FORMAT := "%s runs all %d bands well"
+const TRIBE_REACH_OVER_FORMAT := "%s runs %d of %d bands well — orders past that are carried out worse"
+const TRIBE_STRETCHED_SUFFIX := " · stretched"
+const TRIBE_CHIEFLESS_ORDERS_FORMAT := "%s has no chief of its own: %d%% of each order is carried out here."
 const TRIBE_LEADER_PARAMOUNT := 1
 const TRIBE_LEADER_COUNCIL := 2
 const TRIBE_NAME_SEPARATOR := ", "
@@ -804,6 +839,17 @@ static func _tribe_formed(entry: Dictionary, tribe_name: String) -> Dictionary:
             tooltip.append(TRIBE_LED_PARAMOUNT_FORMAT % leader)
         TRIBE_LEADER_COUNCIL:
             tooltip.append(TRIBE_LED_COUNCIL_FORMAT % leader)
-    return {"line": "[color=#%s]%s[/color]" % [HudStyle.INK.to_html(false),
-        TRIBE_FORMED_FORMAT % [tribe_name, members.size()]],
-        "tooltip": "\n".join(tooltip), "has_partner": true}
+    var line := "[color=#%s]%s[/color]" % [HudStyle.INK.to_html(false),
+        TRIBE_FORMED_FORMAT % [tribe_name, members.size()]]
+    var reach := int(roundf(float(entry.get("tribe_leader_reach", 0.0))))
+    if reach > 0:
+        var load_bands := int(roundf(float(entry.get("tribe_leader_load", 0.0))))
+        if load_bands > reach:
+            tooltip.append(TRIBE_REACH_OVER_FORMAT % [leader, reach, load_bands])
+            line += "[color=#%s]%s[/color]" % [HudStyle.WARN.to_html(false), TRIBE_STRETCHED_SUFFIX]
+        else:
+            tooltip.append(TRIBE_REACH_WITHIN_FORMAT % [leader, load_bands])
+    var carried := float(entry.get("orders_carried_out", 0.0))
+    if float(entry.get("leader_reach", 0.0)) <= 0.0 and carried > 0.0:
+        tooltip.append(TRIBE_CHIEFLESS_ORDERS_FORMAT % [band_name(entry), int(roundf(carried * REACH_PERCENT_SCALE))])
+    return {"line": line, "tooltip": "\n".join(tooltip), "has_partner": true}

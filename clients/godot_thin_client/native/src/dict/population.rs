@@ -2070,6 +2070,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // the practice toward one. Own bands only - a foreign row carries the defaults.
     let _ = dict.insert("leader_name", cohort.leaderName().unwrap_or(""));
     let _ = dict.insert("leader_kind", i64::from(cohort.leaderKind()));
+    // A leader's reach (#870): people the leader runs well vs the band's people (0/0 = no leader).
+    let _ = dict.insert("leader_reach", f64::from(cohort.leaderReach()));
+    let _ = dict.insert("leader_load", f64::from(cohort.leaderLoad()));
+    // A leader's reach (#870): people the leader runs well vs the band's people (0/0 = no leader).
+    let _ = dict.insert("leader_reach", f64::from(cohort.leaderReach()));
+    let _ = dict.insert("leader_load", f64::from(cohort.leaderLoad()));
     let _ = dict.insert(
         "leadership_practice",
         f64::from(cohort.leadershipPractice()),
@@ -2137,6 +2143,16 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("tribe_member_names", &tribe_members);
     let _ = dict.insert("tribe_leader_name", cohort.tribeLeaderName().unwrap_or(""));
     let _ = dict.insert("tribe_leader_kind", i64::from(cohort.tribeLeaderKind()));
+    // Tribe leader's reach in member bands, the member count, and the share of an order that
+    // reaches this band (0 = nothing to show).
+    let _ = dict.insert("tribe_leader_reach", f64::from(cohort.tribeLeaderReach()));
+    let _ = dict.insert("tribe_leader_load", f64::from(cohort.tribeLeaderLoad()));
+    let _ = dict.insert("orders_carried_out", f64::from(cohort.ordersCarriedOut()));
+    // Tribe leader's reach in member bands, the member count, and the share of an order that
+    // reaches this band (0 = nothing to show).
+    let _ = dict.insert("tribe_leader_reach", f64::from(cohort.tribeLeaderReach()));
+    let _ = dict.insert("tribe_leader_load", f64::from(cohort.tribeLeaderLoad()));
+    let _ = dict.insert("orders_carried_out", f64::from(cohort.ordersCarriedOut()));
     let _ = dict.insert(
         "long_move_leaves_food",
         f64::from(cohort.longMoveLeavesFood()),
