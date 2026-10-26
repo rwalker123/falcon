@@ -177,11 +177,17 @@ appended last: `tribeStanding` (0 local, 1 no urn, 2 no supply network, 3 alone;
 `sim_schema::TRIBE_STANDING_*`), `tribeThreshold` (`tribe_score_threshold`),
 `tribeHistoryBuildTurns` (`tribe_history_build_turns`), `tribeWeights` (a `TribeClosenessState`: the
 seven weights, the most each input can add) and `tribePairs` (one `TribePairState` per local partner
-band of the band's people, partner id ascending: `partnerBand`, `partnerName`, `sameTribe`, raw
+band of the band's people, partner id ascending: `partnerBand`, `partnerName`, raw
 `history`, and `contribution`, each input times its weight, summing to the pair's score). Parted
 pairs are not published, and neither is whether the partner has a chief: a chiefless partner is
-listed like any other. A chiefless own band, a foreign band and an expedition party carry the
-defaults (threshold 0, which a client reads as nothing to show). The scoring lives in
+listed like any other. Membership in a *formed* tribe is separate and is published to every member
+band, chiefless ones included, as `tribeName`, `tribeMemberNames` (every member's name, largest
+band first, ties by band id), `tribeLeaderName` and `tribeLeaderKind`
+(`sim_schema::TRIBE_LEADER_*`: 0 none, 1 paramount chief, 2 council of chiefs); all four are empty
+in no tribe. Whether a pair is already in one tribe is not on the wire: a band in a tribe shows the
+tribe, not progress. A chiefless own band, a foreign band and an expedition party carry the
+defaults of the progress fields (threshold 0, which a client reads as nothing to show); a foreign
+band and a party carry the defaults of the tribe fields too. The scoring lives in
 `TribeRegistry` (`scores`, the inputs of this turn's local pairs, and `standing`), rebuilt from
 scratch each turn by `advance_tribes`, rather than in a derived resource: the registry is
 checkpoint state, so a snapshot published right after a load still shows progress. The capture

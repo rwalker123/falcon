@@ -1106,6 +1106,59 @@ pub(crate) struct TribeProgress {
     pub(crate) pairs: Vec<sim_schema::TribePairState>,
 }
 
+/// **The formed tribe a band belongs to, as published** -- published whether or not the band has a
+/// leader of its own.
+pub(crate) struct TribeMembership {
+    pub(crate) name: String,
+    /// Every member band's name, largest band first, ties by band id.
+    pub(crate) member_names: Vec<String>,
+    pub(crate) leader_name: String,
+    pub(crate) leader_kind: u8,
+}
+
+/// `BandId -> people` over every live band, the order a tribe's members are listed in.
+pub(crate) type BandSizeLookup = std::collections::HashMap<BandId, u32>;
+
+/// The tribe `band` belongs to, or `None` in no tribe. `names` and `sizes` are the live-band
+/// lookups; a nameless member reads as the same `Band <id>` label `tribe.rs` uses.
+pub(crate) fn tribe_membership(
+    registry: &crate::tribe::TribeRegistry,
+    band: BandId,
+    names: &BandNameLookup,
+    sizes: &BandSizeLookup,
+) -> Option<TribeMembership> {
+    let tribe = registry.tribe_of(band)?;
+    let mut members: Vec<BandId> = tribe.members.iter().copied().collect();
+    members.sort_by_key(|member| {
+        (
+            std::cmp::Reverse(sizes.get(member).copied().unwrap_or(0)),
+            *member,
+        )
+    });
+    Some(TribeMembership {
+        name: tribe.name.clone(),
+        member_names: members
+            .into_iter()
+            .map(|member| {
+                names
+                    .get(&member)
+                    .filter(|name| !name.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| crate::systems::band_label(member))
+            })
+            .collect(),
+        leader_name: tribe.leader.name.clone(),
+        leader_kind: match tribe.leader.kind {
+            crate::tribe::TribeLeaderKind::ParamountChief => {
+                sim_schema::TRIBE_LEADER_PARAMOUNT_CHIEF
+            }
+            crate::tribe::TribeLeaderKind::CouncilOfChiefs => {
+                sim_schema::TRIBE_LEADER_COUNCIL_OF_CHIEFS
+            }
+        },
+    })
+}
+
 /// Each input times its weight, as the wire's `TribeClosenessState`.
 fn tribe_contribution(
     weights: &crate::leadership_config::LeadershipConfig,
@@ -1141,9 +1194,6 @@ pub(crate) fn tribe_progress(
                 .filter(|name| !name.is_empty())
                 .cloned()
                 .unwrap_or_else(|| crate::systems::band_label(partner)),
-            same_tribe: registry
-                .tribe_of(band)
-                .is_some_and(|tribe| tribe.members.contains(&partner)),
             history: score.history as f32,
             contribution: tribe_contribution(config, score),
         })
@@ -1188,6 +1238,9 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// The band's progress toward a tribe (`crate::tribe`); `None` for a foreign or detached row and
     /// for a hand-built fixture, which publish the defaults.
     pub(crate) tribe: Option<TribeProgress>,
+    /// The formed tribe the band belongs to; `None` in no tribe, for a foreign or detached row and
+    /// for a hand-built fixture.
+    pub(crate) tribe_membership: Option<TribeMembership>,
     pub(crate) cohort: &'a PopulationCohort,
     pub(crate) allocation: Option<&'a LaborAllocation>,
     pub(crate) expedition: Option<&'a Expedition>,
@@ -1582,6 +1635,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         leadership,
         leadership_threshold,
         tribe,
+        tribe_membership,
         cohort,
         allocation,
         expedition,
@@ -3062,6 +3116,18 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         tribe_history_build_turns: tribe.as_ref().map_or(0.0, |t| t.history_build_turns),
         tribe_weights: tribe.as_ref().map(|t| t.weights).unwrap_or_default(),
         tribe_pairs: tribe.map(|t| t.pairs).unwrap_or_default(),
+        tribe_name: tribe_membership
+            .as_ref()
+            .map(|t| t.name.clone())
+            .unwrap_or_default(),
+        tribe_leader_name: tribe_membership
+            .as_ref()
+            .map(|t| t.leader_name.clone())
+            .unwrap_or_default(),
+        tribe_leader_kind: tribe_membership
+            .as_ref()
+            .map_or(sim_schema::TRIBE_LEADER_NONE, |t| t.leader_kind),
+        tribe_member_names: tribe_membership.map(|t| t.member_names).unwrap_or_default(),
         culture_traits,
         culture_ancestor_pull,
         culture_drift_source_band: culture_drift.map_or(0, |pull| pull.source),
@@ -3589,6 +3655,7 @@ mod tests {
             leadership: None,
             leadership_threshold: 0.0,
             tribe: None,
+            tribe_membership: None,
             // No world, so no outfitting window either.
             loadout_window: None,
             heart: None,

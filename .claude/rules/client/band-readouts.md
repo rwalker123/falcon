@@ -1819,30 +1819,38 @@ ceiling"). The Band tab states its EFFECT on growth; the limit itself is a FACTI
 ## THE TRIBE READOUT — one line under the leader block (#861)
 
 The Band tab's `BandTribeBlock` (`BandPanelController._build_tribe_block`) is the block directly after
-the leader block, in the same column: ONE non-wrapping line. The sim publishes tribe progress only on
-an own band that HAS a leader, so a chiefless band (and every foreign row) carries `tribe_threshold`
-0 and gets no block. It reads `tribe_standing`, `tribe_threshold`, `tribe_history_build_turns`,
-`tribe_weights` and `tribe_pairs` (local partners only: `partner_name`, `same_tribe`, `history`,
-`contribution`), decoded in `dict/population.rs`. The shaping is pure `HudFormat` statics
-(`band_tribe_progress`, `tribe_suffix`, `tribe_missing_lines`, `tribe_bar_bbcode`), so the harness
-asserts it without a node.
+the leader block, in the same column: ONE non-wrapping line. It reads `tribe_name`,
+`tribe_member_names` (largest band first), `tribe_leader_name` / `tribe_leader_kind` (0 none, 1
+paramount chief, 2 council of chiefs), and, for a band not yet in a tribe, `tribe_standing`,
+`tribe_threshold`, `tribe_history_build_turns`, `tribe_weights` and `tribe_pairs` (local partners
+only: `partner_name`, `history`, `contribution`), decoded in `dict/population.rs`. The shaping is pure
+`HudFormat` statics (`band_tribe_progress`, `tribe_suffix`, `tribe_missing_lines`,
+`tribe_bar_bbcode`), so the harness asserts it without a node. Four cases, in this order:
 
-- **The line** is `Tribe <split bar> with <best partner> · <phrase>`, with no numeric score. The
-  best partner is the highest summed contribution (ties by name). The bar is one cell per point of
-  the threshold, each input in its own hue in wire order, with cells taken from the rounded RUNNING
-  total so the bar's length is the score rounded once (a per-input rounding read 8.2 of 9 as full).
-- **The phrase** is exactly one of: `one tribe` (same tribe), `forming` (score at the threshold),
-  `N turns` / `1 turn` (history alone can close the gap at weight / build turns, rounded up), else
-  the biggest missing of monument / belief / tie: `needs a monument`, `needs more belief`, `needs a
-  stronger tie`. With no partner the line is dim: `Tribe: no band lives with you`.
-- **The hover** is the rule (`Two of your bands become a tribe by living together: the same ancestors
-  and one pooling network.`), then only what is still missing as actions, one per line (`Live together
-  4 more turns`, `Raise a monument at the ancestors`, `More belief at the ancestors`, `A stronger tie
-  with <name>`; `Forms next turn` / `Already one tribe` when close). Shared origin and culture are
-  never listed: the player cannot change them. With no partner the line after the rule is the standing
-  (`No place of the ancestors yet` / `Not in a pooling network` / `No other band of your people lives
-  here`). Other partners follow a blank line as `Also: A, B`, which is where they are not lost.
-  "Ancestors" is the Beliefs row's word and "pooling network" the Trade tab's title.
-- **Frames:** `tribe_chiefless`, `tribe_pairs`, `tribe_no_partner` in `band_expedition` (docked
-  right, Band tab); the harness asserts one line, the card's minimum width within the strip, the
-  tooltip text, and every suffix off the statics.
+- **In a tribe** (`tribe_name` set), on every member band, led or chiefless: `Tribe: Sandreach tribe ·
+  3 bands` (a tribe has at least two). The hover is the member names, then `Led by paramount chief
+  Wynne` or `Led by a council of chiefs — Wynne speaks`. This replaces the progress line.
+- **Not in a tribe, band has a leader** (the sim publishes `tribe_threshold` above 0 only then):
+  `Tribe <split bar> · <phrase>` for the best-scoring partner (highest summed contribution, ties by
+  name), with no partner name and no numeric score. The bar is one cell per point of the threshold,
+  each input in its own hue in wire order, with cells taken from the rounded RUNNING total so its
+  length is the score rounded once (a per-input rounding read 8.2 of 9 as full). The phrase is one of
+  `forming` (score at the threshold), `N turns` / `1 turn` (history alone can close the gap at weight /
+  build turns, rounded up), else the biggest missing of monument / belief / tie: `needs a monument`,
+  `needs more belief`, `needs a stronger tie`.
+- **Not in a tribe, leader, no partner**: dim `Tribe: no band lives with you`.
+- **No leader and no tribe**: no block.
+
+The hover of the progress line is the rule (`Two of your bands become a tribe by living together: the
+same ancestors and one pooling network.`), then only what is still missing as actions, one per line
+(`Live together 4 more turns`, `Raise a monument at the ancestors`, `More belief at the ancestors`, `A
+stronger tie with <name>`; `Forms next turn` when close), then a blank line and `With: A, B` naming
+EVERY local partner, which is where the names the line dropped are kept. Shared origin and culture are
+never listed: the player cannot change them. With no partner the line after the rule is the standing
+(`No place of the ancestors yet` / `Not in a pooling network` / `No other band of your people lives
+here`). "Ancestors" is the Beliefs row's word and "pooling network" the Trade tab's title.
+
+**Frames:** `tribe_chiefless` (no block), `tribe_pairs`, `tribe_no_partner`, `tribe_formed_chiefless`,
+`tribe_formed_led` in `band_expedition` (docked right, Band tab); the harness asserts one line, the
+card's minimum width within the strip, the verbatim tooltips, a council-led tribe, and every suffix off
+the statics.

@@ -9331,6 +9331,14 @@
       "travel_target_x": 79,
       "travel_target_y": 90,
       "tribe_history_build_turns": 17.290001,
+      "tribe_leader_kind": 127,
+      "tribe_leader_name": "populations[0].tribe_leader_name",
+      "tribe_member_names": [
+        "populations[0].tribe_member_names[0]",
+        "populations[0].tribe_member_names[1]",
+        "populations[0].tribe_member_names[2]"
+      ],
+      "tribe_name": "populations[0].tribe_name",
       "tribe_pairs": [
         {
           "contribution": {
@@ -9344,8 +9352,7 @@
           },
           "history": 53.16,
           "partner_band": 188,
-          "partner_name": "populations[0].tribe_pairs[0].partner_name",
-          "same_tribe": true
+          "partner_name": "populations[0].tribe_pairs[0].partner_name"
         },
         {
           "contribution": {
@@ -9359,8 +9366,7 @@
           },
           "history": 54.509998,
           "partner_band": 65,
-          "partner_name": "populations[0].tribe_pairs[1].partner_name",
-          "same_tribe": false
+          "partner_name": "populations[0].tribe_pairs[1].partner_name"
         },
         {
           "contribution": {
@@ -9374,8 +9380,7 @@
           },
           "history": 57.98,
           "partner_band": 6,
-          "partner_name": "populations[0].tribe_pairs[2].partner_name",
-          "same_tribe": false
+          "partner_name": "populations[0].tribe_pairs[2].partner_name"
         }
       ],
       "tribe_standing": 79,
@@ -11762,6 +11767,14 @@
       "travel_target_x": 128,
       "travel_target_y": 117,
       "tribe_history_build_turns": 2.63,
+      "tribe_leader_kind": 120,
+      "tribe_leader_name": "populations[1].tribe_leader_name",
+      "tribe_member_names": [
+        "populations[1].tribe_member_names[0]",
+        "populations[1].tribe_member_names[1]",
+        "populations[1].tribe_member_names[2]"
+      ],
+      "tribe_name": "populations[1].tribe_name",
       "tribe_pairs": [
         {
           "contribution": {
@@ -11775,8 +11788,7 @@
           },
           "history": 102.989998,
           "partner_band": 19,
-          "partner_name": "populations[1].tribe_pairs[0].partner_name",
-          "same_tribe": true
+          "partner_name": "populations[1].tribe_pairs[0].partner_name"
         },
         {
           "contribution": {
@@ -11790,8 +11802,7 @@
           },
           "history": 32.880001,
           "partner_band": 174,
-          "partner_name": "populations[1].tribe_pairs[1].partner_name",
-          "same_tribe": false
+          "partner_name": "populations[1].tribe_pairs[1].partner_name"
         },
         {
           "contribution": {
@@ -11805,8 +11816,7 @@
           },
           "history": 110.57,
           "partner_band": 169,
-          "partner_name": "populations[1].tribe_pairs[2].partner_name",
-          "same_tribe": false
+          "partner_name": "populations[1].tribe_pairs[2].partner_name"
         }
       ],
       "tribe_standing": 78,
@@ -14283,6 +14293,14 @@
       "travel_target_x": 101,
       "travel_target_y": 112,
       "tribe_history_build_turns": 106.699997,
+      "tribe_leader_kind": 169,
+      "tribe_leader_name": "populations[2].tribe_leader_name",
+      "tribe_member_names": [
+        "populations[2].tribe_member_names[0]",
+        "populations[2].tribe_member_names[1]",
+        "populations[2].tribe_member_names[2]"
+      ],
+      "tribe_name": "populations[2].tribe_name",
       "tribe_pairs": [
         {
           "contribution": {
@@ -14296,8 +14314,7 @@
           },
           "history": 39.130001,
           "partner_band": 182,
-          "partner_name": "populations[2].tribe_pairs[0].partner_name",
-          "same_tribe": true
+          "partner_name": "populations[2].tribe_pairs[0].partner_name"
         },
         {
           "contribution": {
@@ -14311,8 +14328,7 @@
           },
           "history": 20.68,
           "partner_band": 155,
-          "partner_name": "populations[2].tribe_pairs[1].partner_name",
-          "same_tribe": false
+          "partner_name": "populations[2].tribe_pairs[1].partner_name"
         },
         {
           "contribution": {
@@ -14326,8 +14342,7 @@
           },
           "history": 16.33,
           "partner_band": 84,
-          "partner_name": "populations[2].tribe_pairs[2].partner_name",
-          "same_tribe": false
+          "partner_name": "populations[2].tribe_pairs[2].partner_name"
         }
       ],
       "tribe_standing": 165,

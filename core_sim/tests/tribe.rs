@@ -725,7 +725,6 @@ fn a_local_pair_publishes_each_input_times_its_weight_and_they_sum_to_the_score(
         let pair = pairs.get(0);
         assert_eq!(pair.partnerBand(), id(2).0);
         assert_eq!(pair.partnerName(), Some("Test2"));
-        assert!(!pair.sameTribe());
         let c = pair.contribution().expect("contribution");
         assert_eq!(c.origin(), w.origin(), "kin: origin input is 1");
         assert!((c.tie() - w.tie()).abs() < 1e-6, "full tie");
@@ -751,13 +750,113 @@ fn a_local_pair_publishes_each_input_times_its_weight_and_they_sum_to_the_score(
     });
 }
 
+/// Read the formed-tribe fields of band `n`'s row.
+fn tribe_fields(app: &mut App, n: u64) -> (String, Vec<String>, String, u8) {
+    with_row(app, n, |row| {
+        (
+            row.tribeName().unwrap_or_default().to_string(),
+            row.tribeMemberNames()
+                .map(|names| names.iter().map(str::to_string).collect())
+                .unwrap_or_default(),
+            row.tribeLeaderName().unwrap_or_default().to_string(),
+            row.tribeLeaderKind(),
+        )
+    })
+}
+
+fn set_origin(app: &mut App, n: u64, origin: u64) {
+    let entity = app
+        .world
+        .query_filtered::<(Entity, &BandId), With<ResidentBand>>()
+        .iter(&app.world)
+        .find(|(_, b)| **b == id(n))
+        .map(|(e, _)| e)
+        .unwrap();
+    app.world
+        .get_mut::<PopulationCohort>(entity)
+        .unwrap()
+        .founding_lines = FoundingLines::founded(id(origin), 2);
+}
+
 #[test]
-fn a_formed_tribe_marks_its_pairs_as_the_same_tribe() {
+fn every_member_of_a_formed_tribe_publishes_it_chiefless_ones_included() {
+    // Only band 1 is chiefed; 2 and 3 are chiefless kin, each close to 1 through its history.
+    let mut app = spawn_world();
+    member(&mut app, 1, 40, Some(PLACE_A), NET_1, 1);
+    band(&mut app, 2, 90, Some(PLACE_A), NET_1);
+    band(&mut app, 3, 60, Some(PLACE_A), NET_1);
+    set_origin(&mut app, 2, 1);
+    set_origin(&mut app, 3, 1);
+    tie_all(&mut app, &[1, 2, 3]);
+    turns(&mut app, TURNS_TO_FILL_HISTORY);
+    assert_eq!(registry(&app).len(), 1, "one tribe of three");
+    let expected = (
+        "Test2 tribe".to_string(),
+        vec![
+            "Test2".to_string(),
+            "Test3".to_string(),
+            "Test1".to_string(),
+        ],
+        "Chief1".to_string(),
+        sim_schema::TRIBE_LEADER_PARAMOUNT_CHIEF,
+    );
+    for n in [1, 2, 3] {
+        assert_eq!(tribe_fields(&mut app, n), expected, "band {n}");
+    }
+    // The chiefless members carry the formed tribe but no progress.
+    with_row(&mut app, 2, |row| assert_eq!(row.tribeThreshold(), 0.0));
+}
+
+#[test]
+fn a_chain_of_close_pairs_is_one_tribe_of_three() {
+    // 1 and 3 are chiefed, 2 is not. Culture on one axis runs -span, 0, +span, so 1-2 and 2-3 are
+    // close (3 + 1.5 + 2 + 5) and 1-3 is not (3 + 0 + 0 + 5 = 8).
+    let mut app = spawn_world();
+    member(&mut app, 1, 40, Some(PLACE_A), NET_1, 1);
+    band(&mut app, 2, 90, Some(PLACE_A), NET_1);
+    member(&mut app, 3, 60, Some(PLACE_A), NET_1, 1);
+    set_origin(&mut app, 2, 1);
+    {
+        let mut ledger = app.world.resource_mut::<ConnectionLedger>();
+        for (a, b) in [(1, 2), (2, 3)] {
+            ledger.insert_full_tie(
+                ConnectionKey::new(id(a), id(b)),
+                &Sighting::new(UVec2::ZERO, 1, "", FactionId(0)),
+                1,
+            );
+        }
+    }
+    set_axis(&mut app, id(1), 0, -CULTURE_TRAIT_SPAN);
+    set_axis(&mut app, id(3), 0, CULTURE_TRAIT_SPAN);
+    turns(&mut app, TURNS_TO_FILL_HISTORY);
+    assert_eq!(registry(&app).len(), 1);
+    let tribe = registry(&app).tribe_of(id(1)).unwrap();
+    assert_eq!(tribe.members.len(), 3, "a chain is one tribe, not a pair");
+}
+
+#[test]
+fn a_band_in_no_tribe_and_a_foreign_band_publish_no_tribe() {
     let (mut app, _, _) = kin_pair();
-    until_formed(&mut app);
-    with_row(&mut app, 1, |row| {
-        assert!(row.tribePairs().unwrap().get(0).sameTribe());
-    });
+    let loner = band(&mut app, 3, 50, Some(PLACE_B), NET_2);
+    let foreign = band(&mut app, 4, 50, Some(PLACE_A), NET_1);
+    app.world
+        .get_mut::<PopulationCohort>(foreign)
+        .unwrap()
+        .faction = FactionId(1);
+    crown(&mut app, foreign, "Rival", LeaderKind::Chief);
+    crown(&mut app, loner, "Solo", LeaderKind::Chief);
+    let mut config = app.world.resource::<SimulationConfig>().clone();
+    config.fog_enabled = false;
+    app.world.insert_resource(config);
+    turns(&mut app, TURNS_TO_FILL_HISTORY);
+    assert!(registry(&app).tribe_of(id(1)).is_some());
+    for n in [3, 4] {
+        assert_eq!(
+            tribe_fields(&mut app, n),
+            (String::new(), Vec::new(), String::new(), 0),
+            "band {n}"
+        );
+    }
 }
 
 #[test]

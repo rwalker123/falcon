@@ -2115,7 +2115,6 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let mut row = VarDictionary::new();
             let _ = row.insert("partner_band", pair.partnerBand() as i64);
             let _ = row.insert("partner_name", pair.partnerName().unwrap_or(""));
-            let _ = row.insert("same_tribe", pair.sameTribe());
             let _ = row.insert("history", f64::from(pair.history()));
             let _ = row.insert(
                 "contribution",
@@ -2125,6 +2124,19 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         }
     }
     let _ = dict.insert("tribe_pairs", &tribe_pairs);
+    // THE FORMED TRIBE, on every own member band (chiefless ones included): `tribe_name` is empty for a
+    // band in no tribe; `tribe_member_names` lists the bands, largest first; `tribe_leader_kind` is
+    // 0 none, 1 paramount chief, 2 council of chiefs, and `tribe_leader_name` the chief or speaker.
+    let _ = dict.insert("tribe_name", cohort.tribeName().unwrap_or(""));
+    let mut tribe_members = VarArray::new();
+    if let Some(names) = cohort.tribeMemberNames() {
+        for name in names.iter() {
+            tribe_members.push(&GString::from(name).to_variant());
+        }
+    }
+    let _ = dict.insert("tribe_member_names", &tribe_members);
+    let _ = dict.insert("tribe_leader_name", cohort.tribeLeaderName().unwrap_or(""));
+    let _ = dict.insert("tribe_leader_kind", i64::from(cohort.tribeLeaderKind()));
     let _ = dict.insert(
         "long_move_leaves_food",
         f64::from(cohort.longMoveLeavesFood()),

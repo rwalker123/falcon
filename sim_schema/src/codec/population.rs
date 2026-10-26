@@ -942,6 +942,14 @@ fn create_populations<'a>(
             let band_improvements = create_band_improvements(builder, &cohort.band_improvements);
             let tribe_weights = create_tribe_closeness(builder, &cohort.tribe_weights);
             let tribe_pairs = create_tribe_pairs(builder, &cohort.tribe_pairs);
+            let tribe_name = builder.create_string(&cohort.tribe_name);
+            let tribe_member_names: Vec<_> = cohort
+                .tribe_member_names
+                .iter()
+                .map(|name| builder.create_string(name))
+                .collect();
+            let tribe_member_names = builder.create_vector(&tribe_member_names);
+            let tribe_leader_name = builder.create_string(&cohort.tribe_leader_name);
             let culture_ancestor_pull = (!cohort.culture_ancestor_pull.is_empty())
                 .then(|| builder.create_vector(&cohort.culture_ancestor_pull));
             let belief_reach_y = if cohort.belief_reach_y.is_empty() {
@@ -1245,6 +1253,10 @@ fn create_populations<'a>(
                     tribeHistoryBuildTurns: cohort.tribe_history_build_turns,
                     tribeWeights: Some(tribe_weights),
                     tribePairs: Some(tribe_pairs),
+                    tribeName: Some(tribe_name),
+                    tribeMemberNames: Some(tribe_member_names),
+                    tribeLeaderName: Some(tribe_leader_name),
+                    tribeLeaderKind: cohort.tribe_leader_kind,
                 },
             )
         })
@@ -2168,13 +2180,16 @@ fn decode_population(
         tribe_pairs: map_rows(cohort.tribePairs(), |row| TribePairState {
             partner_band: row.partnerBand(),
             partner_name: text(row.partnerName()),
-            same_tribe: row.sameTribe(),
             history: row.history(),
             contribution: row
                 .contribution()
                 .map(decode_tribe_closeness)
                 .unwrap_or_default(),
         }),
+        tribe_name: text(cohort.tribeName()),
+        tribe_member_names: decode_strings(cohort.tribeMemberNames()),
+        tribe_leader_name: text(cohort.tribeLeaderName()),
+        tribe_leader_kind: cohort.tribeLeaderKind(),
     })
 }
 
@@ -2315,7 +2330,6 @@ fn create_tribe_pairs<'a>(
                 &fb::TribePairStateArgs {
                     partnerBand: row.partner_band,
                     partnerName: Some(partner_name),
-                    sameTribe: row.same_tribe,
                     history: row.history,
                     contribution: Some(contribution),
                 },

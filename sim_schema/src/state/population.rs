@@ -1897,7 +1897,28 @@ pub struct PopulationCohortState {
     /// One row per partner band of this band's people, partner id ascending. Appended last.
     #[serde(default)]
     pub tribe_pairs: Vec<TribePairState>,
+    /// The tribe the band belongs to ("" in none), whether or not the band has a leader. Appended
+    /// last.
+    #[serde(default)]
+    pub tribe_name: String,
+    /// Every member band's name, largest band first, ties by band id; empty in no tribe. Appended
+    /// last.
+    #[serde(default)]
+    pub tribe_member_names: Vec<String>,
+    /// The tribe leader's name ("" in no tribe). Appended last.
+    #[serde(default)]
+    pub tribe_leader_name: String,
+    /// The tribe leader's kind (`TRIBE_LEADER_*`). Appended last.
+    #[serde(default)]
+    pub tribe_leader_kind: u8,
 }
+
+/// `PopulationCohortState::tribe_leader_kind`: the band is in no tribe.
+pub const TRIBE_LEADER_NONE: u8 = 0;
+/// `PopulationCohortState::tribe_leader_kind`: a member band's chief, promoted.
+pub const TRIBE_LEADER_PARAMOUNT_CHIEF: u8 = 1;
+/// `PopulationCohortState::tribe_leader_kind`: a member band's elders' council, promoted.
+pub const TRIBE_LEADER_COUNCIL_OF_CHIEFS: u8 = 2;
 
 /// `PopulationCohortState::tribe_standing`: shares an urn and a network with a band of its people.
 pub const TRIBE_STANDING_LOCAL: u8 = 0;
@@ -1927,7 +1948,6 @@ pub struct TribeClosenessState {
 pub struct TribePairState {
     pub partner_band: u64,
     pub partner_name: String,
-    pub same_tribe: bool,
     pub history: f32,
     pub contribution: TribeClosenessState,
 }

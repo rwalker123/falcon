@@ -3318,6 +3318,11 @@ pub fn capture_snapshot(
                 ))
             })
             .collect();
+        // **Every live band's head-count, by id** -- the order a tribe's members are listed in.
+        let band_sizes: crate::snapshot::population::BandSizeLookup = populations
+            .iter()
+            .filter_map(|(_, cohort, _, _, _, band_id, ..)| Some((*band_id?, cohort.size)))
+            .collect();
         // **The ground under a tile**, for an `extract` row's crew curve (`usefulCutters`).
         let ground_of = |pos: UVec2| {
             tile_registry
@@ -3475,6 +3480,20 @@ pub fn capture_snapshot(
                             })
                         })
                         .flatten(),
+                        // The formed tribe is published to every member, chiefless ones included.
+                        tribe_membership: expedition
+                            .is_none()
+                            .then(|| {
+                                band_id.zip(tribes.as_deref()).and_then(|(band, registry)| {
+                                    crate::snapshot::population::tribe_membership(
+                                        registry,
+                                        *band,
+                                        &band_names,
+                                        &band_sizes,
+                                    )
+                                })
+                            })
+                            .flatten(),
                         cohort,
                         allocation,
                         expedition,

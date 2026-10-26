@@ -610,12 +610,10 @@ static func meter_bar(score: float, cells: int) -> String:
 const TRIBE_STANDING_NO_PLACE := 1
 const TRIBE_STANDING_NO_NETWORK := 2
 ## `Tribe <bar> with Snowreach · 4 turns`: the word, the split bar, the partner and one short phrase.
-const TRIBE_LINE_FORMAT := "%s %s with %s · %s"
 const TRIBE_ROW_LABEL := "Tribe"
 const TRIBE_NO_PARTNER_LINE := "Tribe: no band lives with you"
 ## A score within this of the threshold counts as reaching it (float noise from summing seven terms).
 const TRIBE_SCORE_EPSILON := 0.001
-const TRIBE_SUFFIX_ONE_TRIBE := "one tribe"
 const TRIBE_SUFFIX_FORMING := "forming"
 const TRIBE_SUFFIX_TURNS_FORMAT := "%d turns"
 const TRIBE_SUFFIX_ONE_TURN := "1 turn"
@@ -624,7 +622,6 @@ const TRIBE_SUFFIX_BELIEF := "needs more belief"
 const TRIBE_SUFFIX_TIE := "needs a stronger tie"
 const TRIBE_TOOLTIP_RULE := "Two of your bands become a tribe by living together: the same ancestors and one pooling network."
 const TRIBE_TOOLTIP_FORMING := "Forms next turn"
-const TRIBE_TOOLTIP_ONE_TRIBE := "Already one tribe"
 const TRIBE_TOOLTIP_TURNS_FORMAT := "Live together %d more turns"
 const TRIBE_TOOLTIP_ONE_TURN := "Live together 1 more turn"
 const TRIBE_TOOLTIP_MONUMENT := "Raise a monument at the ancestors"
@@ -633,7 +630,14 @@ const TRIBE_TOOLTIP_TIE_FORMAT := "A stronger tie with %s"
 const TRIBE_TOOLTIP_NO_PLACE := "No place of the ancestors yet"
 const TRIBE_TOOLTIP_NO_NETWORK := "Not in a pooling network"
 const TRIBE_TOOLTIP_ALONE := "No other band of your people lives here"
-const TRIBE_TOOLTIP_ALSO_FORMAT := "Also: %s"
+const TRIBE_TOOLTIP_WITH_FORMAT := "With: %s"
+## A formed tribe: `Tribe: Sandreach tribe · 3 bands`, its hover the member bands then who leads it.
+const TRIBE_FORMED_FORMAT := "Tribe: %s tribe · %d bands"
+const TRIBE_LED_PARAMOUNT_FORMAT := "Led by paramount chief %s"
+const TRIBE_LED_COUNCIL_FORMAT := "Led by a council of chiefs — %s speaks"
+## The wire's `tribe_leader_kind`: 0 none, 1 paramount chief, 2 council of chiefs.
+const TRIBE_LEADER_PARAMOUNT := 1
+const TRIBE_LEADER_COUNCIL := 2
 const TRIBE_NAME_SEPARATOR := ", "
 ## The closeness inputs in the wire's (and the bar's) order, one hue each.
 const TRIBE_INPUT_KEYS := ["origin", "likeness", "tie", "history", "belief", "monument", "acting"]
@@ -682,12 +686,10 @@ static func _tribe_biggest_missing(entry: Dictionary, pair: Dictionary) -> Array
             best = candidate
     return best
 
-## **THE ONE SHORT PHRASE** after the partner: one tribe / forming / `N turns` when history alone can
+## **THE ONE SHORT PHRASE** after the partner: forming / `N turns` when history alone can
 ## close the gap at its per-turn rate (weight / build turns) / the biggest missing of monument, belief,
 ## tie. `""` when there is nothing to name.
 static func tribe_suffix(entry: Dictionary, pair: Dictionary) -> String:
-    if bool(pair.get("same_tribe", false)):
-        return TRIBE_SUFFIX_ONE_TRIBE
     var gap := float(entry.get("tribe_threshold", 0.0)) - tribe_pair_score(pair)
     if gap <= TRIBE_SCORE_EPSILON:
         return TRIBE_SUFFIX_FORMING
@@ -703,9 +705,6 @@ static func tribe_suffix(entry: Dictionary, pair: Dictionary) -> String:
 ## origin and culture are not listed: the player cannot change them.
 static func tribe_missing_lines(entry: Dictionary, pair: Dictionary) -> Array[String]:
     var lines: Array[String] = []
-    if bool(pair.get("same_tribe", false)):
-        lines.append(TRIBE_TOOLTIP_ONE_TRIBE)
-        return lines
     var gap := float(entry.get("tribe_threshold", 0.0)) - tribe_pair_score(pair)
     if gap <= TRIBE_SCORE_EPSILON:
         lines.append(TRIBE_TOOLTIP_FORMING)
@@ -744,10 +743,18 @@ static func tribe_bar_bbcode(entry: Dictionary, pair: Dictionary) -> String:
             segments.append({"key": TRIBE_INPUT_KEYS[i], "points": float(cells), "color": colors[i]})
     return chief_bar_bbcode({"total": float(entry.get("tribe_threshold", 0.0)), "segments": segments})
 
-## **THE TRIBE READOUT**, or `{}` when the band carries no threshold (no leader yet, or a foreign
-## row). Otherwise `{line, tooltip, has_partner}`: `line` the one BBCode line, `tooltip` the rule, what
-## is still missing (or why no partner), and the other partners by name.
+## **THE TRIBE READOUT**, or `{}` when there is nothing to say. Otherwise `{line, tooltip, has_partner}`:
+## `line` the ONE BBCode line, `tooltip` its hover.
+##   * a band IN a tribe (`tribe_name` set), leader or not: `Tribe: Sandreach tribe · 3 bands`, hovering to
+##     the member names then who leads it;
+##   * else a band with a leader (`tribe_threshold` above 0): `Tribe <split bar> · <phrase>` for the
+##     best-scoring partner, hovering to the rule, what is still missing and `With: <every partner>`,
+##     or the dim `Tribe: no band lives with you` and the reason;
+##   * else `{}`.
 static func band_tribe_progress(entry: Dictionary) -> Dictionary:
+    var tribe_name := String(entry.get("tribe_name", ""))
+    if tribe_name != "":
+        return _tribe_formed(entry, tribe_name)
     var threshold := float(entry.get("tribe_threshold", 0.0))
     if threshold <= 0.0:
         return {}
@@ -771,14 +778,32 @@ static func band_tribe_progress(entry: Dictionary) -> Dictionary:
             "tooltip": "\n".join(tooltip), "has_partner": false}
     var best: Dictionary = pairs[0]
     tooltip.append_array(tribe_missing_lines(entry, best))
-    var others: Array[String] = []
-    for i in range(1, pairs.size()):
-        others.append(String(pairs[i].get("partner_name", "")))
-    if not others.is_empty():
-        tooltip.append("")
-        tooltip.append(TRIBE_TOOLTIP_ALSO_FORMAT % TRIBE_NAME_SEPARATOR.join(others))
+    var names: Array[String] = []
+    for pair in pairs:
+        names.append(String(pair.get("partner_name", "")))
+    tooltip.append("")
+    tooltip.append(TRIBE_TOOLTIP_WITH_FORMAT % TRIBE_NAME_SEPARATOR.join(names))
     var suffix := tribe_suffix(entry, best)
-    var line := "[color=#%s]%s[/color] %s [color=#%s]with %s%s[/color]" % [HudStyle.INK_DIM.to_html(false),
-        TRIBE_ROW_LABEL, tribe_bar_bbcode(entry, best), HudStyle.INK.to_html(false),
-        String(best.get("partner_name", "")), " · " + suffix if suffix != "" else ""]
+    var line := "[color=#%s]%s[/color] %s" % [HudStyle.INK_DIM.to_html(false), TRIBE_ROW_LABEL,
+        tribe_bar_bbcode(entry, best)]
+    if suffix != "":
+        line += " [color=#%s]· %s[/color]" % [HudStyle.INK.to_html(false), suffix]
     return {"line": line, "tooltip": "\n".join(tooltip), "has_partner": true}
+
+## The line and hover of a band in a formed tribe.
+static func _tribe_formed(entry: Dictionary, tribe_name: String) -> Dictionary:
+    var members: Array = entry.get("tribe_member_names", [])
+    var tooltip: Array[String] = []
+    var names: Array[String] = []
+    for member in members:
+        names.append(String(member))
+    tooltip.append(TRIBE_NAME_SEPARATOR.join(names))
+    var leader := String(entry.get("tribe_leader_name", ""))
+    match int(entry.get("tribe_leader_kind", 0)):
+        TRIBE_LEADER_PARAMOUNT:
+            tooltip.append(TRIBE_LED_PARAMOUNT_FORMAT % leader)
+        TRIBE_LEADER_COUNCIL:
+            tooltip.append(TRIBE_LED_COUNCIL_FORMAT % leader)
+    return {"line": "[color=#%s]%s[/color]" % [HudStyle.INK.to_html(false),
+        TRIBE_FORMED_FORMAT % [tribe_name, members.size()]],
+        "tooltip": "\n".join(tooltip), "has_partner": true}

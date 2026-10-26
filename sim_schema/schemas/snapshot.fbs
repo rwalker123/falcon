@@ -1600,6 +1600,18 @@ table PopulationCohortState {
   tribeWeights:TribeClosenessState;
   // One row per partner band of this band's people, partner id ascending.
   tribePairs:[TribePairState];
+  // --- THE FORMED TRIBE (appended last, #861) ---
+  // The tribe this band belongs to, published whether or not the band has a leader of its own. Own
+  // bands only: a foreign (redacted) row carries the defaults.
+  // The tribe's name ("<largest band> tribe"); empty when the band is in no tribe.
+  tribeName:string;
+  // Every member band's name (its BandName, else the "Band <id>" label), largest band first, ties
+  // by band id; empty when the band is in no tribe.
+  tribeMemberNames:[string];
+  // The tribe's leader (a member band's own leader, promoted); empty / 0 when in no tribe.
+  tribeLeaderName:string;
+  // 0 none, 1 paramount chief, 2 council of chiefs.
+  tribeLeaderKind:ubyte = 0;
 }
 
 // ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH - a row of `PopulationCohortState.bandImprovements`,
@@ -7045,8 +7057,6 @@ table TribePairState {
   partnerBand:ulong;
   // The partner's band name (its BandName, else the "Band <id>" label).
   partnerName:string;
-  // The two are already in one tribe together.
-  sameTribe:bool = false;
   // Raw shared history, 0..1 (for the turns-remaining estimate).
   history:float = 0;
   // Each input times its weight; the sum is the pair's score.
