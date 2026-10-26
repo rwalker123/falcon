@@ -1708,17 +1708,9 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
         if kit_row != null:
             col.add_child(kit_row)
         if is_scout:
-            # **THE SCOUT CARD'S DETAIL RIDES THE `+N tiles` TOOLTIP** - the kit's sight line included.
-            var scout_kits := KitRoster.kits_for_job(_band_labor.kits(), kind)
-            var kit_line := KitRoster.tier_hint(_band_labor.kits(),
-                KitRoster.kit_by_id(scout_kits, kit_id), band, kind)
-            var scout_state := _band_labor.scouting_state(band)
-            var settled_reach := 0
-            for entry in HudBandLaborState.labor_assignments_of(band):
-                if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() == kind:
-                    settled_reach = int((entry as Dictionary).get("scouting_reach", 0))
-            HudWidgets.set_label_tooltip(range_value, HudWorkVocab.scouting_tooltip(scout_state,
-                int(band.get("watched_radius", 0)), settled_reach, kit_line,
+            # **THE SCOUT CARD'S DETAIL RIDES THE `+N tiles` TOOLTIP.**
+            HudWidgets.set_label_tooltip(range_value, HudWorkVocab.scouting_tooltip(
+                _band_labor.scouting_state(band), int(band.get("watched_radius", 0)),
                 int(band.get("predators_kept_off", 0))))
     # A scout card at range +0 states nothing below its controls; every other card keeps its line.
     if hint != "" or not is_scout:

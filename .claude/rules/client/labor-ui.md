@@ -8322,13 +8322,12 @@ kit picker is kept (a kit pick re-states the current RANGE).
   Below the stepper and kit picker the body is `N scouts` (`1 scout`), dim (`HudWorkVocab.scouting_line`);
   short, it is amber `N scouts · K tiles short` (K = range - reach, `HudStyle.WARN`, beside the number it
   explains); at range +0 there is no line. The sim staffs scouts first, so short means the band has too
-  few people. The kit's `2-tile sight per vantage` line, the `past the local range` detail and the
-  kept-off line are OFF the card; `HudWorkVocab.scouting_tooltip` puts them on the value label, one fact
-  per line: `Watches N tiles from camp (local range L + scouting R)` (from `watched_radius`, omitted
-  while no scout is out; L = `watched_radius` - the row's `scouting_reach`, since the snapshot carries no
-  local range), `N scouts this turn[ - K with wayfinding gear]`, the kit sight line, `Keeping N packs off
-  watched ground` (`predators_kept_off`, only above 0), and when short `Reaches +R of +N tiles - not
-  enough people to go farther.`; at +0 the tooltip is `No scouts - the band sees its local range and no
+  few people. The kit's `2-tile sight per vantage` line, the local-range detail and the kept-off line
+  are OFF the card, and the kit sight line is not in the tooltip either; `HudWorkVocab.scouting_tooltip`
+  puts the rest on the value label, one fact per line: `Watches N tiles from camp` (`watched_radius`,
+  omitted while 0), `N scouts this turn[ - K with wayfinding gear]`, `Keeping N packs off watched
+  ground` (`predators_kept_off`, only above 0), and when short `Reaches +R of +N tiles - not enough
+  people to go farther.`; at +0 the tooltip is `No scouts - the band sees its local range and no
   farther.` The label is set through `HudWidgets.set_label_tooltip` (a `Label` ignores the mouse by
   default) and `KitRoster.build_kit_row`'s `show_hint` false keeps the Scout card's gear line off.
 - The Warrior card is unchanged and stays a player-set head count.

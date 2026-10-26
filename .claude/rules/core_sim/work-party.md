@@ -208,8 +208,9 @@ clamp note on the feed line; `scout 0` drops the row. The Scout row exists exact
   shelf, and every pass then staffs from what is left (a band too small for everything staffs the
   full range and a keeper, hold or reach crew goes short). Kitted first — `min(wayfinding heads the shelf can arm for
   the row's kit, ceil(N / kitted_tiles), pool)`, so kit `none` arms no one — then bare for what is
-  left of `N`; `reach = min(N, kitted × kitted_tiles + bare × bare_tiles)`, less than `N` when people
-  run out. A tier that rounds to no tiles contributes nobody. Scouts are one row per band and do not
+  left of `N`; `reach = kitted × kitted_tiles + bare × bare_tiles`, every tile the crew sees: less
+  than `N` when people run out, and past `N` when the last scout's sight overshoots it (range +1 with
+  one wayfinding scout reaches 2, so the band watches local range + 2). A tier that rounds to no tiles contributes nobody. Scouts are one row per band and do not
   go through priority groups; their kit units come off the same shelf as every row's (`arm`), and
   the `Steady` run (`work_kit_plan`) places them too and adds the kit they want to the wants.
 - **One staffing, three callers**: the turn (`staff_rows_settled`), the command restaff and the

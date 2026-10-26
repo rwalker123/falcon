@@ -7147,15 +7147,15 @@ func _kit_breakdown_line(popover: String, label: String) -> String:
 ## composing the expectation through the derivation under test would assert only that it agrees with
 ## itself.
 func _assert_role_card_gear() -> void:
-	# The Scout card keeps its picker but its gear line moved to the `+N tiles` tooltip.
+	# The Scout card keeps its picker and carries no gear line; the tooltip does not quote the kit's sight either.
 	var scout_card := _find_role_card(HudWorkVocab.SCOUT_CARD_TITLE)
 	_assert_band_panel("the Scouting range card carries a kit picker and NO gear line on the card",
 		scout_card != null and _find_meta_control(scout_card, KitRoster.KIT_PICKER_META) != null
 		and _find_meta_control(scout_card, KitRoster.KIT_HINT_META) == null)
 	var scout_vantage := DetailFormat.KIT_ROLE_SCOUT_VANTAGE_FORMAT % String.num(
 		BandFx.KIT_SCOUT_VANTAGE_EQUIPPED, DetailFormat.KIT_VANTAGE_DECIMALS)
-	_assert_band_panel("…and the kit's sight line (\"%s\") rides the tooltip" % scout_vantage,
-		scout_card != null and _scout_tooltip_of(scout_card).contains(scout_vantage))
+	_assert_band_panel("…and the kit's sight line (\"%s\") is NOT on the tooltip" % scout_vantage,
+		scout_card != null and not _scout_tooltip_of(scout_card).contains(scout_vantage))
 	_assert_one_role_card_gear(HudWorkVocab.ROLE_NAME_WARRIOR, KitRoster.JOB_WARRIOR, "Warrior kit",
 		DetailFormat.KIT_ROLE_WARRIOR_ATTACK_FORMAT % String.num(
 			BandFx.KIT_ATTACK_CLUBS, DetailFormat.KIT_CONDITION_DECIMALS),
@@ -7378,7 +7378,7 @@ func _assert_scouting_range_card() -> void:
 	var short_tip := _scout_tooltip_of(short_card)
 	_assert_band_panel("short tooltip states the shortfall - \"%s\"" % short_tip,
 		short_tip.contains("Reaches +1 of +3 tiles — not enough people to go farther."))
-	# The reached tooltip: watches / count with gear / kit sight, one fact per line; kit line and
+	# The reached tooltip: watches / count with gear / kept-off, one fact per line; kit line and
 	# kept-off line are OFF the card body.
 	var reached_band := band.duplicate(true)
 	reached_band["watched_radius"] = 5
@@ -7386,9 +7386,10 @@ func _assert_scouting_range_card() -> void:
 	var reached_card: PanelContainer = _build_scout_card_for(reached_band)
 	var reached_tip := _scout_tooltip_of(reached_card)
 	_assert_band_panel("reached tooltip lines - \"%s\"" % reached_tip.replace("\n", " | "),
-		reached_tip.contains("Watches 5 tiles from camp (local range 2 + scouting 3)")
+		reached_tip.contains("Watches 5 tiles from camp")
+		and not reached_tip.contains("local range")
 		and reached_tip.contains("2 scouts this turn · 1 with wayfinding gear")
-		and reached_tip.contains("tile sight per vantage")
+		and not reached_tip.contains("per vantage")
 		and reached_tip.contains("Keeping 2 packs off watched ground")
 		and not reached_tip.contains("not enough people"))
 	var body_has_old := false

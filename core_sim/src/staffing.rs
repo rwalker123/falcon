@@ -302,7 +302,8 @@ pub struct ScoutPlan {
 pub struct ScoutCrew {
     pub kitted: u32,
     pub bare: u32,
-    /// `min(range, kitted x kitted_tiles + bare x bare_tiles)`.
+    /// `kitted x kitted_tiles + bare x bare_tiles`: every tile the crew's sight covers, which can
+    /// pass the range when the last scout's sight overshoots it.
     pub reach: u32,
 }
 
@@ -345,11 +346,9 @@ fn deal_scouts(
     };
     let bare = bare_wanted.min(*pool_left);
     *pool_left -= bare;
-    let reach = plan.range.min(
-        kitted
-            .saturating_mul(plan.kitted_tiles)
-            .saturating_add(bare.saturating_mul(plan.bare_tiles)),
-    );
+    let reach = kitted
+        .saturating_mul(plan.kitted_tiles)
+        .saturating_add(bare.saturating_mul(plan.bare_tiles));
     ScoutCrew {
         kitted,
         bare,
@@ -2776,6 +2775,13 @@ mod tests {
         // bare scout covers the last tile.
         let crew = scout_step(&scouting(5, wayfinding()), 10, 2);
         assert_eq!((crew.kitted, crew.bare, crew.reach), (2, 1, 5));
+    }
+
+    #[test]
+    fn the_reach_is_every_tile_the_scouts_see() {
+        // Range 1 wants one kitted scout, whose 2-tile sight reaches 2, not the 1 asked for.
+        let crew = scout_step(&scouting(1, wayfinding()), 10, 1);
+        assert_eq!((crew.kitted, crew.bare, crew.reach), (1, 0, 2));
     }
 
     #[test]

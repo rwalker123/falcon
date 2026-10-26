@@ -2708,7 +2708,7 @@ measured 332 and the charted split failed the floor at 74%.
 cannot make, each sabotage-verified against a DISJOINT mutation — `_assert_role_cards_are_level`
 compares the two cards' RENDERED heights behind a precondition that their CONTENT heights differ (two
 cards of equal content are level for free) —
-`_assert_role_card_gear` compares both cards' face and gear line by EQUALITY (the Scout card's gear line now rides its `+N tiles` tooltip, asserted there instead) against expectations
+`_assert_role_card_gear` compares both cards' face and gear line by EQUALITY (the Scout card has no gear line, and its `+N tiles` tooltip is asserted to omit the kit's sight line) against expectations
 that name their item LABEL outright (composing them through `item_for_axis` would assert only that
 the derivation agrees with itself; dropping the job override fails the WARRIOR card alone, naming
 `attack 6 defending the camp · Spears 74`), and `_assert_role_kit_command_carries_the_pick` drives

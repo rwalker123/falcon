@@ -128,7 +128,7 @@ const SCOUT_LINE_ONE_FORMAT := "%d scout"
 const SCOUT_LINE_MANY_FORMAT := "%d scouts"
 const SCOUT_LINE_SHORT_ONE_FORMAT := " · %d tile short"
 const SCOUT_LINE_SHORT_MANY_FORMAT := " · %d tiles short"
-const SCOUT_TIP_WATCHES_FORMAT := "Watches %d tiles from camp (local range %d + scouting %d)"
+const SCOUT_TIP_WATCHES_FORMAT := "Watches %d tiles from camp"
 const SCOUT_TIP_ONE_FORMAT := "%d scout this turn"
 const SCOUT_TIP_MANY_FORMAT := "%d scouts this turn"
 const SCOUT_TIP_GEARED_FORMAT := " · %d with wayfinding gear"
@@ -176,22 +176,19 @@ static func scouting_line(state: Dictionary) -> Dictionary:
 ## difference (the snapshot carries no separate local-range field); with no scouts out `watched` is 0
 ## and the "Watches" line is omitted. `kit_line` is the picked kit's sight line, `kept_off` the packs
 ## the watched ring keeps off.
-static func scouting_tooltip(state: Dictionary, watched: int, settled_reach: int,
-        kit_line: String, kept_off: int) -> String:
+static func scouting_tooltip(state: Dictionary, watched: int, kept_off: int) -> String:
     var wanted := int(state.get("range", 0))
     if wanted <= 0:
         return SCOUT_STATUS_NONE
     var lines: Array[String] = []
     if watched > 0:
-        lines.append(SCOUT_TIP_WATCHES_FORMAT % [watched, watched - settled_reach, settled_reach])
+        lines.append(SCOUT_TIP_WATCHES_FORMAT % watched)
     var scouts := int(state.get("workers", 0))
     var count := (SCOUT_TIP_ONE_FORMAT if scouts == SCOUT_SINGULAR else SCOUT_TIP_MANY_FORMAT) % scouts
     var kitted := int(state.get("kitted", 0))
     if kitted > 0:
         count += SCOUT_TIP_GEARED_FORMAT % kitted
     lines.append(count)
-    if kit_line != "":
-        lines.append(kit_line)
     var kept := predators_kept_off_line(kept_off)
     if kept != "":
         lines.append(kept)
