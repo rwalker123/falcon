@@ -1821,7 +1821,7 @@ ceiling"). The Band tab states its EFFECT on growth; the limit itself is a FACTI
 The Band tab's `BandTribeBlock` (`BandPanelController._build_tribe_block`) is the block directly after
 the leader block, in the same column: ONE non-wrapping line. It reads `tribe_name`,
 `tribe_member_names` (largest band first), `tribe_leader_name` / `tribe_leader_kind` (0 none, 1
-paramount chief, 2 council of chiefs), and, for a band not yet in a tribe, `tribe_standing`,
+paramount chief, 2 council of chiefs), and, for a band not yet in a tribe,
 `tribe_threshold`, `tribe_history_build_turns`, `tribe_weights` and `tribe_pairs` (local partners
 only: `partner_name`, `history`, `contribution`), decoded in `dict/population.rs`. The shaping is pure
 `HudFormat` statics (`band_tribe_progress`, `tribe_suffix`, `tribe_missing_lines`,
@@ -1848,19 +1848,28 @@ only: `partner_name`, `history`, `contribution`), decoded in `dict/population.rs
   best of the pairs that can build (score, then name), else the best score overall. When the chosen
   pair cannot build the phrase is `needs a chief` (no turn count, no `forming`) and the hover's
   missing lines are the single `Neither band has a chief: nothing builds until one of them has one.`
-- **Not in a tribe, no partner**: dim `Tribe: no band lives with you`.
+- **Not in a tribe, no partner** (`tribe_pairs` empty): a dim line naming the real reason, read off the
+  player's OWN bands (`BandPanelController._build_tribe_block` passes the other own, non-expedition
+  bands to `HudFormat.band_tribe_progress(entry, other_bands)`; the wire's `tribe_standing` is not
+  read). Tested in order, one line each: (a) `has_belief_anchor` false: `Tribe: no ancestors' place
+  yet`; (b) another band in the same non-zero `supply_network_id` whose ancestors' place
+  (`belief_anchor_x/y`) differs or is missing: `Tribe: different ancestors' place`, a fixed phrase so
+  no name can overflow it; the hover names that band (the band in a formed tribe is preferred, else
+  the largest by `size`; `the <tribe_name>` or `band_name`), giving both places as `(x, y)` or `<X> has no ancestors' place yet`;
+  (c) other bands exist but none shares the network (or this band's is 0): `Tribe: no shared supply network`; (d) no other band:
+  `Tribe: no other band of your people`. The visible lines are kept short because the line is one
+  non-wrapping `RichTextLabel` whose minimum width widens the docked card.
 - **No threshold and no tribe** (a foreign cohort): no block.
 
-The hover of the progress line is the rule (`Two of your bands become a tribe by living together: the
-same ancestors and one pooling network.`), then only what is still missing as actions, one per line
-(`Live together 4 more turns`, `Raise a monument at the ancestors`, `More belief at the ancestors`, `A
-stronger tie with <name>`; `Forms next turn` when close), then a blank line and `With: A, B` naming
+The hover of the progress line is the rule (`Bands become a tribe when they pool goods in one supply
+network and share one ancestors' place.`), then only what is still missing as actions, one per line
+(`Keep sharing the network and the ancestors' place 4 more turns`, `Raise a monument at the ancestors'
+place`, `More belief at the ancestors' place`, `A stronger tie with <name>`; `Forms next turn` when close), then a blank line and `With: A, B` naming
 EVERY local partner, which is where the names the line dropped are kept. Shared origin and culture are
-never listed: the player cannot change them. With no partner the line after the rule is the standing
-(`No place of the ancestors yet` / `Not in a pooling network` / `No other band of your people lives
-here`). "Ancestors" is the Beliefs row's word and "pooling network" the Trade tab's title.
+never listed: the player cannot change them. With no partner the line after the rule is the
+reason's hover from the list above (none for case (d)). "Ancestors" is the Beliefs row's word.
 
 **Frames:** `tribe_chiefless` (no block), `tribe_pairs`, `tribe_no_partner`, `tribe_formed_chiefless`,
-`tribe_formed_led` in `band_expedition` (docked right, Band tab); the harness asserts one line, the
+`tribe_formed_led`, `tribe_joiner_*` and `tribe_reason_{no_place,different_place,no_network,alone}` in `band_expedition` (docked right, Band tab); the harness asserts one line, the
 card's minimum width within the strip, the verbatim tooltips, a council-led tribe, and every suffix off
 the statics.

@@ -2297,12 +2297,13 @@ func _hay_ledger_states() -> void:
 				and not tribe_text.contains("Ridgeway"))
 			h._assert_hud("tribe_pairs: the tooltip is the rule, what is missing, and every partner (%s)" % tribe_line.tooltip_text.replace("\n", " | "),
 				tribe_line.tooltip_text == "\n".join([HudFormat.TRIBE_TOOLTIP_RULE,
-				"Live together 4 more turns", "Raise a monument at the ancestors",
-				"More belief at the ancestors", "", "With: Snowreach, Ridgeway, Dunmere"]))
+				"Keep sharing the network and the ancestors' place 4 more turns",
+				"Raise a monument at the ancestors' place",
+				"More belief at the ancestors' place", "", "With: Snowreach, Ridgeway, Dunmere"]))
 		else:
 			h._assert_hud("tribe_no_partner: one dim line and the reason on hover (%s)" % tribe_text,
-				tribe_text == HudFormat.TRIBE_NO_PARTNER_LINE
-				and tribe_line.tooltip_text == HudFormat.TRIBE_TOOLTIP_RULE + "\n" + HudFormat.TRIBE_TOOLTIP_NO_PLACE)
+				tribe_text == HudFormat.TRIBE_NO_PLACE_LINE
+				and tribe_line.tooltip_text == HudFormat.TRIBE_TOOLTIP_RULE + "\n" + HudFormat.TRIBE_NO_PLACE_TOOLTIP)
 	# A chiefless band's pull (#870): the Tribe row shows on every band with a threshold.
 	var joiner_base := tribe_chiefless_case.duplicate(true)
 	joiner_base.merge({"tribe_threshold": 9.0, "tribe_history_build_turns": 20.0, "tribe_weights": tribe_weights,
@@ -2316,10 +2317,10 @@ func _hay_ledger_states() -> void:
 	joiner_unled["tribe_pairs"] = [joiner_pair.merged({"partner_has_leader": false})]
 	var joiner_alone := joiner_base.duplicate(true)
 	joiner_alone["tribe_pairs"] = []
-	joiner_alone["tribe_standing"] = 1
-	for joiner_case in [["tribe_joiner_partner_led", joiner_led, " · 4 turns", "Live together 4 more turns"],
+	joiner_alone["has_belief_anchor"] = true
+	for joiner_case in [["tribe_joiner_partner_led", joiner_led, " · 4 turns", "Keep sharing the network and the ancestors' place 4 more turns"],
 			["tribe_joiner_needs_chief", joiner_unled, " · needs a chief", HudFormat.TRIBE_TOOLTIP_NEEDS_CHIEF],
-			["tribe_joiner_no_partner", joiner_alone, "", HudFormat.TRIBE_TOOLTIP_NO_PLACE]]:
+			["tribe_joiner_no_partner", joiner_alone, "", HudFormat.TRIBE_TOOLTIP_RULE]]:
 		var joiner_band := BandFx.band_fixture()
 		joiner_band.merge(joiner_case[1], true)
 		h._hud.update_band_alerts([joiner_band])
@@ -2334,11 +2335,54 @@ func _hay_ledger_states() -> void:
 		var joiner_suffix := String(joiner_case[2])
 		h._assert_hud("%s: one line (%s) with the right phrase and hover" % [joiner_case[0], joiner_text],
 			joiner_line != null and joiner_line.get_line_count() == 1
-			and (joiner_text == HudFormat.TRIBE_NO_PARTNER_LINE if joiner_suffix == "" else joiner_text.ends_with(joiner_suffix))
+			and (joiner_text == HudFormat.TRIBE_ALONE_LINE if joiner_suffix == "" else joiner_text.ends_with(joiner_suffix))
 			and joiner_line.tooltip_text.contains(String(joiner_case[3])))
 		if String(joiner_case[0]) == "tribe_joiner_needs_chief":
 			h._assert_hud("tribe_joiner_needs_chief: no turn count anywhere in the hover",
 				not joiner_line.tooltip_text.contains("turn"))
+	# The no-partner REASONS (#870), read off the player's own bands: (a) no ancestors' place of its own, (b) a
+	# band in its supply network holds a different place (the live Fernhollow / Fenwatch case), (c) no other
+	# band shares its supply network, (d) no other band at all.
+	var reason_here := joiner_base.duplicate(true)
+	reason_here.merge({"name": "Fernhollow", "band_id": 61, "entity": 961, "supply_network_id": 1,
+		"has_belief_anchor": true, "belief_anchor_x": 38, "belief_anchor_y": 38, "tribe_pairs": []}, true)
+	var reason_fen := BandFx.band_fixture()
+	reason_fen.merge({"name": "Fenwatch", "band_id": 62, "entity": 962, "size": 90, "supply_network_id": 1,
+		"has_belief_anchor": true, "belief_anchor_x": 40, "belief_anchor_y": 37, "tribe_name": "Fenwatch tribe"}, true)
+	var reason_night := BandFx.band_fixture()
+	reason_night.merge({"name": "Nightbrook", "band_id": 63, "entity": 963, "size": 120, "supply_network_id": 1,
+		"has_belief_anchor": true, "belief_anchor_x": 40, "belief_anchor_y": 37}, true)
+	var reason_far := reason_fen.duplicate(true)
+	reason_far["supply_network_id"] = 2
+	var reason_no_place := reason_here.duplicate(true)
+	reason_no_place["has_belief_anchor"] = false
+	var reason_no_network := reason_here.duplicate(true)
+	reason_no_network["supply_network_id"] = 0
+	for reason_case in [
+			["tribe_reason_no_place", reason_no_place, [reason_fen], HudFormat.TRIBE_NO_PLACE_LINE, HudFormat.TRIBE_NO_PLACE_TOOLTIP],
+			["tribe_reason_different_place", reason_here, [reason_fen, reason_night],
+				HudFormat.TRIBE_DIFFERENT_PLACE_LINE,
+				"Fernhollow's ancestors' place is at (38, 38); the Fenwatch tribe's is at (40, 37). A band takes up another ancestors' place when it stands near one holding more belief than its own."],
+			["tribe_reason_no_network", reason_no_network, [reason_far], HudFormat.TRIBE_NO_NETWORK_LINE, HudFormat.TRIBE_NO_NETWORK_TOOLTIP],
+			["tribe_reason_alone", reason_here, [], HudFormat.TRIBE_ALONE_LINE, HudFormat.TRIBE_TOOLTIP_RULE]]:
+		var reason_band := BandFx.band_fixture()
+		reason_band.merge(reason_case[1], true)
+		var reason_roster: Array = [reason_band]
+		reason_roster.append_array(reason_case[2])
+		h._hud.update_band_alerts(reason_roster)
+		h._hud.show_unit_selection(reason_band)
+		await h._settle()
+		await h._save(String(reason_case[0]))
+		var reason_blocks := _find_all_meta(leader_panel, HudWorkVocab.BAND_TRIBE_BLOCK_META)
+		var reason_line: RichTextLabel = null
+		if not reason_blocks.is_empty():
+			reason_line = reason_blocks[0].find_child(HudWorkVocab.BAND_TRIBE_LINE_NAME, true, false) as RichTextLabel
+		var reason_text := reason_line.get_parsed_text() if reason_line != null else ""
+		h._assert_hud("%s: one line (%s), its reason on the hover (%s)" % [reason_case[0], reason_text,
+			reason_line.tooltip_text.replace("\n", " | ") if reason_line != null else ""],
+			reason_line != null and reason_line.get_line_count() == 1 and reason_text == String(reason_case[3])
+			and reason_line.tooltip_text.contains(String(reason_case[4]))
+			and reason_line.get_content_width() <= leader_panel.current_reservation_size())
 	# Each suffix, off the pure statics.
 	var suffix_entry := tribe_base.duplicate(true)
 	var suffix_base := {"partner_name": "Snowreach", "contribution": {"origin": 3.0,

@@ -1263,7 +1263,13 @@ func _build_leader_block(band: Dictionary) -> Control:
 ## no band lives with this one. `null` for a band with no tribe threshold (no leader yet, or a foreign
 ## cohort). See `HudFormat.band_tribe_progress`.
 func _build_tribe_block(band: Dictionary) -> Control:
-    var view := HudFormat.band_tribe_progress(band)
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    var others: Array = []
+    for other in _band_labor.current_player_bands():
+        if other is Dictionary and int(other.get("band_id", HudConst.NO_BAND_ID)) != band_id \
+                and not bool(other.get("is_expedition", false)):
+            others.append(other)
+    var view := HudFormat.band_tribe_progress(band, others)
     if view.is_empty():
         return null
     var block := VBoxContainer.new()
