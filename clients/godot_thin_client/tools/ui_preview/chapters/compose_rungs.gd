@@ -15,6 +15,7 @@ const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
+const DoorQ := preload("res://tools/ui_preview/door_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
 ## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
@@ -261,19 +262,18 @@ func run(harness) -> void:
 	var stale_tile_b := BaseFx.food_tile_fixture()
 	stale_tile_b["x"] = 70
 	stale_tile_b["y"] = 20
-	h._hud._drawercompose._clear_forage_drawer()   # drop any prior-state button so tile A gets a FRESH closure
+	# The Foraging row is the door now: tile A's door is read off the rendered markup, then the card
+	# moves to tile B and A's (stale) meta is pressed -- a door must never open the tile it was drawn for.
+	h._show_tile(stale_tile_a)
 	await h._settle()
-	h._hud._drawercompose.build_forage_drawer_actions(stale_tile_a)   # full rebuild → button opens tile A
+	var stale_meta_a: String = DoorQ.meta_for(h._hud, HudFloraVocab.FORAGING_KEY)
+	h._show_tile(stale_tile_b)
 	await h._settle()
-	h._hud._drawercompose.build_forage_drawer_actions(stale_tile_b)   # same shape → the patch path under test
-	await h._settle()
-	# STRUCTURALLY, not by face: the open button's noun follows the patch's rung, and the bare `assert`
-	# this replaces BREAKS THE HEADLESS RUN INTO THE DEBUGGER rather than reporting — measured, it hung
-	# the suite the first time the noun moved under it.
-	var stale_forage_btn: Button = h._forage_open_button()
-	h._assert_hud("the forage drawer's open button survives a same-shape restate", stale_forage_btn != null)
-	if stale_forage_btn != null:
-		stale_forage_btn.pressed.emit()
+	var stale_meta_b: String = DoorQ.meta_for(h._hud, HudFloraVocab.FORAGING_KEY)
+	h._assert_hud("the Foraging row is a door on both food tiles, each carrying its own tile",
+		stale_meta_a != "" and stale_meta_b != "" and stale_meta_a != stale_meta_b)
+	if stale_meta_a != "":
+		h._hud.tile_detail.meta_clicked.emit(stale_meta_a)
 	await h._settle()
 	await h._save("forage_assign_button_targets_selected_tile")
 	# The opened compose must be tile B (subject key "70,20"), never tile A ("66,10") it was first wired to.

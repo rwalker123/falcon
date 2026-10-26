@@ -31,6 +31,7 @@ const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
+const DoorQ := preload("res://tools/ui_preview/door_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
 const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
@@ -306,14 +307,13 @@ func run(harness) -> void:
 	# one the sim charges for: with nobody cutting it nobody keeps it, and the rung slides. The zero form
 	# is parallel to the staffed one for the forage land row's own reason — *nobody is on this* reads
 	# at a glance instead of needing a comparison with a row that has a number.
-	h._assert_hud("…the wood row reads `stock of capacity · rung · crew · hazard` (%s)"
+	h._assert_hud("…the wood row reads `stock of capacity · rung · hazard` (the crew is the trailing worker figure) (%s)"
 			% Readout.detail_row_value(lines, "Wood"),
 		Readout.detail_row_value(lines, "Wood") == HudDepositVocab.DEPOSIT_CLAUSE_SEPARATOR.join([
 			HudDepositVocab.DEPOSIT_STOCK_DRAWN_FORMAT % [
 				DetailFormat.format_trimmed(WOOD_STOCK, HudDepositVocab.CARD_STOCK_DECIMALS),
 				DetailFormat.format_trimmed(WOOD_CAPACITY, HudDepositVocab.CARD_STOCK_DECIMALS)],
 			CATALOG_FELLING_NAME,
-			HudDepositVocab.crew_clause(_wood_working(WOOD_OVER_CUT), HudDepositVocab.CUTTERS_NONE),
 			HudDepositVocab.DEPOSIT_HAZARD_CLAUSE_FORMAT % [
 				HudSelectionVocab.RUNG_HAZARD_GLYPH, HudDepositVocab.DEPOSIT_UNDER_KEPT_WORD]]))
 	# ⛔ **THE RUNG'S NAME IS THE CATALOG'S OWN WORD**, never a client table: `RUNG_LABELS` is retired,
@@ -364,9 +364,7 @@ func run(harness) -> void:
 					DetailFormat.format_trimmed(QUARRY_STOCK, HudDepositVocab.CARD_STOCK_DECIMALS),
 					DetailFormat.format_trimmed(STONE_CAPACITY,
 						HudDepositVocab.CARD_STOCK_DECIMALS)],
-				CATALOG_QUARRY_NAME,
-				HudDepositVocab.crew_clause(_quarried_stone(),
-					HudDepositVocab.CUTTERS_NONE)]))
+				CATALOG_QUARRY_NAME]))
 	# ⛔ **THE BLANK KEY IS SEARCHED FOR ACROSS THE BLOCK, NOT TAKEN AS THE FIRST MATCH.** A hex
 	# carrying two RAISED deposits emits two payoff rows, both keyed `" "` — which is exactly what this
 	# state stages — so a reader that took `detail_row_value`'s first hit would answer the wood's
@@ -392,21 +390,18 @@ func run(harness) -> void:
 		DetailFormat.detail_bbcode(payoff_lines).count(TABLE_OPEN_TAG) == 1)
 	await h._save("workings_payoff_rows")
 
-	# ⛔ **STATE workings-forestry-sheet — `Assign foresters ▸`, THE FORAGE SHEET'S SPINE WITH THE
+	# ⛔ **STATE workings-forestry-sheet — the foresters sheet (opened from the Wood row), THE FORAGE SHEET'S SPINE WITH THE
 	# ELEMENTS A DEPOSIT HAS NO CONCEPT FOR ABSENT.** No floor presets, no chart, no species chips: a
 	# deposit has no escapement floor, and the chart IS the floor dial.
 	h._show_tile(_workings_tile([_wood_working(WOOD_OVER_CUT), _stone_working(STONE_TAKE)]))
 	await h._settle()
-	var foresters := _assign_button(h._hud.forestry_assign_controls,
-		HudDepositVocab.BRANCH_FORESTRY)
-	h._assert_hud("a hex carrying timber offers `%s`"
-			% (HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT
-				% HudDepositVocab.crew_noun(HudDepositVocab.BRANCH_FORESTRY).to_lower()),
-		foresters != null)
-	if foresters != null:
+	var foresters := _door(HudDepositVocab.BRANCH_FORESTRY)
+	h._assert_hud("a hex carrying timber offers a door on its Wood row",
+		foresters != "")
+	if foresters != "":
 		# **DIAL AFTER THE FIRST OPEN, THEN RE-OPEN** — the compose walk's own contract: the first open
 		# re-seeds the crew off the band's standing row, so a count set before it is thrown away.
-		foresters.pressed.emit()
+		_press_door(HudDepositVocab.BRANCH_FORESTRY)
 		await h._settle()
 		h._hud._compose.set_deposit_max(SHEET_CREW)
 		h._hud._drawercompose.open_deposit_compose(_wood_working(WOOD_OVER_CUT))
@@ -481,18 +476,15 @@ func run(harness) -> void:
 		h._hud._drawercompose.close_compose_sheet()
 		await h._settle()
 
-	# ⛔ **STATE workings-extraction-sheet — `Assign diggers ▸`, AND THE VERDICT THE BRANCH TURNS ON.**
+	# ⛔ **STATE workings-extraction-sheet — the diggers sheet (opened from the Stone row), AND THE VERDICT THE BRANCH TURNS ON.**
 	# `Gathering reaches 330 of 2,200. A quarry would reach 1,870.` is the sentence the whole finite
 	# ladder exists to make, and it is composed from the CATALOG's reach against the ground's capacity
 	# — never from `reachable / capacity`, which falls as the rock is worked.
-	var diggers := _assign_button(h._hud.extraction_assign_controls,
-		HudDepositVocab.BRANCH_EXTRACTION)
-	h._assert_hud("…and the same hex offers `%s` for the rock beside it"
-			% (HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT
-				% HudDepositVocab.crew_noun(HudDepositVocab.BRANCH_EXTRACTION).to_lower()),
-		diggers != null)
-	if diggers != null:
-		diggers.pressed.emit()
+	var diggers := _door(HudDepositVocab.BRANCH_EXTRACTION)
+	h._assert_hud("…and the same hex offers a door on the Stone row beside it",
+		diggers != "")
+	if diggers != "":
+		_press_door(HudDepositVocab.BRANCH_EXTRACTION)
 		await h._settle()
 		h._hud._compose.set_deposit_max(SHEET_CREW)
 		h._hud._drawercompose.open_deposit_compose(_stone_working(STONE_TAKE))
@@ -749,67 +741,42 @@ func run(harness) -> void:
 				< Readout.detail_row_index(remembered_lines, HudRouteVocab.ROAD_ROW))
 	await h._save("workings_road_remembered")
 
-	# ⛔ **STATE workings-worked-buttons — THE STANDING SUMMARY IS THE BUTTON'S SECOND LINE.** Ray, on
-	# a Rolling Hills card whose `♻ 2 foresters · +0.60 wood` sat in a row of its own above the button:
-	# *"That looks strange there … I think that would look more at home inside the button. We should
-	# make it the second line on the button."*
+	# ⛔ **STATE workings-worked-buttons — THE CREW MARK IS THE ROW'S TRAILING MARK.** (The state name is
+	# from the button era, when the standing summary was the deposit button's second line.)
 	#
 	# ⛔ **IT IS THE PAIR THAT IS THE CLAIM, ON ONE HEX.** This band works the WOOD and not the rock, so
-	# `Assign foresters ▸` carries a second line and `Assign diggers ▸` carries none — a control that
-	# grew a blank second line on every source would satisfy the presence half on its own, and the
-	# blank gap is exactly what Ray's *"a source nobody works keeps its single line"* forbids.
+	# the Wood row wears the full-ink workers figure and a count and the Stone row wears the dim figure
+	# alone — a mark that grew a count on every source would satisfy the presence half on its own, and
+	# an uncrewed source must stay a bare dim figure (Ray, button era: *"a source nobody works keeps its single line"*).
 	h._hud.update_band_alerts([_working_band_fixture()])
 	h._show_tile(_full_land_tile(TileFx.VIS_ACTIVE))
 	await h._settle()
 	await h._save("workings_worked_buttons")
-	var worked := _assign_button(h._hud.forestry_assign_controls, HudDepositVocab.BRANCH_FORESTRY)
-	var unworked := _assign_button(h._hud.extraction_assign_controls,
-		HudDepositVocab.BRANCH_EXTRACTION)
-	h._assert_hud("both branches still offer their `Assign … ▸` control",
-		worked != null and unworked != null)
-	if worked != null and unworked != null:
-		var summary := Q.stacked_action_summary(worked)
-		# **THE LABEL IS STILL THE FIRST LINE**, which is what says the summary joined the control
-		# rather than replacing its face.
-		h._assert_hud("…the worked branch's button still reads `%s` on its first line (%s)"
-				% [HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT
-					% HudDepositVocab.crew_noun(HudDepositVocab.BRANCH_FORESTRY).to_lower(),
-					Q.action_button_face(worked)],
-			Q.action_button_face(worked) == HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT
-				% HudDepositVocab.crew_noun(HudDepositVocab.BRANCH_FORESTRY).to_lower())
-		h._assert_hud("…and its SECOND line is the standing summary, inside the control",
-			summary != null and summary.get_child_count() > 0
-				and (summary.get_child(0) as Label).text.contains(
-					HudDepositVocab.crew_noun(HudDepositVocab.BRANCH_FORESTRY).to_lower()))
-		# ⛔ **AND THE PRESS STILL LANDS.** Every control in that face is `MOUSE_FILTER_IGNORE`, or the
-		# summary's own note labels — which have been through `set_label_tooltip`, i.e. `STOP` — would
-		# be dead patches over the button. A picture cannot show a swallowed click.
-		var pressable := true
-		for control in [summary]:
-			if control != null and control.mouse_filter != Control.MOUSE_FILTER_IGNORE:
-				pressable = false
-		h._assert_hud("…with its whole face inert, so the button stays pressable", pressable)
-		# **THE NEGATIVE, on the branch beside it**: no standing row, so no second line at all.
-		h._assert_hud("…while the branch this band does NOT work keeps its single line",
-			Q.stacked_action_summary(unworked) == null)
-		# ⛔ **AND THE TAKE IS STATED IN THE MATERIAL, NEVER IN THE FOOD UNIT** (issue #650). This is
-		# the RESOLVED half of the pair the next state opens: a working that has paid out reads
-		# `+0.60 wood`, off the row's `material_yield`, and the food zero beside it is suppressed by
-		# `SourceForecast.yield_rows`' own rule — a source paying a material pays SOMETHING.
+	var worked := _door(HudDepositVocab.BRANCH_FORESTRY)
+	var unworked := _door(HudDepositVocab.BRANCH_EXTRACTION)
+	h._assert_hud("both branches' rows are still doors", worked != "" and unworked != "")
+	if worked != "" and unworked != "":
+		var worked_hover := DoorQ.hover_text(h._hud, _working_key(HudDepositVocab.BRANCH_FORESTRY))
+		# **THE STANDING SUMMARY IS THE ROW'S HOVER NOW**: its first line is the summary, naming the crew.
+		h._assert_hud("…the worked branch's hover opens with the standing summary (%s)" % worked_hover,
+			_summary_text(HudDepositVocab.BRANCH_FORESTRY).contains(
+				HudDepositVocab.crew_noun(HudDepositVocab.BRANCH_FORESTRY).to_lower()))
+		# **THE NEGATIVE, on the branch beside it**: no standing row, so no summary on its hover.
+		h._assert_hud("…while the branch this band does NOT work states no summary",
+			_summary_text(HudDepositVocab.BRANCH_EXTRACTION) == "")
 		h._assert_hud("…and its take is stated in WOOD, with no food unit beside it (%s)"
-				% _summary_text(worked),
-			_summary_text(worked).contains(WOOD_MATERIAL_ID)
-				and not _summary_text(worked).contains(SourceForecast.YIELD_PER_TURN_SUFFIX))
-		# ⛔ **AND THE HOVER SAYS THE SAME THING THE FACE DOES.** The face and the tooltip are two
-		# spellings of ONE row, so a button reading `+0.60 wood` over a hover reading
-		# `+0.00 a turn on average · Sustainable +0.00 /turn` is worse than either being wrong alone —
-		# the player is handed two accounts for one working and no way to tell which is the source's.
-		# **Asserted by EQUALITY against the composed material clause**, which is the only form that
-		# proves BOTH halves at once: the material clause is present, and no food clause survives beside
-		# it. A `contains` would pass on the very string this exists to forbid.
-		h._assert_hud("…and its HOVER is that same take and nothing else (%s)" % worked.tooltip_text,
-			worked.tooltip_text == SourceForecast.POLICY_CAP_MATERIAL_FORMAT % [
+				% _summary_text(HudDepositVocab.BRANCH_FORESTRY),
+			_summary_text(HudDepositVocab.BRANCH_FORESTRY).contains(WOOD_MATERIAL_ID)
+				and not _summary_text(HudDepositVocab.BRANCH_FORESTRY).contains(
+					SourceForecast.YIELD_PER_TURN_SUFFIX))
+		# ⛔ **THE READOUT'S OWN TOOLTIP RIDES THE HOVER'S LAST LINE, by EQUALITY**: the material clause
+		# is present and no food clause survives beside it.
+		h._assert_hud("…and the hover ends on that same take and nothing else (%s)"
+				% _readout_tooltip(HudDepositVocab.BRANCH_FORESTRY),
+			_readout_tooltip(HudDepositVocab.BRANCH_FORESTRY) == SourceForecast.POLICY_CAP_MATERIAL_FORMAT % [
 				SourceForecast.format_signed(WORKED_BUTTON_TAKE), WOOD_MATERIAL_ID])
+
+	await _assert_every_door_opens_its_sheet()
 
 	# ⛔⛔ **STATE workings-just-assigned — THE CREW IS ON, NOTHING HAS BEEN TAKEN YET, AND THE TWO
 	# WEBS ARE READ SIDE BY SIDE.** Issue #650, reported from play: two foresters on a floodplain wood
@@ -831,8 +798,7 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("workings_just_assigned")
 	var fresh_forage := _forage_summary_text()
-	var fresh_wood := _summary_text(
-		_assign_button(h._hud.forestry_assign_controls, HudDepositVocab.BRANCH_FORESTRY))
+	var fresh_wood := _summary_text(HudDepositVocab.BRANCH_FORESTRY)
 	# **THE FORAGE HALF — A REAL RATE IN THE FOOD UNIT**, which is the counterexample that made this a
 	# bug rather than a timing artefact: a crew assigned this same turn, on the same card, states a
 	# number.
@@ -855,8 +821,7 @@ func run(harness) -> void:
 	# sentence a player read there was three zeros in an account the ground does not pay. **Asserted by
 	# EQUALITY against the composed material clause**, which is the only form that proves both halves
 	# at once: the material clause is present, and no food clause survives beside it.
-	var fresh_wood_hover := _assign_button(h._hud.forestry_assign_controls,
-		HudDepositVocab.BRANCH_FORESTRY).tooltip_text
+	var fresh_wood_hover := _readout_tooltip(HudDepositVocab.BRANCH_FORESTRY)
 	h._assert_hud("…and its hover is that seeded take and nothing else (%s)" % fresh_wood_hover,
 		fresh_wood_hover == SourceForecast.POLICY_CAP_MATERIAL_FORMAT % [
 			SourceForecast.format_signed(FRESH_WOOD_SEED), WOOD_MATERIAL_ID])
@@ -1305,7 +1270,7 @@ func run(harness) -> void:
 	# what makes it the minimal level: `SelectionCardController._forage_workers_on_tile` sums the
 	# foragers on the hex across EVERY player band, so the land row states what the faction has on
 	# this ground whichever subject is picked. `SubjectDrawerController._cutters_on_working` is that
-	# function for a working, and `HudDepositVocab.crew_clause` is the pair.
+	# function for a working, and `HudDepositVocab.crew_mark` is the pair.
 	#
 	# ⛔ **TWO WORKINGS ON ONE HEX STAY TWO, AND THE COUNTS DIFFER SO THAT IT CAN BE PROVEN.** Equal
 	# crews would pass a card that composed one number and printed it on both rows — the tile-keyed
@@ -1317,20 +1282,17 @@ func run(harness) -> void:
 	var crew_lines: Array[String] = h._hud._drawer._tile_terrain_lines(
 		h._hud._selection.tile_info(), crew_ctx)
 	await h._save("workings_tile_crews")
-	h._assert_hud("the wood row states its own crew (%s)"
-			% Readout.detail_row_value(crew_lines, "Wood"),
-		Readout.detail_row_value(crew_lines, "Wood").contains(
-			HudDepositVocab.crew_clause(_wood_working(WOOD_OVER_CUT), CARD_WOOD_CUTTERS)))
-	h._assert_hud("…and the rock states a DIFFERENT one on the same hex (%s)"
-			% Readout.detail_row_value(crew_lines, "Stone"),
-		Readout.detail_row_value(crew_lines, "Stone").contains(
-			HudDepositVocab.crew_clause(_stone_working(STONE_TAKE), CARD_STONE_CUTTERS)))
-	# **THE DISTINCTNESS, STATED AS A NEGATIVE TOO**: neither row may carry the other's count.
-	h._assert_hud("…and neither row wears the other's crew",
-		not Readout.detail_row_value(crew_lines, "Wood").contains(
-				HudDepositVocab.crew_clause(_stone_working(STONE_TAKE), CARD_STONE_CUTTERS))
-			and not Readout.detail_row_value(crew_lines, "Stone").contains(
-				HudDepositVocab.crew_clause(_wood_working(WOOD_OVER_CUT), CARD_WOOD_CUTTERS)))
+	DoorQ.assert_marks(h, "workings_tile_crews", ["Wood", "Stone"])
+	h._assert_hud("the wood row states its own crew after the full-ink figure (%s | %s)"
+			% [DoorQ.mark_text(h._hud, "Wood"), DoorQ.mark_tint(h._hud, "Wood")],
+		DoorQ.mark_text(h._hud, "Wood") == str(CARD_WOOD_CUTTERS)
+			and DoorQ.mark_tint(h._hud, "Wood") == HudStyle.INK_HEX + "ff")
+	h._assert_hud("…and the rock states a DIFFERENT one on the same hex (%s)" % DoorQ.mark_text(h._hud, "Stone"),
+		DoorQ.mark_text(h._hud, "Stone") == str(CARD_STONE_CUTTERS))
+	# **THE DISTINCTNESS, STATED AS A NEGATIVE TOO**: the two counts differ, so neither row can wear the other's.
+	h._assert_hud("…and the two crews differ, so neither row wears the other's",
+		CARD_WOOD_CUTTERS != CARD_STONE_CUTTERS
+			and DoorQ.mark_text(h._hud, "Wood") != DoorQ.mark_text(h._hud, "Stone"))
 	# ⛔ **A MARK AND A COUNT — NEVER A BILL.** The keeping figure and the neglect countdown are
 	# retired from this card, and staffing it must not smuggle either back on.
 	h._assert_hud("…and the crew arrives with no bill and no countdown beside it",
@@ -1358,12 +1320,9 @@ func run(harness) -> void:
 				h._hud._band_labor.player_band(), WORKING_TILE_X, WORKING_TILE_Y,
 				STONE_MATERIAL_ID) == 0)
 	h._assert_hud("…and both rows still state the crews the OTHER band has on them (%s | %s)"
-			% [Readout.detail_row_value(other_lines, "Wood"),
-				Readout.detail_row_value(other_lines, "Stone")],
-		Readout.detail_row_value(other_lines, "Wood").contains(
-				HudDepositVocab.crew_clause(_wood_working(WOOD_OVER_CUT), CARD_WOOD_CUTTERS))
-			and Readout.detail_row_value(other_lines, "Stone").contains(
-				HudDepositVocab.crew_clause(_stone_working(STONE_TAKE), CARD_STONE_CUTTERS)))
+			% [DoorQ.mark_text(h._hud, "Wood"), DoorQ.mark_text(h._hud, "Stone")],
+		DoorQ.mark_text(h._hud, "Wood") == str(CARD_WOOD_CUTTERS)
+			and DoorQ.mark_text(h._hud, "Stone") == str(CARD_STONE_CUTTERS))
 	# ⛔ **AND UNTOUCHED GROUND SAYS NOTHING ABOUT A CREW AT ALL** — `deposit_row_value`'s rule: every
 	# clause about a working being worked is, on ground nobody has opened, a reading of an event that
 	# has not happened. The stated ZERO is for a working someone HAS opened, which is the forage land
@@ -1379,22 +1338,19 @@ func run(harness) -> void:
 	await h._settle()
 	var untouched_lines: Array[String] = h._hud._drawer._tile_terrain_lines(
 		h._hud._selection.tile_info())
-	h._assert_hud("untouched ground carries no crew mark of any count (%s | %s)"
-			% [Readout.detail_row_value(untouched_lines, "Wood"),
-				Readout.detail_row_value(untouched_lines, "Stone")],
-		not Readout.detail_row_value(untouched_lines, "Wood").contains(
-				HudSelectionVocab.SOURCE_CREW_MARK)
-			and not Readout.detail_row_value(untouched_lines, "Stone").contains(
-				HudSelectionVocab.SOURCE_CREW_MARK))
+	h._assert_hud("untouched ground shows the dim figure and no crew count (%s | %s)"
+			% [DoorQ.mark_text(h._hud, "Wood"), DoorQ.mark_text(h._hud, "Stone")],
+		DoorQ.mark_text(h._hud, "Wood") == "" and DoorQ.mark_text(h._hud, "Stone") == ""
+			and DoorQ.mark_tint(h._hud, "Wood") != HudStyle.INK_HEX + "ff"
+			and DoorQ.mark_tint(h._hud, "Stone") != HudStyle.INK_HEX + "ff")
 
 	# **THE HEX IS HANDED BACK BARE**, so a chapter appended after this one starts where every other
 	# one does. **An empty `deposits` array means the GROUND HOLDS NOTHING** — not *nobody has worked
 	# it*, which is a row like any other.
 	h._show_tile(_workings_tile([]))
 	await h._settle()
-	h._assert_hud("a hex whose ground holds no deposit offers neither assign action",
-		not h._hud.forestry_assign_controls.visible
-			and not h._hud.extraction_assign_controls.visible)
+	h._assert_hud("a hex whose ground holds no deposit offers neither door",
+		DoorQ.all_metas(h._hud).is_empty())
 
 	await _deposit_kit_states()
 
@@ -1548,11 +1504,10 @@ func _deposit_kit_states() -> void:
 	h._hud.update_band_alerts([_band_at_the_working()])
 	h._show_tile(_workings_tile([_wood_working(WOOD_OVER_CUT), _stone_working(STONE_TAKE)]))
 	await h._settle()
-	var foresters := _assign_button(h._hud.forestry_assign_controls,
-		HudDepositVocab.BRANCH_FORESTRY)
-	h._assert_hud("the kit state has a foresters' button to open", foresters != null)
-	if foresters != null:
-		foresters.pressed.emit()
+	var foresters := _door(HudDepositVocab.BRANCH_FORESTRY)
+	h._assert_hud("the kit state has a foresters' door to open", foresters != "")
+	if foresters != "":
+		_press_door(HudDepositVocab.BRANCH_FORESTRY)
 		await h._settle()
 		h._hud._compose.set_deposit_max(SHEET_CREW)
 		h._hud._compose.set_deposit_kit_id(KitRoster.NO_KIT_ID)
@@ -1610,11 +1565,10 @@ func _deposit_kit_states() -> void:
 	h._assert_hud("the wood's sheet leaves `woodcutting` composed as the rock is opened (%s)"
 			% h._hud._compose.deposit_kit_id(),
 		h._hud._compose.deposit_kit_id() == WOODCUTTING_KIT_ID)
-	var diggers := _assign_button(h._hud.extraction_assign_controls,
-		HudDepositVocab.BRANCH_EXTRACTION)
-	h._assert_hud("the kit state has a diggers' button to open", diggers != null)
-	if diggers != null:
-		diggers.pressed.emit()
+	var diggers := _door(HudDepositVocab.BRANCH_EXTRACTION)
+	h._assert_hud("the kit state has a diggers' door to open", diggers != "")
+	if diggers != "":
+		_press_door(HudDepositVocab.BRANCH_EXTRACTION)
 		await h._settle()
 		h._hud._compose.set_deposit_max(SHEET_CREW)
 		h._hud._drawercompose.open_deposit_compose(_stone_working(STONE_TAKE))
@@ -1747,11 +1701,10 @@ func _crew_curve_states() -> void:
 	h._show_tile(_workings_tile([wood, _stone_working(STONE_TAKE)]))
 	await h._settle()
 	h._hud.forecast_query().reset()
-	var foresters := _assign_button(h._hud.forestry_assign_controls,
-		HudDepositVocab.BRANCH_FORESTRY)
-	h._assert_hud("the curve state has a foresters' button to open", foresters != null)
-	if foresters != null:
-		foresters.pressed.emit()
+	var foresters := _door(HudDepositVocab.BRANCH_FORESTRY)
+	h._assert_hud("the curve state has a foresters' door to open", foresters != "")
+	if foresters != "":
+		_press_door(HudDepositVocab.BRANCH_FORESTRY)
 		await h._settle()
 		# ⛔ **WHILE THE ANSWER IS IN FLIGHT, NO GEAR CLAIM** — read BEFORE the frame ends, since the
 		# stand-in answers deferred, exactly as the socket does. The sheet says it is costing the crew
@@ -1859,9 +1812,9 @@ func _crew_curve_states() -> void:
 	h._show_tile(_workings_tile([far_wood, _stone_working(STONE_TAKE)]))
 	await h._settle()
 	h._hud.forecast_query().reset()
-	foresters = _assign_button(h._hud.forestry_assign_controls, HudDepositVocab.BRANCH_FORESTRY)
-	if foresters != null:
-		foresters.pressed.emit()
+	foresters = _door(HudDepositVocab.BRANCH_FORESTRY)
+	if foresters != "":
+		_press_door(HudDepositVocab.BRANCH_FORESTRY)
 		await h._settle()
 		var sheet: Node = await _open_curve_sheet(far_wood, SHEET_CREW)
 		var commit := Q.find_meta_node(sheet, HudWidgets.COMPOSE_COMMIT_META) as Button
@@ -2152,8 +2105,8 @@ func _full_land_tile(visibility_state: String) -> Dictionary:
 	tile["roads"] = [_worn_path()]
 	return tile
 
-## **A BAND WORKING THE WOOD AND NOT THE ROCK** — the one shape that puts a standing summary on ONE of
-## the hex's two deposit buttons, which is what makes `workings_worked_buttons` a pair rather than a
+## **A BAND WORKING THE WOOD AND NOT THE ROCK** — the one shape that puts a crew mark on ONE of
+## the hex's two deposit rows, which is what makes `workings_worked_buttons` a pair rather than a
 ## sample. The `extract` row names its MATERIAL because `(tile, material)` is the assignment's whole
 ## identity and a row without it stages an assignment `LaborTarget::Extract` cannot produce.
 func _working_band_fixture() -> Dictionary:
@@ -2674,30 +2627,39 @@ const FRESH_WOOD_SEED := 0.6
 const FRESH_FORAGE_CREW := 3
 const FRESH_FORAGE_SEED := 0.96
 
-## The forage drawer's standing summary text — **the `Assign … ▸` button's SECOND LINE**, read
-## through the stacked cell exactly as the deposit reader below does, so the pair is compared through
-## one shape.
+## The forage row's standing summary -- the FIRST LINE of the Foraging door's hover, which is where the
+## retired `Assign … ▸` button's second line went.
 func _forage_summary_text() -> String:
-	var controls = h._hud.forage_assign_controls
-	if controls == null or controls.get_child_count() == 0:
-		return ""
-	return _summary_text(controls.get_child(0))
+	return DoorQ.summary_line(h._hud, HudFloraVocab.FORAGING_KEY)
 
-## …and the same read for any stacked action cell (or the `Button` inside one). `""` where the control
-## carries no second line at all, which is the "nobody works this source" state.
-func _summary_text(node: Node) -> String:
-	if node == null:
-		return ""
-	var flow := Q.stacked_action_summary(node)
-	if flow == null or flow.get_child_count() == 0:
-		return ""
-	var label := flow.get_child(0) as Label
-	return label.text if label != null else ""
+## The row key (the material's word) of the first working of `branch` on the card, `""` where the hex
+## carries none.
+func _working_key(branch: String) -> String:
+	for working in h._hud._drawercompose._tile_workings_of_branch(h._hud._selection.tile_info(), branch):
+		return HudDepositVocab.material_label(working)
+	return ""
 
-## One branch's `Assign … ▸` button, or `null` where the hex carries no deposit of that branch.
-func _assign_button(host: Node, branch: String) -> Button:
-	return Q.find_button_by_text(host, HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT
-		% HudDepositVocab.crew_noun(branch).to_lower())
+## The door meta of that working's row, `""` where it is no door.
+func _door(branch: String) -> String:
+	return DoorQ.meta_for(h._hud, _working_key(branch))
+
+## Press that working's door through the label's own `meta_clicked`.
+func _press_door(branch: String) -> void:
+	DoorQ.press(h._hud, _working_key(branch))
+
+## The working's standing summary (first line of its row's hover), `""` where nobody works it.
+func _summary_text(branch: String) -> String:
+	var hover := DoorQ.hover_text(h._hud, _working_key(branch))
+	for line in hover.split("\n"):
+		if line.contains(HudDepositVocab.crew_noun(branch).to_lower()):
+			return line
+	return ""
+
+## The LAST line of the row's hover: the readout's own tooltip, which the button used to carry whole.
+func _readout_tooltip(branch: String) -> String:
+	var hover := DoorQ.hover_text(h._hud, _working_key(branch))
+	var lines := hover.split("\n")
+	return lines[lines.size() - 1] if hover != "" else ""
 
 ## The sheet's commit button, by the shared meta every compose sheet marks it with.
 func _commit_face(sheet: Node) -> String:
@@ -2792,3 +2754,80 @@ func _assert_hovers_are_per_row() -> void:
 	label.meta_hover_ended.emit(prefix + HOVER_ROW_B)
 	h._assert_hud("…and leaving a row clears the tooltip", label.tooltip_text == "")
 	label.free()
+
+# ---- THE TILE CARD'S DOORS: every door row opens ITS sheet, and a readout row opens nothing ------------
+#
+# Driven through the label's REAL `meta_clicked` with the meta the row's OWN markup carries
+# (`DoorQ.press`), so a door whose dispatch is broken, or whose meta names the wrong subject, fails here.
+
+func _assert_every_door_opens_its_sheet() -> void:
+	var tile := _full_land_tile(TileFx.VIS_ACTIVE)
+	var path_b := _worn_path()
+	path_b["rung"] = HudRouteVocab.RUNG_KEY_PATH
+	tile["roads"] = [_worn_path(), path_b]
+	h._hud.update_band_alerts([_working_band_fixture()])
+	h._show_tile(tile)
+	await h._settle()
+	var dc = h._hud._drawercompose
+	var shown: Dictionary = h._hud._selection.tile_info()
+	var wood_key: String = ""
+	var stone_key: String = ""
+	for working in dc._tile_workings(shown):
+		if HudDepositVocab.branch_of(working) == HudDepositVocab.BRANCH_FORESTRY:
+			wood_key = dc.deposit_subject_key(working)
+		else:
+			stone_key = dc.deposit_subject_key(working)
+	# FORAGING -> the forage sheet on this tile
+	h._assert_hud("the Foraging row is a door", DoorQ.is_door(h._hud, HudFloraVocab.FORAGING_KEY))
+	DoorQ.press(h._hud, HudFloraVocab.FORAGING_KEY)
+	await h._settle()
+	h._assert_hud("…and it opens the FORAGE sheet on this tile (%s %s)" % [
+			h._hud._compose.kind(), h._hud._compose.subject()],
+		h._hud._compose.kind() == ComposeState.KIND_FORAGE
+			and h._hud._compose.subject() == dc.forage_subject_key(shown))
+	h._assert_hud("…and the Foraging row alone wears the selected wash",
+		DoorQ.washed(h._hud, HudStyle.DOOR_SELECTED_WASH_HEX) == [DoorQ.meta_for(h._hud, HudFloraVocab.FORAGING_KEY)])
+	h._hud.close_compose_sheet()
+	await h._settle()
+	h._assert_hud("…and closing the sheet takes the wash down",
+		DoorQ.washed(h._hud, HudStyle.DOOR_SELECTED_WASH_HEX).is_empty())
+	# WOOD and STONE -> their own working's sheet (the pair is the claim: one hex, two workings)
+	for pair in [[_working_key(HudDepositVocab.BRANCH_FORESTRY), wood_key],
+			[_working_key(HudDepositVocab.BRANCH_EXTRACTION), stone_key]]:
+		var key: String = pair[0]
+		DoorQ.press(h._hud, key)
+		await h._settle()
+		h._assert_hud("the `%s` door opens THAT working's deposit sheet (%s)" % [key, h._hud._compose.subject()],
+			key != "" and h._hud._compose.kind() == ComposeState.KIND_DEPOSIT
+				and h._hud._compose.subject() == String(pair[1]))
+		h._assert_hud("…and that row alone is selected",
+			DoorQ.washed(h._hud, HudStyle.DOOR_SELECTED_WASH_HEX) == [DoorQ.meta_for(h._hud, key)])
+		h._hud.close_compose_sheet()
+		await h._settle()
+	# ROAD x2 -> the ladder card for THAT road's index
+	for index in range(2):
+		h._assert_hud("road %d has its own door meta, distinct from its sibling's" % index,
+			DoorQ.meta_for(h._hud, HudRouteVocab.ROAD_ROW, index) != ""
+				and DoorQ.meta_for(h._hud, HudRouteVocab.ROAD_ROW, 0)
+					!= DoorQ.meta_for(h._hud, HudRouteVocab.ROAD_ROW, 1))
+		DoorQ.press(h._hud, HudRouteVocab.ROAD_ROW, index)
+		await h._settle()
+		h._assert_hud("…and pressing it opens the road card on index %d (%d)" % [index, dc._road_ladder_index],
+			dc._road_ladder != null and dc._road_ladder.visible and dc._road_ladder_index == index)
+		h._assert_hud("…with exactly that Road row selected",
+			DoorQ.washed(h._hud, HudStyle.DOOR_SELECTED_WASH_HEX) == [DoorQ.meta_for(h._hud, HudRouteVocab.ROAD_ROW, index)])
+		dc._dismiss_road_ladder()
+		await h._settle()
+		h._assert_hud("…and dismissing the card takes the wash down",
+			DoorQ.washed(h._hud, HudStyle.DOOR_SELECTED_WASH_HEX).is_empty())
+	# READOUT rows carry no door meta and open nothing
+	for key in [HudFloraVocab.GRAZING_KEY, HudFloraVocab.FIELD_ROW, "Height"]:
+		h._assert_hud("the `%s` row is a plain readout (no door meta)" % key,
+			DoorQ.meta_for(h._hud, key) == "" and not DoorQ.press(h._hud, key))
+	h._assert_hud("…and no sheet or card opened for any of them",
+		not h._hud.is_compose_sheet_open() and dc.open_door_meta() == "")
+	# the whole card's door count is exactly its door rows: forage + wood + stone + two roads
+	h._assert_hud("the card carries exactly five doors (%d)" % DoorQ.all_metas(h._hud).size(),
+		DoorQ.all_metas(h._hud).size() == 5)
+	h._show_tile(_workings_tile([]))
+	await h._settle()

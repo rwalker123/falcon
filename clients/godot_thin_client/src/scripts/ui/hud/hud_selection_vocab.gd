@@ -212,6 +212,12 @@ const ACTIVITY_MARKS := {
 # label's font colour, so it dims with a dimmed row instead of staying stubbornly coloured.
 const SOURCE_CREW_MARK := "⚒"
 
+## The warning suffix a crewed door row's mark wears where the source's standing summary warns it is over-taken.
+const DOOR_WARN_SUFFIX := " ⚠"
+
+## Joins the facts a door row's hover states: its own sentence, then the standing summary's lines.
+const DOOR_HOVER_SEPARATOR := "\n"
+
 # The activity mark's box and glyph size, the pair `HudWidgets.build_marker_icon` needs. Sized to the
 # roster's own row mark (`ROSTER_ROW_ICON_BOX`) so the leading subject mark and the trailing activity
 # mark read as one family at one weight rather than as two unrelated pictures on one row.

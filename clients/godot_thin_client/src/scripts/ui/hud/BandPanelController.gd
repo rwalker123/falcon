@@ -2700,36 +2700,10 @@ func _put_staffed_fields(model: Dictionary, merged: Dictionary, assignment: Dict
 ## not carry reads as its humanised id, never blank.
 func _tile_source_models(band: Dictionary) -> Array:
     var models: Array = []
-    var camp := SourceForecast.band_tile(band)
-    var branches: Array = _topbar.ladder_branches() if _topbar != null else []
-    var catalog: Array = _topbar.ladder_rungs() if _topbar != null else []
     for assignment_variant in _band_labor.tile_assignments_of(band):
         var assignment: Dictionary = assignment_variant
-        var x := int(assignment.get("target_x", -1))
-        var y := int(assignment.get("target_y", -1))
-        var branch := String(assignment.get("branch", ""))
-        var row := _band_labor.tile_improvement_at(x, y, branch)
-        var rung_key := String(row.get("current_rung", ""))
-        var distance := SourceForecast.hex_distance_wrapped(camp.x, camp.y, x, y,
-            _band_labor.grid_width(), _band_labor.wrap_horizontal())
-        var key := _band_labor.pending_key(HudConst.LABOR_KIND_TILE, x, y, "", branch)
-        models.append({
-            "kind": HudConst.LABOR_KIND_TILE,
-            "key": key, "x": x, "y": y, "herd_id": "", "branch": branch,
-            "tile": Vector2i(x, y),
-            "tile_row": row,
-            "assignment": assignment,
-            "distance": distance,
-            "workers": _band_labor.effective_worker_map(band).get(key, {}).get(
-                "workers", int(assignment.get("workers", 0))),
-            "name": HudWorkVocab.WORKINGS_ROSTER_NAME_FORMAT % [
-                HudRouteVocab.branch_name(branches, branch),
-                _roadwork_roster_locator(distance, camp, Vector2i(x, y))],
-            "rung_name": HudRouteVocab.rung_name_in(catalog, rung_key) \
-                if rung_key != "" else HudRouteVocab.branch_root_name(catalog, branch),
-        })
-        _put_staffed_fields(models[models.size() - 1],
-            _band_labor.effective_worker_map(band).get(key, {}), assignment)
+        models.append(_tile_model(band, int(assignment.get("target_x", -1)),
+            int(assignment.get("target_y", -1)), String(assignment.get("branch", "")), assignment))
     models.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
         if int(a["distance"]) != int(b["distance"]):
             return int(a["distance"]) < int(b["distance"])
@@ -2741,6 +2715,50 @@ func _tile_source_models(band: Dictionary) -> Array:
             return ta.x < tb.x
         return String(a["branch"]) < String(b["branch"]))
     return models
+
+## **ONE TILE CREW'S MODEL** -- the row `_tile_source_models` lists for a held `tile` labor row, and (with
+## an empty `assignment`) the same shape for a tile the band does NOT crew, so the tile card's crew sheet
+## draws its strip from one producer with the Work tab's row.
+func _tile_model(band: Dictionary, x: int, y: int, branch: String, assignment: Dictionary) -> Dictionary:
+    var camp := SourceForecast.band_tile(band)
+    var branches: Array = _topbar.ladder_branches() if _topbar != null else []
+    var catalog: Array = _topbar.ladder_rungs() if _topbar != null else []
+    var row := _band_labor.tile_improvement_at(x, y, branch)
+    var rung_key := String(row.get("current_rung", ""))
+    var distance := SourceForecast.hex_distance_wrapped(camp.x, camp.y, x, y,
+        _band_labor.grid_width(), _band_labor.wrap_horizontal())
+    var key := _band_labor.pending_key(HudConst.LABOR_KIND_TILE, x, y, "", branch)
+    var model := {
+        "kind": HudConst.LABOR_KIND_TILE,
+        "key": key, "x": x, "y": y, "herd_id": "", "branch": branch,
+        "tile": Vector2i(x, y),
+        "tile_row": row,
+        "assignment": assignment,
+        "distance": distance,
+        "workers": _band_labor.effective_worker_map(band).get(key, {}).get(
+            "workers", int(assignment.get("workers", 0))),
+        "name": HudWorkVocab.WORKINGS_ROSTER_NAME_FORMAT % [
+            HudRouteVocab.branch_name(branches, branch),
+            _roadwork_roster_locator(distance, camp, Vector2i(x, y))],
+        "rung_name": HudRouteVocab.rung_name_in(catalog, rung_key) \
+            if rung_key != "" else HudRouteVocab.branch_root_name(catalog, branch),
+    }
+    _put_staffed_fields(model, _band_labor.effective_worker_map(band).get(key, {}), assignment)
+    return model
+
+## **THE TILE CREW SHEET'S STRIP ROW** -- `{row, ...}` for one `(tile, branch)` whether or not this band crews
+## it: the Work tab's own strip row (`_tile_strip_row`), ladder chip included, so the sheet's chip and the
+## board row's cannot disagree. A band that does not crew the tile reads at a crew of zero; the rung card
+## the chip opens is what names the missing crew.
+func tile_strip_row(band: Dictionary, x: int, y: int, branch: String) -> Dictionary:
+    var model := {}
+    for candidate in _tile_source_models(band):
+        if (candidate as Dictionary)["tile"] == Vector2i(x, y) \
+                and String((candidate as Dictionary)["branch"]) == branch:
+            model = candidate
+    if model.is_empty():
+        model = _tile_model(band, x, y, branch, {})
+    return _tile_strip_row(model, model["tile_row"], Vector2i(x, y), branch)
 
 ## **THE BAND IMPROVEMENT CREW ROWS THIS BAND HOLDS** (a drying rack): one model per `band` labor row.
 ## Staffed like a tile row (the sim strikes the crew; the Max lives on a sheet), but the improvement is
@@ -2827,8 +2845,13 @@ func _build_tile_row(band: Dictionary, model: Dictionary) -> PanelContainer:
         for party_line in lines:
             col.add_child(_build_working_yield_line(party_line, HudStyle.INK_DIM,
                 HudWorkVocab.WORK_ROW_PARTY_META))
-    # The strip carries the keeping mark off the standing bill and the crew. A tile crew has no ladder
-    # and no floor, so those parts draw nothing.
+    var strip_row := _tile_strip_row(model, improvement, tile, branch)
+    (shell[SITE_ROW_SHELL_BODY] as HBoxContainer).add_child(_build_row_strip(band, strip_row))
+    return row
+
+## The strip row of a tile crew's row (and of the crew sheet): the keeping mark off the standing bill and
+## the crew, and the ladder chip (`_put_tile_ladder_chip`). A tile crew has no floor, so that part draws nothing.
+func _tile_strip_row(model: Dictionary, improvement: Dictionary, tile: Vector2i, branch: String) -> Dictionary:
     var kept := float(improvement.get("upkeep_supplied", SourceForecast.NO_UPKEEP_DEMAND))
     var demand := float(improvement.get("upkeep_demand", SourceForecast.NO_UPKEEP_DEMAND))
     var tools_short := SourceForecast.upkeep_tools_short(improvement,
@@ -2841,8 +2864,7 @@ func _build_tile_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     strip_row["tending"] = HudWorkVocab.tending_of(improvement,
         HudComposeVocab.BARE_FORECAST_PREFIX, "")
     _put_tile_ladder_chip(strip_row, improvement, tile, branch, int(model.get("workers", 0)))
-    (shell[SITE_ROW_SHELL_BODY] as HBoxContainer).add_child(_build_row_strip(band, strip_row))
-    return row
+    return strip_row
 
 ## **THE TILE ROW'S LADDER CHIP** -- the deposit row's twin, off the tile branch's catalog rows: a build
 ## declared on the improvement shows the verb being raised, otherwise the rung a press could land right now

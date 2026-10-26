@@ -53,8 +53,8 @@ static func find_button_by_text(root: Node, text: String) -> Button:
 			return found
 	return null
 
-## What a tile-card action button READS, whichever shape it is — a plain `Button.text` (`Road ▸`,
-## `Move`) or a stacked cell's first line. Callers assert against this rather than `Button.text`,
+## What a tile-card action button READS, whichever shape it is — a plain `Button.text` (`Move`,
+## the herd's `Assign … ▸`) or a stacked cell's first line. Callers assert against this rather than `Button.text`,
 ## which is empty by construction on a stacked one.
 static func action_button_face(node: Node) -> String:
 	var cell := stacked_action_cell(node)

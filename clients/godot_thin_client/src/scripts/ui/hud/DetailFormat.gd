@@ -1003,6 +1003,38 @@ class Context extends RefCounted:
     ## renderer sniffing the value for a hazard word would need a new guess per hazard. A key with no
     ## entry renders exactly the BBCode it always did.
     var row_tooltips: Dictionary = {}
+    ## ⛔ **WHICH LINES ARE DOORS** (the tile card's rows that open a sheet) — `{line index: door meta}`,
+    ## filled by the producer as it emits them. **KEYED BY THE LINE'S INDEX, NEVER BY THE ROW KEY**: keys
+    ## repeat (a hex with two roads carries two `Road` rows) and a door is one row, not every row that
+    ## shares its name. The meta (`HudDisclosureVocab.door_meta`) is unique per door.
+    var door_metas: Dictionary = {}
+    ## The crew each door row carries on its trailing mark -- `{line index: {"crew": int, "warn": bool}}`,
+    ## filled by the producer beside `door_metas`. A door with no entry (or a crew of 0) draws the dim
+    ## figure alone; a crew draws the full-ink figure and its count, plus the `warn` mark where the source's
+    ## standing summary warns it is over-taken. A READOUT row (no door) wears the mark only where its entry
+    ## states a crew above zero -- a stated fact outside any url, so a refused tile branch still shows its crew.
+    var door_crews: Dictionary = {}
+    ## The door the pointer is over and the door whose sheet is open (metas, `""` for none). The renderer
+    ## washes BOTH cells of the row: `HudStyle.DOOR_HOVER_WASH_HEX` for the first, the stronger
+    ## `DOOR_SELECTED_WASH_HEX` for the second, and the second wins where both hold.
+    var hovered_door: String = ""
+    var selected_door: String = ""
+    ## ⛔ **THE LAND CARD'S WASH SPANS THE LABEL** (`fill_width` > 0 turns it on). `[cell expand=N]` was
+    ## measured and does NOT widen a table in this Godot (4.7.2) -- it only squeezes the other column -- so
+    ## a door row's value cell is padded with non-breaking spaces up to the label's inner width instead,
+    ## from the label's own font (`fill_font` / `fill_font_size`), its `table_h_separation`, and the widest
+    ## key of the SAME table (a basket sub-row closes a table and the next one has its own key column).
+    ## `0.0` (the default) leaves every other surface exactly as it was.
+    var fill_width: float = 0.0
+    var fill_font: Font = null
+    var fill_font_size: int = 0
+    var fill_h_separation: float = 0.0
+    ## The label's on-screen scale (canvas stretch). Glyph advances are hinted to whole DEVICE pixels, so a run is
+    ## wider on screen than `get_string_size` at the unscaled size says; `0.0` (the default) skips that correction.
+    var fill_scale: float = 0.0
+    ## OUT-PARAMETER of the render: each door's hover sentence (`row_tooltips` of its row, which the door's
+    ## url replaced the `hover:` run of). `wire_row_hovers` cannot answer a door, so the host reads this.
+    var door_tooltips: Dictionary = {}
 
 
 # =====================================================================================
@@ -1019,8 +1051,17 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
     var context := ctx if ctx != null else Context.new()
     var out := ""
     var table_open := false
-    for raw in lines:
-        var line := String(raw)
+    # The wash-spanning pad (see `Context.fill_width`): the table a row sits in, each table's widest key,
+    # and a token per door value that the pad replaces once every table's key column is known.
+    var table_index := -1
+    var table_key_widths: Array[float] = []
+    var table_widest_marked: Array[float] = []
+    var fills := context.fill_width > 0.0 and context.fill_font != null
+    # The widest count text any mark on the card carries (` 4 ⚠`): every figure reserves it after itself, so the
+    # figures of crewed and uncrewed rows sit on one x and the counts trail them out to the right edge.
+    var max_count_width := 0.0
+    for line_index in range(lines.size()):
+        var line := String(lines[line_index])
         if line == "":
             if table_open:
                 out += "[/table]"
@@ -1111,20 +1152,135 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
             out += "[color=#%s]%s[/color]\n" % [HudStyle.INK_DIM_HEX, line]
         else:
             if not table_open:
-                out += "[table=2]"
+                out += "[table=3]" if fills else "[table=2]"
                 table_open = true
+                table_index += 1
+                table_key_widths.append(0.0)
+                table_widest_marked.append(0.0)
             var row_key := String(kv[0])
+            if fills:
+                table_key_widths[table_index] = maxf(table_key_widths[table_index],
+                    _rendered_width(context, row_key))
             var value_run := "[color=#%s]%s[/color]" % [_value_hex(row_key, String(kv[1]), context), kv[1]]
-            # A value already carrying a clickable run (a merged disclosure clause) is not wrapped: the
-            # engine has no nested metas, and that clause states its own hover where it needs one.
-            if not String(kv[1]).contains(DISCLOSURE_URL_OPEN):
-                value_run = hover_wrap(row_key, value_run, context)
             var key_run := _key_cell(row_key, context)
-            if not context.disclosures.has(row_key):
-                key_run = hover_wrap(row_key, key_run, context)
-            out += "[cell]%s[/cell][cell]%s[/cell]" % [key_run, value_run]
+            var cell_open := "[cell]"
+            var value_cell_open := "[cell]"
+            var door := String(context.door_metas.get(line_index, ""))
+            var crew_entry: Dictionary = context.door_crews.get(line_index, {})
+            # ⛔ **THE WORKERS MARK LIVES IN ITS OWN THIRD COLUMN** (`[table=3]`, land card only): a door row, and a
+            # readout that states a crew. The column's left edge is where EVERY figure sits, so figures align exactly
+            # whatever each value's rendered width (a pad measured in the label's font is off by a pixel per glyph
+            # under the canvas stretch's hinting, which spread the figures 7px). Only the table's WIDEST marked value
+            # is padded, up to the label's right edge less the mark column; every other value rides the column.
+            var mark_cell := ""
+            var has_mark := door != "" or int(crew_entry.get("crew", 0)) > 0
+            var mark := door_mark(crew_entry) if has_mark else {}
+            if has_mark and fills:
+                var value_width := _rendered_width(context, String(kv[1]))
+                max_count_width = maxf(max_count_width, _rendered_width(context, String(mark["plain"])))
+                table_widest_marked[table_index] = maxf(table_widest_marked[table_index], value_width)
+                value_run += "%s%d|%f%s" % [FILL_TOKEN, table_index, value_width, FILL_TOKEN]
+                mark_cell = String(mark["bbcode"]) + "%s%f%s" % [FILL_COUNT_TOKEN, _rendered_width(context, String(mark["plain"])),
+                    FILL_COUNT_TOKEN]
+            elif has_mark:
+                value_run += String(mark["bbcode"])
+            if door != "":
+                # ⛔ **A DOOR ROW: ONE `[url]` OVER EACH CELL, AND IT REPLACES THE `hover:` RUN** — the
+                # engine has no nested metas, so the door's own meta answers the click AND the hover (its
+                # sentence is `row_tooltips[row_key]`, handed to the host through `door_tooltips`). The
+                # workers mark closes the row so it reads as something that opens.
+                context.door_tooltips[door] = String(context.row_tooltips.get(row_key, ""))
+                value_run = door_wrap(door, value_run)
+                key_run = door_wrap(door, key_run)
+                if mark_cell != "":
+                    mark_cell = door_wrap(door, mark_cell)
+                # **THE WASH IS A `[cell bg=…]` ON EVERY CELL** (measured: it paints one continuous band
+                # across the pair, no seam), the selected wash outranking the hover wash.
+                if door == context.selected_door:
+                    cell_open = "[cell bg=#%s]" % HudStyle.DOOR_SELECTED_WASH_HEX
+                    value_cell_open = cell_open
+                elif door == context.hovered_door:
+                    cell_open = "[cell bg=#%s]" % HudStyle.DOOR_HOVER_WASH_HEX
+                    value_cell_open = cell_open
+            else:
+                # A value already carrying a clickable run (a merged disclosure clause) is not wrapped: the
+                # engine has no nested metas, and that clause states its own hover where it needs one.
+                if not String(kv[1]).contains(DISCLOSURE_URL_OPEN):
+                    value_run = hover_wrap(row_key, value_run, context)
+                if not context.disclosures.has(row_key):
+                    key_run = hover_wrap(row_key, key_run, context)
+            out += "%s%s[/cell]%s%s[/cell]" % [cell_open, key_run, value_cell_open, value_run]
+            if fills:
+                out += "%s%s[/cell]" % [value_cell_open, mark_cell]
     if table_open:
         out += "[/table]"
+    if fills and out.contains(FILL_TOKEN):
+        out = _fill_door_values(out, context, table_key_widths, table_widest_marked, max_count_width)
+    return out
+
+## Marks where a marked value's pad goes (`<table>|<value width>` between two of them) until every table's
+## widest key is known. A control character, so no row's own text can collide with it.
+const FILL_TOKEN := "\u0001"
+## Marks where the mark column's filler goes (`<own count width>` between two of them): it tops every row's count up to the
+## card's widest, so the mark column is one width and the figures share its left edge.
+const FILL_COUNT_TOKEN := "\u0002"
+## Slack left at the right edge so font rounding can never push the table past the label and wrap a value. The
+## glyph advances are measured the way the label draws them (`_rendered_width`), so this only absorbs sub-pixel layout.
+const FILL_SAFETY_MARGIN := 6.0
+
+static func _fill_door_values(markup: String, context: Context, key_widths: Array[float],
+        widest_marked: Array[float], max_count_width: float) -> String:
+    var mark_col_width := float(HudDisclosureVocab.DOOR_MARK_ICON_PX) + max_count_width
+    var parts := markup.split(FILL_TOKEN)
+    var out := ""
+    for i in range(parts.size()):
+        if i % 2 == 0:
+            out += parts[i]
+            continue
+        var spec := parts[i].split("|")
+        var table := int(spec[0])
+        # Only the widest marked value of a table is padded: it sets the value column's width for every row.
+        if absf(float(spec[1]) - widest_marked[table]) < 0.01:
+            # key | value | mark column: two gutters.
+            var room := context.fill_width - key_widths[table] - 2.0 * context.fill_h_separation \
+                - float(spec[1]) - mark_col_width - FILL_SAFETY_MARGIN
+            out += _pad_run(context, room)
+    var finished := ""
+    var counts := out.split(FILL_COUNT_TOKEN)
+    for j in range(counts.size()):
+        if j % 2 == 0:
+            finished += counts[j]
+        else:
+            finished += _pad_run(context, max_count_width - float(counts[j]))
+    return finished
+
+## A run's width as the label draws it: each glyph's advance rounded to whole device pixels at `fill_scale` (the
+## engine hints small text that way), which `get_string_size` alone does not do.
+static func _rendered_width(context: Context, text: String) -> float:
+    var total := 0.0
+    for i in range(text.length()):
+        total += _glyph_advance(context, text.substr(i, 1), context.fill_font_size)
+    return total
+
+## One glyph's advance at `size`, rounded to whole device pixels at `fill_scale` the way the label draws it.
+static func _glyph_advance(context: Context, glyph: String, size: int) -> float:
+    var advance := context.fill_font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+    if context.fill_scale <= 0.0:
+        return advance
+    return round(advance * context.fill_scale) / context.fill_scale
+
+## No-break filler `width` px wide: whole NBSPs, then NBSPs at a tiny font size for the remainder (each a fraction of
+## a pixel wide, so the width lands within about a pixel and the tail never splits).
+static func _pad_run(context: Context, width: float) -> String:
+    var pad_unit := _glyph_advance(context, "\u00a0", context.fill_font_size)
+    var fine_unit := _glyph_advance(context, "\u00a0", HudDisclosureVocab.DOOR_FINE_PAD_FONT_SIZE)
+    if pad_unit <= 0.0 or width < fine_unit:
+        return ""
+    var whole := int(floor(width / pad_unit))
+    var out := "\u00a0".repeat(whole)
+    var fine := int(floor((width - float(whole) * pad_unit) / fine_unit)) if fine_unit > 0.0 else 0
+    if fine > 0:
+        out += "[font_size=%d]%s[/font_size]" % [HudDisclosureVocab.DOOR_FINE_PAD_FONT_SIZE, "\u00a0".repeat(fine)]
     return out
 
 ## **THE HOVER A ROW CARRIES SHOWS ONLY OVER THAT ROW** — `ctx.row_tooltips` (keyed by the row's own
@@ -1151,6 +1307,34 @@ static func hover_wrap(key: String, inner: String, ctx: Context) -> String:
     if ctx == null or String(ctx.row_tooltips.get(key, "")) == "":
         return inner
     return "[url=%s%s]%s[/url]" % [HudDisclosureVocab.ROW_HOVER_META_PREFIX, key, inner]
+
+## ⛔ **THE DOOR MARK -- the worker figure and the crew count, right-aligned at the end of a door row's value.**
+## `crew_info` is the row's `Context.door_crews` entry (`{}` for none). Returns `bbcode` (the run to append
+## AFTER the fill pad), and `plain` (the text beside the image, for measuring). A crewed door wears the full-ink figure, the count in `INK`, and the `WARN` suffix where the
+## standing summary warns; an uncrewed door wears the figure alone in `INK_DIM` -- the dim figure is the
+## "nobody is on this" read. The image is `HudSprites`' `workers` mark, resolved through its path table.
+static func door_mark(crew_info: Dictionary) -> Dictionary:
+    var crew := int(crew_info.get("crew", 0))
+    var px := HudDisclosureVocab.DOOR_MARK_ICON_PX
+    var path := String(HudSprites.SPRITE_PATHS.get(HudDisclosureVocab.DOOR_MARK_ICON_ID, ""))
+    var tint := HudStyle.INK_HEX if crew > 0 else HudStyle.INK_DIM_HEX
+    var img := ""
+    if path != "":
+        img = HudDisclosureVocab.DOOR_MARK_IMG_FORMAT % [px, px, tint + HudDisclosureVocab.DOOR_MARK_OPAQUE_ALPHA_HEX, path]
+    var plain := ""
+    var text := ""
+    if crew > 0:
+        plain = HudDisclosureVocab.DOOR_MARK_COUNT_FORMAT % crew
+        text = "[color=#%s]%s[/color]" % [HudStyle.INK_HEX, plain]
+        if bool(crew_info.get("warn", false)):
+            var warn := HudSelectionVocab.DOOR_WARN_SUFFIX.replace(" ", HudDisclosureVocab.DOOR_MARK_NBSP)
+            plain += warn
+            text += "[color=#%s]%s[/color]" % [HudStyle.WARN_HEX, warn]
+    return {"bbcode": img + text, "plain": plain}
+
+## A door row's cell content under its `door:` meta (see `Context.door_metas`).
+static func door_wrap(meta: String, inner: String) -> String:
+    return "[url=%s]%s[/url]" % [meta, inner]
 
 ## Make a detail label answer a row's hover with that row's sentence alone. Safe to call on every
 ## render: the signals are connected once and the sentences are re-stored each time.

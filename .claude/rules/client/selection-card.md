@@ -18,7 +18,7 @@ paths:
 | Script | Purpose |
 |--------|---------|
 | `ui/hud/SelectionCardController.gd` | `RefCounted` controller (HUD decomposition Phase 2b, `docs/plan_hud_decomposition.md`) owning the selection card's **IDENTITY/LIST half** — the tile-card header, the pinned condition-**chip** strip, and the whole **roster / subject list** (LAND row + Bands/Wildlife sub-groups), plus the roster-row clicks and the fresh-hex auto-select. The state-isolated half (zero drawer coupling, zero shared compose/band-tint state), so it split off ahead of the drawer (Phase 2c-2b then took the drawer's COMPOSE half into `DrawerComposeController`; HudLayer keeps the drawer's RENDER DISPATCH). Hud holds it as `_selectioncard`, constructed in `_ready` after `_turnorb`, handed the three card nodes (`tile_panel`/`tile_chips`/`subject_list`) + the SAME `_selection`/`_band_labor` model instances (BY REFERENCE) and NOTHING ELSE — the one injected Callable it used to take (`_alloc_hint_label`) went away when that factory moved to the all-`static` `HudWidgets`, which it now calls directly; it reads the forage/hunt worker counts straight off `_band_labor.workers_for_forage`/`workers_for_hunt` (those readers moved onto the labor model). **THE IS-THIS-MINE TEST IS ONE STATIC ON `HudConst`, AND IT FAILS CLOSED.** `HudConst.is_player_unit(unit)` is a `class_name` static every host calls directly — no preload, no injection, no `Callable` through a constructor, which was the objection the six private `_is_player_unit` copies were justified by. A row that carries NO `faction` key defaults to `HudConst.NO_FACTION_ID` and is therefore NOT the player's; defaulting it to `PLAYER_FACTION_ID` made an unattributed row the player's own and exempted it from every foreign-disclosure gate. Owns the moved Phase-2a diff caches `_tile_chip_slots` / `_subject_row_keys`, so the in-place chip/row updaters travel with it and a same-tile restate still patches nodes rather than tearing them down (`tile_panel_no_flash`). **The render seam:** `HudLayer._render_selection_panel` stays the ORCHESTRATOR — it resets the band-tint scalars, calls `_selectioncard.render(tile_info)` (roster + tile-card + chips + auto-select + list), then `_drawer.render_subject_drawer()` (`SubjectDrawerController`, Phase 2c-3). **The row-click seam:** a roster/land click mutates `_selection` and emits the controller's OWN `subject_changed` → `HudLayer._on_selection_subject_changed` (close compose sheet → re-render), plus `roster_occupant_selected(kind, id)` **RELAYED** onto `HudLayer.roster_occupant_selected` → Main (the TurnOrbController pattern); the auto-pick emits only the relayed `roster_occupant_selected` (it runs mid-render). Publics HudLayer's band/labor navigation calls back into: `render`, `select_roster_occupant`, **`select_land_subject`** (the `note_choice_tile` + `select_land` pair BOTH ways of choosing the land go through — the land row here, and the map's select-then-cycle land stop via `Hud.show_land_selection`; it emits nothing, each caller announcing its own), `find_roster_unit`/`find_roster_herd`, `tile_contents_unseen`. Behaviour identical to the old inlined selection-card code |
-| `ui/hud/SubjectDrawerController.gd` | `RefCounted` controller (HUD decomposition Phase 2c-3, `docs/plan_hud_decomposition.md`) owning the selection card's **DRAWER RENDER DISPATCH** — the last piece of the selection card to leave `Hud.gd`, after `SelectionCardController` (identity/list) and `DrawerComposeController` (compose). It holds the **one-drawer dispatch** (`render_subject_drawer` → `_render_land_drawer` vs `_render_occupant_drawer` → `_render_unknown_contents_note`), the **land-drawer content producer** (`_tile_terrain_lines` + its `_graze_stock_lines` / `_stock_value` leaves), the **`%AllocationPanel` occupant branches** (`_build_allocation_panel` — the no-dock fallback stacking `BandPanelController`'s three BAND zone builders (a band declares three zones; the faction page's fourth is `FactionRollup`'s and never reaches this host) — plus `_build_expedition_panel` / `_build_band_verb_actions` / `_make_band_verb_row`), the **pending band verb's sheet mount** (`_mount_verb_form`, over `BandPanelController.build_verb_form`), and the **height-capping fit path** (`fit_subject_drawer`). It owns the drawer's RENDER diff state (`_tile_detail_lines_cache` + the fit-flight/last-height guards). Hud holds it as `_drawer`, constructed in `_ready` after `_bandpanel` (it dispatches into `_bandpanel` and `_drawercompose`). **THE BAND VERBS ARE THE BAND PANEL'S** — the drawer's verb row is built from `HudComposeVocab.BAND_VERBS` and calls `BandPanelController.verb_enabled` / `dispatch_verb`; the EXPEDITION panel's own Move stays a typed `.connect()` to `TargetingController.begin_move_band`. **THE IS-THIS-MINE TEST IS ONE STATIC ON `HudConst`, AND IT FAILS CLOSED.** `HudConst.is_player_unit(unit)` is a `class_name` static every host calls directly — no preload, no injection, no `Callable` through a constructor, which was the objection the six private `_is_player_unit` copies were justified by. A row that carries NO `faction` key defaults to `HudConst.NO_FACTION_ID` and is therefore NOT the player's; defaulting it to `PLAYER_FACTION_ID` made an unattributed row the player's own and exempted it from every foreign-disclosure gate. Collaborators: the SAME `_selection` / `_band_labor` model instances BY REFERENCE, `_selectioncard` (`tile_contents_unseen` + `selected_terrain_label`), `_drawercompose` (`refresh_compose_sheet` / `build_forage_drawer_actions` / `build_herd_drawer_actions`), `_bandpanel` (`has_panel` / `render_band` / the three zone builders / `confirm_recall_expedition`), `_banddetail` (`unit_summary_lines`), and the HUD CanvasLayer as the **host** its fit awaits a frame through (a `RefCounted` has no `get_tree()`). **The drawer scene nodes it writes stay `@onready` on HudLayer and are passed in** (`tile_detail` / `occupant_detail` / `allocation_panel` / `herd_assign_controls` / `forage_assign_controls` / `subject_body` / `subject_scroll` + read-only `left_dock_scroll`) — a `%Name` node loses `unique_name_in_owner` if reparented. **THE FIT PATH IS THE HIGH-RISK PIECE:** `fit_subject_drawer` `await`s `_host.get_tree().process_frame` and is wired to `subject_body.minimum_size_changed` + `viewport.size_changed.bind(true)` (the force-past-the-gate flag) in HudLayer's `_ready`, plus `_refit_left_dock`'s forced refit — all repointed here. **The two calling-in seams STAY on HudLayer:** `_render_selection_panel` (reflectively-reached coordinator core) and `_refresh_disclosure_hosts` (the two-host fan-out — it also renders the band panel) both call `_drawer.render_subject_drawer()`. Word tables/formats/thresholds stay on `HudLayer` and are read back as `HudLayer.X`. Behaviour identical to the old inlined drawer-dispatch code |
+| `ui/hud/SubjectDrawerController.gd` | `RefCounted` controller (HUD decomposition Phase 2c-3, `docs/plan_hud_decomposition.md`) owning the selection card's **DRAWER RENDER DISPATCH** — the last piece of the selection card to leave `Hud.gd`, after `SelectionCardController` (identity/list) and `DrawerComposeController` (compose). It holds the **one-drawer dispatch** (`render_subject_drawer` → `_render_land_drawer` vs `_render_occupant_drawer` → `_render_unknown_contents_note`), the **land-drawer content producer** (`_tile_terrain_lines` + its `_graze_stock_lines` / `_stock_value` leaves), the **`%AllocationPanel` occupant branches** (`_build_allocation_panel` — the no-dock fallback stacking `BandPanelController`'s three BAND zone builders (a band declares three zones; the faction page's fourth is `FactionRollup`'s and never reaches this host) — plus `_build_expedition_panel` / `_build_band_verb_actions` / `_make_band_verb_row`), the **pending band verb's sheet mount** (`_mount_verb_form`, over `BandPanelController.build_verb_form`), and the **height-capping fit path** (`fit_subject_drawer`). It owns the drawer's RENDER diff state (`_tile_detail_lines_cache` + the fit-flight/last-height guards). Hud holds it as `_drawer`, constructed in `_ready` after `_bandpanel` (it dispatches into `_bandpanel` and `_drawercompose`). **THE BAND VERBS ARE THE BAND PANEL'S** — the drawer's verb row is built from `HudComposeVocab.BAND_VERBS` and calls `BandPanelController.verb_enabled` / `dispatch_verb`; the EXPEDITION panel's own Move stays a typed `.connect()` to `TargetingController.begin_move_band`. **THE IS-THIS-MINE TEST IS ONE STATIC ON `HudConst`, AND IT FAILS CLOSED.** `HudConst.is_player_unit(unit)` is a `class_name` static every host calls directly — no preload, no injection, no `Callable` through a constructor, which was the objection the six private `_is_player_unit` copies were justified by. A row that carries NO `faction` key defaults to `HudConst.NO_FACTION_ID` and is therefore NOT the player's; defaulting it to `PLAYER_FACTION_ID` made an unattributed row the player's own and exempted it from every foreign-disclosure gate. Collaborators: the SAME `_selection` / `_band_labor` model instances BY REFERENCE, `_selectioncard` (`tile_contents_unseen` + `selected_terrain_label`), `_drawercompose` (`refresh_compose_sheet` / `build_herd_drawer_actions` / the land rows' `open_door` / `open_door_meta` / `tile_branch_models`), `_bandpanel` (`has_panel` / `render_band` / the three zone builders / `confirm_recall_expedition`), `_banddetail` (`unit_summary_lines`), and the HUD CanvasLayer as the **host** its fit awaits a frame through (a `RefCounted` has no `get_tree()`). **The drawer scene nodes it writes stay `@onready` on HudLayer and are passed in** (`tile_detail` / `occupant_detail` / `allocation_panel` / `herd_assign_controls` / `subject_body` / `subject_scroll` + read-only `left_dock_scroll`) — a `%Name` node loses `unique_name_in_owner` if reparented. **THE FIT PATH IS THE HIGH-RISK PIECE:** `fit_subject_drawer` `await`s `_host.get_tree().process_frame` and is wired to `subject_body.minimum_size_changed` + `viewport.size_changed.bind(true)` (the force-past-the-gate flag) in HudLayer's `_ready`, plus `_refit_left_dock`'s forced refit — all repointed here. **The two calling-in seams STAY on HudLayer:** `_render_selection_panel` (reflectively-reached coordinator core) and `_refresh_disclosure_hosts` (the two-host fan-out — it also renders the band panel) both call `_drawer.render_subject_drawer()`. Word tables/formats/thresholds stay on `HudLayer` and are read back as `HudLayer.X`. Behaviour identical to the old inlined drawer-dispatch code |
 - **The selection card — ONE card, ONE list, ONE drawer** (`Hud.gd`,
   `docs/plan_tile_panel_layout.md`; this SUPERSEDES the earlier split Tile + Occupants
   cards). A populated hex used to ask the left dock for ~1450px of content — two inline,
@@ -118,34 +118,107 @@ paths:
     `docs/plan_tile_panel_layout.md`, §10-§17). Capping the drawer bounded the card but did not make
     it SMALL — the two compose blocks were still ~270px of always-expanded picker sitting permanently
     in a column that also has to show the land, the roster and the detail rows. Composing is **modal
-    by nature** (open, decide, commit, done), so `%ForageAssignControls` / `%HerdAssignControls` now
-    end at a single **`Assign harvesters ▸` / `Assign hunters ▸` / `Assign herders ▸`** control
-    (`build_forage_drawer_actions` / `build_herd_drawer_actions`), and the block itself renders into
-    the floating `ui/hud/ComposeSheet.gd`. `%AllocationPanel` stays INLINE (for an expedition it is
-    two buttons and a callout).
-    - ⛔ **THE STANDING SUMMARY IS THAT CONTROL'S SECOND LINE, NOT A ROW ABOVE IT.** It was a sibling
-      row for the whole life of this layout, and Ray retired that shape on sight of the deposit
-      drawer: *"See the 2 foresters +0.60 wood. That looks strange there, I know that is the existing
-      pattern with foragers and hunters … I think that would look more at home inside the button. We
-      should make it the second line on the button."* **The pattern was what he was objecting to**, so
-      every web moved together — forage, hunt, herd, forestry and extraction — rather than the deposit
-      one alone; two shapes for one readout is the inconsistency this whole rework keeps removing.
-      The mechanism and its three traps (the empty-`text` button under a painted face, the
-      `MOUSE_FILTER_IGNORE` sweep that keeps it pressable, and the re-mute the in-place patch owes)
-      are on `HudWidgets.build_stacked_action_button`.
-    - **A SOURCE NOBODY WORKS KEEPS ITS SINGLE LINE** and grows no blank second one: a summary exists
-      only where this faction already holds a standing assignment on the source, and the face is built
-      with `null` there.
+    by nature** (open, decide, commit, done), so the herd drawer's `%HerdAssignControls` ends at a
+    single **`Assign hunters ▸` / `Assign herders ▸`** control (`build_herd_drawer_actions`), the LAND
+    drawer has **no action container at all** (its sheets open from the card's door rows, below), and
+    the block itself renders into the floating `ui/hud/ComposeSheet.gd`. `%AllocationPanel` stays
+    INLINE (for an expedition it is two buttons and a callout).
+    - ⛔ **THE HERD CONTROL'S STANDING SUMMARY IS ITS SECOND LINE, NOT A ROW ABOVE IT.** Ray, on the
+      deposit drawer: *"See the 2 foresters +0.60 wood. That looks strange there … I think that would
+      look more at home inside the button. We should make it the second line on the button."* The
+      mechanism and its three traps (the empty-`text` button under a painted face, the
+      `MOUSE_FILTER_IGNORE` sweep that keeps it pressable, and the re-mute the in-place patch owes) are
+      on `HudWidgets.build_stacked_action_button`. **A herd nobody works keeps its single line** and
+      grows no blank second one: a summary exists only where this faction holds a standing assignment.
+      The LAND's summary has since moved onto its door rows' trailing worker mark and hover, see "THE LAND
+      CARD'S ROWS ARE THE DOORS" below.
     - **EVERY BUTTON THE TILE CARD RENDERS DRAWS ITS LABEL AT `HudComposeVocab.TILE_ACTION_LABEL_FONT_SIZE`**
-      — the five `Assign … ▸` faces, `Road ▸` and `Move`. Ray: *"we are getting more buttons now …
-      make the font for the `Assign …` label smaller, let's try 25% to see how it looks. Make that
-      change for all the buttons in the TILE panel."* It is 25% off Godot's stock theme size, which is
-      what these buttons drew at (`HudStyle.apply_button` writes styleboxes and colours and no font
-      size), and it is ONE const because it is being tuned. The second line has its own
-      (`TILE_ACTION_SUMMARY_FONT_SIZE`), smaller again, so retuning the label cannot leave the readout
-      competing with it. ⛔ **THAT ONE IS NOT THE SAME RATIO APPLIED TWICE** — the label's 25% lands
-      it at 9, and the Options pane's `ui_scale` floor of 0.75 draws a 9 at under 7px, so it is 10.
-      Ray specified the ratio for the LABEL; the readout under it is sized to stay readable.
+      — the herd's `Assign … ▸` face and `Move` (the land has no buttons). Ray: *"we are getting more
+      buttons now … make the font for the `Assign …` label smaller, let's try 25% to see how it
+      looks. Make that change for all the buttons in the TILE panel."* It is 25% off Godot's stock
+      theme size, which is what these buttons drew at (`HudStyle.apply_button` writes styleboxes and
+      colours and no font size), and it is ONE const because it is being tuned. The second line has its
+      own (`TILE_ACTION_SUMMARY_FONT_SIZE`), smaller again, so retuning the label cannot leave the
+      readout competing with it. ⛔ **THAT ONE IS NOT THE SAME RATIO APPLIED TWICE** — the label's 25%
+      lands it at 9, and the Options pane's `ui_scale` floor of 0.75 draws a 9 at under 7px, so it is
+      10. Ray specified the ratio for the LABEL; the readout under it is sized to stay readable.
+    - ⛔ **THE LAND CARD'S ROWS ARE THE DOORS** to the sheets that used to hang beneath it as a stack of
+      foot buttons (`Assign harvesters ▸`, `Assign foresters ▸` / `Assign diggers ▸`, `Road ▸`, the
+      tile branches' step and crew buttons). The rows of `%TileDetail`'s table that name a source ARE
+      the controls, and every sheet they open (`open_forage_compose`, `open_deposit_compose`,
+      `open_tile_compose`, `_open_road_ladder`) is unchanged:
+
+      | row | opens | is a door exactly when |
+      |---|---|---|
+      | `Foraging` | the forage sheet | `_forage_compose_available` |
+      | each deposit's material row | THAT working's deposit sheet | `_deposit_compose_available` |
+      | each `Road` row | the ladder card for that road's index | the road exists |
+      | `Ancestors` / the branch row | the tile crew sheet | the branch is offered and `_tile_compose_available` |
+
+      The tile-sourced rows are driven off the catalog (`DrawerComposeController.tile_branch_models`,
+      `HudTileVocab.readout_row_key`): a branch whose site term is belief is stated by the dead's own
+      `Ancestors` row, any other branch gets a row keyed by its display name (`Food stores`) valued by
+      the rung the tile stands at. Nothing names a branch. Where a gate is false the row stays a plain
+      readout; the readouts (Height, Grazing, the basket, `Cultivation`, rivers, the blank-key payoff
+      rows) are never doors.
+      - **The markup**: each cell of a door row (key, value, and the mark column) is one
+        `[url=door:<kind>:<subject>]` (`HudDisclosureVocab.door_meta`; the engine has no nested metas, so
+        it REPLACES the `hover:` run on that row and `DetailFormat.Context.door_tooltips` hands the row's
+        `row_tooltips` sentence to the host), and the row ends in the **workers mark**, in its own third
+        column (below). Doors are
+        registered by LINE INDEX (`Context.door_metas`), never by row key, since keys repeat (`Road` x N).
+      - **The washes**: every cell of a hovered door wears `[cell bg=#…]` `HudStyle.DOOR_HOVER_WASH_HEX`
+        (a neutral faint `INK` tint), of the door whose sheet is open `DOOR_SELECTED_WASH_HEX` (`SIGNAL`,
+        this HUD's LIVE ink, the same family the compose-open button's `primary` wears while its sheet is
+        open); selected outranks hovered. `[cell bg=]` paints one continuous band across the row's cells, and the
+        table is still ONE `[table=` per run of rows. **`[cell expand=N]` was measured in Godot 4.7.2 and
+        does NOT widen a table** (it only squeezes the other column), so the band is made to span the label
+        by padding: only each table's WIDEST marked value is padded with non-breaking spaces, up to the
+        label's inner width less the mark column, and every other row rides the column it sets
+        (`Context.fill_width`; `DetailFormat._fill_door_values`; see "THE MARK IS A THIRD COLUMN" below).
+        The host re-renders on the label's `resized`.
+      - **Dispatch and state live in `SubjectDrawerController`** (`meta_clicked` → `open_door`, which
+        re-resolves the live tile / working at press time and never captures a dict). **Hover
+        re-renders only when the hovered door CHANGES**; a hover-ended defers its clear one frame so an
+        ended -> started pair for one meta costs nothing, and an ended the label fires during our own
+        `.text` write is ignored. **The selected wash follows the OPEN SHEET, never a click memo**:
+        `DrawerComposeController.open_door_meta` reads the compose sheet's `ComposeState` kind +
+        subject (or the road card's open state + index), and `door_selection_changed` fires from
+        `refresh_drawer_actions` / the road card's `popup_hide` only when that answer moved.
+      - **THE WORKERS MARK IS THE DOOR'S TRAILING GLYPH, AND THE ONLY ONE.** Every door row ends in the
+        `workers` figure (`HudSprites`, `assets/icons/hud/workers.png`) as an inline
+        `[img=16x16 color=#RRGGBBAA]` (`DetailFormat.door_mark`, sizes and format in `HudDisclosureVocab.DOOR_MARK_*`).
+        A crewed door wears the figure in `INK`, then the count in `INK` (joined to the figure by a non-breaking space
+        so it cannot wrap away), then ` ⚠` in `WARN` where the standing summary warns; an uncrewed door wears the
+        figure alone in `INK_DIM` (the dim figure is the *nobody is on this* read, and replaced the deposit rows' stated
+        `⚒0`; `INK_FAINT` was tried first and the owner's complaint was that the glyph was not obvious). A readout
+        row wears no mark, **except one that states a crew above zero** (a refused tile branch with a crew standing
+        on it): full-`INK` figure and count, outside any url, so no fact is dropped. The crew rides
+        `Context.door_crews` (`{line index: {crew, warn}}`), filled by the producer beside `door_metas`; it is never
+        appended to the value text, so the Work tab's roster value (`deposit_row_value`) is unchanged. A door's
+        mark is inside its `[url]` run, so it is part of the clickable row.
+      - **THE MARK IS A THIRD COLUMN, SO EVERY FIGURE SITS ON ONE x.** The land card renders as `[table=3]`
+        (key | value | mark) whenever `Context.fill_width` is set. The mark cell holds the figure, then the count, then a
+        no-break filler topping every row's count up to the card's WIDEST (`FILL_COUNT_TOKEN`), so the column is one
+        width and the figures share its left edge whatever each count: measured 0px apart within a table, and an
+        uncrewed figure lines up with a crewed one. The wash spans all three cells. **Only the WIDEST marked value of
+        each table is padded** (`_fill_door_values`, to the label's inner width less the mark column and
+        `FILL_SAFETY_MARGIN`); every other value rides the column the widest sets, so a padding error cannot
+        misalign a row. Widths are measured the way the label draws them (`_rendered_width`: each glyph's advance
+        rounded to device pixels at `Context.fill_scale`, the canvas stretch the host reads off the label) because
+        `get_string_size` alone is a pixel short per glyph and spread the figures 7px; the pad's remainder is filled with
+        NBSPs at `DOOR_FINE_PAD_FONT_SIZE` (fractions of a pixel, no-break). **Across two tables the figures can still
+        differ by ~2px** (each table's widest value is measured separately). A value too long for its row wraps in
+        the value column and the figure stays in the mark column.
+      - **THE STANDING SUMMARY IS THE ROW'S**: the crew on that mark (every player band summed,
+        pending-aware; the deposit rows' `HudDepositVocab.crew_mark`), the `⚠` of an over-take beside it, and on the row's HOVER
+        the summary's text line, its `note`, its `muted_note` and its tooltip, in that order, after any
+        sentence the row already registers. They come from the same `_standing_summary_model` call the
+        retired button made. A tile branch the site term refuses stays a readout whose hover is the
+        refusal (`HudTileVocab.refusal_hover`: the short reason, then the long one).
+      - **THE TILE BRANCH STEP CARD** (Monument / Storage pit) is reached row → crew sheet → the sheet's work-strip
+        ladder chip (`DrawerComposeController._mount_tile_strip`), the same chip the Work tab's tile row wears
+        (`BandPanelController.tile_strip_row`, `RungCardController.open_tile_track`).
     - **The builders were NOT reparented — they were PARAMETERISED.** `_build_forage_assign_controls(
       tile_info, target)` / `_build_herd_assign_controls(herd, target)` take an explicit target
       container, because reparenting a `%Name` node silently clears `unique_name_in_owner` and breaks
@@ -487,17 +560,17 @@ panel band's crew and add its bill.
 **A WORKING'S ROWS NOW READ THE SAME WAY** (issue #650). Ray asked for the tile to say a deposit was
 being worked *"the same [as] we do for forage sites"*, and the mechanism he meant is this pair;
 `SubjectDrawerController._cutters_on_working` is `_forage_workers_on_tile` for a `(tile, material)`
-working, and `HudDepositVocab.crew_clause` is the count and the mark. It rides the per-MATERIAL
+working, and `HudDepositVocab.crew_mark` hands that count to the row's mark. It rides the per-MATERIAL
 detail row rather than this roster row, because a hex carries up to two workings and a roster row has
 exactly one meta and one mark — collapsing a wood crew and a stone crew into one is the very
 distinction the `material` field exists to make. Full spec in `extraction-workings.md` → "THE CREW
 CLAUSE IS THE TILE'S ONLY ACTIVITY INDICATION".
 
-⛔ **THE WORKING'S MARK IS `HudSelectionVocab.SOURCE_CREW_MARK` (`⚒`), A TEXT GLYPH RATHER THAN ART.**
-It lives beside the activity marks because the map's source badge reads the same const
-(`overlay-channels.md`), so one hex cannot say `⚒4` under its marker and nothing on its card. It is
-not an `ACTIVITY_MARKS` entry: those are drawn textures for a roster row's own trailing node, and a
-`Key: value` detail line is BBCode text with no node to swap.
+⛔ **ON THE CARD THE WORKING'S MARK IS THE `workers` FIGURE, NOT THE `⚒` GLYPH.** The row is a door, and
+every door ends in the workers mark (see "THE LAND CARD'S ROWS ARE THE DOORS"), drawn as an inline
+`[img]` in the table's third column, since a `Key: value` detail line has no node to swap. The map's
+source badge keeps `HudSelectionVocab.SOURCE_CREW_MARK` (`⚒`, `overlay-channels.md`); the two state
+the same count, so one hex cannot say `⚒4` under its marker and a different number on its card.
 
 **THE PATCH PATH OWES THE SAME NODE SWAP, and a row crosses the line by doing its job.**
 `_set_row_activity_mark` is `_set_row_icon`'s twin: the mark is a `TextureRect` while a band forages

@@ -104,7 +104,7 @@ const KIND_CREW_HANDOFF := "crew_handoff"
 const KIND_KNOWLEDGE_LEARNED := "knowledge_learned"
 # Two bands met (issue #698). A NOTICE that LOCATES: it jumps to the band met, when that band
 # resolves. Its mark is the `gathering` campfire sprite (the shared fire two bands now sit at), NOT the `workers`
-# palm, which says "work"; the text glyph `⇄` (two sides meeting) is the fallback if the art fails.
+# figure digging, which says "work"; the text glyph `⇄` (two sides meeting) is the fallback if the art fails.
 const KIND_GATHERING := "gathering_held"
 # The turn-one outfitting window, still holding an unspent budget (issue #629). Non-locating — it
 # opens the picker, not a hex — and it wears the same pennant the reopen pill does, which is line
@@ -150,10 +150,11 @@ const KIND_ICON_FALLBACK := "●"
 ## a widening of `KIND_ICON`: `_kind_icon` answers in Strings and is asked by callers that want a
 ## glyph, so folding a texture lookup into it would change that contract for one kind's sake.
 ## **`workers` IS ONE FILE FOR TWO KINDS, and `KIND_ICON` already said why**: both rows spell
-## themselves 🛠 because both are about the HANDS — one says nobody is using them, the other says
-## they have moved to another job. The art follows that rather than the emoji, which drew a
+## themselves 🛠 because both are about people at WORK — one says nobody is putting them to work, the
+## other says they have moved to another job. The art follows that rather than the emoji, which drew a
 ## hammer-and-wrench: two crossed pieces, anachronistic for a forager tribe, and colliding with the
-## crafting `⚒`. An open palm is one mass and says *hands* directly (issue #249).
+## crafting `⚒`. The art is a figure digging with a stick, the road-works sign a player reads as
+## labour (it replaced an open palm, which read as *stop*; `icon_prompts.txt` → `workers.png`).
 const KIND_ICON_SPRITE := {
 	KIND_KNOWLEDGE_LEARNED: HudKnowledgeVocab.LAUNCH_MARK,
 	KIND_IDLE_WORKERS: "workers",

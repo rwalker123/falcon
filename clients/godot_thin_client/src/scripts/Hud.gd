@@ -281,22 +281,11 @@ var _server_build: String = "?"
 # row runs straight on from the last wildlife row and the two blocks read as one list.
 @onready var subject_divider: Panel = %SubjectDivider
 # Early-Game Labor allocation UI (slice 3b), all runtime-populated containers:
-# the band's allocation panel (Working/Idle + assignment rows + Scout/Warrior + Move/Clear),
-# the herd "assign hunters" controls, and the tile "assign foragers" controls.
+# the band's allocation panel (Working/Idle + assignment rows + Scout/Warrior + Move/Clear) and the
+# herd "assign hunters" controls. (The LAND drawer has no container of its own: its sheets open from
+# the door rows of `%TileDetail`.)
 @onready var allocation_panel: VBoxContainer = %AllocationPanel
 @onready var herd_assign_controls: VBoxContainer = %HerdAssignControls
-@onready var forage_assign_controls: VBoxContainer = %ForageAssignControls
-## The LAND drawer's ROAD action, at the BOTTOM of the selection card with the other verbs (arc #532
-## slice 13). Its own container rather than a row inside `%ForageAssignControls`, which is gated on
-## the tile being a gathering site with a band in hand — a road crosses ground that is neither.
-@onready var road_ladder_controls: VBoxContainer = %RoadLadderControls
-## …and the LAND drawer's WORKINGS action (arc #583), beside it and for the same reason: a deposit is
-## a tile-keyed source reached by a tile-first pick, and the ground it stands on need be neither a
-## gathering site nor a hex with a band in hand.
-@onready var forestry_assign_controls: VBoxContainer = %ForestryAssignControls
-@onready var extraction_assign_controls: VBoxContainer = %ExtractionAssignControls
-## …and the tile-sourced branches' rows (belief's monument, food stores' pit, ...), one per catalog branch.
-@onready var tile_branch_controls: VBoxContainer = %TileBranchControls
 @onready var left_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack
 @onready var right_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack
 @onready var right_dock_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll
@@ -682,11 +671,8 @@ func _ready() -> void:
     _rungcard = RungCardController.new(_band_labor, _topbar, self)
     _drawercompose = DrawerComposeController.new(
         _compose, _band_labor, _selection, _topbar, _selectioncard, self,
-        herd_assign_controls, forage_assign_controls, road_ladder_controls,
-        forestry_assign_controls, extraction_assign_controls,
-        tile_panel,
+        herd_assign_controls, tile_panel,
         _resolve_assign_band, _herd_label_for_id, _emit_assign_labor)
-    _drawercompose.set_tile_branch_controls(tile_branch_controls)
     # A priority mark / `Stop working here` from a source sheet go straight out (#871): live on the
     # allocation, so no overlay of their own. A stop does drop the source's pending assign first.
     _drawercompose.work_priority_requested.connect(
@@ -912,8 +898,7 @@ func _ready() -> void:
     # if reparented), and the targeting controller whose `begin_move_band` its expedition Move connects to.
     _drawer = SubjectDrawerController.new(
         _selection, _band_labor, _selectioncard, _drawercompose, _bandpanel, _banddetail, self,
-        tile_detail, occupant_detail, allocation_panel, herd_assign_controls, forage_assign_controls,
-        road_ladder_controls, forestry_assign_controls, extraction_assign_controls,
+        tile_detail, occupant_detail, allocation_panel, herd_assign_controls,
         subject_body, subject_scroll, left_dock_scroll, _targeting, _topbar)
     # The pending band verb's sheet lives in THIS drawer, so the panel controller — which owns the
     # sheet's builders and re-renders on every edit to it — is handed the drawer's redraw.
@@ -1127,7 +1112,7 @@ func update_ladder_branches(branches_variant: Variant) -> void:
 ## A thin delegator for `update_ladder_knowledge`'s reason: `Main` reaches it BY NAME through
 ## `_hud_invoke`, whose `has_method` probe fails silently.
 ##
-## **IT PUSHES NO RE-RENDER.** The catalog is read at the moment the tile card's `Road ▸` action is
+## **IT PUSHES NO RE-RENDER.** The catalog is read at the moment the tile card's Road row is
 ## PRESSED, not at render, so a snapshot carrying it moves nothing on screen — and a world's catalog
 ## lands long before any road exists to open a ladder on.
 func update_route_rungs(catalog_variant: Variant) -> void:
@@ -2317,16 +2302,6 @@ func _hide_selection_card() -> void:
     _hide_drawer_blocks()
 
 func _hide_drawer_blocks() -> void:
-    if forage_assign_controls != null:
-        forage_assign_controls.visible = false
-    if road_ladder_controls != null:
-        road_ladder_controls.visible = false
-    if forestry_assign_controls != null:
-        forestry_assign_controls.visible = false
-    if extraction_assign_controls != null:
-        extraction_assign_controls.visible = false
-    if tile_branch_controls != null:
-        tile_branch_controls.visible = false
     if allocation_panel != null:
         allocation_panel.visible = false
     if herd_assign_controls != null:

@@ -156,6 +156,7 @@ const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 const KnowledgeFx := preload("res://tools/ui_preview/fixtures_knowledge.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
+const DoorQ := preload("res://tools/ui_preview/door_query.gd")
 
 
 const HUD_SCENE := preload("res://src/ui/HudLayer.tscn")
@@ -787,22 +788,10 @@ func _compose_herd(herd: Dictionary, count: int = Spine.COMPOSE_COUNT_UNSET,
 	_hud._drawercompose.open_herd_compose(herd)
 
 
-## The LAND drawer's `Assign … ▸` button. Found STRUCTURALLY — `%ForageAssignControls` holds at most a
-## standing-summary `HFlowContainer` and this one Button (`build_forage_drawer_actions`) — for the same
-## reason the identity finders in `node_query.gd` exist: its face carries the crew noun under test.
-## ⛔ **THE HOST'S CHILD IS THE STACKED CELL, NOT THE BUTTON.** The `Assign … ▸` control is a
-## `MarginContainer` holding an empty-`text` `Button` under its two-line face
-## (`HudWidgets.build_stacked_action_button`), so a walk over the host's DIRECT children finds no
-## Button at all and every caller reads `null` — which is a claim about a control that is there.
-func _forage_open_button() -> Button:
-	for child in _hud.forage_assign_controls.get_children():
-		if child is Button:
-			return child as Button
-		if child is Control:
-			var nested := Q.stacked_action_button(child as Control)
-			if nested != null:
-				return nested
-	return null
+## The LAND card's Foraging DOOR (the row that opens the forage sheet), found through the rendered
+## markup of `%TileDetail` -- `""` where the row is no door. See `ui_preview/door_query.gd`.
+func _forage_door_meta() -> String:
+	return DoorQ.meta_for(_hud, HudFloraVocab.FORAGING_KEY)
 
 
 ## **A RUNNING BUILD CANNOT BE WITHDRAWN FROM THE SHEET, AND `unqueue` IS THE GRAMMAR THAT COULD**

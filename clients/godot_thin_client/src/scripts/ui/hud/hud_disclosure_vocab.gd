@@ -100,6 +100,48 @@ const DETAIL_ROW_UPKEEP := "Upkeep"
 ## that is not its own, so a click on a hover run does nothing.
 const ROW_HOVER_META_PREFIX := "hover:"
 
+## The `[url]` meta prefix of a tile-card DOOR row (the land drawer's rows that open a sheet):
+## `door:<kind>:<subject>`. It replaces the `hover:` run on that row (the engine has no nested metas), so
+## `SubjectDrawerController` answers BOTH its click (open the sheet) and its hover (the row's sentence).
+## The payload is unique per door: kind + subject key (+ the road's index), never the bare row key, which
+## repeats (`Road` x N).
+const DOOR_META_PREFIX := "door:"
+const DOOR_KIND_FORAGE := "forage"
+const DOOR_KIND_DEPOSIT := "deposit"
+const DOOR_KIND_ROAD := "road"
+const DOOR_KIND_TILE := "tile"
+const DOOR_PAYLOAD_SEPARATOR := ":"
+
+## The trailing mark a door row's value ends in, marking the row as something that opens: the worker figure
+## (`HudSprites` mark `workers`) boxed square at the label's text height, then the crew count where a crew
+## is on the source. `[img=WxH color=#RRGGBBAA]path[/img]`; the engine's default inline alignment centres
+## it on the text line.
+const DOOR_MARK_ICON_ID := "workers"
+const DOOR_MARK_ICON_PX := 16
+const DOOR_MARK_IMG_FORMAT := "[img=%dx%d color=#%s]%s[/img]"
+const DOOR_MARK_OPAQUE_ALPHA_HEX := "ff"
+## The count beside a crewed figure; the leading NON-BREAKING space is the gap between the two and keeps the
+## count on the figure's line (a plain space let `2` wrap away from the figure it counts).
+const DOOR_MARK_COUNT_FORMAT := "\u00a0%d"
+const DOOR_MARK_NBSP := "\u00a0"
+## The pad's remainder (under one NBSP) is filled with NBSPs at this font size, which are a fraction of a pixel
+## wide each: every no-break, so the tail never splits, and the figures land within about a pixel of one x.
+const DOOR_FINE_PAD_FONT_SIZE := 3
+
+## A door meta from its kind and subject.
+static func door_meta(kind: String, subject: String) -> String:
+	return DOOR_META_PREFIX + kind + DOOR_PAYLOAD_SEPARATOR + subject
+
+## Split a door meta into [kind, subject]; [] for any other meta.
+static func parse_door_meta(meta: String) -> Array:
+	if not meta.begins_with(DOOR_META_PREFIX):
+		return []
+	var body := meta.substr(DOOR_META_PREFIX.length())
+	var at := body.find(DOOR_PAYLOAD_SEPARATOR)
+	if at <= 0:
+		return []
+	return [body.substr(0, at), body.substr(at + DOOR_PAYLOAD_SEPARATOR.length())]
+
 # ---- THE BREAK-AWAY WARNING on the Beliefs row (#702). The cohort key is the sim's own verdict
 # (`culture_break_away_risk`: past the soft divergence limit for the trigger ticks, purist, with a
 # sibling band in its people), never derived here. The clause rides the Beliefs row's value in the

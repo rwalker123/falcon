@@ -973,7 +973,7 @@ a real zone belonging to a floor it never chose. What a finite working's warning
 RUNWAY, which the tile card and the roster state and a hex-sized pill has never had room for.
 
 **The same fork reaches the drawer's standing summary** (`DrawerComposeController._standing_summary_model`
-takes the `deposits` row on its `extract` calls), so `Assign diggers ▸`'s second line and the working's
+takes the `deposits` row on its `extract` calls), so the Stone row's hover on the tile card and the working's
 row in `BandSourceList` cannot answer differently about one working. An `extract` row arriving without a row answers the finite
 reading, which is the safe way round: the failure being forbidden is a quarry claiming `♻`.
 
@@ -1124,7 +1124,7 @@ Each mark docks to the ring of the source's OWN secondary marker, via the slot
     `rung_in_progress` / `next_rung_ready` answer for the FOOD webs and return nothing for an
     `extract` kind, and a working's ladder is declared from the Work board, so the plate states the
     crew (`⚒N`) and stops. It is the same plate a worked patch or a hunted herd wears, which is what
-    makes the map mark and the tile card's `crew_clause` one spelling of one idea.
+    makes the map mark and the tile card's trailing worker figure count one number.
   - **It is the map-side twin of `SubjectDrawerController._cutters_on_working`, and it is local on
     purpose.** That helper sums the same `(tile, material)` crew across every player band but reaches
     it through `HudBandLaborState`; a renderer must not depend on the HUD's band-labor model (the

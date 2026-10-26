@@ -704,7 +704,7 @@ const PLANT_NOOP_HINTS := {
     HARVEST_CREW_LABEL: "Nobody assigned yet — send at least one harvester.",
 }
 
-# `Assign harvesters ▸` / `Assign hunters ▸` / `Assign herders ▸` — the noun is the same one the
+# The herd's `Assign hunters ▸` / `Assign herders ▸` button and the sheets' `Assign harvesters` eyebrow — the noun is the same one the
 # sheet's stepper uses, so the drawer and the sheet can never disagree about who is being staffed.
 const COMPOSE_OPEN_BUTTON_FORMAT := "Assign %s ▸"
 
@@ -750,8 +750,8 @@ const MOVE_CAMP_BOX_META := &"compose_move_camp_box"
 #
 # **25% OFF GODOT'S OWN DEFAULT.** `HudStyle.apply_button` writes styleboxes and colours and NO font
 # size, so a tile button has always drawn at the stock theme size (16); 12 is that less a quarter.
-# The five `Assign … ▸` faces, `Road ▸` and `Move` all read it — the road and move builders directly,
-# the assign ones through `HudWidgets.build_stacked_action_button`'s first line.
+# The herd's `Assign … ▸` face and `Move` both read it — the move builder directly,
+# the assign one through `HudWidgets.build_stacked_action_button`'s first line.
 const TILE_ACTION_LABEL_FONT_SIZE := 12
 
 # …and the standing summary UNDER that label, which must stay the quieter of the two. It is its own

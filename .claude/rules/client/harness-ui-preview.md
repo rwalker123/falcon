@@ -3239,21 +3239,20 @@ opens on `woodcutting` rather than the job's `none`. The far wood authors a curv
 sheet's `DEPOSIT_TAKE_AT_SOURCE_META` line must read the curve row's take at the stepper's crew by
 equality — *Cut at the working: 2.35 wood a turn*.
 
-### ⛔ AND `workings_worked_buttons` IS THE PAIR THE STACKED BUTTON IS JUDGED ON
+### ⛔ AND `workings_worked_buttons` IS THE WORKED/UNWORKED PAIR ON THE LAND CARD
 
-Appended after the two ORDER frames. The standing summary is the `Assign … ▸` control's own SECOND
-LINE now (`selection-card.md`), and this is the one state in the corpus that stages a WORKED deposit —
-Ray's own card, two foresters on the wood — so it is where that face can be read at all.
+Appended after the two ORDER frames. The land's foot buttons are retired; a working's standing crew
+now rides its DOOR ROW (`selection-card.md` → "THE LAND CARD'S ROWS ARE THE DOORS"), and this is the one
+state in the corpus that stages a WORKED deposit — Ray's own card, two foresters on the wood — so it is
+where that row can be read at all. The frame keeps its button-era name.
 
 - **THE PAIR IS ON ONE HEX, which is what makes it a claim rather than a sample**: the band works the
-  wood and not the rock, so `Assign foresters ▸` carries a second line and `Assign diggers ▸` carries
-  none. A control that grew a blank second line on every source satisfies the presence half on its
-  own, and the blank gap is exactly what the single-line rule forbids.
-- **THE LABEL IS ASSERTED ON THE FIRST LINE**, which is what says the summary JOINED the control
-  rather than replacing its face.
-- ⛔ **AND THE FACE IS ASSERTED INERT, because no picture can show a swallowed click.** Every control
-  in a stacked face is `MOUSE_FILTER_IGNORE`; the summary's note labels have been through
-  `set_label_tooltip`, which sets **STOP**, so each would be a dead patch over the button.
+  wood and not the rock, so the Wood row wears the full-ink workers figure and its count while the
+  Stone row wears the dim figure alone. A mark that stated a count on every row satisfies the presence
+  half on its own.
+- **BOTH ROWS ARE STILL DOORS**: a crew of zero changes the mark, never whether the row opens its sheet.
+
+The stacked-button machinery below survives for the HERD's `Assign … ▸` cell, which is still a button.
 
 **THE HARNESS SIDE OF THE MOVE IS FOUR REPOINTINGS, NOT FOUR DELETIONS.** Every claim survived; what
 changed is where it is read from. `Q.find_button_by_text` matches a stacked cell on its first line
@@ -3920,3 +3919,26 @@ per branch, and the dry-store stall as an amber aside on a still-open rung.
 (`route:paved_road`), so the press helper filters rung rows by `<branch>:` — pressing "the first enabled
 button" fires the road's. ⛔ **The map's belief lookup is pushed by hand** (`update_tile_beliefs`): the
 chapter has no `MapView`, and a Work-tab row has no `tile_info`, so without it the site gate reads zero.
+
+
+## The tile card's DOOR rows are asserted through `ui_preview/door_query.gd`
+
+`DoorQ` (an all-`static` helper, preloaded by the chapters that need it) reads the markup `%TileDetail`
+actually holds: `meta_for(hud, row_key, nth)` finds the door meta wrapping a row's key cell (`nth` for a
+repeated key such as two `Road` rows), `press` emits the label's own `meta_clicked` with that meta,
+`hover_text` drives `meta_hover_started` / `ended` and reads the tooltip, `washed(hud, wash_hex)` lists
+the doors wearing a given `[cell bg=` wash, and `all_metas` counts the doors on the card. **A claim made
+through it is about what is drawn and what a click does, never about the producer's own registry.**
+
+- `chapters/tile_branches.gd`: the Ancestors / `Food stores` doors (no door before the lesson, a readout
+  with the refusal on its hover, the exact crew line emitted after opening the sheet through the row),
+  the hover wash, the ended -> started churn guard (zero markup writes), the selected wash and its removal
+  on close, and the absence of the retired foot containers.
+- `chapters/workings.gd` (`_assert_every_door_opens_its_sheet`): Foraging, Wood, Stone and two `Road`
+  rows each open THEIR sheet / card (`ComposeState` kind + subject, the road card's index), readout rows
+  carry no door meta and open nothing, and the card holds exactly five doors.
+- `chapters/tile_panel.gd` (`tile_panel_standing`): the standing summary's facts on the Foraging row —
+  the trailing worker figure with the `4` and the `⚠` in WARN ink, and the hover's text, note and tooltip. The door marks are read off the rendered row through `door_query.gd`'s `row_markup` / `mark_text` / `mark_tint` / `mark_in_column` / `assert_marks` (one workers image per door plus one per readout that states a crew, none on any other readout, the image in the third column), asserted in `tile_branches`, `tile_panel` and `workings`.
+
+Sabotaged: an `open_door` arm that does nothing fails the Wood / Stone claims; a silenced
+`door_selection_changed` fails every selected-wash claim.

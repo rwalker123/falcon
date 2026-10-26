@@ -216,12 +216,6 @@ fit_content = true
 scroll_active = false
 autowrap_mode = 2
 
-[node name="ForageAssignControls" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent/SubjectScroll/SubjectBody"]
-unique_name_in_owner = true
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-visible = false
-
 [node name="OccupantDetail" type="RichTextLabel" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent/SubjectScroll/SubjectBody"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
@@ -237,30 +231,6 @@ theme_override_constants/separation = 6
 visible = false
 
 [node name="HerdAssignControls" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent/SubjectScroll/SubjectBody"]
-unique_name_in_owner = true
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-visible = false
-
-[node name="ForestryAssignControls" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent/SubjectScroll/SubjectBody"]
-unique_name_in_owner = true
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-visible = false
-
-[node name="ExtractionAssignControls" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent/SubjectScroll/SubjectBody"]
-unique_name_in_owner = true
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-visible = false
-
-[node name="TileBranchControls" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent/SubjectScroll/SubjectBody"]
-unique_name_in_owner = true
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-visible = false
-
-[node name="RoadLadderControls" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent/SubjectScroll/SubjectBody"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
 theme_override_constants/separation = 6

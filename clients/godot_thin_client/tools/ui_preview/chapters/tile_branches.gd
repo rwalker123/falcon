@@ -18,6 +18,8 @@ extends RefCounted
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
+const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
+const DoorQ := preload("res://tools/ui_preview/door_query.gd")
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 
 ## The checkpoints this chapter owes the walk (a FLOOR; see `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS`).
@@ -39,6 +41,8 @@ const STORAGE_LABEL := "Storage"
 const MIN_BELIEF := 1.0
 const BELIEF_PRESENT := 3.0
 const BELIEF_NONE := 0.0
+## Some dead, but short of the catalog's minimum.
+const BELIEF_FEW := 0.5
 
 ## The crew the step card is asked at: nobody, and two hands.
 const CREW_NONE := 0
@@ -123,26 +127,33 @@ func _collect_meta(root: Node, meta: String, out: Array[Control] = []) -> Array[
 		_collect_meta(child, meta, out)
 	return out
 
-func _step_button(branch: String) -> Button:
-	for control in _collect_meta(h._hud.tile_branch_controls, HudTileVocab.STEP_META):
-		if String(control.get_meta(HudTileVocab.STEP_META)).ends_with(":" + branch):
-			return control as Button
-	return null
+## The card row that states a branch, off the CATALOG exactly as the producer reads it (the dead's own
+## `Ancestors` row for the belief site term, the branch's display name for the other).
+func _row_key(branch: String) -> String:
+	var ladder := HudTileVocab.tile_ladder(_catalog())
+	return HudTileVocab.readout_row_key(HudTileVocab.first_buildable(ladder, branch),
+		h._hud._topbar.ladder_branches())
 
-func _crew_button(branch: String) -> Button:
-	for control in _collect_meta(h._hud.tile_branch_controls, HudTileVocab.CREW_META):
-		if String(control.get_meta(HudTileVocab.CREW_META)).ends_with(":" + branch):
-			return control as Button
-	return null
+## Is the branch's row on the card at all (door or readout)?
+func _row_present(branch: String) -> bool:
+	return String(h._hud.tile_detail.text).contains("[color=#%s]%s[/color]" % [
+		HudStyle.INK_DIM_HEX, _row_key(branch)])
 
+func _is_door(branch: String) -> bool:
+	return DoorQ.is_door(h._hud, _row_key(branch))
+
+func _press_door(branch: String) -> bool:
+	return DoorQ.press(h._hud, _row_key(branch))
+
+## The row's hover (what the greyed amber reason line used to say).
 func _reason_text(branch: String) -> String:
-	for control in _collect_meta(h._hud.tile_branch_controls, HudTileVocab.REASON_META):
-		if String(control.get_meta(HudTileVocab.REASON_META)).ends_with(":" + branch):
-			return (control as Label).text
-	return ""
+	var meta := DoorQ.meta_for(h._hud, _row_key(branch))
+	if meta != "":
+		return DoorQ.hover_text(h._hud, _row_key(branch))
+	return String(h._hud._drawer._land_ctx.row_tooltips.get(_row_key(branch), ""))
 
-func _row_count() -> int:
-	return _collect_meta(h._hud.tile_branch_controls, HudTileVocab.ROW_META).size()
+func _door_count() -> int:
+	return DoorQ.all_metas(h._hud).size()
 
 func _sheet() -> Node:
 	return h._hud._drawercompose._compose_sheet
@@ -153,13 +164,12 @@ func _close_sheet() -> void:
 ## Open the crew sheet from the tile card's own button, set the stepper to `plus_presses` more than the
 ## seeded crew and commit; returns the command line the real builder makes of the emitted payload.
 func _commit_crew(branch: String, plus_presses: int) -> String:
-	var button := _crew_button(branch)
-	if button == null:
-		return "<no crew button>"
+	if not _is_door(branch):
+		return "<no crew door>"
 	var sent: Array = []
 	var sink := func(payload: Dictionary) -> void: sent.append(payload)
 	h._hud.assign_labor_requested.connect(sink)
-	button.pressed.emit()
+	_press_door(branch)
 	await h._settle()
 	for _i in range(plus_presses):
 		var row := Q.find_meta_node(_sheet(), HudTileVocab.CREW_ROW_META)
@@ -181,7 +191,7 @@ func _press_step(branch: String) -> String:
 	var sent: Array = []
 	var sink := func(payload: Dictionary) -> void: sent.append(payload)
 	h._hud.improvement_requested.connect(sink)
-	_step_button(branch).pressed.emit()
+	_open_step_card(branch)
 	await h._settle()
 	var pressed := false
 	for control in _collect_meta(h._hud, HudWorkVocab.RUNG_TRACK_RUNG_META):
@@ -197,6 +207,12 @@ func _press_step(branch: String) -> String:
 	if sent.is_empty():
 		return "<nothing emitted>"
 	return String((MAIN_SCRIPT.format_improvement(sent[0], h._hud.ladder_rungs()) as Dictionary).get("line", ""))
+
+## The step card (Monument / Storage pit) opens from the Work tab's tile row chip -- the same
+## `RungCardController.open_tile_track` that chip calls -- not from the tile card.
+func _open_step_card(branch: String) -> void:
+	h._hud._rungcard.open_tile_track(_band(CREW_TWO, CREW_TWO), _tile(BELIEF_PRESENT), branch, CREW_TWO,
+		h._hud.tile_detail)
 
 func _site(branch: String, row: Dictionary = {}) -> Dictionary:
 	var ladder := HudTileVocab.tile_ladder(_catalog())
@@ -226,66 +242,99 @@ func run(harness) -> void:
 	h._hud.update_ladder_knowledge(_knowledge_roster())
 	var band := _band(CREW_NONE, CREW_NONE)
 
-	# ---- THE TILE CARD ROW ------------------------------------------------------------------------
-	# Before either lesson is known, and with no improvement standing, the card carries no tile-branch row.
+	# ---- THE TILE CARD ROWS ------------------------------------------------------------------------
+	# Before either lesson is known, and with no improvement standing, no tile-branch row is a door: the
+	# dead are a plain readout and the store has no row at all.
 	_stage(band, [], 0.0, 0.0)
 	h._show_tile(_tile(BELIEF_PRESENT))
 	await h._settle()
-	h._assert_hud("before the lessons, the tile card offers no tile-branch row at all",
-		_row_count() == 0 and not h._hud.tile_branch_controls.visible)
+	h._assert_hud("before the lessons, the Ancestors row is a plain readout and nothing on the card is a door",
+		_row_present(BELIEF_BRANCH) and not _is_door(BELIEF_BRANCH) and _door_count() == 0)
+	h._assert_hud("…and the store has no row at all",
+		not _row_present(STORES_BRANCH))
 	await h._save("tile_branches_hidden")
 
-	# Lessons known: BOTH branches offer a row, worded off the catalog (verb + the rung's own noun).
+	# Lessons known: BOTH branches' rows are doors, valued off the catalog (the rung the tile stands at).
 	_stage(band, [], 1.0, 1.0)
 	h._show_tile(_tile(BELIEF_PRESENT))
 	await h._settle()
-	h._assert_hud("with both lessons known the card carries one row per tile branch", _row_count() == 2)
-	h._assert_hud("…the monument row reads the catalog's verb and noun",
-		_step_button(BELIEF_BRANCH) != null
-			and _step_button(BELIEF_BRANCH).text == "Raise a monument ▸")
-	h._assert_hud("…the pit row reads the catalog's verb and noun",
-		_step_button(STORES_BRANCH) != null
-			and _step_button(STORES_BRANCH).text == "Dig a storage pit ▸")
-	h._assert_hud("…on ground that meets the site term neither row is greyed or explained",
-		not _step_button(BELIEF_BRANCH).disabled and _reason_text(BELIEF_BRANCH) == ""
-			and _crew_button(BELIEF_BRANCH) != null and _crew_button(STORES_BRANCH) != null)
+	h._assert_hud("with both lessons known the card carries one door per tile branch", _door_count() == 2)
+	h._assert_hud("…the dead's row is the belief branch's door",
+		_row_key(BELIEF_BRANCH) == DetailFormat.ANCESTORS_ROW and _is_door(BELIEF_BRANCH))
+	h._assert_hud("…the store row is keyed by the catalog's branch name and reads the standing rung",
+		_row_key(STORES_BRANCH) == "Food stores" and _is_door(STORES_BRANCH)
+			and String(h._hud.tile_detail.text).contains("No store"))
+	h._assert_hud("…the retired foot buttons are gone from the scene",
+		not _foot_stack_exists())
 	await h._save("tile_branches_rows")
 
-	# One lesson only: just that branch's row shows (the other is neither known nor held here).
+	# One lesson only: just that branch's row is a door; the other has no row (neither known nor held).
 	_stage(band, [], 1.0, 0.0)
 	h._show_tile(_tile(BELIEF_PRESENT))
 	await h._settle()
-	h._assert_hud("with only Ritual known, only the monument row shows",
-		_row_count() == 1 and _step_button(BELIEF_BRANCH) != null and _step_button(STORES_BRANCH) == null)
+	h._assert_hud("with only Ritual known, only the Ancestors row is a door and the store has no row",
+		_door_count() == 1 and _is_door(BELIEF_BRANCH) and not _row_present(STORES_BRANCH))
 	# …and an improvement already standing shows its row with no lesson at all (the held-here arm).
 	_stage(band, [_improvement_row(STORES_BRANCH, "food_stores:storage_pit")], 1.0, 0.0)
 	h._show_tile(_tile(BELIEF_PRESENT))
 	await h._settle()
-	h._assert_hud("a tile already holding a pit shows the pit row without the lesson",
-		_step_button(STORES_BRANCH) != null)
+	h._assert_hud("a tile already holding a pit shows the store row (a door) without the lesson, valued at the pit",
+		_is_door(STORES_BRANCH) and String(h._hud.tile_detail.text).contains("Storage pit"))
 
-	# The site term fails: the monument row stays, greyed, with the reason in plain words.
+	# The site term fails. A tile with no dead has no Ancestors row at all; one with too few keeps the
+	# row as a plain readout whose hover carries the reason the greyed amber line used to.
 	_stage(band, [], 1.0, 1.0)
 	h._show_tile(_tile(BELIEF_NONE))
 	await h._settle()
-	h._assert_hud("a tile with no dead keeps the monument row, greyed",
-		_step_button(BELIEF_BRANCH) != null and _step_button(BELIEF_BRANCH).disabled)
-	h._assert_hud("…and says why in plain words (%s)" % _reason_text(BELIEF_BRANCH),
-		_reason_text(BELIEF_BRANCH) == HudTileVocab.SITE_NO_BELIEF_SHORT)
-	h._assert_hud("…while the pit row on the same tile is untouched by the belief term",
-		not _step_button(STORES_BRANCH).disabled and _reason_text(STORES_BRANCH) == "")
-	h._assert_hud("…and a greyed row offers no crew button (the site term no crew closes)",
-		_crew_button(BELIEF_BRANCH) == null)
+	h._assert_hud("a tile with no dead has no Ancestors row at all", not _row_present(BELIEF_BRANCH))
+	h._assert_hud("…while the store row on the same tile is untouched by the belief term",
+		_is_door(STORES_BRANCH))
+	h._show_tile(_tile(BELIEF_FEW))
+	await h._settle()
+	h._assert_hud("a tile with too few dead keeps the Ancestors row as a plain readout, not a door",
+		_row_present(BELIEF_BRANCH) and not _is_door(BELIEF_BRANCH))
+	h._assert_hud("…and its hover says why in plain words (%s)" % _reason_text(BELIEF_BRANCH),
+		_reason_text(BELIEF_BRANCH).contains(HudTileVocab.SITE_FEW_BELIEF_SHORT)
+			and _reason_text(BELIEF_BRANCH).contains(HudTileVocab.SITE_BELIEF_HAVE_SOME))
+	h._assert_hud("…and pressing nothing opens no sheet (a readout row carries no door meta)",
+		not _press_door(BELIEF_BRANCH) and not h._hud.is_compose_sheet_open())
 	await h._save("tile_branches_site_greyed")
+	# ⛔ A refused branch is a readout, but a crew standing on it is still a stated fact: full-ink figure + count,
+	# outside any url. No sim state produces it (belief never decays and the site term is checked when a crew is
+	# put on), so the claim forces ONLY the model's crew on the REAL refused model and drives the real producer.
+	var refused: Dictionary = {}
+	for model in h._hud._drawercompose.tile_branch_models(h._hud._selection.tile_info()):
+		if String(model["branch"]) == BELIEF_BRANCH:
+			refused = model.duplicate()
+	var refused_ctx := DetailFormat.Context.new()
+	var refused_lines: Array[String] = []
+	refused["crew"] = CREW_TWO
+	h._hud._drawer._append_tile_row(refused_lines, refused_ctx, "%s: 1 dead" % DetailFormat.ANCESTORS_ROW, refused)
+	var refused_markup := DetailFormat.detail_bbcode(refused_lines, refused_ctx)
+	h._assert_hud("a refused (readout) branch with a crew states it: full-ink figure and the count, outside any url (%s)"
+			% refused_markup.substr(0, 40),
+		not refused["door"] and refused_ctx.door_metas.is_empty()
+			and refused_markup.count(HudSprites.SPRITE_PATHS["workers"]) == 1
+			and refused_markup.contains("color=#%sff" % HudStyle.INK_HEX)
+			and refused_markup.contains("\u00a0%d" % CREW_TWO)
+			and not refused_markup.contains("[url=door:"))
+	refused["crew"] = CREW_NONE
+	var bare_lines: Array[String] = []
+	var bare_ctx := DetailFormat.Context.new()
+	h._hud._drawer._append_tile_row(bare_lines, bare_ctx, "%s: 1 dead" % DetailFormat.ANCESTORS_ROW, refused)
+	h._assert_hud("…and a refused readout with no crew carries no mark",
+		DetailFormat.detail_bbcode(bare_lines, bare_ctx).count(HudSprites.SPRITE_PATHS["workers"]) == 0)
 
 	# ---- THE CREW SHEET ---------------------------------------------------------------------------
 	_stage(band, [], 1.0, 1.0)
 	h._show_tile(_tile(BELIEF_PRESENT))
 	await h._settle()
 	var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
-	_crew_button(BELIEF_BRANCH).pressed.emit()
+	_press_door(BELIEF_BRANCH)
 	await h._settle()
-	h._assert_hud("the crew button opens a compose sheet", h._hud.is_compose_sheet_open())
+	h._assert_hud("the Ancestors door opens the crew sheet on its branch",
+		h._hud.is_compose_sheet_open() and h._hud._compose.kind() == ComposeState.KIND_TILE
+			and h._hud._compose.subject() == "%d,%d:%s" % [TILE_X, TILE_Y, BELIEF_BRANCH])
 	await h._save("tile_branches_crew_sheet")
 	_close_sheet()
 	await h._settle()
@@ -343,9 +392,9 @@ func run(harness) -> void:
 	_stage(crewed, [], 1.0, 1.0)
 	h._show_tile(_tile(BELIEF_PRESENT))
 	await h._settle()
-	_step_button(BELIEF_BRANCH).pressed.emit()
+	_open_step_card(BELIEF_BRANCH)
 	await h._settle()
-	h._assert_hud("the step button opens the shared rung card",
+	h._assert_hud("the Work tab chip's call opens the shared rung card",
 		h._hud._rungcard.is_open())
 	await h._save("tile_branches_step_card")
 	h._hud._rungcard.dismiss()
@@ -361,7 +410,7 @@ func run(harness) -> void:
 	_stage(band, [], 1.0, 1.0)
 	h._show_tile(_tile(BELIEF_PRESENT))
 	await h._settle()
-	_step_button(BELIEF_BRANCH).pressed.emit()
+	_open_step_card(BELIEF_BRANCH)
 	await h._settle()
 	await h._save("tile_branches_step_card_no_crew")
 	h._hud._rungcard.dismiss()
@@ -384,6 +433,160 @@ func run(harness) -> void:
 	h._assert_hud("…and offers nothing on ground with no dead (the site term, read off the map's lookup)",
 		not bare_row.has("ready_glyph"))
 
+	await _door_state_claims()
+	await _crew_sheet_chip_claims()
+
 	# Leave the HUD as the next chapter found it.
 	_stage(_band(CREW_NONE, CREW_NONE), [], 0.0, 0.0)
 	h._hud.update_tile_improvements([])
+
+## Does any of the retired foot-stack containers or buttons exist? Looked for by node name and by meta,
+## anywhere under the HUD.
+func _foot_stack_exists() -> bool:
+	for name in ["ForageAssignControls", "ForestryAssignControls", "ExtractionAssignControls",
+			"TileBranchControls", "RoadLadderControls"]:
+		if h._hud.find_child(name, true, false) != null:
+			return true
+	return not _collect_meta(h._hud, HudRouteVocab.ROAD_LADDER_ACTION_META, []).is_empty()
+
+## The wash, hover and selected claims, on the Ancestors and store doors (the rows of this chapter's card).
+func _door_state_claims() -> void:
+	_stage(_band(CREW_NONE, CREW_NONE), [], 1.0, 1.0)
+	h._show_tile(_tile(BELIEF_PRESENT))
+	await h._settle()
+	var ancestors := _row_key(BELIEF_BRANCH)
+	var stores := _row_key(STORES_BRANCH)
+	var meta_a := DoorQ.meta_for(h._hud, ancestors)
+	var meta_s := DoorQ.meta_for(h._hud, stores)
+	var drawer = h._hud._drawer
+	# -- at rest: no wash anywhere
+	h._assert_hud("at rest no door row wears a wash",
+		DoorQ.washed(h._hud, HudStyle.DOOR_HOVER_WASH_HEX).is_empty()
+			and DoorQ.washed(h._hud, HudStyle.DOOR_SELECTED_WASH_HEX).is_empty())
+	DoorQ.assert_marks(h, "tile_branches", [ancestors, stores])
+	# -- hover: starts washes that row on BOTH cells and only that row; ended clears it
+	h._hud.tile_detail.meta_hover_started.emit(meta_a)
+	await h._settle()
+	h._assert_hud("hovering a door washes that row, both cells, with the hover wash (and keeps it a frame later)",
+		DoorQ.washed(h._hud, HudStyle.DOOR_HOVER_WASH_HEX) == [meta_a]
+			and DoorQ.cell_tags(h._hud, ancestors).size() == 2
+			and DoorQ.cell_tags(h._hud, ancestors)[0].contains("bg=#" + HudStyle.DOOR_HOVER_WASH_HEX)
+			and DoorQ.cell_tags(h._hud, ancestors)[1].contains("bg=#" + HudStyle.DOOR_HOVER_WASH_HEX))
+	h._assert_hud("…and the table is still ONE table",
+		String(h._hud.tile_detail.text).count("[table=") == 1)
+	await h._save("tile_branches_door_hovered")
+	h._hud.tile_detail.meta_hover_ended.emit(meta_a)
+	await h._settle()
+	h._assert_hud("ending the hover clears the wash",
+		DoorQ.washed(h._hud, HudStyle.DOOR_HOVER_WASH_HEX).is_empty())
+	# -- churn guard: ended -> started for ONE meta re-renders at most once
+	h._hud.tile_detail.meta_hover_started.emit(meta_a)
+	var before: int = drawer.land_markup_writes()
+	h._hud.tile_detail.meta_hover_ended.emit(meta_a)
+	h._hud.tile_detail.meta_hover_started.emit(meta_a)
+	await h._settle()
+	h._assert_hud("an ended -> started pair for the same door re-renders nothing (%d writes)" % (
+			drawer.land_markup_writes() - before),
+		drawer.land_markup_writes() - before == 0
+			and DoorQ.washed(h._hud, HudStyle.DOOR_HOVER_WASH_HEX) == [meta_a])
+	h._hud.tile_detail.meta_hover_ended.emit(meta_a)
+	await h._settle()
+	# -- selected: the open sheet washes its row, stronger, and only that row; closing takes it down
+	DoorQ.press(h._hud, ancestors)
+	await h._settle()
+	h._assert_hud("an open crew sheet washes its own row with the SELECTED wash and no other",
+		DoorQ.washed(h._hud, HudStyle.DOOR_SELECTED_WASH_HEX) == [meta_a])
+	h._hud.tile_detail.meta_hover_started.emit(meta_a)
+	h._assert_hud("selected + hovered shows selected",
+		DoorQ.washed(h._hud, HudStyle.DOOR_SELECTED_WASH_HEX) == [meta_a]
+			and DoorQ.washed(h._hud, HudStyle.DOOR_HOVER_WASH_HEX).is_empty())
+	await h._save("tile_branches_door_selected")
+	h._hud.tile_detail.meta_hover_ended.emit(meta_a)
+	h._hud.close_compose_sheet()
+	await h._settle()
+	h._assert_hud("closing the sheet takes the selected wash down",
+		DoorQ.washed(h._hud, HudStyle.DOOR_SELECTED_WASH_HEX).is_empty())
+	# -- the second door opens ITS sheet, not the first's
+	DoorQ.press(h._hud, stores)
+	await h._settle()
+	h._assert_hud("the store door opens the store's sheet and washes the store row",
+		h._hud._compose.kind() == ComposeState.KIND_TILE
+			and h._hud._compose.subject() == "%d,%d:%s" % [TILE_X, TILE_Y, STORES_BRANCH]
+			and DoorQ.washed(h._hud, HudStyle.DOOR_SELECTED_WASH_HEX) == [meta_s])
+	h._hud.close_compose_sheet()
+	await h._settle()
+	# -- standing facts: the crew rides the row, and the hover carries the refusal-free row sentence
+	_stage(_band(CREW_TWO, CREW_NONE), [], 1.0, 1.0)
+	h._show_tile(_tile(BELIEF_PRESENT))
+	await h._settle()
+	h._assert_hud("a crew on the belief branch shows its count after the full-ink figure on the Ancestors row (%s | %s)"
+			% [DoorQ.mark_tint(h._hud, ancestors), DoorQ.mark_text(h._hud, ancestors)],
+		DoorQ.mark_text(h._hud, ancestors) == str(CREW_TWO)
+			and DoorQ.mark_tint(h._hud, ancestors) == HudStyle.INK_HEX + "ff")
+	h._assert_hud("…and the store row, with nobody on it, shows the dim figure alone and no count (%s | %s)"
+			% [DoorQ.mark_tint(h._hud, stores), DoorQ.mark_text(h._hud, stores)],
+		DoorQ.mark_text(h._hud, stores) == ""
+			and DoorQ.mark_images(h._hud, stores) == 1
+			and DoorQ.mark_tint(h._hud, stores) == HudStyle.INK_DIM_HEX + "ff")
+	await h._save("tile_branches_door_crews")
+	_stage(_band(CREW_NONE, CREW_NONE), [], 0.0, 0.0)
+
+## The crew sheet's work-strip LADDER CHIP: on every state of the sheet, the same face as the Work tab's row
+## for the same tile + branch, and a press opens the rung card for THAT branch.
+func _crew_sheet_chip_claims() -> void:
+	var rung_names := {BELIEF_BRANCH: "Monument", STORES_BRANCH: "Storage pit"}
+	var rung_keys := {BELIEF_BRANCH: "belief:monument", STORES_BRANCH: "food_stores:storage_pit"}
+	# The Work tab's chip reads the belief off the map's lookup (a tile with none offers no monument).
+	h._hud.update_tile_beliefs({Vector2i(TILE_X, TILE_Y): BELIEF_PRESENT})
+	for crewed in [false, true]:
+		var band := _band(CREW_TWO if crewed else CREW_NONE, CREW_TWO if crewed else CREW_NONE)
+		_stage(band, [], 1.0, 1.0)
+		h._show_tile(_tile(BELIEF_PRESENT))
+		await h._settle()
+		for branch in [BELIEF_BRANCH, STORES_BRANCH]:
+			var label := "%s sheet, %s" % [branch, "crewed" if crewed else "no crew yet"]
+			_press_door(branch)
+			await h._settle()
+			var sheet = _sheet()
+			var strip_model := ForageFx.strip_model(sheet)
+			h._assert_hud("%s: the sheet mounts the work strip with a ladder chip (%s)" % [label,
+					ForageFx.describe(sheet)],
+				not strip_model.is_empty()
+					and String(strip_model.get(WorkStrip.M_LADDER_KIND, WorkStrip.LADDER_NONE))
+						!= WorkStrip.LADDER_NONE)
+			# The Work tab's row for the same tile + branch, built by the board's own builder.
+			var board_row: Control = h._hud._bandpanel._build_tile_row(band,
+				h._hud._bandpanel._tile_model(band, TILE_X, TILE_Y, branch, _tile_assignment(branch, CREW_TWO)
+					if crewed else {}))
+			var board_model := ForageFx.strip_model(board_row)
+			h._assert_hud("%s: the chip's face matches the Work tab row's (%s vs %s)" % [label,
+					ForageFx.describe(sheet), ForageFx.describe(board_row)],
+				String(strip_model.get(WorkStrip.M_LADDER_KIND, "")) == String(board_model.get(WorkStrip.M_LADDER_KIND, "x"))
+					and strip_model.get(WorkStrip.M_LADDER_GLYPH) == board_model.get(WorkStrip.M_LADDER_GLYPH))
+			board_row.free()
+			var chip_button: Button = null
+			var strip := ForageFx.find_strip(sheet)
+			if strip != null:
+				var chip := Q.find_meta_node(strip, HudWorkVocab.WORK_STRIP_LADDER_META)
+				for child in (chip.get_children() if chip != null else []):
+					if child is Button:
+						chip_button = child as Button
+			h._assert_hud("%s: the chip is a pressable button" % label, chip_button != null)
+			if chip_button != null:
+				if crewed and branch == BELIEF_BRANCH:
+					await h._save("tile_branches_crew_sheet_chip")
+				chip_button.pressed.emit()
+				await h._settle()
+				h._assert_hud("%s: pressing the chip opens the rung card" % label,
+					h._hud._rungcard.is_open())
+				var named := false
+				for control in _collect_meta(h._hud, HudWorkVocab.RUNG_TRACK_RUNG_META):
+					named = named or String(control.get_meta(HudWorkVocab.RUNG_TRACK_RUNG_META)) == rung_keys[branch]
+				h._assert_hud("%s: …and its track carries the branch's own rung (%s)" % [label, rung_names[branch]],
+					named and Q.has_label_containing(h._hud._rungcard.card(), rung_names[branch]))
+				h._hud._rungcard.dismiss()
+				await h._settle()
+			h._hud.close_compose_sheet()
+			await h._settle()
+	h._hud.update_tile_beliefs({})
+	_stage(_band(CREW_NONE, CREW_NONE), [], 0.0, 0.0)

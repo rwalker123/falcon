@@ -1296,7 +1296,7 @@ cave_fungi: Flat vector game icon of a single mushroom seen from the side, one s
 # **ONE FILE SERVES EVERY SURFACE THAT MEANS THE SAME THING**, which is what the id being the
 # ACTIVITY buys: `hunt.png` is the roster's herd row, the work board's hunt chip, the kit picker's
 # hunt face and the mission grid's Hunt button — four surfaces, one drawing, and no way for them to
-# drift. `workers.png` is two turn-orb kinds. `warrior.png` is a roster row and a kit face.
+# drift. `workers.png` is two turn-orb kinds AND the tile card's door rows (16px, inline `[img]` tinted INK / INK_DIM). `warrior.png` is a roster row and a kit face.
 #
 # **THE MARK ID IS THE ACTIVITY, NOT THE SURFACE** — `hunt` is ONE file behind the chip and the
 # roster row alike, which is what `hunt.png`'s own note below asked for when it collapsed the 🦌
@@ -1766,22 +1766,27 @@ split: Flat vector interface mark of a single round pebble-like disc split verti
 
 
 # workers.png — the turn orb's `idle_workers` AND `crew_handoff` rows. ONE FILE for both kinds:
-# `KIND_ICON` already spells them with the same 🛠 because both rows are about the HANDS — one
-# says nobody is using them, the other says they have moved to another job.
+# `KIND_ICON` already spells them with the same 🛠 because both rows are about people at WORK — one
+# says nobody is putting them to work, the other says they have moved to another job.
 # STATUS: SHIPPED at `assets/icons/hud/workers.png` and WIRED on BOTH turn-orb kinds.
-# Keyed `--size 256 --lo 85 --hi 200`; coverage 38.1%, magenta residual 0.
-# ⛔ **THIS ONE DRAWS AT 30px, NOT 13** — `TurnOrb.ROW_ICON_SIZE` is 30, so the prompt's "merge the
-# fingers into one broad blade" clause was OVER-CAUTIOUS: it applies the 13px piece-count lesson to
-# a mark that never renders at 13px. Both candidates read fine at 30, and the one CHOSEN has the
-# STEPPIER fingertip profile (visibly separate bumps) where the rejected twin's flatter top reads as
-# a mitten — the cairn's rule again, that at size the interior goes and the OUTLINE is what is left.
-# ⚠ SIZE THE JUDGEMENT TO THE SURFACE. Nothing else in `hud/` renders this large, so a turn-orb mark
-# may carry more detail than a 13px row mark — and a row mark may not carry this one's.
-# ⚠ IT MUST NOT BE A TOOL. The 🛠 it replaces is a hammer-and-wrench, which is anachronistic for a
-# forager tribe, collides with the crafting `⚒`, and is TWO crossed pieces — the shape budget
-# `scout` v1 died of. An open palm is one mass and says *hands* directly, which is what both rows
-# are counting.
-workers: Flat vector interface mark of a single open human hand seen palm-on from the front in a symmetrical upright pose, four fingers held together as one broad rounded blade with a separate thumb angled out to one side, no arm, no wrist, no cuff, no sleeve, no tool, no hammer, no wrench, no weapon, no object held, no fingernails, no palm creases, no individual finger gaps, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in a warm pale tan and a light cream in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, at most one interior division line separating the thumb from the fingers, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the hand on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 13 pixels, strategy game interface icon
+# SECOND SURFACE: the tile card's DOOR ROWS wear it as their trailing mark (`DetailFormat.door_mark`,
+# `HudDisclosureVocab.DOOR_MARK_ICON_PX` = 16px, tinted INK for a crewed door and INK_DIM for an uncrewed one).
+# Keyed `--size 256 --lo 85 --hi 200`; coverage 15.1%, bbox 221x225.
+# ⛔ **IT WAS AN OPEN PALM, AND THE PALM IS RETIRED.** The palm came from calling workers "hands",
+# which is the code's word and not a player's: a raised palm reads as *stop* or *hello*, never as
+# *work*. A FIGURE DIGGING is the road-works sign every player already reads as labour, so the mark
+# is a person bent over a digging stick into a mound. Of four renders, the chosen one stands
+# TALLEST in its canvas, which is what keeps the head and the stick separate at 16px; the others
+# read as the same figure at 30 and blur into a wedge at 16.
+# ⚠ SIZE THE JUDGEMENT TO BOTH SURFACES — 30px on the turn orb (`TurnOrb.ROW_ICON_SIZE`), 16px on the
+# card's door rows. Judge a replacement at 16 first: it is the harder of the two.
+# ⚠ IT MUST NOT COLLIDE WITH ITS NEIGHBOURS. `children` / `working_age` / `elders` are standing
+# figures (the elder STOOPED), `trade` is a sack and `kit_fallback` a satchel — hence the diagonal
+# working pose, the mound, and the prompt's bans on a hunch, a cane and any load on the back.
+# ⚠ IT MUST NOT BE A MODERN TOOL. The 🛠 it replaces is a hammer-and-wrench, which is anachronistic
+# for a forager tribe and collides with the crafting `⚒`; a plain digging stick is the era's tool,
+# and it is drawn as one piece joined to the figure and the mound, never as a separate object.
+workers: Flat vector interface mark of a single human figure in side profile hard at work digging, the body leaning steeply forward on a strong diagonal with both arms extended down together gripping one thick straight digging stick that plunges into a low rounded mound of earth at the figure's feet, the figure one bold solid silhouette with a small round head, a straight back angled forward and two legs braced apart in a wide working stance, the mound a simple low dome merged with the figure's front foot and the stick's tip so the whole mark reads as one connected shape, no shovel, no spade blade, no hammer, no pick, no metal, no handle grip, no sack, no bundle, no load on the back, no cane, no walking stick, no hunched elder posture, no face, no hair, no clothing detail, no fingers, drawn with NO outline of any kind and no dark border, filled in a warm pale tan and a light cream in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, no ground line beyond the mound, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the figure and the mound on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 16 pixels, strategy game interface icon
 
 
 # starving.png — the turn orb's `starving` row.
