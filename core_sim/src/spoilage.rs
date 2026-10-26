@@ -30,7 +30,7 @@
 use bevy::prelude::{Query, Res, ResMut, With};
 use std::collections::BTreeMap;
 
-use crate::components::{BandId, FoodMix, PopulationCohort, ResidentBand};
+use crate::components::{BandId, FoodBatch, FoodMix, PopulationCohort, ResidentBand};
 use crate::demographics_config::{DemographicsConfigHandle, KeepingConfig};
 use crate::intensification::{LadderConfig, LadderConfigHandle, LadderKnowledge, SourceKind};
 use crate::resources::{DiscoveryProgressLedger, SimulationConfig, TileRegistry};
@@ -203,6 +203,106 @@ pub fn storage_practice(rotted: f32, kept: f32, need: f32, knowledge: &LadderKno
     (rot_practice + kept_practice).min(knowledge.learn_rate)
 }
 
+/// **HOW MANY TURNS A LOT HAS LEFT BEFORE IT ROTS, where it is kept** (#709): its class's shelf life
+/// there less its age. `held` is the band's own [`HeldPreservation`] for a larder lot and the
+/// in-store lives for a lot in a pit; a class the table does not carry never rots
+/// (`f32::INFINITY`), and a lot past its shelf life reads negative (it rots at the next pass).
+pub fn time_left(keeping: &KeepingConfig, held: &HeldPreservation, class: &str, age: u32) -> f32 {
+    band_shelf_life(keeping, held, class).map_or(f32::INFINITY, |life| life - age as f32)
+}
+
+/// **ONE LOT A MEAL MAY EAT**, wherever it is kept: `source` is `None` for the band's larder and
+/// `Some(n)` for the n-th store in reach (nearest first), `left` its [`time_left`] where it sits.
+#[derive(Debug, Clone)]
+pub struct MealLot {
+    pub source: Option<usize>,
+    pub class: String,
+    pub lot: FoodBatch,
+    pub left: f32,
+}
+
+/// **WHAT THE MEAL EATS - whatever is closest to rotting first, wherever it sits** (#709). Walks
+/// `lots` by least [`time_left`] and takes `amount` from them, the last lot cut. **The tie rule**,
+/// in order: the larder before a store, the nearer store first, the class in `order` (fastest
+/// rotting first; a class it does not name last, by id), the older lot, the longer-stored lot - a
+/// total order, so the plan is deterministic. Returns each lot eaten and how much of it.
+pub fn plan_meal(
+    mut lots: Vec<MealLot>,
+    amount: Scalar,
+    order: &[String],
+) -> Vec<(MealLot, Scalar)> {
+    let rank = |class: &str| {
+        order
+            .iter()
+            .position(|id| id == class)
+            .unwrap_or(order.len())
+    };
+    lots.sort_by(|a, b| {
+        a.left
+            .total_cmp(&b.left)
+            .then_with(|| a.source.cmp(&b.source))
+            .then_with(|| rank(&a.class).cmp(&rank(&b.class)))
+            .then_with(|| a.class.cmp(&b.class))
+            .then_with(|| b.lot.age.cmp(&a.lot.age))
+            .then_with(|| b.lot.stored.cmp(&a.lot.stored))
+    });
+    let mut want = amount.max(scalar_zero());
+    let mut eaten = Vec::new();
+    for meal_lot in lots {
+        if want <= scalar_zero() {
+            break;
+        }
+        let part = std::cmp::min(want, meal_lot.lot.amount);
+        want -= part;
+        eaten.push((meal_lot, part));
+    }
+    eaten
+}
+
+/// The lots of `food` as meal lots at `source`, each with the time it has left under `held`.
+pub fn meal_lots(
+    food: &FoodMix,
+    source: Option<usize>,
+    keeping: &KeepingConfig,
+    held: &HeldPreservation,
+) -> Vec<MealLot> {
+    food.lots()
+        .into_iter()
+        .map(|(class, lot)| MealLot {
+            source,
+            left: time_left(keeping, held, &class, lot.age),
+            class,
+            lot,
+        })
+        .collect()
+}
+
+/// **THE MEAL OVER A BAND'S LARDER ALONE** - eats up to `amount`, the lot with the least
+/// [`time_left`] first ([`plan_meal`]), and returns `(eaten, kept)`: what was eaten and the share
+/// of it from lots that had sat in the larder at least `kept_from_stored` turns (the lot's `stored`
+/// clock, as [`FoodMix::eat_measuring_kept`] reads it). Any food a store lent the larder this turn
+/// (`crate::fixed_store::draw_from_stores`) is in it and eaten by the same order.
+pub fn eat_least_time_left(
+    stores: &mut crate::components::LocalStore,
+    amount: Scalar,
+    keeping: &KeepingConfig,
+    held: &HeldPreservation,
+    kept_from_stored: u32,
+) -> (Scalar, Scalar) {
+    let lots = meal_lots(stores.food(), None, keeping, held);
+    let mut eaten = scalar_zero();
+    let mut kept = scalar_zero();
+    for (meal_lot, part) in plan_meal(lots, amount, &keeping.eat_order()) {
+        let taken =
+            stores.take_food_lot(&meal_lot.class, meal_lot.lot.age, meal_lot.lot.stored, part);
+        eaten += taken.total();
+        if meal_lot.lot.stored >= kept_from_stored {
+            kept += taken.total();
+        }
+    }
+    (eaten, kept)
+}
+
 /// **How much of `food` will rot before it is eaten**, on a band that eats `need` a turn and takes
 /// no income — the larder walked forward through the same meal-then-rot turns the sim runs. The
 /// runway's first-turn correction (`snapshot::population`): a larder holding food that will expire
@@ -217,31 +317,22 @@ pub fn rot_ahead(
     keeping: &KeepingConfig,
     held: &HeldPreservation,
 ) -> Scalar {
-    let ration = scalar_from_f32(need.max(0.0));
-    let order = keeping.eat_order();
-    let horizon = keeping
-        .classes
-        .iter()
-        .filter_map(|class| band_shelf_life(keeping, held, &class.id))
-        .map(|life| life.ceil() as u32)
-        .max()
-        .unwrap_or(0);
-    let mut stock = food.clone();
-    let mut rotted = scalar_zero();
-    for _ in 0..=horizon {
-        if stock.is_empty() {
-            break;
-        }
-        stock.eat(ration, &order);
-        rotted += stock.age_and_expire(|class| band_shelf_life(keeping, held, class));
-    }
-    rotted
+    rot_ahead_with_stores(
+        food,
+        &FoodMix::default(),
+        need,
+        keeping,
+        held,
+        &HeldPreservation::none(),
+    )
 }
 
-/// **[`rot_ahead`] OVER A LARDER AND THE STORES BEHIND IT** (#709) - the same meal-then-rot walk, the
-/// band eating its larder first and its stores last, each rotting at its own shelf lives: the
-/// larder at `held`, the stores at `store_held` (the in-store lives, [`band_shelf_life`] taking the
-/// longer of base and store). Returns everything that rots uneaten, larder and stores together.
+/// **[`rot_ahead`] OVER A LARDER AND THE STORES BEHIND IT** (#709) - the same meal-then-rot walk,
+/// the meal eating whatever is closest to rotting first across the larder and the stores
+/// ([`plan_meal`]), each rotting at its own shelf lives: the larder at `held`, the stores at
+/// `store_held` (the in-store lives, [`band_shelf_life`] taking the longer of base and store). The
+/// stores count as one pile (nearest-first is the draw's own tie rule and never changes the total).
+/// Returns everything that rots uneaten, larder and stores together.
 pub fn rot_ahead_with_stores(
     larder: &FoodMix,
     stores: &FoodMix,
@@ -271,8 +362,16 @@ pub fn rot_ahead_with_stores(
         if larder.is_empty() && stores.is_empty() {
             break;
         }
-        let eaten = larder.eat(ration, &order);
-        stores.eat(ration - eaten, &order);
+        let mut lots = meal_lots(&larder, None, keeping, held);
+        lots.extend(meal_lots(&stores, Some(0), keeping, store_held));
+        for (meal_lot, part) in plan_meal(lots, ration, &order) {
+            let pile = if meal_lot.source.is_none() {
+                &mut larder
+            } else {
+                &mut stores
+            };
+            pile.take_exact_lot(&meal_lot.class, meal_lot.lot.age, meal_lot.lot.stored, part);
+        }
         rotted += larder.age_and_expire(|class| band_shelf_life(keeping, held, class));
         rotted += stores.age_and_expire(|class| band_shelf_life(keeping, store_held, class));
     }

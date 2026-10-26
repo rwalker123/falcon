@@ -268,7 +268,7 @@ fn rotted_in_the_pit(app: &mut App, tile: UVec2, class: &str, age: u32) -> f32 {
 /// beside it (at the camp, at the edge of reach, anywhere), while a lot in the pit rots only when it
 /// reaches the pit's life.
 #[test]
-fn a_band_near_a_pit_keeps_60_in_its_larder_and_food_in_the_pit_keeps_180() {
+fn a_band_near_a_pit_keeps_its_larder_to_the_base_life_and_food_in_the_pit_to_the_pit_life() {
     let (mut app, band) = rot_world();
     let (base, pitted) = (
         shelf_of(&app, "dry"),

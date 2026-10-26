@@ -614,22 +614,30 @@ impl FoodMix {
         rotted
     }
 
-    /// **Take up to `amount` OLDEST FOOD FIRST** across every class (#709) - the draw on a store:
-    /// lots in descending spoilage `age` (ties: class id, then larder time), each taken whole until
-    /// the last, which is cut. Returns the lots taken with both clocks kept.
-    pub fn take_oldest(&mut self, amount: Scalar) -> FoodMix {
-        let mut lots: Vec<(String, FoodBatch)> = self
-            .classes
+    /// **Every lot, as `(class, lot)`** - both clocks - in class-id order and oldest first within a
+    /// class. What a meal plans over (`crate::spoilage::plan_meal`).
+    pub fn lots(&self) -> Vec<(String, FoodBatch)> {
+        self.classes
             .iter()
             .flat_map(|(class, batches)| batches.iter().map(move |batch| (class.clone(), *batch)))
-            .collect();
-        lots.sort_by(|a, b| {
-            b.1.age
-                .cmp(&a.1.age)
-                .then_with(|| a.0.cmp(&b.0))
-                .then_with(|| b.1.stored.cmp(&a.1.stored))
-        });
-        self.take_from_lots(lots, amount)
+            .collect()
+    }
+
+    /// **Take up to `amount` from ONE named lot** (`class`, spoilage `age`, larder time `stored`),
+    /// both clocks kept on what comes out; an absent lot gives nothing.
+    pub fn take_exact_lot(
+        &mut self,
+        class: &str,
+        age: u32,
+        stored: u32,
+        amount: Scalar,
+    ) -> FoodMix {
+        let lot = FoodBatch {
+            age,
+            stored,
+            amount,
+        };
+        self.take_from_lots(vec![(class.to_string(), lot)], amount)
     }
 
     /// **Take up to `limit` from the lots `pick` accepts**, oldest first (#709) - the deposit: the
@@ -967,6 +975,11 @@ impl LocalStore {
     ) -> (Scalar, Scalar) {
         self.food
             .eat_measuring_kept(amount, order, kept_from_stored)
+    }
+
+    /// **Take up to `amount` from one named lot** - see [`FoodMix::take_exact_lot`].
+    pub fn take_food_lot(&mut self, class: &str, age: u32, stored: u32, amount: Scalar) -> FoodMix {
+        self.food.take_exact_lot(class, age, stored, amount)
     }
 
     /// **Take up to `limit` of the lots `pick` accepts** - see [`FoodMix::take_lots_where`].

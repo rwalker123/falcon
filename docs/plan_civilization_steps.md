@@ -523,11 +523,17 @@ through the store itself. The pit is not a supply-network node.
   takes, the packs that landed — goes into its pits within `reach_tiles`, up to each pit's capacity;
   what does not fit stays in the larder. Only the classes the pit preserves go in (dry). The opening
   reserve and food that pooled in stay in the larder.
-- **The band eats from the larder first and the pit last.** Before the meal, a band whose larder
-  cannot cover its need draws the difference from its pits within reach, nearest pit first and
-  oldest food first within a pit (deposits fill the nearest pit first too). Food
-  that pooled in is in the larder, so the pit is the last food a band eats.
-- **Food in the pit keeps the pit's shelf life.** Dry food in a pit keeps 180 turns against 60 in the
+- **The meal eats whatever is closest to rotting first, wherever it sits.** Across the band's
+  larder and the pits it owns within reach, the food eaten this turn is chosen by the shelf life it
+  has LEFT where it is kept (the class's shelf life there, less the lot's age), least first: a
+  larder lot against the larder's life, a pit lot against the pit's life for that class. Before the
+  meal the pit-held lots among them move into the larder, keeping their ages, and the meal eats
+  them in full that turn, so food moved out of a pit never sits in the larder to rot. A pit lot
+  that is not eaten this turn stays in the pit. On equal time left the larder comes before a pit,
+  the nearer pit before a farther one, then the class that rots fastest, the older lot and the
+  longer-stored lot. Deposits are unchanged: they fill the nearest pit first, up to its room, and
+  food is never moved out of a pit to make room.
+- **Food in the pit keeps the pit's shelf life.** Dry food in a pit keeps 120 turns against 60 in the
   larder, and rots at the end of it, whole, as larder food does. The pit's rot is the pit's own; it
   is not on any band's Food line. A band no longer lengthens its larder's shelf life by standing near
   a pit — the food that keeps longer is the food in it.

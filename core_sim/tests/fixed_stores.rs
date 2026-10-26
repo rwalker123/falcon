@@ -373,7 +373,7 @@ fn only_food_that_entered_the_larder_this_turn_is_deposited() {
 /// **A BAND BEYOND REACH DEPOSITS NOTHING AND DRAWS NOTHING, AND ITS PIT ROTS ONLY AT THE PIT'S
 /// LIFE.**
 #[test]
-fn a_band_beyond_reach_neither_deposits_nor_draws_and_its_pit_keeps_to_180() {
+fn a_band_beyond_reach_neither_deposits_nor_draws_and_its_pit_keeps_to_the_pit_life() {
     let (mut app, band) = world();
     let far = UVec2::new(CAMP.0 + reach(&app) + 1, CAMP.1);
     dig_pit(&mut app, far, FACTION, Some(BandId(OWNER)));
@@ -683,6 +683,168 @@ fn the_ledger_identity_closes_on_a_deposit_turn_and_a_draw_turn() {
         (delta - ledger).abs() < EPSILON,
         "draw turn: larder_delta {delta} vs ledger {ledger}"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The meal eats whatever is closest to rotting first, wherever it sits
+// ---------------------------------------------------------------------------------------------
+
+/// The shelf life of `class` INSIDE the shipped pit.
+fn pit_life(app: &App, class: &str) -> u32 {
+    app.world
+        .resource::<DemographicsConfigHandle>()
+        .get()
+        .keeping
+        .preservation
+        .iter()
+        .find(|entry| entry.rung == storage_pit() && entry.class == class)
+        .expect("the shipped pit preserves the class")
+        .shelf_life_turns as u32
+}
+
+/// Every lot's spoilage age in the band's larder.
+fn larder_ages(app: &App, band: Entity) -> Vec<u32> {
+    cohort(app, band)
+        .stores
+        .food()
+        .batches()
+        .map(|(_, age, _)| age)
+        .collect()
+}
+
+/// A lot too small to be more than one meal.
+const A_SLIVER: f32 = 0.2;
+
+/// **A FULL PIT HOLDING AN OLD LOT NEAR ITS PIT LIFE, BESIDE FRESH LARDER OVERFLOW: THE MEAL EATS THE
+/// OLD PIT LOT FIRST AND NOTHING ROTS.** Under larder-first the larder covers the meal, the pit lot
+/// is never touched and rots at the next store pass.
+#[test]
+fn the_meal_eats_an_old_pit_lot_before_fresh_larder_food_and_nothing_rots() {
+    let (mut app, band) = world();
+    let cap = capacity(&app);
+    let life = pit_life(&app, DRY);
+    dig_pit(&mut app, camp(), FACTION, Some(BandId(OWNER)));
+    // The old lot, one turn from its pit life, and the rest of the pit full of fresh food.
+    fill_pit(&mut app, camp(), DRY, A_SLIVER, life - 1);
+    fill_pit(&mut app, camp(), DRY, cap - A_SLIVER, 0);
+    seat_larder(&mut app, band, DRY, 50.0);
+
+    opening(&mut app);
+    let need = cohort(&app, band).last_food_need;
+    assert!(
+        need > A_SLIVER,
+        "fixture: the meal is bigger than the old lot ({need})"
+    );
+    assert!(
+        (cohort(&app, band).last_food_from_store - A_SLIVER).abs() < EPSILON,
+        "liveness: the whole old pit lot was drawn and eaten, drew {}",
+        cohort(&app, band).last_food_from_store
+    );
+    let pit = app
+        .world
+        .resource::<TileImprovementRegistry>()
+        .get(camp(), food_stores())
+        .expect("the pit");
+    assert_eq!(
+        pit.spoiled_this_turn, 0.0,
+        "nothing rotted in the pit: the old lot was eaten, not left"
+    );
+    assert!(
+        pit.contents.batches().all(|(_, age, _)| age < life),
+        "no lot in the pit is at its life"
+    );
+    assert!(
+        (pit_contents(&app, camp()) - (cap - A_SLIVER)).abs() < EPSILON,
+        "nothing but the old lot left the pit"
+    );
+    assert_eq!(
+        cohort(&app, band).last_food_spoiled,
+        0.0,
+        "nor in the larder"
+    );
+    assert!(
+        (cohort(&app, band).last_food_consumption - need).abs() < EPSILON,
+        "the band ate its whole need"
+    );
+}
+
+/// **A FRESH PIT LOT AND AN OLD LARDER LOT: THE LARDER LOT IS EATEN FIRST**, and the pit is not
+/// touched.
+#[test]
+fn the_meal_eats_an_old_larder_lot_before_fresh_pit_food() {
+    let (mut app, band) = world();
+    let cap = capacity(&app);
+    dig_pit(&mut app, camp(), FACTION, Some(BandId(OWNER)));
+    fill_pit(&mut app, camp(), DRY, cap, 1);
+    // A larder lot with a few turns left at the larder's life, far fewer than the pit lot has.
+    let larder_life = shelf(&app, DRY);
+    {
+        let mut cohort = app.world.get_mut::<PopulationCohort>(band).unwrap();
+        cohort.stores = LocalStore::new();
+        cohort
+            .stores
+            .add_food_aged(DRY, scalar_from_f32(50.0), larder_life - 10);
+        cohort.stores.age_food(|_| Some(f32::MAX));
+    }
+    let before = pit_contents(&app, camp());
+
+    opening(&mut app);
+    assert!(
+        cohort(&app, band).last_food_consumption > 0.0,
+        "liveness: the band ate"
+    );
+    assert_eq!(
+        cohort(&app, band).last_food_from_store,
+        0.0,
+        "the old larder lot is eaten before any pit food is moved"
+    );
+    assert!(
+        (pit_contents(&app, camp()) - before).abs() < EPSILON,
+        "the pit is untouched"
+    );
+}
+
+/// **FOOD MOVED OUT OF A PIT IS EATEN THAT TURN, IN FULL: IT NEVER SITS IN THE LARDER.** Two pits
+/// hold lots past the larder's own life (they keep to the pit's), the larder holds younger food and a
+/// meal bigger than the oldest lots; whatever is drawn is eaten and nothing rots on arrival, turn
+/// after turn, and the identity closes on every one.
+#[test]
+fn food_drawn_from_a_pit_is_eaten_the_same_turn_and_never_left_in_the_larder() {
+    let (mut app, band) = world();
+    let life = pit_life(&app, DRY);
+    let larder_life = shelf(&app, DRY);
+    assert!(life > larder_life, "fixture: the pit outlives the larder");
+    dig_pit(&mut app, camp(), FACTION, Some(BandId(OWNER)));
+    let beside = UVec2::new(CAMP.0 + 1, CAMP.1);
+    dig_pit(&mut app, beside, FACTION, Some(BandId(OWNER)));
+    // Lots older than the larder would ever keep, but inside the pit's life.
+    fill_pit(&mut app, camp(), DRY, A_SLIVER, larder_life + 20);
+    fill_pit(&mut app, beside, DRY, A_SLIVER, larder_life + 30);
+    fill_pit(&mut app, camp(), DRY, 20.0, 0);
+    seat_larder(&mut app, band, DRY, 30.0);
+
+    for turn in 0..3 {
+        let before = larder_total(&app, band);
+        opening(&mut app);
+        let c = cohort(&app, band);
+        let (eaten, drawn) = (c.last_food_consumption, c.last_food_from_store);
+        if turn == 0 {
+            assert!(
+                drawn >= 2.0 * A_SLIVER - EPSILON,
+                "liveness: both old lots were drawn, drew {drawn}"
+            );
+        }
+        assert_eq!(c.last_food_spoiled, 0.0, "turn {turn}: nothing rotted");
+        assert!(
+            larder_ages(&app, band).iter().all(|age| *age < larder_life),
+            "turn {turn}: no moved lot sits in the larder past the larder's life"
+        );
+        let after = larder_total(&app, band);
+        assert!(
+            (after - (before + drawn - eaten)).abs() < EPSILON,
+            "turn {turn}: the identity closes: {before} + {drawn} - {eaten} vs {after}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

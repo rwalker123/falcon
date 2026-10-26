@@ -11,7 +11,7 @@
 //!
 //! | system | when | what |
 //! |---|---|---|
-//! | [`draw_from_stores`] | before `simulate_population` | the owner's larder shortfall against this turn's meal is drawn from its stores in reach, nearest first, oldest food first |
+//! | [`draw_from_stores`] | before `simulate_population` | the lots this turn's meal will eat - chosen across the larder and the owner's stores in reach by least shelf life left where each is kept - move out of the stores into the larder, keeping their ages |
 //! | [`rot_store_contents`] | beside `rot_band_larders` | every store's lots age; a lot at its in-store shelf life rots whole; a store that is no longer one loses its contents |
 //! | [`deposit_into_stores`] | after `advance_labor_allocation` | owners are settled (a gone owner clears; the next crewing band adopts), then the larder lots of a stored class that entered the larder THIS turn move into the owner's stores in reach, up to each store's room |
 //!
@@ -209,9 +209,14 @@ fn store_world(
     })
 }
 
-/// **DRAW - before the meal, a band whose larder cannot cover its need draws the difference from
-/// the stores it owns within reach** (nearest store first, oldest food first within one), keeping
-/// each lot's age. Also resets the turn's `into`/`from` ledger terms.
+/// **DRAW - before the meal, the lots the meal will eat are moved out of the stores they sit in.**
+/// Across the band's larder and the stores it owns within reach, the food eaten this turn is chosen
+/// by least shelf life LEFT where it is kept ([`crate::spoilage::plan_meal`]: the larder's life for a
+/// larder lot, the store's in-store life for a store lot, less the lot's age), and the store-held
+/// lots among them move into the larder keeping their ages, so the meal
+/// (`simulate_population`, which eats by the same key) eats exactly them, in full. Nothing else
+/// leaves a store: no store food is moved out to make room, and a store lot that is not eaten stays.
+/// Also resets the turn's `into`/`from` ledger terms.
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource it reads
 pub fn draw_from_stores(
     demographics: Res<DemographicsConfigHandle>,
@@ -245,43 +250,74 @@ pub fn draw_from_stores(
         let (Some(band_id), Ok(tile)) = (band_id, tiles.get(cohort.current_tile)) else {
             continue;
         };
+        let (sites, held) = {
+            let scene = scene_over(
+                &config.keeping,
+                &ladder,
+                &improvements,
+                world.reach_tiles,
+                world.grid,
+            );
+            (
+                owned_stores_in_reach(&scene, *band_id, cohort.faction, tile.position),
+                scene.held_by(Some(*band_id)),
+            )
+        };
+        // Every lot the meal may eat, each with the time it has left where it sits.
+        let mut lots =
+            crate::spoilage::meal_lots(cohort.stores.food(), None, &config.keeping, &held);
+        let mut in_stores = scalar_zero();
+        for (index, site) in sites.iter().enumerate() {
+            let Some(improvement) = improvements.get(site.tile, site.branch) else {
+                continue;
+            };
+            for (class, lot) in improvement.contents.lots() {
+                // A class the store does not hold cannot be in it (the rot pass clears it).
+                let Some(life) = site.spec.life_of(&class) else {
+                    continue;
+                };
+                in_stores += lot.amount;
+                lots.push(crate::spoilage::MealLot {
+                    source: Some(index),
+                    left: life - lot.age as f32,
+                    class,
+                    lot,
+                });
+            }
+        }
+        if in_stores <= scalar_zero() {
+            continue;
+        }
         // The same demand the meal is measured against (`meal_and_births`): the opening brackets
-        // and the parties the band feeds.
+        // and the parties the band feeds. The meal eats `min(demand, what the larder then holds)`.
         let demand = crate::systems::food_demand(
             cohort.children,
             cohort.working + party_working.get(&entity).copied().unwrap_or_default(),
             cohort.elders,
             &config.consumption,
         );
-        let mut shortfall = demand - cohort.stores.get(crate::components::FOOD);
-        if shortfall <= scalar_zero() {
-            continue;
-        }
-        let sites = owned_stores_in_reach(
-            &scene_over(
-                &config.keeping,
-                &ladder,
-                &improvements,
-                world.reach_tiles,
-                world.grid,
-            ),
-            *band_id,
-            cohort.faction,
-            tile.position,
+        let meal = std::cmp::min(
+            demand,
+            cohort.stores.get(crate::components::FOOD) + in_stores,
         );
         let mut drawn = scalar_zero();
-        for site in sites {
-            if shortfall <= scalar_zero() {
-                break;
-            }
+        for (meal_lot, part) in crate::spoilage::plan_meal(lots, meal, &config.keeping.eat_order())
+        {
+            let Some(index) = meal_lot.source else {
+                continue;
+            };
+            let site = &sites[index];
             let Some(improvement) = improvements.get_mut(site.tile, site.branch) else {
                 continue;
             };
-            let taken = improvement.contents.take_oldest(shortfall);
-            let amount = taken.total();
+            let taken = improvement.contents.take_exact_lot(
+                &meal_lot.class,
+                meal_lot.lot.age,
+                meal_lot.lot.stored,
+                part,
+            );
+            drawn += taken.total();
             cohort.stores.add_food_mix(&taken);
-            shortfall -= amount;
-            drawn += amount;
         }
         cohort.last_food_from_store = drawn.to_f32();
     }

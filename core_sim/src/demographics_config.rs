@@ -268,7 +268,7 @@ pub struct FixedStore {
 /// ([`crate::spoilage::HeldPreservation`]). A band's shelf life for a class is the longest of the base
 /// and every preservation it holds.
 ///
-/// **Both life values are OPENING VALUES, PLAYTEST DIALS**: flesh 4 -> 20 and dry 60 -> 180.
+/// **Both life values are OPENING VALUES, PLAYTEST DIALS**: flesh 4 -> 20 and dry 60 -> 120.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Preservation {

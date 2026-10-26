@@ -1587,21 +1587,33 @@ pub fn simulate_population(
 ) {
     let party_working = stationed_party_workers(&parties);
     // **The food each band can reach in the stores it owns** (#709), for the fertility reserve.
-    let store_food: BTreeMap<Entity, Scalar> = store_context
+    // The band's own preservation, resolved once per band, is what the meal reads each lot's time
+    // left through (a drying rack lengthens the larder's lives).
+    let (store_food, held_by_band): (
+        BTreeMap<Entity, Scalar>,
+        BTreeMap<Entity, crate::spoilage::HeldPreservation>,
+    ) = store_context
         .with_scene(&demographics.get().keeping, |scene| {
-            cohorts
-                .iter()
-                .filter_map(|(entity, cohort, _, band_id, _)| {
-                    let at = tiles.get(cohort.current_tile).ok()?.position;
-                    let reachable = crate::fixed_store::reachable_stores(
-                        scene,
-                        band_id.copied(),
-                        cohort.faction,
-                        Some(at),
-                    );
-                    Some((entity, reachable.total()))
-                })
-                .collect()
+            let mut stores = BTreeMap::new();
+            let mut held = BTreeMap::new();
+            for (entity, cohort, _, band_id, _) in cohorts.iter() {
+                held.insert(entity, scene.held_by(band_id.copied()));
+                let Some(at) = tiles
+                    .get(cohort.current_tile)
+                    .ok()
+                    .map(|tile| tile.position)
+                else {
+                    continue;
+                };
+                let reachable = crate::fixed_store::reachable_stores(
+                    scene,
+                    band_id.copied(),
+                    cohort.faction,
+                    Some(at),
+                );
+                stores.insert(entity, reachable.total());
+            }
+            (stores, held)
         })
         .unwrap_or_default();
     let kept_from_stored = ladder.map_or(NO_KEPT_FOOD_STORED, |ladder| {
@@ -1720,13 +1732,17 @@ pub fn simulate_population(
         cohort.children = outcome.state.children;
         cohort.working = outcome.state.working;
         cohort.elders = outcome.state.elders;
-        // **The meal draws the fastest-rotting class first** (#706): the band eats its flesh before
-        // its greens and its greens before its grain, which is what makes the larder rot a line
-        // rather than a share (`crate::spoilage`). `advance_demographics` says how much; the store
-        // says which.
-        let (_, kept) = cohort.stores.eat_food_measuring_kept(
+        // **The meal eats whatever is closest to rotting first** (#709): the lot with the least
+        // time left under the band's own shelf lives, the class order (fastest rotting first) and
+        // then the older lot breaking ties (`spoilage::plan_meal`). Food a pit lent the larder this
+        // turn (`fixed_store::draw_from_stores`) is in the larder and eaten by the same order.
+        // `advance_demographics` says how much; the store says which.
+        let no_preservation = crate::spoilage::HeldPreservation::none();
+        let (_, kept) = crate::spoilage::eat_least_time_left(
+            &mut cohort.stores,
             food_before - outcome.state.food_store,
-            &demo.keeping.eat_order(),
+            &demo.keeping,
+            held_by_band.get(&entity).unwrap_or(&no_preservation),
             kept_from_stored,
         );
         // **The kept share of the meal teaches storage** (#708), paid by `spoilage::rot_band_larders`
