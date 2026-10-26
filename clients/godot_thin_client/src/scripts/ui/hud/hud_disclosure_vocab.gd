@@ -39,6 +39,10 @@ const BREAKDOWN_KIND_MORALE := "morale"
 # combine by product; see `DetailFormat.fertility_breakdown_row`.
 const BREAKDOWN_KIND_GROWTH := "growth"
 
+# The Beliefs row's pull-down: the band's ancestors' place, what ties it there, and the stronger places
+# of its own people. Opens in the same popover; the caret tints WARN while the place is out of reach.
+const BREAKDOWN_KIND_BELIEFS := "beliefs"
+
 # The faction page's `Family limit` row (issue #691): who holds the breeding population's limit up. Its
 # popover rows are the member bands and the other peoples (`HudLineageVocab.faction_popover_lines`).
 const BREAKDOWN_KIND_FAMILY_LIMIT := "family_limit"
@@ -202,3 +206,28 @@ const BELIEFS_DRIFT_BAND_FORMAT := "the %s band"
 const BELIEFS_DRIFT_UNKNOWN_BAND := "another band"
 const BELIEFS_DRIFT_PEOPLE_FORMAT := " (%s)"
 const BELIEFS_DRIFT_SENTENCE_FORMAT := "Drifting toward %s%s — %s +%s/turn."
+
+# ---- THE BELIEFS PULL-DOWN (Beliefs ▸): the band's ancestors' place, in four kinds of line. Words are the
+# on-screen vocabulary ("ancestors' place", "dead"). The relay key is the decoded
+# `PopulationCohortState.beliefRelayHops` (0 direct, n through n kin bands, 255 unreached).
+const BELIEFS_PLACE_ANCHOR_KEY := "has_belief_anchor"
+const BELIEFS_PLACE_X_KEY := "belief_anchor_x"
+const BELIEFS_PLACE_Y_KEY := "belief_anchor_y"
+const BELIEFS_PLACE_RELAY_KEY := "belief_relay_hops"
+const BELIEFS_PLACE_RELAY_DIRECT := 0
+const BELIEFS_PLACE_RELAY_UNREACHED := 255
+const BELIEFS_PLACE_NEAR_FORMAT := "Ancestors' place: %d dead · near"
+const BELIEFS_PLACE_KIN_ONE_FORMAT := "Ancestors' place: %d dead · tied in through 1 band of kin"
+const BELIEFS_PLACE_KIN_FORMAT := "Ancestors' place: %d dead · tied in through %d bands of kin"
+const BELIEFS_PLACE_UNREACHED_FORMAT := "Ancestors' place: %d dead · out of reach"
+const BELIEFS_PLACE_NONE := "No ancestors' place yet — the band takes one up once its dead lie within walking reach."
+## A stronger place held by the player's other bands: who holds it, its dead, and what to do about it.
+const BELIEFS_STRONGER_FORMAT := "%s: %d dead — stand within walking reach to take it up"
+const BELIEFS_STRONGER_OTHERS_ONE_FORMAT := "%s and 1 other band"
+const BELIEFS_STRONGER_OTHERS_FORMAT := "%s and %d other bands"
+const BELIEFS_STRONGER_MORE_FORMAT := "+%d more places"
+const BELIEFS_STRONGER_MAX_LINES := 3
+const BELIEFS_PLACE_RULE := \
+    "A band takes up another ancestors' place when it stands within walking reach of one holding more dead than its own."
+## The BBCode wrapper for a line that wears its own ink (the renderer's indented branch is neutral).
+const BELIEFS_PLACE_INK_FORMAT := "[color=#%s]%s[/color]"

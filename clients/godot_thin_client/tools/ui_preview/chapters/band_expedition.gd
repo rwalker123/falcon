@@ -1347,8 +1347,8 @@ const BELIEFS_FLIPPED_TRADITIONAL := 0.27
 ## The row text, spelled as LITERALS — a needle composed through the format under test can only
 ## agree with itself.
 ## (The parsed text runs a table row's key and value cells together, so the key abuts the value.)
-const BELIEFS_TIED_ROW := "Beliefsdevout · traditional"
-const BELIEFS_FLIPPED_ROW := "Beliefssecular · revisionist"
+const BELIEFS_TIED_ROW := "Beliefs ▸devout · traditional"
+const BELIEFS_FLIPPED_ROW := "Beliefs ▸secular · revisionist"
 const BELIEFS_TIED_TOOLTIP := "Devout 0.4, traditional 0.3. The ancestors pull this band +0.30 devout and +0.30 traditional."
 const BELIEFS_FLIPPED_TOOLTIP := "Secular 0.2, revisionist 0.3. The ancestors pull this band +0.30 secular and +0.30 revisionist."
 const BELIEFS_UNTIED_TOOLTIP := "Devout 0.4, traditional 0.3. Not tied to its dead. Stand within reach of them to be drawn toward devout, traditional ways."
@@ -1471,10 +1471,131 @@ func _belief_culture_states() -> void:
 	await h._settle()
 	h._assert_hud("a rival band draws NO Beliefs row",
 		_beliefs_row_count(String(h._hud.occupant_detail.get_parsed_text())) == 0)
+	await _beliefs_place_states()
 	await _break_away_states()
 	await _culture_drift_states()
 	await _culture_pressure_states()
 	h._hud.show_unit_selection(BandFx.band_fixture())
+	await h._settle()
+
+## THE BELIEFS PULL-DOWN (Beliefs ▸): the ancestors' place, its reach, the pull, the stronger places of the
+## player's other bands and the rule. Needles are LITERALS, not the format under test.
+const PLACE_HERE_ID := 61
+## The disclosure key the Beliefs row registers: `beliefs:<entity>` (entity = 970 + band id in `_place_band`).
+const PLACE_DISCLOSURE := "beliefs:1031"
+const PLACE_FEN_ID := 62
+const PLACE_NIGHT_ID := 63
+const PLACE_LOW_ID := 64
+const PLACE_HERE_TILE := Vector2i(38, 38)
+const PLACE_FEN_TILE := Vector2i(40, 37)
+const PLACE_LOW_TILE := Vector2i(10, 10)
+const PLACE_HERE_DEAD := 14.4
+const PLACE_FEN_DEAD := 40.0
+const PLACE_LOW_DEAD := 5.0
+const PLACE_RELAY_UNREACHED := 255
+const PLACE_NEEDLE_NEAR := "Ancestors' place: 14 dead · near"
+const PLACE_NEEDLE_UNREACHED := "Ancestors' place: 14 dead · out of reach"
+const PLACE_NEEDLE_PULL := "The ancestors pull this band +0.30 devout and +0.30 traditional."
+const PLACE_NEEDLE_STRONGER := "Fenwatch tribe: 40 dead — stand within walking reach to take it up"
+const PLACE_NEEDLE_NONE := "No ancestors' place yet — the band takes one up once its dead lie within walking reach."
+const PLACE_NEEDLE_RULE := "A band takes up another ancestors' place when it stands within walking reach of one holding more dead than its own."
+const PLACE_NEEDLE_LOW := "5 dead"
+const PLACE_MORE_PLACES := 5
+const PLACE_MORE_NEEDLE := "+2 more places"
+
+func _place_band(band_id: int, band_name: String, tile: Vector2i, tribe_name: String) -> Dictionary:
+	var band := BandFx.band_fixture()
+	band.merge({"name": band_name, "band_id": band_id, "entity": 970 + band_id, "has_belief_anchor": true,
+		"belief_anchor_x": tile.x, "belief_anchor_y": tile.y, "tribe_name": tribe_name,
+		"belief_relay_hops": 0}, true)
+	return band
+
+func _beliefs_place_states() -> void:
+	var here := _place_band(PLACE_HERE_ID, "Fernhollow", PLACE_HERE_TILE, "")
+	here["culture_traits"] = _culture_vector(BELIEFS_TIED_DEVOUT, BELIEFS_TIED_TRADITIONAL)
+	here["culture_ancestor_pull"] = _culture_vector(BELIEFS_PULL_DEVOUT, BELIEFS_PULL_TRADITIONAL)
+	var fen := _place_band(PLACE_FEN_ID, "Fenwatch", PLACE_FEN_TILE, "Fenwatch tribe")
+	var night := _place_band(PLACE_NIGHT_ID, "Nightbrook", PLACE_FEN_TILE, "Fenwatch tribe")
+	var low := _place_band(PLACE_LOW_ID, "Lowmarsh", PLACE_LOW_TILE, "")
+	h._hud.update_tile_beliefs({PLACE_HERE_TILE: PLACE_HERE_DEAD, PLACE_FEN_TILE: PLACE_FEN_DEAD,
+		PLACE_LOW_TILE: PLACE_LOW_DEAD})
+	var roster: Array = [here, fen, night, low]
+
+	# (a) direct, one stronger place held by a formed tribe; the weaker place stays unmentioned.
+	h._hud.update_band_alerts(roster)
+	h._hud.show_unit_selection(here)
+	await h._settle()
+	_click_disclosure(PLACE_DISCLOSURE)
+	await h._settle()
+	await h._save("band_beliefs_place_direct")
+	var direct := _flat(_popover_text())
+	h._assert_hud("Beliefs ▸ direct: place, pull, the formed tribe's stronger place, the rule (%s)" % direct,
+		direct.contains(PLACE_NEEDLE_NEAR) and direct.contains(PLACE_NEEDLE_PULL)
+		and direct.contains(PLACE_NEEDLE_STRONGER) and direct.contains(PLACE_NEEDLE_RULE)
+		and not direct.contains(PLACE_NEEDLE_LOW)
+		and direct.find(PLACE_NEEDLE_NEAR) < direct.find(PLACE_NEEDLE_PULL)
+		and direct.find(PLACE_NEEDLE_PULL) < direct.find(PLACE_NEEDLE_STRONGER)
+		and direct.find(PLACE_NEEDLE_STRONGER) < direct.find(PLACE_NEEDLE_RULE))
+	_click_disclosure(PLACE_DISCLOSURE)
+
+	# The same stronger place with its holders NOT in one formed tribe names the lowest-id band.
+	var untribed: Array = [here, _place_band(PLACE_FEN_ID, "Fenwatch", PLACE_FEN_TILE, ""),
+		_place_band(PLACE_NIGHT_ID, "Nightbrook", PLACE_FEN_TILE, "Fenwatch tribe")]
+	h._hud.update_band_alerts(untribed)
+	h._hud.show_unit_selection(here)
+	await h._settle()
+	var untribed_lines: Array[String] = h._hud._banddetail._stronger_place_lines(here, true, 14)
+	h._assert_hud("a place whose holders are not one formed tribe is named for its lowest-id band",
+		untribed_lines.size() == 1 and untribed_lines[0].contains("Fenwatch and 1 other band: 40 dead"))
+
+	# More than three stronger places: three lines, then `+N more places`.
+	var crowd: Array = [here]
+	for index in range(PLACE_MORE_PLACES):
+		var crowd_tile := Vector2i(50 + index, 50)
+		crowd.append(_place_band(80 + index, "Crowd%d" % index, crowd_tile, ""))
+	var crowd_beliefs := {PLACE_HERE_TILE: PLACE_HERE_DEAD}
+	for index in range(PLACE_MORE_PLACES):
+		crowd_beliefs[Vector2i(50 + index, 50)] = PLACE_FEN_DEAD + index
+	h._hud.update_tile_beliefs(crowd_beliefs)
+	h._hud.update_band_alerts(crowd)
+	var crowd_lines: Array[String] = h._hud._banddetail._stronger_place_lines(here, true, 14)
+	h._assert_hud("five stronger places: three lines then `+2 more places`, strongest first",
+		crowd_lines.size() == 4 and crowd_lines[3].contains(PLACE_MORE_NEEDLE)
+		and crowd_lines[0].contains("44 dead"))
+	h._hud.update_tile_beliefs({PLACE_HERE_TILE: PLACE_HERE_DEAD, PLACE_FEN_TILE: PLACE_FEN_DEAD,
+		PLACE_LOW_TILE: PLACE_LOW_DEAD})
+	h._hud.update_band_alerts(roster)
+
+	# (b) out of reach: the amber line.
+	var unreached := here.duplicate(true)
+	unreached["belief_relay_hops"] = PLACE_RELAY_UNREACHED
+	h._hud.show_unit_selection(unreached)
+	await h._settle()
+	_click_disclosure(PLACE_DISCLOSURE)
+	await h._settle()
+	await h._save("band_beliefs_place_unreached")
+	h._assert_hud("Beliefs ▸ unreached reads `%s`, in the warning ink" % PLACE_NEEDLE_UNREACHED,
+		_flat(_popover_text()).contains(PLACE_NEEDLE_UNREACHED)
+		and _popover_markup().contains("[color=#%s]" % HudStyle.WARN_HEX))
+	_click_disclosure(PLACE_DISCLOSURE)
+
+	# (c) no ancestors' place: the invitation, no pull line.
+	var bare_place := here.duplicate(true)
+	bare_place["has_belief_anchor"] = false
+	h._hud.update_band_alerts([bare_place, fen, night])
+	h._hud.show_unit_selection(bare_place)
+	await h._settle()
+	_click_disclosure(PLACE_DISCLOSURE)
+	await h._settle()
+	await h._save("band_beliefs_place_none")
+	var none_text := _flat(_popover_text())
+	h._assert_hud("Beliefs ▸ with no place: the invitation, the stronger place, no pull line (%s)" % none_text,
+		none_text.contains(PLACE_NEEDLE_NONE) and none_text.contains(PLACE_NEEDLE_STRONGER)
+		and not none_text.contains("pull this band") and not none_text.contains("Ancestors' place:"))
+	_click_disclosure(PLACE_DISCLOSURE)
+	h._hud.update_tile_beliefs({})
+	h._hud.update_band_alerts([BandFx.band_fixture()])
+	h._hud.clear_selection()
 	await h._settle()
 
 ## THE CONTACT-DRIFT MARK (issue #702): a violet arrow at the end of the Beliefs value while a FOREIGN
@@ -2362,7 +2483,7 @@ func _hay_ledger_states() -> void:
 			["tribe_reason_no_place", reason_no_place, [reason_fen], HudFormat.TRIBE_NO_PLACE_LINE, HudFormat.TRIBE_NO_PLACE_TOOLTIP],
 			["tribe_reason_different_place", reason_here, [reason_fen, reason_night],
 				HudFormat.TRIBE_DIFFERENT_PLACE_LINE,
-				"Fernhollow's ancestors' place is at (38, 38); the Fenwatch tribe's is at (40, 37). A band takes up another ancestors' place when it stands near one holding more belief than its own."],
+				"Bands become a tribe when they pool goods in one supply network and share one ancestors' place.\nFernhollow keeps a different ancestors' place from your other bands — see Beliefs."],
 			["tribe_reason_no_network", reason_no_network, [reason_far], HudFormat.TRIBE_NO_NETWORK_LINE, HudFormat.TRIBE_NO_NETWORK_TOOLTIP],
 			["tribe_reason_alone", reason_here, [], HudFormat.TRIBE_ALONE_LINE, HudFormat.TRIBE_TOOLTIP_RULE]]:
 		var reason_band := BandFx.band_fixture()
@@ -2382,6 +2503,10 @@ func _hay_ledger_states() -> void:
 			reason_line.tooltip_text.replace("\n", " | ") if reason_line != null else ""],
 			reason_line != null and reason_line.get_line_count() == 1 and reason_text == String(reason_case[3])
 			and reason_line.tooltip_text.contains(String(reason_case[4]))
+			and (String(reason_case[0]) != "tribe_reason_different_place"
+				or (reason_line.tooltip_text == String(reason_case[4])
+					and reason_line.tooltip_text.split("\n").size() == 2
+					and not reason_line.tooltip_text.contains("(")))
 			and reason_line.get_content_width() <= leader_panel.current_reservation_size())
 	# Each suffix, off the pure statics.
 	var suffix_entry := tribe_base.duplicate(true)

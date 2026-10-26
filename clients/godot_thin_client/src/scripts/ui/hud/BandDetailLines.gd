@@ -503,6 +503,8 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
                 var beliefs_line := _band_beliefs_line(unit_data, context)
                 if beliefs_line != "":
                     lines.append(beliefs_line)
+                    _disclosures.register(HudDisclosureVocab.DETAIL_ROW_BELIEFS,
+                        HudDisclosureVocab.BREAKDOWN_KIND_BELIEFS, unit_data, _beliefs_place_lines(unit_data))
                     lines.append_array(_culture_pressure_lines(unit_data))
             if growth_line != "":
                 lines.append(growth_line)
@@ -984,6 +986,97 @@ func _band_beliefs_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> Str
         value += _drift_mark()
     ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_BELIEFS] = _beliefs_hover(reading)
     return HudDisclosureVocab.DETAIL_ROW_BELIEFS + DetailFormat.DETAIL_KV_SEPARATOR + value
+
+## The Beliefs pull-down: the band's ancestors' place and its reach, the pull, the stronger places of the
+## player's other bands, then the rule. Facts the sim published only; walking reach is never computed here.
+func _beliefs_place_lines(unit_data: Dictionary) -> Array[String]:
+    var lines: Array[String] = []
+    var indent := DetailFormat.MORALE_BREAKDOWN_INDENT
+    var has_place := bool(unit_data.get(HudDisclosureVocab.BELIEFS_PLACE_ANCHOR_KEY, false))
+    var own_dead := 0
+    if has_place:
+        own_dead = _place_dead(unit_data)
+        var hops := int(unit_data.get(HudDisclosureVocab.BELIEFS_PLACE_RELAY_KEY, HudDisclosureVocab.BELIEFS_PLACE_RELAY_DIRECT))
+        if hops >= HudDisclosureVocab.BELIEFS_PLACE_RELAY_UNREACHED:
+            lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_INK_FORMAT % [HudStyle.WARN_HEX,
+                HudDisclosureVocab.BELIEFS_PLACE_UNREACHED_FORMAT % own_dead])
+        elif hops == HudDisclosureVocab.BELIEFS_PLACE_RELAY_DIRECT:
+            lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_NEAR_FORMAT % own_dead)
+        elif hops == 1:
+            lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_KIN_ONE_FORMAT % own_dead)
+        else:
+            lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_KIN_FORMAT % [own_dead, hops])
+        var reading := _belief_reading(unit_data)
+        if bool(reading["pulling"]):
+            lines.append(indent + String(reading["pull_sentence"]))
+        else:
+            lines.append(indent + BELIEFS_UNTIED_TOOLTIP_FORMAT % [BELIEFS_WORD_DEVOUT, BELIEFS_WORD_TRADITIONAL])
+    else:
+        lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_NONE)
+    lines.append_array(_stronger_place_lines(unit_data, has_place, own_dead))
+    lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_INK_FORMAT % [HudStyle.INK_DIM_HEX,
+        HudDisclosureVocab.BELIEFS_PLACE_RULE])
+    return lines
+
+## The dead standing on a band's ancestors' place, rounded to whole people.
+func _place_dead(band: Dictionary) -> int:
+    return int(round(_band_labor.tile_belief_at(int(band.get(HudDisclosureVocab.BELIEFS_PLACE_X_KEY, 0)),
+        int(band.get(HudDisclosureVocab.BELIEFS_PLACE_Y_KEY, 0)))))
+
+## Places the player's OTHER bands hold that differ from this band's and hold strictly more dead, strongest
+## first: at most `BELIEFS_STRONGER_MAX_LINES`, then `+N more places`. A place is named for its formed tribe
+## when every band holding it is in that one tribe, else for its lowest-id holder.
+func _stronger_place_lines(unit_data: Dictionary, has_place: bool, own_dead: int) -> Array[String]:
+    var lines: Array[String] = []
+    var band_id := int(unit_data.get("band_id", HudConst.NO_BAND_ID))
+    var places: Dictionary = {}
+    for other in _band_labor.current_player_bands():
+        if not (other is Dictionary) or int(other.get("band_id", HudConst.NO_BAND_ID)) == band_id \
+                or bool(other.get("is_expedition", false)) \
+                or not bool(other.get(HudDisclosureVocab.BELIEFS_PLACE_ANCHOR_KEY, false)):
+            continue
+        var tile := Vector2i(int(other.get(HudDisclosureVocab.BELIEFS_PLACE_X_KEY, 0)),
+            int(other.get(HudDisclosureVocab.BELIEFS_PLACE_Y_KEY, 0)))
+        if has_place and tile == Vector2i(int(unit_data.get(HudDisclosureVocab.BELIEFS_PLACE_X_KEY, 0)),
+                int(unit_data.get(HudDisclosureVocab.BELIEFS_PLACE_Y_KEY, 0))):
+            continue
+        if not places.has(tile):
+            places[tile] = []
+        (places[tile] as Array).append(other)
+    var rows: Array[Dictionary] = []
+    for tile in places:
+        var dead := _place_dead(places[tile][0])
+        if dead <= own_dead:
+            continue
+        rows.append({"dead": dead, "who": _place_holder_name(places[tile])})
+    rows.sort_custom(func(a, b): return int(a["dead"]) > int(b["dead"]))
+    var indent := DetailFormat.MORALE_BREAKDOWN_INDENT
+    for index in range(mini(rows.size(), HudDisclosureVocab.BELIEFS_STRONGER_MAX_LINES)):
+        lines.append(indent + HudDisclosureVocab.BELIEFS_STRONGER_FORMAT % [rows[index]["who"], rows[index]["dead"]])
+    if rows.size() > HudDisclosureVocab.BELIEFS_STRONGER_MAX_LINES:
+        lines.append(indent + HudDisclosureVocab.BELIEFS_STRONGER_MORE_FORMAT
+            % (rows.size() - HudDisclosureVocab.BELIEFS_STRONGER_MAX_LINES))
+    return lines
+
+## Who holds a place: the one formed tribe all its holders belong to, else the lowest-id holder plus a count.
+func _place_holder_name(holders: Array) -> String:
+    var tribe := String(holders[0].get("tribe_name", ""))
+    var same_tribe := tribe != ""
+    for holder in holders:
+        if String(holder.get("tribe_name", "")) != tribe:
+            same_tribe = false
+    if same_tribe:
+        return tribe
+    var lowest: Dictionary = holders[0]
+    for holder in holders:
+        if int(holder.get("band_id", 0)) < int(lowest.get("band_id", 0)):
+            lowest = holder
+    var holder_name := HudFormat.band_name(lowest)
+    if holders.size() == 2:
+        return HudDisclosureVocab.BELIEFS_STRONGER_OTHERS_ONE_FORMAT % holder_name
+    if holders.size() > 2:
+        return HudDisclosureVocab.BELIEFS_STRONGER_OTHERS_FORMAT % [holder_name, holders.size() - 1]
+    return holder_name
 
 ## The culture-pressure lines under the Beliefs row (#820): one per pulling people with phase >= 1, at
 ## most `CULTURE_PRESSURE_MAX_LINES`, then `+N more`. Text only; the copy lives in the disclosure vocab.

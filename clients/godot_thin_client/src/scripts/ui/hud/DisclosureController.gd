@@ -142,6 +142,11 @@ func _is_concerning(kind: String, band: Dictionary) -> bool:
             return DetailFormat.food_is_concerning(band)
         HudDisclosureVocab.BREAKDOWN_KIND_GROWTH:
             return DetailFormat.growth_is_concerning(band)
+        HudDisclosureVocab.BREAKDOWN_KIND_BELIEFS:
+            # Only a place the band holds but no chain of kin reaches is worth a WARN caret.
+            return bool(band.get(HudDisclosureVocab.BELIEFS_PLACE_ANCHOR_KEY, false)) \
+                and int(band.get(HudDisclosureVocab.BELIEFS_PLACE_RELAY_KEY, 0)) \
+                    >= HudDisclosureVocab.BELIEFS_PLACE_RELAY_UNREACHED
         HudDisclosureVocab.BREAKDOWN_KIND_FODDER:
             # The FOOD test on the fodder account, through the same runway thresholds — see
             # `DetailFormat.fodder_is_concerning`. The row's own amber `need` clause is retired, so

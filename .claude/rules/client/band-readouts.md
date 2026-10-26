@@ -1763,6 +1763,22 @@ with no pull adds nothing there (`_band_beliefs_compact_clause`).
   (`CULTURE_PRESSURE_COMPACT_*`, no factor or clock); phases 0/1 add nothing. Pinned in `band_panel_preview`
   (`_assert_beliefs_compact_clause`, frame `band_panel_vitals_worst_case`). The `culture_pull` event is
   Notable (`event-dock.md`).
+- **Beliefs ▸ — the ancestors' place pull-down** (non-compact tier only; the compact tier keeps its
+  clause). The row is a disclosure like Morale and Growth: `BandDetailLines._beliefs_place_lines`
+  registers `BREAKDOWN_KIND_BELIEFS` under `DETAIL_ROW_BELIEFS`, the row keeps its hover, and the popover
+  holds, in order: (1) the place and its reach, read off `has_belief_anchor`, `belief_anchor_x/y` and
+  `belief_relay_hops` with the tile's dead from `HudBandLaborState.tile_belief_at` rounded to whole
+  people (`Ancestors' place: 14 dead · near` / `· tied in through 1 band of kin` / `· tied in through
+  K bands of kin` / `· out of reach` in the warning ink at hops 255; with no place, `No ancestors' place
+  yet — the band takes one up once its dead lie within walking reach.`); (2) the existing pull sentence,
+  or the untied sentence when there is a place and no pull, and nothing with no place; (3) the stronger
+  places of the player's OTHER own, non-expedition bands (the same set `_build_tribe_block` gathers):
+  distinct places that differ from this band's and hold strictly more dead (no place counts as 0),
+  strongest first, at most three as `<who>: N dead — stand within walking reach to take it up`, then
+  `+N more places`; `<who>` is the formed tribe's name when every holder is in that one tribe, else the
+  lowest-id holder's band name plus ` and N other band(s)`; (4) the rule, dim. The caret tints WARN while
+  the place is unreached. The client states published facts and compares two belief numbers; it never
+  computes walking reach. Frames `band_beliefs_place_direct` / `_unreached` / `_none` (`band_expedition`).
 - **EVERY ROW'S HOVER SHOWS OVER THAT ROW ONLY.** `ctx.row_tooltips` (keyed by row) is still the one
   source, but `DetailFormat.block_tooltip` (one `tooltip_text` joining every row's sentence) is
   retired: it put the Carry sentence under a cursor on Beliefs. A row with a hover wears a
@@ -1854,8 +1870,8 @@ only: `partner_name`, `history`, `contribution`), decoded in `dict/population.rs
   read). Tested in order, one line each: (a) `has_belief_anchor` false: `Tribe: no ancestors' place
   yet`; (b) another band in the same non-zero `supply_network_id` whose ancestors' place
   (`belief_anchor_x/y`) differs or is missing: `Tribe: different ancestors' place`, a fixed phrase so
-  no name can overflow it; the hover names that band (the band in a formed tribe is preferred, else
-  the largest by `size`; `the <tribe_name>` or `band_name`), giving both places as `(x, y)` or `<X> has no ancestors' place yet`;
+  no name can overflow it; the hover is exactly two lines and names no partner and no coordinates: the
+  rule, then `<band> keeps a different ancestors' place from your other bands — see Beliefs.`;
   (c) other bands exist but none shares the network (or this band's is 0): `Tribe: no shared supply network`; (d) no other band:
   `Tribe: no other band of your people`. The visible lines are kept short because the line is one
   non-wrapping `RichTextLabel` whose minimum width widens the docked card.

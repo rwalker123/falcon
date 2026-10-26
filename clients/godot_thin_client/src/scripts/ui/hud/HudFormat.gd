@@ -643,13 +643,11 @@ const TRIBE_ROW_LABEL := "Tribe"
 const TRIBE_NO_PLACE_LINE := "Tribe: no ancestors' place yet"
 const TRIBE_NO_PLACE_TOOLTIP := "A band takes up an ancestors' place where its people have died."
 const TRIBE_DIFFERENT_PLACE_LINE := "Tribe: different ancestors' place"
-const TRIBE_DIFFERENT_PLACE_TOOLTIP_FORMAT := "%s's ancestors' place is at (%d, %d); %s's is at (%d, %d). A band takes up another ancestors' place when it stands near one holding more belief than its own."
-const TRIBE_OTHER_NO_PLACE_TOOLTIP_FORMAT := "%s's ancestors' place is at (%d, %d). %s has no ancestors' place yet."
+## The hover on the different-place line: this band's own fact, no partner and no coordinates.
+const TRIBE_DIFFERENT_PLACE_TOOLTIP_FORMAT := "%s keeps a different ancestors' place from your other bands — see Beliefs."
 const TRIBE_NO_NETWORK_LINE := "Tribe: no shared supply network"
 const TRIBE_NO_NETWORK_TOOLTIP := "Bands in one supply network pool goods; link this band to the others."
 const TRIBE_ALONE_LINE := "Tribe: no other band of your people"
-## How a band in a formed tribe is named in those lines: `the Fenwatch tribe` (`tribe_name` already ends in "tribe").
-const TRIBE_NAMED_FORMAT := "the %s"
 ## The supply network id that means "in none".
 const SUPPLY_NETWORK_NONE := 0
 ## A score within this of the threshold counts as reaching it (float noise from summing seven terms).
@@ -842,8 +840,8 @@ static func band_tribe_progress(entry: Dictionary, other_bands: Array = []) -> D
 
 ## The dim line and hover of a band with no partner, naming the real reason from the player's own
 ## bands (`other_bands`: the other own, non-expedition bands). Tested in order: this band has no
-## ancestors' place; another band shares its supply network (non-zero) but not its place — the one named
-## is the band in a formed tribe, else the largest; no other band shares its network; no other band.
+## ancestors' place; another band shares its supply network (non-zero) but not its place; no other band
+## shares its network; no other band.
 static func tribe_no_partner_view(entry: Dictionary, other_bands: Array) -> Dictionary:
     var tooltip: Array[String] = [TRIBE_TOOLTIP_RULE]
     var line := TRIBE_ALONE_LINE
@@ -853,7 +851,7 @@ static func tribe_no_partner_view(entry: Dictionary, other_bands: Array) -> Dict
         tooltip.append(TRIBE_NO_PLACE_TOOLTIP)
     elif not other_bands.is_empty():
         var network := int(entry.get("supply_network_id", SUPPLY_NETWORK_NONE))
-        var named: Dictionary = {}
+        var differs := false
         for other in other_bands:
             if network == SUPPLY_NETWORK_NONE or int(other.get("supply_network_id", SUPPLY_NETWORK_NONE)) != network:
                 continue
@@ -861,30 +859,16 @@ static func tribe_no_partner_view(entry: Dictionary, other_bands: Array) -> Dict
                     and int(other.get("belief_anchor_x", 0)) == int(entry.get("belief_anchor_x", 0)) \
                     and int(other.get("belief_anchor_y", 0)) == int(entry.get("belief_anchor_y", 0)):
                 continue
-            if named.is_empty() or _tribe_other_outranks(other, named):
-                named = other
-        if named.is_empty():
+            differs = true
+            break
+        if not differs:
             line = TRIBE_NO_NETWORK_LINE
             tooltip.append(TRIBE_NO_NETWORK_TOOLTIP)
         else:
-            var other_name := TRIBE_NAMED_FORMAT % String(named["tribe_name"]) \
-                if String(named.get("tribe_name", "")) != "" else band_name(named)
             line = TRIBE_DIFFERENT_PLACE_LINE
-            var mine: Array = [int(entry.get("belief_anchor_x", 0)), int(entry.get("belief_anchor_y", 0))]
-            if bool(named.get("has_belief_anchor", false)):
-                tooltip.append(TRIBE_DIFFERENT_PLACE_TOOLTIP_FORMAT % [here, mine[0], mine[1], other_name,
-                    int(named.get("belief_anchor_x", 0)), int(named.get("belief_anchor_y", 0))])
-            else:
-                tooltip.append(TRIBE_OTHER_NO_PLACE_TOOLTIP_FORMAT % [here, mine[0], mine[1], other_name])
+            tooltip.append(TRIBE_DIFFERENT_PLACE_TOOLTIP_FORMAT % here)
     return {"line": "[color=#%s]%s[/color]" % [HudStyle.INK_FAINT.to_html(false), line],
         "tooltip": "\n".join(tooltip), "has_partner": false}
-
-## Whether `a` is the better band to name than `b`: one in a formed tribe beats one in none, else the larger.
-static func _tribe_other_outranks(a: Dictionary, b: Dictionary) -> bool:
-    var a_tribe := String(a.get("tribe_name", "")) != ""
-    if a_tribe != (String(b.get("tribe_name", "")) != ""):
-        return a_tribe
-    return int(a.get("size", 0)) > int(b.get("size", 0))
 
 ## The line and hover of a band in a formed tribe.
 static func _tribe_formed(entry: Dictionary, tribe_name: String) -> Dictionary:
