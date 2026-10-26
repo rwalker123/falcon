@@ -897,8 +897,8 @@ func _link_spans_seam(a: Vector2, b: Vector2) -> bool:
 ## When a player band is selected, surface what it is working (Early-Game Labor slice 3b):
 ##  - two RANGE BORDERS: a clean perimeter outline of each reach's hex disk (traced
 ##    edge-by-edge via _draw_range_border, using the sim's true **odd-r hex distance** so the
-##    boundary == actually-in-range) — the band's apron (green, `work_range`) and scout sight
-##    (azure, `scout_reveal_radius`, only when scouts are staffed). There is no separate hunt ring:
+##    boundary == actually-in-range) — the band's apron (green, `work_range`) and watched ground
+##    (azure, `watched_radius`, only when scouts are staffed). There is no separate hunt ring:
 ##    every job — hunt or gather — posts a work party past the SAME apron
 ##    (`docs/plan_civilization_steps.md` §One work party).
 ##  - the SOURCE ROWS (`compute_source_rows`) — the model the docked `BandSourceList` renders and
@@ -927,21 +927,20 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 	var eff_col := _view._band_effective_col(band_col, radius, origin)
 	var band_center := _view._hex_center(eff_col, band_row, radius, origin)
 
-	# Scouting draws no filled REVEAL DISC: `scout_reveal_radius` carries the band's scout vantage
-	# distance (how far forward-observer vantages are posted, `0` with no scouts), not a revealed-area
-	# radius. Staffed scouts reveal LOS from vantages that see around obstacles, and that true revealed
-	# area — which the client can't reconstruct (it doesn't know the server-side LOS/terrain) — shows
-	# directly in the fog. What IS drawn (below) is the azure scout range BORDER: a perimeter outline at
-	# `scout_reveal_radius` marking how far the vantage reach extends, not the tiles actually revealed.
+	# Scouting draws no filled REVEAL DISC: `watched_radius` carries the edge of the band's watched
+	# ground (local range + the tiles its scouts reach, `0` with no scouts) — the line wild predators
+	# keep outside of — not a revealed-area radius. The true revealed area depends on server-side
+	# LOS/terrain the client can't reconstruct, and shows directly in the fog. What IS drawn (below)
+	# is the azure BORDER: a perimeter outline at `watched_radius`.
 
 	# 1. Range borders — two clean perimeter outlines of the band's reaches (see _draw_range_border):
 	#    the apron (green) and scout sight (azure, only when scouts are staffed). All at every zoom.
 	var work_range := int(band.get("work_range", 0))
-	var scout_reveal_radius := int(band.get("scout_reveal_radius", 0))
+	var watched_radius := int(band.get("watched_radius", 0))
 	if work_range > 0:
 		_draw_range_border(eff_col, band_row, work_range, FORAGE_RANGE_OUTLINE, FORAGE_RANGE_OUTLINE_WIDTH, radius, origin)
-	if scout_reveal_radius > 0:
-		_draw_range_border(eff_col, band_row, scout_reveal_radius, SCOUT_RANGE_OUTLINE, SCOUT_RANGE_OUTLINE_WIDTH, radius, origin)
+	if watched_radius > 0:
+		_draw_range_border(eff_col, band_row, watched_radius, SCOUT_RANGE_OUTLINE, SCOUT_RANGE_OUTLINE_WIDTH, radius, origin)
 
 	# 1b. The band's ancestors: the reach-region perimeter and the anchor mark (nothing without an
 	#     anchor). Drawn under the source rows / pending / travel layers that follow.

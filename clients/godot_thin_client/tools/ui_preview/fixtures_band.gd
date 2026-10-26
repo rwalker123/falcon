@@ -117,7 +117,7 @@ static func band_fixture() -> Dictionary:
 		#     sentinel is relative to, so an unbounded raid can be quoted a floor instead of "many turns".
 		"expedition_forecast_horizon_turns": FORECAST_HORIZON_TURNS,
 		"work_range": 2,
-		"scout_reveal_radius": 2,
+		"watched_radius": 5,
 		"activity": "forage",
 		# Band food flow (Food summary line): total income across the worked sources vs the cohort's
 		# consumption. Net = 0.94 − 0.68 = +0.26 (positive → larder growing), shown green on the Food

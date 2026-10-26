@@ -7362,7 +7362,7 @@ func _assert_scouting_range_card() -> void:
 	_set_scout_row(shorted, SCOUT_FIXTURE_RANGE, SCOUT_SHORT_REACH, 0, 0)
 	var short_status := HudWorkVocab.scouting_status(_hud._band_labor.scouting_state(shorted))
 	_assert_band_panel("short line - \"%s\"" % short_status["text"],
-		short_status["text"] == "Reaches +1 of +3 tiles — no one free to scout farther."
+		short_status["text"] == "Reaches +1 of +3 tiles — not enough people to go farther."
 		and bool(short_status["short"]))
 	var short_card: PanelContainer = _build_scout_card_for(shorted)
 	var amber := false

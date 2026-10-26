@@ -921,13 +921,11 @@ pub struct PopulationCohortState {
     /// to draw the work-range ring. Sourced from `labor_config.json` at capture.
     #[serde(default)]
     pub work_range: u32,
-    /// The band's effective **scout vantage distance** — how far its forward-observer vantage ring
-    /// is posted out from the band (`min(vantage_distance_base + scouts × vantage_distance_per_scout,
-    /// vantage_distance_max)` from `LaborConfig.scout`), `0` with no scouts. Derived per-band at
-    /// capture. (Field name retained for wire compatibility; scouts now reveal by posting vantage
-    /// points that see *around* obstacles, not the retired flat fog-pulse ring.)
+    /// The band's **watched radius** in tiles: local range + scouting reach, the edge wild
+    /// predators stay behind (`visibility_systems::watched_radius`). `0` with no scouts reaching
+    /// past the local range. Derived per-band at capture.
     #[serde(default)]
-    pub scout_reveal_radius: u32,
+    pub watched_radius: u32,
     /// Expedition discriminators (`docs/plan_exploration_and_sites.md` §2). `false`/`""`/empty for a
     /// normal band; a detached scouting party sets `is_expedition` and carries its mission/phase.
     /// Client-facing (distinct marker glyph/label, awaiting-orders state, Recall affordance).

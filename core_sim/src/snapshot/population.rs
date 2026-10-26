@@ -2696,15 +2696,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         idle_workers,
         working_age,
         work_range,
-        // Repurposed: carries the band's effective scout vantage distance (how far the forward-
-        // observer vantage ring is posted, `0` with no scouts), not the retired fog-pulse radius.
-        // See the field doc in `sim_schema`.
-        // **Where the scouts' vantages are posted** - the same function the sight sweep posts them
-        // with, asked at the same sight, so the ring the client draws is the ring that sees.
-        scout_reveal_radius: crate::visibility_systems::scout_vantage_posting_distance(
+        // **The watched ground's edge** - the same function that keeps wild predators out
+        // (`fauna::advance_herds`), so the border the client draws is the edge they stay behind.
+        watched_radius: crate::visibility_systems::watched_radius(
             expedition_levers.move_ferry_reach_tiles,
             allocation.map_or(0, LaborAllocation::scouting_reach_tiles),
-            scout_vantage_range.max(0.0).round() as u32,
         ),
         scouting_range_max: kit_levers.scouting_range_max,
         predators_kept_off: cohort.predators_kept_off,

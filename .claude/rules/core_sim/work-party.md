@@ -97,6 +97,7 @@ Pinned by `server::tests::a_band_improvements_crew_is_the_keepers_the_sim_staffs
 
 | pass | what it hands out |
 |---|---|
+| 0 | the band's **scouts** (below), off the top of the pool and shelf, before any row |
 | 1a | the site's **keepers** on every row at every priority, High to Low: `floor(keep_hands)` whole-keeper heads round-robin, then, for a row with a fraction of a hand of keeping left, one head that carries it (a kitted gatherer if the shelf can arm one, else a bare one where a bare hand works, else a keeper; a row with no hold take gives it a keeper's head so the improvement is kept) |
 | 1b | per priority group High to Low: the group's **builds'** first builder (kitted if the shelf can arm one, else bare), then the group's **kitted** hands up to the row's **hold crew** |
 | 2 | **kitted** hands up to the row's **reach crew** |
@@ -202,9 +203,10 @@ clamp note on the feed line; `scout 0` drops the row. The Scout row exists exact
   `EquipmentConfig::scout_vantage_range`: a kitted scout the row's kit at its equipped tier
   (`labor_config.scout.vantage_range`, 2), a bare scout the bare tier (1, `KitChoice` none). The
   tiers are plain values on `staffing::ScoutPlan`.
-- **The scout step sits between pass 1 and pass 2** (`staffing::staff_passes_scouting`,
-  `deal_scouts`): after every keeper, first builder and hold crew, before any reach crew, out of
-  what the pool and the shelf still hold. Kitted first — `min(wayfinding heads the shelf can arm for
+- **The scouts come off the top** (`staffing::staff_passes_scouting`, `deal_scouts`): the range is
+  an explicit player order, so it is dealt before pass 1a's keepers, out of the whole pool and
+  shelf, and every pass then staffs from what is left (a band too small for everything staffs the
+  full range and a keeper, hold or reach crew goes short). Kitted first — `min(wayfinding heads the shelf can arm for
   the row's kit, ceil(N / kitted_tiles), pool)`, so kit `none` arms no one — then bare for what is
   left of `N`; `reach = min(N, kitted × kitted_tiles + bare × bare_tiles)`, less than `N` when people
   run out. A tier that rounds to no tiles contributes nobody. Scouts are one row per band and do not
@@ -222,16 +224,17 @@ clamp note on the feed line; `scout 0` drops the row. The Scout row exists exact
   `visibility_systems::scout_vantage_posting_distance(reach_tiles, scouting_reach, sight)` =
   `max(1, reach_tiles + scouting_reach − sight)`, so the farthest tile seen is
   `reach_tiles + scouting_reach` from camp. `sight` is the band's tier for the row's kit (a mixed
-  kitted/bare crew posts at the kit's tier). `scoutRevealRadius` is the same function.
+  kitted/bare crew posts at the kit's tier). The snapshot's `watchedRadius` is not this: it is the watched radius below.
 - **The payoff - predators keep off the watched ground**: with `scouting_reach > 0` the band's ring
-  (`watched_radius` = `reach_tiles + scouting_reach`) pushes wild carnivores out and keeps them from
+  (`visibility_systems::watched_radius` = `reach_tiles + scouting_reach`, `0` with no reach; the
+  snapshot's `PopulationCohortState.watchedRadius`, which the client draws as the map border) pushes wild carnivores out and keeps them from
   stepping in or chasing prey inside (`fauna.md`), so a pack never reaches `raid_radius`;
   `PopulationCohort::predators_kept_off` counts the packs it moved this turn.
 - **Wire**: `LaborAssignment.scoutingRange` / `scoutingReach`, `PopulationCohortState.scoutingRangeMax`
   (the local range is `moveFerryReachTiles`) and `predatorsKeptOff`. `SAVE_FORMAT_VERSION` 57.
 
 Pinned by `staffing::tests` (kitted before bare, kit none all bare, range 0 nobody, reach short when
-people run out, hold crews before scouts and scouts before reach crews),
+people run out, scouts before keepers and before hold and reach crews),
 `visibility_systems::tests::the_vantage_edge_is_the_local_range_plus_the_scouting_reach`, and
 `server::tests::a_scouting_range_clamps_to_the_cap_and_zero_drops_the_row`.
 

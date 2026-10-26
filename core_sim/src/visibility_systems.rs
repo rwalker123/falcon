@@ -853,8 +853,7 @@ const NEAREST_VANTAGE_TILES: u32 = 1;
 
 /// **HOW FAR OUT FROM CAMP A SCOUT VANTAGE IS POSTED** (#875): `local_range + scouting_reach -
 /// sight`, so a vantage that sees `sight` tiles reaches exactly `local_range + scouting_reach` from
-/// camp, floored at one tile. `0` with no reach (no vantages at all). The one function the sight
-/// sweep and the snapshot's `scoutRevealRadius` both ask.
+/// camp, floored at one tile. `0` with no reach (no vantages at all). The sight sweep asks it.
 pub fn scout_vantage_posting_distance(
     local_range_tiles: u32,
     scouting_reach: u32,

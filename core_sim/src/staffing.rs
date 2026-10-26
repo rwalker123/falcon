@@ -5,6 +5,9 @@
 //! decides the **crew**, every turn, with no smoothing. A row's crew is the sum of three kinds of
 //! head, staffed in three passes across the whole band:
 //!
+//! 0. **Scouts, off the top** — the band's scouting range is an explicit order, so its scouts are
+//!    dealt first (kitted, then bare) out of the whole pool and shelf; everything below staffs from
+//!    what is left.
 //! 1. **Keepers, then each group's builders and hold crews** — every row at every priority gets its
 //!    **keepers** first (keeping an improvement from sliding down its ladder is the one claim that
 //!    outranks everything). Then, per priority group High to Low, the group's builds get their
@@ -384,9 +387,8 @@ fn staff_passes(
     staff_passes_scouting(rows, pool, shelf, passes, tile_room, &ScoutPlan::default()).0
 }
 
-/// [`staff_passes`] with the band's scouting range: the scouts are placed **after pass 1** (the
-/// keepers, the first builders and the hold crews) and **before pass 2** (the reach crews), out of
-/// what the pool and the shelf still hold.
+/// [`staff_passes`] with the band's scouting range: the scouts are placed **first**, before pass 1a's
+/// keepers, out of the whole pool and shelf; every pass then staffs from what the scouts left.
 fn staff_passes_scouting(
     rows: &[StaffRowInput<'_>],
     pool: u32,
@@ -428,6 +430,11 @@ fn staff_passes_scouting(
         .iter()
         .map(|group| group.iter().partition(|&&i| rows[i].is_build))
         .collect();
+
+    // ## The scouts come off the top - before every keeper, builder and crew. The scouting range is
+    // an explicit order of its own (one row per band, not a priority group), so it is dealt first
+    // out of the whole pool and shelf and every pass below staffs from what is left.
+    let scout_crew = deal_scouts(scouts, &mut ledger.pool_left, shelf);
 
     // ## Pass 1a — the keepers on every row at every priority, High to Low: the ground the band
     // already has never rots to pay for anything else (a hold crew is a food take, not rot
@@ -486,10 +493,6 @@ fn staff_passes_scouting(
             hold_heads(row, kmax).saturating_sub(kept[i])
         });
     }
-
-    // ## The scouts - after every hold crew, keeper and first builder, before any reach crew. The
-    // band's scouting range is one row of its own, not a priority group.
-    let scout_crew = deal_scouts(scouts, &mut ledger.pool_left, shelf);
 
     // ## Pass 2 — kitted heads up to the reach crew, from whatever units and heads remain. A group's
     // builds go first, up to their cap.
@@ -2829,28 +2832,60 @@ mod tests {
     }
 
     #[test]
-    fn a_short_band_staffs_its_hold_crew_before_any_scout() {
-        // Two people: the hold crew takes both, the scouts get nobody.
-        let (rows, scouts) = staffed_with_scouts(2, 3);
-        assert_eq!(rows[0].kitted, 2);
+    fn a_short_band_still_staffs_the_full_range_and_the_hold_crew_goes_short() {
+        // Two people, range 2 (two bare scouts): the scouts come off the top, so the hold crew
+        // (which would have taken both) gets nobody.
+        let (rows, scouts) = staffed_with_scouts(2, 2);
+        assert_eq!((scouts.bare, scouts.reach), (2, 2));
+        assert_eq!(rows[0].kitted, 0);
+        let (rows, scouts) = staffed_with_scouts(2, 0);
         assert_eq!(scouts.total(), 0);
+        assert_eq!(
+            rows[0].kitted, 2,
+            "liveness: without scouts the hold crew staffs"
+        );
     }
 
     #[test]
-    fn scouts_are_placed_before_a_reach_crew() {
-        // Five people, range 2 (two bare scouts): hold 2, scouts 2, and only one left for the reach
-        // crew, which would have taken all three remaining without the scouts.
-        let (rows, scouts) = staffed_with_scouts(5, 2);
+    fn scouts_are_placed_before_the_keepers() {
+        // A keeping-only row (two whole keepers) in a band of three with range 2: the scouts take
+        // two people and the keepers get the one that is left.
+        let rows = vec![linear_row(
+            SourcePriority::Normal,
+            None,
+            2,
+            2.0,
+            2.0,
+            1.0,
+            0.0,
+            Vec::new(),
+        )];
+        let (out, scouts) = staff_passes_scouting(
+            &rows,
+            3,
+            &mut shelf(10),
+            Passes::All,
+            &BTreeMap::new(),
+            &scouting(2, Vec::new()),
+        );
         assert_eq!(scouts.bare, 2);
         assert_eq!(
-            rows[0].kitted, 3,
-            "the reach crew gets what the scouts left"
+            out[0].keepers, 1,
+            "the keepers staff from what the scouts left"
         );
+    }
+
+    #[test]
+    fn the_reach_crew_gets_what_the_scouts_left() {
+        // Five people, range 2 (two bare scouts): scouts 2, hold 2, and one left for the reach crew.
+        let (rows, scouts) = staffed_with_scouts(5, 2);
+        assert_eq!(scouts.bare, 2);
+        assert_eq!(rows[0].kitted, 3);
         let (rows, scouts) = staffed_with_scouts(5, 0);
         assert_eq!(scouts.total(), 0);
         assert_eq!(
             rows[0].kitted, 5,
-            "liveness: without scouts the reach crew takes them"
+            "liveness: without scouts the crew takes them"
         );
     }
 

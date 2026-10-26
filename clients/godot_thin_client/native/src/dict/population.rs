@@ -1267,10 +1267,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("working_age", cohort.workingAge() as i64);
     let _ = dict.insert("elders", cohort.eldersCount() as i64);
     // Forage work radius (Chebyshev tiles) drives the MapView band-selection work-range ring.
-    // scout_reveal_radius is now the band's effective sight-range bonus (extra tiles beyond
-    // base, 0 when no scouts) — its effect shows directly in the fog, NOT as a drawn disc.
+    // watched_radius is the band's watched ground in tiles (local range + scouting reach, 0 with no
+    // scouts) — the edge wild predators stay behind; the client draws it as a border.
     let _ = dict.insert("work_range", cohort.workRange() as i64);
-    let _ = dict.insert("scout_reveal_radius", cohort.scoutRevealRadius() as i64);
+    let _ = dict.insert("watched_radius", cohort.watchedRadius() as i64);
 
     // Scouting expedition (docs/plan_exploration_and_sites.md §2): a detached party is a
     // PopulationCohort tagged Expedition that flows through this same populations[] array as a

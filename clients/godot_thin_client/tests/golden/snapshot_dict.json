@@ -9243,7 +9243,6 @@
       "roadwork_demand": 58.639999,
       "roadwork_shortfall": 109.0,
       "roadwork_supplied": 76.110001,
-      "scout_reveal_radius": 65,
       "scout_vantage_range": 44.77,
       "scouting_range_max": 43,
       "settlement_stage_icon": "populations[0].settlement_stage.icon",
@@ -9406,6 +9405,7 @@
       "turns_of_food": 62.830002,
       "upkeep_fund_mode": "populations[0].upkeep_fund_mode",
       "warrior_attack": 62.459999,
+      "watched_radius": 123,
       "work_range": 137,
       "working_age": 87
     },
@@ -11687,7 +11687,6 @@
       "roadwork_demand": 67.360001,
       "roadwork_shortfall": 58.630001,
       "roadwork_supplied": 43.880001,
-      "scout_reveal_radius": 130,
       "scout_vantage_range": 23.389999,
       "scouting_range_max": 198,
       "settlement_stage_icon": "populations[1].settlement_stage.icon",
@@ -11850,6 +11849,7 @@
       "turns_of_food": 103.459999,
       "upkeep_fund_mode": "populations[1].upkeep_fund_mode",
       "warrior_attack": 96.199997,
+      "watched_radius": 114,
       "work_range": 176,
       "working_age": 100
     },
@@ -14221,7 +14221,6 @@
       "roadwork_demand": 39.720001,
       "roadwork_shortfall": 86.629997,
       "roadwork_supplied": 51.669998,
-      "scout_reveal_radius": 83,
       "scout_vantage_range": 92.559998,
       "scouting_range_max": 173,
       "settlement_stage_icon": "populations[2].settlement_stage.icon",
@@ -14384,6 +14383,7 @@
       "turns_of_food": 63.139999,
       "upkeep_fund_mode": "populations[2].upkeep_fund_mode",
       "warrior_attack": 62.490002,
+      "watched_radius": 153,
       "work_range": 171,
       "working_age": 29
     }

@@ -576,11 +576,9 @@ table PopulationCohortState {
   // Global config today (same every band); surfaced per-band so the client reads it off the
   // selected band. Appended last (append-only schema discipline).
   workRange:uint = 0;
-  // Band's effective scout vantage distance — how far the forward-observer vantage ring is posted
-  // out from the band (min(vantage_distance_base + scouts * vantage_distance_per_scout,
-  // vantage_distance_max) from LaborConfig.scout), 0 with no scouts. Field name retained for wire
-  // compat; scouts now reveal by posting vantage points that see around obstacles, not a flat ring.
-  scoutRevealRadius:uint = 0;
+  // Band's watched radius in tiles: local range + scouting reach, the edge wild predators stay
+  // behind (visibility_systems::watched_radius). 0 with no scouts reaching past the local range.
+  watchedRadius:uint = 0;
   // Expedition discriminators (docs/plan_exploration_and_sites.md §2). A detached scouting party is
   // a PopulationCohort tagged `Expedition`; these fields are false/""/empty for a normal band.
   // Client-facing: distinct marker glyph/label + awaiting-orders marker state + a Recall affordance.
