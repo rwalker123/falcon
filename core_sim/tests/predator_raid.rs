@@ -214,6 +214,7 @@ fn resident_band(app: &mut App, tile: Entity, working: u32, warriors: u32) -> En
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
             },
             LaborAllocation {
                 assignments,

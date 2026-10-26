@@ -131,6 +131,18 @@ const SCOUT_RANGE_VALUE_FORMAT := "+%d tiles"
 const SCOUT_RANGE_LESS_ARIA := "Scout less far"
 const SCOUT_RANGE_FARTHER_ARIA := "Scout farther"
 const SCOUT_RANGE_VALUE_WIDTH := 64.0
+## The card's second dim line: the wild predator packs the watched ring keeps off this turn (a payoff,
+## not a warning, so it is never amber). Shown only above zero.
+const SCOUT_KEPT_OFF_META := "scout_kept_off_line"
+const SCOUT_KEPT_OFF_ONE_FORMAT := "Keeping %d pack off watched ground"
+const SCOUT_KEPT_OFF_MANY_FORMAT := "Keeping %d packs off watched ground"
+
+static func predators_kept_off_line(kept_off: int) -> String:
+    if kept_off <= 0:
+        return ""
+    return (SCOUT_KEPT_OFF_ONE_FORMAT if kept_off == SCOUT_SINGULAR \
+        else SCOUT_KEPT_OFF_MANY_FORMAT) % kept_off
+
 ## The card's title - `ROLE_NAME_SCOUT` stays the job's name wherever a job is named.
 const SCOUT_CARD_TITLE := "Scouting range"
 ## One scout, the singular of `SCOUT_STATUS_ONE_FORMAT`.

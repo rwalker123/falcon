@@ -2145,6 +2145,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // The most tiles past the local range a scouting range may name (the stepper's ceiling); the
     // local range itself is `move_ferry_reach_tiles`.
     let _ = dict.insert("scouting_range_max", i64::from(cohort.scoutingRangeMax()));
+    // Wild predator packs this band's watched ring kept off this turn (0 without scouts).
+    let _ = dict.insert("predators_kept_off", i64::from(cohort.predatorsKeptOff()));
     let _ = dict.insert(
         "long_move_leaves_food",
         f64::from(cohort.longMoveLeavesFood()),

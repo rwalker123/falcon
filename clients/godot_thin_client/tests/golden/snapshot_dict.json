@@ -9237,6 +9237,7 @@
           "rung_id": "populations[0].pooling_links[2].rung_id"
         }
       ],
+      "predators_kept_off": 77,
       "raid_forfeit": 89.769997,
       "raid_radius": 51,
       "roadwork_demand": 58.639999,
@@ -11680,6 +11681,7 @@
           "rung_id": "populations[1].pooling_links[2].rung_id"
         }
       ],
+      "predators_kept_off": 80,
       "raid_forfeit": 69.870003,
       "raid_radius": 80,
       "roadwork_demand": 67.360001,
@@ -14213,6 +14215,7 @@
           "rung_id": "populations[2].pooling_links[2].rung_id"
         }
       ],
+      "predators_kept_off": 71,
       "raid_forfeit": 89.860001,
       "raid_radius": 1,
       "roadwork_demand": 39.720001,

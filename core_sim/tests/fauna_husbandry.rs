@@ -1108,6 +1108,7 @@ fn spawn_crew_of(
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),
@@ -5251,6 +5252,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),

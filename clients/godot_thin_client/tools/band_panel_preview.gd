@@ -1403,6 +1403,7 @@ func _ready() -> void:
 	for state in [["none", 0, 0, 0, 0], ["reached", SCOUT_FIXTURE_RANGE, SCOUT_FIXTURE_RANGE, 2, SCOUT_ONE_GEARED],
 			["short", SCOUT_FIXTURE_RANGE + 2, SCOUT_SHORT_REACH, 1, 0]]:
 		var scout_band := _band_fixture()
+		scout_band["predators_kept_off"] = 2 if String(state[0]) == "reached" else 0
 		_set_scout_row(scout_band, int(state[1]), int(state[2]), int(state[3]), int(state[4]))
 		_push_bands([scout_band])
 		await _settle()
@@ -7369,6 +7370,22 @@ func _assert_scouting_range_card() -> void:
 		if (label as Label).text == short_status["text"]:
 			amber = (label as Label).get_theme_color("font_color").is_equal_approx(HudStyle.WARN)
 	_assert_band_panel("…and the short line renders amber", amber)
+	# The kept-off line: present with N packs, singular at 1, absent at 0.
+	for kept in [[2, "Keeping 2 packs off watched ground"], [1, "Keeping 1 pack off watched ground"], [0, ""]]:
+		var kept_band := band.duplicate(true)
+		kept_band["predators_kept_off"] = int(kept[0])
+		var kept_card: PanelContainer = _hud._bandpanel._build_role_card(kept_band,
+			HudWorkVocab.SCOUT_CARD_TITLE, "", HudConst.LABOR_KIND_SCOUT,
+			_hud._band_labor.effective_role_workers(kept_band, HudConst.LABOR_KIND_SCOUT), 0, false,
+			false, HudWorkVocab.predators_kept_off_line(int(kept[0])))
+		var found := _find_label_with_text(kept_card, String(kept[1])) if String(kept[1]) != "" else null
+		var any_line := false
+		for kept_label in _labels_under(kept_card):
+			if (kept_label as Label).has_meta(HudWorkVocab.SCOUT_KEPT_OFF_META):
+				any_line = true
+		_assert_band_panel("kept-off line at %d: %s" % [int(kept[0]), "\"%s\"" % String(kept[1]) if String(kept[1]) != "" else "absent"],
+			(found != null and any_line) if String(kept[1]) != "" else not any_line)
+		kept_card.free()
 	# Pending overlay: the range, not the crew.
 	var pending_band := band.duplicate(true)
 	var entity := int(pending_band.get("entity", -1))

@@ -1455,7 +1455,8 @@ func _build_roles_block(band: Dictionary) -> VBoxContainer:
     # while the reach falls short of the ask.
     var scout_status := HudWorkVocab.scouting_status(_band_labor.scouting_state(band))
     scout_row.add_child(_build_role_card(band, HudWorkVocab.SCOUT_CARD_TITLE, String(scout_status["text"]),
-        HudConst.LABOR_KIND_SCOUT, scout_eff, orderable, false, bool(scout_status["short"])))
+        HudConst.LABOR_KIND_SCOUT, scout_eff, orderable, false, bool(scout_status["short"]),
+        HudWorkVocab.predators_kept_off_line(int(band.get("predators_kept_off", 0)))))
     # A visible predator within raid range turns the Warrior card's static hint into a live crimson
     # alert naming the on-guard count — the guarding role is only legible when the threat it answers is.
     var warrior_threat := _band_predator_threat_present(band)
@@ -1637,7 +1638,7 @@ func _band_predator_threat_present(band: Dictionary) -> bool:
 ## Warrior are the only two cards with a kit picker, a gear line and prose. A site's keeping and its
 ## build are staffed on the site's own row (`docs/plan_site_crews.md`, `docs/plan_labor_at_scale.md`),
 ## so no other standing role is built here.
-func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: String, effective: Dictionary, idle: int, alert: bool = false, hint_warn: bool = false) -> PanelContainer:
+func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: String, effective: Dictionary, idle: int, alert: bool = false, hint_warn: bool = false, extra_line: String = "") -> PanelContainer:
     # **THE COUNT THE CARD STEPS**: a head count, except on Scout where it is the range in tiles.
     var is_scout := kind == HudConst.LABOR_KIND_SCOUT
     var workers := int(effective.get("range", 0)) if is_scout else int(effective.get("workers", 0))
@@ -1713,6 +1714,10 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
         hint_label.add_theme_color_override("font_color", HudStyle.WARN)
     hint_label.custom_minimum_size = Vector2(0.0, HudWorkVocab.ROLE_CARD_HINT_HEIGHT)
     col.add_child(hint_label)
+    if extra_line != "":
+        var extra := HudWidgets.alloc_hint_label(extra_line)
+        extra.set_meta(HudWorkVocab.SCOUT_KEPT_OFF_META, extra_line)
+        col.add_child(extra)
     return card
 
 ## The role card mounts the shared kit row with NO field key — see `_build_role_card`.

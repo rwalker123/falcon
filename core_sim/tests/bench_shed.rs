@@ -107,6 +107,7 @@ fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entit
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
             },
             StartingUnit {
                 kind: "BandForager".to_string(),

@@ -6543,3 +6543,5 @@ status line; the wording and the pending-overlay rules are in `labor-ui.md` -> "
 RANGE, NOT A HEADCOUNT". Its status line is as tall as the Warrior's hint (both reserve
 `ROLE_CARD_HINT_HEIGHT`), so the two cards' contents can measure the same height, and the chartless band
 flank's balance floor is 0.60.
+The Scout card's optional second dim line (`Keeping N packs off watched ground`, only when
+`predators_kept_off > 0`) sits under the status line; it is asserted in `_assert_scouting_range_card`.

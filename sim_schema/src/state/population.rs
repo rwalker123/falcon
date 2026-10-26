@@ -1922,6 +1922,9 @@ pub struct PopulationCohortState {
     /// The most tiles past the local range a scouting range may name. Appended last.
     #[serde(default)]
     pub scouting_range_max: u32,
+    /// The wild predator packs this band's watched ring kept off this turn. Appended last.
+    #[serde(default)]
+    pub predators_kept_off: u32,
 }
 
 /// `PopulationCohortState::tribe_leader_kind`: the band is in no tribe.

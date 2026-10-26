@@ -1260,6 +1260,7 @@ fn create_populations<'a>(
                     tribeLeaderName: Some(tribe_leader_name),
                     tribeLeaderKind: cohort.tribe_leader_kind,
                     scoutingRangeMax: cohort.scouting_range_max,
+                    predatorsKeptOff: cohort.predators_kept_off,
                 },
             )
         })
@@ -2196,6 +2197,7 @@ fn decode_population(
         tribe_leader_name: text(cohort.tribeLeaderName()),
         tribe_leader_kind: cohort.tribeLeaderKind(),
         scouting_range_max: cohort.scoutingRangeMax(),
+        predators_kept_off: cohort.predatorsKeptOff(),
     })
 }
 

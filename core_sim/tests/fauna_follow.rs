@@ -171,6 +171,7 @@ fn spawn_hunter(app: &mut App, herd_id: &str, policy: f32) -> bevy::prelude::Ent
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),

@@ -2707,6 +2707,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             scout_vantage_range.max(0.0).round() as u32,
         ),
         scouting_range_max: kit_levers.scouting_range_max,
+        predators_kept_off: cohort.predators_kept_off,
         is_expedition,
         expedition_mission,
         expedition_phase,
@@ -3636,6 +3637,7 @@ mod tests {
             ),
             belief_anchor: None,
             last_belief_relay_hops: 0,
+            predators_kept_off: 0,
         }
     }
 

@@ -863,10 +863,23 @@ pub fn scout_vantage_posting_distance(
     if scouting_reach == NO_SCOUTING_REACH {
         return 0;
     }
-    local_range_tiles
-        .saturating_add(scouting_reach)
+    watched_radius(local_range_tiles, scouting_reach)
         .saturating_sub(vantage_sight)
         .max(NEAREST_VANTAGE_TILES)
+}
+
+/// No watched ground: the band has no scouts reaching past its local range.
+pub const NO_WATCHED_RADIUS: u32 = 0;
+
+/// **HOW FAR FROM CAMP A BAND WATCHES** (#875): `local_range + scouting_reach` hex steps, and only
+/// while scouts reach past the local range (the plain local range watches nothing).
+/// [`NO_WATCHED_RADIUS`] without scouts. The one home of "watched radius": the vantages are posted
+/// to see exactly this far, and wild predators keep off it (`fauna::advance_herds`).
+pub fn watched_radius(local_range_tiles: u32, scouting_reach: u32) -> u32 {
+    if scouting_reach == NO_SCOUTING_REACH {
+        return NO_WATCHED_RADIUS;
+    }
+    local_range_tiles.saturating_add(scouting_reach)
 }
 
 /// Build a grid of terrain tags from tile entities.
@@ -1468,6 +1481,7 @@ mod tests {
                     ),
                     belief_anchor: None,
                     last_belief_relay_hops: 0,
+                    predators_kept_off: 0,
                 },
                 StartingUnit::new("BandScout".to_string(), vec![]),
                 allocation,
@@ -1603,6 +1617,7 @@ mod tests {
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
             },
             // BandCrafter: base_range 2, so the band center can't reveal the far worked tiles.
             StartingUnit::new("BandCrafter".to_string(), vec![]),
@@ -2294,6 +2309,7 @@ mod hex_sight_range_tests {
             ),
             belief_anchor: None,
             last_belief_relay_hops: 0,
+            predators_kept_off: 0,
         }
     }
 

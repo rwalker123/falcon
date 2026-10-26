@@ -1616,6 +1616,10 @@ table PopulationCohortState {
   // range_past_local_max) - the Scouting range stepper's ceiling. The local range itself is
   // moveFerryReachTiles.
   scoutingRangeMax:uint = 0;
+  // How many wild predator packs this band's watched ring (local range + scouting reach, only while
+  // scouts reach) kept off this turn: pushed out, a step into it refused, or a prey target inside it
+  // excluded. 0 without scouts. Own bands only (a foreign row carries 0).
+  predatorsKeptOff:uint = 0;
 }
 
 // ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH - a row of `PopulationCohortState.bandImprovements`,

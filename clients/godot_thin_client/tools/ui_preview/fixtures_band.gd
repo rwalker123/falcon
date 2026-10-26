@@ -146,6 +146,7 @@ static func band_fixture() -> Dictionary:
 			{"kind": "warrior", "workers": 2},
 		],
 		"scouting_range_max": 9,
+		"predators_kept_off": 2,
 		"tile_info": {
 			"x": 71, "y": 18,
 			"terrain_label": "Freshwater Marsh",

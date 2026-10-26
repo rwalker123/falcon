@@ -223,8 +223,12 @@ clamp note on the feed line; `scout 0` drops the row. The Scout row exists exact
   `max(1, reach_tiles + scouting_reach − sight)`, so the farthest tile seen is
   `reach_tiles + scouting_reach` from camp. `sight` is the band's tier for the row's kit (a mixed
   kitted/bare crew posts at the kit's tier). `scoutRevealRadius` is the same function.
+- **The payoff - predators keep off the watched ground**: with `scouting_reach > 0` the band's ring
+  (`watched_radius` = `reach_tiles + scouting_reach`) pushes wild carnivores out and keeps them from
+  stepping in or chasing prey inside (`fauna.md`), so a pack never reaches `raid_radius`;
+  `PopulationCohort::predators_kept_off` counts the packs it moved this turn.
 - **Wire**: `LaborAssignment.scoutingRange` / `scoutingReach`, `PopulationCohortState.scoutingRangeMax`
-  (the local range is `moveFerryReachTiles`). `SAVE_FORMAT_VERSION` 57.
+  (the local range is `moveFerryReachTiles`) and `predatorsKeptOff`. `SAVE_FORMAT_VERSION` 57.
 
 Pinned by `staffing::tests` (kitted before bare, kit none all bare, range 0 nobody, reach short when
 people run out, hold crews before scouts and scouts before reach crews),

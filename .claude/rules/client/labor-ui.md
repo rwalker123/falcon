@@ -8322,3 +8322,7 @@ kit picker is kept (a kit pick re-states the current RANGE).
   band sees its local range and no farther.` / `N scout(s) this turn, past the local range[ - K with
   wayfinding gear]` / `Reaches +R of +N tiles - no one free to scout farther.` (amber, `HudStyle.WARN`).
 - The Warrior card is unchanged and stays a player-set head count.
+- **A second dim line states the payoff**: `Keeping N packs off watched ground` (`pack` at 1), from the
+  cohort's `predators_kept_off` (wild packs the watched ring keeps off this turn; 0 without scouts and on
+  foreign rows). Shown only above 0, never amber (`HudWorkVocab.predators_kept_off_line`, carried on
+  the label as `SCOUT_KEPT_OFF_META`).

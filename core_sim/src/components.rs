@@ -1800,6 +1800,12 @@ pub struct PopulationCohort {
     /// `PopulationCohortState.beliefRelayHops`, so the hop count a frame shows is the one its
     /// `moraleCulture` was priced from — not a recount on positions the turn's movement changed.
     pub last_belief_relay_hops: u8,
+    /// **HOW MANY WILD PREDATOR PACKS THIS BAND'S WATCHED RING KEPT OFF THIS TURN** (#875): the
+    /// distinct packs whose move `advance_herds` changed because of this band's ring - pushed out of
+    /// it, a step into it refused, or a prey target inside it excluded. Reset to `0` and rewritten by
+    /// the movement system every turn; `0` without scouts (no ring). Stored on the cohort so a
+    /// recapture after a command republishes the same value, and it rides the checkpoint with it.
+    pub predators_kept_off: u32,
     /// The three named fertility factors behind this turn's births — `hunger` (did we eat) ×
     /// `reserve` (is there a cushion) × `trend` (is the cushion growing or shrinking), the
     /// `birth_rate` multiplier from `docs/plan_population_growth_model.md`. The birth path's

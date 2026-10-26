@@ -363,6 +363,27 @@ field today; a future tamed wolf→dog would keep its rung's `drift_to_owner`).
   disk it feeds from, and the wider acquisition range is the real fix for the transient-zero-prey
   stranding that widening `prey_sense_radius` 3→4 only band-aided. See Also "Predation (Phase 1a)" /
   "Predator raids (Phase 1b)" in `combat.md`.
+- **A band's watched ring pushes a wild carnivore off** (#875). The ring is every tile within
+  `visibility_systems::watched_radius(reach_tiles, scouting_reach)` = `reach_tiles + scouting_reach` hex
+  steps of a resident band whose scouts reach past its local range (`scouting_reach > 0`; the plain
+  local range watches nothing, and the same function posts the vantages). It applies to the `Pursue`
+  herds only — unowned, carnivore, not penned; prey, tame and penned herds never read it.
+  `advance_herds` builds the rings once per turn (`WatchedGround`, in `BandId` order) from the labor
+  rows as the player left them, so visit order changes nothing. (1) A pack **standing inside** a ring
+  takes, on its move turns (the species' `dwell_turns` cadence still applies: no extra speed), the
+  greedy one-hex step that increases its distance from the nearest watching camp (ties to the lower
+  `BandId`), over the roam's own `acceptable_steps`, ordered `(distance from camp DESC, graze capacity
+  DESC, y ASC, x ASC)` (`step_out_of_watch`); no step that increases the distance means it stays.
+  (2) **Outside** the rings, `pursue` ignores prey standing inside any ring, its attractor step skips
+  a tile inside one, and a roam step that ends inside one is refused (the pack stays where it stood).
+  No new randomness: the same seeded per-herd RNG, consumed exactly as before; with no scouts the rings
+  are empty and every path is the code it was. **The readout**: `PopulationCohort::predators_kept_off`
+  is reset to `0` and rewritten by `advance_herds` each turn - the distinct packs whose move this band's
+  ring changed (pushed out, a step refused, or a prey target excluded), attributed to the nearest
+  watching camp (ties to the lower `BandId`) - so a recapture after a command republishes it;
+  `PopulationCohortState.predatorsKeptOff`, native key `predators_kept_off`. `advance_cultivation` is
+  ordered `.after(advance_herds)` because the herd pass now writes the cohort. Pinned by
+  `tests/watched_ground.rs` and `tests/watched_ground_wire.rs`.
 - **`fixed`** (pen) — pinned at `corralled_at`, no roam, no heading arrow.
 
 Movement is **deterministic under rollback** — a per-herd/​per-turn `SmallRng` seeded from `map_seed ^

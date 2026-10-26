@@ -261,6 +261,7 @@ fn spawn_keeper(app: &mut App, assignments: Vec<LaborAssignment>, tile: UVec2) -
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
             },
             LaborAllocation {
                 assignments,

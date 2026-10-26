@@ -300,6 +300,7 @@ fn spawn_keepers_of(
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
             },
             ResidentBand,
             match gear {
@@ -1446,6 +1447,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
             },
             ResidentBand,
             // **THE LEDGER IS STATED, NOT LEFT ABSENT.** An absent component resolves to one reference
