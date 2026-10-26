@@ -1124,7 +1124,7 @@ Each mark docks to the ring of the source's OWN secondary marker, via the slot
     `rung_in_progress` / `next_rung_ready` answer for the FOOD webs and return nothing for an
     `extract` kind, and a working's ladder is declared from the Work board, so the plate states the
     crew (`⚒N`) and stops. It is the same plate a worked patch or a hunted herd wears, which is what
-    makes the map mark and the tile card's trailing hand count one number.
+    makes the map mark and the tile card's trailing worker figure count one number.
   - **It is the map-side twin of `SubjectDrawerController._cutters_on_working`, and it is local on
     purpose.** That helper sums the same `(tile, material)` crew across every player band but reaches
     it through `HudBandLaborState`; a renderer must not depend on the HUD's band-labor model (the

@@ -98,7 +98,7 @@ static func washed(hud: Node, wash_hex: String) -> Array[String]:
 static func _markup(hud: Node) -> String:
 	return hud.tile_detail.text
 
-# ---- THE TRAILING WORKERS MARK (the open hand + crew count every door row ends in) -------------------
+# ---- THE TRAILING WORKERS MARK (the worker figure + crew count every door row ends in) -------------------
 # Read off the RENDERED markup of one row, never the producer's registry. A row is cut out of the markup from its
 # key cell to the end of its value cell.
 
@@ -162,7 +162,7 @@ static func warn_mark_in_warn_ink(hud: Node, key: String, nth: int = 0) -> bool:
 	return row_markup(hud, key, nth).contains("[color=#%s]%s[/color]" % [
 		HudStyle.WARN_HEX, HudSelectionVocab.DOOR_WARN_SUFFIX.replace(" ", NBSP)])
 
-## True when the image sits in the row's THIRD cell (the mark column), i.e. after two closed cells: every hand shares
+## True when the image sits in the row's THIRD cell (the mark column), i.e. after two closed cells: every figure shares
 ## that column's left edge.
 static func mark_in_column(hud: Node, key: String, nth: int = 0) -> bool:
 	var row := row_markup(hud, key, nth)

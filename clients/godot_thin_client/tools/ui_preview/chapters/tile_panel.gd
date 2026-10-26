@@ -1355,7 +1355,7 @@ func run(harness) -> void:
 	# clause, every line of the summary on the row's hover -- crew count, rate, the overstaff note.
 	var standing_text := String(h._hud.tile_detail.text)
 	var standing_hover: String = DoorQ.hover_text(h._hud, HudFloraVocab.FORAGING_KEY)
-	h._assert_hud("the Foraging row carries the hex's crew after the full-ink hand, and the over-take warning in WARN ink (%s | %s)"
+	h._assert_hud("the Foraging row carries the hex's crew after the full-ink figure, and the over-take warning in WARN ink (%s | %s)"
 			% [DoorQ.mark_tint(h._hud, HudFloraVocab.FORAGING_KEY), DoorQ.mark_text(h._hud, HudFloraVocab.FORAGING_KEY)],
 		DoorQ.mark_text(h._hud, HudFloraVocab.FORAGING_KEY) == "4" + HudSelectionVocab.DOOR_WARN_SUFFIX
 			and DoorQ.mark_tint(h._hud, HudFloraVocab.FORAGING_KEY) == HudStyle.INK_HEX + "ff"

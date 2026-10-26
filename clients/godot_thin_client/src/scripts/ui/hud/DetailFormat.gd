@@ -1010,7 +1010,7 @@ class Context extends RefCounted:
     var door_metas: Dictionary = {}
     ## The crew each door row carries on its trailing mark -- `{line index: {"crew": int, "warn": bool}}`,
     ## filled by the producer beside `door_metas`. A door with no entry (or a crew of 0) draws the dim
-    ## hand alone; a crew draws the full-ink hand and its count, plus the `warn` mark where the source's
+    ## figure alone; a crew draws the full-ink figure and its count, plus the `warn` mark where the source's
     ## standing summary warns it is over-taken. A READOUT row (no door) wears the mark only where its entry
     ## states a crew above zero -- a stated fact outside any url, so a refused tile branch still shows its crew.
     var door_crews: Dictionary = {}
@@ -1057,8 +1057,8 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
     var table_key_widths: Array[float] = []
     var table_widest_marked: Array[float] = []
     var fills := context.fill_width > 0.0 and context.fill_font != null
-    # The widest count text any mark on the card carries (` 4 ⚠`): every hand reserves it after itself, so the
-    # hands of crewed and uncrewed rows sit on one x and the counts trail them out to the right edge.
+    # The widest count text any mark on the card carries (` 4 ⚠`): every figure reserves it after itself, so the
+    # figures of crewed and uncrewed rows sit on one x and the counts trail them out to the right edge.
     var max_count_width := 0.0
     for line_index in range(lines.size()):
         var line := String(lines[line_index])
@@ -1168,9 +1168,9 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
             var door := String(context.door_metas.get(line_index, ""))
             var crew_entry: Dictionary = context.door_crews.get(line_index, {})
             # ⛔ **THE WORKERS MARK LIVES IN ITS OWN THIRD COLUMN** (`[table=3]`, land card only): a door row, and a
-            # readout that states a crew. The column's left edge is where EVERY hand sits, so hands align exactly
+            # readout that states a crew. The column's left edge is where EVERY figure sits, so figures align exactly
             # whatever each value's rendered width (a pad measured in the label's font is off by a pixel per glyph
-            # under the canvas stretch's hinting, which spread the hands 7px). Only the table's WIDEST marked value
+            # under the canvas stretch's hinting, which spread the figures 7px). Only the table's WIDEST marked value
             # is padded, up to the label's right edge less the mark column; every other value rides the column.
             var mark_cell := ""
             var has_mark := door != "" or int(crew_entry.get("crew", 0)) > 0
@@ -1222,7 +1222,7 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
 ## widest key is known. A control character, so no row's own text can collide with it.
 const FILL_TOKEN := "\u0001"
 ## Marks where the mark column's filler goes (`<own count width>` between two of them): it tops every row's count up to the
-## card's widest, so the mark column is one width and the hands share its left edge.
+## card's widest, so the mark column is one width and the figures share its left edge.
 const FILL_COUNT_TOKEN := "\u0002"
 ## Slack left at the right edge so font rounding can never push the table past the label and wrap a value. The
 ## glyph advances are measured the way the label draws them (`_rendered_width`), so this only absorbs sub-pixel layout.
@@ -1308,11 +1308,11 @@ static func hover_wrap(key: String, inner: String, ctx: Context) -> String:
         return inner
     return "[url=%s%s]%s[/url]" % [HudDisclosureVocab.ROW_HOVER_META_PREFIX, key, inner]
 
-## ⛔ **THE DOOR MARK -- the open hand and the crew count, right-aligned at the end of a door row's value.**
+## ⛔ **THE DOOR MARK -- the worker figure and the crew count, right-aligned at the end of a door row's value.**
 ## `crew_info` is the row's `Context.door_crews` entry (`{}` for none). Returns `bbcode` (the run to append
 ## AFTER the fill pad), `plain` (the text beside the image, for measuring) and `image_px` (the image's
-## width). A crewed door wears the full-ink hand, the count in `INK`, and the `WARN` suffix where the
-## standing summary warns; an uncrewed door wears the hand alone in `INK_DIM` -- the dim hand is the
+## width). A crewed door wears the full-ink figure, the count in `INK`, and the `WARN` suffix where the
+## standing summary warns; an uncrewed door wears the figure alone in `INK_DIM` -- the dim figure is the
 ## "nobody is on this" read. The image is `HudSprites`' `workers` mark, resolved through its path table.
 static func door_mark(crew_info: Dictionary) -> Dictionary:
     var crew := int(crew_info.get("crew", 0))

@@ -3939,7 +3939,7 @@ through it is about what is drawn and what a click does, never about the produce
   rows each open THEIR sheet / card (`ComposeState` kind + subject, the road card's index), readout rows
   carry no door meta and open nothing, and the card holds exactly five doors.
 - `chapters/tile_panel.gd` (`tile_panel_standing`): the standing summary's facts on the Foraging row —
-  the trailing hand with the `4` and the `⚠` in WARN ink, and the hover's text, note and tooltip. The door marks are read off the rendered row through `door_query.gd`'s `row_markup` / `mark_text` / `mark_tint` / `mark_in_column` / `assert_marks` (one workers image per door plus one per readout that states a crew, none on any other readout, the image in the third column), asserted in `tile_branches`, `tile_panel` and `workings`.
+  the trailing worker figure with the `4` and the `⚠` in WARN ink, and the hover's text, note and tooltip. The door marks are read off the rendered row through `door_query.gd`'s `row_markup` / `mark_text` / `mark_tint` / `mark_in_column` / `assert_marks` (one workers image per door plus one per readout that states a crew, none on any other readout, the image in the third column), asserted in `tile_branches`, `tile_panel` and `workings`.
 
 Sabotaged: an `open_door` arm that does nothing fails the Wood / Stone claims; a silenced
 `door_selection_changed` fails every selected-wash claim.

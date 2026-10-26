@@ -1178,7 +1178,7 @@ static func deposit_land_value(deposit: Dictionary, ladder: Array[Dictionary]) -
 		# the row holds one qualifier.
 		hazard = DEPOSIT_HAZARD_CLAUSE_FORMAT % [
 			HudSelectionVocab.RUNG_HAZARD_GLYPH, over_cut_word()]
-	# **THE CREW IS NOT IN THIS VALUE.** A door row wears it as the trailing hand mark
+	# **THE CREW IS NOT IN THIS VALUE.** A door row wears it as the trailing worker mark
 	# (`DetailFormat.door_mark`), fed by `crew_mark` through `Context.door_crews`.
 	if hazard != "":
 		clauses.append(hazard)
@@ -1197,12 +1197,12 @@ static func deposit_stock_clause(deposit: Dictionary) -> String:
 		DetailFormat.format_trimmed(capacity, CARD_STOCK_DECIMALS)]
 
 ## **THE CREW A WORKING'S DOOR ROW WEARS** (issue #650), as `Context.door_crews` data: `{crew, warn}`, which
-## `DetailFormat.door_mark` draws as the open hand and its count. It is the HEX'S crew, not the selected
+## `DetailFormat.door_mark` draws as the worker figure and its count. It is the HEX'S crew, not the selected
 ## band's (the caller sums it over every player band, `SubjectDrawerController._cutters_on_working`), so the row
 ## answers *is anyone working this ground* whichever band is picked; one entry per MATERIAL row keeps a wood
 ## crew and a stone crew apart. A mark and a count, never a bill.
 ##
-##   * `CUTTERS_UNSTATED` or no crew -> `crew` 0, the dim hand alone (*nobody is on this*), which replaced the
+##   * `CUTTERS_UNSTATED` or no crew -> `crew` 0, the dim figure alone (*nobody is on this*), which replaced the
 ##     stated `⚒0`;
 ##   * a crew -> `crew` N, **including on ground the wire still reads as unopened** (a crew put here this turn
 ##     has taken nothing yet from a full seam, and suppressing the count would mute it at the one moment the

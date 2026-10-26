@@ -130,7 +130,7 @@ paths:
       `MOUSE_FILTER_IGNORE` sweep that keeps it pressable, and the re-mute the in-place patch owes) are
       on `HudWidgets.build_stacked_action_button`. **A herd nobody works keeps its single line** and
       grows no blank second one: a summary exists only where this faction holds a standing assignment.
-      The LAND's summary has since moved onto its door rows' trailing hand mark and hover, see "THE LAND
+      The LAND's summary has since moved onto its door rows' trailing worker mark and hover, see "THE LAND
       CARD'S ROWS ARE THE DOORS" below.
     - **EVERY BUTTON THE TILE CARD RENDERS DRAWS ITS LABEL AT `HudComposeVocab.TILE_ACTION_LABEL_FONT_SIZE`**
       — the herd's `Assign … ▸` face and `Move` (the land has no buttons). Ray: *"we are getting more
@@ -185,30 +185,30 @@ paths:
         subject (or the road card's open state + index), and `door_selection_changed` fires from
         `refresh_drawer_actions` / the road card's `popup_hide` only when that answer moved.
       - **THE WORKERS MARK IS THE DOOR'S TRAILING GLYPH, AND THE ONLY ONE.** Every door row ends in the
-        `workers` hand (`HudSprites`, `assets/icons/hud/workers.png`) as an inline
+        `workers` figure (`HudSprites`, `assets/icons/hud/workers.png`) as an inline
         `[img=16x16 color=#RRGGBBAA]` (`DetailFormat.door_mark`, sizes and format in `HudDisclosureVocab.DOOR_MARK_*`).
-        A crewed door wears the hand in `INK`, then the count in `INK` (joined to the hand by a non-breaking space
+        A crewed door wears the figure in `INK`, then the count in `INK` (joined to the figure by a non-breaking space
         so it cannot wrap away), then ` ⚠` in `WARN` where the standing summary warns; an uncrewed door wears the
-        hand alone in `INK_DIM` (the dim hand is the *nobody is on this* read, and replaced the deposit rows' stated
+        figure alone in `INK_DIM` (the dim figure is the *nobody is on this* read, and replaced the deposit rows' stated
         `⚒0`; `INK_FAINT` was tried first and the owner's complaint was that the glyph was not obvious). A readout
         row wears no mark, **except one that states a crew above zero** (a refused tile branch with a crew standing
-        on it): full-`INK` hand and count, outside any url, so no fact is dropped. The crew rides
+        on it): full-`INK` figure and count, outside any url, so no fact is dropped. The crew rides
         `Context.door_crews` (`{line index: {crew, warn}}`), filled by the producer beside `door_metas`; it is never
         appended to the value text, so the Work tab's roster value (`deposit_row_value`) is unchanged. A door's
         mark is inside its `[url]` run, so it is part of the clickable row.
-      - **THE MARK IS A THIRD COLUMN, SO EVERY HAND SITS ON ONE x.** The land card renders as `[table=3]`
-        (key | value | mark) whenever `Context.fill_width` is set. The mark cell holds the hand, then the count, then a
+      - **THE MARK IS A THIRD COLUMN, SO EVERY FIGURE SITS ON ONE x.** The land card renders as `[table=3]`
+        (key | value | mark) whenever `Context.fill_width` is set. The mark cell holds the figure, then the count, then a
         no-break filler topping every row's count up to the card's WIDEST (`FILL_COUNT_TOKEN`), so the column is one
-        width and the hands share its left edge whatever each count: measured 0px apart within a table, and an
-        uncrewed hand lines up with a crewed one. The wash spans all three cells. **Only the WIDEST marked value of
+        width and the figures share its left edge whatever each count: measured 0px apart within a table, and an
+        uncrewed figure lines up with a crewed one. The wash spans all three cells. **Only the WIDEST marked value of
         each table is padded** (`_fill_door_values`, to the label's inner width less the mark column and
         `FILL_SAFETY_MARGIN`); every other value rides the column the widest sets, so a padding error cannot
         misalign a row. Widths are measured the way the label draws them (`_rendered_width`: each glyph's advance
         rounded to device pixels at `Context.fill_scale`, the canvas stretch the host reads off the label) because
-        `get_string_size` alone is a pixel short per glyph and spread the hands 7px; the pad's remainder is filled with
-        NBSPs at `DOOR_FINE_PAD_FONT_SIZE` (fractions of a pixel, no-break). **Across two tables the hands can still
+        `get_string_size` alone is a pixel short per glyph and spread the figures 7px; the pad's remainder is filled with
+        NBSPs at `DOOR_FINE_PAD_FONT_SIZE` (fractions of a pixel, no-break). **Across two tables the figures can still
         differ by ~2px** (each table's widest value is measured separately). A value too long for its row wraps in
-        the value column and the hand stays in the mark column.
+        the value column and the figure stays in the mark column.
       - **THE STANDING SUMMARY IS THE ROW'S**: the crew on that mark (every player band summed,
         pending-aware; the deposit rows' `HudDepositVocab.crew_mark`), the `⚠` of an over-take beside it, and on the row's HOVER
         the summary's text line, its `note`, its `muted_note` and its tooltip, in that order, after any

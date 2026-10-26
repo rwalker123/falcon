@@ -170,7 +170,7 @@ paths:
     covers both), then the connections section's remembered `last_seen_x`/`last_seen_y` for that
     `subject_band_id`. The row carries that tile like the idle-workers row, so it wears `Jump →` and
     routes through the same `on_turn_orb_focus` recentre. An unresolved band or an event carrying no band
-    leaves the row non-locating (`x < 0`). It has no `Open ▸` (not on `ATTENTION_KINDS_WITH_A_PANEL`), wears the `gathering` campfire sprite (the `workers` palm says "work"; `⇄` is the text fallback in `KIND_ICON`), and is
+    leaves the row non-locating (`x < 0`). It has no `Open ▸` (not on `ATTENTION_KINDS_WITH_A_PANEL`), wears the `gathering` campfire sprite (the `workers` figure digging says "work"; `⇄` is the text fallback in `KIND_ICON`), and is
     capped at `ATTENTION_HANDOFF_MAX_ROWS`. The feed line rides the Notable rung (`hud_event_vocab.gd`).
 
   - **THE EVENT-DERIVED ROWS (`crew_handoff`, `gathering_held`, `leader_emerged`) ARE THEIR OWN HALF OF THE REGISTRY.**

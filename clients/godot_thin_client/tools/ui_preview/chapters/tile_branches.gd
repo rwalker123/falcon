@@ -299,7 +299,7 @@ func run(harness) -> void:
 	h._assert_hud("…and pressing nothing opens no sheet (a readout row carries no door meta)",
 		not _press_door(BELIEF_BRANCH) and not h._hud.is_compose_sheet_open())
 	await h._save("tile_branches_site_greyed")
-	# ⛔ A refused branch is a readout, but a crew standing on it is still a stated fact: full-ink hand + count,
+	# ⛔ A refused branch is a readout, but a crew standing on it is still a stated fact: full-ink figure + count,
 	# outside any url. No sim state produces it (belief never decays and the site term is checked when a crew is
 	# put on), so the claim forces ONLY the model's crew on the REAL refused model and drives the real producer.
 	var refused: Dictionary = {}
@@ -311,7 +311,7 @@ func run(harness) -> void:
 	refused["crew"] = CREW_TWO
 	h._hud._drawer._append_tile_row(refused_lines, refused_ctx, "%s: 1 dead" % DetailFormat.ANCESTORS_ROW, refused)
 	var refused_markup := DetailFormat.detail_bbcode(refused_lines, refused_ctx)
-	h._assert_hud("a refused (readout) branch with a crew states it: full-ink hand and the count, outside any url (%s)"
+	h._assert_hud("a refused (readout) branch with a crew states it: full-ink figure and the count, outside any url (%s)"
 			% refused_markup.substr(0, 40),
 		not refused["door"] and refused_ctx.door_metas.is_empty()
 			and refused_markup.count(HudSprites.SPRITE_PATHS["workers"]) == 1
@@ -519,11 +519,11 @@ func _door_state_claims() -> void:
 	_stage(_band(CREW_TWO, CREW_NONE), [], 1.0, 1.0)
 	h._show_tile(_tile(BELIEF_PRESENT))
 	await h._settle()
-	h._assert_hud("a crew on the belief branch shows its count after the full-ink hand on the Ancestors row (%s | %s)"
+	h._assert_hud("a crew on the belief branch shows its count after the full-ink figure on the Ancestors row (%s | %s)"
 			% [DoorQ.mark_tint(h._hud, ancestors), DoorQ.mark_text(h._hud, ancestors)],
 		DoorQ.mark_text(h._hud, ancestors) == str(CREW_TWO)
 			and DoorQ.mark_tint(h._hud, ancestors) == HudStyle.INK_HEX + "ff")
-	h._assert_hud("…and the store row, with nobody on it, shows the dim hand alone and no count (%s | %s)"
+	h._assert_hud("…and the store row, with nobody on it, shows the dim figure alone and no count (%s | %s)"
 			% [DoorQ.mark_tint(h._hud, stores), DoorQ.mark_text(h._hud, stores)],
 		DoorQ.mark_text(h._hud, stores) == ""
 			and DoorQ.mark_images(h._hud, stores) == 1

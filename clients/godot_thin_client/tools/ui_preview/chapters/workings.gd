@@ -307,7 +307,7 @@ func run(harness) -> void:
 	# one the sim charges for: with nobody cutting it nobody keeps it, and the rung slides. The zero form
 	# is parallel to the staffed one for the forage land row's own reason — *nobody is on this* reads
 	# at a glance instead of needing a comparison with a row that has a number.
-	h._assert_hud("…the wood row reads `stock of capacity · rung · hazard` (the crew is the trailing hand) (%s)"
+	h._assert_hud("…the wood row reads `stock of capacity · rung · hazard` (the crew is the trailing worker figure) (%s)"
 			% Readout.detail_row_value(lines, "Wood"),
 		Readout.detail_row_value(lines, "Wood") == HudDepositVocab.DEPOSIT_CLAUSE_SEPARATOR.join([
 			HudDepositVocab.DEPOSIT_STOCK_DRAWN_FORMAT % [
@@ -1285,7 +1285,7 @@ func run(harness) -> void:
 		h._hud._selection.tile_info(), crew_ctx)
 	await h._save("workings_tile_crews")
 	DoorQ.assert_marks(h, "workings_tile_crews", ["Wood", "Stone"])
-	h._assert_hud("the wood row states its own crew after the full-ink hand (%s | %s)"
+	h._assert_hud("the wood row states its own crew after the full-ink figure (%s | %s)"
 			% [DoorQ.mark_text(h._hud, "Wood"), DoorQ.mark_tint(h._hud, "Wood")],
 		DoorQ.mark_text(h._hud, "Wood") == str(CARD_WOOD_CUTTERS)
 			and DoorQ.mark_tint(h._hud, "Wood") == HudStyle.INK_HEX + "ff")
@@ -1340,7 +1340,7 @@ func run(harness) -> void:
 	await h._settle()
 	var untouched_lines: Array[String] = h._hud._drawer._tile_terrain_lines(
 		h._hud._selection.tile_info())
-	h._assert_hud("untouched ground shows the dim hand and no crew count (%s | %s)"
+	h._assert_hud("untouched ground shows the dim figure and no crew count (%s | %s)"
 			% [DoorQ.mark_text(h._hud, "Wood"), DoorQ.mark_text(h._hud, "Stone")],
 		DoorQ.mark_text(h._hud, "Wood") == "" and DoorQ.mark_text(h._hud, "Stone") == ""
 			and DoorQ.mark_tint(h._hud, "Wood") != HudStyle.INK_HEX + "ff"
