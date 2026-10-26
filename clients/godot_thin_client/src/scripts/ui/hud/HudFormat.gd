@@ -631,8 +631,8 @@ const TRIBE_TOOLTIP_NO_PLACE := "No place of the ancestors yet"
 const TRIBE_TOOLTIP_NO_NETWORK := "Not in a pooling network"
 const TRIBE_TOOLTIP_ALONE := "No other band of your people lives here"
 const TRIBE_TOOLTIP_WITH_FORMAT := "With: %s"
-## A formed tribe: `Tribe: Sandreach tribe · 3 bands`, its hover the member bands then who leads it.
-const TRIBE_FORMED_FORMAT := "Tribe: %s tribe · %d bands"
+## A formed tribe: `Tribe: Sandreach tribe · 3 bands` (`tribe_name` already ends in "tribe"), its hover the member bands then who leads it.
+const TRIBE_FORMED_FORMAT := "Tribe: %s · %d bands"
 const TRIBE_LED_PARAMOUNT_FORMAT := "Led by paramount chief %s"
 const TRIBE_LED_COUNCIL_FORMAT := "Led by a council of chiefs — %s speaks"
 ## The wire's `tribe_leader_kind`: 0 none, 1 paramount chief, 2 council of chiefs.

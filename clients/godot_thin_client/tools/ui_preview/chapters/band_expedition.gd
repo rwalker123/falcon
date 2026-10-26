@@ -2201,7 +2201,7 @@ func _hay_ledger_states() -> void:
 		{"partner_band": 9, "partner_name": "Dunmere", "history": 0.1,
 			"contribution": {"history": 0.5}},
 	]}, true)
-	var tribe_formed := {"tribe_name": "Sandreach", "tribe_member_names": ["Sandreach", "Harehollow", "Woodfen"],
+	var tribe_formed := {"tribe_name": "Sandreach tribe", "tribe_member_names": ["Sandreach", "Harehollow", "Woodfen"],
 		"tribe_leader_name": "Wynne", "tribe_leader_kind": 1}
 	var tribe_formed_chiefless_case := tribe_chiefless_case.duplicate(true)
 	tribe_formed_chiefless_case.merge(tribe_formed, true)
@@ -2277,7 +2277,7 @@ func _hay_ledger_states() -> void:
 		and HudFormat.tribe_suffix(suffix_entry, suffix_monument) == "needs a monument"
 		and HudFormat.tribe_suffix(small_entry, suffix_belief) == "needs more belief"
 		and HudFormat.tribe_suffix(small_entry, suffix_tie) == "needs a stronger tie")
-	var council_view := HudFormat.band_tribe_progress({"tribe_name": "Sandreach",
+	var council_view := HudFormat.band_tribe_progress({"tribe_name": "Sandreach tribe",
 		"tribe_member_names": ["Sandreach", "Harehollow"], "tribe_leader_name": "Wynne", "tribe_leader_kind": 2})
 	h._assert_hud("a council-led tribe reads `Led by a council of chiefs — Wynne speaks`, with a member count of 2",
 		council_view["tooltip"] == "Sandreach, Harehollow\nLed by a council of chiefs — Wynne speaks"

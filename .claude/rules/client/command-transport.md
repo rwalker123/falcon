@@ -406,6 +406,9 @@ sheet's `Stop working here` (`DrawerComposeController._emit_stop_labor` → `sto
   in the material slot on tile/band kinds) before relaying, because `reconcile_pending` only retires
   EARLIER-turn entries and an assign made earlier in the same turn would re-add the stopped row through
   `effective_worker_map` until the turn advanced. Other pending edits on the band survive.
+  The tile row's emitter (`DrawerComposeController._emit_tile_stop`) carries them too, with `kind` `tile`
+  and its `branch`; without them that branch of the handler is unreachable and a tile row assigned and
+  stopped in one turn lingers. `band_panel_preview` asserts the tile case beside forage.
 - **`command_guard` drives all five forms** (`_drive_stop_labor`, expected count `5`) through the real server
   parser, so the grammar cannot drift from `sim_runtime/src/command_text.rs`.
 

@@ -17731,6 +17731,30 @@ func _assert_stop_labor_drops_pending_assign() -> void:
 	_hud.drop_pending_assign(sent[1] as Dictionary)
 	_assert_band_panel("…and the stop fixture leaves no pending overlay behind",
 		_hud._band_labor.pending_assigns_for(entity).is_empty())
+	# The TILE row: its key carries the BRANCH in the material slot, and `_emit_tile_stop` must carry
+	# `kind` + `pending_entity` or `Hud._on_stop_labor_requested` never reaches that branch.
+	var tile_branch := "cultivate"
+	var tile_key: String = _hud._band_labor.pending_key(HudConst.LABOR_KIND_TILE,
+		STOP_FIXTURE_TILE.x, STOP_FIXTURE_TILE.y, "", tile_branch)
+	var tile_sent: Array = []
+	var tile_sink := func(payload: Dictionary) -> void: tile_sent.append(payload)
+	_hud.assign_labor_requested.connect(tile_sink)
+	_hud._emit_assign_labor(band, HudConst.LABOR_KIND_TILE, ROLLBACK_FORAGERS,
+		STOP_FIXTURE_TILE.x, STOP_FIXTURE_TILE.y, "", SourceForecast.FLOOR_UNNAMED, tile_branch)
+	_hud.assign_labor_requested.disconnect(tile_sink)
+	_assert_band_panel("the stop fixture's TILE row reads through the effective map",
+		_hud._band_labor.effective_worker_map(band).has(tile_key))
+	var tile_stops: Array = []
+	var tile_stop_sink := func(payload: Dictionary) -> void: tile_stops.append(payload)
+	_hud.stop_labor_requested.connect(tile_stop_sink)
+	_hud._drawercompose._emit_tile_stop(band, STOP_FIXTURE_TILE.x, STOP_FIXTURE_TILE.y, tile_branch)
+	_hud.stop_labor_requested.disconnect(tile_stop_sink)
+	_assert_band_panel("a tile stop carries kind tile and pending_entity",
+		tile_stops.size() == 1 and String((tile_stops[0] as Dictionary).get("kind", "")) == HudConst.LABOR_KIND_TILE
+		and int((tile_stops[0] as Dictionary).get("pending_entity", -1)) == entity)
+	_assert_band_panel("a tile stop drops the same-turn pending tile row at once",
+		not _hud._band_labor.effective_worker_map(band).has(tile_key)
+		and _hud._band_labor.pending_assigns_for(entity).is_empty())
 
 # =====================================================================================
 #  A FINISHED RUNG OFFERS NOTHING, AND THE KEEPING WARNING THAT USED TO ARRIVE A TURN LATE

@@ -5381,7 +5381,11 @@ func _emit_tile_stop(band: Dictionary, x: int, y: int, branch: String) -> void:
     stop_labor_requested.emit({
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
         "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+        "kind": HudConst.LABOR_KIND_TILE,
         "x": x, "y": y, "herd_id": "", "material": "", "branch": branch,
+        # Not a command token: `Hud._on_stop_labor_requested` drops THIS row's pending assign by it
+        # (key rebuilt with the branch in the material slot, as `_emit_assign_labor` filed it).
+        "pending_entity": int(band.get("entity", -1)),
     })
 
 
