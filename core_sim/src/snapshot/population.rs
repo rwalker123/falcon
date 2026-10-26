@@ -639,17 +639,30 @@ pub const NOT_FOOD_LIMITED_TURNS: f32 = 999.0;
 /// The steady income is Σ per-source `realized` (the honest long-run average of the lumpy `actual`),
 /// the consumption is the forward `demand` of the people, and a resident band's larder is read less
 /// what will rot uneaten (see the derivation at the call site in [`population_state`]).
+///
+/// **The stock is the larder plus the stores the band owns within reach** (#709), the store part
+/// rotting ahead at the pit's shelf lives. The hunting need clock ([`kill_turns_of_food`]) does not
+/// count them: dry food keeps longer than a kill, so it is already excluded.
 pub(crate) fn band_turns_of_food(
     cohort: &PopulationCohort,
     allocation: Option<&LaborAllocation>,
     demographics: &DemographicsConfig,
     held: &crate::spoilage::HeldPreservation,
+    stores: &crate::fixed_store::ReachableStores,
     is_expedition: bool,
 ) -> f32 {
     runway_over(
         cohort,
         allocation,
-        &band_food_terms(cohort, allocation, demographics, held, is_expedition),
+        &food_terms_over(
+            cohort,
+            allocation,
+            demographics,
+            held,
+            is_expedition,
+            &|_| true,
+            Some(stores),
+        ),
     )
 }
 
@@ -700,8 +713,8 @@ fn runway_over(
 }
 
 /// **THE THREE TERMS A BAND'S FOOD IS READ FROM** — shared by the runway ([`band_turns_of_food`]) and
-/// the hunting crew's meal (`hunt_by_need::meal_food`), so the two cannot price the same band's
-/// larder differently.
+/// the need clock ([`kill_turns_of_food`]), so the two cannot price the same band's larder
+/// differently.
 pub(crate) struct BandFoodTerms {
     /// What the people want to eat each turn (`food_demand`, the forward need).
     pub demand: crate::scalar::Scalar,
@@ -712,24 +725,7 @@ pub(crate) struct BandFoodTerms {
     pub usable_larder: f32,
 }
 
-pub(crate) fn band_food_terms(
-    cohort: &PopulationCohort,
-    allocation: Option<&LaborAllocation>,
-    demographics: &DemographicsConfig,
-    held: &crate::spoilage::HeldPreservation,
-    is_expedition: bool,
-) -> BandFoodTerms {
-    food_terms_over(
-        cohort,
-        allocation,
-        demographics,
-        held,
-        is_expedition,
-        &|_| true,
-    )
-}
-
-/// [`band_food_terms`] over only the larder classes that keep no longer than `kill_class`.
+/// The food terms over only the larder classes that keep no longer than `kill_class`.
 pub(crate) fn kill_food_terms(
     cohort: &PopulationCohort,
     allocation: Option<&LaborAllocation>,
@@ -747,6 +743,7 @@ pub(crate) fn kill_food_terms(
         &|class| {
             crate::spoilage::keeps_no_longer_than(&demographics.keeping, held, class, kill_class)
         },
+        None,
     )
 }
 
@@ -776,6 +773,7 @@ fn food_terms_over(
     held: &crate::spoilage::HeldPreservation,
     is_expedition: bool,
     counts: &dyn Fn(&str) -> bool,
+    stores: Option<&crate::fixed_store::ReachableStores>,
 ) -> BandFoodTerms {
     // **The forward need counts the party the band feeds**, the same mouths its meal does.
     let demand = food_demand(
@@ -790,6 +788,17 @@ fn food_terms_over(
     let larder = cohort.stores.food().retaining(counts);
     let usable_larder = if is_expedition {
         larder.total()
+    } else if let Some(stores) = stores.filter(|stores| !stores.food.is_empty()) {
+        // The pit's food is stock too (#709): eaten after the larder, rotting at the pit's lives.
+        larder.total() + stores.total()
+            - crate::spoilage::rot_ahead_with_stores(
+                &larder,
+                &stores.food,
+                demand.to_f32(),
+                &demographics.keeping,
+                held,
+                &stores.held,
+            )
     } else {
         larder.total()
             - crate::spoilage::rot_ahead(&larder, demand.to_f32(), &demographics.keeping, held)
@@ -1319,6 +1328,9 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// resolved once per band at capture by [`crate::spoilage::PreservationScene::held_by`], so the
     /// runway, the rot forecast and the hunt meal all read the shelf lives the turn's rot did.
     pub(crate) held_preservation: crate::spoilage::HeldPreservation,
+    /// **The food this band owns in stores within reach** (#709), resolved once per band at capture
+    /// by [`crate::fixed_store::reachable_stores`]; empty for a party.
+    pub(crate) reachable_stores: crate::fixed_store::ReachableStores,
 }
 
 /// The two webs' registries, for resolving a declared build's **live** rung. No ladder: both
@@ -1625,6 +1637,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         belief_reach,
         belief_relay_region,
         held_preservation,
+        reachable_stores,
         culture_traits,
         culture_ancestor_pull,
         culture_drift,
@@ -2056,6 +2069,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             allocation,
             demographics,
             &held_preservation,
+            &reachable_stores,
             expedition.is_some(),
         )
     };
@@ -3049,6 +3063,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // **What rotted this turn** (#706) — the ledger identity's `spoiled` term, set by the larder
         // rot and added to by any caravan pack's transit rot.
         food_spoiled: cohort.last_food_spoiled,
+        // **The pit is the band's second larder** (#709): the identity's two store terms, and the
+        // food in the stores it owns within reach (the part of its runway and reserve that is not
+        // in the larder).
+        food_into_store: cohort.last_food_into_store,
+        food_from_store: cohort.last_food_from_store,
+        food_in_stores_in_reach: reachable_stores.total().to_f32(),
         // **The band's stood-down parties, walking home** (#706) — read off the allocation, since
         // they outlive the rows that posted them.
         homeward_workers: homeward_totals.workers,
@@ -3600,6 +3620,8 @@ mod tests {
             last_food_need: 0.0,
             fed_party_workers: Default::default(),
             last_food_spoiled: 0.0,
+            last_food_into_store: 0.0,
+            last_food_from_store: 0.0,
             last_food_kept: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
@@ -3662,6 +3684,7 @@ mod tests {
             culture_pressures: Vec::new(),
             band_improvements: Vec::new(),
             held_preservation: crate::spoilage::HeldPreservation::none(),
+            reachable_stores: crate::fixed_store::ReachableStores::none(),
             cohort,
             allocation,
             expedition,

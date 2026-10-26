@@ -35,6 +35,7 @@ pub(crate) fn tile_improvement_states(
     viewer: FactionId,
     fog_enabled: bool,
     ladder: &LadderConfig,
+    keeping: &crate::demographics_config::KeepingConfig,
     build_kits: &crate::snapshot::subsistence::QueuedBuildSources,
 ) -> Vec<sim_runtime::TileImprovementState> {
     registry
@@ -57,7 +58,31 @@ pub(crate) fn tile_improvement_states(
                 tile: improvement.tile,
                 branch: improvement.branch,
             });
+            // **The fixed store** (#709): its capacity follows the row's own fog (a fact about the
+            // rung held); what is in it, who owns it and what rotted are the improvement's own
+            // people's business and read zero to every other viewer.
+            let capacity = keeping
+                .store_spec(ladder, improvement.held_rung())
+                .map_or(0.0, |spec| spec.capacity);
+            let own = improvement.faction == viewer;
             sim_runtime::TileImprovementState {
+                stored_food: if own {
+                    improvement.contents.total().to_f32()
+                } else {
+                    0.0
+                },
+                store_capacity: capacity,
+                has_store_owner: own && improvement.owner.is_some(),
+                store_owner_band: if own {
+                    improvement.owner.map_or(0, |band| band.0)
+                } else {
+                    0
+                },
+                store_spoiled: if own {
+                    improvement.spoiled_this_turn
+                } else {
+                    0.0
+                },
                 tile_x: improvement.tile.x,
                 tile_y: improvement.tile.y,
                 branch: improvement.branch.as_str().to_string(),

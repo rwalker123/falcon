@@ -10835,7 +10835,7 @@ pub fn advance_labor_allocation(
                     // **The improvement is placed LAZILY, by the first crew** - the `assign_labor`
                     // command places it too; this covers a hand-built fixture. It is the placing
                     // faction's: another people's crew banks, keeps and builds nothing here.
-                    tile_improvements.place(*tile, *branch, faction, &ladder);
+                    tile_improvements.place_owned(*tile, *branch, faction, band_id, &ladder);
                     if tile_improvements
                         .get(*tile, *branch)
                         .is_none_or(|improvement| improvement.faction != faction)
@@ -11802,7 +11802,7 @@ pub fn advance_labor_allocation(
                 reach_tiles: supply_cfg.reach_tiles,
                 grid: (grid_width, wrap_horizontal),
             }
-            .held_by(band_id, faction, Some(band_pos));
+            .held_by(band_id);
             let decided: Vec<(usize, u32, u32)> = need_rows
                 .iter()
                 .map(|&idx| {
@@ -15702,6 +15702,8 @@ mod labor_yield_tests {
                     last_food_need: 0.0,
                     fed_party_workers: Default::default(),
                     last_food_spoiled: 0.0,
+                    last_food_into_store: 0.0,
+                    last_food_from_store: 0.0,
                     last_food_kept: 0.0,
                     last_turn_food_transfers: Default::default(),
                     last_turn_fodder_transfers: Default::default(),

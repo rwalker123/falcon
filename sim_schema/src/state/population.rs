@@ -1911,6 +1911,18 @@ pub struct PopulationCohortState {
     /// The tribe leader's kind (`TRIBE_LEADER_*`). Appended last.
     #[serde(default)]
     pub tribe_leader_kind: u8,
+    /// **Food this band's larder gave its own stores this turn** (#709) - the ledger identity's
+    /// `into_store` term. Appended last.
+    #[serde(default)]
+    pub food_into_store: f32,
+    /// **Food this band's meal drew from its own stores this turn** (#709) - the identity's
+    /// `from_store` term. Appended last.
+    #[serde(default)]
+    pub food_from_store: f32,
+    /// **Food in the stores this band owns within reach** (#709), counted in its runway and its
+    /// fertility reserve beside the larder. Appended last.
+    #[serde(default)]
+    pub food_in_stores_in_reach: f32,
 }
 
 /// `PopulationCohortState::tribe_leader_kind`: the band is in no tribe.

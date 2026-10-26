@@ -829,7 +829,7 @@ an_abandoned_rows_walkers_appear_on_the_band_only}`.
 > It is not any live row's income — a walk outlives its row, so no telemetry counts it in — and food
 > that reached the larder through neither `food_income` nor a transfer would break the pinned identity
 > `larder_delta == food_income − food_consumption − raid_forfeit − spoiled − left_behind + transfer_received −
-> transfer_sent`.
+> transfer_sent − into_store + from_store`.
 > A party carrying goods home is exactly what `TransferLink::Route` is for, so `bring_the_party_home`
 > books it there — through `LaborAllocation::book_crossing` as `TransferCause::PartyHome`, the one way
 > a crossing is written, so the route arm and the cause-keyed crossings row agree and the band's own

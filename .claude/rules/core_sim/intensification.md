@@ -2356,8 +2356,8 @@ an unknown or non-per-tile branch is refused by name rather than read as the til
 
 `SourceKind::Tile` is a source that **yields nothing**: a **standing** on the ladder, a **standing
 bill**, a **neglect clock** and a **grace**, kept by a **crew row** exactly as a deposit's working is.
-**Two tile branches ship: `food_stores`** (`unstored` -> `storage_pit`, the storage pit - see "The band
-kind" below for what it buys) **and `belief`** (`gathering_ground` -> `monument`, verb `raise`, the
+**Two tile branches ship: `food_stores`** (`unstored` -> `storage_pit`, the storage pit - it holds its owner band's dry food on the tile;
+see `campaign.md` -> "A storage pit is its band's second larder") **and `belief`** (`gathering_ground` -> `monument`, verb `raise`, the
 first rung with no yield; what it buys is `belief_config.json` -> `improvement_belief`, see `belief.md`
 -> "The monument source"). A tile branch is a JSON edit, and the engine never names one:
 `core_sim/tests/tile_improvement.rs` proves it on a test-only two-rung branch (`orchard`, overlay

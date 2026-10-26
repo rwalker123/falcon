@@ -50,6 +50,7 @@ mod extraction_config;
 mod faction_names;
 mod fauna;
 mod fauna_config;
+pub mod fixed_store;
 mod flora_config;
 mod food;
 mod forage;
@@ -935,6 +936,14 @@ pub fn build_headless_app() -> App {
     {
         panic!("keeping preservation does not reconcile with the intensification ladder: {err}");
     }
+    // **Every fixed store names a tile rung the ladder defines, and the preservation table states
+    // what it holds** (#709) - the other half of the same reconciliation.
+    if let Err(err) = demographics_config
+        .keeping
+        .validate_fixed_stores(&ladder_for_reconcile)
+    {
+        panic!("keeping fixed_stores does not reconcile with the intensification ladder: {err}");
+    }
     // **Every improvement that adds belief names a tile rung the ladder defines** (#692) - the belief
     // config's cross-config half, run where the ladder and the belief config are both in scope.
     if let Err(err) = belief_handle
@@ -1467,6 +1476,10 @@ pub fn build_headless_app() -> App {
         .add_systems(
             Update,
             (
+                // **A band eats from the larder first and its own stores last** (#709): the
+                // shortfall against this turn's meal is drawn from the stores it owns within
+                // reach before the meal and before the births are priced off the larder.
+                fixed_store::draw_from_stores.before(systems::simulate_population),
                 systems::simulate_population,
                 // The larder rots right after the meal and before the turn's take lands
                 // (#706): what the band could not eat in time is measured against the food it
@@ -1479,6 +1492,13 @@ pub fn build_headless_app() -> App {
                 // `simulate_population` just stored, and sits before the rest of the stage's
                 // writers of the cohort and the discovery ledger.
                 belief::advance_ritual_trickle.after(systems::simulate_population),
+                // **Food in a store rots at the store's own shelf life** (#709), beside the larder's
+                // rot; it is on no band's Food line and teaches nothing. Ordered ahead of the
+                // outfit so it joins the spine (it shares the improvement registry with the labor
+                // pass that follows).
+                fixed_store::rot_store_contents
+                    .after(spoilage::rot_band_larders)
+                    .before(starting_loadout::outfit_opening_bands),
                 // **The opening band is outfitted on the world-build pass, after its meal** —
                 // its fixed larder counts against its carry, and this is the larder the first
                 // frame publishes (`starting_loadout::outfit_opening_bands`). A splinter's
@@ -1560,7 +1580,11 @@ pub fn build_headless_app() -> App {
                 // **A chief emerges from the practice this turn's labour and expeditions banked**
                 // (`leadership`): after labor, which follows the expeditions, and before anything
                 // that reads the event log after it.
-                leadership::advance_leadership.after(systems::advance_labor_allocation),
+                //
+                // **A band's dry take goes into its pits as it is gathered** (#709): the deposit
+                // follows the labor pass that landed the take and precedes everything after it.
+                fixed_store::deposit_into_stores.after(systems::advance_labor_allocation),
+                leadership::advance_leadership.after(fixed_store::deposit_into_stores),
                 auto_craft::advance_auto_craft.after(leadership::advance_leadership),
                 systems::advance_crafting.after(auto_craft::advance_auto_craft),
                 auto_craft::advance_auto_craft_after_bench.after(systems::advance_crafting),

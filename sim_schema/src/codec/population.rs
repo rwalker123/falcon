@@ -1257,6 +1257,9 @@ fn create_populations<'a>(
                     tribeMemberNames: Some(tribe_member_names),
                     tribeLeaderName: Some(tribe_leader_name),
                     tribeLeaderKind: cohort.tribe_leader_kind,
+                    foodIntoStore: cohort.food_into_store,
+                    foodFromStore: cohort.food_from_store,
+                    foodInStoresInReach: cohort.food_in_stores_in_reach,
                 },
             )
         })
@@ -2190,6 +2193,9 @@ fn decode_population(
         tribe_member_names: decode_strings(cohort.tribeMemberNames()),
         tribe_leader_name: text(cohort.tribeLeaderName()),
         tribe_leader_kind: cohort.tribeLeaderKind(),
+        food_into_store: cohort.foodIntoStore(),
+        food_from_store: cohort.foodFromStore(),
+        food_in_stores_in_reach: cohort.foodInStoresInReach(),
     })
 }
 

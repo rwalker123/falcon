@@ -3447,11 +3447,17 @@ pub fn capture_snapshot(
                     Some(population_state(PopulationStateInputs {
                         belief_reach,
                         belief_relay_region,
-                        held_preservation: preservation_scene.held_by(
-                            band_id.copied(),
-                            cohort.faction,
-                            current_pos,
-                        ),
+                        held_preservation: preservation_scene.held_by(band_id.copied()),
+                        reachable_stores: if expedition.is_none() {
+                            crate::fixed_store::reachable_stores(
+                                &preservation_scene,
+                                band_id.copied(),
+                                cohort.faction,
+                                current_pos,
+                            )
+                        } else {
+                            crate::fixed_store::ReachableStores::none()
+                        },
                         culture_traits,
                         culture_ancestor_pull,
                         culture_drift: band_owner
@@ -4252,6 +4258,7 @@ pub fn capture_snapshot(
             viewer,
             config.fog_enabled,
             &ladder_config,
+            &demographics_config.keeping,
             &build_kit_ids,
         );
         // **THE DEPOSITS THE VIEWER HAS EXPLORED** — the road list's `Discovered` gate, because a

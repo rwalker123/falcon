@@ -26,6 +26,13 @@
     "preservation": [
       { "rung": "camp_stores:drying_rack", "class": "flesh", "shelf_life_turns": 20.0 },
       { "rung": "food_stores:storage_pit", "class": "dry", "shelf_life_turns": 180.0 }
+    ],
+    "fixed_stores": [
+      {
+        "_comment": "Capacity in food units: about 150 people x 20 turns at the shipped draw. OPENING VALUE / PLAYTEST DIAL. The classes it holds and their shelf life inside it are this rung's keeping.preservation entries.",
+        "rung": "food_stores:storage_pit",
+        "capacity": 400.0
+      }
     ]
   },
   "births": {

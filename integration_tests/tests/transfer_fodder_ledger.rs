@@ -86,6 +86,9 @@ struct Rows {
     food_left_behind: f32,
     food_received: f32,
     food_sent: f32,
+    /// `foodIntoStore` / `foodFromStore` (#709) — the identity's two store terms.
+    food_into_store: f32,
+    food_from_store: f32,
     /// `expeditionCargoFodder` — the hay an in-flight party is carrying, on its own wire field.
     cargo_fodder: f32,
 }
@@ -100,6 +103,8 @@ impl Rows {
             - self.food_left_behind
             + self.food_received
             - self.food_sent
+            - self.food_into_store
+            + self.food_from_store
     }
 }
 
@@ -135,6 +140,8 @@ fn rows_of(app: &bevy::prelude::App, band: BandId) -> Rows {
         food_left_behind: row.foodLeftBehind(),
         food_received: row.transferReceived(),
         food_sent: row.transferSent(),
+        food_into_store: row.foodIntoStore(),
+        food_from_store: row.foodFromStore(),
         cargo_fodder: row.expeditionCargoFodder(),
     }
 }

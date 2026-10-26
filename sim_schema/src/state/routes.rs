@@ -211,6 +211,16 @@ pub struct TileImprovementState {
     pub build_toe: Vec<crate::state::population::PoolToeLineState>,
     /// Whether one of the viewer's own bands has a build declared on this improvement.
     pub is_queued: bool,
+    /// Food in the store (#709); zero to every viewer but the improvement's own people.
+    pub stored_food: f32,
+    /// Food units the held rung holds; `0` for an improvement that is not a store.
+    pub store_capacity: f32,
+    /// Whether the store has an owner band. Read this before `store_owner_band`.
+    pub has_store_owner: bool,
+    /// The owning band's id (`0` is a real id; read `has_store_owner` first).
+    pub store_owner_band: u64,
+    /// Food the store rotted or lost this turn.
+    pub store_spoiled: f32,
 }
 
 impl Default for TileImprovementState {
@@ -239,6 +249,11 @@ impl Default for TileImprovementState {
             builders_cap: 0,
             build_toe: Vec::new(),
             is_queued: false,
+            stored_food: 0.0,
+            store_capacity: 0.0,
+            has_store_owner: false,
+            store_owner_band: 0,
+            store_spoiled: 0.0,
         }
     }
 }

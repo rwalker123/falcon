@@ -2137,6 +2137,14 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("tribe_member_names", &tribe_members);
     let _ = dict.insert("tribe_leader_name", cohort.tribeLeaderName().unwrap_or(""));
     let _ = dict.insert("tribe_leader_kind", i64::from(cohort.tribeLeaderKind()));
+    // The storage pit is its band's second larder (#709): the ledger's two store terms and the
+    // food in the stores the band owns within reach.
+    let _ = dict.insert("food_into_store", f64::from(cohort.foodIntoStore()));
+    let _ = dict.insert("food_from_store", f64::from(cohort.foodFromStore()));
+    let _ = dict.insert(
+        "food_in_stores_in_reach",
+        f64::from(cohort.foodInStoresInReach()),
+    );
     let _ = dict.insert(
         "long_move_leaves_food",
         f64::from(cohort.longMoveLeavesFood()),

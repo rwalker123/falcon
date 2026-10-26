@@ -5707,9 +5707,10 @@ fn handle_assign_labor(
             );
             return;
         }
+        let placing_band = app.world.get::<BandId>(band.entity).copied();
         app.world
             .resource_mut::<core_sim::TileImprovementRegistry>()
-            .place(*tile, *branch, faction, &ladder);
+            .place_owned(*tile, *branch, faction, placing_band, &ladder);
     }
     // **A BAND CREW PLACES THE BAND'S OWN IMPROVEMENT**, at the branch's floor. The row names the
     // band the command was addressed to (the selected band), never another.
@@ -14937,6 +14938,8 @@ mod tests {
                     last_food_need: 0.0,
                     fed_party_workers: Default::default(),
                     last_food_spoiled: 0.0,
+                    last_food_into_store: 0.0,
+                    last_food_from_store: 0.0,
                     last_food_kept: 0.0,
                     last_turn_food_transfers: Default::default(),
                     last_turn_fodder_transfers: Default::default(),

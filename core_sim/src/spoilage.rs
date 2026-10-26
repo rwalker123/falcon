@@ -16,22 +16,23 @@
 //! [`rot_band_larders`] is the one system that rots a larder, once a turn right after the meal and
 //! before the turn's income lands. [`rot_ahead`] is the same rule walked forward for the forecasts.
 //!
-//! **A store lengthens a shelf life** (#708): a band that holds a drying rack, or that camps within
-//! reach of its people's storage pit, keeps a class longer than its base. That is
-//! [`HeldPreservation`] — resolved once per band — read through [`band_shelf_life`], the one seam.
+//! **A store lengthens a shelf life** (#708): a band that holds a drying rack keeps a class longer
+//! than its base. That is [`HeldPreservation`] — resolved once per band — read through
+//! [`band_shelf_life`], the one seam. **A storage pit is not a preservation the band holds** (#709):
+//! it is a second larder with an owner (`crate::fixed_store`), and the food IN it keeps the pit's
+//! shelf life while the same food in the band's larder keeps its base.
 //!
 //! **Rot also teaches** (#707): a surplus that sat until it spoiled is the practice that teaches
 //! [`STORAGE_KNOWLEDGE`], paid through the same knowledge ledger the intensification ladder uses
 //! ([`storage_practice`]). Only the LARDER's rot teaches; a caravan pack lost on its walk is
 //! distance, not a surplus that sat.
 
-use bevy::prelude::{Query, Res, ResMut, UVec2, With};
+use bevy::prelude::{Query, Res, ResMut, With};
 use std::collections::BTreeMap;
 
-use crate::components::{BandId, FoodMix, PopulationCohort, ResidentBand, Tile};
+use crate::components::{BandId, FoodMix, PopulationCohort, ResidentBand};
 use crate::demographics_config::{DemographicsConfigHandle, KeepingConfig};
 use crate::intensification::{LadderConfig, LadderConfigHandle, LadderKnowledge, SourceKind};
-use crate::orders::FactionId;
 use crate::resources::{DiscoveryProgressLedger, SimulationConfig, TileRegistry};
 use crate::scalar::{scalar_from_f32, scalar_zero, Scalar};
 use crate::supply_network_config::SupplyNetworkConfigHandle;
@@ -73,12 +74,13 @@ impl HeldPreservation {
 
 /// **EVERYTHING A PRESERVATION IS RESOLVED AGAINST** — the keeping table, the ladder, the
 /// improvements and the supply network's reach — so a caller builds it once and asks it per band.
+/// The reach and grid are read by `crate::fixed_store` to find a band's own stores.
 pub struct PreservationScene<'a> {
     pub keeping: &'a KeepingConfig,
     pub ladder: &'a LadderConfig,
     pub improvements: &'a TileImprovementRegistry,
-    /// `supply_network_config.reach_tiles` - how near a tile improvement has to be to its people's
-    /// band for the band to keep its food there.
+    /// `supply_network_config.reach_tiles` - how near a band has to be to a store it owns to deposit
+    /// into it and draw from it (`crate::fixed_store`).
     pub reach_tiles: u32,
     /// The grid's width and whether it wraps horizontally, for the hex distance.
     pub grid: (u32, bool),
@@ -86,21 +88,13 @@ pub struct PreservationScene<'a> {
 
 impl PreservationScene<'_> {
     /// **WHAT `band` PRESERVES WITH**, for the entries of the keeping table whose rung is held
-    /// (fully — an `on_completion` rung half built is not held):
-    ///
-    /// - a **band**-kind rung: the band itself holds it;
-    /// - a **tile**-kind rung: any improvement of `faction` — the band's own people, never another's —
-    ///   within `reach_tiles` hex steps of the band's tile at `at`.
+    /// (fully — an `on_completion` rung half built is not held): a **band**-kind rung is held by the
+    /// band itself. A **tile**-kind rung (a storage pit) is never held by a band: the food in the
+    /// pit keeps its life, the band's larder does not (`crate::fixed_store`, #709).
     ///
     /// Which kind a rung is, is the ladder's declaration; nothing here names a branch.
-    pub fn held_by(
-        &self,
-        band: Option<BandId>,
-        faction: FactionId,
-        at: Option<UVec2>,
-    ) -> HeldPreservation {
+    pub fn held_by(&self, band: Option<BandId>) -> HeldPreservation {
         let mut held = HeldPreservation::none();
-        let (width, wrap) = self.grid;
         for entry in &self.keeping.preservation {
             let rung = entry.rung;
             let holds = match self.ladder.source_kind(rung.branch) {
@@ -109,15 +103,6 @@ impl PreservationScene<'_> {
                         .bands()
                         .get(band, rung.branch)
                         .is_some_and(|held| self.ladder.at_or_above(held.held_rung(), rung))
-                }),
-                Some(SourceKind::Tile) => at.is_some_and(|at| {
-                    self.improvements.iter().any(|held| {
-                        held.branch == rung.branch
-                            && held.faction == faction
-                            && self.ladder.at_or_above(held.held_rung(), rung)
-                            && crate::grid_utils::hex_distance_wrapped(at, held.tile, width, wrap)
-                                <= self.reach_tiles
-                    })
                 }),
                 _ => false,
             };
@@ -253,6 +238,47 @@ pub fn rot_ahead(
     rotted
 }
 
+/// **[`rot_ahead`] OVER A LARDER AND THE STORES BEHIND IT** (#709) - the same meal-then-rot walk, the
+/// band eating its larder first and its stores last, each rotting at its own shelf lives: the
+/// larder at `held`, the stores at `store_held` (the in-store lives, [`band_shelf_life`] taking the
+/// longer of base and store). Returns everything that rots uneaten, larder and stores together.
+pub fn rot_ahead_with_stores(
+    larder: &FoodMix,
+    stores: &FoodMix,
+    need: f32,
+    keeping: &KeepingConfig,
+    held: &HeldPreservation,
+    store_held: &HeldPreservation,
+) -> Scalar {
+    let ration = scalar_from_f32(need.max(0.0));
+    let order = keeping.eat_order();
+    let horizon = keeping
+        .classes
+        .iter()
+        .flat_map(|class| {
+            [
+                band_shelf_life(keeping, held, &class.id),
+                band_shelf_life(keeping, store_held, &class.id),
+            ]
+        })
+        .flatten()
+        .map(|life| life.ceil() as u32)
+        .max()
+        .unwrap_or(0);
+    let (mut larder, mut stores) = (larder.clone(), stores.clone());
+    let mut rotted = scalar_zero();
+    for _ in 0..=horizon {
+        if larder.is_empty() && stores.is_empty() {
+            break;
+        }
+        let eaten = larder.eat(ration, &order);
+        stores.eat(ration - eaten, &order);
+        rotted += larder.age_and_expire(|class| band_shelf_life(keeping, held, class));
+        rotted += stores.age_and_expire(|class| band_shelf_life(keeping, store_held, class));
+    }
+    rotted
+}
+
 /// **Does a pack of `class` rot on a walk of `walk_turns`?** — a shelf life no longer than the walk
 /// home (the larder expires a lot at `age >= shelf`, and a pack's walk is its age). A walk of no length (a local row, a road the whole way) never rots anything, and a class
 /// the table does not carry never rots. **The BASE shelf life**: a pack on the walk is away from the
@@ -286,7 +312,6 @@ pub fn rot_band_larders(
     supply: Option<Res<SupplyNetworkConfigHandle>>,
     tile_registry: Option<Res<TileRegistry>>,
     sim_config: Option<Res<SimulationConfig>>,
-    tiles: Query<&Tile>,
     mut cohorts: Query<(&mut PopulationCohort, Option<&BandId>), With<ResidentBand>>,
 ) {
     let config = demographics.get();
@@ -315,11 +340,7 @@ pub fn rot_band_larders(
     };
     for (mut cohort, band_id) in cohorts.iter_mut() {
         let held = scene.as_ref().map_or_else(HeldPreservation::none, |scene| {
-            let at = tiles
-                .get(cohort.current_tile)
-                .ok()
-                .map(|tile| tile.position);
-            scene.held_by(band_id.copied(), cohort.faction, at)
+            scene.held_by(band_id.copied())
         });
         let rotted = cohort
             .stores
@@ -378,6 +399,7 @@ mod tests {
             plant_fallback_class: FRESH.to_string(),
             kill_fallback_class: FLESH.to_string(),
             preservation: Vec::new(),
+            fixed_stores: Vec::new(),
         }
     }
 
