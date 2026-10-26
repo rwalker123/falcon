@@ -244,6 +244,8 @@ fn spawn_the_farming_band(app: &mut App, tile: bevy::prelude::Entity, source: UV
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                scouting_range: 0,
+                scouting_reach: 0,
                 max_workers: Some(A_GATHERER + A_FULL_KEEPING_CREW),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {

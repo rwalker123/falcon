@@ -276,6 +276,103 @@ pub fn staff_band(
     staff_passes(rows, pool, shelf, Passes::All, &BTreeMap::new())
 }
 
+/// **THE BAND'S SCOUTING RANGE AS THE PASSES SEE IT** (#875) - the tiles past the local range the
+/// player asked to see, what one scout of each kind adds, and the wayfinding items a kitted scout
+/// is armed with. Plain values, like [`StaffRowInput`]: the world half resolves them
+/// ([`scout_plan`]).
+#[derive(Debug, Clone, Default)]
+pub struct ScoutPlan {
+    /// Tiles past the local range the band should see. `0` = no scouts.
+    pub range: u32,
+    /// Tiles one **kitted** scout adds (the scout row's kit at its equipped vantage tier).
+    pub kitted_tiles: u32,
+    /// Tiles one **bare** scout adds (the bare vantage tier).
+    pub bare_tiles: u32,
+    /// The scout row's kit items the band can still arm with, each with the people one unit arms.
+    /// Empty for kit `none`, so no scout is kitted.
+    pub kit_items: Vec<(Arc<str>, u32)>,
+}
+
+/// **WHO THE SCOUT STEP PLACED AND HOW FAR THEY REACH** - the Scout row's crew and the tiles past
+/// the local range its heads see.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScoutCrew {
+    pub kitted: u32,
+    pub bare: u32,
+    /// `min(range, kitted x kitted_tiles + bare x bare_tiles)`.
+    pub reach: u32,
+}
+
+impl ScoutCrew {
+    /// Every scout placed.
+    pub fn total(&self) -> u32 {
+        self.kitted + self.bare
+    }
+}
+
+/// **THE SCOUT STEP** - kitted scouts first (the shelf can arm them, up to the heads the range
+/// needs at the kitted tier), then bare ones for what is left of the range, each out of the pool
+/// that remains. A tier that rounds to no tiles contributes nobody, so the step cannot loop on it.
+fn deal_scouts(
+    plan: &ScoutPlan,
+    pool_left: &mut u32,
+    shelf: &mut BTreeMap<Arc<str>, u32>,
+) -> ScoutCrew {
+    if plan.range == NOBODY {
+        return ScoutCrew::default();
+    }
+    let arming = scout_arming_input(plan);
+    let kitted_wanted = if plan.kitted_tiles == NOBODY {
+        NOBODY
+    } else {
+        plan.range.div_ceil(plan.kitted_tiles)
+    };
+    let kitted = kitted_capacity(&arming, NOBODY, shelf)
+        .min(kitted_wanted)
+        .min(*pool_left);
+    arm(&arming, NOBODY, kitted, shelf);
+    *pool_left -= kitted;
+    let still_to_reach = plan
+        .range
+        .saturating_sub(kitted.saturating_mul(plan.kitted_tiles));
+    let bare_wanted = if plan.bare_tiles == NOBODY {
+        NOBODY
+    } else {
+        still_to_reach.div_ceil(plan.bare_tiles)
+    };
+    let bare = bare_wanted.min(*pool_left);
+    *pool_left -= bare;
+    let reach = plan.range.min(
+        kitted
+            .saturating_mul(plan.kitted_tiles)
+            .saturating_add(bare.saturating_mul(plan.bare_tiles)),
+    );
+    ScoutCrew {
+        kitted,
+        bare,
+        reach,
+    }
+}
+
+/// The scout row seen as an input that only arms: `kitted_capacity` and `arm` read nothing else.
+fn scout_arming_input(plan: &ScoutPlan) -> StaffRowInput<'static> {
+    StaffRowInput {
+        priority: SourcePriority::default(),
+        max: None,
+        keep_hands: NO_HANDS,
+        hold_take: NO_TAKE_WANTED,
+        reach: ReachTarget::Nothing,
+        useful_take: NO_TAKE_WANTED,
+        kit_items: plan.kit_items.clone(),
+        hands: Box::new(|_, _| Some(0.0)),
+        bare_can_work: false,
+        distance: NOBODY,
+        is_build: false,
+        kitless: false,
+        tile: None,
+    }
+}
+
 /// [`staff_band`] over the passes `passes` names.
 fn staff_passes(
     rows: &[StaffRowInput<'_>],
@@ -284,6 +381,20 @@ fn staff_passes(
     passes: Passes,
     tile_room: &BTreeMap<TileKey, u32>,
 ) -> Vec<RowStaffing> {
+    staff_passes_scouting(rows, pool, shelf, passes, tile_room, &ScoutPlan::default()).0
+}
+
+/// [`staff_passes`] with the band's scouting range: the scouts are placed **after pass 1** (the
+/// keepers, the first builders and the hold crews) and **before pass 2** (the reach crews), out of
+/// what the pool and the shelf still hold.
+fn staff_passes_scouting(
+    rows: &[StaffRowInput<'_>],
+    pool: u32,
+    shelf: &mut BTreeMap<Arc<str>, u32>,
+    passes: Passes,
+    tile_room: &BTreeMap<TileKey, u32>,
+    scouts: &ScoutPlan,
+) -> (Vec<RowStaffing>, ScoutCrew) {
     let mut order: Vec<usize> = (0..rows.len()).collect();
     order.sort_by_key(|&i| (std::cmp::Reverse(rows[i].priority), i));
 
@@ -376,6 +487,10 @@ fn staff_passes(
         });
     }
 
+    // ## The scouts - after every hold crew, keeper and first builder, before any reach crew. The
+    // band's scouting range is one row of its own, not a priority group.
+    let scout_crew = deal_scouts(scouts, &mut ledger.pool_left, shelf);
+
     // ## Pass 2 — kitted heads up to the reach crew, from whatever units and heads remain. A group's
     // builds go first, up to their cap.
     for (builds, sources) in &split {
@@ -390,7 +505,7 @@ fn staff_passes(
     }
 
     if passes == Passes::Steady {
-        return ledger.out;
+        return (ledger.out, scout_crew);
     }
 
     // ## Pass 3 — every row up to its USEFUL crew: the kit's units still unspent first (a kit never
@@ -414,7 +529,7 @@ fn staff_passes(
             ledger.deal_head(i, kitted + ledger.out[i].bare < useful, HeadKind::Bare)
         });
     }
-    ledger.out
+    (ledger.out, scout_crew)
 }
 
 /// Which segment of a row's crew a head joins.
@@ -612,12 +727,13 @@ impl CampSite {
 }
 
 /// **THE HANDS THE SIM MAY STAFF** — the working people less the bench, the hands still walking home
-/// and every crew the player set by hand (Scout, Warrior, Builders and a need row's muster).
+/// and every crew the player set by hand (Warrior, Builders and a need row's muster). The Scout
+/// row is the sim's: it is dealt from this pool after the hold crews.
 pub fn staffable_pool(allocation: &LaborAllocation, available: u32, bench_workers: u32) -> u32 {
     let player_set: u32 = allocation
         .assignments
         .iter()
-        .filter(|row| !row.target.is_staffed())
+        .filter(|row| !row.target.is_sim_staffed())
         .map(|row| row.workers)
         .sum();
     available
@@ -744,6 +860,8 @@ struct StaffInputs<'a> {
     builds: Vec<BuildMeta>,
     /// The room each referenced tile has for this band: the cap less the other bands' hands.
     tile_room: BTreeMap<TileKey, u32>,
+    /// The band's scouting range (`range` 0 when it has no Scout row).
+    scouts: ScoutPlan,
 }
 
 /// What a build input carries beyond the passes' view of it.
@@ -759,6 +877,21 @@ struct BuildMeta {
 pub struct StaffedBand {
     pub rows: Vec<(LaborTarget, StaffedCrew)>,
     pub builds: Vec<(BuildSource, BuildCrew)>,
+    /// The Scout row's crew and the tiles past the local range it reaches (default with no Scout
+    /// row). Kept apart from `rows` so the settle trim, which takes hands off source rows and
+    /// builds, can never leave `reach` describing scouts it removed.
+    pub scout: ScoutCrew,
+}
+
+impl StaffedBand {
+    /// **WRITE THE WHOLE STAFFING ONTO AN ALLOCATION** - the staffed rows, the Scout row's crew and
+    /// reach, and the builds' crews. The one place the turn, the command restaff and the preview's
+    /// copy all apply a staffing, so they cannot differ.
+    pub fn apply_to(self, allocation: &mut LaborAllocation, lost_people: u32) {
+        allocation.apply_staffing(self.rows, lost_people);
+        allocation.apply_scouting(self.scout);
+        allocation.apply_build_crews(self.builds);
+    }
 }
 
 /// **STAFF EVERY STAFFED ROW AND EVERY DECLARED BUILD OF `allocation`** — the world half of the
@@ -776,19 +909,23 @@ pub fn staff_rows<'a>(
     let equipment = world.sources.equipment;
     let inputs = build_staff_inputs(world, allocation, band_kit, available);
     let mut shelf: BTreeMap<Arc<str>, u32> = BTreeMap::new();
-    for row in &inputs.rows {
-        for (item, _) in &row.kit_items {
-            shelf
-                .entry(Arc::clone(item))
-                .or_insert_with(|| band_kit.live_units(item, equipment));
-        }
+    for (item, _) in inputs
+        .rows
+        .iter()
+        .flat_map(|row| row.kit_items.iter())
+        .chain(inputs.scouts.kit_items.iter())
+    {
+        shelf
+            .entry(Arc::clone(item))
+            .or_insert_with(|| band_kit.live_units(item, equipment));
     }
-    let staffed = staff_passes(
+    let (staffed, scout) = staff_passes_scouting(
         &inputs.rows,
         pool,
         &mut shelf,
         Passes::All,
         &inputs.tile_room,
+        &inputs.scouts,
     );
     let source_rows = inputs.targets.len();
     let builds = inputs
@@ -809,6 +946,7 @@ pub fn staff_rows<'a>(
     StaffedBand {
         rows: inputs.targets.into_iter().zip(staffed).collect(),
         builds,
+        scout,
     }
 }
 
@@ -834,8 +972,7 @@ pub fn staff_rows_settled<'a>(
     let mut staffed = staff_rows(world, allocation, band_kit, pool, available);
     loop {
         let mut after = allocation.clone();
-        after.apply_staffing(staffed.rows.clone(), lost_people);
-        after.apply_build_crews(staffed.builds.clone());
+        staffed.clone().apply_to(&mut after, lost_people);
         let committed = after.assigned_total() + bench_workers + after.walking_home();
         if committed <= available {
             return staffed;
@@ -984,7 +1121,7 @@ pub fn work_kit_plan<'a>(
     for row in allocation
         .assignments
         .iter()
-        .filter(|row| row.target.is_staffed())
+        .filter(|row| row.target.is_sim_staffed())
     {
         for item in row.kit_choice(equipment).uses() {
             if unlimited.count_of(item) != NOBODY {
@@ -1002,14 +1139,46 @@ pub fn work_kit_plan<'a>(
             shelf.insert(Arc::clone(item), UNLIMITED_SHELF_UNITS);
         }
     }
-    let staffed = staff_passes(
+    for (item, _) in &inputs.scouts.kit_items {
+        shelf.insert(Arc::clone(item), UNLIMITED_SHELF_UNITS);
+    }
+    let (staffed, scout) = staff_passes_scouting(
         &inputs.rows,
         pool,
         &mut shelf,
         Passes::Steady,
         &inputs.tile_room,
+        &inputs.scouts,
     );
     let mut wants: BTreeMap<String, KitWant> = BTreeMap::new();
+    // The Scout row wants one kit per kitted scout its range needs, ranked at its own Priority.
+    if let Some(row) = allocation
+        .assignments
+        .iter()
+        .find(|row| matches!(row.target, LaborTarget::Scout))
+    {
+        let kits_needed = inputs
+            .scouts
+            .kit_items
+            .iter()
+            .map(|(_, people)| units_for(scout.kitted, *people))
+            .max()
+            .unwrap_or(NOBODY);
+        if kits_needed > NOBODY {
+            let kit = row.kit_choice(equipment);
+            let want = wants
+                .entry(kit.id().to_string())
+                .or_insert_with(|| KitWant {
+                    kit: kit.id().to_string(),
+                    count: NOBODY,
+                    priority: row.priority,
+                    distance: NOBODY,
+                });
+            want.count = want.count.saturating_add(kits_needed);
+            want.priority = want.priority.max(row.priority);
+            want.distance = NOBODY;
+        }
+    }
     for ((row, kit), crew) in inputs.rows.iter().zip(&inputs.kits).zip(&staffed) {
         let kits_needed = row
             .kit_items
@@ -1195,6 +1364,40 @@ fn build_staff_inputs<'a>(
         kits: staffed_kits,
         builds,
         tile_room,
+        scouts: scout_plan(world, allocation, band_kit),
+    }
+}
+
+/// **THE BAND'S SCOUTING RANGE, RESOLVED** (#875) - the Scout row's range, what a kitted and a bare
+/// scout each add (the equipped and the bare vantage tier, both through
+/// [`crate::equipment_config::EquipmentConfig::scout_vantage_range`]) and the wayfinding items the
+/// band can still arm a scout with. The default plan (`range` 0) when there is no Scout row.
+fn scout_plan(
+    world: &StaffingWorld<'_>,
+    allocation: &LaborAllocation,
+    band_kit: &BandEquipment,
+) -> ScoutPlan {
+    let Some(row) = allocation
+        .assignments
+        .iter()
+        .find(|row| matches!(row.target, LaborTarget::Scout))
+    else {
+        return ScoutPlan::default();
+    };
+    let equipment = world.sources.equipment;
+    let equipped = world.sources.labor.scout.vantage_range as f32;
+    let kit = row.kit_choice(equipment);
+    let tiles = |kit: &KitChoice| {
+        equipment
+            .scout_vantage_range(equipped, kit, band_kit)
+            .max(0.0)
+            .round() as u32
+    };
+    ScoutPlan {
+        range: row.scouting_range,
+        kitted_tiles: tiles(&kit),
+        bare_tiles: tiles(&equipment.no_kit()),
+        kit_items: live_kit_items(&kit, band_kit, world),
     }
 }
 
@@ -1662,8 +1865,7 @@ pub fn staff_allocation_copy(
         },
     )?;
     let mut staffed_allocation = allocation;
-    staffed_allocation.apply_staffing(staffed.rows, NOBODY);
-    staffed_allocation.apply_build_crews(staffed.builds);
+    staffed.apply_to(&mut staffed_allocation, NOBODY);
     Some(staffed_allocation)
 }
 
@@ -1695,7 +1897,7 @@ pub fn staffed_hands_lost(world: &bevy::prelude::World, band: bevy::prelude::Ent
     let staffed_hands: u32 = allocation
         .assignments
         .iter()
-        .filter(|row| row.target.is_staffed())
+        .filter(|row| row.target.is_sim_staffed())
         .map(|row| row.workers)
         .sum();
     committed
@@ -1734,8 +1936,7 @@ pub fn restaff_band_after_loss(
         return;
     };
     if let Some(mut allocation) = world.get_mut::<LaborAllocation>(band) {
-        allocation.apply_staffing(staffed.rows, lost_people);
-        allocation.apply_build_crews(staffed.builds);
+        staffed.apply_to(&mut allocation, lost_people);
     }
     refresh_band_work_kit_wants(world, band);
 }
@@ -2236,6 +2437,7 @@ mod tests {
                     cap: HANDS,
                 },
             )],
+            scout: ScoutCrew::default(),
         };
         assert!(trim_one_hand(&allocation, &mut staffed));
         staffed
@@ -2536,5 +2738,133 @@ mod tests {
             out.iter().map(|crew| crew.keepers).collect::<Vec<_>>(),
             vec![1, 2]
         );
+    }
+
+    /// Tiles one kitted scout adds in the scout tests (the equipped vantage tier).
+    const KITTED_TILES: u32 = 2;
+    /// Tiles one bare scout adds (the bare vantage tier).
+    const BARE_TILES: u32 = 1;
+
+    fn wayfinding() -> Vec<(Arc<str>, u32)> {
+        vec![(Arc::from("wayfinding"), 1)]
+    }
+
+    fn wayfinding_shelf(units: u32) -> BTreeMap<Arc<str>, u32> {
+        BTreeMap::from([(Arc::from("wayfinding"), units)])
+    }
+
+    fn scouting(range: u32, kit_items: Vec<(Arc<str>, u32)>) -> ScoutPlan {
+        ScoutPlan {
+            range,
+            kitted_tiles: KITTED_TILES,
+            bare_tiles: BARE_TILES,
+            kit_items,
+        }
+    }
+
+    fn scout_step(plan: &ScoutPlan, pool: u32, units: u32) -> ScoutCrew {
+        let mut pool_left = pool;
+        deal_scouts(plan, &mut pool_left, &mut wayfinding_shelf(units))
+    }
+
+    #[test]
+    fn kitted_scouts_are_placed_before_bare_ones() {
+        // Range 5 at 2 tiles a kitted scout wants three kitted; the shelf arms two (4 tiles) and one
+        // bare scout covers the last tile.
+        let crew = scout_step(&scouting(5, wayfinding()), 10, 2);
+        assert_eq!((crew.kitted, crew.bare, crew.reach), (2, 1, 5));
+    }
+
+    #[test]
+    fn a_kit_of_none_places_only_bare_scouts() {
+        let crew = scout_step(&scouting(4, Vec::new()), 10, 5);
+        assert_eq!((crew.kitted, crew.bare, crew.reach), (0, 4, 4));
+    }
+
+    #[test]
+    fn a_range_of_nothing_places_nobody() {
+        let crew = scout_step(&scouting(0, wayfinding()), 10, 5);
+        assert_eq!(crew, ScoutCrew::default());
+    }
+
+    #[test]
+    fn the_reach_comes_up_short_when_people_run_out() {
+        // Range 9, three people, one wayfinding kit: one kitted (2 tiles) + two bare (2 tiles).
+        let crew = scout_step(&scouting(9, wayfinding()), 3, 1);
+        assert_eq!((crew.kitted, crew.bare, crew.reach), (1, 2, 4));
+    }
+
+    #[test]
+    fn a_tier_that_rounds_to_no_tiles_contributes_nobody() {
+        let mut plan = scouting(3, wayfinding());
+        plan.kitted_tiles = 0;
+        plan.bare_tiles = 0;
+        assert_eq!(scout_step(&plan, 10, 5), ScoutCrew::default());
+    }
+
+    fn kitted_hold_and_reach_row<'a>() -> StaffRowInput<'a> {
+        // Hold crew 2, reach crew 6, one take hand per kitted head.
+        linear_row(
+            SourcePriority::Normal,
+            None,
+            0,
+            2.0,
+            6.0,
+            1.0,
+            0.0,
+            spears(),
+        )
+    }
+
+    fn staffed_with_scouts(pool: u32, range: u32) -> (Vec<RowStaffing>, ScoutCrew) {
+        let rows = vec![kitted_hold_and_reach_row()];
+        staff_passes_scouting(
+            &rows,
+            pool,
+            &mut shelf(10),
+            Passes::All,
+            &BTreeMap::new(),
+            &scouting(range, Vec::new()),
+        )
+    }
+
+    #[test]
+    fn a_short_band_staffs_its_hold_crew_before_any_scout() {
+        // Two people: the hold crew takes both, the scouts get nobody.
+        let (rows, scouts) = staffed_with_scouts(2, 3);
+        assert_eq!(rows[0].kitted, 2);
+        assert_eq!(scouts.total(), 0);
+    }
+
+    #[test]
+    fn scouts_are_placed_before_a_reach_crew() {
+        // Five people, range 2 (two bare scouts): hold 2, scouts 2, and only one left for the reach
+        // crew, which would have taken all three remaining without the scouts.
+        let (rows, scouts) = staffed_with_scouts(5, 2);
+        assert_eq!(scouts.bare, 2);
+        assert_eq!(
+            rows[0].kitted, 3,
+            "the reach crew gets what the scouts left"
+        );
+        let (rows, scouts) = staffed_with_scouts(5, 0);
+        assert_eq!(scouts.total(), 0);
+        assert_eq!(
+            rows[0].kitted, 5,
+            "liveness: without scouts the reach crew takes them"
+        );
+    }
+
+    #[test]
+    fn the_steady_passes_see_the_scouts_too() {
+        let rows = vec![kitted_hold_and_reach_row()];
+        let (_, scouts) = staff_passes_scouting(
+            &rows,
+            5,
+            &mut shelf(10),
+            Passes::Steady,
+            &BTreeMap::new(),
+            &scouting(2, Vec::new()),
+        );
+        assert_eq!(scouts.bare, 2);
     }
 }

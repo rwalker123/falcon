@@ -177,6 +177,8 @@ fn spawn_band_of(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    scouting_range: 0,
+                    scouting_reach: 0,
                     max_workers: Some(take_crew),
                     staffing: Default::default(),
                     target: LaborTarget::Extract {
@@ -258,6 +260,8 @@ fn spawn_keepers(
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                scouting_range: 0,
+                scouting_reach: 0,
                 max_workers: Some(take_crew + keepers),
                 staffing: Default::default(),
                 target: LaborTarget::Extract {
@@ -1977,6 +1981,8 @@ fn a_slumped_working_can_be_cut_back_open() {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(4),
             staffing: Default::default(),
             target: row,

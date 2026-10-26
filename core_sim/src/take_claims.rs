@@ -477,7 +477,7 @@ pub fn row_claims(
         // walk's rationing must hand each row those units and no more or less. Read only while the
         // stamp is current (its total is the crew on the row); a row nobody has staffed yet claims
         // by the old planned rule.
-        if assignment.target.is_staffed()
+        if assignment.target.is_sim_staffed()
             && assignment.staffing.total() == assignment.workers
             && assignment.workers > NO_STAFFED_CREW
         {

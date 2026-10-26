@@ -532,6 +532,8 @@ fn spawn_forager_of(
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        scouting_range: 0,
+                        scouting_reach: 0,
                         max_workers: Some(foragers + keepers),
                         staffing: Default::default(),
                         target: LaborTarget::Forage {
@@ -1584,6 +1586,8 @@ fn a_field_worked_by(crew: u32, ledger: core_sim::BandEquipment) -> (App, Entity
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    scouting_range: 0,
+                    scouting_reach: 0,
                     max_workers: Some(crew),
                     staffing: Default::default(),
                     target: LaborTarget::Forage {

@@ -120,7 +120,7 @@ pub enum EquipmentStat {
     /// equipped `2` is `labor_config.json`'s `scout.vantage_range`.
     ///
     /// It lifts the vantage's *range* rather than how far out it is posted, because the posting
-    /// distance is three dials (`vantage_distance_base` / `_per_scout` / `_max`) and a kit that moved
+    /// distance follows from the player's scouting range and this sight, and a kit that moved
     /// one of them would be a fourth authority over the same line. What wayfinding gear buys is what
     /// an observer can make out once they are there.
     ScoutVantageRange,

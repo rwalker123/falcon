@@ -533,6 +533,14 @@ pub struct LaborAssignmentState {
     /// Turns until the next landing, the wait for a pack to fill included; `0` = none within the
     /// forecast horizon. Appended last.
     pub load_home_in: u32,
+    /// The Scout row's range: tiles past the band's local range the player asked to see. `0` on
+    /// every other row. Appended last.
+    #[serde(default)]
+    pub scouting_range: u32,
+    /// Tiles past the local range the staffed scouts actually reach. `0` on every other row.
+    /// Appended last.
+    #[serde(default)]
+    pub scouting_reach: u32,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].
@@ -1911,6 +1919,9 @@ pub struct PopulationCohortState {
     /// The tribe leader's kind (`TRIBE_LEADER_*`). Appended last.
     #[serde(default)]
     pub tribe_leader_kind: u8,
+    /// The most tiles past the local range a scouting range may name. Appended last.
+    #[serde(default)]
+    pub scouting_range_max: u32,
 }
 
 /// `PopulationCohortState::tribe_leader_kind`: the band is in no tribe.

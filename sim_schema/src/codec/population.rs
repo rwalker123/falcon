@@ -508,6 +508,8 @@ fn create_populations<'a>(
                                 loadUnits: assignment.load_units,
                                 packUnits: assignment.pack_units,
                                 loadHomeIn: assignment.load_home_in,
+                                scoutingRange: assignment.scouting_range,
+                                scoutingReach: assignment.scouting_reach,
                             },
                         )
                     })
@@ -1257,6 +1259,7 @@ fn create_populations<'a>(
                     tribeMemberNames: Some(tribe_member_names),
                     tribeLeaderName: Some(tribe_leader_name),
                     tribeLeaderKind: cohort.tribe_leader_kind,
+                    scoutingRangeMax: cohort.scouting_range_max,
                 },
             )
         })
@@ -1662,6 +1665,8 @@ fn decode_labor_assignment(
         load_units: assignment.loadUnits(),
         pack_units: assignment.packUnits(),
         load_home_in: assignment.loadHomeIn(),
+        scouting_range: assignment.scoutingRange(),
+        scouting_reach: assignment.scoutingReach(),
     })
 }
 
@@ -2190,6 +2195,7 @@ fn decode_population(
         tribe_member_names: decode_strings(cohort.tribeMemberNames()),
         tribe_leader_name: text(cohort.tribeLeaderName()),
         tribe_leader_kind: cohort.tribeLeaderKind(),
+        scouting_range_max: cohort.scoutingRangeMax(),
     })
 }
 

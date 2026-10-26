@@ -8302,3 +8302,23 @@ every such ceiling. A band reading "0 idle of 18" with every hand on staffed row
   that and the staffed rows shrink on the next snapshot.
 - Fixtures: `crafting_bench.gd` `_staffed_hands_state` (all hands on two hunt rows: crafters `+` enabled and
   sends `bench_crew`); `band_panel_preview.gd` all-hands-committed state (idle 0: Scout `+` enabled).
+
+## THE SCOUT CARD STATES A RANGE, NOT A HEADCOUNT (#875)
+
+The Band panel's Scout card is titled **`Scouting range`** (`HudWorkVocab.SCOUT_CARD_TITLE`;
+`ROLE_NAME_SCOUT` stays the job's name where a job is named). Its stepper reads **`+N tiles`**
+(`HudWidgets.add_range_stepper`, `-`/`+` by one tile, `0..scouting_range_max` off the cohort) and sends
+`assign_labor ... scout <N> [kit <k>]`, where the count slot is the range in tiles past the band's local
+range; `scout 0` drops the row. The `-`/`+` carry the tooltips `Scout less far` / `Scout farther`, and the
+kit picker is kept (a kit pick re-states the current RANGE).
+
+- **The scout row is sim-staffed**, so `scout` is in `HudBandLaborState.STAFFED_KINDS`: a pending scout
+  command never overlays `workers` (the staffed scouts the People bar's roles segment reads), it overlays
+  the range. `effective_role_workers(band, "scout")` answers `{workers, range, pending}` and
+  `scouting_state(band)` answers `{range, reach, workers, kitted}` off the row's `scouting_range` /
+  `scouting_reach` / `workers` / `kitted_staffed`. A pending range reads as REACHED, so the card claims no
+  shortfall the recapture has not reported.
+- **The status line replaces the retired static hint** (`HudWorkVocab.scouting_status`): `No scouts - the
+  band sees its local range and no farther.` / `N scout(s) this turn, past the local range[ - K with
+  wayfinding gear]` / `Reaches +R of +N tiles - no one free to scout farther.` (amber, `HudStyle.WARN`).
+- The Warrior card is unchanged and stays a player-set head count.

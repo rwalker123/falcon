@@ -140,6 +140,8 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        scouting_range: 0,
+                        scouting_reach: 0,
                         max_workers: Some(2),
                         staffing: Default::default(),
                         target: LaborTarget::Forage {
@@ -156,6 +158,8 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        scouting_range: 0,
+                        scouting_reach: 0,
                         max_workers: Some(2),
                         staffing: Default::default(),
                         target: LaborTarget::Hunt {

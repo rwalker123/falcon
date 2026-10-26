@@ -164,6 +164,8 @@ fn resident_band(app: &mut App, tile: Entity, working: u32, warriors: u32) -> En
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(warriors),
             staffing: Default::default(),
             target: LaborTarget::Warrior,

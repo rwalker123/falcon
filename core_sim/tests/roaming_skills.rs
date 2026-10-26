@@ -141,6 +141,8 @@ fn spawn_band(app: &mut App, at: UVec2, follow: bool) -> Entity {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    scouting_range: 0,
+                    scouting_reach: 0,
                     max_workers: Some(CREW),
                     staffing: Default::default(),
                     target: LaborTarget::Hunt {

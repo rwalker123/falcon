@@ -119,7 +119,40 @@ const ALLOC_HEADER_FOOD_OUTLOOK := "Food outlook"
 
 const ALLOC_NO_SOURCES_HINT := "No sources worked yet — select a tile or herd to assign foragers/hunters."
 
-const SCOUT_ROLE_HINT := "Posts scouts that see around obstacles — more scouts range farther."
+## **THE SCOUT CARD IS A RANGE, NOT A HEADCOUNT** (#875): the player states how many tiles past the
+## band's local range it should see, and the sim staffs as many scouts as that takes. Its status line
+## is one of three sentences, picked by `scouting_status`.
+const SCOUT_STATUS_NONE := "No scouts — the band sees its local range and no farther."
+const SCOUT_STATUS_ONE_FORMAT := "%d scout this turn, past the local range"
+const SCOUT_STATUS_MANY_FORMAT := "%d scouts this turn, past the local range"
+const SCOUT_STATUS_GEARED_FORMAT := " · %d with wayfinding gear"
+const SCOUT_STATUS_SHORT_FORMAT := "Reaches +%d of +%d tiles — no one free to scout farther."
+const SCOUT_RANGE_VALUE_FORMAT := "+%d tiles"
+const SCOUT_RANGE_LESS_ARIA := "Scout less far"
+const SCOUT_RANGE_FARTHER_ARIA := "Scout farther"
+const SCOUT_RANGE_VALUE_WIDTH := 64.0
+## The card's title - `ROLE_NAME_SCOUT` stays the job's name wherever a job is named.
+const SCOUT_CARD_TITLE := "Scouting range"
+## One scout, the singular of `SCOUT_STATUS_ONE_FORMAT`.
+const SCOUT_SINGULAR := 1
+
+## **THE SCOUT CARD'S STATUS LINE** - `{text, short}` from `HudBandLaborState.scouting_state`'s
+## `{range, reach, workers, kitted}`. `short` is true when the sim reached less than was asked (nobody
+## free), which the card paints amber beside the number it explains.
+static func scouting_status(state: Dictionary) -> Dictionary:
+    var wanted := int(state.get("range", 0))
+    var reach := int(state.get("reach", 0))
+    if wanted <= 0:
+        return {"text": SCOUT_STATUS_NONE, "short": false}
+    if reach < wanted:
+        return {"text": SCOUT_STATUS_SHORT_FORMAT % [reach, wanted], "short": true}
+    var scouts := int(state.get("workers", 0))
+    var text := (SCOUT_STATUS_ONE_FORMAT if scouts == SCOUT_SINGULAR \
+        else SCOUT_STATUS_MANY_FORMAT) % scouts
+    var kitted := int(state.get("kitted", 0))
+    if kitted > 0:
+        text += SCOUT_STATUS_GEARED_FORMAT % kitted
+    return {"text": text, "short": false}
 
 const WARRIOR_ROLE_HINT := "Guards the band — matters once threats arrive."
 

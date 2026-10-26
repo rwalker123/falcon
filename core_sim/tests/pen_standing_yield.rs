@@ -350,6 +350,8 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        scouting_range: 0,
+                        scouting_reach: 0,
                         max_workers: Some(KEEPER_WORKERS + KEEPER_WORKERS),
                         staffing: Default::default(),
                         target: LaborTarget::Hunt {

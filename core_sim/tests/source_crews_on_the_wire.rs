@@ -133,6 +133,8 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    scouting_range: 0,
+                    scouting_reach: 0,
                     max_workers: Some(TAKE_CREW),
                     staffing: Default::default(),
                     target: LaborTarget::Forage {
@@ -150,6 +152,8 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    scouting_range: 0,
+                    scouting_reach: 0,
                     max_workers: Some(KEEP_CREW),
                     staffing: Default::default(),
                     target: LaborTarget::Roadwork,

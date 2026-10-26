@@ -279,6 +279,8 @@ fn spawn_hunting_band(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    scouting_range: 0,
+                    scouting_reach: 0,
                     max_workers: Some(CREW),
                     staffing: Default::default(),
                     target: LaborTarget::Hunt {
@@ -553,6 +555,8 @@ fn a_gather_crew_wears_only_the_baskets_and_a_kitless_one_wears_nothing() {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        scouting_range: 0,
+                        scouting_reach: 0,
                         max_workers: Some(CREW),
                         staffing: Default::default(),
                         target: LaborTarget::Forage {
@@ -1473,6 +1477,8 @@ fn every_labor_row_publishes_the_kit_it_is_priced_at() {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        scouting_range: 0,
+                        scouting_reach: 0,
                         max_workers: Some(CREW),
                         staffing: Default::default(),
                         target: LaborTarget::Hunt {
@@ -1489,6 +1495,8 @@ fn every_labor_row_publishes_the_kit_it_is_priced_at() {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        scouting_range: 0,
+                        scouting_reach: 0,
                         max_workers: Some(CREW),
                         staffing: Default::default(),
                         target: LaborTarget::Scout,
@@ -1886,6 +1894,8 @@ fn spawn_gathering_band(app: &mut App, baskets_owned: u32) -> (bevy::prelude::En
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    scouting_range: 0,
+                    scouting_reach: 0,
                     max_workers: Some(CREW),
                     staffing: Default::default(),
                     target: LaborTarget::Forage {
@@ -2403,6 +2413,8 @@ fn spawn_band_hunting(
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(ROW_CREW),
             staffing: Default::default(),
             target: LaborTarget::Hunt {

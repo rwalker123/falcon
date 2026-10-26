@@ -1245,6 +1245,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = entry.insert("kitted_staffed", i64::from(assignment.kittedStaffed()));
             let _ = entry.insert("bare_staffed", i64::from(assignment.bareStaffed()));
             let _ = entry.insert("useful_crew", i64::from(assignment.usefulCrew()));
+            // The Scout row's range (#875): tiles past the band's local range the player asked to see
+            // and the tiles the staffed scouts reach (0 on every other row). `kitted_staffed` /
+            // `bare_staffed` above are the scouts' split and `workers` the scouts placed.
+            let _ = entry.insert("scouting_range", i64::from(assignment.scoutingRange()));
+            let _ = entry.insert("scouting_reach", i64::from(assignment.scoutingReach()));
             array.push(&entry.to_variant());
         }
     }
@@ -2137,6 +2142,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("tribe_member_names", &tribe_members);
     let _ = dict.insert("tribe_leader_name", cohort.tribeLeaderName().unwrap_or(""));
     let _ = dict.insert("tribe_leader_kind", i64::from(cohort.tribeLeaderKind()));
+    // The most tiles past the local range a scouting range may name (the stepper's ceiling); the
+    // local range itself is `move_ferry_reach_tiles`.
+    let _ = dict.insert("scouting_range_max", i64::from(cohort.scoutingRangeMax()));
     let _ = dict.insert(
         "long_move_leaves_food",
         f64::from(cohort.longMoveLeavesFood()),

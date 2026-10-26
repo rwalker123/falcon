@@ -270,6 +270,8 @@ fn forage_row(patch: UVec2, policy: f32, foragers: u32) -> LaborAssignment {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        scouting_range: 0,
+        scouting_reach: 0,
         max_workers: Some(foragers),
         staffing: Default::default(),
         target: LaborTarget::Forage {

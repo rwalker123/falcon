@@ -187,6 +187,8 @@ fn keeper_row(herd_id: &str) -> LaborAssignment {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        scouting_range: 0,
+        scouting_reach: 0,
         max_workers: Some(KEEPERS),
         staffing: Default::default(),
         target: LaborTarget::Hunt {
@@ -1304,6 +1306,8 @@ fn forager_row(patch: UVec2) -> LaborAssignment {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        scouting_range: 0,
+        scouting_reach: 0,
         max_workers: Some(KEEPERS),
         staffing: Default::default(),
         target: LaborTarget::Forage {

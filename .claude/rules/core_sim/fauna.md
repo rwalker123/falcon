@@ -1218,7 +1218,7 @@ turn: Forage = `workers × per_worker_yield × seasonal_weight` from an in-range
 Hunt take = `min(workers × per_worker_biomass_capacity, policy_ceiling)` (reusing the per-policy ecology
 ceilings — Sustain under-hunting lets a herd grow); a herd past `band_work_range` is worked by a work
 party that follows it (`work-party.md`). Scout extends the band's live sight range
-in `calculate_visibility` by posting forward-observer vantages (`scout.vantage_distance(scouts)` out
+in `calculate_visibility` by posting forward-observer vantages (posted out to the scouting range
 in all 6 hex directions, LOS revealed from each — re-marked Active every turn while scouts are
 staffed, scaling with head-count); Warrior is inert until the predator slice. `move_band <faction> <band> <x> <y>` sets a `BandTravel` component that
 `advance_band_movement` steps at `band_move_tiles_per_turn`/turn. `assign_labor` sets one target's

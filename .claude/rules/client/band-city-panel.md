@@ -6535,3 +6535,11 @@ Work row's foreign line shows the BAND NAME ONLY, as a flat button (`WORK_ROW_FO
 tile roster, never made the panel's subject). With no builder named, or one the roster does not hold, the
 line falls back to the people (`Lothari cultivating · 86%`) and draws no link. Frames
 `band_panel_work_other_builder`; the link press and the fallback are asserted in `_other_peoples_build_rows`.
+
+### The Scout card is the `Scouting range` card (#875)
+
+In the band zone's role cards the Scout card is a range stepper (`+N tiles`) over its kit picker and a
+status line; the wording and the pending-overlay rules are in `labor-ui.md` -> "THE SCOUT CARD STATES A
+RANGE, NOT A HEADCOUNT". Its status line is as tall as the Warrior's hint (both reserve
+`ROLE_CARD_HINT_HEIGHT`), so the two cards' contents can measure the same height, and the chartless band
+flank's balance floor is 0.60.

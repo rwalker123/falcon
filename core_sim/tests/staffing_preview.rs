@@ -77,6 +77,8 @@ fn row(id: &str, priority: SourcePriority, max: u32) -> LaborAssignment {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        scouting_range: 0,
+        scouting_reach: 0,
         max_workers: Some(max),
         staffing: Default::default(),
         target: hunt(id),

@@ -1612,6 +1612,10 @@ table PopulationCohortState {
   tribeLeaderName:string;
   // 0 none, 1 paramount chief, 2 council of chiefs.
   tribeLeaderKind:ubyte = 0;
+  // The most tiles past the local range a scouting range may name (labor_config scout
+  // range_past_local_max) - the Scouting range stepper's ceiling. The local range itself is
+  // moveFerryReachTiles.
+  scoutingRangeMax:uint = 0;
 }
 
 // ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH - a row of `PopulationCohortState.bandImprovements`,
@@ -2551,6 +2555,13 @@ table LaborAssignment {
   // still filling. 0 = no landing within the forecast horizon (a part load with no take, or no
   // party). Unlike nextLoadHomeIn, which counts only a pack already on the road.
   loadHomeIn:uint = 0;
+  // *** THE SCOUT ROW'S RANGE (#875). *** scoutingRange: tiles past the band's local range the
+  // player asked to see (the row exists exactly while this is above 0). scoutingReach: tiles past the
+  // local range the staffed scouts actually reach (less than scoutingRange when the band ran out of
+  // people). kittedStaffed / bareStaffed carry the scouts' split; workers is the scouts placed.
+  // Both 0 on every other row.
+  scoutingRange:uint = 0;
+  scoutingReach:uint = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

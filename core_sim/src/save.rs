@@ -151,7 +151,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 54 | The dig row shows its load (#871): `WorkParty` gained `pack_units` (the units of the row's material one pack carries) and `load_home_in` (turns to the next landing, counting the wait for a pack to fill), stamped each turn and published on `LaborAssignment`. A version-53 blob has neither and is refused. |
 /// | 55 | Builds join the site's crew (#872): the build queue is gone. `LaborAllocation` gained `builds` (each declared build as a `BuildDeclaration`: its source and its job, with no order and no head) and `build_crews` (the hands each build was dealt this turn, kitted and bare, with the rung's cap) and lost `build_queue`, `last_pool_toe`, `last_queued_build_toe` and the `Builders` row; `LaborTarget::Builders` and `BuildQueueEntry` are deleted, and `last_build_toe` carries each build's own tool line. The allocation rides `BandRecord::labor`, so a version-54 blob does not decode |
 /// | 56 | Tribes (#861): `SimState` gained `tribes` (`TribeRegistry`: every tribe with its id, people, name, member bands and leader, and the cumulative tribes each people has formed, which the Telling diffs into `tribes.formed_this_turn`). `CommandEventKind` gained `TribeFormed`, `TribeBandJoined`, `TribeBandLeft` and `TribeDissolved`, appended. A version-55 blob has neither |
-pub const SAVE_FORMAT_VERSION: u32 = 56;
+/// | 57 | Scouting is a range (#875): `LaborAssignment` gained `scouting_range` (the tiles past the local range the player asked to see; the Scout row exists exactly while it is above zero) and `scouting_reach` (the tiles the staffed scouts reach). The Scout row's crew is the sim's, restaffed every turn. The allocation rides `BandRecord::labor`, so a version-56 blob does not decode |
+pub const SAVE_FORMAT_VERSION: u32 = 57;
 
 /// gzip level for the payload document.
 ///

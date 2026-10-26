@@ -122,6 +122,8 @@ fn band(app: &mut App, pos: UVec2, fauna_id: &str) -> bevy::prelude::Entity {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    scouting_range: 0,
+                    scouting_reach: 0,
                     max_workers: Some(ROW_MAX),
                     staffing: Default::default(),
                     target: LaborTarget::Hunt {
