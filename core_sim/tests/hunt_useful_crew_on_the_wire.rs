@@ -172,6 +172,7 @@ fn world_hunting_at(
             ),
             belief_anchor: None,
             last_belief_relay_hops: 0,
+            last_cohesion: Default::default(),
         },
         LaborAllocation {
             assignments: vec![LaborAssignment {

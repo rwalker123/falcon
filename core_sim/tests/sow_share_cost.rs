@@ -233,6 +233,7 @@ fn spawn_the_farming_band(app: &mut App, tile: bevy::prelude::Entity, source: UV
             ),
             belief_anchor: None,
             last_belief_relay_hops: 0,
+            last_cohesion: Default::default(),
         },
         StartingUnit {
             kind: "BandForager".to_string(),

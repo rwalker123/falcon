@@ -252,6 +252,7 @@ fn cohort(tile: bevy::prelude::Entity, working: u32) -> PopulationCohort {
         ),
         belief_anchor: None,
         last_belief_relay_hops: 0,
+        last_cohesion: Default::default(),
     }
 }
 

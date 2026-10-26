@@ -171,6 +171,7 @@ fn the_scene(baskets: u32) -> (App, Entity, UVec2, UVec2) {
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                last_cohesion: Default::default(),
             },
             StartingUnit {
                 kind: "BandForager".to_string(),

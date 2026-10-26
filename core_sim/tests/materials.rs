@@ -92,6 +92,7 @@ fn cohort(tile: Entity, working: f32, stores: LocalStore, faction: FactionId) ->
         ),
         belief_anchor: None,
         last_belief_relay_hops: 0,
+        last_cohesion: Default::default(),
     }
 }
 

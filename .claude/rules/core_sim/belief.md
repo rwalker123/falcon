@@ -316,6 +316,48 @@ tie-break order is Terrain ≥ Climate ≥ Unrest ≥ Culture (`MoraleContributi
 - **Every other cohort starts `None`**: the opening bands at worldgen, and a detached party
   (`belief_anchor` cleared at launch — a party keeps no morale of its own).
 
+## The crowding morale term — too many of one people on one tile
+
+Belief's second morale consumer (issue #700, `docs/plan_civilization_steps.md` §"Cohesion is a
+property of a group"): a Layer-1 contributor (`MoraleContributions::crowding`,
+`MoraleFactor::Crowding`) computed in `simulate_population` beside culture.
+
+- **The unit is the co-located group**: every RESIDENT band (`ResidentBand`, the filter
+  `simulate_population` uses) of ONE people (`cohort.faction`) whose `current_tile` is the same tile.
+  A lone band is a group of one; a detached party is not a member and reads `0`.
+- **Group size** is the members' fixed-point totals at the turn's OPENING summed and rounded once
+  (`Scalar::to_u32`, the `size` rounding), read in the pre-pass `resolve_crowding_terms` before any
+  death or birth — so no band's term depends on query order.
+- **Ceiling** `= base_ceiling + belief_lift × s`, `s = b / (b + belief_half_saturation)` with `b` the
+  belief on the tile the group STANDS on (`current_tile`, never `home`) — `CrowdingConfig::ceiling`.
+  Crowding's half-saturation is its own lever, not culture's.
+- **Term** `= −drag × max(0, group − ceiling) / ceiling` (`CrowdingConfig::term`), the same value on
+  every member; `0` at or under the ceiling; no cap (morale already clamps to `[0, 1]`).
+- **There is no hard cap and no migration rule of its own**: the term lowers morale, and
+  discontent-driven migration (`advance_population_migration`) carries the leavers. The breeding shed
+  is untouched.
+- `MoraleCause::Crowding` (wire `5`) names it when it is the dominant negative contributor; tie-break
+  order Terrain ≥ Climate ≥ Unrest ≥ Culture ≥ Crowding.
+- **Parked for publication** on `PopulationCohort::last_cohesion` (`CohesionReading { group,
+  ceiling }`, ceiling rounded), the way `last_belief_relay_hops` is; reset on a fresh splinter and a
+  party launch. The frame publishes what was priced and never recounts.
+- **Wire** (appended last on `PopulationCohortState`): `moraleCrowding:long` (fixed point),
+  `cohesionGroup:uint`, `cohesionCeiling:uint`. Not on the redaction allow-list, so a foreign row
+  reads `0`. Native dict keys `morale_crowding`, `cohesion_group`, `cohesion_ceiling`.
+  `SAVE_FORMAT_VERSION` 57.
+
+| Lever (`wellbeing_config.json` → `crowding`) | Opening value | Validated |
+|---|---|---|
+| `base_ceiling` | **150.0** — the ceiling with no belief underfoot (Dunbar) | finite, `> 0` |
+| `belief_lift` | **150.0** — people a saturated tile adds | finite, `>= 0` (`0`: belief lifts nothing) |
+| `belief_half_saturation` | **20.0** — dead-equivalents at which the lift is half | finite, `> 0` |
+| `drag` | **0.2** — morale per turn lost per 100% over the ceiling | finite, `>= 0` |
+
+All four are OPENING VALUES and PLAYTEST DIALS; the `wellbeing` Workbench kind stages the block with
+no extra work. Tests: `core_sim/tests/crowding.rs` (lone band, co-located vs adjacent, different
+peoples, belief underfoot vs beside, the migration leak with its no-drag control, the encoded
+envelope, checkpoint and save).
+
 ## The ancestor pull — belief moves the culture axes
 
 Honouring the dead pulls a band's OWN culture layer toward **Devout** (`SecularDevout`, positive is

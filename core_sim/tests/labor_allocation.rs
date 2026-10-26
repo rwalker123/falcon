@@ -182,6 +182,7 @@ fn spawn_band(
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                last_cohesion: Default::default(),
             },
             allocation,
         ))

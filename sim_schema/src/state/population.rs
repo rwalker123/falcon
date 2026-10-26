@@ -1911,6 +1911,17 @@ pub struct PopulationCohortState {
     /// The tribe leader's kind (`TRIBE_LEADER_*`). Appended last.
     #[serde(default)]
     pub tribe_leader_kind: u8,
+    /// The crowding morale contribution (`snapshot.fbs` → `moraleCrowding`), part of the `morale_*`
+    /// breakdown whose signed sum IS `morale_delta`. Fixed-point raw. Derived at capture. Appended
+    /// last.
+    #[serde(default)]
+    pub morale_crowding: i64,
+    /// The co-located group's head-count the crowding term was priced from. Appended last.
+    #[serde(default)]
+    pub cohesion_group: u32,
+    /// The cohesion ceiling the crowding term was priced against, in whole people. Appended last.
+    #[serde(default)]
+    pub cohesion_ceiling: u32,
 }
 
 /// `PopulationCohortState::tribe_leader_kind`: the band is in no tribe.

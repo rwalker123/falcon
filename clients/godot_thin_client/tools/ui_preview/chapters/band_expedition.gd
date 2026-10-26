@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 168
+const EXPECTED_CHECKPOINTS := 172
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -853,6 +853,10 @@ func run(harness) -> void:
 	# **APPENDED**, for the reason the blocks above state.
 	await _belief_culture_states()
 
+	# ---- THE CROWDING MORALE TERM (#700) -----------------------------------------------------------
+	# **APPENDED**, for the reason the blocks above state.
+	await _crowding_states()
+
 	# band_alerts (above) left _player_band as an alert-fixture band (no work_range, far from the food
 	# tile); seed a NEAR band so the forage controls resolve an in-range actor.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
@@ -1395,6 +1399,69 @@ func _beliefs_row_count(vitals: String) -> int:
 func _hover_beliefs() -> void:
 	h._hud.occupant_detail.meta_hover_started.emit(
 		HudDisclosureVocab.ROW_HOVER_META_PREFIX + HudDisclosureVocab.DETAIL_ROW_BELIEFS)
+
+## ---- THE CROWDING MORALE TERM (#700) -- `morale_crowding`, never positive: the people in the band's
+## co-located group (`cohesion_group`) outnumber that group's cohesion ceiling (`cohesion_ceiling`).
+const CROWDED_BAND_ENTITY := 920
+const CROWDED_CONTRIB := -0.012
+const CROWDED_GROUP := 182
+const CROWDED_CEILING := 150
+const BAND_DISCLOSURE_MORALE_CROWDED := "morale:920"
+## Spelled as LITERALS, like the ancestors rows.
+const CROWDED_ROW := "−1.2%  crowded (182 here, room for 150)"
+const CROWDED_HEADLINE_CAUSE := "— crowded"
+## Panel copy is two lines max: the popover may wrap at most this many rendered lines over its logical ones.
+const CROWDED_MAX_EXTRA_WRAPPED_LINES := 1
+
+func _crowding_states() -> void:
+	var crowded := _low_morale_band_fixture()
+	crowded["entity"] = CROWDED_BAND_ENTITY
+	crowded["morale_crowding"] = CROWDED_CONTRIB
+	crowded["morale_delta"] = float(crowded["morale_delta"]) + CROWDED_CONTRIB
+	crowded["morale_cause"] = DetailFormat.MORALE_CAUSE_CROWDING
+	crowded["cohesion_group"] = CROWDED_GROUP
+	crowded["cohesion_ceiling"] = CROWDED_CEILING
+	h._hud.show_unit_selection(crowded)
+	await h._settle()
+	var vitals := String(h._hud.occupant_detail.get_parsed_text())
+	h._assert_hud("the morale headline names the cause `%s`" % CROWDED_HEADLINE_CAUSE,
+		vitals.contains(CROWDED_HEADLINE_CAUSE))
+	_click_disclosure(BAND_DISCLOSURE_MORALE_CROWDED)
+	await h._settle()
+	await h._save("band_morale_crowded")
+	var row := _kit_breakdown_line(_popover_text(), "crowded")
+	h._assert_hud("a crowded band itemizes `%s`" % CROWDED_ROW,
+		row.contains(CROWDED_ROW) and row.contains(DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH))
+	var with_extra := _popover_extra_wrapped_lines()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_CROWDED)
+	# The SAME band with the term zeroed: whatever the popover wraps beyond this is the crowded row's.
+	var without := crowded.duplicate(true)
+	without["morale_crowding"] = 0.0
+	h._hud.show_unit_selection(without)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_CROWDED)
+	await h._settle()
+	var row_extra := with_extra - _popover_extra_wrapped_lines()
+	h._assert_hud("…and the row stays within two lines (%d extra wrapped)" % row_extra,
+		row_extra <= CROWDED_MAX_EXTRA_WRAPPED_LINES)
+	_click_disclosure(BAND_DISCLOSURE_MORALE_CROWDED)
+	# A band with no crowding draws no row.
+	var calm := BandFx.band_fixture()
+	calm["entity"] = CROWDED_BAND_ENTITY
+	calm["morale_crowding"] = 0.0
+	calm["morale_culture"] = ANCESTORS_NEAR_CONTRIB
+	h._hud.show_unit_selection(calm)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_CROWDED)
+	await h._settle()
+	h._assert_hud("a band with zero crowding draws no `crowded` row",
+		_kit_breakdown_line(_popover_text(), "crowded") == "")
+	_click_disclosure(BAND_DISCLOSURE_MORALE_CROWDED)
+
+## Rendered lines the breakdown popover wraps beyond its logical ones.
+func _popover_extra_wrapped_lines() -> int:
+	var label := h._hud._disclosures._breakdown_popover_label as RichTextLabel
+	return label.get_line_count() - _popover_text().split("\n").size()
 
 func _belief_culture_states() -> void:
 	# The drawer's content height WITHOUT the row: Beliefs is an ordinary table row, so its height over this

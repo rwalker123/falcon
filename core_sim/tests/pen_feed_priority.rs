@@ -277,6 +277,7 @@ fn spawn_keeper(app: &mut App, assignments: Vec<LaborAssignment>, tile: UVec2) -
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                last_cohesion: Default::default(),
             },
             StartingUnit {
                 kind: "BandKeeper".to_string(),

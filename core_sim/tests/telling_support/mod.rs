@@ -143,6 +143,7 @@ pub fn spawn_band(app: &mut App, faction: FactionId, size: u32) {
             ),
             belief_anchor: None,
             last_belief_relay_hops: 0,
+            last_cohesion: Default::default(),
         },
         // Every band carries a durable id (see `BandId`); a cohort without one is invisible to the
         // band queries that require it, which is how this helper's omission surfaced.

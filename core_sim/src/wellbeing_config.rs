@@ -11,6 +11,9 @@
 //!   same-faction band or stay (population conserved within the faction).
 //! - `culture` — the Layer-1 "near / far from the ancestors" morale term, read off the band's belief
 //!   anchor (`.claude/rules/core_sim/belief.md` → "The culture morale term").
+//! - `crowding` — the Layer-1 "too many of one people on one tile" morale term, priced against a
+//!   cohesion ceiling that belief underfoot lifts (`docs/plan_civilization_steps.md` §"Cohesion is a
+//!   property of a group").
 //!
 //! Mirrors the `demographics_config.rs` / `sedentarization_config.rs` loader (baked-in builtin +
 //! optional file/env override).
@@ -226,6 +229,81 @@ fn require_non_negative_finite(
     Ok(())
 }
 
+/// Layer 1 — the **crowding** morale term: too many of one people on one tile
+/// (`docs/plan_civilization_steps.md` §"Cohesion is a property of a group"). The unit is the
+/// co-located group — every resident band of one people standing on the same tile. With `b` the
+/// belief on the tile the group stands on and `s = b / (b + belief_half_saturation)`, the group's
+/// cohesion ceiling is `base_ceiling + belief_lift × s`, and each member band reads
+/// `−drag × max(0, group − ceiling) / ceiling`: `0` at or under the ceiling. Every lever is an
+/// OPENING VALUE and a PLAYTEST DIAL.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CrowdingConfig {
+    /// The cohesion ceiling with no belief underfoot, in people (Dunbar's number). Finite and `> 0`.
+    pub base_ceiling: f32,
+    /// The people a saturated tile (`s → 1`) adds to the ceiling. Finite and `>= 0`; `0` means belief
+    /// lifts nothing.
+    pub belief_lift: f32,
+    /// Belief (dead-equivalents) at which the lift is half. Crowding's own lever, not culture's.
+    /// Finite and `> 0`.
+    pub belief_half_saturation: f32,
+    /// Morale per turn lost per 100% over the ceiling. Finite and `>= 0`.
+    pub drag: f32,
+}
+
+impl Default for CrowdingConfig {
+    fn default() -> Self {
+        Self {
+            base_ceiling: 150.0,
+            belief_lift: 150.0,
+            belief_half_saturation: 20.0,
+            drag: 0.2,
+        }
+    }
+}
+
+impl CrowdingConfig {
+    /// The belief weight `s = b / (b + belief_half_saturation)`, in `[0, 1)`.
+    pub fn belief_weight(&self, belief: f32) -> f32 {
+        belief / (belief + self.belief_half_saturation)
+    }
+
+    /// The cohesion ceiling of a group standing on a tile holding `belief`:
+    /// `base_ceiling + belief_lift × s`.
+    pub fn ceiling(&self, belief: f32) -> f32 {
+        self.base_ceiling + self.belief_lift * self.belief_weight(belief)
+    }
+
+    /// The crowding term for a group of `group` people against `ceiling`:
+    /// `−drag × max(0, group − ceiling) / ceiling` (`<= 0`).
+    pub fn term(&self, group: f32, ceiling: f32) -> f32 {
+        -self.drag * (group - ceiling).max(0.0) / ceiling
+    }
+
+    /// `base_ceiling` and `belief_half_saturation` must be finite and `> 0` (denominators);
+    /// `belief_lift` and `drag` finite and `>= 0`.
+    pub fn validate(&self) -> Result<(), WellbeingConfigError> {
+        require_positive_finite("crowding.base_ceiling", self.base_ceiling)?;
+        require_non_negative_finite("crowding.belief_lift", self.belief_lift)?;
+        require_positive_finite(
+            "crowding.belief_half_saturation",
+            self.belief_half_saturation,
+        )?;
+        require_non_negative_finite("crowding.drag", self.drag)
+    }
+}
+
+fn require_positive_finite(field: &'static str, value: f32) -> Result<(), WellbeingConfigError> {
+    if !value.is_finite() || value <= 0.0 {
+        return Err(WellbeingConfigError::Invalid {
+            field,
+            constraint: "be finite and greater than 0",
+            value: value.to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// **Independence** — when a cut-off group of a people's bands becomes a people of its own
 /// (`docs/plan_band_fission.md` §Independence, `systems::independence`).
 ///
@@ -259,6 +337,7 @@ pub struct WellbeingConfig {
     pub migration: MigrationConfig,
     pub independence: IndependenceConfig,
     pub culture: CultureConfig,
+    pub crowding: CrowdingConfig,
 }
 
 impl WellbeingConfig {
@@ -277,11 +356,12 @@ impl WellbeingConfig {
         Ok(config)
     }
 
-    /// The invariants a parsed config must hold: the culture levers, and the independence
+    /// The invariants a parsed config must hold: the culture and crowding levers, and the independence
     /// threshold (every band's grievance is `>= 0`, so a negative threshold would break every
     /// cut-off group away on its first turn while reading like a strict setting).
     pub fn validate(&self) -> Result<(), WellbeingConfigError> {
         self.culture.validate()?;
+        self.crowding.validate()?;
         require_non_negative_finite(
             "independence.grievance_threshold",
             self.independence.grievance_threshold,
@@ -502,6 +582,91 @@ mod tests {
             WellbeingConfig::from_json_str(json),
             Err(WellbeingConfigError::Invalid {
                 field: "culture.away_drag",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn the_shipped_crowding_levers_are_the_documented_defaults() {
+        let shipped = &WellbeingConfig::builtin().crowding;
+        let default = CrowdingConfig::default();
+        assert_eq!(shipped.base_ceiling, default.base_ceiling);
+        assert_eq!(shipped.belief_lift, default.belief_lift);
+        assert_eq!(
+            shipped.belief_half_saturation,
+            default.belief_half_saturation
+        );
+        assert_eq!(shipped.drag, default.drag);
+    }
+
+    /// Belief equal to the half-saturation lever lifts the ceiling by exactly half the lift; no
+    /// belief lifts nothing.
+    #[test]
+    fn the_ceiling_is_the_base_plus_the_lift_weighted_by_belief() {
+        const ONE_HALF: f32 = 0.5;
+        let crowding = CrowdingConfig::default();
+        assert_eq!(crowding.ceiling(0.0), crowding.base_ceiling);
+        assert_eq!(
+            crowding.ceiling(crowding.belief_half_saturation),
+            crowding.base_ceiling + crowding.belief_lift * ONE_HALF
+        );
+    }
+
+    #[test]
+    fn the_term_is_zero_at_or_under_the_ceiling_and_scales_with_the_excess() {
+        const DOUBLE: f32 = 2.0;
+        let crowding = CrowdingConfig::default();
+        let ceiling = crowding.base_ceiling;
+        assert_eq!(crowding.term(ceiling, ceiling), 0.0);
+        assert_eq!(crowding.term(ceiling - 1.0, ceiling), 0.0);
+        let over = crowding.term(DOUBLE * ceiling, ceiling);
+        assert_eq!(over, -crowding.drag);
+    }
+
+    #[test]
+    fn a_non_positive_crowding_base_ceiling_is_refused() {
+        let json = r#"{ "crowding": { "base_ceiling": 0.0 } }"#;
+        assert!(matches!(
+            WellbeingConfig::from_json_str(json),
+            Err(WellbeingConfigError::Invalid {
+                field: "crowding.base_ceiling",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_negative_crowding_belief_lift_is_refused() {
+        let json = r#"{ "crowding": { "belief_lift": -1.0 } }"#;
+        assert!(matches!(
+            WellbeingConfig::from_json_str(json),
+            Err(WellbeingConfigError::Invalid {
+                field: "crowding.belief_lift",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_non_positive_crowding_half_saturation_is_refused() {
+        let json = r#"{ "crowding": { "belief_half_saturation": 0.0 } }"#;
+        assert!(matches!(
+            WellbeingConfig::from_json_str(json),
+            Err(WellbeingConfigError::Invalid {
+                field: "crowding.belief_half_saturation",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_negative_crowding_drag_is_refused() {
+        let json = r#"{ "crowding": { "drag": -0.1 } }"#;
+        assert!(matches!(
+            WellbeingConfig::from_json_str(json),
+            Err(WellbeingConfigError::Invalid {
+                field: "crowding.drag",
                 ..
             })
         ));

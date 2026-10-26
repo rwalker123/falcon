@@ -116,6 +116,7 @@ fn band(app: &mut App, pos: UVec2, fauna_id: &str) -> bevy::prelude::Entity {
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                last_cohesion: Default::default(),
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {

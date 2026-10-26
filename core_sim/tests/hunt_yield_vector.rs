@@ -264,6 +264,7 @@ fn spawn_hunters(
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                last_cohesion: Default::default(),
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {
@@ -742,6 +743,7 @@ fn spawn_resident_crew(
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                last_cohesion: Default::default(),
             },
             ResidentBand,
             LaborAllocation {
