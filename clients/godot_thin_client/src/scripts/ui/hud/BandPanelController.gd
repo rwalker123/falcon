@@ -892,6 +892,7 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     var vitals: Control = _build_vitals_label(band) if with_vitals else null
     # The leader block is FIRST in the flat stack and in the left column (#859).
     var leader: Control = _build_leader_block(band) if with_vitals else null
+    var tribe: Control = _build_tribe_block(band) if with_vitals else null
     var people := _build_people_block(band)
     # The chart is ALWAYS built; only its height answers the tier. `TALL` gets the full series, every
     # shorter tier the compact one — same series, same empty marker, drawn denser.
@@ -926,6 +927,8 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     var blocks: Array[Dictionary] = []
     if leader != null:
         blocks.append({"control": leader, "column": BAND_COLUMN_LARDER})
+    if tribe != null:
+        blocks.append({"control": tribe, "column": BAND_COLUMN_LARDER})
     if vitals != null:
         blocks.append({"control": vitals, "column": BAND_COLUMN_LARDER})
     if people != null:
@@ -1247,6 +1250,33 @@ func _build_leader_block(band: Dictionary) -> Control:
         block.tooltip_text = String(progress.get("tooltip", ""))
         text.tooltip_text = block.tooltip_text
     block.add_child(text)
+    return block
+
+## **THE TRIBE LINE** (#861), directly under the leader block: ONE line, `Tribe <split bar> with
+## <partner> · <one short phrase>`, hovering to the rule and what is still missing; or one dim line when
+## no band lives with this one. `null` for a band with no tribe threshold (no leader yet, or a foreign
+## cohort). See `HudFormat.band_tribe_progress`.
+func _build_tribe_block(band: Dictionary) -> Control:
+    var view := HudFormat.band_tribe_progress(band)
+    if view.is_empty():
+        return null
+    var block := VBoxContainer.new()
+    block.name = HudWorkVocab.BAND_TRIBE_BLOCK_NAME
+    block.set_meta(HudWorkVocab.BAND_TRIBE_BLOCK_META, true)
+    block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    block.mouse_filter = Control.MOUSE_FILTER_PASS
+    var line := RichTextLabel.new()
+    line.name = HudWorkVocab.BAND_TRIBE_LINE_NAME
+    line.set_meta(HudWorkVocab.BAND_TRIBE_LINE_META, true)
+    line.bbcode_enabled = true
+    line.fit_content = true
+    line.scroll_active = false
+    line.autowrap_mode = TextServer.AUTOWRAP_OFF
+    line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    line.mouse_filter = Control.MOUSE_FILTER_STOP
+    line.text = String(view.get("line", ""))
+    line.tooltip_text = String(view.get("tooltip", ""))
+    block.add_child(line)
     return block
 
 ## The vitals readout — Food, Fodder, Morale and Growth, of which Food / Morale / Growth carry the

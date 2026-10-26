@@ -311,6 +311,50 @@ A migratory people needs no settling for either level: its chief comes from foll
 its tribe forms at a gathering place on its round — which is what the gathering place was for
 foragers in the first place (`docs/plan_civilization_steps.md` → "The contact chain").
 
+### How a tribe forms: one network, one gathering place (#861)
+
+The gathering place is the band's **belief anchor** — the urn on the map, the strongest belief tile
+the band has stood within reach of (`.claude/rules/core_sim/belief.md`). Deaths and gatherings both
+raise it.
+
+**The conditions.** Bands can only be a tribe when they are of one faction, linked in one supply
+network, and hold the same anchor — and at least one of them has a chief. Being linked is a
+condition, not a score: it is what "local" means.
+
+**The closeness score.** How close two bands are is a score, the way a chief's practice is, but read
+fresh each turn rather than banked. Each input reads 0 to 1 and carries a weight; the pair's score is
+the sum. Every weight is a lever in `leadership_config.json`, tunable in the Workbench; these are
+opening values.
+
+| Input | What it is | Weight |
+|---|---|---|
+| Shared origin | the two descend from the same starting band — split from one another or from a common ancestor | 3 |
+| Culture likeness | how alike their cultures are now; bands in touch drift together (#702), bands apart drift apart | 3 |
+| Knowing each other | the existing tie between them, which fills with contact and is forgotten over about 50 quiet turns | 2 |
+| Shared history | how long they have lived local to each other **with a chief among them**: builds over about 25 turns while the pair is local and at least one of the two has a leader, holds while local with none, fades over about 100 apart — history is not erased, it is forgotten | 5 |
+| Belief on the shared urn | a stronger sacred place pulls harder | 1 |
+| Acting as a tribe | work done at the tribe level — the shared pool (#862), the tribe bench (#864), shared works; only a tribe has it, so a working tribe holds together | 3 |
+| A kept monument at the urn | the plainest case of a place they walk to and work on (#692); 1 while it stands kept, 0 half-raised or decayed | 2 |
+
+- **A tribe forms at 9 and dissolves below it.** A band joins when its score with a member reaches the
+  line, and leaves when it falls under.
+- **What it takes in play** (opening values): a fresh split scores about 8.5 — one people, identical,
+  well known to each other — so it is a tribe after a few turns of shared history, and shared
+  history only starts building once one of the two has a chief: until then nothing counts toward a
+  tribe. Two unrelated bands, even alike, need most of the history. Bands that part keep their
+  history a while, then forget each other and drift apart, and the score falls on its own.
+- **A band needs no chief of its own to join.** A member without one carries the tribe's orders out
+  worse — the lossy shape of "A leader can only run so much well" below.
+- **The tribe's leader is that chief, promoted** — a band's chief becomes the paramount chief, an
+  elders' council becomes the council of chiefs; with several, the largest band's. If the leader's
+  band leaves, the next chief among the members takes over; with no chief left the tribe dissolves.
+- **Identity survives a split.** When a network splits, the side holding most of the old members
+  keeps the tribe; any other side that meets the conditions and the line is a new tribe. When two
+  tribes come together, the one with more of its members there keeps it.
+- **The tribe is named for its largest band** at formation ("Reedwater tribe").
+
+These are opening rules for playtest.
+
 ### What each level's orders are
 
 The player gives orders at the highest level they have. A change made by hand at a lower level stays
@@ -447,6 +491,8 @@ list every band. It is the same panel, rows and work strip, rolled up:
 
 - A chief runs one band, up to the cohesion ceiling (~150 people).
 - A paramount chief runs so many bands — a config lever.
+- A tribe member band with no chief of its own carries the paramount chief's orders out worse, the
+  same lossy shape as over-reach (#870).
 - A ruler's and a faction leader's reach is the **management capacity** writing lifts
   (`docs/plan_civilization_steps.md` → "Writing: the third ceiling caps management").
 

@@ -167,6 +167,10 @@ pub struct SnapshotContext<'w> {
     /// cohort row so the client can say "N of M". `Option` so a hand-rolled capture world that never
     /// installed it reads the builtin.
     pub leadership_config: Option<Res<'w, crate::leadership_config::LeadershipConfigHandle>>,
+    /// Every pair's scoring and every band's standing toward a tribe (`crate::tribe`), published on
+    /// the own cohort rows. `Option` so a hand-rolled capture world that never installed it
+    /// publishes the defaults.
+    pub tribes: Option<Res<'w, crate::tribe::TribeRegistry>>,
     pub supply_membership: Res<'w, SupplyNetworkMembership>,
     /// The supply-network tuning — read for the base of a band's **ferry reach**
     /// ([`crate::carry::move_ferry_reach_tiles`]), echoed on every cohort. `Option` so a
@@ -2819,6 +2823,7 @@ pub fn capture_snapshot(
         recipes,
         settlement_stage,
         leadership_config,
+        tribes,
         supply_membership,
         supply_network,
         hearts,
@@ -3095,13 +3100,11 @@ pub fn capture_snapshot(
         let settlement_stage_config = settlement_stage.get();
         // The practice a leader emerges at, echoed per cohort (global config, the `band_work_range`
         // idiom). A hand-rolled capture world with no handle reads the builtin.
-        let leadership_threshold = leadership_config
-            .as_ref()
-            .map_or_else(
-                crate::leadership_config::LeadershipConfig::builtin,
-                |handle| handle.get(),
-            )
-            .practice_threshold as f32;
+        let leadership_cfg = leadership_config.as_ref().map_or_else(
+            crate::leadership_config::LeadershipConfig::builtin,
+            |handle| handle.get(),
+        );
+        let leadership_threshold = leadership_cfg.practice_threshold as f32;
         // Global labor config today (identical for every band); the work-range ring is surfaced
         // per-band so the client reads it off the selected band (future-proof if bands diverge).
         let band_work_range = labor_config.band_work_range;
@@ -3315,6 +3318,11 @@ pub fn capture_snapshot(
                 ))
             })
             .collect();
+        // **Every live band's head-count, by id** -- the order a tribe's members are listed in.
+        let band_sizes: crate::snapshot::population::BandSizeLookup = populations
+            .iter()
+            .filter_map(|(_, cohort, _, _, _, band_id, ..)| Some((*band_id?, cohort.size)))
+            .collect();
         // **The ground under a tile**, for an `extract` row's crew curve (`usefulCutters`).
         let ground_of = |pos: UVec2| {
             tile_registry
@@ -3456,6 +3464,36 @@ pub fn capture_snapshot(
                         band_name,
                         leadership,
                         leadership_threshold,
+                        // Own bands with a leader only (a foreign row returned redacted above); a
+                        // chiefless band and a party row, which carries its home band's id,
+                        // publish the defaults.
+                        tribe: (expedition.is_none()
+                            && leadership.is_some_and(|l| l.leader.is_some()))
+                        .then(|| {
+                            band_id.zip(tribes.as_deref()).and_then(|(band, registry)| {
+                                crate::snapshot::population::tribe_progress(
+                                    registry,
+                                    &leadership_cfg,
+                                    *band,
+                                    &band_names,
+                                )
+                            })
+                        })
+                        .flatten(),
+                        // The formed tribe is published to every member, chiefless ones included.
+                        tribe_membership: expedition
+                            .is_none()
+                            .then(|| {
+                                band_id.zip(tribes.as_deref()).and_then(|(band, registry)| {
+                                    crate::snapshot::population::tribe_membership(
+                                        registry,
+                                        *band,
+                                        &band_names,
+                                        &band_sizes,
+                                    )
+                                })
+                            })
+                            .flatten(),
                         cohort,
                         allocation,
                         expedition,

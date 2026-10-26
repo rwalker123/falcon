@@ -39,7 +39,6 @@ pub const BUILTIN_LEADER_NAMES: &str = include_str!("data/leader_names.json");
 /// distinct from every other salt, so leader naming cannot correlate with any other draw made from
 /// the same map seed -- and in particular not with the band-name permutation.
 pub const LEADER_NAME_SALT: u64 = 0x1EAD_E4A3_9B27_C6D1;
-
 /// The curated pool of leader names, in file order. File order is an index space, not a ranking.
 #[derive(Resource, Debug, Clone, Deserialize)]
 pub struct LeaderNameCatalog {

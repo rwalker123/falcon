@@ -3064,6 +3064,13 @@ const BAND_LEADER_BLOCK_NAME := "BandLeaderBlock"
 const BAND_LEADER_TEXT_NAME := "BandLeaderText"
 ## Gap between the portrait and the text beside it.
 const BAND_LEADER_BLOCK_SEPARATION := 8
+## **THE TRIBE BLOCK** (#861) sits directly under the leader block: one one-line label (the best
+## partner, or a dim no-partner line).
+## `BAND_TRIBE_BLOCK_META` is the harness handle; the line is a RichTextLabel named `BandTribeLine`.
+const BAND_TRIBE_BLOCK_META := &"band_tribe_block"
+const BAND_TRIBE_BLOCK_NAME := "BandTribeBlock"
+const BAND_TRIBE_LINE_NAME := "BandTribeLine"
+const BAND_TRIBE_LINE_META := &"band_tribe_line"
 
 const WORK_SECTION_HEAD_HEIGHT := 22.0
 

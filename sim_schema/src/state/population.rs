@@ -1880,6 +1880,76 @@ pub struct PopulationCohortState {
     /// branch order. Own bands only; a foreign row defaults to empty. Appended last.
     #[serde(default)]
     pub band_improvements: Vec<BandImprovementState>,
+    /// Why the band is or is not in reach of a tribe (`TRIBE_STANDING_*`). Own bands only.
+    /// Appended last.
+    #[serde(default)]
+    pub tribe_standing: u8,
+    /// The closeness score at which a pair is close (`tribe_score_threshold`). Appended last.
+    #[serde(default)]
+    pub tribe_threshold: f32,
+    /// Turns of being local that fill a pair's shared history (`tribe_history_build_turns`).
+    /// Appended last.
+    #[serde(default)]
+    pub tribe_history_build_turns: f32,
+    /// The seven weights: the most each input can add to a pair's score. Appended last.
+    #[serde(default)]
+    pub tribe_weights: TribeClosenessState,
+    /// One row per partner band of this band's people, partner id ascending. Appended last.
+    #[serde(default)]
+    pub tribe_pairs: Vec<TribePairState>,
+    /// The tribe the band belongs to ("" in none), whether or not the band has a leader. Appended
+    /// last.
+    #[serde(default)]
+    pub tribe_name: String,
+    /// Every member band's name, largest band first, ties by band id; empty in no tribe. Appended
+    /// last.
+    #[serde(default)]
+    pub tribe_member_names: Vec<String>,
+    /// The tribe leader's name ("" in no tribe). Appended last.
+    #[serde(default)]
+    pub tribe_leader_name: String,
+    /// The tribe leader's kind (`TRIBE_LEADER_*`). Appended last.
+    #[serde(default)]
+    pub tribe_leader_kind: u8,
+}
+
+/// `PopulationCohortState::tribe_leader_kind`: the band is in no tribe.
+pub const TRIBE_LEADER_NONE: u8 = 0;
+/// `PopulationCohortState::tribe_leader_kind`: a member band's chief, promoted.
+pub const TRIBE_LEADER_PARAMOUNT_CHIEF: u8 = 1;
+/// `PopulationCohortState::tribe_leader_kind`: a member band's elders' council, promoted.
+pub const TRIBE_LEADER_COUNCIL_OF_CHIEFS: u8 = 2;
+
+/// `PopulationCohortState::tribe_standing`: shares an urn and a network with a band of its people.
+pub const TRIBE_STANDING_LOCAL: u8 = 0;
+/// `PopulationCohortState::tribe_standing`: the band has no belief anchor.
+pub const TRIBE_STANDING_NO_URN: u8 = 1;
+/// `PopulationCohortState::tribe_standing`: the band is in no supply network.
+pub const TRIBE_STANDING_NO_NETWORK: u8 = 2;
+/// `PopulationCohortState::tribe_standing`: an urn and a network, but no band of its people shares
+/// both.
+pub const TRIBE_STANDING_ALONE: u8 = 3;
+
+/// **THE SEVEN INPUTS TO A TRIBE CLOSENESS SCORE** — the weights, or one pair's inputs times them.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+pub struct TribeClosenessState {
+    pub origin: f32,
+    pub likeness: f32,
+    pub tie: f32,
+    pub history: f32,
+    pub belief: f32,
+    pub monument: f32,
+    pub acting: f32,
+}
+
+/// **ONE PARTNER BAND AND HOW CLOSE THE TWO ARE** — a row of
+/// [`PopulationCohortState::tribe_pairs`]. See `snapshot.fbs`'s `TribePairState`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct TribePairState {
+    pub partner_band: u64,
+    pub partner_name: String,
+    pub history: f32,
+    pub contribution: TribeClosenessState,
 }
 
 /// **ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH** — a row of

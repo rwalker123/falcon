@@ -41,6 +41,8 @@ const GATHERING_BEAT: &str = "belief.gathering_held";
 const ESTABLISHED_AGE: u32 = 5;
 /// A band's age on the turn it comes into being, as `advance_connections` reads it.
 const FOUNDING_AGE: u32 = 1;
+/// The first id a spawned kin band takes, well clear of any worldgen band.
+const KIN_BAND_ID: u64 = 9_000;
 
 /// One band of the world, by its place in the roster.
 struct Band {
@@ -426,21 +428,67 @@ fn the_telling_hears_a_gathering_once() {
     assert_eq!(told(&app), 1, "an unchanged total is not a new gathering");
 }
 
-/// What a band founded after the opening turn sees on the turn it comes into being is where it
-/// started, not a meeting - a split's child beside its parent, or a foreign band in sight of it.
+/// Mark `band` as in its founding turn, or past it.
+fn set_age(app: &mut App, band: &Band, age_turns: u32) {
+    app.world
+        .get_mut::<PopulationCohort>(band.entity)
+        .unwrap()
+        .age_turns = age_turns;
+}
+
+/// A kin band of `of`'s people (a clone of it, given a fresh id), standing where `of` stands: the
+/// parent or sibling a founded band is split from.
+fn kin_of(app: &mut App, of: &Band, id: u64) -> Band {
+    let mut cohort = app
+        .world
+        .get::<PopulationCohort>(of.entity)
+        .unwrap()
+        .clone();
+    cohort.age_turns = ESTABLISHED_AGE;
+    let id = BandId(id);
+    let entity = app.world.spawn((id, cohort, ResidentBand)).id();
+    Band {
+        entity,
+        id,
+        tile: of.tile,
+    }
+}
+
+/// Give `observer` a live tie to `subject`, as an earlier turn's contact would have.
+fn already_tied(app: &mut App, observer: &Band, subject: &Band) {
+    let faction = app
+        .world
+        .get::<PopulationCohort>(subject.entity)
+        .unwrap()
+        .faction;
+    let sighting = Sighting::new(subject.tile, FIRST_TURN - 1, "seen", faction);
+    app.world
+        .resource_mut::<ConnectionLedger>()
+        .insert_full_tie(
+            ConnectionKey::new(observer.id, subject.id),
+            &sighting,
+            FIRST_TURN - 1,
+        );
+}
+
+/// What a band founded after the opening turn sees of a band its people already knew is where it
+/// started, not a meeting: the parent or a sibling held a live tie to that band before the split.
 #[test]
-fn a_band_founded_after_the_opening_turn_holds_no_gathering_on_its_founding_turn() {
+fn a_founded_band_holds_no_gathering_with_a_band_its_people_already_knew() {
     for (founded_a, founded_b) in [(true, true), (true, false), (false, true)] {
         let mut app = two_faction_world();
         let (a, b) = pair(&mut app, HOME, RIVAL);
         set_size(&mut app, &a, SMALL);
         set_size(&mut app, &b, BIG);
-        for (founded, band) in [(founded_a, &a), (founded_b, &b)] {
+        // Each founded side's parent already knew the other side.
+        for (founded, band, other, kin_id) in [
+            (founded_a, &a, &b, KIN_BAND_ID),
+            (founded_b, &b, &a, KIN_BAND_ID + 1),
+        ] {
             if founded {
-                app.world
-                    .get_mut::<PopulationCohort>(band.entity)
-                    .unwrap()
-                    .age_turns = FOUNDING_AGE;
+                set_age(&mut app, band, FOUNDING_AGE);
+                let parent = kin_of(&mut app, band, kin_id);
+                already_tied(&mut app, &parent, other);
             }
         }
 
@@ -456,15 +504,31 @@ fn a_band_founded_after_the_opening_turn_holds_no_gathering_on_its_founding_turn
         );
 
         // Both established now, still in sight: the live tie means no gathering later either.
-        for band in [&a, &b] {
-            app.world
-                .get_mut::<PopulationCohort>(band.entity)
-                .unwrap()
-                .age_turns = ESTABLISHED_AGE;
-        }
+        set_age(&mut app, &a, ESTABLISHED_AGE);
+        set_age(&mut app, &b, ESTABLISHED_AGE);
         meet(&mut app, FIRST_TURN + 1, &a, &b);
         assert!(gathering_events(&app).is_empty());
     }
+}
+
+/// A band founded after the opening turn that sees a people its own had never met holds a
+/// gathering on its founding turn: Ray's split-off bands met three peoples on turn 1 and were told
+/// of none.
+#[test]
+fn a_founded_band_that_meets_a_people_its_own_never_met_holds_a_gathering() {
+    let mut app = two_faction_world();
+    let (a, b) = pair(&mut app, HOME, RIVAL);
+    set_size(&mut app, &a, SMALL);
+    set_size(&mut app, &b, BIG);
+    set_age(&mut app, &a, FOUNDING_AGE);
+    // Its parent stands beside it, tied to it by the split, and has never met `b`.
+    let parent = kin_of(&mut app, &a, KIN_BAND_ID);
+    already_tied(&mut app, &parent, &a);
+
+    meet(&mut app, FIRST_TURN, &a, &b);
+
+    assert_eq!(gathering_events(&app).len(), 2, "each people is told once");
+    assert_eq!(belief_at(&app, b.tile), per_gathering(&app));
 }
 
 /// The world's first resolved turn reads the opening tick: constructing the world runs one update

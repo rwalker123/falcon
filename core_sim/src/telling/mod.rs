@@ -58,6 +58,7 @@ use crate::{
     sedentarization::SedentarizationScore,
     sites::DiscoveredSites,
     sites_config::SitesConfigHandle,
+    tribe::TribeRegistry,
 };
 
 pub use catalog::{
@@ -792,6 +793,7 @@ pub struct TellingSources<'w, 's> {
     pub sedentarization: Res<'w, SedentarizationScore>,
     pub discovered_sites: Res<'w, DiscoveredSites>,
     pub gatherings: Res<'w, GatheringLedger>,
+    pub tribes: Res<'w, TribeRegistry>,
     pub discovery_progress: Res<'w, DiscoveryProgressLedger>,
     pub herds: Res<'w, HerdRegistry>,
     pub fauna_config: Res<'w, FaunaConfigHandle>,
@@ -894,6 +896,7 @@ pub fn telling_tick(
         sedentarization: &sources.sedentarization,
         discovered_sites: &sources.discovered_sites,
         gatherings: &sources.gatherings,
+        tribes: &sources.tribes,
         discovery_progress: &sources.discovery_progress,
         herds: &sources.herds,
         culture: &sources.culture,
@@ -1240,6 +1243,7 @@ mod tests {
             &CumulativeTotals {
                 discovered_sites: 2.0,
                 gatherings_held: 3.0,
+                tribes_formed: 2.0,
             },
         );
 
@@ -1362,6 +1366,7 @@ mod tests {
         let totals = CumulativeTotals {
             discovered_sites: 4.0,
             gatherings_held: 3.0,
+            tribes_formed: 2.0,
         };
         ledger.commit_edge_state(&SignalSample::default(), &totals);
         assert_eq!(

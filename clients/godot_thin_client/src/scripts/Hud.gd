@@ -120,10 +120,10 @@ signal abandon_requested(payload: Dictionary)
 ## the server re-captures after every command, so it arrives on this command's own recapture.
 signal work_priority_requested(payload: Dictionary)
 
-## Emitted when the player stops a STAFFED row (a source sheet's `Stop working here`, the inspector's
-## `Unassign`). Payload `{ faction, band_id, x, y, herd_id, material, branch, roadwork }`; Main formats
-## `stop_labor <faction> <band_id> <source…>`. No optimistic overlay and so no `pending_entity`: the
-## server restaffs the band at once and the next snapshot carries the row's absence.
+## Emitted when the player stops a STAFFED row (a source sheet's `Stop working here`). Payload `{ faction, band_id, x, y, herd_id, material, branch, roadwork }`; Main formats
+## `stop_labor <faction> <band_id> <source…>`. Records no overlay of its own, but `kind` and
+## `pending_entity` ride along so `_on_stop_labor_requested` can drop that source's pending assign
+## before the relay; the server restaffs the band at once and the next snapshot carries the row's absence.
 signal stop_labor_requested(payload: Dictionary)
 
 ## Emitted when the player picks how a band splits a keeping POOL it cannot stretch
@@ -688,11 +688,10 @@ func _ready() -> void:
         _resolve_assign_band, _herd_label_for_id, _emit_assign_labor)
     _drawercompose.set_tile_branch_controls(tile_branch_controls)
     # A priority mark / `Stop working here` from a source sheet go straight out (#871): live on the
-    # allocation, so no optimistic overlay and no rollback.
+    # allocation, so no overlay of their own. A stop does drop the source's pending assign first.
     _drawercompose.work_priority_requested.connect(
         func(payload: Dictionary) -> void: work_priority_requested.emit(payload))
-    _drawercompose.stop_labor_requested.connect(
-        func(payload: Dictionary) -> void: stop_labor_requested.emit(payload))
+    _drawercompose.stop_labor_requested.connect(_on_stop_labor_requested)
     # **STOP BUILDING, FROM A SITE'S OWN SHEET** rides the work row chip's relay, so the optimistic half
     # (`record_pending_unqueue`) is written once whichever control ended the build.
     _drawercompose.unqueue_requested.connect(_on_queue_row_unqueue_requested)
@@ -771,8 +770,7 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: extend_pen_requested.emit(payload))
     _bandpanel.work_priority_requested.connect(
         func(payload: Dictionary) -> void: work_priority_requested.emit(payload))
-    _bandpanel.stop_labor_requested.connect(
-        func(payload: Dictionary) -> void: stop_labor_requested.emit(payload))
+    _bandpanel.stop_labor_requested.connect(_on_stop_labor_requested)
     # The WORK row's `⌃` is the DECLARATION now (`docs/plan_standing_upkeep.md` §4.7a ①), and this
     # relay carries its optimistic write — see `_on_work_row_improvement_requested`.
     _bandpanel.improvement_requested.connect(_on_work_row_improvement_requested)
@@ -1862,6 +1860,24 @@ func drop_pending_assign(payload: Dictionary) -> void:
         _drawercompose.withdraw_declaration(String(payload.get("kind", "")),
             int(payload.get("x", -1)), int(payload.get("y", -1)),
             String(payload.get("herd_id", "")), String(payload.get("improvement", "")))
+
+## **A STOP DROPS THE SOURCE'S PENDING ASSIGN BEFORE IT RELAYS.** `reconcile_pending` only retires an
+## entry from an EARLIER turn, so a row assigned and stopped within one turn would otherwise be
+## re-inserted over the recaptured snapshot by `effective_worker_map` until the turn advanced. Only
+## THIS source's entry goes; other pending edits on the band survive. The key is rebuilt the way
+## `_emit_assign_labor` built it: tile/band kinds carry their BRANCH in the material slot.
+func _on_stop_labor_requested(payload: Dictionary) -> void:
+    var entity := int(payload.get("pending_entity", -1))
+    if entity >= 0:
+        var kind := String(payload.get("kind", ""))
+        var material := String(payload.get("material", ""))
+        if kind == HudConst.LABOR_KIND_TILE or kind == HudConst.LABOR_KIND_BAND:
+            material = String(payload.get("branch", ""))
+        if _band_labor.drop_pending_assign(entity, _band_labor.pending_key(
+                kind, int(payload.get("x", -1)), int(payload.get("y", -1)),
+                String(payload.get("herd_id", "")), material)):
+            _after_pending_change()
+    stop_labor_requested.emit(payload)
 
 ## The move twin. The move overlay is one slot per band, so the payload's rollback handle is the whole
 ## identity — see `HudBandLaborState.drop_pending_move`.

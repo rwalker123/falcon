@@ -693,6 +693,8 @@ fn seed_snapshot() -> WorldSnapshot {
             build_toe: build_toe_rows(),
             ..Default::default()
         });
+        cohort.tribe_pairs = rows();
+        cohort.tribe_member_names = vec![String::new(); ROWS];
         cohort.pending_reveal_x = vec![0u32; ROWS];
         cohort.pending_reveal_y = vec![0u32; ROWS];
         cohort.belief_reach_x = vec![0u32; ROWS];

@@ -110,7 +110,7 @@ impl SupplyNetworkMembership {
     /// **Put one band's checkpointed membership back**, under the entity the restore just spawned
     /// for it. An empty reading inserts nothing, which is exactly how the balancer leaves a band in
     /// no network — so a restored resource holds the same entries the captured one did.
-    pub(crate) fn restore_band(&mut self, entity: Entity, membership: &BandSupplyMembership) {
+    pub fn restore_band(&mut self, entity: Entity, membership: &BandSupplyMembership) {
         if membership.network_id != 0 {
             self.networks.insert(entity, membership.network_id);
         }

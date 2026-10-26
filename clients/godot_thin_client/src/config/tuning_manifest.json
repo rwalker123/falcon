@@ -497,6 +497,106 @@
           "step": 0.5,
           "default": 5.0,
           "hint": "Points a band banks the first time it grows into each settlement stage past the first. Each stage pays once."
+        },
+        {
+          "pointer": "/tribe_score_threshold",
+          "label": "Closeness for a tribe",
+          "type": "float",
+          "min": 1,
+          "max": 30,
+          "step": 0.5,
+          "default": 9.0,
+          "hint": "The closeness score two linked bands sharing an urn must reach to be a tribe (with a chief among them). Below it, they come apart."
+        },
+        {
+          "pointer": "/tribe_weight_origin",
+          "label": "Shared origin",
+          "type": "float",
+          "min": 0,
+          "max": 10,
+          "step": 0.5,
+          "default": 3.0,
+          "hint": "Closeness two bands get for descending from the same starting band — a split from one another or from a common ancestor."
+        },
+        {
+          "pointer": "/tribe_weight_likeness",
+          "label": "Culture likeness",
+          "type": "float",
+          "min": 0,
+          "max": 10,
+          "step": 0.5,
+          "default": 3.0,
+          "hint": "Closeness at identical culture, less as the two bands' cultures differ."
+        },
+        {
+          "pointer": "/tribe_weight_tie",
+          "label": "Knowing each other",
+          "type": "float",
+          "min": 0,
+          "max": 10,
+          "step": 0.5,
+          "default": 2.0,
+          "hint": "Closeness at a full tie between the two bands; the tie fades when they stop meeting."
+        },
+        {
+          "pointer": "/tribe_weight_history",
+          "label": "Shared history",
+          "type": "float",
+          "min": 0,
+          "max": 10,
+          "step": 0.5,
+          "default": 5.0,
+          "hint": "Closeness at a full shared history of living local to each other."
+        },
+        {
+          "pointer": "/tribe_history_build_turns",
+          "label": "Turns to build history",
+          "type": "float",
+          "min": 1,
+          "max": 200,
+          "step": 1,
+          "default": 25.0,
+          "hint": "Turns living local to each other for two bands' shared history to fill."
+        },
+        {
+          "pointer": "/tribe_history_fade_turns",
+          "label": "Turns to forget history",
+          "type": "float",
+          "min": 1,
+          "max": 400,
+          "step": 1,
+          "default": 100.0,
+          "hint": "Turns apart for a full shared history to be forgotten."
+        },
+        {
+          "pointer": "/tribe_weight_belief",
+          "label": "Belief on the shared urn",
+          "type": "float",
+          "min": 0,
+          "max": 10,
+          "step": 0.5,
+          "default": 1.0,
+          "hint": "Closeness from a strong sacred place; a little belief adds little."
+        },
+        {
+          "pointer": "/tribe_weight_acting",
+          "label": "Acting as a tribe",
+          "type": "float",
+          "min": 0,
+          "max": 10,
+          "step": 0.5,
+          "default": 3.0,
+          "hint": "Closeness a tribe gets from work done at the tribe level. No tribe-level work exists yet, so this has no effect until it does."
+        },
+        {
+          "pointer": "/tribe_weight_monument",
+          "label": "Monument at the urn",
+          "type": "float",
+          "min": 0,
+          "max": 10,
+          "step": 0.5,
+          "default": 2.0,
+          "hint": "Closeness two bands get while a monument stands kept on their shared urn."
         }
       ]
     }

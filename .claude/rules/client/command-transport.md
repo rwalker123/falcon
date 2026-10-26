@@ -389,8 +389,8 @@ client is still trying, because after a server restart it is.
 
 A staffed row's count is the player's **Max** (`assign_labor`'s count slot, `0` = no Max), so a count of
 zero no longer removes it. `stop_labor <faction> <band> <source>` does. The client reaches it from a source
-sheet's `Stop working here` and the work inspector's `Unassign` (`BandPanelController._commit_stop_labor` /
-`DrawerComposeController._emit_stop_labor` → `stop_labor_requested` → `HudLayer` → `Main._on_hud_stop_labor`
+sheet's `Stop working here` (`DrawerComposeController._emit_stop_labor` → `stop_labor_requested` →
+`HudLayer._on_stop_labor_requested` → `Main._on_hud_stop_labor`
 → `Main.format_stop_labor`).
 
 - **It names its band by `BandId`** (`faction`, `band_id` in the payload), like `work_priority`, and
@@ -399,9 +399,16 @@ sheet's `Stop working here` and the work inspector's `Unassign` (`BandPanelContr
   working, and `<branch> <x> <y>` for a tile-improvement keeper row (the branch word leads, from the
   payload's `branch`). The Roadwork pool is the lone token `roadwork` (`payload.roadwork`), never a tile.
   A road BUILD has no crew row and builds no line.
-- **No optimistic overlay and no rollback.** The row is captured live and the server restaffs the band at
-  once, so the next snapshot carries the row's absence; `_on_hud_stop_labor` is `_on_hud_work_priority`'s
-  shape. A client copy of a row that is about to go would be a second statement of one value.
+- **Stop records no overlay of its own, but it drops the pending assign for that source.** The row is
+  captured live and the server restaffs the band at once, so the next snapshot carries the row's absence;
+  `_on_hud_stop_labor` is `_on_hud_work_priority`'s shape. The emitter carries `kind` and `pending_entity`,
+  and `Hud._on_stop_labor_requested` drops that source's entry (key rebuilt as the assign built it; branch
+  in the material slot on tile/band kinds) before relaying, because `reconcile_pending` only retires
+  EARLIER-turn entries and an assign made earlier in the same turn would re-add the stopped row through
+  `effective_worker_map` until the turn advanced. Other pending edits on the band survive.
+  The tile row's emitter (`DrawerComposeController._emit_tile_stop`) carries them too, with `kind` `tile`
+  and its `branch`; without them that branch of the handler is unreachable and a tile row assigned and
+  stopped in one turn lingers. `band_panel_preview` asserts the tile case beside forage.
 - **`command_guard` drives all five forms** (`_drive_stop_labor`, expected count `5`) through the real server
   parser, so the grammar cannot drift from `sim_runtime/src/command_text.rs`.
 

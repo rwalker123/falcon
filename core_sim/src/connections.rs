@@ -591,17 +591,39 @@ struct Attendee {
     size: u32,
     tile: Entity,
     name: String,
-    /// Turns the band has been simulated; see [`FOUNDING_AGE_TURNS`].
-    age_turns: u32,
 }
 
 /// A band whose `age_turns` is at most this has not yet lived past the turn it came into being.
 /// `simulate_population` (Population) bumps `age_turns` before this Visibility pass, so a band
 /// founded between turns (worldgen, a split command) reads `1` here on its first turn, and one
 /// founded mid-turn after the Population pass reads `0`. A band founded later (a split's child)
-/// holds no gathering on that turn: what it sees is where it started, not a meeting. The world's
-/// opening sightings are the exception: they count as a meeting at turn 0 (see [`OPENING_TURN`]).
+/// holds no gathering on that turn with a band its people already knew ([`saw_where_it_started`]):
+/// that is where it started, not a meeting. A band its people had never met is a meeting. The
+/// world's opening sightings count as a meeting at turn 0 (see [`OPENING_TURN`]).
 const FOUNDING_AGE_TURNS: u32 = 1;
+
+/// **Does `founded` only see where it started when it sees `other`?** True when `founded` is in its
+/// founding turn and another resident band of its people already held a live tie to `other` before
+/// this turn: the parent it split from, or a sibling, already knew them, so this is the camp it was
+/// born into. A band of `founded`'s people knowing `other` is the test, not `founded` itself, which
+/// has no ties of its own to consult on its first turn beyond the split's kinship ones.
+fn saw_where_it_started(
+    ledger: &ConnectionLedger,
+    residents: &Query<(&BandId, &PopulationCohort, Option<&BandName>), With<ResidentBand>>,
+    founded: BandId,
+    other: BandId,
+) -> bool {
+    let Some(people) = residents
+        .iter()
+        .find(|(id, cohort, _)| **id == founded && cohort.age_turns <= FOUNDING_AGE_TURNS)
+        .map(|(_, cohort, _)| cohort.faction)
+    else {
+        return false;
+    };
+    residents.iter().any(|(id, cohort, _)| {
+        *id != founded && *id != other && cohort.faction == people && ledger.tie_is_live(*id, other)
+    })
+}
 
 /// The `SimulationTick` read while the world's first turn resolves (`advance_tick` runs in
 /// `Snapshot`, after the turn). Bands in sight of each other when the game starts met "at turn 0",
@@ -646,6 +668,16 @@ pub fn advance_connections(
         .filter(|key| !ledger.tie_is_live(key.observer, key.subject))
         .map(|key| band_pair(key.observer, key.subject))
         .collect();
+    // Which of those a founding-turn band only sees where it started: read off the same pre-turn
+    // ledger, before this turn's contacts are folded in.
+    let started_beside: BTreeSet<(BandId, BandId)> = meetings
+        .iter()
+        .copied()
+        .filter(|&(low, high)| {
+            saw_where_it_started(&ledger, &residents, low, high)
+                || saw_where_it_started(&ledger, &residents, high, low)
+        })
+        .collect();
 
     let direct: BTreeSet<ConnectionKey> = contacts.iter().map(|(key, _)| *key).collect();
     let mut formed = 0u32;
@@ -681,7 +713,6 @@ pub fn advance_connections(
                     faction: cohort.faction,
                     size: cohort.size,
                     tile: cohort.current_tile,
-                    age_turns: cohort.age_turns,
                     name: name.map_or_else(|| band_label(*id), |name| name.0.clone()),
                 })
         };
@@ -690,10 +721,9 @@ pub fn advance_connections(
                 continue;
             };
             // The world's opening sightings count as a meeting at turn 0; a band founded later (a
-            // split) holds none on its founding turn, because what it sees is where it started.
-            let founding =
-                low.age_turns <= FOUNDING_AGE_TURNS || high.age_turns <= FOUNDING_AGE_TURNS;
-            if founding && turn != OPENING_TURN {
+            // split) holds none on its founding turn with a band its people already knew, because
+            // that is where it started. One its people had never met is a meeting.
+            if started_beside.contains(&(low.band, high.band)) && turn != OPENING_TURN {
                 continue;
             }
             // The larger band hosts; a tie goes to the lower band id (`low` is the lower id).

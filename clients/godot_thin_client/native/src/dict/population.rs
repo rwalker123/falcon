@@ -139,6 +139,23 @@ fn cohort_scalars(cohort: fb::PopulationCohortState<'_>) -> CohortScalars {
     }
 }
 
+/// One `TribeClosenessState` as `{origin, likeness, tie, history, belief, monument, acting}` -- the
+/// cohort's `tribe_weights` and every pair's `contribution` share this one shape. Absent reads zeros.
+fn tribe_closeness_to_dict(state: Option<fb::TribeClosenessState<'_>>) -> VarDictionary {
+    let mut out = VarDictionary::new();
+    let get = |f: fn(&fb::TribeClosenessState<'_>) -> f32| -> f64 {
+        state.as_ref().map_or(0.0, |s| f64::from(f(s)))
+    };
+    let _ = out.insert("origin", get(|s| s.origin()));
+    let _ = out.insert("likeness", get(|s| s.likeness()));
+    let _ = out.insert("tie", get(|s| s.tie()));
+    let _ = out.insert("history", get(|s| s.history()));
+    let _ = out.insert("belief", get(|s| s.belief()));
+    let _ = out.insert("monument", get(|s| s.monument()));
+    let _ = out.insert("acting", get(|s| s.acting()));
+    out
+}
+
 fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let mut dict = VarDictionary::new();
     let _ = dict.insert("entity", cohort.entity() as i64);
@@ -2078,6 +2095,48 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "leadership_from_stages",
         f64::from(cohort.leadershipFromStages()),
     );
+    // PROGRESS TOWARD A TRIBE (#861), own bands only: `tribe_standing` is 0 local, 1 no ancestors place, 2 no pooling
+    // network, 3 alone; `tribe_threshold` (0 until the band has a leader) the score that makes a pair close;
+    // `tribe_history_build_turns` the turns of being local that fill shared history; `tribe_weights`
+    // the most each input can add; `tribe_pairs` one row per band living with this one.
+    let _ = dict.insert("tribe_standing", i64::from(cohort.tribeStanding()));
+    let _ = dict.insert("tribe_threshold", f64::from(cohort.tribeThreshold()));
+    let _ = dict.insert(
+        "tribe_history_build_turns",
+        f64::from(cohort.tribeHistoryBuildTurns()),
+    );
+    let _ = dict.insert(
+        "tribe_weights",
+        &tribe_closeness_to_dict(cohort.tribeWeights()),
+    );
+    let mut tribe_pairs = VarArray::new();
+    if let Some(pairs) = cohort.tribePairs() {
+        for pair in pairs.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("partner_band", pair.partnerBand() as i64);
+            let _ = row.insert("partner_name", pair.partnerName().unwrap_or(""));
+            let _ = row.insert("history", f64::from(pair.history()));
+            let _ = row.insert(
+                "contribution",
+                &tribe_closeness_to_dict(pair.contribution()),
+            );
+            tribe_pairs.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("tribe_pairs", &tribe_pairs);
+    // THE FORMED TRIBE, on every own member band (chiefless ones included): `tribe_name` is empty for a
+    // band in no tribe; `tribe_member_names` lists the bands, largest first; `tribe_leader_kind` is
+    // 0 none, 1 paramount chief, 2 council of chiefs, and `tribe_leader_name` the chief or speaker.
+    let _ = dict.insert("tribe_name", cohort.tribeName().unwrap_or(""));
+    let mut tribe_members = VarArray::new();
+    if let Some(names) = cohort.tribeMemberNames() {
+        for name in names.iter() {
+            tribe_members.push(&GString::from(name).to_variant());
+        }
+    }
+    let _ = dict.insert("tribe_member_names", &tribe_members);
+    let _ = dict.insert("tribe_leader_name", cohort.tribeLeaderName().unwrap_or(""));
+    let _ = dict.insert("tribe_leader_kind", i64::from(cohort.tribeLeaderKind()));
     let _ = dict.insert(
         "long_move_leaves_food",
         f64::from(cohort.longMoveLeavesFood()),

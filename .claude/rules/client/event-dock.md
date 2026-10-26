@@ -96,6 +96,13 @@ standing reading is on the band's Beliefs lines. The label's `Faction <id>` span
 published people name through `PEOPLE_ID_TOKEN_KEYS` (which now includes `faction`), and `faction` joins
 `DETAIL_KEY_HIDDEN` so the detail column stays empty.
 
+**The four tribe kinds are NOTABLE** (#861, `leadership.md` → "A tribe forms when linked bands share
+a gathering place"): `tribe_formed`, `tribe_band_joined`, `tribe_band_left`, `tribe_dissolved`. They
+take `leader_emerged`'s rung for its reason, a change in how the people is organised with nothing
+lost. Unlisted, they fell to `DEFAULT_RUNG` and a tribe formed below the default floor. The label
+names the tribe and the leader; `tribe=` and `leader=` join `DETAIL_KEY_HIDDEN`, and `band=` takes
+the ordinary roster join.
+
 **`band_broke_away` is ALERT on both sides, and `lost_touch` is NOTABLE** (issue #284,
 `docs/plan_band_fission.md` §Independence). A break-away is a cut-off group of bands becoming its own
 people: irreversible, not player-initiated, and two rows (`side=lost|gained`, detail `band= from= to=`)
