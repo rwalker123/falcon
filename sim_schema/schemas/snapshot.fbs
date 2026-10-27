@@ -1618,7 +1618,8 @@ table PopulationCohortState {
   //                   + transferReceived - transferSent - foodIntoStore + foodFromStore
   // foodIntoStore - food this band's larder gave to its own stores this turn (the dry food that
   //                 entered the larder this turn and moved into an owned pit within reach).
-  // foodFromStore - food its meal drew from its own stores this turn (the larder shortfall).
+  // foodFromStore - food its meal drew from its own stores this turn: the pit lots the meal ate,
+  //                 chosen soonest-to-spoil first across larder and pits (not only a shortfall).
   // foodInStoresInReach - the food now in the stores this band owns within reach: the part of
   //                 its runway (`turnsOfFood`) and its fertility reserve that is not in the larder.
   // Own bands only: a foreign (redacted) row carries the defaults.

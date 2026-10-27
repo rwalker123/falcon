@@ -1476,9 +1476,9 @@ pub fn build_headless_app() -> App {
         .add_systems(
             Update,
             (
-                // **A band eats from the larder first and its own stores last** (#709): the
-                // shortfall against this turn's meal is drawn from the stores it owns within
-                // reach before the meal and before the births are priced off the larder.
+                // **A band's meal eats the food closest to spoiling first** (#709), across the
+                // larder and the stores it owns within reach: the pit lots the meal will eat are
+                // drawn into the larder before the meal and before the births are priced off it.
                 fixed_store::draw_from_stores.before(systems::simulate_population),
                 systems::simulate_population,
                 // The larder rots right after the meal and before the turn's take lands

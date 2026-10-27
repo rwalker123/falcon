@@ -789,7 +789,8 @@ fn food_terms_over(
     let usable_larder = if is_expedition {
         larder.total()
     } else if let Some(stores) = stores.filter(|stores| !stores.food.is_empty()) {
-        // The pit's food is stock too (#709): eaten after the larder, rotting at the pit's lives.
+        // The pit's food is stock too (#709): eaten soonest-to-spoil first beside the larder's,
+        // rotting at the pit's lives.
         larder.total() + stores.total()
             - crate::spoilage::rot_ahead_with_stores(
                 &larder,

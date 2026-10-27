@@ -1832,9 +1832,10 @@ pub struct PopulationCohort {
     /// - into_store + from_store`. Reset each turn by `fixed_store::draw_from_stores`; on the wire as
     /// `PopulationCohortState.foodIntoStore`.
     pub last_food_into_store: f32,
-    /// **The food this band's larder drew from its own storage pits this turn** (#709) - the
-    /// shortfall the meal would have met, taken from owned pits in reach before the meal
-    /// (`fixed_store::draw_from_stores`). The identity's `from_store` term; on the wire as
+    /// **The food this band's larder drew from its own storage pits this turn** (#709) - the pit
+    /// lots the meal eats, chosen by least shelf life left across the larder and the owned pits
+    /// in reach, drawn before the meal (`fixed_store::draw_from_stores`). Non-zero even when the
+    /// larder alone would have covered the meal. The identity's `from_store` term; on the wire as
     /// `PopulationCohortState.foodFromStore`.
     pub last_food_from_store: f32,
     /// **The food the band's meal ate from lots it had KEPT a while** (#708) - what

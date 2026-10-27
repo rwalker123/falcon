@@ -3311,7 +3311,7 @@ const EXTRACT_ROW_HEIGHT := WORK_ROW_TWO_LINE_HEIGHT + float(TWO_LINE_STEPPER_SE
 const WORK_ROW_STORED_FORMAT := "%d / %d stored"
 const WORK_ROW_STORED_SPOILED_FORMAT := " · %d spoiled"
 const WORK_ROW_STORED_META := &"work_row_stored_line"
-const WORK_ROW_STORED_TOOLTIP := "Dry food kept in this pit. Nearby bands add their dry harvest and eat from it, soonest-to-spoil first."
+const WORK_ROW_STORED_TOOLTIP := "Dry food kept in this pit. The band that dug it adds its dry harvest and eats from it, soonest-to-spoil first."
 
 ## The stored line's text, `""` where the row is not a store whose contents are published.
 static func stored_line(improvement: Dictionary) -> String:
