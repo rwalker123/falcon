@@ -3182,6 +3182,7 @@ pub fn advance_herds(
                     if herd.current_pos != before {
                         if let Some(ring) = watched.covering(herd.current_pos, width, wrap) {
                             herd.current_pos = before;
+                            hem_in_refused_step(herd, def, &mut rng);
                             changed_by.get_or_insert(ring.band);
                             None
                         } else {
@@ -4338,11 +4339,7 @@ fn advance_herd_roam(
         }
         RoamState::Migrate => {
             // Directed leg to the next anchor at 1 hex/turn, no grazing pause.
-            let next_index = if herd.route.is_empty() {
-                0
-            } else {
-                (herd.step_index + 1) % herd.route.len()
-            };
+            let next_index = next_route_index(herd);
             let target = herd
                 .route
                 .get(next_index)
@@ -4359,10 +4356,7 @@ fn advance_herd_roam(
             });
             if herd.current_pos == target || !moved {
                 // Arrived (or hemmed in) → loiter at the new anchor for a fresh window.
-                herd.step_index = next_index;
-                let turns = def.map(|d| d.sample_loiter_turns(rng)).unwrap_or(16);
-                herd.roam = RoamState::Loiter { turns_left: turns };
-                herd.dwell_remaining = 0;
+                end_migrate_leg(herd, def, rng);
             } else {
                 // Heading arrow: where it will step next turn.
                 herd.next_pos = best_land_neighbor_toward(
@@ -4380,6 +4374,44 @@ fn advance_herd_roam(
             step
         }
     }
+}
+
+/// The route index a `Migrate` leg is heading for: the anchor after the one the herd last loitered at.
+fn next_route_index(herd: &Herd) -> usize {
+    if herd.route.is_empty() {
+        0
+    } else {
+        (herd.step_index + 1) % herd.route.len()
+    }
+}
+
+/// End a `Migrate` leg at its target anchor: the herd takes the anchor as its own and loiters there
+/// for a fresh window. Both an arrival and a hemmed-in turn (and a watched-ground refusal, see
+/// [`hem_in_refused_step`]) end the leg this way. Clears the heading: a leg that has ended points nowhere.
+fn end_migrate_leg(herd: &mut Herd, def: Option<&SpeciesDef>, rng: &mut SmallRng) {
+    herd.step_index = next_route_index(herd);
+    let turns = def.map(|d| d.sample_loiter_turns(rng)).unwrap_or(16);
+    herd.roam = RoamState::Loiter { turns_left: turns };
+    herd.dwell_remaining = 0;
+    herd.next_pos = None;
+}
+
+/// **A roam step refused by a watched ring counts as the pack being hemmed in** (#875), so the roam
+/// machine moves on exactly as it does when no step is possible: a graze-wanderer advances to its
+/// next waypoint (the advance it makes on arrival), a `Migrate` leg ends. Without this the pack would
+/// retry the same refused step every move turn, frozen at the ring's edge with a heading into the
+/// ring. A `Loiter` nudge is random and expires on its own, so it needs nothing.
+fn hem_in_refused_step(herd: &mut Herd, def: Option<&SpeciesDef>, rng: &mut SmallRng) {
+    match herd.roam {
+        RoamState::GrazeWander => {
+            if !herd.route.is_empty() {
+                herd.step_index = (herd.step_index + 1) % herd.route.len();
+            }
+        }
+        RoamState::Migrate => end_migrate_leg(herd, def, rng),
+        RoamState::Loiter { .. } => {}
+    }
+    herd.next_pos = None;
 }
 
 /// Step the herd one hex toward `target`, choosing the land neighbour that most reduces hex

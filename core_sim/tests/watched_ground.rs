@@ -21,7 +21,7 @@ use core_sim::{
     CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle,
     ForageRegistry, GenerationId, GenerationRegistry, Herd, HerdDensityMap, HerdRegistry,
     HerdTelemetry, LaborAllocation, LaborConfigHandle, LadderConfigHandle, LocalStore, MapPresets,
-    MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, SimulationConfig,
+    MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, RoamState, SimulationConfig,
     SimulationTick, SizeClass, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
     StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, Tile, TileRegistry,
     WellbeingConfigHandle,
@@ -398,6 +398,116 @@ fn a_pack_outside_does_not_step_into_the_ring() {
         distance(&control, herd_pos(&control, "wolf"), camp) < distance(&control, start, camp),
         "liveness: without the ring the pack closes on its prey and its anchor"
     );
+}
+
+/// A refused step is the pack hemmed in: a graze-wanderer whose waypoint lies inside the ring moves
+/// on to its next waypoint instead of retrying the refused step for ever.
+#[test]
+fn a_refused_graze_wander_step_moves_the_pack_on_to_its_next_waypoint() {
+    let route = |app: &mut App, camp: UVec2| {
+        let spot = land_at(app, camp, RING + 1)
+            .into_iter()
+            .find(|&pos| neighbour_at(app, pos, camp, RING).is_some())
+            .expect("a land tile just outside the ring with a way in");
+        let inner = land_at(app, camp, RING - 2)
+            .into_iter()
+            .next()
+            .expect("a land tile well inside the ring");
+        let outside = neighbour_at(app, spot, camp, RING + 2)
+            .or_else(|| neighbour_at(app, spot, camp, RING + 1))
+            .expect("a land neighbour clear of the ring");
+        (spot, vec![spot, inner, outside])
+    };
+    let (mut watched, band, camp, start) = world_with(REACH, route);
+    prey_beside(&mut watched, start, camp);
+    let mut moved = false;
+    for _ in 0..TURNS {
+        step(&mut watched);
+        let at = herd_pos(&watched, "wolf");
+        assert!(
+            distance(&watched, at, camp) > RING,
+            "the pack never ends a step inside the ring"
+        );
+        moved |= at != start;
+    }
+    assert!(
+        moved,
+        "the refused waypoint is skipped: the pack moves on instead of freezing at the ring's edge"
+    );
+    assert!(
+        kept_off(&watched, band) <= 1,
+        "one pack, credited at most once"
+    );
+
+    // Control: no scouts, the same route - the pack walks to the inner waypoint.
+    let (mut control, _, camp, start) = world_with(0, route);
+    prey_beside(&mut control, start, camp);
+    for _ in 0..TURNS {
+        step(&mut control);
+    }
+    assert!(
+        distance(&control, herd_pos(&control, "wolf"), camp) <= RING,
+        "liveness: unwatched, the same route takes the pack into the ground the ring guards"
+    );
+}
+
+/// A refused `Migrate` step ends the leg (the hemmed-in branch) and leaves no heading into the ring.
+#[test]
+fn a_refused_migrate_step_ends_the_leg_and_clears_the_heading() {
+    let route = |app: &mut App, camp: UVec2| {
+        let spot = land_at(app, camp, RING + 1)
+            .into_iter()
+            .find(|&pos| neighbour_at(app, pos, camp, RING).is_some())
+            .expect("a land tile just outside the ring with a way in");
+        let inner = land_at(app, camp, RING - 2)
+            .into_iter()
+            .next()
+            .expect("a land tile well inside the ring");
+        (spot, vec![spot, inner])
+    };
+    let migrating = |reach: u32| {
+        let (mut app, band, camp, start) = world_with(reach, route);
+        prey_beside(&mut app, start, camp);
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let wolf = registry
+            .herds
+            .iter_mut()
+            .find(|herd| herd.id == "wolf")
+            .unwrap();
+        wolf.roam = RoamState::Migrate;
+        (app, band, camp, start)
+    };
+    let roam_of = |app: &App| {
+        let herd = app
+            .world
+            .resource::<HerdRegistry>()
+            .herds
+            .iter()
+            .find(|herd| herd.id == "wolf")
+            .unwrap()
+            .clone();
+        (herd.roam, herd.next_pos)
+    };
+
+    let (mut watched, _, camp, start) = migrating(REACH);
+    step(&mut watched);
+    let (roam, next_pos) = roam_of(&watched);
+    assert_eq!(herd_pos(&watched, "wolf"), start, "the step was refused");
+    assert!(
+        matches!(roam, RoamState::Loiter { .. }),
+        "a refused migrate step ends the leg: {roam:?}"
+    );
+    assert_eq!(next_pos, None, "no heading arrow points into the ring");
+    for _ in 0..TURNS {
+        step(&mut watched);
+        assert!(
+            distance(&watched, herd_pos(&watched, "wolf"), camp) > RING,
+            "never inside the ring"
+        );
+        if let Some(next) = roam_of(&watched).1 {
+            assert!(distance(&watched, next, camp) > RING, "heading stays clear");
+        }
+    }
 }
 
 #[test]

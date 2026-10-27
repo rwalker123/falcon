@@ -730,7 +730,7 @@ impl CampSite {
 
 /// **THE HANDS THE SIM MAY STAFF** — the working people less the bench, the hands still walking home
 /// and every crew the player set by hand (Warrior, Builders and a need row's muster). The Scout
-/// row is the sim's: it is dealt from this pool after the hold crews.
+/// row is the sim's: it is dealt from this pool FIRST (`deal_scouts`, before pass 1a), off the top, ahead of the hold crews.
 pub fn staffable_pool(allocation: &LaborAllocation, available: u32, bench_workers: u32) -> u32 {
     let player_set: u32 = allocation
         .assignments

@@ -376,6 +376,10 @@ field today; a future tamed wolf→dog would keep its rung's `drift_to_owner`).
   DESC, y ASC, x ASC)` (`step_out_of_watch`); no step that increases the distance means it stays.
   (2) **Outside** the rings, `pursue` ignores prey standing inside any ring, its attractor step skips
   a tile inside one, and a roam step that ends inside one is refused (the pack stays where it stood).
+  A refused step counts as the pack being hemmed in (`hem_in_refused_step`): a graze-wanderer
+  advances to its next waypoint (the advance it makes on arrival), a `Migrate` leg ends in `Loiter`
+  (`end_migrate_leg`, the `!moved` branch), and the heading (`next_pos`) is cleared, so a pack whose
+  waypoint or anchor lies inside the ring moves on rather than retrying the refused step.
   No new randomness: the same seeded per-herd RNG, consumed exactly as before; with no scouts the rings
   are empty and every path is the code it was. **The readout**: `PopulationCohort::predators_kept_off`
   is reset to `0` and rewritten by `advance_herds` each turn - the distinct packs whose move this band's
@@ -1241,7 +1245,7 @@ ceilings — Sustain under-hunting lets a herd grow); a herd past `band_work_ran
 party that follows it (`work-party.md`). Scout extends the band's live sight range
 in `calculate_visibility` by posting forward-observer vantages (posted out to the scouting range
 in all 6 hex directions, LOS revealed from each — re-marked Active every turn while scouts are
-staffed, scaling with head-count); Warrior is inert until the predator slice. `move_band <faction> <band> <x> <y>` sets a `BandTravel` component that
+staffed, posted at `scout_vantage_posting_distance` from the staffed reach); Warrior is inert until the predator slice. `move_band <faction> <band> <x> <y>` sets a `BandTravel` component that
 `advance_band_movement` steps at `band_move_tiles_per_turn`/turn. `assign_labor` sets one target's
 worker count (0 unassigns; clamps to free headroom); **`cancel_order <faction_id> [band_id]
 [all|work|roles]`** clears the assignments its **scope** names — `all` (the default when the token is
