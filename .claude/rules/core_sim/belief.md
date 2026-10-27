@@ -366,8 +366,8 @@ Belief's second morale consumer: a Layer-1 contributor (`MoraleContributions::co
 `base_ceiling` sits beside the inbreeding ceiling (`demographics_config.json` → `lineage`,
 `founding_lines` 8 × `people_per_line` 19 = 152) on purpose — both are the video's ~150, on two
 units (a people vs one band) — but the two are separate levers and retuning one does not move the
-other. All four are OPENING VALUES and PLAYTEST DIALS; the `wellbeing` Workbench kind stages the
-block with no extra work. Tests: `core_sim/tests/cohesion.rs`.
+other. All four are OPENING VALUES and PLAYTEST DIALS, each a row under Wellbeing in the client's
+`tuning_manifest.json` (a lever reaches the Workbench only through a manifest row). Tests: `core_sim/tests/cohesion.rs`.
 
 ## The ancestor pull — belief moves the culture axes
 
