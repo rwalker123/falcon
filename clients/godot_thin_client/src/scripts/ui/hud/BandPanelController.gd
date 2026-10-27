@@ -2868,8 +2868,35 @@ func _tile_strip_row(model: Dictionary, improvement: Dictionary, tile: Vector2i,
     strip_row["keep_tools_named"] = _site_short_tool_names(improvement) if tools_short else ""
     strip_row["tending"] = HudWorkVocab.tending_of(improvement,
         HudComposeVocab.BARE_FORECAST_PREFIX, "")
+    _put_tile_standing_mark(strip_row, improvement, tile, branch)
     _put_tile_ladder_chip(strip_row, improvement, tile, branch, int(model.get("workers", 0)))
     return strip_row
+
+## **THE TILE ROW'S STANDING-RUNG MARK** -- the harvest rows' twin (`_work_source_rung`): the rung the tile
+## STANDS on, in the strip's rung slot, when it is a built rung above the branch root and carries art in
+## `HudTileVocab.RUNG_MARKS`. At the root rung (nothing built) the row has none, as a wild source has none.
+func _put_tile_standing_mark(strip_row: Dictionary, improvement: Dictionary, tile: Vector2i,
+        branch: String) -> void:
+    var ladder := HudTileVocab.tile_ladder(_topbar.ladder_rungs() if _topbar != null else [])
+    if ladder.is_empty():
+        return
+    var site := HudTileVocab.site_of(improvement, ladder, branch, tile.x, tile.y)
+    var rows := HudDepositVocab.branch_ladder(ladder, branch)
+    var held := String(site.get("rung", ""))
+    if HudDepositVocab.ladder_order_of(rows, held) <= HudDepositVocab.catalog_order(
+            HudTileVocab.root_entry(ladder, branch)):
+        return
+    for entry in rows:
+        if HudDepositVocab.catalog_rung_key(entry) != held:
+            continue
+        var mark := HudTileVocab.rung_mark(entry)
+        if mark == "":
+            return
+        strip_row["rung_glyph"] = FoodIcons.for_policy(HudDepositVocab.catalog_verb(entry))
+        strip_row["rung_sprite"] = mark
+        strip_row["rung_tooltip"] = HudWorkVocab.WORK_ROW_RUNG_TILE_TOOLTIP_FORMAT \
+            % HudDepositVocab.ladder_rung_name(ladder, held)
+        return
 
 ## **THE TILE ROW'S LADDER CHIP** -- the deposit row's twin, off the tile branch's catalog rows: a build
 ## declared on the improvement shows the verb being raised, otherwise the rung a press could land right now

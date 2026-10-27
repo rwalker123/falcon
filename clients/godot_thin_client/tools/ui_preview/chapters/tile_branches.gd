@@ -656,6 +656,40 @@ func _tile_row_art_claims() -> void:
 				and offer_chip != null and _chip_texture(offer_chip) == HudSprites.for_mark(mark))
 	await h._settle()
 	await h._save("tile_branches_row_art_offered")
+
+	# THE STANDING-RUNG MARK: a bare tile has none; a tile standing on its BUILT rung wears that rung's art in
+	# the strip's rung slot (the harvest rows' slot), hovering the rung's name.
+	for child in column.get_children():
+		column.remove_child(child)
+		child.queue_free()
+	await h._settle()
+	for branch in [STORES_BRANCH, BELIEF_BRANCH]:
+		var bare_row: Control = bp._build_tile_row(band,
+			bp._tile_model(band, TILE_X, TILE_Y, branch, _tile_assignment(branch, CREW_TWO)))
+		column.add_child(bare_row)
+		# An empty slot stamps the marks run itself with a blank rung (`_add_rung_mark`), so "no mark" is a blank stamp
+		# on a non-art node, never a TextureRect.
+		var bare_stamp := Q.find_meta_node(bare_row, HudWorkVocab.WORK_ROW_RUNG_META)
+		h._assert_hud("tile row (%s), bare tile: no standing-rung mark" % branch,
+			bare_stamp != null and not (bare_stamp is TextureRect)
+				and String(bare_stamp.get_meta(HudWorkVocab.WORK_ROW_RUNG_META)) == "")
+	var built_rungs := {STORES_BRANCH: ["food_stores:storage_pit", "storage_pit", "Storage pit"],
+		BELIEF_BRANCH: ["belief:monument", "monument", "Monument"]}
+	for branch in [STORES_BRANCH, BELIEF_BRANCH]:
+		var built := _improvement_row(branch, String(built_rungs[branch][0]))
+		_stage(band, [built], 1.0, 1.0)
+		var built_row: Control = bp._build_tile_row(band,
+			bp._tile_model(band, TILE_X, TILE_Y, branch, _tile_assignment(branch, CREW_TWO)))
+		column.add_child(built_row)
+		var standing := Q.find_meta_node(built_row, HudWorkVocab.WORK_ROW_RUNG_META)
+		h._assert_hud("tile row (%s), built: the standing mark is a TextureRect wearing the %s art, hovering `%s`"
+				% [branch, built_rungs[branch][1], built_rungs[branch][2]],
+			standing is TextureRect
+				and (standing as TextureRect).texture == HudSprites.for_mark(String(built_rungs[branch][1]))
+				and (standing as TextureRect).tooltip_text.begins_with(String(built_rungs[branch][2]))
+				and (standing as TextureRect).get_combined_minimum_size().y >= HudWorkVocab.WORK_ROW_RUNG_WIDTH)
+	await h._settle()
+	await h._save("tile_branches_row_standing_mark")
 	host.queue_free()
 	h._hud.update_tile_beliefs({})
 	await h._settle()

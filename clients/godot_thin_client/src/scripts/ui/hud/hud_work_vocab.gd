@@ -1628,6 +1628,8 @@ static func natural_list(parts: Array[String]) -> String:
 ## would read ragged. Costs the label ~20px (slot + `WORK_ROW_SEPARATION`) out of the
 ## `WORK_COLUMN_MIN_WIDTH` budget.
 const WORK_ROW_RUNG_WIDTH := 16
+## A tile row's standing-rung mark hover: the built rung's catalog name.
+const WORK_ROW_RUNG_TILE_TOOLTIP_FORMAT := "%s — built on this ground."
 
 
 ## The stable handle on a rung mark, mirroring `HudWidgets.POLICY_RUNG_META`'s job for a picker rung.

@@ -26,6 +26,8 @@ extends RefCounted
 ## ---- the strip model's keys ---------------------------------------------------------------------
 const M_RUNG_MARK := "rung_mark"
 const M_RUNG_TIP := "rung_tip"
+## The standing-rung mark's `HudSprites` mark id ('' = the text glyph is the mark).
+const M_RUNG_ART := "rung_art"
 const M_RING_OFFERED := "ring_offered"
 const M_LADDER_KIND := "ladder_kind"
 const M_LADDER_GLYPH := "ladder_glyph"
@@ -128,6 +130,7 @@ static func model_from_row(row: Dictionary) -> Dictionary:
     var need_row := bool(row.get("need_row", false))
     return {
         M_RUNG_MARK: String(row.get("rung_glyph", "")),
+        M_RUNG_ART: String(row.get("rung_sprite", "")),
         M_RUNG_TIP: rung_tip,
         M_RING_OFFERED: bool(row.get("ring_offered", false)),
         M_LADDER_KIND: kind, M_LADDER_GLYPH: glyph, M_LADDER_MARK: mark, M_LADDER_PROGRESS: progress, M_LADDER_TIP: tip,
@@ -213,8 +216,19 @@ static func _add_rung_mark(marks: HBoxContainer, model: Dictionary, handlers: Di
         ring_btn.mouse_filter = Control.MOUSE_FILTER_STOP
         mark = ring_btn
     else:
-        mark = _mark_label(glyph, HudStyle.SIGNAL, String(model.get(M_RUNG_TIP, "")))
-    mark.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_RUNG_WIDTH, 0.0)
+        var rung_art := HudSprites.for_mark(String(model.get(M_RUNG_ART, "")))
+        if rung_art != null:
+            # A standing rung with bundled art: a TextureRect in the same slot, the hover on it (PASS so the
+            # tooltip shows and the press still reaches the row).
+            mark = HudWidgets.build_marker_icon(rung_art, "", HudWorkVocab.WORK_ROW_RUNG_WIDTH,
+                HudWorkVocab.WORK_ROW_FONT_SIZE)
+            mark.mouse_filter = Control.MOUSE_FILTER_PASS
+            mark.tooltip_text = String(model.get(M_RUNG_TIP, ""))
+        else:
+            mark = _mark_label(glyph, HudStyle.SIGNAL, String(model.get(M_RUNG_TIP, "")))
+    # A glyph sets its own height off the font; art needs the box kept square or it collapses to zero height.
+    mark.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_RUNG_WIDTH,
+        HudWorkVocab.WORK_ROW_RUNG_WIDTH if mark is TextureRect else 0.0)
     mark.set_meta(HudWorkVocab.WORK_ROW_RUNG_META, glyph)
     mark.set_meta(HudWorkVocab.WORK_ROW_RING_META, ring)
     marks.add_child(mark)
