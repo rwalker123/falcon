@@ -31,6 +31,17 @@
     "_comment_relay_per_hop": "How much of the ancestors' reach each hop of KIN relays. A band of the same people within walking reach of a band that is near is itself near at this strength, and each further hop multiplies by it again (no hop cap - it dies out). The term blends near and far by that strength r: s x (r x near_bonus - (1 - r) x away_drag), so r = 1 (direct) and r = 0 (unreached) are the two plain values. Same people and resident bands only; relaying never adopts a place. Must be finite and in [0, 1]; 0 turns relaying off. PLAYTEST DIAL.",
     "relay_per_hop": 0.5
   },
+  "cohesion": {
+    "_comment": "A band can only hold together at about this many people (docs/plan_civilization_steps.md 'Cohesion is a property of a group'; .claude/rules/core_sim/belief.md 'The cohesion morale term'). The unit is ONE BAND's own size: how many people can keep track of each other. With b = the belief on the tile the band stands on and s = b / (b + belief_half_saturation), the band's cohesion ceiling is base_ceiling + belief_lift x s, and the band reads -drag x max(0, size - ceiling) / ceiling: 0 at or under the ceiling. No hard cap; unhappy people drift to a smaller band of their own people through discontent migration because the term lowers morale. This is NOT how many people a TILE holds (tile capacity is a separate lever, #277); two bands on one tile do not affect each other. All four are OPENING VALUES and PLAYTEST DIALs.",
+    "_comment_base_ceiling": "The cohesion ceiling of one band with no belief underfoot, in people (Dunbar's number: how many a group can keep track of). Must be finite and > 0. OPENING VALUE, PLAYTEST DIAL.",
+    "base_ceiling": 150.0,
+    "_comment_belief_lift": "People a saturated tile adds to the ceiling (s -> 1). Must be finite and >= 0; 0 means belief lifts nothing. OPENING VALUE, PLAYTEST DIAL.",
+    "belief_lift": 150.0,
+    "_comment_belief_half_saturation": "Belief (dead-equivalents) at which the lift is half. Cohesion's own lever, separate from culture.belief_half_saturation. Must be finite and > 0. OPENING VALUE, PLAYTEST DIAL.",
+    "belief_half_saturation": 20.0,
+    "_comment_drag": "Morale per turn lost per 100% over the ceiling. At the shipped settling +0.01 a band 10% over nets -0.01 a turn, so the leak starts just past the ceiling. Must be finite and >= 0. OPENING VALUE, PLAYTEST DIAL.",
+    "drag": 0.2
+  },
   "independence": {
     "grievance_threshold": 1.0
   }

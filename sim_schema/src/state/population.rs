@@ -533,6 +533,14 @@ pub struct LaborAssignmentState {
     /// Turns until the next landing, the wait for a pack to fill included; `0` = none within the
     /// forecast horizon. Appended last.
     pub load_home_in: u32,
+    /// The Scout row's range: tiles past the band's local range the player asked to see. `0` on
+    /// every other row. Appended last.
+    #[serde(default)]
+    pub scouting_range: u32,
+    /// Tiles past the local range the staffed scouts actually reach. `0` on every other row.
+    /// Appended last.
+    #[serde(default)]
+    pub scouting_reach: u32,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].
@@ -913,13 +921,11 @@ pub struct PopulationCohortState {
     /// to draw the work-range ring. Sourced from `labor_config.json` at capture.
     #[serde(default)]
     pub work_range: u32,
-    /// The band's effective **scout vantage distance** — how far its forward-observer vantage ring
-    /// is posted out from the band (`min(vantage_distance_base + scouts × vantage_distance_per_scout,
-    /// vantage_distance_max)` from `LaborConfig.scout`), `0` with no scouts. Derived per-band at
-    /// capture. (Field name retained for wire compatibility; scouts now reveal by posting vantage
-    /// points that see *around* obstacles, not the retired flat fog-pulse ring.)
+    /// The band's **watched radius** in tiles: local range + scouting reach, the edge wild
+    /// predators stay behind (`visibility_systems::watched_radius`). `0` with no scouts reaching
+    /// past the local range. Derived per-band at capture.
     #[serde(default)]
-    pub scout_reveal_radius: u32,
+    pub watched_radius: u32,
     /// Expedition discriminators (`docs/plan_exploration_and_sites.md` §2). `false`/`""`/empty for a
     /// normal band; a detached scouting party sets `is_expedition` and carries its mission/phase.
     /// Client-facing (distinct marker glyph/label, awaiting-orders state, Recall affordance).
@@ -987,7 +993,7 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub morale_delta: i64,
     /// Dominant negative morale driver this turn: `0 = None, 1 = Terrain, 2 = Cold, 3 = Unrest,
-    /// 4 = Culture`.
+    /// 4 = Culture, 5 = Cohesion`.
     /// Names *why* morale is falling. Recomputed each turn alongside [`Self::morale_delta`].
     #[serde(default)]
     pub morale_cause: u8,
@@ -1880,10 +1886,6 @@ pub struct PopulationCohortState {
     /// branch order. Own bands only; a foreign row defaults to empty. Appended last.
     #[serde(default)]
     pub band_improvements: Vec<BandImprovementState>,
-    /// Why the band is or is not in reach of a tribe (`TRIBE_STANDING_*`). Own bands only.
-    /// Appended last.
-    #[serde(default)]
-    pub tribe_standing: u8,
     /// The closeness score at which a pair is close (`tribe_score_threshold`). Appended last.
     #[serde(default)]
     pub tribe_threshold: f32,
@@ -1911,6 +1913,52 @@ pub struct PopulationCohortState {
     /// The tribe leader's kind (`TRIBE_LEADER_*`). Appended last.
     #[serde(default)]
     pub tribe_leader_kind: u8,
+    /// The most tiles past the local range a scouting range may name. Appended last.
+    #[serde(default)]
+    pub scouting_range_max: u32,
+    /// The wild predator packs this band's watched ring kept off this turn. Appended last.
+    #[serde(default)]
+    pub predators_kept_off: u32,
+    /// People the band's own leader runs well (0 when it has no leader). Appended last.
+    #[serde(default)]
+    pub leader_reach: f32,
+    /// People the band's own leader actually runs (0 when it has no leader). Appended last.
+    #[serde(default)]
+    pub leader_load: f32,
+    /// Member bands the tribe leader runs well (0 in no tribe). Appended last.
+    #[serde(default)]
+    pub tribe_leader_reach: f32,
+    /// Member bands the tribe leader actually runs (0 in no tribe). Appended last.
+    #[serde(default)]
+    pub tribe_leader_load: f32,
+    /// The share of the band's orders that arrive, `(0, 1]` (0 with no leader and no tribe).
+    /// Appended last.
+    #[serde(default)]
+    pub orders_carried_out: f32,
+    /// The anchor's saturating weight `b / (b + belief_half_saturation)` in `[0, 1)`; 0 with no
+    /// anchor. Derived at capture. Appended last.
+    #[serde(default)]
+    pub belief_anchor_weight: f32,
+    /// The band's own leader's orders-carried-out factor (`LeaderReach::orders_carried_out`), in
+    /// `(0, 1]`; 0 with no leader of its own, whether or not the band is in a tribe. Own bands
+    /// only. Appended last.
+    #[serde(default)]
+    pub leader_orders_carried_out: f32,
+    /// The cohesion morale contribution (`snapshot.fbs` → `moraleCohesion`), part of the `morale_*`
+    /// breakdown whose signed sum IS `morale_delta`. Fixed-point raw. Derived at capture. Appended
+    /// last.
+    #[serde(default)]
+    pub morale_cohesion: i64,
+    /// The band's opening head-count the cohesion term was priced from. Appended last.
+    #[serde(default)]
+    pub cohesion_headcount: u32,
+    /// The cohesion ceiling the cohesion term was priced against, in whole people. Appended last.
+    #[serde(default)]
+    pub cohesion_ceiling: u32,
+    /// The fresh-water morale contribution (`snapshot.fbs` -> `moraleFreshWater`, >= 0), part of the
+    /// `morale_*` breakdown whose signed sum IS `morale_delta`. Fixed-point raw. Appended last.
+    #[serde(default)]
+    pub morale_fresh_water: i64,
     /// **Food this band's larder gave its own stores this turn** (#709) - the ledger identity's
     /// `into_store` term. Appended last.
     #[serde(default)]
@@ -1932,16 +1980,6 @@ pub const TRIBE_LEADER_PARAMOUNT_CHIEF: u8 = 1;
 /// `PopulationCohortState::tribe_leader_kind`: a member band's elders' council, promoted.
 pub const TRIBE_LEADER_COUNCIL_OF_CHIEFS: u8 = 2;
 
-/// `PopulationCohortState::tribe_standing`: shares an urn and a network with a band of its people.
-pub const TRIBE_STANDING_LOCAL: u8 = 0;
-/// `PopulationCohortState::tribe_standing`: the band has no belief anchor.
-pub const TRIBE_STANDING_NO_URN: u8 = 1;
-/// `PopulationCohortState::tribe_standing`: the band is in no supply network.
-pub const TRIBE_STANDING_NO_NETWORK: u8 = 2;
-/// `PopulationCohortState::tribe_standing`: an urn and a network, but no band of its people shares
-/// both.
-pub const TRIBE_STANDING_ALONE: u8 = 3;
-
 /// **THE SEVEN INPUTS TO A TRIBE CLOSENESS SCORE** — the weights, or one pair's inputs times them.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 pub struct TribeClosenessState {
@@ -1962,6 +2000,9 @@ pub struct TribePairState {
     pub partner_name: String,
     pub history: f32,
     pub contribution: TribeClosenessState,
+    /// Whether the partner has a leader of its own. Appended last.
+    #[serde(default)]
+    pub partner_has_leader: bool,
 }
 
 /// **ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH** — a row of

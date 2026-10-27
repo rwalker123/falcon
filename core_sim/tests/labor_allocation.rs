@@ -184,6 +184,8 @@ fn spawn_band(
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
+                last_cohesion: Default::default(),
             },
             allocation,
         ))
@@ -325,6 +327,8 @@ fn forage_alloc_policy(tile: UVec2, workers: u32, policy: f32) -> LaborAllocatio
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(workers),
             staffing: Default::default(),
             target: LaborTarget::Forage {
@@ -482,6 +486,8 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                scouting_range: 0,
+                scouting_reach: 0,
                 max_workers: Some(1),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -576,6 +582,8 @@ fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                scouting_range: 0,
+                scouting_reach: 0,
                 max_workers: Some(2),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -722,6 +730,8 @@ fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                scouting_range: 0,
+                scouting_reach: 0,
                 max_workers: Some(4),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -815,6 +825,8 @@ fn a_hunt_past_the_leash_follows_its_herd_and_only_a_vanished_herd_ends_it() {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(3),
             staffing: Default::default(),
             target: LaborTarget::Hunt {
@@ -941,6 +953,8 @@ fn a_hunt_just_past_the_apron_posts_a_party_on_the_same_apron_as_forage() {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                scouting_range: 0,
+                scouting_reach: 0,
                 max_workers: Some(3),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -1029,6 +1043,8 @@ fn a_far_work_partys_hunt_dead_credit_no_belief() {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                scouting_range: 0,
+                scouting_reach: 0,
                 max_workers: Some(HUNTERS),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -1191,13 +1207,15 @@ fn every_labor_loss_line_names_the_band_by_its_durable_id() {
     let mut app = spawn_world();
     let (_patch_pos, camp) = food_tile(&mut app);
     // A hunt on a herd the registry does not carry — the surviving source lapse — and three hands
-    // committed to four seats: the scout is step 1 of the shedding order, so the band sheds it, and
+    // committed to four seats: the warrior is a hand-set crew, so the band sheds it, and
     // then the hunt row lapses because its herd is gone.
     let mut allocation = LaborAllocation {
         assignments: vec![LaborAssignment {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(3),
             staffing: Default::default(),
             target: LaborTarget::Hunt {
@@ -1211,15 +1229,17 @@ fn every_labor_loss_line_names_the_band_by_its_durable_id() {
         }],
         ..Default::default()
     };
-    // **Four scouts on a band of three** (#871): the hunt's crew is the sim's and never shed, so
+    // **Four warriors on a band of three** (#871): the hunt's crew is the sim's and never shed, so
     // the shed's line is the player-set role being one hand over.
     allocation.assignments.push(LaborAssignment {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        scouting_range: 0,
+        scouting_reach: 0,
         max_workers: Some(4),
         staffing: Default::default(),
-        target: LaborTarget::Scout,
+        target: LaborTarget::Warrior,
         workers: 4,
         kit: None,
         priority: SourcePriority::default(),
@@ -1239,10 +1259,10 @@ fn every_labor_loss_line_names_the_band_by_its_durable_id() {
     assert_eq!(
         losses.len(),
         2,
-        "fixture: the band must lose its scout AND the hunt on the vanished herd — {losses:?}"
+        "fixture: the band must lose its warrior AND the hunt on the vanished herd — {losses:?}"
     );
     assert!(
-        losses.iter().any(|detail| detail.contains("kind=scout")),
+        losses.iter().any(|detail| detail.contains("kind=warrior")),
         "fixture: one of the two is the band-wide role, which names no source — {losses:?}"
     );
     assert!(
@@ -1323,12 +1343,12 @@ fn assignment_sum_clamps_to_working_age() {
     );
     assert_eq!(
         shed[0].subject,
-        core_sim::ShedSubject::Row(LaborTarget::Scout),
-        "the scout is step 1 of the shedding order; the warrior standing beside it is step 2"
+        core_sim::ShedSubject::Row(LaborTarget::Warrior),
+        "an unthreatened warrior is step 2 of the shedding order, the first a hand-set crew gives"
     );
     assert!(
         shed[0].row_survived(),
-        "a scout is still posted, so this is a trim rather than a lapse"
+        "a warrior is still posted, so this is a trim rather than a lapse"
     );
 
     // Sanity: available_workers floors the fractional working scalar.
@@ -1543,6 +1563,8 @@ fn hunt_alloc(fauna_id: &str, workers: u32, floor: f32) -> LaborAllocation {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(workers),
             staffing: Default::default(),
             target: LaborTarget::Hunt {
@@ -2006,6 +2028,8 @@ fn stage_hunt(
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                scouting_range: 0,
+                scouting_reach: 0,
                 max_workers: Some(workers),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -2231,38 +2255,25 @@ fn a_crew_that_is_only_trimmed_is_announced_and_says_what_is_left() {
     let mut app = spawn_world();
     let (patch_pos, patch_tile) = food_tile(&mut app);
 
-    // Σ = 6 on a band with 5 hands: one short, so one row is cut from 3 to 2 and survives.
+    // Σ = 6 on a band with 5 hands: one short, so the row is cut from 6 to 5 and survives.
     //
-    // **The row that gives is a SCOUT, and the order says so rather than the list does.** Scouts are
-    // step 1 of the shedding order (`ShedStep::Scout`) — nothing is lost when the fog stops rolling
-    // back — so this fixture names its shed row by construction. A Forage or Hunt row can also leave
-    // the allocation because it went out of range or past the leash, and a fixture whose shed row
-    // could vanish for a reason that is not the shedding pass would be measuring the wrong thing —
-    // or, as it did on the first attempt here, silently become the lapse test again.
-    //
-    // **The other crew is a WARRIOR guard, not a source** (#871): a Forage or Hunt row's crew is the
-    // sim's now and is never shed, so the shed only ever trims the crews the player set by hand.
+    // **The row that gives is a WARRIOR guard, not a source** (#871): a Forage or Hunt row's crew is
+    // the sim's now and is never shed, and neither is the Scout row's, so the shed only ever trims
+    // the crews the player set by hand. A Forage or Hunt row can also leave the allocation because
+    // it went out of range or past the leash, and a fixture whose shed row could vanish for a reason
+    // that is not the shedding pass would be measuring the wrong thing.
     let _ = patch_pos;
     let mut allocation = LaborAllocation::default();
     allocation.assignments.push(LaborAssignment {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
-        max_workers: Some(3),
+        scouting_range: 0,
+        scouting_reach: 0,
+        max_workers: Some(6),
         staffing: Default::default(),
         target: LaborTarget::Warrior,
-        workers: 3,
-        kit: None,
-        priority: SourcePriority::default(),
-    });
-    allocation.assignments.push(LaborAssignment {
-        party: None,
-        muster_crew: 0,
-        planned_crew: 0,
-        max_workers: Some(3),
-        staffing: Default::default(),
-        target: LaborTarget::Scout,
-        workers: 3,
+        workers: 6,
         kit: None,
         priority: SourcePriority::default(),
     });
@@ -2276,13 +2287,13 @@ fn a_crew_that_is_only_trimmed_is_announced_and_says_what_is_left() {
         .expect("band allocation");
     assert_eq!(
         allocation.assignments.len(),
-        2,
+        1,
         "fixture: the shed row must SURVIVE, or this is the lapse test with extra steps"
     );
     assert_eq!(
-        allocation.workers_on(&LaborTarget::Scout),
-        2,
-        "the scout is cut by the one hand the band does not have"
+        allocation.workers_on(&LaborTarget::Warrior),
+        5,
+        "the warrior is cut by the one hand the band does not have"
     );
 
     let entry = app
@@ -2299,11 +2310,11 @@ fn a_crew_that_is_only_trimmed_is_announced_and_says_what_is_left() {
         .expect("a crew the sim cut must push a feed entry, not shrink in silence");
     let detail = entry.detail.clone().unwrap_or_default();
     assert!(
-        detail.contains("kind=scout"),
+        detail.contains("kind=warrior"),
         "the entry names the row that gave up the hands: {detail}"
     );
     assert!(
-        detail.contains("workers=2"),
+        detail.contains("workers=5"),
         "and the crew still standing there, which is the number the row now reads: {detail}"
     );
     assert!(
@@ -2338,6 +2349,8 @@ fn a_staffed_row_squeezed_to_nobody_is_not_shed_and_keeps_its_declaration() {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(1),
             staffing: Default::default(),
             target: LaborTarget::Hunt {

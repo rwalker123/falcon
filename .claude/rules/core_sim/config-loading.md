@@ -195,7 +195,7 @@ no file, registers nothing, and leaves the running world untouched; it logs
 `config_override.rejected` at `warn!`.
 
 The stageable kinds are `simulation`, `labor`, `demographics`, `expedition`, `combat`, `materials`,
-`recipes`, `wellbeing`, `fauna`, `mobility` and `leadership` (`ConfigOverrideKind::ALL`; proto `CONFIG_OVERRIDE_KIND_FAUNA = 9`,
+`recipes`, `wellbeing`, `fauna`, `mobility`, `leadership` and `turn_pipeline` (`ConfigOverrideKind::ALL`; proto `CONFIG_OVERRIDE_KIND_FAUNA = 9`,
 env `FAUNA_CONFIG_PATH`, `FaunaConfig::from_json_str`). `fauna` is staged for the `drives` levers
 `hunt.drive_engage_gain` and `hunt.drive_full_head_count` (#799); it validates against itself only
 (the materials cross-check stays a boot-path concern), and
@@ -205,7 +205,12 @@ new world builds and the `herd_engage_rate` seam the hunt reads. `mobility` (pro
 staged for the mobility score's `smoothing`, both `weights` and `references.hexes_per_turn` (#800);
 `tests/mobility_override_takes_effect.rs` pins it the same way. `leadership` (proto
 `CONFIG_OVERRIDE_KIND_LEADERSHIP = 11`, env `LEADERSHIP_CONFIG_PATH`, `LeadershipConfig::from_json_str`)
-is staged for the practice threshold and the four per-source quanta (#859).
+is staged for the practice threshold and the four per-source quanta (#859). `turn_pipeline` (proto
+`CONFIG_OVERRIDE_KIND_TURN_PIPELINE = 12`, env `TURN_PIPELINE_CONFIG_PATH`, `TurnPipelineConfig::from_json_str`)
+is staged for `population.attrition_morale_tolerance` and `population.fresh_water_morale_bonus`;
+`tests/turn_pipeline_override_takes_effect.rs` pins it. A `new_game` rebuild re-reads it through
+`load_turn_pipeline_config_from_env` and nothing carries the old handle across, so it has no
+`simulation`-style trap.
 
 The `set_config_override` / `clear_config_overrides` commands are **not** written to the replay log
 for the same reason `reload_config` is not: they change what the *next* world boots on, and a

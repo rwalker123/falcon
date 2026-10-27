@@ -210,6 +210,9 @@ signal targeting_changed(info: Dictionary)
 ## Emitted when the player clicks a band alert; Main forwards it to
 ## MapView.focus_on_tile so the map pans to the band that raised the alert.
 signal alert_focus_requested(x: int, y: int)
+## Emitted by the Beliefs popover's `show ▸`; Main forwards it to MapView.show_belief_place, which pans to the
+## tile and shades the holder band's published reach until the band selection changes.
+signal belief_place_show_requested(x: int, y: int, holder_entity: int)
 ## Emitted when a roster row (band or wildlife) is selected in the Occupants card.
 ## `kind` is "unit" (id = entity_id int) or "herd" (id = herd_id String). Main
 ## forwards it to MapView.select_occupant so the map selection ring follows the
@@ -772,6 +775,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: split_band_requested.emit(payload))
     _bandpanel.alert_focus_requested.connect(
         func(x: int, y: int) -> void: alert_focus_requested.emit(x, y))
+    _bandpanel.belief_place_show_requested.connect(
+        func(x: int, y: int, holder: int) -> void: belief_place_show_requested.emit(x, y, holder))
     # **THE ROADWORK ROSTER'S `✕`, ONTO THE SAME `abandon` THE ROAD LADDER'S BUTTON TAKES** (arc
     # #532). Two emitters, one relay target and one `Main.format_abandon` — a second command path
     # would be a second place for the verb's grammar to drift. No optimistic write, for the reason
@@ -1348,6 +1353,11 @@ func update_connections(connections_variant: Variant) -> void:
 ## reach none of the other decline reasons. See `HudBandLaborState._tile_temperature`.
 func update_tile_temperatures(temperatures_variant: Variant) -> void:
     _band_labor.set_tile_temperatures(temperatures_variant)
+
+## The per-tile habitability drains the map ingested (`MapView.tile_habitability`), so band morale
+## wording can follow the same rating the tile card shows.
+func update_tile_habitability(habitability_variant: Variant) -> void:
+    _band_labor.set_tile_habitability(habitability_variant)
 
 ## The per-tile belief the map ingested (`MapView.tile_belief`), for a tile branch's site gate.
 func update_tile_beliefs(beliefs_variant: Variant) -> void:

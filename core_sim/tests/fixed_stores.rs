@@ -83,6 +83,7 @@ fn spawn_band(app: &mut App, id: u64, faction: FactionId, at: UVec2) -> Entity {
                 last_morale_delta: scalar_zero(),
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
+                last_cohesion: Default::default(),
                 last_fertility_factors: Default::default(),
                 last_breeding: Default::default(),
                 discontent_fraction: scalar_zero(),
@@ -99,6 +100,7 @@ fn spawn_band(app: &mut App, id: u64, faction: FactionId, at: UVec2) -> Entity {
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
             },
         ))
         .id()

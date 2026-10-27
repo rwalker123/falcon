@@ -145,6 +145,9 @@ signal split_band_requested(payload: Dictionary)
 signal road_abandon_requested(payload: Dictionary)
 # Recenter + select a hex (a zone row / cycler jump) — relayed to HudLayer.alert_focus_requested.
 signal alert_focus_requested(x: int, y: int)
+# The Beliefs popover's `show ▸`: pan the map to a sacred-ground tile and shade the holder band's reach there.
+# Relayed to HudLayer.belief_place_show_requested -> MapView.show_belief_place.
+signal belief_place_show_requested(x: int, y: int, holder_entity: int)
 # Pin an exact occupant on the map after that recenter — relayed to HudLayer.roster_occupant_selected.
 signal roster_occupant_selected(kind: String, id: Variant)
 # The header's `⚒` was pressed — open Materials & Crafting on this band. Relayed to HudLayer, which
@@ -1244,6 +1247,12 @@ func _build_leader_block(band: Dictionary) -> Control:
     text.mouse_filter = Control.MOUSE_FILTER_PASS
     if phrase != "":
         text.text = "[color=#%s]%s[/color]" % [HudStyle.INK.to_html(false), phrase]
+        var reach := HudFormat.band_leader_reach(band)
+        if not reach.is_empty():
+            var reach_ink: Color = HudStyle.WARN if bool(reach["over"]) else HudStyle.INK_DIM
+            text.text += "\n[color=#%s]%s[/color]" % [reach_ink.to_html(false), String(reach["line"])]
+            block.tooltip_text = String(reach["tooltip"])
+            text.tooltip_text = block.tooltip_text
     else:
         text.text = "[color=#%s]%s[/color] %s %s" % [HudStyle.INK_DIM.to_html(false),
             HudFormat.CHIEF_ROW_LABEL, HudFormat.chief_bar_bbcode(progress), String(progress.get("label", ""))]
@@ -1254,10 +1263,17 @@ func _build_leader_block(band: Dictionary) -> Control:
 
 ## **THE TRIBE LINE** (#861), directly under the leader block: ONE line, `Tribe <split bar> with
 ## <partner> · <one short phrase>`, hovering to the rule and what is still missing; or one dim line when
-## no band lives with this one. `null` for a band with no tribe threshold (no leader yet, or a foreign
-## cohort). See `HudFormat.band_tribe_progress`.
+## no band lives with this one. A band with no leader of its own still gets the block (a chiefless band
+## has a tribe line too); `null` only when `HudFormat.band_tribe_progress` has nothing to draw (a foreign
+## cohort carrying no tribe data). See `HudFormat.band_tribe_progress`.
 func _build_tribe_block(band: Dictionary) -> Control:
-    var view := HudFormat.band_tribe_progress(band)
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    var others: Array = []
+    for other in _band_labor.current_player_bands():
+        if other is Dictionary and int(other.get("band_id", HudConst.NO_BAND_ID)) != band_id \
+                and not bool(other.get("is_expedition", false)):
+            others.append(other)
+    var view := HudFormat.band_tribe_progress(band, others)
     if view.is_empty():
         return null
     var block := VBoxContainer.new()
@@ -1303,7 +1319,8 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     # (`_panel_position_label`), so a vitals row would be a second telling — and one this zone pays
     # for in height. The drawer host keeps it (it has no header and renders foreign bands).
     var vitals_lines := _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx,
-        _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false)
+        _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false, {},
+        _band_labor.terrain_rating_at(int(band.get("current_x", -1)), int(band.get("current_y", -1))))
     detail_label.set_meta(HudWorkVocab.BAND_VITALS_LABEL_META, true)
     detail_label.text = DetailFormat.detail_bbcode(vitals_lines, ctx)
     # **A ROW'S HOVER SHOWS OVER THAT ROW ALONE** (`DetailFormat.wire_row_hovers`).
@@ -1451,7 +1468,11 @@ func _build_roles_block(band: Dictionary) -> VBoxContainer:
     # crews never block a player-set one — `HudBandLaborState.orderable_hands`).
     var orderable := _band_labor.orderable_hands(band)
     var scout_row := _build_role_card_row()
-    scout_row.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_SCOUT, HudWorkVocab.SCOUT_ROLE_HINT, HudConst.LABOR_KIND_SCOUT, scout_eff, orderable))
+    # **THE SCOUT CARD STATES A RANGE** (#875): its line is the status of what the sim staffed for it, amber
+    # while the reach falls short of the ask.
+    var scout_status := HudWorkVocab.scouting_line(_band_labor.scouting_state(band))
+    scout_row.add_child(_build_role_card(band, HudWorkVocab.SCOUT_CARD_TITLE, String(scout_status["text"]),
+        HudConst.LABOR_KIND_SCOUT, scout_eff, orderable, false, bool(scout_status["short"])))
     # A visible predator within raid range turns the Warrior card's static hint into a live crimson
     # alert naming the on-guard count — the guarding role is only legible when the threat it answers is.
     var warrior_threat := _band_predator_threat_present(band)
@@ -1633,8 +1654,10 @@ func _band_predator_threat_present(band: Dictionary) -> bool:
 ## Warrior are the only two cards with a kit picker, a gear line and prose. A site's keeping and its
 ## build are staffed on the site's own row (`docs/plan_site_crews.md`, `docs/plan_labor_at_scale.md`),
 ## so no other standing role is built here.
-func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: String, effective: Dictionary, idle: int, alert: bool = false) -> PanelContainer:
-    var workers := int(effective.get("workers", 0))
+func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: String, effective: Dictionary, idle: int, alert: bool = false, hint_warn: bool = false) -> PanelContainer:
+    # **THE COUNT THE CARD STEPS**: a head count, except on Scout where it is the range in tiles.
+    var is_scout := kind == HudConst.LABOR_KIND_SCOUT
+    var workers := int(effective.get("range", 0)) if is_scout else int(effective.get("workers", 0))
     var pending := bool(effective.get("pending", false))
     var card := PanelContainer.new()
     card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1674,7 +1697,14 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
     var stepper := HBoxContainer.new()
     stepper.alignment = BoxContainer.ALIGNMENT_CENTER
     stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    HudWidgets.add_stepper_controls(stepper, workers, idle > 0,
+    var range_value: Label = null
+    if is_scout:
+        range_value = HudWidgets.add_range_stepper(stepper, workers, HudBandLaborState.scouting_range_max(band),
+            func(n: int) -> void: _emit_assign_labor(
+                band, kind, n, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR,
+                "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id))
+    else:
+        HudWidgets.add_stepper_controls(stepper, workers, idle > 0,
         # A BAND-WIDE ROLE (scout / warrior) works no source, so it has no escapement floor to set.
         # The sim ignores the token on those branches; the default is the honest thing to send.
         # **THE KIT RIDES THE PRESS**: `_kit_token` omits it when it equals the job default, so a
@@ -1691,14 +1721,23 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
         var kit_row := KitRoster.build_kit_row(_band_labor.kits(), kind, kit_id,
             _band_labor.default_kit_id(kind), band,
             func(picked: String) -> void: _on_role_kit_picked(band, kind, picked, workers),
-            {}, "", ROLE_CARD_KIT_KEY_TEXT, true)
+            {}, "", ROLE_CARD_KIT_KEY_TEXT, true, KitRoster.KIT_CREW_UNCOMPOSED, {}, not is_scout)
         if kit_row != null:
             col.add_child(kit_row)
-    var hint_label := HudWidgets.alloc_hint_label(hint)
-    if alert:
-        hint_label.add_theme_color_override("font_color", HudStyle.THREAT_ACCENT)
-    hint_label.custom_minimum_size = Vector2(0.0, HudWorkVocab.ROLE_CARD_HINT_HEIGHT)
-    col.add_child(hint_label)
+        if is_scout:
+            # **THE SCOUT CARD'S DETAIL RIDES THE `+N tiles` TOOLTIP.**
+            HudWidgets.set_label_tooltip(range_value, HudWorkVocab.scouting_tooltip(
+                _band_labor.scouting_state(band), int(band.get("watched_radius", 0)),
+                int(band.get("predators_kept_off", 0))))
+    # A scout card at range +0 states nothing below its controls; every other card keeps its line.
+    if hint != "" or not is_scout:
+        var hint_label := HudWidgets.alloc_hint_label(hint)
+        if alert:
+            hint_label.add_theme_color_override("font_color", HudStyle.THREAT_ACCENT)
+        elif hint_warn:
+            hint_label.add_theme_color_override("font_color", HudStyle.WARN)
+        hint_label.custom_minimum_size = Vector2(0.0, HudWorkVocab.ROLE_CARD_HINT_HEIGHT)
+        col.add_child(hint_label)
     return card
 
 ## The role card mounts the shared kit row with NO field key — see `_build_role_card`.
@@ -9045,6 +9084,8 @@ func set_panel(panel: BandCityPanel) -> void:
     # controller's job — the disclosure controller must not know the band panel exists.
     if _disclosures != null:
         _disclosures.set_faction_band_jump(jump_to_band_entity)
+        _disclosures.set_belief_show(
+            func(x: int, y: int, holder: int) -> void: emit_signal("belief_place_show_requested", x, y, holder))
 
 ## The header's `⚒`. From a band page this is that band; from the FACTION page it is the last band
 ## loaded, which is sitting on the model already because `render_faction` deliberately leaves

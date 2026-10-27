@@ -1601,6 +1601,8 @@ fn spawn_forager(
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
+                last_cohesion: Default::default(),
             },
             StartingUnit {
                 kind: "BandForager".to_string(),
@@ -1611,6 +1613,8 @@ fn spawn_forager(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    scouting_range: 0,
+                    scouting_reach: 0,
                     max_workers: Some(FORAGE_WORKERS),
                     staffing: Default::default(),
                     target: LaborTarget::Forage {

@@ -160,6 +160,8 @@ fn spawn_band(app: &mut App, (x, y): (u32, u32), food: i64) -> Entity {
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
+                last_cohesion: Default::default(),
             },
             ResidentBand,
             BandId(NEXT_TEST_BAND_ID.fetch_add(1, Ordering::Relaxed)),

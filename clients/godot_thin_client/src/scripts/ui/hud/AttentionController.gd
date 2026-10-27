@@ -1052,7 +1052,7 @@ func _decline_reason(turns: float, morale: float, morale_cause: int, last_emigra
             else HudAttentionVocab.DECLINE_REASON_LETHAL_HEAT
     if last_emigrated > 0:
         return HudAttentionVocab.DECLINE_REASON_PEOPLE_LEAVING
-    var cause_label := DetailFormat.morale_cause_label(morale_cause)
+    var cause_label := DetailFormat.morale_cause_label(morale_cause, _band_labor.terrain_rating_at(x, y))
     if cause_label != "":
         return cause_label
     if morale < BandFoodStatus.warn_morale():

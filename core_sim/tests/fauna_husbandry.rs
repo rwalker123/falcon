@@ -1110,6 +1110,8 @@ fn spawn_crew_of(
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
+                last_cohesion: Default::default(),
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),
@@ -1124,6 +1126,8 @@ fn spawn_crew_of(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    scouting_range: 0,
+                    scouting_reach: 0,
                     max_workers: Some(hunters + keepers),
                     staffing: Default::default(),
                     target: LaborTarget::Hunt {
@@ -5193,6 +5197,8 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(crew),
             staffing: Default::default(),
             target: LaborTarget::Hunt {
@@ -5251,6 +5257,8 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
+                last_cohesion: Default::default(),
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),

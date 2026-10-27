@@ -165,17 +165,17 @@ pub use combat_config::{
 pub use components::{
     available_workers, floor_is_valid, floor_overdraws, take_overdraws, BandBench, BandEquipment,
     BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BenchOrder, BenchQueueError,
-    BuildDeclaration, BuildJob, BuildSource, BuildToeLine, DeathCause, DemographicFlowAccumulator,
-    DrawnInputs, DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission,
-    ExpeditionPhase, FinishedBatch, FoodBatch, FoodMix, KeepingIssue, KeepingToolLine, KitOrder,
-    KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch,
-    MaterialDraw, MoraleCause, MusterBench, MusterKit, MusterPlan, PoolToeLine, PopulationCohort,
-    PowerNode, ResidentBand, ScoutPack, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject,
-    ShipmentTerms, SourcePriority, SourceShedFacts, SourceYield, StaffedCrew, StartingUnit,
-    StationReport, StrangersOrder, TakeSelection, Tile, TownCenter, TransferCause,
-    TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
-    YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT,
-    NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+    BuildDeclaration, BuildJob, BuildSource, BuildToeLine, CohesionReading, DeathCause,
+    DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind, EquipmentBatch,
+    Expedition, ExpeditionMission, ExpeditionPhase, FinishedBatch, FoodBatch, FoodMix,
+    KeepingIssue, KeepingToolLine, KitOrder, KnowledgeFragment, LaborAllocation, LaborAssignment,
+    LaborTarget, LocalStore, MaterialBatch, MaterialDraw, MoraleCause, MusterBench, MusterKit,
+    MusterPlan, PoolToeLine, PopulationCohort, PowerNode, ResidentBand, ScoutPack, Settlement,
+    ShedCrew, ShedFacts, ShedStep, ShedSubject, ShipmentTerms, SourcePriority, SourceShedFacts,
+    SourceYield, StaffedCrew, StartingUnit, StationReport, StrangersOrder, TakeSelection, Tile,
+    TownCenter, TransferCause, TransferCounterparty, TransferCrossing, TransferDirection,
+    TransferLedger, TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER,
+    MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -531,9 +531,9 @@ pub use visibility_config::{
 };
 pub use visibility_systems::terrain_sight_modifier;
 pub use wellbeing_config::{
-    load_wellbeing_config_from_env, CultureConfig, DiscontentConfig, MigrationConfig,
-    ProductivityConfig, WellbeingConfig, WellbeingConfigHandle, WellbeingConfigMetadata,
-    BUILTIN_WELLBEING_CONFIG,
+    load_wellbeing_config_from_env, CohesionConfig, CultureConfig, DiscontentConfig,
+    MigrationConfig, ProductivityConfig, WellbeingConfig, WellbeingConfigHandle,
+    WellbeingConfigMetadata, BUILTIN_WELLBEING_CONFIG,
 };
 pub use work_party::{CaravanForecast, SourceTake, Walker, WorkParty};
 
@@ -1358,6 +1358,9 @@ pub fn build_headless_app() -> App {
                 // to name the band a decay line links to (`band=`).
                 advance_cultivation
                     .after(advance_forage_regrowth)
+                    // `advance_herds` writes each band's `predators_kept_off`, and this reads the
+                    // cohorts, so the order is declared (the herd pass is first of the fauna chain).
+                    .after(advance_herds)
                     .before(advance_husbandry)
                     .before(supply::balance_supply_networks),
                 advance_graze_regrowth.after(advance_herd_grazing),

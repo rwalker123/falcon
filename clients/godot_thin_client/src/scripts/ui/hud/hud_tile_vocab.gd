@@ -102,13 +102,13 @@ static func site_of(row: Dictionary, ladder: Array[Dictionary], branch: String, 
 ## ⛔ **THE BRANCH'S ROW ON THE TILE CARD IS ITS DOOR** (`SubjectDrawerController` registers it): the crew
 ## sheet opens from the row that states the branch, not from a button beneath the card. Which row that
 ## is comes off the CATALOG and nothing here names a branch:
-##   * a branch whose site term asks the tile's belief (`min_belief`) is stated by the row the dead
-##     already have, `DetailFormat.ANCESTORS_ROW` -- a tile branch whose readout row exists keeps it;
+##   * a branch whose site term asks the tile's belief (`min_belief`) is stated by the row the sacred ground
+##     already has, `DetailFormat.SACRED_GROUND_ROW` -- a tile branch whose readout row exists keeps it;
 ##   * any other tile branch gets a row of its own, keyed by the branch's display name
 ##     (`HudRouteVocab.branch_name`) and valued by the rung the tile stands at.
 static func readout_row_key(entry: Dictionary, branches: Array) -> String:
 	if catalog_min_belief(entry) > BELIEF_NONE:
-		return DetailFormat.ANCESTORS_ROW
+		return DetailFormat.SACRED_GROUND_ROW
 	return HudRouteVocab.branch_name(branches, HudDepositVocab.catalog_branch(entry))
 
 ## `Storage pit`, `Unstored`: the rung the tile STANDS at on a branch -- the placed improvement's, else
@@ -160,7 +160,7 @@ static func is_offered(ladder: Array[Dictionary], branch: String, knowledge: Dic
 
 ## ⛔ **A SITE TERM IS WORDED BY THE TERM, NEVER BY THE BRANCH.** `min_belief` is compared with the belief
 ## standing on the tile, which is the dead buried there and the gatherings held there (the card's
-## `Ancestors: N dead` row). `0` is "asks nothing of the tile's belief".
+## `Sacred ground` row). `0` is "asks nothing of the tile's belief".
 const BELIEF_NONE := 0.0
 const SITE_NO_BELIEF_SHORT := "No dead are buried here"
 const SITE_FEW_BELIEF_SHORT := "Too few dead are buried here"

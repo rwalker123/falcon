@@ -114,6 +114,8 @@ struct CohortScalars {
     morale_climate: f64,
     morale_unrest: f64,
     morale_culture: f64,
+    morale_cohesion: f64,
+    morale_fresh_water: f64,
     fertility_hunger: f64,
     fertility_reserve: f64,
     fertility_trend: f64,
@@ -132,6 +134,8 @@ fn cohort_scalars(cohort: fb::PopulationCohortState<'_>) -> CohortScalars {
         morale_climate: fixed64_to_f64(cohort.moraleClimate()),
         morale_unrest: fixed64_to_f64(cohort.moraleUnrest()),
         morale_culture: fixed64_to_f64(cohort.moraleCulture()),
+        morale_cohesion: fixed64_to_f64(cohort.moraleCohesion()),
+        morale_fresh_water: fixed64_to_f64(cohort.moraleFreshWater()),
         fertility_hunger: fixed64_to_f64(cohort.fertilityHunger()),
         fertility_reserve: fixed64_to_f64(cohort.fertilityReserve()),
         fertility_trend: fixed64_to_f64(cohort.fertilityTrend()),
@@ -190,12 +194,18 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // draws a wrap-aware reticle + line to it for the selected traveling unit.
     let _ = dict.insert("travel_target_x", i64::from(cohort.travelTargetX()));
     let _ = dict.insert("travel_target_y", i64::from(cohort.travelTargetY()));
-    // The band's ancestors' place — its belief anchor, the tile `morale_culture` is measured against
+    // The band's sacred ground — its belief anchor, the tile `morale_culture` is measured against
     // (`hasBeliefAnchor` gates it; `0,0` with no anchor, the `isTraveling`/`travelTarget` idiom). Own
     // bands only: a foreign band's redacted row leaves all three at their defaults.
     let _ = dict.insert("has_belief_anchor", cohort.hasBeliefAnchor());
     let _ = dict.insert("belief_anchor_x", i64::from(cohort.beliefAnchorX()));
     let _ = dict.insert("belief_anchor_y", i64::from(cohort.beliefAnchorY()));
+    // The anchor's strength in [0, 1): the saturating weight of the dead on that tile. 0 with no anchor
+    // and on a foreign row. The sacred-ground strength bar steps off it (never the raw count).
+    let _ = dict.insert(
+        "belief_anchor_weight",
+        f64::from(cohort.beliefAnchorWeight()),
+    );
     // Every tile the band can STAND on and still count as near its anchor, as two zipped packed
     // arrays (index i of each is one tile). Road-aware, so the set is irregular — the map draws its
     // perimeter, never a circle. Empty with no anchor.
@@ -257,12 +267,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let scalars = cohort_scalars(cohort);
     let _ = dict.insert("morale", scalars.morale);
     // Signed per-turn morale trend + the dominant negative driver when falling
-    // (0=None, 1=Terrain, 2=Cold, 3=Unrest, 4=Culture). A rehydrated save reports 0/None for
+    // (0=None, 1=Terrain, 2=Cold, 3=Unrest, 4=Culture, 5=Cohesion). A rehydrated save reports 0/None for
     // one turn (the sim doesn't persist them) — the HUD handles that gracefully.
     let _ = dict.insert("morale_delta", scalars.morale_delta);
     let _ = dict.insert("morale_cause", i64::from(cohort.moraleCause()));
     // Civilization Wellbeing (docs/plan_civ_wellbeing.md). Productivity + discontent +
-    // migration counters + the five signed Layer-1 morale contributions (their sum IS
+    // migration counters + the six signed Layer-1 morale contributions (their sum IS
     // morale_delta) that drive the itemized morale breakdown in the band drawer.
     let _ = dict.insert("output_multiplier", scalars.output_multiplier);
     let _ = dict.insert("discontent_fraction", scalars.discontent_fraction);
@@ -275,6 +285,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("morale_climate", scalars.morale_climate);
     let _ = dict.insert("morale_unrest", scalars.morale_unrest);
     let _ = dict.insert("morale_culture", scalars.morale_culture);
+    let _ = dict.insert("morale_cohesion", scalars.morale_cohesion);
+    let _ = dict.insert("morale_fresh_water", scalars.morale_fresh_water);
+    // The band's opening head-count and cohesion ceiling the cohesion term was priced from (whole people).
+    let _ = dict.insert("cohesion_headcount", i64::from(cohort.cohesionHeadcount()));
+    let _ = dict.insert("cohesion_ceiling", i64::from(cohort.cohesionCeiling()));
     // The birth path's parallel of the morale contributions: the three named fertility factors whose
     // PRODUCT (not sum) is the birth_rate multiplier — hunger (did we eat) x reserve (is there a
     // cushion) x trend (is the cushion growing or shrinking). NEUTRAL AT 1.0, not at 0, so the
@@ -1245,6 +1260,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = entry.insert("kitted_staffed", i64::from(assignment.kittedStaffed()));
             let _ = entry.insert("bare_staffed", i64::from(assignment.bareStaffed()));
             let _ = entry.insert("useful_crew", i64::from(assignment.usefulCrew()));
+            // The Scout row's range (#875): tiles past the band's local range the player asked to see
+            // and the tiles the staffed scouts reach (0 on every other row). `kitted_staffed` /
+            // `bare_staffed` above are the scouts' split and `workers` the scouts placed.
+            let _ = entry.insert("scouting_range", i64::from(assignment.scoutingRange()));
+            let _ = entry.insert("scouting_reach", i64::from(assignment.scoutingReach()));
             array.push(&entry.to_variant());
         }
     }
@@ -1262,10 +1282,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("working_age", cohort.workingAge() as i64);
     let _ = dict.insert("elders", cohort.eldersCount() as i64);
     // Forage work radius (Chebyshev tiles) drives the MapView band-selection work-range ring.
-    // scout_reveal_radius is now the band's effective sight-range bonus (extra tiles beyond
-    // base, 0 when no scouts) — its effect shows directly in the fog, NOT as a drawn disc.
+    // watched_radius is the band's watched ground in tiles (local range + scouting reach, 0 with no
+    // scouts) — the edge wild predators stay behind; the client draws it as a border.
     let _ = dict.insert("work_range", cohort.workRange() as i64);
-    let _ = dict.insert("scout_reveal_radius", cohort.scoutRevealRadius() as i64);
+    let _ = dict.insert("watched_radius", cohort.watchedRadius() as i64);
 
     // Scouting expedition (docs/plan_exploration_and_sites.md §2): a detached party is a
     // PopulationCohort tagged Expedition that flows through this same populations[] array as a
@@ -2070,6 +2090,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // the practice toward one. Own bands only - a foreign row carries the defaults.
     let _ = dict.insert("leader_name", cohort.leaderName().unwrap_or(""));
     let _ = dict.insert("leader_kind", i64::from(cohort.leaderKind()));
+    // A leader's reach (#870): people the leader runs well vs the band's people (0/0 = no leader).
+    let _ = dict.insert("leader_reach", f64::from(cohort.leaderReach()));
+    let _ = dict.insert("leader_load", f64::from(cohort.leaderLoad()));
     let _ = dict.insert(
         "leadership_practice",
         f64::from(cohort.leadershipPractice()),
@@ -2095,11 +2118,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "leadership_from_stages",
         f64::from(cohort.leadershipFromStages()),
     );
-    // PROGRESS TOWARD A TRIBE (#861), own bands only: `tribe_standing` is 0 local, 1 no ancestors place, 2 no pooling
-    // network, 3 alone; `tribe_threshold` (0 until the band has a leader) the score that makes a pair close;
+    // PROGRESS TOWARD A TRIBE (#861), own bands only: `tribe_threshold` (0 until the band has a leader) the score that makes a pair close;
     // `tribe_history_build_turns` the turns of being local that fill shared history; `tribe_weights`
     // the most each input can add; `tribe_pairs` one row per band living with this one.
-    let _ = dict.insert("tribe_standing", i64::from(cohort.tribeStanding()));
     let _ = dict.insert("tribe_threshold", f64::from(cohort.tribeThreshold()));
     let _ = dict.insert(
         "tribe_history_build_turns",
@@ -2116,6 +2137,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = row.insert("partner_band", pair.partnerBand() as i64);
             let _ = row.insert("partner_name", pair.partnerName().unwrap_or(""));
             let _ = row.insert("history", f64::from(pair.history()));
+            let _ = row.insert("partner_has_leader", pair.partnerHasLeader());
             let _ = row.insert(
                 "contribution",
                 &tribe_closeness_to_dict(pair.contribution()),
@@ -2137,6 +2159,20 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("tribe_member_names", &tribe_members);
     let _ = dict.insert("tribe_leader_name", cohort.tribeLeaderName().unwrap_or(""));
     let _ = dict.insert("tribe_leader_kind", i64::from(cohort.tribeLeaderKind()));
+    // The most tiles past the local range a scouting range may name (the stepper's ceiling); the
+    // local range itself is `move_ferry_reach_tiles`.
+    let _ = dict.insert("scouting_range_max", i64::from(cohort.scoutingRangeMax()));
+    // Wild predator packs this band's watched ring kept off this turn (0 without scouts).
+    let _ = dict.insert("predators_kept_off", i64::from(cohort.predatorsKeptOff()));
+    // Tribe leader's reach in member bands, the member count, and the share of an order that
+    // reaches this band (0 = nothing to show).
+    let _ = dict.insert("tribe_leader_reach", f64::from(cohort.tribeLeaderReach()));
+    let _ = dict.insert("tribe_leader_load", f64::from(cohort.tribeLeaderLoad()));
+    let _ = dict.insert("orders_carried_out", f64::from(cohort.ordersCarriedOut()));
+    let _ = dict.insert(
+        "leader_orders_carried_out",
+        f64::from(cohort.leaderOrdersCarriedOut()),
+    );
     // The storage pit is its band's second larder (#709): the ledger's two store terms and the
     // food in the stores the band owns within reach.
     let _ = dict.insert("food_into_store", f64::from(cohort.foodIntoStore()));
@@ -2409,16 +2445,20 @@ mod cohort_decode_tests {
                 workingAge: 17,
                 eldersCount: 4,
                 morale: 820_000,
-                // == the five Layer-1 contributions below, which the test asserts.
-                moraleDelta: -3_000,
+                // == the seven Layer-1 contributions below, which the test asserts.
+                moraleDelta: -5_000,
                 outputMultiplier: 1_000_000,
                 discontentFraction: 250_000,
                 grievance: 40_000,
-                moraleSettling: 10_000,
+                moraleSettling: 5_000,
                 moraleTerrain: -26_000,
                 moraleClimate: -6_000,
                 moraleUnrest: 11_000,
                 moraleCulture: 8_000,
+                moraleCohesion: -2_000,
+                moraleFreshWater: 5_000,
+                cohesionHeadcount: 160,
+                cohesionCeiling: 150,
                 // The three fertility factors: a band eating short (0.6) off a fat larder (1.5)
                 // with its income collapsed (0.25) — the case the model exists for, and the one
                 // where all three sit off their neutral 1.0.
@@ -2451,16 +2491,18 @@ mod cohort_decode_tests {
         );
 
         assert!((scalars.morale - 0.82).abs() < 1e-9);
-        assert!((scalars.morale_delta - -0.003).abs() < 1e-9);
+        assert!((scalars.morale_delta - -0.005).abs() < 1e-9);
         assert!((scalars.output_multiplier - 1.0).abs() < 1e-9);
         assert!((scalars.discontent_fraction - 0.25).abs() < 1e-9);
         assert!((scalars.grievance - 0.04).abs() < 1e-9);
-        // The five signed Layer-1 contributions must sum to the reported morale trend.
+        // The seven signed Layer-1 contributions must sum to the reported morale trend.
         let contributions = scalars.morale_settling
             + scalars.morale_terrain
             + scalars.morale_climate
             + scalars.morale_unrest
-            + scalars.morale_culture;
+            + scalars.morale_culture
+            + scalars.morale_cohesion
+            + scalars.morale_fresh_water;
         assert!(
             (contributions - scalars.morale_delta).abs() < 1e-9,
             "contributions {contributions} != morale_delta {}",
@@ -2499,6 +2541,8 @@ mod cohort_decode_tests {
             ("discontent_fraction", scalars.discontent_fraction),
             ("grievance", scalars.grievance),
             ("morale_culture", scalars.morale_culture),
+            ("morale_cohesion", scalars.morale_cohesion),
+            ("morale_fresh_water", scalars.morale_fresh_water),
             ("fertility_hunger", scalars.fertility_hunger),
             ("fertility_reserve", scalars.fertility_reserve),
             ("fertility_trend", scalars.fertility_trend),

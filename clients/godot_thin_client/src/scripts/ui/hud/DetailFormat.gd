@@ -60,23 +60,35 @@ const MORALE_CAUSE_UNREST := 3
 # The band stands beyond walking reach of the belief place it remembers (where its dead lie).
 const MORALE_CAUSE_CULTURE := 4
 
+# The band's head-count exceeds its cohesion ceiling (about 150; belief on its tile lifts it).
+const MORALE_CAUSE_COHESION := 5
+
 # Plain-language cause labels, shared by the drawer morale line and the alert reason.
 # Cold reads "harsh climate" because the server penalty fires on hot OR cold deviation.
 const MORALE_CAUSE_LABEL_TERRAIN := "harsh terrain"
+
+# The plain wordings, used when the band's tile does NOT rate Harsh/Hostile (or has no rating): the sim
+# drains a little morale on almost every terrain, so "harsh" is claimed only where `TileHabitability`
+# says so — the same authority the tile card's Habitability row reads.
+const MORALE_CAUSE_LABEL_TERRAIN_PLAIN := "terrain"
+
+const MORALE_CAUSE_LABEL_COLD_PLAIN := "climate"
 
 const MORALE_CAUSE_LABEL_COLD := "harsh climate"
 
 const MORALE_CAUSE_LABEL_UNREST := "unrest"
 
 # Deliberately not "culture": the positive-unrest breakdown row already reads "culture" (cohesion).
-const MORALE_CAUSE_LABEL_CULTURE := "far from the ancestors"
+const MORALE_CAUSE_LABEL_CULTURE := "far from its sacred ground"
+
+const MORALE_CAUSE_LABEL_COHESION := "too many to hold together"
 
 # |morale_delta| below this (0.5%/turn) reads as flat (no arrow), so trivial drift — nearly every tile
 # bleeds a hair today — isn't shown as a decline. (The ▲/▼ ARROWS are `BandDetailLines`', the only
 # thing that draws them.)
 const MORALE_TREND_EPSILON := 0.005
 
-# Itemized morale breakdown — the five signed Layer-1 contributions (their sum IS
+# Itemized morale breakdown — the seven signed Layer-1 contributions (their sum IS
 # morale_delta) rendered as indented sub-lines under the Morale headline when morale is
 # concerning or declining. Tinted by sign (▲ positive = healthy, ▼ negative = amber).
 const MORALE_BREAKDOWN_INDENT := "    "
@@ -577,7 +589,7 @@ const KIT_BARE_HANDS_SUFFIX := " — bare hands"
 # comes through one path, so a basket's clause is this same string — and it cannot name the job,
 # because the reading does not carry one: `workersOnQuotedJob` is a head count and the job behind it
 # is resolved sim-side. `workers` is the one noun true of a gatherer, a keeper, a scout and a warrior.
-# **SPELLED STRUCTURALLY, the `RECOVERY_GUIDANCE_TEXT` idiom** — the two clauses below share a tail and
+# **SPELLED STRUCTURALLY, the `RECOVERY_GUIDANCE_PREFIX` idiom** — the two clauses below share a tail and
 # a harness needs a needle that finds EITHER, so the tail is written once and both formats are built
 # from it. Two literals would let a reworded clause slip past an assertion still matching the other.
 const KIT_COVERAGE_SHORT_NEEDLE := "workers carry one"
@@ -882,7 +894,33 @@ const OVERGRAZING_WARNING := "%s Overgrazing — range can't sustain this herd" 
 # emits. They are one invariant ("the text begins with the glyph"), so it is spelled structurally here
 # rather than as two literals that could drift.
 const RECOVERY_GUIDANCE_GLYPH := "↑"
-const RECOVERY_GUIDANCE_TEXT := RECOVERY_GUIDANCE_GLYPH + " Recover: move to Hospitable ground · Scout · Hunt"
+const RECOVERY_GUIDANCE_PREFIX := RECOVERY_GUIDANCE_GLYPH + " Recover: "
+const RECOVERY_GUIDANCE_TAIL := "Scout · Hunt"
+const RECOVERY_GUIDANCE_MOVE := "move to Hospitable ground"
+const RECOVERY_GUIDANCE_SPLIT := "split the band"
+const RECOVERY_GUIDANCE_ANCESTORS := "return to your sacred ground"
+
+## The recovery line for the band's DOMINANT cause (`morale_cause`): the lever that REMOVES that cause,
+## and only it — a band crowded past its cohesion ceiling is told to split, never to move, and a band
+## already on Hospitable ground is never told to go there. Scout and Hunt lift morale for a while but fix
+## no cause (they shed no people and move no band), so they are named only where no cause-specific lever
+## exists: Unrest / None / unknown, or terrain/climate on ground that is already Hospitable.
+## Always begins with `RECOVERY_GUIDANCE_GLYPH` (the tint registry keys on it).
+static func recovery_guidance_text(cause: int, terrain_rating: String = "") -> String:
+    var lever := ""
+    match cause:
+        MORALE_CAUSE_COHESION:
+            lever = RECOVERY_GUIDANCE_SPLIT
+        MORALE_CAUSE_TERRAIN, MORALE_CAUSE_COLD:
+            if terrain_rating != TileHabitability.RATING_HOSPITABLE:
+                lever = RECOVERY_GUIDANCE_MOVE
+        MORALE_CAUSE_CULTURE:
+            lever = RECOVERY_GUIDANCE_ANCESTORS
+    return RECOVERY_GUIDANCE_PREFIX + (lever if lever != "" else RECOVERY_GUIDANCE_TAIL)
+
+## Whether a `TileHabitability` rating justifies the word "harsh". Unknown ("") is NOT harsh.
+static func rating_is_harsh(terrain_rating: String) -> bool:
+    return terrain_rating == TileHabitability.RATING_HARSH or terrain_rating == TileHabitability.RATING_HOSTILE
 
 # ---- Expedition row vocabulary (the `expedition_*` producers below are the only readers).
 # The click affordance on an Active-expeditions row (the whole row is the button there).
@@ -2834,7 +2872,7 @@ const BUILD_GEAR_WORK_NONE := 0.0
 ## same job and the existing three-state rows already say so.
 ## The needle every rung row's tint registry matches this value on, so the amber is decided once for
 ## four rows rather than by four independent substring guesses. The value is BUILT FROM it
-## (`RECOVERY_GUIDANCE_TEXT`'s idiom) so the words and the test cannot drift apart.
+## (`RECOVERY_GUIDANCE_PREFIX`'s idiom) so the words and the test cannot drift apart.
 const BUILD_UNSTAFFED_NEEDLE := "no builders"
 
 const BUILD_UNSTARTED_VALUE := "%s Not started — %s assigned" % [
@@ -3113,35 +3151,79 @@ static func expedition_mission_label(mission: String) -> String:
         return HudExpeditionVocab.EXPEDITION_MISSION_LABELS[key]
     return key.capitalize() if key != "" else "Expedition"
 
-# The tile card's BELIEF row (issue #699): the dead a place holds, in whole people (`TileState.belief`,
-# 1.0 per person who died there; it never decays). Below one whole person it reads "<1" rather than a
-# rounded "0", which would claim the place holds no dead.
-const ANCESTORS_ROW := "Ancestors"
-const ANCESTORS_DEAD_FORMAT := "%s dead"
-const ANCESTORS_UNDER_ONE := "<1"
-const ANCESTORS_WHOLE_PERSON := 1.0
+# The tile card's SACRED GROUND row (#870): shown only where the tile IS the sacred ground of one or more
+# of the player's own bands -- the same strength bar and word the Beliefs pull-down draws, off the
+# strongest `belief_anchor_weight` among the bands holding it. A tile no band of the player's holds as its
+# sacred ground has no row, whatever dead it carries.
+const SACRED_GROUND_ROW := "Sacred ground"
+const SACRED_GROUND_HONOURED_ONE_FORMAT := "Honoured by %s"
+const SACRED_GROUND_HONOURED_MANY_FORMAT := "%s and %d other bands"
+const SACRED_GROUND_HONOURED_ONE_OTHER_FORMAT := "%s and 1 other band"
 
-## The tile card's `Ancestors: 12 dead` row, or `""` where the place holds no dead (`belief` absent
-## or zero — no row, never a `0 dead`).
-static func ancestors_line(tile_info: Dictionary) -> String:
-    var belief := float(tile_info.get("belief", 0.0))
-    if belief <= 0.0:
+## `▰▰▰▱▱ hallowed` -- the strength bar and its word, off an anchor's weight `w` in (0, 1): step
+## `clamp(ceil(w * pips), 1, pips)`. No raw number ever reaches the screen. The ONE implementation the
+## Beliefs pull-down and the tile card share.
+static func sacred_ground_bar(weight: float) -> String:
+    var pips := HudDisclosureVocab.BELIEFS_BAR_PIPS
+    var step := clampi(int(ceil(weight * float(pips))), 1, pips)
+    return HudDisclosureVocab.BELIEFS_BAR_FORMAT % [
+        HudDisclosureVocab.BELIEFS_BAR_FILLED.repeat(step) + HudDisclosureVocab.BELIEFS_BAR_EMPTY.repeat(pips - step),
+        HudDisclosureVocab.BELIEFS_BAR_WORDS[step - 1]]
+
+## The player's bands (non-expedition) whose sacred ground is the tile `(x, y)`.
+static func sacred_ground_holders(bands: Array, x: int, y: int) -> Array:
+    var holders: Array = []
+    for band in bands:
+        if not (band is Dictionary) or bool(band.get("is_expedition", false)):
+            continue
+        if bool(band.get(HudDisclosureVocab.BELIEFS_PLACE_ANCHOR_KEY, false)) \
+                and int(band.get(HudDisclosureVocab.BELIEFS_PLACE_X_KEY, -1)) == x \
+                and int(band.get(HudDisclosureVocab.BELIEFS_PLACE_Y_KEY, -1)) == y:
+            holders.append(band)
+    return holders
+
+## The tile card's `Sacred ground: ▰▰▰▱▱ hallowed` row, or `""` where none of `bands` holds the tile.
+static func sacred_ground_line(tile_info: Dictionary, bands: Array) -> String:
+    var holders := sacred_ground_holders(bands, int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
+    if holders.is_empty():
         return ""
-    var count := ANCESTORS_UNDER_ONE if belief < ANCESTORS_WHOLE_PERSON else str(int(round(belief)))
-    return "%s: %s" % [ANCESTORS_ROW, ANCESTORS_DEAD_FORMAT % count]
+    var weight := 0.0
+    for holder in holders:
+        weight = maxf(weight, float(holder.get(HudDisclosureVocab.BELIEFS_PLACE_WEIGHT_KEY, 0.0)))
+    return "%s%s%s" % [SACRED_GROUND_ROW, DETAIL_KV_SEPARATOR, sacred_ground_bar(weight)]
 
-## Plain-language label for a morale cause (0=None,1=Terrain,2=Cold,3=Unrest,4=Culture); "" for None or
+## The row's hover: who honours the ground.
+static func sacred_ground_hover(tile_info: Dictionary, bands: Array) -> String:
+    var holders := sacred_ground_holders(bands, int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
+    if holders.is_empty():
+        return ""
+    var first := HudFormat.band_name(holders[0])
+    match holders.size():
+        1:
+            return SACRED_GROUND_HONOURED_ONE_FORMAT % first
+        2:
+            return SACRED_GROUND_HONOURED_ONE_OTHER_FORMAT % first
+        _:
+            return SACRED_GROUND_HONOURED_MANY_FORMAT % [first, holders.size() - 1]
+
+## Plain-language label for a morale cause (0=None,1=Terrain,2=Cold,3=Unrest,4=Culture,5=Cohesion); "" for None or
 ## unknown. Shared by the drawer morale line and the losing-population alert reason.
-static func morale_cause_label(cause: int) -> String:
+## `terrain_rating` is the `TileHabitability` rating of the tile the band stands on; "harsh" is claimed
+## only for Harsh/Hostile, and the default "" (unknown) reads plain.
+static func morale_cause_label(cause: int, terrain_rating: String = "") -> String:
     match cause:
         DetailFormat.MORALE_CAUSE_TERRAIN:
-            return DetailFormat.MORALE_CAUSE_LABEL_TERRAIN
+            return DetailFormat.MORALE_CAUSE_LABEL_TERRAIN if rating_is_harsh(terrain_rating) \
+                else DetailFormat.MORALE_CAUSE_LABEL_TERRAIN_PLAIN
         DetailFormat.MORALE_CAUSE_COLD:
-            return DetailFormat.MORALE_CAUSE_LABEL_COLD
+            return DetailFormat.MORALE_CAUSE_LABEL_COLD if rating_is_harsh(terrain_rating) \
+                else DetailFormat.MORALE_CAUSE_LABEL_COLD_PLAIN
         DetailFormat.MORALE_CAUSE_UNREST:
             return DetailFormat.MORALE_CAUSE_LABEL_UNREST
         DetailFormat.MORALE_CAUSE_CULTURE:
             return DetailFormat.MORALE_CAUSE_LABEL_CULTURE
+        DetailFormat.MORALE_CAUSE_COHESION:
+            return DetailFormat.MORALE_CAUSE_LABEL_COHESION
         _:
             return ""
 

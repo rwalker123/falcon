@@ -79,7 +79,7 @@ const MARKER_OMITTED_KEYS := {}
 # These values are also the fixture's values for these keys (merged over FIXTURE_ENTRY), so the
 # fixture cannot drift away from what the round-trip asserts.
 const FRACTIONAL_ROUND_TRIP_KEYS := {
-	# Morale + its five signed Layer-1 contributions — all fixed-point Scalars.
+	# Morale + its six signed Layer-1 contributions — all fixed-point Scalars.
 	"morale": 0.4137,
 	"morale_delta": -0.0325,
 	"morale_settling": 0.0113,
@@ -87,6 +87,8 @@ const FRACTIONAL_ROUND_TRIP_KEYS := {
 	"morale_climate": -0.0154,
 	"morale_unrest": -0.0061,
 	"morale_culture": 0.0089,
+	"morale_cohesion": -0.0074,
+	"morale_fresh_water": 0.005,
 	# Wellbeing scalars — fixed-point.
 	"output_multiplier": 0.7225,
 	"discontent_fraction": 0.1837,
@@ -139,7 +141,7 @@ const FIXTURE_ENTRY := {
 	"morale_cause": 1,
 	"activity": "forage",
 	"work_range": 2,
-	"scout_reveal_radius": 3,
+	"watched_radius": 3,
 	"is_traveling": true,
 	"travel_target_x": 11,
 	"travel_target_y": 9,
@@ -235,7 +237,7 @@ func _ready() -> void:
 	_expect_int(marker, "elders", 5)
 	_expect_int(marker, "idle_workers", 7)
 	_expect_int(marker, "work_range", 2)
-	_expect_int(marker, "scout_reveal_radius", 3)
+	_expect_int(marker, "watched_radius", 3)
 	_expect_int(marker, "travel_target_x", 11)
 	_expect_int(marker, "travel_target_y", 9)
 	if not bool(marker.get("is_traveling", false)):

@@ -2848,6 +2848,7 @@ pub fn capture_snapshot(
         temperature_morale_penalty: config.temperature_morale_penalty,
         temperature_morale_tolerance: config.temperature_morale_tolerance,
         attrition_penalty_scale: population_cfg.attrition_penalty_scale(),
+        attrition_morale_tolerance: population_cfg.attrition_morale_tolerance(),
         hardness_penalty_scale: population_cfg.hardness_penalty_scale(),
     };
 
@@ -3187,6 +3188,7 @@ pub fn capture_snapshot(
             baseline_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
             baseline_gather_rate: labor_config.forage.per_worker_biomass_capacity,
             equipped_vantage_range: labor_config.scout.vantage_range as f32,
+            scouting_range_max: labor_config.scout.range_past_local_max,
             // The detached party's *equipped* observation radius, beside the posted vantage's — the
             // second axis the one wayfinding item lifts.
             equipped_expedition_sight_range: expedition_cfg.observe_sight_range as f32,
@@ -3323,6 +3325,14 @@ pub fn capture_snapshot(
             .iter()
             .filter_map(|(_, cohort, _, _, _, band_id, ..)| Some((*band_id?, cohort.size)))
             .collect();
+        // **Every live band with a leader of its own**, for a tribe pair row's `partnerHasLeader`.
+        let band_leaders: crate::snapshot::population::BandLeaderLookup = populations
+            .iter()
+            .filter_map(|(_, _, _, _, _, band_id, _, _, _, leadership)| {
+                let has_leader = leadership.is_some_and(|l| l.leader.is_some());
+                band_id.copied().filter(|_| has_leader)
+            })
+            .collect();
         // **The ground under a tile**, for an `extract` row's crew curve (`usefulCutters`).
         let ground_of = |pos: UVec2| {
             tile_registry
@@ -3387,14 +3397,6 @@ pub fn capture_snapshot(
                         .unwrap_or(false);
                     // The `BandTravel` destination (for the client's target-hex display); `None` → 0,0.
                     let travel_target = travel.map(|t| t.target);
-                    // Local scout: scouts are now forward observers posting vantage points out from the
-                    // band. Carry the effective vantage distance (how far the vantage ring is posted, `0`
-                    // with no scouts), using the same helper the visibility pass applies, so the field
-                    // stays coherent for the client.
-                    let scout_workers = allocation
-                        .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
-                        .unwrap_or(0);
-                    let scout_vantage_distance = labor_config.scout.vantage_distance(scout_workers);
                     // Derived, never checkpointed: a road built, an anchor moved or a kin band
                     // walked off is re-read here on the next capture and rides that frame's delta.
                     let belief_reach: Vec<UVec2> = cohort
@@ -3444,8 +3446,38 @@ pub fn capture_snapshot(
                         .and_then(|owner| culture.applied_band_pull(owner))
                         .map(|pull| pull.iter().map(|v| v.to_f32()).collect())
                         .unwrap_or_default();
+                    // The formed tribe is published to every member, chiefless ones included.
+                    let tribe_membership = expedition
+                        .is_none()
+                        .then(|| {
+                            band_id.zip(tribes.as_deref()).and_then(|(band, registry)| {
+                                crate::snapshot::population::tribe_membership(
+                                    registry,
+                                    *band,
+                                    &band_names,
+                                    &band_sizes,
+                                )
+                            })
+                        })
+                        .flatten();
+                    // Reach: only an own band row (a party carries its home band's id and
+                    // leadership, so it is excluded), the defaults otherwise.
+                    let reach = if expedition.is_none() {
+                        crate::snapshot::population::reach_readout(
+                            &leadership_cfg,
+                            leadership.is_some_and(|l| l.leader.is_some()),
+                            cohort.size,
+                            tribe_membership.as_ref().map(|t| t.member_count),
+                        )
+                    } else {
+                        crate::snapshot::population::ReachReadout::default()
+                    };
+                    let belief_anchor_weight = cohort.belief_anchor.map_or(0.0, |anchor| {
+                        wellbeing_config.culture.anchor_weight(belief.get(anchor))
+                    });
                     Some(population_state(PopulationStateInputs {
                         belief_reach,
+                        belief_anchor_weight,
                         belief_relay_region,
                         held_preservation: preservation_scene.held_by(band_id.copied()),
                         reachable_stores: if expedition.is_none() {
@@ -3473,33 +3505,22 @@ pub fn capture_snapshot(
                         // Own bands with a leader only (a foreign row returned redacted above); a
                         // chiefless band and a party row, which carries its home band's id,
                         // publish the defaults.
-                        tribe: (expedition.is_none()
-                            && leadership.is_some_and(|l| l.leader.is_some()))
-                        .then(|| {
-                            band_id.zip(tribes.as_deref()).and_then(|(band, registry)| {
-                                crate::snapshot::population::tribe_progress(
-                                    registry,
-                                    &leadership_cfg,
-                                    *band,
-                                    &band_names,
-                                )
-                            })
-                        })
-                        .flatten(),
-                        // The formed tribe is published to every member, chiefless ones included.
-                        tribe_membership: expedition
+                        tribe: expedition
                             .is_none()
                             .then(|| {
                                 band_id.zip(tribes.as_deref()).and_then(|(band, registry)| {
-                                    crate::snapshot::population::tribe_membership(
+                                    crate::snapshot::population::tribe_progress(
                                         registry,
+                                        &leadership_cfg,
                                         *band,
                                         &band_names,
-                                        &band_sizes,
+                                        &band_leaders,
                                     )
                                 })
                             })
                             .flatten(),
+                        tribe_membership,
+                        reach,
                         cohort,
                         allocation,
                         expedition,
@@ -3511,7 +3532,6 @@ pub fn capture_snapshot(
                         band_names: &band_names,
                         work_range: band_work_range,
                         raid_radius: fauna_config.predators.raid_radius,
-                        scout_vantage_distance,
                         expedition_levers: &expedition_levers,
                         settlement_stage_config: &settlement_stage_config,
                         travel_target,

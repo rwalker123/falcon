@@ -43,11 +43,13 @@ head of each band's labor pass in `systems/labor.rs`, restated by the command pa
 **A forage, hunt (not a need row), extraction, tile-improvement, band-improvement or Roadwork row's
 `workers` is the sim's answer**, not the player's. The player states a **Max** (`LaborAssignment::max_workers`;
 `None` = no Max) and the **floor** the row already carries; each turn the sim zeroes those rows'
-hands and refills them. `LaborTarget::is_staffed` names the kinds. Scout, Warrior, Builders and a
-need row keep the player's count.
+hands and refills them. `LaborTarget::is_staffed` names the kinds. Warrior and a need row keep the
+player's count; **the Scout row is the sim's too, from a range rather than a Max**
+(`LaborTarget::is_sim_staffed`, "Scouting is a range" below).
 
 **The pool** is `staffable_pool`: the working people less the bench, the hands still walking home and
-every crew the player set by hand (the rows that are not staffed). Rows are grouped by
+every crew the player set by hand (the rows that are not sim-staffed: Warrior and a need row's muster).
+Rows are grouped by
 `SourcePriority`, High to Low.
 
 **No hand is committed twice** (`staffing::staff_rows_settled`, used by the turn and by
@@ -75,8 +77,8 @@ heads, and pass 3 deals the group's unspent-kit heads before its bare heads.
 **Sim-staffed crews never block a player-set order.** They are what is left after the player's own
 orders, so every ceiling a player-set crew clamps against counts them as available:
 `BandWorkforce::benchable` (the bench crew and `bench_enqueue`) is `pool − (assigned − sim_staffed) −
-walking_home`, and `LaborAllocation::set_assignment` nets only the other **player-set** rows (Scout,
-Warrior, Builders, a need row) out of the headroom. `assignable` (the pool less the bench and the
+walking_home`, and `LaborAllocation::set_assignment` nets only the other **player-set** rows (Warrior, a need row)
+out of the headroom. `assignable` (the pool less the bench and the
 walkers) and the published `idleWorkers` (what pass 3 left over) keep their meaning. `bench_crew`,
 `bench_enqueue` and every `assign_labor` restaff the band, so the sources give up the hands at once.
 The party verbs (`send_scout`, `send_expedition`, `send_denial_raid`, `station_expedition`,
@@ -95,6 +97,7 @@ Pinned by `server::tests::a_band_improvements_crew_is_the_keepers_the_sim_staffs
 
 | pass | what it hands out |
 |---|---|
+| 0 | the band's **scouts** (below), off the top of the pool and shelf, before any row |
 | 1a | the site's **keepers** on every row at every priority, High to Low: `floor(keep_hands)` whole-keeper heads round-robin, then, for a row with a fraction of a hand of keeping left, one head that carries it (a kitted gatherer if the shelf can arm one, else a bare one where a bare hand works, else a keeper; a row with no hold take gives it a keeper's head so the improvement is kept) |
 | 1b | per priority group High to Low: the group's **builds'** first builder (kitted if the shelf can arm one, else bare), then the group's **kitted** hands up to the row's **hold crew** |
 | 2 | **kitted** hands up to the row's **reach crew** |
@@ -190,6 +193,59 @@ Pinned by `staffing::tests` (the passes, in order, against a shelf), `labor_allo
 re-staff on a smaller pool and the turn's staffed rows), `shedding_order::a_smaller_pool_restaffs_the_rows_and_sheds_nothing`,
 `take_kit_claims` (granted claims against asks) and `server::tests` (`stop_labor`, the Max on
 `assign_labor`).
+
+### Scouting is a range, not a count (#875)
+
+Design: `docs/plan_labor_at_scale.md` "Scouts: a range, not a count". The player states a **scouting
+range** `N` — tiles **past the band's local range** (`supply_network_config.reach_tiles`, 3) — with
+`assign_labor <faction> <band> scout <N> [kit <k>]`, and the sim staffs the scouts that reach it.
+`N` is clamped to `labor_config.scout.range_past_local_max` (**9**, the stepper's ceiling) with a
+clamp note on the feed line; `scout 0` drops the row. The Scout row exists exactly while `N > 0` and
+**persists with no scouts staffed** when the band is short of people.
+
+- **Storage**: `LaborAssignment::scouting_range` (intent, in the row's equality) and
+  `scouting_reach` (tiles the staffed scouts actually reach this staffing, outside it, on the save);
+  `0` on every other row. `kitted_staffed` / `bareStaffed` carry the scouts' split, `workers` the
+  scouts placed.
+- **What a scout adds** is its vantage sight, resolved through the one
+  `EquipmentConfig::scout_vantage_range`: a kitted scout the row's kit at its equipped tier
+  (`labor_config.scout.vantage_range`, 2), a bare scout the bare tier (1, `KitChoice` none). The
+  tiers are plain values on `staffing::ScoutPlan`.
+- **The scouts come off the top** (`staffing::staff_passes_scouting`, `deal_scouts`): the range is
+  an explicit player order, so it is dealt before pass 1a's keepers, out of the whole pool and
+  shelf, and every pass then staffs from what is left (a band too small for everything staffs the
+  full range and a keeper, hold or reach crew goes short). Kitted first — `min(wayfinding heads the shelf can arm for
+  the row's kit, ceil(N / kitted_tiles), pool)`, so kit `none` arms no one — then bare for what is
+  left of `N`; `reach = kitted × kitted_tiles + bare × bare_tiles`, every tile the crew sees: less
+  than `N` when people run out, and past `N` when the last scout's sight overshoots it (range +1 with
+  one wayfinding scout reaches 2, so the band watches local range + 2). A tier that rounds to no tiles contributes nobody. Scouts are one row per band and do not
+  go through priority groups; their kit units come off the same shelf as every row's (`arm`), and
+  the `Steady` run (`work_kit_plan`) places them too and adds the kit they want to the wants.
+- **One staffing, three callers**: the turn (`staff_rows_settled`), the command restaff and the
+  preview's copy all end in `StaffedBand::apply_to`, which writes the rows, the Scout row
+  (`LaborAllocation::apply_scouting`) and the builds, so the panel's preview agrees with the turn.
+  The scout crew is kept apart from `StaffedBand::rows` so the settle trim, which takes hands off
+  source rows and builds, can never leave `scouting_reach` describing scouts it removed.
+- **It is zeroed before the shed and refilled after it**, like a staffed row, so `ShedStep::Scout`
+  (step 1) is gone: a scout is never a hand the shed gives. The steps keep their numbers (there is
+  no step 1).
+- **Visibility**: with `scouting_reach > 0`, vantages are posted at
+  `visibility_systems::scout_vantage_posting_distance(reach_tiles, scouting_reach, sight)` =
+  `max(1, reach_tiles + scouting_reach − sight)`, so the farthest tile seen is
+  `reach_tiles + scouting_reach` from camp. `sight` is the band's tier for the row's kit (a mixed
+  kitted/bare crew posts at the kit's tier). The snapshot's `watchedRadius` is not this: it is the watched radius below.
+- **The payoff - predators keep off the watched ground**: with `scouting_reach > 0` the band's ring
+  (`visibility_systems::watched_radius` = `reach_tiles + scouting_reach`, `0` with no reach; the
+  snapshot's `PopulationCohortState.watchedRadius`, which the client draws as the map border) pushes wild carnivores out and keeps them from
+  stepping in or chasing prey inside (`fauna.md`), so a pack never reaches `raid_radius`;
+  `PopulationCohort::predators_kept_off` counts the packs it moved this turn.
+- **Wire**: `LaborAssignment.scoutingRange` / `scoutingReach`, `PopulationCohortState.scoutingRangeMax`
+  (the local range is `moveFerryReachTiles`) and `predatorsKeptOff`. `SAVE_FORMAT_VERSION` 57.
+
+Pinned by `staffing::tests` (kitted before bare, kit none all bare, range 0 nobody, reach short when
+people run out, scouts before keepers and before hold and reach crews),
+`visibility_systems::tests::the_vantage_edge_is_the_local_range_plus_the_scouting_reach`, and
+`server::tests::a_scouting_range_clamps_to_the_cap_and_zero_drops_the_row`.
 
 ### The staffing preview — one staffing, two callers
 
@@ -758,8 +814,8 @@ them; they rejoin only as they arrive) and `work_party::tests::a_deep_cut_turns_
 > (`settle_rejoining_on`): a staffed row is zeroed ahead of the shed, so a sweep over every source
 > would read its rejoining walkers as excess and discard them, cargo and all, for a hand taken off a
 > scout. **A staffed row is not shed at all** (#871): its hands are zeroed before the
-> shed walks and refilled from the smaller pool after it, so only the hand-set crews (Scout, Warrior,
-> Builders, a need row's muster) are trimmed; the hands a staffed row's party loses to the smaller pool
+> shed walks and refilled from the smaller pool after it, so only the hand-set crews (Warrior, a need row's
+> muster) are trimmed; the hands a staffed row's party loses to the smaller pool
 > are discarded the same way (`apply_staffing`'s `lost_people`). So a row the shed **trims** reaches `post_a_party` below its party's crew
 > (the only way it can, a player's cut having already matched them), and the party sheds the
 > difference through `cut_crew`'s own order — the hands at the source first, then porters nearest

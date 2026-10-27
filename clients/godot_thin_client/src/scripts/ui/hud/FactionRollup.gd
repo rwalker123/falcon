@@ -123,7 +123,7 @@ static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureCon
         on_open_borders: Callable) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     var bands := labor.player_bands()
-    col.add_child(_build_vitals_label(bands, disclosures))
+    col.add_child(_build_vitals_label(bands, disclosures, labor))
     var people := _build_people_block(labor, bands)
     if people != null:
         col.add_child(people)
@@ -147,7 +147,8 @@ static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureCon
 ## numbers; a runway is one larder against one band's drain and a kit condition is three durabilities
 ## per band, so neither has a faction value to state and those rows carry the ALERT instead. The
 ## detail is one click away in every case.
-static func _build_vitals_label(bands: Array, disclosures: DisclosureController) -> RichTextLabel:
+static func _build_vitals_label(bands: Array, disclosures: DisclosureController,
+        labor: HudBandLaborState) -> RichTextLabel:
     var label := RichTextLabel.new()
     label.bbcode_enabled = true
     label.fit_content = true
@@ -165,7 +166,7 @@ static func _build_vitals_label(bands: Array, disclosures: DisclosureController)
     var ctx := DetailFormat.Context.new()
     # The context is this page's alone: the row builders below take none. It carries the caret state,
     # the tint table `detail_bbcode` resolves rows through, and the dormant `Fodder:` row's hover.
-    var lines := _faction_summary_lines(bands, disclosures)
+    var lines := _faction_summary_lines(bands, disclosures, labor)
     if not _any_fodder_economy(bands):
         ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_FODDER] = \
             DetailFormat.FODDER_DORMANT_HOVER_FACTION
@@ -190,12 +191,13 @@ static func _disclosures_clear(disclosures: DisclosureController) -> void:
         disclosures.clear_rows()
 
 ## The rows, in the band page's order, registering each row's per-band drill-down as it goes.
-static func _faction_summary_lines(bands: Array, disclosures: DisclosureController) -> Array[String]:
+static func _faction_summary_lines(bands: Array, disclosures: DisclosureController,
+        labor: HudBandLaborState) -> Array[String]:
     var lines: Array[String] = []
     lines.append(_food_line(bands, disclosures))
     lines.append(_fodder_line(bands, disclosures))
     lines.append(_upkeep_line(bands, disclosures))
-    lines.append(_morale_line(bands, disclosures))
+    lines.append(_morale_line(bands, disclosures, labor))
     var growth := _growth_line(bands, disclosures)
     if growth != "":
         lines.append(growth)
@@ -446,7 +448,8 @@ static func _material_face(material_id: String, amount: float) -> String:
 ## `Morale: 78% ▼` (+ the alert clause). Population-weighted through `FactionAggregate`, and the ARROW
 ## is the weighted mean of the bands' own `morale_delta` — NOT a diff of this mean against last turn's,
 ## which would swing every time a band is founded or lost and report a trend that never happened.
-static func _morale_line(bands: Array, disclosures: DisclosureController) -> String:
+static func _morale_line(bands: Array, disclosures: DisclosureController,
+        labor: HudBandLaborState) -> String:
     var mean := FactionAggregate.weighted_mean(bands, "morale")
     var delta := FactionAggregate.weighted_mean(bands, "morale_delta")
     var rows: Array[String] = []
@@ -457,7 +460,8 @@ static func _morale_line(bands: Array, disclosures: DisclosureController) -> Str
             concerning += 1
         rows.append(_band_row(band, "%d%%%s" % [
             int(round(float(band.get("morale", 0.0)) * 100.0)), _trend_glyph(float(band.get("morale_delta", 0.0)))],
-            DetailFormat.morale_cause_label(int(band.get("morale_cause", DetailFormat.MORALE_CAUSE_NONE)))))
+            DetailFormat.morale_cause_label(int(band.get("morale_cause", DetailFormat.MORALE_CAUSE_NONE)),
+                labor.terrain_rating_at(int(band.get("current_x", -1)), int(band.get("current_y", -1))))))
     disclosures.register_faction(HudDisclosureVocab.DETAIL_ROW_MORALE,
         HudDisclosureVocab.BREAKDOWN_KIND_MORALE, rows, concerning > 0)
     return "%s%s%d%%%s%s" % [

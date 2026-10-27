@@ -536,7 +536,8 @@ table PopulationCohortState {
   supplyNetworkId:uint = 0;
   // This turn's signed morale delta (fixed-point, FIXED_POINT_SCALE = 1e6) — trend arrow source.
   moraleDelta:long = 0;
-  // Dominant negative morale driver when falling: 0=None, 1=Terrain, 2=Cold, 3=Unrest, 4=Culture.
+  // Dominant negative morale driver when falling: 0=None, 1=Terrain, 2=Cold, 3=Unrest, 4=Culture,
+  // 5=Cohesion.
   moraleCause:ubyte = 0;
   // Civilization Wellbeing (docs/plan_civ_wellbeing.md). All fixed-point (FIXED_POINT_SCALE = 1e6)
   // except the two head-counts. Derived per-turn unless noted.
@@ -576,11 +577,9 @@ table PopulationCohortState {
   // Global config today (same every band); surfaced per-band so the client reads it off the
   // selected band. Appended last (append-only schema discipline).
   workRange:uint = 0;
-  // Band's effective scout vantage distance — how far the forward-observer vantage ring is posted
-  // out from the band (min(vantage_distance_base + scouts * vantage_distance_per_scout,
-  // vantage_distance_max) from LaborConfig.scout), 0 with no scouts. Field name retained for wire
-  // compat; scouts now reveal by posting vantage points that see around obstacles, not a flat ring.
-  scoutRevealRadius:uint = 0;
+  // Band's watched radius in tiles: local range + scouting reach, the edge wild predators stay
+  // behind (visibility_systems::watched_radius). 0 with no scouts reaching past the local range.
+  watchedRadius:uint = 0;
   // Expedition discriminators (docs/plan_exploration_and_sites.md §2). A detached scouting party is
   // a PopulationCohort tagged `Expedition`; these fields are false/""/empty for a normal band.
   // Client-facing: distinct marker glyph/label + awaiting-orders marker state + a Recall affordance.
@@ -1590,8 +1589,6 @@ table PopulationCohortState {
   bandImprovements:[BandImprovementState];
   // --- PROGRESS TOWARD A TRIBE (appended last, #861) ---
   // Own bands only: a foreign (redacted) row carries the defaults.
-  // Why the band is or is not in reach of a tribe: 0 local, 1 no urn, 2 no supply network, 3 alone.
-  tribeStanding:ubyte = 0;
   // leadership_config tribe_score_threshold: the closeness score at which a pair is close.
   tribeThreshold:float = 0;
   // leadership_config tribe_history_build_turns: turns of being local to fill shared history.
@@ -1612,6 +1609,51 @@ table PopulationCohortState {
   tribeLeaderName:string;
   // 0 none, 1 paramount chief, 2 council of chiefs.
   tribeLeaderKind:ubyte = 0;
+  // The most tiles past the local range a scouting range may name (labor_config scout
+  // range_past_local_max) - the Scouting range stepper's ceiling. The local range itself is
+  // moveFerryReachTiles.
+  scoutingRangeMax:uint = 0;
+  // How many wild predator packs this band's watched ring (local range + scouting reach, only while
+  // scouts reach) kept off this turn: pushed out, a step into it refused, or a prey target inside it
+  // excluded. 0 without scouts. Own bands only (a foreign row carries 0).
+  predatorsKeptOff:uint = 0;
+  // A leader's REACH: how many people (a band leader) it runs well, and how many it actually runs
+  // (the band's people). Set only for an own band with a leader of its own; 0 / 0 otherwise, which a
+  // client reads as nothing to show.
+  leaderReach:float = 0;
+  leaderLoad:float = 0;
+  // The tribe leader's reach in member bands, and the member bands it actually runs. Set for every
+  // own member band of a formed tribe (chiefless ones included); 0 / 0 in no tribe.
+  tribeLeaderReach:float = 0;
+  tribeLeaderLoad:float = 0;
+  // The share of this band's orders that arrive, in (0, 1]: the tribe leader's factor for a tribe
+  // member (times the over-reach efficiency again when the band has no leader of its own), else the
+  // band leader's own factor. 0 when the band has neither a leader nor a tribe (nothing to show).
+  ordersCarriedOut:float = 0;
+  // The anchor's saturating weight s = b / (b + belief_half_saturation), in [0, 1): how much of the
+  // culture term the band's ancestors carry. 0 with no anchor (hasBeliefAnchor false). Own bands only.
+  beliefAnchorWeight:float = 0;
+  // The share of the band's OWN leader's orders that arrive, in (0, 1]: that leader's reach against
+  // the band's load, whether or not the band is in a tribe (ordersCarriedOut is the tribe factor
+  // for a member). 0 when the band has no leader of its own. Own bands only.
+  leaderOrdersCarriedOut:float = 0;
+  // --- COHESION (appended last, #700) ---
+  // The cohesion morale contributor: -drag x max(0, size - ceiling) / ceiling for this band's own
+  // size (a band can only hold together at about 150 people; belief on its tile lifts the ceiling;
+  // other bands on the tile do not count). Signed (<= 0), fixed-point (FIXED_POINT_SCALE = 1e6),
+  // part of the moraleSettling/Terrain/Climate/Unrest/Culture breakdown whose signed sum IS
+  // moraleDelta. moraleCause 5 names it. Derived per-turn.
+  moraleCohesion:long = 0;
+  // The band's opening head-count (before the turn's births and deaths, rounded once) and the cohesion ceiling the term
+  // was priced from - stored by the sim (PopulationCohort.last_cohesion), never recounted at capture.
+  // 0 / 0 for a detached party and for a cohort no turn has priced.
+  cohesionHeadcount:uint = 0;
+  cohesionCeiling:uint = 0;
+  // The fresh-water morale contributor: +fresh_water_morale_bonus while the band's current tile is
+  // fresh-watered (forage::tile_is_fresh_watered), else 0. Signed (>= 0), fixed-point
+  // (FIXED_POINT_SCALE = 1e6), part of the moraleSettling/Terrain/Climate/Unrest/Culture/Cohesion
+  // breakdown whose signed sum IS moraleDelta. Never a moraleCause (causes are negative). Derived per-turn.
+  moraleFreshWater:long = 0;
   // --- THE STORAGE PIT IS ITS BAND'S SECOND LARDER (appended last, #709) ---
   // The food ledger gains two terms:
   //   larder_delta == foodIncome - foodConsumption - raidForfeit - foodSpoiled - foodLeftBehind
@@ -2569,6 +2611,13 @@ table LaborAssignment {
   // still filling. 0 = no landing within the forecast horizon (a part load with no take, or no
   // party). Unlike nextLoadHomeIn, which counts only a pack already on the road.
   loadHomeIn:uint = 0;
+  // *** THE SCOUT ROW'S RANGE (#875). *** scoutingRange: tiles past the band's local range the
+  // player asked to see (the row exists exactly while this is above 0). scoutingReach: tiles past the
+  // local range the staffed scouts actually reach (less than scoutingRange when the band ran out of
+  // people). kittedStaffed / bareStaffed carry the scouts' split; workers is the scouts placed.
+  // Both 0 on every other row.
+  scoutingRange:uint = 0;
+  scoutingReach:uint = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -7103,4 +7152,7 @@ table TribePairState {
   history:float = 0;
   // Each input times its weight; the sum is the pair's score.
   contribution:TribeClosenessState;
+  // Whether the partner band has a leader of its own. Shared history builds only while at least one
+  // of the two bands has one, so a chiefless band reads its turns-remaining estimate off this.
+  partnerHasLeader:bool = false;
 }

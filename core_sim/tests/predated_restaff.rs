@@ -118,12 +118,16 @@ fn band(app: &mut App, pos: UVec2, fauna_id: &str) -> bevy::prelude::Entity {
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
+                last_cohesion: Default::default(),
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    scouting_range: 0,
+                    scouting_reach: 0,
                     max_workers: Some(ROW_MAX),
                     staffing: Default::default(),
                     target: LaborTarget::Hunt {

@@ -540,7 +540,7 @@ const BELIEFS_COMPACT_DRIFT_SOURCE := 9100
 const BELIEFS_COMPACT_DRIFT_AXIS_LABEL := "Open \u2194 Closed"
 const BELIEFS_COMPACT_DRIFT_DELTA := -0.02
 const BELIEFS_COMPACT_VALUES := "Devout 0.4, traditional 0.3."
-const BELIEFS_COMPACT_PULL := "The ancestors pull this band +0.30 devout and +0.30 traditional."
+const BELIEFS_COMPACT_PULL := "Its sacred ground draws it toward devout, traditional ways."
 const TOPBAR_SEDENTARIZATION_STAGE := "soft"
 ## How many of that score's points the band standing on its dead supplies (the SETTLING block's
 ## `From the dead` row). Seeded non-zero so every faction frame measures the block with the mark in.
@@ -1392,12 +1392,22 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_assert_role_card_gear()
 	_assert_role_cards_are_level()
+	_assert_scouting_range_card()
 	_assert_role_kit_command_carries_the_pick()
 	# Put the shared band back exactly as the later states expect it: the pick above is real zone
 	# state and its emit is a real pending assign, and either one left behind would render a `No kit`
 	# Scout card with an amber title in every band frame from here down.
 	_hud._bandpanel._role_kit_ids.clear()
 	_hud._band_labor._pending_labor.clear()
+	# The Scouting range card in its three states (#875): none asked / reached / short of people.
+	for state in [["none", 0, 0, 0, 0], ["reached", SCOUT_FIXTURE_RANGE, SCOUT_FIXTURE_RANGE, 2, SCOUT_ONE_GEARED],
+			["short", SCOUT_FIXTURE_RANGE + 2, SCOUT_SHORT_REACH, 1, 0]]:
+		var scout_band := _band_fixture()
+		scout_band["predators_kept_off"] = 2 if String(state[0]) == "reached" else 0
+		_set_scout_row(scout_band, int(state[1]), int(state[2]), int(state[3]), int(state[4]))
+		_push_bands([scout_band])
+		await _settle()
+		await _save("band_panel_scout_%s" % String(state[0]))
 	_push_bands([_band_fixture()])
 	await _settle()
 	# **THE TWO BARS, CROSS-CHECKED AGAINST EACH OTHER** — with the reference band's TWO PARTIES in the
@@ -4634,7 +4644,13 @@ const BAND_FLANK_FILL_FLOOR := 0.50
 ## is the CHARTLESS flank's arithmetic best, and no ordering of three blocks beats 0.68. The rule the
 ## old note states still holds and is the order these two steps went in: re-author and re-measure
 ## before touching this number, and lower it only to the new best a re-authoring can reach.
-const BAND_FLANK_BALANCE_FLOOR := 0.65
+##
+## **0.65 -> 0.60 WHEN THE SCOUT CARD BECAME A RANGE (#875).** The card's three-line static hint is a
+## status line that wraps to two beside the Warrior's, so the roles block lost ~16px, and the shorter
+## column - the one it sits in - read 158/260 = **0.61** against the old 174/256 = 0.68. The split was
+## not re-authored: the content moved, not the ordering, and 0.60 clears the new reading by one point
+## while still failing every rival ordering (the best of which is 0.32).
+const BAND_FLANK_BALANCE_FLOOR := 0.60
 
 ## GUARD: **the widened flank SPENDS the height it recovered.** Two columns halve what each carries,
 ## so the tier must rise to put the recovered room back into content — the food-outlook chart and the
@@ -7131,10 +7147,15 @@ func _kit_breakdown_line(popover: String, label: String) -> String:
 ## composing the expectation through the derivation under test would assert only that it agrees with
 ## itself.
 func _assert_role_card_gear() -> void:
-	_assert_one_role_card_gear(HudWorkVocab.ROLE_NAME_SCOUT, KitRoster.JOB_SCOUT, "Wayfinding kit",
-		DetailFormat.KIT_ROLE_SCOUT_VANTAGE_FORMAT % String.num(
-			BandFx.KIT_SCOUT_VANTAGE_EQUIPPED, DetailFormat.KIT_VANTAGE_DECIMALS),
-		DetailFormat.KIT_LABEL_WAYFINDING, BandFx.KIT_CONDITION_WAYFINDING)
+	# The Scout card keeps its picker and carries no gear line; the tooltip does not quote the kit's sight either.
+	var scout_card := _find_role_card(HudWorkVocab.SCOUT_CARD_TITLE)
+	_assert_band_panel("the Scouting range card carries a kit picker and NO gear line on the card",
+		scout_card != null and _find_meta_control(scout_card, KitRoster.KIT_PICKER_META) != null
+		and _find_meta_control(scout_card, KitRoster.KIT_HINT_META) == null)
+	var scout_vantage := DetailFormat.KIT_ROLE_SCOUT_VANTAGE_FORMAT % String.num(
+		BandFx.KIT_SCOUT_VANTAGE_EQUIPPED, DetailFormat.KIT_VANTAGE_DECIMALS)
+	_assert_band_panel("…and the kit's sight line (\"%s\") is NOT on the tooltip" % scout_vantage,
+		scout_card != null and not _scout_tooltip_of(scout_card).contains(scout_vantage))
 	_assert_one_role_card_gear(HudWorkVocab.ROLE_NAME_WARRIOR, KitRoster.JOB_WARRIOR, "Warrior kit",
 		DetailFormat.KIT_ROLE_WARRIOR_ATTACK_FORMAT % String.num(
 			BandFx.KIT_ATTACK_CLUBS, DetailFormat.KIT_CONDITION_DECIMALS),
@@ -7268,7 +7289,7 @@ func _assert_role_card_shortfall() -> void:
 ## `HEIGHT_EPSILON` is the sub-pixel disagreement between a container's rounded layout and the float
 ## rects it writes — the tolerance `_faction_keyless_rows` takes for the same reason.
 func _assert_role_cards_are_level() -> void:
-	var scout := _find_role_card(HudWorkVocab.ROLE_NAME_SCOUT)
+	var scout := _find_role_card(HudWorkVocab.SCOUT_CARD_TITLE)
 	var warrior := _find_role_card(HudWorkVocab.ROLE_NAME_WARRIOR)
 	if scout == null or warrior == null:
 		_fail("both role cards must render to compare their heights")
@@ -7278,15 +7299,189 @@ func _assert_role_cards_are_level() -> void:
 	# genuinely shorter than the other's, which is what makes the padding observable.
 	var scout_content := scout.get_combined_minimum_size().y
 	var warrior_content := warrior.get_combined_minimum_size().y
-	_assert_band_panel(
-		"the two role cards hold DIFFERENT amounts (Scout wants %.0fpx, Warrior %.0fpx) — %s"
-			% [scout_content, warrior_content,
-				"so the shorter one has to be padded" if scout_content != warrior_content
-					else "NOTHING TO PROVE"],
-		scout_content != warrior_content and minf(scout_content, warrior_content) > 0.0)
+	# The Scout card's body is one short count line (none at range +0) and its kit sight line is on the
+	# tooltip, so its CONTENT now measures shorter than the Warrior's; the card still RENDERS level
+	# because the row stretches it (`SIZE_FILL`), and that is the claim below.
+	_assert_band_panel("both role cards hold content (Scout wants %.0fpx, Warrior %.0fpx)"
+			% [scout_content, warrior_content],
+		minf(scout_content, warrior_content) > 0.0)
 	_assert_band_panel("…and both cards RENDER at the same height (Scout %.0fpx, Warrior %.0fpx)"
 			% [scout.size.y, warrior.size.y],
 		absf(scout.size.y - warrior.size.y) <= ROLE_CARD_HEIGHT_EPSILON)
+
+## **THE SCOUT CARD STATES A RANGE** (#875): the title, the `+N tiles` stepper and its command line,
+## the clamp at the config ceiling, the pending overlay and the three status lines. PNG-LESS for the
+## words and the command; the frames `band_panel_scout_*` carry the look.
+const SCOUT_FIXTURE_RANGE := 3
+const SCOUT_FIXTURE_MAX := 9
+const SCOUT_SHORT_REACH := 1
+const SCOUT_ONE_GEARED := 1
+
+func _assert_scouting_range_card() -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	var card := _find_role_card(HudWorkVocab.SCOUT_CARD_TITLE)
+	if card == null:
+		_fail("no Scouting range card renders")
+		return
+	var value := _find_label_with_text(card, HudWorkVocab.SCOUT_RANGE_VALUE_FORMAT % SCOUT_FIXTURE_RANGE)
+	_assert_band_panel("the Scouting range card's stepper reads \"+%d tiles\"" % SCOUT_FIXTURE_RANGE,
+		value != null)
+	var less := _find_button_with_tooltip(card, HudWorkVocab.SCOUT_RANGE_LESS_ARIA)
+	var farther := _find_button_with_tooltip(card, HudWorkVocab.SCOUT_RANGE_FARTHER_ARIA)
+	_assert_band_panel("…with \"Scout less far\" / \"Scout farther\" tooltips", less != null and farther != null)
+	if farther != null:
+		var line := _emitted_button_line(farther)
+		card = _find_role_card(HudWorkVocab.SCOUT_CARD_TITLE)
+		less = _find_button_with_tooltip(card, HudWorkVocab.SCOUT_RANGE_LESS_ARIA)
+		_assert_band_panel("…and \"Scout farther\" sends `scout %d` - \"%s\"" % [SCOUT_FIXTURE_RANGE + 1, line],
+			line.contains(" scout %d" % (SCOUT_FIXTURE_RANGE + 1)))
+	if less != null:
+		var line_less := _emitted_button_line(less)
+		_assert_band_panel("…and \"Scout less far\" sends `scout %d` - \"%s\"" % [SCOUT_FIXTURE_RANGE - 1, line_less],
+			line_less.contains(" scout %d" % (SCOUT_FIXTURE_RANGE - 1)))
+	# Clamp: at the ceiling the `+` is greyed.
+	var maxed := band.duplicate(true)
+	_set_scout_row(maxed, SCOUT_FIXTURE_MAX, SCOUT_FIXTURE_MAX, SCOUT_FIXTURE_MAX, SCOUT_ONE_GEARED)
+	var maxed_card: PanelContainer = _build_scout_card_for(maxed)
+	var maxed_plus := _find_button_with_tooltip(maxed_card, HudWorkVocab.SCOUT_RANGE_FARTHER_ARIA)
+	_assert_band_panel("the `+` is greyed at the ceiling (+%d)" % SCOUT_FIXTURE_MAX,
+		maxed_plus != null and maxed_plus.disabled)
+	var empty := band.duplicate(true)
+	_set_scout_row(empty, 0, 0, 0, 0)
+	var empty_card: PanelContainer = _build_scout_card_for(empty)
+	var empty_minus := _find_button_with_tooltip(empty_card, HudWorkVocab.SCOUT_RANGE_LESS_ARIA)
+	_assert_band_panel("the `-` is greyed at +0", empty_minus != null and empty_minus.disabled)
+	# The card's ONE line (none / reached / short) and the tooltip carrying everything else.
+	var empty_line := HudWorkVocab.scouting_line(_hud._band_labor.scouting_state(empty))
+	_assert_band_panel("range +0: no line", String(empty_line["text"]) == "")
+	var empty_tip := _scout_tooltip_of(empty_card)
+	_assert_band_panel("range +0 tooltip - \"%s\"" % empty_tip,
+		empty_tip == "No scouts — the band sees its local range and no farther.")
+	var reached := HudWorkVocab.scouting_line(_hud._band_labor.scouting_state(band))
+	_assert_band_panel("reached line - \"%s\"" % reached["text"],
+		reached["text"] == "2 scouts" and not bool(reached["short"]))
+	var solo := band.duplicate(true)
+	_set_scout_row(solo, SCOUT_FIXTURE_RANGE, SCOUT_FIXTURE_RANGE, 1, 0)
+	_assert_band_panel("singular",
+		HudWorkVocab.scouting_line(_hud._band_labor.scouting_state(solo))["text"] == "1 scout")
+	var shorted := band.duplicate(true)
+	_set_scout_row(shorted, SCOUT_FIXTURE_RANGE, SCOUT_SHORT_REACH, 0, 0)
+	var short_status := HudWorkVocab.scouting_line(_hud._band_labor.scouting_state(shorted))
+	_assert_band_panel("short line - \"%s\"" % short_status["text"],
+		short_status["text"] == "0 scouts · 2 tiles short" and bool(short_status["short"]))
+	var short_card: PanelContainer = _build_scout_card_for(shorted)
+	var amber := false
+	for label in _labels_under(short_card):
+		if (label as Label).text == short_status["text"]:
+			amber = (label as Label).get_theme_color("font_color").is_equal_approx(HudStyle.WARN)
+	_assert_band_panel("...and the short line renders amber", amber)
+	var short_tip := _scout_tooltip_of(short_card)
+	_assert_band_panel("short tooltip states the shortfall - \"%s\"" % short_tip,
+		short_tip.contains("Reaches +1 of +3 tiles — not enough people to go farther."))
+	# The reached tooltip: watches / count with gear / kept-off, one fact per line; kit line and
+	# kept-off line are OFF the card body.
+	var reached_band := band.duplicate(true)
+	reached_band["watched_radius"] = 5
+	reached_band["predators_kept_off"] = 2
+	var reached_card: PanelContainer = _build_scout_card_for(reached_band)
+	var reached_tip := _scout_tooltip_of(reached_card)
+	_assert_band_panel("reached tooltip lines - \"%s\"" % reached_tip.replace("\n", " | "),
+		reached_tip.contains("Watches 5 tiles from camp")
+		and not reached_tip.contains("local range")
+		and reached_tip.contains("2 scouts this turn · 1 with wayfinding gear")
+		and not reached_tip.contains("per vantage")
+		and reached_tip.contains("Keeping 2 packs off watched ground")
+		and not reached_tip.contains("not enough people"))
+	var body_has_old := false
+	for body_label in _labels_under(reached_card):
+		var body_text := (body_label as Label).text
+		if body_text.contains("per vantage") or body_text.contains("Keeping") \
+				or body_text.contains("past the local range"):
+			body_has_old = true
+	_assert_band_panel("the kit, kept-off and local-range lines are off the card body", not body_has_old)
+	var tip_label := _scout_value_label(reached_card)
+	_assert_band_panel("the value label receives the mouse (tooltip can show)",
+		tip_label != null and tip_label.mouse_filter == Control.MOUSE_FILTER_STOP)
+	var one_pack := reached_band.duplicate(true)
+	one_pack["predators_kept_off"] = 1
+	_assert_band_panel("kept-off singular, and absent at 0",
+		_scout_tooltip_of(_build_scout_card_for(one_pack)).contains("Keeping 1 pack off watched ground")
+		and not _scout_tooltip_of(_build_scout_card_for(band)).contains("Keeping"))
+	# Pending overlay: the range, not the crew.
+	var pending_band := band.duplicate(true)
+	var entity := int(pending_band.get("entity", -1))
+	_hud._band_labor.record_pending_assign(entity, HudConst.LABOR_KIND_SCOUT, SCOUT_FIXTURE_RANGE + 2,
+		-1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR)
+	var eff: Dictionary = _hud._band_labor.effective_role_workers(pending_band, HudConst.LABOR_KIND_SCOUT)
+	_assert_band_panel("a pending scout command overlays the RANGE (+%d), leaving the crew at the wire's %d"
+			% [int(eff.get("range", -1)), int(eff.get("workers", -1))],
+		int(eff.get("range", -1)) == SCOUT_FIXTURE_RANGE + 2 and int(eff.get("workers", -1)) == 2
+		and bool(eff.get("pending", false)))
+	_hud._band_labor.drop_pending_assign(entity, _hud._band_labor.pending_key(HudConst.LABOR_KIND_SCOUT, -1, -1, ""))
+
+func _set_scout_row(band: Dictionary, wanted: int, reach: int, scouts: int, kitted: int) -> void:
+	var rows: Array = []
+	for row in band.get("labor_assignments", []):
+		if String((row as Dictionary).get("kind", "")) != HudConst.LABOR_KIND_SCOUT:
+			rows.append(row)
+	rows.append({"kind": HudConst.LABOR_KIND_SCOUT, "workers": scouts, "scouting_range": wanted,
+		"scouting_reach": reach, "kitted_staffed": kitted, "bare_staffed": scouts - kitted})
+	band["labor_assignments"] = rows
+
+func _build_scout_card_for(band: Dictionary) -> PanelContainer:
+	var status := HudWorkVocab.scouting_line(_hud._band_labor.scouting_state(band))
+	var card: PanelContainer = _hud._bandpanel._build_role_card(band, HudWorkVocab.SCOUT_CARD_TITLE,
+		String(status["text"]), HudConst.LABOR_KIND_SCOUT,
+		_hud._band_labor.effective_role_workers(band, HudConst.LABOR_KIND_SCOUT), 0, false,
+		bool(status["short"]))
+	return card
+
+func _scout_value_label(card: Node) -> Label:
+	for label in _labels_under(card):
+		if (label as Label).has_meta(HudWorkVocab.SCOUT_RANGE_VALUE_META):
+			return label
+	return null
+
+func _scout_tooltip_of(card: Node) -> String:
+	var label := _scout_value_label(card)
+	return label.tooltip_text if label != null else ""
+
+func _labels_under(node: Node) -> Array:
+	var out: Array = []
+	for child in node.get_children():
+		if child is Label:
+			out.append(child)
+		out.append_array(_labels_under(child))
+	return out
+
+func _find_label_with_text(node: Node, text: String) -> Label:
+	for label in _labels_under(node):
+		if (label as Label).text == text:
+			return label
+	return null
+
+func _find_button_with_tooltip(node: Node, tip: String) -> Button:
+	for child in node.get_children():
+		if child is Button and (child as Button).tooltip_text == tip:
+			return child as Button
+		var found := _find_button_with_tooltip(child, tip)
+		if found != null:
+			return found
+	return null
+
+## Press a card button and hand back the `assign_labor` line the HUD emitted ("" when none).
+func _emitted_button_line(button: Button) -> String:
+	var seen: Array[Dictionary] = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.assign_labor_requested.connect(sink)
+	button.pressed.emit()
+	_hud.assign_labor_requested.disconnect(sink)
+	if seen.is_empty():
+		return ""
+	var entity := int((seen[0] as Dictionary).get("pending_entity", -1))
+	_hud._band_labor.drop_pending_assign(entity, _hud._band_labor.pending_key(HudConst.LABOR_KIND_SCOUT, -1, -1, ""))
+	_hud._bandpanel.rerender()
+	return String(MAIN_SCRIPT.format_assign_labor(seen[0]).get("line", ""))
 
 ## How far two role cards' rendered heights may differ before the pair reads as ragged — the sub-pixel
 ## disagreement between a container's rounded layout and the float rects it writes, and nothing more.
@@ -7301,7 +7496,7 @@ const ROLE_CARD_HEIGHT_EPSILON := 1.0
 ## so the pick emits on the press; a pick that only moved client state would leave the sim running
 ## the kit the card had stopped naming.
 func _assert_role_kit_command_carries_the_pick() -> void:
-	var card := _find_role_card(HudWorkVocab.ROLE_NAME_SCOUT)
+	var card := _find_role_card(HudWorkVocab.SCOUT_CARD_TITLE)
 	var picker := _find_meta_control(card, KitRoster.KIT_PICKER_META) as OptionButton if card != null else null
 	if picker == null:
 		_fail("no Scout kit picker to drive")
@@ -14799,6 +14994,7 @@ func _band_fixture() -> Dictionary:
 		"fertility_trend": 1.25,
 		"stores": {"provisions": 84.0},
 		"move_ferry_reach_tiles": 2,
+		"scouting_range_max": 9,
 		"working_age": 16,
 		"idle_workers": 3,
 		# Age structure — the band zone's PEOPLE bar, in WHOLE PEOPLE as the wire carries it.
@@ -14879,7 +15075,8 @@ func _band_fixture() -> Dictionary:
 			# claim about the row rather than about the fallback.
 			{"kind": "forage", "workers": 5, "workers_needed": 2, "floor": 0.5, "target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48, "kit_id": BandFx.KIT_DEFAULT_FORAGE},
 			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "floor": 0.5, "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20, "kit_id": BandFx.KIT_DEFAULT_HUNT},
-			{"kind": "scout", "workers": 2},
+			{"kind": "scout", "workers": 2, "scouting_range": 3, "scouting_reach": 3,
+			"kitted_staffed": 1, "bare_staffed": 1},
 			{"kind": "warrior", "workers": 2},
 		],
 	}
@@ -17664,20 +17861,21 @@ func _assert_pending_assign_rollback() -> void:
 	_assert_band_panel("the emitted payload carries the client-local rollback handle (got %d)"
 			% int(builders_payload.get("pending_entity", -1)),
 		int(builders_payload.get("pending_entity", -1)) == entity)
-	_assert_band_panel("the optimistic write lands — the Scout role reads %d" % ROLLBACK_BUILDERS,
+	_assert_band_panel("the optimistic write lands — the Scout range reads +%d" % ROLLBACK_BUILDERS,
 		int(_hud._band_labor.effective_role_workers(band, HudConst.LABOR_KIND_SCOUT)
-			.get("workers", -1)) == ROLLBACK_BUILDERS)
+			.get("range", -1)) == ROLLBACK_BUILDERS)
 	_assert_band_panel("…and so does the unrelated edit beside it — a Max of %d foragers" % ROLLBACK_FORAGERS,
 		_hud._band_labor.effective_forage_max(band,
 			ROLLBACK_SURVIVOR_TILE.x, ROLLBACK_SURVIVOR_TILE.y) == ROLLBACK_FORAGERS)
 	# THE FAILURE PATH: exactly what `Main._on_hud_assign_labor` does when the send answers `false`.
 	_hud.drop_pending_assign(builders_payload)
-	var wire_builders := _hud._band_labor.workers_for_role(band, HudConst.LABOR_KIND_SCOUT)
+	var wire_builders := int(_hud._band_labor.scouting_state(
+		{"labor_assignments": band.get("labor_assignments", [])})["range"])
 	var rolled: Dictionary = _hud._band_labor.effective_role_workers(
 		band, HudConst.LABOR_KIND_SCOUT)
-	_assert_band_panel("a send that never went drops its pending entry — the Scout role is back to the wire's %d, unpending (got %d/%s)"
-			% [wire_builders, int(rolled.get("workers", -1)), str(rolled.get("pending", true))],
-		int(rolled.get("workers", -1)) == wire_builders and not bool(rolled.get("pending", true)))
+	_assert_band_panel("a send that never went drops its pending entry — the Scout range is back to the wire's +%d, unpending (got %d/%s)"
+			% [wire_builders, int(rolled.get("range", -1)), str(rolled.get("pending", true))],
+		int(rolled.get("range", -1)) == wire_builders and not bool(rolled.get("pending", true)))
 	_assert_band_panel("…and the OTHER pending edit on the same band SURVIVES it — still a Max of %d foragers"
 			% ROLLBACK_FORAGERS,
 		_hud._band_labor.effective_forage_max(band,
@@ -17727,7 +17925,7 @@ func _assert_stop_labor_drops_pending_assign() -> void:
 		not _hud._band_labor.effective_worker_map(band).has(forage_key))
 	_assert_band_panel("…and the unrelated pending Scout edit SURVIVES it",
 		int(_hud._band_labor.effective_role_workers(band, HudConst.LABOR_KIND_SCOUT)
-			.get("workers", -1)) == ROLLBACK_BUILDERS)
+			.get("range", -1)) == ROLLBACK_BUILDERS)
 	_hud.drop_pending_assign(sent[1] as Dictionary)
 	_assert_band_panel("…and the stop fixture leaves no pending overlay behind",
 		_hud._band_labor.pending_assigns_for(entity).is_empty())

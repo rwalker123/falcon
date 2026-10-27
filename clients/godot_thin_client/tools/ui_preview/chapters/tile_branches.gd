@@ -44,6 +44,9 @@ const BELIEF_NONE := 0.0
 ## Some dead, but short of the catalog's minimum.
 const BELIEF_FEW := 0.5
 
+## The anchor weight the fixture band holds the tile at: step 3 of 5, the word `hallowed`.
+const SACRED_WEIGHT := 0.6
+
 ## The crew the step card is asked at: nobody, and two hands.
 const CREW_NONE := 0
 const CREW_TWO := 2
@@ -87,6 +90,11 @@ func _band(crew_on_belief: int, crew_on_pit: int) -> Dictionary:
 	var band := BandFx.band_fixture()
 	band["current_x"] = TILE_X
 	band["current_y"] = TILE_Y
+	# The tile is this band's SACRED GROUND: the card's belief row only exists on a band's own sacred ground.
+	band["has_belief_anchor"] = true
+	band["belief_anchor_x"] = TILE_X
+	band["belief_anchor_y"] = TILE_Y
+	band["belief_anchor_weight"] = SACRED_WEIGHT
 	var assignments: Array = (band.get("labor_assignments", []) as Array).duplicate()
 	if crew_on_belief > 0:
 		assignments.append(_tile_assignment(BELIEF_BRANCH, crew_on_belief))
@@ -142,7 +150,7 @@ func _collect_meta(root: Node, meta: String, out: Array[Control] = []) -> Array[
 	return out
 
 ## The card row that states a branch, off the CATALOG exactly as the producer reads it (the dead's own
-## `Ancestors` row for the belief site term, the branch's display name for the other).
+## `Sacred ground` row for the belief site term, the branch's display name for the other).
 func _row_key(branch: String) -> String:
 	var ladder := HudTileVocab.tile_ladder(_catalog())
 	return HudTileVocab.readout_row_key(HudTileVocab.first_buildable(ladder, branch),
@@ -265,7 +273,7 @@ func run(harness) -> void:
 	_stage(band, [], 0.0, 0.0)
 	h._show_tile(_tile(BELIEF_PRESENT))
 	await h._settle()
-	h._assert_hud("before the lessons, the Ancestors row is a plain readout and nothing on the card is a door",
+	h._assert_hud("before the lessons, the Sacred ground row is a plain readout and nothing on the card is a door",
 		_row_present(BELIEF_BRANCH) and not _is_door(BELIEF_BRANCH) and _door_count() == 0)
 	h._assert_hud("…and the store has no row at all",
 		not _row_present(STORES_BRANCH))
@@ -277,7 +285,7 @@ func run(harness) -> void:
 	await h._settle()
 	h._assert_hud("with both lessons known the card carries one door per tile branch", _door_count() == 2)
 	h._assert_hud("…the dead's row is the belief branch's door",
-		_row_key(BELIEF_BRANCH) == DetailFormat.ANCESTORS_ROW and _is_door(BELIEF_BRANCH))
+		_row_key(BELIEF_BRANCH) == DetailFormat.SACRED_GROUND_ROW and _is_door(BELIEF_BRANCH))
 	h._assert_hud("…the store row is keyed by the catalog's branch name and reads the standing rung",
 		_row_key(STORES_BRANCH) == "Food stores" and _is_door(STORES_BRANCH)
 			and String(h._hud.tile_detail.text).contains("No store"))
@@ -289,7 +297,7 @@ func run(harness) -> void:
 	_stage(band, [], 1.0, 0.0)
 	h._show_tile(_tile(BELIEF_PRESENT))
 	await h._settle()
-	h._assert_hud("with only Ritual known, only the Ancestors row is a door and the store has no row",
+	h._assert_hud("with only Ritual known, only the Sacred ground row is a door and the store has no row",
 		_door_count() == 1 and _is_door(BELIEF_BRANCH) and not _row_present(STORES_BRANCH))
 	# …and an improvement already standing shows its row with no lesson at all (the held-here arm).
 	_stage(band, [_improvement_row(STORES_BRANCH, "food_stores:storage_pit")], 1.0, 0.0)
@@ -298,17 +306,21 @@ func run(harness) -> void:
 	h._assert_hud("a tile already holding a pit shows the store row (a door) without the lesson, valued at the pit",
 		_is_door(STORES_BRANCH) and String(h._hud.tile_detail.text).contains("Storage pit"))
 
-	# The site term fails. A tile with no dead has no Ancestors row at all; one with too few keeps the
+	# The site term fails. A tile with no dead has no Sacred ground row at all; one with too few keeps the
 	# row as a plain readout whose hover carries the reason the greyed amber line used to.
 	_stage(band, [], 1.0, 1.0)
+	var unanchored := _band(CREW_NONE, CREW_NONE)
+	unanchored["has_belief_anchor"] = false
+	_stage(unanchored, [], 1.0, 1.0)
 	h._show_tile(_tile(BELIEF_NONE))
 	await h._settle()
-	h._assert_hud("a tile with no dead has no Ancestors row at all", not _row_present(BELIEF_BRANCH))
+	h._assert_hud("a tile that is no band's sacred ground has no Sacred ground row at all", not _row_present(BELIEF_BRANCH))
 	h._assert_hud("…while the store row on the same tile is untouched by the belief term",
 		_is_door(STORES_BRANCH))
+	_stage(band, [], 1.0, 1.0)
 	h._show_tile(_tile(BELIEF_FEW))
 	await h._settle()
-	h._assert_hud("a tile with too few dead keeps the Ancestors row as a plain readout, not a door",
+	h._assert_hud("a tile with too few dead keeps the Sacred ground row as a plain readout, not a door",
 		_row_present(BELIEF_BRANCH) and not _is_door(BELIEF_BRANCH))
 	h._assert_hud("…and its hover says why in plain words (%s)" % _reason_text(BELIEF_BRANCH),
 		_reason_text(BELIEF_BRANCH).contains(HudTileVocab.SITE_FEW_BELIEF_SHORT)
@@ -326,7 +338,7 @@ func run(harness) -> void:
 	var refused_ctx := DetailFormat.Context.new()
 	var refused_lines: Array[String] = []
 	refused["crew"] = CREW_TWO
-	h._hud._drawer._append_tile_row(refused_lines, refused_ctx, "%s: 1 dead" % DetailFormat.ANCESTORS_ROW, refused)
+	h._hud._drawer._append_tile_row(refused_lines, refused_ctx, DetailFormat.sacred_ground_line(h._hud._selection.tile_info(), [_band(CREW_NONE, CREW_NONE)]), refused)
 	var refused_markup := DetailFormat.detail_bbcode(refused_lines, refused_ctx)
 	h._assert_hud("a refused (readout) branch with a crew states it: full-ink figure and the count, outside any url (%s)"
 			% refused_markup.substr(0, 40),
@@ -338,7 +350,7 @@ func run(harness) -> void:
 	refused["crew"] = CREW_NONE
 	var bare_lines: Array[String] = []
 	var bare_ctx := DetailFormat.Context.new()
-	h._hud._drawer._append_tile_row(bare_lines, bare_ctx, "%s: 1 dead" % DetailFormat.ANCESTORS_ROW, refused)
+	h._hud._drawer._append_tile_row(bare_lines, bare_ctx, DetailFormat.sacred_ground_line(h._hud._selection.tile_info(), [_band(CREW_NONE, CREW_NONE)]), refused)
 	h._assert_hud("…and a refused readout with no crew carries no mark",
 		DetailFormat.detail_bbcode(bare_lines, bare_ctx).count(HudSprites.SPRITE_PATHS["workers"]) == 0)
 
@@ -349,7 +361,7 @@ func run(harness) -> void:
 	var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
 	_press_door(BELIEF_BRANCH)
 	await h._settle()
-	h._assert_hud("the Ancestors door opens the crew sheet on its branch",
+	h._assert_hud("the Sacred ground door opens the crew sheet on its branch",
 		h._hud.is_compose_sheet_open() and h._hud._compose.kind() == ComposeState.KIND_TILE
 			and h._hud._compose.subject() == "%d,%d:%s" % [TILE_X, TILE_Y, BELIEF_BRANCH])
 	await h._save("tile_branches_crew_sheet")
@@ -500,7 +512,7 @@ func _foot_stack_exists() -> bool:
 			return true
 	return not _collect_meta(h._hud, HudRouteVocab.ROAD_LADDER_ACTION_META, []).is_empty()
 
-## The wash, hover and selected claims, on the Ancestors and store doors (the rows of this chapter's card).
+## The wash, hover and selected claims, on the Sacred ground and store doors (the rows of this chapter's card).
 func _door_state_claims() -> void:
 	_stage(_band(CREW_NONE, CREW_NONE), [], 1.0, 1.0)
 	h._show_tile(_tile(BELIEF_PRESENT))
@@ -570,7 +582,7 @@ func _door_state_claims() -> void:
 	_stage(_band(CREW_TWO, CREW_NONE), [], 1.0, 1.0)
 	h._show_tile(_tile(BELIEF_PRESENT))
 	await h._settle()
-	h._assert_hud("a crew on the belief branch shows its count after the full-ink figure on the Ancestors row (%s | %s)"
+	h._assert_hud("a crew on the belief branch shows its count after the full-ink figure on the Sacred ground row (%s | %s)"
 			% [DoorQ.mark_tint(h._hud, ancestors), DoorQ.mark_text(h._hud, ancestors)],
 		DoorQ.mark_text(h._hud, ancestors) == str(CREW_TWO)
 			and DoorQ.mark_tint(h._hud, ancestors) == HudStyle.INK_HEX + "ff")

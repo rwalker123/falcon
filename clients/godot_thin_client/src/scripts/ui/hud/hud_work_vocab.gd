@@ -119,7 +119,83 @@ const ALLOC_HEADER_FOOD_OUTLOOK := "Food outlook"
 
 const ALLOC_NO_SOURCES_HINT := "No sources worked yet — select a tile or herd to assign foragers/hunters."
 
-const SCOUT_ROLE_HINT := "Posts scouts that see around obstacles — more scouts range farther."
+## **THE SCOUT CARD IS A RANGE, NOT A HEADCOUNT** (#875): the player states how many tiles past the
+## band's local range it should see, and the sim staffs as many scouts as that takes. **THE CARD CARRIES
+## ONE LINE** - the scout count, amber with the shortfall beside it (`scouting_line`) - and everything
+## else rides the tooltip on the stepper's `+N tiles` value (`scouting_tooltip`), one fact per line.
+const SCOUT_STATUS_NONE := "No scouts — the band sees its local range and no farther."
+const SCOUT_LINE_ONE_FORMAT := "%d scout"
+const SCOUT_LINE_MANY_FORMAT := "%d scouts"
+const SCOUT_LINE_SHORT_ONE_FORMAT := " · %d tile short"
+const SCOUT_LINE_SHORT_MANY_FORMAT := " · %d tiles short"
+const SCOUT_TIP_WATCHES_FORMAT := "Watches %d tiles from camp"
+const SCOUT_TIP_ONE_FORMAT := "%d scout this turn"
+const SCOUT_TIP_MANY_FORMAT := "%d scouts this turn"
+const SCOUT_TIP_GEARED_FORMAT := " · %d with wayfinding gear"
+const SCOUT_STATUS_SHORT_FORMAT := "Reaches +%d of +%d tiles — not enough people to go farther."
+const SCOUT_RANGE_VALUE_FORMAT := "+%d tiles"
+const SCOUT_RANGE_LESS_ARIA := "Scout less far"
+const SCOUT_RANGE_FARTHER_ARIA := "Scout farther"
+const SCOUT_RANGE_VALUE_WIDTH := 64.0
+## Marks the stepper's value label, which carries the card's tooltip (the harness finds it by this).
+const SCOUT_RANGE_VALUE_META := "scout_range_value"
+const SCOUT_KEPT_OFF_ONE_FORMAT := "Keeping %d pack off watched ground"
+const SCOUT_KEPT_OFF_MANY_FORMAT := "Keeping %d packs off watched ground"
+
+static func predators_kept_off_line(kept_off: int) -> String:
+    if kept_off <= 0:
+        return ""
+    return (SCOUT_KEPT_OFF_ONE_FORMAT if kept_off == SCOUT_SINGULAR \
+        else SCOUT_KEPT_OFF_MANY_FORMAT) % kept_off
+
+## The card's title - `ROLE_NAME_SCOUT` stays the job's name wherever a job is named.
+const SCOUT_CARD_TITLE := "Scouting range"
+## One scout, the singular of the count lines.
+const SCOUT_SINGULAR := 1
+
+## **THE SCOUT CARD'S ONE LINE** - `{text, short}` from `HudBandLaborState.scouting_state`'s
+## `{range, reach, workers, kitted}`. `text` is `""` at range +0 (the card draws no line). `short` is
+## true when the sim reached less than was asked (not enough people), which the card paints amber
+## beside the number it explains.
+static func scouting_line(state: Dictionary) -> Dictionary:
+    var wanted := int(state.get("range", 0))
+    if wanted <= 0:
+        return {"text": "", "short": false}
+    var reach := int(state.get("reach", 0))
+    var scouts := int(state.get("workers", 0))
+    var text := (SCOUT_LINE_ONE_FORMAT if scouts == SCOUT_SINGULAR else SCOUT_LINE_MANY_FORMAT) % scouts
+    if reach < wanted:
+        var gap := wanted - reach
+        text += (SCOUT_LINE_SHORT_ONE_FORMAT if gap == SCOUT_SINGULAR \
+            else SCOUT_LINE_SHORT_MANY_FORMAT) % gap
+        return {"text": text, "short": true}
+    return {"text": text, "short": false}
+
+## **THE TOOLTIP ON THE `+N tiles` VALUE** - one fact per line. `watched` is the band's published
+## `watched_radius` and `settled_reach` the row's own `scouting_reach`, so the local range is their
+## difference (the snapshot carries no separate local-range field); with no scouts out `watched` is 0
+## and the "Watches" line is omitted. `kit_line` is the picked kit's sight line, `kept_off` the packs
+## the watched ring keeps off.
+static func scouting_tooltip(state: Dictionary, watched: int, kept_off: int) -> String:
+    var wanted := int(state.get("range", 0))
+    if wanted <= 0:
+        return SCOUT_STATUS_NONE
+    var lines: Array[String] = []
+    if watched > 0:
+        lines.append(SCOUT_TIP_WATCHES_FORMAT % watched)
+    var scouts := int(state.get("workers", 0))
+    var count := (SCOUT_TIP_ONE_FORMAT if scouts == SCOUT_SINGULAR else SCOUT_TIP_MANY_FORMAT) % scouts
+    var kitted := int(state.get("kitted", 0))
+    if kitted > 0:
+        count += SCOUT_TIP_GEARED_FORMAT % kitted
+    lines.append(count)
+    var kept := predators_kept_off_line(kept_off)
+    if kept != "":
+        lines.append(kept)
+    var reach := int(state.get("reach", 0))
+    if reach < wanted:
+        lines.append(SCOUT_STATUS_SHORT_FORMAT % [reach, wanted])
+    return "\n".join(lines)
 
 const WARRIOR_ROLE_HINT := "Guards the band — matters once threats arrive."
 

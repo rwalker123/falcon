@@ -102,6 +102,17 @@ const LEADER_KIND_CHIEF := 1
 const LEADER_KIND_ELDER_COUNCIL := 2
 const BAND_LEADER_CHIEF_FORMAT := "Chief %s"
 const BAND_LEADER_COUNCIL_FORMAT := "Elders' council — %s speaks"
+## A leader's reach (#870), the line under the leader phrase: within reach it says everyone is run
+## well, over reach how many of the band's people are. Hover: what a leader runs well and what past
+## that costs; the `— N% now` clause is appended only when over reach.
+const BAND_REACH_WITHIN_FORMAT := "Runs all %d people well"
+const BAND_REACH_OVER_FORMAT := "Runs %d of %d people well"
+const BAND_REACH_TIP_CHIEF_SUBJECT := "A chief"
+const BAND_REACH_TIP_COUNCIL_SUBJECT := "The council"
+const BAND_REACH_TIP_FORMAT := "%s runs about %d people well. Past that, orders still go out, but less of each one is carried out"
+const BAND_REACH_TIP_NOW_FORMAT := " — %d%% now"
+const BAND_REACH_TIP_END := "."
+const REACH_PERCENT_SCALE := 100.0
 ## **THE CHIEF-PROGRESS BAR** (#859) under the header's sub line, while a band has no leader. Four
 ## sources in this order, each a distinct hue; the remainder to the threshold is the empty cell.
 const CHIEF_LABEL_FORMAT := "%d / %d"
@@ -230,6 +241,25 @@ static func band_leader_phrase(entry: Dictionary) -> String:
         LEADER_KIND_ELDER_COUNCIL:
             return BAND_LEADER_COUNCIL_FORMAT % leader_name
     return ""
+
+## **A LEADER'S REACH** (#870): `{line, tooltip, over}` under the leader phrase, or `{}` when the band has
+## no leader (`leader_reach` 0). `over` is true when the band's people exceed the reach; `line` carries
+## no colour (the caller tints it: amber when `over`, dim otherwise). Numbers are whole people.
+static func band_leader_reach(entry: Dictionary) -> Dictionary:
+    var reach := float(entry.get("leader_reach", 0.0))
+    if reach <= 0.0:
+        return {}
+    var load_people := float(entry.get("leader_load", 0.0))
+    var over := load_people > reach
+    var line := BAND_REACH_OVER_FORMAT % [int(roundf(reach)), int(roundf(load_people))] if over \
+        else BAND_REACH_WITHIN_FORMAT % int(roundf(load_people))
+    var subject := BAND_REACH_TIP_COUNCIL_SUBJECT \
+        if int(entry.get("leader_kind", LEADER_KIND_NONE)) == LEADER_KIND_ELDER_COUNCIL \
+        else BAND_REACH_TIP_CHIEF_SUBJECT
+    var tooltip := BAND_REACH_TIP_FORMAT % [subject, int(roundf(reach))]
+    if over:
+        tooltip += BAND_REACH_TIP_NOW_FORMAT % int(roundf(float(entry.get("leader_orders_carried_out", 1.0)) * REACH_PERCENT_SCALE))
+    return {"line": line, "tooltip": tooltip + BAND_REACH_TIP_END, "over": over}
 
 ## The segment hues, in `CHIEF_SOURCE_KEYS` order. Read at call time because `HudStyle`'s palette is
 ## installed at runtime.
@@ -605,37 +635,55 @@ static func meter_bar(score: float, cells: int) -> String:
 # PROGRESS TOWARD A TRIBE (#861) -- the Band tab's one-line Tribe readout, under the leader block.
 # ---------------------------------------------------------------------------------------------------
 
-## The wire's `tribe_standing` when no partner lives with the band: 1 no ancestors' place yet, 2 not in
-## a pooling network, 3 alone (0 with no partner cannot happen and reads as alone).
-const TRIBE_STANDING_NO_PLACE := 1
-const TRIBE_STANDING_NO_NETWORK := 2
 ## `Tribe <bar> with Snowreach · 4 turns`: the word, the split bar, the partner and one short phrase.
 const TRIBE_ROW_LABEL := "Tribe"
-const TRIBE_NO_PARTNER_LINE := "Tribe: no band lives with you"
+## The no-partner reasons, read off the player's own bands (the cohort fields, not a wire verdict), in the
+## order they are tested: this band has no sacred ground; another band is in its supply network but
+## holds a different place; no other band shares its supply network; there is no other band at all.
+const TRIBE_NO_PLACE_LINE := "Tribe: no sacred ground yet"
+const TRIBE_NO_PLACE_TOOLTIP := "Sacred ground forms where a band buries its people."
+const TRIBE_DIFFERENT_PLACE_LINE := "Tribe: different sacred ground"
+## The hover on the different-place line: this band's own fact, no partner and no coordinates.
+const TRIBE_DIFFERENT_PLACE_TOOLTIP_FORMAT := "%s honours different sacred ground from your other bands — see Beliefs."
+## A same-network band that has no sacred ground of its own blocks the tribe too; named when no band
+## with a DIFFERENT ground does (that reason wins).
+const TRIBE_PARTNER_NO_PLACE_LINE_FORMAT := "Tribe: %s has no sacred ground yet"
+## Several such bands: the count on the line (the docked strip clips a longer one), the names on the hover.
+const TRIBE_PARTNERS_NO_PLACE_LINE_FORMAT := "Tribe: %d bands have no sacred ground yet"
+const TRIBE_PARTNERS_NO_PLACE_NAMES_FORMAT := "Without sacred ground: %s"
+const TRIBE_NO_NETWORK_LINE := "Tribe: no shared supply network"
+const TRIBE_NO_NETWORK_TOOLTIP := "Bands in one supply network pool goods; link this band to the others."
+const TRIBE_ALONE_LINE := "Tribe: no other band of your people"
+## The supply network id that means "in none".
+const SUPPLY_NETWORK_NONE := 0
 ## A score within this of the threshold counts as reaching it (float noise from summing seven terms).
 const TRIBE_SCORE_EPSILON := 0.001
 const TRIBE_SUFFIX_FORMING := "forming"
+const TRIBE_SUFFIX_NEEDS_CHIEF := "needs a chief"
 const TRIBE_SUFFIX_TURNS_FORMAT := "%d turns"
 const TRIBE_SUFFIX_ONE_TURN := "1 turn"
 const TRIBE_SUFFIX_MONUMENT := "needs a monument"
 const TRIBE_SUFFIX_BELIEF := "needs more belief"
 const TRIBE_SUFFIX_TIE := "needs a stronger tie"
-const TRIBE_TOOLTIP_RULE := "Two of your bands become a tribe by living together: the same ancestors and one pooling network."
+const TRIBE_TOOLTIP_RULE := "Bands become a tribe when they pool goods in one supply network and share one sacred ground."
 const TRIBE_TOOLTIP_FORMING := "Forms next turn"
-const TRIBE_TOOLTIP_TURNS_FORMAT := "Live together %d more turns"
-const TRIBE_TOOLTIP_ONE_TURN := "Live together 1 more turn"
-const TRIBE_TOOLTIP_MONUMENT := "Raise a monument at the ancestors"
-const TRIBE_TOOLTIP_BELIEF := "More belief at the ancestors"
+const TRIBE_TOOLTIP_NEEDS_CHIEF := "Neither band has a chief: nothing builds until one of them has one."
+const TRIBE_TOOLTIP_TURNS_FORMAT := "Keep sharing the network and the sacred ground %d more turns"
+const TRIBE_TOOLTIP_ONE_TURN := "Keep sharing the network and the sacred ground 1 more turn"
+const TRIBE_TOOLTIP_MONUMENT := "Raise a monument at the sacred ground"
+const TRIBE_TOOLTIP_BELIEF := "A stronger sacred ground"
 const TRIBE_TOOLTIP_TIE_FORMAT := "A stronger tie with %s"
-const TRIBE_TOOLTIP_NO_PLACE := "No place of the ancestors yet"
-const TRIBE_TOOLTIP_NO_NETWORK := "Not in a pooling network"
-const TRIBE_TOOLTIP_ALONE := "No other band of your people lives here"
 const TRIBE_TOOLTIP_WITH_FORMAT := "With: %s"
 ## A formed tribe: `Tribe: Sandreach tribe · 3 bands` (`tribe_name` already ends in "tribe"), its hover the member bands then who leads it.
 const TRIBE_FORMED_FORMAT := "Tribe: %s · %d bands"
 const TRIBE_LED_PARAMOUNT_FORMAT := "Led by paramount chief %s"
 const TRIBE_LED_COUNCIL_FORMAT := "Led by a council of chiefs — %s speaks"
 ## The wire's `tribe_leader_kind`: 0 none, 1 paramount chief, 2 council of chiefs.
+## The tribe leader's reach (#870): a tooltip line, and a short amber suffix on the visible line.
+const TRIBE_REACH_WITHIN_FORMAT := "%s runs all %d bands well"
+const TRIBE_REACH_OVER_FORMAT := "%s runs %d of %d bands well — orders past that are carried out worse"
+const TRIBE_STRETCHED_SUFFIX := " · stretched"
+const TRIBE_CHIEFLESS_ORDERS_FORMAT := "%s has no chief of its own: %d%% of each order is carried out here."
 const TRIBE_LEADER_PARAMOUNT := 1
 const TRIBE_LEADER_COUNCIL := 2
 const TRIBE_NAME_SEPARATOR := ", "
@@ -658,7 +706,7 @@ static func tribe_pair_score(pair: Dictionary) -> float:
         total += float(contribution.get(key, 0.0))
     return total
 
-## Turns of living together that fill `needed` points of history, rounded up; 0 when it cannot be said.
+## Turns of sharing the network and the sacred ground that fill `needed` points of history, rounded up; 0 when it cannot be said.
 static func _tribe_turns_for(entry: Dictionary, needed: float) -> int:
     var weights: Dictionary = entry.get("tribe_weights", {})
     var build_turns := float(entry.get("tribe_history_build_turns", 0.0))
@@ -686,10 +734,17 @@ static func _tribe_biggest_missing(entry: Dictionary, pair: Dictionary) -> Array
             best = candidate
     return best
 
+## Whether shared history can build for a pair: this band has a leader, or the partner does. A pair
+## with neither stands still, so no turn count is true of it.
+static func tribe_pair_can_build(entry: Dictionary, pair: Dictionary) -> bool:
+    return String(entry.get("leader_name", "")).strip_edges() != "" or bool(pair.get("partner_has_leader", false))
+
 ## **THE ONE SHORT PHRASE** after the partner: forming / `N turns` when history alone can
 ## close the gap at its per-turn rate (weight / build turns) / the biggest missing of monument, belief,
 ## tie. `""` when there is nothing to name.
 static func tribe_suffix(entry: Dictionary, pair: Dictionary) -> String:
+    if not tribe_pair_can_build(entry, pair):
+        return TRIBE_SUFFIX_NEEDS_CHIEF
     var gap := float(entry.get("tribe_threshold", 0.0)) - tribe_pair_score(pair)
     if gap <= TRIBE_SCORE_EPSILON:
         return TRIBE_SUFFIX_FORMING
@@ -705,6 +760,9 @@ static func tribe_suffix(entry: Dictionary, pair: Dictionary) -> String:
 ## origin and culture are not listed: the player cannot change them.
 static func tribe_missing_lines(entry: Dictionary, pair: Dictionary) -> Array[String]:
     var lines: Array[String] = []
+    if not tribe_pair_can_build(entry, pair):
+        lines.append(TRIBE_TOOLTIP_NEEDS_CHIEF)
+        return lines
     var gap := float(entry.get("tribe_threshold", 0.0)) - tribe_pair_score(pair)
     if gap <= TRIBE_SCORE_EPSILON:
         lines.append(TRIBE_TOOLTIP_FORMING)
@@ -749,9 +807,9 @@ static func tribe_bar_bbcode(entry: Dictionary, pair: Dictionary) -> String:
 ##     the member names then who leads it;
 ##   * else a band with a leader (`tribe_threshold` above 0): `Tribe <split bar> · <phrase>` for the
 ##     best-scoring partner, hovering to the rule, what is still missing and `With: <every partner>`,
-##     or the dim `Tribe: no band lives with you` and the reason;
+##     or a dim reason line (`tribe_no_partner_view`) and its hover;
 ##   * else `{}`.
-static func band_tribe_progress(entry: Dictionary) -> Dictionary:
+static func band_tribe_progress(entry: Dictionary, other_bands: Array = []) -> Dictionary:
     var tribe_name := String(entry.get("tribe_name", ""))
     if tribe_name != "":
         return _tribe_formed(entry, tribe_name)
@@ -759,7 +817,11 @@ static func band_tribe_progress(entry: Dictionary) -> Dictionary:
     if threshold <= 0.0:
         return {}
     var pairs: Array = (entry.get("tribe_pairs", []) as Array).duplicate()
+    # Pairs that can build come first (best score, then name); when none can, the best score alone.
     pairs.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+        var can_a := tribe_pair_can_build(entry, a)
+        if can_a != tribe_pair_can_build(entry, b):
+            return can_a
         var score_a := tribe_pair_score(a)
         var score_b := tribe_pair_score(b)
         if absf(score_a - score_b) < TRIBE_SCORE_EPSILON:
@@ -767,15 +829,7 @@ static func band_tribe_progress(entry: Dictionary) -> Dictionary:
         return score_a > score_b)
     var tooltip: Array[String] = [TRIBE_TOOLTIP_RULE]
     if pairs.is_empty():
-        match int(entry.get("tribe_standing", 0)):
-            TRIBE_STANDING_NO_PLACE:
-                tooltip.append(TRIBE_TOOLTIP_NO_PLACE)
-            TRIBE_STANDING_NO_NETWORK:
-                tooltip.append(TRIBE_TOOLTIP_NO_NETWORK)
-            _:
-                tooltip.append(TRIBE_TOOLTIP_ALONE)
-        return {"line": "[color=#%s]%s[/color]" % [HudStyle.INK_FAINT.to_html(false), TRIBE_NO_PARTNER_LINE],
-            "tooltip": "\n".join(tooltip), "has_partner": false}
+        return tribe_no_partner_view(entry, other_bands)
     var best: Dictionary = pairs[0]
     tooltip.append_array(tribe_missing_lines(entry, best))
     var names: Array[String] = []
@@ -789,6 +843,48 @@ static func band_tribe_progress(entry: Dictionary) -> Dictionary:
     if suffix != "":
         line += " [color=#%s]· %s[/color]" % [HudStyle.INK.to_html(false), suffix]
     return {"line": line, "tooltip": "\n".join(tooltip), "has_partner": true}
+
+## The dim line and hover of a band with no partner, naming the real reason from the player's own
+## bands (`other_bands`: the other own, non-expedition bands). Tested in order: this band has no
+## sacred ground; another band shares its supply network (non-zero) but not its place; no other band
+## shares its network; no other band.
+static func tribe_no_partner_view(entry: Dictionary, other_bands: Array) -> Dictionary:
+    var tooltip: Array[String] = [TRIBE_TOOLTIP_RULE]
+    var line := TRIBE_ALONE_LINE
+    var here := band_name(entry)
+    if not bool(entry.get("has_belief_anchor", false)):
+        line = TRIBE_NO_PLACE_LINE
+        tooltip.append(TRIBE_NO_PLACE_TOOLTIP)
+    elif not other_bands.is_empty():
+        var network := int(entry.get("supply_network_id", SUPPLY_NETWORK_NONE))
+        var differs := false
+        var groundless: Array[String] = []
+        for other in other_bands:
+            if network == SUPPLY_NETWORK_NONE or int(other.get("supply_network_id", SUPPLY_NETWORK_NONE)) != network:
+                continue
+            if not bool(other.get("has_belief_anchor", false)):
+                groundless.append(band_name(other))
+                continue
+            if int(other.get("belief_anchor_x", 0)) == int(entry.get("belief_anchor_x", 0)) \
+                    and int(other.get("belief_anchor_y", 0)) == int(entry.get("belief_anchor_y", 0)):
+                continue
+            differs = true
+            break
+        if differs:
+            line = TRIBE_DIFFERENT_PLACE_LINE
+            tooltip.append(TRIBE_DIFFERENT_PLACE_TOOLTIP_FORMAT % here)
+        elif not groundless.is_empty():
+            tooltip.append(TRIBE_NO_PLACE_TOOLTIP)
+            if groundless.size() == 1:
+                line = TRIBE_PARTNER_NO_PLACE_LINE_FORMAT % groundless[0]
+            else:
+                line = TRIBE_PARTNERS_NO_PLACE_LINE_FORMAT % groundless.size()
+                tooltip.append(TRIBE_PARTNERS_NO_PLACE_NAMES_FORMAT % TRIBE_NAME_SEPARATOR.join(groundless))
+        else:
+            line = TRIBE_NO_NETWORK_LINE
+            tooltip.append(TRIBE_NO_NETWORK_TOOLTIP)
+    return {"line": "[color=#%s]%s[/color]" % [HudStyle.INK_FAINT.to_html(false), line],
+        "tooltip": "\n".join(tooltip), "has_partner": false}
 
 ## The line and hover of a band in a formed tribe.
 static func _tribe_formed(entry: Dictionary, tribe_name: String) -> Dictionary:
@@ -804,6 +900,17 @@ static func _tribe_formed(entry: Dictionary, tribe_name: String) -> Dictionary:
             tooltip.append(TRIBE_LED_PARAMOUNT_FORMAT % leader)
         TRIBE_LEADER_COUNCIL:
             tooltip.append(TRIBE_LED_COUNCIL_FORMAT % leader)
-    return {"line": "[color=#%s]%s[/color]" % [HudStyle.INK.to_html(false),
-        TRIBE_FORMED_FORMAT % [tribe_name, members.size()]],
-        "tooltip": "\n".join(tooltip), "has_partner": true}
+    var line := "[color=#%s]%s[/color]" % [HudStyle.INK.to_html(false),
+        TRIBE_FORMED_FORMAT % [tribe_name, members.size()]]
+    var reach := int(roundf(float(entry.get("tribe_leader_reach", 0.0))))
+    if reach > 0:
+        var load_bands := int(roundf(float(entry.get("tribe_leader_load", 0.0))))
+        if load_bands > reach:
+            tooltip.append(TRIBE_REACH_OVER_FORMAT % [leader, reach, load_bands])
+            line += "[color=#%s]%s[/color]" % [HudStyle.WARN.to_html(false), TRIBE_STRETCHED_SUFFIX]
+        else:
+            tooltip.append(TRIBE_REACH_WITHIN_FORMAT % [leader, load_bands])
+    var carried := float(entry.get("orders_carried_out", 0.0))
+    if float(entry.get("leader_reach", 0.0)) <= 0.0 and carried > 0.0:
+        tooltip.append(TRIBE_CHIEFLESS_ORDERS_FORMAT % [band_name(entry), int(roundf(carried * REACH_PERCENT_SCALE))])
+    return {"line": line, "tooltip": "\n".join(tooltip), "has_partner": true}

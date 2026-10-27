@@ -333,6 +333,8 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
+                last_cohesion: Default::default(),
             },
             StartingUnit {
                 kind: "BandKeeper".to_string(),
@@ -352,6 +354,8 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        scouting_range: 0,
+                        scouting_reach: 0,
                         max_workers: Some(KEEPER_WORKERS + KEEPER_WORKERS),
                         staffing: Default::default(),
                         target: LaborTarget::Hunt {

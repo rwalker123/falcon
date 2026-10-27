@@ -572,6 +572,8 @@ fn spawn_camp(world: &mut World, at: UVec2, faction: FactionId) {
             ),
             belief_anchor: None,
             last_belief_relay_hops: 0,
+            predators_kept_off: 0,
+            last_cohesion: Default::default(),
         },
         ResidentBand,
     ));

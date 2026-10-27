@@ -2051,9 +2051,8 @@ the preceding block (`_ancestors_states`) so no earlier frame moves.
   (`DetailFormat.MORALE_CAUSE_CULTURE`) and a belief anchor at (12, 7): the Morale headline reads
   `— far from the ancestors` with no coordinates, and the popover itemizes
   `▼ −0.9%  far from the ancestors (12, 7)` and never the word `culture`, which the positive-unrest
-  row owns — frame **`band_morale_ancestors_far`**. Its hex carries `belief` 12.4, and the tile-card
-  producer (`_tile_terrain_lines`) is asserted to state `Ancestors: 12 dead`; `<1 dead` under one
-  person and no row at zero are asserted on `DetailFormat.ancestors_line` directly.
+  row owns — frame **`band_morale_ancestors_far`**. The tile card's sacred-ground row is
+  asserted in `chapters/land_readouts.gd`.
 - **KIN** — the same two bands tied in through kin (entities 912 / 913): `belief_relay_hops` 1 reads
   `+0.6%  near the ancestors, through kin (1 hop)` — frame **`band_morale_ancestors_kin_near`** — and
   3 on the far band reads `−0.9%  far from the ancestors (12, 7), through kin` with no hop count —
@@ -2063,11 +2062,26 @@ the preceding block (`_ancestors_states`) so no earlier frame moves.
 The row needles are LITERALS, matched within one popover line, so a row that drew the other sign's
 label or glyph fails.
 
-## `chapters/land_readouts.gd` — the tile card's Ancestors row (#699)
+## `chapters/band_expedition.gd` — the cohesion morale term (#700)
 
-`EXPECTED_CHECKPOINTS` **121**, RE-MEASURED: one frame and one claim, appended after the road-kit
-roster claim and before the roster restore. The food tile with `belief` 23.6 —
-frame **`tile_ancestors`**, the card reading `Ancestors: 24 dead` among its land rows.
+`EXPECTED_CHECKPOINTS` **172**, RE-MEASURED: one frame and four claims, appended after
+`_belief_culture_states` (`_cohesion_states`) so no earlier frame moves.
+
+- **COHESION** — the low-morale band (entity 920) with `morale_cohesion` −0.012, `morale_cause` 5
+  (`DetailFormat.MORALE_CAUSE_COHESION`), `cohesion_headcount` 182 and `cohesion_ceiling` 150: the
+  headline reads `— too many to hold together`, and the popover itemizes
+  `▼ −1.2%  too many to hold together (182 in the band, holds 150)` — frame
+  **`band_morale_cohesion`**. The two-lines-max copy rule is asserted by DIFFERENCE: the same band with the
+  term zeroed is re-opened and the popover's extra wrapped lines must differ by at most one.
+- **ABSENT** — a band at zero cohesion term draws no `too many to hold together` row.
+
+## `chapters/land_readouts.gd` — the tile card's Sacred ground row (#870)
+
+`EXPECTED_CHECKPOINTS` **122**, RE-MEASURED: one frame and two claims, appended after the road-kit
+roster claim and before the roster restore. The food tile, staged as a player band's sacred ground at
+anchor weight 0.6 — frame **`tile_sacred_ground`**, the card reading `Sacred ground: ▰▰▰▱▱ hallowed`
+(a literal) — then the same tile with the band's anchor moved one hex over, asserting no
+`Sacred ground` row.
 
 ## The ⚠'s one producer, and the biomass quantiser (this arc)
 
@@ -3930,7 +3944,7 @@ repeated key such as two `Road` rows), `press` emits the label's own `meta_click
 the doors wearing a given `[cell bg=` wash, and `all_metas` counts the doors on the card. **A claim made
 through it is about what is drawn and what a click does, never about the producer's own registry.**
 
-- `chapters/tile_branches.gd`: the Ancestors / `Food stores` doors (no door before the lesson, a readout
+- `chapters/tile_branches.gd`: the Sacred ground / `Food stores` doors (no door before the lesson, a readout
   with the refusal on its hover, the exact crew line emitted after opening the sheet through the row),
   the hover wash, the ended -> started churn guard (zero markup writes), the selected wash and its removal
   on close, and the absence of the retired foot containers.

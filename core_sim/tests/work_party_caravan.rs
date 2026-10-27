@@ -161,12 +161,16 @@ fn spawn_band_camped_at(
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
+                last_cohesion: Default::default(),
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    scouting_range: 0,
+                    scouting_reach: 0,
                     max_workers: Some(CREW),
                     staffing: Default::default(),
                     target,
@@ -2589,7 +2593,7 @@ const FAR: u32 = 5;
 const TURNS_TO_WAIT: usize = 40;
 
 /// **Ray's band**: a pool of [`RAY_POOL`], a far hunt of [`RAY_ROW`] (first, so the caravan
-/// helpers find it) and a second row of [`RAY_ROW`] — a `Scout` role standing in for the forage row,
+/// helpers find it) and a second row of [`RAY_ROW`] — a `Warrior` role standing in for the forage row,
 /// because a role row has no source that can lapse.
 fn rays_band() -> (App, Entity) {
     let (mut app, band) = world_hunting_at(FAR);
@@ -2608,9 +2612,11 @@ fn rays_band() -> (App, Entity) {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(RAY_ROW),
             staffing: Default::default(),
-            target: LaborTarget::Scout,
+            target: LaborTarget::Warrior,
             workers: RAY_ROW,
             kit: None,
             priority: SourcePriority::default(),
@@ -2733,7 +2739,7 @@ fn a_herd_back_inside_the_apron_does_not_count_its_walkers_twice() {
     );
     assert!(
         workforce.benchable().min(1) == 1 && workforce.benchable() == RAY_POOL - RAY_ROW,
-        "the sim-staffed hunt is benchable, the player-set Scout is not: idle {}, benchable {}",
+        "the sim-staffed hunt is benchable, the player-set Warrior is not: idle {}, benchable {}",
         read.band_idle,
         workforce.benchable()
     );
@@ -3252,6 +3258,8 @@ fn a_far_party_the_staffing_shrinks_walks_its_cut_hands_home_and_commits_no_hand
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(NEAR_ROW_MAX),
             staffing: Default::default(),
             target: LaborTarget::Extract {
@@ -3386,6 +3394,8 @@ fn starved_stone_world(pool: u32, sleds: u32) -> App {
                 planned_crew: 0,
                 max_workers: Some(ONE_HEAD),
                 staffing: Default::default(),
+                scouting_range: 0,
+                scouting_reach: 0,
                 target: extract_target(distance),
                 workers: 0,
                 kit: Some(extract_kit(WOODCUTTING_KIT)),
@@ -3398,6 +3408,8 @@ fn starved_stone_world(pool: u32, sleds: u32) -> App {
             planned_crew: 0,
             max_workers: Some(ONE_HEAD),
             staffing: Default::default(),
+            scouting_range: 0,
+            scouting_reach: 0,
             target: LaborTarget::Extract {
                 tile: UVec2::new(CAMP.x + STARVED_STONE_AT, CAMP.y),
                 material: STONE.to_string(),
@@ -3529,6 +3541,8 @@ fn wood_rows_world(pool: u32, rows: &[(u32, SourcePriority, Option<u32>)]) -> Ap
                 planned_crew: 0,
                 max_workers: *max,
                 staffing: Default::default(),
+                scouting_range: 0,
+                scouting_reach: 0,
                 target: extract_target(*distance),
                 workers: 0,
                 kit: Some(extract_kit(WOODCUTTING_KIT)),

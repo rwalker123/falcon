@@ -6896,6 +6896,7 @@
       "activity": "populations[0].activity",
       "band_id": 141,
       "band_move_tiles_per_turn": 65.150002,
+      "belief_anchor_weight": 30.57,
       "belief_anchor_x": 78,
       "belief_anchor_y": 67,
       "belief_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [114, 109, 120]},
@@ -7116,6 +7117,8 @@
       "carry_material_weight": 39.889999,
       "carry_per_worker": 112.379997,
       "children": 97,
+      "cohesion_ceiling": 4,
+      "cohesion_headcount": 62,
       "comm_range_tiles": 188,
       "craft_offers": [
         {
@@ -8700,6 +8703,8 @@
           "rejoining_all_home_in": 18,
           "rejoining_food": 67.699997,
           "rejoining_workers": 190,
+          "scouting_range": 143,
+          "scouting_reach": 157,
           "species": "populations[0].labor_assignments[0].species",
           "spoiled_rate_home": 62.150002,
           "sustainable_yield": 16.4,
@@ -8834,6 +8839,8 @@
           "rejoining_all_home_in": 73,
           "rejoining_food": 56.619999,
           "rejoining_workers": 89,
+          "scouting_range": 70,
+          "scouting_reach": 148,
           "species": "populations[0].labor_assignments[1].species",
           "spoiled_rate_home": 1.6,
           "sustainable_yield": 35.830002,
@@ -8968,6 +8975,8 @@
           "rejoining_all_home_in": 160,
           "rejoining_food": 26.139999,
           "rejoining_workers": 44,
+          "scouting_range": 97,
+          "scouting_reach": 27,
           "species": "populations[0].labor_assignments[2].species",
           "spoiled_rate_home": 30.200001,
           "sustainable_yield": 68.709999,
@@ -8992,7 +9001,10 @@
       "last_emigrated": 197,
       "last_immigrated": 170,
       "leader_kind": 74,
+      "leader_load": 9.03,
       "leader_name": "populations[0].leader_name",
+      "leader_orders_carried_out": 102.989998,
+      "leader_reach": 111.169998,
       "leadership_from_builds": 37.580002,
       "leadership_from_herd": 93.699997,
       "leadership_from_splits": 46.009998,
@@ -9187,13 +9199,16 @@
       "morale": 0.000022,
       "morale_cause": 86,
       "morale_climate": 0.00015,
+      "morale_cohesion": 0.000011,
       "morale_culture": 0.000061,
       "morale_delta": 0.000129,
+      "morale_fresh_water": 0.000023,
       "morale_settling": 0.000027,
       "morale_terrain": 0.000096,
       "morale_unrest": 0.000088,
       "move_ferry_reach_tiles": 132,
       "name": "populations[0].name",
+      "orders_carried_out": 82.110001,
       "output_multiplier": 0.000001,
       "pending_reveal_count": 3,
       "pool_crew": [
@@ -9234,13 +9249,14 @@
           "rung_id": "populations[0].pooling_links[2].rung_id"
         }
       ],
+      "predators_kept_off": 77,
       "raid_forfeit": 89.769997,
       "raid_radius": 51,
       "roadwork_demand": 58.639999,
       "roadwork_shortfall": 109.0,
       "roadwork_supplied": 76.110001,
-      "scout_reveal_radius": 65,
       "scout_vantage_range": 44.77,
+      "scouting_range_max": 43,
       "settlement_stage_icon": "populations[0].settlement_stage.icon",
       "settlement_stage_id": "populations[0].settlement_stage.id",
       "settlement_stage_label": "populations[0].settlement_stage.label",
@@ -9335,7 +9351,9 @@
       "travel_target_y": 90,
       "tribe_history_build_turns": 17.290001,
       "tribe_leader_kind": 127,
+      "tribe_leader_load": 94.779999,
       "tribe_leader_name": "populations[0].tribe_leader_name",
+      "tribe_leader_reach": 49.810001,
       "tribe_member_names": [
         "populations[0].tribe_member_names[0]",
         "populations[0].tribe_member_names[1]",
@@ -9355,6 +9373,7 @@
           },
           "history": 53.16,
           "partner_band": 188,
+          "partner_has_leader": true,
           "partner_name": "populations[0].tribe_pairs[0].partner_name"
         },
         {
@@ -9369,6 +9388,7 @@
           },
           "history": 54.509998,
           "partner_band": 65,
+          "partner_has_leader": false,
           "partner_name": "populations[0].tribe_pairs[1].partner_name"
         },
         {
@@ -9383,10 +9403,10 @@
           },
           "history": 57.98,
           "partner_band": 6,
+          "partner_has_leader": false,
           "partner_name": "populations[0].tribe_pairs[2].partner_name"
         }
       ],
-      "tribe_standing": 79,
       "tribe_threshold": 15.5,
       "tribe_weights": {
         "acting": 61.549999,
@@ -9401,6 +9421,7 @@
       "turns_of_food": 62.830002,
       "upkeep_fund_mode": "populations[0].upkeep_fund_mode",
       "warrior_attack": 62.459999,
+      "watched_radius": 123,
       "work_range": 137,
       "working_age": 87
     },
@@ -9408,6 +9429,7 @@
       "activity": "populations[1].activity",
       "band_id": 42,
       "band_move_tiles_per_turn": 61.23,
+      "belief_anchor_weight": 26.4,
       "belief_anchor_x": 49,
       "belief_anchor_y": 60,
       "belief_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [29, 50, 115]},
@@ -9628,6 +9650,8 @@
       "carry_material_weight": 81.660004,
       "carry_per_worker": 74.93,
       "children": 148,
+      "cohesion_ceiling": 117,
+      "cohesion_headcount": 87,
       "comm_range_tiles": 93,
       "craft_offers": [
         {
@@ -11212,6 +11236,8 @@
           "rejoining_all_home_in": 31,
           "rejoining_food": 53.32,
           "rejoining_workers": 135,
+          "scouting_range": 32,
+          "scouting_reach": 178,
           "species": "populations[1].labor_assignments[0].species",
           "spoiled_rate_home": 57.459999,
           "sustainable_yield": 23.76,
@@ -11346,6 +11372,8 @@
           "rejoining_all_home_in": 200,
           "rejoining_food": 67.5,
           "rejoining_workers": 68,
+          "scouting_range": 33,
+          "scouting_reach": 179,
           "species": "populations[1].labor_assignments[1].species",
           "spoiled_rate_home": 9.36,
           "sustainable_yield": 31.49,
@@ -11480,6 +11508,8 @@
           "rejoining_all_home_in": 97,
           "rejoining_food": 96.339996,
           "rejoining_workers": 89,
+          "scouting_range": 190,
+          "scouting_reach": 68,
           "species": "populations[1].labor_assignments[2].species",
           "spoiled_rate_home": 49.360001,
           "sustainable_yield": 65.809998,
@@ -11504,7 +11534,10 @@
       "last_emigrated": 24,
       "last_immigrated": 49,
       "leader_kind": 81,
+      "leader_load": 33.41,
       "leader_name": "populations[1].leader_name",
+      "leader_orders_carried_out": 13.69,
+      "leader_reach": 68.720001,
       "leadership_from_builds": 41.080002,
       "leadership_from_herd": 49.389999,
       "leadership_from_splits": 17.82,
@@ -11626,13 +11659,16 @@
       "morale": 0.000167,
       "morale_cause": 171,
       "morale_climate": 0.000195,
+      "morale_cohesion": 0.000148,
       "morale_culture": 0.000164,
       "morale_delta": 0.00018,
+      "morale_fresh_water": 0.000098,
       "morale_settling": 0.00012,
       "morale_terrain": 0.000157,
       "morale_unrest": 0.000139,
       "move_ferry_reach_tiles": 145,
       "name": "populations[1].name",
+      "orders_carried_out": 61.57,
       "output_multiplier": 0.000118,
       "pending_reveal_count": 3,
       "pool_crew": [
@@ -11673,13 +11709,14 @@
           "rung_id": "populations[1].pooling_links[2].rung_id"
         }
       ],
+      "predators_kept_off": 80,
       "raid_forfeit": 69.870003,
       "raid_radius": 80,
       "roadwork_demand": 67.360001,
       "roadwork_shortfall": 58.630001,
       "roadwork_supplied": 43.880001,
-      "scout_reveal_radius": 130,
       "scout_vantage_range": 23.389999,
+      "scouting_range_max": 198,
       "settlement_stage_icon": "populations[1].settlement_stage.icon",
       "settlement_stage_id": "populations[1].settlement_stage.id",
       "settlement_stage_label": "populations[1].settlement_stage.label",
@@ -11774,7 +11811,9 @@
       "travel_target_y": 117,
       "tribe_history_build_turns": 2.63,
       "tribe_leader_kind": 120,
+      "tribe_leader_load": 92.57,
       "tribe_leader_name": "populations[1].tribe_leader_name",
+      "tribe_leader_reach": 62.259998,
       "tribe_member_names": [
         "populations[1].tribe_member_names[0]",
         "populations[1].tribe_member_names[1]",
@@ -11794,6 +11833,7 @@
           },
           "history": 102.989998,
           "partner_band": 19,
+          "partner_has_leader": true,
           "partner_name": "populations[1].tribe_pairs[0].partner_name"
         },
         {
@@ -11808,6 +11848,7 @@
           },
           "history": 32.880001,
           "partner_band": 174,
+          "partner_has_leader": false,
           "partner_name": "populations[1].tribe_pairs[1].partner_name"
         },
         {
@@ -11822,10 +11863,10 @@
           },
           "history": 110.57,
           "partner_band": 169,
+          "partner_has_leader": false,
           "partner_name": "populations[1].tribe_pairs[2].partner_name"
         }
       ],
-      "tribe_standing": 78,
       "tribe_threshold": 90.18,
       "tribe_weights": {
         "acting": 7.69,
@@ -11840,6 +11881,7 @@
       "turns_of_food": 103.459999,
       "upkeep_fund_mode": "populations[1].upkeep_fund_mode",
       "warrior_attack": 96.199997,
+      "watched_radius": 114,
       "work_range": 176,
       "working_age": 100
     },
@@ -11864,6 +11906,7 @@
       "activity": "populations[2].activity",
       "band_id": 87,
       "band_move_tiles_per_turn": 100.839996,
+      "belief_anchor_weight": 10.31,
       "belief_anchor_x": 124,
       "belief_anchor_y": 113,
       "belief_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [52, 15, 54]},
@@ -12084,6 +12127,8 @@
       "carry_material_weight": 33.52,
       "carry_per_worker": 84.809998,
       "children": 39,
+      "cohesion_ceiling": 186,
+      "cohesion_headcount": 92,
       "comm_range_tiles": 118,
       "craft_offers": [
         {
@@ -13668,6 +13713,8 @@
           "rejoining_all_home_in": 176,
           "rejoining_food": 99.760002,
           "rejoining_workers": 92,
+          "scouting_range": 17,
+          "scouting_reach": 131,
           "species": "populations[2].labor_assignments[0].species",
           "spoiled_rate_home": 60.459999,
           "sustainable_yield": 14.97,
@@ -13802,6 +13849,8 @@
           "rejoining_all_home_in": 95,
           "rejoining_food": 86.32,
           "rejoining_workers": 79,
+          "scouting_range": 40,
+          "scouting_reach": 18,
           "species": "populations[2].labor_assignments[1].species",
           "spoiled_rate_home": 54.16,
           "sustainable_yield": 54.080002,
@@ -13936,6 +13985,8 @@
           "rejoining_all_home_in": 194,
           "rejoining_food": 59.139999,
           "rejoining_workers": 150,
+          "scouting_range": 119,
+          "scouting_reach": 173,
           "species": "populations[2].labor_assignments[2].species",
           "spoiled_rate_home": 40.009998,
           "sustainable_yield": 89.739998,
@@ -13960,7 +14011,10 @@
       "last_emigrated": 111,
       "last_immigrated": 128,
       "leader_kind": 200,
+      "leader_load": 54.830002,
       "leader_name": "populations[2].leader_name",
+      "leader_orders_carried_out": 57.200001,
+      "leader_reach": 18.66,
       "leadership_from_builds": 38.580002,
       "leadership_from_herd": 20.91,
       "leadership_from_splits": 1.94,
@@ -14155,13 +14209,16 @@
       "morale": 0.000096,
       "morale_cause": 196,
       "morale_climate": 0.000176,
+      "morale_cohesion": 0.000145,
       "morale_culture": 0.000083,
       "morale_delta": 0.000111,
+      "morale_fresh_water": 0.000085,
       "morale_settling": 0.000057,
       "morale_terrain": 0.000138,
       "morale_unrest": 0.000198,
       "move_ferry_reach_tiles": 66,
       "name": "populations[2].name",
+      "orders_carried_out": 71.419998,
       "output_multiplier": 0.000051,
       "pending_reveal_count": 3,
       "pool_crew": [
@@ -14202,13 +14259,14 @@
           "rung_id": "populations[2].pooling_links[2].rung_id"
         }
       ],
+      "predators_kept_off": 71,
       "raid_forfeit": 89.860001,
       "raid_radius": 1,
       "roadwork_demand": 39.720001,
       "roadwork_shortfall": 86.629997,
       "roadwork_supplied": 51.669998,
-      "scout_reveal_radius": 83,
       "scout_vantage_range": 92.559998,
+      "scouting_range_max": 173,
       "settlement_stage_icon": "populations[2].settlement_stage.icon",
       "settlement_stage_id": "populations[2].settlement_stage.id",
       "settlement_stage_label": "populations[2].settlement_stage.label",
@@ -14303,7 +14361,9 @@
       "travel_target_y": 112,
       "tribe_history_build_turns": 106.699997,
       "tribe_leader_kind": 169,
+      "tribe_leader_load": 5.77,
       "tribe_leader_name": "populations[2].tribe_leader_name",
+      "tribe_leader_reach": 95.559998,
       "tribe_member_names": [
         "populations[2].tribe_member_names[0]",
         "populations[2].tribe_member_names[1]",
@@ -14323,6 +14383,7 @@
           },
           "history": 39.130001,
           "partner_band": 182,
+          "partner_has_leader": true,
           "partner_name": "populations[2].tribe_pairs[0].partner_name"
         },
         {
@@ -14337,6 +14398,7 @@
           },
           "history": 20.68,
           "partner_band": 155,
+          "partner_has_leader": false,
           "partner_name": "populations[2].tribe_pairs[1].partner_name"
         },
         {
@@ -14351,10 +14413,10 @@
           },
           "history": 16.33,
           "partner_band": 84,
+          "partner_has_leader": false,
           "partner_name": "populations[2].tribe_pairs[2].partner_name"
         }
       ],
-      "tribe_standing": 165,
       "tribe_threshold": 52.619999,
       "tribe_weights": {
         "acting": 106.690002,
@@ -14369,6 +14431,7 @@
       "turns_of_food": 63.139999,
       "upkeep_fund_mode": "populations[2].upkeep_fund_mode",
       "warrior_attack": 62.490002,
+      "watched_radius": 153,
       "work_range": 171,
       "working_age": 29
     }

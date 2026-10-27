@@ -1907,6 +1907,16 @@ pub struct PopulationCohort {
     /// `PopulationCohortState.beliefRelayHops`, so the hop count a frame shows is the one its
     /// `moraleCulture` was priced from — not a recount on positions the turn's movement changed.
     pub last_belief_relay_hops: u8,
+    /// **HOW MANY WILD PREDATOR PACKS THIS BAND'S WATCHED RING KEPT OFF THIS TURN** (#875): the
+    /// distinct packs whose move `advance_herds` changed because of this band's ring - pushed out of
+    /// it, a step into it refused, or a prey target inside it excluded. Reset to `0` and rewritten by
+    /// the movement system every turn; `0` without scouts (no ring). Stored on the cohort so a
+    /// recapture after a command republishes the same value, and it rides the checkpoint with it.
+    pub predators_kept_off: u32,
+    /// **The band size and ceiling the cohesion term was priced from this turn** (see
+    /// [`CohesionReading`]). Recomputed each turn beside `last_morale_contributions` and published as
+    /// `PopulationCohortState.cohesionHeadcount` / `cohesionCeiling`.
+    pub last_cohesion: CohesionReading,
     /// The three named fertility factors behind this turn's births — `hunger` (did we eat) ×
     /// `reserve` (is there a cushion) × `trend` (is the cushion growing or shrinking), the
     /// `birth_rate` multiplier from `docs/plan_population_growth_model.md`. The birth path's
@@ -1972,7 +1982,7 @@ pub struct PopulationCohort {
 /// Starvation is deliberately excluded — it is surfaced through the days-of-food path, not morale.
 ///
 /// Snapshot wire encoding (see [`MoraleCause::as_u8`]): `0 = None, 1 = Terrain, 2 = Cold,
-/// 3 = Unrest, 4 = Culture`.
+/// 3 = Unrest, 4 = Culture, 5 = Cohesion`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum MoraleCause {
     /// Morale rose or held this turn — no dominant negative driver.
@@ -1988,6 +1998,9 @@ pub enum MoraleCause {
     /// `belief_anchor`) at full strength — beyond its own walking reach and reached only weakly (or
     /// not at all) through its kin.
     Culture,
+    /// The cohesion term dominated: the band itself is over its
+    /// cohesion ceiling.
+    Cohesion,
 }
 
 /// Which mortality term did most of the killing in one age bracket on one turn.
@@ -2104,7 +2117,7 @@ impl DemographicFlowAccumulator {
 
 impl MoraleCause {
     /// Encode for the snapshot's `moraleCause:ubyte` field: `0=None, 1=Terrain, 2=Cold, 3=Unrest,
-    /// 4=Culture`.
+    /// 4=Culture, 5=Cohesion`.
     pub fn as_u8(self) -> u8 {
         match self {
             MoraleCause::None => 0,
@@ -2112,6 +2125,7 @@ impl MoraleCause {
             MoraleCause::Cold => 2,
             MoraleCause::Unrest => 3,
             MoraleCause::Culture => 4,
+            MoraleCause::Cohesion => 5,
         }
     }
 }
@@ -2133,6 +2147,11 @@ pub enum MoraleFactor {
     Unrest,
     /// Near (`+`) or far (`−`) from the band's ancestors — its `belief_anchor` (signed).
     Culture,
+    /// The band is too big to hold together: its own size over its cohesion ceiling
+    /// (≤ 0).
+    Cohesion,
+    /// The band stands on fresh-watered ground (`>= 0`; never a cause, causes are negative).
+    FreshWater,
 }
 
 /// The Phase-1 named morale contributions for a cohort this turn (each signed; their sum IS
@@ -2154,6 +2173,26 @@ pub struct MoraleContributions {
     /// (`+near_bonus × s`), `relay_per_hop ^ n` tied in through `n` bands of kin, `0` unreached
     /// (`−away_drag × s`); `0` with no anchor (signed; `wellbeing_config.json` → `culture`).
     pub culture: Scalar,
+    /// cohesion: `−drag × max(0, size − ceiling) / ceiling` for the band's own size
+    /// (≤ 0; `wellbeing_config.json` → `cohesion`). Another band on the same tile does not count.
+    pub cohesion: Scalar,
+    /// fresh water: `+fresh_water_morale_bonus` while the band's current tile is fresh-watered
+    /// (`forage::tile_is_fresh_watered`), else `0` (>= 0; `turn_pipeline_config.json` -> `population`).
+    pub fresh_water: Scalar,
+}
+
+/// **The head-count and ceiling a band's cohesion term was priced from** — the band's
+/// opening head-count and its cohesion ceiling, each rounded to whole people. Parked on the cohort
+/// (`last_cohesion`) beside `last_morale_contributions` and published as
+/// `PopulationCohortState.cohesionHeadcount` / `cohesionCeiling`, so the frame says what was priced and
+/// never recounts on positions the turn's movement changed. `0 / 0` is the not-priced default (a
+/// party, a fresh splinter, a cohort no turn has run).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CohesionReading {
+    /// The band's head-count at the turn's opening (before the turn's births and deaths), rounded once.
+    pub headcount: u32,
+    /// The band's cohesion ceiling, in whole people.
+    pub ceiling: u32,
 }
 
 /// The three named fertility factors behind a cohort's births this turn — the `birth_rate`
@@ -2204,14 +2243,16 @@ impl FertilityFactors {
 impl MoraleContributions {
     /// The active contributions as `(factor, signed value)` pairs — the itemized breakdown the
     /// client can render and the single source both `total` and cause attribution iterate. Ordered
-    /// by the tie-break priority (Terrain ≥ Climate ≥ Unrest ≥ Culture) so the dominant-cause scan
+    /// by the tie-break priority (Terrain ≥ Climate ≥ Unrest ≥ Culture ≥ Cohesion) so the dominant-cause scan
     /// is a stable first-max.
-    pub fn contributions(&self) -> [(MoraleFactor, Scalar); 5] {
+    pub fn contributions(&self) -> [(MoraleFactor, Scalar); 7] {
         [
             (MoraleFactor::Terrain, self.terrain),
             (MoraleFactor::Climate, self.climate),
             (MoraleFactor::Unrest, self.unrest),
             (MoraleFactor::Culture, self.culture),
+            (MoraleFactor::Cohesion, self.cohesion),
+            (MoraleFactor::FreshWater, self.fresh_water),
             (MoraleFactor::Settling, self.settling),
         ]
     }
@@ -2225,7 +2266,7 @@ impl MoraleContributions {
 
     /// The dominant *negative* contributor as a [`MoraleCause`] (the "why morale fell" label). The
     /// most-negative labeled contribution wins; `Settling` is base growth (never a negative cause),
-    /// and ties resolve by `contributions()` order (Terrain ≥ Climate ≥ Unrest ≥ Culture).
+    /// and ties resolve by `contributions()` order (Terrain ≥ Climate ≥ Unrest ≥ Culture ≥ Cohesion).
     pub fn dominant_negative_cause(&self) -> MoraleCause {
         let mut best: Option<(MoraleFactor, Scalar)> = None;
         for (factor, value) in self.contributions() {
@@ -2241,6 +2282,7 @@ impl MoraleContributions {
             Some((MoraleFactor::Climate, _)) => MoraleCause::Cold,
             Some((MoraleFactor::Unrest, _)) => MoraleCause::Unrest,
             Some((MoraleFactor::Culture, _)) => MoraleCause::Culture,
+            Some((MoraleFactor::Cohesion, _)) => MoraleCause::Cohesion,
             _ => MoraleCause::None,
         }
     }
@@ -3568,8 +3610,9 @@ impl LaborTarget {
     /// `docs/plan_labor_at_scale.md`) — the player states the source, its floor, its kit and an
     /// optional Max, and [`crate::staffing::staff_band`] decides the crew every turn. A wild or kept
     /// patch, a hunt that is not a need row, a working, a tile improvement, a band improvement (the
-    /// tile kind's reading, at the camp) and the Roadwork pool are; Scout, Warrior and Builders keep
-    /// the crew the player set, and a need row keeps its own muster sizing.
+    /// tile kind's reading, at the camp) and the Roadwork pool are; Warrior and Builders keep
+    /// the crew the player set, and a need row keeps its own muster sizing. (The Scout row's crew is
+    /// the sim's too, but from a range rather than a Max: [`Self::is_sim_staffed`].)
     ///
     /// Stated exhaustively so a new target has to answer the question rather than inherit a default.
     pub fn is_staffed(&self) -> bool {
@@ -3582,6 +3625,15 @@ impl LaborTarget {
             LaborTarget::Hunt { move_with_herd, .. } => !move_with_herd,
             LaborTarget::Scout | LaborTarget::Warrior => false,
         }
+    }
+
+    /// **IS THIS ROW'S CREW THE SIM'S TO DECIDE EACH TURN** - [`Self::is_staffed`]'s rows and the
+    /// **Scout** row (#875): the player states a scouting range in tiles and the passes place the
+    /// scouts that reach it, so the row is zeroed with the staffed rows before the shed, restaffed
+    /// after it, never trimmed by it and never counted as a hand the player set. It has no Max, no
+    /// floor and no site, which is why it is not [`Self::is_staffed`].
+    pub fn is_sim_staffed(&self) -> bool {
+        self.is_staffed() || matches!(self, LaborTarget::Scout)
     }
 
     pub fn is_source(&self) -> bool {
@@ -3783,6 +3835,20 @@ pub struct LaborAssignment {
     /// It is **intent**, so it is inside this type's equality, and it caps **every** pass: no pass
     /// puts the row's total (keepers + kitted + bare) above it.
     pub max_workers: Option<u32>,
+    /// **THE BAND'S SCOUTING RANGE - TILES PAST ITS LOCAL RANGE** (#875,
+    /// `docs/plan_labor_at_scale.md` "Scouts: a range, not a count"). Only the Scout row carries a
+    /// non-zero value, and the row exists exactly while this is above zero: the player states how far
+    /// past `supply_network_config.reach_tiles` the band should see, and the sim staffs the scouts
+    /// that reach it ([`crate::staffing`]). `0` on every other row.
+    ///
+    /// It is **intent**, so it is inside this type's equality.
+    pub scouting_range: u32,
+    /// **THE TILES PAST THE LOCAL RANGE THE STAFFED SCOUTS ACTUALLY REACH THIS STAFFING** - at most
+    /// [`Self::scouting_range`], less when the band ran out of people. `0` on every other row.
+    ///
+    /// ⛔ **OUTSIDE THIS TYPE'S EQUALITY**, for [`Self::staffing`]'s reason: a fact the staffing
+    /// restamps, and it rides the save because the visibility sweep reads it.
+    pub scouting_reach: u32,
     /// **WHO THE SIM PUT ON THIS ROW THIS TURN, AND WHY** — the keepers, the kitted heads, the bare
     /// heads and the two published crew targets. Meaningful only on a staffed row; `workers` is
     /// their sum there.
@@ -3835,6 +3901,7 @@ impl PartialEq for LaborAssignment {
             && self.kit == other.kit
             && self.priority == other.priority
             && self.max_workers == other.max_workers
+            && self.scouting_range == other.scouting_range
     }
 }
 
@@ -4246,6 +4313,9 @@ impl ShedRank {
 /// *"items are not one of the three accounts"*.
 const A_CRAFT_PAYS_NO_ACCOUNT: bool = false;
 
+/// **A SCOUTING RANGE OF NOTHING** - no tiles past the band's local range, so no Scout row.
+pub const NO_SCOUTING_RANGE: u32 = 0;
+
 /// **THE SHEDDING ORDER** — which row gives when a band cannot field what it is holding. One variant
 /// per step, declared in the order they are walked, so the whole list can be read top to bottom in
 /// one place (`docs/plan_standing_upkeep.md` §2.9).
@@ -4256,7 +4326,7 @@ const A_CRAFT_PAYS_NO_ACCOUNT: bool = false;
 ///
 /// # THE THREE BANDS, AND THE SHARP LINE IS BETWEEN THE SECOND AND THE THIRD
 ///
-/// - **Nothing is lost** (1–4): a role stops, or a pool loses a hand it was not spending.
+/// - **Nothing is lost** (2–4): a role stops, or a pool loses a hand it was not spending.
 /// - **Output falls, nothing ends** (5): a crew thins. The row, its improvement and its declared build
 ///   all stand.
 /// - **Something ends** (6–11): a row is emptied and dropped, or the keeping goes short.
@@ -4278,8 +4348,6 @@ const A_CRAFT_PAYS_NO_ACCOUNT: bool = false;
 /// overwritten by the act of editing the row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShedStep {
-    /// **1 — a scout.** The fog stops rolling back and nothing the band holds is touched.
-    Scout,
     /// **2 — a warrior, while nothing threatens the band.** A guard against nothing is the cheapest
     /// hand in the allocation.
     UnthreatenedWarrior,
@@ -6005,7 +6073,7 @@ impl BandWorkforce {
             sim_staffed: allocation.map_or(0, |a| {
                 a.assignments
                     .iter()
-                    .filter(|row| row.target.is_staffed())
+                    .filter(|row| row.target.is_sim_staffed())
                     .map(|row| row.staffed_total())
                     .sum::<u32>()
                     + a.builders_total()
@@ -7538,7 +7606,7 @@ impl LaborAllocation {
         let others: u32 = self
             .assignments
             .iter()
-            .filter(|a| !a.target.same_source(&target) && !a.target.is_staffed())
+            .filter(|a| !a.target.same_source(&target) && !a.target.is_sim_staffed())
             .map(|a| a.staffed_total())
             .sum();
         let headroom = available.saturating_sub(others);
@@ -7635,6 +7703,8 @@ impl LaborAllocation {
                 party: standing_party,
                 muster_crew: if need_row { standing_muster } else { 0 },
                 planned_crew: if need_row { standing_planned } else { 0 },
+                scouting_range: 0,
+                scouting_reach: 0,
                 // **A PINNED CREW IS A MAX** — `set_assignment` names an exact crew, which on a
                 // staffed row the sim reads as the most it may put there. The player-facing verb is
                 // [`Self::set_staffed_row`], whose count is the Max outright.
@@ -7685,11 +7755,93 @@ impl LaborAllocation {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: max,
             staffing: StaffedCrew::default(),
         });
         self.last_yields.push(SourceYield::ZERO);
         true
+    }
+
+    /// The tiles past the local range the band's scouts reach this staffing (`0` with no Scout row).
+    pub fn scouting_reach_tiles(&self) -> u32 {
+        self.assignments
+            .iter()
+            .find(|a| matches!(a.target, LaborTarget::Scout))
+            .map_or(0, |a| a.scouting_reach)
+    }
+
+    /// The scouting range the band asked for, in tiles past the local range (`0` with no Scout row).
+    pub fn scouting_range_tiles(&self) -> u32 {
+        self.assignments
+            .iter()
+            .find(|a| matches!(a.target, LaborTarget::Scout))
+            .map_or(NO_SCOUTING_RANGE, |a| a.scouting_range)
+    }
+
+    /// **STATE THE BAND'S SCOUTING RANGE** (#875) - tiles past the local range. A range above zero
+    /// creates or restates the Scout row in place (keeping its priority and, unless `kit` names one,
+    /// its kit); `0` drops the row, which is how the player stops scouting. The crew and reach are
+    /// the staffing's: the caller restaffs the band afterwards.
+    pub fn set_scouting_range(
+        &mut self,
+        range: u32,
+        kit: Option<crate::equipment_config::KitChoice>,
+    ) {
+        self.align_yields();
+        let standing = self
+            .assignments
+            .iter()
+            .position(|a| matches!(a.target, LaborTarget::Scout));
+        if range == NO_SCOUTING_RANGE {
+            if let Some(idx) = standing {
+                self.assignments.remove(idx);
+                self.last_yields.remove(idx);
+            }
+            return;
+        }
+        if let Some(idx) = standing {
+            let row = &mut self.assignments[idx];
+            row.scouting_range = range;
+            if kit.is_some() {
+                row.kit = kit;
+            }
+            return;
+        }
+        self.assignments.push(LaborAssignment {
+            target: LaborTarget::Scout,
+            workers: NO_CREW_ON_THIS_ACTIVITY,
+            kit,
+            priority: SourcePriority::default(),
+            party: None,
+            muster_crew: 0,
+            planned_crew: 0,
+            max_workers: None,
+            scouting_range: range,
+            scouting_reach: 0,
+            staffing: StaffedCrew::default(),
+        });
+        self.last_yields.push(SourceYield::ZERO);
+    }
+
+    /// **WRITE THE SCOUT STEP'S CREW ONTO THE SCOUT ROW** (#875): `workers` is the scouts placed, the
+    /// kitted / bare split rides `staffing` and `scouting_reach` is the tiles they reach. Does
+    /// nothing with no Scout row.
+    pub fn apply_scouting(&mut self, scouts: crate::staffing::ScoutCrew) {
+        if let Some(row) = self
+            .assignments
+            .iter_mut()
+            .find(|a| matches!(a.target, LaborTarget::Scout))
+        {
+            row.workers = scouts.total();
+            row.staffing = StaffedCrew {
+                kitted: scouts.kitted,
+                bare: scouts.bare,
+                ..StaffedCrew::default()
+            };
+            row.scouting_reach = scouts.reach;
+        }
     }
 
     /// **WRITE WHAT THE STAFFING DECIDED ONTO ITS ROWS** (#871) — `workers` becomes the staffed
@@ -8117,10 +8269,8 @@ impl LaborAllocation {
         bench: Option<&BandBench>,
     ) -> Option<(ShedPick, ShedStep)> {
         // ## Nothing is lost
-        // 1. A scout.
-        if let Some(index) = self.staffed_role_row(&LaborTarget::Scout) {
-            return Some((ShedPick::Row(index), ShedStep::Scout));
-        }
+        // (There is no step 1: the Scout row is the sim's to place each turn, zeroed before the shed
+        // and restaffed after it, so it never reaches the shed to give a hand.)
         // 2. A warrior, if nothing threatens the band.
         if !facts.threatened {
             if let Some(index) = self.staffed_role_row(&LaborTarget::Warrior) {
@@ -9018,6 +9168,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(take),
             staffing: Default::default(),
             target: LaborTarget::Forage {
@@ -9052,6 +9204,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(take),
             staffing: Default::default(),
             target: LaborTarget::Hunt {
@@ -9081,6 +9235,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(workers),
             staffing: Default::default(),
             target,
@@ -9145,36 +9301,10 @@ mod tests {
         shed.iter().map(|entry| entry.subject.clone()).collect()
     }
 
-    /// **STEP 1 — A SCOUT GIVES FIRST.** Nothing is lost: the fog stops rolling back and every row
-    /// the band holds is untouched, so it outranks even the warrior standing beside it.
-    #[test]
-    fn a_scout_is_the_first_hand_a_shrunk_band_gives() {
-        let mut allocation = LaborAllocation {
-            assignments: vec![
-                staffed_forage(PATCH_A, 3),
-                staffed_role(LaborTarget::Scout, 2),
-                staffed_role(LaborTarget::Warrior, 2),
-            ],
-            ..Default::default()
-        };
-        let shed = allocation.normalize(None, 6, ShedFacts::default());
-        assert_eq!(
-            shed,
-            vec![ShedCrew {
-                subject: ShedSubject::Row(LaborTarget::Scout),
-                lost: 1,
-                remaining: 1,
-            }],
-            "the scout gives, and says so"
-        );
-        assert_eq!(allocation.workers_on(&LaborTarget::Warrior), 2);
-        assert_eq!(allocation.assignments[0].workers, 3, "the gathering stands");
-    }
-
     /// **SHEDDING ONE HAND TOUCHES ONLY THE ROW IT CAME OFF.** A staffed row is zeroed ahead of the
     /// shed (it is refilled after), so its rejoining walkers read as excess to any sweep over every
     /// source; the shed settles the shed row's walkers alone, and a staffed row's walk, with its
-    /// cargo, survives a hand taken off a scout.
+    /// cargo, survives a hand taken off a warrior.
     #[test]
     fn shedding_a_hand_leaves_a_staffed_rows_rejoining_walkers_alone() {
         const WALKERS: u32 = 2;
@@ -9182,7 +9312,7 @@ mod tests {
         let mut staffed = staffed_forage(PATCH_A, 3);
         staffed.workers = NO_CREW_ON_THIS_ACTIVITY;
         let mut allocation = LaborAllocation {
-            assignments: vec![staffed, staffed_role(LaborTarget::Scout, 2)],
+            assignments: vec![staffed, staffed_role(LaborTarget::Warrior, 2)],
             ..Default::default()
         };
         allocation.homeward.push(crate::work_party::HomewardWalk {
@@ -9198,13 +9328,13 @@ mod tests {
         let shed = allocation.normalize(None, 1, ShedFacts::default());
         assert_eq!(
             shed_targets(&shed),
-            vec![LaborTarget::Scout],
-            "liveness: the scout gave a hand"
+            vec![LaborTarget::Warrior],
+            "liveness: the warrior gave a hand"
         );
         assert_eq!(
             allocation.rejoining_to(&allocation.assignments[0].target.clone()),
             WALKERS,
-            "the staffed row's walkers were not discarded by a hand taken off the scout"
+            "the staffed row's walkers were not discarded by a hand taken off the warrior"
         );
         assert_eq!(allocation.homeward[0].cargo, CARGO, "...nor their cargo");
     }
@@ -9412,6 +9542,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: None,
             staffing: Default::default(),
             priority,
@@ -10135,13 +10267,12 @@ mod tests {
                 staffed_forage(PATCH_A, 2),
                 staffed_role(LaborTarget::Roadwork, 2),
                 staffed_role(LaborTarget::Warrior, 1),
-                staffed_role(LaborTarget::Scout, 1),
             ],
             builds: vec![queued_on(PATCH_A)],
-            last_yields: vec![realized(6.0); 4],
+            last_yields: vec![realized(6.0); 3],
             ..Default::default()
         };
-        assert_eq!(allocation.assigned_total(), 6);
+        assert_eq!(allocation.assigned_total(), 5);
         let shed = allocation.normalize(
             None,
             2,
@@ -10153,12 +10284,11 @@ mod tests {
         assert_eq!(
             shed_targets(&shed),
             vec![
-                LaborTarget::Scout,
                 LaborTarget::Warrior,
                 LaborTarget::Roadwork,
                 staffed_forage(PATCH_A, 0).target,
             ],
-            "steps 1, 2, 3 then 5 — and list position had nothing to do with any of it"
+            "steps 2, 3 then 5 — and list position had nothing to do with any of it"
         );
     }
 
@@ -10829,6 +10959,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(workers),
             staffing: Default::default(),
         }

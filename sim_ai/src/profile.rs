@@ -155,8 +155,9 @@ pub struct LandFloors {
     pub split_size: u32,
     /// How far from a band *blind* counts and *better ground* looks, in hex steps.
     pub horizon_tiles: u32,
-    /// How many scouts *blind* posts (`assign_labor … scout <n>`).
-    pub scout_workers: u32,
+    /// How far past the band's local range *blind* asks to see, in tiles
+    /// (`assign_labor … scout <tiles>`); the sim staffs the scouts that reach it.
+    pub scout_range: u32,
     /// *Better ground*: the share by which a patch must out-pay the band's own ground, per worker,
     /// before the band is walked to it — `(target − own) / target`. The same lesson as
     /// `food.runway_gain_fraction`: distinctness is not improvement, and without a margin a band
@@ -370,8 +371,8 @@ impl AiProfiles {
             {
                 return invalid(format!("profile `{id}`: food.runway_floor_turns"));
             }
-            if profile.land.scout_workers == 0 {
-                return invalid(format!("profile `{id}`: land.scout_workers is 0"));
+            if profile.land.scout_range == 0 {
+                return invalid(format!("profile `{id}`: land.scout_range is 0"));
             }
             let better = profile.land.better_ground_gain_fraction;
             if !better.is_finite() || !(0.0..=1.0).contains(&better) || better <= 0.0 {

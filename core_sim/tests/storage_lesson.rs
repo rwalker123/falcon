@@ -83,6 +83,8 @@ fn spawn_band(app: &mut App) -> Entity {
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
+                last_cohesion: Default::default(),
             },
         ))
         .id()

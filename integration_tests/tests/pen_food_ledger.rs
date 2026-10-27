@@ -134,6 +134,8 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32, floor: f32) -> (f32, f32, f32,
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(workers.max(1)),
             staffing: Default::default(),
             target: LaborTarget::Hunt {

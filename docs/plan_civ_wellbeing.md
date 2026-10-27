@@ -43,8 +43,9 @@ rewritten.
   habitability, `climate` (temperature vs the tolerance band), `unrest` (crisis + culture).
 - **Phase 2 (active):** `culture` — near (+) / far (−) from the band's ancestors (#699;
   `wellbeing_config.json` → `culture`).
-- **Reserved slots (unimplemented):** `education`, `technology`, `government`, `crowding`,
-  `leadership`.
+- **Active:** `cohesion` — a band over its cohesion ceiling (~150, lifted by belief on its tile)
+  loses morale (#700; built in the reserved `crowding` slot; `wellbeing_config.json` → `cohesion`).
+- **Reserved slots (unimplemented):** `education`, `technology`, `government`, `leadership`.
 - **Not a factor: nutrition / food.** Starvation stays out of morale by design — hunger reaches the
   player through the days-of-food path, and population loss to starvation is a demographic
   outcome, not a wellbeing one.

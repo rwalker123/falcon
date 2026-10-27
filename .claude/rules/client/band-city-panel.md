@@ -109,7 +109,11 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   freezes once a leader exists). With a leader the text is `Chief Orrin` or
   `Elders' council — Orrin speaks` in primary ink (`HudFormat.band_leader_phrase`) and the portrait is
   filled; a council's portrait also wears a small group badge (a disc with three dots) in its
-  bottom-right corner. With none the portrait is an EMPTY slot (dimmed frame and a faint silhouette) and
+  bottom-right corner. **A leader's reach (#870)** is a second line in the same text label
+  (`HudFormat.band_leader_reach`, from `leader_reach` / `leader_load` / `orders_carried_out`; absent when
+  `leader_reach` is 0): dim `Runs all 32 people well` within reach, amber (`HudStyle.WARN`) `Runs 150 of
+  170 people well` over it, the hover saying what a chief (or `The council`) runs well and, over reach
+  only, `— N% now`. With none the portrait is an EMPTY slot (dimmed frame and a faint silhouette) and
   the text is `Chief` / a compact glyph bar then `7 / 10` (practice floored and capped at the
   threshold, whole numbers): one `▰` per point, in order builds / splits / herd / stages (green / blue /
   amber / cyan, `HudFormat.chief_source_colors`, as `[color]` runs), then `▱` for the remainder
@@ -2708,7 +2712,7 @@ measured 332 and the charted split failed the floor at 74%.
 cannot make, each sabotage-verified against a DISJOINT mutation — `_assert_role_cards_are_level`
 compares the two cards' RENDERED heights behind a precondition that their CONTENT heights differ (two
 cards of equal content are level for free) —
-`_assert_role_card_gear` compares both cards' face and gear line by EQUALITY against expectations
+`_assert_role_card_gear` compares both cards' face and gear line by EQUALITY (the Scout card has no gear line, and its `+N tiles` tooltip is asserted to omit the kit's sight line) against expectations
 that name their item LABEL outright (composing them through `item_for_axis` would assert only that
 the derivation agrees with itself; dropping the job override fails the WARRIOR card alone, naming
 `attack 6 defending the camp · Spears 74`), and `_assert_role_kit_command_carries_the_pick` drives
@@ -6547,3 +6551,13 @@ Work row's foreign line shows the BAND NAME ONLY, as a flat button (`WORK_ROW_FO
 tile roster, never made the panel's subject). With no builder named, or one the roster does not hold, the
 line falls back to the people (`Lothari cultivating · 86%`) and draws no link. Frames
 `band_panel_work_other_builder`; the link press and the fallback are asserted in `_other_peoples_build_rows`.
+
+### The Scout card is the `Scouting range` card (#875)
+
+In the band zone's role cards the Scout card is a range stepper (`+N tiles`) over its kit picker and ONE
+line (`N scouts`, amber `N scouts · K tiles short` when short, none at +0). Everything else - the watched
+radius, the gear count, the kit's sight line, the kept-off packs, the shortfall sentence - is the
+tooltip on the `+N tiles` value (`labor-ui.md` -> "THE SCOUT CARD STATES A RANGE, NOT A HEADCOUNT").
+The card's content is therefore shorter than the Warrior's; the pair still renders level (the row
+stretches them), and the chartless band flank's balance floor is 0.60 (measured 61% in
+`band_panel_band_columns_two`). Asserted in `_assert_scouting_range_card`.

@@ -417,6 +417,41 @@ static func add_max_stepper(row: HBoxContainer, max_workers: int, upper: int,
                 HudWorkVocab.WORK_STEPPER_PADDING_V)
     return value
 
+## **THE SCOUTING-RANGE STEPPER** (#875) - `-`, `+N tiles`, `+`, stepping by one tile within
+## `0..upper`. Both buttons carry the aria names `Scout less far` / `Scout farther`. `on_change` fires
+## with the new range; the `-` greys at 0 and the `+` at `upper`. Returns the value `Label`.
+static func add_range_stepper(row: HBoxContainer, value_tiles: int, upper: int,
+        on_change: Callable) -> Label:
+    var minus := Button.new()
+    minus.text = HudWorkVocab.STEPPER_MINUS_FACE
+    minus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
+    HudStyle.apply_button(minus, "ghost")
+    minus.disabled = value_tiles <= 0
+    minus.tooltip_text = HudWorkVocab.SCOUT_RANGE_LESS_ARIA
+    if "accessibility_name" in minus:
+        minus.set("accessibility_name", HudWorkVocab.SCOUT_RANGE_LESS_ARIA)
+    minus.pressed.connect(func() -> void: on_change.call(maxi(value_tiles - HudConst.WORKER_STEP, 0)))
+    row.add_child(minus)
+    var value := Label.new()
+    value.text = HudWorkVocab.SCOUT_RANGE_VALUE_FORMAT % value_tiles
+    value.custom_minimum_size = Vector2(HudWorkVocab.SCOUT_RANGE_VALUE_WIDTH, 0)
+    value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    value.add_theme_color_override("font_color", HudStyle.INK if value_tiles > 0 else HudStyle.INK_FAINT)
+    value.set_meta(HudWorkVocab.SCOUT_RANGE_VALUE_META, true)
+    row.add_child(value)
+    var plus := Button.new()
+    plus.text = HudWorkVocab.STEPPER_PLUS_FACE
+    plus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
+    HudStyle.apply_button(plus, "ghost")
+    plus.disabled = value_tiles >= upper
+    plus.tooltip_text = HudWorkVocab.SCOUT_RANGE_FARTHER_ARIA
+    if "accessibility_name" in plus:
+        plus.set("accessibility_name", HudWorkVocab.SCOUT_RANGE_FARTHER_ARIA)
+    plus.pressed.connect(func() -> void:
+        on_change.call(mini(value_tiles + HudConst.WORKER_STEP, maxi(upper, 0))))
+    row.add_child(plus)
+    return value
+
 ## **A STAFFED ROW'S CREW NUMBER** — the read-only stand-in for the stepper the row used to carry: the
 ## sim's crew, in the stepper's value column so every row's number lines up. Faint at zero.
 static func build_crew_number(workers: int) -> Label:

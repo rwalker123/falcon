@@ -300,6 +300,9 @@ const ANCESTORS_GLYPH_FONT_FACTOR := 1.4      # of disc diameter — the ⚱ sit
 const ANCESTORS_GLYPH_FONT_MIN := 14
 
 var _view: MapView = null
+## The sacred ground the Beliefs popover's `show ▸` asked to have shaded: {tile, holder (band entity), selected
+## (the `selected_unit_id` it was asked under)}. Empty = none.
+var _shown_belief: Dictionary = {}
 # Optimistic pending-labor map (per band entity), pushed from the HUD via set_labor_pending.
 # Drawn for the selected band in a distinct dashed-amber style until the snapshot confirms.
 var _labor_pending: Dictionary = {}
@@ -897,8 +900,8 @@ func _link_spans_seam(a: Vector2, b: Vector2) -> bool:
 ## When a player band is selected, surface what it is working (Early-Game Labor slice 3b):
 ##  - two RANGE BORDERS: a clean perimeter outline of each reach's hex disk (traced
 ##    edge-by-edge via _draw_range_border, using the sim's true **odd-r hex distance** so the
-##    boundary == actually-in-range) — the band's apron (green, `work_range`) and scout sight
-##    (azure, `scout_reveal_radius`, only when scouts are staffed). There is no separate hunt ring:
+##    boundary == actually-in-range) — the band's apron (green, `work_range`) and watched ground
+##    (azure, `watched_radius`, only when scouts are staffed). There is no separate hunt ring:
 ##    every job — hunt or gather — posts a work party past the SAME apron
 ##    (`docs/plan_civilization_steps.md` §One work party).
 ##  - the SOURCE ROWS (`compute_source_rows`) — the model the docked `BandSourceList` renders and
@@ -927,21 +930,20 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 	var eff_col := _view._band_effective_col(band_col, radius, origin)
 	var band_center := _view._hex_center(eff_col, band_row, radius, origin)
 
-	# Scouting draws no filled REVEAL DISC: `scout_reveal_radius` carries the band's scout vantage
-	# distance (how far forward-observer vantages are posted, `0` with no scouts), not a revealed-area
-	# radius. Staffed scouts reveal LOS from vantages that see around obstacles, and that true revealed
-	# area — which the client can't reconstruct (it doesn't know the server-side LOS/terrain) — shows
-	# directly in the fog. What IS drawn (below) is the azure scout range BORDER: a perimeter outline at
-	# `scout_reveal_radius` marking how far the vantage reach extends, not the tiles actually revealed.
+	# Scouting draws no filled REVEAL DISC: `watched_radius` carries the edge of the band's watched
+	# ground (local range + the tiles its scouts reach, `0` with no scouts) — the line wild predators
+	# keep outside of — not a revealed-area radius. The true revealed area depends on server-side
+	# LOS/terrain the client can't reconstruct, and shows directly in the fog. What IS drawn (below)
+	# is the azure BORDER: a perimeter outline at `watched_radius`.
 
 	# 1. Range borders — two clean perimeter outlines of the band's reaches (see _draw_range_border):
 	#    the apron (green) and scout sight (azure, only when scouts are staffed). All at every zoom.
 	var work_range := int(band.get("work_range", 0))
-	var scout_reveal_radius := int(band.get("scout_reveal_radius", 0))
+	var watched_radius := int(band.get("watched_radius", 0))
 	if work_range > 0:
 		_draw_range_border(eff_col, band_row, work_range, FORAGE_RANGE_OUTLINE, FORAGE_RANGE_OUTLINE_WIDTH, radius, origin)
-	if scout_reveal_radius > 0:
-		_draw_range_border(eff_col, band_row, scout_reveal_radius, SCOUT_RANGE_OUTLINE, SCOUT_RANGE_OUTLINE_WIDTH, radius, origin)
+	if watched_radius > 0:
+		_draw_range_border(eff_col, band_row, watched_radius, SCOUT_RANGE_OUTLINE, SCOUT_RANGE_OUTLINE_WIDTH, radius, origin)
 
 	# 1b. The band's ancestors: the reach-region perimeter and the anchor mark (nothing without an
 	#     anchor). Drawn under the source rows / pending / travel layers that follow.
@@ -1509,7 +1511,7 @@ func _draw_travel_destination(unit: Dictionary, band_col: int, band_row: int, ef
 	# animated targeting reticle).
 	_view._draw_reticle(dest_center, radius * TRAVEL_DEST_RETICLE_FACTOR, dest_color, 1.0)
 
-## THE BAND'S ANCESTORS — the reach-region PERIMETER (every edge between a tile in
+## THE BAND'S SACRED GROUND — the reach-region PERIMETER (every edge between a tile in
 ## `belief_reach_x/y` and one outside it, off-map counting as outside) and the anchor glyph, both in
 ## the band's effective column frame so the region stays contiguous across the wrap seam. Nothing for
 ## a band with no anchor; a foreign band never reaches here (`_selected_player_band`), and its
@@ -1528,11 +1530,58 @@ func _draw_band_ancestors(band: Dictionary, band_col: int, eff_col: int, radius:
 	_draw_reach_outline(_reach_perimeter(direct, {}, band_col, eff_col, radius, origin),
 		Color(HudStyle.BELIEF, ANCESTORS_REACH_ALPHA), ANCESTORS_REACH_WIDTH,
 		Color(HudStyle.GROUND, ANCESTORS_REACH_UNDER_ALPHA), ANCESTORS_REACH_UNDER_WIDTH)
-	var anchor_y := int(band.get("belief_anchor_y", 0))
-	if anchor_y < 0 or anchor_y >= _view.grid_height:
+	# The anchor MARK is not drawn here: `draw_belief_places` marks every sacred ground of the player's, the
+	# selected band's included, so one tile is marked once.
+
+## SACRED GROUND ON THE MAP, selection-free. Every distinct sacred-ground tile held by any of the player's
+## bands wears the urn marker (a tile several bands share is marked once), and the region the Beliefs
+## popover's `show ▸` asked for is outlined: the HOLDER band's published `belief_reach_x/y`, never a reach
+## computed here. The shown region lasts until the band selection changes or another `show ▸` replaces it.
+func draw_belief_places(radius: float, origin: Vector2) -> void:
+	var marked := {}
+	for unit_variant in _view.units:
+		if not (unit_variant is Dictionary) or not HudConst.is_player_unit(unit_variant):
+			continue
+		var band: Dictionary = unit_variant
+		if not bool(band.get("has_belief_anchor", false)):
+			continue
+		var tile := Vector2i(int(band.get("belief_anchor_x", 0)), int(band.get("belief_anchor_y", 0)))
+		if marked.has(tile) or tile.y < 0 or tile.y >= _view.grid_height:
+			continue
+		marked[tile] = true
+		_draw_ancestors_marker(_view._hex_center_wrapped(tile.x, tile.y, radius, origin), radius)
+	_draw_shown_belief_region(radius, origin)
+
+## Ask for a sacred ground's reach to be shaded (the Beliefs popover's `show ▸`). Tied to the band selected NOW:
+## once the selection moves, `_draw_shown_belief_region` lets it go.
+func show_belief_place(tile: Vector2i, holder_entity: int) -> void:
+	_shown_belief = {"tile": tile, "holder": holder_entity, "selected": _view.selected_unit_id}
+
+func clear_shown_belief_place() -> void:
+	_shown_belief = {}
+
+func _draw_shown_belief_region(radius: float, origin: Vector2) -> void:
+	if _shown_belief.is_empty():
 		return
-	var anchor_col := eff_col + _view._wrapped_col_delta(band_col, int(band.get("belief_anchor_x", 0)))
-	_draw_ancestors_marker(_view._hex_center(anchor_col, anchor_y, radius, origin), radius)
+	if int(_shown_belief["selected"]) != _view.selected_unit_id:
+		_shown_belief = {}
+		return
+	for unit_variant in _view.units:
+		if not (unit_variant is Dictionary) or not HudConst.is_player_unit(unit_variant):
+			continue
+		var holder: Dictionary = unit_variant
+		if int(holder.get("entity", -1)) != int(_shown_belief["holder"]):
+			continue
+		var pos: Array = Array(holder.get("pos", []))
+		if pos.size() != 2 or not bool(holder.get("has_belief_anchor", false)):
+			return
+		var band_col := int(pos[0])
+		var eff_col := _view._band_effective_col(band_col, radius, origin)
+		_draw_reach_outline(_reach_perimeter(_tile_set(holder, "belief_reach_x", "belief_reach_y"), {},
+			band_col, eff_col, radius, origin),
+			Color(HudStyle.BELIEF, ANCESTORS_REACH_ALPHA), ANCESTORS_REACH_WIDTH,
+			Color(HudStyle.GROUND, ANCESTORS_REACH_UNDER_ALPHA), ANCESTORS_REACH_UNDER_WIDTH)
+		return
 
 ## A zipped x/y tile list off the band as a `Vector2i → true` set.
 func _tile_set(band: Dictionary, x_key: String, y_key: String) -> Dictionary:

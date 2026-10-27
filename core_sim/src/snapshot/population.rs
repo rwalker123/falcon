@@ -193,6 +193,8 @@ pub(crate) fn labor_assignment_to_state(
         },
         pack_units: assignment.party.as_ref().map_or(0.0, |p| p.pack_units),
         load_home_in: assignment.party.as_ref().map_or(0, |p| p.load_home_in),
+        scouting_range: assignment.scouting_range,
+        scouting_reach: assignment.scouting_reach,
         ..Default::default()
     };
     match &assignment.target {
@@ -1074,6 +1076,9 @@ pub(crate) struct BandKitLevers<'a> {
     /// `labor_config.scout.vantage_range` — the *equipped* vantage sight range (the wayfinding
     /// gear's). Carried as `f32` because the effects axis is continuous; the reveal path rounds.
     pub(crate) equipped_vantage_range: f32,
+    /// `labor_config.scout.range_past_local_max` - the most a scouting range may name, echoed
+    /// per-cohort for the client's stepper.
+    pub(crate) scouting_range_max: u32,
     /// `expedition_config.observe_sight_range` — the *equipped* observation radius a DETACHED PARTY
     /// maps at, which the same wayfinding gear buys. Its own lever beside the vantage's because the
     /// two observers have different **bare** readings; see
@@ -1106,10 +1111,9 @@ pub(crate) struct HuntCrewLevers<'a> {
     pub(crate) drives_known: bool,
 }
 
-/// **A band's progress toward a tribe, as published** — the standing, the lever echoes and one row
+/// **A band's progress toward a tribe, as published** — the lever echoes and one row
 /// per partner band of its people. Built by [`tribe_progress`] off the checkpointed registry.
 pub(crate) struct TribeProgress {
-    pub(crate) standing: u8,
     pub(crate) threshold: f32,
     pub(crate) history_build_turns: f32,
     pub(crate) weights: sim_schema::TribeClosenessState,
@@ -1124,10 +1128,58 @@ pub(crate) struct TribeMembership {
     pub(crate) member_names: Vec<String>,
     pub(crate) leader_name: String,
     pub(crate) leader_kind: u8,
+    /// How many bands the tribe has: the tribe leader's load.
+    pub(crate) member_count: usize,
+}
+
+/// **A band's leader reach fields, as published** (`crate::leadership::LeaderReach`): all zero
+/// (the default) is nothing to show.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct ReachReadout {
+    pub(crate) leader_reach: f32,
+    pub(crate) leader_load: f32,
+    pub(crate) tribe_leader_reach: f32,
+    pub(crate) tribe_leader_load: f32,
+    pub(crate) orders_carried_out: f32,
+    /// The band's own leader's factor, whether or not it is in a tribe; 0 with no leader of its own.
+    pub(crate) leader_orders_carried_out: f32,
+}
+
+/// The reach fields of one own band: its own leader's reach and load when it has a leader, the
+/// tribe leader's when it is in a formed tribe, and the factor its orders arrive at. `people` is
+/// the band's head-count, the same measure the tribe code ranks bands by.
+pub(crate) fn reach_readout(
+    config: &crate::leadership_config::LeadershipConfig,
+    has_own_leader: bool,
+    people: u32,
+    tribe_member_count: Option<usize>,
+) -> ReachReadout {
+    use crate::leadership::{
+        band_leader_reach, tribe_leader_reach, tribe_orders_carried_out_for_member,
+    };
+    let own = has_own_leader.then(|| band_leader_reach(config, f64::from(people)));
+    let tribe = tribe_member_count.map(|count| tribe_leader_reach(config, count));
+    let orders_carried_out = match (&tribe, &own) {
+        (Some(tribe), _) => tribe_orders_carried_out_for_member(config, tribe, has_own_leader),
+        (None, Some(own)) => own.orders_carried_out(config),
+        (None, None) => 0.0,
+    };
+    ReachReadout {
+        leader_reach: own.map_or(0.0, |r| r.reach as f32),
+        leader_load: own.map_or(0.0, |r| r.load as f32),
+        tribe_leader_reach: tribe.map_or(0.0, |r| r.reach as f32),
+        tribe_leader_load: tribe.map_or(0.0, |r| r.load as f32),
+        orders_carried_out: orders_carried_out as f32,
+        leader_orders_carried_out: own.map_or(0.0, |r| r.orders_carried_out(config) as f32),
+    }
 }
 
 /// `BandId -> people` over every live band, the order a tribe's members are listed in.
 pub(crate) type BandSizeLookup = std::collections::HashMap<BandId, u32>;
+
+/// Every live band that has a leader of its own: shared history builds only while at least one of a
+/// pair is in it, so a pair row states whether its partner is.
+pub(crate) type BandLeaderLookup = std::collections::HashSet<BandId>;
 
 /// The tribe `band` belongs to, or `None` in no tribe. `names` and `sizes` are the live-band
 /// lookups; a nameless member reads as the same `Band <id>` label `tribe.rs` uses.
@@ -1166,6 +1218,7 @@ pub(crate) fn tribe_membership(
                 sim_schema::TRIBE_LEADER_COUNCIL_OF_CHIEFS
             }
         },
+        member_count: tribe.members.len(),
     })
 }
 
@@ -1193,8 +1246,9 @@ pub(crate) fn tribe_progress(
     config: &crate::leadership_config::LeadershipConfig,
     band: BandId,
     names: &BandNameLookup,
+    leaders: &BandLeaderLookup,
 ) -> Option<TribeProgress> {
-    let standing = registry.standing_of(band)?;
+    registry.standing_of(band)?;
     let pairs = registry
         .pairs_of(band)
         .map(|(partner, score)| sim_schema::TribePairState {
@@ -1206,10 +1260,10 @@ pub(crate) fn tribe_progress(
                 .unwrap_or_else(|| crate::systems::band_label(partner)),
             history: score.history as f32,
             contribution: tribe_contribution(config, score),
+            partner_has_leader: leaders.contains(&partner),
         })
         .collect();
     Some(TribeProgress {
-        standing: standing.wire(),
         threshold: config.tribe_score_threshold as f32,
         history_build_turns: config.tribe_history_build_turns as f32,
         weights: tribe_contribution(
@@ -1251,6 +1305,9 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// The formed tribe the band belongs to; `None` in no tribe, for a foreign or detached row and
     /// for a hand-built fixture.
     pub(crate) tribe_membership: Option<TribeMembership>,
+    /// The band's leader reach and the factor its orders arrive at (default for a foreign row, a
+    /// party and a hand-built fixture).
+    pub(crate) reach: ReachReadout,
     pub(crate) cohort: &'a PopulationCohort,
     pub(crate) allocation: Option<&'a LaborAllocation>,
     pub(crate) expedition: Option<&'a Expedition>,
@@ -1267,7 +1324,6 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// Echo of `fauna.predators.raid_radius` — surfaced per-cohort exactly like `work_range` (a global
     /// lever the client needs per-band to check whether a visible aggressive predator is in raid range).
     pub(crate) raid_radius: u32,
-    pub(crate) scout_vantage_distance: u32,
     pub(crate) expedition_levers: &'a ExpeditionLevers<'a>,
     pub(crate) settlement_stage_config: &'a crate::settlement_stage_config::SettlementStageConfig,
     pub(crate) travel_target: Option<UVec2>,
@@ -1299,6 +1355,9 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// near its anchor, resolved at capture by [`crate::supply::WalkReach::region_around`], the same
     /// walk test the culture morale term reads. Empty with no anchor.
     pub(crate) belief_reach: Vec<UVec2>,
+    /// **The anchor's saturating weight** (`CultureConfig::anchor_weight` of the belief standing at
+    /// the band's anchor), `0` with no anchor. Resolved at capture from the live registry.
+    pub(crate) belief_anchor_weight: f32,
     /// **The band's relayed region** — tiles outside the direct region from which it would be tied
     /// in through its other kin, resolved at capture by [`crate::belief_relay`] on the frame's
     /// positions. (The hop count is NOT recounted here: the frame publishes the one the turn's term
@@ -1636,6 +1695,7 @@ pub(crate) fn redacted_population_state(
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
     let PopulationStateInputs {
         belief_reach,
+        belief_anchor_weight,
         belief_relay_region,
         held_preservation,
         reachable_stores,
@@ -1650,6 +1710,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         leadership_threshold,
         tribe,
         tribe_membership,
+        reach,
         cohort,
         allocation,
         expedition,
@@ -1661,7 +1722,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         band_names,
         work_range,
         raid_radius,
-        scout_vantage_distance,
         expedition_levers,
         settlement_stage_config,
         travel_target,
@@ -2708,10 +2768,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         idle_workers,
         working_age,
         work_range,
-        // Repurposed: carries the band's effective scout vantage distance (how far the forward-
-        // observer vantage ring is posted, `0` with no scouts), not the retired fog-pulse radius.
-        // See the field doc in `sim_schema`.
-        scout_reveal_radius: scout_vantage_distance,
+        // **The watched ground's edge** - the same function that keeps wild predators out
+        // (`fauna::advance_herds`), so the border the client draws is the edge they stay behind.
+        watched_radius: crate::visibility_systems::watched_radius(
+            expedition_levers.move_ferry_reach_tiles,
+            allocation.map_or(0, LaborAllocation::scouting_reach_tiles),
+        ),
+        scouting_range_max: kit_levers.scouting_range_max,
+        predators_kept_off: cohort.predators_kept_off,
         is_expedition,
         expedition_mission,
         expedition_phase,
@@ -2736,10 +2800,17 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         morale_climate: cohort.last_morale_contributions.climate.raw(),
         morale_unrest: cohort.last_morale_contributions.unrest.raw(),
         morale_culture: cohort.last_morale_contributions.culture.raw(),
+        // **The cohesion term and what it was priced from** — the head-count and ceiling the sim stored,
+        // never a recount on the positions this turn's movement changed.
+        morale_cohesion: cohort.last_morale_contributions.cohesion.raw(),
+        cohesion_headcount: cohort.last_cohesion.headcount,
+        cohesion_ceiling: cohort.last_cohesion.ceiling,
+        morale_fresh_water: cohort.last_morale_contributions.fresh_water.raw(),
         // **The ancestors' place and the ground near it** — `0,0` and empty with no anchor.
         has_belief_anchor: cohort.belief_anchor.is_some(),
         belief_anchor_x: cohort.belief_anchor.map_or(0, |anchor| anchor.x),
         belief_anchor_y: cohort.belief_anchor.map_or(0, |anchor| anchor.y),
+        belief_anchor_weight,
         belief_reach_x: belief_reach.iter().map(|tile| tile.x).collect(),
         belief_reach_y: belief_reach.iter().map(|tile| tile.y).collect(),
         // The hop count the turn's culture term was priced from (`simulate_population`), never a
@@ -3132,7 +3203,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         independence_grievance_threshold: wellbeing.independence.grievance_threshold,
         culture_pressures,
         band_improvements,
-        tribe_standing: tribe.as_ref().map_or(0, |t| t.standing),
         tribe_threshold: tribe.as_ref().map_or(0.0, |t| t.threshold),
         tribe_history_build_turns: tribe.as_ref().map_or(0.0, |t| t.history_build_turns),
         tribe_weights: tribe.as_ref().map(|t| t.weights).unwrap_or_default(),
@@ -3148,6 +3218,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         tribe_leader_kind: tribe_membership
             .as_ref()
             .map_or(sim_schema::TRIBE_LEADER_NONE, |t| t.leader_kind),
+        leader_reach: reach.leader_reach,
+        leader_load: reach.leader_load,
+        tribe_leader_reach: reach.tribe_leader_reach,
+        tribe_leader_load: reach.tribe_leader_load,
+        orders_carried_out: reach.orders_carried_out,
+        leader_orders_carried_out: reach.leader_orders_carried_out,
         tribe_member_names: tribe_membership.map(|t| t.member_names).unwrap_or_default(),
         culture_traits,
         culture_ancestor_pull,
@@ -3575,6 +3651,9 @@ mod tests {
             equipped_vantage_range: crate::labor_config::LaborConfig::builtin()
                 .scout
                 .vantage_range as f32,
+            scouting_range_max: crate::labor_config::LaborConfig::builtin()
+                .scout
+                .range_past_local_max,
             equipped_expedition_sight_range: crate::expedition_config::ExpeditionConfig::builtin()
                 .observe_sight_range as f32,
         }
@@ -3646,6 +3725,8 @@ mod tests {
             ),
             belief_anchor: None,
             last_belief_relay_hops: 0,
+            predators_kept_off: 0,
+            last_cohesion: Default::default(),
         }
     }
 
@@ -3666,6 +3747,7 @@ mod tests {
     ) -> PopulationCohortState {
         population_state(PopulationStateInputs {
             belief_reach: Vec::new(),
+            belief_anchor_weight: 0.0,
             belief_relay_region: Vec::new(),
             culture_traits: Vec::new(),
             culture_ancestor_pull: Vec::new(),
@@ -3679,6 +3761,7 @@ mod tests {
             leadership_threshold: 0.0,
             tribe: None,
             tribe_membership: None,
+            reach: ReachReadout::default(),
             // No world, so no outfitting window either.
             loadout_window: None,
             heart: None,
@@ -3697,7 +3780,6 @@ mod tests {
             band_names: &BandNameLookup::default(),
             work_range: 0,
             raid_radius: 0,
-            scout_vantage_distance: 0,
             expedition_levers: &levers(),
             settlement_stage_config:
                 &crate::settlement_stage_config::SettlementStageConfig::builtin(),
@@ -3732,6 +3814,8 @@ mod tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                scouting_range: 0,
+                scouting_reach: 0,
                 max_workers: Some(4),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -4056,6 +4140,8 @@ mod tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                scouting_range: 0,
+                scouting_reach: 0,
                 max_workers: Some(4),
                 staffing: Default::default(),
                 target: LaborTarget::Scout,
