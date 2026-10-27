@@ -116,10 +116,6 @@ fn band_pair(a: BandId, b: BandId) -> BandPair {
     }
 }
 
-use sim_schema::{
-    TRIBE_STANDING_ALONE, TRIBE_STANDING_LOCAL, TRIBE_STANDING_NO_NETWORK, TRIBE_STANDING_NO_URN,
-};
-
 /// Why a band is or is not in reach of a tribe this turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TribeStanding {
@@ -127,18 +123,6 @@ pub enum TribeStanding {
     NoUrn,
     NoNetwork,
     Alone,
-}
-
-impl TribeStanding {
-    /// The wire byte (`TRIBE_STANDING_*`).
-    pub fn wire(self) -> u8 {
-        match self {
-            TribeStanding::Local => TRIBE_STANDING_LOCAL,
-            TribeStanding::NoUrn => TRIBE_STANDING_NO_URN,
-            TribeStanding::NoNetwork => TRIBE_STANDING_NO_NETWORK,
-            TribeStanding::Alone => TRIBE_STANDING_ALONE,
-        }
-    }
 }
 
 /// **Every tribe, every pair's shared history, and how many tribes each people has formed.**

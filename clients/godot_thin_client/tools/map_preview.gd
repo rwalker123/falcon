@@ -8166,3 +8166,37 @@ func _band_ancestors_states() -> void:
 	_assert_map("ancestors — the relayed region draws its own outline out to %s" % ANCESTORS_KIN_PROBE_TILE,
 		_count_changed_pixels(anchored, kin_frame,
 			_hex_probe_rect(kin_frame, ANCESTORS_KIN_PROBE_TILE, ANCESTORS_PROBE_RADII)) > 0)
+	# SACRED GROUND IS ALWAYS MARKED: with NOTHING selected the anchored band's tile still wears the mark,
+	# and `show_belief_place` shades the holder's published reach (a changed pixel at the road's bend) until
+	# the selection changes.
+	_display_snapshot(_snapshot_band_ancestors(false))
+	_map.selected_unit_id = -1
+	await _settle()
+	var bare_unselected: Image = await _capture()
+	_display_snapshot(_snapshot_band_ancestors(true))
+	_map.selected_unit_id = -1
+	await _settle()
+	var marked_unselected: Image = await _capture()
+	await _save("map_band_ancestors_always")
+	_assert_map("ancestors — the mark is drawn with nothing selected at %s" % ANCESTORS_ANCHOR,
+		_count_changed_pixels(bare_unselected, marked_unselected,
+			_hex_probe_rect(marked_unselected, ANCESTORS_ANCHOR, 0.5)) > 0)
+	_map.selected_unit_id = BAND_ENTITY
+	var pan_before: Vector2 = _map.pan_offset
+	_map.show_belief_place(ANCESTORS_ANCHOR.x, ANCESTORS_ANCHOR.y, BAND_ENTITY)
+	await _settle()
+	_assert_map("ancestors — show ▸ pans the map to the tile", _map.pan_offset != pan_before)
+	# Back to the fitted view (the shown region survives a pan) so the probe rects line up with the frames above.
+	_map._fit_map_to_view()
+	await _settle()
+	var shown_frame: Image = await _capture()
+	await _save("map_band_ancestors_show")
+	_assert_map("ancestors — show ▸ shades the holder's reach out to %s" % ANCESTORS_BEND_TILE,
+		_count_changed_pixels(bare_unselected, shown_frame,
+			_hex_probe_rect(shown_frame, ANCESTORS_BEND_TILE, ANCESTORS_PROBE_RADII)) > 0)
+	_map.selected_unit_id = -1
+	_map.queue_redraw()
+	await _settle()
+	_assert_map("ancestors — the shown region lets go when the selection changes",
+		_count_changed_pixels(shown_frame, await _capture(),
+			_hex_probe_rect(shown_frame, ANCESTORS_BEND_TILE, ANCESTORS_PROBE_RADII)) > 0)

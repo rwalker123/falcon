@@ -409,6 +409,7 @@ struct PublishedAnchor {
     has_anchor: bool,
     anchor: UVec2,
     region: Vec<UVec2>,
+    weight: f32,
 }
 
 fn published_anchor(app: &mut App, band: Entity) -> PublishedAnchor {
@@ -441,6 +442,7 @@ fn published_anchor(app: &mut App, band: Entity) -> PublishedAnchor {
     assert_eq!(xs.len(), ys.len(), "the region's x and y lists zip");
     PublishedAnchor {
         has_anchor: row.hasBeliefAnchor(),
+        weight: row.beliefAnchorWeight(),
         anchor: UVec2::new(row.beliefAnchorX(), row.beliefAnchorY()),
         region: xs
             .into_iter()
@@ -497,6 +499,23 @@ fn a_band_with_no_anchor_publishes_an_empty_region() {
     assert!(!published.has_anchor);
     assert_eq!(published.anchor, UVec2::ZERO);
     assert!(published.region.is_empty());
+    assert_eq!(published.weight, 0.0, "no anchor, no strength");
+}
+
+/// **The anchor's strength rides the encoded frame**: an anchor holding exactly the half-saturation
+/// belief reads one half, the same `anchor_weight` the morale term uses.
+#[test]
+fn the_anchor_weight_is_on_the_encoded_snapshot() {
+    let mut app = one_faction_world();
+    let (fx, place) = anchored_band(&mut app);
+    let half = wellbeing(&app).culture.belief_half_saturation;
+    stage_belief(&mut app, place, half - SOME_BELIEF);
+
+    let published = published_anchor(&mut app, fx.band);
+    assert!(published.has_anchor);
+    let expected = wellbeing(&app).culture.anchor_weight(half);
+    assert!((published.weight - expected).abs() < f32::EPSILON);
+    assert!((published.weight - 0.5).abs() < f32::EPSILON);
 }
 
 /// **A road widens the published region exactly as it widens the term**: a tile one step past

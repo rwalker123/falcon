@@ -190,12 +190,18 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // draws a wrap-aware reticle + line to it for the selected traveling unit.
     let _ = dict.insert("travel_target_x", i64::from(cohort.travelTargetX()));
     let _ = dict.insert("travel_target_y", i64::from(cohort.travelTargetY()));
-    // The band's ancestors' place — its belief anchor, the tile `morale_culture` is measured against
+    // The band's sacred ground — its belief anchor, the tile `morale_culture` is measured against
     // (`hasBeliefAnchor` gates it; `0,0` with no anchor, the `isTraveling`/`travelTarget` idiom). Own
     // bands only: a foreign band's redacted row leaves all three at their defaults.
     let _ = dict.insert("has_belief_anchor", cohort.hasBeliefAnchor());
     let _ = dict.insert("belief_anchor_x", i64::from(cohort.beliefAnchorX()));
     let _ = dict.insert("belief_anchor_y", i64::from(cohort.beliefAnchorY()));
+    // The anchor's strength in [0, 1): the saturating weight of the dead on that tile. 0 with no anchor
+    // and on a foreign row. The sacred-ground strength bar steps off it (never the raw count).
+    let _ = dict.insert(
+        "belief_anchor_weight",
+        f64::from(cohort.beliefAnchorWeight()),
+    );
     // Every tile the band can STAND on and still count as near its anchor, as two zipped packed
     // arrays (index i of each is one tile). Road-aware, so the set is irregular — the map draws its
     // perimeter, never a circle. Empty with no anchor.
@@ -2075,6 +2081,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // the practice toward one. Own bands only - a foreign row carries the defaults.
     let _ = dict.insert("leader_name", cohort.leaderName().unwrap_or(""));
     let _ = dict.insert("leader_kind", i64::from(cohort.leaderKind()));
+    // A leader's reach (#870): people the leader runs well vs the band's people (0/0 = no leader).
+    let _ = dict.insert("leader_reach", f64::from(cohort.leaderReach()));
+    let _ = dict.insert("leader_load", f64::from(cohort.leaderLoad()));
     let _ = dict.insert(
         "leadership_practice",
         f64::from(cohort.leadershipPractice()),
@@ -2100,11 +2109,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "leadership_from_stages",
         f64::from(cohort.leadershipFromStages()),
     );
-    // PROGRESS TOWARD A TRIBE (#861), own bands only: `tribe_standing` is 0 local, 1 no ancestors place, 2 no pooling
-    // network, 3 alone; `tribe_threshold` (0 until the band has a leader) the score that makes a pair close;
+    // PROGRESS TOWARD A TRIBE (#861), own bands only: `tribe_threshold` (0 until the band has a leader) the score that makes a pair close;
     // `tribe_history_build_turns` the turns of being local that fill shared history; `tribe_weights`
     // the most each input can add; `tribe_pairs` one row per band living with this one.
-    let _ = dict.insert("tribe_standing", i64::from(cohort.tribeStanding()));
     let _ = dict.insert("tribe_threshold", f64::from(cohort.tribeThreshold()));
     let _ = dict.insert(
         "tribe_history_build_turns",
@@ -2121,6 +2128,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = row.insert("partner_band", pair.partnerBand() as i64);
             let _ = row.insert("partner_name", pair.partnerName().unwrap_or(""));
             let _ = row.insert("history", f64::from(pair.history()));
+            let _ = row.insert("partner_has_leader", pair.partnerHasLeader());
             let _ = row.insert(
                 "contribution",
                 &tribe_closeness_to_dict(pair.contribution()),
@@ -2147,6 +2155,15 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("scouting_range_max", i64::from(cohort.scoutingRangeMax()));
     // Wild predator packs this band's watched ring kept off this turn (0 without scouts).
     let _ = dict.insert("predators_kept_off", i64::from(cohort.predatorsKeptOff()));
+    // Tribe leader's reach in member bands, the member count, and the share of an order that
+    // reaches this band (0 = nothing to show).
+    let _ = dict.insert("tribe_leader_reach", f64::from(cohort.tribeLeaderReach()));
+    let _ = dict.insert("tribe_leader_load", f64::from(cohort.tribeLeaderLoad()));
+    let _ = dict.insert("orders_carried_out", f64::from(cohort.ordersCarriedOut()));
+    let _ = dict.insert(
+        "leader_orders_carried_out",
+        f64::from(cohort.leaderOrdersCarriedOut()),
+    );
     let _ = dict.insert(
         "long_move_leaves_food",
         f64::from(cohort.longMoveLeavesFood()),

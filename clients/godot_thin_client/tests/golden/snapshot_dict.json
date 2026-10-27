@@ -6896,6 +6896,7 @@
       "activity": "populations[0].activity",
       "band_id": 141,
       "band_move_tiles_per_turn": 65.150002,
+      "belief_anchor_weight": 30.57,
       "belief_anchor_x": 78,
       "belief_anchor_y": 67,
       "belief_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [114, 109, 120]},
@@ -8995,7 +8996,10 @@
       "last_emigrated": 197,
       "last_immigrated": 170,
       "leader_kind": 74,
+      "leader_load": 9.03,
       "leader_name": "populations[0].leader_name",
+      "leader_orders_carried_out": 102.989998,
+      "leader_reach": 111.169998,
       "leadership_from_builds": 37.580002,
       "leadership_from_herd": 93.699997,
       "leadership_from_splits": 46.009998,
@@ -9197,6 +9201,7 @@
       "morale_unrest": 0.000088,
       "move_ferry_reach_tiles": 132,
       "name": "populations[0].name",
+      "orders_carried_out": 82.110001,
       "output_multiplier": 0.000001,
       "pending_reveal_count": 3,
       "pool_crew": [
@@ -9339,7 +9344,9 @@
       "travel_target_y": 90,
       "tribe_history_build_turns": 17.290001,
       "tribe_leader_kind": 127,
+      "tribe_leader_load": 94.779999,
       "tribe_leader_name": "populations[0].tribe_leader_name",
+      "tribe_leader_reach": 49.810001,
       "tribe_member_names": [
         "populations[0].tribe_member_names[0]",
         "populations[0].tribe_member_names[1]",
@@ -9359,6 +9366,7 @@
           },
           "history": 53.16,
           "partner_band": 188,
+          "partner_has_leader": true,
           "partner_name": "populations[0].tribe_pairs[0].partner_name"
         },
         {
@@ -9373,6 +9381,7 @@
           },
           "history": 54.509998,
           "partner_band": 65,
+          "partner_has_leader": false,
           "partner_name": "populations[0].tribe_pairs[1].partner_name"
         },
         {
@@ -9387,10 +9396,10 @@
           },
           "history": 57.98,
           "partner_band": 6,
+          "partner_has_leader": false,
           "partner_name": "populations[0].tribe_pairs[2].partner_name"
         }
       ],
-      "tribe_standing": 79,
       "tribe_threshold": 15.5,
       "tribe_weights": {
         "acting": 61.549999,
@@ -9413,6 +9422,7 @@
       "activity": "populations[1].activity",
       "band_id": 42,
       "band_move_tiles_per_turn": 61.23,
+      "belief_anchor_weight": 26.4,
       "belief_anchor_x": 49,
       "belief_anchor_y": 60,
       "belief_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [29, 50, 115]},
@@ -11512,7 +11522,10 @@
       "last_emigrated": 24,
       "last_immigrated": 49,
       "leader_kind": 81,
+      "leader_load": 33.41,
       "leader_name": "populations[1].leader_name",
+      "leader_orders_carried_out": 13.69,
+      "leader_reach": 68.720001,
       "leadership_from_builds": 41.080002,
       "leadership_from_herd": 49.389999,
       "leadership_from_splits": 17.82,
@@ -11641,6 +11654,7 @@
       "morale_unrest": 0.000139,
       "move_ferry_reach_tiles": 145,
       "name": "populations[1].name",
+      "orders_carried_out": 61.57,
       "output_multiplier": 0.000118,
       "pending_reveal_count": 3,
       "pool_crew": [
@@ -11783,7 +11797,9 @@
       "travel_target_y": 117,
       "tribe_history_build_turns": 2.63,
       "tribe_leader_kind": 120,
+      "tribe_leader_load": 92.57,
       "tribe_leader_name": "populations[1].tribe_leader_name",
+      "tribe_leader_reach": 62.259998,
       "tribe_member_names": [
         "populations[1].tribe_member_names[0]",
         "populations[1].tribe_member_names[1]",
@@ -11803,6 +11819,7 @@
           },
           "history": 102.989998,
           "partner_band": 19,
+          "partner_has_leader": true,
           "partner_name": "populations[1].tribe_pairs[0].partner_name"
         },
         {
@@ -11817,6 +11834,7 @@
           },
           "history": 32.880001,
           "partner_band": 174,
+          "partner_has_leader": false,
           "partner_name": "populations[1].tribe_pairs[1].partner_name"
         },
         {
@@ -11831,10 +11849,10 @@
           },
           "history": 110.57,
           "partner_band": 169,
+          "partner_has_leader": false,
           "partner_name": "populations[1].tribe_pairs[2].partner_name"
         }
       ],
-      "tribe_standing": 78,
       "tribe_threshold": 90.18,
       "tribe_weights": {
         "acting": 7.69,
@@ -11874,6 +11892,7 @@
       "activity": "populations[2].activity",
       "band_id": 87,
       "band_move_tiles_per_turn": 100.839996,
+      "belief_anchor_weight": 10.31,
       "belief_anchor_x": 124,
       "belief_anchor_y": 113,
       "belief_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [52, 15, 54]},
@@ -13973,7 +13992,10 @@
       "last_emigrated": 111,
       "last_immigrated": 128,
       "leader_kind": 200,
+      "leader_load": 54.830002,
       "leader_name": "populations[2].leader_name",
+      "leader_orders_carried_out": 57.200001,
+      "leader_reach": 18.66,
       "leadership_from_builds": 38.580002,
       "leadership_from_herd": 20.91,
       "leadership_from_splits": 1.94,
@@ -14175,6 +14197,7 @@
       "morale_unrest": 0.000198,
       "move_ferry_reach_tiles": 66,
       "name": "populations[2].name",
+      "orders_carried_out": 71.419998,
       "output_multiplier": 0.000051,
       "pending_reveal_count": 3,
       "pool_crew": [
@@ -14317,7 +14340,9 @@
       "travel_target_y": 112,
       "tribe_history_build_turns": 106.699997,
       "tribe_leader_kind": 169,
+      "tribe_leader_load": 5.77,
       "tribe_leader_name": "populations[2].tribe_leader_name",
+      "tribe_leader_reach": 95.559998,
       "tribe_member_names": [
         "populations[2].tribe_member_names[0]",
         "populations[2].tribe_member_names[1]",
@@ -14337,6 +14362,7 @@
           },
           "history": 39.130001,
           "partner_band": 182,
+          "partner_has_leader": true,
           "partner_name": "populations[2].tribe_pairs[0].partner_name"
         },
         {
@@ -14351,6 +14377,7 @@
           },
           "history": 20.68,
           "partner_band": 155,
+          "partner_has_leader": false,
           "partner_name": "populations[2].tribe_pairs[1].partner_name"
         },
         {
@@ -14365,10 +14392,10 @@
           },
           "history": 16.33,
           "partner_band": 84,
+          "partner_has_leader": false,
           "partner_name": "populations[2].tribe_pairs[2].partner_name"
         }
       ],
-      "tribe_standing": 165,
       "tribe_threshold": 52.619999,
       "tribe_weights": {
         "acting": 106.690002,

@@ -706,7 +706,6 @@ fn a_local_pair_publishes_each_input_times_its_weight_and_they_sum_to_the_score(
     let expected = closeness(&config, &stored[0].1);
 
     with_row(&mut app, 1, |row| {
-        assert_eq!(row.tribeStanding(), 0, "local");
         assert_eq!(row.tribeThreshold(), config.tribe_score_threshold as f32);
         assert_eq!(
             row.tribeHistoryBuildTurns(),
@@ -803,8 +802,8 @@ fn every_member_of_a_formed_tribe_publishes_it_chiefless_ones_included() {
     for n in [1, 2, 3] {
         assert_eq!(tribe_fields(&mut app, n), expected, "band {n}");
     }
-    // The chiefless members carry the formed tribe but no progress.
-    with_row(&mut app, 2, |row| assert_eq!(row.tribeThreshold(), 0.0));
+    // Chiefless members publish their progress too: a chiefless band can join a tribe.
+    with_row(&mut app, 2, |row| assert!(row.tribeThreshold() > 0.0));
 }
 
 #[test]
@@ -874,10 +873,9 @@ fn standing_says_why_a_band_is_not_in_reach() {
     assert_eq!(r.standing_of(id(3)), Some(TribeStanding::NoUrn));
     assert_eq!(r.standing_of(id(4)), Some(TribeStanding::NoNetwork));
     assert_eq!(r.standing_of(id(5)), Some(TribeStanding::NoUrn));
-    for (n, wire) in [(1, 3u8), (3, 1), (4, 2), (5, 1)] {
+    for n in [1, 3, 4, 5] {
         with_row(&mut app, n, |row| {
-            assert_eq!(row.tribeStanding(), wire, "band {n}");
-            assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
+            assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0, "band {n}");
         });
     }
 }
@@ -900,14 +898,19 @@ fn nothing_builds_toward_a_tribe_until_a_chief_exists() {
         0.0,
         "held, not built"
     );
-    for n in [1, 2] {
+    // Two chiefless local bands each publish the pair, and neither partner has a leader.
+    for (n, partner) in [(1, 2), (2, 1)] {
         with_row(&mut app, n, |row| {
-            assert_eq!(row.tribeThreshold(), 0.0, "no progress is published");
-            assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
+            assert!(row.tribeThreshold() > 0.0, "progress is published");
+            let pairs = row.tribePairs().expect("pairs");
+            assert_eq!(pairs.len(), 1);
+            assert_eq!(pairs.get(0).partnerBand(), id(partner).0);
+            assert!(!pairs.get(0).partnerHasLeader(), "band {n}");
+            assert_eq!(pairs.get(0).history(), 0.0);
         });
     }
 
-    // One band is crowned: history builds from that turn, and only the chiefed row shows it.
+    // One band is crowned: history builds from that turn, and both rows show it.
     crown(&mut app, one, "Chief1", LeaderKind::Chief);
     turns(&mut app, 3);
     let built = registry(&app).shared_history(id(1), id(2));
@@ -918,15 +921,17 @@ fn nothing_builds_toward_a_tribe_until_a_chief_exists() {
         assert_eq!(pairs.len(), 1);
         assert_eq!(pairs.get(0).partnerBand(), id(2).0);
         assert!((pairs.get(0).history() - built as f32).abs() < 1e-6);
+        assert!(!pairs.get(0).partnerHasLeader(), "band 2 has no chief");
     });
+    // The chiefless band publishes its pair with the chiefed partner, history and all.
     with_row(&mut app, 2, |row| {
-        assert_eq!(
-            row.tribeThreshold(),
-            0.0,
-            "the chiefless partner shows nothing"
-        );
-        assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
-        assert_eq!(row.tribeWeights().map_or(0.0, |w| w.origin()), 0.0);
+        assert!(row.tribeThreshold() > 0.0);
+        assert!(row.tribeWeights().is_some_and(|w| w.origin() > 0.0));
+        let pairs = row.tribePairs().expect("pairs");
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs.get(0).partnerBand(), id(1).0);
+        assert!((pairs.get(0).history() - built as f32).abs() < 1e-6);
+        assert!(pairs.get(0).partnerHasLeader(), "band 1 has a chief");
     });
 }
 
@@ -947,7 +952,6 @@ fn a_local_pair_with_no_leader_left_holds_its_history_and_a_parted_one_fades() {
     turns(&mut app, 10);
     assert!(registry(&app).shared_history(id(1), id(2)) < built);
     with_row(&mut app, 1, |row| {
-        assert_eq!(row.tribeStanding(), 3, "alone now");
         assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
     });
 }
@@ -965,7 +969,6 @@ fn a_foreign_band_publishes_the_defaults() {
     app.world.insert_resource(config);
     turns(&mut app, 3);
     with_row(&mut app, 3, |row| {
-        assert_eq!(row.tribeStanding(), 0);
         assert_eq!(row.tribeThreshold(), 0.0);
         assert_eq!(row.tribeHistoryBuildTurns(), 0.0);
         assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
@@ -996,4 +999,69 @@ fn the_scores_round_trip_the_checkpoint_so_a_load_publishes_progress() {
         registry(&app).standing_of(id(1)),
         Some(TribeStanding::Local)
     );
+}
+
+#[test]
+fn reach_is_published_for_a_chiefed_band_a_tribe_member_and_a_chiefless_member() {
+    // Band 1 (chiefed, 200 people: over its own reach) and 2 (chiefed, 300: the largest, so its chief is
+    // promoted to lead the tribe) form a tribe with chiefless kin band 3.
+    let mut app = spawn_world();
+    member(&mut app, 1, 200, Some(PLACE_A), NET_1, 1);
+    member(&mut app, 2, 300, Some(PLACE_A), NET_1, 1);
+    band(&mut app, 3, 60, Some(PLACE_A), NET_1);
+    set_origin(&mut app, 3, 1);
+    // A chiefed band in no tribe, over its reach.
+    member(&mut app, 4, 200, Some(PLACE_B), NET_2, 4);
+    // A chiefless band in no tribe.
+    band(&mut app, 5, 30, None, 0);
+    tie_all(&mut app, &[1, 2, 3]);
+    turns(&mut app, TURNS_TO_FILL_HISTORY);
+    assert_eq!(registry(&app).tribe_of(id(1)).unwrap().members.len(), 3);
+    let config = app.world.resource::<LeadershipConfigHandle>().get();
+    let read = |row: fb::PopulationCohortState<'_>| {
+        (
+            row.leaderReach(),
+            row.leaderLoad(),
+            row.tribeLeaderReach(),
+            row.tribeLeaderLoad(),
+            row.ordersCarriedOut(),
+        )
+    };
+    let reach = config.reach_chief_people as f32;
+    let tribe_reach = config.reach_paramount_bands as f32;
+    let eff = config.over_reach_efficiency as f32;
+    // Chiefed tribe member over its own reach: the tribe factor (three bands is within reach) is
+    // in `ordersCarriedOut`, the band's own, lower factor in `leaderOrdersCarriedOut`.
+    let over = ((config.reach_chief_people
+        + config.over_reach_efficiency * (200.0 - config.reach_chief_people))
+        / 200.0) as f32;
+    assert!(over < 1.0);
+    assert_eq!(
+        with_row(&mut app, 1, |row| (
+            row.leaderReach(),
+            row.leaderLoad(),
+            row.tribeLeaderReach(),
+            row.tribeLeaderLoad(),
+            row.ordersCarriedOut(),
+            row.leaderOrdersCarriedOut()
+        )),
+        (reach, 200.0, tribe_reach, 3.0, 1.0, over)
+    );
+    // Chiefless tribe member: no own reach, the tribe's, and the efficiency applied once.
+    assert_eq!(
+        with_row(&mut app, 3, read),
+        (0.0, 0.0, tribe_reach, 3.0, eff)
+    );
+    // Chiefed, no tribe, over its reach: (150 + 0.5 * 50) / 200.
+    assert_eq!(with_row(&mut app, 4, read), (reach, 200.0, 0.0, 0.0, over));
+    assert_eq!(
+        with_row(&mut app, 4, |row| row.leaderOrdersCarriedOut()),
+        over
+    );
+    assert_eq!(
+        with_row(&mut app, 3, |row| row.leaderOrdersCarriedOut()),
+        0.0
+    );
+    // Neither leader nor tribe: nothing to show.
+    assert_eq!(with_row(&mut app, 5, read), (0.0, 0.0, 0.0, 0.0, 0.0));
 }

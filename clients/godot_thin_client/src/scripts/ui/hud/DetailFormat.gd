@@ -69,7 +69,7 @@ const MORALE_CAUSE_LABEL_COLD := "harsh climate"
 const MORALE_CAUSE_LABEL_UNREST := "unrest"
 
 # Deliberately not "culture": the positive-unrest breakdown row already reads "culture" (cohesion).
-const MORALE_CAUSE_LABEL_CULTURE := "far from the ancestors"
+const MORALE_CAUSE_LABEL_CULTURE := "far from its sacred ground"
 
 # |morale_delta| below this (0.5%/turn) reads as flat (no arrow), so trivial drift — nearly every tile
 # bleeds a hair today — isn't shown as a decline. (The ▲/▼ ARROWS are `BandDetailLines`', the only
@@ -3113,22 +3113,60 @@ static func expedition_mission_label(mission: String) -> String:
         return HudExpeditionVocab.EXPEDITION_MISSION_LABELS[key]
     return key.capitalize() if key != "" else "Expedition"
 
-# The tile card's BELIEF row (issue #699): the dead a place holds, in whole people (`TileState.belief`,
-# 1.0 per person who died there; it never decays). Below one whole person it reads "<1" rather than a
-# rounded "0", which would claim the place holds no dead.
-const ANCESTORS_ROW := "Ancestors"
-const ANCESTORS_DEAD_FORMAT := "%s dead"
-const ANCESTORS_UNDER_ONE := "<1"
-const ANCESTORS_WHOLE_PERSON := 1.0
+# The tile card's SACRED GROUND row (#870): shown only where the tile IS the sacred ground of one or more
+# of the player's own bands -- the same strength bar and word the Beliefs pull-down draws, off the
+# strongest `belief_anchor_weight` among the bands holding it. A tile no band of the player's holds as its
+# sacred ground has no row, whatever dead it carries.
+const SACRED_GROUND_ROW := "Sacred ground"
+const SACRED_GROUND_HONOURED_ONE_FORMAT := "Honoured by %s"
+const SACRED_GROUND_HONOURED_MANY_FORMAT := "%s and %d other bands"
+const SACRED_GROUND_HONOURED_ONE_OTHER_FORMAT := "%s and 1 other band"
 
-## The tile card's `Ancestors: 12 dead` row, or `""` where the place holds no dead (`belief` absent
-## or zero — no row, never a `0 dead`).
-static func ancestors_line(tile_info: Dictionary) -> String:
-    var belief := float(tile_info.get("belief", 0.0))
-    if belief <= 0.0:
+## `▰▰▰▱▱ hallowed` -- the strength bar and its word, off an anchor's weight `w` in (0, 1): step
+## `clamp(ceil(w * pips), 1, pips)`. No raw number ever reaches the screen. The ONE implementation the
+## Beliefs pull-down and the tile card share.
+static func sacred_ground_bar(weight: float) -> String:
+    var pips := HudDisclosureVocab.BELIEFS_BAR_PIPS
+    var step := clampi(int(ceil(weight * float(pips))), 1, pips)
+    return HudDisclosureVocab.BELIEFS_BAR_FORMAT % [
+        HudDisclosureVocab.BELIEFS_BAR_FILLED.repeat(step) + HudDisclosureVocab.BELIEFS_BAR_EMPTY.repeat(pips - step),
+        HudDisclosureVocab.BELIEFS_BAR_WORDS[step - 1]]
+
+## The player's bands (non-expedition) whose sacred ground is the tile `(x, y)`.
+static func sacred_ground_holders(bands: Array, x: int, y: int) -> Array:
+    var holders: Array = []
+    for band in bands:
+        if not (band is Dictionary) or bool(band.get("is_expedition", false)):
+            continue
+        if bool(band.get(HudDisclosureVocab.BELIEFS_PLACE_ANCHOR_KEY, false)) \
+                and int(band.get(HudDisclosureVocab.BELIEFS_PLACE_X_KEY, -1)) == x \
+                and int(band.get(HudDisclosureVocab.BELIEFS_PLACE_Y_KEY, -1)) == y:
+            holders.append(band)
+    return holders
+
+## The tile card's `Sacred ground: ▰▰▰▱▱ hallowed` row, or `""` where none of `bands` holds the tile.
+static func sacred_ground_line(tile_info: Dictionary, bands: Array) -> String:
+    var holders := sacred_ground_holders(bands, int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
+    if holders.is_empty():
         return ""
-    var count := ANCESTORS_UNDER_ONE if belief < ANCESTORS_WHOLE_PERSON else str(int(round(belief)))
-    return "%s: %s" % [ANCESTORS_ROW, ANCESTORS_DEAD_FORMAT % count]
+    var weight := 0.0
+    for holder in holders:
+        weight = maxf(weight, float(holder.get(HudDisclosureVocab.BELIEFS_PLACE_WEIGHT_KEY, 0.0)))
+    return "%s%s%s" % [SACRED_GROUND_ROW, DETAIL_KV_SEPARATOR, sacred_ground_bar(weight)]
+
+## The row's hover: who honours the ground.
+static func sacred_ground_hover(tile_info: Dictionary, bands: Array) -> String:
+    var holders := sacred_ground_holders(bands, int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
+    if holders.is_empty():
+        return ""
+    var first := HudFormat.band_name(holders[0])
+    match holders.size():
+        1:
+            return SACRED_GROUND_HONOURED_ONE_FORMAT % first
+        2:
+            return SACRED_GROUND_HONOURED_ONE_OTHER_FORMAT % first
+        _:
+            return SACRED_GROUND_HONOURED_MANY_FORMAT % [first, holders.size() - 1]
 
 ## Plain-language label for a morale cause (0=None,1=Terrain,2=Cold,3=Unrest,4=Culture); "" for None or
 ## unknown. Shared by the drawer morale line and the losing-population alert reason.

@@ -1250,7 +1250,6 @@ fn create_populations<'a>(
                     leadershipFromHerd: cohort.leadership_from_herd,
                     leadershipFromStages: cohort.leadership_from_stages,
                     bandImprovements: Some(band_improvements),
-                    tribeStanding: cohort.tribe_standing,
                     tribeThreshold: cohort.tribe_threshold,
                     tribeHistoryBuildTurns: cohort.tribe_history_build_turns,
                     tribeWeights: Some(tribe_weights),
@@ -1261,6 +1260,13 @@ fn create_populations<'a>(
                     tribeLeaderKind: cohort.tribe_leader_kind,
                     scoutingRangeMax: cohort.scouting_range_max,
                     predatorsKeptOff: cohort.predators_kept_off,
+                    leaderReach: cohort.leader_reach,
+                    leaderLoad: cohort.leader_load,
+                    tribeLeaderReach: cohort.tribe_leader_reach,
+                    tribeLeaderLoad: cohort.tribe_leader_load,
+                    ordersCarriedOut: cohort.orders_carried_out,
+                    leaderOrdersCarriedOut: cohort.leader_orders_carried_out,
+                    beliefAnchorWeight: cohort.belief_anchor_weight,
                 },
             )
         })
@@ -2176,7 +2182,6 @@ fn decode_population(
             build_toe: decode_build_toe(row.buildToe()),
             is_queued: row.isQueued(),
         }),
-        tribe_standing: cohort.tribeStanding(),
         tribe_threshold: cohort.tribeThreshold(),
         tribe_history_build_turns: cohort.tribeHistoryBuildTurns(),
         tribe_weights: cohort
@@ -2191,6 +2196,7 @@ fn decode_population(
                 .contribution()
                 .map(decode_tribe_closeness)
                 .unwrap_or_default(),
+            partner_has_leader: row.partnerHasLeader(),
         }),
         tribe_name: text(cohort.tribeName()),
         tribe_member_names: decode_strings(cohort.tribeMemberNames()),
@@ -2198,6 +2204,13 @@ fn decode_population(
         tribe_leader_kind: cohort.tribeLeaderKind(),
         scouting_range_max: cohort.scoutingRangeMax(),
         predators_kept_off: cohort.predatorsKeptOff(),
+        leader_reach: cohort.leaderReach(),
+        leader_load: cohort.leaderLoad(),
+        tribe_leader_reach: cohort.tribeLeaderReach(),
+        tribe_leader_load: cohort.tribeLeaderLoad(),
+        orders_carried_out: cohort.ordersCarriedOut(),
+        leader_orders_carried_out: cohort.leaderOrdersCarriedOut(),
+        belief_anchor_weight: cohort.beliefAnchorWeight(),
     })
 }
 
@@ -2340,6 +2353,7 @@ fn create_tribe_pairs<'a>(
                     partnerName: Some(partner_name),
                     history: row.history,
                     contribution: Some(contribution),
+                    partnerHasLeader: row.partner_has_leader,
                 },
             )
         })
