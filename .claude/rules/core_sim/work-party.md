@@ -144,9 +144,14 @@ not counted against next turn's pool and cut again.
 **Kit claims follow the staffing.** `take_claims::row_claims` settles a staffed row on exactly the
 hands the passes armed (plus the keeping remainder: the leftover fraction of a keeper the bill asks
 for), so the band's item budget grants a staffed row its `kitted` units and no more. `RowClaims::asks`
-keeps the planned claim (what the row would ask for if armed as planned) beside the granted
-`claims`; a row's published `kitToe` states `required` from the ask and `filled` from the grant, so a
-shortfall the staffing left stays visible by item.
+keeps the ask beside the granted `claims`; a staffed row's ask is struck at the crew the staffing
+WANTED (`StaffedCrew::useful_crew`, pass 3's ceiling after the row's Max), not the hands present, read
+only while the stamp is current (`staffing.total() == workers`; a muster-cut donor row falls back to its
+hands present, so a lent hand's kit is not asked for twice), and still counts only take hands that would take something with the kit. A row's published `kitToe`
+states `required` from the ask and `filled` from the grant, so a row the pool starved of every head
+(passes 1b/2 deal every row's kitted heads before any bare head) still reads `required` > 0,
+`filled` 0 for the kit it lacked. Craft suggestions and auto-craft read the same lines, so they ask
+for that kit too.
 
 **Commands.** For a staffed kind the count on `assign_labor` is the **Max** (`0` = no Max, never an
 unassign); `stop_labor <faction> <band> <source>` ends the row

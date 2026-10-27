@@ -2679,12 +2679,30 @@ func _extract_source_models(band: Dictionary) -> Array:
         models.append(model)
     return models
 
+## **THE ROW'S SHORT-CREW REASON, FOLDED INTO ITS ONE `⚠`** (`HudWorkVocab.crew_shortfall`): appended to
+## `warn_lines` so a row already warning carries both reasons in one hover. A kit reason (any `kit_toe` line
+## with `filled < required`, named off the roster) REPLACES the row's own `kit_note` line, so the kit shortfall
+## is stated once, in the one sentence; otherwise the hands reason.
+func _add_short_crew_warn(warn_lines: Array, workers: int, max_workers: int, useful_crew: int,
+        toe: Array, kit_note: String = "") -> void:
+    var short := HudWorkVocab.crew_shortfall(workers, max_workers, useful_crew)
+    if short <= 0:
+        return
+    var kit_names := HudWorkVocab.toe_short_item_names(toe, _item_display_names)
+    if kit_names != "" and kit_note != "":
+        warn_lines.erase(kit_note)
+    warn_lines.append(HudWorkVocab.short_crew_reason(short, kit_names))
+
 ## **THE STAFFED FIELDS A ROW'S MODEL CARRIES** (#871): the Max, the hold figure, the three-way split of
 ## the crew and the kit's on-screen item words, off the merged row `merged` (pending-aware for the Max) and
 ## the confirmed assignment `assignment` (the table of equipment). One writer, so the work, groundwork
 ## and tile rows cannot read one crew three ways.
 func _put_staffed_fields(model: Dictionary, merged: Dictionary, assignment: Dictionary) -> void:
     model["max_workers"] = int(merged.get("max_workers", 0))
+    var warn_lines: Array = (model.get("warn_lines", []) as Array).duplicate()
+    _add_short_crew_warn(warn_lines, int(model.get("workers", 0)), int(merged.get("max_workers", 0)),
+        int(merged.get("useful_crew", 0)), assignment.get(SourceForecast.ASSIGNMENT_KIT_TOE_KEY, []) as Array)
+    model["warn_lines"] = warn_lines
     model["hold_crew"] = int(merged.get("hold_crew", 0))
     model["keepers_staffed"] = int(merged.get("keepers_staffed", 0))
     model["kitted_staffed"] = int(merged.get("kitted_staffed", 0))
@@ -4758,6 +4776,10 @@ func _work_source_model(band: Dictionary, key: Variant, m: Dictionary, kind: Str
     # AND short of gear, and each of those is its own mark.
     if kit_note != "":
         warn_lines.append(kit_note)
+    # **…AND THE ROW SHORT OF THE CREW IT ASKED FOR** shares that one ⚠ (a need row has no standing crew to be short).
+    if not is_need_row:
+        _add_short_crew_warn(warn_lines, workers, int(m.get("max_workers", 0)), int(m.get("useful_crew", 0)),
+            m.get(SourceForecast.ASSIGNMENT_KIT_TOE_KEY, []) as Array, kit_note)
     # **THE WORK PARTY ON THIS ROW** (`docs/plan_civilization_steps.md` §One work party), read
     # ONCE here so the row's block, its height and the board's own reservation all ask the same
     # answer. `SourceForecast.party_readout` is the only place the wire's party keys are read and

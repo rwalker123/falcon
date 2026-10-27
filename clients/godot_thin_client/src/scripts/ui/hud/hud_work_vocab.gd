@@ -1589,6 +1589,31 @@ static func pool_tools_short_line(lines: Array, work_short: bool, kind: String =
 const POOL_TOOLS_SHORT_WARN_FORMAT := "Short of %s."
 const POOL_TOOLS_SHORT_INFO_FORMAT := "More %s would speed this up."
 
+## ---- A STAFFED ROW SHORT OF THE CREW IT ASKED FOR ---------------------------------------------------
+## The row's one `⚠` also fires when the sim dealt it fewer workers than it wanted, so a row left at `0` for
+## many turns says why. SHORT: the row has a Max and `workers < min(Max, useful crew)`, or it has NO crew
+## and a crew would be useful (a row with no Max that merely got fewer than its useful crew is not short --
+## that is noise). The hover is two lines, `⚠ reason` over `Fix: remedy`.
+const SHORT_CREW_HANDS_FORMAT := "⚠ Short %d %s · no spare hands\nFix: raise this row's Priority · lower another row's Max"
+const SHORT_CREW_KIT_FORMAT := "⚠ Short %d %s · no free %s\nFix: make %s — rows carrying their kit are staffed first"
+const SHORT_CREW_NOUN_ONE := "worker"
+const SHORT_CREW_NOUN_MANY := "workers"
+
+## How many workers short the row is, `0` = not short. `max_workers` 0 = no Max.
+static func crew_shortfall(workers: int, max_workers: int, useful_crew: int) -> int:
+    if max_workers > 0:
+        return maxi(mini(max_workers, useful_crew) - workers, 0)
+    if workers == 0 and useful_crew > 0:
+        return useful_crew
+    return 0
+
+## The hover for a short row; `kit_names` is `toe_short_item_names` (`""` = nothing kit-short).
+static func short_crew_reason(short: int, kit_names: String) -> String:
+    var noun := SHORT_CREW_NOUN_ONE if short == 1 else SHORT_CREW_NOUN_MANY
+    if kit_names != "":
+        return SHORT_CREW_KIT_FORMAT % [short, noun, kit_names, kit_names]
+    return SHORT_CREW_HANDS_FORMAT % [short, noun]
+
 ## **A TAKE ROW'S KIT NOTE** — the row's own `kit_toe` read the same way: `Short of baskets`, `Short of
 ## spears and sleds`. It is the 🎒 mark's hover and the inspector's KITS line.
 const KIT_SHORT_ITEMS_FORMAT := "Short of %s"

@@ -6144,7 +6144,17 @@ control the sheets used to mount; and it retired the Work inspector for source r
   presses).
 - **`⚠` is ONE mark whose hover is every warning line**, joined: the overdraw, overstaffed, kit-short,
   pen-underfed and keeping-short sentences the row's producer already wrote (`warn_lines`). No new
-  sentence exists for it. **`ⓘ`** carries the tools-short sentence, which stops nothing.
+  sentence exists for it.
+  **A staffed row short of the crew it asked for joins the same ⚠** (forage, hunt, extract, tile and band
+  improvement rows, and the compose sheet's strip; not need rows): `BandPanelController._add_short_crew_warn`
+  appends `HudWorkVocab.short_crew_reason` to `warn_lines`. SHORT (`HudWorkVocab.crew_shortfall`) is
+  `max_workers > 0` and `workers < min(max_workers, useful_crew)`, or `workers == 0` and `useful_crew > 0`;
+  a no-Max row with some hands under its useful crew is not short. The hover is two lines: `⚠ Short N
+  worker(s) · no free <items>` over `Fix: make <items> — rows carrying their kit are staffed first` when any
+  `kit_toe` line has `filled < required` (the items named by `toe_short_item_names`, lower-cased; this
+  REPLACES the row's own `Short of <items>` kit line so the kit is stated once), else `⚠ Short N worker(s) ·
+  no spare hands` over `Fix: raise this row's Priority · lower another row's Max`. No text line is added to
+  the row. **`ⓘ`** carries the tools-short sentence, which stops nothing.
 - ⛔ **NO LINE OF TEXT OR PILLS MAY SET A ROW'S MINIMUM WIDTH.** The strip, crew bar and `⋮` sit to the right
   of the row's left column, so whatever that column asks for is taken from the zone and the right end is
   clipped. The pill line (`Priority` / `Max N` / `Build`) was an `HBoxContainer` asking ~220px, which put the

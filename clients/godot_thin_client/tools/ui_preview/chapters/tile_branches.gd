@@ -485,6 +485,7 @@ func run(harness) -> void:
 	await _door_state_claims()
 	await _crew_sheet_chip_claims()
 	await _tile_row_art_claims()
+	await _short_crew_claims()
 
 	# Leave the HUD as the next chapter found it.
 	_stage(_band(CREW_NONE, CREW_NONE), [], 0.0, 0.0)
@@ -758,6 +759,90 @@ func _tile_row_art_claims() -> void:
 	await h._save("tile_branches_row_standing_mark")
 	host.queue_free()
 	h._hud.update_tile_beliefs({})
+	await h._settle()
+
+## **A STAFFED ROW SHORT OF THE CREW IT ASKED FOR WEARS THE ONE `⚠`** (`HudWorkVocab.crew_shortfall`): the
+## reason rides `warn_lines`, so a row already warning carries both sentences in the same hover. Every
+## assertion reads the strip's warn mark BY ITS META (a Label), never by searching the row's text.
+func _short_assignment(workers: int, max_workers: int, useful: int, toe: Array) -> Dictionary:
+	var row := _tile_assignment(STORES_BRANCH, workers)
+	row["max_workers"] = max_workers
+	row["useful_crew"] = useful
+	row["kit_toe"] = toe
+	return row
+
+func _short_row(band_rows: Array, assignment: Dictionary, improvements: Array) -> Control:
+	var band := _band(CREW_NONE, CREW_NONE)
+	band["labor_assignments"] = (band.get("labor_assignments", []) as Array).duplicate() + band_rows
+	_stage(band, improvements, 1.0, 1.0)
+	var bp = h._hud._bandpanel
+	return bp._build_tile_row(band, bp._tile_model(band, TILE_X, TILE_Y, STORES_BRANCH, assignment))
+
+func _warn_marks(row: Control) -> Array[Control]:
+	return _collect_meta(row, String(HudWorkVocab.WORK_STRIP_WARN_META))
+
+const SLED_ITEM := "sled"
+const KIT_SENTENCE := "⚠ Short 1 worker · no free sled\nFix: make sled — rows carrying their kit are staffed first"
+const HANDS_SENTENCE := "⚠ Short 1 worker · no spare hands\nFix: raise this row's Priority · lower another row's Max"
+
+func _short_crew_claims() -> void:
+	var host := PanelContainer.new()
+	var box := StyleBoxFlat.new()
+	box.bg_color = HudStyle.PANEL_SOLID
+	host.add_theme_stylebox_override("panel", box)
+	host.position = ROW_HOST_POS
+	host.custom_minimum_size = Vector2(ROW_HOST_WIDTH, 0.0)
+	var column := VBoxContainer.new()
+	host.add_child(column)
+	h._hud.add_child(host)
+	h._hud.update_tile_beliefs({Vector2i(TILE_X, TILE_Y): BELIEF_PRESENT})
+	h._hud._bandpanel._item_display_names = {SLED_ITEM: "Sled"}
+	var sled_toe := [{"pool": "", "item_id": SLED_ITEM, "required": 1.0, "filled": 0.0}]
+	# (a) Max 1, nobody dealt, a sled wanted and none free: the kit sentence.
+	var a := _short_assignment(0, 1, 1, sled_toe)
+	var row_a := _short_row([a], a, [])
+	column.add_child(row_a)
+	var marks_a := _warn_marks(row_a)
+	h._assert_hud("short crew (a): a Max-1 row with 0 workers and a missing sled wears ONE ⚠ with the kit sentence (%s)"
+			% [(marks_a[0] as Label).tooltip_text if not marks_a.is_empty() else "no mark"],
+		marks_a.size() == 1 and marks_a[0] is Label and (marks_a[0] as Label).tooltip_text == KIT_SENTENCE)
+	# (b) the same with no kit claim: the hands sentence.
+	var b := _short_assignment(0, 1, 1, [])
+	var row_b := _short_row([b], b, [])
+	column.add_child(row_b)
+	var marks_b := _warn_marks(row_b)
+	h._assert_hud("short crew (b): the same row with no kit claim wears the hands sentence (%s)"
+			% [(marks_b[0] as Label).tooltip_text if not marks_b.is_empty() else "no mark"],
+		marks_b.size() == 1 and (marks_b[0] as Label).tooltip_text == HANDS_SENTENCE)
+	# (c) NO Max and 3 of a useful 8: not short, no ⚠ (noise).
+	var c := _short_assignment(3, 0, 8, [])
+	var row_c := _short_row([c], c, [])
+	column.add_child(row_c)
+	h._assert_hud("short crew (c): a no-Max row with 3 workers of a useful 8 draws no ⚠", _warn_marks(row_c).is_empty())
+	# …and a row at its Max (or beyond what is useful) is not short either.
+	var at_max := _short_assignment(2, 2, 5, [])
+	var row_max := _short_row([at_max], at_max, [])
+	column.add_child(row_max)
+	h._assert_hud("short crew: a row staffed to its Max draws no ⚠", _warn_marks(row_max).is_empty())
+	# (d) a row already warning (its keeping is short) and also short: ONE ⚠, both reasons in its hover.
+	var d := _short_assignment(0, 1, 1, [])
+	var keeping := _improvement_row(STORES_BRANCH, "food_stores:storage_pit")
+	keeping["upkeep_demand"] = 2.0
+	keeping["upkeep_supplied"] = 0.0
+	var row_d := _short_row([d], d, [keeping])
+	column.add_child(row_d)
+	var marks_d := _warn_marks(row_d)
+	var hover_d := (marks_d[0] as Label).tooltip_text if not marks_d.is_empty() else ""
+	h._assert_hud("short crew (d): a row with short keeping AND a short crew has ONE ⚠ whose hover carries both (%s)"
+			% hover_d.replace("\n", " / "),
+		marks_d.size() == 1 and hover_d.contains(HANDS_SENTENCE)
+			and hover_d.split("\n").size() > HANDS_SENTENCE.split("\n").size())
+	await h._settle()
+	await h._save("tile_branches_short_crew")
+	host.queue_free()
+	h._hud._bandpanel._item_display_names = {}
+	h._hud.update_tile_beliefs({})
+	_stage(_band(CREW_NONE, CREW_NONE), [], 0.0, 0.0)
 	await h._settle()
 
 ## The crew sheet's work-strip LADDER CHIP: on every state of the sheet, the same face as the Work tab's row

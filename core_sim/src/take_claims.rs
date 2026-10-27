@@ -442,8 +442,10 @@ pub struct RowClaims {
     pub claims: Vec<f32>,
     /// The planned keep hands each claim was struck less.
     pub keep_hands: Vec<f32>,
-    /// **WHAT EACH ROW WOULD ASK FOR if its crew were armed as planned** (#871) - the old
-    /// planned-rule claim, which for a staffed row is not what the passes granted (`claims`).
+    /// **WHAT EACH ROW WOULD ASK FOR if its crew were armed as planned** (#871) - the planned-rule
+    /// claim, which for a staffed row is struck at the crew the staffing WANTED
+    /// (`StaffedCrew::useful_crew`), not the hands present, and is not what the passes granted
+    /// (`claims`).
     /// It is the `required` of a row's published `kitToe`, so the shortfall the staffing left
     /// (`filled < required`) is still stated by item.
     pub asks: Vec<f32>,
@@ -471,7 +473,24 @@ pub fn row_claims(
                 allocation.hands_present_on(assignment),
             )
         };
-        let planned_claim = split.claim;
+        // **THE ASK IS STRUCK AT THE CREW THE STAFFING WANTED** (a staffed row's `useful_crew`,
+        // pass 3's ceiling after the row's Max), not the hands present: a row the pool starved of
+        // every head still states the kit it lacked.
+        let mut planned_claim = split.claim;
+        if assignment.target.is_staffed()
+            && assignment.staffing.total() == assignment.workers
+            && assignment.staffing.useful_crew > NO_STAFFED_CREW
+        {
+            planned_claim = take_kit_claim(
+                sources,
+                band_kit,
+                declared_on(allocation, &assignment.target),
+                &assignment.target,
+                &assignment.kit_choice(sources.equipment),
+                assignment.staffing.useful_crew,
+            )
+            .claim;
+        }
         // **A STAFFED ROW CLAIMS EXACTLY THE HANDS THE STAFFING ARMED** (#871): the passes already
         // decided who holds a kit, across rows and priorities, out of this very ledger, so the
         // walk's rationing must hand each row those units and no more or less. Read only while the
