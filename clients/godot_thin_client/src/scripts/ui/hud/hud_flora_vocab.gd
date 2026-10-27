@@ -565,7 +565,7 @@ const STOCK_FORMAT := "%.0f / %.0f"
 # when a reader last carried a fogged `130 / 130` into their model of the forage patch. A label on
 # the tile does not label the number; this does.
 #
-# Spelled STRUCTURALLY (the `DetailFormat.RECOVERY_GUIDANCE_TEXT` idiom) so the glyph the harness
+# Spelled STRUCTURALLY (the `DetailFormat.RECOVERY_GUIDANCE_PREFIX` idiom) so the glyph the harness
 # searches for and the glyph the row actually renders are one value and cannot drift apart.
 const STOCK_UNKNOWN_GLYPH := "—"
 

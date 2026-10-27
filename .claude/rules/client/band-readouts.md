@@ -590,7 +590,7 @@ which is a property of the tier and not of the merge.
   `moraleCulture` / `moraleFreshWater` / `moraleCohesion`,
   decoded in `native/src/lib.rs population_to_dict` as `output_multiplier` / `discontent_fraction`
   / `last_emigrated` / `last_immigrated` / `grievance` (telemetry only, not displayed in P1) /
-  `morale_settling` / `morale_terrain` / `morale_climate` / `morale_unrest` / `morale_culture` / `morale_cohesion`, all
+  `morale_settling` / `morale_terrain` / `morale_climate` / `morale_unrest` / `morale_culture` / `morale_cohesion` / `morale_fresh_water`, all
   flowed onto the
   MapView unit marker in `_rebuild_unit_markers`). Player-band drawer only (`_unit_summary_lines`):
   - **Productivity is NOT a detail row — it reads on the Band panel's WORK zone head** as
@@ -715,7 +715,7 @@ which is a property of the tier and not of the merge.
   source of truth — config `src/config/tile_habitability_config.json` (`habitability.{hospitable_max,
   fair_max,harsh_max}` = `0.02`/`0.05`/`0.09`) buckets the drain into Hospitable/Fair/Harsh/Hostile,
   tinted HEALTHY/INK/WARN/DANGER via `hex_for_rating` in `DetailFormat.detail_bbcode` (mirrors the
-  `BandFoodStatus` bucketing pattern). The Karst Cavern Mouth (~0.0825) reads "Harsh" (amber).
+  `BandFoodStatus` bucketing pattern). The Karst Cavern Mouth (~0.0725 since the terrain allowance) reads "Harsh" (amber).
   With the latitude climate + cold-morale tolerance dead-band (see `core_sim`), temperate
   mid-latitudes read "Hospitable", the equator "Hospitable/Fair", and poles/high-alt/caverns
   "Harsh/Hostile" — the config buckets (`0.02`/`0.05`/`0.09`) spread cleanly across that range,
@@ -1052,7 +1052,7 @@ three WHOLE PEOPLE.
   *"only 0 of 4"* is the arithmetic where *"none of your 4"* is the fact — and that reading is
   reachable with the item LIVE, an item needing a full crew (`workers_per_unit > 1`) equipping nobody
   until the job is staffed to it. Both clauses are spelled from one shared tail
-  (`KIT_COVERAGE_SHORT_NEEDLE`, the `RECOVERY_GUIDANCE_TEXT` idiom) so a harness needle finds either.
+  (`KIT_COVERAGE_SHORT_NEEDLE`, the `RECOVERY_GUIDANCE_PREFIX` idiom) so a harness needle finds either.
 - **RETIRED (ROW) — the three-ink rule and the entry budget.** `_band_kit_line` inked a live item that
   reached everybody neutral, a spent one DANGER and a live-but-short one WARN, and showed only
   `BAND_KIT_ROW_MAX_ENTRIES` (3) entries, dry-first then short — a fourth wrapped and overflowed

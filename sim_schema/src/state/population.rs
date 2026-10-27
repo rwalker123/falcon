@@ -987,7 +987,7 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub morale_delta: i64,
     /// Dominant negative morale driver this turn: `0 = None, 1 = Terrain, 2 = Cold, 3 = Unrest,
-    /// 4 = Culture`.
+    /// 4 = Culture, 5 = Cohesion`.
     /// Names *why* morale is falling. Recomputed each turn alongside [`Self::morale_delta`].
     #[serde(default)]
     pub morale_cause: u8,

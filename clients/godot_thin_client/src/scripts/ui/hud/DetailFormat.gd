@@ -88,7 +88,7 @@ const MORALE_CAUSE_LABEL_COHESION := "too many to hold together"
 # thing that draws them.)
 const MORALE_TREND_EPSILON := 0.005
 
-# Itemized morale breakdown — the five signed Layer-1 contributions (their sum IS
+# Itemized morale breakdown — the seven signed Layer-1 contributions (their sum IS
 # morale_delta) rendered as indented sub-lines under the Morale headline when morale is
 # concerning or declining. Tinted by sign (▲ positive = healthy, ▼ negative = amber).
 const MORALE_BREAKDOWN_INDENT := "    "
@@ -589,7 +589,7 @@ const KIT_BARE_HANDS_SUFFIX := " — bare hands"
 # comes through one path, so a basket's clause is this same string — and it cannot name the job,
 # because the reading does not carry one: `workersOnQuotedJob` is a head count and the job behind it
 # is resolved sim-side. `workers` is the one noun true of a gatherer, a keeper, a scout and a warrior.
-# **SPELLED STRUCTURALLY, the `RECOVERY_GUIDANCE_TEXT` idiom** — the two clauses below share a tail and
+# **SPELLED STRUCTURALLY, the `RECOVERY_GUIDANCE_PREFIX` idiom** — the two clauses below share a tail and
 # a harness needs a needle that finds EITHER, so the tail is written once and both formats are built
 # from it. Two literals would let a reworded clause slip past an assertion still matching the other.
 const KIT_COVERAGE_SHORT_NEEDLE := "workers carry one"
@@ -2872,7 +2872,7 @@ const BUILD_GEAR_WORK_NONE := 0.0
 ## same job and the existing three-state rows already say so.
 ## The needle every rung row's tint registry matches this value on, so the amber is decided once for
 ## four rows rather than by four independent substring guesses. The value is BUILT FROM it
-## (`RECOVERY_GUIDANCE_TEXT`'s idiom) so the words and the test cannot drift apart.
+## (`RECOVERY_GUIDANCE_PREFIX`'s idiom) so the words and the test cannot drift apart.
 const BUILD_UNSTAFFED_NEEDLE := "no builders"
 
 const BUILD_UNSTARTED_VALUE := "%s Not started — %s assigned" % [
