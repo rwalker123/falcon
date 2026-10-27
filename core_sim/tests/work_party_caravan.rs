@@ -3448,3 +3448,144 @@ fn the_same_row_with_a_free_sled_is_staffed_and_its_ask_is_met() {
         "required 1, filled 1, got {sled:?}"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// A ROW WITH NO MAX NEVER ASKS FOR THE TAKE CURVE'S CEILING
+// ---------------------------------------------------------------------------------------------
+
+/// The wood row at `distance`'s `(workers, usefulCrew, [(item, required, filled)])` off the
+/// encoded frame.
+fn published_wood_row_at(app: &App, distance: u32) -> (u32, u32, Vec<(String, f32, f32)>) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == BAND)
+        .expect("the band is on the wire");
+    let row = cohort
+        .laborAssignments()
+        .into_iter()
+        .flatten()
+        .find(|row| row.targetX() == CAMP.x + distance && row.targetY() == CAMP.y)
+        .expect("the wood row is published");
+    let toe = row
+        .kitToe()
+        .into_iter()
+        .flatten()
+        .map(|line| {
+            (
+                line.itemId().unwrap_or_default().to_string(),
+                line.required(),
+                line.filled(),
+            )
+        })
+        .collect();
+    (row.workers(), row.usefulCrew(), toe)
+}
+
+/// A pool of `pool` hands, gear for everybody, and wood rows (`(distance, priority, max)`).
+fn wood_rows_world(pool: u32, rows: &[(u32, SourcePriority, Option<u32>)]) -> App {
+    let (mut app, band) = world_extracting_at(rows[0].0, Some(WOODCUTTING_KIT));
+    let mut gear = BandEquipment::default();
+    gear.stock("sled", pool * 2, "plain", None);
+    gear.stock("axe", pool * 2, "plain", None);
+    app.world.entity_mut(band).insert(gear);
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band")
+        .working = scalar_from_f32(pool as f32);
+    for (distance, _, _) in rows {
+        let entity = app
+            .world
+            .resource::<TileRegistry>()
+            .index(CAMP.x + distance, CAMP.y)
+            .expect("the tile is on the map");
+        app.world
+            .get_mut::<core_sim::Tile>(entity)
+            .expect("a map tile carries terrain")
+            .terrain = WOODED;
+    }
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        allocation.assignments.clear();
+        for (distance, priority, max) in rows {
+            allocation.assignments.push(LaborAssignment {
+                party: None,
+                muster_crew: 0,
+                planned_crew: 0,
+                max_workers: *max,
+                staffing: Default::default(),
+                target: extract_target(*distance),
+                workers: 0,
+                kit: Some(extract_kit(WOODCUTTING_KIT)),
+                priority: *priority,
+            });
+        }
+        allocation.last_yields = vec![core_sim::SourceYield::ZERO; allocation.assignments.len()];
+    }
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    resolve_a_turn(&mut app);
+    app
+}
+
+/// A no-Max row's ask is the kit of the hands it got, never of the take curve's ceiling.
+#[test]
+fn a_row_with_no_max_asks_for_the_hands_it_got_not_the_curves_ceiling() {
+    let app = wood_rows_world(POOL_OF_FEW, &[(1, SourcePriority::Normal, None)]);
+    let (workers, useful, toe) = published_wood_row_at(&app, 1);
+    assert!(workers > 0, "liveness: the row is staffed");
+    assert!(
+        useful > workers,
+        "liveness: the curve's ceiling {useful} is past the {workers} staffed"
+    );
+    let sled = toe
+        .iter()
+        .find(|(item, _, _)| item == "sled")
+        .unwrap_or_else(|| panic!("the row names its sled, got {toe:?}"));
+    assert!(
+        sled.1 <= workers as f32 + 1e-4,
+        "the ask {} must not exceed the {workers} hands present (ceiling {useful})",
+        sled.1
+    );
+}
+
+/// A no-Max row the pool left at nobody asks for one head's kit.
+#[test]
+fn a_row_with_no_max_that_got_nobody_asks_for_one_heads_kit() {
+    let app = wood_rows_world(
+        ONE_HAND,
+        &[
+            (1, SourcePriority::High, Some(ONE_HEAD)),
+            (2, SourcePriority::Normal, None),
+        ],
+    );
+    let (workers, useful, toe) = published_wood_row_at(&app, 2);
+    assert_eq!(workers, 0, "the High row took the only hand");
+    assert!(useful > 0, "liveness: a crew would be useful");
+    let sled = toe
+        .iter()
+        .find(|(item, _, _)| item == "sled")
+        .unwrap_or_else(|| panic!("the starved row names its sled, got {toe:?}"));
+    assert!(
+        (sled.1 - 1.0).abs() < 1e-4 && sled.2.abs() < 1e-4,
+        "one head's sled asked, none filled, got {sled:?}"
+    );
+}
+
+/// Hands in the few-hands scenarios.
+const POOL_OF_FEW: u32 = 3;
+const ONE_HAND: u32 = 1;

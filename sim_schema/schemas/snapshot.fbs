@@ -2444,9 +2444,10 @@ table LaborAssignment {
   // claimed (`required`) and the units the band's take-gear settlement handed it (`filled`). The
   // claim is the row's TAKE HANDS THAT WOULD TAKE SOMETHING WITH THE KIT, never its head count
   // (`docs/plan_site_crews.md` §2.3), so a crew stepped past its site's yield claims no more and
-  // reads no shorter. On a STAFFED row the claim is struck at the crew the staffing WANTED for it
-  // (`useful_crew`, after the row's Max), not the hands present, so a row the pool starved of every
-  // head still names the kit it lacked (`required` > 0, `filled` 0). The item is SHORT where
+  // reads no shorter. On a STAFFED row the claim is struck at the crew the row was DENIED: with a
+  // Max, `min(Max, usefulCrew)`; with no Max and nobody staffed, one head; otherwise the hands
+  // present. So a row the pool starved of every head still names the kit it lacked
+  // (`required` > 0, `filled` 0). The item is SHORT where
   // `filled < required`. Item ids only - the client
   // resolves each to its roster display name. Absent = the row claims nothing (no kit, or no hand
   // that would take anything with one). The builders' and Roadwork's twin is the cohort's `poolToe`.
@@ -6901,7 +6902,7 @@ table KitToeLine {
   // The `equipment.json` item id this line is about.
   itemId:string;
   // Units the row claimed: its take hands that would take something with the kit (on a staffed row,
-  // at the crew the staffing wanted for it), over the item's `workers_per_unit`. *** NEVER 0 ***: a line exists only where something is claimed.
+  // at the crew it was denied), over the item's `workers_per_unit`. *** NEVER 0 ***: a line exists only where something is claimed.
   required:float;
   // Units the band's take-gear settlement handed this row. Fractional where the row's priority
   // tier was covered in full (it is handed exactly its claim); whole units where its tier was short
