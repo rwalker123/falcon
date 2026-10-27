@@ -51,7 +51,7 @@ something. The fog-of-war ledger already computes, per faction, per turn, exactl
 needs (`visibility.rs`, `visibility_systems.rs`): `Active` (seen now), `Discovered` (seen once,
 remembered, stale), `Unexplored`. That field is already:
 
-- **Dynamic** — it grows with local scouts (a band's `scoutRevealRadius` is its vantage distance),
+- **Dynamic** — it grows with local scouts (a band's scouting reach extends the sight it sweeps),
   with hunting expeditions, and with scouting expeditions, and it shrinks back to `Discovered` when
   the crew comes home.
 - **Earned** — you see far because you *spent people on seeing far*, which is what scouts are for.

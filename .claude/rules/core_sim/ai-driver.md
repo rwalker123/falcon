@@ -331,7 +331,7 @@ any key fails that test rather than silently mis-sizing the estimate. The orches
 runs a bench for the seat, so the log carries the ask and its timing and nothing crafts. On the eight Standard bench seeds at t1 every band posts `bone 6, fibre 12,
 craft:hoes ×6` — two hoed keepers on the richest climbable patch plus the founding four.
 **`Land` posts** (`Land::outfit_demands`) `wayfinding` ×
-`land.scout_workers` for a band with an open window that is blind (fewer than
+`ceil(land.scout_range / the kit's published vantage tier)` (the roster's `scout_vantage_range` for `wayfinding`, one tile where it is unlisted) for a band with an open window that is blind (fewer than
 `known_tiles_floor` known tiles within the horizon), at `DEMAND_PRIORITY_SCOUT` (0.5 — after
 food; it sees farther and nothing eats it).
 
@@ -393,7 +393,7 @@ leaves (`.claude/rules/core_sim/work-party.md`, *Three staffing passes*). The co
 row's `workers` read back next frame is the sim's crew. A rule that empties a row sends `stop_labor`
 (`Food::release`), never `assign_labor ... 0`; a rule that only thins one sends nothing, so the
 "donor reduction" lines are gone from every rule's commands. The band-wide roles
-(`scout`, `warrior`, `roadwork`) stay a count the player sets. A build names no count at all: the
+(`warrior` only: `roadwork` is staffed from a Max, and `scout` is a range in tiles past the local range that the sim staffs) stays a count the player sets. A build names no count at all: the
 declaration is the whole order and the sim deals the builders.
 Every assignment is `assign_labor` with kit and floor left `None` (the
 job's default on the wire) — except *draw down to survive*'s, which states the floor; `policy` is
@@ -891,7 +891,7 @@ reading) is below its `food_need`, and no tile in view reads a better cluster �
 comparison *better ground* moves on.
 
 - *blind* — fewer than `land.known_tiles_floor` known tiles within `land.horizon_tiles` of a band
-  posts `land.scout_workers` scouts with `assign_labor … scout <n>`, once. `land:scout:<band>`.
+  asks to see `land.scout_range` tiles past the local range with `assign_labor … scout <tiles>`, once ("already asked" reads the Scout row's `scoutingRange`, not its workers). `land:scout:<band>`.
   ⛔ **The `scout <x> <y>` verb is retired server-side** (`command.retired=ignored`,
   `core_sim/src/bin/server.rs`); the standing scout role posts vantage points around the band.
 - *better ground* — **positions by the cluster, not the patch** (`plan_ai_driver.md` §4). While
@@ -1256,7 +1256,7 @@ and `rover` (expand). Each key has one consumer:
 | `land.known_tiles_floor` | `Land` | *blind*'s floor |
 | `land.split_size` | `Land` | *room*'s band size |
 | `land.horizon_tiles` | `Land` | how far *blind* counts and *better ground* looks |
-| `land.scout_workers` | `Land` | how many scouts *blind* posts |
+| `land.scout_range` | `Land` | how many tiles past its local range *blind* asks a band to see (forager 2, rover 4); the sim staffs the scouts |
 | `land.better_ground_gain_fraction` | `Land` | the per-worker gain, as a share of the target's rate, *better ground* must buy before it moves a band |
 | `land.stay_tolerance` | the land reading (`ground.rs`) | the band's own hex is kept as the first planned band when within this fraction of the best hex's value, and a `move_target` must beat the first planned band by more than it; `≥ 0`, default `0.1` |
 | `land.pooling_weight` | the land reading | a candidate hex within `food.split_search_tiles` of a hex already chosen has its value multiplied by `1 + this`; `≥ 0`, default `0.25` |

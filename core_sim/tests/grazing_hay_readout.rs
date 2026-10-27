@@ -187,6 +187,8 @@ fn keeper_row(herd_id: &str) -> LaborAssignment {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        scouting_range: 0,
+        scouting_reach: 0,
         max_workers: Some(KEEPERS),
         staffing: Default::default(),
         target: LaborTarget::Hunt {
@@ -246,6 +248,7 @@ fn spawn_band(app: &mut App, tile: UVec2, assignments: Vec<LaborAssignment>) -> 
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
             },
             StartingUnit {
                 kind: "BandKeeper".to_string(),
@@ -1304,6 +1307,8 @@ fn forager_row(patch: UVec2) -> LaborAssignment {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        scouting_range: 0,
+        scouting_reach: 0,
         max_workers: Some(KEEPERS),
         staffing: Default::default(),
         target: LaborTarget::Forage {

@@ -3668,6 +3668,7 @@ fn spawn_population_entity(
         founding_lines: FoundingLines::founded(band_id, start_kit.founding_lines),
         belief_anchor: None,
         last_belief_relay_hops: 0,
+        predators_kept_off: 0,
     });
     // Every band carries a labor allocation (default empty = fully idle). The client drives
     // assignment; the startup food reserve covers the ramp before the first orders land.

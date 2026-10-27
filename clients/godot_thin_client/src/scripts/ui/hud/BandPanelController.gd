@@ -1451,7 +1451,11 @@ func _build_roles_block(band: Dictionary) -> VBoxContainer:
     # crews never block a player-set one — `HudBandLaborState.orderable_hands`).
     var orderable := _band_labor.orderable_hands(band)
     var scout_row := _build_role_card_row()
-    scout_row.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_SCOUT, HudWorkVocab.SCOUT_ROLE_HINT, HudConst.LABOR_KIND_SCOUT, scout_eff, orderable))
+    # **THE SCOUT CARD STATES A RANGE** (#875): its line is the status of what the sim staffed for it, amber
+    # while the reach falls short of the ask.
+    var scout_status := HudWorkVocab.scouting_line(_band_labor.scouting_state(band))
+    scout_row.add_child(_build_role_card(band, HudWorkVocab.SCOUT_CARD_TITLE, String(scout_status["text"]),
+        HudConst.LABOR_KIND_SCOUT, scout_eff, orderable, false, bool(scout_status["short"])))
     # A visible predator within raid range turns the Warrior card's static hint into a live crimson
     # alert naming the on-guard count — the guarding role is only legible when the threat it answers is.
     var warrior_threat := _band_predator_threat_present(band)
@@ -1633,8 +1637,10 @@ func _band_predator_threat_present(band: Dictionary) -> bool:
 ## Warrior are the only two cards with a kit picker, a gear line and prose. A site's keeping and its
 ## build are staffed on the site's own row (`docs/plan_site_crews.md`, `docs/plan_labor_at_scale.md`),
 ## so no other standing role is built here.
-func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: String, effective: Dictionary, idle: int, alert: bool = false) -> PanelContainer:
-    var workers := int(effective.get("workers", 0))
+func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: String, effective: Dictionary, idle: int, alert: bool = false, hint_warn: bool = false) -> PanelContainer:
+    # **THE COUNT THE CARD STEPS**: a head count, except on Scout where it is the range in tiles.
+    var is_scout := kind == HudConst.LABOR_KIND_SCOUT
+    var workers := int(effective.get("range", 0)) if is_scout else int(effective.get("workers", 0))
     var pending := bool(effective.get("pending", false))
     var card := PanelContainer.new()
     card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1674,7 +1680,14 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
     var stepper := HBoxContainer.new()
     stepper.alignment = BoxContainer.ALIGNMENT_CENTER
     stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    HudWidgets.add_stepper_controls(stepper, workers, idle > 0,
+    var range_value: Label = null
+    if is_scout:
+        range_value = HudWidgets.add_range_stepper(stepper, workers, HudBandLaborState.scouting_range_max(band),
+            func(n: int) -> void: _emit_assign_labor(
+                band, kind, n, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR,
+                "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id))
+    else:
+        HudWidgets.add_stepper_controls(stepper, workers, idle > 0,
         # A BAND-WIDE ROLE (scout / warrior) works no source, so it has no escapement floor to set.
         # The sim ignores the token on those branches; the default is the honest thing to send.
         # **THE KIT RIDES THE PRESS**: `_kit_token` omits it when it equals the job default, so a
@@ -1691,14 +1704,23 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
         var kit_row := KitRoster.build_kit_row(_band_labor.kits(), kind, kit_id,
             _band_labor.default_kit_id(kind), band,
             func(picked: String) -> void: _on_role_kit_picked(band, kind, picked, workers),
-            {}, "", ROLE_CARD_KIT_KEY_TEXT, true)
+            {}, "", ROLE_CARD_KIT_KEY_TEXT, true, KitRoster.KIT_CREW_UNCOMPOSED, {}, not is_scout)
         if kit_row != null:
             col.add_child(kit_row)
-    var hint_label := HudWidgets.alloc_hint_label(hint)
-    if alert:
-        hint_label.add_theme_color_override("font_color", HudStyle.THREAT_ACCENT)
-    hint_label.custom_minimum_size = Vector2(0.0, HudWorkVocab.ROLE_CARD_HINT_HEIGHT)
-    col.add_child(hint_label)
+        if is_scout:
+            # **THE SCOUT CARD'S DETAIL RIDES THE `+N tiles` TOOLTIP.**
+            HudWidgets.set_label_tooltip(range_value, HudWorkVocab.scouting_tooltip(
+                _band_labor.scouting_state(band), int(band.get("watched_radius", 0)),
+                int(band.get("predators_kept_off", 0))))
+    # A scout card at range +0 states nothing below its controls; every other card keeps its line.
+    if hint != "" or not is_scout:
+        var hint_label := HudWidgets.alloc_hint_label(hint)
+        if alert:
+            hint_label.add_theme_color_override("font_color", HudStyle.THREAT_ACCENT)
+        elif hint_warn:
+            hint_label.add_theme_color_override("font_color", HudStyle.WARN)
+        hint_label.custom_minimum_size = Vector2(0.0, HudWorkVocab.ROLE_CARD_HINT_HEIGHT)
+        col.add_child(hint_label)
     return card
 
 ## The role card mounts the shared kit row with NO field key — see `_build_role_card`.

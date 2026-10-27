@@ -1349,6 +1349,9 @@ pub fn build_headless_app() -> App {
                 // to name the band a decay line links to (`band=`).
                 advance_cultivation
                     .after(advance_forage_regrowth)
+                    // `advance_herds` writes each band's `predators_kept_off`, and this reads the
+                    // cohorts, so the order is declared (the herd pass is first of the fauna chain).
+                    .after(advance_herds)
                     .before(advance_husbandry)
                     .before(supply::balance_supply_networks),
                 advance_graze_regrowth.after(advance_herd_grazing),

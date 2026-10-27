@@ -300,6 +300,7 @@ fn spawn_keepers_of(
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
             },
             ResidentBand,
             match gear {
@@ -314,6 +315,8 @@ fn spawn_keepers_of(
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        scouting_range: 0,
+                        scouting_reach: 0,
                         max_workers: Some(KEEPERS),
                         staffing: Default::default(),
                         target: LaborTarget::Hunt {
@@ -1444,6 +1447,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
             },
             ResidentBand,
             // **THE LEDGER IS STATED, NOT LEFT ABSENT.** An absent component resolves to one reference
@@ -1457,6 +1461,8 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        scouting_range: 0,
+                        scouting_reach: 0,
                         max_workers: Some(GATHERERS),
                         staffing: Default::default(),
                         target: LaborTarget::Forage {

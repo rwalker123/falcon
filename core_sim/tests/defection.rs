@@ -834,6 +834,8 @@ fn work(app: &mut App, band: Entity, target: LaborTarget) {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        scouting_range: 0,
+        scouting_reach: 0,
         max_workers: Some(0),
         staffing: Default::default(),
         target,

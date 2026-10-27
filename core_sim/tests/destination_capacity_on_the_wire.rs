@@ -315,6 +315,7 @@ fn spawn_the_farming_band(
             ),
             belief_anchor: None,
             last_belief_relay_hops: 0,
+            predators_kept_off: 0,
         },
         StartingUnit {
             kind: "BandForager".to_string(),
@@ -327,6 +328,8 @@ fn spawn_the_farming_band(
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                scouting_range: 0,
+                scouting_reach: 0,
                 max_workers: Some(gatherers + keepers),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -754,6 +757,7 @@ fn spawn_the_herding_band(
             ),
             belief_anchor: None,
             last_belief_relay_hops: 0,
+            predators_kept_off: 0,
         },
         StartingUnit {
             kind: "BandHunter".to_string(),
@@ -766,6 +770,8 @@ fn spawn_the_herding_band(
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                scouting_range: 0,
+                scouting_reach: 0,
                 max_workers: Some(hunters + keepers),
                 staffing: Default::default(),
                 // **The food-peak floor, not the shipped default** — a `Tame` needs stock

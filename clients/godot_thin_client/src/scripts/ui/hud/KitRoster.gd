@@ -2050,7 +2050,7 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 		band: Dictionary, on_pick: Callable, quarry: Dictionary = {},
 		prefix: String = "", key_text: String = HudComposeVocab.COMPOSE_FIELD_KIT,
 		compact_chrome: bool = false, crew: int = KIT_CREW_UNCOMPOSED,
-		row_assignment: Dictionary = {}) -> VBoxContainer:
+		row_assignment: Dictionary = {}, show_hint: bool = true) -> VBoxContainer:
 	var offered := kits_for_job(kits, job)
 	if offered.is_empty():
 		return null
@@ -2095,7 +2095,8 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 			HudWorkVocab.WORK_STEPPER_PADDING_V)
 	row.add_child(picker)
 	block.add_child(row)
-	var hint_text := tier_hint(kits, selected, band, job, crew, row_assignment)
+	# `show_hint` false leaves the line to the host (the Scout card moves it into a tooltip).
+	var hint_text := tier_hint(kits, selected, band, job, crew, row_assignment) if show_hint else ""
 	if hint_text != "":
 		# **THE INK FOLLOWS THE SHORTFALL, and it is asked of the PRODUCER rather than read off the
 		# text** — so a copy edit cannot silently take the colour with it.

@@ -2435,3 +2435,15 @@ the crew-split frame. The roadwork row's inspector keeps its own claims. What re
   anchor) and the sheet is still open after the next snapshot refresh; a press on the strip's chip opens the
   rung card and not the sheet. `Main` is not instanced, so the map's focus-and-select hop is stood in for by a
   listener on `alert_focus_requested`.
+
+## The Scouting range card (#875)
+
+`band_panel_preview._assert_scouting_range_card` runs in the `band_panel_role_kits` state: the title and
+`+N tiles` value, the two tooltips, the stepper's command lines (`scout 4` / `scout 2` off a range of 3),
+the greyed `+` at `scouting_range_max` and `-` at 0, the three status lines verbatim (the short one amber)
+and the pending overlay (range overlaid, crew left at the wire's). The frames `band_panel_scout_none`,
+`band_panel_scout_reached` and `band_panel_scout_short` render the card in each state. The fixtures'
+scout row carries `scouting_range` / `scouting_reach` / `kitted_staffed` / `bare_staffed` and the cohort
+`scouting_range_max`. `BAND_FLANK_BALANCE_FLOOR` is 0.60: the Scout card lost its third hint line, which
+took the shorter flank column to 0.61. `command_guard`'s role sweep still drives `scout` as one number on
+the shared grammar.

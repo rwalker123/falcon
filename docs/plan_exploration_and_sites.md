@@ -27,8 +27,8 @@ Two distinct exploration actions, and the subsystem that gives them a point:
 > Config in `labor_config.json` `scout` (`vantage_distance_base`, `vantage_distance_per_scout`,
 > `vantage_distance_max`, `vantage_range`). The old radius-2 `FogRevealLedger` pulse and
 > `reveal_radius`/`reveal_duration_turns` are retired, as is the earlier pure range-bump
-> (`sight_bonus_per_scout`/`max_sight_bonus`). The snapshot `scoutRevealRadius` field now carries the
-> effective **vantage distance** (0 with no scouts). The client Scout row hint reads "Posts scouts
+> (`sight_bonus_per_scout`/`max_sight_bonus`). The snapshot `watchedRadius` field carries the
+> band's **watched radius** (local range + scouting reach, 0 with no scouts). The client Scout row hint reads "Posts scouts
 > that see around obstacles — more scouts range farther."
 
 The earlier "just add to `base_range`" fix was insufficient: visibility still cast LOS from the

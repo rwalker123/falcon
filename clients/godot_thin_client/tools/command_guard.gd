@@ -1237,6 +1237,9 @@ func _record(kind: String, payload: Dictionary, formatted: Dictionary,
 ##
 ## The two SOURCE kinds (`forage`, `hunt`) are not here: they carry targets and are driven by their
 ## own grammars above.
+##
+## **`scout`'S COUNT SLOT IS A RANGE IN TILES** (#875), not a head count - the sweep drives it as one
+## number on the same line shape, which is all the grammar check needs.
 const ASSIGN_LABOR_ROLES := [
 	HudConst.LABOR_KIND_SCOUT,
 	HudConst.LABOR_KIND_WARRIOR,

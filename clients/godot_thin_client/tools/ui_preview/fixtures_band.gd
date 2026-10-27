@@ -117,7 +117,7 @@ static func band_fixture() -> Dictionary:
 		#     sentinel is relative to, so an unbounded raid can be quoted a floor instead of "many turns".
 		"expedition_forecast_horizon_turns": FORECAST_HORIZON_TURNS,
 		"work_range": 2,
-		"scout_reveal_radius": 2,
+		"watched_radius": 5,
 		"activity": "forage",
 		# Band food flow (Food summary line): total income across the worked sources vs the cohort's
 		# consumption. Net = 0.94 − 0.68 = +0.26 (positive → larder growing), shown green on the Food
@@ -139,9 +139,14 @@ static func band_fixture() -> Dictionary:
 				"max_workers": 0, "hold_crew": 1, "reach_crew": 3, "keepers_staffed": 0, "kitted_staffed": 2, "bare_staffed": 3, "useful_crew": 5},
 			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "floor": 0.5, "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20, "workers_needed": 4, "overdraws": false,
 				"max_workers": 0, "hold_crew": 2, "reach_crew": 4, "keepers_staffed": 0, "kitted_staffed": 4, "bare_staffed": 0, "useful_crew": 4},
-			{"kind": "scout", "workers": 2},
+			# The Scout row is a RANGE the sim staffs (#875): +3 tiles asked, reached with one kitted and one
+			# bare scout (2 + 1 tiles of vantage).
+			{"kind": "scout", "workers": 2, "scouting_range": 3, "scouting_reach": 3,
+				"kitted_staffed": 1, "bare_staffed": 1},
 			{"kind": "warrior", "workers": 2},
 		],
+		"scouting_range_max": 9,
+		"predators_kept_off": 2,
 		"tile_info": {
 			"x": 71, "y": 18,
 			"terrain_label": "Freshwater Marsh",
