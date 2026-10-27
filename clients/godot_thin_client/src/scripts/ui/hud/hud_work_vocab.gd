@@ -3277,6 +3277,28 @@ const EXTRACT_ROW_HEIGHT := WORK_ROW_TWO_LINE_HEIGHT + float(TWO_LINE_STEPPER_SE
     + WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(TWO_LINE_STEPPER_SEPARATION) \
     + WORK_ROW_PILL_LINE_HEIGHT
 
+## ---- A BUILT FOOD STORE'S CONTENTS (issue #709) ----------------------------------------------------
+## Line three of a GROUNDWORK tile row on a built store (the yield line's slot): `14 / 400 stored`, whole
+## numbers off the improvement's `stored_food` / `store_capacity`. Drawn only where `store_capacity > 0` -- a
+## bare tile, a monument, or a pit whose contents the sim does not publish to this player has no line, never
+## `0 / 0`. A loss this turn (`store_spoiled > 0`) appends the figure and turns the WHOLE line warn ink, the
+## yield line's own loss pattern (a Label has one ink).
+const WORK_ROW_STORED_FORMAT := "%d / %d stored"
+const WORK_ROW_STORED_SPOILED_FORMAT := " · %d spoiled"
+const WORK_ROW_STORED_META := &"work_row_stored_line"
+const WORK_ROW_STORED_TOOLTIP := "Dry food kept in this pit. Nearby bands add their dry harvest and eat from it, soonest-to-spoil first."
+
+## The stored line's text, `""` where the row is not a store whose contents are published.
+static func stored_line(improvement: Dictionary) -> String:
+    var capacity := int(roundf(float(improvement.get("store_capacity", 0.0))))
+    if capacity <= 0:
+        return ""
+    var text := WORK_ROW_STORED_FORMAT % [int(float(improvement.get("stored_food", 0.0))), capacity]
+    var spoiled := int(roundf(float(improvement.get("store_spoiled", 0.0))))
+    if spoiled > 0:
+        text += WORK_ROW_STORED_SPOILED_FORMAT % spoiled
+    return text
+
 ## The pill line's handle.
 const WORK_ROW_PILL_LINE_META := &"work_row_pill_line"
 

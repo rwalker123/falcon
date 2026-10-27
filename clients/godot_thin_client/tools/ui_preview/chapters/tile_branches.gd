@@ -586,6 +586,8 @@ func _door_state_claims() -> void:
 ## own label, found by meta, not by a text search of the row -- and the icon slot and the chip wear the
 ## `HudSprites` art of the branch's built rung. A HELD row with nothing queued offers the rung with the same art.
 const QUEUED_BUILD_FRACTION := 0.25
+const STORED_FOOD := 14.49
+const STORE_CAPACITY := 400.0
 const ROW_HOST_POS := Vector2(24.0, 24.0)
 const ROW_HOST_WIDTH := 360.0
 
@@ -699,6 +701,8 @@ func _tile_row_art_claims() -> void:
 		column.add_child(bare_row)
 		# An empty slot stamps the marks run itself with a blank rung (`_add_rung_mark`), so "no mark" is a blank stamp
 		# on a non-art node, never a TextureRect.
+		h._assert_hud("tile row (%s), bare tile: no stored line" % branch,
+			Q.find_meta_node(bare_row, HudWorkVocab.WORK_ROW_STORED_META) == null)
 		var bare_stamp := Q.find_meta_node(bare_row, HudWorkVocab.WORK_ROW_RUNG_META)
 		h._assert_hud("tile row (%s), bare tile: no standing-rung mark" % branch,
 			bare_stamp != null and not (bare_stamp is TextureRect)
@@ -707,6 +711,9 @@ func _tile_row_art_claims() -> void:
 		BELIEF_BRANCH: ["belief:monument", "monument", "Monument"]}
 	for branch in [STORES_BRANCH, BELIEF_BRANCH]:
 		var built := _improvement_row(branch, String(built_rungs[branch][0]))
+		if branch == STORES_BRANCH:
+			built["stored_food"] = STORED_FOOD
+			built["store_capacity"] = STORE_CAPACITY
 		_stage(band, [built], 1.0, 1.0)
 		var built_row: Control = bp._build_tile_row(band,
 			bp._tile_model(band, TILE_X, TILE_Y, branch, _tile_assignment(branch, CREW_TWO)))
@@ -718,6 +725,35 @@ func _tile_row_art_claims() -> void:
 				and (standing as TextureRect).texture == HudSprites.for_mark(String(built_rungs[branch][1]))
 				and (standing as TextureRect).tooltip_text.begins_with(String(built_rungs[branch][2]))
 				and (standing as TextureRect).get_combined_minimum_size().y >= HudWorkVocab.WORK_ROW_RUNG_WIDTH)
+		var stored_node := Q.find_meta_node(built_row, HudWorkVocab.WORK_ROW_STORED_META)
+		if branch == STORES_BRANCH:
+			h._assert_hud("tile row (food_stores), built store: line three reads exactly `14 / 400 stored` (%s)"
+					% [(stored_node as Label).text if stored_node is Label else "no line"],
+				stored_node is Label and (stored_node as Label).text == "14 / 400 stored"
+					and (stored_node as Label).tooltip_text == HudWorkVocab.WORK_ROW_STORED_TOOLTIP)
+		else:
+			h._assert_hud("tile row (%s), built monument: no stored line" % branch, stored_node == null)
+	# A loss this turn: the figure rides the line, in warn ink.
+	var spoiling := _improvement_row(STORES_BRANCH, "food_stores:storage_pit")
+	spoiling["stored_food"] = STORED_FOOD
+	spoiling["store_capacity"] = STORE_CAPACITY
+	spoiling["store_spoiled"] = 3.0
+	_stage(band, [spoiling], 1.0, 1.0)
+	var spoil_row: Control = bp._build_tile_row(band,
+		bp._tile_model(band, TILE_X, TILE_Y, STORES_BRANCH, _tile_assignment(STORES_BRANCH, CREW_TWO)))
+	column.add_child(spoil_row)
+	var spoil_node := Q.find_meta_node(spoil_row, HudWorkVocab.WORK_ROW_STORED_META)
+	h._assert_hud("tile row, spoiling store: `14 / 400 stored · 3 spoiled` in warn ink",
+		spoil_node is Label and (spoil_node as Label).text == "14 / 400 stored · 3 spoiled"
+			and (spoil_node as Label).get_theme_color("font_color") == HudStyle.WARN)
+	# A pit whose contents are not published (capacity 0) draws no line, never `0 / 0`.
+	var unpublished := _improvement_row(STORES_BRANCH, "food_stores:storage_pit")
+	_stage(band, [unpublished], 1.0, 1.0)
+	var hidden_row: Control = bp._build_tile_row(band,
+		bp._tile_model(band, TILE_X, TILE_Y, STORES_BRANCH, _tile_assignment(STORES_BRANCH, CREW_TWO)))
+	column.add_child(hidden_row)
+	h._assert_hud("tile row, store with nothing published: no stored line",
+		Q.find_meta_node(hidden_row, HudWorkVocab.WORK_ROW_STORED_META) == null)
 	await h._settle()
 	await h._save("tile_branches_row_standing_mark")
 	host.queue_free()

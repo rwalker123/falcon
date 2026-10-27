@@ -2846,6 +2846,14 @@ func _build_tile_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     title.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(title)
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(String(model["rung_name"]))))
+    # Line three of a built store: what the pit holds (the row's pill-line slot is free on a tile row).
+    var stored := HudWorkVocab.stored_line(improvement)
+    if stored != "":
+        var stored_line := _build_working_yield_line(stored,
+            HudStyle.WARN if float(improvement.get("store_spoiled", 0.0)) >= 0.5 else HudStyle.INK_DIM,
+            HudWorkVocab.WORK_ROW_STORED_META)
+        (stored_line.get_child(0) as Label).tooltip_text = HudWorkVocab.WORK_ROW_STORED_TOOLTIP
+        col.add_child(stored_line)
     var party := SourceForecast.party_readout(assignment)
     if SourceForecast.party_is_posted(party):
         var lines: Array[String] = HudWorkVocab.party_block_lines(party, HudWorkVocab.TILE_CREW_NOUN,
