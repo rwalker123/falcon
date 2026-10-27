@@ -5714,7 +5714,7 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
 ## **THE STONE SHEET** (#874, `docs/prototypes/labor_at_scale/Stone.dc.html`) - the sheet of a MINED
 ## material, which the band keeps on hand instead of crewing. Top to bottom: the `Band:` picker; the
 ## stock line; the KEEP ON HAND box (`N on hand`, `keep` with the `-` / `+` stepper in steps of
-## `HudKeepVocab.KEEP_STEP`, `None` at 0; a meter of on hand against the target; what the band uses a turn);
+## `HudKeepVocab.KEEP_STEP`, `None` at 0; what the band uses a turn);
 ## the Priority segment; the DIGGERS strip (the dig row's crew and the `^` rung offer, so a quarry is still
 ## the player's call) over its box (how many the band sends, where, and how they split); the NEXT TURN box
 ## (the take and when the pile is back at the target); `Show on map` and `Done`.
@@ -5775,7 +5775,6 @@ func _build_keep_sheet(band: Dictionary, deposit: Dictionary, target: VBoxContai
         _bandpanel.commit_keep_on_hand(band, material, next, _compose.deposit_priority())
         rebuild.call())
     keep_box.add_child(keep_row)
-    keep_box.add_child(_build_keep_meter(on_hand, keep))
     var uses := HudKeepVocab.SHEET_USES_FORMAT % [band_name, "%.1f" % draw, word] if draw > 0.0 \
         else HudKeepVocab.SHEET_USES_NOTHING_FORMAT % [band_name, word]
     var uses_label := HudWidgets.alloc_hint_label(uses)
@@ -5900,37 +5899,6 @@ func _keep_dim_label(text: String, ink: Color, meta: StringName) -> Label:
     var label := HudWidgets.build_wrapping_status_part(text, ink)
     label.set_meta(meta, text)
     return label
-
-## **THE KEEP METER** - the pile against the target: a fill to the on-hand figure and a mark at the target,
-## on a scale that runs `METER_HEADROOM` past the larger of the two so the mark never sits on the edge.
-func _build_keep_meter(on_hand: float, keep: int) -> Control:
-    var scale_max := maxf(maxf(float(keep), on_hand), HudKeepVocab.METER_FLOOR) * HudKeepVocab.METER_HEADROOM
-    var bar := ProgressBar.new()
-    bar.show_percentage = false
-    bar.min_value = 0.0
-    bar.max_value = scale_max
-    bar.value = on_hand
-    bar.custom_minimum_size = Vector2(0.0, HudKeepVocab.METER_HEIGHT)
-    bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    var back := StyleBoxFlat.new()
-    back.bg_color = HudStyle.LINE_SOFT
-    var fill := StyleBoxFlat.new()
-    fill.bg_color = HudStyle.INK_DIM
-    bar.add_theme_stylebox_override("background", back)
-    bar.add_theme_stylebox_override("fill", fill)
-    bar.set_meta(HudKeepVocab.SHEET_METER_META, {"on_hand": on_hand, "target": keep})
-    if keep > 0:
-        var mark := ColorRect.new()
-        mark.color = HudStyle.INK
-        var at := float(keep) / scale_max
-        mark.anchor_left = at
-        mark.anchor_right = at
-        mark.anchor_top = 0.0
-        mark.anchor_bottom = 1.0
-        mark.offset_right = HudKeepVocab.METER_TARGET_MARK_WIDTH
-        mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
-        bar.add_child(mark)
-    return bar
 
 ## **THE WORKING'S CHART MODEL — the SHARED instrument, composed ONCE per render and once per drag.**
 ##

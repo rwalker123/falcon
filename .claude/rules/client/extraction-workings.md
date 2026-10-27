@@ -721,7 +721,7 @@ band-scoped, which is what every surface already holds. "stone" is spelled nowhe
   as soon as the acting band holds an entry for the deposit's material. Band picker; the stock line
   (`2100 of 2200 stone left in this rock. Stone does not come back.`); the KEEP ON HAND box (`N on hand`,
   `keep` and the `−`/`+` stepper `HudWidgets.add_keep_stepper` — step `HudKeepVocab.KEEP_STEP` = 1 (a step of 10 left nothing between None and 10), never
-  below 0, `None` at 0 — a meter of on hand against the target, and `<Band> uses X stone a turn — its builds
+  below 0, `None` at 0 — and `<Band> uses X stone a turn — its builds
   and upkeep.` off the entry's `draw`); the Priority segment; the DIGGERS strip over its box (`<Band> sends N
   diggers this turn` / `At target — nobody digs this turn`, the site line — `Here, …` on the picked site,
   `The game is digging at (x, y)` on another deposit — and the `1 with gear · 2 bare-handed` split); the

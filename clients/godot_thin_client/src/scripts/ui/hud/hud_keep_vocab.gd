@@ -93,7 +93,6 @@ const KEEP_ONLY_KEY := "keep_only"
 const SHEET_BOX_META := &"keep_sheet_box"
 const SHEET_ON_HAND_META := &"keep_sheet_on_hand"
 const SHEET_TARGET_META := &"keep_sheet_target"
-const SHEET_METER_META := &"keep_sheet_meter"
 const SHEET_CREW_META := &"keep_sheet_crew"
 const SHEET_SITE_META := &"keep_sheet_site"
 const SHEET_SPLIT_META := &"keep_sheet_split"
@@ -101,12 +100,6 @@ const SHEET_TAKE_META := &"keep_sheet_take"
 const SHEET_ETA_META := &"keep_sheet_eta"
 const SHEET_USES_META := &"keep_sheet_uses"
 const SHEET_STOCK_META := &"keep_sheet_stock"
-
-## The meter's room above the larger of target and on hand, so the target mark never sits on the edge.
-const METER_HEADROOM := 1.25
-const METER_HEIGHT := 8.0
-const METER_TARGET_MARK_WIDTH := 2.0
-const METER_FLOOR := 1.0
 
 ## How a status reads — the three states of the `stock` job.
 enum Status { AT_TARGET, NOBODY_FREE, REFILLING, NO_ROCK }
