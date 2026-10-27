@@ -41,7 +41,9 @@ const ENTRY_SITE_Y_KEY := "site_y"
 const DIG_ROW_NAME_FORMAT := "Dig %s"
 const DIG_ROW_SITE_FORMAT := "%s (%d, %d) — the game picks the site"
 const DIG_ROW_NO_SITE := "No rock known yet"
-const KEEP_CHIP_FORMAT := "Keep %d · %d on hand"
+## The row's chip names the order alone: on hand is the sheet's, and the status line already says
+## whether the pile is short (`Refilling to N`) or full (`At target`).
+const KEEP_CHIP_FORMAT := "Keep %d"
 const KEEP_CHIP_NONE := "Keep: none"
 const KEEP_CHIP_TOOLTIP := "Set on the %s sheet (click the row)"
 const STATUS_AT_TARGET := "At target — nobody digs"
@@ -56,7 +58,9 @@ const DIG_ROW_META := &"dig_row"
 const SHEET_SECTION_KEEP := "Keep on hand"
 const SHEET_SECTION_DIGGERS := "Diggers"
 const SHEET_SECTION_NEXT_TURN := "Next turn"
-const SHEET_ON_HAND_FORMAT := "%d on hand"
+const SHEET_ON_HAND_FORMAT := "%s on hand"
+## A pile short of a whole stone is stated to this many places, so a first dig of 0.4 never reads `0`.
+const SHEET_ON_HAND_DECIMALS := 1
 const SHEET_KEEP_KEY := "keep"
 const SHEET_USES_FORMAT := "%s uses %s %s a turn — its builds and upkeep."
 const SHEET_USES_NOTHING_FORMAT := "%s uses no %s right now."
@@ -147,9 +151,14 @@ static func on_hand_of(band: Dictionary, material: String) -> float:
 			held += float(row.get(SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
 	return held
 
-## On hand as the player reads it: FLOORED, so the face never claims the target is met a hair early.
-static func whole_on_hand(on_hand: float) -> int:
-	return int(floor(on_hand))
+## On hand as the player reads it: a whole pile as a whole number, a part-stone to `SHEET_ON_HAND_DECIMALS`
+## places — FLOORED either way, so the face never claims the target is met a hair early.
+static func on_hand_face(on_hand: float) -> String:
+	var whole := floorf(on_hand)
+	if on_hand - whole <= 0.0:
+		return str(int(whole))
+	var scale := pow(10.0, SHEET_ON_HAND_DECIMALS)
+	return String.num(floorf(on_hand * scale) / scale, SHEET_ON_HAND_DECIMALS)
 
 ## The sim's own test: at or above the target, which includes target 0, nobody digs.
 static func at_target(target: int, on_hand: float) -> bool:
@@ -183,10 +192,10 @@ static func status_text(status: Status, target: int) -> String:
 		_:
 			return STATUS_REFILLING_FORMAT % target
 
-static func chip_text(target: int, on_hand: float) -> String:
+static func chip_text(target: int) -> String:
 	if target <= 0:
 		return KEEP_CHIP_NONE
-	return KEEP_CHIP_FORMAT % [target, whole_on_hand(on_hand)]
+	return KEEP_CHIP_FORMAT % target
 
 ## The turns until the pile is back at the target at the rate the crew nets over the band's own draw;
 ## `-1` where the take does not out-run the draw (there is no honest answer).

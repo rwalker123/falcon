@@ -712,7 +712,7 @@ band-scoped, which is what every surface already holds. "stone" is spelled nowhe
   `No rock known yet`; line three the status (`At target — nobody digs` / `Refilling to 60`, preceded by
   the take, / `Nobody free to dig` / `No rock to dig`, the last two WARN with the strip's `⚠`); the dig-load
   line; and the pill line, where the Priority pill sends `keep_on_hand` with the SAME target and the **keep
-  chip replaces the Max chip** — `Keep 60 · 42 on hand`, or `Keep: none` at 0. **The chip is a LABEL**; the
+  chip replaces the Max chip** — `Keep 60`, or `Keep: none` at 0, naming the order alone (on hand is the sheet's, which states a part-stone to one place — `0.4 on hand`, never a floored `0`). **The chip is a LABEL**; the
   number changes only on the sheet. The crew strip is the dig row's staffed crew. A click opens the sheet:
   on the picked site, or in its **site-less form** when the entry has no site.
 - **At target means `target <= on hand`** (the sim's own test, target 0 included), so `Keep: none` rows read

@@ -5763,10 +5763,10 @@ func _build_keep_sheet(band: Dictionary, deposit: Dictionary, target: VBoxContai
     keep_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     keep_row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     var have_label := Label.new()
-    have_label.text = HudKeepVocab.SHEET_ON_HAND_FORMAT % HudKeepVocab.whole_on_hand(on_hand)
+    have_label.text = HudKeepVocab.SHEET_ON_HAND_FORMAT % HudKeepVocab.on_hand_face(on_hand)
     have_label.add_theme_color_override("font_color", HudStyle.INK)
     have_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    have_label.set_meta(HudKeepVocab.SHEET_ON_HAND_META, HudKeepVocab.whole_on_hand(on_hand))
+    have_label.set_meta(HudKeepVocab.SHEET_ON_HAND_META, HudKeepVocab.on_hand_face(on_hand))
     keep_row.add_child(have_label)
     keep_row.add_child(HudWidgets.build_field_key(HudKeepVocab.SHEET_KEEP_KEY))
     HudWidgets.add_keep_stepper(keep_row, keep, word, func(next: int) -> void:

@@ -1969,6 +1969,13 @@ func _keep_sheet_states() -> void:
 	h._assert_hud("the verbs agree with the counts (1 keeps / 2 keep, 1 refills / 2 refill)",
 		HudKeepVocab.site_here_line(1, 2, KEEP_TARGET).contains("1 keeps up with what the band uses, 2 refill toward")
 			and HudKeepVocab.site_here_line(2, 1, KEEP_TARGET).contains("2 keep up with what the band uses, 1 refills toward"))
+	# A first dig lands 0.4 stone, and a floored whole number read that as `0 on hand` (Ray, from play).
+	h._assert_hud("on hand states a part-stone, floored, and a whole pile as a whole number (got `%s` / `%s` / `%s`)"
+			% [HudKeepVocab.on_hand_face(0.4), HudKeepVocab.on_hand_face(0.96), HudKeepVocab.on_hand_face(42.0)],
+		HudKeepVocab.on_hand_face(0.4) == "0.4" and HudKeepVocab.on_hand_face(0.96) == "0.9"
+			and HudKeepVocab.on_hand_face(42.0) == "42")
+	h._assert_hud("the row's chip names the order alone (got `%s`)" % HudKeepVocab.chip_text(KEEP_TARGET),
+		HudKeepVocab.chip_text(KEEP_TARGET) == "Keep %d" % KEEP_TARGET)
 	h._hud._drawercompose.close_compose_sheet()
 	await h._settle()
 

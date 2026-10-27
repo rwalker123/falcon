@@ -3155,7 +3155,7 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
 ## content: the name (`Dig stone`), the site line (`<where> (x, y) - the game picks the site`, or `No rock
 ## known yet`), line three the status (`At target - nobody digs` / `Refilling to 60` / `Nobody free to
 ## dig`) with the take, the dig-load line, and the pill line - the Priority pill and the keep chip, a
-## LABEL (`Keep 60 · 42 on hand`, `Keep: none`) whose number is set on the sheet. The strip is the dig
+## LABEL (`Keep 60`, `Keep: none`) whose number is set on the sheet. The strip is the dig
 ## row's own crew. A click opens the sheet when there is a site to open it on.
 func _build_keep_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var entry: Dictionary = model["keep_entry"]
@@ -3310,8 +3310,7 @@ func _add_priority_pills(line: Container, band: Dictionary, model: Dictionary,
         if model.has("keep_entry"):
             var entry: Dictionary = model["keep_entry"]
             var keep_chip := HudWidgets.build_max_chip(0)
-            keep_chip.text = HudKeepVocab.chip_text(HudKeepVocab.target_of(entry),
-                float(model.get("on_hand", 0.0)))
+            keep_chip.text = HudKeepVocab.chip_text(HudKeepVocab.target_of(entry))
             keep_chip.tooltip_text = HudKeepVocab.KEEP_CHIP_TOOLTIP % HudLoadoutVocab.material_label(
                 String(model.get("material", "")))
             keep_chip.remove_meta(HudWorkVocab.MAX_CHIP_META)

@@ -92,7 +92,7 @@ func run(harness) -> void:
 		var title := _line_of(row, HudWorkVocab.WORKINGS_ROW_NAME_META)
 		h._assert_band_panel("…named `%s` (got `%s`)" % [NAME, title], title == NAME)
 		var chip := _line_of(row, HudKeepVocab.KEEP_CHIP_META)
-		var want_chip := "Keep %d · %d on hand" % [TARGET, ON_HAND_BELOW]
+		var want_chip := "Keep %d" % TARGET
 		h._assert_band_panel("…its keep chip reads `%s` (got `%s`)" % [want_chip, chip], chip == want_chip)
 		h._assert_band_panel("…and the chip is a LABEL, not a button",
 			h._find_meta_control(row, String(HudKeepVocab.KEEP_CHIP_META)) is Label)
