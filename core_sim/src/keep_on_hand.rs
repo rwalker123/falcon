@@ -1,6 +1,15 @@
 //! ⛔ **A MINED MATERIAL IS KEPT ON HAND, NOT CREWED** (#874, `docs/plan_labor_at_scale.md` → "Two
 //! interfaces: what grows back, and what is mined").
 //!
+//! # ⛔ AN ORDER BELONGS TO A BAND WITH A LEADER
+//!
+//! Before a leader the player crews work directly; a keep-on-hand target is an order, and orders
+//! arrive with a leader (`BandLeadership::leader`). A leaderless band, and a leader band whose target
+//! is zero, crew stone by hand exactly as any other deposit (player-made `Extract` rows, the Max as
+//! the crew). A leader band with a target above zero owns **every** row of that material
+//! ([`LaborAllocation::keep_owned`]): its hand-made rows are taken over, and hand commands on the
+//! material are refused ([`order_refusal`]).
+//!
 //! A *mined* material is one whose `extraction.json` deposit row names the config's `mined_branch`
 //! (`extraction`: stone today; an ore is a config row). For it the band holds a **keep-on-hand target**
 //! ([`crate::components::KeepOnHand`]) instead of crews: `0` is no order, anything above is the stock
@@ -9,7 +18,8 @@
 //!
 //! This module owns the three things that are not staffing: the classification
 //! ([`is_mined`]), the site the game picks ([`manage_dig_rows`]) and the refusal the player-facing
-//! crew commands share ([`crewed_dig_refusal`]).
+//! crew commands share ([`order_refusal`], and [`leaderless_refusal`] for `keep_on_hand` on a band
+//! with no leader).
 //!
 //! # The cargo rule: a row never moves or goes while anything of it is out
 //!
@@ -32,9 +42,6 @@ use crate::extraction_config::{ExtractionConfig, NEVER_RENEWS, NO_DEPOSIT};
 use crate::staffing::CampSite;
 use crate::take_claims::ClaimSources;
 
-/// How many leading characters of a material id are upper-cased for a sentence ("stone" -> "Stone").
-const CAPITALISED_CHARACTERS: usize = 1;
-
 /// **IS THIS MATERIAL MINED** - its deposit row names the config's `mined_branch`. Wood (`forestry`)
 /// regrows and keeps its per-site rows, Max and floor.
 pub fn is_mined(config: &ExtractionConfig, material: &str) -> bool {
@@ -51,19 +58,23 @@ pub fn mined_materials(config: &ExtractionConfig) -> Vec<String> {
         .collect()
 }
 
-/// A material id as a sentence's noun phrase ("stone" -> "Stone").
-fn display_name(material: &str) -> String {
-    let (head, tail) = material.split_at(material.len().min(CAPITALISED_CHARACTERS));
-    format!("{}{}", head.to_uppercase(), tail)
+/// **THE REFUSAL FOR A HAND COMMAND ON A MATERIAL A LEADER KEEPS ON HAND** (`assign_labor extract`,
+/// `stop_labor`, `work_priority`), naming the order. `None` when the band crews the material by hand.
+pub fn order_refusal(
+    allocation: &LaborAllocation,
+    material: &str,
+    band_label: &str,
+) -> Option<String> {
+    allocation.keep_owned.contains(material).then(|| {
+        format!(
+            "{band_label}'s leader keeps {material} on hand - set the order to None to crew it by hand."
+        )
+    })
 }
 
-/// **THE REFUSAL FOR A CREW COMMAND ON A MINED MATERIAL** (`assign_labor extract`, `stop_labor`,
-/// `work_priority`): the dig is the sim's, set through `keep_on_hand`.
-pub fn crewed_dig_refusal(config: &ExtractionConfig, material: &str) -> Option<String> {
-    is_mined(config, material).then(|| {
-        let name = display_name(material);
-        format!("{name} is kept on hand, not crewed - set how much to keep on the {name} sheet.")
-    })
+/// **THE REFUSAL FOR AN ORDER ON A BAND WITH NO LEADER.**
+pub fn leaderless_refusal(material: &str, band_label: &str) -> String {
+    format!("{band_label} has no leader yet - crew {material} by hand.")
 }
 
 /// **THE FLOOR AN `extract` ROW CARRIES WHEN NOBODY NAMED ONE** - nothing is left standing on a finite
@@ -187,73 +198,105 @@ fn row_is_pinned(allocation: &LaborAllocation, target: &LaborTarget) -> bool {
     party_out || cargo_walking || build_declared
 }
 
-/// **KEEP THE BAND'S DIG ROWS WHERE THE ORDERS SAY** - run before staffing, by the turn and by every
-/// command restaff. For each mined material: publish the best site; with a target, create the row on
-/// it or move the row to a strictly better site (or off a worked-out one); without, remove it. A
-/// pinned row stays put ([`row_is_pinned`]). The row's priority is the order's.
+/// **KEEP A LEADER BAND'S DIG ROWS WHERE ITS ORDERS SAY** - run before staffing, by the turn and by
+/// every command restaff. Per mined material:
+///
+/// - **active** (the band has a leader and the target is above zero): the order owns the material.
+///   Publish the best site; create the one row on it, or move it to a strictly better site (or off
+///   a worked-out one); retire the band's other rows of that material. The row's priority is the
+///   order's.
+/// - **released** (the material is owned but the order is gone - target 0, or no leader): remove the
+///   rows; the material is handed back to the player once none remains.
+/// - **otherwise** the band crews it by hand and nothing here touches its rows.
+///
+/// A pinned row ([`row_is_pinned`]) is never moved or removed.
 pub fn manage_dig_rows(
     allocation: &mut LaborAllocation,
     inputs: &DigSiteInputs<'_>,
+    has_leader: bool,
     candidate_tiles: &dyn Fn(&str) -> Vec<UVec2>,
 ) {
     allocation.last_keep_site.clear();
     for material in mined_materials(inputs.sources.extraction) {
         let order = allocation.keep_on_hand_for(&material);
-        let best = candidate_tiles(&material)
-            .into_iter()
-            .filter_map(|tile| rank_site(inputs, tile, &material))
-            .reduce(|best, next| if next.beats(&best) { next } else { best });
+        let active = has_leader && order.target > 0;
+        if active {
+            allocation.keep_owned.insert(material.clone());
+        } else if !allocation.keep_owned.contains(&material) {
+            continue;
+        }
+        let best = if has_leader {
+            candidate_tiles(&material)
+                .into_iter()
+                .filter_map(|tile| rank_site(inputs, tile, &material))
+                .reduce(|best, next| if next.beats(&best) { next } else { best })
+        } else {
+            None
+        };
         if let Some(best) = best {
             allocation
                 .last_keep_site
                 .insert(material.clone(), best.tile);
         }
-        let current = allocation
-            .assignments
-            .iter()
-            .find_map(|row| match &row.target {
-                LaborTarget::Extract {
-                    tile,
-                    material: held,
-                    ..
-                } if *held == material => Some((*tile, row.target.clone())),
-                _ => None,
-            });
-        let wanted = if order.target > 0 { best } else { None };
-        let mut keep_current = current.is_some();
-        if let Some((tile, target)) = &current {
-            let stays = wanted.is_some_and(|best| {
-                rank_site(inputs, *tile, &material).is_some_and(|here| !best.beats(&here))
-            });
-            if !stays && !row_is_pinned(allocation, target) {
-                allocation.drop_source_row(target);
-                keep_current = false;
+        let rows_of_material = |allocation: &LaborAllocation| -> Vec<(UVec2, LaborTarget)> {
+            allocation
+                .assignments
+                .iter()
+                .filter_map(|row| match &row.target {
+                    LaborTarget::Extract {
+                        tile,
+                        material: held,
+                        ..
+                    } if *held == material => Some((*tile, row.target.clone())),
+                    _ => None,
+                })
+                .collect()
+        };
+        let wanted = if active { best } else { None };
+        // The row that stays is the first one still at a site the order wants.
+        let mut stayed: Option<UVec2> = None;
+        for (tile, target) in rows_of_material(allocation) {
+            let stays = stayed.is_none()
+                && wanted.is_some_and(|best| {
+                    rank_site(inputs, tile, &material).is_some_and(|here| !best.beats(&here))
+                });
+            if stays {
+                stayed = Some(tile);
+            } else if !row_is_pinned(allocation, &target) {
+                allocation.drop_source_row(&target);
             }
         }
-        if let (false, Some(best)) = (keep_current, wanted) {
-            if let Some((working, ground)) = inputs.sources.working(best.tile, &material) {
-                let floor = dig_floor(tile_deposit_regrowth(
-                    inputs.sources.extraction,
-                    &material,
-                    &ground,
-                ));
-                let kit = working_default_kit(inputs.sources.equipment, &working);
-                allocation.set_staffed_row(
-                    LaborTarget::Extract {
-                        tile: best.tile,
-                        material: material.clone(),
-                        floor,
-                    },
-                    None,
-                    Some(kit),
-                );
+        if let (None, Some(best)) = (stayed, wanted) {
+            let any_left = !rows_of_material(allocation).is_empty();
+            if !any_left {
+                if let Some((working, ground)) = inputs.sources.working(best.tile, &material) {
+                    let floor = dig_floor(tile_deposit_regrowth(
+                        inputs.sources.extraction,
+                        &material,
+                        &ground,
+                    ));
+                    let kit = working_default_kit(inputs.sources.equipment, &working);
+                    allocation.set_staffed_row(
+                        LaborTarget::Extract {
+                            tile: best.tile,
+                            material: material.clone(),
+                            floor,
+                        },
+                        None,
+                        Some(kit),
+                    );
+                }
             }
         }
         for row in allocation.assignments.iter_mut() {
             if matches!(&row.target, LaborTarget::Extract { material: held, .. } if *held == material)
             {
                 row.priority = order.priority;
+                row.max_workers = None;
             }
+        }
+        if !active && rows_of_material(allocation).is_empty() {
+            allocation.keep_owned.remove(&material);
         }
     }
 }

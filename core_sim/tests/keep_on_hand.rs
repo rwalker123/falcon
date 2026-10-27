@@ -1,6 +1,6 @@
 //! A mined material is kept on hand, not crewed (#874, `.claude/rules/core_sim/work-party.md` -> "A
-//! mined material is kept on hand, not crewed"). Every test opts back into the shipped extraction
-//! config, because `build_test_app` installs the fixture that crews stone.
+//! mined material is kept on hand, not crewed"). The band under test has a leader: an order belongs
+//! to a band that has one.
 
 use std::collections::BTreeMap;
 
@@ -11,9 +11,10 @@ use core_sim::extraction::{
 use core_sim::shipped;
 use core_sim::work_party::HomewardWalk;
 use core_sim::{
-    build_test_app, scalar_from_f32, ExtractionConfigHandle, KeepOnHand, LaborAllocation,
-    LaborTarget, LadderConfigHandle, MaterialsConfigHandle, PopulationCohort, ResidentBand,
-    SimulationConfig, SourcePriority, Tile, TileRegistry,
+    build_test_app, scalar_from_f32, BandLeader, BandLeadership, ExtractionConfigHandle,
+    KeepOnHand, LaborAllocation, LaborTarget, LadderConfigHandle, LeaderKind,
+    MaterialsConfigHandle, PopulationCohort, ResidentBand, SimulationConfig, SourcePriority, Tile,
+    TileRegistry,
 };
 use sim_schema::TerrainType;
 
@@ -27,7 +28,6 @@ const A_BIG_TARGET: u32 = 500;
 
 fn world() -> (App, Entity, UVec2) {
     let mut app = build_test_app();
-    app.world.insert_resource(ExtractionConfigHandle::default());
     app.update();
     app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
     let (band, tile) = {
@@ -38,7 +38,19 @@ fn world() -> (App, Entity, UVec2) {
         (band, cohort.current_tile)
     };
     let camp = app.world.get::<Tile>(tile).expect("camp tile").position;
+    give_a_leader(&mut app, band);
     (app, band, camp)
+}
+
+fn give_a_leader(app: &mut App, band: Entity) {
+    app.world.entity_mut(band).insert(BandLeadership {
+        leader: Some(BandLeader {
+            name: "Ash".to_string(),
+            kind: LeaderKind::Chief,
+            since_turn: 0,
+        }),
+        ..Default::default()
+    });
 }
 
 fn reground(app: &mut App, at: UVec2, terrain: TerrainType) {
@@ -339,4 +351,142 @@ fn real_turns_dig_stone_home_up_to_the_target_and_not_without_one() {
         held < TARGET as f32 * OVERSHOOT_PACKS,
         "the dig stopped near the target instead of running on: {held}"
     );
+}
+
+/// A hand-made stone row at `tile`, staffed with a Max, as the player makes one on main.
+fn hand_row(app: &mut App, band: Entity, tile: UVec2, max: u32) {
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("allocation")
+        .set_staffed_row(
+            LaborTarget::Extract {
+                tile,
+                material: STONE.to_string(),
+                floor: 0.0,
+            },
+            Some(max),
+            None,
+        );
+    core_sim::staffing::restaff_band(&mut app.world, band);
+}
+
+#[test]
+fn a_leader_band_at_target_zero_crews_by_hand_and_the_order_leaves_a_hand_row_alone() {
+    const MAX: u32 = 2;
+    let (mut app, band, camp) = world();
+    bare_the_map(&mut app);
+    reground(&mut app, camp, ROCK);
+    keep(&mut app, band, 0);
+    hand_row(&mut app, band, camp, MAX);
+    let rows = stone_rows(&app, band);
+    assert_eq!(rows.len(), 1, "the hand-made row stands");
+    assert_eq!(rows[0].1, MAX, "its Max is the crew: {rows:?}");
+    assert!(
+        !app.world
+            .get::<LaborAllocation>(band)
+            .unwrap()
+            .keep_owned
+            .contains(STONE),
+        "no order, no ownership"
+    );
+}
+
+#[test]
+fn an_order_takes_over_a_hand_row_and_releasing_it_removes_the_rows() {
+    const MAX: u32 = 2;
+    let (mut app, band, camp) = world();
+    bare_the_map(&mut app);
+    let width = app.world.resource::<TileRegistry>().width;
+    let far = UVec2::new((camp.x + 3) % width, camp.y);
+    reground(&mut app, camp, ROCK);
+    reground(&mut app, far, ROCK);
+    hand_row(&mut app, band, far, MAX);
+    keep(&mut app, band, A_BIG_TARGET);
+    let rows = stone_rows(&app, band);
+    assert_eq!(rows.len(), 1, "one row: the order's");
+    assert_eq!(
+        rows[0].0, camp,
+        "the hand row at the farther site was retired for the best one"
+    );
+    let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+    assert!(allocation.keep_owned.contains(STONE));
+    assert!(allocation.assignments[0].max_workers.is_none());
+
+    keep(&mut app, band, 0);
+    assert!(
+        stone_rows(&app, band).is_empty(),
+        "the order's rows are released"
+    );
+    assert!(!app
+        .world
+        .get::<LaborAllocation>(band)
+        .unwrap()
+        .keep_owned
+        .contains(STONE));
+}
+
+#[test]
+fn a_pinned_hand_row_survives_a_takeover_until_its_cargo_lands() {
+    let (mut app, band, camp) = world();
+    bare_the_map(&mut app);
+    let width = app.world.resource::<TileRegistry>().width;
+    let far = UVec2::new((camp.x + 3) % width, camp.y);
+    reground(&mut app, camp, ROCK);
+    reground(&mut app, far, ROCK);
+    hand_row(&mut app, band, far, 2);
+    let target = app.world.get::<LaborAllocation>(band).unwrap().assignments[0]
+        .target
+        .clone();
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .unwrap()
+        .homeward
+        .push(HomewardWalk {
+            target,
+            workers: 1,
+            turns_left: 2,
+            walk_turns: 2,
+            cargo: 5.0,
+            classes: Default::default(),
+            goods: Default::default(),
+            rejoins_row: false,
+        });
+    keep(&mut app, band, A_BIG_TARGET);
+    assert_eq!(
+        stone_rows(&app, band)
+            .iter()
+            .map(|r| r.0)
+            .collect::<Vec<_>>(),
+        vec![far],
+        "cargo is walking home from the hand row: it stays"
+    );
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .unwrap()
+        .homeward
+        .clear();
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    assert_eq!(
+        stone_rows(&app, band)
+            .iter()
+            .map(|r| r.0)
+            .collect::<Vec<_>>(),
+        vec![camp],
+        "once it lands the order moves the row to the best site"
+    );
+}
+
+#[test]
+fn a_leaderless_band_is_never_owned_by_an_order() {
+    let (mut app, band, camp) = world();
+    bare_the_map(&mut app);
+    reground(&mut app, camp, ROCK);
+    app.world.entity_mut(band).remove::<BandLeadership>();
+    keep(&mut app, band, A_BIG_TARGET);
+    assert!(
+        stone_rows(&app, band).is_empty(),
+        "an order without a leader places no row"
+    );
+    hand_row(&mut app, band, camp, 2);
+    assert_eq!(stone_rows(&app, band).len(), 1, "the hand row stands");
 }

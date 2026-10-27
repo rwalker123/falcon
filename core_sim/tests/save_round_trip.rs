@@ -63,10 +63,6 @@ fn spawn_world() -> App {
     // nothing else, which is a statement about the two builders rather than about the save.
     app.world
         .insert_resource(core_sim::EquipmentConfigHandle::default());
-    // The deposits too: a reload loads the shipped `mined_branch`, and a live world that crewed
-    // stone would differ from its own reload in the dig-site telemetry it carries.
-    app.world
-        .insert_resource(core_sim::ExtractionConfigHandle::default());
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_preset_id = "earthlike".to_string();
     config.map_seed = core_sim::HARNESS_MAP_SEED;
@@ -93,10 +89,6 @@ fn spawn_world_with_ai_factions(ai_factions: u32) -> App {
     let mut app = build_test_app();
     app.world
         .insert_resource(core_sim::EquipmentConfigHandle::default());
-    // The deposits too: a reload loads the shipped `mined_branch`, and a live world that crewed
-    // stone would differ from its own reload in the dig-site telemetry it carries.
-    app.world
-        .insert_resource(core_sim::ExtractionConfigHandle::default());
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_preset_id = "earthlike".to_string();
     config.map_seed = core_sim::HARNESS_MAP_SEED;

@@ -6483,6 +6483,9 @@ pub fn advance_labor_allocation(
                         band_kit: &band_kit,
                         camp: camp.as_ref(),
                     },
+                    band_leadership
+                        .as_deref()
+                        .is_some_and(|leadership| leadership.leader.is_some()),
                     &candidates,
                 );
             }

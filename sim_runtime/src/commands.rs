@@ -1315,9 +1315,12 @@ pub mod query_error {
     /// A staffing preview's `priority` is not `high`, `normal` or `low` (rejected, never read as the
     /// default - the `work_priority` command's rule).
     pub const INVALID_PRIORITY: &str = "invalid_priority";
-    /// A staffing preview of a crew on a mined material (stone): the dig is the sim's, set with
-    /// `keep_on_hand`, so `assign_labor` refuses the same row.
-    pub const MINED_MATERIAL_IS_KEPT_ON_HAND: &str = "mined_material_is_kept_on_hand";
+    /// A staffing preview of a dig on ground that never renews, with no Max: the sim sizes such a
+    /// crew from the player's count, so `assign_labor` refuses the same row.
+    pub const NEVER_RENEWING_DIG_WITHOUT_A_COUNT: &str = "never_renewing_dig_without_a_count";
+    /// A staffing preview of a crew on a material the band's leader keeps on hand: the dig is the
+    /// order's, so `assign_labor` refuses the same row.
+    pub const MATERIAL_IS_KEPT_ON_HAND: &str = "material_is_kept_on_hand";
 }
 
 /// **How a receiver answers a pending dealing** (`answer_dealing`): accept, refuse, or counter.

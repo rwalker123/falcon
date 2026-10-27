@@ -99,6 +99,10 @@ pub enum ReachTarget {
     Nothing,
     /// Draw the stock down at this take per turn (already strictly above the peak regrowth).
     Take(f32),
+    /// A hand-crewed mined seam with no regrowth: there is no regrowth to out-take, so the target is
+    /// the player's Max in heads - this many **take hands**. (A leader's keep-on-hand order sizes a
+    /// mined seam by its deficit instead.)
+    Heads(u32),
 }
 
 /// One staffed row, as the passes see it.
@@ -236,6 +240,7 @@ fn reach_gather(row: &StaffRowInput<'_>, armed: u32) -> f32 {
     match row.reach {
         ReachTarget::Nothing => NO_HANDS,
         ReachTarget::Take(target) => gather_hands(row, target, armed),
+        ReachTarget::Heads(heads) => heads as f32,
     }
 }
 
@@ -248,7 +253,10 @@ fn reach_heads(row: &StaffRowInput<'_>, armed: u32) -> u32 {
 /// The crew past which the take stops rising, keepers included.
 fn useful_heads(row: &StaffRowInput<'_>, armed: u32) -> u32 {
     let hold = gather_hands(row, row.hold_take, armed);
-    let useful = gather_hands(row, row.useful_take, armed);
+    let useful = match row.reach {
+        ReachTarget::Heads(heads) => heads as f32,
+        _ => gather_hands(row, row.useful_take, armed),
+    };
     crew_heads(row, useful.max(reach_gather(row, armed)).max(hold))
 }
 
@@ -1672,8 +1680,8 @@ fn extract_input<'a>(
     if room <= crate::extraction::DEPOSIT_EMPTY {
         return;
     }
-    if crate::keep_on_hand::is_mined(config, material) {
-        // **A MINED MATERIAL IS STAFFED FROM ITS KEEP-ON-HAND DEFICIT** (#874): at or above the target
+    if allocation.keep_owned.contains(material) {
+        // **A MATERIAL A LEADER KEEPS ON HAND IS STAFFED FROM ITS DEFICIT** (#874): at or above the target
         // nobody digs (the row's keepers still come, `keep_hands`); below it the crew takes what
         // the band draws plus the deficit spread over `keep_on_hand_refill_turns`.
         let deficit =
@@ -1686,6 +1694,14 @@ fn extract_input<'a>(
         input.hold_take = draw.min(room);
         input.useful_take = refill.min(room);
         input.reach = ReachTarget::Take(refill.min(room));
+        return;
+    }
+    if ground_rate <= crate::extraction_config::NEVER_RENEWS {
+        // A seam that never renews holds nothing; crewed by hand, its reach is the player's Max in heads.
+        let wanted = input.max.map_or(NOBODY, |max| {
+            max.saturating_sub(input.keep_hands.ceil() as u32)
+        });
+        input.reach = ReachTarget::Heads(wanted);
         return;
     }
     let rate = ground_rate * payoff.regrowth_multiplier;
@@ -1866,6 +1882,9 @@ fn managed_dig_allocation(
         .get::<BandEquipment>(band)
         .cloned()
         .unwrap_or_else(|| BandEquipment::start_stocked_for(&equipment, available as f32));
+    let has_leader = world
+        .get::<crate::leadership::BandLeadership>(band)
+        .is_some_and(|leadership| leadership.leader.is_some());
     let visibility = world.get_resource::<crate::visibility::VisibilityLedger>();
     let fog_enabled = world
         .get_resource::<crate::resources::SimulationConfig>()
@@ -1896,7 +1915,7 @@ fn managed_dig_allocation(
             band_kit: &band_kit,
             camp: camp.as_ref(),
         };
-        crate::keep_on_hand::manage_dig_rows(&mut allocation, &inputs, &candidates);
+        crate::keep_on_hand::manage_dig_rows(&mut allocation, &inputs, has_leader, &candidates);
     });
     Some(allocation)
 }
@@ -2655,6 +2674,36 @@ mod tests {
         let out = staff_band(&rows, 4, &mut units);
         assert_eq!(out[0].keepers, 3);
         assert_eq!(out[0].total(), 4);
+    }
+
+    #[test]
+    fn a_mined_seam_with_no_max_gets_nobody_and_with_a_max_gets_the_max() {
+        let mut none = linear_row(
+            SourcePriority::Normal,
+            None,
+            0,
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+            Vec::new(),
+        );
+        none.reach = ReachTarget::Heads(0);
+        let mut capped = linear_row(
+            SourcePriority::Normal,
+            Some(3),
+            0,
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+            Vec::new(),
+        );
+        capped.reach = ReachTarget::Heads(3);
+        let mut units = shelf(0);
+        let out = staff_band(&[none, capped], 10, &mut units);
+        assert_eq!(out[0].total(), 0);
+        assert_eq!(out[1].total(), 3);
     }
 
     #[test]

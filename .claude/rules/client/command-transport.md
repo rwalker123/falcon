@@ -409,10 +409,12 @@ sheet's `Stop working here` (`DrawerComposeController._emit_stop_labor` → `sto
   The tile row's emitter (`DrawerComposeController._emit_tile_stop`) carries them too, with `kind` `tile`
   and its `branch`; without them that branch of the handler is unreachable and a tile row assigned and
   stopped in one turn lingers. `band_panel_preview` asserts the tile case beside forage.
-- **A mined material is refused here and kept on hand instead** (#874): `stop_labor`, `work_priority` and
-  `assign_labor extract` on stone answer *Stone is kept on hand, not crewed*, and the player's stone
-  order is `keep_on_hand <faction> <band> <material> <target> <high|normal|low>` (both fields
-  required, `KeepOnHandCommand`, proto field 96), band-addressed and seated like `work_priority`.
+- **A leader's keep-on-hand order refuses the hand commands on its material** (#874): while a band's
+  stone target is above zero, `stop_labor`, `work_priority` and `assign_labor extract` on that band and
+  material answer *<Band>'s leader keeps stone on hand - set the order to None to crew it by hand.*
+  The order is `keep_on_hand <faction> <band> <material> <target> <high|normal|low>` (both fields
+  required, `KeepOnHandCommand`, proto field 96), band-addressed and seated like `work_priority`; a band
+  with no leader is refused (*<Band> has no leader yet - crew stone by hand.*) and keeps crewing by hand.
 - **`command_guard` drives all five forms** (`_drive_stop_labor`, expected count `5`) through the real server
   parser, so the grammar cannot drift from `sim_runtime/src/command_text.rs`.
 

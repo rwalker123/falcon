@@ -6354,6 +6354,12 @@ pub struct LaborAllocation {
     /// **THE KEEP-ON-HAND ORDERS** (#874): per mined material, how much the band keeps in its store and
     /// the priority of its dig row. Absent is `target 0`, which is no order. Intent: inside equality.
     pub keep_on_hand: std::collections::BTreeMap<String, KeepOnHand>,
+    /// **THE MATERIALS WHOSE ROWS ARE A LEADER'S ORDER'S** (#874): a leader band holding a keep-on-hand
+    /// target above zero owns every row of that material, and keeps owning them until the order is
+    /// released and no row remains (a row with cargo out is released once it lands). Written by
+    /// `keep_on_hand::manage_dig_rows`; a material absent here is crewed by hand. Saved: the release
+    /// is a fact that spans turns.
+    pub keep_owned: std::collections::BTreeSet<String>,
     /// **WHERE THE GAME PICKED TO DIG**, per mined material - the best-ranked site this turn's
     /// management found, whether or not a row stands on it. Published beside the order; derived
     /// telemetry outside equality.
@@ -6525,6 +6531,7 @@ impl PartialEq for LaborAllocation {
     fn eq(&self, other: &Self) -> bool {
         self.assignments == other.assignments
             && self.keep_on_hand == other.keep_on_hand
+            && self.keep_owned == other.keep_owned
             && self.upkeep_fund_mode == other.upkeep_fund_mode
             && self.builds == other.builds
     }

@@ -432,22 +432,7 @@ impl ConfigLoadError for ExtractionConfigError {
 #[derive(Resource, Debug, Clone)]
 pub struct ExtractionConfigHandle(pub Arc<ExtractionConfig>);
 
-/// The branch a fixture config names as mined so that no deposit row matches it.
-const NO_DEPOSIT_IS_MINED: &str = "no_deposit_is_mined";
-
 impl ExtractionConfigHandle {
-    /// **THE SHIPPED DEPOSITS WITH NOTHING MINED** - every material crewed with `assign_labor
-    /// extract`, stone included. `build_test_app` installs it, as it installs the stocked-gear
-    /// config and for the same reason: the deposit mechanics (take, floor, runway, lessons) are
-    /// about a rate-0 working a crew stands on, and the keep-on-hand order that replaces that crew
-    /// for a mined material (#874) is a different input. A fixture whose subject IS the order
-    /// puts `ExtractionConfigHandle::default()` back.
-    pub fn crewed_for_a_fixture() -> Self {
-        let mut config = (*ExtractionConfig::builtin()).clone();
-        config.mined_branch = crate::ladder_ids::BranchId::new(NO_DEPOSIT_IS_MINED);
-        Self(Arc::new(config))
-    }
-
     pub fn new(config: Arc<ExtractionConfig>) -> Self {
         Self(config)
     }

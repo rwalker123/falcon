@@ -81,7 +81,7 @@ fn world_of(terrain: TerrainType) -> (World, Entity) {
     world.insert_resource(core_sim::EquipmentConfigHandle::default());
     world.insert_resource(core_sim::MaterialsConfigHandle::default());
     world.insert_resource(core_sim::RecipesConfigHandle::default());
-    world.insert_resource(ExtractionConfigHandle::crewed_for_a_fixture());
+    world.insert_resource(ExtractionConfigHandle::default());
     world.insert_resource(DepositRegistry::default());
     world.insert_resource(core_sim::BeliefRegistry::default());
     world.insert_resource(core_sim::BeliefConfigHandle::default());

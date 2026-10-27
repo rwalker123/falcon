@@ -1886,8 +1886,6 @@ pub fn build_test_app() -> App {
     app.world.resource_mut::<SimulationConfig>().map_seed = HARNESS_MAP_SEED;
     app.world
         .insert_resource(crate::equipment_config::EquipmentConfigHandle::for_a_stocked_fixture());
-    app.world
-        .insert_resource(crate::extraction_config::ExtractionConfigHandle::crewed_for_a_fixture());
     app
 }
 

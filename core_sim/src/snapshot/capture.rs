@@ -3573,6 +3573,7 @@ pub fn capture_snapshot(
                             })
                             .unwrap_or_default(),
                         keep_on_hand: allocation
+                            .filter(|_| leadership.is_some_and(|l| l.leader.is_some()))
                             .map(|allocation| {
                                 crate::snapshot::population::keep_on_hand_rows(
                                     allocation,

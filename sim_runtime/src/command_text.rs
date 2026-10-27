@@ -218,7 +218,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "keep_on_hand",
         aliases: &[],
-        summary: "KEEP A MINED MATERIAL ON HAND: tell one band how much of a mined material (stone) to hold in its store, and how urgently. The sim picks the dig site, staffs the digging from the shortfall and stops when the store reaches the target. A target of 0 is no order - nobody digs for it. 'high', 'normal' or 'low' ranks the dig against the band's other work. Both the target and the priority are required. Refused for a material that regrows (wood keeps its per-site `assign_labor extract` rows); `assign_labor extract`, `stop_labor` and `work_priority` on a mined material are refused and point here.",
+        summary: "KEEP A MINED MATERIAL ON HAND: a band's LEADER orders how much of a mined material (stone) to hold in its store, and how urgently. The sim picks the dig site, staffs the digging from the shortfall and stops when the store reaches the target. A target of 0 is no order - the band crews the material by hand again. 'high', 'normal' or 'low' ranks the dig against the band's other work. Both the target and the priority are required. Refused for a band with no leader yet (it crews by hand) and for a material that regrows (wood keeps its per-site `assign_labor extract` rows). While a target above 0 stands, `assign_labor extract`, `stop_labor` and `work_priority` on that material and band are refused and name the order.",
         usage: "keep_on_hand <faction_id> <band_id> <material> <target> high|normal|low",
     },
     CommandVerbHelp {
