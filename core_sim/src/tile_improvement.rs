@@ -59,6 +59,9 @@ pub const TILE_KEEPING_LOAD: f32 = 1.0;
 /// **NO HANDS KEPT THE SITE THIS TURN** - the neutral of [`TileImprovement::upkeep_hands`].
 pub const NO_HANDS_ON_THE_IMPROVEMENT: f32 = 0.0;
 
+/// **NOTHING ROTTED IN THE STORE THIS TURN** - the neutral of [`TileImprovement::spoiled_this_turn`].
+pub const NO_FOOD_SPOILED: f32 = 0.0;
+
 /// Slack on the keeping comparison, so an improvement funded to the last representable fraction of
 /// its bill is not judged short by a rounding - [`crate::routes`]' reason, restated for this kind.
 const KEEPING_EPSILON: f32 = 1.0e-4;
@@ -117,6 +120,17 @@ pub struct TileImprovement {
     pub build_turns_remaining: Option<BuildTurns>,
     /// Its 0-based place in the builder's queue, or [`sim_schema::NOT_IN_ANY_BUILD_QUEUE`].
     pub build_queue_position: i32,
+    /// **THE BAND THAT OWNS THIS IMPROVEMENT AS A STORE** (#709) - the band whose crew placed it, or
+    /// that adopted it once its owner was gone. Only the owner deposits into or draws from the
+    /// store (`crate::fixed_store`). `None` is unowned: nothing goes in or comes out. Meaningless
+    /// (and `None`) on an improvement that is not a store.
+    pub owner: Option<BandId>,
+    /// **THE FOOD THIS IMPROVEMENT HOLDS** (#709), as the aged lots a larder holds. Empty on every
+    /// improvement that is not a store, and on a store nothing has been put in.
+    pub contents: crate::components::FoodMix,
+    /// **The food that rotted or was lost in this store this turn** (#709), scratch cleared at the
+    /// head of the store rot pass. Not on any band's Food line.
+    pub spoiled_this_turn: f32,
     /// The rung the head entry is raising it to - published, scratch cleared every turn.
     pub build_destination: Option<RungId>,
     /// The legs still to lay on the way there - published, scratch cleared every turn.
@@ -137,6 +151,9 @@ impl TileImprovement {
             faction,
             position: RUNG_UNSTARTED,
             standing: tile_standing_at(ladder, branch, RUNG_UNSTARTED),
+            owner: None,
+            contents: crate::components::FoodMix::default(),
+            spoiled_this_turn: NO_FOOD_SPOILED,
             upkeep_demanded: None,
             upkeep_supplied: NO_UPKEEP_DEMAND,
             upkeep_hands: NO_HANDS_ON_THE_IMPROVEMENT,
@@ -240,6 +257,23 @@ impl TileImprovement {
         )
     }
 
+    /// **THE METER ON THE RUNG THIS IMPROVEMENT IS ACTUALLY RAISING**, `0..=1` - the tile kind's twin
+    /// of [`crate::routes::road_build_fraction`] and [`crate::extraction::deposit_build_fraction`],
+    /// through the same `rung_work_done` / `build_fraction` seam and never a subtraction.
+    pub fn build_fraction(&self, ladder: &LadderConfig) -> f32 {
+        let at_risk = self.at_risk_rung();
+        let span = tile_rung_span(at_risk, ladder);
+        crate::intensification::build_fraction(
+            crate::intensification::rung_work_done(
+                self.standing,
+                ladder.rung(at_risk),
+                self.position,
+                span,
+            ),
+            span.1,
+        )
+    }
+
     /// **The rung whose bill is at risk**, the one being raised once work is banked on it, else the
     /// one held ([`crate::routes::road_at_risk_rung`]).
     pub fn at_risk_rung(&self) -> RungId {
@@ -286,9 +320,26 @@ impl TileImprovementRegistry {
         faction: FactionId,
         ladder: &LadderConfig,
     ) -> &mut TileImprovement {
+        self.place_owned(tile, branch, faction, None, ladder)
+    }
+
+    /// **[`Self::place`] naming the band whose crew places it** (#709): `owner` is set on a NEW
+    /// improvement only, so a second crew assigned to an existing one never takes it over.
+    pub fn place_owned(
+        &mut self,
+        tile: UVec2,
+        branch: BranchId,
+        faction: FactionId,
+        owner: Option<BandId>,
+        ladder: &LadderConfig,
+    ) -> &mut TileImprovement {
         self.improvements
             .entry(Self::key(tile, branch))
-            .or_insert_with(|| TileImprovement::placed(tile, branch, faction, ladder))
+            .or_insert_with(|| {
+                let mut placed = TileImprovement::placed(tile, branch, faction, ladder);
+                placed.owner = owner;
+                placed
+            })
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &TileImprovement> {

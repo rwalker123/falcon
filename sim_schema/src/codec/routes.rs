@@ -113,6 +113,12 @@ fn create_tile_improvements<'a>(
                     buildersCap: improvement.builders_cap,
                     buildToe: build_toe,
                     isQueued: improvement.is_queued,
+                    storedFood: improvement.stored_food,
+                    storeCapacity: improvement.store_capacity,
+                    hasStoreOwner: improvement.has_store_owner,
+                    storeOwnerBand: improvement.store_owner_band,
+                    storeSpoiled: improvement.store_spoiled,
+                    buildFraction: improvement.build_fraction,
                 },
             )
         })
@@ -210,6 +216,12 @@ fn decode_tile_improvement(improvement: fb::TileImprovementState<'_>) -> TileImp
         builders_cap: improvement.buildersCap(),
         build_toe: decode_build_toe(improvement.buildToe()),
         is_queued: improvement.isQueued(),
+        stored_food: improvement.storedFood(),
+        store_capacity: improvement.storeCapacity(),
+        has_store_owner: improvement.hasStoreOwner(),
+        store_owner_band: improvement.storeOwnerBand(),
+        store_spoiled: improvement.storeSpoiled(),
+        build_fraction: improvement.buildFraction(),
     }
 }
 

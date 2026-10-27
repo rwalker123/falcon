@@ -2356,8 +2356,8 @@ an unknown or non-per-tile branch is refused by name rather than read as the til
 
 `SourceKind::Tile` is a source that **yields nothing**: a **standing** on the ladder, a **standing
 bill**, a **neglect clock** and a **grace**, kept by a **crew row** exactly as a deposit's working is.
-**Two tile branches ship: `food_stores`** (`unstored` -> `storage_pit`, the storage pit - see "The band
-kind" below for what it buys) **and `belief`** (`gathering_ground` -> `monument`, verb `raise`, the
+**Two tile branches ship: `food_stores`** (`unstored` -> `storage_pit`, the storage pit - it holds its owner band's dry food on the tile;
+see `campaign.md` -> "A storage pit is its band's second larder") **and `belief`** (`gathering_ground` -> `monument`, verb `raise`, the
 first rung with no yield; what it buys is `belief_config.json` -> `improvement_belief`, see `belief.md`
 -> "The monument source"). A tile branch is a JSON edit, and the engine never names one:
 `core_sim/tests/tile_improvement.rs` proves it on a test-only two-rung branch (`orchard`, overlay
@@ -2390,6 +2390,19 @@ working.
 **Distance is nothing special.** A crew past `band_work_range` is a work party by the path every
 source row takes (`party_source_position` names the tile; the party carries no cargo). Nothing here
 forks it.
+
+**A tile crew row on a bare tile IS the order for the branch's first build.** When
+`assign_labor ... tile <branch> <x> <y> <n>` creates or raises a row (n > 0) and the tile stands at
+the branch's root rung with no build declared on it by any band of the faction, the sim declares the
+rung above the root - `food_stores` -> `storage_pit` (`dig`), `belief` -> `monument` (`raise`) - read
+off the catalog (`LadderConfig::root_of` / `above_rung`), never a branch name
+(`declare_the_branchs_first_build` in `bin/server.rs`). It goes through the same gate
+(`validate_improvement`: the lesson, a site term such as `min_belief`) and the same
+`queue_build_on_working_bands` as the explicit verb; a refusing gate leaves the row assigned and
+declares nothing, with no error. A tile already holding the improvement declares nothing and the
+crew keeps it, and the climb never passes the first rung above the root. An explicit `build` verb
+afterwards replaces the declaration in place, so it is a harmless repeat. Pinned by the
+`a_tile_crew_row_*` / `an_explicit_dig_*` tests in `server.rs`.
 
 **Building**: `build <verb> <faction> <x> <y>` with a tile-kind verb - no band token, the deposit
 grammar. It resolves to `LaborTarget::Tile`, gates on the knowledge and on the rung beneath being held

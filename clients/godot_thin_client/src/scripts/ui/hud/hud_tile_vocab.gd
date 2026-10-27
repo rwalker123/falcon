@@ -4,12 +4,12 @@ extends RefCounted
 ## **THE TILE-SOURCED BRANCHES' VOCABULARY** -- `source_kind == "tile"` in `intensification_ladder.json`
 ## (belief's monument, food stores' pit, and whatever the config adds next). A tile branch is an
 ## improvement standing ON a hex that a crew keeps: the crew line places it at the branch's root rung
-## (`assign_labor <f> <band> tile <branch> <x> <y> <n>`), the band's builders raise the next rung
-## (`build <verb> <f> <x> <y>`).
+## and, on a bare tile, declares the branch's first rung itself (`assign_labor <f> <band> tile <branch> <x> <y>
+## <n>`: the row IS the order), the band's builders raise it (`build <verb> <f> <x> <y>` remains a valid press).
 ##
 ## ⛔ **NOTHING HERE NAMES A BRANCH.** Every noun, verb, cost and gate is read off the rung CATALOG
 ## (`SubsistenceSection.ladderRungs`), so a branch added to the config reaches the tile card, the crew
-## sheet and the step card with no client edit. The only per-branch facts this file holds are none; the
+## sheet and the step card with no client edit. The only per-rung facts this file holds are the art marks (`RUNG_MARKS`); the
 ## only per-SITE-TERM facts are the words for a site requirement (`min_belief`), keyed by the term.
 ##
 ## The catalog readers (`catalog_*`, `branch_ladder`, `ladder_order_of`) are `HudDepositVocab`'s: they
@@ -62,6 +62,24 @@ static func first_buildable(ladder: Array[Dictionary], branch: String) -> Dictio
 ## The branch's root rung: where a crew's placed improvement stands before anything is raised.
 static func root_entry(ladder: Array[Dictionary], branch: String) -> Dictionary:
 	return HudDepositVocab.branch_floor_entry(ladder, branch)
+
+# ---- THE BUILT RUNG'S MARK --------------------------------------------------------------------------
+
+## Rung wire key (`branch:id`, the catalog's `rung_key`) -> `HudSprites` mark id. Art is bundled per RUNG, so
+## the table is keyed by the key the catalog carries and a rung without art has no entry (the verb glyph is
+## the fallback). No code path branches on a branch: the branch is resolved to its rung through the catalog.
+const RUNG_MARKS := {
+	"food_stores:storage_pit": "storage_pit",
+	"belief:monument": "monument",
+}
+
+## The mark id for one catalog rung, `""` when the rung has no art.
+static func rung_mark(entry: Dictionary) -> String:
+	return String(RUNG_MARKS.get(HudDepositVocab.catalog_rung_key(entry), ""))
+
+## The mark of a branch's BUILT rung -- the first rung above the root that declares a verb. `""` for none.
+static func branch_mark(ladder: Array[Dictionary], branch: String) -> String:
+	return rung_mark(first_buildable(ladder, branch))
 
 # ---- THE TILE'S STATE OF A BRANCH ------------------------------------------------------------------
 
@@ -116,7 +134,7 @@ static func refusal_hover(refusal: Dictionary) -> String:
 ## catalog noun as the title, a `Crew` stepper, one hint line, the commit.
 const CREW_SHEET_NOUN := "crew"
 const CREW_STEPPER_LABEL := "Crew"
-const CREW_HINT := "They place it and keep it. The band's builders raise the next step."
+const CREW_HINT := "Adding the crew starts the first build. They keep it; the band's builders raise it."
 const COMMIT_LABEL := "Assign crew"
 
 ## Handle the harnesses find the crew sheet's stepper row by (the value is the `x,y:branch` subject key).
@@ -185,9 +203,10 @@ const GATE_KIND_CREW := "crew"
 const GATE_KIND_CRAFT := "craft"
 const GATE_KIND_GROUND := "ground"
 
-## `Put a crew on this tile first`: the build only reaches a tile a band of yours works.
+## No crew works the tile: the build only reaches a tile a band of yours works, and the crew row itself declares
+## the branch's first rung.
 const GATE_SHORT_NO_CREW := "no crew"
-const GATE_LONG_NO_CREW := "Put a crew on this tile first. A band's builders raise it once one works the ground."
+const GATE_LONG_NO_CREW := "No crew works this tile. Adding one starts the build, and the band's builders raise it."
 
 ## The row-priority order a locked row prefers: the site no learning closes, then the crew that closes in
 ## one gesture, then the lesson, then the rung beneath.

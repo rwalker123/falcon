@@ -99,7 +99,9 @@ fn the_food_ledger_reconciles_when_a_larder_above_its_line_rots() {
         + cohort.transfer_received
         - cohort.transfer_sent
         - cohort.food_spoiled
-        - cohort.food_left_behind;
+        - cohort.food_left_behind
+        - cohort.food_into_store
+        + cohort.food_from_store;
     assert!(
         (delta - ledger).abs() < EPSILON,
         "larder_delta must equal foodIncome − foodConsumption − raidForfeit − foodSpoiled + \

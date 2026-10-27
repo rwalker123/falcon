@@ -1514,6 +1514,14 @@ pub(crate) fn tile_improvements_to_array(
             &crate::dict::population::kit_toe_to_array(row.upkeepToe()),
         );
         let _ = dict.insert("is_queued", row.isQueued());
+        // The improvement as a fixed store (#709): `store_capacity` 0 = not a store; read
+        // `has_store_owner` before `store_owner_band`.
+        let _ = dict.insert("stored_food", f64::from(row.storedFood()));
+        let _ = dict.insert("store_capacity", f64::from(row.storeCapacity()));
+        let _ = dict.insert("has_store_owner", row.hasStoreOwner());
+        let _ = dict.insert("store_owner_band", row.storeOwnerBand() as i64);
+        let _ = dict.insert("store_spoiled", f64::from(row.storeSpoiled()));
+        let _ = dict.insert("build_fraction", f64::from(row.buildFraction()));
         crate::dict::population::insert_build_crew(
             &mut dict,
             row.buildersStaffed(),

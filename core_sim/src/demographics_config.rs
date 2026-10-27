@@ -231,6 +231,30 @@ pub struct KeepingConfig {
     /// **WHAT A STORE BUYS** (#708) - the shelf life a class takes while a band holds a rung. See
     /// [`Preservation`]. Required, and empty means no rung preserves anything.
     pub preservation: Vec<Preservation>,
+    /// **WHAT A FIXED STORE HOLDS** (#709) - the capacity of each tile-kind rung that is a store
+    /// ([`FixedStore`]). A band's own pit is its second larder; the classes it keeps and the shelf
+    /// life inside it are this rung's [`Self::preservation`] entries. Required, and empty means no
+    /// tile rung is a store.
+    pub fixed_stores: Vec<FixedStore>,
+}
+
+/// **ONE FIXED STORE - a tile rung that holds its owner band's food** (#709,
+/// `docs/plan_civilization_steps.md` -> "The storage pit is its band's second larder").
+///
+/// The rung's [`Preservation`] entries say WHICH classes the store holds and how long each keeps
+/// inside it; this says how MUCH it holds. **`capacity` is an OPENING VALUE / PLAYTEST DIAL**, in
+/// food units: 400 is about 150 people for 20 turns at the shipped eating rate.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FixedStore {
+    /// Free-text note, ignored by the sim.
+    #[serde(rename = "_comment")]
+    pub comment: Option<String>,
+    /// The tile-kind rung that is a store, `branch:id`. A holder of this rung or any above it is a
+    /// store; the highest such entry a holder reaches sets its capacity.
+    pub rung: crate::ladder_ids::RungId,
+    /// Food units the store holds, finite and above zero.
+    pub capacity: f32,
 }
 
 /// **ONE PRESERVATION - the VALUE a class's shelf life takes while a rung is held** (#708,
@@ -244,7 +268,7 @@ pub struct KeepingConfig {
 /// ([`crate::spoilage::HeldPreservation`]). A band's shelf life for a class is the longest of the base
 /// and every preservation it holds.
 ///
-/// **Both life values are OPENING VALUES, PLAYTEST DIALS**: flesh 4 -> 20 and dry 60 -> 180.
+/// **Both life values are OPENING VALUES, PLAYTEST DIALS**: flesh 4 -> 20 and dry 60 -> 120.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Preservation {
@@ -257,6 +281,33 @@ pub struct Preservation {
     /// The class's shelf life while the rung is held, in turns. Finite and strictly greater than the
     /// class's base - a preservation that shortens or equals the base is a lever that does nothing.
     pub shelf_life_turns: f32,
+}
+
+/// **A fixed store as a held rung resolves it** ([`KeepingConfig::store_spec`]): the capacity, and
+/// per class the shelf life INSIDE the store - a class absent from `lives` cannot be in it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoreSpec {
+    /// The store rung that set this spec.
+    pub rung: crate::ladder_ids::RungId,
+    /// Food units it holds.
+    pub capacity: f32,
+    /// `class -> shelf life inside the store`.
+    pub lives: Vec<(String, f32)>,
+}
+
+impl StoreSpec {
+    /// The shelf life of `class` inside the store, `None` for a class it does not hold.
+    pub fn life_of(&self, class: &str) -> Option<f32> {
+        self.lives
+            .iter()
+            .find(|(id, _)| id == class)
+            .map(|(_, life)| *life)
+    }
+
+    /// Does the store hold `class`?
+    pub fn holds(&self, class: &str) -> bool {
+        self.life_of(class).is_some()
+    }
 }
 
 impl KeepingConfig {
@@ -320,7 +371,103 @@ impl KeepingConfig {
                 return Err(format!("keeping.{key} names unknown class '{id}'"));
             }
         }
+        self.validate_fixed_stores_table()?;
         self.validate_preservation_table()
+    }
+
+    /// **THE FIXED-STORE TABLE IS COHERENT ON ITS OWN**: a finite capacity above zero, no rung twice.
+    fn validate_fixed_stores_table(&self) -> Result<(), String> {
+        let mut seen = std::collections::BTreeSet::new();
+        for entry in &self.fixed_stores {
+            if !(entry.capacity.is_finite() && entry.capacity > 0.0) {
+                return Err(format!(
+                    "keeping.fixed_stores for {} needs a finite capacity above zero, got {}",
+                    entry.rung, entry.capacity
+                ));
+            }
+            if !seen.insert(entry.rung) {
+                return Err(format!("keeping.fixed_stores states {} twice", entry.rung));
+            }
+        }
+        Ok(())
+    }
+
+    /// **THE FIXED STORES RECONCILE WITH THE LADDER AND THE PRESERVATION TABLE** - the cross-config
+    /// half, run at boot beside [`Self::validate_preservation`]. Every store rung exists, sits on a
+    /// `tile` branch, is not a root, and has a preservation entry for the same rung (its classes and
+    /// its shelf life inside the store). Conversely a preservation entry on a tile rung with no
+    /// store entry would preserve nothing now that a band no longer lengthens its larder's life by
+    /// standing near a pit, so it is refused.
+    pub fn validate_fixed_stores(
+        &self,
+        ladder: &crate::intensification::LadderConfig,
+    ) -> Result<(), String> {
+        use crate::intensification::SourceKind;
+        for store in &self.fixed_stores {
+            let Some(rung) = ladder.rung_by_id(store.rung) else {
+                return Err(format!(
+                    "keeping.fixed_stores names unknown rung '{}'",
+                    store.rung
+                ));
+            };
+            if ladder.source_kind(rung.branch) != Some(SourceKind::Tile) {
+                return Err(format!(
+                    "keeping.fixed_stores names '{}', which is not on a tile branch",
+                    store.rung
+                ));
+            }
+            if rung.build.is_none() {
+                return Err(format!(
+                    "keeping.fixed_stores names '{}', a root every improvement stands on",
+                    store.rung
+                ));
+            }
+            if !self.preservation.iter().any(|p| p.rung == store.rung) {
+                return Err(format!(
+                    "keeping.fixed_stores names '{}' but no keeping.preservation entry states what \
+                     it holds",
+                    store.rung
+                ));
+            }
+        }
+        for entry in &self.preservation {
+            let on_tile = ladder.source_kind(entry.rung.branch) == Some(SourceKind::Tile);
+            if on_tile && !self.fixed_stores.iter().any(|s| s.rung == entry.rung) {
+                return Err(format!(
+                    "keeping.preservation names tile rung '{}' with no keeping.fixed_stores entry - \
+                     it would preserve nothing",
+                    entry.rung
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// **WHAT A TILE IMPROVEMENT HOLDING `held` IS AS A STORE** - `None` where it holds no
+    /// fixed-store rung. The highest store rung `held` is at or above sets the capacity; the classes
+    /// and their in-store shelf lives are that rung's preservation entries.
+    pub fn store_spec(
+        &self,
+        ladder: &crate::intensification::LadderConfig,
+        held: crate::ladder_ids::RungId,
+    ) -> Option<StoreSpec> {
+        let order_of = |rung| ladder.rung_by_id(rung).map(|def| def.order);
+        let top = self
+            .fixed_stores
+            .iter()
+            .filter(|store| ladder.at_or_above(held, store.rung))
+            .max_by_key(|store| order_of(store.rung))?;
+        let lives = self
+            .preservation
+            .iter()
+            .filter(|entry| entry.rung == top.rung)
+            .map(|entry| (entry.class.clone(), entry.shelf_life_turns))
+            .collect();
+        Some(StoreSpec {
+            rung: top.rung,
+            capacity: top.capacity,
+            lives,
+        })
     }
 
     /// **THE PRESERVATION TABLE IS COHERENT ON ITS OWN**: every entry names a configured class, a
@@ -832,6 +979,96 @@ mod tests {
                 "{what}: the refusal names the rung: {refusal}"
             );
         }
+    }
+
+    /// **A FIXED STORE THAT STORES NOTHING IS REFUSED AT LOAD** (#709): a capacity that is zero,
+    /// negative or not finite, and the same rung twice. Each breaker is paired with the shipped
+    /// table loading.
+    #[test]
+    fn a_fixed_store_with_no_room_is_rejected_at_load() {
+        assert!(
+            DemographicsConfig::from_json_str(&builtin_value().to_string()).is_ok(),
+            "control: the shipped table loads"
+        );
+        type Breaker = (&'static str, fn(&mut serde_json::Value));
+        let breakers: [Breaker; 4] = [
+            ("a zero capacity", |v| {
+                v["keeping"]["fixed_stores"][0]["capacity"] = serde_json::json!(0.0);
+            }),
+            ("a negative capacity", |v| {
+                v["keeping"]["fixed_stores"][0]["capacity"] = serde_json::json!(-5.0);
+            }),
+            ("a missing capacity", |v| {
+                v["keeping"]["fixed_stores"][0]
+                    .as_object_mut()
+                    .expect("an entry")
+                    .remove("capacity");
+            }),
+            ("the same rung twice", |v| {
+                let first = v["keeping"]["fixed_stores"][0].clone();
+                v["keeping"]["fixed_stores"]
+                    .as_array_mut()
+                    .expect("fixed_stores is an array")
+                    .push(first);
+            }),
+        ];
+        for (what, breaker) in breakers {
+            let mut value = builtin_value();
+            breaker(&mut value);
+            assert!(
+                DemographicsConfig::from_json_str(&value.to_string()).is_err(),
+                "{what} must fail to load"
+            );
+        }
+    }
+
+    /// **THE FIXED STORES RECONCILE WITH THE LADDER AND THE PRESERVATION TABLE** (#709), at boot: each
+    /// store rung exists, is on a tile branch, is not a root and has a preservation entry; and a tile
+    /// rung that is preserved must be a store.
+    #[test]
+    fn a_fixed_store_must_name_a_tile_rung_the_preservation_table_describes() {
+        let ladder = crate::intensification::LadderConfig::builtin();
+        let keeping = DemographicsConfig::builtin().keeping.clone();
+        keeping
+            .validate_fixed_stores(&ladder)
+            .expect("control: the shipped table reconciles with the shipped ladder");
+
+        let with_store_rung = |rung: &str| {
+            let mut keeping = keeping.clone();
+            keeping.fixed_stores[0].rung = rung
+                .parse()
+                .unwrap_or_else(|_| panic!("'{rung}' is a well-formed rung key"));
+            keeping
+        };
+        for (what, rung) in [
+            ("a rung the ladder does not define", "food_stores:granary"),
+            ("a root nothing raises", "food_stores:unstored"),
+            ("a rung on a band branch", "camp_stores:drying_rack"),
+            ("a rung on a plant branch", "plant:tended"),
+        ] {
+            assert!(
+                with_store_rung(rung)
+                    .validate_fixed_stores(&ladder)
+                    .is_err(),
+                "{what} must be refused"
+            );
+        }
+
+        let mut unpreserved = keeping.clone();
+        unpreserved
+            .preservation
+            .retain(|entry| entry.rung != unpreserved.fixed_stores[0].rung);
+        assert!(
+            unpreserved.validate_fixed_stores(&ladder).is_err(),
+            "a store with no preservation entry holds nothing"
+        );
+
+        let mut unstored = keeping.clone();
+        unstored.fixed_stores.clear();
+        assert!(
+            unstored.validate_fixed_stores(&ladder).is_err(),
+            "a preserved tile rung with no store entry would do nothing"
+        );
     }
 
     /// The JSON is the sole source (#350): `default()` **is** the shipped tuning, so a test that

@@ -1654,6 +1654,20 @@ table PopulationCohortState {
   // (FIXED_POINT_SCALE = 1e6), part of the moraleSettling/Terrain/Climate/Unrest/Culture/Cohesion
   // breakdown whose signed sum IS moraleDelta. Never a moraleCause (causes are negative). Derived per-turn.
   moraleFreshWater:long = 0;
+  // --- THE STORAGE PIT IS ITS BAND'S SECOND LARDER (appended last, #709) ---
+  // The food ledger gains two terms:
+  //   larder_delta == foodIncome - foodConsumption - raidForfeit - foodSpoiled - foodLeftBehind
+  //                   + transferReceived - transferSent - foodIntoStore + foodFromStore
+  // foodIntoStore - food this band's larder gave to its own stores this turn (the dry food that
+  //                 entered the larder this turn and moved into an owned pit within reach).
+  // foodFromStore - food its meal drew from its own stores this turn: the pit lots the meal ate,
+  //                 chosen soonest-to-spoil first across larder and pits (not only a shortfall).
+  // foodInStoresInReach - the food now in the stores this band owns within reach: the part of
+  //                 its runway (`turnsOfFood`) and its fertility reserve that is not in the larder.
+  // Own bands only: a foreign (redacted) row carries the defaults.
+  foodIntoStore:float = 0;
+  foodFromStore:float = 0;
+  foodInStoresInReach:float = 0;
 }
 
 // ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH - a row of `PopulationCohortState.bandImprovements`,
@@ -2473,7 +2487,11 @@ table LaborAssignment {
   // claimed (`required`) and the units the band's take-gear settlement handed it (`filled`). The
   // claim is the row's TAKE HANDS THAT WOULD TAKE SOMETHING WITH THE KIT, never its head count
   // (`docs/plan_site_crews.md` §2.3), so a crew stepped past its site's yield claims no more and
-  // reads no shorter. The item is SHORT where `filled < required`. Item ids only - the client
+  // reads no shorter. On a STAFFED row the claim is struck at the crew the row was DENIED: with a
+  // Max, `min(Max, usefulCrew)`; with no Max and nobody staffed, one head; otherwise the hands
+  // present. So a row the pool starved of every head still names the kit it lacked
+  // (`required` > 0, `filled` 0). The item is SHORT where
+  // `filled < required`. Item ids only - the client
   // resolves each to its roster display name. Absent = the row claims nothing (no kit, or no hand
   // that would take anything with one). The builders' and Roadwork's twin is the cohort's `poolToe`.
   kitToe:[KitToeLine];
@@ -6676,6 +6694,27 @@ table TileImprovementState {
   buildersKitted:uint = 0;
   buildersCap:uint = 0;
   buildToe:[PoolToeLine];
+  // --- THE IMPROVEMENT AS A FIXED STORE (appended last, #709) -----------------------------------
+  // A tile improvement whose held rung has a `keeping.fixed_stores` entry is its owner band's
+  // second larder. `storeCapacity` is 0 for an improvement that is not a store, and follows the
+  // row's own fog (it is a fact about the rung held). The rest is the improvement's own people's
+  // business and reads zero / false to every other viewer.
+  //   storedFood      - food in the store (every class and age).
+  //   storeCapacity   - food units the held rung holds; 0 = not a store.
+  //   hasStoreOwner / storeOwnerBand - the band that owns it (read the bool first: 0 is a real
+  //                     BandId); false while unowned, when nothing goes in or comes out.
+  //   storeSpoiled    - food the store rotted or lost this turn.
+  storedFood:float = 0;
+  storeCapacity:float = 0;
+  hasStoreOwner:bool = false;
+  storeOwnerBand:ulong = 0;
+  storeSpoiled:float = 0;
+  // --- THE BUILD METER (appended last, #709) -----------------------------------------------------
+  // The meter on the rung being RAISED, 0..1, off the shared intensification::build_fraction seam
+  // (`DepositState.buildFraction`'s twin) - the rung the improvement holds once nothing is being
+  // raised above it. Derived at capture from the position; nothing is saved for it. The rung is the
+  // string (`currentRung`, `buildDestinationRung`); never threshold this float to infer one.
+  buildFraction:float = 0;
 }
 
 table RouteSection {
@@ -6912,10 +6951,13 @@ table PoolingLinkState {
 table KitToeLine {
   // The `equipment.json` item id this line is about.
   itemId:string;
-  // Units the row claimed: its take hands that would take something with the kit, over the item's
-  // `workers_per_unit`. *** NEVER 0 ***: a line exists only where something is claimed.
+  // Units the row claimed: its take hands that would take something with the kit (on a staffed row,
+  // at the crew it was denied), over the item's `workers_per_unit`. *** NEVER 0 ***: a line exists only where something is claimed.
   required:float;
-  // Units the band's take-gear settlement handed this row. Fractional where the row's priority
+  // Units the band's take-gear settlement handed this row, plus (for the part of `required` the
+  // staffing denied the row hands for) the band's units still unclaimed after the settlement, so
+  // a row short of hands but not of kit reads `filled == required`. Two starved rows may both
+  // count one free unit. Fractional where the row's priority
   // tier was covered in full (it is handed exactly its claim); whole units where its tier was short
   // and split by largest remainder on the claims. SHORT is `filled < required`.
   filled:float;

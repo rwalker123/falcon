@@ -27,8 +27,13 @@
 //!
 //! ```text
 //! larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled − foodLeftBehind
-//!                 + transferReceived − transferSent
+//!                 + transferReceived − transferSent − foodIntoStore + foodFromStore
 //! ```
+//!
+//! (`foodIntoStore` / `foodFromStore`, #709, are the food a band's larder gave its own storage pit
+//! and the meal drew back; both read `0` on every turn here, so the terms are carried to keep the
+//! identity this file states the one the wire documents. `fixed_stores.rs` closes them on a deposit
+//! turn and a draw turn.)
 //!
 //! (`foodSpoiled`, #706, is the turn's rot — the larder's and any caravan pack's; `foodLeftBehind`,
 //! #732, is the food a band dropped on a move farther than it can ferry, pinned across a real move
@@ -88,6 +93,10 @@ struct Ledger {
     left_behind: f32,
     received: f32,
     sent: f32,
+    /// The food the larder gave its own pit (#709) — the identity's `into_store` term.
+    into_store: f32,
+    /// The food the meal drew from the pit (#709) — the identity's `from_store` term.
+    from_store: f32,
 }
 
 impl Ledger {
@@ -96,6 +105,8 @@ impl Ledger {
         self.income - self.consumption - self.raid_forfeit - self.spoiled - self.left_behind
             + self.received
             - self.sent
+            - self.into_store
+            + self.from_store
     }
 
     /// The right-hand side **as it read before the transfer terms existed** — what a client
@@ -125,6 +136,8 @@ fn ledger_of(app: &bevy::prelude::App, band: BandId) -> Ledger {
         left_behind: cohort.food_left_behind,
         received: cohort.transfer_received,
         sent: cohort.transfer_sent,
+        into_store: cohort.food_into_store,
+        from_store: cohort.food_from_store,
     }
 }
 

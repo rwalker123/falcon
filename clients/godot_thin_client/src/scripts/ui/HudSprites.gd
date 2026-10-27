@@ -14,11 +14,11 @@ class_name HudSprites
 ## the map's, so the art takes the `crops/` sub-style (no outline, front-on, pale fill on near-black)
 ## and `assets/icons/icon_prompts.txt` documents it per DIRECTORY: everything in `hud/` takes it.
 ##
-## **THE TABLE CARRIES ALL SEVENTEEN MARKS `assets/icons/hud/` SHIPS** — the `cairn` of issue #581,
+## **THE TABLE CARRIES ALL NINETEEN MARKS `assets/icons/hud/` SHIPS** — the `cairn` of issue #581,
 ## the twelve wired by issue #249: `forage` / `hunt` / `scout` / `warrior` (activities and kit
 ## faces), `deny` / `trade` (band verbs, which are also the party MISSION marks the Parties rows and the selection card's party rows draw, with `station` the stationed party's),  `workers` (turn-orb rows, and the tile card's door rows at 16px, `DetailFormat.door_mark`) / `starving` (turn-orb rows), `children` /
 ## `working_age` / `elders` (the PEOPLE key) and `kit_fallback`; and `move` / `split`, which close
-## the band verb row of issue #529; and `gathering` (the turn orb's `gathering_held` row, issue #698). It held the cairn alone while the
+## the band verb row of issue #529; and `gathering` (the turn orb's `gathering_held` row, issue #698); and `storage_pit` / `monument`, the tile branches' built rungs (the Work tab's tile row icon and its ladder chip, issue #709). It held the cairn alone while the
 ## rest had no call site, because a path nothing loads is dead data rather than coverage; giving
 ## them call sites is what let them in.
 ##
@@ -40,6 +40,8 @@ class_name HudSprites
 const SPRITE_DIR := "res://assets/icons/hud/"
 const SPRITE_PATHS := {
 	"cairn": SPRITE_DIR + "cairn.png",
+	"storage_pit": SPRITE_DIR + "storage_pit.png",
+	"monument": SPRITE_DIR + "monument.png",
 	"forage": SPRITE_DIR + "forage.png",
 	"hunt": SPRITE_DIR + "hunt.png",
 	"scout": SPRITE_DIR + "scout.png",
@@ -63,7 +65,7 @@ const SPRITE_PATHS := {
 ## contract every other art family has with its emoji.
 ##
 ## Takes `IconSprites.texture_for`'s DEFAULT `warn: true`: this family's coverage is complete for
-## what it declares — all SEVENTEEN keys above have a committed, imported PNG behind them — so a
+## what it declares — all NINETEEN keys above have a committed, imported PNG behind them — so a
 ## failed load is a DEFECT and must surface. (Contrast `FloraSprites`, the one family that passes
 ## `false` because a species without art is its expected state.)
 static func for_mark(mark_id: String) -> Texture2D:

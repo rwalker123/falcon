@@ -5136,7 +5136,8 @@ func tile_branch_models(tile_info: Dictionary) -> Array[Dictionary]:
     for branch in HudTileVocab.branches(ladder):
         var crew := _band_labor.tile_crew_total(x, y, branch)
         var improvement := _band_labor.tile_improvement_at(x, y, branch)
-        var holds := crew > HudTileVocab.CREW_NONE or not improvement.is_empty()
+        var holds := _band_labor.tile_rows_held(x, y, branch) > HudTileVocab.CREW_NONE \
+            or not improvement.is_empty()
         if not HudTileVocab.is_offered(ladder, branch, knowledge, holds):
             continue
         var entry := HudTileVocab.first_buildable(ladder, branch)

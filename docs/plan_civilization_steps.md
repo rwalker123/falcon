@@ -434,9 +434,10 @@ catalog is the intensification ladder (see "The improvement catalog is the inten
 below). **Camp stores** (carried → drying rack) is held by the band: the rack stands at the camp
 and moves with it, so a split leaves it with the parent band and a merge keeps the better one.
 **Food stores** (storage pit, then the granary and silo) is held on a tile. Neither is a step up
-from the other — they keep different food — so the one rot-taught `storage` lesson unlocks both. A
-pit lengthens dry food's shelf life for any band of its people within `reach_tiles`; the food stays
-in the band's larder until #709 puts the contents on the tile.
+from the other — they keep different food — so the one rot-taught `storage` lesson unlocks both. The
+rack lengthens the shelf life of the band's own meat, which never leaves the band. The pit holds its
+food itself, on the tile, and belongs to the band that dug it — "The storage pit is its band's second
+larder" below.
 
 **Split by how food keeps, not plant vs animal.** The video's step 4 property is the one that
 matters: grain is legible because it keeps dry and can be counted. A food kind carries one property —
@@ -448,7 +449,7 @@ characteristic axes (`docs/plan_crafting_and_materials.md`). Not a per-species t
 | Improvement | Where it lives | Holds | What it is |
 |---|---|---|---|
 | Drying rack | at the camp, moves with the band | cures meat and fish | a nomad's storage — slows rot without rooting anyone |
-| Storage pit (granary #709) | fixed to a tile | dry goods only | its contents are on the ground, not on your backs, so leaving means leaving them — the stored-surplus tether `docs/plan_settlement_population.md` describes, finally existing |
+| Storage pit | fixed to a tile, owned by the band that dug it | dry goods only, up to its capacity | its contents are on the ground, not on your backs, so leaving means leaving them — the stored-surplus tether `docs/plan_settlement_population.md` describes, finally existing |
 | Sealed pottery | later | everything | a crafting-arc material, not a storage rung |
 
 **Fixed storage is two branches, by what they hold.** Food storage holds dry food only and climbs
@@ -494,14 +495,68 @@ store leaves its contents behind. The bound on a nomad's larder is **emergent** 
 eat of each batch before its shelf life runs out — and no separate carry rule exists. It
 moves with band size and with technique, which is what makes it not a carry cap.
 
-**"Away from your storage" needs no distance rule.** Two things already decided give it: food
-spoils at the rate of *where it is* (carried, or in a store), and **the granary is a supply-network
-node** — the same rule as the work party. A band within `reach_tiles` of its store draws from it
-through pooling; a band beyond reach is cut off from it, and the contents stay on the tile spoiling
-slowly. The only thing a store adds to the network is that it is a node with no people in it. With
-no carry cap, the first turns differ from today only in that food above a class's line rots — which
-is the signal that teaches the storage lesson — while a well-fed band's runway still grows up to its
-shelf lives, and the rot shows on the Food line as its own term.
+**"Away from your storage" needs no distance rule.** Food spoils at the rate of *where it is*
+(carried, or in a store), and a band draws on its store only while it is within `reach_tiles` of it.
+A band beyond reach is cut off, and the contents stay on the tile spoiling slowly. With no carry cap,
+the first turns differ from today only in that food above a class's line rots — which is the signal
+that teaches the storage lesson — while a well-fed band's runway still grows up to its shelf lives,
+and the rot shows on the Food line as its own term.
+
+### The storage pit is its band's second larder (decided, #709)
+
+*(This replaced "the granary is a supply-network node with no people in it". Two things killed it.
+Pooling evens food out per person, so a node with no people has a fair share of zero and would be
+emptied into the nearest bands every turn. And every level of organisation above the band —
+`docs/plan_labor_at_scale.md` → "Leaders: four levels of orders" — needs a store to have an owner:
+a chief's "keep N turns of food" order counts its band's food; a tribe's shared works are the
+tribe's while "a work that belongs to one band's camp is that band's"; a tribe replaces automatic
+pooling with "who comes first when the network runs short"; a city begins with "its first
+administered store … and the rations drawn from it"; a nation keeps stores filled by tax. An unowned
+pit shared by every band of a people would be counted by two chiefs at once and would have no
+place in any of those.)*
+
+**A store belongs to whoever built it.** At this step that is a band; a tribe's granary (a shared
+work) will be the tribe's, a city's the city's. Sharing between bands goes through what already
+exists — automatic pooling today, the paramount chief's order once there is a tribe — and never
+through the store itself. The pit is not a supply-network node.
+
+- **The owner is the band whose crew dug it.** It is set when the first crew places the pit. A split
+  leaves it with the parent band, as it leaves the rack. Bands do not merge.
+- **An owner that is gone hands the pit to the next crew.** When the owner no longer exists or is no
+  longer of the pit's people (it broke away), the pit has no owner until a band of the pit's people
+  crews it, and that band becomes the owner — the way a road with no keeper is adopted by re-issuing
+  its build. While it has no owner nothing goes in or comes out, and its contents keep rotting.
+- **Food goes in as it is gathered.** The dry food that came into the owner's larder this turn — its
+  takes, the packs that landed — goes into its pits within `reach_tiles`, up to each pit's capacity;
+  what does not fit stays in the larder. Only the classes the pit preserves go in (dry). The opening
+  reserve and food that pooled in stay in the larder.
+- **The meal eats whatever is closest to rotting first, wherever it sits.** Across the band's
+  larder and the pits it owns within reach, the food eaten this turn is chosen by the shelf life it
+  has LEFT where it is kept (the class's shelf life there, less the lot's age), least first: a
+  larder lot against the larder's life, a pit lot against the pit's life for that class. Before the
+  meal the pit-held lots among them move into the larder, keeping their ages, and the meal eats
+  them in full that turn, so food moved out of a pit never sits in the larder to rot. A pit lot
+  that is not eaten this turn stays in the pit. On equal time left the larder comes before a pit,
+  the nearer pit before a farther one, then the class that rots fastest, the older lot and the
+  longer-stored lot. Deposits are unchanged: they fill the nearest pit first, up to its room, and
+  food is never moved out of a pit to make room.
+- **Food in the pit keeps the pit's shelf life.** Dry food in a pit keeps 120 turns against 60 in the
+  larder, and rots at the end of it, whole, as larder food does. The pit's rot is the pit's own; it
+  is not on any band's Food line. A band no longer lengthens its larder's shelf life by standing near
+  a pit — the food that keeps longer is the food in it.
+- **A pit has a capacity, in food units, per rung** (`demographics_config.json` →
+  `keeping.fixed_stores`, opening value **400** for the storage pit). 400 is about 150 people for 20
+  turns at the shipped eating rate; a 30-person band eats about 4 a turn, so one full pit feeds it for
+  about 100 turns. The cap bounds what one pit holds; what bounds a people's storage is the work to
+  dig and keep more pits. Later rungs (granary, silo) are larger capacities on the same rule.
+- **A pit that fills in loses its contents.** An unkept pit that falls back to the branch root holds
+  nothing; what was in it is lost.
+- **The food a band can reach counts as its food.** Its runway (`turnsOfFood`) and its fertility
+  reserve count the larder plus its pits within reach, so a band with an empty larder and a full pit
+  does not read as starving.
+- **The pull to stay.** The pit's contents count in the people's surplus on the `SedentarizationScore`
+  beside the larders. Walking out of reach does not move them off the score — the food is still the
+  people's — it moves them out of the band's reach, which is what the player loses by leaving.
 
 ## The improvement catalog is the intensification ladder (decided)
 

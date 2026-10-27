@@ -1665,6 +1665,34 @@ static func pool_tools_short_line(lines: Array, work_short: bool, kind: String =
 const POOL_TOOLS_SHORT_WARN_FORMAT := "Short of %s."
 const POOL_TOOLS_SHORT_INFO_FORMAT := "More %s would speed this up."
 
+## ---- A STAFFED ROW SHORT OF THE CREW IT ASKED FOR ---------------------------------------------------
+## The row's one `⚠` also fires when the sim dealt it fewer workers than it wanted, so a row left at `0` for
+## many turns says why. SHORT: the row has a Max and `workers < min(Max, useful crew)`, or it has NO crew
+## and a crew would be useful (a row with no Max that merely got fewer than its useful crew is not short --
+## that is noise). The hover is two lines, `⚠ reason` over `Fix: remedy`.
+const SHORT_CREW_HANDS_FORMAT := "⚠ Short %d %s · no spare hands\nFix: raise this row's Priority · lower another row's Max"
+const SHORT_CREW_KIT_FORMAT := "⚠ Short %d %s · no free %s\nFix: make %s — rows carrying their kit are staffed first"
+## A no-Max row that got NOBODY is short by ONE head, not by its useful crew (that is the take curve's ceiling,
+## which can exceed the band): it mirrors the sim's kit ask, `take_claims::wanted_ask_crew`'s `ONE_HEAD_ASKED`.
+const SHORT_CREW_NO_MAX_STARVED := 1
+const SHORT_CREW_NOUN_ONE := "worker"
+const SHORT_CREW_NOUN_MANY := "workers"
+
+## How many workers short the row is, `0` = not short. `max_workers` 0 = no Max.
+static func crew_shortfall(workers: int, max_workers: int, useful_crew: int) -> int:
+    if max_workers > 0:
+        return maxi(mini(max_workers, useful_crew) - workers, 0)
+    if workers == 0 and useful_crew > 0:
+        return SHORT_CREW_NO_MAX_STARVED
+    return 0
+
+## The hover for a short row; `kit_names` is `toe_short_item_names` (`""` = nothing kit-short).
+static func short_crew_reason(short: int, kit_names: String) -> String:
+    var noun := SHORT_CREW_NOUN_ONE if short == 1 else SHORT_CREW_NOUN_MANY
+    if kit_names != "":
+        return SHORT_CREW_KIT_FORMAT % [short, noun, kit_names, kit_names]
+    return SHORT_CREW_HANDS_FORMAT % [short, noun]
+
 ## **A TAKE ROW'S KIT NOTE** — the row's own `kit_toe` read the same way: `Short of baskets`, `Short of
 ## spears and sleds`. It is the 🎒 mark's hover and the inspector's KITS line.
 const KIT_SHORT_ITEMS_FORMAT := "Short of %s"
@@ -1704,6 +1732,8 @@ static func natural_list(parts: Array[String]) -> String:
 ## would read ragged. Costs the label ~20px (slot + `WORK_ROW_SEPARATION`) out of the
 ## `WORK_COLUMN_MIN_WIDTH` budget.
 const WORK_ROW_RUNG_WIDTH := 16
+## A tile row's standing-rung mark hover: the built rung's catalog name.
+const WORK_ROW_RUNG_TILE_TOOLTIP_FORMAT := "%s — built on this ground."
 
 
 ## The stable handle on a rung mark, mirroring `HudWidgets.POLICY_RUNG_META`'s job for a picker rung.
@@ -1810,6 +1840,19 @@ const WORK_ROW_RING_META := &"work_row_ring"
 
 ## A rung UNDER WAY: the verb glyph and how far in. No chevron — `⌃` offers, this reports.
 const WORK_ROW_BUILDING_FORMAT := "%s%d%%"
+## The same chip when the rung has bundled art: the art leads, so the text is the percent alone (building) or
+## the offer chevron alone (ready).
+const WORK_ROW_BUILDING_SPRITE_FORMAT := "%d%%"
+const WORK_ROW_READY_SPRITE_TEXT := "⌃"
+## The tile crew sheet's NAMED chip text: the rung's catalog name, then the percent (building) or the chevron.
+const WORK_ROW_NAMED_BUILDING_FORMAT := "%s %d%%"
+const WORK_ROW_NAMED_READY_FORMAT := "%s ⌃"
+## Its hover: the full name (the text clips with an ellipsis) over the chip's own hover.
+const WORK_ROW_NAMED_TIP_FORMAT := "%s\n%s"
+## Gap between a ladder chip's art and its text.
+const WORK_STRIP_CHIP_ART_SEPARATION := 2
+## Stamped on a tile row's icon slot: the `HudSprites` mark id it was drawn with ('' = empty slot).
+const TILE_ROW_MARK_META := "tile_row_mark"
 ## A build meter that belongs to ANOTHER people: `Lothari cultivating · 20%` -- the people, the rung's
 ## participle (lowercased) and the percent, in WARN ink at the head of line two. Not ours: nothing here moves it.
 const WORK_ROW_FOREIGN_BUILD_FORMAT := "%s %s · %d%%"
@@ -3337,6 +3380,28 @@ static func site_row_height(party_lines: int) -> float:
 const EXTRACT_ROW_HEIGHT := WORK_ROW_TWO_LINE_HEIGHT + float(TWO_LINE_STEPPER_SEPARATION) \
     + WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(TWO_LINE_STEPPER_SEPARATION) \
     + WORK_ROW_PILL_LINE_HEIGHT
+
+## ---- A BUILT FOOD STORE'S CONTENTS (issue #709) ----------------------------------------------------
+## Line three of a GROUNDWORK tile row on a built store (the yield line's slot): `14 / 400 stored`, whole
+## numbers off the improvement's `stored_food` / `store_capacity`. Drawn only where `store_capacity > 0` -- a
+## bare tile, a monument, or a pit whose contents the sim does not publish to this player has no line, never
+## `0 / 0`. A loss this turn (`store_spoiled > 0`) appends the figure and turns the WHOLE line warn ink, the
+## yield line's own loss pattern (a Label has one ink).
+const WORK_ROW_STORED_FORMAT := "%d / %d stored"
+const WORK_ROW_STORED_SPOILED_FORMAT := " · %d spoiled"
+const WORK_ROW_STORED_META := &"work_row_stored_line"
+const WORK_ROW_STORED_TOOLTIP := "Dry food kept in this pit. The band that dug it adds its dry harvest and eats from it, soonest-to-spoil first."
+
+## The stored line's text, `""` where the row is not a store whose contents are published.
+static func stored_line(improvement: Dictionary) -> String:
+    var capacity := int(roundf(float(improvement.get("store_capacity", 0.0))))
+    if capacity <= 0:
+        return ""
+    var text := WORK_ROW_STORED_FORMAT % [int(float(improvement.get("stored_food", 0.0))), capacity]
+    var spoiled := int(roundf(float(improvement.get("store_spoiled", 0.0))))
+    if spoiled > 0:
+        text += WORK_ROW_STORED_SPOILED_FORMAT % spoiled
+    return text
 
 ## The pill line's handle.
 const WORK_ROW_PILL_LINE_META := &"work_row_pill_line"

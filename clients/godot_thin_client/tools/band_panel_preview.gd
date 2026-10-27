@@ -540,7 +540,7 @@ const BELIEFS_COMPACT_DRIFT_SOURCE := 9100
 const BELIEFS_COMPACT_DRIFT_AXIS_LABEL := "Open \u2194 Closed"
 const BELIEFS_COMPACT_DRIFT_DELTA := -0.02
 const BELIEFS_COMPACT_VALUES := "Devout 0.4, traditional 0.3."
-const BELIEFS_COMPACT_PULL := "The ancestors pull this band +0.30 devout and +0.30 traditional."
+const BELIEFS_COMPACT_PULL := "Its sacred ground draws it toward devout, traditional ways."
 const TOPBAR_SEDENTARIZATION_STAGE := "soft"
 ## How many of that score's points the band standing on its dead supplies (the SETTLING block's
 ## `From the dead` row). Seeded non-zero so every faction frame measures the block with the mark in.
@@ -13318,7 +13318,7 @@ func _guard_frame_rung_offers(state: String) -> void:
 			rows = _hud._rungcard.tile_track_rows(_hud._band_labor._panel_band,
 				{"x": int(model.get("x", -1)), "y": int(model.get("y", -1))},
 				String(model.get("branch", "")),
-				_hud._band_labor.tile_crew_total(int(model.get("x", -1)), int(model.get("y", -1)),
+				_hud._band_labor.tile_rows_held(int(model.get("x", -1)), int(model.get("y", -1)),
 					String(model.get("branch", ""))))
 		else:
 			rows = RungLadder.track(kind, _hud._rungcard.source_of(model),

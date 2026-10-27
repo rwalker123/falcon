@@ -136,6 +136,8 @@ fn spawn_band_camped_at(
                 last_food_need: 0.0,
                 fed_party_workers: Default::default(),
                 last_food_spoiled: 0.0,
+                last_food_into_store: 0.0,
+                last_food_from_store: 0.0,
                 last_food_kept: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
@@ -3296,5 +3298,342 @@ fn a_far_party_the_staffing_shrinks_walks_its_cut_hands_home_and_commits_no_hand
         committed(&app) <= CREW,
         "after the turn: {} committed for {CREW}",
         committed(&app)
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// A STARVED STAFFED ROW STILL NAMES THE KIT IT LACKED
+// ---------------------------------------------------------------------------------------------
+
+/// The far stone seam's distance in the starved-row scenario.
+const STARVED_STONE_AT: u32 = 4;
+/// The two nearer wood rows (each takes one kitted head) sit this far out.
+const NEARER_WOOD_AT: [u32; 2] = [1, 2];
+/// Each row's Max in the scenario.
+const ONE_HEAD: u32 = 1;
+/// Axes the band holds: one per nearer wood row, so the stone row's kit is short only of sleds.
+const AXES_HELD: u32 = 2;
+
+/// The `(workers, [(item, required, filled)])` the encoded frame publishes on the stone row.
+fn published_stone_row(app: &App) -> (u32, Vec<(String, f32, f32)>) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == BAND)
+        .expect("the band is on the wire");
+    let row = cohort
+        .laborAssignments()
+        .into_iter()
+        .flatten()
+        .find(|row| row.material().is_some_and(|m| m == STONE))
+        .expect("the stone row is published");
+    let toe = row
+        .kitToe()
+        .into_iter()
+        .flatten()
+        .map(|line| {
+            (
+                line.itemId().unwrap_or_default().to_string(),
+                line.required(),
+                line.filled(),
+            )
+        })
+        .collect();
+    (row.workers(), toe)
+}
+
+/// Two nearer High wood rows on the woodcutting kit and a far Normal stone row on `sledding`,
+/// Max 1, with `sleds` sleds and a pool of `pool` hands.
+fn starved_stone_world(pool: u32, sleds: u32) -> App {
+    let (mut app, band) = world_extracting_at(NEARER_WOOD_AT[0], Some(WOODCUTTING_KIT));
+    for tile_x in NEARER_WOOD_AT.iter().copied().chain([STARVED_STONE_AT]) {
+        let entity = app
+            .world
+            .resource::<TileRegistry>()
+            .index(CAMP.x + tile_x, CAMP.y)
+            .expect("the tile is on the map");
+        app.world
+            .get_mut::<core_sim::Tile>(entity)
+            .expect("a map tile carries terrain")
+            .terrain = if tile_x == STARVED_STONE_AT {
+            STONY
+        } else {
+            WOODED
+        };
+    }
+    let mut gear = BandEquipment::default();
+    gear.stock("sled", sleds, "plain", None);
+    gear.stock("axe", AXES_HELD, "plain", None);
+    app.world.entity_mut(band).insert(gear);
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band")
+        .working = scalar_from_f32(pool as f32);
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        allocation.assignments.clear();
+        for distance in NEARER_WOOD_AT {
+            allocation.assignments.push(LaborAssignment {
+                party: None,
+                muster_crew: 0,
+                planned_crew: 0,
+                max_workers: Some(ONE_HEAD),
+                staffing: Default::default(),
+                scouting_range: 0,
+                scouting_reach: 0,
+                target: extract_target(distance),
+                workers: 0,
+                kit: Some(extract_kit(WOODCUTTING_KIT)),
+                priority: SourcePriority::High,
+            });
+        }
+        allocation.assignments.push(LaborAssignment {
+            party: None,
+            muster_crew: 0,
+            planned_crew: 0,
+            max_workers: Some(ONE_HEAD),
+            staffing: Default::default(),
+            scouting_range: 0,
+            scouting_reach: 0,
+            target: LaborTarget::Extract {
+                tile: UVec2::new(CAMP.x + STARVED_STONE_AT, CAMP.y),
+                material: STONE.to_string(),
+                floor: FLOOR,
+            },
+            workers: 0,
+            kit: Some(extract_kit(SLEDDING_KIT)),
+            priority: SourcePriority::Normal,
+        });
+        allocation.last_yields = vec![core_sim::SourceYield::ZERO; allocation.assignments.len()];
+    }
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    resolve_a_turn(&mut app);
+    app
+}
+
+/// A ROW THE POOL STARVED OF EVERY HEAD STILL NAMES THE KIT IT LACKED. The staffing deals every
+/// row's kitted heads before any bare head, so a far stone row with no free sled got nothing while
+/// nearer kitted rows took the pool. Its `kitToe` was empty (the ask was struck on the hands
+/// present, and none asks for nothing); it now asks at the crew the staffing wanted.
+#[test]
+fn a_row_the_pool_starved_of_every_head_publishes_the_sled_it_lacked() {
+    let app = starved_stone_world(2, 2);
+    let (workers, toe) = published_stone_row(&app);
+    assert_eq!(workers, 0, "the nearer kitted rows took the whole pool");
+    let sled = toe
+        .iter()
+        .find(|(item, _, _)| item == "sled")
+        .unwrap_or_else(|| panic!("the starved row names its sled, got {toe:?}"));
+    assert!(
+        (sled.1 - 1.0).abs() < 1e-4 && sled.2.abs() < 1e-4,
+        "required 1, filled 0, got {sled:?}"
+    );
+}
+
+/// The same row with a free sled is staffed, kitted, and states the ask met.
+#[test]
+fn the_same_row_with_a_free_sled_is_staffed_and_its_ask_is_met() {
+    let app = starved_stone_world(3, 3);
+    let (workers, toe) = published_stone_row(&app);
+    assert_eq!(workers, 1, "a free sled and a free hand staff the row");
+    let sled = toe
+        .iter()
+        .find(|(item, _, _)| item == "sled")
+        .unwrap_or_else(|| panic!("the row names its sled, got {toe:?}"));
+    assert!(
+        (sled.1 - 1.0).abs() < 1e-4 && (sled.2 - 1.0).abs() < 1e-4,
+        "required 1, filled 1, got {sled:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// A ROW WITH NO MAX NEVER ASKS FOR THE TAKE CURVE'S CEILING
+// ---------------------------------------------------------------------------------------------
+
+/// The wood row at `distance`'s `(workers, usefulCrew, [(item, required, filled)])` off the
+/// encoded frame.
+fn published_wood_row_at(app: &App, distance: u32) -> (u32, u32, Vec<(String, f32, f32)>) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == BAND)
+        .expect("the band is on the wire");
+    let row = cohort
+        .laborAssignments()
+        .into_iter()
+        .flatten()
+        .find(|row| row.targetX() == CAMP.x + distance && row.targetY() == CAMP.y)
+        .expect("the wood row is published");
+    let toe = row
+        .kitToe()
+        .into_iter()
+        .flatten()
+        .map(|line| {
+            (
+                line.itemId().unwrap_or_default().to_string(),
+                line.required(),
+                line.filled(),
+            )
+        })
+        .collect();
+    (row.workers(), row.usefulCrew(), toe)
+}
+
+/// A pool of `pool` hands, gear for everybody, and wood rows (`(distance, priority, max)`).
+fn wood_rows_world(pool: u32, rows: &[(u32, SourcePriority, Option<u32>)]) -> App {
+    let (mut app, band) = world_extracting_at(rows[0].0, Some(WOODCUTTING_KIT));
+    let mut gear = BandEquipment::default();
+    gear.stock("sled", pool * 2, "plain", None);
+    gear.stock("axe", pool * 2, "plain", None);
+    app.world.entity_mut(band).insert(gear);
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band")
+        .working = scalar_from_f32(pool as f32);
+    for (distance, _, _) in rows {
+        let entity = app
+            .world
+            .resource::<TileRegistry>()
+            .index(CAMP.x + distance, CAMP.y)
+            .expect("the tile is on the map");
+        app.world
+            .get_mut::<core_sim::Tile>(entity)
+            .expect("a map tile carries terrain")
+            .terrain = WOODED;
+    }
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        allocation.assignments.clear();
+        for (distance, priority, max) in rows {
+            allocation.assignments.push(LaborAssignment {
+                party: None,
+                muster_crew: 0,
+                planned_crew: 0,
+                max_workers: *max,
+                staffing: Default::default(),
+                scouting_range: 0,
+                scouting_reach: 0,
+                target: extract_target(*distance),
+                workers: 0,
+                kit: Some(extract_kit(WOODCUTTING_KIT)),
+                priority: *priority,
+            });
+        }
+        allocation.last_yields = vec![core_sim::SourceYield::ZERO; allocation.assignments.len()];
+    }
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    resolve_a_turn(&mut app);
+    app
+}
+
+/// A no-Max row's ask is the kit of the hands it got, never of the take curve's ceiling.
+#[test]
+fn a_row_with_no_max_asks_for_the_hands_it_got_not_the_curves_ceiling() {
+    let app = wood_rows_world(POOL_OF_FEW, &[(1, SourcePriority::Normal, None)]);
+    let (workers, useful, toe) = published_wood_row_at(&app, 1);
+    assert!(workers > 0, "liveness: the row is staffed");
+    assert!(
+        useful > workers,
+        "liveness: the curve's ceiling {useful} is past the {workers} staffed"
+    );
+    let sled = toe
+        .iter()
+        .find(|(item, _, _)| item == "sled")
+        .unwrap_or_else(|| panic!("the row names its sled, got {toe:?}"));
+    assert!(
+        sled.1 <= workers as f32 + 1e-4,
+        "the ask {} must not exceed the {workers} hands present (ceiling {useful})",
+        sled.1
+    );
+}
+
+/// A no-Max row the pool left at nobody asks for one head's kit.
+#[test]
+fn a_row_with_no_max_that_got_nobody_asks_for_one_heads_kit_and_a_spare_unit_covers_it() {
+    let app = wood_rows_world(
+        ONE_HAND,
+        &[
+            (1, SourcePriority::High, Some(ONE_HEAD)),
+            (2, SourcePriority::Normal, None),
+        ],
+    );
+    let (workers, useful, toe) = published_wood_row_at(&app, 2);
+    assert_eq!(workers, 0, "the High row took the only hand");
+    assert!(useful > 0, "liveness: a crew would be useful");
+    let sled = toe
+        .iter()
+        .find(|(item, _, _)| item == "sled")
+        .unwrap_or_else(|| panic!("the starved row names its sled, got {toe:?}"));
+    assert!(
+        (sled.1 - 1.0).abs() < 1e-4 && (sled.2 - 1.0).abs() < 1e-4,
+        "one head's sled asked and a spare sled is on the shelf, so not short: {sled:?}"
+    );
+}
+
+/// Hands in the few-hands scenarios.
+const POOL_OF_FEW: u32 = 3;
+const ONE_HAND: u32 = 1;
+
+/// The denied part of the ask is covered by the shelf: the starved stone row lacked hands, not a
+/// sled. With spare sleds on the shelf its line reads `required == filled` (not short) and it
+/// still has no workers.
+#[test]
+fn a_row_starved_of_hands_with_spare_sleds_on_the_shelf_is_not_kit_short() {
+    const SPARE_SLEDS: u32 = 5;
+    let app = starved_stone_world(2, SPARE_SLEDS);
+    let (workers, toe) = published_stone_row(&app);
+    assert_eq!(workers, 0, "the nearer kitted rows took the whole pool");
+    let sled = toe
+        .iter()
+        .find(|(item, _, _)| item == "sled")
+        .unwrap_or_else(|| panic!("the row still names its sled, got {toe:?}"));
+    assert!(
+        (sled.1 - 1.0).abs() < 1e-4 && (sled.2 - sled.1).abs() < 1e-4,
+        "required == filled, got {sled:?}"
+    );
+}
+
+/// The band holds no sled at all: the starved row's line is genuinely short.
+#[test]
+fn a_row_starved_of_hands_in_a_band_with_no_sleds_is_kit_short() {
+    let app = starved_stone_world(2, 0);
+    let (_, toe) = published_stone_row(&app);
+    let sled = toe
+        .iter()
+        .find(|(item, _, _)| item == "sled")
+        .unwrap_or_else(|| panic!("the row names its sled, got {toe:?}"));
+    assert!(
+        sled.1 > 0.0 && sled.2.abs() < 1e-4,
+        "required, none filled, got {sled:?}"
     );
 }

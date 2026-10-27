@@ -614,6 +614,86 @@ impl FoodMix {
         rotted
     }
 
+    /// **Every lot, as `(class, lot)`** - both clocks - in class-id order and oldest first within a
+    /// class. What a meal plans over (`crate::spoilage::plan_meal`).
+    pub fn lots(&self) -> Vec<(String, FoodBatch)> {
+        self.classes
+            .iter()
+            .flat_map(|(class, batches)| batches.iter().map(move |batch| (class.clone(), *batch)))
+            .collect()
+    }
+
+    /// **Take up to `amount` from ONE named lot** (`class`, spoilage `age`, larder time `stored`),
+    /// both clocks kept on what comes out; an absent lot gives nothing.
+    pub fn take_exact_lot(
+        &mut self,
+        class: &str,
+        age: u32,
+        stored: u32,
+        amount: Scalar,
+    ) -> FoodMix {
+        let lot = FoodBatch {
+            age,
+            stored,
+            amount,
+        };
+        self.take_from_lots(vec![(class.to_string(), lot)], amount)
+    }
+
+    /// **Take up to `limit` from the lots `pick` accepts**, oldest first (#709) - the deposit: the
+    /// lots of the larder that entered it this turn and are of a class a store holds. Both clocks
+    /// are kept on what comes out.
+    pub fn take_lots_where(
+        &mut self,
+        pick: impl Fn(&str, &FoodBatch) -> bool,
+        limit: Scalar,
+    ) -> FoodMix {
+        let mut lots: Vec<(String, FoodBatch)> = self
+            .classes
+            .iter()
+            .flat_map(|(class, batches)| batches.iter().map(move |batch| (class.clone(), *batch)))
+            .filter(|(class, batch)| pick(class, batch))
+            .collect();
+        lots.sort_by(|a, b| b.1.age.cmp(&a.1.age).then_with(|| a.0.cmp(&b.0)));
+        self.take_from_lots(lots, limit)
+    }
+
+    /// Remove up to `limit` from the named lots in the order given, returning what came out.
+    fn take_from_lots(&mut self, lots: Vec<(String, FoodBatch)>, limit: Scalar) -> FoodMix {
+        let mut want = limit.max(scalar_zero());
+        let mut taken = FoodMix::default();
+        for (class, lot) in lots {
+            if want <= scalar_zero() {
+                break;
+            }
+            let Some(batches) = self.classes.get_mut(&class) else {
+                continue;
+            };
+            let Some(batch) = batches
+                .iter_mut()
+                .find(|b| b.age == lot.age && b.stored == lot.stored)
+            else {
+                continue;
+            };
+            let part = min(want, batch.amount);
+            batch.amount -= part;
+            want -= part;
+            taken.add_lot(
+                &class,
+                FoodBatch {
+                    age: lot.age,
+                    stored: lot.stored,
+                    amount: part,
+                },
+            );
+            batches.retain(|b| b.amount > scalar_zero());
+            if batches.is_empty() {
+                self.classes.remove(&class);
+            }
+        }
+        taken
+    }
+
     /// The amount of one class, every age (zero if absent).
     pub fn get(&self, class: &str) -> Scalar {
         self.classes.get(class).map_or_else(scalar_zero, |batches| {
@@ -895,6 +975,20 @@ impl LocalStore {
     ) -> (Scalar, Scalar) {
         self.food
             .eat_measuring_kept(amount, order, kept_from_stored)
+    }
+
+    /// **Take up to `amount` from one named lot** - see [`FoodMix::take_exact_lot`].
+    pub fn take_food_lot(&mut self, class: &str, age: u32, stored: u32, amount: Scalar) -> FoodMix {
+        self.food.take_exact_lot(class, age, stored, amount)
+    }
+
+    /// **Take up to `limit` of the lots `pick` accepts** - see [`FoodMix::take_lots_where`].
+    pub fn take_food_lots_where(
+        &mut self,
+        pick: impl Fn(&str, &FoodBatch) -> bool,
+        limit: Scalar,
+    ) -> FoodMix {
+        self.food.take_lots_where(pick, limit)
     }
 
     /// **One rot pass over the larder** — see [`FoodMix::age_and_expire`]. Returns what rotted.
@@ -1731,6 +1825,19 @@ pub struct PopulationCohort {
     /// pack is credited as income when it lands and debited here the same turn, so income stays the
     /// one producer it always was. On the wire as `PopulationCohortState.foodSpoiled`.
     pub last_food_spoiled: f32,
+    /// **The food this band's larder gave to its own storage pits this turn** (#709) - the dry food
+    /// that entered the larder this turn and moved into an owned pit within reach
+    /// (`fixed_store::deposit_into_stores`). The ledger identity's `into_store` term:
+    /// `larder_delta == income - consumption - raid_forfeit - spoiled - left_behind + received - sent
+    /// - into_store + from_store`. Reset each turn by `fixed_store::draw_from_stores`; on the wire as
+    /// `PopulationCohortState.foodIntoStore`.
+    pub last_food_into_store: f32,
+    /// **The food this band's larder drew from its own storage pits this turn** (#709) - the pit
+    /// lots the meal eats, chosen by least shelf life left across the larder and the owned pits
+    /// in reach, drawn before the meal (`fixed_store::draw_from_stores`). Non-zero even when the
+    /// larder alone would have covered the meal. The identity's `from_store` term; on the wire as
+    /// `PopulationCohortState.foodFromStore`.
+    pub last_food_from_store: f32,
     /// **The food the band's meal ate from lots it had KEPT a while** (#708) - what
     /// `spoilage::rot_band_larders` reads, right after the meal that wrote it, to pay the storage
     /// lesson's kept half (`spoilage::storage_practice`). Rewritten every turn by

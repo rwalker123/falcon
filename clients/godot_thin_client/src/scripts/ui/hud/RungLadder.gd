@@ -1727,8 +1727,8 @@ static func deposit_building_verb(rows: Array[Dictionary]) -> String:
 ## **ONE TILE BRANCH ON ONE HEX, BOTTOM RUNG FIRST -- ONE LINE PER RUNG.**
 ##
 ## `site` is the `HudTileVocab.site_of` normalisation of the `tile_improvements` row (the root rung where
-## nothing is placed yet), `ladder` the WHOLE catalog, `crew` the take crew on the tile (pending-aware),
-## `tile_info` the land card's dict (the belief the site gate reads) and `band` the acting band, whose store
+## nothing is placed yet), `ladder` the WHOLE catalog, `crew` the count of player bands HOLDING a tile row on it
+## (`tile_rows_held`, NOT the staffed count), `tile_info` the land card's dict (the belief the site gate reads) and `band` the acting band, whose store
 ## the stone pile is weighed against.
 ##
 ## ⛔ **THE PILE IS AN AMBER ASIDE, NEVER A REFUSAL.** The sim draws it from the store as the meter climbs

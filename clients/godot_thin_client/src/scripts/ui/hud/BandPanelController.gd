@@ -2718,12 +2718,30 @@ func _extract_source_models(band: Dictionary) -> Array:
         models.append(model)
     return models
 
+## **THE ROW'S SHORT-CREW REASON, FOLDED INTO ITS ONE `⚠`** (`HudWorkVocab.crew_shortfall`): appended to
+## `warn_lines` so a row already warning carries both reasons in one hover. A kit reason (any `kit_toe` line
+## with `filled < required`, named off the roster) REPLACES the row's own `kit_note` line, so the kit shortfall
+## is stated once, in the one sentence; otherwise the hands reason.
+func _add_short_crew_warn(warn_lines: Array, workers: int, max_workers: int, useful_crew: int,
+        toe: Array, kit_note: String = "") -> void:
+    var short := HudWorkVocab.crew_shortfall(workers, max_workers, useful_crew)
+    if short <= 0:
+        return
+    var kit_names := HudWorkVocab.toe_short_item_names(toe, _item_display_names)
+    if kit_names != "" and kit_note != "":
+        warn_lines.erase(kit_note)
+    warn_lines.append(HudWorkVocab.short_crew_reason(short, kit_names))
+
 ## **THE STAFFED FIELDS A ROW'S MODEL CARRIES** (#871): the Max, the hold figure, the three-way split of
 ## the crew and the kit's on-screen item words, off the merged row `merged` (pending-aware for the Max) and
 ## the confirmed assignment `assignment` (the table of equipment). One writer, so the work, groundwork
 ## and tile rows cannot read one crew three ways.
 func _put_staffed_fields(model: Dictionary, merged: Dictionary, assignment: Dictionary) -> void:
     model["max_workers"] = int(merged.get("max_workers", 0))
+    var warn_lines: Array = (model.get("warn_lines", []) as Array).duplicate()
+    _add_short_crew_warn(warn_lines, int(model.get("workers", 0)), int(merged.get("max_workers", 0)),
+        int(merged.get("useful_crew", 0)), assignment.get(SourceForecast.ASSIGNMENT_KIT_TOE_KEY, []) as Array)
+    model["warn_lines"] = warn_lines
     model["hold_crew"] = int(merged.get("hold_crew", 0))
     model["keepers_staffed"] = int(merged.get("keepers_staffed", 0))
     model["kitted_staffed"] = int(merged.get("kitted_staffed", 0))
@@ -2797,7 +2815,10 @@ func tile_strip_row(band: Dictionary, x: int, y: int, branch: String) -> Diction
             model = candidate
     if model.is_empty():
         model = _tile_model(band, x, y, branch, {})
-    return _tile_strip_row(model, model["tile_row"], Vector2i(x, y), branch)
+    var sheet_row := _tile_strip_row(model, model["tile_row"], Vector2i(x, y), branch)
+    # Only the crew sheet's strip names its chip's rung (the sheet has the width); the Work tab row does not.
+    sheet_row["chip_named"] = true
+    return sheet_row
 
 ## **THE BAND IMPROVEMENT CREW ROWS THIS BAND HOLDS** (a drying rack): one model per `band` labor row.
 ## Staffed like a tile row (the sim strikes the crew; the Max lives on a sheet), but the improvement is
@@ -2864,9 +2885,14 @@ func _build_tile_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var line: HBoxContainer = shell[SITE_ROW_SHELL_LINE]
     row.set_meta(HudWorkVocab.TILE_ROW_META, "%d,%d:%s" % [tile.x, tile.y, branch])
     row.mouse_filter = Control.MOUSE_FILTER_PASS
-    # An empty icon slot keeps the name in the site rows' column (no mark exists for a branch yet).
-    line.add_child(HudWidgets.build_marker_icon(null, "", HudWorkVocab.WORK_ROW_ICON_WIDTH,
-        HudWorkVocab.WORK_ROW_FONT_SIZE))
+    # The icon slot wears the mark of the branch's built rung (read off the catalog); a branch whose rung has
+    # no art keeps an empty slot so the name stays in the site rows' column.
+    var row_ladder := HudTileVocab.tile_ladder(_topbar.ladder_rungs() if _topbar != null else [])
+    var row_mark := HudTileVocab.branch_mark(row_ladder, branch)
+    var row_icon := HudWidgets.build_marker_icon(HudSprites.for_mark(row_mark), "",
+        HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE)
+    row_icon.set_meta(HudWorkVocab.TILE_ROW_MARK_META, row_mark)
+    line.add_child(row_icon)
     var title := Label.new()
     title.text = String(model["name"])
     title.clip_text = true
@@ -2877,6 +2903,14 @@ func _build_tile_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     title.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(title)
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(String(model["rung_name"]))))
+    # Line three of a built store: what the pit holds (the row's pill-line slot is free on a tile row).
+    var stored := HudWorkVocab.stored_line(improvement)
+    if stored != "":
+        var stored_line := _build_working_yield_line(stored,
+            HudStyle.WARN if float(improvement.get("store_spoiled", 0.0)) >= 0.5 else HudStyle.INK_DIM,
+            HudWorkVocab.WORK_ROW_STORED_META)
+        (stored_line.get_child(0) as Label).tooltip_text = HudWorkVocab.WORK_ROW_STORED_TOOLTIP
+        col.add_child(stored_line)
     var party := SourceForecast.party_readout(assignment)
     if SourceForecast.party_is_posted(party):
         var lines: Array[String] = HudWorkVocab.party_block_lines(party, HudWorkVocab.TILE_CREW_NOUN,
@@ -2902,8 +2936,35 @@ func _tile_strip_row(model: Dictionary, improvement: Dictionary, tile: Vector2i,
     strip_row["keep_tools_named"] = _site_short_tool_names(improvement) if tools_short else ""
     strip_row["tending"] = HudWorkVocab.tending_of(improvement,
         HudComposeVocab.BARE_FORECAST_PREFIX, "")
+    _put_tile_standing_mark(strip_row, improvement, tile, branch)
     _put_tile_ladder_chip(strip_row, improvement, tile, branch, int(model.get("workers", 0)))
     return strip_row
+
+## **THE TILE ROW'S STANDING-RUNG MARK** -- the harvest rows' twin (`_work_source_rung`): the rung the tile
+## STANDS on, in the strip's rung slot, when it is a built rung above the branch root and carries art in
+## `HudTileVocab.RUNG_MARKS`. At the root rung (nothing built) the row has none, as a wild source has none.
+func _put_tile_standing_mark(strip_row: Dictionary, improvement: Dictionary, tile: Vector2i,
+        branch: String) -> void:
+    var ladder := HudTileVocab.tile_ladder(_topbar.ladder_rungs() if _topbar != null else [])
+    if ladder.is_empty():
+        return
+    var site := HudTileVocab.site_of(improvement, ladder, branch, tile.x, tile.y)
+    var rows := HudDepositVocab.branch_ladder(ladder, branch)
+    var held := String(site.get("rung", ""))
+    if HudDepositVocab.ladder_order_of(rows, held) <= HudDepositVocab.catalog_order(
+            HudTileVocab.root_entry(ladder, branch)):
+        return
+    for entry in rows:
+        if HudDepositVocab.catalog_rung_key(entry) != held:
+            continue
+        var mark := HudTileVocab.rung_mark(entry)
+        if mark == "":
+            return
+        strip_row["rung_glyph"] = FoodIcons.for_policy(HudDepositVocab.catalog_verb(entry))
+        strip_row["rung_sprite"] = mark
+        strip_row["rung_tooltip"] = HudWorkVocab.WORK_ROW_RUNG_TILE_TOOLTIP_FORMAT \
+            % HudDepositVocab.ladder_rung_name(ladder, held)
+        return
 
 ## **THE TILE ROW'S LADDER CHIP** -- the deposit row's twin, off the tile branch's catalog rows: a build
 ## declared on the improvement shows the verb being raised, otherwise the rung a press could land right now
@@ -2918,6 +2979,8 @@ func _put_tile_ladder_chip(strip_row: Dictionary, improvement: Dictionary, tile:
     if HudDepositVocab.is_queued(site) and not next_entry.is_empty():
         var verb := HudDepositVocab.catalog_verb(next_entry)
         strip_row["building_glyph"] = FoodIcons.for_policy(verb)
+        strip_row["building_sprite"] = HudTileVocab.rung_mark(next_entry)
+        strip_row["building_name"] = HudDepositVocab.catalog_display_name(next_entry)
         strip_row["building_policy"] = verb
         strip_row["building_progress"] = HudDepositVocab.build_fraction_of(site)
         strip_row[WorkStrip.ROW_BUILDERS_KEY] = SourceForecast.build_crew_staffed(improvement,
@@ -2930,6 +2993,8 @@ func _put_tile_ladder_chip(strip_row: Dictionary, improvement: Dictionary, tile:
         _topbar.knowledge_labels() if _topbar != null else {}, crew, tile_info)
     if not ready.is_empty():
         strip_row["ready_glyph"] = FoodIcons.for_policy(HudDepositVocab.catalog_verb(ready))
+        strip_row["ready_sprite"] = HudTileVocab.rung_mark(ready)
+        strip_row["ready_name"] = HudDepositVocab.catalog_display_name(ready)
 
 ## **ONE WORKING'S ROW — a harvest or hunt row's shape** (the site rows' shell, `_site_row_shell`).
 ## Line one is the icon (the MATERIAL's mark), the name (`Wood · 2 tiles SE`, one ink — it names the
@@ -3190,7 +3255,7 @@ func strip_handlers(band: Dictionary, row: Dictionary, deposit: Dictionary = {},
         return {
             "on_ladder": func(anchor: Control) -> void:
                 _rung.open_tile_track(band, {"x": tile_x, "y": tile_y}, tile_branch,
-                    _band_labor.tile_crew_total(tile_x, tile_y, tile_branch), anchor),
+                    _band_labor.tile_rows_held(tile_x, tile_y, tile_branch), anchor),
             "on_ring": func(_anchor: Control) -> void: pass,
         }
     return {
@@ -4750,6 +4815,10 @@ func _work_source_model(band: Dictionary, key: Variant, m: Dictionary, kind: Str
     # AND short of gear, and each of those is its own mark.
     if kit_note != "":
         warn_lines.append(kit_note)
+    # **…AND THE ROW SHORT OF THE CREW IT ASKED FOR** shares that one ⚠ (a need row has no standing crew to be short).
+    if not is_need_row:
+        _add_short_crew_warn(warn_lines, workers, int(m.get("max_workers", 0)), int(m.get("useful_crew", 0)),
+            m.get(SourceForecast.ASSIGNMENT_KIT_TOE_KEY, []) as Array, kit_note)
     # **THE WORK PARTY ON THIS ROW** (`docs/plan_civilization_steps.md` §One work party), read
     # ONCE here so the row's block, its height and the board's own reservation all ask the same
     # answer. `SourceForecast.party_readout` is the only place the wire's party keys are read and

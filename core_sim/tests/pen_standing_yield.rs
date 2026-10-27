@@ -308,6 +308,8 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                 last_food_need: 0.0,
                 fed_party_workers: Default::default(),
                 last_food_spoiled: 0.0,
+                last_food_into_store: 0.0,
+                last_food_from_store: 0.0,
                 last_food_kept: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),

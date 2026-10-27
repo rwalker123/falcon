@@ -259,7 +259,7 @@ nothing carried the food anywhere — the same *standing together* crossing pool
 `larder_delta` measures. Without the booking the parent publishes a frame whose Food line is short by
 exactly the provisions and the child's opens at food it never grew, and the identity
 `larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled − foodLeftBehind + transferReceived −
-transferSent` is simply false on the turn a band splits. The child receives it on the
+transferSent − foodIntoStore + foodFromStore` is simply false on the turn a band splits. The child receives it on the
 `LaborAllocation` it is spawned with, because its first published frame is the one that has to
 account for it.
 

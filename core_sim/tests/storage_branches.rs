@@ -1,7 +1,8 @@
 //! **THE STORAGE BRANCHES** (#708, `.claude/rules/core_sim/intensification.md` -> "The band kind",
 //! `campaign.md` -> "Food spoils by keeping class"): a drying rack a BAND holds at its camp and a
 //! storage pit a people digs on a TILE. What each buys is a shelf life - `demographics_config.json`
-//! `keeping.preservation` - read through the one `spoilage::band_shelf_life` seam.
+//! `keeping.preservation`: the rack through the one `spoilage::band_shelf_life` seam, the pit as the
+//! life of the food INSIDE it (#709: the pit is its owner band's second larder, see `fixed_stores.rs`).
 //!
 //! Three halves, each driven through the real systems against the SHIPPED config:
 //!
@@ -17,6 +18,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::{Entity, With};
 
+use core_sim::fixed_store::rot_store_contents;
 use core_sim::spoilage::{
     band_shelf_life, base_shelf_life, rot_band_larders, rots_in_transit, HeldPreservation,
     STORAGE_DISCOVERY_ID,
@@ -26,8 +28,8 @@ use core_sim::{
     tile_rung_span, BandEquipment, BandId, BranchId, BuildJob, BuildSource,
     DemographicsConfigHandle, DiscoveryProgressLedger, EquipmentConfig, FactionId, GenerationId,
     LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort,
-    ResidentBand, RungId, SimulationConfig, SimulationTick, SnapshotHistory,
-    SupplyNetworkConfigHandle, Tile, TileImprovementRegistry, TileRegistry, ViewerFaction,
+    ResidentBand, RungId, SimulationConfig, SimulationTick, SnapshotHistory, Tile,
+    TileImprovementRegistry, TileRegistry, ViewerFaction,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -37,8 +39,6 @@ use core_sim::{
 const BAND: u64 = 31;
 /// A faction no opening band belongs to, so the ledger reads are this fixture's alone.
 const FACTION: FactionId = FactionId(77);
-/// Another people, whose pit is never the band's.
-const OTHER_PEOPLE: FactionId = FactionId(78);
 /// A larder far past what a turn's meal eats, so the lot is certain to be left to age.
 const SURPLUS: f32 = 100_000.0;
 /// A dry tile on the harness map for the camp.
@@ -85,6 +85,8 @@ fn spawn_band(app: &mut App) -> Entity {
                 last_food_need: 0.0,
                 fed_party_workers: Default::default(),
                 last_food_spoiled: 0.0,
+                last_food_into_store: 0.0,
+                last_food_from_store: 0.0,
                 last_food_kept: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
@@ -141,13 +143,6 @@ fn dig_a_pit(app: &mut App, tile: UVec2, faction: FactionId, fraction: f32) {
         .resource_mut::<TileImprovementRegistry>()
         .place(tile, food_stores(), faction, &ladder)
         .set_position(base + width * fraction, &ladder);
-}
-
-fn reach_tiles(app: &App) -> u32 {
-    app.world
-        .resource::<SupplyNetworkConfigHandle>()
-        .get()
-        .reach_tiles
 }
 
 fn camp() -> UVec2 {
@@ -250,73 +245,96 @@ fn a_half_built_rack_preserves_nothing() {
     );
 }
 
-/// **A PIT KEEPS GRAIN FOR THE PEOPLE WHO DUG IT, NEAR ENOUGH.** One scenario per world: the pit in
-/// reach keeps dry food past its base life; a pit a step out of reach, another people's pit and a
-/// half-dug pit each leave the band at the base.
-#[test]
-fn a_pit_keeps_dry_food_only_for_its_own_people_within_reach() {
-    let base = |app: &App| shelf_of(app, "dry");
-    let pitted = |app: &App| preserved_shelf(app, storage_pit(), "dry");
+/// Seat one lot of `class` at `age` as the whole contents of the pit on `tile`, run the store rot
+/// pass once and say how much of it rotted (`spoiled_this_turn`) - the pit's own shelf life, read
+/// through the real system.
+fn rotted_in_the_pit(app: &mut App, tile: UVec2, class: &str, age: u32) -> f32 {
+    {
+        let mut registry = app.world.resource_mut::<TileImprovementRegistry>();
+        let pit = registry
+            .get_mut(tile, food_stores())
+            .expect("the fixture dug a pit here");
+        pit.contents = core_sim::FoodMix::default();
+        pit.contents.add_aged(class, scalar_from_f32(SURPLUS), age);
+    }
+    app.world.run_system_once(rot_store_contents);
+    app.world
+        .resource::<TileImprovementRegistry>()
+        .get(tile, food_stores())
+        .expect("the pit is still there")
+        .spoiled_this_turn
+}
 
-    // The pit at the camp.
+/// **A BAND NO LONGER KEEPS ITS LARDER LONGER BY STANDING NEAR A PIT (#709); THE FOOD IN THE PIT
+/// KEEPS THE PIT'S LIFE.** The band's larder rots dry food at the base life whatever pit stands
+/// beside it (at the camp, at the edge of reach, anywhere), while a lot in the pit rots only when it
+/// reaches the pit's life.
+#[test]
+fn a_band_near_a_pit_keeps_its_larder_to_the_base_life_and_food_in_the_pit_to_the_pit_life() {
     let (mut app, band) = rot_world();
-    let (base, pitted) = (base(&app), pitted(&app));
+    let (base, pitted) = (
+        shelf_of(&app, "dry"),
+        preserved_shelf(&app, storage_pit(), "dry"),
+    );
     assert!(pitted > base, "fixture: the pit lengthens dry food");
     dig_a_pit(&mut app, camp(), FACTION, 1.0);
+    app.world
+        .resource_mut::<TileImprovementRegistry>()
+        .get_mut(camp(), food_stores())
+        .expect("the pit")
+        .owner = Some(BandId(BAND));
+
+    // The larder: the lot that reaches the base life rots even with the band's own finished pit
+    // at its camp - with a control one turn younger that keeps.
+    assert!(
+        rotted_of_a_lot(&mut app, band, "dry", base - 1) > MOST_OF_THE_LOT,
+        "a band beside its own pit keeps dry food in the LARDER only to {base}"
+    );
     assert_eq!(
-        rotted_of_a_lot(&mut app, band, "dry", base - 1),
+        rotted_of_a_lot(&mut app, band, "dry", base - 2),
         0.0,
-        "a finished pit at the camp keeps dry food past {base}"
-    );
-    assert_eq!(rotted_of_a_lot(&mut app, band, "dry", pitted - 2), 0.0);
-    assert!(
-        rotted_of_a_lot(&mut app, band, "dry", pitted - 1) > MOST_OF_THE_LOT,
-        "and rots it when its age reaches the pit's {pitted}"
+        "control: one turn younger it keeps"
     );
 
-    // A pit exactly at the edge of the supply network's reach still serves the band ...
-    let (mut app, band) = rot_world();
-    let reach = reach_tiles(&app);
-    dig_a_pit(&mut app, UVec2::new(CAMP.0 + reach, CAMP.1), FACTION, 1.0);
+    // The pit: the same food, inside it, survives the base life and rots at the pit's.
     assert_eq!(
-        rotted_of_a_lot(&mut app, band, "dry", base - 1),
+        rotted_in_the_pit(&mut app, camp(), "dry", base - 1),
         0.0,
-        "a pit {reach} tiles away is within reach"
+        "food in the pit outlives the base life"
     );
-
-    // ... and one step beyond it does not.
-    let (mut app, band) = rot_world();
-    dig_a_pit(
-        &mut app,
-        UVec2::new(CAMP.0 + reach + 1, CAMP.1),
-        FACTION,
-        1.0,
-    );
+    assert_eq!(rotted_in_the_pit(&mut app, camp(), "dry", pitted - 2), 0.0);
     assert!(
-        rotted_of_a_lot(&mut app, band, "dry", base - 1) > MOST_OF_THE_LOT,
-        "a pit {} tiles away is out of reach",
-        reach + 1
-    );
-
-    // Another people's pit at the camp is not this band's.
-    let (mut app, band) = rot_world();
-    dig_a_pit(&mut app, camp(), OTHER_PEOPLE, 1.0);
-    assert!(
-        rotted_of_a_lot(&mut app, band, "dry", base - 1) > MOST_OF_THE_LOT,
-        "a stranger's pit keeps nothing of ours"
-    );
-
-    // A half-dug pit stores nothing.
-    let (mut app, band) = rot_world();
-    dig_a_pit(&mut app, camp(), FACTION, 0.5);
-    assert!(
-        rotted_of_a_lot(&mut app, band, "dry", base - 1) > MOST_OF_THE_LOT,
-        "a pit the diggers have not finished keeps the base life"
+        rotted_in_the_pit(&mut app, camp(), "dry", pitted - 1) > MOST_OF_THE_LOT,
+        "and rots whole when its age reaches the pit's {pitted}"
     );
 }
 
-/// **A STORE LENGTHENS THE CLASS IT NAMES AND NO OTHER.** With a rack and a pit both held, a plant
-/// lot still rots at its base life, and the rack does not touch dry food nor the pit flesh.
+/// **A PIT HOLDS THE CLASSES ITS RUNG PRESERVES AND NO OTHER, AND A HALF-DUG PIT HOLDS NOTHING.**
+#[test]
+fn a_pit_holds_only_the_classes_it_preserves_and_only_once_dug() {
+    let (mut app, _) = rot_world();
+    dig_a_pit(&mut app, camp(), FACTION, 1.0);
+    assert!(
+        rotted_in_the_pit(&mut app, camp(), "flesh", 0) > MOST_OF_THE_LOT,
+        "meat cannot be in a pit: the pit loses it"
+    );
+    assert_eq!(
+        rotted_in_the_pit(&mut app, camp(), "dry", 0),
+        0.0,
+        "control: dry food stays"
+    );
+
+    let (mut app, _) = rot_world();
+    dig_a_pit(&mut app, camp(), FACTION, 0.5);
+    assert!(
+        rotted_in_the_pit(&mut app, camp(), "dry", 0) > MOST_OF_THE_LOT,
+        "a pit the diggers have not finished is not a store: what is in it is lost"
+    );
+}
+
+/// **A STORE LENGTHENS THE CLASS IT NAMES AND NO OTHER.** With a rack held, a plant lot still rots at
+/// its base life, the rack keeps flesh and not dry food, and a pit near the band lengthens nothing in
+/// the larder.
 #[test]
 fn a_store_leaves_every_other_class_at_its_base_life() {
     let (mut app, band) = rot_world();
@@ -326,29 +344,20 @@ fn a_store_leaves_every_other_class_at_its_base_life() {
     let fresh = shelf_of(&app, "fresh_plant");
     assert!(
         rotted_of_a_lot(&mut app, band, "fresh_plant", fresh - 1) > MOST_OF_THE_LOT,
-        "fresh plant food rots at its base life with a rack and a pit held"
+        "fresh plant food rots at its base life with a rack held"
     );
     let flesh = preserved_shelf(&app, drying_rack(), "flesh");
-    let dry = preserved_shelf(&app, storage_pit(), "dry");
     assert_eq!(
         rotted_of_a_lot(&mut app, band, "flesh", flesh - 2),
         0.0,
         "control: the rack keeps flesh"
     );
-    assert_eq!(
-        rotted_of_a_lot(&mut app, band, "dry", dry - 2),
-        0.0,
-        "control: the pit keeps dry food"
-    );
-
-    // The rack alone, in a world with no pit: dry food is at its base.
-    let (mut app, band) = rot_world();
-    hold_the_rack(&mut app, BandId(BAND));
     let dry_base = shelf_of(&app, "dry");
     assert!(
         rotted_of_a_lot(&mut app, band, "dry", dry_base - 1) > MOST_OF_THE_LOT,
-        "a rack does not keep grain"
+        "neither a rack nor a pit keeps grain in the larder"
     );
+
     // And the pit alone leaves flesh at its base.
     let (mut app, band) = rot_world();
     dig_a_pit(&mut app, camp(), FACTION, 1.0);

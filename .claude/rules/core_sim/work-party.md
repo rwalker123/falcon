@@ -147,9 +147,17 @@ not counted against next turn's pool and cut again.
 **Kit claims follow the staffing.** `take_claims::row_claims` settles a staffed row on exactly the
 hands the passes armed (plus the keeping remainder: the leftover fraction of a keeper the bill asks
 for), so the band's item budget grants a staffed row its `kitted` units and no more. `RowClaims::asks`
-keeps the planned claim (what the row would ask for if armed as planned) beside the granted
-`claims`; a row's published `kitToe` states `required` from the ask and `filled` from the grant, so a
-shortfall the staffing left stays visible by item.
+keeps the ask beside the granted `claims`. A staffed row's ask is struck at the crew it was DENIED
+(`take_claims::wanted_ask_crew`, mirroring the client's short-crew warning, `HudWorkVocab.crew_shortfall`):
+a row with a Max asks at `min(Max, useful_crew)`; a row with no Max that got nobody asks at one head;
+any other row asks at the hands present (a no-Max `useful_crew` is the take curve's ceiling, never a
+crew the band would field). Read only while the stamp is current (`staffing.total() == workers`; a
+muster-cut donor row falls back to its hands present, so a lent hand's kit is not asked for twice),
+and it still counts only take hands that would take something with the kit. A row's published `kitToe`
+states `required` from the ask and `filled` from the grant, so a row the pool starved of every head
+(passes 1b/2 deal every row's kitted heads before any bare head) still reads `required` > 0,
+`filled` 0 for the kit it lacked. **The denied part of the ask is covered by the shelf**: `craft_suggestions::take_row_gear` publishes `filled` = the grant + the band's units still unclaimed after the whole settlement (`BandItemBudget::unclaimed_units`), up to the denied part (`required` less the granted claim in the item's units), so a row short of hands but not of kit reads `filled == required` and only genuinely missing kit reads short. The grant (`claims`, `item_budget`) is unchanged. Approximation: two starved rows can both count the same free unit, so a suggestion may undercount by the units they share. Craft suggestions and auto-craft read the same lines, so they ask
+for that kit too.
 
 **Commands.** For a staffed kind the count on `assign_labor` is the **Max** (`0` = no Max, never an
 unassign); `stop_labor <faction> <band> <source>` ends the row
@@ -885,7 +893,7 @@ an_abandoned_rows_walkers_appear_on_the_band_only}`.
 > It is not any live row's income — a walk outlives its row, so no telemetry counts it in — and food
 > that reached the larder through neither `food_income` nor a transfer would break the pinned identity
 > `larder_delta == food_income − food_consumption − raid_forfeit − spoiled − left_behind + transfer_received −
-> transfer_sent`.
+> transfer_sent − into_store + from_store`.
 > A party carrying goods home is exactly what `TransferLink::Route` is for, so `bring_the_party_home`
 > books it there — through `LaborAllocation::book_crossing` as `TransferCause::PartyHome`, the one way
 > a crossing is written, so the route arm and the cause-keyed crossings row agree and the band's own

@@ -234,6 +234,8 @@ fn band(app: &mut App, tile: Entity, reach: u32) -> Entity {
                 fed_party_workers: Default::default(),
                 last_food_spoiled: 0.0,
                 last_food_kept: 0.0,
+                last_food_into_store: 0.0,
+                last_food_from_store: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),

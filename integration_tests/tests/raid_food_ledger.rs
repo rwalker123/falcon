@@ -168,8 +168,12 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
     );
     // The extended identity holds against the real larder movement.
     let delta = after - before;
-    let ledger =
-        cohort.food_income - cohort.food_consumption - cohort.raid_forfeit - cohort.food_spoiled;
+    let ledger = cohort.food_income
+        - cohort.food_consumption
+        - cohort.raid_forfeit
+        - cohort.food_spoiled
+        - cohort.food_into_store
+        + cohort.food_from_store;
     assert!(
         (delta - ledger).abs() < EPSILON,
         "larder_delta must equal foodIncome − foodConsumption − raidForfeit − foodSpoiled: \

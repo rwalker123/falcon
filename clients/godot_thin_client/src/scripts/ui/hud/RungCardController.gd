@@ -273,7 +273,7 @@ func tile_ladder() -> Array[Dictionary]:
     return HudTileVocab.tile_ladder(_topbar.ladder_rungs() if _topbar != null else [])
 
 ## A tile improvement's destination track (belief's monument, food stores' pit, ...): the same Window,
-## renderer and press the deposit track uses. `crew` is the take crew on the tile (pending-aware) and
+## renderer and press the deposit track uses. `crew` is the count of bands HOLDING a tile row on it (`tile_rows_held`; not the staffed count) and
 ## `tile_info` the land card's dict, whose `belief` the site gate reads. The press emits
 ## `build <verb> <f> <x> <y>` through `improvement_requested`; no `assign_labor` rides with it.
 func open_tile_track(band: Dictionary, tile_info: Dictionary, branch: String, crew: int,

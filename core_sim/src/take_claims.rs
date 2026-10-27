@@ -27,7 +27,9 @@ use glam::UVec2;
 
 use crate::combat::CombatStats;
 use crate::combat_config::CombatConfig;
-use crate::components::{BandEquipment, BuildSource, LaborAllocation, LaborTarget, Tile};
+use crate::components::{
+    BandEquipment, BuildSource, LaborAllocation, LaborAssignment, LaborTarget, Tile,
+};
 use crate::equipment_config::{EquipmentConfig, KitChoice, Quarry, NO_CLAIMING_HANDS};
 use crate::extraction::{DepositRegistry, DepositSource};
 use crate::extraction_config::ExtractionConfig;
@@ -442,11 +444,41 @@ pub struct RowClaims {
     pub claims: Vec<f32>,
     /// The planned keep hands each claim was struck less.
     pub keep_hands: Vec<f32>,
-    /// **WHAT EACH ROW WOULD ASK FOR if its crew were armed as planned** (#871) - the old
-    /// planned-rule claim, which for a staffed row is not what the passes granted (`claims`).
+    /// **WHAT EACH ROW WOULD ASK FOR if its crew were armed as planned** (#871) - the planned-rule
+    /// claim, which for a staffed row is struck at the crew the staffing WANTED
+    /// (`StaffedCrew::useful_crew`), not the hands present, and is not what the passes granted
+    /// (`claims`).
     /// It is the `required` of a row's published `kitToe`, so the shortfall the staffing left
     /// (`filled < required`) is still stated by item.
     pub asks: Vec<f32>,
+}
+
+/// The crew a no-Max row that got nobody asks a kit for: one head's worth ("you need at least one").
+const ONE_HEAD_ASKED: u32 = 1;
+
+/// **THE CREW A STAFFED ROW'S KIT ASK IS STRUCK AT** - `None` leaves the ask on the hands present.
+/// It mirrors the client's short-crew warning (`HudWorkVocab.crew_shortfall`), so the kit a row
+/// is told it lacks is the kit of the crew it was denied:
+/// - a row with a Max asks at `min(Max, useful_crew)` (the staffing already caps `useful_crew` at
+///   the Max), so a row the pool starved still names its kit;
+/// - a row with no Max that got nobody, where a crew would be useful, asks at one head;
+/// - any other row asks at the hands present - a no-Max `useful_crew` is the take curve's ceiling,
+///   never a crew the band would field.
+///
+/// Read only while the staffing stamp is current (`total() == workers`), as the grant is.
+pub fn wanted_ask_crew(assignment: &LaborAssignment, hands_present: u32) -> Option<u32> {
+    let staffing = &assignment.staffing;
+    if !assignment.target.is_staffed()
+        || staffing.total() != assignment.workers
+        || staffing.useful_crew == NO_STAFFED_CREW
+    {
+        return None;
+    }
+    match assignment.max_workers {
+        Some(max) if max > NO_STAFFED_CREW => Some(max.min(staffing.useful_crew)),
+        _ if hands_present == NO_STAFFED_CREW => Some(ONE_HEAD_ASKED),
+        _ => None,
+    }
 }
 
 /// [`RowClaims`] for every row of `allocation`, at each row's own crew.
@@ -471,7 +503,21 @@ pub fn row_claims(
                 allocation.hands_present_on(assignment),
             )
         };
-        let planned_claim = split.claim;
+        // **THE ASK IS STRUCK AT THE CREW THE ROW WAS DENIED** ([`wanted_ask_crew`]): a row the
+        // pool starved still states the kit it lacked, and a row with no Max never asks for the
+        // take curve's ceiling.
+        let mut planned_claim = split.claim;
+        if let Some(crew) = wanted_ask_crew(assignment, allocation.hands_present_on(assignment)) {
+            planned_claim = take_kit_claim(
+                sources,
+                band_kit,
+                declared_on(allocation, &assignment.target),
+                &assignment.target,
+                &assignment.kit_choice(sources.equipment),
+                crew,
+            )
+            .claim;
+        }
         // **A STAFFED ROW CLAIMS EXACTLY THE HANDS THE STAFFING ARMED** (#871): the passes already
         // decided who holds a kit, across rows and priorities, out of this very ledger, so the
         // walk's rationing must hand each row those units and no more or less. Read only while the

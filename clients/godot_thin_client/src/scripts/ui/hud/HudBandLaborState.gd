@@ -1090,14 +1090,26 @@ func effective_tile_workers(band: Dictionary, x: int, y: int, branch: String) ->
 func has_tile_row(band: Dictionary, x: int, y: int, branch: String) -> bool:
 	return effective_worker_map(band).has(pending_key(HudConst.LABOR_KIND_TILE, x, y, "", branch))
 
-## The player's crew on the tile improvement across EVERY player band: the hands that make the build
-## declarable at all (the sim declares on every band crewing the tile).
+## The STAFFED hands on the tile improvement across every player band -- the figure the tile card's crew
+## mark prints. NEVER a gate: see `tile_rows_held`.
 func tile_crew_total(x: int, y: int, branch: String) -> int:
 	var total := 0
 	for band_variant in current_player_bands():
 		if band_variant is Dictionary:
 			total += effective_tile_workers(band_variant as Dictionary, x, y, branch)
 	return total
+
+## How many player bands HOLD a tile row (confirmed or pending, at ANY crew or Max) on the improvement:
+## the gate `build <verb>` actually obeys. A tile row's `workers` is the SIM's staffed count and a tile
+## improvement has no take and (unbuilt) no keeping bill, so the sim staffs 0 until a build is declared --
+## gating on `workers` deadlocks the very press that would declare it. The server admits a band whose row
+## is held (`LaborTarget::Tile` is staffed), so holding is the whole test.
+func tile_rows_held(x: int, y: int, branch: String) -> int:
+	var held := 0
+	for band_variant in current_player_bands():
+		if band_variant is Dictionary and has_tile_row(band_variant as Dictionary, x, y, branch):
+			held += 1
+	return held
 
 ## The `deposits` row at `(x, y)` holding `material`, `{}` where the frame carries none — the working
 ## a deposit command is ABOUT, which is what `KitRoster.default_kit_for` reads the working's own

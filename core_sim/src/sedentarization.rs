@@ -146,6 +146,8 @@ pub fn sedentarization_tick(
     // The belief input reads the tile a band STANDS on (`current_tile`), never its home.
     tiles: Query<&Tile>,
     belief: Res<BeliefRegistry>,
+    // The people's stored food counts toward their surplus beside the larders (#709).
+    improvements: Option<Res<crate::tile_improvement::TileImprovementRegistry>>,
 ) {
     let cfg = config.get();
     let refs = &cfg.references;
@@ -168,6 +170,16 @@ pub fn sedentarization_tick(
             .map_or(0.0, |tile| belief.get(tile.position));
         let belief_norm = (standing_belief / refs.belief.max(f32::EPSILON)).clamp(0.0, 1.0);
         *belief_weighted.entry(cohort.faction).or_insert(0.0) += belief_norm * cohort.size as f32;
+    }
+
+    // **The food in the people's stores is their surplus too** (#709), whether or not any band
+    // stands within reach of it: walking out of reach does not move it off the score - the food is
+    // still the people's - it moves it out of the band's reach, which is what leaving costs.
+    for improvement in improvements.iter().flat_map(|registry| registry.iter()) {
+        let stored = improvement.contents.total().to_f32().max(0.0);
+        if stored > 0.0 {
+            *surplus.entry(improvement.faction).or_insert(0.0) += stored;
+        }
     }
 
     // Map-wide game richness (v1 environmental baseline; per-faction-local density is a

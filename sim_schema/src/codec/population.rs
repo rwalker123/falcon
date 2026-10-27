@@ -1271,6 +1271,9 @@ fn create_populations<'a>(
                     cohesionHeadcount: cohort.cohesion_headcount,
                     cohesionCeiling: cohort.cohesion_ceiling,
                     moraleFreshWater: cohort.morale_fresh_water,
+                    foodIntoStore: cohort.food_into_store,
+                    foodFromStore: cohort.food_from_store,
+                    foodInStoresInReach: cohort.food_in_stores_in_reach,
                 },
             )
         })
@@ -2219,6 +2222,9 @@ fn decode_population(
         cohesion_headcount: cohort.cohesionHeadcount(),
         cohesion_ceiling: cohort.cohesionCeiling(),
         morale_fresh_water: cohort.moraleFreshWater(),
+        food_into_store: cohort.foodIntoStore(),
+        food_from_store: cohort.foodFromStore(),
+        food_in_stores_in_reach: cohort.foodInStoresInReach(),
     })
 }
 
