@@ -501,30 +501,16 @@ pub struct HuntLaborConfig {
 /// bumping the band's sight radius, they post vantage points out from the band in all six
 /// hex directions and compute line-of-sight from each, so scouting reveals *around*
 /// obstacles (ridges/forest), not just farther. No resource yield.
+///
+/// The player states a scouting **range** (tiles past the band's local range) and the sim staffs
+/// the scouts that reach it (#875); `range_past_local_max` is the most that command may name.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ScoutLaborConfig {
-    /// Base distance (tiles) a vantage is posted out from the band with ≥1 scout.
-    pub vantage_distance_base: u32,
-    /// Additional vantage distance per staffed scout (more scouts → ring farther out).
-    pub vantage_distance_per_scout: u32,
-    /// Upper bound on how far a vantage is posted regardless of head-count.
-    pub vantage_distance_max: u32,
     /// Sight range (tiles) each posted vantage reveals via the band's normal LOS.
     pub vantage_range: u32,
-}
-
-impl ScoutLaborConfig {
-    /// How far vantages are posted out from the band for a cohort staffing `scouts`
-    /// workers: `min(vantage_distance_base + scouts × vantage_distance_per_scout,
-    /// vantage_distance_max)`. Zero scouts → `0` (no vantages posted).
-    pub fn vantage_distance(&self, scouts: u32) -> u32 {
-        if scouts == 0 {
-            return 0;
-        }
-        self.vantage_distance_base
-            .saturating_add(scouts.saturating_mul(self.vantage_distance_per_scout))
-            .min(self.vantage_distance_max)
-    }
+    /// The most tiles past the band's local range (`supply_network_config.reach_tiles`) a
+    /// `assign_labor … scout <tiles>` may name. The stepper's ceiling.
+    pub range_past_local_max: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1061,9 +1047,8 @@ mod tests {
         assert!(config.forage.cultivation.field_regrowth_gain >= 1.0);
         assert!(config.validate().is_ok());
         assert!(config.hunt.per_worker_biomass_capacity > 0.0);
-        assert!(config.scout.vantage_distance_base >= 1);
-        assert!(config.scout.vantage_distance_max >= config.scout.vantage_distance_base);
         assert!(config.scout.vantage_range >= 1);
+        assert!(config.scout.range_past_local_max >= 1);
     }
 
     /// Parse the builtin with `mutate` applied to its JSON, expecting a **rejection** — the
@@ -1313,25 +1298,12 @@ mod tests {
     }
 
     #[test]
-    fn scout_vantage_distance_scales_with_headcount_and_caps() {
-        // Vantages are posted `vantage_distance(scouts)` tiles out from the band, scaling
-        // linearly per scout and clamping at `vantage_distance_max`.
-        let scout = ScoutLaborConfig {
-            vantage_distance_base: 2,
-            vantage_distance_per_scout: 1,
-            vantage_distance_max: 6,
-            vantage_range: 2,
-        };
-
-        // 0 scouts → no vantages posted at all.
-        assert_eq!(scout.vantage_distance(0), 0);
-
-        // N scouts below the cap → base + N × per-scout.
-        assert_eq!(scout.vantage_distance(1), 3);
-        assert_eq!(scout.vantage_distance(3), 5);
-
-        // Above the cap → clamped to vantage_distance_max (never grows past it).
-        assert_eq!(scout.vantage_distance(4), 6);
-        assert_eq!(scout.vantage_distance(99), 6);
+    fn the_shipped_scouting_range_cap_and_vantage_tier_are_stated() {
+        // The scouting range a command may name is capped by one lever, and the equipped vantage
+        // tier is the one the staffing divides the range by.
+        let config = LaborConfig::builtin();
+        let scout = &config.scout;
+        assert_eq!(scout.range_past_local_max, 9);
+        assert_eq!(scout.vantage_range, 2);
     }
 }

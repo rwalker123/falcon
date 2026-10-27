@@ -319,6 +319,7 @@ fn spawn_forager_with_workers(
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
                 last_cohesion: Default::default(),
             },
             StartingUnit {
@@ -330,6 +331,8 @@ fn spawn_forager_with_workers(
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    scouting_range: 0,
+                    scouting_reach: 0,
                     max_workers: Some(workers),
                     staffing: Default::default(),
                     target: LaborTarget::Forage {

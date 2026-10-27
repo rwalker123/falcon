@@ -577,11 +577,9 @@ table PopulationCohortState {
   // Global config today (same every band); surfaced per-band so the client reads it off the
   // selected band. Appended last (append-only schema discipline).
   workRange:uint = 0;
-  // Band's effective scout vantage distance — how far the forward-observer vantage ring is posted
-  // out from the band (min(vantage_distance_base + scouts * vantage_distance_per_scout,
-  // vantage_distance_max) from LaborConfig.scout), 0 with no scouts. Field name retained for wire
-  // compat; scouts now reveal by posting vantage points that see around obstacles, not a flat ring.
-  scoutRevealRadius:uint = 0;
+  // Band's watched radius in tiles: local range + scouting reach, the edge wild predators stay
+  // behind (visibility_systems::watched_radius). 0 with no scouts reaching past the local range.
+  watchedRadius:uint = 0;
   // Expedition discriminators (docs/plan_exploration_and_sites.md §2). A detached scouting party is
   // a PopulationCohort tagged `Expedition`; these fields are false/""/empty for a normal band.
   // Client-facing: distinct marker glyph/label + awaiting-orders marker state + a Recall affordance.
@@ -1613,6 +1611,14 @@ table PopulationCohortState {
   tribeLeaderName:string;
   // 0 none, 1 paramount chief, 2 council of chiefs.
   tribeLeaderKind:ubyte = 0;
+  // The most tiles past the local range a scouting range may name (labor_config scout
+  // range_past_local_max) - the Scouting range stepper's ceiling. The local range itself is
+  // moveFerryReachTiles.
+  scoutingRangeMax:uint = 0;
+  // How many wild predator packs this band's watched ring (local range + scouting reach, only while
+  // scouts reach) kept off this turn: pushed out, a step into it refused, or a prey target inside it
+  // excluded. 0 without scouts. Own bands only (a foreign row carries 0).
+  predatorsKeptOff:uint = 0;
   // --- COHESION (appended last, #700) ---
   // The cohesion morale contributor: -drag x max(0, size - ceiling) / ceiling for this band's own
   // size (a band can only hold together at about 150 people; belief on its tile lifts the ceiling;
@@ -2569,6 +2575,13 @@ table LaborAssignment {
   // still filling. 0 = no landing within the forecast horizon (a part load with no take, or no
   // party). Unlike nextLoadHomeIn, which counts only a pack already on the road.
   loadHomeIn:uint = 0;
+  // *** THE SCOUT ROW'S RANGE (#875). *** scoutingRange: tiles past the band's local range the
+  // player asked to see (the row exists exactly while this is above 0). scoutingReach: tiles past the
+  // local range the staffed scouts actually reach (less than scoutingRange when the band ran out of
+  // people). kittedStaffed / bareStaffed carry the scouts' split; workers is the scouts placed.
+  // Both 0 on every other row.
+  scoutingRange:uint = 0;
+  scoutingReach:uint = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

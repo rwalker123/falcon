@@ -523,6 +523,12 @@ Phase 0, inert until now) is the trigger; `diet` gates it to carnivores.
   exposed populace stays at `attack 0` whatever the band carries, which is the whole reason it is a
   separate contingent. The clubs wear one use per fight resolved, charged after the raids so this
   turn is defended at the tier it was priced with.
+- **A watched ring keeps packs out of raid range** (#875): wild carnivores keep off the ground a
+  band's scouts watch (`reach_tiles + scouting_reach`; `fauna.md` → "A band's watched ring pushes a
+  wild carnivore off"), and the ring's radius exceeds `raid_radius`, so a pack held outside it never
+  triggers a raid. There is no raid-side special case; a band with scouts on duty takes no raid from a
+  pack that began four tiles away, and the no-scout control does
+  (`tests/watched_ground.rs::a_band_with_scouts_on_duty_is_not_raided_and_one_without_is`).
 - **Config** — two `#[serde(default)]` levers on `PredatorConfig` (`fauna_config.json` `predators`
   block), both playtest dials: **`raid_radius`** (`2` — how close the pack must be to raid; its own
   lever, deliberately tighter than the `prey_sense_radius` disk) and **`raid_exposure`** (`4.0` — how

@@ -1436,13 +1436,16 @@ static func staffed_total(entry: Dictionary) -> int:
 	return maxi(int(entry.get("workers", 0)), 0)
 
 ## **THE STAFFED KINDS** (#871) - the rows whose `workers` the SIM strikes from the player's floor
-## (`docs/plan_labor_at_scale.md`): forage, hunt, extract, tile and Roadwork. On them the count the
-## player states is a MAX (`max_workers`, `0` = no Max), never a crew. Builders, Scout, Warrior and the
+## (`docs/plan_labor_at_scale.md`): forage, hunt, extract, tile, Roadwork and Scout. On them the count the
+## player states is a MAX (`max_workers`, `0` = no Max), never a crew - and on Scout the range. Builders, Warrior and the
 ## bench keep a player-set count, and so does a hunting-by-need row (`move_with_herd`), whose count slot
 ## is unchanged.
 const STAFFED_KINDS: Array[String] = [
 	LABOR_KIND_FORAGE, LABOR_KIND_HUNT, HudConst.LABOR_KIND_EXTRACT,
 	HudConst.LABOR_KIND_TILE, HudConst.LABOR_KIND_BAND, HudConst.LABOR_KIND_ROADWORK,
+	# **SCOUT IS SIM-STAFFED (#875)**: the player states a RANGE in tiles, the sim places the scouts.
+	# On its row the pending number is that range (`scouting_state`), the crew stays the settled one.
+	HudConst.LABOR_KIND_SCOUT,
 ]
 
 ## The wire keys the three staffing passes publish on a row, copied onto the merged row as integers:
@@ -2026,9 +2029,44 @@ func upkeep_fund_mode(band: Dictionary) -> String:
 func effective_role_workers(band: Dictionary, kind: String) -> Dictionary:
 	var key := pending_key(kind, -1, -1, "")
 	var pend := pending_assigns_for(int(band.get("entity", -1)))
+	if kind == HudConst.LABOR_KIND_SCOUT:
+		# **SCOUT'S PENDING NUMBER IS A RANGE** (#875): `workers` stays the staffed scouts the wire
+		# last published (the People bar's segment reads it), `range` is the overlaid ask.
+		var state := scouting_state(band)
+		return {"workers": int(state["workers"]), "range": int(state["range"]),
+			"pending": pend.has(key)}
 	if pend.has(key):
 		return {"workers": int((pend[key] as Dictionary).get("workers", 0)), "pending": true}
 	return {"workers": workers_for_role(band, kind), "pending": false}
+
+## **THE SCOUT ROW'S SETTLED FIGURES, WITH THE PENDING RANGE OVERLAID** (#875) -
+## `{range, reach, workers, kitted}`. `range` is the tiles past the local range the player asked for
+## (the pending command's number while one is un-acknowledged, else the row's `scouting_range`; 0 with
+## no row); `workers` / `kitted` are the staffed scouts and the geared ones among them.
+##
+## **A PENDING RANGE READS AS REACHED**: the staffing that answers it is the sim's, so until the
+## recapture lands the card claims no shortfall it cannot know about - `reach` follows the ask, and the
+## counts are the settled ones.
+func scouting_state(band: Dictionary) -> Dictionary:
+	var row: Dictionary = {}
+	for entry in labor_assignments_of(band):
+		if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() \
+				== HudConst.LABOR_KIND_SCOUT:
+			row = entry
+			break
+	var pend := pending_assigns_for(int(band.get("entity", -1)))
+	var key := pending_key(HudConst.LABOR_KIND_SCOUT, -1, -1, "")
+	var wanted := int(row.get("scouting_range", 0))
+	var reach := int(row.get("scouting_reach", 0))
+	if pend.has(key):
+		wanted = int((pend[key] as Dictionary).get("workers", 0))
+		reach = wanted
+	return {"range": wanted, "reach": reach, "workers": int(row.get("workers", 0)),
+		"kitted": int(row.get("kitted_staffed", 0))}
+
+## The stepper's ceiling: `PopulationCohortState.scoutingRangeMax`.
+static func scouting_range_max(band: Dictionary) -> int:
+	return maxi(int(band.get("scouting_range_max", 0)), 0)
 
 ## > ### ⛔ RETIRED — `role_assignment_of`, THE POOL ROW'S RAW GEAR PAIR
 ## >

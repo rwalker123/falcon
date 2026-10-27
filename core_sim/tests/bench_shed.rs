@@ -6,7 +6,7 @@
 //! The bench is one of the crews the player sets **by hand**, and those are the only crews the shed
 //! walks now: a forage, hunt, extraction, tile or Roadwork row is staffed by the sim from what the
 //! hand-set crews leave (`core_sim::staffing`), so a source row is no longer a shed candidate at all.
-//! The bench therefore ranks beside the other hand-set roles - a spare scout goes first - and the
+//! The bench therefore ranks beside the other hand-set roles - a spare warrior goes first - and the
 //! three tests that ranked it against a SOURCE row (the bench thinned before the row that feeds the
 //! band, a `High` bench outliving a `Low` source, the bench's last hand going before a source was
 //! emptied) are deleted: there is no source row left for it to be ranked against.
@@ -44,7 +44,7 @@ const CRAFTERS: u32 = 4;
 /// **The fixture's order count** — the shed never advances the bench, so any count would do; a long
 /// one says *"nothing here finishes an order"*.
 const ORDER_COUNT: u32 = 10;
-const SCOUTS: u32 = 3;
+const WARRIORS: u32 = 3;
 
 /// The tile the fixture band works and lives on.
 fn source_tile(app: &App) -> UVec2 {
@@ -57,7 +57,7 @@ fn source_tile(app: &App) -> UVec2 {
         .expect("worldgen seeded at least one forage patch")
 }
 
-/// A band with a standing scout crew and a staffed bench, sized to afford **exactly** both — so the
+/// A band with a standing warrior crew and a staffed bench, sized to afford **exactly** both — so the
 /// pool it is holding is fully committed and any loss of people has to come off one of them.
 fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entity, UVec2) {
     let mut app = build_test_app();
@@ -76,7 +76,7 @@ fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entit
                 current_tile: tile,
                 size: 30,
                 children: scalar_zero(),
-                working: scalar_from_f32((SCOUTS + CRAFTERS) as f32),
+                working: scalar_from_f32((WARRIORS + CRAFTERS) as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -107,6 +107,7 @@ fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entit
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
                 last_cohesion: Default::default(),
             },
             StartingUnit {
@@ -120,10 +121,12 @@ fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entit
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
-                    max_workers: Some(SCOUTS),
+                    scouting_range: 0,
+                    scouting_reach: 0,
+                    max_workers: Some(WARRIORS),
                     staffing: Default::default(),
-                    target: LaborTarget::Scout,
-                    workers: SCOUTS,
+                    target: LaborTarget::Warrior,
+                    workers: WARRIORS,
                     kit: None,
                     priority: SourcePriority::default(),
                 }],
@@ -164,32 +167,32 @@ fn bench_crew(app: &App, band: Entity) -> u32 {
         .workers
 }
 
-fn scouts(app: &App, band: Entity) -> u32 {
+fn warriors(app: &App, band: Entity) -> u32 {
     app.world
         .get::<LaborAllocation>(band)
         .expect("the fixture band keeps its allocation")
         .assignments
         .iter()
-        .find(|row| matches!(row.target, LaborTarget::Scout))
+        .find(|row| matches!(row.target, LaborTarget::Warrior))
         .map_or(0, |row| row.workers)
 }
 
-/// **A BAND THAT LOSES PEOPLE SHEDS ITS SPARE SCOUTS BEFORE IT THINS ITS BENCH.**
+/// **A BAND THAT LOSES PEOPLE SHEDS ITS SPARE WARRIORS BEFORE IT THINS ITS BENCH.**
 ///
-/// Step 1 of the order is a scout - nothing is lost when the fog stops rolling back - and the bench
-/// is only a candidate at step 5, so the two hands the band lost come off the scouts and the crafters
+/// Step 2 of the order is an unthreatened warrior - the cheapest hand - and the bench
+/// is only a candidate at step 5, so the two hands the band lost come off the warriors and the crafters
 /// keep hammering. (The case the bench was made a candidate for - a starving band stripping every
 /// worked row while four crafters kept hammering - is the staffed rows' now: they are restaffed from
-/// the smaller pool, and the bench is a hand-set crew like a scout.)
+/// the smaller pool, and the bench is a hand-set crew like a warrior.)
 #[test]
-fn a_band_losing_people_sheds_a_spare_scout_before_it_thins_its_bench() {
+fn a_band_losing_people_sheds_a_spare_warrior_before_it_thins_its_bench() {
     let (mut app, band, _source) = world_with_a_band_at_the_bench(SourcePriority::default());
     lose_people(&mut app, band, 2);
     app.world.run_system_once(advance_labor_allocation);
 
     assert_eq!(
-        scouts(&app, band),
-        SCOUTS - 2,
+        warriors(&app, band),
+        WARRIORS - 2,
         "the two hands the band lost came off the scouts"
     );
     assert_eq!(
@@ -201,7 +204,7 @@ fn a_band_losing_people_sheds_a_spare_scout_before_it_thins_its_bench() {
 
 /// **A BENCH WITH NOTHING BESIDE IT IS THINNED, ONE HAND AT A TIME.**
 #[test]
-fn a_bench_with_no_scouts_left_is_thinned_by_the_people_the_band_lost() {
+fn a_bench_with_no_warriors_left_is_thinned_by_the_people_the_band_lost() {
     let (mut app, band, _source) = world_with_a_band_at_the_bench(SourcePriority::default());
     {
         let mut allocation = app
@@ -211,13 +214,13 @@ fn a_bench_with_no_scouts_left_is_thinned_by_the_people_the_band_lost() {
         allocation.assignments.clear();
         allocation.last_yields.clear();
     }
-    lose_people(&mut app, band, 1 + SCOUTS);
+    lose_people(&mut app, band, 1 + WARRIORS);
     app.world.run_system_once(advance_labor_allocation);
 
     assert_eq!(
         bench_crew(&app, band),
         CRAFTERS - 1,
-        "the one hand the band lost beyond what the scouts held came off the bench"
+        "the one hand the band lost beyond what the warriors held came off the bench"
     );
 }
 

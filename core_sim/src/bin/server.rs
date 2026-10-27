@@ -5199,7 +5199,7 @@ fn validate_species_selection(
 ///   `assign_labor <faction> <band> forage <x> <y> [floor] [species] <workers>`
 ///   `assign_labor <faction> <band> hunt <herd_id> [floor] <workers>`
 ///   `assign_labor <faction> <band> extract <x> <y> <material> [floor] <workers>`
-///   `assign_labor <faction> <band> scout <workers>`
+///   `assign_labor <faction> <band> scout <tiles> [kit <k>]` (tiles past the local range; `0` stops)
 ///   `assign_labor <faction> <band> warrior <workers>`
 ///
 /// `floor` is where the crew stops, as a fraction of the source's carrying capacity — **all three
@@ -5533,6 +5533,13 @@ fn handle_assign_labor(
         // pools do.
         LaborTarget::Tile { .. } | LaborTarget::Band { .. } => CommandEventKind::CancelOrder,
     };
+
+    // **THE SCOUT ROW IS A RANGE, NOT A HEAD COUNT** (#875): the count slot names the tiles past the
+    // band's local range the player wants to see, and the sim staffs the scouts that reach it.
+    if matches!(target, LaborTarget::Scout) {
+        handle_scouting_range(app, faction, band_id, workers, kit_id, event_kind);
+        return;
+    }
 
     // Stance validation. Unassigning (`workers == 0`) is always allowed — a player must be able to
     // abandon an investment even if its gates have since lapsed. **The improvement's gates are NOT
@@ -5901,6 +5908,82 @@ fn handle_assign_labor(
         Some(format!(
             "status=applied role={} workers={} assigned_total={} available={}",
             kind_label, applied, assigned_total, available
+        )),
+    );
+}
+
+/// **STATE A BAND'S SCOUTING RANGE** (#875) - `assign_labor <faction> <band> scout <tiles> [kit <k>]`.
+/// `tiles` is how far past the band's local range (`supply_network_config.reach_tiles`) the player
+/// wants to see, clamped to `labor_config.scout.range_past_local_max`; `0` drops the Scout row. The
+/// scouts that reach it are the sim's ([`core_sim::staffing`]); the band is restaffed here so the
+/// snapshot shows the crew and the reach the moment the player acts.
+fn handle_scouting_range(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    requested_tiles: u32,
+    kit_id: Option<String>,
+    event_kind: CommandEventKind,
+) {
+    // A kit is resolved only when the range is above nothing (stopping scouting is never refused
+    // over a kit that has since left the roster) and only when one was named: the standing row
+    // keeps its kit otherwise, and a new row reads the job's default.
+    let kit = match kit_id.as_deref() {
+        Some(id) if requested_tiles > core_sim::NO_CREW_ON_THIS_ACTIVITY => {
+            let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+            let absent = equipment_cfg.no_kit();
+            match equipment_cfg.resolve_kit_or(Some(id), LaborTarget::Scout.kit_job(), absent) {
+                Ok(kit) => Some(kit),
+                Err(reason) => {
+                    emit_command_failure(
+                        app,
+                        event_kind,
+                        faction,
+                        format!("assign_labor: {reason}."),
+                    );
+                    return;
+                }
+            }
+        }
+        _ => None,
+    };
+    let Some(band) = select_starting_band(app, faction, band_id, "assign_labor", event_kind) else {
+        return;
+    };
+    let cap = app
+        .world
+        .resource::<LaborConfigHandle>()
+        .get()
+        .scout
+        .range_past_local_max;
+    let range = requested_tiles.min(cap);
+    band_allocation_mut(app, band.entity).set_scouting_range(range, kit);
+    restaff_and_reseed(app, band.entity);
+    let (staffed, reach) = {
+        let allocation = band_allocation_mut(app, band.entity);
+        (
+            allocation.workers_on(&LaborTarget::Scout),
+            allocation.scouting_reach_tiles(),
+        )
+    };
+    let tick = app.world.resource::<SimulationTick>().0;
+    let clamp_note = if range < requested_tiles {
+        format!(" (clamped from {requested_tiles} - the most is {cap})")
+    } else {
+        String::new()
+    };
+    push_band_event(
+        app,
+        tick,
+        event_kind,
+        faction,
+        band.id,
+        format!(
+            "{} scouting range +{range} tiles{clamp_note}: {staffed} scouts reach +{reach}",
+            band.label
+        ),
+        Some(format!(
+            "status=applied role=scout range={range} reach={reach} workers={staffed}"
         )),
     );
 }
@@ -14965,6 +15048,7 @@ mod tests {
                     ),
                     belief_anchor: None,
                     last_belief_relay_hops: 0,
+                    predators_kept_off: 0,
                     last_cohesion: Default::default(),
                 },
                 LaborAllocation {
@@ -14972,6 +15056,8 @@ mod tests {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        scouting_range: 0,
+                        scouting_reach: 0,
                         max_workers: Some(BAND_WORKERS),
                         staffing: Default::default(),
                         target,
@@ -24518,7 +24604,7 @@ mod tests {
             &mut app,
             faction,
             None,
-            "scout".to_string(),
+            "warrior".to_string(),
             published + BENCH_IDLE_CREW,
             None,
             None,
@@ -24599,7 +24685,7 @@ mod tests {
             &mut app,
             faction,
             None,
-            "scout".to_string(),
+            "warrior".to_string(),
             IDLE_BENCH_SCOUTS,
             None,
             None,
@@ -24657,27 +24743,21 @@ mod tests {
         let (_, idle_before, ..) = published_hands(&mut app, band);
         assert!(idle_before > IDLE_BENCH_SCOUTS);
 
-        // Take every hand but IDLE_BENCH_SCOUTS, then ask a second role for more than is left.
-        handle_assign_labor(
+        // Take every hand but IDLE_BENCH_SCOUTS (at the bench: the warrior row is the only
+        // hand-set crew left), then ask the warrior row for more than is left.
+        handle_bench_enqueue(
             &mut app,
             faction,
             None,
-            "warrior".to_string(),
+            BENCH_IDLE_RECIPE,
+            BENCH_TEST_ORDER,
             idle_before - IDLE_BENCH_SCOUTS,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Vec::new(),
-            false,
         );
         handle_assign_labor(
             &mut app,
             faction,
             None,
-            "scout".to_string(),
+            "warrior".to_string(),
             IDLE_BENCH_SCOUTS + 1,
             None,
             None,
@@ -24730,11 +24810,18 @@ mod tests {
                 false,
             );
         };
-        assign(&mut app, "scout", ALREADY_ON_ROW);
+        assign(&mut app, "warrior", ALREADY_ON_ROW);
         let (_, idle, ..) = published_hands(&mut app, band);
         assert!(idle > IDLE_BENCH_SCOUTS);
-        assign(&mut app, "warrior", idle - IDLE_BENCH_SCOUTS);
-        assign(&mut app, "scout", ASKED);
+        handle_bench_enqueue(
+            &mut app,
+            faction,
+            None,
+            BENCH_IDLE_RECIPE,
+            BENCH_TEST_ORDER,
+            idle - IDLE_BENCH_SCOUTS,
+        );
+        assign(&mut app, "warrior", ASKED);
         let expected = format!("(clamped from {ASKED} \u{2014} only {IDLE_BENCH_SCOUTS} idle)");
         let logged = app
             .world
@@ -32467,10 +32554,11 @@ mod tests {
         assert_eq!(staffed_hands(&app, entity), pool - PARTY);
     }
 
-    /// The same for a player-set Scout crew.
+    /// The same for a scouting range: its scouts are placed ahead of the reach crews, out of the
+    /// hands the staffed rows held.
     #[test]
-    fn a_fully_staffed_band_can_still_send_scouts() {
-        const SCOUTS: u32 = 2;
+    fn a_fully_staffed_band_can_still_ask_for_a_scouting_range() {
+        const RANGE: u32 = 2;
         let mut app = build_world_app();
         let (band, entity) = fully_staffed_band(&mut app);
         let pool = band_workforce(&app, entity).pool;
@@ -32479,7 +32567,7 @@ mod tests {
             FactionId(0),
             Some(band.0),
             "scout".to_string(),
-            SCOUTS,
+            RANGE,
             None,
             None,
             None,
@@ -32489,16 +32577,65 @@ mod tests {
             Vec::new(),
             false,
         );
-        let scouts = app
+        let allocation = app.world.get::<LaborAllocation>(entity).unwrap();
+        let scouts = allocation.workers_on(&LaborTarget::Scout);
+        assert_eq!(allocation.scouting_range_tiles(), RANGE);
+        assert!(scouts > 0, "liveness: someone is placed to scout");
+        assert_eq!(staffed_hands(&app, entity), pool - scouts);
+    }
+
+    /// **THE COUNT ON `scout` IS A RANGE**: it clamps to `scout.range_past_local_max`, the Scout
+    /// row persists while the range is above zero, kit `none` staffs only bare scouts, and `scout 0`
+    /// drops the row.
+    #[test]
+    fn a_scouting_range_clamps_to_the_cap_and_zero_drops_the_row() {
+        let mut app = build_world_app();
+        let (band, entity) = fully_staffed_band(&mut app);
+        let cap = app
             .world
-            .get::<LaborAllocation>(entity)
-            .unwrap()
+            .resource::<LaborConfigHandle>()
+            .get()
+            .scout
+            .range_past_local_max;
+        let scout = |app: &mut bevy::prelude::App, tiles: u32, kit: Option<&str>| {
+            handle_assign_labor(
+                app,
+                FactionId(0),
+                Some(band.0),
+                "scout".to_string(),
+                tiles,
+                None,
+                None,
+                None,
+                None,
+                None,
+                kit.map(str::to_string),
+                Vec::new(),
+                false,
+            );
+        };
+        scout(&mut app, cap + 5, Some("none"));
+        let allocation = app.world.get::<LaborAllocation>(entity).unwrap();
+        assert_eq!(allocation.scouting_range_tiles(), cap, "clamped to the cap");
+        let row = allocation
             .assignments
             .iter()
             .find(|row| matches!(row.target, LaborTarget::Scout))
-            .map(|row| row.workers);
-        assert_eq!(scouts, Some(SCOUTS));
-        assert_eq!(staffed_hands(&app, entity), pool - SCOUTS);
+            .expect("the Scout row exists while the range is above zero");
+        assert_eq!(row.staffing.kitted, 0, "kit none arms no scout");
+        assert_eq!(row.workers, row.staffing.bare, "all bare");
+        assert!(row.workers > 0, "liveness: bare scouts were placed");
+        assert!(row.scouting_reach <= cap);
+        scout(&mut app, 0, None);
+        let allocation = app.world.get::<LaborAllocation>(entity).unwrap();
+        assert_eq!(allocation.scouting_range_tiles(), 0);
+        assert!(
+            !allocation
+                .assignments
+                .iter()
+                .any(|row| matches!(row.target, LaborTarget::Scout)),
+            "scout 0 drops the row"
+        );
     }
 
     /// **OUTFIT THE BAND WITH EXACTLY WHAT ITS WORK WANTS AND EVERY ROW HOLDS ITS FULL HOLD-AND-REACH

@@ -3668,6 +3668,7 @@ fn spawn_population_entity(
         founding_lines: FoundingLines::founded(band_id, start_kit.founding_lines),
         belief_anchor: None,
         last_belief_relay_hops: 0,
+        predators_kept_off: 0,
         last_cohesion: Default::default(),
     });
     // Every band carries a labor allocation (default empty = fully idle). The client drives

@@ -132,6 +132,7 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
                 last_cohesion: Default::default(),
             },
             ResidentBand,
@@ -141,6 +142,8 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        scouting_range: 0,
+                        scouting_reach: 0,
                         max_workers: Some(2),
                         staffing: Default::default(),
                         target: LaborTarget::Forage {
@@ -157,6 +160,8 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         party: None,
                         muster_crew: 0,
                         planned_crew: 0,
+                        scouting_range: 0,
+                        scouting_reach: 0,
                         max_workers: Some(2),
                         staffing: Default::default(),
                         target: LaborTarget::Hunt {
@@ -305,6 +310,7 @@ fn a_raids_target_round_trips_through_the_rollback() {
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
                 last_cohesion: Default::default(),
             },
             Expedition {

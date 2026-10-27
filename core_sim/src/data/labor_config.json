@@ -88,9 +88,8 @@
     "per_worker_biomass_capacity": 12.0
   },
   "scout": {
-    "vantage_distance_base": 2,
-    "vantage_distance_per_scout": 1,
-    "vantage_distance_max": 6,
+    "_comment_range_past_local_max": "THE MOST TILES PAST THE BAND'S LOCAL RANGE (supply_network_config.json `reach_tiles`) THAT `assign_labor ... scout <tiles>` MAY NAME - the Scouting range stepper's ceiling (#875). The three retired dials (`vantage_distance_base` / `_per_scout` / `_max`) set how far a vantage was posted from the head-count; the range is now the player's statement and the staffing decides the heads. See .claude/rules/core_sim/work-party.md.",
+    "range_past_local_max": 9,
     "vantage_range": 2
   }
 }

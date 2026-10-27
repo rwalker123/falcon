@@ -141,7 +141,7 @@ const FIXTURE_ENTRY := {
 	"morale_cause": 1,
 	"activity": "forage",
 	"work_range": 2,
-	"scout_reveal_radius": 3,
+	"watched_radius": 3,
 	"is_traveling": true,
 	"travel_target_x": 11,
 	"travel_target_y": 9,
@@ -237,7 +237,7 @@ func _ready() -> void:
 	_expect_int(marker, "elders", 5)
 	_expect_int(marker, "idle_workers", 7)
 	_expect_int(marker, "work_range", 2)
-	_expect_int(marker, "scout_reveal_radius", 3)
+	_expect_int(marker, "watched_radius", 3)
 	_expect_int(marker, "travel_target_x", 11)
 	_expect_int(marker, "travel_target_y", 9)
 	if not bool(marker.get("is_traveling", false)):

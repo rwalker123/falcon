@@ -354,7 +354,7 @@ Belief's second morale consumer: a Layer-1 contributor (`MoraleContributions::co
 - **Wire** (appended last on `PopulationCohortState`): `moraleCohesion:long` (fixed point),
   `cohesionHeadcount:uint`, `cohesionCeiling:uint`. Not on the redaction allow-list, so a foreign
   row reads `0`. Native dict keys `morale_cohesion`, `cohesion_headcount`, `cohesion_ceiling`.
-  `SAVE_FORMAT_VERSION` 57.
+  `SAVE_FORMAT_VERSION` 58.
 
 | Lever (`wellbeing_config.json` → `cohesion`) | Opening value | Validated |
 |---|---|---|

@@ -548,6 +548,8 @@ fn begin_a_ring(app: &mut App, band: Entity) {
         party: None,
         muster_crew: 0,
         planned_crew: 0,
+        scouting_range: 0,
+        scouting_reach: 0,
         max_workers: Some(RING_BUILDERS),
         staffing: Default::default(),
         target: LaborTarget::Hunt {

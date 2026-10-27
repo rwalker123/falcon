@@ -3188,6 +3188,7 @@ pub fn capture_snapshot(
             baseline_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
             baseline_gather_rate: labor_config.forage.per_worker_biomass_capacity,
             equipped_vantage_range: labor_config.scout.vantage_range as f32,
+            scouting_range_max: labor_config.scout.range_past_local_max,
             // The detached party's *equipped* observation radius, beside the posted vantage's — the
             // second axis the one wayfinding item lifts.
             equipped_expedition_sight_range: expedition_cfg.observe_sight_range as f32,
@@ -3388,14 +3389,6 @@ pub fn capture_snapshot(
                         .unwrap_or(false);
                     // The `BandTravel` destination (for the client's target-hex display); `None` → 0,0.
                     let travel_target = travel.map(|t| t.target);
-                    // Local scout: scouts are now forward observers posting vantage points out from the
-                    // band. Carry the effective vantage distance (how far the vantage ring is posted, `0`
-                    // with no scouts), using the same helper the visibility pass applies, so the field
-                    // stays coherent for the client.
-                    let scout_workers = allocation
-                        .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
-                        .unwrap_or(0);
-                    let scout_vantage_distance = labor_config.scout.vantage_distance(scout_workers);
                     // Derived, never checkpointed: a road built, an anchor moved or a kin band
                     // walked off is re-read here on the next capture and rides that frame's delta.
                     let belief_reach: Vec<UVec2> = cohort
@@ -3506,7 +3499,6 @@ pub fn capture_snapshot(
                         band_names: &band_names,
                         work_range: band_work_range,
                         raid_radius: fauna_config.predators.raid_radius,
-                        scout_vantage_distance,
                         expedition_levers: &expedition_levers,
                         settlement_stage_config: &settlement_stage_config,
                         travel_target,

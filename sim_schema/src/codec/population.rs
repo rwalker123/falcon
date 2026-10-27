@@ -508,6 +508,8 @@ fn create_populations<'a>(
                                 loadUnits: assignment.load_units,
                                 packUnits: assignment.pack_units,
                                 loadHomeIn: assignment.load_home_in,
+                                scoutingRange: assignment.scouting_range,
+                                scoutingReach: assignment.scouting_reach,
                             },
                         )
                     })
@@ -1022,7 +1024,7 @@ fn create_populations<'a>(
                     idleWorkers: cohort.idle_workers,
                     workingAge: cohort.working_age,
                     workRange: cohort.work_range,
-                    scoutRevealRadius: cohort.scout_reveal_radius,
+                    watchedRadius: cohort.watched_radius,
                     isExpedition: cohort.is_expedition,
                     expeditionMission: expedition_mission,
                     expeditionPhase: expedition_phase,
@@ -1257,6 +1259,8 @@ fn create_populations<'a>(
                     tribeMemberNames: Some(tribe_member_names),
                     tribeLeaderName: Some(tribe_leader_name),
                     tribeLeaderKind: cohort.tribe_leader_kind,
+                    scoutingRangeMax: cohort.scouting_range_max,
+                    predatorsKeptOff: cohort.predators_kept_off,
                     moraleCohesion: cohort.morale_cohesion,
                     cohesionHeadcount: cohort.cohesion_headcount,
                     cohesionCeiling: cohort.cohesion_ceiling,
@@ -1666,6 +1670,8 @@ fn decode_labor_assignment(
         load_units: assignment.loadUnits(),
         pack_units: assignment.packUnits(),
         load_home_in: assignment.loadHomeIn(),
+        scouting_range: assignment.scoutingRange(),
+        scouting_reach: assignment.scoutingReach(),
     })
 }
 
@@ -1788,7 +1794,7 @@ fn decode_population(
         idle_workers: cohort.idleWorkers(),
         working_age: cohort.workingAge(),
         work_range: cohort.workRange(),
-        scout_reveal_radius: cohort.scoutRevealRadius(),
+        watched_radius: cohort.watchedRadius(),
         is_expedition: cohort.isExpedition(),
         expedition_mission: text(cohort.expeditionMission()),
         expedition_phase: text(cohort.expeditionPhase()),
@@ -2194,6 +2200,8 @@ fn decode_population(
         tribe_member_names: decode_strings(cohort.tribeMemberNames()),
         tribe_leader_name: text(cohort.tribeLeaderName()),
         tribe_leader_kind: cohort.tribeLeaderKind(),
+        scouting_range_max: cohort.scoutingRangeMax(),
+        predators_kept_off: cohort.predatorsKeptOff(),
         morale_cohesion: cohort.moraleCohesion(),
         cohesion_headcount: cohort.cohesionHeadcount(),
         cohesion_ceiling: cohort.cohesionCeiling(),

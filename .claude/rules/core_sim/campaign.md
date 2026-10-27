@@ -1055,10 +1055,12 @@ with the most workers in the band's `LaborAllocation`). Both are computed at cap
 
 Alongside them the snapshot exports `laborAssignments`/`idleWorkers`/`workingAge`,
 plus `workRange` (from `labor_config.json` `band_work_range`, global config today, surfaced per-band
-for the work-range ring) and `scoutRevealRadius` (**repurposed**: now carries the band's effective
-**scout vantage distance** — `scout.vantage_distance(scouts)` = `min(vantage_distance_base + scouts ×
-vantage_distance_per_scout, vantage_distance_max)`, `0` with no scouts — since scouts now reveal by
-posting forward-observer vantages that see around obstacles; field name kept for wire compat).
+for the work-range ring) and `watchedRadius` (the watched ground's edge:
+`visibility_systems::watched_radius(reach_tiles, scouting_reach)` = `reach_tiles + scouting_reach`,
+`0` with no reach — the same function that keeps wild predators out, so the client's map border marks
+the edge they stay behind; where the vantages stand is `scout_vantage_posting_distance`, which only
+the sight sweep reads). The cohort also carries `scoutingRangeMax` (`labor_config.scout.range_past_local_max`, the
+stepper's ceiling); the local range is `moveFerryReachTiles`.
 
 **Per-source food-income breakdown (retained yield telemetry).** `advance_labor_allocation` rebuilds
 `LaborAllocation.last_yields` each turn — one `SourceYield { actual, sustainable, wasted, workers_needed, overdraws, realized }`
