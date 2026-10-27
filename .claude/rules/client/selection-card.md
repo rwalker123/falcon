@@ -153,11 +153,11 @@ paths:
       | `Foraging` | the forage sheet | `_forage_compose_available` |
       | each deposit's material row | THAT working's deposit sheet | `_deposit_compose_available` |
       | each `Road` row | the ladder card for that road's index | the road exists |
-      | `Ancestors` / the branch row | the tile crew sheet | the branch is offered and `_tile_compose_available` |
+      | `Sacred ground` / the branch row | the tile crew sheet | the branch is offered and `_tile_compose_available` |
 
       The tile-sourced rows are driven off the catalog (`DrawerComposeController.tile_branch_models`,
       `HudTileVocab.readout_row_key`): a branch whose site term is belief is stated by the dead's own
-      `Ancestors` row, any other branch gets a row keyed by its display name (`Food stores`) valued by
+      `Sacred ground` row, any other branch gets a row keyed by its display name (`Food stores`) valued by
       the rung the tile stands at. Nothing names a branch. Where a gate is false the row stays a plain
       readout; the readouts (Height, Grazing, the basket, `Cultivation`, rivers, the blank-key payoff
       rows) are never doors.

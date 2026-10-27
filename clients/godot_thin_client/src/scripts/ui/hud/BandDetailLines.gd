@@ -988,7 +988,7 @@ func _beliefs_place_lines(unit_data: Dictionary) -> Array[String]:
     if has_place:
         own_dead = _place_dead(unit_data)
         lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_OWN_FORMAT % [
-            _strength_bar(float(unit_data.get(HudDisclosureVocab.BELIEFS_PLACE_WEIGHT_KEY, 0.0))),
+            DetailFormat.sacred_ground_bar(float(unit_data.get(HudDisclosureVocab.BELIEFS_PLACE_WEIGHT_KEY, 0.0))),
             _show_link(_place_tile(unit_data), unit_data)])
         var hops := int(unit_data.get(HudDisclosureVocab.BELIEFS_PLACE_RELAY_KEY, HudDisclosureVocab.BELIEFS_PLACE_RELAY_DIRECT))
         if hops >= HudDisclosureVocab.BELIEFS_PLACE_RELAY_UNREACHED:
@@ -1002,15 +1002,6 @@ func _beliefs_place_lines(unit_data: Dictionary) -> Array[String]:
         lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_NONE)
     lines.append_array(_stronger_place_lines(unit_data, has_place, own_dead))
     return lines
-
-## `▰▰▰▱▱ sacred` — the strength bar and its word, off the anchor's weight `w` in (0, 1): step
-## `clamp(ceil(w * pips), 1, pips)`. No raw number ever reaches the screen.
-static func _strength_bar(weight: float) -> String:
-    var pips := HudDisclosureVocab.BELIEFS_BAR_PIPS
-    var step := clampi(int(ceil(weight * float(pips))), 1, pips)
-    return HudDisclosureVocab.BELIEFS_BAR_FORMAT % [
-        HudDisclosureVocab.BELIEFS_BAR_FILLED.repeat(step) + HudDisclosureVocab.BELIEFS_BAR_EMPTY.repeat(pips - step),
-        HudDisclosureVocab.BELIEFS_BAR_WORDS[step - 1]]
 
 ## The clickable `[show ▸]`: the meta names the tile and the band whose published reach the map shades.
 static func _show_link(tile: Vector2i, holder: Dictionary) -> String:
@@ -1080,7 +1071,7 @@ func _stronger_place_lines(unit_data: Dictionary, has_place: bool, own_dead: int
             weight = maxf(weight, float(holder.get(HudDisclosureVocab.BELIEFS_PLACE_WEIGHT_KEY, 0.0)))
         var who := _place_holder_name(holders)
         lines.append(indent + HudDisclosureVocab.BELIEFS_STRONGER_FORMAT % [
-            who, _strength_bar(weight), _place_direction(unit_data, tile),
+            who, DetailFormat.sacred_ground_bar(weight), _place_direction(unit_data, tile),
             _show_link(tile, _lowest_id_holder(holders))])
         if tribe != "":
             lines.append(indent + HudDisclosureVocab.BELIEFS_STRONGER_JOIN_TRIBE_FORMAT % tribe)

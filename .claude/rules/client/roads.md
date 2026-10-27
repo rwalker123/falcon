@@ -1593,7 +1593,7 @@ from `ladder_branches`, the rung it stands on from `ladder_rungs` x `tile_improv
 improvement row yet, the branch's root rung via `branch_root_name`, or `—` for a branch the catalog
 lacks — never `Wild`, which is plant vocabulary), its crew count, its keeping mark off the row's `upkeep_*` keys and a far
 posting's party block, and the strip's ladder chip that opens the tile step card. No stepper and no
-inspector: the crew is set from the tile card's `Ancestors` / branch door (the crew sheet) (`extraction-workings.md` → "THE
+inspector: the crew is set from the tile card's `Sacred ground` / branch door (the crew sheet) (`extraction-workings.md` → "THE
 TILE-SOURCED BRANCHES"). A tile build is `build <verb> <faction> <x> <y>` (no band token; only road verbs name a
 band). `band_panel_work_tile_crews` is the frame, over a fixture `orchard` / `grafted` catalog and a
 branch the catalog does not carry.

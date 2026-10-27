@@ -9,7 +9,7 @@ extends RefCounted
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
 const CrewFx := preload("res://tools/ui_preview/fixtures_crew.gd")
-const EXPECTED_CHECKPOINTS := 121
+const EXPECTED_CHECKPOINTS := 122
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -2529,25 +2529,41 @@ func run(harness) -> void:
 	# would test the control's chrome instead of the answer.
 	_assert_the_roster_names_one_road_kit_per_rung()
 
-	# ---- THE DEAD A PLACE HOLDS (#699) — APPENDED. The tile card's `Ancestors` row on a hex whose
-	# `belief` is above zero, in whole people. Rendered on the food tile so the row sits among the
-	# land rows it belongs with.
-	var ancestors_tile := BaseFx.food_tile_fixture()
-	ancestors_tile["belief"] = ANCESTORS_TILE_BELIEF
-	h._show_tile(ancestors_tile)
+	# ---- SACRED GROUND ON THE TILE CARD (#870) — APPENDED. The card's `Sacred ground` row exists only on
+	# a hex that IS the sacred ground of one of the player's own bands, drawn with the Beliefs
+	# pull-down's bar and word. A hex that holds dead no band of the player's holds has no row at all.
+	var ground_tile := BaseFx.food_tile_fixture()
+	ground_tile["belief"] = SACRED_TILE_BELIEF
+	var holder := BandFx.band_fixture()
+	holder["has_belief_anchor"] = true
+	holder["belief_anchor_x"] = int(ground_tile["x"])
+	holder["belief_anchor_y"] = int(ground_tile["y"])
+	holder["belief_anchor_weight"] = SACRED_TILE_WEIGHT
+	h._hud.update_band_alerts([holder])
+	h._show_tile(ground_tile)
 	await h._settle()
-	await h._save("tile_ancestors")
-	h._assert_hud("the tile card states the dead the hex holds — `%s`" % ANCESTORS_TILE_ROW_TEXT,
-		"\n".join(h._hud._drawer._tile_terrain_lines(ancestors_tile)).contains(ANCESTORS_TILE_ROW_TEXT))
+	await h._save("tile_sacred_ground")
+	var ground_text := "\n".join(h._hud._drawer._tile_terrain_lines(ground_tile))
+	h._assert_hud("the tile card states an own band's sacred ground — `%s`" % SACRED_TILE_ROW_TEXT,
+		ground_text.contains(SACRED_TILE_ROW_TEXT))
+	var held_elsewhere := holder.duplicate()
+	held_elsewhere["belief_anchor_x"] = int(ground_tile["x"]) + 1
+	h._hud.update_band_alerts([held_elsewhere])
+	h._show_tile(ground_tile)
+	await h._settle()
+	h._assert_hud("a hex holding dead that none of the player's bands holds as its sacred ground has no row",
+		not "\n".join(h._hud._drawer._tile_terrain_lines(ground_tile)).contains(DetailFormat.SACRED_GROUND_ROW))
 
 	# **PUT THE ROSTER BACK.** Everything after this chapter renders against whatever roster it
 	# inherits, and a band left standing here is a band the next chapter never asked for.
 	_restore_band_roster(inherited_bands)
 	await h._settle()
 
-## The `tile_ancestors` frame's hex: 23.6 dead-equivalents, which the row rounds to whole people.
-const ANCESTORS_TILE_BELIEF := 23.6
-const ANCESTORS_TILE_ROW_TEXT := "Ancestors: 24 dead"
+## The `tile_sacred_ground` frame's hex: it carries belief, held by a band at anchor weight 0.6 (step 3 of
+## 5), which the row spells as the Beliefs bar's third word. Spelled as a LITERAL.
+const SACRED_TILE_BELIEF := 23.6
+const SACRED_TILE_WEIGHT := 0.6
+const SACRED_TILE_ROW_TEXT := "Sacred ground: ▰▰▰▱▱ hallowed"
 
 # ---- THE ROAD LADDER'S OWN FIXTURE NUMBERS AND ITS EXPECTED SENTENCES ---------------------------
 #

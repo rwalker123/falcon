@@ -695,13 +695,17 @@ which is a property of the tier and not of the merge.
   mid-latitudes read "Hospitable", the equator "Hospitable/Fair", and poles/high-alt/caverns
   "Harsh/Hostile" — the config buckets (`0.02`/`0.05`/`0.09`) spread cleanly across that range,
   so no re-tune was needed.
-- **Tile-card Ancestors** (snapshot `TileState.belief`, dead-equivalents — 1.0 per person who died
-  there, never decaying — decoded in `native/src/dict/map.rs` `tile_to_dict` as `belief`, held in
-  `MapView.tile_belief` only where it is above zero and copied onto the `_tile_info_at` dict as
-  `belief`): `SubjectDrawerController._tile_terrain_lines` adds `Ancestors: <N> dead` from
-  `DetailFormat.ancestors_line` — rounded to whole people, `<1` below one person, NO row at zero.
-  Emitted beside the deposit rows, above the FoW discovered early-return: a place keeps its dead, so a
-  remembered hex states them, and `belief` is not in `MapView.FOW_DISCOVERED_HIDDEN_KEYS`.
+- **Tile-card Sacred ground** (#870): `SubjectDrawerController._append_tile_branch_rows` adds
+  `Sacred ground: ▰▰▰▱▱ hallowed` (`DetailFormat.sacred_ground_line`) ONLY where the tile is the
+  sacred ground of one or more of the player's own non-expedition bands (`has_belief_anchor` true and
+  `belief_anchor_x/y` equal to the tile, off `_band_labor.current_player_bands()`). The bar and word
+  are the Beliefs pull-down's: `DetailFormat.sacred_ground_bar` is the ONE implementation, driven by
+  the strongest `belief_anchor_weight` among the holding bands (`BandDetailLines` calls it). The row's
+  hover names who honours it (`Honoured by <band>` / `<band> and N other bands`,
+  `DetailFormat.sacred_ground_hover`). A tile no band of the player's holds has no row, whatever
+  `TileState.belief` it carries; the raw dead count is never shown. The row is also the belief
+  branch's door/readout host (`HudTileVocab.readout_row_key` → `DetailFormat.SACRED_GROUND_ROW`), so
+  a belief-branch door exists only on a tile that is an own band's sacred ground.
 - **Tile-card Climate** (snapshot `TileState.temperature`, decoded in `native/src/lib.rs`
   `tile_to_dict` as `temperature` (°); temperature is now a **latitude + elevation** climate
   (equator-in-the-middle, poles cold) with a small element jitter, NOT the old element
