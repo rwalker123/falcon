@@ -17,8 +17,9 @@ class_name HudKeepVocab
 ## ⛔ **THE KEEP CHIP IS A LABEL.** The target changes only from the sheet's `−` / `+` stepper, in steps of
 ## `KEEP_STEP`, and `0` reads `None`.
 
-## One press of the sheet's `−` / `+` moves the target by this many units — the opening step.
-const KEEP_STEP := 10
+## One press of the sheet's `−` / `+` moves the target by this many units. One, like every stepper in the game:
+## a step of 10 left a band that wants a few stone nothing between None and 10.
+const KEEP_STEP := 1
 ## The target's face at 0 (no order: nobody digs).
 const KEEP_NONE_WORD := "None"
 const KEEP_STEPPER_LOWER_ARIA := "Keep less %s"
