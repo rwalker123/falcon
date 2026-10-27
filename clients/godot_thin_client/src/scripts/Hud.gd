@@ -1349,6 +1349,11 @@ func update_connections(connections_variant: Variant) -> void:
 func update_tile_temperatures(temperatures_variant: Variant) -> void:
     _band_labor.set_tile_temperatures(temperatures_variant)
 
+## The per-tile habitability drains the map ingested (`MapView.tile_habitability`), so band morale
+## wording can follow the same rating the tile card shows.
+func update_tile_habitability(habitability_variant: Variant) -> void:
+    _band_labor.set_tile_habitability(habitability_variant)
+
 ## The per-tile belief the map ingested (`MapView.tile_belief`), for a tile branch's site gate.
 func update_tile_beliefs(beliefs_variant: Variant) -> void:
     _band_labor.set_tile_beliefs(beliefs_variant)

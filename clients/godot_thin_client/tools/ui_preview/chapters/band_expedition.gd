@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 172
+const EXPECTED_CHECKPOINTS := 187
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -856,6 +856,7 @@ func run(harness) -> void:
 	# ---- THE COHESION MORALE TERM (#700) -----------------------------------------------------------
 	# **APPENDED**, for the reason the blocks above state.
 	await _cohesion_states()
+	await _morale_wording_states()
 
 	# band_alerts (above) left _player_band as an alert-fixture band (no work_range, far from the food
 	# tile); seed a NEAR band so the forage controls resolve an in-range actor.
@@ -1457,6 +1458,109 @@ func _cohesion_states() -> void:
 	h._assert_hud("a band with zero cohesion term draws no cohesion row",
 		_kit_breakdown_line(_popover_text(), "too many to hold together") == "")
 	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+
+## ---- THE MORALE WORDING FOLLOWS THE BAND'S TILE RATING (`TileHabitability`), and the recovery line
+## follows the dominant cause. The sim drains a little morale on almost every terrain, so "harsh" is
+## claimed only where the tile card's Habitability rating says Harsh/Hostile.
+const WORDING_HARSH_CELL := Vector2i(44, 61)
+const WORDING_HARSH_DRAIN := 0.0825
+const WORDING_HOSPITABLE_CELL := Vector2i(30, 30)
+const WORDING_HOSPITABLE_DRAIN := 0.01
+const WORDING_FAIR_CELL := Vector2i(31, 30)
+const WORDING_FAIR_DRAIN := 0.03
+const WORDING_UNKNOWN_CELL := Vector2i(32, 30)
+const WORDING_HARSH_WORD := "harsh"
+const WORDING_HOSPITABLE_WORD := "Hospitable"
+const WORDING_RECOVER_BARE := "Recover: Scout · Hunt"
+
+## A morale-concerning band standing on `cell`, its drawer terrain named `label`, dying of `cause`.
+func _wording_band(cell: Vector2i, label: String, cause: int) -> Dictionary:
+	var band := _low_morale_band_fixture()
+	band["entity"] = COHESION_BAND_ENTITY
+	band["current_x"] = cell.x
+	band["current_y"] = cell.y
+	band["morale_cause"] = cause
+	band["tile_info"]["terrain_label"] = label
+	# The card's own Habitability chip reads the same drain the band's wording does.
+	var drains := {WORDING_HARSH_CELL: WORDING_HARSH_DRAIN, WORDING_HOSPITABLE_CELL: WORDING_HOSPITABLE_DRAIN,
+		WORDING_FAIR_CELL: WORDING_FAIR_DRAIN}
+	if drains.has(cell):
+		band["tile_info"]["habitability"] = drains[cell]
+	else:
+		band["tile_info"].erase("habitability")
+	return band
+
+## Select `band`, then return [headline vitals text, opened morale popover text].
+func _wording_read(band: Dictionary) -> Array[String]:
+	h._hud.show_unit_selection(band)
+	await h._settle()
+	var vitals := String(h._hud.occupant_detail.get_parsed_text())
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	await h._settle()
+	var popover := _popover_text()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	return [vitals, popover]
+
+func _morale_wording_states() -> void:
+	h._hud.update_tile_habitability({
+		WORDING_HARSH_CELL: WORDING_HARSH_DRAIN, WORDING_HOSPITABLE_CELL: WORDING_HOSPITABLE_DRAIN,
+		WORDING_FAIR_CELL: WORDING_FAIR_DRAIN})
+	# HARSH ground keeps the word, and its recovery line sends the band somewhere better.
+	var harsh: Array[String] = await _wording_read(
+		_wording_band(WORDING_HARSH_CELL, "Karst Cavern Mouth", DetailFormat.MORALE_CAUSE_TERRAIN))
+	h._assert_hud("a band on Harsh ground reads `harsh terrain (Karst Cavern Mouth)` in the headline",
+		harsh[0].contains("harsh terrain (Karst Cavern Mouth)"))
+	h._assert_hud("…and in the breakdown row, with `harsh climate`",
+		harsh[1].contains("harsh terrain (Karst Cavern Mouth)") and harsh[1].contains("harsh climate"))
+	h._assert_hud("…and its recovery line still says move to Hospitable ground",
+		harsh[1].contains(DetailFormat.RECOVERY_GUIDANCE_PREFIX + DetailFormat.RECOVERY_GUIDANCE_MOVE))
+	# HOSPITABLE ground: plain words, no move clause.
+	var hospitable: Array[String] = await _wording_read(
+		_wording_band(WORDING_HOSPITABLE_CELL, "Alluvial Plain", DetailFormat.MORALE_CAUSE_TERRAIN))
+	await h._save("band_morale_hospitable")
+	h._assert_hud("a band on Hospitable ground reads `terrain (Alluvial Plain)` in the headline",
+		hospitable[0].contains("— terrain (Alluvial Plain)"))
+	h._assert_hud("…and never `harsh` in the headline",
+		not hospitable[0].contains(WORDING_HARSH_WORD))
+	h._assert_hud("…its breakdown rows read `terrain (Alluvial Plain)` and `climate`",
+		hospitable[1].contains("terrain (Alluvial Plain)") and hospitable[1].contains("climate"))
+	h._assert_hud("…and never `harsh` in the breakdown",
+		not hospitable[1].contains(WORDING_HARSH_WORD))
+	h._assert_hud("…its recovery line drops the move clause (`%s`)" % WORDING_RECOVER_BARE,
+		hospitable[1].contains(WORDING_RECOVER_BARE) and not hospitable[1].contains(WORDING_HOSPITABLE_WORD))
+	# FAIR ground: plain words, but the move clause stays (only Hospitable ground is already the answer).
+	var fair: Array[String] = await _wording_read(
+		_wording_band(WORDING_FAIR_CELL, "Prairie Steppe", DetailFormat.MORALE_CAUSE_TERRAIN))
+	h._assert_hud("a band on Fair ground reads plain `terrain (Prairie Steppe)`, not harsh",
+		fair[0].contains("— terrain (Prairie Steppe)") and not fair[0].contains(WORDING_HARSH_WORD))
+	h._assert_hud("…and is still told to move to Hospitable ground",
+		fair[1].contains(DetailFormat.RECOVERY_GUIDANCE_MOVE))
+	# NO RATING published: never claim harsh without evidence.
+	var unknown: Array[String] = await _wording_read(
+		_wording_band(WORDING_UNKNOWN_CELL, "Prairie Steppe", DetailFormat.MORALE_CAUSE_TERRAIN))
+	h._assert_hud("a band on a tile with no habitability reads plain, never `harsh`",
+		unknown[0].contains("— terrain (Prairie Steppe)") and not unknown[0].contains(WORDING_HARSH_WORD)
+		and not unknown[1].contains(WORDING_HARSH_WORD))
+	# COHESION cause on Hospitable ground: split, never "move to Hospitable ground".
+	var crowded := _wording_band(WORDING_HOSPITABLE_CELL, "Alluvial Plain", DetailFormat.MORALE_CAUSE_COHESION)
+	crowded["morale_cohesion"] = COHESION_CONTRIB
+	crowded["cohesion_headcount"] = COHESION_HEADCOUNT
+	crowded["cohesion_ceiling"] = COHESION_CEILING
+	var split: Array[String] = await _wording_read(crowded)
+	h._assert_hud("a crowded band's recovery line says `split the band`",
+		split[1].contains(DetailFormat.RECOVERY_GUIDANCE_PREFIX + DetailFormat.RECOVERY_GUIDANCE_SPLIT))
+	h._assert_hud("…and does not send it to Hospitable ground",
+		not split[1].contains(WORDING_HOSPITABLE_WORD))
+	# CULTURE and UNREST name their own lever / none.
+	var culture: Array[String] = await _wording_read(
+		_wording_band(WORDING_HARSH_CELL, "Karst Cavern Mouth", DetailFormat.MORALE_CAUSE_CULTURE))
+	h._assert_hud("a band far from its ancestors is told to return to them",
+		culture[1].contains(DetailFormat.RECOVERY_GUIDANCE_ANCESTORS))
+	var unrest: Array[String] = await _wording_read(
+		_wording_band(WORDING_HARSH_CELL, "Karst Cavern Mouth", DetailFormat.MORALE_CAUSE_UNREST))
+	h._assert_hud("an unrest band is told only the generic levers",
+		unrest[1].contains(WORDING_RECOVER_BARE) and not unrest[1].contains(WORDING_HOSPITABLE_WORD))
+	h._hud.update_tile_habitability({})
 
 ## Rendered lines the breakdown popover wraps beyond its logical ones.
 func _popover_extra_wrapped_lines() -> int:

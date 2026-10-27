@@ -566,8 +566,14 @@ which is a property of the tier and not of the merge.
   symptom, not the cause — the morale drivers live server-side and were discarded each turn until the
   cohort started exporting the per-turn trend + dominant negative driver. `Hud._band_morale_line` appends
   a trend arrow (`▼` falling / `▲` rising / none when `|morale_delta| < MORALE_TREND_EPSILON`) and, when
-  falling, the plain-language cause via `_morale_cause_label` — `Terrain`→"harsh terrain", `Cold`→"harsh
-  climate" (the server penalty fires on hot **or** cold deviation, so not literally "cold"),
+  falling, the plain-language cause via `_morale_cause_label` — `Terrain`→"harsh terrain" / `Cold`→"harsh
+  climate" **only when the tile the BAND stands on rates Harsh or Hostile** (`TileHabitability`, the tile card's
+  own authority; `DetailFormat.rating_is_harsh`), else the plain "terrain" / "climate" — the sim drains a little
+  morale on almost every terrain, so a Hospitable/Fair/unknown-rating tile never reads "harsh". The rating
+  reaches the producers as `terrain_rating` (`HudBandLaborState.terrain_rating_at(current_x, current_y)`, fed by
+  `MapView.tile_habitability` via `Hud.update_tile_habitability`); `BandDetailLines.unit_summary_lines`
+  takes it as a trailing parameter from both hosts, `FactionRollup` and `AttentionController._decline_reason`
+  resolve it per band. Wording below ("harsh terrain") is the Harsh/Hostile form (the server penalty fires on hot **or** cold deviation, so not literally "cold"),
   `Unrest`→"unrest", `Cohesion`→"too many to hold together" (`DetailFormat.MORALE_CAUSE_COHESION` / `MORALE_CAUSE_LABEL_COHESION`: the band's head-count exceeds its cohesion ceiling), `Culture`→"far from the ancestors" (`DetailFormat.MORALE_CAUSE_CULTURE` /
   `MORALE_CAUSE_LABEL_CULTURE`: the band stands beyond walking reach of the belief place it remembers).
   Every surface that names a cause — this headline, the faction morale rollup, the turn orb's
@@ -606,8 +612,8 @@ which is a property of the tier and not of the merge.
   - **Itemized morale breakdown** (`_morale_breakdown_lines`): the six signed contributions
     (their sum IS `morale_delta`) as indented sub-lines (e.g. `    ▲ +1.0%  settling`). Only
     contributions above `BandFoodStatus.morale_breakdown_epsilon()` (config `morale.breakdown_epsilon`
-    = `0.002`) list. Labels: `settling`, `harsh terrain (<terrain_label>)` (matches the headline cause
-    treatment), `harsh climate`, `unrest`/`culture` by sign, and the culture term `morale_culture` as
+    = `0.002`) list. Labels: `settling`, `terrain (<terrain_label>)` / `climate`, each prefixed `harsh` on Harsh/Hostile ground (matches the headline cause
+    treatment), `unrest`/`culture` by sign, and the culture term `morale_culture` as
     `near the ancestors` (positive, `BandDetailLines.MORALE_CONTRIB_LABEL_ANCESTORS_NEAR`) / `far from
     the ancestors (x, y)` (negative, `DetailFormat.MORALE_CAUSE_LABEL_CULTURE` plus the band's belief
     anchor in the `Position` row's coordinate form, `MORALE_CONTRIB_ANCESTORS_FAR_FORMAT`, read off
@@ -641,10 +647,14 @@ which is a property of the tier and not of the merge.
     anchor tile), so the row wraps to at most one extra line in the popover. A band publishing no
     head-count (`cohesion_headcount` 0) gets the bare `too many to hold together`; a band at zero cohesion
     term draws no row, under the same epsilon.
-  - **Recovery guidance** (`RECOVERY_GUIDANCE_TEXT`): a dim `↑ Recover: move to Hospitable ground ·
-    Scout · Hunt` line (the real levers, NOT harvest), appended under the breakdown **only when
-    morale is concerning** (a healthy band that manually expands its breakdown is not told to
-    "recover"). `_split_detail_kv` skips lines beginning with `↑` so it renders as a dim sentence.
+  - **Recovery guidance** (`DetailFormat.recovery_guidance_text(cause, terrain_rating)`): a dim line
+    beginning with `RECOVERY_GUIDANCE_GLYPH` (`↑`), appended under the breakdown **only when morale is
+    concerning**. The lever follows the dominant `morale_cause`: Cohesion → `↑ Recover: split the band · Scout ·
+    Hunt`; Terrain/Cold → `… move to Hospitable ground · Scout · Hunt`, dropping the move clause when the
+    band's tile already rates Hospitable (Fair keeps it); Culture → `… return to your ancestors · …`;
+    Unrest/None → `↑ Recover: Scout · Hunt`. Built from `RECOVERY_GUIDANCE_PREFIX` + lever + `_TAIL` consts so
+    the "text begins with the glyph" invariant holds. `_split_detail_kv` skips lines beginning with `↑` so it
+    renders as a dim sentence. ui_preview: `_morale_wording_states` (`band_morale_hospitable`).
   - **Growth row + itemized fertility breakdown** (`_band_growth_line` / `_fertility_breakdown_lines`;
     snapshot `PopulationCohortState.fertilityHunger`/`fertilityReserve`/`fertilityTrend`, decoded in
     `native/src/dict/population.rs cohort_scalars` as `fertility_hunger`/`fertility_reserve`/

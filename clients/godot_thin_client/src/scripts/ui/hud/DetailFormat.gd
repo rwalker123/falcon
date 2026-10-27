@@ -67,6 +67,13 @@ const MORALE_CAUSE_COHESION := 5
 # Cold reads "harsh climate" because the server penalty fires on hot OR cold deviation.
 const MORALE_CAUSE_LABEL_TERRAIN := "harsh terrain"
 
+# The plain wordings, used when the band's tile does NOT rate Harsh/Hostile (or has no rating): the sim
+# drains a little morale on almost every terrain, so "harsh" is claimed only where `TileHabitability`
+# says so — the same authority the tile card's Habitability row reads.
+const MORALE_CAUSE_LABEL_TERRAIN_PLAIN := "terrain"
+
+const MORALE_CAUSE_LABEL_COLD_PLAIN := "climate"
+
 const MORALE_CAUSE_LABEL_COLD := "harsh climate"
 
 const MORALE_CAUSE_LABEL_UNREST := "unrest"
@@ -887,7 +894,31 @@ const OVERGRAZING_WARNING := "%s Overgrazing — range can't sustain this herd" 
 # emits. They are one invariant ("the text begins with the glyph"), so it is spelled structurally here
 # rather than as two literals that could drift.
 const RECOVERY_GUIDANCE_GLYPH := "↑"
-const RECOVERY_GUIDANCE_TEXT := RECOVERY_GUIDANCE_GLYPH + " Recover: move to Hospitable ground · Scout · Hunt"
+const RECOVERY_GUIDANCE_PREFIX := RECOVERY_GUIDANCE_GLYPH + " Recover: "
+const RECOVERY_GUIDANCE_TAIL := "Scout · Hunt"
+const RECOVERY_GUIDANCE_MOVE := "move to Hospitable ground · "
+const RECOVERY_GUIDANCE_SPLIT := "split the band · "
+const RECOVERY_GUIDANCE_ANCESTORS := "return to your ancestors · "
+
+## The recovery line for the band's DOMINANT cause (`morale_cause`): the lever that answers THAT cause,
+## so a band crowded past its cohesion ceiling is told to split rather than to move, and a band already
+## on Hospitable ground is never told to go there. Unrest / None / unknown name only the generic levers.
+## Always begins with `RECOVERY_GUIDANCE_GLYPH` (the tint registry keys on it).
+static func recovery_guidance_text(cause: int, terrain_rating: String = "") -> String:
+    var lever := ""
+    match cause:
+        MORALE_CAUSE_COHESION:
+            lever = RECOVERY_GUIDANCE_SPLIT
+        MORALE_CAUSE_TERRAIN, MORALE_CAUSE_COLD:
+            if terrain_rating != TileHabitability.RATING_HOSPITABLE:
+                lever = RECOVERY_GUIDANCE_MOVE
+        MORALE_CAUSE_CULTURE:
+            lever = RECOVERY_GUIDANCE_ANCESTORS
+    return RECOVERY_GUIDANCE_PREFIX + lever + RECOVERY_GUIDANCE_TAIL
+
+## Whether a `TileHabitability` rating justifies the word "harsh". Unknown ("") is NOT harsh.
+static func rating_is_harsh(terrain_rating: String) -> bool:
+    return terrain_rating == TileHabitability.RATING_HARSH or terrain_rating == TileHabitability.RATING_HOSTILE
 
 # ---- Expedition row vocabulary (the `expedition_*` producers below are the only readers).
 # The click affordance on an Active-expeditions row (the whole row is the button there).
@@ -3137,12 +3168,16 @@ static func ancestors_line(tile_info: Dictionary) -> String:
 
 ## Plain-language label for a morale cause (0=None,1=Terrain,2=Cold,3=Unrest,4=Culture,5=Cohesion); "" for None or
 ## unknown. Shared by the drawer morale line and the losing-population alert reason.
-static func morale_cause_label(cause: int) -> String:
+## `terrain_rating` is the `TileHabitability` rating of the tile the band stands on; "harsh" is claimed
+## only for Harsh/Hostile, and the default "" (unknown) reads plain.
+static func morale_cause_label(cause: int, terrain_rating: String = "") -> String:
     match cause:
         DetailFormat.MORALE_CAUSE_TERRAIN:
-            return DetailFormat.MORALE_CAUSE_LABEL_TERRAIN
+            return DetailFormat.MORALE_CAUSE_LABEL_TERRAIN if rating_is_harsh(terrain_rating) \
+                else DetailFormat.MORALE_CAUSE_LABEL_TERRAIN_PLAIN
         DetailFormat.MORALE_CAUSE_COLD:
-            return DetailFormat.MORALE_CAUSE_LABEL_COLD
+            return DetailFormat.MORALE_CAUSE_LABEL_COLD if rating_is_harsh(terrain_rating) \
+                else DetailFormat.MORALE_CAUSE_LABEL_COLD_PLAIN
         DetailFormat.MORALE_CAUSE_UNREST:
             return DetailFormat.MORALE_CAUSE_LABEL_UNREST
         DetailFormat.MORALE_CAUSE_CULTURE:

@@ -358,12 +358,15 @@ func _herd_label_for_id(herd_id: String) -> String:
 ## position is nearly all we can honestly observe, and it has no header to carry it — so it keeps the
 ## row and this defaults true. **Deliberately its own parameter and NOT keyed off `compact`**, which
 ## is the band zone's HEIGHT TIER: the dock drops this row in every tier, tall or short.
+## `terrain_rating` is the `TileHabitability` rating of the tile the BAND stands on, host-resolved
+## (`HudBandLaborState.terrain_rating_at`) like `terrain_label`; "" = unknown. It decides whether the
+## morale cause says "harsh" and whether the recovery line offers a move. Defaults unknown.
 ## `denial_view` is carried straight through to `expedition_summary_lines` — a party selected on the map
 ## renders through THIS entry point, so the drawer host answers the same query the dock's parties strip
 ## does. See that producer for why the answer is a parameter.
 func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         ctx: DetailFormat.Context = null, compact: bool = false,
-        with_position: bool = true, denial_view: Dictionary = {}) -> Array[String]:
+        with_position: bool = true, denial_view: Dictionary = {}, terrain_rating: String = "") -> Array[String]:
     # The tint context is an OUT-PARAMETER of this producer, not a member: the caller (each of the two
     # detail hosts) builds it and hands it straight to the formatter. Defaulted so the preview
     # harnesses can still ask for the lines alone.
@@ -468,7 +471,7 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         # run, which does not exist until `register` has recorded its caret state. So the morale line
         # is held rather than appended, both disclosures are registered, and only then does the tier
         # decide whether this is one line or two.
-        var morale_line := _band_morale_line(unit_data, terrain_label, context, compact)
+        var morale_line := _band_morale_line(unit_data, terrain_label, context, compact, terrain_rating)
         # **NO `Output:` ROW.** Productivity ties visibly to morale, but the multiplier's CONSEQUENCE
         # is the work board: every rate the WORK zone shows is already scaled by it. So it renders as
         # an item of that zone's head (`BandPanelController._build_work_head`), under the same
@@ -477,7 +480,7 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         # Only offered when there's actually a breakdown to show (a contribution above the epsilon, or
         # the concerning recovery line) — `register` declines an empty payload.
         _disclosures.register(HudDisclosureVocab.DETAIL_ROW_MORALE, HudDisclosureVocab.BREAKDOWN_KIND_MORALE, unit_data,
-            _morale_breakdown_lines(unit_data, terrain_label))
+            _morale_breakdown_lines(unit_data, terrain_label, terrain_rating))
         # Growth: the birth path's parallel of the morale cluster above — a headline row plus the
         # SAME click-to-open disclosure, itemizing the three named fertility factors. The player
         # could already see both the inputs (Food, larder) and the effect (the People bar); this is
@@ -889,7 +892,7 @@ func _band_food_line(unit_data: Dictionary, ctx: DetailFormat.Context, merge_fod
 ## the row degrades to a bare percentage.
 ## Stashes morale on the render context so `DetailFormat.detail_bbcode` tints the value.
 func _band_morale_line(unit_data: Dictionary, terrain_label: String, ctx: DetailFormat.Context,
-        compact: bool = false) -> String:
+        compact: bool = false, terrain_rating: String = "") -> String:
     var morale: float = float(unit_data.get("morale", 1.0))
     ctx.morale = morale
     var text := "Morale: %d%%" % int(round(morale * 100.0))
@@ -908,7 +911,7 @@ func _band_morale_line(unit_data: Dictionary, terrain_label: String, ctx: Detail
         # caret opens, which is what makes it the clause that yields rather than the merge.
         if morale < BandFoodStatus.warn_morale() and not compact:
             var cause := int(unit_data.get("morale_cause", DetailFormat.MORALE_CAUSE_NONE))
-            var cause_label := DetailFormat.morale_cause_label(cause)
+            var cause_label := DetailFormat.morale_cause_label(cause, terrain_rating)
             if cause_label != "":
                 if cause == DetailFormat.MORALE_CAUSE_TERRAIN and terrain_label != "":
                     cause_label = "%s (%s)" % [cause_label, terrain_label]
@@ -1249,18 +1252,21 @@ func _belief_relay_hops(unit_data: Dictionary) -> int:
 ## contributions always compute so the row can be manually opened in the good state; the
 ## recovery-guidance line is appended ONLY when morale is concerning (don't tell a healthy band to
 ## "recover"). Returns [] when there is nothing to disclose (no contribution + not concerning).
-func _morale_breakdown_lines(unit_data: Dictionary, terrain_label: String) -> Array[String]:
+func _morale_breakdown_lines(unit_data: Dictionary, terrain_label: String, terrain_rating: String = "") -> Array[String]:
     var lines: Array[String] = []
-    var terrain_row_label := DetailFormat.MORALE_CAUSE_LABEL_TERRAIN
+    var harsh := DetailFormat.rating_is_harsh(terrain_rating)
+    var terrain_word := DetailFormat.MORALE_CAUSE_LABEL_TERRAIN if harsh else DetailFormat.MORALE_CAUSE_LABEL_TERRAIN_PLAIN
+    var climate_word := DetailFormat.MORALE_CAUSE_LABEL_COLD if harsh else DetailFormat.MORALE_CAUSE_LABEL_COLD_PLAIN
+    var terrain_row_label := terrain_word
     if terrain_label != "":
-        terrain_row_label = "%s (%s)" % [DetailFormat.MORALE_CAUSE_LABEL_TERRAIN, terrain_label]
+        terrain_row_label = "%s (%s)" % [terrain_word, terrain_label]
     var unrest_value := float(unit_data.get("morale_unrest", 0.0))
     var culture_value := float(unit_data.get("morale_culture", 0.0))
     # (value, label) in the display order of the spec: settling, terrain, climate, unrest, culture.
     var contributions := [
         [float(unit_data.get("morale_settling", 0.0)), MORALE_CONTRIB_LABEL_SETTLING],
         [float(unit_data.get("morale_terrain", 0.0)), terrain_row_label],
-        [float(unit_data.get("morale_climate", 0.0)), DetailFormat.MORALE_CAUSE_LABEL_COLD],
+        [float(unit_data.get("morale_climate", 0.0)), climate_word],
         [unrest_value, MORALE_CONTRIB_LABEL_CULTURE if unrest_value > 0.0 else DetailFormat.MORALE_CAUSE_LABEL_UNREST],
         [culture_value, _ancestors_near_label(unit_data) if culture_value > 0.0 else _ancestors_far_label(unit_data)],
         [float(unit_data.get("morale_cohesion", 0.0)), _cohesion_label(unit_data)],
@@ -1277,6 +1283,7 @@ func _morale_breakdown_lines(unit_data: Dictionary, terrain_label: String) -> Ar
         ])
     # Recovery guidance is a "you have a problem" prompt — only when concerning.
     if DetailFormat.morale_is_concerning(unit_data):
-        lines.append(DetailFormat.RECOVERY_GUIDANCE_TEXT)
+        lines.append(DetailFormat.recovery_guidance_text(
+            int(unit_data.get("morale_cause", DetailFormat.MORALE_CAUSE_NONE)), terrain_rating))
     return lines
 

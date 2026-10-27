@@ -936,6 +936,23 @@ func set_tile_beliefs(beliefs_variant: Variant) -> void:
 func tile_belief_at(x: int, y: int) -> float:
 	return float(_tile_belief.get(Vector2i(x, y), 0.0))
 
+## Per-tile habitability drain (`MapView.tile_habitability` forwarded, same precedent as temperature).
+var _tile_habitability: Dictionary = {}
+
+func set_tile_habitability(habitability_variant: Variant) -> void:
+	if not (habitability_variant is Dictionary):
+		return
+	_tile_habitability = habitability_variant
+	changed.emit(&"tile_habitability")
+
+## The `TileHabitability` rating of a tile, or "" when the world publishes no habitability there —
+## unknown, which callers must treat as NOT harsh. The bucket is `TileHabitability`'s alone.
+func terrain_rating_at(x: int, y: int) -> String:
+	var key := Vector2i(x, y)
+	if not _tile_habitability.has(key):
+		return ""
+	return TileHabitability.rating_for(float(_tile_habitability[key]))
+
 func set_tile_temperatures(temperatures_variant: Variant) -> void:
 	if not (temperatures_variant is Dictionary):
 		return
