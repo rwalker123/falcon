@@ -378,8 +378,7 @@ static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: b
 ## source. `0` is "no max" and reads `No max`; the `−` is greyed there (there is nothing lower) and the
 ## `+` greys at `upper`, the band's working-age people. `on_change` fires with the new Max. The buttons
 ## carry the aria names `Lower the max` / `Raise the max`. `floor_workers` is the lowest count the stepper
-## offers (default 0 = `No max`); a dig crew passes 1, so `No max` is never drawn and `−` greys at 1.
-## Returns the value `Label`.
+## offers (default 0 = `No max`); a tile crew passes 1, so `−` greys at 1. Returns the value `Label`.
 static func add_max_stepper(row: HBoxContainer, max_workers: int, upper: int,
         on_change: Callable, compact_chrome: bool = false, floor_workers: int = 0) -> Label:
     var minus := Button.new()
@@ -449,6 +448,41 @@ static func add_range_stepper(row: HBoxContainer, value_tiles: int, upper: int,
         plus.set("accessibility_name", HudWorkVocab.SCOUT_RANGE_FARTHER_ARIA)
     plus.pressed.connect(func() -> void:
         on_change.call(mini(value_tiles + HudConst.WORKER_STEP, maxi(upper, 0))))
+    row.add_child(plus)
+    return value
+
+## **THE KEEP-ON-HAND STEPPER** (#874) - `-`, the target (`None` at 0), `+`, stepping by
+## `HudKeepVocab.KEEP_STEP` and never below 0. It is the ONLY control that changes a mined material's
+## target. Returns the value `Label`.
+static func add_keep_stepper(row: HBoxContainer, target: int, material_word: String,
+        on_change: Callable) -> Label:
+    var lower_aria := HudKeepVocab.KEEP_STEPPER_LOWER_ARIA % material_word
+    var raise_aria := HudKeepVocab.KEEP_STEPPER_RAISE_ARIA % material_word
+    var minus := Button.new()
+    minus.text = HudWorkVocab.STEPPER_MINUS_FACE
+    minus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
+    HudStyle.apply_button(minus, "ghost")
+    minus.disabled = target <= 0
+    minus.tooltip_text = lower_aria
+    if "accessibility_name" in minus:
+        minus.set("accessibility_name", lower_aria)
+    minus.pressed.connect(func() -> void: on_change.call(maxi(target - HudKeepVocab.KEEP_STEP, 0)))
+    row.add_child(minus)
+    var value := Label.new()
+    value.text = HudKeepVocab.target_face(target)
+    value.custom_minimum_size = Vector2(HudKeepVocab.KEEP_STEPPER_VALUE_WIDTH, 0)
+    value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    value.add_theme_color_override("font_color", HudStyle.INK if target > 0 else HudStyle.INK_FAINT)
+    value.set_meta(HudKeepVocab.SHEET_TARGET_META, target)
+    row.add_child(value)
+    var plus := Button.new()
+    plus.text = HudWorkVocab.STEPPER_PLUS_FACE
+    plus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
+    HudStyle.apply_button(plus, "ghost")
+    plus.tooltip_text = raise_aria
+    if "accessibility_name" in plus:
+        plus.set("accessibility_name", raise_aria)
+    plus.pressed.connect(func() -> void: on_change.call(target + HudKeepVocab.KEEP_STEP))
     row.add_child(plus)
     return value
 

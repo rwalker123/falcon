@@ -68,6 +68,7 @@ const RUNG_FX := preload("res://tools/ui_preview/fixtures_rung.gd")
 const TRADE_TAB_STATES := preload("res://tools/band_panel_trade_tab.gd")
 ## The Family limit row and the split sheet's FAMILY LIMIT block (issue #691), in their own file.
 const FAMILY_LIMIT_STATES := preload("res://tools/band_panel_family_limit.gd")
+const KEEP_ON_HAND_STATES := preload("res://tools/band_panel_keep_on_hand.gd")
 ## The hex `_band_fixture()` stands on — the tile the map-path state clicks.
 const MAP_PATH_TILE := Vector2i(71, 18)
 ## A grid just large enough to hold MAP_PATH_TILE, and one flat terrain id to fill it with.
@@ -2573,6 +2574,7 @@ func _ready() -> void:
 	await _settle()
 	await _assert_the_roadwork_roster_names_its_roads()
 	await _assert_the_workings_roster_names_its_workings()
+	await KEEP_ON_HAND_STATES.new().run(self)
 
 	# The pen's refusal by viewing band and the underfed pen's warning on its Work row.
 	_assert_pen_taken_refusal_by_viewing_band()
@@ -16341,10 +16343,14 @@ func _assert_the_pick_names_the_working() -> void:
 ## this gate every rung refuses with nothing anywhere near the card saying why — the defect the gate
 ## records exist to prevent.
 ##
-## The FAR row is the fixture's own crewless working (`WORKINGS_NO_CUTTERS`), staged there since the
-## roster's membership test needed a row held at nobody.
+## The row is the keep-on-hand order's dig row staffed at nobody (`_workings_band_fixture`'s `dig_crew` 0).
 func _assert_a_crewless_working_says_so() -> void:
-	var wanted := "%d,%d:%s" % [ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y, WORKINGS_STONE]
+	# **THE CREWLESS ROCK IS THE `Nobody free to dig` STATE** (#874): the dig row stands at its site with
+	# no hands on it, which is the only way a mined material is ever held at nobody.
+	_push_bands([_workings_band_fixture(WORKINGS_DEMAND, 0)])
+	_hud._bandpanel.rerender()
+	await _settle()
+	var wanted := "%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_STONE]
 	var mark: Button = null
 	for control in _workings_marks():
 		if String(control.get_meta(WORKINGS_MARK_KEY_META)) == wanted \
@@ -16414,7 +16420,7 @@ func _assert_a_working_can_be_put_down() -> void:
 		rows.size() == 3)
 	if rows.size() != 3:
 		return
-	var walked := rows[1]
+	var walked := rows[0]
 	var wanted_key := "%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_WOOD]
 	_assert_band_panel("precondition: the middle row is the walked-away wood (%s)" % wanted_key,
 		String(walked.get_meta(HudWorkVocab.WORKINGS_ROSTER_ROW_META)) == wanted_key)
@@ -16515,8 +16521,8 @@ func _walked_away_band_fixture() -> Dictionary:
 ## both ways at once: the wood row's `coppice` is craft-refused and wears no mark, while the two rock
 ## rows' `quarry` is clear and both do.
 ##
-## ⛔ **AND THE FAR ROCK IS THE CREW-GATE CASE, ON THIS SAME BOARD.** It is held at
-## `WORKINGS_NO_CUTTERS`, so its every rung is refused for want of a crew — and it MUST still wear the
+## ⛔ **AND THE CREWLESS DIG ROW IS THE CREW-GATE CASE, ON THIS SAME BOARD.** It is staffed at nobody
+## (`dig_crew` 0), so its every rung is refused for want of a crew — and it MUST still wear the
 ## mark, because the card it opens is the one surface that names the missing diggers. A predicate that
 ## forgave nothing would drop it, which is a different lie from the one Ray reported and reads the same
 ## on a thumbnail.
@@ -16549,7 +16555,6 @@ func _assert_the_mark_needs_a_pressable_rung() -> void:
 		marked.append(String(control.get_meta(WORKINGS_MARK_KEY_META)))
 	var wood_key := "%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_WOOD]
 	var near_rock := "%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_STONE]
-	var far_rock := "%d,%d:%s" % [ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y, WORKINGS_STONE]
 	# ⛔ **THE PRECONDITION THAT MAKES THE ABSENCE MEAN THE CRAFT.** The wood row's next rung must
 	# really be refused, and refused on its CRAFT rather than on the crew or the ground — otherwise the
 	# missing mark is evidence of a predicate that answers nothing.
@@ -16578,12 +16583,20 @@ func _assert_the_mark_needs_a_pressable_rung() -> void:
 	# ⛔ **AND THE CREW REFUSAL IS FORGIVEN, which is the one gate with no counterpart on the other two
 	# webs.** The far rock is held at nobody and the card is where that is stated, so withholding the
 	# mark for it would hide the remedy rather than an unavailable act.
-	_assert_band_panel(("…and a working held at NOBODY keeps its mark, the crew being the one refusal "
-			+ "the card itself names (%s of %s)") % [far_rock, marked],
-		marked.has(far_rock))
-	_assert_band_panel("…so the craft-gated board carries exactly TWO marks (got %d: %s)"
+	_assert_band_panel("…so the craft-gated board carries exactly ONE mark, the rock's (got %d: %s)"
 			% [marked.size(), marked],
-		marked.size() == 2)
+		marked.size() == 1)
+	# ⛔ **AND THE CREW REFUSAL IS FORGIVEN ON THE SAME BOARD** - the dig row staffed at NOBODY (`Nobody free to
+	# dig`) keeps its mark, the crew being the one refusal the card itself names.
+	_push_bands([_workings_band_fixture(WORKINGS_DEMAND, 0)])
+	_hud._bandpanel.rerender()
+	await _settle()
+	var marked_crewless: Array = []
+	for control in _workings_marks():
+		marked_crewless.append(String(control.get_meta(WORKINGS_MARK_KEY_META)))
+	_assert_band_panel(("…and a rock held at NOBODY keeps its mark, the crew being the one refusal "
+			+ "the card itself names (%s of %s)") % [near_rock, marked_crewless],
+		marked_crewless.has(near_rock) and not marked_crewless.has(wood_key))
 	# **THE CRAFTS GO BACK**, so the states after this one run against the block's own full row — the
 	# `_restore_workings_roster_fixture` idiom, applied at the state that narrowed them.
 	_hud.update_intensification([_workings_knowledge_row()])
@@ -16649,8 +16662,12 @@ const WORKINGS_NO_CUTTERS := 0
 ## The name cells, material-led. `_roadwork_roster_locator` supplies the tail verbatim, so a bearing
 ## that drifted would fail both rosters rather than only one.
 const WORKINGS_NEAR_WOOD_NAME := "Wood · 1 tile E"
-const WORKINGS_NEAR_STONE_NAME := "Stone · 1 tile E"
-const WORKINGS_FAR_NAME := "Stone · 6 tiles N"
+const WORKINGS_FAR_NAME := "Wood · 6 tiles N"
+const WORKINGS_DIG_NAME := "Dig stone"
+## The stone order the roster band carries (#874): a pile below its target, one tile from camp.
+const WORKINGS_KEEP_TARGET := 60
+const WORKINGS_KEEP_ON_HAND := 42
+const WORKINGS_KEEP_DRAW := 1.0
 
 ## One working row, shaped exactly as `native/src/dict/deposits.rs` writes one — the `(tile, material)`
 ## pair is its identity, and every derived number is read live off the tile sim-side.
@@ -16791,7 +16808,9 @@ const WORKINGS_QUARRY_MIN_CAPACITY := 100.0
 func _workings_rows() -> Array:
 	return [
 		# Deliberately NOT in distance order on the wire, so the sort is doing work.
-		_workings_row(ROSTER_FAR_TILE, WORKINGS_STONE, false, WORKINGS_STONE_TAKE),
+		# The FAR working is wood: stone is a MINED material (#874), kept on hand through ONE `Dig stone`
+		# row at the game's picked site, so a far per-site stone row is a state no band can hold.
+		_workings_row(ROSTER_FAR_TILE, WORKINGS_WOOD, true, WORKINGS_WOOD_TAKE),
 		_workings_row(ROSTER_NEAR_TILE, WORKINGS_STONE, false, WORKINGS_STONE_TAKE),
 		_workings_row(ROSTER_NEAR_TILE, WORKINGS_WOOD, true, WORKINGS_WOOD_TAKE),
 		# **THE NEGATIVE**: a real working this band works not at all.
@@ -16800,7 +16819,7 @@ func _workings_rows() -> Array:
 		# stone — so a membership test keyed on the tile rather than on `(tile, material)` lists it;
 		# the second is ground nobody has ever touched, which is what the section is now mostly made
 		# of and what a roster reading the deposit list rather than the band's own rows would draw.
-		_unopened_workings_row(ROSTER_FAR_TILE, WORKINGS_WOOD, true),
+		_unopened_workings_row(ROSTER_FAR_TILE, WORKINGS_STONE, false),
 		_unopened_workings_row(ROSTER_MID_TILE, WORKINGS_STONE, false),
 	]
 
@@ -16810,13 +16829,14 @@ func _workings_rows() -> Array:
 ## omitting it stages an assignment `LaborTarget::Extract` cannot produce — the roster would then find
 ## no working at all and every claim below would pass as an absence.
 
-func _workings_band_fixture(demand: float) -> Dictionary:
+## `dig_crew` is the sim-owned stone dig row's staffed crew (kitted + bare); `0` is the `Nobody free to
+## dig` state, the one a mined material has for a working held at nobody.
+func _workings_band_fixture(demand: float, dig_crew: int = WORKINGS_CUTTERS) -> Dictionary:
 	var band := _band_fixture()
 	var rows: Array = band["labor_assignments"]
 	if demand > 0.0:
 		for held in [[ROSTER_NEAR_TILE, WORKINGS_WOOD, WORKINGS_CUTTERS],
-				[ROSTER_NEAR_TILE, WORKINGS_STONE, WORKINGS_CUTTERS],
-				[ROSTER_FAR_TILE, WORKINGS_STONE, WORKINGS_NO_CUTTERS]]:
+				[ROSTER_FAR_TILE, WORKINGS_WOOD, WORKINGS_NO_CUTTERS]]:
 			var tile: Vector2i = held[0]
 			# A crewed row carries what it took last turn — `material_yield`, the wire's own shape —
 			# so the GROUNDWORK row's yield line has a take to state.
@@ -16829,6 +16849,23 @@ func _workings_band_fixture(demand: float) -> Dictionary:
 				"material_yield": [{"material_id": String(held[1]),
 					"amount": WORKINGS_CREW_TAKE}] if crewed else [],
 			})
+		# **THE STONE ORDER, AS THE SIM PUBLISHES IT**: a `keep_on_hand` entry (site one tile out, pile
+		# below target) and the sim-owned dig row at that site, crewed with one kitted and one bare hand.
+		band["material_store"] = [{"material_id": WORKINGS_STONE, "amount": float(WORKINGS_KEEP_ON_HAND)}]
+		band["keep_on_hand"] = [{
+			"material": WORKINGS_STONE, "target": WORKINGS_KEEP_TARGET, "priority": "normal",
+			"draw": WORKINGS_KEEP_DRAW, "has_site": true,
+			"site_x": ROSTER_NEAR_TILE.x, "site_y": ROSTER_NEAR_TILE.y,
+		}]
+		rows.append({
+			"kind": HudConst.LABOR_KIND_EXTRACT, "workers": dig_crew,
+			"target_x": ROSTER_NEAR_TILE.x, "target_y": ROSTER_NEAR_TILE.y, "fauna_id": "",
+			"material": WORKINGS_STONE, "has_yield": dig_crew > 0,
+			"material_yield": [{"material_id": WORKINGS_STONE, "amount": WORKINGS_CREW_TAKE}] \
+				if dig_crew > 0 else [],
+			"keepers_staffed": 0, "kitted_staffed": mini(dig_crew, 1), "bare_staffed": maxi(dig_crew - 1, 0),
+			"hold_crew": mini(dig_crew, 1), "reach_crew": dig_crew,
+		})
 	return band
 
 ## What a crewed working's row took last turn, in its own material.
@@ -16861,7 +16898,8 @@ const WORKINGS_WORN_ROOM := 11.0
 ## **THE SIM'S GEARED CAP ON EACH ROW** (`LaborAssignment.usefulCutters`) — the smallest crew whose
 ## geared take reaches the curve's best. Both sit BELOW the bare quotient of the room above, which is
 ## the shape that tells the two ceilings apart; asserted as a premise rather than trusted.
-const WORKINGS_WORN_USEFUL := {WORKINGS_WOOD: 3, WORKINGS_STONE: 2}
+## Keyed by the wood's hex (`near` / `far`) - stone is a mined material and has no crew ceiling (#874).
+const WORKINGS_WORN_USEFUL := {&"near": 3, &"far": 2}
 
 ## The hands beyond what that ground can use. Added to the SHIPPED cap rather than typed as a crew,
 ## for `CAP_DEMO_WASTED_EXTRA`'s reason.
@@ -16873,26 +16911,28 @@ const WORKINGS_WASTED_HANDS := 2
 ## wood HARDER than it grows, which is §7's over-cut warning — and a row wearing `⚠ overdrawing` AND
 ## `⚠ overstaffed` would leave the clause under test sharing its line with another, so the claim could
 ## not say which mark the renderer put there.
-func _worn_workings_row(material: String) -> Dictionary:
-	var renews := material == WORKINGS_WOOD
-	var row := _workings_row(ROSTER_NEAR_TILE, material, renews,
-		WORKINGS_WOOD_SUSTAINABLE if renews else WORKINGS_STONE_TAKE)
+func _worn_workings_row(tile: Vector2i) -> Dictionary:
+	var row := _workings_row(tile, WORKINGS_WOOD, true, WORKINGS_WOOD_SUSTAINABLE)
 	row["per_worker_biomass"] = WORKINGS_WORN_PER_WORKER
 	row["stock"] = HudDepositVocab.composed_floor(row, SourceForecast.DEFAULT_HARVEST_FLOOR) \
 		* float(row["capacity"]) + WORKINGS_WORN_ROOM
 	row["reachable"] = WORKINGS_WORN_ROOM
 	return row
 
-## **THE PUBLISHED CEILING FOR ONE OF THEM** — what the band's `extract` row carries on the wire.
-func _worn_workings_cap(material: String) -> int:
-	return int(WORKINGS_WORN_USEFUL[material])
+## Which of the pair a hex is: the near wood is over-crewed, the far one sits exactly on its ceiling.
+func _worn_workings_key(tile: Vector2i) -> StringName:
+	return &"near" if tile == ROSTER_NEAR_TILE else &"far"
 
-## **THE BARE QUOTIENT THE ROSTER USED TO MEASURE AGAINST** — the room above the floor an `extract`
+## **THE PUBLISHED CEILING FOR ONE OF THEM** - what the band's `extract` row carries on the wire.
+func _worn_workings_cap(tile: Vector2i) -> int:
+	return int(WORKINGS_WORN_USEFUL[_worn_workings_key(tile)])
+
+## **THE BARE QUOTIENT THE ROSTER USED TO MEASURE AGAINST** - the room above the floor an `extract`
 ## row with no dial resolves to, over the bare `perWorkerBiomass`, rounded up. The oracle the premise
 ## below checks the published cap against: a fixture where the two agreed could not say which one the
 ## row read.
-func _worn_workings_bare_cap(material: String) -> int:
-	var row := _worn_workings_row(material)
+func _worn_workings_bare_cap(tile: Vector2i) -> int:
+	var row := _worn_workings_row(tile)
 	return ceili(HudDepositVocab.room_next_turn(row, SourceForecast.DEFAULT_HARVEST_FLOOR)
 		/ HudDepositVocab.per_worker_biomass_of(row))
 
@@ -16902,8 +16942,9 @@ func _worn_workings_rows() -> Array:
 	var rows: Array = _workings_rows()
 	for i in range(rows.size()):
 		var row: Dictionary = rows[i]
-		if Vector2i(int(row["tile_x"]), int(row["tile_y"])) == ROSTER_NEAR_TILE:
-			rows[i] = _worn_workings_row(String(row["material"]))
+		var tile := Vector2i(int(row["tile_x"]), int(row["tile_y"]))
+		if String(row["material"]) == WORKINGS_WOOD and (tile == ROSTER_NEAR_TILE or tile == ROSTER_FAR_TILE):
+			rows[i] = _worn_workings_row(tile)
 	return rows
 
 ## …and the band that works them: the WOOD crew past what its stand can use, the STONE crew sitting
@@ -16915,12 +16956,12 @@ func _worn_workings_band_fixture() -> Dictionary:
 		var row: Dictionary = row_variant
 		if String(row.get("kind", "")) != HudConst.LABOR_KIND_EXTRACT:
 			continue
-		if Vector2i(int(row["target_x"]), int(row["target_y"])) != ROSTER_NEAR_TILE:
+		var tile := Vector2i(int(row["target_x"]), int(row["target_y"]))
+		if String(row["material"]) != WORKINGS_WOOD:
 			continue
-		var material := String(row["material"])
-		row["workers"] = _worn_workings_cap(material) \
-			+ (WORKINGS_WASTED_HANDS if material == WORKINGS_WOOD else 0)
-		row[HudDepositVocab.ASSIGNMENT_USEFUL_CUTTERS_KEY] = _worn_workings_cap(material)
+		row["workers"] = _worn_workings_cap(tile) \
+			+ (WORKINGS_WASTED_HANDS if tile == ROSTER_NEAR_TILE else 0)
+		row[HudDepositVocab.ASSIGNMENT_USEFUL_CUTTERS_KEY] = _worn_workings_cap(tile)
 	return band
 
 ## ⛔ **A FAR WORKING REPORTS ITS WORK PARTY, IN ITS OWN MATERIAL — the far forage row's block, one
@@ -16966,7 +17007,7 @@ func _assert_a_far_working_states_its_party() -> void:
 	_push_bands([band])
 	_hud._bandpanel.rerender()
 	await _settle()
-	var far_key := "%d,%d:%s" % [ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y, WORKINGS_STONE]
+	var far_key := "%d,%d:%s" % [ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y, WORKINGS_WOOD]
 	var far_row: Control = null
 	var near_row: Control = null
 	for row in _workings_rows_drawn():
@@ -16983,23 +17024,23 @@ func _assert_a_far_working_states_its_party() -> void:
 		return
 	var hover := _workings_row_tooltip(far_row)
 	var crew_line := HudWorkVocab.WORK_ROW_PARTY_CREW_FORMAT % [FAR_WORKING_PARTY_WORKERS,
-		HudDepositVocab.EXTRACTION_CREW_NOUN.to_lower(), ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y,
+		HudDepositVocab.FORESTRY_CREW_NOUN.to_lower(), ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y,
 		FAR_WORKING_WALK_TILES] + HudWorkVocab.WORK_ROW_PARTY_ON_ROAD_FORMAT % FAR_WORKING_ON_ROAD
 	var next_line := HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_FORMAT % FAR_WORKING_NEXT_LOAD
 	var rate_line := HudWorkVocab.WORK_ROW_PARTY_RATE_HOME_FORMAT % [
-		SourceForecast.format_signed(FAR_WORKING_RATE_HOME), WORKINGS_STONE]
+		SourceForecast.format_signed(FAR_WORKING_RATE_HOME), WORKINGS_WOOD]
 	print("band_panel_preview: far working hover -> %s" % hover.replace("\n", " | "))
 	_assert_band_panel("a far working's hover states its party's crew line (\"%s\")" % crew_line,
 		hover.contains(crew_line))
 	_assert_band_panel("…and when its next load lands (\"%s\")" % next_line,
 		hover.contains(next_line))
-	_assert_band_panel("…and what arrives home IN STONE (\"%s\")" % rate_line,
+	_assert_band_panel("…and what arrives home IN WOOD (\"%s\")" % rate_line,
 		hover.contains(rate_line))
 	_assert_band_panel("…and never calls that figure food",
 		not hover.to_lower().contains("food"))
 	# **THE LOAD LINE IS ON THE ROW, AND A PACK ALREADY ON THE ROAD OWNS THE COUNTDOWN** - `next_load_home_in`
 	# is 2 here, so the line states the load alone rather than a second `home in` figure.
-	var want_load := "8 of 13 stone in the load"
+	var want_load := "8 of 13 wood in the load"
 	var load_node := _find_meta_control(far_row, HudWorkVocab.DIG_LOAD_LINE_META) as Label
 	_assert_band_panel("a far dig row states its load (\"%s\", got \"%s\")"
 			% [want_load, "" if load_node == null else load_node.text],
@@ -17089,13 +17130,13 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 	# would grow by thousands of rows on a revealed map; the membership test is the band's own
 	# `extract` row and neither of these has one. **The PRECONDITION is asserted first** — a fixture
 	# whose "untouched" rows read as ordinary workings would make the negative a claim about nothing.
-	var untouched_here := _unopened_workings_row(ROSTER_FAR_TILE, WORKINGS_WOOD, true)
+	var untouched_here := _unopened_workings_row(ROSTER_FAR_TILE, WORKINGS_STONE, false)
 	var untouched_away := _unopened_workings_row(ROSTER_MID_TILE, WORKINGS_STONE, false)
 	_assert_band_panel("precondition: both untouched rows read as UNOPENED ground",
 		HudDepositVocab.is_unopened(untouched_here)
 			and HudDepositVocab.is_unopened(untouched_away))
 	var untouched_keys: Array = [
-		"%d,%d:%s" % [ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y, WORKINGS_WOOD],
+		"%d,%d:%s" % [ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y, WORKINGS_STONE],
 		"%d,%d:%s" % [ROSTER_MID_TILE.x, ROSTER_MID_TILE.y, WORKINGS_STONE]]
 	_assert_band_panel(("…and never untouched ground, not even on a hex this band DOES hold "
 			+ "(%s not listed, got %s)") % [untouched_keys, keys],
@@ -17112,16 +17153,18 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 		return
 	# **NEAREST FIRST, tie-broken by tile and then by MATERIAL**, so the two rows on one hex cannot
 	# swap frame to frame. `stone` sorts before `wood`.
-	_assert_band_panel("…sorted nearest-first and tie-broken by material (%s)" % [keys],
-		keys == ["%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_STONE],
-			"%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_WOOD],
-			"%d,%d:%s" % [ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y, WORKINGS_STONE]])
+	# **THE MINED MATERIAL'S ONE `Dig stone` ROW STANDS LAST** (#874): it is not a roster working, it is the
+	# band's keep-on-hand order, appended after the sorted workings and keyed at the game's picked site.
+	_assert_band_panel("…sorted nearest-first, the keep-on-hand order after them (%s)" % [keys],
+		keys == ["%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_WOOD],
+			"%d,%d:%s" % [ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y, WORKINGS_WOOD],
+			"%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_STONE]])
 	# **THE NAME CELL LEADS WITH THE MATERIAL**, because a working has half a name the road lacked and
 	# the two rows on one hex differ in nothing else.
 	var names: Array = [_workings_row_name(rows[0]), _workings_row_name(rows[1]),
 		_workings_row_name(rows[2])]
 	_assert_band_panel("…each named by its MATERIAL and then its distance and bearing (%s)" % [names],
-		names == [WORKINGS_NEAR_STONE_NAME, WORKINGS_NEAR_WOOD_NAME, WORKINGS_FAR_NAME])
+		names == [WORKINGS_NEAR_WOOD_NAME, WORKINGS_FAR_NAME, WORKINGS_DIG_NAME])
 	# ⛔ **AND THE VALUE CELL IS `HudDepositVocab.deposit_row_value` VERBATIM.** The claim is the
 	# REUSE: the tile card's working block and this roster compose a working's state through ONE
 	# function, so §7's fork is taken once and the two cannot disagree.
@@ -17132,12 +17175,12 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 	var ladder := HudDepositVocab.deposit_ladder(_deposit_rung_catalog())
 	# ⛔ **THE RUNG IS SAID ONCE, ON LINE TWO**, and the YIELD line carries every other clause the
 	# value states — `deposit_row_qualifiers`, the value's own tail — so nothing the value said is lost.
-	var rung := _workings_row_rung(rows[1])
+	var rung := _workings_row_rung(rows[0])
 	var rung_want := HudWorkVocab.site_crew_line(HudDepositVocab.ladder_rung_name(ladder,
 		HudDepositVocab.rung_of(wood)))
 	_assert_band_panel("…its second line is the rung alone — `%s` (got \"%s\")" % [rung_want, rung],
 		rung == rung_want)
-	var got := _workings_row_value(rows[1])
+	var got := _workings_row_value(rows[0])
 	var tail := HudDepositVocab.DEPOSIT_CLAUSE_SEPARATOR.join(
 		HudDepositVocab.deposit_row_qualifiers(wood, ladder))
 	_assert_band_panel("…and its yield line carries the value's clauses after the rung — `%s` (got \"%s\")"
@@ -17156,20 +17199,20 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 			% rung,
 		rung.contains("Felling") and not rung.contains(HudDepositVocab.RUNG_KEY_FELLING))
 	# **THE NAME IS ONE INK** — it names the working; it is no longer a jump link in the SIGNAL ink.
-	var name_label := _find_meta_control(rows[1], HudWorkVocab.WORKINGS_ROW_NAME_META) as Label
+	var name_label := _find_meta_control(rows[0], HudWorkVocab.WORKINGS_ROW_NAME_META) as Label
 	_assert_band_panel("…its name is one plain INK label, not a link",
 		name_label != null and name_label.get_theme_color(FONT_COLOR_THEME_KEY) == HudStyle.INK)
-	# ⛔ **THE §7 FORK, READ OFF TWO ROWS OF ONE ROSTER.** The renewing seam states the over-cut word
-	# and the finite one a runway — the pair, since either alone passes on a composer that says the
-	# same thing about both.
+	# ⛔ **THE RENEWING WORKING STATES THE OVER-CUT WORD; THE MINED ONE STATES NEITHER IT NOR A RUNWAY.** The
+	# finite seam's runway is the tile card's (`HudDepositVocab.runway_aside`); on the Work tab the stone is
+	# a keep-on-hand order whose line three is its status (#874).
 	_assert_band_panel("…the RENEWING working states the over-cut word (`%s`)"
 			% SourceForecast.YIELD_OVERDRAW_WORD,
 		got.contains(SourceForecast.YIELD_OVERDRAW_WORD))
-	_assert_band_panel("…while the FINITE one states its runway instead (\"%s\")"
-			% _workings_row_value(rows[0]),
-		_workings_row_value(rows[0]).contains(
-			HudDepositVocab.DEPOSIT_RUNWAY_FORMAT % WORKINGS_STONE_RUNWAY)
-			and not _workings_row_value(rows[0]).contains(SourceForecast.YIELD_OVERDRAW_WORD))
+	_assert_band_panel("…while the MINED order states its status, never a runway or an over-cut (\"%s\")"
+			% _workings_row_value(rows[2]),
+		not _workings_row_value(rows[2]).contains(SourceForecast.YIELD_OVERDRAW_WORD)
+			and not _workings_row_value(rows[2]).contains(
+				HudDepositVocab.DEPOSIT_RUNWAY_FORMAT % WORKINGS_STONE_RUNWAY))
 	# ⛔ **NO STEPPER ON ANY ROW — SCOPED TO THE ROWS, WHICH IS THE WHOLE OF THE RULE.** roads.md
 	# forbids a worker COUNT on a ROW, because a per-working crew here would re-introduce the per-tile
 	# work row §4.13b retired; the pool's own band-wide stepper is on the block's HEAD and is asserted
@@ -17231,7 +17274,7 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 ## `_assert_a_crew_bigger_than_its_source_is_flagged`; this is the third web.
 ##
 ## ⛔ **THE PAIR IS THE CLAIM.** `SourceForecast.crew_is_wasted` is `workers > useful` STRICTLY, so the
-## STONE row crewed exactly to its own ceiling must carry nothing — without that half this passes on a
+## far wood crewed exactly to its own ceiling must carry nothing — without that half this passes on a
 ## renderer that marks every crewed working in the game.
 func _assert_a_working_flags_the_crew_that_outgrew_it() -> void:
 	_hud.update_deposits(_worn_workings_rows())
@@ -17250,27 +17293,27 @@ func _assert_a_working_flags_the_crew_that_outgrew_it() -> void:
 	# and the other sits exactly on it. A working the client was never sent a rate for answers
 	# `CUTTERS_UNCAPPED`, and both rows would then be silent for a reason that has nothing to do with
 	# the predicate.
-	var wood_cap := _worn_workings_cap(WORKINGS_WOOD)
-	var stone_cap := _worn_workings_cap(WORKINGS_STONE)
+	var wood_cap := _worn_workings_cap(ROSTER_NEAR_TILE)
+	var stone_cap := _worn_workings_cap(ROSTER_FAR_TILE)
 	_assert_band_panel(("wasted cutters — premise: the cut-back pair PRICES a ceiling, one crew over "
-			+ "it and one exactly on it (%d of %d cutters on wood, %d of %d on stone)")
+			+ "it and one exactly on it (%d of %d cutters on the near wood, %d of %d on the far)")
 			% [wood_cap + WORKINGS_WASTED_HANDS, wood_cap, stone_cap, stone_cap],
 		wood_cap != HudDepositVocab.CUTTERS_UNCAPPED and wood_cap > 0
 		and stone_cap != HudDepositVocab.CUTTERS_UNCAPPED and stone_cap > 0)
 	# ⛔ **AND THE GEARED CAP SITS BELOW THE BARE QUOTIENT, with the wood crew between them** — the
 	# shape in which the two ceilings answer differently. Without it the flag below passes on a roster
 	# still measuring `room ÷ perWorkerBiomass`.
-	var wood_bare := _worn_workings_bare_cap(WORKINGS_WOOD)
-	var stone_bare := _worn_workings_bare_cap(WORKINGS_STONE)
+	var wood_bare := _worn_workings_bare_cap(ROSTER_NEAR_TILE)
+	var stone_bare := _worn_workings_bare_cap(ROSTER_FAR_TILE)
 	_assert_band_panel(("wasted cutters — premise: gear lowers the cap, and the bare quotient would "
 			+ "NOT flag the wood crew (wood %d published < %d cutters <= %d bare; stone %d < %d bare)")
 			% [wood_cap, wood_cap + WORKINGS_WASTED_HANDS, wood_bare, stone_cap, stone_bare],
 		wood_cap + WORKINGS_WASTED_HANDS <= wood_bare and stone_cap < stone_bare)
-	# The near hex's two rows sort STONE before WOOD (the roster's own material tie-break), which the
-	# standing state above asserts — so index 0 is the fully-crewed stone and index 1 the over-crewed
-	# wood. Both values are printed, so a sort that moved would be readable in the failure.
-	var stone_value := _workings_row_value(rows[0])
-	var wood_value := _workings_row_value(rows[1])
+	# The roster sorts nearest first, so index 0 is the over-crewed near wood and index 1 the far wood crewed
+	# exactly to its ceiling (the mined order stands last). Both values are printed, so a sort that moved
+	# would be readable in the failure.
+	var stone_value := _workings_row_value(rows[1])
+	var wood_value := _workings_row_value(rows[0])
 	_assert_band_panel("wasted cutters — the over-crewed WORKING wears `%s` (\"%s\")"
 			% [HudDepositVocab.OVERSTAFFED_WORD, wood_value],
 		wood_value.contains(HudDepositVocab.OVERSTAFFED_WORD))
@@ -17285,7 +17328,7 @@ func _assert_a_working_flags_the_crew_that_outgrew_it() -> void:
 	# …and the row reads in the hazard AMBER, through the ink fork that keys on the mark rather than on
 	# a second reading of the working.
 	_assert_band_panel("wasted cutters — …and the row's ink is the hazard amber",
-		_workings_row_value_color(rows[1]) == HudStyle.WARN)
+		_workings_row_value_color(rows[0]) == HudStyle.WARN)
 	_assert_band_panel(("wasted cutters — …while the working crewed EXACTLY to its ceiling says "
 			+ "nothing about waste (%d of %d cutters, \"%s\")")
 			% [stone_cap, stone_cap, stone_value],
@@ -20600,7 +20643,8 @@ func _render_build_phase_states() -> void:
 
 	# A declared WORKING with nobody on its site: the deposit web reads its own row's `builders_staffed`.
 	_set_forage_patches([])
-	var working := _workings_row(PHASE_WORKING_TILE, WORKINGS_STONE, false, WORKINGS_STONE_TAKE)
+	# Wood: stone is a mined material with no per-site build crew row (#874); the build chip is generic.
+	var working := _workings_row(PHASE_WORKING_TILE, WORKINGS_WOOD, true, WORKINGS_WOOD_TAKE)
 	working["is_queued"] = true
 	working["build_fraction"] = 0.4
 	working["builders_staffed"] = 0
@@ -20611,7 +20655,7 @@ func _render_build_phase_states() -> void:
 	empty_band["idle_workers"] = 0
 	empty_band["labor_assignments"] = [{"kind": HudConst.LABOR_KIND_EXTRACT, "workers": 2,
 		"target_x": PHASE_WORKING_TILE.x, "target_y": PHASE_WORKING_TILE.y, "fauna_id": "",
-		"material": WORKINGS_STONE, "actual_yield": 0.0, "sustainable_yield": 0.0}]
+		"material": WORKINGS_WOOD, "actual_yield": 0.0, "sustainable_yield": 0.0}]
 	_push_bands([empty_band])
 	await _settle()
 	await _save("band_panel_build_phase_stalled")

@@ -7842,6 +7842,35 @@
       "independence_grievance_threshold": 59.740002,
       "is_expedition": true,
       "is_traveling": false,
+      "keep_on_hand": [
+        {
+          "draw": 44.540001,
+          "has_site": true,
+          "material": "populations[0].keep_on_hand[0].material",
+          "priority": "normal",
+          "site_x": 159,
+          "site_y": 170,
+          "target": 172
+        },
+        {
+          "draw": 17.469999,
+          "has_site": false,
+          "material": "populations[0].keep_on_hand[1].material",
+          "priority": "normal",
+          "site_x": 14,
+          "site_y": 3,
+          "target": 165
+        },
+        {
+          "draw": 92.550003,
+          "has_site": false,
+          "material": "populations[0].keep_on_hand[2].material",
+          "priority": "normal",
+          "site_x": 181,
+          "site_y": 192,
+          "target": 42
+        }
+      ],
       "kit_id": "populations[0].kit_id",
       "kit_item_conditions": [
         {
@@ -10375,6 +10404,35 @@
       "independence_grievance_threshold": 24.59,
       "is_expedition": true,
       "is_traveling": false,
+      "keep_on_hand": [
+        {
+          "draw": 93.419998,
+          "has_site": true,
+          "material": "populations[1].keep_on_hand[0].material",
+          "priority": "normal",
+          "site_x": 174,
+          "site_y": 163,
+          "target": 149
+        },
+        {
+          "draw": 7.47,
+          "has_site": false,
+          "material": "populations[1].keep_on_hand[1].material",
+          "priority": "normal",
+          "site_x": 47,
+          "site_y": 58,
+          "target": 196
+        },
+        {
+          "draw": 53.419998,
+          "has_site": false,
+          "material": "populations[1].keep_on_hand[2].material",
+          "priority": "normal",
+          "site_x": 196,
+          "site_y": 185,
+          "target": 163
+        }
+      ],
       "kit_id": "populations[1].kit_id",
       "kit_item_conditions": [
         {
@@ -12852,6 +12910,35 @@
       "independence_grievance_threshold": 50.919998,
       "is_expedition": false,
       "is_traveling": true,
+      "keep_on_hand": [
+        {
+          "draw": 7.72,
+          "has_site": true,
+          "material": "populations[2].keep_on_hand[0].material",
+          "priority": "normal",
+          "site_x": 33,
+          "site_y": 44,
+          "target": 150
+        },
+        {
+          "draw": 91.290001,
+          "has_site": false,
+          "material": "populations[2].keep_on_hand[1].material",
+          "priority": "normal",
+          "site_x": 24,
+          "site_y": 13,
+          "target": 55
+        },
+        {
+          "draw": 30.9,
+          "has_site": false,
+          "material": "populations[2].keep_on_hand[2].material",
+          "priority": "normal",
+          "site_x": 3,
+          "site_y": 14,
+          "target": 104
+        }
+      ],
       "kit_id": "populations[2].kit_id",
       "kit_item_conditions": [
         {

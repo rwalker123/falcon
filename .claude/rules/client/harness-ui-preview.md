@@ -3956,3 +3956,22 @@ through it is about what is drawn and what a click does, never about the produce
 
 Sabotaged: an `open_door` arm that does nothing fails the Wood / Stone claims; a silenced
 `door_selection_changed` fails every selected-wash claim.
+
+## The Stone sheet's states (`chapters/workings.gd`, #874)
+
+`workings_keep_below` / `_at_target` / `_other_site` / `_none` replaced `workings_dig_crew` (the Diggers
+stepper state). The band carries a `keep_on_hand` entry and a `material_store`; the dig row is staffed at the
+entry's site. Claims: the crew line (`sends 3 diggers this turn`), the `Here, …` site line with its
+hold / refill split, the kit / bare split, the `uses 1.0 stone a turn` line, `Back to 60 in ≈T turns`, the
+ABSENCE of the Max stepper and `Stop working here`, the `+` sending `keep_on_hand … stone 70 normal`, the
+at-target sentence, `The game is digging at (x, y)` on a deposit the game did not pick, and `None` at 0.
+The eyebrow reads `STONE`; `workings_keep_no_site` opens the site-less form through `open_source_sheet` with no
+tile and asserts the one-line replacement for the Diggers box, the absence of Next turn / crew / Show on map,
+and that its `−` sends `keep_on_hand … stone 50 normal`.
+
+**Every band in the `workings` chapter carries a stone `keep_on_hand` entry** (`_with_stone_entry`, target 0,
+picked at the chapter's hex), because the sim publishes one for any discovered mined material — so a stone
+sheet is always the keep sheet. `_below_target` restates the order below its target where the dig row's crew
+is the point. The old stone-sheet claims about the Diggers stepper, the forecast runway, the reach verdict,
+the kit picker, the commit verb and the far party block were deleted with the behaviour; the dig-load line and
+the crew / take of a worked quarry moved onto the keep sheet.

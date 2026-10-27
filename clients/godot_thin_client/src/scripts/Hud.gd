@@ -120,6 +120,12 @@ signal abandon_requested(payload: Dictionary)
 ## the server re-captures after every command, so it arrives on this command's own recapture.
 signal work_priority_requested(payload: Dictionary)
 
+## Emitted when the player sets how much of a MINED material the band keeps on hand (#874) - the Stone
+## sheet's stepper or the `Dig stone` row's Priority pill. Payload `{ faction, band_id, material, target,
+## level }`; Main formats `keep_on_hand <faction> <band> <material> <target> <level>`. No optimistic
+## write: the entry is captured live and the server restaffs the band at once.
+signal keep_on_hand_requested(payload: Dictionary)
+
 ## Emitted when the player stops a STAFFED row (a source sheet's `Stop working here`). Payload `{ faction, band_id, x, y, herd_id, material, branch, roadwork }`; Main formats
 ## `stop_labor <faction> <band_id> <source…>`. Records no overlay of its own, but `kind` and
 ## `pending_entity` ride along so `_on_stop_labor_requested` can drop that source's pending assign
@@ -759,6 +765,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: extend_pen_requested.emit(payload))
     _bandpanel.work_priority_requested.connect(
         func(payload: Dictionary) -> void: work_priority_requested.emit(payload))
+    _bandpanel.keep_on_hand_requested.connect(
+        func(payload: Dictionary) -> void: keep_on_hand_requested.emit(payload))
     _bandpanel.stop_labor_requested.connect(_on_stop_labor_requested)
     # The WORK row's `⌃` is the DECLARATION now (`docs/plan_standing_upkeep.md` §4.7a ①), and this
     # relay carries its optimistic write — see `_on_work_row_improvement_requested`.

@@ -419,6 +419,8 @@ func _ready() -> void:
             hud.connect("abandon_requested", Callable(self, "_on_hud_abandon"))
         if hud.has_signal("work_priority_requested") and not hud.is_connected("work_priority_requested", Callable(self, "_on_hud_work_priority")):
             hud.connect("work_priority_requested", Callable(self, "_on_hud_work_priority"))
+        if hud.has_signal("keep_on_hand_requested") and not hud.is_connected("keep_on_hand_requested", Callable(self, "_on_hud_keep_on_hand")):
+            hud.connect("keep_on_hand_requested", Callable(self, "_on_hud_keep_on_hand"))
         if hud.has_signal("stop_labor_requested") and not hud.is_connected("stop_labor_requested", Callable(self, "_on_hud_stop_labor")):
             hud.connect("stop_labor_requested", Callable(self, "_on_hud_stop_labor"))
         if hud.has_signal("bench_enqueue_requested") and not hud.is_connected("bench_enqueue_requested", Callable(self, "_on_hud_bench_enqueue")):
@@ -2172,6 +2174,29 @@ static func format_work_priority(payload: Dictionary) -> Dictionary:
         "message": "%s is now %s priority for this band." % [site_label(payload), face.to_lower()],
     }
 
+## **`keep_on_hand <faction> <band> <material> <target> <high|normal|low>` - A MINED MATERIAL'S ORDER**
+## (#874). A mined material (stone) is not crewed: the band holds a target stock, the sim picks the site
+## and staffs the dig to it, and `0` is how the player stops digging. **BOTH TRAILING FIELDS ARE ALWAYS
+## SENT**, so a priority change restates the target and a target change restates the priority; the level
+## is the word the decoder handed the picker, as `format_work_priority` sends it.
+static func format_keep_on_hand(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    var material := String(payload.get("material", "")).strip_edges()
+    if band_id == HudConst.NO_BAND_ID or material == "":
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    var level := String(payload.get("level", "")).strip_edges().to_lower()
+    if not HudWorkVocab.WORK_PRIORITY_FACES.has(level):
+        return {}
+    var target := maxi(int(payload.get("target", 0)), 0)
+    var message := "Stop digging %s." % HudKeepVocab.word(material) if target == 0 \
+        else "Keep %d %s on hand (%s priority)." % [target, HudKeepVocab.word(material),
+            String(HudWorkVocab.WORK_PRIORITY_FACES[level]).to_lower()]
+    return {
+        "line": "keep_on_hand %d %d %s %d %s" % [faction, band_id, material, target, level],
+        "message": message,
+    }
+
 ## **`stop_labor <faction> <band> <x> <y> | <herd_id> | <x> <y> <material> | <branch> <x> <y> |
 ## roadwork` — STOP A STAFFED ROW** (#871), emitted by a source sheet's `Stop working here` and the
 ## work inspector's `Unassign`. A staffed row's count is the sim's now, so a count of zero is a Max of
@@ -2795,6 +2820,11 @@ func _on_hud_abandon(payload: Dictionary) -> void:
 ## client-side copy would be a second statement of one value, which is the drift §4.9 forbids.
 func _on_hud_work_priority(payload: Dictionary) -> void:
     _send_formatted_command(format_work_priority(payload))
+
+## Set a mined material's keep-on-hand order (#874). No rollback, `_on_hud_work_priority`'s reason: the
+## entry is captured live and the server restaffs the band at once.
+func _on_hud_keep_on_hand(payload: Dictionary) -> void:
+    _send_formatted_command(format_keep_on_hand(payload))
 
 ## Stop a staffed row (#871). **No rollback, for `_on_hud_work_priority`'s reason**: the row is captured
 ## live and the server restaffs the band at once, so the next snapshot carries the crew without it and

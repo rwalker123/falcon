@@ -449,6 +449,36 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "material_store",
         &crate::dict::subsistence::material_payoffs_to_array(cohort.materialStore()),
     );
+    // **THE BAND'S KEEP-ON-HAND ORDERS, ONE PER MINED MATERIAL** (#874). A mined material (stone) is
+    // not crewed by hand: the band holds a target stock and the sim picks the site and staffs the
+    // dig to it. `{ material, target, priority, draw, has_site, site_x, site_y }` -- `target` `0` is
+    // "None" (no order), `priority` the LOWERCASE WORD (never the wire ordinal, see `bench_priority`
+    // below), `draw` the per-turn upkeep + road + build draw the sheet quotes. ON HAND is not here:
+    // it is this dict's `material_store`. The dig row itself rides `labor_assignments` as an
+    // ordinary `extract` row. Listed for every mined material the faction has found rock of or holds
+    // a nonzero target for; the key is always present.
+    let mut keep_on_hand = VarArray::new();
+    if let Some(rows) = cohort.keepOnHand() {
+        for row in rows.iter() {
+            let mut entry = VarDictionary::new();
+            let _ = entry.insert("material", row.material().unwrap_or(""));
+            let _ = entry.insert("target", i64::from(row.target()));
+            let _ = entry.insert(
+                "priority",
+                match row.priority() {
+                    fb::SourcePriority::High => "high",
+                    fb::SourcePriority::Low => "low",
+                    _ => "normal",
+                },
+            );
+            let _ = entry.insert("draw", f64::from(row.draw()));
+            let _ = entry.insert("has_site", row.hasSite());
+            let _ = entry.insert("site_x", i64::from(row.siteX()));
+            let _ = entry.insert("site_y", i64::from(row.siteY()));
+            keep_on_hand.push(&entry.to_variant());
+        }
+    }
+    let _ = dict.insert("keep_on_hand", &keep_on_hand);
     // Predators Phase 3 (raid legibility pair, appended after fodderStore in the schema):
     //   raid_radius  — echo of `fauna.predators.raid_radius`: how close (odd-r hex distance) an
     //                  aggressive carnivore herd must be to raid this band's larder. The band panel

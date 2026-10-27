@@ -111,6 +111,17 @@
           "hint": "Most hands one tile holds across every band: keepers, builders and harvesters together."
         },
         {
+          "pointer": "/keep_on_hand_refill_turns",
+          "label": "Keep-on-hand refill",
+          "type": "int",
+          "min": 1,
+          "max": 40,
+          "step": 1,
+          "default": 10,
+          "unit": "turns",
+          "hint": "Turns a keep-on-hand deficit is spread over: a band digging a mined material to its target works at its draw plus deficit / this."
+        },
+        {
           "pointer": "/forage/per_worker_biomass_capacity",
           "label": "Forage throughput",
           "type": "float",

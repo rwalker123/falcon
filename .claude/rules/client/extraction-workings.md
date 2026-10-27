@@ -11,6 +11,7 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/hud/hud_tile_vocab.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/RungCardController.gd"
   - "clients/godot_thin_client/tools/ui_preview/chapters/tile_branches.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/hud_keep_vocab.gd"
 ---
 
 # Workings — the client half of the wood-and-stone producers
@@ -40,6 +41,7 @@ does with them. Read the sim one first — most of the traps here are its traps,
 | Script | Purpose |
 |--------|---------|
 | `ui/hud/hud_deposit_vocab.gd` (`HudDepositVocab`) | The WORKINGS vocabulary leaf — one reader per field on a `deposits` row, one reader per field on a deposit-kind `ladder_rungs` CATALOG row (`catalog_*`) plus the branch-filtered walks over it (`branch_ladder` / `ladder_next_entry` / `ladder_rung_teaching`), the keeping verdict (`owes_keeping` / `is_short` / `is_at_risk`, the bool-before-the-number rule), and the FIVE composers the three surfaces state a working with: `deposit_lines` (the tile card's rows, which carry no crew text: `crew_mark` hands the row's crew to `Context.door_crews`, and `DetailFormat.door_mark` draws it as the workers figure and count), `deposit_row_value` (the roster's value cell), `deposit_verdict` / `runway_aside` / `deal_label`+`deal_value` (the sheet's readout). §7's fork lives inside it, once (`renews` → `supply_clause`/`runway_clause`/`deposit_verdict`/the DIAL). It also owns the ESCAPEMENT layer (issue #650): `rung_floor_fraction_of` / `per_worker_biomass_of` / `regrowth_samples_of`, the ONE `max` composition (`composed_floor`), the forecast-shaped view of a working (`forecast_source`) and the room above the dial (`room_next_turn`), plus the three-state take/runway readers (`assigned_cutters` / `assigned_take` / `stated_take` / `stated_runway`) and the standing rung's lesson (`standing_lesson` / `standing_lesson_known`), and the PUT-DOWN layer (`DEPOSIT_IDLE_WORD` — which `GATE_SHORT_NO_CREW` reads — `is_idle`, `DEPOSIT_IDLE_TIP_FORMAT`, `WORKING_ABANDON_LABEL` / `_DROPS_FORMAT` / `_WHY_FORMAT` and the one `working_abandon_tooltip` both emitters wear). A vocab module with static funcs, the `hud_route_vocab.gd` shape: it reads `SourceForecast` / `DetailFormat` / `HudFormat` / `HudComposeVocab` / `HudSelectionVocab` / `HudLoadoutVocab` / `HudWorkVocab` / `HudConst` / `RungGates` / `HudStyle` inside functions only, never in a `const`, so it adds no load cycle |
+| `ui/hud/hud_keep_vocab.gd` (`HudKeepVocab`) · `HudWidgets.add_keep_stepper` · `BandPanelController._keep_source_models` / `_build_keep_row` / `commit_keep_on_hand` / `dig_take_of` · `DrawerComposeController._build_keep_sheet` · `Main.format_keep_on_hand` · `native/src/dict/population.rs` → `keep_on_hand` | A MINED material's keep-on-hand order (#874): the entry readers and `is_mined`, the status / chip / sheet words, the `Dig <material>` row, the Stone sheet, the `keep_on_hand` command and its decoder. See "A MINED MATERIAL IS KEPT ON HAND, NOT CREWED". |
 | `ui/hud/DrawerComposeController.gd` → `_is_past_apron` / `_work_party_view` / `_mount_work_party_section` / `_with_home_rate` | **A FAR WORKING POSTS A WORK PARTY**, through the forage and hunt sheets' own four functions — see "⛔ A FAR WORKING IS AN ORDINARY FAR SOURCE" below. The retired `_mount_work_range_refusal` and `WORK_RANGE_REFUSAL_FORMAT` are gone |
 | `ui/hud/DrawerComposeController.gd` → the deposit DOORS | The tile card's deposit rows are the doors to the sheet (`deposit_door_open`, `deposit_standing_facts`, `open_door`, `_tile_workings_of_branch`, `open_deposit_compose`, `_build_deposit_assign_controls`, `_build_deposit_offer_line`, `_mount_deposit_readout`, `_deposit_source_key`) — the row's key cell IS the control, so a wooded highland offers both at once on its two rows. The ESCAPEMENT half is `_deposit_chart_model` (the ONE place the two floors are composed and the teaching note re-priced at the dial's own value), `_deposit_floor_takes` (the presets' hover metric) and `_deposit_yield_model` (the take off the crew curve, the `now → after` pair and the `renews` gate on the yields note); the crew curve is asked through `_deposit_crew_take_ask` / `_deposit_crew_take_view` / `_drag_deposit_crew_take`. Its commit is the only thing it emits: `assign_labor <f> <b> extract <x> <y> <material> [floor] <n>`, through the shared `_emit_assign_labor` |
 | `ui/hud/SubjectDrawerController.gd` → `_tile_terrain_lines`' deposit loop + `_cutters_on_working` | Where the ROWS are appended — with the rivers, **above the Discovered early return**, and the one place the catalog join is resolved and threaded in. The ROAD block is composed on that same fog-safe side and appended LAST on both branches (`roads.md`); the deposits are emitted where they are composed. `_cutters_on_working` is the SECOND join, and it is the deposit twin of `SelectionCardController._forage_workers_on_tile`: the hex's cutters on one material summed across **every player band**, pending-aware, which is what makes the crew clause band-independent |
@@ -691,14 +693,62 @@ than three special cases) and its value is the crew curve's **`next_rung_take`**
 crew (issue #663) — see "THE CREW CURVE" below. It is absent while the curve is in flight, where the
 reply names no `next_rung` (the top of the branch), and where the row prices the next rung at `0`.
 
-### A stone sheet's stepper is the digger count, and it has no `No max`
+### A MINED MATERIAL IS KEPT ON HAND, NOT CREWED — the `Dig stone` row and the Stone sheet (#874)
 
-The sim works a seam that never renews (`HudDepositVocab.renews` false) with exactly its Max in heads,
-so a Max of 0 staffs nobody until stone's crew is a keep-on-hand target. On such a sheet the Max stepper
-is labelled `Diggers` (`HudWorkVocab.DIG_CREW_STEPPER_LABEL`), its floor is `HudDepositVocab.DIG_CREW_MIN`
-(one: `−` greys at 1), its upper bound is still the band's working-age people, and `_build_deposit_assign_controls`
-raises a seeded 0 to one on open. The Work tab's inspector Max stepper follows the same fork. A renewing wood sheet
-keeps `Max` and `No max`. `ui_preview` chapter `workings`, state `workings_dig_crew` / `workings_wood_max`.
+A mined material (stone) has no per-site crew. The band holds a **keep-on-hand target**, the sim picks the
+one site and staffs the dig to the target, and the player's whole say is the target and a priority. The
+wire is `PopulationCohortState.keepOnHand`, decoded as the band dict's **`keep_on_hand`** array
+(`{material, target, priority, draw, has_site, site_x, site_y}`; `priority` the lowercase word, `target`
+0 = none). **On hand is not on the wire** — it is the band's `material_store` total (`HudKeepVocab.on_hand_of`).
+
+⛔ **WHICH MATERIALS ARE MINED IS MEMBERSHIP IN THE BAND'S `keep_on_hand` ENTRIES** (`HudKeepVocab.is_mined`),
+chosen over a deposit row's `branch` because the entry list is the sim's own classification and is
+band-scoped, which is what every surface already holds. "stone" is spelled nowhere in the client's logic.
+
+- **The row.** `BandPanelController._keep_source_models` builds one `Dig <material>` model per entry and
+  `_extract_source_models` appends them; `_extract_source_models` SKIPS any roster row whose material is
+  mined (the sim-owned dig row is drawn through the entry, never beside it). `_build_keep_row` is the
+  groundwork row's shape: name `Dig stone`; line two `<bearing> (x, y) — the game picks the site`, or
+  `No rock known yet`; line three the status (`At target — nobody digs` / `Refilling to 60`, preceded by
+  the take, / `Nobody free to dig` / `No rock to dig`, the last two WARN with the strip's `⚠`); the dig-load
+  line; and the pill line, where the Priority pill sends `keep_on_hand` with the SAME target and the **keep
+  chip replaces the Max chip** — `Keep 60 · 42 on hand`, or `Keep: none` at 0. **The chip is a LABEL**; the
+  number changes only on the sheet. The crew strip is the dig row's staffed crew. A click opens the sheet:
+  on the picked site, or in its **site-less form** when the entry has no site.
+- **At target means `target <= on hand`** (the sim's own test, target 0 included), so `Keep: none` rows read
+  `At target — nobody digs`.
+- **The sheet.** `DrawerComposeController._build_keep_sheet`, entered from `_build_deposit_assign_controls`
+  as soon as the acting band holds an entry for the deposit's material. Band picker; the stock line
+  (`2100 of 2200 stone left in this rock. Stone does not come back.`); the KEEP ON HAND box (`N on hand`,
+  `keep` and the `−`/`+` stepper `HudWidgets.add_keep_stepper` — step `HudKeepVocab.KEEP_STEP` = 10, never
+  below 0, `None` at 0 — a meter of on hand against the target, and `<Band> uses X stone a turn — its builds
+  and upkeep.` off the entry's `draw`); the Priority segment; the DIGGERS strip over its box (`<Band> sends N
+  diggers this turn` / `At target — nobody digs this turn`, the site line — `Here, …` on the picked site,
+  `The game is digging at (x, y)` on another deposit — and the `1 with gear · 2 bare-handed` split); the
+  NEXT TURN box (the dig row's take and `Back to 60 in ≈T turns`, `T = ceil(deficit / (take − draw))`); and
+  `Show on map` + `Done`. The stepper and the priority both call `BandPanelController.commit_keep_on_hand`,
+  which emits `keep_on_hand_requested` (relayed by `Hud`, formatted by `Main.format_keep_on_hand` as
+  `keep_on_hand <faction> <band> <material> <target> <high|normal|low>` — **both trailing fields on every
+  line**). `ComposeState` holds the composed target (`deposit_keep`), seeded from the entry when the source or
+  the acting band changes.
+- **The eyebrow is the material's name** (`STONE`, as in Stone.dc.html), never `Assign diggers`
+  (`open_deposit_compose` takes the fork off `_band_keeps_material`).
+- **The site-less sheet** (`open_source_sheet(extract, -1, -1, "", material)` -> a `keep_only` stand-in from
+  `_siteless_deposit`, which `_live_deposit` re-resolves from its `-1,-1:<material>` subject key): the
+  band picker, the Keep on hand box with its working stepper and the draw line, the Priority segment, and in
+  place of the Diggers box one line, `No rock known yet — diggers go out once the band finds some.` No stock
+  line, no strip, no Next turn box, no Show on map. A target of 0 with no site has no entry and so no row.
+- **Gone from a mined sheet:** the Diggers Max stepper, the kit picker (the site's default kit staffs it),
+  and `Stop working here` — the server refuses `assign_labor` / `stop_labor` / `work_priority` on a mined
+  material, and `keep_on_hand … 0` is how digging stops. The rung strip (`⌃`, the quarry step card) stays on
+  the sheet: building a quarry is still the player's call. Wood's sheet is unchanged (`Max` / `No max`).
+- **The generic deposit sheet is a RENEWING working's.** `DIG_CREW_STEPPER_LABEL`, `DIG_CREW_MIN`,
+  `ComposeState.raise_deposit_max_to` and every `offers_floor` / `FLOOR_UNNAMED` branch of
+  `_build_deposit_assign_controls` are deleted: ground that never renews is a mined material, which always has
+  an entry (the sim's dig row always has a site), so the dial, the chart and the floor on the command are
+  always the player's. `HudWidgets.add_max_stepper`'s `floor_workers` stays for the tile crew sheet.
+- `ui_preview` chapter `workings` (`workings_keep_below` / `_at_target` / `_other_site` / `_none`,
+  `workings_wood_max`) and `band_panel_preview`'s `band_panel_keep_on_hand.gd` (`band_panel_dig_stone_*`).
 
 ### The load waiting at a dig site
 
@@ -1209,6 +1259,10 @@ Routing a working's press onto the wider signal would put a road's blast radius 
 label.
 
 ## PUTTING A WORKING DOWN — `Stop working here` (`stop_labor`)
+
+**Applies to a RENEWING working (wood).** A mined material is never stopped this way — its sheet carries no
+`Stop working here` and the server refuses the verb; the order ends at `keep_on_hand … 0`
+(see "A MINED MATERIAL IS KEPT ON HAND").
 
 A working raised above its free floor is a HOLDING, so `assign_labor … extract … 0` is not an undo: the
 row, the bill and the meter's slow rot survive a crew of zero. What ends it is `stop_labor`, which the

@@ -3,6 +3,7 @@ paths:
   - "clients/godot_thin_client/tools/band_panel_preview.gd"
   - "clients/godot_thin_client/tools/band_panel_preview.tscn"
   - "clients/godot_thin_client/tools/band_panel_trade_tab.gd"
+  - "clients/godot_thin_client/tools/band_panel_keep_on_hand.gd"
   # `command_guard` is gated HERE, not in `harness-headless-guards.md`, because the rationale it
   # needs is the KIT PICKER's: it `preload`s `BandFx.kit_roster_fixture()` — one of the tree's three
   # cross-harness preloads — and the "compose a NON-DEFAULT kit on every path, and write the id
@@ -2447,3 +2448,22 @@ scout row carries `scouting_range` / `scouting_reach` / `kitted_staffed` / `bare
 `scouting_range_max`. `BAND_FLANK_BALANCE_FLOOR` is 0.60: the Scout card lost its third hint line, which
 took the shorter flank column to 0.61. `command_guard`'s role sweep still drives `scout` as one number on
 the shared grammar.
+
+## The `Dig stone` row's states (`band_panel_keep_on_hand.gd`, #874)
+
+A module run right after the workings roster, in its own file like the trade tab. Five frames —
+`band_panel_dig_stone_refilling` / `_at_target` / `_none` / `_no_site` / `_nobody_free` — each a band carrying
+a `keep_on_hand` entry (the decoder's shape) over the workings ground, with the dig row as the sim-owned
+`extract` assignment at the entry's site. Claims: one `Dig stone` row and no per-site stone row beside it;
+the keep chip text by equality and that it is a `Label`; the status line per state; the site line
+(`… — the game picks the site` / `No rock known yet`); the Priority pill carries the entry's level, and
+cycling it sends `keep_on_hand <f> <b> stone 60 high` through `Main.format_keep_on_hand`. A click on the no-site
+row opens the site-less Stone sheet. **The workings-roster fixtures stage stone the way the sim publishes
+it**: `_workings_band_fixture` carries a `keep_on_hand` entry and the sim-owned dig row at the near hex, and
+its far, held-at-nobody working is WOOD (a mined material has no per-site far row). The roster claims read
+`[near wood, far wood, Dig stone]`; the finite-versus-renewing fork is asserted on the tile card's producer
+and the Work tab asserts the mined row states a status, never a runway. The crew-refusal states (the card's
+`no crew` rung, the craft-gated board's forgiven mark) stand on the dig row staffed at nobody
+(`_workings_band_fixture(demand, 0)`, `Nobody free to dig`). The wasted-cutters pair is two woods (over-crewed
+near, exactly-at-ceiling far), and the declared-working build phases are wood. `command_guard` drives `keep_on_hand` twice (a target and `None`), counted in
+`EXPECTED_KINDS`.
