@@ -2848,6 +2848,7 @@ pub fn capture_snapshot(
         temperature_morale_penalty: config.temperature_morale_penalty,
         temperature_morale_tolerance: config.temperature_morale_tolerance,
         attrition_penalty_scale: population_cfg.attrition_penalty_scale(),
+        attrition_morale_tolerance: population_cfg.attrition_morale_tolerance(),
         hardness_penalty_scale: population_cfg.hardness_penalty_scale(),
     };
 

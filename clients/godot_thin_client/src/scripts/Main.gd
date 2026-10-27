@@ -1048,6 +1048,7 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     if map_view != null and snapshot.has("tiles") and SnapshotSections.changed(snapshot, "tiles"):
         _hud_invoke("update_tile_temperatures", [map_view.tile_temperature])
         _hud_invoke("update_tile_beliefs", [map_view.tile_belief])
+        _hud_invoke("update_tile_habitability", [map_view.tile_habitability])
     if snapshot.has("herds") and SnapshotSections.changed(snapshot, "herds"):
         # The HUD needs the live herd positions (herds migrate) to jump the map to a hunted herd
         # from the band panel's Current-actions rows, and to name it. Same array MapView renders.

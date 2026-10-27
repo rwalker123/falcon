@@ -36,6 +36,7 @@ use crate::{
     mobility_config::{MobilityConfig, BUILTIN_MOBILITY_CONFIG},
     recipes_config::{RecipesConfig, BUILTIN_RECIPES_CONFIG},
     resources::{SimulationConfig, BUILTIN_SIMULATION_CONFIG},
+    turn_pipeline_config::{TurnPipelineConfig, BUILTIN_TURN_PIPELINE_CONFIG},
     wellbeing_config::{WellbeingConfig, BUILTIN_WELLBEING_CONFIG},
 };
 
@@ -146,6 +147,13 @@ pub fn spec_for(kind: ConfigOverrideKind) -> ConfigKindSpec {
             default_rel_path: "src/data/leadership_config.json",
             builtin_json: BUILTIN_LEADERSHIP_CONFIG,
             validate: |json| erase(LeadershipConfig::from_json_str(json)),
+        },
+        ConfigOverrideKind::TurnPipeline => ConfigKindSpec {
+            kind,
+            env_var: "TURN_PIPELINE_CONFIG_PATH",
+            default_rel_path: "src/data/turn_pipeline_config.json",
+            builtin_json: BUILTIN_TURN_PIPELINE_CONFIG,
+            validate: |json| erase(TurnPipelineConfig::from_json_str(json)),
         },
     }
 }

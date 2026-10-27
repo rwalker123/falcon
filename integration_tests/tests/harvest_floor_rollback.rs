@@ -133,6 +133,7 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
                 predators_kept_off: 0,
+                last_cohesion: Default::default(),
             },
             ResidentBand,
             LaborAllocation {
@@ -310,6 +311,7 @@ fn a_raids_target_round_trips_through_the_rollback() {
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
                 predators_kept_off: 0,
+                last_cohesion: Default::default(),
             },
             Expedition {
                 home_band: home,

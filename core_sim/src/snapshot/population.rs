@@ -2785,6 +2785,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         morale_climate: cohort.last_morale_contributions.climate.raw(),
         morale_unrest: cohort.last_morale_contributions.unrest.raw(),
         morale_culture: cohort.last_morale_contributions.culture.raw(),
+        // **The cohesion term and what it was priced from** — the head-count and ceiling the sim stored,
+        // never a recount on the positions this turn's movement changed.
+        morale_cohesion: cohort.last_morale_contributions.cohesion.raw(),
+        cohesion_headcount: cohort.last_cohesion.headcount,
+        cohesion_ceiling: cohort.last_cohesion.ceiling,
+        morale_fresh_water: cohort.last_morale_contributions.fresh_water.raw(),
         // **The ancestors' place and the ground near it** — `0,0` and empty with no anchor.
         has_belief_anchor: cohort.belief_anchor.is_some(),
         belief_anchor_x: cohort.belief_anchor.map_or(0, |anchor| anchor.x),
@@ -3697,6 +3703,7 @@ mod tests {
             belief_anchor: None,
             last_belief_relay_hops: 0,
             predators_kept_off: 0,
+            last_cohesion: Default::default(),
         }
     }
 

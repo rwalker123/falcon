@@ -1,7 +1,7 @@
 use super::*;
 use crate::belief::{BeliefRegistry, NO_BELIEF};
 use crate::belief_config::BeliefConfigHandle;
-use crate::components::FertilityFactors;
+use crate::components::{CohesionReading, FertilityFactors};
 use crate::demographics_config::{
     DemographicsBirths, DemographicsTemperatureTail, DemographicsTrend,
 };
@@ -641,6 +641,9 @@ pub struct MoralePressureConfig {
     /// the deviation beyond it is penalized, so temperate mid-latitudes hold morale.
     pub temperature_morale_tolerance: Scalar,
     pub attrition_penalty_scale: Scalar,
+    /// Terrain attrition rate up to which the ground drains **no** morale — only the rate beyond
+    /// it is priced (the terrain twin of `temperature_morale_tolerance`).
+    pub attrition_morale_tolerance: Scalar,
     pub hardness_penalty_scale: Scalar,
 }
 
@@ -670,8 +673,10 @@ pub fn tile_morale_pressure(
     temperature: Scalar,
     cfg: &MoralePressureConfig,
 ) -> TileMoralePressure {
-    let terrain_attrition_penalty =
-        scalar_from_f32(terrain.attrition_rate) * cfg.attrition_penalty_scale;
+    let attrition_excess = (scalar_from_f32(terrain.attrition_rate)
+        - cfg.attrition_morale_tolerance)
+        .max(scalar_zero());
+    let terrain_attrition_penalty = attrition_excess * cfg.attrition_penalty_scale;
     let hardness_excess = (terrain.logistics_penalty - 1.0).max(0.0);
     let terrain_hardness_penalty = scalar_from_f32(hardness_excess) * cfg.hardness_penalty_scale;
     let temp_diff = (temperature - cfg.ambient_temperature).abs();
@@ -1504,6 +1509,79 @@ fn resolve_culture_terms(
         .collect()
 }
 
+/// One band's cohesion term and the head-count and ceiling it was priced from.
+#[derive(Debug, Clone, Copy)]
+struct CohesionTerm {
+    term: Scalar,
+    cohesion: CohesionReading,
+}
+
+/// **The cohesion pre-pass.** Price every resident band on its OWN size: the band's fixed-point
+/// head-count at the turn's OPENING (before any death or birth), rounded once, against a ceiling
+/// taken off the belief on the tile it stands on (`current_tile`, never `home`). Another band on
+/// the same tile changes nothing — Dunbar's number is how many people one group can keep track of,
+/// not how many a tile holds (tile capacity is a separate lever). Read before anything mutates a
+/// bracket or writes belief, so no band's term depends on query order. A band whose standing tile
+/// does not resolve reads nothing.
+fn resolve_cohesion_terms(
+    cohorts: &DemographicBands,
+    tiles: &Query<&Tile>,
+    belief: &BeliefRegistry,
+    cohesion: &crate::wellbeing_config::CohesionConfig,
+) -> BTreeMap<Entity, CohesionTerm> {
+    cohorts
+        .iter()
+        .filter_map(|(entity, cohort, _, _, _)| {
+            let standing = tiles
+                .get(cohort.current_tile)
+                .map(|tile| tile.position)
+                .ok()?;
+            let headcount = cohort.total().to_u32();
+            let ceiling = cohesion.ceiling(belief.get(standing));
+            let reading = CohesionTerm {
+                term: scalar_from_f32(cohesion.term(headcount as f32, ceiling)),
+                cohesion: CohesionReading {
+                    headcount,
+                    ceiling: ceiling.round() as u32,
+                },
+            };
+            Some((entity, reading))
+        })
+        .collect()
+}
+
+/// **Fresh water underfoot**, resolved in the pre-pass beside culture and cohesion: each resident
+/// band that stands (`current_tile`, never `home`) on fresh-watered ground earns `bonus`. The rule is
+/// `forage::tile_is_fresh_watered`, the one every site gate reads. A band whose tile cannot be
+/// resolved, or that is not fresh-watered, has no entry (reads `0`).
+fn resolve_fresh_water_terms(
+    cohorts: &DemographicBands,
+    tiles: &Query<&Tile>,
+    registry: &TileRegistry,
+    wrap_horizontal: bool,
+    bonus: Scalar,
+) -> BTreeMap<Entity, Scalar> {
+    cohorts
+        .iter()
+        .filter_map(|(entity, cohort, _, _, _)| {
+            let standing = tiles.get(cohort.current_tile).ok()?;
+            let watered = crate::forage::tile_is_fresh_watered(
+                standing,
+                registry.width,
+                registry.height,
+                wrap_horizontal,
+                |coord| {
+                    registry
+                        .index(coord.x, coord.y)
+                        .and_then(|neighbour| tiles.get(neighbour).ok())
+                        .map(|neighbour| neighbour.terrain_tags)
+                },
+            );
+            watered.then_some((entity, bonus))
+        })
+        .collect()
+}
+
 /// One band's culture term and the relay hop count it was priced from.
 #[derive(Debug, Clone, Copy)]
 struct CultureReading {
@@ -1594,6 +1672,7 @@ pub fn simulate_population(
         temperature_morale_penalty: config.temperature_morale_penalty,
         temperature_morale_tolerance: config.temperature_morale_tolerance,
         attrition_penalty_scale: population_cfg.attrition_penalty_scale(),
+        attrition_morale_tolerance: population_cfg.attrition_morale_tolerance(),
         hardness_penalty_scale: population_cfg.hardness_penalty_scale(),
     };
     let walk = walk_inputs.walk_reach(
@@ -1608,6 +1687,14 @@ pub fn simulate_population(
         &walk_inputs.roads,
         walk_inputs.rights.treaties(),
         &wellbeing.culture,
+    );
+    let cohesion_terms = resolve_cohesion_terms(&cohorts, &tiles, &belief, &wellbeing.cohesion);
+    let fresh_water_terms = resolve_fresh_water_terms(
+        &cohorts,
+        &tiles,
+        &walk_inputs.tile_registry,
+        config.map_topology.wrap_horizontal,
+        population_cfg.fresh_water_morale_bonus(),
     );
     for (entity, mut cohort, labor, band_id, mut accumulator) in cohorts.iter_mut() {
         // Age the band every turn, before any early-out, so a band whose home tile briefly can't be
@@ -1631,6 +1718,15 @@ pub fn simulate_population(
             (scalar_zero(), crate::belief_relay::DIRECT_HOPS as u8),
             |reading| (reading.term, reading.relay_hops),
         );
+        // **A band too big to hold together**, resolved by the pre-pass: the band's own opening
+        // head-count against its cohesion ceiling. A band the pre-pass could not place reads `0`.
+        let cohesion = cohesion_terms
+            .get(&entity)
+            .copied()
+            .unwrap_or(CohesionTerm {
+                term: scalar_zero(),
+                cohesion: CohesionReading::default(),
+            });
         // Layer 1 (wellbeing): the morale delta is the signed sum of named contributors, so a
         // future factor is a new `MoraleFactor` variant + one field here — not a rewrite. The
         // contribution set doubles as the client's per-band morale breakdown. `unrest` = crisis
@@ -1642,6 +1738,11 @@ pub fn simulate_population(
             climate: -pressure.cold,
             unrest: impacts.morale_delta + effects.morale_bias,
             culture,
+            cohesion: cohesion.term,
+            fresh_water: fresh_water_terms
+                .get(&entity)
+                .copied()
+                .unwrap_or_else(scalar_zero),
         };
         let morale_delta = contributions.total();
         // Attribute the dominant *negative* driver when morale fell (else `None`). Starvation is
@@ -1656,6 +1757,8 @@ pub fn simulate_population(
         // The hop count `culture` was priced from — what the frame publishes, so it cannot be a
         // recount on positions this turn's movement changes later.
         cohort.last_belief_relay_hops = relay_hops;
+        // The group and ceiling `cohesion` was priced from, published as priced.
+        cohort.last_cohesion = cohesion.cohesion;
         cohort.morale = (cohort.morale + morale_delta).clamp(scalar_zero(), scalar_one());
 
         // Layer 2 (wellbeing): map morale → the discontented share of the band. `0` at/above
@@ -1758,6 +1861,7 @@ mod tile_morale_pressure_tests {
             temperature_morale_penalty: scalar_from_f32(0.004),
             temperature_morale_tolerance: scalar_from_f32(9.0),
             attrition_penalty_scale: scalar_from_f32(0.2),
+            attrition_morale_tolerance: scalar_from_f32(0.05),
             hardness_penalty_scale: scalar_from_f32(0.05),
         }
     }
@@ -1770,11 +1874,11 @@ mod tile_morale_pressure_tests {
         let pressure =
             tile_morale_pressure(&terrain, scalar_from_f32(ambient), &shipped_cfg(ambient));
         assert_eq!(pressure.cold, scalar_zero());
-        // attrition 0.30 * 0.2 + (1.45 - 1.0) * 0.05 = 0.0825.
-        let expected = scalar_from_f32(0.0825);
+        // (attrition 0.30 - allowance 0.05) * 0.2 + (1.45 - 1.0) * 0.05 = 0.0725.
+        let expected = scalar_from_f32(0.0725);
         assert!(
             (pressure.total() - expected).abs() < scalar_from_f32(0.0005),
-            "cavern habitability {:?} should be ~0.0825",
+            "cavern habitability {:?} should be ~0.0725",
             pressure.total().to_f32()
         );
     }
@@ -3476,6 +3580,7 @@ mod wellbeing_tests {
             belief_anchor: None,
             last_belief_relay_hops: 0,
             predators_kept_off: 0,
+            last_cohesion: Default::default(),
         };
         cohort.sync_size();
         cohort

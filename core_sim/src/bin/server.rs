@@ -6277,6 +6277,9 @@ fn handle_send_scout(
     // remembers no ancestors' place; the band it left keeps the anchor (`belief.md`).
     expedition_cohort.belief_anchor = None;
     expedition_cohort.last_belief_relay_hops = core_sim::belief_relay::DIRECT_HOPS as u8;
+    // A party is no band of its own people: it takes no cohesion term and no cohesion reading.
+    expedition_cohort.last_cohesion = core_sim::CohesionReading::default();
+    expedition_cohort.last_morale_contributions.cohesion = Scalar::from_i64(0);
     expedition_cohort.sync_size();
 
     // A detached party is a band in its own right, so it takes its own durable id.
@@ -11623,6 +11626,8 @@ fn handle_reload_turn_pipeline_config(app: &mut bevy::prelude::App, path: Option
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "builtin".to_string()),
         attrition_penalty_scale = population.attrition_penalty_scale().to_f32(),
+        attrition_morale_tolerance = population.attrition_morale_tolerance().to_f32(),
+        fresh_water_morale_bonus = population.fresh_water_morale_bonus().to_f32(),
         hardness_penalty_scale = population.hardness_penalty_scale().to_f32(),
         "turn_pipeline_config.reloaded"
     );
@@ -15044,6 +15049,7 @@ mod tests {
                     belief_anchor: None,
                     last_belief_relay_hops: 0,
                     predators_kept_off: 0,
+                    last_cohesion: Default::default(),
                 },
                 LaborAllocation {
                     assignments: vec![core_sim::LaborAssignment {

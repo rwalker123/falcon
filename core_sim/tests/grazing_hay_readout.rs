@@ -249,6 +249,7 @@ fn spawn_band(app: &mut App, tile: UVec2, assignments: Vec<LaborAssignment>) -> 
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
                 predators_kept_off: 0,
+                last_cohesion: Default::default(),
             },
             StartingUnit {
                 kind: "BandKeeper".to_string(),

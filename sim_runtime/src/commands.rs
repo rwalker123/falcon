@@ -1712,6 +1712,9 @@ pub enum ConfigOverrideKind {
     /// and the four practice quanta (a finished directed-work build, a split, a herd-following hex, a
     /// settlement stage reached).
     Leadership,
+    /// The turn pipeline (`turn_pipeline_config.json`) - staged for the population block's
+    /// `attrition_morale_tolerance` and `fresh_water_morale_bonus`.
+    TurnPipeline,
 }
 
 impl ConfigOverrideKind {
@@ -1729,6 +1732,7 @@ impl ConfigOverrideKind {
         ConfigOverrideKind::Fauna,
         ConfigOverrideKind::Mobility,
         ConfigOverrideKind::Leadership,
+        ConfigOverrideKind::TurnPipeline,
     ];
 
     /// The wire spelling, shared with the client's `tuning_manifest.json` `kind` field.
@@ -1745,6 +1749,7 @@ impl ConfigOverrideKind {
             ConfigOverrideKind::Fauna => "fauna",
             ConfigOverrideKind::Mobility => "mobility",
             ConfigOverrideKind::Leadership => "leadership",
+            ConfigOverrideKind::TurnPipeline => "turn_pipeline",
         }
     }
 
@@ -3805,6 +3810,7 @@ fn config_override_kind_to_proto(kind: ConfigOverrideKind) -> pb::ConfigOverride
         ConfigOverrideKind::Fauna => pb::ConfigOverrideKind::Fauna,
         ConfigOverrideKind::Mobility => pb::ConfigOverrideKind::Mobility,
         ConfigOverrideKind::Leadership => pb::ConfigOverrideKind::Leadership,
+        ConfigOverrideKind::TurnPipeline => pb::ConfigOverrideKind::TurnPipeline,
     }
 }
 
@@ -3821,6 +3827,7 @@ fn config_override_kind_from_proto(value: i32) -> Result<ConfigOverrideKind, Com
         Ok(pb::ConfigOverrideKind::Fauna) => Ok(ConfigOverrideKind::Fauna),
         Ok(pb::ConfigOverrideKind::Mobility) => Ok(ConfigOverrideKind::Mobility),
         Ok(pb::ConfigOverrideKind::Leadership) => Ok(ConfigOverrideKind::Leadership),
+        Ok(pb::ConfigOverrideKind::TurnPipeline) => Ok(ConfigOverrideKind::TurnPipeline),
         Ok(pb::ConfigOverrideKind::Unspecified) | Err(_) => Err(CommandDecodeError::InvalidEnum {
             field: "ConfigOverrideKind",
             value,

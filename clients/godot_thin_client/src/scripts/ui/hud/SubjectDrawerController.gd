@@ -1067,7 +1067,9 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
         # stream). It answers `{}` for anything else, which renders no row at all.
         lines = _banddetail.unit_summary_lines(
             _selection.unit(), _selectioncard.selected_terrain_label(), ctx, false, true,
-            _bandpanel.launched_party_denial_view(_selection.unit()))
+            _bandpanel.launched_party_denial_view(_selection.unit()),
+            _band_labor.terrain_rating_at(int(_selection.unit().get("current_x", -1)),
+                int(_selection.unit().get("current_y", -1))) if _band_labor != null else "")
     elif not _selection.herd().is_empty():
         # **NO KEEPER COUNT IS THREADED IN ANY MORE** (`docs/plan_standing_upkeep.md` §2.5). The
         # drawer used to be handed the `maintain` crews summed across the player's bands; maintenance

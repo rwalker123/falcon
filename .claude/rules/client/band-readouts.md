@@ -566,9 +566,15 @@ which is a property of the tier and not of the merge.
   symptom, not the cause — the morale drivers live server-side and were discarded each turn until the
   cohort started exporting the per-turn trend + dominant negative driver. `Hud._band_morale_line` appends
   a trend arrow (`▼` falling / `▲` rising / none when `|morale_delta| < MORALE_TREND_EPSILON`) and, when
-  falling, the plain-language cause via `_morale_cause_label` — `Terrain`→"harsh terrain", `Cold`→"harsh
-  climate" (the server penalty fires on hot **or** cold deviation, so not literally "cold"),
-  `Unrest`→"unrest", `Culture`→"far from its sacred ground" (`DetailFormat.MORALE_CAUSE_CULTURE` /
+  falling, the plain-language cause via `_morale_cause_label` — `Terrain`→"harsh terrain" / `Cold`→"harsh
+  climate" **only when the tile the BAND stands on rates Harsh or Hostile** (`TileHabitability`, the tile card's
+  own authority; `DetailFormat.rating_is_harsh`), else the plain "terrain" / "climate" — the sim drains a little
+  morale on almost every terrain, so a Hospitable/Fair/unknown-rating tile never reads "harsh". The rating
+  reaches the producers as `terrain_rating` (`HudBandLaborState.terrain_rating_at(current_x, current_y)`, fed by
+  `MapView.tile_habitability` via `Hud.update_tile_habitability`); `BandDetailLines.unit_summary_lines`
+  takes it as a trailing parameter from both hosts, `FactionRollup` and `AttentionController._decline_reason`
+  resolve it per band. Wording below ("harsh terrain") is the Harsh/Hostile form (the server penalty fires on hot **or** cold deviation, so not literally "cold"),
+  `Unrest`→"unrest", `Cohesion`→"too many to hold together" (`DetailFormat.MORALE_CAUSE_COHESION` / `MORALE_CAUSE_LABEL_COHESION`: the band's head-count exceeds its cohesion ceiling), `Culture`→"far from its sacred ground" (`DetailFormat.MORALE_CAUSE_CULTURE` /
   `MORALE_CAUSE_LABEL_CULTURE`: the band stands beyond walking reach of the belief place it remembers).
   Every surface that names a cause — this headline, the faction morale rollup, the turn orb's
   `AttentionController._decline_reason` — reads it through the one `DetailFormat.morale_cause_label`.
@@ -579,12 +585,12 @@ which is a property of the tier and not of the merge.
   restored band keeps its delta and cause; the sentinel answers for a cohort no turn has resolved.
 - **Civilization Wellbeing — productivity, itemized morale, recovery** (see
   `docs/plan_civ_wellbeing.md`; snapshot `PopulationCohortState.outputMultiplier` /
-  `discontentFraction` / `lastEmigrated` / `lastImmigrated` / `grievance` + the five signed
+  `discontentFraction` / `lastEmigrated` / `lastImmigrated` / `grievance` + the seven signed
   Layer-1 contributions `moraleSettling` / `moraleTerrain` / `moraleClimate` / `moraleUnrest` /
-  `moraleCulture`,
+  `moraleCulture` / `moraleFreshWater` / `moraleCohesion`,
   decoded in `native/src/lib.rs population_to_dict` as `output_multiplier` / `discontent_fraction`
   / `last_emigrated` / `last_immigrated` / `grievance` (telemetry only, not displayed in P1) /
-  `morale_settling` / `morale_terrain` / `morale_climate` / `morale_unrest` / `morale_culture`, all
+  `morale_settling` / `morale_terrain` / `morale_climate` / `morale_unrest` / `morale_culture` / `morale_cohesion` / `morale_fresh_water`, all
   flowed onto the
   MapView unit marker in `_rebuild_unit_markers`). Player-band drawer only (`_unit_summary_lines`):
   - **Productivity is NOT a detail row — it reads on the Band panel's WORK zone head** as
@@ -603,11 +609,13 @@ which is a property of the tier and not of the merge.
     renderer's `"Output"` tint branch and `hex_for_output` itself all went with the row — no emitter
     or caller survived — so nothing in the detail path carries the scalar any more. The head item's placement, gate and vocabulary are
     specified in `band-city-panel.md` → Zone `work`.
-  - **Itemized morale breakdown** (`_morale_breakdown_lines`): the five signed contributions
+  - **Itemized morale breakdown** (`_morale_breakdown_lines`): the seven signed contributions
     (their sum IS `morale_delta`) as indented sub-lines (e.g. `    ▲ +1.0%  settling`). Only
     contributions above `BandFoodStatus.morale_breakdown_epsilon()` (config `morale.breakdown_epsilon`
-    = `0.002`) list. Labels: `settling`, `harsh terrain (<terrain_label>)` (matches the headline cause
-    treatment), `harsh climate`, `unrest`/`culture` by sign, and the culture term `morale_culture` as
+    = `0.002`) list, in the order settling, terrain, climate, unrest, culture, fresh water, cohesion. `morale_fresh_water`
+    (`moraleFreshWater`; the band's tile on or beside fresh water) lists as `fresh water`
+    (`BandDetailLines.MORALE_CONTRIB_LABEL_FRESH_WATER`), never negative and never a morale cause. Labels: `settling`, `terrain (<terrain_label>)` / `climate`, each prefixed `harsh` on Harsh/Hostile ground (matches the headline cause
+    treatment), `unrest`/`culture` by sign, and the culture term `morale_culture` as
     `close to its sacred ground` (positive, `BandDetailLines.MORALE_CONTRIB_LABEL_ANCESTORS_NEAR`) / `far
     from its sacred ground` (negative, `DetailFormat.MORALE_CAUSE_LABEL_CULTURE`). No coordinates and no hop
     counts are on screen (the Beliefs panel's [show ▸] finds the place); the morale HEADLINE's cause is the
@@ -630,10 +638,24 @@ which is a property of the tier and not of the merge.
     always compute so the good state can be opened too; the disclosure is offered only when there's
     actually something to show (a contribution above epsilon, or the concerning recovery line) —
     `_register_disclosure` declines an empty payload and no caret renders.
-  - **Recovery guidance** (`RECOVERY_GUIDANCE_TEXT`): a dim `↑ Recover: move to Hospitable ground ·
-    Scout · Hunt` line (the real levers, NOT harvest), appended under the breakdown **only when
-    morale is concerning** (a healthy band that manually expands its breakdown is not told to
-    "recover"). `_split_detail_kv` skips lines beginning with `↑` so it renders as a dim sentence.
+    **The cohesion row** (`morale_cohesion`, never positive, so one label): `too many to hold together
+    (182 in the band, holds 150)` (`BandDetailLines._cohesion_label`, `MORALE_CONTRIB_COHESION_FORMAT`) —
+    `cohesion_headcount` is the band's opening head-count the term was priced from (not `size`),
+    `cohesion_ceiling` the ceiling it is held against (about 150; belief on the band's tile lifts it); past
+    it some leave for another band. The numbers ride on the row itself (as the ancestors row carries its
+    anchor tile), so the row wraps to at most one extra line in the popover. A band publishing no
+    head-count (`cohesion_headcount` 0) gets the bare `too many to hold together`; a band at zero cohesion
+    term draws no row, under the same epsilon.
+  - **Recovery guidance** (`DetailFormat.recovery_guidance_text(cause, terrain_rating)`): a dim line
+    beginning with `RECOVERY_GUIDANCE_GLYPH` (`↑`), appended under the breakdown **only when morale is
+    concerning**. It names the lever that REMOVES the dominant `morale_cause`, and only it: Cohesion →
+    `↑ Recover: split the band`; Terrain/Cold → `↑ Recover: move to Hospitable ground` (Fair ground keeps
+    it); Culture → `↑ Recover: return to your sacred ground`. Scout and Hunt lift morale for a while but fix no
+    cause — they shed no people and move no band — so `↑ Recover: Scout · Hunt` is the line only where no
+    cause-specific lever exists: Unrest/None, or Terrain/Cold on ground already rated Hospitable. Built from
+    `RECOVERY_GUIDANCE_PREFIX` + (lever or `_TAIL`) consts so
+    the "text begins with the glyph" invariant holds. `_split_detail_kv` skips lines beginning with `↑` so it
+    renders as a dim sentence. ui_preview: `_morale_wording_states` (`band_morale_hospitable`).
   - **Growth row + itemized fertility breakdown** (`_band_growth_line` / `_fertility_breakdown_lines`;
     snapshot `PopulationCohortState.fertilityHunger`/`fertilityReserve`/`fertilityTrend`, decoded in
     `native/src/dict/population.rs cohort_scalars` as `fertility_hunger`/`fertility_reserve`/
@@ -690,7 +712,7 @@ which is a property of the tier and not of the merge.
   source of truth — config `src/config/tile_habitability_config.json` (`habitability.{hospitable_max,
   fair_max,harsh_max}` = `0.02`/`0.05`/`0.09`) buckets the drain into Hospitable/Fair/Harsh/Hostile,
   tinted HEALTHY/INK/WARN/DANGER via `hex_for_rating` in `DetailFormat.detail_bbcode` (mirrors the
-  `BandFoodStatus` bucketing pattern). The Karst Cavern Mouth (~0.0825) reads "Harsh" (amber).
+  `BandFoodStatus` bucketing pattern). The Karst Cavern Mouth (~0.0725 since the terrain allowance) reads "Harsh" (amber).
   With the latitude climate + cold-morale tolerance dead-band (see `core_sim`), temperate
   mid-latitudes read "Hospitable", the equator "Hospitable/Fair", and poles/high-alt/caverns
   "Harsh/Hostile" — the config buckets (`0.02`/`0.05`/`0.09`) spread cleanly across that range,
@@ -1031,7 +1053,7 @@ three WHOLE PEOPLE.
   *"only 0 of 4"* is the arithmetic where *"none of your 4"* is the fact — and that reading is
   reachable with the item LIVE, an item needing a full crew (`workers_per_unit > 1`) equipping nobody
   until the job is staffed to it. Both clauses are spelled from one shared tail
-  (`KIT_COVERAGE_SHORT_NEEDLE`, the `RECOVERY_GUIDANCE_TEXT` idiom) so a harness needle finds either.
+  (`KIT_COVERAGE_SHORT_NEEDLE`, the `RECOVERY_GUIDANCE_PREFIX` idiom) so a harness needle finds either.
 - **RETIRED (ROW) — the three-ink rule and the entry budget.** `_band_kit_line` inked a live item that
   reached everybody neutral, a spent one DANGER and a live-but-short one WARN, and showed only
   `BAND_KIT_ROW_MAX_ENTRIES` (3) entries, dry-first then short — a fourth wrapped and overflowed

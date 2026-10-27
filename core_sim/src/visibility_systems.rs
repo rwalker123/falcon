@@ -1481,6 +1481,7 @@ mod tests {
                     belief_anchor: None,
                     last_belief_relay_hops: 0,
                     predators_kept_off: 0,
+                    last_cohesion: Default::default(),
                 },
                 StartingUnit::new("BandScout".to_string(), vec![]),
                 allocation,
@@ -1617,6 +1618,7 @@ mod tests {
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
                 predators_kept_off: 0,
+                last_cohesion: Default::default(),
             },
             // BandCrafter: base_range 2, so the band center can't reveal the far worked tiles.
             StartingUnit::new("BandCrafter".to_string(), vec![]),
@@ -2309,6 +2311,7 @@ mod hex_sight_range_tests {
             belief_anchor: None,
             last_belief_relay_hops: 0,
             predators_kept_off: 0,
+            last_cohesion: Default::default(),
         }
     }
 

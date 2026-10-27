@@ -993,7 +993,7 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub morale_delta: i64,
     /// Dominant negative morale driver this turn: `0 = None, 1 = Terrain, 2 = Cold, 3 = Unrest,
-    /// 4 = Culture`.
+    /// 4 = Culture, 5 = Cohesion`.
     /// Names *why* morale is falling. Recomputed each turn alongside [`Self::morale_delta`].
     #[serde(default)]
     pub morale_cause: u8,
@@ -1944,6 +1944,21 @@ pub struct PopulationCohortState {
     /// only. Appended last.
     #[serde(default)]
     pub leader_orders_carried_out: f32,
+    /// The cohesion morale contribution (`snapshot.fbs` → `moraleCohesion`), part of the `morale_*`
+    /// breakdown whose signed sum IS `morale_delta`. Fixed-point raw. Derived at capture. Appended
+    /// last.
+    #[serde(default)]
+    pub morale_cohesion: i64,
+    /// The band's opening head-count the cohesion term was priced from. Appended last.
+    #[serde(default)]
+    pub cohesion_headcount: u32,
+    /// The cohesion ceiling the cohesion term was priced against, in whole people. Appended last.
+    #[serde(default)]
+    pub cohesion_ceiling: u32,
+    /// The fresh-water morale contribution (`snapshot.fbs` -> `moraleFreshWater`, >= 0), part of the
+    /// `morale_*` breakdown whose signed sum IS `morale_delta`. Fixed-point raw. Appended last.
+    #[serde(default)]
+    pub morale_fresh_water: i64,
 }
 
 /// `PopulationCohortState::tribe_leader_kind`: the band is in no tribe.

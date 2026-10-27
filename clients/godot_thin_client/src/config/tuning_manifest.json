@@ -326,6 +326,50 @@
           "default": 1.0,
           "unit": "grievance",
           "hint": "Grievance at which bands cut off from the heart of their people break away as a people of their own. Low: any far band with a bad season leaves once out of touch. High: only a starving band ever leaves."
+        },
+        {
+          "pointer": "/cohesion/base_ceiling",
+          "label": "Cohesion ceiling",
+          "type": "float",
+          "min": 1,
+          "max": 500,
+          "step": 5,
+          "default": 150.0,
+          "unit": "people",
+          "hint": "How many people one band can hold together with no belief where it stands. Above it the band's morale falls and people drift to a smaller band of their own. Low: bands fray early. High: bands grow large and stay whole."
+        },
+        {
+          "pointer": "/cohesion/belief_lift",
+          "label": "Belief lift",
+          "type": "float",
+          "min": 0,
+          "max": 500,
+          "step": 5,
+          "default": 150.0,
+          "unit": "people",
+          "hint": "People a heavily honoured tile adds to the cohesion ceiling of a band standing on it. 0: belief holds nobody together. High: a sacred place keeps a very large band whole."
+        },
+        {
+          "pointer": "/cohesion/belief_half_saturation",
+          "label": "Belief half-lift",
+          "type": "float",
+          "min": 0.5,
+          "max": 200,
+          "step": 0.5,
+          "default": 20.0,
+          "unit": "dead",
+          "hint": "Dead remembered on a tile at which it gives half its lift. Low: a few graves lift the ceiling. High: only an old burial ground does."
+        },
+        {
+          "pointer": "/cohesion/drag",
+          "label": "Cohesion drag",
+          "type": "float",
+          "min": 0,
+          "max": 2,
+          "step": 0.05,
+          "default": 0.2,
+          "unit": "morale",
+          "hint": "Morale a band loses per turn for being twice its ceiling, less in proportion when nearer. 0: an oversized band never minds. High: it frays within a few turns."
         }
       ]
     },
@@ -627,6 +671,35 @@
           "step": 0.5,
           "default": 2.0,
           "hint": "Closeness two bands get while a monument stands kept on their shared urn."
+        }
+      ]
+    },
+    {
+      "kind": "turn_pipeline",
+      "label": "Turn pipeline",
+      "env_var": "TURN_PIPELINE_CONFIG_PATH",
+      "params": [
+        {
+          "pointer": "/population/attrition_morale_tolerance",
+          "label": "Terrain morale allowance",
+          "type": "float",
+          "min": 0,
+          "max": 0.5,
+          "step": 0.01,
+          "default": 0.05,
+          "unit": "attrition",
+          "hint": "Attrition the gentlest ground carries without costing morale. Only a terrain's attrition above this drains morale each turn. 0: every terrain drains. High: rough ground stops mattering."
+        },
+        {
+          "pointer": "/population/fresh_water_morale_bonus",
+          "label": "Fresh water morale",
+          "type": "float",
+          "min": 0,
+          "max": 0.05,
+          "step": 0.001,
+          "default": 0.005,
+          "unit": "morale",
+          "hint": "Morale a band gains each turn standing on or beside fresh water — a river along its tile, a lake or marsh next door. 0: water does nothing for morale."
         }
       ]
     }

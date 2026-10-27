@@ -1267,6 +1267,10 @@ fn create_populations<'a>(
                     ordersCarriedOut: cohort.orders_carried_out,
                     leaderOrdersCarriedOut: cohort.leader_orders_carried_out,
                     beliefAnchorWeight: cohort.belief_anchor_weight,
+                    moraleCohesion: cohort.morale_cohesion,
+                    cohesionHeadcount: cohort.cohesion_headcount,
+                    cohesionCeiling: cohort.cohesion_ceiling,
+                    moraleFreshWater: cohort.morale_fresh_water,
                 },
             )
         })
@@ -2211,6 +2215,10 @@ fn decode_population(
         orders_carried_out: cohort.ordersCarriedOut(),
         leader_orders_carried_out: cohort.leaderOrdersCarriedOut(),
         belief_anchor_weight: cohort.beliefAnchorWeight(),
+        morale_cohesion: cohort.moraleCohesion(),
+        cohesion_headcount: cohort.cohesionHeadcount(),
+        cohesion_ceiling: cohort.cohesionCeiling(),
+        morale_fresh_water: cohort.moraleFreshWater(),
     })
 }
 

@@ -348,6 +348,7 @@ static func _pointer_tokens(pointer: String) -> PackedStringArray:
 ## leaving the rows dirty, because the edits are still there to re-apply once a server is attached
 ## and silently reverting them would look like the apply had worked.
 func _on_apply_pressed() -> void:
+	release_field_focus()
 	_outcome = ""
 	var patches := build_patches()
 	if patches.is_empty():
@@ -404,6 +405,7 @@ func _mark_sent(kinds: Array) -> void:
 ## **It stays reachable while anything is staged**, even with every row already reading its default —
 ## that is the state in which it is the only control that can do anything.
 func _on_revert_pressed() -> void:
+	release_field_focus()
 	_outcome = ""
 	if send_command(WorkbenchVocab.COMMAND_CLEAR_CONFIG_OVERRIDES):
 		_staged = false

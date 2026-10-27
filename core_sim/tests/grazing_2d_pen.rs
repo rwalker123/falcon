@@ -277,6 +277,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
                 predators_kept_off: 0,
+                last_cohesion: Default::default(),
             },
             StartingUnit {
                 kind: "BandKeeper".to_string(),

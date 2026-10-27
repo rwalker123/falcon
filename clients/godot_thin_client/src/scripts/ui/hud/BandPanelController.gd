@@ -1319,7 +1319,8 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     # (`_panel_position_label`), so a vitals row would be a second telling — and one this zone pays
     # for in height. The drawer host keeps it (it has no header and renders foreign bands).
     var vitals_lines := _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx,
-        _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false)
+        _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false, {},
+        _band_labor.terrain_rating_at(int(band.get("current_x", -1)), int(band.get("current_y", -1))))
     detail_label.set_meta(HudWorkVocab.BAND_VITALS_LABEL_META, true)
     detail_label.text = DetailFormat.detail_bbcode(vitals_lines, ctx)
     # **A ROW'S HOVER SHOWS OVER THAT ROW ALONE** (`DetailFormat.wire_row_hovers`).

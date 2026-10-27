@@ -536,7 +536,8 @@ table PopulationCohortState {
   supplyNetworkId:uint = 0;
   // This turn's signed morale delta (fixed-point, FIXED_POINT_SCALE = 1e6) — trend arrow source.
   moraleDelta:long = 0;
-  // Dominant negative morale driver when falling: 0=None, 1=Terrain, 2=Cold, 3=Unrest, 4=Culture.
+  // Dominant negative morale driver when falling: 0=None, 1=Terrain, 2=Cold, 3=Unrest, 4=Culture,
+  // 5=Cohesion.
   moraleCause:ubyte = 0;
   // Civilization Wellbeing (docs/plan_civ_wellbeing.md). All fixed-point (FIXED_POINT_SCALE = 1e6)
   // except the two head-counts. Derived per-turn unless noted.
@@ -1636,6 +1637,23 @@ table PopulationCohortState {
   // the band's load, whether or not the band is in a tribe (ordersCarriedOut is the tribe factor
   // for a member). 0 when the band has no leader of its own. Own bands only.
   leaderOrdersCarriedOut:float = 0;
+  // --- COHESION (appended last, #700) ---
+  // The cohesion morale contributor: -drag x max(0, size - ceiling) / ceiling for this band's own
+  // size (a band can only hold together at about 150 people; belief on its tile lifts the ceiling;
+  // other bands on the tile do not count). Signed (<= 0), fixed-point (FIXED_POINT_SCALE = 1e6),
+  // part of the moraleSettling/Terrain/Climate/Unrest/Culture breakdown whose signed sum IS
+  // moraleDelta. moraleCause 5 names it. Derived per-turn.
+  moraleCohesion:long = 0;
+  // The band's opening head-count (before the turn's births and deaths, rounded once) and the cohesion ceiling the term
+  // was priced from - stored by the sim (PopulationCohort.last_cohesion), never recounted at capture.
+  // 0 / 0 for a detached party and for a cohort no turn has priced.
+  cohesionHeadcount:uint = 0;
+  cohesionCeiling:uint = 0;
+  // The fresh-water morale contributor: +fresh_water_morale_bonus while the band's current tile is
+  // fresh-watered (forage::tile_is_fresh_watered), else 0. Signed (>= 0), fixed-point
+  // (FIXED_POINT_SCALE = 1e6), part of the moraleSettling/Terrain/Climate/Unrest/Culture/Cohesion
+  // breakdown whose signed sum IS moraleDelta. Never a moraleCause (causes are negative). Derived per-turn.
+  moraleFreshWater:long = 0;
 }
 
 // ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH - a row of `PopulationCohortState.bandImprovements`,

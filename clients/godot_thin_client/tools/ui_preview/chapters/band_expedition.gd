@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 166
+const EXPECTED_CHECKPOINTS := 187
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -853,6 +853,11 @@ func run(harness) -> void:
 	# **APPENDED**, for the reason the blocks above state.
 	await _belief_culture_states()
 
+	# ---- THE COHESION MORALE TERM (#700) -----------------------------------------------------------
+	# **APPENDED**, for the reason the blocks above state.
+	await _cohesion_states()
+	await _morale_wording_states()
+
 	# band_alerts (above) left _player_band as an alert-fixture band (no work_range, far from the food
 	# tile); seed a NEAR band so the forage controls resolve an in-range actor.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
@@ -1376,6 +1381,204 @@ func _beliefs_row_count(vitals: String) -> int:
 func _hover_beliefs() -> void:
 	h._hud.occupant_detail.meta_hover_started.emit(
 		HudDisclosureVocab.ROW_HOVER_META_PREFIX + HudDisclosureVocab.DETAIL_ROW_BELIEFS)
+
+## ---- THE COHESION MORALE TERM (#700) -- `morale_cohesion`, never positive: the band's opening
+## head-count (`cohesion_headcount`) exceeds its cohesion ceiling (`cohesion_ceiling`).
+const COHESION_BAND_ENTITY := 920
+const COHESION_CONTRIB := -0.012
+const COHESION_HEADCOUNT := 182
+const COHESION_CEILING := 150
+const BAND_DISCLOSURE_MORALE_COHESION := "morale:920"
+## Spelled as LITERALS, like the ancestors rows.
+const COHESION_ROW := "−1.2%  too many to hold together (182 in the band, holds 150)"
+const COHESION_HEADLINE_CAUSE := "— too many to hold together"
+## Panel copy is two lines max: the popover may wrap at most this many rendered lines over its logical ones.
+const COHESION_MAX_EXTRA_WRAPPED_LINES := 1
+
+func _cohesion_states() -> void:
+	var over := _low_morale_band_fixture()
+	over["entity"] = COHESION_BAND_ENTITY
+	over["morale_cohesion"] = COHESION_CONTRIB
+	over["morale_delta"] = float(over["morale_delta"]) + COHESION_CONTRIB
+	over["morale_cause"] = DetailFormat.MORALE_CAUSE_COHESION
+	over["cohesion_headcount"] = COHESION_HEADCOUNT
+	over["cohesion_ceiling"] = COHESION_CEILING
+	h._hud.show_unit_selection(over)
+	await h._settle()
+	var vitals := String(h._hud.occupant_detail.get_parsed_text())
+	h._assert_hud("the morale headline names the cause `%s`" % COHESION_HEADLINE_CAUSE,
+		vitals.contains(COHESION_HEADLINE_CAUSE))
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	await h._settle()
+	await h._save("band_morale_cohesion")
+	var row := _kit_breakdown_line(_popover_text(), "too many to hold together")
+	h._assert_hud("an over-ceiling band itemizes `%s`" % COHESION_ROW,
+		row.contains(COHESION_ROW) and row.contains(DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH))
+	var with_extra := _popover_extra_wrapped_lines()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	# The SAME band with the term zeroed: whatever the popover wraps beyond this is the cohesion row's.
+	var without := over.duplicate(true)
+	without["morale_cohesion"] = 0.0
+	h._hud.show_unit_selection(without)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	await h._settle()
+	var row_extra := with_extra - _popover_extra_wrapped_lines()
+	h._assert_hud("…and the row stays within two lines (%d extra wrapped)" % row_extra,
+		row_extra <= COHESION_MAX_EXTRA_WRAPPED_LINES)
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	# A band with no cohesion term draws no row.
+	var calm := BandFx.band_fixture()
+	calm["entity"] = COHESION_BAND_ENTITY
+	calm["morale_cohesion"] = 0.0
+	calm["morale_culture"] = ANCESTORS_NEAR_CONTRIB
+	h._hud.show_unit_selection(calm)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	await h._settle()
+	h._assert_hud("a band with zero cohesion term draws no cohesion row",
+		_kit_breakdown_line(_popover_text(), "too many to hold together") == "")
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	await _fresh_water_states()
+
+## ---- THE FRESH WATER MORALE TERM -- `morale_fresh_water`, never negative and never a cause.
+const FRESH_WATER_CONTRIB := 0.005
+const FRESH_WATER_LABEL := "fresh water"
+const FRESH_WATER_VALUE_TEXT := "+0.5%"
+
+func _fresh_water_states() -> void:
+	var wet := BandFx.band_fixture()
+	wet["entity"] = COHESION_BAND_ENTITY
+	wet["morale_cohesion"] = 0.0
+	wet["morale_fresh_water"] = FRESH_WATER_CONTRIB
+	h._hud.show_unit_selection(wet)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	await h._settle()
+	var expected := "%s%s %s  %s" % [DetailFormat.MORALE_BREAKDOWN_INDENT,
+		DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH, FRESH_WATER_VALUE_TEXT, FRESH_WATER_LABEL]
+	h._assert_hud("a band beside fresh water itemizes `%s`" % expected.strip_edges(),
+		_kit_breakdown_line(_popover_text(), FRESH_WATER_LABEL) == expected)
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	var dry := wet.duplicate(true)
+	dry["morale_fresh_water"] = 0.0
+	h._hud.show_unit_selection(dry)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	await h._settle()
+	h._assert_hud("a band with zero fresh water term draws no fresh water row",
+		_kit_breakdown_line(_popover_text(), FRESH_WATER_LABEL) == "")
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+
+## ---- THE MORALE WORDING FOLLOWS THE BAND'S TILE RATING (`TileHabitability`), and the recovery line
+## follows the dominant cause. The sim drains a little morale on almost every terrain, so "harsh" is
+## claimed only where the tile card's Habitability rating says Harsh/Hostile.
+const WORDING_HARSH_CELL := Vector2i(44, 61)
+const WORDING_HARSH_DRAIN := 0.0825
+const WORDING_HOSPITABLE_CELL := Vector2i(30, 30)
+const WORDING_HOSPITABLE_DRAIN := 0.01
+const WORDING_FAIR_CELL := Vector2i(31, 30)
+const WORDING_FAIR_DRAIN := 0.03
+const WORDING_UNKNOWN_CELL := Vector2i(32, 30)
+const WORDING_HARSH_WORD := "harsh"
+const WORDING_HOSPITABLE_WORD := "Hospitable"
+const WORDING_RECOVER_BARE := "Recover: Scout · Hunt"
+
+## A morale-concerning band standing on `cell`, its drawer terrain named `label`, dying of `cause`.
+func _wording_band(cell: Vector2i, label: String, cause: int) -> Dictionary:
+	var band := _low_morale_band_fixture()
+	band["entity"] = COHESION_BAND_ENTITY
+	band["current_x"] = cell.x
+	band["current_y"] = cell.y
+	band["morale_cause"] = cause
+	band["tile_info"]["terrain_label"] = label
+	# The card's own Habitability chip reads the same drain the band's wording does.
+	var drains := {WORDING_HARSH_CELL: WORDING_HARSH_DRAIN, WORDING_HOSPITABLE_CELL: WORDING_HOSPITABLE_DRAIN,
+		WORDING_FAIR_CELL: WORDING_FAIR_DRAIN}
+	if drains.has(cell):
+		band["tile_info"]["habitability"] = drains[cell]
+	else:
+		band["tile_info"].erase("habitability")
+	return band
+
+## Select `band`, then return [headline vitals text, opened morale popover text].
+func _wording_read(band: Dictionary) -> Array[String]:
+	h._hud.show_unit_selection(band)
+	await h._settle()
+	var vitals := String(h._hud.occupant_detail.get_parsed_text())
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	await h._settle()
+	var popover := _popover_text()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	return [vitals, popover]
+
+func _morale_wording_states() -> void:
+	h._hud.update_tile_habitability({
+		WORDING_HARSH_CELL: WORDING_HARSH_DRAIN, WORDING_HOSPITABLE_CELL: WORDING_HOSPITABLE_DRAIN,
+		WORDING_FAIR_CELL: WORDING_FAIR_DRAIN})
+	# HARSH ground keeps the word, and its recovery line sends the band somewhere better.
+	var harsh: Array[String] = await _wording_read(
+		_wording_band(WORDING_HARSH_CELL, "Karst Cavern Mouth", DetailFormat.MORALE_CAUSE_TERRAIN))
+	h._assert_hud("a band on Harsh ground reads `harsh terrain (Karst Cavern Mouth)` in the headline",
+		harsh[0].contains("harsh terrain (Karst Cavern Mouth)"))
+	h._assert_hud("…and in the breakdown row, with `harsh climate`",
+		harsh[1].contains("harsh terrain (Karst Cavern Mouth)") and harsh[1].contains("harsh climate"))
+	h._assert_hud("…and its recovery line still says move to Hospitable ground",
+		harsh[1].contains(DetailFormat.RECOVERY_GUIDANCE_PREFIX + DetailFormat.RECOVERY_GUIDANCE_MOVE))
+	# HOSPITABLE ground: plain words, no move clause.
+	var hospitable: Array[String] = await _wording_read(
+		_wording_band(WORDING_HOSPITABLE_CELL, "Alluvial Plain", DetailFormat.MORALE_CAUSE_TERRAIN))
+	await h._save("band_morale_hospitable")
+	h._assert_hud("a band on Hospitable ground reads `terrain (Alluvial Plain)` in the headline",
+		hospitable[0].contains("— terrain (Alluvial Plain)"))
+	h._assert_hud("…and never `harsh` in the headline",
+		not hospitable[0].contains(WORDING_HARSH_WORD))
+	h._assert_hud("…its breakdown rows read `terrain (Alluvial Plain)` and `climate`",
+		hospitable[1].contains("terrain (Alluvial Plain)") and hospitable[1].contains("climate"))
+	h._assert_hud("…and never `harsh` in the breakdown",
+		not hospitable[1].contains(WORDING_HARSH_WORD))
+	h._assert_hud("…its recovery line drops the move clause (`%s`)" % WORDING_RECOVER_BARE,
+		hospitable[1].contains(WORDING_RECOVER_BARE) and not hospitable[1].contains(WORDING_HOSPITABLE_WORD))
+	# FAIR ground: plain words, but the move clause stays (only Hospitable ground is already the answer).
+	var fair: Array[String] = await _wording_read(
+		_wording_band(WORDING_FAIR_CELL, "Prairie Steppe", DetailFormat.MORALE_CAUSE_TERRAIN))
+	h._assert_hud("a band on Fair ground reads plain `terrain (Prairie Steppe)`, not harsh",
+		fair[0].contains("— terrain (Prairie Steppe)") and not fair[0].contains(WORDING_HARSH_WORD))
+	h._assert_hud("…and is still told to move to Hospitable ground",
+		fair[1].contains(DetailFormat.RECOVERY_GUIDANCE_MOVE))
+	# NO RATING published: never claim harsh without evidence.
+	var unknown: Array[String] = await _wording_read(
+		_wording_band(WORDING_UNKNOWN_CELL, "Prairie Steppe", DetailFormat.MORALE_CAUSE_TERRAIN))
+	h._assert_hud("a band on a tile with no habitability reads plain, never `harsh`",
+		unknown[0].contains("— terrain (Prairie Steppe)") and not unknown[0].contains(WORDING_HARSH_WORD)
+		and not unknown[1].contains(WORDING_HARSH_WORD))
+	# COHESION cause on Hospitable ground: split, never "move to Hospitable ground".
+	var crowded := _wording_band(WORDING_HOSPITABLE_CELL, "Alluvial Plain", DetailFormat.MORALE_CAUSE_COHESION)
+	crowded["morale_cohesion"] = COHESION_CONTRIB
+	crowded["cohesion_headcount"] = COHESION_HEADCOUNT
+	crowded["cohesion_ceiling"] = COHESION_CEILING
+	var split: Array[String] = await _wording_read(crowded)
+	h._assert_hud("a crowded band's recovery line says `split the band`",
+		split[1].contains(DetailFormat.RECOVERY_GUIDANCE_PREFIX + DetailFormat.RECOVERY_GUIDANCE_SPLIT))
+	h._assert_hud("…and does not send it to Hospitable ground",
+		not split[1].contains(WORDING_HOSPITABLE_WORD))
+	h._assert_hud("…and names no palliative beside the fix (Scout and Hunt shed no people)",
+		not split[1].contains(DetailFormat.RECOVERY_GUIDANCE_TAIL))
+	# CULTURE and UNREST name their own lever / none.
+	var culture: Array[String] = await _wording_read(
+		_wording_band(WORDING_HARSH_CELL, "Karst Cavern Mouth", DetailFormat.MORALE_CAUSE_CULTURE))
+	h._assert_hud("a band far from its ancestors is told to return to them",
+		culture[1].contains(DetailFormat.RECOVERY_GUIDANCE_ANCESTORS))
+	var unrest: Array[String] = await _wording_read(
+		_wording_band(WORDING_HARSH_CELL, "Karst Cavern Mouth", DetailFormat.MORALE_CAUSE_UNREST))
+	h._assert_hud("an unrest band is told only the generic levers",
+		unrest[1].contains(WORDING_RECOVER_BARE) and not unrest[1].contains(WORDING_HOSPITABLE_WORD))
+	h._hud.update_tile_habitability({})
+
+## Rendered lines the breakdown popover wraps beyond its logical ones.
+func _popover_extra_wrapped_lines() -> int:
+	var label := h._hud._disclosures._breakdown_popover_label as RichTextLabel
+	return label.get_line_count() - _popover_text().split("\n").size()
 
 func _belief_culture_states() -> void:
 	# The drawer's content height WITHOUT the row: Beliefs is an ordinary table row, so its height over this

@@ -298,6 +298,7 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
                 predators_kept_off: 0,
+                last_cohesion: Default::default(),
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {

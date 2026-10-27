@@ -316,6 +316,59 @@ tie-break order is Terrain ≥ Climate ≥ Unrest ≥ Culture (`MoraleContributi
 - **Every other cohort starts `None`**: the opening bands at worldgen, and a detached party
   (`belief_anchor` cleared at launch — a party keeps no morale of its own).
 
+## The cohesion morale term — a band too big to hold together
+
+**A band can only hold together at about 150 people** — past that, not everyone knows everyone
+(Dunbar). Above its ceiling its morale falls and unhappy people drift off to a smaller band of their
+own people; with no such band, splitting it is the player's remedy. **Belief on the tile it stands
+on lets it grow bigger and still hold together** — shared dead and a sacred place give people a
+reason to stay one group. That is the step from band to tribe (issue #700,
+`docs/plan_civilization_steps.md` §"Cohesion is a property of a group").
+
+**What it is NOT: a limit on how many people a tile holds.** Two bands of one people on one tile
+each answer to their own ceiling and never add together; a tile's capacity (housing, sanitation) is
+#277's per-hex cap, a different lever on a different unit.
+
+Belief's second morale consumer: a Layer-1 contributor (`MoraleContributions::cohesion`,
+`MoraleFactor::Cohesion`) computed in `simulate_population` beside culture.
+
+- **The unit is one RESIDENT band** (`ResidentBand`, the filter `simulate_population` uses); a
+  detached party reads `0`.
+- **Head-count** is the band's fixed-point total at the turn's OPENING rounded once
+  (`Scalar::to_u32`, the `size` rounding), read in the pre-pass `resolve_cohesion_terms` before any
+  death, birth or belief write — so no band's term depends on query order.
+- **Ceiling** `= base_ceiling + belief_lift × s`, `s = b / (b + belief_half_saturation)` with `b` the
+  belief on the tile the band STANDS on (`current_tile`, never `home`) — `CohesionConfig::ceiling`.
+  Cohesion's half-saturation is its own lever, not culture's.
+- **Term** `= −drag × max(0, headcount − ceiling) / ceiling` (`CohesionConfig::term`); `0` at or
+  under the ceiling; no cap (morale already clamps to `[0, 1]`).
+- **There is no hard cap and no migration rule of its own**: the term lowers morale, and
+  discontent-driven migration (`advance_population_migration`) carries the leavers. Births are not
+  stopped (that is the inbreeding ceiling's job), and the breeding shed is untouched.
+- `MoraleCause::Cohesion` (wire `5`) names it when it is the dominant negative contributor;
+  tie-break order Terrain ≥ Climate ≥ Unrest ≥ Culture ≥ Cohesion.
+- **Parked for publication** on `PopulationCohort::last_cohesion` (`CohesionReading { headcount,
+  ceiling }`, ceiling rounded), the way `last_belief_relay_hops` is; reset on a fresh splinter and a
+  party launch. The frame publishes what was priced and never recounts — the published `size` is
+  END-of-turn, so the readout quotes `headcount`, not `size`, to reproduce the term.
+- **Wire** (appended last on `PopulationCohortState`): `moraleCohesion:long` (fixed point),
+  `cohesionHeadcount:uint`, `cohesionCeiling:uint`. Not on the redaction allow-list, so a foreign
+  row reads `0`. Native dict keys `morale_cohesion`, `cohesion_headcount`, `cohesion_ceiling`.
+  `SAVE_FORMAT_VERSION` 58.
+
+| Lever (`wellbeing_config.json` → `cohesion`) | Opening value | Validated |
+|---|---|---|
+| `base_ceiling` | **150.0** — the band size that holds together with no belief underfoot (Dunbar) | finite, `> 0` |
+| `belief_lift` | **150.0** — people a saturated tile adds | finite, `>= 0` (`0`: belief lifts nothing) |
+| `belief_half_saturation` | **20.0** — dead-equivalents at which the lift is half | finite, `> 0` |
+| `drag` | **0.2** — morale per turn lost per 100% over the ceiling | finite, `>= 0` |
+
+`base_ceiling` sits beside the inbreeding ceiling (`demographics_config.json` → `lineage`,
+`founding_lines` 8 × `people_per_line` 19 = 152) on purpose — both are the video's ~150, on two
+units (a people vs one band) — but the two are separate levers and retuning one does not move the
+other. All four are OPENING VALUES and PLAYTEST DIALS, each a row under Wellbeing in the client's
+`tuning_manifest.json` (a lever reaches the Workbench only through a manifest row). Tests: `core_sim/tests/cohesion.rs`.
+
 ## The ancestor pull — belief moves the culture axes
 
 Honouring the dead pulls a band's OWN culture layer toward **Devout** (`SecularDevout`, positive is

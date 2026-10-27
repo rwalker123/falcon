@@ -7117,6 +7117,8 @@
       "carry_material_weight": 39.889999,
       "carry_per_worker": 112.379997,
       "children": 97,
+      "cohesion_ceiling": 4,
+      "cohesion_headcount": 62,
       "comm_range_tiles": 188,
       "craft_offers": [
         {
@@ -9194,8 +9196,10 @@
       "morale": 0.000022,
       "morale_cause": 86,
       "morale_climate": 0.00015,
+      "morale_cohesion": 0.000011,
       "morale_culture": 0.000061,
       "morale_delta": 0.000129,
+      "morale_fresh_water": 0.000023,
       "morale_settling": 0.000027,
       "morale_terrain": 0.000096,
       "morale_unrest": 0.000088,
@@ -9643,6 +9647,8 @@
       "carry_material_weight": 81.660004,
       "carry_per_worker": 74.93,
       "children": 148,
+      "cohesion_ceiling": 117,
+      "cohesion_headcount": 87,
       "comm_range_tiles": 93,
       "craft_offers": [
         {
@@ -11647,8 +11653,10 @@
       "morale": 0.000167,
       "morale_cause": 171,
       "morale_climate": 0.000195,
+      "morale_cohesion": 0.000148,
       "morale_culture": 0.000164,
       "morale_delta": 0.00018,
+      "morale_fresh_water": 0.000098,
       "morale_settling": 0.00012,
       "morale_terrain": 0.000157,
       "morale_unrest": 0.000139,
@@ -12113,6 +12121,8 @@
       "carry_material_weight": 33.52,
       "carry_per_worker": 84.809998,
       "children": 39,
+      "cohesion_ceiling": 186,
+      "cohesion_headcount": 92,
       "comm_range_tiles": 118,
       "craft_offers": [
         {
@@ -14190,8 +14200,10 @@
       "morale": 0.000096,
       "morale_cause": 196,
       "morale_climate": 0.000176,
+      "morale_cohesion": 0.000145,
       "morale_culture": 0.000083,
       "morale_delta": 0.000111,
+      "morale_fresh_water": 0.000085,
       "morale_settling": 0.000057,
       "morale_terrain": 0.000138,
       "morale_unrest": 0.000198,
