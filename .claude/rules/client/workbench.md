@@ -371,3 +371,16 @@ find out why.
 The manifest's `fauna` kind (`FAUNA_CONFIG_PATH`, server `ConfigOverrideKind::Fauna`) carries the two
 `drives` levers of the roaming skills: `/hunt/drive_engage_gain` (0.5, 0-2) and
 `/hunt/drive_full_head_count` (100, 10-600). The kind list is the manifest alone; no GDScript keeps its own.
+
+## A number field gives up keyboard focus itself, because the map cannot take it
+
+The map is not a focus-taking `Control`, so a click on it never moves GUI focus: a `SpinBox`'s
+`LineEdit` that was left focused swallows every later key, game hotkeys included. The Apply and Revert
+buttons are `FOCUS_NONE`, so they do not take focus either. `WorkbenchPage` (the base class, not the
+shell) owns the release: its `_input` — not `_unhandled_input`, since the map consumes clicks —
+releases the focused number field on a mouse press outside that field's rect and on Enter or
+Escape. A click is never marked handled, so it still acts in the game; an Escape that released a
+field IS marked handled, so leaving a field does not also open the pause menu.
+`release_field_focus()` calls `SpinBox.apply()` first, so the typed text is committed before focus is
+dropped; `ConfigTuningPage._on_apply_pressed` and `_on_revert_pressed` call it before acting.
+`workbench_preview._assert_number_field_gives_up_focus` pins each path (sabotage-verified).

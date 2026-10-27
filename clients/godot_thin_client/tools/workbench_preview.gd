@@ -157,6 +157,7 @@ func _ready() -> void:
 	# the shell detaches a page it is not showing.
 	_shell.show_page(TUNING_PAGE)
 	await _settle()
+	await _assert_number_field_gives_up_focus()
 	_assert_staged_survives_un_edit()
 	_finish()
 
@@ -354,6 +355,74 @@ func _spin_for(page: ConfigTuningPage, label: String) -> SpinBox:
 		if _row_label_for(spin) == label:
 			return spin
 	return null
+
+
+## Distance up-left of a field's corner that is certainly outside it, for the synthetic click.
+const FOCUS_CLICK_OFFSET := 20.0
+
+## **A NUMBER FIELD GIVES UP KEYBOARD FOCUS** on a click outside it, on Enter, on Escape, and when
+## Apply / Revert act - and the typed value survives each. Driven through the page's own `_input`
+## with synthetic events, the same entry the viewport feeds.
+func _assert_number_field_gives_up_focus() -> void:
+	var page := _tuning_page()
+	var spin := _spin_for(page, STAGED_PARAM) if page != null else null
+	if spin == null:
+		_fail("focus check: no '%s' row" % STAGED_PARAM)
+		return
+	var original := spin.value
+	var typed := spin.max_value
+	var outside := spin.get_global_rect().position - Vector2(FOCUS_CLICK_OFFSET, FOCUS_CLICK_OFFSET)
+
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	click.position = outside
+	click.global_position = outside
+	var enter := InputEventKey.new()
+	enter.keycode = KEY_ENTER
+	enter.pressed = true
+	var escape := InputEventKey.new()
+	escape.keycode = KEY_ESCAPE
+	escape.pressed = true
+
+	var cases := {"click outside": click, "Enter": enter, "Escape": escape}
+	for label in cases:
+		spin.get_line_edit().grab_focus()
+		await get_tree().process_frame
+		spin.get_line_edit().text = str(typed)
+		if page.focused_number_field() != spin:
+			_fail("focus check: %s - the field never took focus, so nothing was tested" % label)
+		page._input(cases[label])
+		if page.focused_number_field() != null:
+			_fail("focus check: %s left the number field focused" % label)
+		if not is_equal_approx(spin.value, typed):
+			_fail("focus check: %s dropped the typed value (%s, expected %s)"
+				% [label, spin.value, typed])
+		spin.value = original
+		await get_tree().process_frame
+
+	# A click INSIDE the field must not release it.
+	spin.get_line_edit().grab_focus()
+	await get_tree().process_frame
+	var inside := spin.get_global_rect().get_center()
+	click.position = inside
+	click.global_position = inside
+	page._input(click)
+	if page.focused_number_field() != spin:
+		_fail("focus check: a click inside the field released it")
+
+	# Apply releases a focused field and keeps the typed value.
+	spin.get_line_edit().text = str(typed)
+	_install_fake_transport()
+	page._on_apply_pressed()
+	if page.focused_number_field() != null:
+		_fail("focus check: Apply left the number field focused")
+	if not is_equal_approx(spin.value, typed):
+		_fail("focus check: Apply dropped the typed value")
+	page._on_revert_pressed()
+	page.set_services({})
+	await get_tree().process_frame
+	print("workbench_preview: assert OK - number field gives up focus (click away, Enter, Escape, Apply)")
 
 
 ## Sub-pixel slack when comparing a laid-out rect against the box it has to fit in.
