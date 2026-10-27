@@ -6148,7 +6148,9 @@ control the sheets used to mount; and it retired the Work inspector for source r
   **A staffed row short of the crew it asked for joins the same ⚠** (forage, hunt, extract, tile and band
   improvement rows, and the compose sheet's strip; not need rows): `BandPanelController._add_short_crew_warn`
   appends `HudWorkVocab.short_crew_reason` to `warn_lines`. SHORT (`HudWorkVocab.crew_shortfall`) is
-  `max_workers > 0` and `workers < min(max_workers, useful_crew)`, or `workers == 0` and `useful_crew > 0`;
+  `max_workers > 0` and `workers < min(max_workers, useful_crew)`, or a no-Max row that got nobody
+  (`workers == 0` and `useful_crew > 0`), which is short by ONE head (`SHORT_CREW_NO_MAX_STARVED`, mirroring the
+  sim kit ask's `ONE_HEAD_ASKED`; `useful_crew` there is the take curve's ceiling and can exceed the band);
   a no-Max row with some hands under its useful crew is not short. The hover is two lines: `⚠ Short N
   worker(s) · no free <items>` over `Fix: make <items> — rows carrying their kit are staffed first` when any
   `kit_toe` line has `filled < required` (the items named by `toe_short_item_names`, lower-cased; this

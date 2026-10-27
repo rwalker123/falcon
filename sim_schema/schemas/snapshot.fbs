@@ -6905,7 +6905,10 @@ table KitToeLine {
   // Units the row claimed: its take hands that would take something with the kit (on a staffed row,
   // at the crew it was denied), over the item's `workers_per_unit`. *** NEVER 0 ***: a line exists only where something is claimed.
   required:float;
-  // Units the band's take-gear settlement handed this row. Fractional where the row's priority
+  // Units the band's take-gear settlement handed this row, plus (for the part of `required` the
+  // staffing denied the row hands for) the band's units still unclaimed after the settlement, so
+  // a row short of hands but not of kit reads `filled == required`. Two starved rows may both
+  // count one free unit. Fractional where the row's priority
   // tier was covered in full (it is handed exactly its claim); whole units where its tier was short
   // and split by largest remainder on the claims. SHORT is `filled < required`.
   filled:float;

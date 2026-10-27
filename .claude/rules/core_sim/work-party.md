@@ -153,7 +153,7 @@ muster-cut donor row falls back to its hands present, so a lent hand's kit is no
 and it still counts only take hands that would take something with the kit. A row's published `kitToe`
 states `required` from the ask and `filled` from the grant, so a row the pool starved of every head
 (passes 1b/2 deal every row's kitted heads before any bare head) still reads `required` > 0,
-`filled` 0 for the kit it lacked. Craft suggestions and auto-craft read the same lines, so they ask
+`filled` 0 for the kit it lacked. **The denied part of the ask is covered by the shelf**: `craft_suggestions::take_row_gear` publishes `filled` = the grant + the band's units still unclaimed after the whole settlement (`BandItemBudget::unclaimed_units`), up to the denied part (`required` less the granted claim in the item's units), so a row short of hands but not of kit reads `filled == required` and only genuinely missing kit reads short. The grant (`claims`, `item_budget`) is unchanged. Approximation: two starved rows can both count the same free unit, so a suggestion may undercount by the units they share. Craft suggestions and auto-craft read the same lines, so they ask
 for that kit too.
 
 **Commands.** For a staffed kind the count on `assign_labor` is the **Max** (`0` = no Max, never an

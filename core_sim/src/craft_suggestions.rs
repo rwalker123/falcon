@@ -479,6 +479,7 @@ pub fn take_row_gear(
             // no line.
             // **`required` is the ask, `filled` what the passes granted** (#871).
             let claim = claims.asks.get(i).copied().unwrap_or(claims.claims[i]);
+            let granted_claim = claims.claims[i];
             let toe = row_kit
                 .uses()
                 .filter_map(|item| {
@@ -487,10 +488,26 @@ pub fn take_row_gear(
                         .map_or(ONE_WORKER_PER_UNIT, |def| def.workers_per_unit)
                         as f32;
                     let required = claim / per_unit;
+                    // **THE DENIED PART OF THE ASK IS COVERED BY THE SHELF** - the hands the
+                    // passes left out of the row's grant ask for units, and a unit still unclaimed
+                    // after the whole band's settlement is not a unit the band lacks. So `filled`
+                    // is the grant plus the free units, up to the denied part: short reads only
+                    // for kit the band really does not hold. (Approximation: two starved rows
+                    // can both count the same free unit, so a suggestion may undercount by the
+                    // units they share.) The grant itself is untouched.
+                    let denied = (required - granted_claim / per_unit).max(NOTHING_CLAIMED);
+                    let free = if denied > NOTHING_CLAIMED {
+                        budget
+                            .unclaimed_units(item, kit, config)
+                            .min(denied)
+                            .max(NOTHING_CLAIMED)
+                    } else {
+                        NOTHING_CLAIMED
+                    };
                     (required > NOTHING_CLAIMED).then(|| KitToeLine {
                         item_id: item.to_string(),
                         required,
-                        filled: share(item),
+                        filled: share(item) + free,
                     })
                 })
                 .collect();

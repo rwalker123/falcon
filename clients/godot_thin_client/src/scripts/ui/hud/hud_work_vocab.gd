@@ -1596,6 +1596,9 @@ const POOL_TOOLS_SHORT_INFO_FORMAT := "More %s would speed this up."
 ## that is noise). The hover is two lines, `⚠ reason` over `Fix: remedy`.
 const SHORT_CREW_HANDS_FORMAT := "⚠ Short %d %s · no spare hands\nFix: raise this row's Priority · lower another row's Max"
 const SHORT_CREW_KIT_FORMAT := "⚠ Short %d %s · no free %s\nFix: make %s — rows carrying their kit are staffed first"
+## A no-Max row that got NOBODY is short by ONE head, not by its useful crew (that is the take curve's ceiling,
+## which can exceed the band): it mirrors the sim's kit ask, `take_claims::wanted_ask_crew`'s `ONE_HEAD_ASKED`.
+const SHORT_CREW_NO_MAX_STARVED := 1
 const SHORT_CREW_NOUN_ONE := "worker"
 const SHORT_CREW_NOUN_MANY := "workers"
 
@@ -1604,7 +1607,7 @@ static func crew_shortfall(workers: int, max_workers: int, useful_crew: int) -> 
     if max_workers > 0:
         return maxi(mini(max_workers, useful_crew) - workers, 0)
     if workers == 0 and useful_crew > 0:
-        return useful_crew
+        return SHORT_CREW_NO_MAX_STARVED
     return 0
 
 ## The hover for a short row; `kit_names` is `toe_short_item_names` (`""` = nothing kit-short).

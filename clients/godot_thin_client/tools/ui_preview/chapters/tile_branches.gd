@@ -819,6 +819,14 @@ func _short_crew_claims() -> void:
 	var row_c := _short_row([c], c, [])
 	column.add_child(row_c)
 	h._assert_hud("short crew (c): a no-Max row with 3 workers of a useful 8 draws no ⚠", _warn_marks(row_c).is_empty())
+	# (c2) NO Max, nobody dealt, a useful crew of 39: short by ONE head, never by the 39.
+	var starved := _short_assignment(0, 0, 39, [])
+	var row_starved := _short_row([starved], starved, [])
+	column.add_child(row_starved)
+	var marks_starved := _warn_marks(row_starved)
+	h._assert_hud("short crew (c2): a no-Max row with 0 workers and a useful 39 is short by ONE (%s)"
+			% [(marks_starved[0] as Label).tooltip_text if not marks_starved.is_empty() else "no mark"],
+		marks_starved.size() == 1 and (marks_starved[0] as Label).tooltip_text == HANDS_SENTENCE)
 	# …and a row at its Max (or beyond what is useful) is not short either.
 	var at_max := _short_assignment(2, 2, 5, [])
 	var row_max := _short_row([at_max], at_max, [])

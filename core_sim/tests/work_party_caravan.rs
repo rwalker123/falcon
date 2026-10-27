@@ -3565,7 +3565,7 @@ fn a_row_with_no_max_asks_for_the_hands_it_got_not_the_curves_ceiling() {
 
 /// A no-Max row the pool left at nobody asks for one head's kit.
 #[test]
-fn a_row_with_no_max_that_got_nobody_asks_for_one_heads_kit() {
+fn a_row_with_no_max_that_got_nobody_asks_for_one_heads_kit_and_a_spare_unit_covers_it() {
     let app = wood_rows_world(
         ONE_HAND,
         &[
@@ -3581,11 +3581,45 @@ fn a_row_with_no_max_that_got_nobody_asks_for_one_heads_kit() {
         .find(|(item, _, _)| item == "sled")
         .unwrap_or_else(|| panic!("the starved row names its sled, got {toe:?}"));
     assert!(
-        (sled.1 - 1.0).abs() < 1e-4 && sled.2.abs() < 1e-4,
-        "one head's sled asked, none filled, got {sled:?}"
+        (sled.1 - 1.0).abs() < 1e-4 && (sled.2 - 1.0).abs() < 1e-4,
+        "one head's sled asked and a spare sled is on the shelf, so not short: {sled:?}"
     );
 }
 
 /// Hands in the few-hands scenarios.
 const POOL_OF_FEW: u32 = 3;
 const ONE_HAND: u32 = 1;
+
+/// The denied part of the ask is covered by the shelf: the starved stone row lacked hands, not a
+/// sled. With spare sleds on the shelf its line reads `required == filled` (not short) and it
+/// still has no workers.
+#[test]
+fn a_row_starved_of_hands_with_spare_sleds_on_the_shelf_is_not_kit_short() {
+    const SPARE_SLEDS: u32 = 5;
+    let app = starved_stone_world(2, SPARE_SLEDS);
+    let (workers, toe) = published_stone_row(&app);
+    assert_eq!(workers, 0, "the nearer kitted rows took the whole pool");
+    let sled = toe
+        .iter()
+        .find(|(item, _, _)| item == "sled")
+        .unwrap_or_else(|| panic!("the row still names its sled, got {toe:?}"));
+    assert!(
+        (sled.1 - 1.0).abs() < 1e-4 && (sled.2 - sled.1).abs() < 1e-4,
+        "required == filled, got {sled:?}"
+    );
+}
+
+/// The band holds no sled at all: the starved row's line is genuinely short.
+#[test]
+fn a_row_starved_of_hands_in_a_band_with_no_sleds_is_kit_short() {
+    let app = starved_stone_world(2, 0);
+    let (_, toe) = published_stone_row(&app);
+    let sled = toe
+        .iter()
+        .find(|(item, _, _)| item == "sled")
+        .unwrap_or_else(|| panic!("the row names its sled, got {toe:?}"));
+    assert!(
+        sled.1 > 0.0 && sled.2.abs() < 1e-4,
+        "required, none filled, got {sled:?}"
+    );
+}
