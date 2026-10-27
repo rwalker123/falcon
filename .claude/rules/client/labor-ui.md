@@ -7999,7 +7999,7 @@ The committed row prints `netRateHome`, so past the apron `_with_home_rate` subs
 
 ## A worked source's sheet says it edits live: `Done` and `Applied`
 
-On a source the band already works (`is_unassign`), floor, Priority, Max, kit and take edits send
+On a source the band already works (`is_unassign`), floor, Priority, Max / Diggers, kit and take edits send
 their command the moment they change. `DrawerComposeController._mount_commit_row` ends such a sheet with
 `Done` (`HudComposeVocab.DONE_BUTTON`, primary, closes the sheet and sends nothing) beside `Stop working
 here` (ghost). A source not yet worked keeps its single commit button and no `Done`. `Applied`
@@ -8079,7 +8079,7 @@ Kit row and the readout.
   `build_work_priority_picker` (drawn with `show_hint = false`: the `When something runs short…` sentence
   rides the section label's and every level button's hover, not a line), and `HudWidgets.add_max_stepper`
   (`No max` at 0, `Lower the max` / `Raise the max`, bounded above by the band's working-age people) on ONE
-  line with its key — `Max` — the `Kit` field row's shape (a mined material's sheet has no Max: `extraction-workings.md` → "A MINED MATERIAL IS KEPT ON HAND").
+  line with its key — `Max`, or `Diggers` on a dig sheet — the `Kit` field row's shape.
 - **LIVE ON A WORKING SOURCE, COMMITTED ON A NEW ONE.** A sheet on a source the band works has no commit
   verb but `Stop working here` (`stop_labor`), so every edit re-sends the assignment the moment it lands:
   the Max, the floor (a preset pick and a released chart drag), the kit, and a patch's take chips, all

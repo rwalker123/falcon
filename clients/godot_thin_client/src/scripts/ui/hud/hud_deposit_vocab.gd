@@ -167,6 +167,10 @@ static func reachable_of(deposit: Dictionary) -> float:
 static func regrowth_rate_of(deposit: Dictionary) -> float:
 	return float(deposit.get("regrowth_rate", REGROWTH_NEVER_RENEWS))
 
+## The fewest diggers a never-renewing seam's crew may be set to: the sim staffs such a seam with exactly
+## its Max, so `No max` (0) would work nobody.
+const DIG_CREW_MIN := 1
+
 ## ⛔ **THE ONE FORK IN THIS FILE.** `true` → the OVER-CUT pair is this working's warning; `false` →
 ## the RUNWAY is. **Never `branch`**: forking on the branch string paints a renewing flint scatter
 ## with a runway that never moves, and leaves a quarry quoting a sustainable take of zero as though

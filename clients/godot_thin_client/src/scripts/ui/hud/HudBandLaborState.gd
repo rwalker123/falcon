@@ -130,39 +130,6 @@ func pending_labor() -> Dictionary:
 func current_turn() -> int:
 	return _current_turn
 
-# ---- A KEEP-ON-HAND ORDER THE SERVER HAS NOT YET SHOWN BACK (#874) ----------------------------------
-#
-# A band's `keep_on_hand` entry arrives on the SNAPSHOT, and a snapshot is a turn's, so the entry a sheet
-# or a row reads stays at the old target for the rest of the turn the player just changed it in. A sheet
-# that re-seeded its stepper from that entry (it closes and re-opens, the band is re-picked) would put the
-# player back on the old number and the next `+` would send the same step again - the reported
-# "I can only select 0 and 10". The order is therefore remembered here, keyed by band and material, for the
-# turn it was sent in; the entry the HUD reads is the entry WITH it applied, and a new turn's snapshot (the
-# server's own word) retires it.
-var _pending_keep: Dictionary = {}
-
-func note_keep_sent(band_id: int, material: String, target: int, level: String) -> void:
-	_pending_keep["%d:%s" % [band_id, material]] = {
-		"target": maxi(target, 0), "priority": level, "turn": _current_turn}
-
-## A new world retires every unconfirmed order.
-func clear_pending_keep() -> void:
-	_pending_keep.clear()
-
-## The band's entry for `material` with any order sent THIS turn applied over it. `{}` stays `{}`.
-func keep_entry_with_pending(band: Dictionary, entry: Dictionary) -> Dictionary:
-	if entry.is_empty():
-		return entry
-	var key := "%d:%s" % [int(band.get("band_id", -1)), String(entry.get("material", ""))]
-	var pending: Dictionary = _pending_keep.get(key, {})
-	if pending.is_empty() or int(pending.get("turn", -1)) != _current_turn:
-		_pending_keep.erase(key)
-		return entry
-	var applied := entry.duplicate()
-	applied["target"] = int(pending["target"])
-	applied["priority"] = String(pending["priority"])
-	return applied
-
 func grid_width() -> int:
 	return _grid_width
 

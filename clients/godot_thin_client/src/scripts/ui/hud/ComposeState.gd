@@ -118,9 +118,6 @@ var _deposit_band: int = NO_BAND_ENTITY
 ## crew the newly-picked band really has on the working.
 var _deposit_seeded_band: int = NO_BAND_ENTITY
 var _deposit_kit_id: String = KitRoster.NO_KIT_ID
-## A MINED material's composed keep-on-hand target (#874), seeded from the band's entry when the sheet
-## opens or the actor changes; the sheet's stepper writes it and sends `keep_on_hand`.
-var _deposit_keep: int = 0
 
 # **THE TILE-BRANCH CREW SHEET'S COMPOSITION** -- a source key (`x,y:branch`), the picked band, the count
 # the player has dialled and the band that count was seeded from. No floor, kit, priority or species: a
@@ -228,12 +225,6 @@ func set_deposit_max(count: int) -> void:
 func set_deposit_floor(floor: float) -> void:
 	_deposit_floor = SourceForecast.clamp_floor(floor)
 
-func deposit_keep() -> int:
-	return _deposit_keep
-
-func set_deposit_keep(target: int) -> void:
-	_deposit_keep = maxi(target, 0)
-
 func set_deposit_kit_id(kit_id: String) -> void:
 	_deposit_kit_id = kit_id
 
@@ -243,6 +234,14 @@ func set_deposit_kit_id(kit_id: String) -> void:
 ## has already refused.
 func clamp_deposit_max(cap: int) -> void:
 	_deposit_max = clampi(_deposit_max, 0, maxi(cap, 0))
+
+## A dig crew has no `No max` state: raise the composed count to at least `minimum`, returning whether
+## it moved. See `HudDepositVocab.DIG_CREW_MIN` for why a never-renewing seam needs a count.
+func raise_deposit_max_to(minimum: int) -> bool:
+	if _deposit_max >= minimum:
+		return false
+	_deposit_max = minimum
+	return true
 
 func tile_key() -> String:
 	return _tile_key

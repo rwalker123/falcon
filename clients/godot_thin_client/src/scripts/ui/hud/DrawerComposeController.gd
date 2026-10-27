@@ -2224,19 +2224,7 @@ func _wanted_crew(forecast: Dictionary, pool: int, max_workers: int) -> int:
 ## over a staffed source's crew. Priority is `High` / `Normal` / `Low` (the work inspector's own picker);
 ## the Max is `-` / `+` with `No max` at 0, bounded above by the band's working-age people.
 func _mount_priority_and_max(parent: VBoxContainer, priority: String, max_workers: int, upper: int,
-        on_priority: Callable, on_max: Callable) -> void:
-    _mount_priority_block(parent, priority, on_priority)
-    # **MAX IS ONE LINE** — the key on the left, the `−  N  +` stepper beside it, the `Kit` field row's shape.
-    var max_row := HBoxContainer.new()
-    max_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    max_row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    max_row.add_child(HudWidgets.build_field_key(HudWorkVocab.MAX_STEPPER_LABEL))
-    HudWidgets.add_max_stepper(max_row, max_workers, upper, on_max)
-    parent.add_child(max_row)
-
-## The sheet's `Priority` label over the High / Normal / Low segment - shared by the Max-bearing sheets and
-## the keep-on-hand sheet.
-func _mount_priority_block(parent: VBoxContainer, priority: String, on_priority: Callable) -> void:
+        on_priority: Callable, on_max: Callable, is_dig_crew: bool = false) -> void:
     var priority_block := VBoxContainer.new()
     priority_block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     priority_block.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_LABEL_SEPARATION)
@@ -2246,6 +2234,15 @@ func _mount_priority_block(parent: VBoxContainer, priority: String, on_priority:
     priority_block.add_child(priority_label)
     priority_block.add_child(HudWidgets.build_work_priority_picker(on_priority, priority, false))
     parent.add_child(priority_block)
+    # **MAX IS ONE LINE** — the key on the left, the `−  N  +` stepper beside it, the `Kit` field row's shape.
+    var max_row := HBoxContainer.new()
+    max_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    max_row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    max_row.add_child(HudWidgets.build_field_key(
+        HudWorkVocab.DIG_CREW_STEPPER_LABEL if is_dig_crew else HudWorkVocab.MAX_STEPPER_LABEL))
+    HudWidgets.add_max_stepper(max_row, max_workers, upper, on_max, false,
+        HudDepositVocab.DIG_CREW_MIN if is_dig_crew else 0)
+    parent.add_child(max_row)
 
 ## **A SOURCE THE BAND WORKS IS EDITED LIVE** (#871): its sheet's commit is `Stop working here`, so the
 ## Max, the floor, the kit (and a patch's take selection) re-send the assignment the moment they change,
@@ -2268,8 +2265,10 @@ func _send_forage_assignment(band: Dictionary, x: int, y: int) -> void:
 func _send_deposit_assignment(band: Dictionary, deposit: Dictionary, tile: Vector2i,
         material: String) -> void:
     _note_applied()
+    var named_floor := _compose.deposit_floor() if HudDepositVocab.renews(deposit) \
+        else SourceForecast.FLOOR_UNNAMED
     _emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, _compose.deposit_max(), tile.x, tile.y, "",
-        _compose.deposit_floor(), material, SourceForecast.IMPROVEMENT_NONE, _compose.deposit_kit_id())
+        named_floor, material, SourceForecast.IMPROVEMENT_NONE, _compose.deposit_kit_id())
 
 ## **THE COMMIT ROW.** A source the band does not work yet keeps its one commit button. A worked source's
 ## sheet edits live, so its row is `Done` (primary, closes the sheet and sends nothing) beside
@@ -4235,9 +4234,6 @@ func open_source_sheet(kind: String, x: int, y: int, herd_id: String, material: 
                 herd = _band_labor.find_world_herd(herd_id)
             open_herd_compose(herd)
         HudConst.LABOR_KIND_EXTRACT:
-            if x < 0 or y < 0:
-                open_deposit_compose(_siteless_deposit(material))
-                return
             var working := {}
             for candidate in _tile_workings(_selection.tile_info()):
                 if HudDepositVocab.material_of(candidate) == material \
@@ -5363,26 +5359,13 @@ func _live_deposit(subject_key: String, fallback: Dictionary) -> Dictionary:
     for working in _tile_workings(_selection.tile_info()):
         if _deposit_source_key(working) == subject_key:
             return working
-    # A site-less keep sheet has no tile to re-resolve off: its subject key names the material alone.
-    var siteless_prefix := DEPOSIT_SUBJECT_KEY_FORMAT % [-1, -1, ""]
-    if subject_key.begins_with(siteless_prefix):
-        return _siteless_deposit(subject_key.substr(siteless_prefix.length()))
     return fallback
-
-## **THE STAND-IN DEPOSIT OF A SITE-LESS KEEP SHEET** (#874): no tile, no ground, just the material and the
-## branch that makes it mined, flagged `keep_only` so `_deposit_compose_available` admits it.
-func _siteless_deposit(material: String) -> Dictionary:
-    return {"tile_x": -1, "tile_y": -1, "material": material,
-        "branch": HudDepositVocab.BRANCH_EXTRACTION, HudKeepVocab.KEEP_ONLY_KEY: true}
 
 ## Can a sheet be composed on this working at all? — a real row, a branch this client has a crew noun
 ## for, and a band to spend. **A branch with no noun renders NO action** rather than an unnamed one.
 func _deposit_compose_available(deposit: Dictionary) -> bool:
     if deposit.is_empty():
         return false
-    # A SITE-LESS keep sheet (#874): a mined material with an order and no rock the game can dig yet.
-    if bool(deposit.get(HudKeepVocab.KEEP_ONLY_KEY, false)):
-        return HudDepositVocab.material_of(deposit) != ""
     if HudDepositVocab.tile_of(deposit).x < 0 or HudDepositVocab.material_of(deposit) == "":
         return false
     return HudDepositVocab.crew_noun(HudDepositVocab.branch_of(deposit)) != ""
@@ -5398,27 +5381,13 @@ func open_deposit_compose(deposit: Dictionary) -> void:
     var subject_key := _deposit_source_key(deposit)
     _compose.set_composing(ComposeState.KIND_DEPOSIT, subject_key)
     var branch := HudDepositVocab.branch_of(deposit)
-    # **A MINED MATERIAL'S EYEBROW IS ITS NAME** (`Stone`, as in Stone.dc.html) - nobody assigns diggers.
-    var material := HudDepositVocab.material_of(deposit)
-    var siteless := bool(deposit.get(HudKeepVocab.KEEP_ONLY_KEY, false))
-    var eyebrow := HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT \
-        % HudDepositVocab.crew_noun(branch).to_lower()
-    if siteless or _band_keeps_material(material):
-        eyebrow = HudLoadoutVocab.material_label(material)
     var content := _compose_sheet.open(
-        eyebrow,
-        "" if siteless else String(_selection.tile_info().get("terrain_label", "")).strip_edges(),
+        HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT
+            % HudDepositVocab.crew_noun(branch).to_lower(),
+        String(_selection.tile_info().get("terrain_label", "")).strip_edges(),
         subject_key, _compose_anchor_rect())
     _build_deposit_assign_controls(deposit, content)
     refresh_drawer_actions()
-
-## Does any player band hold a keep-on-hand entry for `material`? - the fork `open_deposit_compose` takes
-## before a band is resolved.
-func _band_keeps_material(material: String) -> bool:
-    for band_variant in _band_labor.current_player_bands():
-        if band_variant is Dictionary and HudKeepVocab.is_mined(band_variant as Dictionary, material):
-            return true
-    return false
 
 ## **THE SHEET, TOP TO BOTTOM** — the forage sheet's spine, with the elements a working has no concept
 ## for simply ABSENT and the escapement dial offered on the half of them that grows back:
@@ -5467,11 +5436,6 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     if band.is_empty():
         band = resolved
         _compose.set_deposit_band(int(band.get("entity", ComposeState.NO_BAND_ENTITY)))
-    # **A MINED MATERIAL HAS NO CREW SHEET** (#874): the band keeps it on hand and the sim staffs the dig,
-    # so its sheet is the keep-on-hand sheet, not the Diggers / kit / `Stop working here` one below.
-    if HudKeepVocab.is_mined(band, material) or bool(deposit.get(HudKeepVocab.KEEP_ONLY_KEY, false)):
-        _build_keep_sheet(band, deposit, target, subject_key, source_changed)
-        return
     # **THE ACTOR BAND CHANGING RE-SEEDS THE CREW, exactly as the SOURCE changing does** — the forage
     # sheet's rule and for its reason: a composition is a statement about ONE band's standing row, so
     # the previous band's count surviving a pick turns the commit into an Unassign.
@@ -5511,17 +5475,33 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     var ladder := HudDepositVocab.deposit_ladder(
         _topbar.deposit_rungs() if _topbar != null else [])
     var next_entry := HudDepositVocab.ladder_next_entry(ladder, deposit)
-    # **THE GENERIC SHEET IS A RENEWING WORKING'S**: ground that never renews is a mined material, which
-    # the keep-on-hand sheet takes (#874), so the dial is always offered here and the floor the command
-    # carries is the dial's.
-    var floor_value := _compose.deposit_floor()
+    # ⛔ **THE DIAL IS OFFERED ONLY WHERE THE GROUND GROWS BACK.** `renews` is this arc's one fork and
+    # every surface in it takes the same one; the sim deliberately does not fork, so a finite working
+    # carries a floor on its row and is simply never asked for one here.
+    var offers_floor := HudDepositVocab.renews(deposit)
+    var floor_value := _compose.deposit_floor() if offers_floor \
+        else SourceForecast.DEFAULT_HARVEST_FLOOR
+    # ⛔ **THE FLOOR THE COMMAND CARRIES IS A DIFFERENT ANSWER FROM THE ONE THIS SHEET COMPOSES AT**
+    # (issue #650). Every reading above is struck at `floor_value`, which on a finite working is the
+    # food peak standing in for a dial nobody was offered — inert, because `composed_floor` discards a
+    # crew floor on ground that never renews. What may NOT be inert is the wire: sending the default
+    # makes `handle_assign_labor` see a floor the player NAMED, so `unnamed_deposit_floor` — the whole
+    # sim-side fork for this case — never fires and the row stores a conservation choice nobody made.
+    # `FLOOR_UNNAMED` is the sentinel for *the sheet offered no dial*, and `offers_floor` is the ONE
+    # reading of that fact on this sheet.
+    var named_floor := _compose.deposit_floor() if offers_floor else SourceForecast.FLOOR_UNNAMED
     # ⛔ **THE CREW CURVE — THE ONE SOURCE OF EVERY GEAR-BEARING FIGURE ON THIS SHEET** (issue #663).
     # NEXT TURN, `N of M <kit> available` and the `once felled` deal are all READ off this reply at the
-    # stepper's crew; none is composed here. It is asked at the floor the COMMAND would store - the
-    # dial - and at the band's whole pool, so one round trip answers every stepper position.
-    var ask_floor := _compose.deposit_floor()
+    # stepper's crew; none is composed here. It is asked at the floor the COMMAND would store — the dial
+    # on a renewing working, `FLOOR_MIN` on a finite one, where an unnamed floor is stored as *strip it
+    # bare* — and at the band's whole pool, so one round trip answers every stepper position.
+    var ask_floor := _compose.deposit_floor() if offers_floor else SourceForecast.FLOOR_MIN
     # **A WORKING THE BAND DOES NOT HOLD YET IS PRICED OFF THE SIM'S DRY RUN** (the hunt sheet's rule).
+    # A never-renewing dig is worked by exactly its Max in heads, so the Max is raised to the dig floor
+    # BEFORE the ask - the sim refuses a dig without a count.
     _compose.clamp_deposit_max(maxi(int(band.get("working_age", 0)), 0))
+    if not offers_floor:
+        _compose.raise_deposit_max_to(HudDepositVocab.DIG_CREW_MIN)
     var preview_view: Dictionary = {}
     if not is_working:
         preview_view = _staffing_preview_view(band, {
@@ -5558,22 +5538,30 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # **THE MAX IS CLAMPED TO THE BAND'S WORKING-AGE PEOPLE** (#871), and the crew is the sim's: the
     # snapshot row's `workers` on a working the band holds, else the curve's useful cutters held to the Max.
     _compose.clamp_deposit_max(maxi(int(band.get("working_age", 0)), 0))
+    # ⛔ **A SEAM THAT NEVER RENEWS HAS NO `No max`** - the sim works it with exactly its Max in heads, so
+    # a Max of 0 staffs nobody. The floor is raised AFTER the clamp (a band of no working-age people still
+    # shows 1).
+    var is_dig_crew := not offers_floor
+    if is_dig_crew:
+        _compose.raise_deposit_max_to(HudDepositVocab.DIG_CREW_MIN)
     var staffed_crew := _previewed_crew(is_working, preview_view,
         _staffed_crew_of(is_working, current, cap, _compose.deposit_max()))
     var live_hosts: Array[Dictionary] = []
     # **THE FLOOR PRESETS, THROUGH THE SHARED PICKER**, with each preset's own per-turn take on its
     # hover — the same builder and the same metric shape the forage sheet's picker wears.
-    target.add_child(HudWidgets.build_floor_picker(func(picked: float) -> void:
-        _compose.set_deposit_floor(picked)
-        if is_working:
-            _send_deposit_assignment(band, deposit, tile, material)
-        _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
-        floor_value, _deposit_floor_takes(deposit),
-        HudWorkVocab.POLICY_PICKER_AUTO_COLUMNS))
+    if offers_floor:
+        target.add_child(HudWidgets.build_floor_picker(func(picked: float) -> void:
+            _compose.set_deposit_floor(picked)
+            if is_working:
+                _send_deposit_assignment(band, deposit, tile, material)
+            _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
+            floor_value, _deposit_floor_takes(deposit),
+            HudWorkVocab.POLICY_PICKER_AUTO_COLUMNS))
     # **THE CHART — the SHARED instrument, fed a working through `HudDepositVocab.forecast_source`.**
     # A deposit's sampled curve never goes negative (there is no Allee term), so its projection has the
     # patch's shape rather than the herd's; that asymmetry comes off the wire, not from here.
-    var chart_model := _deposit_chart_model(deposit, ladder, floor_value, staffed_crew)
+    var chart_model := _deposit_chart_model(deposit, ladder, floor_value, staffed_crew) \
+        if offers_floor else {}
     _last_chart_model = chart_model
     if bool(chart_model.get("known", false)):
         # A live drag may NOT rebuild the sheet — freeing the chart mid-drag ends the drag on the
@@ -5614,7 +5602,8 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
             _compose.set_deposit_max(n)
             if is_working:
                 _send_deposit_assignment(band, deposit, tile, material)
-            _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target))
+            _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
+        is_dig_crew)
     _mount_staffing_preview(target, is_working, preview_view,
         HudComposeVocab.STAFFING_PREVIEW_VERB_EXTRACT, crew_label, _compose.deposit_priority())
     if capped_by_seam:
@@ -5662,7 +5651,7 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     if _is_past_apron(band, tile.x, tile.y):
         party_view = _work_party_view(band, ForecastQuery.WORK_PARTY_SOURCE_EXTRACT, "",
             tile.x, tile.y, [], kit_id, staffed_crew,
-            _compose.deposit_floor(), material)
+            named_floor if offers_floor else SourceForecast.FLOOR_MIN, material)
         _mount_work_party_section(target, party_view)
     # **A WORKING OFFERS `Stop working here`, A NEW ONE ITS VERB** (#871) - see the forage sheet.
     var is_unassign := is_working
@@ -5691,8 +5680,9 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # the optimistic overlay's key — and the FLOOR is a validated number in forage's own position and
     # forage's own decimal precision, the stance words being refused by name at parse.
     #
-    # The floor rides the player's own dial; ground that never renews is a mined material and takes the
-    # keep-on-hand sheet instead (#874), so this sheet never sends an unnamed floor.
+    # **A FINITE WORKING SENDS NO FLOOR AT ALL, because it was never asked** — `named_floor` is
+    # `FLOOR_UNNAMED` there and `Main`'s extract arm drops the token, leaving the sim to answer what
+    # silence means on ground that never renews. A renewing working rides the player's own dial.
     #
     # **THE KIT RIDES IT** (issue #663): the picker above offers the working's own take kit and
     # `none`, and a selection the line dropped would be a choice the sim never heard.
@@ -5710,195 +5700,6 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     _mount_commit_row(target, assign_btn, is_unassign, func() -> void:
         _bandpanel.show_source_on_map(HudConst.LABOR_KIND_EXTRACT, tile.x, tile.y, ""))
 
-
-## **THE STONE SHEET** (#874, `docs/prototypes/labor_at_scale/Stone.dc.html`) - the sheet of a MINED
-## material, which the band keeps on hand instead of crewing. Top to bottom: the `Band:` picker; the
-## stock line; the KEEP ON HAND box (`N on hand`, `keep` with the `-` / `+` stepper in steps of
-## `HudKeepVocab.KEEP_STEP`, `None` at 0; what the band uses a turn);
-## the Priority segment; the DIGGERS strip (the dig row's crew and the `^` rung offer, so a quarry is still
-## the player's call) over its box (how many the band sends, where, and how they split); the NEXT TURN box
-## (the take and when the pile is back at the target); `Show on map` and `Done`.
-##
-## Gone from this sheet: the Diggers Max stepper, the kit picker and `Stop working here` - the server
-## refuses `assign_labor` / `stop_labor` / `work_priority` on a mined material, and `keep_on_hand ... 0`
-## is how digging stops. The stepper and the priority both send `keep_on_hand`, which always carries both
-## fields. The sheet opens on ANY deposit of the material; the crew it states is the band's one dig row at
-## the game's picked site, so a sheet on another deposit says where the game is digging instead.
-func _build_keep_sheet(band: Dictionary, deposit: Dictionary, target: VBoxContainer,
-        subject_key: String, source_changed: bool) -> void:
-    # This sheet draws no chart, so the last sheet's chart model (and its crew targets) must not outlive it.
-    _last_chart_model = {}
-    var tile := HudDepositVocab.tile_of(deposit)
-    var material := HudDepositVocab.material_of(deposit)
-    var entry := _band_labor.keep_entry_with_pending(band, HudKeepVocab.entry_of(band, material))
-    var band_entity := int(band.get("entity", ComposeState.NO_BAND_ENTITY))
-    if source_changed or _compose.deposit_seeded_band() != band_entity:
-        _compose.seed_deposit(0, SourceForecast.DEFAULT_HARVEST_FLOOR)
-        _compose.set_deposit_keep(HudKeepVocab.target_of(entry))
-        _compose.set_deposit_priority(HudWorkVocab.work_priority_of(
-            entry.get(HudKeepVocab.ENTRY_PRIORITY_KEY, "")))
-    var keep := _compose.deposit_keep()
-    var level := _compose.deposit_priority()
-    var word := HudKeepVocab.word(material)
-    var band_name := HudFormat.band_name(band)
-    var rebuild := func() -> void:
-        _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target)
-    target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
-        _compose.set_deposit_band(int(picked.get("entity", ComposeState.NO_BAND_ENTITY)))
-        rebuild.call()))
-    var siteless := bool(deposit.get(HudKeepVocab.KEEP_ONLY_KEY, false))
-    if not siteless:
-        var stock := HudWidgets.alloc_hint_label(HudKeepVocab.stock_line(deposit, material,
-            HudDepositVocab.renews(deposit)))
-        stock.set_meta(HudKeepVocab.SHEET_STOCK_META, true)
-        target.add_child(stock)
-
-    # ---- KEEP ON HAND -----------------------------------------------------------------------------
-    var on_hand := HudKeepVocab.on_hand_of(band, material)
-    var draw := HudKeepVocab.draw_of(entry)
-    target.add_child(HudWidgets.alloc_section_label(HudKeepVocab.SHEET_SECTION_KEEP))
-    var keep_box := HudWidgets.build_readout_box(target)
-    keep_box.set_meta(HudKeepVocab.SHEET_BOX_META, true)
-    var keep_row := HBoxContainer.new()
-    keep_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    keep_row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    var have_label := Label.new()
-    have_label.text = HudKeepVocab.SHEET_ON_HAND_FORMAT % HudKeepVocab.on_hand_face(on_hand)
-    have_label.add_theme_color_override("font_color", HudStyle.INK)
-    have_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    have_label.set_meta(HudKeepVocab.SHEET_ON_HAND_META, HudKeepVocab.on_hand_face(on_hand))
-    keep_row.add_child(have_label)
-    keep_row.add_child(HudWidgets.build_field_key(HudKeepVocab.SHEET_KEEP_KEY))
-    HudWidgets.add_keep_stepper(keep_row, keep, word, func(next: int) -> void:
-        _compose.set_deposit_keep(next)
-        _note_applied()
-        _bandpanel.commit_keep_on_hand(band, material, next, _compose.deposit_priority())
-        rebuild.call())
-    keep_box.add_child(keep_row)
-    var uses := HudKeepVocab.SHEET_USES_FORMAT % [band_name, "%.1f" % draw, word] if draw > 0.0 \
-        else HudKeepVocab.SHEET_USES_NOTHING_FORMAT % [band_name, word]
-    var uses_label := HudWidgets.alloc_hint_label(uses)
-    uses_label.set_meta(HudKeepVocab.SHEET_USES_META, uses)
-    keep_box.add_child(uses_label)
-
-    _mount_priority_block(target, level, func(picked: String) -> void:
-        _compose.set_deposit_priority(picked)
-        _note_applied()
-        _bandpanel.commit_keep_on_hand(band, material, _compose.deposit_keep(), picked)
-        rebuild.call())
-
-    # ---- A SITE-LESS SHEET ENDS HERE: no Diggers box, no Next turn, no Show on map ----------------------
-    if siteless:
-        target.add_child(_keep_dim_label(HudKeepVocab.SHEET_NO_SITE_LINE, HudStyle.INK_DIM,
-            HudKeepVocab.SHEET_SITE_META))
-        var done_only := HBoxContainer.new()
-        var done_gap := Control.new()
-        done_gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        done_gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-        done_only.add_child(done_gap)
-        var done_button := Button.new()
-        done_button.text = HudComposeVocab.DONE_BUTTON
-        done_button.set_meta(HudComposeVocab.DONE_BUTTON_META, true)
-        HudStyle.apply_button(done_button, "primary")
-        done_button.pressed.connect(func() -> void: close_compose_sheet())
-        done_only.add_child(done_button)
-        target.add_child(done_only)
-        return
-
-    # ---- DIGGERS ----------------------------------------------------------------------------------
-    var site := HudKeepVocab.site_of(entry)
-    var site_key := _band_labor.pending_key(HudConst.LABOR_KIND_EXTRACT, site.x, site.y, "", material)
-    var merged: Dictionary = _band_labor.effective_worker_map(band).get(site_key, {})
-    var crew := _band_labor.effective_extract_workers(band, site.x, site.y, material) \
-        if site.x >= 0 else 0
-    _mount_work_strip(target, band, HudConst.LABOR_KIND_EXTRACT, tile.x, tile.y, "", material,
-        HudKeepVocab.SHEET_SECTION_DIGGERS, HudDepositVocab.CARD_CREW_HINT, "", crew, deposit)
-    var digger_box := HudWidgets.build_readout_box(target)
-    var below := not HudKeepVocab.at_target(keep, on_hand)
-    var crew_text := HudKeepVocab.SHEET_CREW_AT_TARGET
-    if below:
-        crew_text = HudKeepVocab.SHEET_CREW_NOBODY if crew <= 0 \
-            else (HudKeepVocab.SHEET_CREW_ONE_FORMAT % band_name if crew == 1
-                else HudKeepVocab.SHEET_CREW_FORMAT % [band_name, crew])
-    var crew_label := Label.new()
-    crew_label.text = crew_text
-    crew_label.add_theme_color_override("font_color", HudStyle.WARN if below and crew <= 0 else HudStyle.INK)
-    crew_label.set_meta(HudKeepVocab.SHEET_CREW_META, crew_text)
-    digger_box.add_child(crew_label)
-    var hold := mini(int(merged.get("hold_crew", 0)), crew)
-    var site_text := ""
-    if keep <= 0:
-        site_text = HudKeepVocab.SHEET_SITE_NO_TARGET
-    elif not below:
-        site_text = HudKeepVocab.SHEET_SITE_AT_TARGET_FORMAT % [word, keep]
-    elif site.x < 0:
-        site_text = HudKeepVocab.SHEET_NO_ROCK
-    elif site == tile:
-        site_text = HudKeepVocab.site_here_line(hold, maxi(crew - hold, 0), keep)
-    else:
-        site_text = HudKeepVocab.SHEET_SITE_ELSEWHERE_FORMAT % [site.x, site.y]
-    digger_box.add_child(_keep_dim_label(site_text, HudStyle.INK_DIM, HudKeepVocab.SHEET_SITE_META))
-    var split := HudKeepVocab.split_line(int(merged.get("keepers_staffed", 0)),
-        int(merged.get("kitted_staffed", 0)), int(merged.get("bare_staffed", 0)),
-        String(_bandpanel.source_strip_row(band, HudConst.LABOR_KIND_EXTRACT, site.x, site.y, "",
-            material).get("row", {}).get("kit_names", "")))
-    if split != "" and crew > 0:
-        digger_box.add_child(_keep_dim_label(split, HudStyle.INK_FAINT, HudKeepVocab.SHEET_SPLIT_META))
-    # **THE LOAD WAITING AT THE SITE** - what the crew has dug that is not yet on the road home.
-    var dig_load := HudWorkVocab.dig_load_line(
-        _band_labor.extract_assignment_of(band, site.x, site.y, material), material)
-    if dig_load != "":
-        digger_box.add_child(_keep_dim_label(dig_load, HudStyle.INK_FAINT, HudWorkVocab.DIG_LOAD_LINE_META))
-
-    # ---- NEXT TURN --------------------------------------------------------------------------------
-    var take := _bandpanel.dig_take_of(band, material) if below else 0.0
-    var next_box := HudWidgets.build_readout_box(target)
-    next_box.add_child(HudWidgets.alloc_section_label(HudKeepVocab.SHEET_SECTION_NEXT_TURN))
-    var take_row := HBoxContainer.new()
-    take_row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    var take_label := Label.new()
-    take_label.text = HudKeepVocab.SHEET_TAKE_FORMAT % take
-    take_label.add_theme_color_override("font_color", HudStyle.INK)
-    take_label.set_meta(HudKeepVocab.SHEET_TAKE_META, take)
-    take_row.add_child(take_label)
-    take_row.add_child(HudWidgets.alloc_section_label(word))
-    next_box.add_child(take_row)
-    var eta_text := HudKeepVocab.SHEET_NOTHING_DUG
-    if below and take > 0.0:
-        var turns := HudKeepVocab.turns_to_target(keep, on_hand, take, draw)
-        eta_text = HudKeepVocab.SHEET_NOT_GAINING if turns < 0 \
-            else (HudKeepVocab.SHEET_BACK_TO_ONE_FORMAT % keep if turns == 1
-                else HudKeepVocab.SHEET_BACK_TO_FORMAT % [keep, turns])
-    elif below:
-        eta_text = ""
-    if eta_text != "":
-        next_box.add_child(_keep_dim_label(eta_text, HudStyle.INK_FAINT, HudKeepVocab.SHEET_ETA_META))
-
-    # ---- SHOW ON MAP / DONE -----------------------------------------------------------------------
-    var foot := HBoxContainer.new()
-    foot.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_SEPARATION)
-    var show_map := HudWidgets.build_inline_link(HudComposeVocab.SHOW_ON_MAP_LABEL, HudStyle.INK,
-        func() -> void: _bandpanel.show_source_on_map(HudConst.LABOR_KIND_EXTRACT, tile.x, tile.y, ""))
-    show_map.set_meta(HudComposeVocab.SHOW_ON_MAP_META, true)
-    show_map.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-    foot.add_child(show_map)
-    var gap := Control.new()
-    gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    foot.add_child(gap)
-    var done := Button.new()
-    done.text = HudComposeVocab.DONE_BUTTON
-    done.set_meta(HudComposeVocab.DONE_BUTTON_META, true)
-    HudStyle.apply_button(done, "primary")
-    done.pressed.connect(func() -> void: close_compose_sheet())
-    foot.add_child(done)
-    target.add_child(foot)
-
-## A quiet one-line-or-wrapping sentence on the keep sheet, tagged with its harness handle.
-func _keep_dim_label(text: String, ink: Color, meta: StringName) -> Label:
-    var label := HudWidgets.build_wrapping_status_part(text, ink)
-    label.set_meta(meta, text)
-    return label
 
 ## **THE WORKING'S CHART MODEL — the SHARED instrument, composed ONCE per render and once per drag.**
 ##

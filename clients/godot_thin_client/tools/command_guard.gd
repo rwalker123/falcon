@@ -257,7 +257,6 @@ func _ready() -> void:
 	await _drive_assign_labor_kits()
 	await _drive_work_priority()
 	await _drive_stop_labor()
-	await _drive_keep_on_hand()
 	await _drive_unqueue()
 	_assert_retired_kit_verbs()
 	await _drive_send_trade_expedition()
@@ -688,16 +687,6 @@ func _drive_stop_labor() -> void:
 			int(model["y"]), String(model["herd_id"]), String(model.get("material", "")))
 		await _settle()
 
-## **`keep_on_hand` - A MINED MATERIAL'S ORDER** (#874), from the `Dig stone` row's priority pill and the
-## Stone sheet's stepper, both through `BandPanelController.commit_keep_on_hand`. Both trailing fields
-## ride every line, so the two drives differ in target AND level.
-func _drive_keep_on_hand() -> void:
-	var band: Dictionary = _hud._band_labor.panel_band()
-	_hud._bandpanel.commit_keep_on_hand(band, "stone", 40, HudWorkVocab.WORK_PRIORITY_HIGH)
-	await _settle()
-	_hud._bandpanel.commit_keep_on_hand(band, "stone", 0, HudWorkVocab.WORK_PRIORITY_NORMAL)
-	await _settle()
-
 ## **`unqueue` — THE WITHDRAWAL**, in the four forms a queue row can name: patch, herd, working, road.
 func _drive_unqueue() -> void:
 	var band: Dictionary = _hud._band_labor.panel_band()
@@ -948,8 +937,6 @@ func _connect_recorders() -> void:
 		_record("split_band", p, MAIN_SCRIPT.format_split_band(p)))
 	_hud.work_priority_requested.connect(func(p: Dictionary) -> void:
 		_record("work_priority", p, MAIN_SCRIPT.format_work_priority(p)))
-	_hud.keep_on_hand_requested.connect(func(p: Dictionary) -> void:
-		_record("keep_on_hand", p, MAIN_SCRIPT.format_keep_on_hand(p)))
 	_hud.stop_labor_requested.connect(func(p: Dictionary) -> void:
 		_record("stop_labor", p, MAIN_SCRIPT.format_stop_labor(p)))
 	_hud.unqueue_requested.connect(func(p: Dictionary) -> void:
@@ -1390,8 +1377,6 @@ const EXPECTED_KINDS := {
 	# THREE — the patch, herd and working forms of a staffed row's end (#871), all from the sheet's
 	# `Stop working here`; the inspector's tile-branch / camp-stores / roadwork forms went with it.
 	"stop_labor": 3,
-	# TWO - a mined material's keep-on-hand order (#874), once with a target and once at 0 (`None`).
-	"keep_on_hand": 2,
 	# FOUR — every form a queue row can withdraw.
 	"unqueue": 4,
 	# ONE — the Deny verb's sheet, opened on the herd its pick landed on, is the raid's only launch site.

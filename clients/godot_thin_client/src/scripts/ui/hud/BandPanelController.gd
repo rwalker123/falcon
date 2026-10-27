@@ -98,12 +98,6 @@ signal extend_pen_requested(payload: Dictionary)
 # It carries no `pending_entity`: the mark is captured LIVE off the allocation, so it arrives on this
 # command's own recapture and there is no optimistic copy to roll back (§4.9 item 9a's rule).
 signal work_priority_requested(payload: Dictionary)
-
-## The band's keep-on-hand order for a MINED material changed (#874) - the Stone sheet's stepper, or the
-## `Dig stone` row's Priority pill. Payload `{ faction, band_id, material, target, level }`, relayed to
-## HudLayer.keep_on_hand_requested and formatted by `Main.format_keep_on_hand`. Both trailing fields are
-## always sent, so a priority change restates the target and a target change restates the priority.
-signal keep_on_hand_requested(payload: Dictionary)
 ## A staffed row was STOPPED (#871) - the inspector's `Unassign`. Relayed to HudLayer.stop_labor_requested
 ## and formatted by `Main.format_stop_labor`; payload `{ faction, band_id, x, y, herd_id, material,
 ## branch, roadwork }`. No optimistic copy: the next snapshot carries the row's absence.
@@ -2704,9 +2698,6 @@ func _extract_source_models(band: Dictionary) -> Array:
     var models: Array = []
     for model_variant in _workings_roster_models(band):
         var model: Dictionary = (model_variant as Dictionary).duplicate()
-        # A MINED material is kept on hand, not crewed per site: its one `Dig` row is built below.
-        if HudKeepVocab.is_mined(band, String(model["material"])):
-            continue
         model["kind"] = HudConst.LABOR_KIND_EXTRACT
         model["workers"] = _workings_roster_cutters(band, model)
         var tile: Vector2i = model["tile"]
@@ -2725,80 +2716,7 @@ func _extract_source_models(band: Dictionary) -> Array:
         _put_staffed_fields(model, _band_labor.effective_worker_map(band).get(key, {}),
             _band_labor.extract_assignment_of(band, tile.x, tile.y, String(model["material"])))
         models.append(model)
-    models.append_array(_keep_source_models(band))
     return models
-
-## **THE `Dig <material>` ROWS** (#874) - one per `keep_on_hand` entry the band carries, i.e. one per MINED
-## material the faction has found rock of or holds a target for. The row is the band's keep-on-hand ORDER;
-## the dig crew it draws is the sim-owned `extract` row at the picked site (none while the pile is at
-## target). Membership is the wire's entry list, never a material name.
-func _keep_source_models(band: Dictionary) -> Array:
-    var models: Array = []
-    var camp := SourceForecast.band_tile(band)
-    for wire_entry in HudKeepVocab.entries_of(band):
-        var entry := _band_labor.keep_entry_with_pending(band, wire_entry)
-        var material := String(entry.get(HudKeepVocab.ENTRY_MATERIAL_KEY, ""))
-        var tile := HudKeepVocab.site_of(entry)
-        var assignment := _band_labor.extract_assignment_of(band, tile.x, tile.y, material) \
-            if tile.x >= 0 else {}
-        var key := _band_labor.pending_key(HudConst.LABOR_KIND_EXTRACT, tile.x, tile.y, "", material)
-        var crew := _band_labor.effective_extract_workers(band, tile.x, tile.y, material) \
-            if tile.x >= 0 else 0
-        var on_hand := HudKeepVocab.on_hand_of(band, material)
-        var status := HudKeepVocab.status_of(entry, on_hand, crew)
-        var detail := HudKeepVocab.DIG_ROW_NO_SITE
-        if tile.x >= 0:
-            var distance := SourceForecast.hex_distance_wrapped(camp.x, camp.y, tile.x, tile.y,
-                _band_labor.grid_width(), _band_labor.wrap_horizontal())
-            detail = HudKeepVocab.DIG_ROW_SITE_FORMAT % [
-                _roadwork_roster_locator(distance, camp, tile), tile.x, tile.y]
-        var model := {
-            "kind": HudConst.LABOR_KIND_EXTRACT, "keep_entry": entry,
-            "tile": tile, "x": tile.x, "y": tile.y, "herd_id": "", "key": key,
-            "material": material, "deposit": _band_labor.find_deposit(tile.x, tile.y, material),
-            "workers": crew, "on_hand": on_hand, "status": status, "detail": detail,
-            "name": HudKeepVocab.DIG_ROW_NAME_FORMAT % HudKeepVocab.word(material),
-            "priority": HudWorkVocab.work_priority_of(entry.get(HudKeepVocab.ENTRY_PRIORITY_KEY, "")),
-            "lent_to_hunt": int(assignment.get("lent_to_hunt", 0)),
-        }
-        _put_staffed_fields(model, _band_labor.effective_worker_map(band).get(key, {}), assignment)
-        # The crew shortfall sentence is a Max-row's; this row's warning is its status.
-        var warn_lines: Array = []
-        if status == HudKeepVocab.Status.NOBODY_FREE or status == HudKeepVocab.Status.NO_ROCK:
-            warn_lines.append(HudKeepVocab.status_text(status, HudKeepVocab.target_of(entry)))
-        model["warn_lines"] = warn_lines
-        models.append(model)
-    return models
-
-## Send the band's keep-on-hand order for one mined material. No optimistic write: the entry is captured
-## live and the server restaffs the band at once, so the new figures arrive on this command's recapture.
-func commit_keep_on_hand(band: Dictionary, material: String, target: int, level: String) -> void:
-    _band_labor.note_keep_sent(int(band.get("band_id", HudConst.NO_BAND_ID)), material, target,
-        HudWorkVocab.work_priority_of(level))
-    emit_signal("keep_on_hand_requested", {
-        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-        "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
-        "material": material,
-        "target": maxi(target, 0),
-        "level": HudWorkVocab.work_priority_of(level),
-    })
-    _repage_work_zone()
-
-## The material this band's dig crew takes per turn at its picked site (the extract row's yield of
-## `material`), `0.0` while nobody digs.
-func dig_take_of(band: Dictionary, material: String) -> float:
-    var site := HudKeepVocab.site_of(HudKeepVocab.entry_of(band, material))
-    if site.x < 0:
-        return 0.0
-    # The row's own `material_yield` for the material, as every extract row's yield line reads it
-    # (`SourceForecast.material_rows_of`): the sim seeds the take on a row it has just staffed, before any
-    # turn has resolved, so no `has_yield` flag gates it.
-    var take := 0.0
-    for payoff in SourceForecast.material_rows_of(
-            _band_labor.extract_assignment_of(band, site.x, site.y, material)):
-        if String(payoff.get(SourceForecast.MATERIAL_PAYOFF_ID_KEY, "")) == material:
-            take += float(payoff.get(SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
-    return take
 
 ## **THE ROW'S SHORT-CREW REASON, FOLDED INTO ITS ONE `⚠`** (`HudWorkVocab.crew_shortfall`): appended to
 ## `warn_lines` so a row already warning carries both reasons in one hover. A kit reason (any `kit_toe` line
@@ -3089,8 +3007,6 @@ func _put_tile_ladder_chip(strip_row: Dictionary, improvement: Dictionary, tile:
 ## does; the sheet's `Stop working here` is where the working is put down, so the row carries no `✕`
 ## and no stepper. The strip's own buttons stop the press and open the rung card.
 func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
-    if model.has("keep_entry"):
-        return _build_keep_row(band, model)
     var tile: Vector2i = model["tile"]
     var deposit: Dictionary = model["deposit"]
     var material := String(model["material"])
@@ -3149,67 +3065,6 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     col.add_child(_build_pill_line(band, model, true))
     (shell[SITE_ROW_SHELL_BODY] as HBoxContainer).add_child(_build_row_strip(band,
         _extract_strip_row(model, deposit, ladder, cutters), deposit))
-    return row
-
-## **THE `Dig <material>` ROW** (#874) - the groundwork row's shape with a keep-on-hand order for its
-## content: the name (`Dig stone`), the site line (`<where> (x, y) - the game picks the site`, or `No rock
-## known yet`), line three the status (`At target - nobody digs` / `Refilling to 60` / `Nobody free to
-## dig`) with the take, the dig-load line, and the pill line - the Priority pill and the keep chip, a
-## LABEL (`Keep 60`, `Keep: none`) whose number is set on the sheet. The strip is the dig
-## row's own crew. A click opens the sheet when there is a site to open it on.
-func _build_keep_row(band: Dictionary, model: Dictionary) -> PanelContainer:
-    var entry: Dictionary = model["keep_entry"]
-    var tile: Vector2i = model["tile"]
-    var material := String(model["material"])
-    var deposit: Dictionary = model["deposit"]
-    var status: HudKeepVocab.Status = model["status"]
-    var target := HudKeepVocab.target_of(entry)
-    var dig_assignment := _band_labor.extract_assignment_of(band, tile.x, tile.y, material) \
-        if tile.x >= 0 else {}
-    var load_line := HudWorkVocab.dig_load_line(dig_assignment, material) if tile.x >= 0 else ""
-    var warns := status == HudKeepVocab.Status.NOBODY_FREE or status == HudKeepVocab.Status.NO_ROCK
-    var shell := _site_row_shell(HudWorkVocab.EXTRACT_ROW_HEIGHT \
-        + (HudWorkVocab.WORK_ROW_PARTY_LINE_HEIGHT if load_line != "" else 0.0),
-        false, HudStyle.WARN if warns else Color(0.0, 0.0, 0.0, 0.0))
-    var row: PanelContainer = shell[SITE_ROW_SHELL_ROW]
-    var col: VBoxContainer = shell[SITE_ROW_SHELL_COLUMN]
-    var line: HBoxContainer = shell[SITE_ROW_SHELL_LINE]
-    row.set_meta(HudKeepVocab.DIG_ROW_META, material)
-    row.set_meta(HudWorkVocab.WORKINGS_ROSTER_ROW_META, "%d,%d:%s" % [tile.x, tile.y, material])
-    row.mouse_filter = Control.MOUSE_FILTER_STOP
-    row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-    row.gui_input.connect(func(event: InputEvent) -> void:
-        if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-            _open_keep_sheet(model))
-    row.tooltip_text = String(model["detail"])
-    line.add_child(HudWidgets.build_marker_icon(null, FoodIcons.for_material(material),
-        HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE))
-    var title := Label.new()
-    title.text = String(model["name"])
-    title.clip_text = true
-    title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
-    title.add_theme_color_override("font_color", HudStyle.INK)
-    title.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    title.set_meta(HudWorkVocab.WORKINGS_ROW_NAME_META, title.text)
-    line.add_child(title)
-    col.add_child(_build_site_crew_line(String(model["detail"])))
-    var status_text := HudKeepVocab.status_text(status, target)
-    var take := dig_take_of(band, material)
-    var yield_text := status_text
-    if status == HudKeepVocab.Status.REFILLING and take > 0.0:
-        yield_text = "+%.2f %s%s%s%s" % [take, HudKeepVocab.word(material),
-            SourceForecast.YIELD_PER_TURN_SUFFIX, HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR, status_text]
-    col.add_child(_build_working_yield_line(yield_text,
-        HudStyle.WARN if warns else HudStyle.INK_DIM, HudKeepVocab.KEEP_STATUS_META))
-    if load_line != "":
-        col.add_child(_build_working_yield_line(load_line, HudStyle.INK_DIM,
-            HudWorkVocab.DIG_LOAD_LINE_META))
-    col.add_child(_build_pill_line(band, model, true))
-    var strip_row := _extract_strip_row(model, deposit, _deposit_ladder(), int(model.get("workers", 0))) \
-        if not deposit.is_empty() else model
-    (shell[SITE_ROW_SHELL_BODY] as HBoxContainer).add_child(_build_row_strip(band, strip_row, deposit))
     return row
 
 ## **A WORKING'S STRIP ROW** — the work-row vocabulary the strip reads, filled from the `deposits` row and
@@ -3305,19 +3160,8 @@ func _add_priority_pills(line: Container, band: Dictionary, model: Dictionary,
             String(model.get("priority", HudWorkVocab.WORK_PRIORITY_NORMAL)),
             HudWorkVocab.WORK_ROW_PRIORITY_PILL_META, HudWorkVocab.WORK_ROW_PRIORITY_PILL_TOOLTIP,
             func(level: String) -> void: _commit_work_priority(band, model, level)))
-        # **THE KEEP CHIP REPLACES THE MAX CHIP ON A `Dig` ROW** (#874): a LABEL, not a control - the target
-        # changes only on the sheet.
-        if model.has("keep_entry"):
-            var entry: Dictionary = model["keep_entry"]
-            var keep_chip := HudWidgets.build_max_chip(0)
-            keep_chip.text = HudKeepVocab.chip_text(HudKeepVocab.target_of(entry))
-            keep_chip.tooltip_text = HudKeepVocab.KEEP_CHIP_TOOLTIP % HudLoadoutVocab.material_label(
-                String(model.get("material", "")))
-            keep_chip.remove_meta(HudWorkVocab.MAX_CHIP_META)
-            keep_chip.set_meta(HudKeepVocab.KEEP_CHIP_META, keep_chip.text)
-            line.add_child(keep_chip)
         # **A STATIC `Max N` CHIP** (#871), only while the player set a Max - a label, not a control.
-        elif int(model.get("max_workers", 0)) > 0:
+        if int(model.get("max_workers", 0)) > 0:
             line.add_child(HudWidgets.build_max_chip(int(model.get("max_workers", 0))))
 
 ## **THE ROW'S PILL LINE** — `Priority` on a line of its own under the row, so the pill takes no width
@@ -3497,14 +3341,6 @@ func _open_source_sheet(model: Dictionary) -> void:
     _focus_work_source(model)
     source_sheet_requested.emit(String(model.get("kind", "")), int(model.get("x", -1)),
         int(model.get("y", -1)), String(model.get("herd_id", "")), String(model.get("material", "")))
-
-## A `Dig` row's click (#874): with a picked site it is the ordinary source sheet; with none there is no
-## tile to select, so the request goes out with no site and the sheet opens in its site-less form.
-func _open_keep_sheet(model: Dictionary) -> void:
-    if int(model.get("x", -1)) >= 0:
-        _open_source_sheet(model)
-        return
-    source_sheet_requested.emit(HudConst.LABOR_KIND_EXTRACT, -1, -1, "", String(model.get("material", "")))
 
 ## **ONE PRIORITY PILL** — `Priority: High` / `Build: Normal`, a text-only ghost button that CYCLES the
 ## level on a press. No optimistic write: both marks are captured live, so the new level arrives on the
@@ -4534,11 +4370,6 @@ func _build_work_inspector_rule(col: VBoxContainer) -> void:
 ## to undo.
 func _commit_work_priority(band: Dictionary, model: Dictionary, level: String) -> void:
     if model.is_empty():
-        return
-    if model.has("keep_entry"):
-        # A `Dig` row's Priority restates its target: the order is one `keep_on_hand` line.
-        commit_keep_on_hand(band, String(model.get("material", "")),
-            HudKeepVocab.target_of(model["keep_entry"]), level)
         return
     emit_signal("work_priority_requested", {
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
