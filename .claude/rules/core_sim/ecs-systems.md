@@ -205,16 +205,19 @@ to compensate**: narrowing the diagonals is the fix.
 - **Target size**: a tile holding a large group is visible from further off (#533) —
   `connections.md` → "A large group is seen from further away"
 - **Line of Sight**: Bresenham ray-cast checks for blocking terrain
-- **Local scout** (labor): staffed scouts are **forward observers** — with ≥1 scout (from the
-  cohort's `LaborAllocation` head-count, `workers_on(&LaborTarget::Scout)`), `calculate_visibility`
-  posts vantage tiles out from the band in all 6 hex directions (`scout_vantage_tiles`, reusing
-  `grid_utils::hex_neighbor`) at `scout.vantage_distance(scouts)` = `min(vantage_distance_base +
-  scouts × vantage_distance_per_scout, vantage_distance_max)`, pulling each back to the last on-map,
-  passable (non-`WATER`) tile. Each vantage reveals with `vantage_range` via the *same* per-source
+- **Local scout** (labor): staffed scouts are **forward observers** — with a non-zero
+  `scouting_reach` on the Scout row (the tiles past the local range the staffed scouts reach,
+  `LaborAllocation::scouting_reach_tiles`), `calculate_visibility` posts vantage tiles out from the
+  band in all 6 hex directions (`scout_vantage_tiles`, reusing `grid_utils::hex_neighbor`) at
+  `scout_vantage_posting_distance(reach_tiles, scouting_reach, sight)` = `max(1, reach_tiles +
+  scouting_reach − sight)`, so the farthest tile seen is `reach_tiles + scouting_reach` from camp,
+  pulling each back to the last on-map,
+  passable (non-`WATER`) tile. Each vantage reveals with `vantage_range` (`sight`) via the *same* per-source
   LOS reveal the band uses (`reveal_tiles_in_range`), so scouts see **around** ridges/forest, not
   merely farther. The band's own base-range LOS from its center is unchanged (scouts are additive);
   the vantages are re-marked Active every turn while scouts are staffed. Config: `labor_config.json`
-  `scout`.
+  `scout` (`vantage_range`, `range_past_local_max`); the range and its staffing are `work-party.md` →
+  "Scouting is a range".
 
 **Config** (`visibility_config.json`):
 - `decay`: `enabled` (default `false` — permanent memory; Discovered tiles never revert to Unexplored), `threshold_turns` (turns before Discovered → Unexplored when enabled)

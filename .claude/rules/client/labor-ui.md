@@ -5283,8 +5283,8 @@ spelled and never a raw count.
     PERIMETER outline of each reach's hex disk — traced edge-by-edge, drawing an edge only where the
     neighbour across it leaves the disk, NOT a filled tile-by-tile mesh — using the sim's true **odd-r
     hex distance** `hex_distance_wrapped` via `MapView._hex_distance`, so the boundary ==
-    actually-in-range; forage **green** at `work_range` (ties to the worked-forage fills), scout **azure**
-    at `scout_reveal_radius` when scouts are staffed — nested and color-distinct, all at every zoom),
+    actually-in-range; forage **green** at `work_range` (ties to the worked-forage fills), watched ground **azure**
+    at `watched_radius` when scouts are staffed — nested and color-distinct, all at every zoom),
     and the **hunted herds** (red ring on the herd tile + a band→herd link, drawn wherever the herd is
     since a far crew posts a work party). **The per-source RATE is no longer drawn on the map at
     all** (issue #650): a rate pill is ~90px and two markers in one hex's edge slots are ~55px apart,
@@ -5294,13 +5294,13 @@ spelled and never a raw count.
     it; what belongs here is only that a staffed assignment's rate reaches the player through the ROW's
     `rate_text` rather than through a label over its tile, and that the row's producers are still this
     layer's (`SourceForecast.row_zero_account` for the account a zero may name, the sim-answered
-    `overdraws` bool for the `⚠`, never the client-derived `actual > sustainable`). **Scouting draws its azure range border** (the scout vantage reach `scout_reveal_radius`, when
+    `overdraws` bool for the `⚠`, never the client-derived `actual > sustainable`). **Scouting draws its azure range border** (the watched-ground edge `watched_radius`, when
     scouts are staffed) — a perimeter outline like the forage border, NOT a filled reveal disc:
-    the old faint-blue scouted DISC was removed because `scout_reveal_radius` is a scout-vantage /
-    sight-range value, not a revealed-area radius, and the client can't reconstruct the true LOS-revealed
-    area; the border just marks how far the vantage reach extends. The band's actual sight is still
+    the old faint-blue scouted DISC was removed because `watched_radius` is not a revealed-area radius
+    (the client can't reconstruct the true LOS-revealed area). It is the watched ground's edge —
+    local range plus the tiles the scouts reach, `0` with no scouts — and wild predators keep outside it. The band's actual sight is still
     visible directly in the fog (a wider Active radius). Snapshot fields `work_range` /
-    `scout_reveal_radius` are decoded in `native/src/lib.rs population_to_dict` and flowed onto the
+    `watched_radius` are decoded in `native/src/lib.rs population_to_dict` and flowed onto the
     MapView unit marker in `_rebuild_unit_markers` (alongside `labor_assignments`). **Optimistic pending**
     actions for the selected band draw in a distinct **dashed-amber** style (`_draw_band_pending`, fed by
     `set_labor_pending`) — the pending forage tile, the pending hunted herd (dashed ring-hex + dashed
@@ -8302,3 +8302,32 @@ every such ceiling. A band reading "0 idle of 18" with every hand on staffed row
   that and the staffed rows shrink on the next snapshot.
 - Fixtures: `crafting_bench.gd` `_staffed_hands_state` (all hands on two hunt rows: crafters `+` enabled and
   sends `bench_crew`); `band_panel_preview.gd` all-hands-committed state (idle 0: Scout `+` enabled).
+
+## THE SCOUT CARD STATES A RANGE, NOT A HEADCOUNT (#875)
+
+The Band panel's Scout card is titled **`Scouting range`** (`HudWorkVocab.SCOUT_CARD_TITLE`;
+`ROLE_NAME_SCOUT` stays the job's name where a job is named). Its stepper reads **`+N tiles`**
+(`HudWidgets.add_range_stepper`, `-`/`+` by one tile, `0..scouting_range_max` off the cohort) and sends
+`assign_labor ... scout <N> [kit <k>]`, where the count slot is the range in tiles past the band's local
+range; `scout 0` drops the row. The `-`/`+` carry the tooltips `Scout less far` / `Scout farther`, and the
+kit picker is kept (a kit pick re-states the current RANGE).
+
+- **The scout row is sim-staffed**, so `scout` is in `HudBandLaborState.STAFFED_KINDS`: a pending scout
+  command never overlays `workers` (the staffed scouts the People bar's roles segment reads), it overlays
+  the range. `effective_role_workers(band, "scout")` answers `{workers, range, pending}` and
+  `scouting_state(band)` answers `{range, reach, workers, kitted}` off the row's `scouting_range` /
+  `scouting_reach` / `workers` / `kitted_staffed`. A pending range reads as REACHED, so the card claims no
+  shortfall the recapture has not reported.
+- **THE CARD CARRIES ONE LINE; THE REST IS A TOOLTIP ON THE `+N tiles` VALUE** (Ray: too many words).
+  Below the stepper and kit picker the body is `N scouts` (`1 scout`), dim (`HudWorkVocab.scouting_line`);
+  short, it is amber `N scouts · K tiles short` (K = range - reach, `HudStyle.WARN`, beside the number it
+  explains); at range +0 there is no line. The sim staffs scouts first, so short means the band has too
+  few people. The kit's `2-tile sight per vantage` line, the local-range detail and the kept-off line
+  are OFF the card, and the kit sight line is not in the tooltip either; `HudWorkVocab.scouting_tooltip`
+  puts the rest on the value label, one fact per line: `Watches N tiles from camp` (`watched_radius`,
+  omitted while 0), `N scouts this turn[ - K with wayfinding gear]`, `Keeping N packs off watched
+  ground` (`predators_kept_off`, only above 0), and when short `Reaches +R of +N tiles - not enough
+  people to go farther.`; at +0 the tooltip is `No scouts - the band sees its local range and no
+  farther.` The label is set through `HudWidgets.set_label_tooltip` (a `Label` ignores the mouse by
+  default) and `KitRoster.build_kit_row`'s `show_hint` false keeps the Scout card's gear line off.
+- The Warrior card is unchanged and stays a player-set head count.

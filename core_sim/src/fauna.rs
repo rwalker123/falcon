@@ -2985,7 +2985,7 @@ pub fn advance_herds(
     // positive-marker isolation convention — see `components::ResidentBand`).
     // Beside the cohort, the band's id and labor rows: which band KEEPS a herd (a Hunt row on it
     // with workers) is the camp it drifts to (`herd_camp_targets`).
-    bands: HerdCampBands,
+    mut bands: HerdCampBands,
     // Optional so the many hand-built fauna test harnesses that run `advance_herds` in isolation
     // don't have to stand up a graze layer; a `None`/empty registry falls back to plain land movement
     // (the pre-2b-i behaviour). The live app always carries a seeded `GrazeRegistry`.
@@ -2998,8 +2998,14 @@ pub fn advance_herds(
     // **The trails a `Migrate` step prefers** (issue #215) — the roads as last turn's `advance_roads`
     // left them. Optional for the graze layer's reason; with none, every step ranks alike.
     road_registry: Option<Res<crate::routes::RoadRegistry>>,
+    // **The local range a band's watched ring is measured from** (`reach_tiles`) - optional for the
+    // graze layer's reason; with none, no band watches anything.
+    supply_config: Option<Res<crate::supply_network_config::SupplyNetworkConfigHandle>>,
 ) {
     if registry.herds.is_empty() {
+        for (mut cohort, ..) in bands.iter_mut() {
+            cohort.predators_kept_off = NO_PACKS_KEPT_OFF;
+        }
         telemetry.entries.clear();
         density.width = 0;
         density.height = 0;
@@ -3028,6 +3034,19 @@ pub fn advance_herds(
     // the same one-turn lag a herbivore's graze `K` has. Byte-identical to before on a carnivore-free
     // map: nothing reads it unless a herd's species is a carnivore.
     let prey_index = build_prey_index(&registry.herds, &fauna);
+    // **The ground the bands' scouts watch** - built once, from the labor rows as the player left
+    // them, so no pack's move depends on the order the herds are visited in.
+    let watched = WatchedGround::of(bands.iter().filter_map(|(cohort, id, allocation)| {
+        let reach = allocation?.scouting_reach_tiles();
+        let radius = crate::visibility_systems::watched_radius(
+            supply_config.as_deref()?.get().reach_tiles,
+            reach,
+        );
+        let camp = tiles.get(cohort.current_tile).ok()?.position;
+        Some((*id?, camp, radius))
+    }));
+    // Per band: the distinct packs its ring changed the move of this turn.
+    let mut kept_off: BTreeMap<BandId, u32> = BTreeMap::new();
     for herd in registry.herds.iter_mut() {
         // Deterministic per-herd, per-turn RNG (rollback-stable): map_seed ^ tick ^ salt ^ id-hash.
         let mut hasher = FnvHasher::new();
@@ -3070,6 +3089,7 @@ pub fn advance_herds(
                 width,
                 height,
                 wrap,
+                None,
             ),
             // `drift_to_owner`: the herd biases its step toward its owner's nearest camp. No owner,
             // or an owner with no bands → `None`, i.e. a plain roam (the fallback is the `Option`).
@@ -3087,6 +3107,7 @@ pub fn advance_herds(
                     width,
                     height,
                     wrap,
+                    None,
                 )
             }
             // `pursue`: a wild carnivore steps toward the nearest **clearable prey in pursuit range**.
@@ -3100,30 +3121,81 @@ pub fn advance_herds(
             // today's roam. The target list is tie-broken downstream by `resource_step_order`, so its
             // build order can't leak into the step.
             RungMovement::Pursue => {
-                let pred_attack = def.map(|d| d.combat.attack).unwrap_or(0.0);
-                let pursuit_radius = fauna.predators.pursuit_radius;
-                let targets: Vec<UVec2> = prey_index
-                    .iter()
-                    .filter(|p| {
-                        attack_clears_defense(pred_attack, p.defense)
-                            && hex_distance_wrapped(herd.current_pos, p.pos, width, wrap)
-                                <= pursuit_radius
-                    })
-                    .map(|p| p.pos)
-                    .collect();
-                advance_herd_roam(
-                    herd,
-                    def,
-                    (!targets.is_empty()).then_some(targets.as_slice()),
-                    &tile_registry,
-                    &tiles,
-                    graze,
-                    roads,
-                    &mut rng,
-                    width,
-                    height,
-                    wrap,
-                )
+                // **A pack keeps off a band's watched ground** (#875) - a simple push, no extra
+                // speed: the cadence below is the species' own.
+                let mut changed_by: Option<BandId> = None;
+                let movement = if let Some(ring) = watched.covering(herd.current_pos, width, wrap) {
+                    step_out_of_watch(
+                        herd,
+                        def,
+                        ring,
+                        &tile_registry,
+                        &tiles,
+                        graze,
+                        width,
+                        height,
+                        wrap,
+                        &mut changed_by,
+                    );
+                    None
+                } else {
+                    let pred_attack = def.map(|d| d.combat.attack).unwrap_or(0.0);
+                    let pursuit_radius = fauna.predators.pursuit_radius;
+                    let in_range: Vec<UVec2> = prey_index
+                        .iter()
+                        .filter(|p| {
+                            attack_clears_defense(pred_attack, p.defense)
+                                && hex_distance_wrapped(herd.current_pos, p.pos, width, wrap)
+                                    <= pursuit_radius
+                        })
+                        .map(|p| p.pos)
+                        .collect();
+                    // Prey standing inside a watched ring is not chased.
+                    let targets: Vec<UVec2> = in_range
+                        .iter()
+                        .copied()
+                        .filter(|&pos| watched.covering(pos, width, wrap).is_none())
+                        .collect();
+                    if targets.len() != in_range.len() {
+                        changed_by = in_range
+                            .iter()
+                            .filter_map(|&pos| watched.covering(pos, width, wrap))
+                            .map(|ring| ring.band)
+                            .min();
+                    }
+                    let before = herd.current_pos;
+                    let step = advance_herd_roam(
+                        herd,
+                        def,
+                        (!targets.is_empty()).then_some(targets.as_slice()),
+                        &tile_registry,
+                        &tiles,
+                        graze,
+                        roads,
+                        &mut rng,
+                        width,
+                        height,
+                        wrap,
+                        Some((&watched, &mut changed_by)),
+                    );
+                    // A roam step that ends inside a ring is refused: the pack stays where it stood.
+                    if herd.current_pos != before {
+                        if let Some(ring) = watched.covering(herd.current_pos, width, wrap) {
+                            herd.current_pos = before;
+                            hem_in_refused_step(herd, def, &mut rng);
+                            changed_by.get_or_insert(ring.band);
+                            None
+                        } else {
+                            step
+                        }
+                    } else {
+                        step
+                    }
+                };
+                if let Some(band) = changed_by {
+                    *kept_off.entry(band).or_default() += 1;
+                }
+                movement
             }
         };
         // **THE CORRIDOR WEARS IN** (issue #215) — only a step on a `Migrate` leg (`RoamState::Migrate`
@@ -3188,6 +3260,13 @@ pub fn advance_herds(
             biomass = herd.biomass,
             ecology_phase = herd.ecology_phase.as_str(),
         );
+    }
+    // **The readout**: reset every band's count, then write what this turn's rings changed - stored
+    // on the cohort so a recapture after a command republishes the same value.
+    for (mut cohort, id, _) in bands.iter_mut() {
+        cohort.predators_kept_off = id
+            .and_then(|id| kept_off.get(id).copied())
+            .unwrap_or(NO_PACKS_KEPT_OFF);
     }
     // Local extinction: a group hunted to zero, or a collapsing remnant that has fallen below the
     // viability floor, **disperses** and despawns — measured against the ecology/capacity the herd
@@ -4159,6 +4238,9 @@ fn advance_herd_roam(
     width: u32,
     height: u32,
     wrap: bool,
+    // The watched ground a wild predator keeps off, and where to note that it changed the pack's step
+    // (`None` for every herd that is not a wild carnivore).
+    mut watch: Option<(&WatchedGround, &mut Option<BandId>)>,
 ) -> Option<MigrationStep> {
     let dwell_turns = def.map(|d| d.dwell_turns).unwrap_or(1);
     let loiter_radius = def.map(|d| d.loiter_radius).unwrap_or(2);
@@ -4174,7 +4256,19 @@ fn advance_herd_roam(
             herd.dwell_remaining -= 1;
             return None;
         }
-        if relocate_toward_resource(herd, targets, registry, tiles, graze, width, height, wrap) {
+        if relocate_toward_resource(
+            herd,
+            targets,
+            registry,
+            tiles,
+            graze,
+            width,
+            height,
+            wrap,
+            watch
+                .as_mut()
+                .map(|(ground, changed_by)| (*ground, &mut **changed_by)),
+        ) {
             herd.dwell_remaining = dwell_turns;
             return None;
         }
@@ -4245,11 +4339,7 @@ fn advance_herd_roam(
         }
         RoamState::Migrate => {
             // Directed leg to the next anchor at 1 hex/turn, no grazing pause.
-            let next_index = if herd.route.is_empty() {
-                0
-            } else {
-                (herd.step_index + 1) % herd.route.len()
-            };
+            let next_index = next_route_index(herd);
             let target = herd
                 .route
                 .get(next_index)
@@ -4266,10 +4356,7 @@ fn advance_herd_roam(
             });
             if herd.current_pos == target || !moved {
                 // Arrived (or hemmed in) → loiter at the new anchor for a fresh window.
-                herd.step_index = next_index;
-                let turns = def.map(|d| d.sample_loiter_turns(rng)).unwrap_or(16);
-                herd.roam = RoamState::Loiter { turns_left: turns };
-                herd.dwell_remaining = 0;
+                end_migrate_leg(herd, def, rng);
             } else {
                 // Heading arrow: where it will step next turn.
                 herd.next_pos = best_land_neighbor_toward(
@@ -4287,6 +4374,44 @@ fn advance_herd_roam(
             step
         }
     }
+}
+
+/// The route index a `Migrate` leg is heading for: the anchor after the one the herd last loitered at.
+fn next_route_index(herd: &Herd) -> usize {
+    if herd.route.is_empty() {
+        0
+    } else {
+        (herd.step_index + 1) % herd.route.len()
+    }
+}
+
+/// End a `Migrate` leg at its target anchor: the herd takes the anchor as its own and loiters there
+/// for a fresh window. Both an arrival and a hemmed-in turn (and a watched-ground refusal, see
+/// [`hem_in_refused_step`]) end the leg this way. Clears the heading: a leg that has ended points nowhere.
+fn end_migrate_leg(herd: &mut Herd, def: Option<&SpeciesDef>, rng: &mut SmallRng) {
+    herd.step_index = next_route_index(herd);
+    let turns = def.map(|d| d.sample_loiter_turns(rng)).unwrap_or(16);
+    herd.roam = RoamState::Loiter { turns_left: turns };
+    herd.dwell_remaining = 0;
+    herd.next_pos = None;
+}
+
+/// **A roam step refused by a watched ring counts as the pack being hemmed in** (#875), so the roam
+/// machine moves on exactly as it does when no step is possible: a graze-wanderer advances to its
+/// next waypoint (the advance it makes on arrival), a `Migrate` leg ends. Without this the pack would
+/// retry the same refused step every move turn, frozen at the ring's edge with a heading into the
+/// ring. A `Loiter` nudge is random and expires on its own, so it needs nothing.
+fn hem_in_refused_step(herd: &mut Herd, def: Option<&SpeciesDef>, rng: &mut SmallRng) {
+    match herd.roam {
+        RoamState::GrazeWander => {
+            if !herd.route.is_empty() {
+                herd.step_index = (herd.step_index + 1) % herd.route.len();
+            }
+        }
+        RoamState::Migrate => end_migrate_leg(herd, def, rng),
+        RoamState::Loiter { .. } => {}
+    }
+    herd.next_pos = None;
 }
 
 /// Step the herd one hex toward `target`, choosing the land neighbour that most reduces hex
@@ -4463,6 +4588,8 @@ fn relocate_toward_resource(
     width: u32,
     height: u32,
     wrap: bool,
+    // Watched ground the step may not end inside, and where to note that it refused the best one.
+    watch: Option<(&WatchedGround, &mut Option<BandId>)>,
 ) -> bool {
     let current = nearest_target_distance(herd.current_pos, targets, width, wrap);
     if current == 0 {
@@ -4470,6 +4597,8 @@ fn relocate_toward_resource(
         return false;
     }
     let mut best: Option<(u32, f32, UVec2)> = None;
+    // The best step ignoring the watched ground: when it differs from `best`, the ring refused it.
+    let mut best_ignoring_watch: Option<(u32, f32, UVec2)> = None;
     for (np, cap) in acceptable_steps(
         herd.current_pos,
         registry,
@@ -4486,9 +4615,27 @@ fn relocate_toward_resource(
             continue;
         }
         let candidate = (d, cap, np);
+        if best_ignoring_watch
+            .is_none_or(|best| resource_step_order(candidate, best) == Ordering::Less)
+        {
+            best_ignoring_watch = Some(candidate);
+        }
+        if watch
+            .as_ref()
+            .is_some_and(|(ground, _)| ground.covering(np, width, wrap).is_some())
+        {
+            continue;
+        }
         let better = best.is_none_or(|best| resource_step_order(candidate, best) == Ordering::Less);
         if better {
             best = Some(candidate);
+        }
+    }
+    if let (Some((ground, changed_by)), Some((_, _, wanted))) = (watch, best_ignoring_watch) {
+        if best.map(|(_, _, pos)| pos) != Some(wanted) {
+            if let Some(ring) = ground.covering(wanted, width, wrap) {
+                changed_by.get_or_insert(ring.band);
+            }
         }
     }
     match best {
@@ -4497,6 +4644,110 @@ fn relocate_toward_resource(
             true
         }
         None => false,
+    }
+}
+
+/// No pack was kept off: the readout's zero.
+pub const NO_PACKS_KEPT_OFF: u32 = 0;
+
+/// **One band's watched ring** (#875): the band, where it camps and how far it watches
+/// ([`crate::visibility_systems::watched_radius`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WatchedRing {
+    band: BandId,
+    camp: UVec2,
+    radius: u32,
+}
+
+/// **Every ground a band's scouts watch this turn**, in `BandId` order. Wild carnivores keep off it:
+/// a pack standing inside steps out on its move turns, and neither `pursue` nor the roam takes a step
+/// that ends inside. Empty without scouts, so a world with none moves exactly as it did before.
+#[derive(Debug, Default)]
+struct WatchedGround {
+    rings: Vec<WatchedRing>,
+}
+
+impl WatchedGround {
+    /// The rings of `(band, camp, radius)`; a radius of [`crate::visibility_systems::NO_WATCHED_RADIUS`]
+    /// is no ring.
+    fn of(bands: impl Iterator<Item = (BandId, UVec2, u32)>) -> Self {
+        let mut rings: Vec<WatchedRing> = bands
+            .filter(|&(_, _, radius)| radius > crate::visibility_systems::NO_WATCHED_RADIUS)
+            .map(|(band, camp, radius)| WatchedRing { band, camp, radius })
+            .collect();
+        rings.sort_by_key(|ring| ring.band);
+        Self { rings }
+    }
+
+    /// The **nearest watching camp** whose ring covers `pos` (ties to the lower `BandId`).
+    fn covering(&self, pos: UVec2, width: u32, wrap: bool) -> Option<&WatchedRing> {
+        self.rings
+            .iter()
+            .filter_map(|ring| {
+                let distance = hex_distance_wrapped(pos, ring.camp, width, wrap);
+                (distance <= ring.radius).then_some((distance, ring))
+            })
+            .min_by_key(|(distance, ring)| (*distance, ring.band))
+            .map(|(_, ring)| ring)
+    }
+}
+
+/// **A pack inside a watched ring steps out of it** - on its move turns (the species' own
+/// `dwell_turns` cadence still applies: no extra speed), the greedy one-hex step that increases its
+/// distance from the watching camp, over the roam's own [`acceptable_steps`]. The order is total:
+/// `(distance from camp DESC, graze capacity DESC, y ASC, x ASC)`, the style of
+/// [`resource_step_order`]. If no step increases the distance it stays. Notes the ring's band in
+/// `changed_by` when the pack moved.
+#[allow(clippy::too_many_arguments)]
+fn step_out_of_watch(
+    herd: &mut Herd,
+    def: Option<&SpeciesDef>,
+    ring: &WatchedRing,
+    registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    graze: &GrazeRegistry,
+    width: u32,
+    height: u32,
+    wrap: bool,
+    changed_by: &mut Option<BandId>,
+) {
+    herd.next_pos = None;
+    if herd.dwell_remaining > 0 {
+        herd.dwell_remaining -= 1;
+        return;
+    }
+    let current = hex_distance_wrapped(herd.current_pos, ring.camp, width, wrap);
+    let mut best: Option<(u32, f32, UVec2)> = None;
+    for (np, cap) in acceptable_steps(
+        herd.current_pos,
+        registry,
+        tiles,
+        graze,
+        width,
+        height,
+        wrap,
+    ) {
+        let distance = hex_distance_wrapped(np, ring.camp, width, wrap);
+        if distance <= current {
+            continue;
+        }
+        let better = best.is_none_or(|(best_distance, best_cap, best_pos)| {
+            distance
+                .cmp(&best_distance)
+                .reverse()
+                .then_with(|| best_cap.total_cmp(&cap))
+                .then_with(|| np.y.cmp(&best_pos.y))
+                .then_with(|| np.x.cmp(&best_pos.x))
+                == Ordering::Less
+        });
+        if better {
+            best = Some((distance, cap, np));
+        }
+    }
+    if let Some((_, _, pos)) = best {
+        herd.current_pos = pos;
+        herd.dwell_remaining = def.map_or(1, |d| d.dwell_turns);
+        changed_by.get_or_insert(ring.band);
     }
 }
 
@@ -4527,7 +4778,8 @@ type HerdCampBands<'w, 's> = Query<
     'w,
     's,
     (
-        &'static PopulationCohort,
+        // Mutable for one write only: the band's `predators_kept_off` readout.
+        &'static mut PopulationCohort,
         Option<&'static BandId>,
         Option<&'static LaborAllocation>,
     ),
@@ -15379,6 +15631,7 @@ mod tests {
                     ),
                     belief_anchor: None,
                     last_belief_relay_hops: 0,
+                    predators_kept_off: 0,
                 },
             ))
             .id()

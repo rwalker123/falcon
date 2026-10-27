@@ -312,6 +312,9 @@ pub fn calculate_visibility(
     config: Res<VisibilityConfigHandle>,
     labor_config: Res<LaborConfigHandle>,
     equipment_config: Res<EquipmentConfigHandle>,
+    // The band's local range (`reach_tiles`): a scout's vantages are posted so the farthest tile
+    // seen is the local range plus the scouting reach out from camp.
+    supply_config: Res<crate::supply_network_config::SupplyNetworkConfigHandle>,
     sim_config: Res<SimulationConfig>,
     tick: Res<SimulationTick>,
     elevation: Option<Res<ElevationField>>,
@@ -341,6 +344,7 @@ pub fn calculate_visibility(
     let cfg = config.0.as_ref();
     let labor = labor_config.get();
     let equipment_cfg = equipment_config.get();
+    let local_range_tiles = supply_config.get().reach_tiles;
     let current_turn = tick.0;
     let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
 
@@ -438,16 +442,14 @@ pub fn calculate_visibility(
             // so scouts see *around* obstacles (ridges/forest) rather than merely farther. The
             // vantages ride the SAME per-source LOS reveal below (elevation/terrain modifiers
             // included) — no separate raycast.
-            let scout_workers = allocation
-                .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
-                .unwrap_or(0);
-            let vantage_distance = labor.scout.vantage_distance(scout_workers);
-            if vantage_distance > 0 {
+            let scouting_reach = allocation
+                .map(|alloc| alloc.scouting_reach_tiles())
+                .unwrap_or(NO_SCOUTING_REACH);
+            if scouting_reach > NO_SCOUTING_REACH {
                 // **THE SCOUTING TOE.** The Scout row's kit decides what a posted vantage can make
-                // out — `labor_config`'s `vantage_range` with wayfinding gear, the item's own
-                // unequipped tier without it. How far the vantages are *posted* is untouched: that
-                // is three `labor_config` dials, and a kit reaching into one of them would be a
-                // fourth authority over the same line.
+                // out - `labor_config`'s `vantage_range` with wayfinding gear, the item's own
+                // unequipped tier without it. How far out the vantages are posted follows from that
+                // sight and the reach the staffing achieved ([`scout_vantage_posting_distance`]).
                 let scout_kit = allocation
                     .map(|alloc| alloc.kit_on(&LaborTarget::Scout, &equipment_cfg))
                     .unwrap_or_else(|| equipment_cfg.no_kit());
@@ -457,6 +459,11 @@ pub fn calculate_visibility(
                         .max(0.0)
                         .round() as u32
                 });
+                let vantage_distance = scout_vantage_posting_distance(
+                    local_range_tiles,
+                    scouting_reach,
+                    vantage_range,
+                );
                 for vantage in scout_vantage_tiles(
                     current_pos,
                     vantage_distance,
@@ -835,6 +842,43 @@ fn scout_vantage_tiles(
         }
     }
     vantages
+}
+
+/// No scouting reach: the staffing placed no scout, or the band asked for none.
+pub const NO_SCOUTING_REACH: u32 = 0;
+
+/// The nearest a vantage is posted: one tile out from camp (a vantage on the camp itself sees
+/// nothing the band's own sight does not).
+const NEAREST_VANTAGE_TILES: u32 = 1;
+
+/// **HOW FAR OUT FROM CAMP A SCOUT VANTAGE IS POSTED** (#875): `local_range + scouting_reach -
+/// sight`, so a vantage that sees `sight` tiles reaches exactly `local_range + scouting_reach` from
+/// camp, floored at one tile. `0` with no reach (no vantages at all). The sight sweep asks it.
+pub fn scout_vantage_posting_distance(
+    local_range_tiles: u32,
+    scouting_reach: u32,
+    vantage_sight: u32,
+) -> u32 {
+    if scouting_reach == NO_SCOUTING_REACH {
+        return 0;
+    }
+    watched_radius(local_range_tiles, scouting_reach)
+        .saturating_sub(vantage_sight)
+        .max(NEAREST_VANTAGE_TILES)
+}
+
+/// No watched ground: the band has no scouts reaching past its local range.
+pub const NO_WATCHED_RADIUS: u32 = 0;
+
+/// **HOW FAR FROM CAMP A BAND WATCHES** (#875): `local_range + scouting_reach` hex steps, and only
+/// while scouts reach past the local range (the plain local range watches nothing).
+/// [`NO_WATCHED_RADIUS`] without scouts. The one home of "watched radius": the vantages are posted
+/// to see exactly this far, and wild predators keep off it (`fauna::advance_herds`).
+pub fn watched_radius(local_range_tiles: u32, scouting_reach: u32) -> u32 {
+    if scouting_reach == NO_SCOUTING_REACH {
+        return NO_WATCHED_RADIUS;
+    }
+    local_range_tiles.saturating_add(scouting_reach)
 }
 
 /// Build a grid of terrain tags from tile entities.
@@ -1328,8 +1372,7 @@ mod tests {
         use std::sync::Arc;
 
         use crate::components::{
-            LaborAllocation, LaborTarget, LocalStore, MoraleCause, MoraleContributions,
-            PopulationCohort,
+            LaborAllocation, LocalStore, MoraleCause, MoraleContributions, PopulationCohort,
         };
         use crate::labor_config::LaborConfigHandle;
         use crate::scalar::{scalar_from_f32, scalar_zero};
@@ -1346,8 +1389,9 @@ mod tests {
         // band's own center LOS can't see it. A scout vantage posted past the ridge can.
         const TARGET: UVec2 = UVec2::new(15, 10);
 
-        // Returns the target tile's visibility state for a band staffing `scouts` workers.
-        fn probe_state(scouts: u32) -> VisibilityState {
+        // Returns the target tile's visibility state for a band whose scouts reach `reach` tiles
+        // past its local range.
+        fn probe_state(reach: u32) -> VisibilityState {
             let mut world = World::new();
 
             // Flat elevation (so only the terrain-tag ridge blocks) but LINE OF SIGHT ON, so
@@ -1357,6 +1401,9 @@ mod tests {
             vis.line_of_sight.enabled = true;
             world.insert_resource(VisibilityConfigHandle::new(Arc::new(vis)));
             world.insert_resource(LaborConfigHandle::default());
+            world.insert_resource(
+                crate::supply_network_config::SupplyNetworkConfigHandle::default(),
+            );
             world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
 
             let mut sim = SimulationConfig::builtin();
@@ -1387,8 +1434,13 @@ mod tests {
             });
 
             let mut allocation = LaborAllocation::default();
-            if scouts > 0 {
-                allocation.set_assignment(LaborTarget::Scout, scouts, scouts, None);
+            if reach > 0 {
+                allocation.set_scouting_range(reach, None);
+                allocation.apply_scouting(crate::staffing::ScoutCrew {
+                    kitted: 0,
+                    bare: reach,
+                    reach,
+                });
             }
 
             world.spawn((
@@ -1397,7 +1449,7 @@ mod tests {
                     current_tile: tile,
                     size: 0,
                     children: scalar_zero(),
-                    working: scalar_from_f32(scouts.max(1) as f32),
+                    working: scalar_from_f32(reach.max(1) as f32),
                     elders: scalar_zero(),
                     stores: LocalStore::new(),
                     morale: scalar_zero(),
@@ -1428,6 +1480,7 @@ mod tests {
                     ),
                     belief_anchor: None,
                     last_belief_relay_hops: 0,
+                    predators_kept_off: 0,
                 },
                 StartingUnit::new("BandScout".to_string(), vec![]),
                 allocation,
@@ -1445,9 +1498,32 @@ mod tests {
         // 0 scouts: the ridge blocks the band's center LOS, so the target stays Unexplored —
         // extra *radius* alone could never see past it.
         assert_eq!(probe_state(0), VisibilityState::Unexplored);
-        // 4 scouts: vantage_distance caps at 6, so the east vantage steps past the ridge and
-        // reveals the target as Active — scouts seeing *around* the obstacle.
+        // A reach of 4 posts the vantage 3 + 4 - 2 = 5 tiles out, past the ridge, and reveals the
+        // target as Active — scouts seeing *around* the obstacle.
         assert_eq!(probe_state(4), VisibilityState::Active);
+    }
+
+    /// **The farthest tile seen is `reach_tiles + scouting_reach` from camp**: a vantage posted at
+    /// the returned distance and seeing `sight` tiles reaches exactly that far, one tile is the
+    /// nearest it is ever posted, and no reach posts nothing.
+    #[test]
+    fn the_vantage_edge_is_the_local_range_plus_the_scouting_reach() {
+        const LOCAL: u32 = 3;
+        const SIGHT: u32 = 2;
+        for reach in 1..=9 {
+            let distance = scout_vantage_posting_distance(LOCAL, reach, SIGHT);
+            assert_eq!(distance + SIGHT, LOCAL + reach, "reach {reach}");
+        }
+        assert_eq!(
+            scout_vantage_posting_distance(LOCAL, 0, SIGHT),
+            0,
+            "no reach, no vantages"
+        );
+        assert_eq!(
+            scout_vantage_posting_distance(0, 1, SIGHT),
+            1,
+            "a vantage is never posted on the camp itself"
+        );
     }
 
     /// Runs `calculate_visibility` for a single BandCrafter band (base_range 2, no scouts) at
@@ -1479,6 +1555,7 @@ mod tests {
         vis.line_of_sight.enabled = true;
         world.insert_resource(VisibilityConfigHandle::new(Arc::new(vis)));
         world.insert_resource(LaborConfigHandle::default());
+        world.insert_resource(crate::supply_network_config::SupplyNetworkConfigHandle::default());
         world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
 
         let mut sim = SimulationConfig::builtin();
@@ -1539,6 +1616,7 @@ mod tests {
                 ),
                 belief_anchor: None,
                 last_belief_relay_hops: 0,
+                predators_kept_off: 0,
             },
             // BandCrafter: base_range 2, so the band center can't reveal the far worked tiles.
             StartingUnit::new("BandCrafter".to_string(), vec![]),
@@ -2230,6 +2308,7 @@ mod hex_sight_range_tests {
             ),
             belief_anchor: None,
             last_belief_relay_hops: 0,
+            predators_kept_off: 0,
         }
     }
 
@@ -2247,6 +2326,7 @@ mod hex_sight_range_tests {
             VisibilityConfig::default(),
         )));
         world.insert_resource(LaborConfigHandle::default());
+        world.insert_resource(crate::supply_network_config::SupplyNetworkConfigHandle::default());
         world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
 
         let mut sim = SimulationConfig::builtin();

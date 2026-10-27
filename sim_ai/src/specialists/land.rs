@@ -2,7 +2,7 @@
 //! `LandShort` when a band's ground cannot feed it and nothing better is in view.
 //!
 //! - *blind* — fewer than `land.known_tiles_floor` known tiles within `land.horizon_tiles` of a
-//!   band posts `land.scout_workers` scouts (`assign_labor … scout <n>`). **The `scout <x> <y>`
+//!   band asks to see `land.scout_range` tiles past its local range (`assign_labor … scout <tiles>`). **The `scout <x> <y>`
 //!   verb is retired server-side** (`command.retired=ignored`, `core_sim/src/bin/server.rs`);
 //!   scouting is the standing scout role, which posts vantage points around the band.
 //! - *better ground* — **positions by the cluster, not the patch** (§4): a standing tile is
@@ -35,8 +35,13 @@ use crate::orchestrator::{Alarm, AlarmKind, Plan, Stance};
 use crate::profile::LandFloors;
 use crate::view::{band_tile, SeatMemory, SeatView};
 
-/// The standing scout role (`assign_labor <faction> <band> scout <workers>`).
+/// The standing scout role (`assign_labor <faction> <band> scout <tiles>`: a range past the local range).
 pub const ROLE_SCOUT: &str = "scout";
+/// No scouting range: no scout row.
+const NO_SCOUTING_RANGE: u32 = 0;
+/// The least a kitted scout adds to the range, in tiles - the divisor floor when the roster does
+/// not publish the kit's tier.
+const MIN_TILES_PER_SCOUT: u32 = 1;
 pub const INTENT_SCOUT: &str = "scout";
 pub const INTENT_MOVE: &str = "move";
 pub const INTENT_SPLIT: &str = "split";
@@ -135,12 +140,30 @@ impl Land {
             })
     }
 
-    fn scouts_posted(band: &PopulationCohortState) -> u32 {
+    /// The scouting range the band already asks for, in tiles past its local range.
+    fn scouting_range_posted(band: &PopulationCohortState) -> u32 {
         band.labor_assignments
             .iter()
             .filter(|row| row.kind == ROLE_SCOUT)
-            .map(|row| row.workers)
-            .sum()
+            .map(|row| row.scouting_range)
+            .max()
+            .unwrap_or(NO_SCOUTING_RANGE)
+    }
+
+    /// **How many scout kits the range needs**: one per scout, and a kitted scout adds the
+    /// wayfinding kit's published vantage tier (`KitOptionState::scout_vantage_range`) to the
+    /// range. A roster that does not list the kit (or lists it at under a tile) counts one tile a
+    /// scout, so the demand never divides by nothing.
+    fn kits_for_range(view: &SeatView, range: u32) -> u32 {
+        let tier = view
+            .snapshot
+            .kits
+            .iter()
+            .find(|kit| kit.id == SCOUT_KIT_ID)
+            .map_or(MIN_TILES_PER_SCOUT, |kit| {
+                (kit.scout_vantage_range.round() as u32).max(MIN_TILES_PER_SCOUT)
+            });
+        range.div_ceil(tier)
     }
 
     /// The known tiles within the horizon of `band`, and *blind*'s floor.
@@ -179,7 +202,7 @@ impl Land {
             requester: SPECIALIST_LAND,
             band: band.band_id,
             resource: Resource::Kit(SCOUT_KIT_ID.to_owned()),
-            amount: self.floors.scout_workers,
+            amount: Self::kits_for_range(view, self.floors.scout_range),
             by_tick: view.tick(),
             priority: DEMAND_PRIORITY_SCOUT,
         }]
@@ -193,14 +216,14 @@ impl Land {
         band: &PopulationCohortState,
     ) -> Option<Proposal> {
         let (known, floor) = self.known_and_floor(view, memory, band);
-        if known >= floor || Self::scouts_posted(band) >= self.floors.scout_workers {
+        if known >= floor || Self::scouting_range_posted(band) >= self.floors.scout_range {
             return None;
         }
         let commands = vec![CommandPayload::AssignLabor {
             faction_id: self.faction,
             band_id: Some(band.band_id),
             role: ROLE_SCOUT.to_owned(),
-            workers: self.floors.scout_workers,
+            workers: self.floors.scout_range,
             target_x: None,
             target_y: None,
             fauna_id: None,
@@ -212,7 +235,7 @@ impl Land {
             move_with_herd: false,
         }];
         Some(Proposal {
-            cost: Cost::claimed(self.floors.scout_workers, band.band_id, &commands),
+            cost: Cost::claimed(self.floors.scout_range, band.band_id, &commands),
             commands,
             intent: intent_key(SPECIALIST_LAND, INTENT_SCOUT, band.band_id),
             score: (floor - known) as f32 / floor as f32 * self.weight,
@@ -561,7 +584,7 @@ mod tests {
             "full shortfall × land_claim"
         );
         assert!(
-            matches!(&proposal.commands[0], CommandPayload::AssignLabor { role, workers: 1, .. } if role == ROLE_SCOUT)
+            matches!(&proposal.commands[0], CommandPayload::AssignLabor { role, workers: 2, .. } if role == ROLE_SCOUT)
         );
         // The whole raster is discovered: a radius-3 disk of 37 tiles is well past the floor of 12.
         memory.observe(&view, FACTION);
@@ -574,6 +597,9 @@ mod tests {
             .is_none());
     }
 
+    /// The wayfinding kit's published vantage tier in the fixture roster.
+    const PUBLISHED_SCOUT_TIER: f32 = 2.0;
+
     /// A blind band with its window open asks the board for a scout kit per scout *blind*
     /// posts; a seeing band, or a closed window, asks for nothing.
     #[test]
@@ -584,11 +610,20 @@ mod tests {
             carry_capacity: crate::specialists::food::tests::FIXTURE_BAND_CARRY,
             ..Default::default()
         });
+        // The roster publishes the wayfinding kit at its equipped 2-tile vantage tier.
+        view.snapshot.kits.push(sim_runtime::KitOptionState {
+            id: SCOUT_KIT_ID.to_owned(),
+            scout_vantage_range: PUBLISHED_SCOUT_TIER,
+            ..Default::default()
+        });
         let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         let demands = land("forager").outfit_demands(&view, &memory, own_band(&view));
         assert_eq!(demands.len(), 1);
         assert_eq!(demands[0].resource, Resource::Kit("wayfinding".to_owned()));
-        assert_eq!(demands[0].amount, 1, "the forager posts one scout");
+        assert_eq!(
+            demands[0].amount, 1,
+            "a forager range of 2 at the published 2-tile kit tier needs one kit"
+        );
         assert_eq!(demands[0].requester, SPECIALIST_LAND);
         assert_eq!(demands[0].by_tick, TICK);
         assert_eq!(demands[0].priority, DEMAND_PRIORITY_SCOUT);
@@ -608,6 +643,7 @@ mod tests {
         let mut view = a_view();
         view.snapshot.populations[0].labor_assignments = vec![sim_runtime::LaborAssignmentState {
             kind: ROLE_SCOUT.into(),
+            scouting_range: 2,
             workers: 1,
             ..Default::default()
         }];

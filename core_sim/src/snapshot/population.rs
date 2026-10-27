@@ -193,6 +193,8 @@ pub(crate) fn labor_assignment_to_state(
         },
         pack_units: assignment.party.as_ref().map_or(0.0, |p| p.pack_units),
         load_home_in: assignment.party.as_ref().map_or(0, |p| p.load_home_in),
+        scouting_range: assignment.scouting_range,
+        scouting_reach: assignment.scouting_reach,
         ..Default::default()
     };
     match &assignment.target {
@@ -1064,6 +1066,9 @@ pub(crate) struct BandKitLevers<'a> {
     /// `labor_config.scout.vantage_range` — the *equipped* vantage sight range (the wayfinding
     /// gear's). Carried as `f32` because the effects axis is continuous; the reveal path rounds.
     pub(crate) equipped_vantage_range: f32,
+    /// `labor_config.scout.range_past_local_max` - the most a scouting range may name, echoed
+    /// per-cohort for the client's stepper.
+    pub(crate) scouting_range_max: u32,
     /// `expedition_config.observe_sight_range` — the *equipped* observation radius a DETACHED PARTY
     /// maps at, which the same wayfinding gear buys. Its own lever beside the vantage's because the
     /// two observers have different **bare** readings; see
@@ -1308,7 +1313,6 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// Echo of `fauna.predators.raid_radius` — surfaced per-cohort exactly like `work_range` (a global
     /// lever the client needs per-band to check whether a visible aggressive predator is in raid range).
     pub(crate) raid_radius: u32,
-    pub(crate) scout_vantage_distance: u32,
     pub(crate) expedition_levers: &'a ExpeditionLevers<'a>,
     pub(crate) settlement_stage_config: &'a crate::settlement_stage_config::SettlementStageConfig,
     pub(crate) travel_target: Option<UVec2>,
@@ -1703,7 +1707,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         band_names,
         work_range,
         raid_radius,
-        scout_vantage_distance,
         expedition_levers,
         settlement_stage_config,
         travel_target,
@@ -2749,10 +2752,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         idle_workers,
         working_age,
         work_range,
-        // Repurposed: carries the band's effective scout vantage distance (how far the forward-
-        // observer vantage ring is posted, `0` with no scouts), not the retired fog-pulse radius.
-        // See the field doc in `sim_schema`.
-        scout_reveal_radius: scout_vantage_distance,
+        // **The watched ground's edge** - the same function that keeps wild predators out
+        // (`fauna::advance_herds`), so the border the client draws is the edge they stay behind.
+        watched_radius: crate::visibility_systems::watched_radius(
+            expedition_levers.move_ferry_reach_tiles,
+            allocation.map_or(0, LaborAllocation::scouting_reach_tiles),
+        ),
+        scouting_range_max: kit_levers.scouting_range_max,
+        predators_kept_off: cohort.predators_kept_off,
         is_expedition,
         expedition_mission,
         expedition_phase,
@@ -3616,6 +3623,9 @@ mod tests {
             equipped_vantage_range: crate::labor_config::LaborConfig::builtin()
                 .scout
                 .vantage_range as f32,
+            scouting_range_max: crate::labor_config::LaborConfig::builtin()
+                .scout
+                .range_past_local_max,
             equipped_expedition_sight_range: crate::expedition_config::ExpeditionConfig::builtin()
                 .observe_sight_range as f32,
         }
@@ -3685,6 +3695,7 @@ mod tests {
             ),
             belief_anchor: None,
             last_belief_relay_hops: 0,
+            predators_kept_off: 0,
         }
     }
 
@@ -3737,7 +3748,6 @@ mod tests {
             band_names: &BandNameLookup::default(),
             work_range: 0,
             raid_radius: 0,
-            scout_vantage_distance: 0,
             expedition_levers: &levers(),
             settlement_stage_config:
                 &crate::settlement_stage_config::SettlementStageConfig::builtin(),
@@ -3772,6 +3782,8 @@ mod tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                scouting_range: 0,
+                scouting_reach: 0,
                 max_workers: Some(4),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -4096,6 +4108,8 @@ mod tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                scouting_range: 0,
+                scouting_reach: 0,
                 max_workers: Some(4),
                 staffing: Default::default(),
                 target: LaborTarget::Scout,

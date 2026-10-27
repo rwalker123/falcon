@@ -960,8 +960,8 @@ func _ready() -> void:
 	await _save("map_band_yield_farzoom")
 
 	# State B — the same band with scouts staffed: scouting no longer draws a map highlight
-	# (its effect is the extended sight visible in the fog; `scout_reveal_radius` is a
-	# sight-range bonus, not a reveal disc). This state is a regression guard that NO blue
+	# (its effect is the extended sight visible in the fog; `watched_radius` is the
+	# watched-ground edge, not a reveal disc). This state is a regression guard that NO blue
 	# scouted disc appears — only the work-range ring + the single worked forage tile.
 	_display_snapshot(_snapshot_scout())
 	_map.selected_unit_id = BAND_ENTITY
@@ -3991,7 +3991,7 @@ func _marker_band(entity: int, tile: Vector2i) -> Dictionary:
 		"size": 30,
 		"id": "Band %d" % entity,
 		"work_range": 2,
-		"scout_reveal_radius": 0,
+		"watched_radius": 0,
 		"labor_assignments": [],
 	}, STAGE_NOMADIC)
 
@@ -4120,7 +4120,7 @@ const FIXTURE_BAND_NAMES := ["Ashfell", "Thornhollow", "Lowfen", "Deepfen", "Tea
 func _fixture_band_name(entity: int) -> String:
 	return FIXTURE_BAND_NAMES[absi(entity) % FIXTURE_BAND_NAMES.size()]
 
-func _band(assignments: Array, work_range: int, scout_radius: int) -> Dictionary:
+func _band(assignments: Array, work_range: int, watched_radius: int) -> Dictionary:
 	return _with_stage({
 		"entity": BAND_ENTITY,
 		"faction": 0,
@@ -4129,7 +4129,7 @@ func _band(assignments: Array, work_range: int, scout_radius: int) -> Dictionary
 		"size": 30,
 		"id": "Band 1",
 		"work_range": work_range,
-		"scout_reveal_radius": scout_radius,
+		"watched_radius": watched_radius,
 		"labor_assignments": assignments,
 	}, STAGE_NOMADIC)
 
@@ -4167,7 +4167,7 @@ func _snapshot_pens() -> Dictionary:
 		"x": 7, "y": 7, "biomass": 260.0, "huntable": true,
 		"corralled": true, "pen_fed_fraction": 0.3,
 	})
-	return _base_snapshot(_band([], 2, 2), [fed, starving, starving_sprite])
+	return _base_snapshot(_band([], 2, 5), [fed, starving, starving_sprite])
 
 ## Every species in `FoodIcons.HERD_SPECIES`, one herd per ALIAS GROUP, laid out on its own hex so
 ## each `FaunaSprites` marker can be judged at TRUE marker size. This is the roster frame: it is the
@@ -4254,7 +4254,7 @@ func _snapshot_fauna_sprites() -> Dictionary:
 			"label": "%s (%s)" % [entry[1], entry[0]],
 			"x": col, "y": row, "biomass": 400.0, "huntable": true,
 		})
-	return _base_snapshot(_band([], 2, 2), herds)
+	return _base_snapshot(_band([], 2, 5), herds)
 
 func _snapshot_work() -> Dictionary:
 	# Per-source yields annotate the worked tiles/herd on the map. The ⚠ overhunt flag is now the
@@ -4436,7 +4436,7 @@ func _snapshot_scout() -> Dictionary:
 		{"kind": "scout", "workers": 5},
 		{"kind": "forage", "workers": 3, "target_x": 7, "target_y": 6},
 	]
-	return _base_snapshot(_band(assignments, 2, 2), [_deer_herd()])
+	return _base_snapshot(_band(assignments, 2, 5), [_deer_herd()])
 
 func _sites_state() -> Array:
 	return [{
@@ -4450,7 +4450,7 @@ func _sites_state() -> Array:
 	}]
 
 func _snapshot_sites() -> Dictionary:
-	var snap := _base_snapshot(_band([], 2, 2), [_deer_herd()])
+	var snap := _base_snapshot(_band([], 2, 5), [_deer_herd()])
 	snap["discovered_sites"] = _sites_state()
 	return snap
 
@@ -4492,7 +4492,7 @@ func _snapshot_raid_party_quarry() -> Dictionary:
 	return snap
 
 func _snapshot_expeditions() -> Dictionary:
-	var snap := _base_snapshot(_band([], 2, 2), [])
+	var snap := _base_snapshot(_band([], 2, 5), [])
 	# Two expeditions alongside the resident band: one outbound, one awaiting (pulsing ring).
 	snap["populations"].append(_expedition(9101, 11, 3, "outbound"))
 	snap["populations"].append(_expedition(9102, 5, 9, "awaiting"))
@@ -4507,7 +4507,7 @@ func _band_at(entity: int, x: int, y: int, stage: Dictionary = STAGE_NOMADIC, fa
 		"size": 30,
 		"id": "Band %d" % entity,
 		"work_range": 2,
-		"scout_reveal_radius": 0,
+		"watched_radius": 0,
 		"labor_assignments": [],
 	}, stage)
 
@@ -4876,7 +4876,7 @@ func _snapshot_work_on_grid(w: int, h: int) -> Dictionary:
 	]
 	var band := _with_stage({
 		"entity": BAND_ENTITY, "faction": 0, "current_x": cx, "current_y": cy, "size": 30,
-		"id": "Band 1", "work_range": 2, "scout_reveal_radius": 2, "labor_assignments": assignments,
+		"id": "Band 1", "work_range": 2, "watched_radius": 5, "labor_assignments": assignments,
 	}, STAGE_NOMADIC)
 	return {
 		"grid": {"width": w, "height": h, "wrap_horizontal": false},
@@ -4911,7 +4911,7 @@ func _snapshot_far_zoom() -> Dictionary:
 ## Two huntable, visible herds, one near the band and one far: the denial pick admits both, so both
 ## wear the ring.
 func _snapshot_quarry_targeting() -> Dictionary:
-	return _base_snapshot(_band([], 2, 2), [
+	return _base_snapshot(_band([], 2, 5), [
 		{"id": "game_deer_79", "label": "Roe Deer (game_deer_79)",
 			"x": BAND_X + QUARRY_NEAR_OFFSET, "y": BAND_Y, "biomass": 500.0, "huntable": true},
 		{"id": "game_boar_04", "label": "Wild Boar (game_boar_04)",
@@ -4920,7 +4920,7 @@ func _snapshot_quarry_targeting() -> Dictionary:
 
 ## One party per mission for the marker-art frame: scout, deny, trade and station.
 func _snapshot_expedition_art() -> Dictionary:
-	var snap := _base_snapshot(_band([], 2, 2), [_deer_herd()])
+	var snap := _base_snapshot(_band([], 2, 5), [_deer_herd()])
 	snap["populations"].append(_expedition(9211, 11, 3, "outbound"))
 	var deny := _expedition(9212, 5, 9, "outbound")
 	deny["expedition_mission"] = HudExpeditionVocab.EXPEDITION_MISSION_DENY
@@ -5916,7 +5916,7 @@ func _snapshot_workings(w: int, h: int, worked_materials: Array) -> Dictionary:
 		})
 	var band := _with_stage({
 		"entity": BAND_ENTITY, "faction": 0, "current_x": center.x, "current_y": center.y,
-		"size": 30, "id": "Band 1", "work_range": 2, "scout_reveal_radius": 0,
+		"size": 30, "id": "Band 1", "work_range": 2, "watched_radius": 0,
 		"labor_assignments": assignments,
 	}, STAGE_NOMADIC)
 	return {
@@ -6026,7 +6026,7 @@ func _snapshot_workings_overflow() -> Dictionary:
 	var tile := Vector2i(BAND_X, BAND_Y)
 	snap["populations"] = [_with_stage({
 		"entity": BAND_ENTITY, "faction": 0, "current_x": BAND_X, "current_y": BAND_Y,
-		"size": 30, "id": "Band 1", "work_range": 2, "scout_reveal_radius": 0,
+		"size": 30, "id": "Band 1", "work_range": 2, "watched_radius": 0,
 		"labor_assignments": [{
 			"kind": HudConst.LABOR_KIND_EXTRACT,
 			"workers": int(WORKING_CREW[WORKING_MATERIAL_WOOD]),

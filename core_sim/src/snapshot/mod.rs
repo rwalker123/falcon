@@ -1441,6 +1441,7 @@ mod tests {
             ),
             belief_anchor: None,
             last_belief_relay_hops: 0,
+            predators_kept_off: 0,
         };
         (cohort, allocation)
     }
@@ -1470,6 +1471,9 @@ mod tests {
             equipped_vantage_range: crate::labor_config::LaborConfig::builtin()
                 .scout
                 .vantage_range as f32,
+            scouting_range_max: crate::labor_config::LaborConfig::builtin()
+                .scout
+                .range_past_local_max,
             equipped_expedition_sight_range: crate::expedition_config::ExpeditionConfig::builtin()
                 .observe_sight_range as f32,
         };
@@ -1524,7 +1528,6 @@ mod tests {
             band_names: &crate::snapshot::population::BandNameLookup::default(),
             work_range: 0,
             raid_radius: 0,
-            scout_vantage_distance: 0,
             expedition_levers: &levers,
             settlement_stage_config: &stages,
             travel_target: None,
@@ -1550,6 +1553,8 @@ mod tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    scouting_range: 0,
+                    scouting_reach: 0,
                     max_workers: Some(10),
                     staffing: Default::default(),
                     target: LaborTarget::Forage {
@@ -1566,6 +1571,8 @@ mod tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    scouting_range: 0,
+                    scouting_reach: 0,
                     max_workers: Some(5),
                     staffing: Default::default(),
                     target: LaborTarget::Hunt {
@@ -1717,6 +1724,8 @@ mod tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    scouting_range: 0,
+                    scouting_reach: 0,
                     max_workers: Some(10),
                     staffing: Default::default(),
                     target: LaborTarget::Forage {
@@ -1733,6 +1742,8 @@ mod tests {
                     party: None,
                     muster_crew: 0,
                     planned_crew: 0,
+                    scouting_range: 0,
+                    scouting_reach: 0,
                     max_workers: Some(5),
                     staffing: Default::default(),
                     target: LaborTarget::Hunt {
@@ -1816,6 +1827,8 @@ mod tests {
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                scouting_range: 0,
+                scouting_reach: 0,
                 max_workers: Some(10),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -1886,6 +1899,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(6),
             staffing: Default::default(),
             target,
@@ -1927,6 +1942,8 @@ mod tests {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(6),
             staffing: Default::default(),
             target: LaborTarget::Forage {

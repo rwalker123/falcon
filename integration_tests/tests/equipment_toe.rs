@@ -149,6 +149,8 @@ fn hunting_world_at(
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                scouting_range: 0,
+                scouting_reach: 0,
                 max_workers: Some(crew.unwrap_or(workers).max(1)),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -193,6 +195,8 @@ fn gathering_world_of(kit: BandEquipment, crew: Option<u32>) -> (bevy::prelude::
                 party: None,
                 muster_crew: 0,
                 planned_crew: 0,
+                scouting_range: 0,
+                scouting_reach: 0,
                 max_workers: Some(workers.max(1)),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -212,6 +216,10 @@ fn gathering_world_of(kit: BandEquipment, crew: Option<u32>) -> (bevy::prelude::
     (app, band)
 }
 
+/// The scouting range (tiles past the local range) the scouting fixture asks for; the sim staffs the
+/// scouts that reach it.
+const SCOUTING_RANGE: u32 = 6;
+
 /// The same world with the band staffing **Scout** — it works every turn and marches, and neither
 /// kills nor gathers. The control for "wear is charged for use, not for turns elapsed".
 fn scouting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
@@ -222,7 +230,9 @@ fn scouting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
-            max_workers: Some(workers.max(1)),
+            scouting_range: SCOUTING_RANGE,
+            scouting_reach: 0,
+            max_workers: None,
             staffing: Default::default(),
             target: LaborTarget::Scout,
             workers: workers.max(1),
@@ -2149,6 +2159,8 @@ fn report_the_strike_wear_the_shipped_opening_pays() {
             party: None,
             muster_crew: 0,
             planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
             max_workers: Some(workers.max(1)),
             staffing: Default::default(),
             target: LaborTarget::Hunt {
