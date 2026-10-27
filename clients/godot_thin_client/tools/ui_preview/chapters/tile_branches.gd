@@ -639,8 +639,24 @@ func _tile_row_art_claims() -> void:
 		chip_label != null and chip_label.text == "25%" and _chip_texture(chip) == pit_art)
 	h._assert_hud("…and the chip's model carries the mark id",
 		String(ForageFx.strip_model(building_row).get(WorkStrip.M_LADDER_MARK, "")) == "storage_pit")
+	h._assert_hud("…and the Work tab row's chip carries NO rung name (the name is the crew sheet's alone)",
+		String(ForageFx.strip_model(building_row).get(WorkStrip.M_LADDER_NAME, "x")) == ""
+			and chip_label != null and not chip_label.text.contains("Storage pit"))
+	# The crew sheet's strip row: the same chip, named. Built through the sheet's own producer + WorkStrip.
+	var sheet_strip := WorkStrip.build(WorkStrip.model_from_row(
+		bp.tile_strip_row(band, TILE_X, TILE_Y, STORES_BRANCH)), {}, true)
+	column.add_child(sheet_strip)
+	var sheet_chip := Q.find_meta_node(sheet_strip, HudWorkVocab.WORK_STRIP_LADDER_META)
+	var sheet_label := _chip_label(sheet_chip) if sheet_chip != null else null
+	h._assert_hud("crew sheet chip, queued: reads `Storage pit 25%%` beside the art, label clipped with an ellipsis (%s)"
+			% [sheet_label.text if sheet_label != null else "no label"],
+		sheet_label != null and sheet_label.text == "Storage pit 25%"
+			and sheet_label.text_overrun_behavior == TextServer.OVERRUN_TRIM_ELLIPSIS
+			and _chip_texture(sheet_chip) == pit_art
+			and (sheet_chip as Control).tooltip_text.begins_with("Storage pit"))
 	await h._settle()
 	await h._save("tile_branches_row_art")
+	sheet_strip.queue_free()
 
 	# A held row with nothing queued: the rung is OFFERED, wearing the same art; the belief branch's is the dolmen.
 	_stage(band, [], 1.0, 1.0)
@@ -654,6 +670,20 @@ func _tile_row_art_claims() -> void:
 		h._assert_hud("tile row (%s), offered: icon slot is %s art and the chip wears it" % [branch, mark],
 			slot is TextureRect and (slot as TextureRect).texture == HudSprites.for_mark(mark)
 				and offer_chip != null and _chip_texture(offer_chip) == HudSprites.for_mark(mark))
+		var offer_name := "Storage pit" if branch == STORES_BRANCH else "Monument"
+		var offer_strip := WorkStrip.build(WorkStrip.model_from_row(
+			bp.tile_strip_row(band, TILE_X, TILE_Y, branch)), {}, true)
+		column.add_child(offer_strip)
+		var named_chip := Q.find_meta_node(offer_strip, HudWorkVocab.WORK_STRIP_LADDER_META)
+		var named_label := _chip_label(named_chip) if named_chip != null else null
+		h._assert_hud("crew sheet chip (%s), offered: reads `%s ⌃` with the art (%s)" % [branch, offer_name,
+				named_label.text if named_label != null else "no label"],
+			named_label != null and named_label.text == offer_name + " ⌃"
+				and _chip_texture(named_chip) == HudSprites.for_mark(mark))
+		var plain_label := _chip_label(offer_chip) if offer_chip != null else null
+		h._assert_hud("crew sheet chip (%s): the Work tab row's chip beside it has no name (%s)" % [branch,
+				plain_label.text if plain_label != null else "no label"],
+			plain_label != null and not plain_label.text.contains(offer_name))
 	await h._settle()
 	await h._save("tile_branches_row_art_offered")
 

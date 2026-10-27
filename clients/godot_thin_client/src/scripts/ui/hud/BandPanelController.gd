@@ -2758,7 +2758,10 @@ func tile_strip_row(band: Dictionary, x: int, y: int, branch: String) -> Diction
             model = candidate
     if model.is_empty():
         model = _tile_model(band, x, y, branch, {})
-    return _tile_strip_row(model, model["tile_row"], Vector2i(x, y), branch)
+    var sheet_row := _tile_strip_row(model, model["tile_row"], Vector2i(x, y), branch)
+    # Only the crew sheet's strip names its chip's rung (the sheet has the width); the Work tab row does not.
+    sheet_row["chip_named"] = true
+    return sheet_row
 
 ## **THE BAND IMPROVEMENT CREW ROWS THIS BAND HOLDS** (a drying rack): one model per `band` labor row.
 ## Staffed like a tile row (the sim strikes the crew; the Max lives on a sheet), but the improvement is
@@ -2912,6 +2915,7 @@ func _put_tile_ladder_chip(strip_row: Dictionary, improvement: Dictionary, tile:
         var verb := HudDepositVocab.catalog_verb(next_entry)
         strip_row["building_glyph"] = FoodIcons.for_policy(verb)
         strip_row["building_sprite"] = HudTileVocab.rung_mark(next_entry)
+        strip_row["building_name"] = HudDepositVocab.catalog_display_name(next_entry)
         strip_row["building_policy"] = verb
         strip_row["building_progress"] = HudDepositVocab.build_fraction_of(site)
         strip_row[WorkStrip.ROW_BUILDERS_KEY] = SourceForecast.build_crew_staffed(improvement,
@@ -2925,6 +2929,7 @@ func _put_tile_ladder_chip(strip_row: Dictionary, improvement: Dictionary, tile:
     if not ready.is_empty():
         strip_row["ready_glyph"] = FoodIcons.for_policy(HudDepositVocab.catalog_verb(ready))
         strip_row["ready_sprite"] = HudTileVocab.rung_mark(ready)
+        strip_row["ready_name"] = HudDepositVocab.catalog_display_name(ready)
 
 ## **ONE WORKING'S ROW — a harvest or hunt row's shape** (the site rows' shell, `_site_row_shell`).
 ## Line one is the icon (the MATERIAL's mark), the name (`Wood · 2 tiles SE`, one ink — it names the

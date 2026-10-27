@@ -1740,6 +1740,11 @@ const WORK_ROW_BUILDING_FORMAT := "%s%d%%"
 ## the offer chevron alone (ready).
 const WORK_ROW_BUILDING_SPRITE_FORMAT := "%d%%"
 const WORK_ROW_READY_SPRITE_TEXT := "⌃"
+## The tile crew sheet's NAMED chip text: the rung's catalog name, then the percent (building) or the chevron.
+const WORK_ROW_NAMED_BUILDING_FORMAT := "%s %d%%"
+const WORK_ROW_NAMED_READY_FORMAT := "%s ⌃"
+## Its hover: the full name (the text clips with an ellipsis) over the chip's own hover.
+const WORK_ROW_NAMED_TIP_FORMAT := "%s\n%s"
 ## Gap between a ladder chip's art and its text.
 const WORK_STRIP_CHIP_ART_SEPARATION := 2
 ## Stamped on a tile row's icon slot: the `HudSprites` mark id it was drawn with ('' = empty slot).

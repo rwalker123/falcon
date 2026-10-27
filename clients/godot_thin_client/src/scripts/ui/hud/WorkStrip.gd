@@ -33,6 +33,9 @@ const M_LADDER_KIND := "ladder_kind"
 const M_LADDER_GLYPH := "ladder_glyph"
 ## The ladder chip's `HudSprites` mark id ('' = the text glyph is the face), set by a row whose rung has art.
 const M_LADDER_MARK := "ladder_mark"
+## The rung NAME the chip carries beside its art ('' = none). Opt-in: a row sets `chip_named` (the tile crew sheet's
+## strip row does; the Work tab rows do not) and the producer's `building_name` / `ready_name` rides through.
+const M_LADDER_NAME := "ladder_name"
 const M_LADDER_PROGRESS := "ladder_progress"
 const M_LADDER_TIP := "ladder_tip"
 const M_FLOOR_GLYPH := "floor_glyph"
@@ -89,16 +92,19 @@ static func model_from_row(row: Dictionary) -> Dictionary:
     var kind := LADDER_NONE
     var glyph := ""
     var mark := ""
+    var rung_name := ""
     var tip := ""
     if building_glyph != "":
         glyph = building_glyph
         mark = String(row.get("building_sprite", ""))
+        rung_name = String(row.get("building_name", ""))
         kind = LADDER_STALLED if build_phase(row) == PHASE_STALLED else LADDER_BUILDING
         tip = String(row.get(ROW_BUILD_TIP_KEY, ""))
     elif ready_glyph != "":
         kind = LADDER_OFFER
         glyph = ready_glyph
         mark = String(row.get("ready_sprite", ""))
+        rung_name = String(row.get("ready_name", ""))
         tip = HudWorkVocab.WORK_STRIP_OFFER_TIP
     var rung_tip := String(row.get("rung_tooltip", ""))
     if bool(row.get("ring_in_flight", false)):
@@ -133,7 +139,8 @@ static func model_from_row(row: Dictionary) -> Dictionary:
         M_RUNG_ART: String(row.get("rung_sprite", "")),
         M_RUNG_TIP: rung_tip,
         M_RING_OFFERED: bool(row.get("ring_offered", false)),
-        M_LADDER_KIND: kind, M_LADDER_GLYPH: glyph, M_LADDER_MARK: mark, M_LADDER_PROGRESS: progress, M_LADDER_TIP: tip,
+        M_LADDER_KIND: kind, M_LADDER_GLYPH: glyph, M_LADDER_MARK: mark, M_LADDER_NAME: rung_name if bool(row.get("chip_named", false)) else "",
+        M_LADDER_PROGRESS: progress, M_LADDER_TIP: tip,
         M_FLOOR_GLYPH: floor_glyph, M_FLOOR_TIP: floor_tip,
         M_WARN_LINES: lines, M_INFO_TIP: info_tip,
         M_KEEPERS: keepers, M_BUILDERS: builders, M_KITTED: kitted, M_BARE: bare,
@@ -253,11 +260,19 @@ static func _add_ladder(marks: HBoxContainer, model: Dictionary, handlers: Dicti
     if art != null:
         face_text = HudWorkVocab.WORK_ROW_BUILDING_SPRITE_FORMAT % progress_pct if building \
             else HudWorkVocab.WORK_ROW_READY_SPRITE_TEXT
+    var chip_tip := String(model.get(M_LADDER_TIP, ""))
+    var rung_name := String(model.get(M_LADDER_NAME, ""))
+    if rung_name != "":
+        # NAMED CHIP (the tile crew sheet): the name leads the text; it clips with an ellipsis, so the full
+        # name rides the hover.
+        face_text = (HudWorkVocab.WORK_ROW_NAMED_BUILDING_FORMAT % [rung_name, progress_pct]) if building \
+            else HudWorkVocab.WORK_ROW_NAMED_READY_FORMAT % rung_name
+        chip_tip = rung_name if chip_tip == "" else HudWorkVocab.WORK_ROW_NAMED_TIP_FORMAT % [rung_name, chip_tip]
     var chip := build_chip(face_text, float(model.get(M_LADDER_PROGRESS, 0.0)) if building else 0.0,
-        String(model.get(M_LADDER_TIP, "")), building, kind == LADDER_STALLED,
+        chip_tip, building, kind == LADDER_STALLED,
         func(anchor: Control) -> void:
             if on_ladder.is_valid():
-                on_ladder.call(anchor), art)
+                on_ladder.call(anchor), art, rung_name != "")
     chip.set_meta(HudWorkVocab.WORK_STRIP_LADDER_META, kind)
     chip.set_meta(HudWorkVocab.WORK_ROW_BUILD_KIND_META, kind)
     chip.set_meta(HudWorkVocab.WORK_ROW_BUILD_STATE_META, face)
@@ -268,7 +283,7 @@ static func _add_ladder(marks: HBoxContainer, model: Dictionary, handlers: Dicti
 ## FIRST so it draws beneath), the progress fill, then the face, transparent to the pointer so every
 ## click lands on the button. `on_press` receives the container as the anchor for the rung card.
 static func build_chip(face: String, progress: float, tip: String, filled: bool, warn: bool,
-        on_press: Callable, sprite: Texture2D = null) -> PanelContainer:
+        on_press: Callable, sprite: Texture2D = null, named: bool = false) -> PanelContainer:
     var chip := PanelContainer.new()
     chip.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
     chip.custom_minimum_size = Vector2(HudWorkVocab.WORK_STRIP_LADDER_MIN_WIDTH, 0.0)
@@ -288,10 +303,13 @@ static func build_chip(face: String, progress: float, tip: String, filled: bool,
     chip.add_child(button)
     if filled:
         chip.add_child(fill_layer(progress))
-    chip.add_child(_chip_face(face, warn, sprite))
+    chip.add_child(_chip_face(face, warn, sprite, named))
+    if named:
+        chip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     return chip
 
-static func _chip_face(face: String, warn: bool, sprite: Texture2D = null) -> MarginContainer:
+static func _chip_face(face: String, warn: bool, sprite: Texture2D = null,
+        named: bool = false) -> MarginContainer:
     var inner := MarginContainer.new()
     inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
     for side in ["margin_left", "margin_right"]:
@@ -303,6 +321,11 @@ static func _chip_face(face: String, warn: bool, sprite: Texture2D = null) -> Ma
     label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     label.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     label.add_theme_color_override("font_color", HudStyle.WARN if warn else HudStyle.INK)
+    if named:
+        label.clip_text = true
+        label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+        label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
     if sprite == null:
         inner.add_child(label)
         return inner
