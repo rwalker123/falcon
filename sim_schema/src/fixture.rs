@@ -693,7 +693,11 @@ fn seed_snapshot() -> WorldSnapshot {
             build_toe: build_toe_rows(),
             ..Default::default()
         });
-        cohort.tribe_pairs = rows();
+        // A bool defaults to false, which a dropped key also reads as, so seed `partner_has_leader` true.
+        cohort.tribe_pairs = rows_of(TribePairState {
+            partner_has_leader: true,
+            ..Default::default()
+        });
         cohort.tribe_member_names = vec![String::new(); ROWS];
         cohort.pending_reveal_x = vec![0u32; ROWS];
         cohort.pending_reveal_y = vec![0u32; ROWS];

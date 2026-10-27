@@ -3325,6 +3325,14 @@ pub fn capture_snapshot(
             .iter()
             .filter_map(|(_, cohort, _, _, _, band_id, ..)| Some((*band_id?, cohort.size)))
             .collect();
+        // **Every live band with a leader of its own**, for a tribe pair row's `partnerHasLeader`.
+        let band_leaders: crate::snapshot::population::BandLeaderLookup = populations
+            .iter()
+            .filter_map(|(_, _, _, _, _, band_id, _, _, _, leadership)| {
+                let has_leader = leadership.is_some_and(|l| l.leader.is_some());
+                band_id.copied().filter(|_| has_leader)
+            })
+            .collect();
         // **The ground under a tile**, for an `extract` row's crew curve (`usefulCutters`).
         let ground_of = |pos: UVec2| {
             tile_registry
@@ -3438,8 +3446,38 @@ pub fn capture_snapshot(
                         .and_then(|owner| culture.applied_band_pull(owner))
                         .map(|pull| pull.iter().map(|v| v.to_f32()).collect())
                         .unwrap_or_default();
+                    // The formed tribe is published to every member, chiefless ones included.
+                    let tribe_membership = expedition
+                        .is_none()
+                        .then(|| {
+                            band_id.zip(tribes.as_deref()).and_then(|(band, registry)| {
+                                crate::snapshot::population::tribe_membership(
+                                    registry,
+                                    *band,
+                                    &band_names,
+                                    &band_sizes,
+                                )
+                            })
+                        })
+                        .flatten();
+                    // Reach: only an own band row (a party carries its home band's id and
+                    // leadership, so it is excluded), the defaults otherwise.
+                    let reach = if expedition.is_none() {
+                        crate::snapshot::population::reach_readout(
+                            &leadership_cfg,
+                            leadership.is_some_and(|l| l.leader.is_some()),
+                            cohort.size,
+                            tribe_membership.as_ref().map(|t| t.member_count),
+                        )
+                    } else {
+                        crate::snapshot::population::ReachReadout::default()
+                    };
+                    let belief_anchor_weight = cohort.belief_anchor.map_or(0.0, |anchor| {
+                        wellbeing_config.culture.anchor_weight(belief.get(anchor))
+                    });
                     Some(population_state(PopulationStateInputs {
                         belief_reach,
+                        belief_anchor_weight,
                         belief_relay_region,
                         held_preservation: preservation_scene.held_by(
                             band_id.copied(),
@@ -3461,33 +3499,22 @@ pub fn capture_snapshot(
                         // Own bands with a leader only (a foreign row returned redacted above); a
                         // chiefless band and a party row, which carries its home band's id,
                         // publish the defaults.
-                        tribe: (expedition.is_none()
-                            && leadership.is_some_and(|l| l.leader.is_some()))
-                        .then(|| {
-                            band_id.zip(tribes.as_deref()).and_then(|(band, registry)| {
-                                crate::snapshot::population::tribe_progress(
-                                    registry,
-                                    &leadership_cfg,
-                                    *band,
-                                    &band_names,
-                                )
-                            })
-                        })
-                        .flatten(),
-                        // The formed tribe is published to every member, chiefless ones included.
-                        tribe_membership: expedition
+                        tribe: expedition
                             .is_none()
                             .then(|| {
                                 band_id.zip(tribes.as_deref()).and_then(|(band, registry)| {
-                                    crate::snapshot::population::tribe_membership(
+                                    crate::snapshot::population::tribe_progress(
                                         registry,
+                                        &leadership_cfg,
                                         *band,
                                         &band_names,
-                                        &band_sizes,
+                                        &band_leaders,
                                     )
                                 })
                             })
                             .flatten(),
+                        tribe_membership,
+                        reach,
                         cohort,
                         allocation,
                         expedition,

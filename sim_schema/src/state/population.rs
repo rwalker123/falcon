@@ -1886,10 +1886,6 @@ pub struct PopulationCohortState {
     /// branch order. Own bands only; a foreign row defaults to empty. Appended last.
     #[serde(default)]
     pub band_improvements: Vec<BandImprovementState>,
-    /// Why the band is or is not in reach of a tribe (`TRIBE_STANDING_*`). Own bands only.
-    /// Appended last.
-    #[serde(default)]
-    pub tribe_standing: u8,
     /// The closeness score at which a pair is close (`tribe_score_threshold`). Appended last.
     #[serde(default)]
     pub tribe_threshold: f32,
@@ -1923,6 +1919,31 @@ pub struct PopulationCohortState {
     /// The wild predator packs this band's watched ring kept off this turn. Appended last.
     #[serde(default)]
     pub predators_kept_off: u32,
+    /// People the band's own leader runs well (0 when it has no leader). Appended last.
+    #[serde(default)]
+    pub leader_reach: f32,
+    /// People the band's own leader actually runs (0 when it has no leader). Appended last.
+    #[serde(default)]
+    pub leader_load: f32,
+    /// Member bands the tribe leader runs well (0 in no tribe). Appended last.
+    #[serde(default)]
+    pub tribe_leader_reach: f32,
+    /// Member bands the tribe leader actually runs (0 in no tribe). Appended last.
+    #[serde(default)]
+    pub tribe_leader_load: f32,
+    /// The share of the band's orders that arrive, `(0, 1]` (0 with no leader and no tribe).
+    /// Appended last.
+    #[serde(default)]
+    pub orders_carried_out: f32,
+    /// The anchor's saturating weight `b / (b + belief_half_saturation)` in `[0, 1)`; 0 with no
+    /// anchor. Derived at capture. Appended last.
+    #[serde(default)]
+    pub belief_anchor_weight: f32,
+    /// The band's own leader's orders-carried-out factor (`LeaderReach::orders_carried_out`), in
+    /// `(0, 1]`; 0 with no leader of its own, whether or not the band is in a tribe. Own bands
+    /// only. Appended last.
+    #[serde(default)]
+    pub leader_orders_carried_out: f32,
     /// The cohesion morale contribution (`snapshot.fbs` → `moraleCohesion`), part of the `morale_*`
     /// breakdown whose signed sum IS `morale_delta`. Fixed-point raw. Derived at capture. Appended
     /// last.
@@ -1947,16 +1968,6 @@ pub const TRIBE_LEADER_PARAMOUNT_CHIEF: u8 = 1;
 /// `PopulationCohortState::tribe_leader_kind`: a member band's elders' council, promoted.
 pub const TRIBE_LEADER_COUNCIL_OF_CHIEFS: u8 = 2;
 
-/// `PopulationCohortState::tribe_standing`: shares an urn and a network with a band of its people.
-pub const TRIBE_STANDING_LOCAL: u8 = 0;
-/// `PopulationCohortState::tribe_standing`: the band has no belief anchor.
-pub const TRIBE_STANDING_NO_URN: u8 = 1;
-/// `PopulationCohortState::tribe_standing`: the band is in no supply network.
-pub const TRIBE_STANDING_NO_NETWORK: u8 = 2;
-/// `PopulationCohortState::tribe_standing`: an urn and a network, but no band of its people shares
-/// both.
-pub const TRIBE_STANDING_ALONE: u8 = 3;
-
 /// **THE SEVEN INPUTS TO A TRIBE CLOSENESS SCORE** — the weights, or one pair's inputs times them.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 pub struct TribeClosenessState {
@@ -1977,6 +1988,9 @@ pub struct TribePairState {
     pub partner_name: String,
     pub history: f32,
     pub contribution: TribeClosenessState,
+    /// Whether the partner has a leader of its own. Appended last.
+    #[serde(default)]
+    pub partner_has_leader: bool,
 }
 
 /// **ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH** — a row of

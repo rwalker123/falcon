@@ -109,7 +109,11 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   freezes once a leader exists). With a leader the text is `Chief Orrin` or
   `Elders' council — Orrin speaks` in primary ink (`HudFormat.band_leader_phrase`) and the portrait is
   filled; a council's portrait also wears a small group badge (a disc with three dots) in its
-  bottom-right corner. With none the portrait is an EMPTY slot (dimmed frame and a faint silhouette) and
+  bottom-right corner. **A leader's reach (#870)** is a second line in the same text label
+  (`HudFormat.band_leader_reach`, from `leader_reach` / `leader_load` / `orders_carried_out`; absent when
+  `leader_reach` is 0): dim `Runs all 32 people well` within reach, amber (`HudStyle.WARN`) `Runs 150 of
+  170 people well` over it, the hover saying what a chief (or `The council`) runs well and, over reach
+  only, `— N% now`. With none the portrait is an EMPTY slot (dimmed frame and a faint silhouette) and
   the text is `Chief` / a compact glyph bar then `7 / 10` (practice floored and capped at the
   threshold, whole numbers): one `▰` per point, in order builds / splits / herd / stages (green / blue /
   amber / cyan, `HudFormat.chief_source_colors`, as `[color]` runs), then `▱` for the remainder

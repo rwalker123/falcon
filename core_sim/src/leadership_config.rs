@@ -54,6 +54,12 @@ pub struct LeadershipConfig {
     pub tribe_history_fade_turns: f64,
     /// The closeness score at which a pair is close.
     pub tribe_score_threshold: f64,
+    /// People a band leader (chief or elders' council) runs well: the cohesion ceiling.
+    pub reach_chief_people: f64,
+    /// Member bands a tribe leader (paramount chief or council of chiefs) runs well.
+    pub reach_paramount_bands: f64,
+    /// The share of an order still carried out for the load past a leader's reach, in `(0, 1]`.
+    pub over_reach_efficiency: f64,
 }
 
 /// The **only** `Default`: it parses the builtin JSON, so `default()` and the shipped tuning are
@@ -104,6 +110,8 @@ impl LeadershipConfig {
             ("tribe_history_build_turns", self.tribe_history_build_turns),
             ("tribe_history_fade_turns", self.tribe_history_fade_turns),
             ("tribe_score_threshold", self.tribe_score_threshold),
+            ("reach_chief_people", self.reach_chief_people),
+            ("reach_paramount_bands", self.reach_paramount_bands),
         ] {
             if !(value.is_finite() && value > 0.0) {
                 return Err(format!("{name} must be finite and > 0, got {value}"));
@@ -122,6 +130,14 @@ impl LeadershipConfig {
             if !(value.is_finite() && value >= 0.0) {
                 return Err(format!("{name} must be finite and >= 0, got {value}"));
             }
+        }
+        // The share of an order carried out past the reach: zero would refuse the order, and more
+        // than one would make over-reaching pay.
+        let efficiency = self.over_reach_efficiency;
+        if !(efficiency.is_finite() && efficiency > 0.0 && efficiency <= 1.0) {
+            return Err(format!(
+                "over_reach_efficiency must be finite and in (0, 1], got {efficiency}"
+            ));
         }
         Ok(())
     }
@@ -229,6 +245,9 @@ mod tests {
             config.tribe_history_build_turns,
             config.tribe_history_fade_turns,
             config.tribe_score_threshold,
+            config.reach_chief_people,
+            config.reach_paramount_bands,
+            config.over_reach_efficiency,
         ] {
             assert!(lever > 0.0);
         }
@@ -253,6 +272,9 @@ mod tests {
             "tribe_history_build_turns",
             "tribe_history_fade_turns",
             "tribe_score_threshold",
+            "reach_chief_people",
+            "reach_paramount_bands",
+            "over_reach_efficiency",
         ] {
             for bad in [0.0, -1.0] {
                 assert!(
@@ -264,6 +286,15 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn an_efficiency_above_one_is_refused_and_one_is_kept() {
+        assert!(matches!(
+            LeadershipConfig::from_json_str(&with("over_reach_efficiency", 1.5)),
+            Err(LeadershipConfigError::Invalid(_))
+        ));
+        assert!(LeadershipConfig::from_json_str(&with("over_reach_efficiency", 1.0)).is_ok());
     }
 
     #[test]

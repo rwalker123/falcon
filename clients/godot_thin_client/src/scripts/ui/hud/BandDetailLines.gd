@@ -159,11 +159,9 @@ const BELIEFS_TERM_SEPARATOR := " · "
 const BELIEFS_ANCESTORS_MARK_FORMAT := " [color=#%s]%s[/color]"
 ## A pull below this magnitude is no pull (float noise on an untied band's zero vector).
 const BELIEFS_PULL_EPSILON := 0.0005
-const BELIEFS_PULL_TOOLTIP_FORMAT := "The ancestors pull this band %s and %s."
-## A pull is stated as a magnitude TOWARD the word its sign names, so it is always `+`.
-const BELIEFS_PULL_TERM_FORMAT := "+%.2f %s"
-const BELIEFS_UNTIED_TOOLTIP_FORMAT := \
-    "Not tied to its dead. Stand within reach of them to be drawn toward %s, %s ways."
+const BELIEFS_PULL_TOOLTIP_FORMAT := "Its sacred ground draws it toward %s, %s ways."
+## A pull is stated as the word its sign names; no figure.
+const BELIEFS_UNTIED_TOOLTIP := "No sacred ground draws it yet."
 
 # ---- THE GROWTH ROW AS A CLAUSE ON THE MORALE LINE, for the `compact` (SHORT band-zone tier) host —
 # the second merge this tier makes, and the same trade for the same reason as the hay clause above:
@@ -279,28 +277,21 @@ const MORALE_CONTRIB_LABEL_SETTLING := "settling"
 const MORALE_CONTRIB_LABEL_CULTURE := "culture"
 ## The band's tile is on or beside fresh water: a purely positive contribution, never a morale cause.
 const MORALE_CONTRIB_LABEL_FRESH_WATER := "fresh water"
-# A positive `morale_culture` (within walking reach of the remembered belief place) reads as "near the
-# ancestors"; a negative one reads `DetailFormat.MORALE_CAUSE_LABEL_CULTURE` ("far from the ancestors").
-const MORALE_CONTRIB_LABEL_ANCESTORS_NEAR := "near the ancestors"
-# The cohesion row names its numbers on the row itself, as the ancestors row names its anchor tile:
+# The cohesion row names its numbers on the row itself:
 # `too many to hold together (182 in the band, holds 150)` -- the band's opening head-count and the
 # ceiling it is held against. Past the ceiling some of them leave for another band.
 const MORALE_CONTRIB_COHESION_FORMAT := "%s (%d in the band, holds %d)"
-# The negative row NAMES THE PLACE — "far from the ancestors (x, y)", the anchor tile in the `Position`
-# row's coordinate form — so the player knows where to walk back to. Only when the band has an anchor.
-const MORALE_CONTRIB_ANCESTORS_FAR_FORMAT := "%s (%d, %d)"
-# THE KIN RELAY (`belief_relay_hops`): a band tied to its belief place through n bands of kin says so
-# on the culture row — `near the ancestors, through kin (1 hop)`, or the far wording with its
-# coordinates and `, through kin`. The far row carries NO hop count: the coordinates already take the
-# popover's second line, and the hop count is what yields before "through kin" does (two-line limit).
-# 0 is direct (and also what a band with no anchor sends), 255 unreached: both keep the plain wording.
+# A positive `morale_culture` (within walking reach of the remembered belief place) reads as "close to
+# its sacred ground"; a negative one reads `DetailFormat.MORALE_CAUSE_LABEL_CULTURE` ("far from its
+# sacred ground"). No coordinates and no hop counts on screen: the Beliefs panel's [show ▸] finds the place.
+const MORALE_CONTRIB_LABEL_ANCESTORS_NEAR := "close to its sacred ground"
+# THE KIN RELAY (`belief_relay_hops`): a band tied to its belief place through kin says so on the
+# culture row -- `close to its sacred ground through kin`, `far from its sacred ground, partly through
+# kin`. 0 is direct (and also what a band with no anchor sends), 255 unreached: both keep the plain wording.
 const BELIEF_RELAY_DIRECT := 0
-const BELIEF_RELAY_LONGEST := 254       # a chain of 254 hops OR LONGER
 const BELIEF_RELAY_UNREACHED := 255     # mirrors `sim_schema::BELIEF_RELAY_UNREACHED`
-const MORALE_CONTRIB_THROUGH_KIN := ", through kin"
-const MORALE_CONTRIB_KIN_HOP_FORMAT := " (%d hop)"
-const MORALE_CONTRIB_KIN_HOPS_FORMAT := " (%d hops)"
-const MORALE_CONTRIB_KIN_HOPS_LONGEST_FORMAT := " (%d+ hops)"
+const MORALE_CONTRIB_NEAR_THROUGH_KIN := " through kin"
+const MORALE_CONTRIB_FAR_THROUGH_KIN := ", partly through kin"
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 # The snapshot herd list, for a raiding party's migrating target.
@@ -512,6 +503,8 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
                 var beliefs_line := _band_beliefs_line(unit_data, context)
                 if beliefs_line != "":
                     lines.append(beliefs_line)
+                    _disclosures.register(HudDisclosureVocab.DETAIL_ROW_BELIEFS,
+                        HudDisclosureVocab.BREAKDOWN_KIND_BELIEFS, unit_data, _beliefs_place_lines(unit_data))
                     lines.append_array(_culture_pressure_lines(unit_data))
             if growth_line != "":
                 lines.append(growth_line)
@@ -948,8 +941,7 @@ func _belief_reading(unit_data: Dictionary) -> Dictionary:
     var sentence := ""
     if pulling:
         sentence = BELIEFS_PULL_TOOLTIP_FORMAT % [
-            BELIEFS_PULL_TERM_FORMAT % [absf(pull_devout), _devout_word(pull_devout)],
-            BELIEFS_PULL_TERM_FORMAT % [absf(pull_traditional), _traditional_word(pull_traditional)]]
+            _devout_word(pull_devout), _traditional_word(pull_traditional)]
     return {"terms": terms, "values": values, "pulling": pulling, "pull_sentence": sentence,
         "at_risk": at_risk, "drift": _drift_reading(unit_data)}
 
@@ -968,7 +960,7 @@ func _beliefs_hover(reading: Dictionary) -> String:
     if bool(reading["pulling"]):
         text += String(reading["pull_sentence"])
     else:
-        text += BELIEFS_UNTIED_TOOLTIP_FORMAT % [BELIEFS_WORD_DEVOUT, BELIEFS_WORD_TRADITIONAL]
+        text += BELIEFS_UNTIED_TOOLTIP
     var drift: Dictionary = reading["drift"]
     if not drift.is_empty():
         text += " " + String(drift["sentence"])
@@ -993,6 +985,138 @@ func _band_beliefs_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> Str
         value += _drift_mark()
     ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_BELIEFS] = _beliefs_hover(reading)
     return HudDisclosureVocab.DETAIL_ROW_BELIEFS + DetailFormat.DETAIL_KV_SEPARATOR + value
+
+## The Beliefs pull-down: the band's SACRED GROUND with its strength bar, one line on how it holds the band,
+## then the stronger places of the player's other bands (who, bar, where, what to do). Facts the sim
+## published only: walking reach is never computed here; the distance and bearing are plain geometry.
+func _beliefs_place_lines(unit_data: Dictionary) -> Array[String]:
+    var lines: Array[String] = []
+    var indent := DetailFormat.MORALE_BREAKDOWN_INDENT
+    var has_place := bool(unit_data.get(HudDisclosureVocab.BELIEFS_PLACE_ANCHOR_KEY, false))
+    var own_dead := 0
+    if has_place:
+        own_dead = _place_dead(unit_data)
+        lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_OWN_FORMAT % [
+            DetailFormat.sacred_ground_bar(float(unit_data.get(HudDisclosureVocab.BELIEFS_PLACE_WEIGHT_KEY, 0.0))),
+            _show_link(_place_tile(unit_data), unit_data)])
+        var hops := int(unit_data.get(HudDisclosureVocab.BELIEFS_PLACE_RELAY_KEY, HudDisclosureVocab.BELIEFS_PLACE_RELAY_DIRECT))
+        if hops >= HudDisclosureVocab.BELIEFS_PLACE_RELAY_UNREACHED:
+            lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_INK_FORMAT % [HudStyle.WARN_HEX,
+                HudDisclosureVocab.BELIEFS_PLACE_UNREACHED_LINE])
+        elif hops == HudDisclosureVocab.BELIEFS_PLACE_RELAY_DIRECT:
+            lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_DIRECT_LINE)
+        else:
+            lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_KIN_LINE)
+    else:
+        lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_NONE)
+    lines.append_array(_stronger_place_lines(unit_data, has_place, own_dead))
+    return lines
+
+## The clickable `[show ▸]`: the meta names the tile and the band whose published reach the map shades.
+static func _show_link(tile: Vector2i, holder: Dictionary) -> String:
+    var sep := HudDisclosureVocab.BELIEFS_SHOW_META_SEPARATOR
+    var meta := HudDisclosureVocab.BELIEFS_SHOW_META_PREFIX + sep.join(
+        [str(tile.x), str(tile.y), str(int(holder.get("entity", -1)))])
+    return "%s%s][color=#%s][u]%s[/u][/color][/url]" % [
+        DetailFormat.DISCLOSURE_URL_OPEN, meta, HudStyle.SIGNAL_HEX, HudDisclosureVocab.BELIEFS_SHOW_LABEL]
+
+static func _place_tile(band: Dictionary) -> Vector2i:
+    return Vector2i(int(band.get(HudDisclosureVocab.BELIEFS_PLACE_X_KEY, 0)),
+        int(band.get(HudDisclosureVocab.BELIEFS_PLACE_Y_KEY, 0)))
+
+## The published belief on a band's sacred ground tile, rounded — only ever COMPARED (which places are
+## stronger than this band's own), never shown.
+func _place_dead(band: Dictionary) -> int:
+    var tile := _place_tile(band)
+    return int(round(_band_labor.tile_belief_at(tile.x, tile.y)))
+
+## `6 hexes NE` from the band's current tile to the place (wrap-aware, the shortest way round),
+## `1 hex E`, or `here` on the band's own tile.
+func _place_direction(band: Dictionary, place: Vector2i) -> String:
+    var here := SourceForecast.band_tile(band)
+    var width := _band_labor.grid_width()
+    var wrap := _band_labor.wrap_horizontal()
+    var distance := SourceForecast.hex_distance_wrapped(here.x, here.y, place.x, place.y, width, wrap)
+    if distance <= 0:
+        return HudDisclosureVocab.BELIEFS_DISTANCE_HERE
+    var bearing := SourceForecast.compass_bearing(here.x, here.y, place.x, place.y, width, wrap)
+    if distance == 1:
+        return HudDisclosureVocab.BELIEFS_DISTANCE_ONE_FORMAT % bearing
+    return HudDisclosureVocab.BELIEFS_DISTANCE_FORMAT % [distance, bearing]
+
+## Places the player's OTHER bands hold that differ from this band's and hold strictly more belief, strongest
+## first: at most `BELIEFS_STRONGER_MAX_LINES` (two lines each), then `+N more places`. A place is named for
+## its formed tribe when every band holding it is in that one tribe, else for its lowest-id holder.
+func _stronger_place_lines(unit_data: Dictionary, has_place: bool, own_dead: int) -> Array[String]:
+    var lines: Array[String] = []
+    var band_id := int(unit_data.get("band_id", HudConst.NO_BAND_ID))
+    var places: Dictionary = {}
+    for other in _band_labor.current_player_bands():
+        if not (other is Dictionary) or int(other.get("band_id", HudConst.NO_BAND_ID)) == band_id \
+                or bool(other.get("is_expedition", false)) \
+                or not bool(other.get(HudDisclosureVocab.BELIEFS_PLACE_ANCHOR_KEY, false)):
+            continue
+        var tile := _place_tile(other)
+        if has_place and tile == _place_tile(unit_data):
+            continue
+        if not places.has(tile):
+            places[tile] = []
+        (places[tile] as Array).append(other)
+    var rows: Array[Dictionary] = []
+    for tile in places:
+        var holders: Array = places[tile]
+        var dead := _place_dead(holders[0])
+        if dead <= own_dead:
+            continue
+        rows.append({"dead": dead, "tile": tile, "holders": holders})
+    rows.sort_custom(func(a, b): return int(a["dead"]) > int(b["dead"]))
+    var indent := DetailFormat.MORALE_BREAKDOWN_INDENT
+    for index in range(mini(rows.size(), HudDisclosureVocab.BELIEFS_STRONGER_MAX_LINES)):
+        var holders: Array = rows[index]["holders"]
+        var tile: Vector2i = rows[index]["tile"]
+        var tribe := _shared_tribe(holders)
+        var weight := 0.0
+        for holder in holders:
+            weight = maxf(weight, float(holder.get(HudDisclosureVocab.BELIEFS_PLACE_WEIGHT_KEY, 0.0)))
+        var who := _place_holder_name(holders)
+        lines.append(indent + HudDisclosureVocab.BELIEFS_STRONGER_FORMAT % [
+            who, DetailFormat.sacred_ground_bar(weight), _place_direction(unit_data, tile),
+            _show_link(tile, _lowest_id_holder(holders))])
+        if tribe != "":
+            lines.append(indent + HudDisclosureVocab.BELIEFS_STRONGER_JOIN_TRIBE_FORMAT % tribe)
+        else:
+            lines.append(indent + HudDisclosureVocab.BELIEFS_STRONGER_JOIN_WITH_FORMAT % who)
+    if rows.size() > HudDisclosureVocab.BELIEFS_STRONGER_MAX_LINES:
+        lines.append(indent + HudDisclosureVocab.BELIEFS_STRONGER_MORE_FORMAT
+            % (rows.size() - HudDisclosureVocab.BELIEFS_STRONGER_MAX_LINES))
+    return lines
+
+## The formed tribe every holder of a place belongs to, or `""` when they are not all in one.
+static func _shared_tribe(holders: Array) -> String:
+    var tribe := String(holders[0].get("tribe_name", ""))
+    for holder in holders:
+        if String(holder.get("tribe_name", "")) != tribe:
+            return ""
+    return tribe
+
+static func _lowest_id_holder(holders: Array) -> Dictionary:
+    var lowest: Dictionary = holders[0]
+    for holder in holders:
+        if int(holder.get("band_id", 0)) < int(lowest.get("band_id", 0)):
+            lowest = holder
+    return lowest
+
+## Who holds a place: the one formed tribe all its holders belong to, else the lowest-id holder plus a count.
+func _place_holder_name(holders: Array) -> String:
+    var tribe := _shared_tribe(holders)
+    if tribe != "":
+        return tribe
+    var holder_name := HudFormat.band_name(_lowest_id_holder(holders))
+    if holders.size() == 2:
+        return HudDisclosureVocab.BELIEFS_STRONGER_OTHERS_ONE_FORMAT % holder_name
+    if holders.size() > 2:
+        return HudDisclosureVocab.BELIEFS_STRONGER_OTHERS_FORMAT % [holder_name, holders.size() - 1]
+    return holder_name
 
 ## The culture-pressure lines under the Beliefs row (#820): one per pulling people with phase >= 1, at
 ## most `CULTURE_PRESSURE_MAX_LINES`, then `+N more`. Text only; the copy lives in the disclosure vocab.
@@ -1207,27 +1331,21 @@ func _fertility_breakdown_lines(unit_data: Dictionary) -> Array[String]:
         lines.append(DetailFormat.fertility_breakdown_row(factor, entry[1]))
     return lines
 
-## The negative culture row's label: `far from the ancestors (x, y)` naming the band's belief anchor,
-## or the bare label when the cohort carries no anchor.
+## The negative culture row's label: `far from its sacred ground`, plus `, partly through kin` when the
+## band is tied in through kin.
 func _ancestors_far_label(unit_data: Dictionary) -> String:
-    if not bool(unit_data.get("has_belief_anchor", false)):
-        return DetailFormat.MORALE_CAUSE_LABEL_CULTURE
-    var label := MORALE_CONTRIB_ANCESTORS_FAR_FORMAT % [DetailFormat.MORALE_CAUSE_LABEL_CULTURE,
-        int(unit_data.get("belief_anchor_x", 0)), int(unit_data.get("belief_anchor_y", 0))]
+    var label := DetailFormat.MORALE_CAUSE_LABEL_CULTURE
     if _belief_relay_hops(unit_data) > BELIEF_RELAY_DIRECT:
-        label += MORALE_CONTRIB_THROUGH_KIN
+        label += MORALE_CONTRIB_FAR_THROUGH_KIN
     return label
 
-## The positive culture row's label: `near the ancestors`, plus `, through kin (n hops)` when the band
-## is tied in through kin.
+## The positive culture row's label: `close to its sacred ground`, plus ` through kin` when the band is
+## tied in through kin.
 func _ancestors_near_label(unit_data: Dictionary) -> String:
-    var hops := _belief_relay_hops(unit_data)
-    if hops == BELIEF_RELAY_DIRECT:
-        return MORALE_CONTRIB_LABEL_ANCESTORS_NEAR
-    var count_format := MORALE_CONTRIB_KIN_HOP_FORMAT if hops == 1 else MORALE_CONTRIB_KIN_HOPS_FORMAT
-    if hops >= BELIEF_RELAY_LONGEST:
-        count_format = MORALE_CONTRIB_KIN_HOPS_LONGEST_FORMAT
-    return MORALE_CONTRIB_LABEL_ANCESTORS_NEAR + MORALE_CONTRIB_THROUGH_KIN + count_format % hops
+    var label := MORALE_CONTRIB_LABEL_ANCESTORS_NEAR
+    if _belief_relay_hops(unit_data) > BELIEF_RELAY_DIRECT:
+        label += MORALE_CONTRIB_NEAR_THROUGH_KIN
+    return label
 
 ## The cohesion row's label: `too many to hold together (182 in the band, holds 150)`, or the bare
 ## label when the band publishes no head-count (a party, or a foreign band).

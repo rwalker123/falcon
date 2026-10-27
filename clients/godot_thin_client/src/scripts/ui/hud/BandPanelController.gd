@@ -145,6 +145,9 @@ signal split_band_requested(payload: Dictionary)
 signal road_abandon_requested(payload: Dictionary)
 # Recenter + select a hex (a zone row / cycler jump) — relayed to HudLayer.alert_focus_requested.
 signal alert_focus_requested(x: int, y: int)
+# The Beliefs popover's `show ▸`: pan the map to a sacred-ground tile and shade the holder band's reach there.
+# Relayed to HudLayer.belief_place_show_requested -> MapView.show_belief_place.
+signal belief_place_show_requested(x: int, y: int, holder_entity: int)
 # Pin an exact occupant on the map after that recenter — relayed to HudLayer.roster_occupant_selected.
 signal roster_occupant_selected(kind: String, id: Variant)
 # The header's `⚒` was pressed — open Materials & Crafting on this band. Relayed to HudLayer, which
@@ -1244,6 +1247,12 @@ func _build_leader_block(band: Dictionary) -> Control:
     text.mouse_filter = Control.MOUSE_FILTER_PASS
     if phrase != "":
         text.text = "[color=#%s]%s[/color]" % [HudStyle.INK.to_html(false), phrase]
+        var reach := HudFormat.band_leader_reach(band)
+        if not reach.is_empty():
+            var reach_ink: Color = HudStyle.WARN if bool(reach["over"]) else HudStyle.INK_DIM
+            text.text += "\n[color=#%s]%s[/color]" % [reach_ink.to_html(false), String(reach["line"])]
+            block.tooltip_text = String(reach["tooltip"])
+            text.tooltip_text = block.tooltip_text
     else:
         text.text = "[color=#%s]%s[/color] %s %s" % [HudStyle.INK_DIM.to_html(false),
             HudFormat.CHIEF_ROW_LABEL, HudFormat.chief_bar_bbcode(progress), String(progress.get("label", ""))]
@@ -1254,10 +1263,17 @@ func _build_leader_block(band: Dictionary) -> Control:
 
 ## **THE TRIBE LINE** (#861), directly under the leader block: ONE line, `Tribe <split bar> with
 ## <partner> · <one short phrase>`, hovering to the rule and what is still missing; or one dim line when
-## no band lives with this one. `null` for a band with no tribe threshold (no leader yet, or a foreign
-## cohort). See `HudFormat.band_tribe_progress`.
+## no band lives with this one. A band with no leader of its own still gets the block (a chiefless band
+## has a tribe line too); `null` only when `HudFormat.band_tribe_progress` has nothing to draw (a foreign
+## cohort carrying no tribe data). See `HudFormat.band_tribe_progress`.
 func _build_tribe_block(band: Dictionary) -> Control:
-    var view := HudFormat.band_tribe_progress(band)
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    var others: Array = []
+    for other in _band_labor.current_player_bands():
+        if other is Dictionary and int(other.get("band_id", HudConst.NO_BAND_ID)) != band_id \
+                and not bool(other.get("is_expedition", false)):
+            others.append(other)
+    var view := HudFormat.band_tribe_progress(band, others)
     if view.is_empty():
         return null
     var block := VBoxContainer.new()
@@ -8999,6 +9015,8 @@ func set_panel(panel: BandCityPanel) -> void:
     # controller's job — the disclosure controller must not know the band panel exists.
     if _disclosures != null:
         _disclosures.set_faction_band_jump(jump_to_band_entity)
+        _disclosures.set_belief_show(
+            func(x: int, y: int, holder: int) -> void: emit_signal("belief_place_show_requested", x, y, holder))
 
 ## The header's `⚒`. From a band page this is that band; from the FACTION page it is the last band
 ## loaded, which is sitting on the model already because `render_faction` deliberately leaves

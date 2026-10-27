@@ -553,6 +553,36 @@
           "hint": "The closeness score two linked bands sharing an urn must reach to be a tribe (with a chief among them). Below it, they come apart."
         },
         {
+          "pointer": "/reach_chief_people",
+          "label": "People a chief runs well",
+          "type": "float",
+          "min": 20,
+          "max": 400,
+          "step": 10,
+          "default": 150,
+          "hint": "How many people one chief (or elders' council) runs well. Past it, orders still go out but less of each one is carried out."
+        },
+        {
+          "pointer": "/reach_paramount_bands",
+          "label": "Bands a paramount chief runs well",
+          "type": "float",
+          "min": 1,
+          "max": 12,
+          "step": 1,
+          "default": 4,
+          "hint": "How many member bands a paramount chief (or council of chiefs) runs well. Past it, orders are carried out worse."
+        },
+        {
+          "pointer": "/over_reach_efficiency",
+          "label": "Past-reach efficiency",
+          "type": "float",
+          "min": 0.05,
+          "max": 1.0,
+          "step": 0.05,
+          "default": 0.5,
+          "hint": "The share of each order carried out for the people or bands beyond a leader's reach. 1 means no penalty."
+        },
+        {
           "pointer": "/tribe_weight_origin",
           "label": "Shared origin",
           "type": "float",

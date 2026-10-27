@@ -498,20 +498,22 @@ func _crew_on_forage(x: int, y: int) -> int:
 
 ## **THE TILE-SOURCED BRANCHES' ROWS** (belief's monument, food stores' pit, ...). Nothing names a branch:
 ## each offered branch (`DrawerComposeController.tile_branch_models`) is stated by the row the catalog
-## says (`HudTileVocab.readout_row_key`) -- the dead's own `Ancestors` row where the branch's site term is
+## says (`HudTileVocab.readout_row_key`) -- the `Sacred ground` row where the branch's site term is
 ## belief, else a row keyed by the branch's display name and valued by the rung the tile stands at. The
 ## crew rides `Context.door_crews` and is drawn as the workers mark plus its count. The row is the door to the crew sheet where the branch can be worked
 ## here; where the site term refuses it stays a readout and the refusal is its hover.
 func _append_tile_branch_rows(lines: Array[String], tile_info: Dictionary,
         ctx: DetailFormat.Context) -> void:
     var models := _drawercompose.tile_branch_models(tile_info)
-    var ancestors := DetailFormat.ancestors_line(tile_info)
-    if ancestors != "":
-        var belief_model := _tile_model_for_row(models, DetailFormat.ANCESTORS_ROW)
-        _append_tile_row(lines, ctx, ancestors, belief_model)
+    var bands: Array = _band_labor.current_player_bands() if _band_labor != null else []
+    var sacred := DetailFormat.sacred_ground_line(tile_info, bands)
+    if sacred != "":
+        _add_row_hover(ctx, DetailFormat.SACRED_GROUND_ROW, DetailFormat.sacred_ground_hover(tile_info, bands))
+        var belief_model := _tile_model_for_row(models, DetailFormat.SACRED_GROUND_ROW)
+        _append_tile_row(lines, ctx, sacred, belief_model)
     for model in models:
         var row_key := String(model["row_key"])
-        if row_key == DetailFormat.ANCESTORS_ROW:
+        if row_key == DetailFormat.SACRED_GROUND_ROW:
             continue
         _append_tile_row(lines, ctx, "%s: %s" % [row_key, String(model["rung_name"])], model)
 

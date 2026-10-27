@@ -2208,6 +2208,7 @@ func _draw() -> void:
 	# optimistic pending overlay and the travel destination — the things SELECTION buys, on top of the
 	# always-on marks above. Its per-source yield LABELS are the exception — they are queued here and
 	# flushed at the very end of _draw (see _band_overlays.flush_yield_labels).
+	_band_overlays.draw_belief_places(radius, origin)
 	_band_overlays.draw_band_work_highlights(radius, origin)
 	# …and the SOURCE LIST that carries what those sources PAY (issue #650). Placed and linked here,
 	# in the same `_draw` that built the rows: the leader lines run from a ROW to its hex, so the
@@ -6118,6 +6119,12 @@ func focus_on_tile(col: int, row: int) -> void:
 	# Panning only moves the viewport; the minimap image is unchanged, so just
 	# refresh the indicator instead of running the full rebuild-check path.
 	_minimap.queue_indicator_redraw()
+
+## The Beliefs popover's `show ▸`: centre the view on a sacred-ground tile WITHOUT selecting it (a selection
+## change would drop the very band whose panel asked) and shade the holder band's published reach there.
+func show_belief_place(col: int, row: int, holder_entity: int) -> void:
+	_band_overlays.show_belief_place(Vector2i(col, row), holder_entity)
+	focus_on_tile(col, row)
 
 ## Centre the view on a tile AND select it (as if the hex were clicked), so a jump
 ## from the turn-orb attention popover lands on a *selected* tile — the Tile card +
