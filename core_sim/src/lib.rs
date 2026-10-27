@@ -66,6 +66,7 @@ pub mod hunt_by_need;
 mod hydrology;
 mod influencers;
 mod intensification;
+pub mod keep_on_hand;
 pub mod knowledge_contact;
 mod knowledge_contact_config;
 mod knowledge_ledger;
@@ -167,7 +168,7 @@ pub use components::{
     BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BenchOrder, BenchQueueError,
     BuildDeclaration, BuildJob, BuildSource, BuildToeLine, CohesionReading, DeathCause,
     DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind, EquipmentBatch,
-    Expedition, ExpeditionMission, ExpeditionPhase, FinishedBatch, FoodBatch, FoodMix,
+    Expedition, ExpeditionMission, ExpeditionPhase, FinishedBatch, FoodBatch, FoodMix, KeepOnHand,
     KeepingIssue, KeepingToolLine, KitOrder, KnowledgeFragment, LaborAllocation, LaborAssignment,
     LaborTarget, LocalStore, MaterialBatch, MaterialDraw, MoraleCause, MusterBench, MusterKit,
     MusterPlan, PoolToeLine, PopulationCohort, PowerNode, ResidentBand, ScoutPack, Settlement,
@@ -1885,6 +1886,8 @@ pub fn build_test_app() -> App {
     app.world.resource_mut::<SimulationConfig>().map_seed = HARNESS_MAP_SEED;
     app.world
         .insert_resource(crate::equipment_config::EquipmentConfigHandle::for_a_stocked_fixture());
+    app.world
+        .insert_resource(crate::extraction_config::ExtractionConfigHandle::crewed_for_a_fixture());
     app
 }
 

@@ -1711,6 +1711,15 @@ enum Command {
         source: BuildSourceRef,
         level: String,
     },
+    /// **Keep a mined material on hand** (#874) — the band's target and dig priority for one mined
+    /// material. See `handle_keep_on_hand`.
+    KeepOnHand {
+        faction: FactionId,
+        band_id: u64,
+        material: String,
+        target: u32,
+        priority: String,
+    },
     /// **Stop a staffed row** (#871) — remove the band's row for one source, or its Roadwork pool.
     /// See `handle_stop_labor`.
     StopLabor {
@@ -5279,17 +5288,15 @@ fn labor_event_kind(role: &str) -> CommandEventKind {
     }
 }
 
-/// **A SEAM THAT NEVER RENEWS HAS NO REGROWTH TO STAFF AGAINST, SO IT NEEDS THE PLAYER'S COUNT.**
-/// The sim sizes a staffed extract row's crew from what the deposit regrows; stone on a rock body
-/// never does (`extraction_config::NEVER_RENEWS`), so its crew is the Max in heads and a row with no
-/// Max would staff nobody forever while reading "(no max)". Refused at the command, by name, until
-/// a stock-draw sizing replaces it. `None` for every other row, and for a count of one or more.
-fn never_renewing_dig_without_a_count(
-    app: &bevy::prelude::App,
-    target: &LaborTarget,
-    workers: u32,
-) -> Option<String> {
-    core_sim::staffing_preview::never_renewing_dig_without_a_count(&app.world, target, workers)
+/// **A MINED MATERIAL IS KEPT ON HAND, NOT CREWED** (#874): the refusal `assign_labor extract`,
+/// `stop_labor` and `work_priority` give for a row on stone (or any material whose deposit names the
+/// extraction branch). `None` for every other target.
+fn crewed_mined_dig_refusal(app: &bevy::prelude::App, target: &LaborTarget) -> Option<String> {
+    let LaborTarget::Extract { material, .. } = target else {
+        return None;
+    };
+    let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+    core_sim::keep_on_hand::crewed_dig_refusal(&extraction, material)
 }
 
 /// **What this row runs on when the player names no kit** — the herd's own default for a Hunt on a
@@ -5559,7 +5566,7 @@ fn handle_assign_labor(
             emit_command_failure(app, event_kind, faction, reason);
             return;
         }
-        if let Some(reason) = never_renewing_dig_without_a_count(app, &target, workers) {
+        if let Some(reason) = crewed_mined_dig_refusal(app, &target) {
             emit_command_failure(app, event_kind, faction, reason);
             return;
         }
@@ -11016,6 +11023,81 @@ fn handle_unqueue(app: &mut bevy::prelude::App, faction: FactionId, source: Buil
 /// the source (its work party is stood down and walks home, its declared build goes with it), or its
 /// Roadwork pool for the lone token `roadwork`. It exists because `assign_labor`'s count is the
 /// player's Max now and `0` means *no Max*, so a count can no longer end a staffed row.
+/// **KEEP A MINED MATERIAL ON HAND** (#874) - `keep_on_hand <faction> <band> <material> <target>
+/// <priority>`. Stores the band's order and restaffs at once, so the dig row (placed by the sim,
+/// `core_sim::keep_on_hand`) and its crew show on the next frame. A material that regrows is
+/// refused: it keeps its per-site `assign_labor extract` rows.
+fn handle_keep_on_hand(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: u64,
+    material: &str,
+    target: u32,
+    priority: &str,
+) {
+    let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+    if !core_sim::keep_on_hand::is_mined(&extraction, material) {
+        emit_command_failure(
+            app,
+            CommandEventKind::Extraction,
+            faction,
+            format!("{material} is not a mined material - it is crewed with assign_labor extract."),
+        );
+        return;
+    }
+    let Some(priority) = SourcePriority::from_token(priority.trim().to_ascii_lowercase().as_str())
+    else {
+        emit_command_failure(
+            app,
+            CommandEventKind::Extraction,
+            faction,
+            format!(
+                "Unknown work priority '{}' - expected {}, {} or {}.",
+                priority.trim(),
+                SourcePriority::High.as_str(),
+                SourcePriority::Normal.as_str(),
+                SourcePriority::Low.as_str()
+            ),
+        );
+        return;
+    };
+    let Some(band) = select_starting_band(
+        app,
+        faction,
+        Some(band_id),
+        "keep_on_hand",
+        CommandEventKind::Extraction,
+    ) else {
+        return;
+    };
+    band_allocation_mut(app, band.entity).keep_on_hand.insert(
+        material.to_string(),
+        core_sim::KeepOnHand { target, priority },
+    );
+    restaff_and_reseed(app, band.entity);
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = "keep_on_hand",
+        faction = %faction.0,
+        band = band_id,
+        material = %material,
+        keep = target,
+        "command.keep_on_hand.applied"
+    );
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::Extraction,
+        faction,
+        format!("{}: keeping {target} {material} on hand", band.label),
+        Some(format!(
+            "status=applied action=keep_on_hand material={material} target={target} priority={} band={band_id}",
+            priority.as_str()
+        )),
+    );
+}
+
 fn handle_stop_labor(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -11051,6 +11133,10 @@ fn handle_stop_labor(
         );
         return;
     };
+    if let Some(reason) = crewed_mined_dig_refusal(app, &target) {
+        emit_command_failure(app, CommandEventKind::Extraction, faction, reason);
+        return;
+    }
     let label = if roadwork {
         "the Roadwork pool".to_string()
     } else {
@@ -11161,6 +11247,10 @@ fn handle_work_priority(
         );
         return;
     };
+    if let Some(reason) = crewed_mined_dig_refusal(app, &target) {
+        emit_command_failure(app, CommandEventKind::Extraction, faction, reason);
+        return;
+    }
     let Some(priority) = SourcePriority::from_token(level.trim().to_ascii_lowercase().as_str())
     else {
         emit_command_failure(
@@ -12390,6 +12480,19 @@ fn command_from_payload(
             },
             roadwork,
         }),
+        ProtoCommandPayload::KeepOnHand {
+            faction_id,
+            band_id,
+            material,
+            target,
+            priority,
+        } => Some(Command::KeepOnHand {
+            faction: FactionId(faction_id),
+            band_id,
+            material,
+            target,
+            priority,
+        }),
         ProtoCommandPayload::WorkPriority {
             faction_id,
             band_id,
@@ -13321,6 +13424,7 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::Abandon { faction, .. } => Some((*faction, "abandon")),
         Command::Unqueue { faction, .. } => Some((*faction, "unqueue")),
         Command::StopLabor { faction, .. } => Some((*faction, "stop_labor")),
+        Command::KeepOnHand { faction, .. } => Some((*faction, "keep_on_hand")),
         Command::WorkPriority { faction, .. } => Some((*faction, "work_priority")),
         Command::BenchPriority { faction, .. } => Some((*faction, "bench_priority")),
         Command::BenchAuto { faction, .. } => Some((*faction, "bench_auto")),
@@ -13808,6 +13912,15 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             level,
         } => {
             handle_work_priority(app, faction, band_id, source, level);
+        }
+        Command::KeepOnHand {
+            faction,
+            band_id,
+            material,
+            target,
+            priority,
+        } => {
+            handle_keep_on_hand(app, faction, band_id, &material, target, &priority);
         }
         Command::ExtendPen {
             faction,
@@ -30147,18 +30260,20 @@ mod tests {
         );
     }
 
-    /// **A SEAM THAT NEVER RENEWS IS DUG BY A COUNT, AND NO COUNT IS REFUSED BY NAME.** Stone on a
-    /// rock body regrows nothing, so the sim has no regrowth to size its crew against and a row with
-    /// no Max would staff nobody forever while reading "(no max)". The command refuses it; a Max of
-    /// one or more lands.
-    ///
-    /// Falsified by removing the refusal: the `0` command then lands a row and this fails.
+    /// **A MINED MATERIAL IS KEPT ON HAND, NOT CREWED** (#874): `assign_labor extract`,
+    /// `stop_labor` and `work_priority` on stone are refused by name, wood is not, and
+    /// `keep_on_hand` (driven through the encoded envelope) stores the order and restaffs at once.
     #[test]
-    fn a_never_renewing_dig_with_no_count_is_refused_and_a_count_is_not() {
+    fn a_mined_material_is_refused_a_crew_and_takes_a_keep_on_hand_order() {
         let mut app = build_test_app();
+        app.world
+            .insert_resource(core_sim::ExtractionConfigHandle::default());
+        app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
         let faction = FactionId(0);
         let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::AlpineMountain);
         let band = spawn_idle_band(&mut app, faction, tile);
+        let band_id = 7;
+        app.world.entity_mut(band).insert(BandId(band_id));
         let rows = |app: &bevy::prelude::App| {
             app.world
                 .get::<LaborAllocation>(band)
@@ -30167,20 +30282,34 @@ mod tests {
                 .len()
         };
 
-        assign_extract(&mut app, faction, WORKING, "stone", None, 0);
-        assert_eq!(
-            rows(&app),
-            0,
-            "no count on a seam that never renews lands no row"
-        );
+        assign_extract(&mut app, faction, WORKING, "stone", None, 3);
+        assert_eq!(rows(&app), 0, "stone takes no crew");
         assert!(
-            extraction_failure_contains(&app, "needs a digger count"),
-            "the refusal says what is missing: {:?}",
+            extraction_failure_contains(&app, "Stone is kept on hand, not crewed"),
+            "{:?}",
             extraction_failure_reasons(&app)
         );
+        send_command_line(&mut app, "stop_labor 0 7 1 1 stone");
+        send_command_line(&mut app, "work_priority 0 7 1 1 stone high");
+        assert!(extraction_failure_contains(&app, "kept on hand"));
 
-        assign_extract(&mut app, faction, WORKING, "stone", None, 1);
-        assert_eq!(rows(&app), 1, "a Max of one lands the row");
+        send_command_line(&mut app, "keep_on_hand 0 7 wood 10 normal");
+        assert!(extraction_failure_contains(&app, "not a mined material"));
+
+        send_command_line(&mut app, "keep_on_hand 0 7 stone 60 high");
+        let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+        let order = allocation.keep_on_hand_for("stone");
+        assert_eq!(order.target, 60);
+        assert_eq!(order.priority, SourcePriority::High);
+        assert_eq!(
+            allocation.assignments.len(),
+            1,
+            "the order places the dig row at once"
+        );
+        assert_eq!(allocation.assignments[0].priority, SourcePriority::High);
+
+        send_command_line(&mut app, "keep_on_hand 0 7 stone 0 normal");
+        assert_eq!(rows(&app), 0, "target 0 removes the row");
     }
 
     /// **STONE TAKES A FLOOR AT THE COMMAND BOUNDARY, AND ON A RATE-0 BODY IT IS INERT**

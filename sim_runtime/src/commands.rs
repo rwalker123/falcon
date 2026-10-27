@@ -309,6 +309,15 @@ pub enum CommandPayload {
         branch: Option<String>,
         roadwork: bool,
     },
+    /// **Keep a mined material on hand** (#874): the band holds `target` of `material` in its store
+    /// and the sim digs for the deficit at `priority` (`high` | `normal` | `low`). `0` is no order.
+    KeepOnHand {
+        faction_id: u32,
+        band_id: u64,
+        material: String,
+        target: u32,
+        priority: String,
+    },
     /// **Say how a band splits a maintenance pool it cannot stretch**
     /// (`docs/plan_standing_upkeep.md` §2.5) — `"spread"` (everything degrades a little) or
     /// `"priority"` (fund sources completely, most-invested first).
@@ -1306,9 +1315,9 @@ pub mod query_error {
     /// A staffing preview's `priority` is not `high`, `normal` or `low` (rejected, never read as the
     /// default - the `work_priority` command's rule).
     pub const INVALID_PRIORITY: &str = "invalid_priority";
-    /// A staffing preview of a dig on ground that never renews, with no Max: the sim sizes such a
-    /// crew from the player's count, so `assign_labor` refuses the same row.
-    pub const NEVER_RENEWING_DIG_WITHOUT_A_COUNT: &str = "never_renewing_dig_without_a_count";
+    /// A staffing preview of a crew on a mined material (stone): the dig is the sim's, set with
+    /// `keep_on_hand`, so `assign_labor` refuses the same row.
+    pub const MINED_MATERIAL_IS_KEPT_ON_HAND: &str = "mined_material_is_kept_on_hand";
 }
 
 /// **How a receiver answers a pending dealing** (`answer_dealing`): accept, refuse, or counter.
@@ -2195,6 +2204,19 @@ impl CommandEnvelope {
                 branch: branch.clone(),
                 roadwork: *roadwork,
             }),
+            CommandPayload::KeepOnHand {
+                faction_id,
+                band_id,
+                material,
+                target,
+                priority,
+            } => pb::command_envelope::Command::KeepOnHand(pb::KeepOnHandCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                material: material.clone(),
+                target: *target,
+                priority: priority.clone(),
+            }),
             CommandPayload::UpkeepMode {
                 faction_id,
                 band_id,
@@ -2976,6 +2998,13 @@ impl CommandEnvelope {
                 material: cmd.material,
                 branch: cmd.branch,
                 roadwork: cmd.roadwork,
+            },
+            pb::command_envelope::Command::KeepOnHand(cmd) => CommandPayload::KeepOnHand {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                material: cmd.material,
+                target: cmd.target,
+                priority: cmd.priority,
             },
             pb::command_envelope::Command::UpkeepMode(cmd) => CommandPayload::UpkeepMode {
                 faction_id: cmd.faction_id,
@@ -4058,6 +4087,25 @@ mod tests {
             let decoded = CommandEnvelope::decode(&bytes).expect("decode");
             assert_eq!(decoded.payload, payload);
         }
+    }
+
+    /// **`keep_on_hand` survives the envelope** with every field a distinct value.
+    #[test]
+    fn keep_on_hand_round_trips_through_the_envelope() {
+        let payload = CommandPayload::KeepOnHand {
+            faction_id: 2,
+            band_id: 9,
+            material: "stone".to_string(),
+            target: 60,
+            priority: "high".to_string(),
+        };
+        let envelope = CommandEnvelope {
+            payload: payload.clone(),
+            correlation_id: None,
+        };
+        let bytes = envelope.encode_to_vec().expect("encode");
+        let decoded = CommandEnvelope::decode(&bytes).expect("decode");
+        assert_eq!(decoded.payload, payload);
     }
 
     /// **The staffing dry run survives the envelope on all three sources**, every field a distinct

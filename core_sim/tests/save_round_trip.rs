@@ -63,6 +63,10 @@ fn spawn_world() -> App {
     // nothing else, which is a statement about the two builders rather than about the save.
     app.world
         .insert_resource(core_sim::EquipmentConfigHandle::default());
+    // The deposits too: a reload loads the shipped `mined_branch`, and a live world that crewed
+    // stone would differ from its own reload in the dig-site telemetry it carries.
+    app.world
+        .insert_resource(core_sim::ExtractionConfigHandle::default());
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_preset_id = "earthlike".to_string();
     config.map_seed = core_sim::HARNESS_MAP_SEED;
@@ -89,6 +93,10 @@ fn spawn_world_with_ai_factions(ai_factions: u32) -> App {
     let mut app = build_test_app();
     app.world
         .insert_resource(core_sim::EquipmentConfigHandle::default());
+    // The deposits too: a reload loads the shipped `mined_branch`, and a live world that crewed
+    // stone would differ from its own reload in the dig-site telemetry it carries.
+    app.world
+        .insert_resource(core_sim::ExtractionConfigHandle::default());
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_preset_id = "earthlike".to_string();
     config.map_seed = core_sim::HARNESS_MAP_SEED;
@@ -731,6 +739,39 @@ fn a_bands_last_started_recipes_survive_the_round_trip() {
         seen += 1;
     }
     assert_eq!(seen, marked, "every band that made a choice came back");
+}
+
+/// **A BAND'S KEEP-ON-HAND ORDERS SURVIVE A SAVE AND A LOAD** (#874): the target and the priority are
+/// intent, and a load that dropped them would silently stop the band digging.
+#[test]
+fn a_bands_keep_on_hand_orders_survive_the_round_trip() {
+    const TARGET: u32 = 60;
+    let mut original = spawn_world();
+    let mut marked = 0;
+    let mut allocations = original.world.query::<&mut core_sim::LaborAllocation>();
+    for mut allocation in allocations.iter_mut(&mut original.world) {
+        allocation.keep_on_hand.insert(
+            "stone".to_string(),
+            core_sim::KeepOnHand {
+                target: TARGET,
+                priority: core_sim::SourcePriority::High,
+            },
+        );
+        marked += 1;
+    }
+    assert!(marked > 0, "LIVENESS: the world has a band to mark");
+
+    let blob = encode_save(&original.world).expect("the world encodes");
+    let (mut loaded, _) = load_save(&blob).expect("the save loads");
+    let mut restored = loaded.world.query::<&core_sim::LaborAllocation>();
+    let mut seen = 0;
+    for allocation in restored.iter(&loaded.world) {
+        let order = allocation.keep_on_hand_for("stone");
+        assert_eq!(order.target, TARGET);
+        assert_eq!(order.priority, core_sim::SourcePriority::High);
+        seen += 1;
+    }
+    assert_eq!(seen, marked);
 }
 
 /// **EQUIPMENT A BENCH FINISHED, NOT YET STOCKED, SURVIVES A SAVE AND A LOAD**

@@ -539,6 +539,12 @@ pub struct LaborConfig {
     /// left. Validated `>= 1`: a zero would leave every tile unworkable. A playtest lever (opening
     /// value 12).
     pub tile_worker_cap: u32,
+    /// **HOW MANY TURNS A KEEP-ON-HAND DEFICIT IS SPREAD OVER** (`docs/plan_labor_at_scale.md` → "Two
+    /// interfaces: what grows back, and what is mined"). A band holding a keep-on-hand target for a
+    /// mined material digs at its per-turn draw plus `deficit / keep_on_hand_refill_turns`, so the
+    /// stock returns to the target in about this many turns. Validated `>= 1`: a zero would divide
+    /// the deficit by nothing. A playtest dial (opening value 10).
+    pub keep_on_hand_refill_turns: u32,
     /// **The forward-projection horizon for a source's steady `realized` yield**, in turns. Each
     /// source's `SourceYield::realized` is the *average food/turn it will deliver over the next N
     /// turns*, computed by simulating the herd/patch forward N turns from its CURRENT state under the
@@ -622,6 +628,15 @@ impl LaborConfig {
                 constraint: "be at least 1 (the most hands one tile holds across every band)"
                     .to_string(),
                 value: self.tile_worker_cap.to_string(),
+            });
+        }
+        // The refill rate divides the deficit by this.
+        if self.keep_on_hand_refill_turns == 0 {
+            return Err(LaborConfigError::Invalid {
+                field: "keep_on_hand_refill_turns",
+                constraint: "be at least 1 (the turns a keep-on-hand deficit is refilled over)"
+                    .to_string(),
+                value: self.keep_on_hand_refill_turns.to_string(),
             });
         }
         // A party walks at the band's own pace, so a zero would make a far posting's walk never

@@ -154,7 +154,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 57 | Scouting is a range (#875): `LaborAssignment` gained `scouting_range` (the tiles past the local range the player asked to see; the Scout row exists exactly while it is above zero) and `scouting_reach` (the tiles the staffed scouts reach), and `PopulationCohort` gained `predators_kept_off` (the wild predator packs the band's watched ring kept off this turn). The Scout row's crew is the sim's, restaffed every turn. The allocation rides `BandRecord::labor`, so a version-56 blob does not decode |
 /// | 58 | Cohesion (#700): `PopulationCohort` gained `last_cohesion` (`CohesionReading`: the band's opening head-count and the cohesion ceiling the cohesion morale term was priced from, published as `PopulationCohortState.cohesionHeadcount` / `cohesionCeiling`), and `MoraleContributions` gained `cohesion` and `fresh_water` (published as `moraleCohesion` / `moraleFreshWater`) — both ride `BandRecord::cohort`, so a save and a rollback keep the reading the frame shows. |
 /// | 59 | The storage pit is its band's second larder (#709): `TileImprovement` gained `owner` (the band that owns it as a store), `contents` (the aged food lots it holds) and `spoiled_this_turn`; `PopulationCohort` gained `last_food_into_store` / `last_food_from_store` (the food ledger's two store terms). The improvement registry rides `SimState::tile_improvements` and the cohort rides `BandRecord::cohort`, so a version-58 blob does not decode |
-pub const SAVE_FORMAT_VERSION: u32 = 59;
+/// | 60 | Mined materials are kept on hand (#874): `LaborAllocation` gained `keep_on_hand` (the band's per-material target and priority), `last_road_material_bill`, `last_build_material_draw` (two seams of the band's material draw, read by next turn's staffing) and `last_keep_site`; it rides `BandRecord`, so a version-59 blob does not decode |
+pub const SAVE_FORMAT_VERSION: u32 = 60;
 
 /// gzip level for the payload document.
 ///

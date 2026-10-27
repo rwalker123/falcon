@@ -216,6 +216,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "stop_labor <faction_id> <band_id> <x> <y> | stop_labor <faction_id> <band_id> <herd_id> | stop_labor <faction_id> <band_id> <x> <y> <material> | stop_labor <faction_id> <band_id> <branch> <x> <y> | stop_labor <faction_id> <band_id> roadwork",
     },
     CommandVerbHelp {
+        verb: "keep_on_hand",
+        aliases: &[],
+        summary: "KEEP A MINED MATERIAL ON HAND: tell one band how much of a mined material (stone) to hold in its store, and how urgently. The sim picks the dig site, staffs the digging from the shortfall and stops when the store reaches the target. A target of 0 is no order - nobody digs for it. 'high', 'normal' or 'low' ranks the dig against the band's other work. Both the target and the priority are required. Refused for a material that regrows (wood keeps its per-site `assign_labor extract` rows); `assign_labor extract`, `stop_labor` and `work_priority` on a mined material are refused and point here.",
+        usage: "keep_on_hand <faction_id> <band_id> <material> <target> high|normal|low",
+    },
+    CommandVerbHelp {
         verb: "upkeep_mode",
         aliases: &[],
         summary: "Say how one band splits its ROADWORK POOL when it cannot cover every road it keeps. Road-keeping is a band-level standing role (`assign_labor <faction> <band> roadwork <n>`), and the band's demand is the SUM over every road it keeps; a patch, herd or working is kept by its own crew instead, which keeps it first and collects with the rest. When the pool falls short, 'spread' funds every road in proportion to its demand so EVERYTHING degrades a little, and 'priority' funds roads COMPLETELY until the pool runs out, MOST-INVESTED FIRST, so the biggest investments stay whole and the marginal ones rot. Defaults to spread. An unknown mode is refused by name.",
@@ -1140,6 +1146,33 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 level: level_str.to_ascii_lowercase(),
                 material,
                 branch,
+            })
+        }
+        // **KEEP A MINED MATERIAL ON HAND** (#874): `<faction> <band> <material> <target> <priority>`,
+        // both trailing fields required. The priority is lower-cased on the way in and an unknown
+        // level is the sim's to refuse by name, as `work_priority`'s is.
+        "keep_on_hand" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let material = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("material"))?;
+            let target_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target"))?;
+            let priority = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("priority"))?;
+            Ok(CommandPayload::KeepOnHand {
+                faction_id: parse_u32(faction_str, "keep_on_hand faction")?,
+                band_id: parse_u64(band_str, "keep_on_hand band")?,
+                material: material.to_owned(),
+                target: parse_u32(target_str, "keep_on_hand target")?,
+                priority: priority.to_ascii_lowercase(),
             })
         }
         // **STOP A STAFFED ROW** (#871) - `work_priority`'s band handle and source addressing with no
@@ -2819,6 +2852,13 @@ pub fn render_command_line(payload: &CommandPayload) -> String {
             }
             line
         }
+        CommandPayload::KeepOnHand {
+            faction_id,
+            band_id,
+            material,
+            target,
+            priority,
+        } => format!("keep_on_hand {faction_id} {band_id} {material} {target} {priority}"),
         CommandPayload::MoveBand {
             faction_id,
             band_id,
@@ -4859,6 +4899,27 @@ mod tests {
     /// **`stop_labor` reads the band and any of the five source shapes** (#871): a tile, a herd, a
     /// working (`<x> <y> <material>`), a tile improvement (`<branch> <x> <y>`) and the Roadwork pool
     /// (the lone token `roadwork`), with no trailing level and a refusal when no source is named.
+    #[test]
+    fn keep_on_hand_parses_and_renders_back_and_needs_both_fields() {
+        let payload = parse_command_line("keep_on_hand 1 7 stone 60 HIGH").unwrap();
+        assert_eq!(
+            payload,
+            CommandPayload::KeepOnHand {
+                faction_id: 1,
+                band_id: 7,
+                material: "stone".to_string(),
+                target: 60,
+                priority: "high".to_string(),
+            }
+        );
+        assert_eq!(
+            render_command_line(&payload),
+            "keep_on_hand 1 7 stone 60 high"
+        );
+        assert!(parse_command_line("keep_on_hand 1 7 stone 60").is_err());
+        assert!(parse_command_line("keep_on_hand 1 7 stone").is_err());
+    }
+
     #[test]
     fn parse_stop_labor_reads_every_source_shape() {
         let stop =

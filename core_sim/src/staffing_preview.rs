@@ -65,34 +65,6 @@ pub fn working_as_it_stands(
     ))
 }
 
-/// **A SEAM THAT NEVER RENEWS HAS NO REGROWTH TO STAFF AGAINST, SO IT NEEDS THE PLAYER'S COUNT.**
-/// The sim sizes a staffed extract row's crew from what the deposit regrows; stone on a rock body
-/// never does, so its crew is the Max in heads and a row with no Max would staff nobody forever.
-/// Refused by name at `assign_labor` and at the preview. `None` for every other row, and for a count
-/// of one or more.
-pub fn never_renewing_dig_without_a_count(
-    world: &World,
-    target: &LaborTarget,
-    workers: u32,
-) -> Option<String> {
-    let LaborTarget::Extract { tile, material, .. } = target else {
-        return None;
-    };
-    if workers > NO_CREW_ON_THIS_ACTIVITY {
-        return None;
-    }
-    let extraction = world.resource::<ExtractionConfigHandle>().get();
-    let entity = world.resource::<TileRegistry>().index(tile.x, tile.y)?;
-    let ground = world.get::<Tile>(entity)?;
-    (crate::extraction::tile_deposit_regrowth(&extraction, material, ground) <= crate::NEVER_RENEWS)
-        .then(|| {
-            format!(
-                "A {material} dig needs a digger count - this seam never renews, so the count you \
-                 give is how many people dig it."
-            )
-        })
-}
-
 /// **What a row runs on when the player names no kit** — the herd's own default for a Hunt on a
 /// resolvable quarry, the working's branch default for an Extract, the job's default for everything
 /// else. The same id the wire publishes (`HerdTelemetryState::default_kit_id`,
@@ -276,8 +248,11 @@ pub fn answer_staffing_preview(world: &mut World, ask: &StaffingPreviewQuery) ->
         Ok(target) => target,
         Err(reply) => return reply,
     };
-    if never_renewing_dig_without_a_count(world, &target, ask.max_workers).is_some() {
-        return refusal(query_error::NEVER_RENEWING_DIG_WITHOUT_A_COUNT);
+    if let LaborTarget::Extract { material, .. } = &target {
+        let extraction = world.resource::<ExtractionConfigHandle>().get();
+        if crate::keep_on_hand::is_mined(&extraction, material) {
+            return refusal(query_error::MINED_MATERIAL_IS_KEPT_ON_HAND);
+        }
     }
     let equipment = world.resource::<EquipmentConfigHandle>().get();
     let absent = default_kit_for_target(world, &equipment, &target);

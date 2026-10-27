@@ -433,6 +433,17 @@ message StopLaborCommand {
   bool roadwork = 8;
 }
 
+// KEEP A MINED MATERIAL ON HAND (#874): the band holds `target` of `material` in its store and the sim
+// digs for the deficit. `target` 0 is no order (nobody digs); `priority` is `high`, `normal` or `low`
+// and ranks the dig row among the band's work. Refused for a material that is not mined.
+message KeepOnHandCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  string material = 3;
+  uint32 target = 4;
+  string priority = 5;
+}
+
 // Travel a band toward a target tile at band_move_tiles_per_turn/turn.
 message MoveBandCommand {
   uint32 faction_id = 1;
@@ -1842,5 +1853,6 @@ message CommandEnvelope {
     SendEnvoyCommand send_envoy = 93;
     EndTreatyCommand end_treaty = 94;
     StopLaborCommand stop_labor = 95;
+    KeepOnHandCommand keep_on_hand = 96;
   }
 }

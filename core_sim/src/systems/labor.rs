@@ -279,6 +279,8 @@ pub fn source_has_a_meter_at_risk(
 pub struct PerTileWorks<'w> {
     pub roads: ResMut<'w, crate::routes::RoadRegistry>,
     pub tile_improvements: ResMut<'w, crate::tile_improvement::TileImprovementRegistry>,
+    /// What each faction has explored - the fog gate the keep-on-hand dig sites are picked behind.
+    pub visibility: Option<Res<'w, crate::visibility::VisibilityLedger>>,
 }
 
 /// The config handles [`advance_labor_allocation`] reads, bundled into one `SystemParam` so the
@@ -3685,7 +3687,7 @@ pub fn bill_and_stock_roads(
     ladder: Res<LadderConfigHandle>,
     tile_registry: Res<TileRegistry>,
     tiles: Query<&Tile>,
-    mut bands: Query<(&mut PopulationCohort, &BandId), With<BandId>>,
+    mut bands: Query<(&mut PopulationCohort, &BandId, Option<&mut LaborAllocation>), With<BandId>>,
 ) {
     let ladder = ladder.get();
 
@@ -3705,9 +3707,24 @@ pub fn bill_and_stock_roads(
     }
 
     // ## (b) The STONE, out of each keeper's own stores.
-    for (mut cohort, band) in bands.iter_mut() {
+    for (mut cohort, band, mut allocation) in bands.iter_mut() {
         let (kept, claims) =
             route_keeping_claims(&registry, Some(*band), &tile_registry, &tiles, &ladder);
+        // **THE ROAD SEAM OF THE BAND'S MATERIAL DRAW** (`LaborAllocation::material_draw`): the stone
+        // its roads are billed this turn, restated for every band (a band that keeps none reads empty).
+        if let Some(allocation) = allocation.as_deref_mut() {
+            allocation.last_road_material_bill.clear();
+            for claim in &claims {
+                if let Some(road) = registry.road(kept[claim.index]) {
+                    for (material, amount) in &road.upkeep_materials_demanded {
+                        *allocation
+                            .last_road_material_bill
+                            .entry(material.clone())
+                            .or_insert(NOTHING_DEMANDED) += amount;
+                    }
+                }
+            }
+        }
         if claims.is_empty() {
             continue;
         }
@@ -5935,6 +5952,7 @@ pub fn advance_labor_allocation(
     let PerTileWorks {
         mut roads,
         mut tile_improvements,
+        visibility,
     } = per_tile;
     // # ⛔ THIS PASS MAY RUN ONCE PER LOGISTICS CLEAR, AND A SECOND RUN OVERSTATES THE KEEPING
     //
@@ -6440,6 +6458,34 @@ pub fn advance_labor_allocation(
                 drives_known,
                 start: fauna::ProjectionStart::AfterRegrowth,
             };
+            // **THE KEEP-ON-HAND DIG ROWS ARE PLACED BEFORE STAFFING** (#874): the sim owns the one
+            // row per mined material, on the site the game picks.
+            {
+                let camp = band_pos.map(|position| crate::staffing::CampSite {
+                    position,
+                    grid_width,
+                    wrap_horizontal,
+                });
+                let candidates = |material: &str| {
+                    crate::keep_on_hand::discovered_deposit_tiles(
+                        &extraction_cfg,
+                        material,
+                        faction,
+                        visibility.as_deref(),
+                        sim_config.fog_enabled,
+                        tiles.iter(),
+                    )
+                };
+                crate::keep_on_hand::manage_dig_rows(
+                    &mut allocation,
+                    &crate::keep_on_hand::DigSiteInputs {
+                        sources: &staff_sources,
+                        band_kit: &band_kit,
+                        camp: camp.as_ref(),
+                    },
+                    &candidates,
+                );
+            }
             let progress_context = BuildProgressContext {
                 sources: &staff_sources,
                 roads: &roads,
@@ -6457,10 +6503,12 @@ pub fn advance_labor_allocation(
             let can_progress = |declaration: &BuildDeclaration| {
                 declared_build_can_progress(&progress_context, &allocation, declaration)
             };
+            let on_hand = |material: &str| cohort.stores.material_total(material).to_f32();
             let staffing_world = crate::staffing::StaffingWorld {
                 sources: &staff_sources,
                 tile_improvements: &tile_improvements,
                 roads: &roads,
+                on_hand: &on_hand,
                 band: band_id,
                 camp: band_pos.map(|position| crate::staffing::CampSite {
                     position,
@@ -6584,6 +6632,7 @@ pub fn advance_labor_allocation(
         // ahead of the shed's `continue`s, so a band that loses its last worker stops republishing
         // last turn's need for holdings it no longer keeps.
         allocation.last_material_need.clear();
+        allocation.last_build_material_draw.clear();
         allocation.last_material_income.clear();
         allocation.last_fodder_drain = NO_FODDER_LEDGER;
         // **THE POOLS' TOOLS RIDE THE SAME CYCLE AND THE SAME EARLY-EXIT RULE** — cleared ahead of
@@ -6959,6 +7008,16 @@ pub fn advance_labor_allocation(
                 (draw, plan.priority)
             })
             .collect();
+        // **THE THIRD SEAM OF THE BAND'S MATERIAL DRAW** (`LaborAllocation::material_draw`): what its
+        // funded builds draw this turn, read by next turn's staffing.
+        for (draw, _) in &build_wants {
+            for (material, amount) in &draw.wanted {
+                *allocation
+                    .last_build_material_draw
+                    .entry(material.clone())
+                    .or_insert(NOTHING_DEMANDED) += amount;
+            }
+        }
         let material_settlement = settle_material_upkeep(
             &allocation.assignments,
             &forage_registry,

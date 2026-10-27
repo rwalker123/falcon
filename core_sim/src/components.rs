@@ -6134,6 +6134,35 @@ pub enum ExcessRejoining {
     Discard,
 }
 
+/// **A BAND'S KEEP-ON-HAND ORDER FOR ONE MINED MATERIAL** (#874): the stock it wants in its store and
+/// the priority its dig row ranks at. A `target` of `0` is no order.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct KeepOnHand {
+    pub target: u32,
+    pub priority: SourcePriority,
+}
+
+impl LaborAllocation {
+    /// The order this band holds for `material`: `target 0` where none was given.
+    pub fn keep_on_hand_for(&self, material: &str) -> KeepOnHand {
+        self.keep_on_hand.get(material).copied().unwrap_or_default()
+    }
+
+    /// **THE BAND'S PER-TURN DRAW ON `material`** - the sum of the three seams that spend it: the
+    /// standing upkeep need of its holdings, the road keeping it is billed and its builds' draw. Last
+    /// turn's figures (a one-turn lag).
+    pub fn material_draw(&self, material: &str) -> f32 {
+        [
+            &self.last_material_need,
+            &self.last_road_material_bill,
+            &self.last_build_material_draw,
+        ]
+        .iter()
+        .map(|seam| seam.get(material).copied().unwrap_or_default())
+        .sum()
+    }
+}
+
 /// A band's partition of its working-age pool across labor demands. Replaces the retired
 /// single-task model (`HarvestAssignment`/`ScoutAssignment`/`FaunaPursuit`): a band now draws from
 /// many sources at once, with the invariant `Σ assignments.workers ≤ available_workers(working)`.
@@ -6315,6 +6344,20 @@ pub struct LaborAllocation {
     /// Reset then re-summed every turn, and **excluded from equality** below, like the rest of the
     /// per-turn telemetry.
     pub last_material_need: std::collections::BTreeMap<String, f32>,
+    /// **WHAT THE ROADS THIS BAND KEEPS WERE BILLED IN MATERIAL THIS TURN**, per material id - the
+    /// road twin of [`Self::last_material_need`], written by `bill_and_stock_roads`. One of the three
+    /// seams [`Self::material_draw`] sums. Last turn's figure is what staffing reads (a one-turn lag).
+    pub last_road_material_bill: std::collections::BTreeMap<String, f32>,
+    /// **WHAT THE BAND'S FUNDED BUILDS DREW IN MATERIAL THIS TURN**, per material id - the third seam
+    /// of [`Self::material_draw`], written by `advance_labor_allocation` from the builds' wants.
+    pub last_build_material_draw: std::collections::BTreeMap<String, f32>,
+    /// **THE KEEP-ON-HAND ORDERS** (#874): per mined material, how much the band keeps in its store and
+    /// the priority of its dig row. Absent is `target 0`, which is no order. Intent: inside equality.
+    pub keep_on_hand: std::collections::BTreeMap<String, KeepOnHand>,
+    /// **WHERE THE GAME PICKED TO DIG**, per mined material - the best-ranked site this turn's
+    /// management found, whether or not a row stands on it. Published beside the order; derived
+    /// telemetry outside equality.
+    pub last_keep_site: std::collections::BTreeMap<String, UVec2>,
     /// **THE MATERIALS THIS BAND'S OWN SOURCES CREDITED THIS TURN**, per material id — the take
     /// side of the same ledger, and the twin of [`Self::last_fodder_inflow`].
     ///
@@ -6481,6 +6524,7 @@ pub struct LaborAllocation {
 impl PartialEq for LaborAllocation {
     fn eq(&self, other: &Self) -> bool {
         self.assignments == other.assignments
+            && self.keep_on_hand == other.keep_on_hand
             && self.upkeep_fund_mode == other.upkeep_fund_mode
             && self.builds == other.builds
     }

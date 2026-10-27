@@ -99,9 +99,6 @@ pub enum ReachTarget {
     Nothing,
     /// Draw the stock down at this take per turn (already strictly above the peak regrowth).
     Take(f32),
-    /// A mined seam with no regrowth, until keep-on-hand stone (#874): there is no regrowth to
-    /// out-take, so the target is the player's Max in heads — this many **take hands**.
-    Heads(u32),
 }
 
 /// One staffed row, as the passes see it.
@@ -239,7 +236,6 @@ fn reach_gather(row: &StaffRowInput<'_>, armed: u32) -> f32 {
     match row.reach {
         ReachTarget::Nothing => NO_HANDS,
         ReachTarget::Take(target) => gather_hands(row, target, armed),
-        ReachTarget::Heads(heads) => heads as f32,
     }
 }
 
@@ -252,10 +248,7 @@ fn reach_heads(row: &StaffRowInput<'_>, armed: u32) -> u32 {
 /// The crew past which the take stops rising, keepers included.
 fn useful_heads(row: &StaffRowInput<'_>, armed: u32) -> u32 {
     let hold = gather_hands(row, row.hold_take, armed);
-    let useful = match row.reach {
-        ReachTarget::Heads(heads) => heads as f32,
-        _ => gather_hands(row, row.useful_take, armed),
-    };
+    let useful = gather_hands(row, row.useful_take, armed);
     crew_heads(row, useful.max(reach_gather(row, armed)).max(hold))
 }
 
@@ -666,6 +659,9 @@ pub struct StaffingWorld<'a> {
     /// **Whether a declared build can make progress this turn** — not complete, not gated, not stalled
     /// on materials. A build that cannot gets no builders.
     pub build_can_progress: &'a dyn Fn(&crate::components::BuildDeclaration) -> bool,
+    /// **WHAT THE BAND'S STORE HOLDS OF A MATERIAL** - the "on hand" a keep-on-hand target is
+    /// judged against (`LocalStore::material_total`: the store only, not loads at the site).
+    pub on_hand: &'a dyn Fn(&str) -> f32,
 }
 
 /// **A TILE AS A MAP KEY** — `(y, x)`, row-major like every registry keyed by tile (`UVec2` is not
@@ -718,7 +714,7 @@ pub struct CampSite {
 
 impl CampSite {
     /// Hex steps from camp to `site`, the metric the work-party walk is measured in.
-    fn distance_to(&self, site: UVec2) -> u32 {
+    pub(crate) fn distance_to(&self, site: UVec2) -> u32 {
         crate::grid_utils::hex_distance_wrapped(
             self.position,
             site,
@@ -1315,7 +1311,8 @@ fn build_staff_inputs<'a>(
                 input.keep_hands =
                     planned_keep_hands(sources, band_kit, declared, &target, crew_bound);
                 extract_input(
-                    world, band_kit, kit, *tile, material, *floor, crew_float, &mut input,
+                    world, allocation, band_kit, kit, *tile, material, *floor, crew_float,
+                    &mut input,
                 );
             }
             LaborTarget::Tile { .. } => {
@@ -1633,6 +1630,7 @@ fn hunt_input<'a>(
 #[allow(clippy::too_many_arguments)] // the row's own inputs
 fn extract_input<'a>(
     world: &'a StaffingWorld<'a>,
+    allocation: &LaborAllocation,
     band_kit: &'a BandEquipment,
     kit: &KitChoice,
     tile: UVec2,
@@ -1674,12 +1672,20 @@ fn extract_input<'a>(
     if room <= crate::extraction::DEPOSIT_EMPTY {
         return;
     }
-    if ground_rate <= crate::extraction_config::NEVER_RENEWS {
-        // A seam that never renews holds nothing; its reach is the player's Max in heads.
-        let wanted = input.max.map_or(NOBODY, |max| {
-            max.saturating_sub(input.keep_hands.ceil() as u32)
-        });
-        input.reach = ReachTarget::Heads(wanted);
+    if crate::keep_on_hand::is_mined(config, material) {
+        // **A MINED MATERIAL IS STAFFED FROM ITS KEEP-ON-HAND DEFICIT** (#874): at or above the target
+        // nobody digs (the row's keepers still come, `keep_hands`); below it the crew takes what
+        // the band draws plus the deficit spread over `keep_on_hand_refill_turns`.
+        let deficit =
+            allocation.keep_on_hand_for(material).target as f32 - (world.on_hand)(material);
+        if deficit <= NO_TAKE_WANTED {
+            return;
+        }
+        let draw = allocation.material_draw(material);
+        let refill = draw + deficit / sources.labor.keep_on_hand_refill_turns as f32;
+        input.hold_take = draw.min(room);
+        input.useful_take = refill.min(room);
+        input.reach = ReachTarget::Take(refill.min(room));
         return;
     }
     let rate = ground_rate * payoff.regrowth_multiplier;
@@ -1822,6 +1828,7 @@ pub(crate) fn with_band_staffing_over<R>(
                     declaration,
                 )
             };
+            let on_hand = |material: &str| stores.material_total(material).to_f32();
             let staffing_world = StaffingWorld {
                 sources,
                 tile_improvements,
@@ -1830,10 +1837,68 @@ pub(crate) fn with_band_staffing_over<R>(
                 camp,
                 tile_hands_elsewhere: &elsewhere,
                 build_can_progress: &can_progress,
+                on_hand: &on_hand,
             };
             body(&staffing_world, &allocation, &band_kit, pool, available)
         },
     ))
+}
+
+/// **THE BAND'S ALLOCATION WITH ITS KEEP-ON-HAND DIG ROWS PLACED** - [`crate::keep_on_hand::manage_dig_rows`]
+/// run over a copy, read from the world the way a command restaff reads it. The caller writes it back
+/// before staffing. `None` where the band has no cohort or allocation.
+fn managed_dig_allocation(
+    world: &bevy::prelude::World,
+    band: bevy::prelude::Entity,
+) -> Option<LaborAllocation> {
+    let mut allocation = world.get::<LaborAllocation>(band)?.clone();
+    let cohort = world.get::<crate::components::PopulationCohort>(band)?;
+    let faction = cohort.faction;
+    let camp = camp_of(world, band);
+    let equipment = world
+        .get_resource::<crate::EquipmentConfigHandle>()
+        .map_or_else(
+            crate::equipment_config::EquipmentConfig::builtin,
+            crate::EquipmentConfigHandle::get,
+        );
+    let available = crate::components::available_workers(cohort.working);
+    let band_kit = world
+        .get::<BandEquipment>(band)
+        .cloned()
+        .unwrap_or_else(|| BandEquipment::start_stocked_for(&equipment, available as f32));
+    let visibility = world.get_resource::<crate::visibility::VisibilityLedger>();
+    let fog_enabled = world
+        .get_resource::<crate::resources::SimulationConfig>()
+        .is_none_or(|config| config.fog_enabled);
+    let registry = world.get_resource::<crate::resources::TileRegistry>()?;
+    crate::take_claims::with_world_sources(world, faction, |sources| {
+        let tiles = || {
+            (0..registry.height).flat_map(move |y| {
+                (0..registry.width).filter_map(move |x| {
+                    registry
+                        .index(x, y)
+                        .and_then(|entity| world.get::<crate::components::Tile>(entity))
+                })
+            })
+        };
+        let candidates = |material: &str| {
+            crate::keep_on_hand::discovered_deposit_tiles(
+                sources.extraction,
+                material,
+                faction,
+                visibility,
+                fog_enabled,
+                tiles(),
+            )
+        };
+        let inputs = crate::keep_on_hand::DigSiteInputs {
+            sources,
+            band_kit: &band_kit,
+            camp: camp.as_ref(),
+        };
+        crate::keep_on_hand::manage_dig_rows(&mut allocation, &inputs, &candidates);
+    });
+    Some(allocation)
 }
 
 /// **STAFF A COPY OF A BAND'S ALLOCATION THE WAY THE COMMAND PATH DOES** — `restaff_band`'s staffing
@@ -1920,6 +1985,11 @@ pub fn restaff_band_after_loss(
     let bench_workers = world
         .get::<crate::components::BandBench>(band)
         .map_or(NOBODY, |bench| bench.workers);
+    if let Some(managed) = managed_dig_allocation(world, band) {
+        if let Some(mut allocation) = world.get_mut::<LaborAllocation>(band) {
+            *allocation = managed;
+        }
+    }
     let Some(staffed) = with_band_staffing(
         world,
         band,
@@ -2585,36 +2655,6 @@ mod tests {
         let out = staff_band(&rows, 4, &mut units);
         assert_eq!(out[0].keepers, 3);
         assert_eq!(out[0].total(), 4);
-    }
-
-    #[test]
-    fn a_mined_seam_with_no_max_gets_nobody_and_with_a_max_gets_the_max() {
-        let mut none = linear_row(
-            SourcePriority::Normal,
-            None,
-            0,
-            0.0,
-            0.0,
-            1.0,
-            1.0,
-            Vec::new(),
-        );
-        none.reach = ReachTarget::Heads(0);
-        let mut capped = linear_row(
-            SourcePriority::Normal,
-            Some(3),
-            0,
-            0.0,
-            0.0,
-            1.0,
-            1.0,
-            Vec::new(),
-        );
-        capped.reach = ReachTarget::Heads(3);
-        let mut units = shelf(0);
-        let out = staff_band(&[none, capped], 10, &mut units);
-        assert_eq!(out[0].total(), 0);
-        assert_eq!(out[1].total(), 3);
     }
 
     #[test]

@@ -3572,6 +3572,14 @@ pub fn capture_snapshot(
                                 )
                             })
                             .unwrap_or_default(),
+                        keep_on_hand: allocation
+                            .map(|allocation| {
+                                crate::snapshot::population::keep_on_hand_rows(
+                                    allocation,
+                                    &extraction_config,
+                                )
+                            })
+                            .unwrap_or_default(),
                         culture_pressures: band_id
                             .zip(culture_pressure.as_deref())
                             .map(|(band, ledger)| {

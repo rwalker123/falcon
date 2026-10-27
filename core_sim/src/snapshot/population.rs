@@ -1381,6 +1381,9 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// [`crate::systems::CulturePressureLedger`]. Empty for a detached party and for a world no
     /// turn has judged.
     pub(crate) culture_pressures: Vec<sim_schema::CulturePressureState>,
+    /// **This band's keep-on-hand orders** (#874) - see [`keep_on_hand_rows`]. Empty for a detached
+    /// party.
+    pub(crate) keep_on_hand: Vec<sim_schema::KeepOnHandState>,
     /// **The improvements this band holds at its camp** (#708), one row per band-kind branch - see
     /// [`band_improvement_rows`]. Empty for a detached party.
     pub(crate) band_improvements: Vec<sim_schema::BandImprovementState>,
@@ -1692,6 +1695,38 @@ pub(crate) fn redacted_population_state(
     }
 }
 
+/// **A BAND'S KEEP-ON-HAND ROWS** (#874): one per mined material the band has a site picked for
+/// (rock it knows and can reach) or holds a nonzero target for. Draw, target and priority come from
+/// the allocation; on hand is the band's `material_store`, which the client already reads.
+pub(crate) fn keep_on_hand_rows(
+    allocation: &LaborAllocation,
+    extraction: &crate::extraction_config::ExtractionConfig,
+) -> Vec<sim_schema::KeepOnHandState> {
+    crate::keep_on_hand::mined_materials(extraction)
+        .into_iter()
+        .filter_map(|material| {
+            let order = allocation.keep_on_hand_for(&material);
+            let site = allocation.last_keep_site.get(&material).copied();
+            if order.target == 0 && site.is_none() {
+                return None;
+            }
+            Some(sim_schema::KeepOnHandState {
+                draw: allocation.material_draw(&material),
+                target: order.target,
+                priority: match order.priority {
+                    SourcePriority::High => sim_schema::state::SourcePriorityState::High,
+                    SourcePriority::Normal => sim_schema::state::SourcePriorityState::Normal,
+                    SourcePriority::Low => sim_schema::state::SourcePriorityState::Low,
+                },
+                has_site: site.is_some(),
+                site_x: site.map_or(0, |tile| tile.x),
+                site_y: site.map_or(0, |tile| tile.y),
+                material,
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
     let PopulationStateInputs {
         belief_reach,
@@ -1734,6 +1769,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         loadout_window,
         heart,
         culture_pressures,
+        keep_on_hand,
         band_improvements,
     } = inputs;
     let homeward: &[crate::work_party::HomewardWalk] =
@@ -3202,6 +3238,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .map_or(sim_schema::state::NO_HEART_CONTACT, |turn| turn as i64),
         independence_grievance_threshold: wellbeing.independence.grievance_threshold,
         culture_pressures,
+        keep_on_hand,
         band_improvements,
         tribe_threshold: tribe.as_ref().map_or(0.0, |t| t.threshold),
         tribe_history_build_turns: tribe.as_ref().map_or(0.0, |t| t.history_build_turns),
@@ -3766,6 +3803,7 @@ mod tests {
             loadout_window: None,
             heart: None,
             culture_pressures: Vec::new(),
+            keep_on_hand: Vec::new(),
             band_improvements: Vec::new(),
             held_preservation: crate::spoilage::HeldPreservation::none(),
             reachable_stores: crate::fixed_store::ReachableStores::none(),

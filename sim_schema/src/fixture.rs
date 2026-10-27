@@ -685,6 +685,7 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.hunt_meals = rows();
         cohort.envoy_terms = seeded_terms();
         cohort.culture_pressures = rows();
+        cohort.keep_on_hand = rows();
         // A band improvement's own `build_legs` and `upkeep_toe` are nested repeated fields, so
         // both levels are seeded, as the tile improvement's are.
         cohort.band_improvements = rows_of(BandImprovementState {

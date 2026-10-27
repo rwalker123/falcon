@@ -1971,6 +1971,10 @@ pub struct PopulationCohortState {
     /// fertility reserve beside the larder. Appended last.
     #[serde(default)]
     pub food_in_stores_in_reach: f32,
+    /// **Keep-on-hand orders** (#874): one row per mined material this people has discovered any
+    /// deposit of or holds a nonzero target for. Own bands only. Appended last.
+    #[serde(default)]
+    pub keep_on_hand: Vec<KeepOnHandState>,
 }
 
 /// `PopulationCohortState::tribe_leader_kind`: the band is in no tribe.
@@ -2155,6 +2159,22 @@ pub struct CulturePressureState {
     pub close: bool,
     /// Turns left on the clock toward the next phase; `0` when that clock is not running.
     pub turns_to_next: u16,
+}
+
+/// **A BAND'S KEEP-ON-HAND ORDER FOR ONE MINED MATERIAL** (#874) - a row of
+/// [`PopulationCohortState::keep_on_hand`]. On hand is not here: it is the band's `material_store`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct KeepOnHandState {
+    pub material: String,
+    /// The stock the band wants in its store; `0` is no order.
+    pub target: u32,
+    pub priority: SourcePriorityState,
+    /// The band's per-turn draw on the material (upkeep, road keeping, builds).
+    pub draw: f32,
+    /// Whether the game picked a site to dig at; `site_x` / `site_y` are meaningful only then.
+    pub has_site: bool,
+    pub site_x: u32,
+    pub site_y: u32,
 }
 
 /// **ONE KEEPING CLASS'S HUNTING MEAL** — a row of [`PopulationCohortState::hunt_meals`]: the food

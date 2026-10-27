@@ -2,6 +2,7 @@
 paths:
   - "core_sim/src/work_party.rs"
   - "core_sim/src/staffing.rs"
+  - "core_sim/src/keep_on_hand.rs"
   - "core_sim/src/staffing_preview.rs"
   - "core_sim/tests/staffing_preview.rs"
   - "core_sim/src/take_claims.rs"
@@ -132,7 +133,7 @@ A kitted hand holds the whole of its row's live kit items, drawn from one shelf 
 every row (so two rows cannot arm one spear twice). **Hold crew** is the hands that take the
 regrowth at the floor; **reach crew** is the hands whose take is strictly above the peak regrowth
 between the floor and today's stock (`REACH_STRICTLY_ABOVE_PEAK`), so they draw the stock down
-toward the floor. Stone has no regrowth and takes `ReachTarget::Heads(Max - keepers)`. A source
+toward the floor. A mined material (stone) is staffed from its keep-on-hand deficit instead ("A mined material is kept on hand" below). A source
 already at or under its floor staffs its keepers only. Each web builds its own take-per-hand
 (`forage_input`, `hunt_input`, `extract_input`; a tile improvement and Roadwork size by their
 keeping bill alone) and at least one hand is asked of a take that rounds to nothing
@@ -168,11 +169,70 @@ parser's own shapes (a seat's `decisions.jsonl` / `commands.jsonl` line parses b
 `Cost::claimed` gives a stop the row key of the `assign_labor` that sets the same row, so a stop and
 an assign on one row cannot both pass arbitration in a turn.
 
-**A seam that never renews needs the player's count.** The sim sizes a staffed extract row from the
-deposit's regrowth; stone on a rock body regrows nothing, so its crew is the Max in heads and
-`assign_labor` with no Max on it is refused by name (`never_renewing_dig_without_a_count`: *a stone
-dig needs a digger count*) rather than landing a row that staffs nobody. A Max of one or more
-lands. Pinned by `server::tests::a_never_renewing_dig_with_no_count_is_refused_and_a_count_is_not`.
+## A mined material is kept on hand, not crewed (#874)
+
+Design: `docs/plan_labor_at_scale.md` "Two interfaces: what grows back, and what is mined". Engine:
+`core_sim/src/keep_on_hand.rs` (classification, the site, the refusal), the `extract_input` branch in
+`staffing.rs`, the order on `LaborAllocation::keep_on_hand`.
+
+**A *mined* material is one whose `extraction.json` deposit row names the config's `mined_branch`**
+(`extraction`; `keep_on_hand::is_mined`; stone today, an ore is a config row). The engine names
+neither "stone" nor the shipped branch (`ladder_ids::tests::no_non_test_source_names_the_shipped_ladder`
+forbids it), so the classification is a key in `extraction.json`, validated to name a branch some
+deposit works. Wood (`forestry`) is unchanged: per-site rows, floor, Max. `build_test_app` installs
+`ExtractionConfigHandle::crewed_for_a_fixture` (nothing mined), the stocked-gear config's twin, so
+the deposit-mechanics fixtures still crew stone; a fixture whose subject is the order puts
+`ExtractionConfigHandle::default()` back.
+
+**For a mined material the band holds an order, not crews**: `LaborAllocation::keep_on_hand[material] =
+KeepOnHand { target, priority }`. `target` 0 is no order (nobody digs; a band starts at 0 for every
+material). The order is intent, inside the allocation's equality, and rides the save.
+
+- **on hand** = `LocalStore::material_total` (the store only - not a load at the site or on the road;
+  overshooting by a pack is accepted). **deficit** = target - on hand.
+- **draw** = `LaborAllocation::material_draw(m)`: the sum of three seams, each last turn's figure -
+  `last_material_need` (the holdings' upkeep), `last_road_material_bill` (written by
+  `bill_and_stock_roads` from the roads the band keeps) and `last_build_material_draw` (written by
+  `advance_labor_allocation` from the funded builds' wants). Published as `KeepOnHandState.draw`.
+- **staffing** (`extract_input`): deficit <= 0 -> take 0, reach `Nothing`, nobody digs, **the row's
+  keepers still come** (`keep_hands`, a quarry rung owes its keeping either way). Deficit > 0 -> pass 1
+  `hold_take = draw`, pass 2 `ReachTarget::Take(draw + deficit / keep_on_hand_refill_turns)`, pass 3
+  the same take (bare hands fill a reach the kit could not, never past the refill rate); each capped
+  by the room (`deposit_crew_needed`'s own sizing). `labor_config.keep_on_hand_refill_turns` (**10**,
+  validated >= 1, a playtest dial) is the only new lever. `ReachTarget::Heads` and the
+  never-renewing-dig refusal are deleted.
+
+**The game picks the site and owns the row** (`keep_on_hand::manage_dig_rows`, run at the head of the
+labor pass before staffing and by every command restaff, `staffing::managed_dig_allocation`).
+Candidates are the faction's discovered tiles holding the material (the `deposit_states` fog gate)
+with something reachable above `DEPOSIT_EMPTY`; opened or not (`ClaimSources::working` derives the
+unopened one). Rank: most **per hand** first (`yield_per_worker_turn` of the working's ladder
+position plus the best `deposit_take_per_worker` among kits whose items the band holds live), then the
+**shortest walk**, then tile order - so a quarry outranks a nearer gathering site, and on a tie the
+nearer wins. One `Extract { tile, material }` row per band per mined material, `max_workers = None`,
+the working's default kit for its rung, priority = the order's. A target creates the row on the best
+site; a worked-out site or a strictly better one moves it; target 0 or no known rock removes it.
+
+> **The cargo rule.** A row is *pinned* (`row_is_pinned`) while its party is out
+> (`LaborAssignment::party`), a walk of that source is on `homeward`, or a build is declared on its
+> site. A pinned row neither moves nor goes: with the order gone it is staffed to nobody, its party
+> walks home through the ordinary cut path, and the first pass that finds it unpinned moves or
+> removes it. No stand-down code runs in the manager, so no path can strand a load.
+
+**Commands.** `keep_on_hand <faction> <band> <material> <target> <high|normal|low>` (both trailing
+fields required; `KeepOnHandCommand`, proto field 96) stores the order and restaffs at once. A
+material that is not mined is refused. `assign_labor ... extract x y <mined>`, `stop_labor x y <mined>`
+and `work_priority ... x y <mined>` are refused (`keep_on_hand::crewed_dig_refusal`: *Stone is kept on
+hand, not crewed - set how much to keep on the Stone sheet.*); `abandon` of a working and the `quarry`
+build verb are unchanged. The staffing preview refuses the same row with `mined_material_is_kept_on_hand`.
+
+**Wire** (`PopulationCohortState.keepOnHand`, appended): one `KeepOnHandState { material, target,
+priority, draw, hasSite, siteX, siteY }` per mined material the band has a site picked for or holds a
+nonzero target for (own bands only). On hand is the band's `materialStore`. The dig row is an ordinary
+`LaborAssignment` (`kind` extract) on the site; any extract row of a mined material is the dig row.
+`SAVE_FORMAT_VERSION` 60.
+
+Pinned by `keep_on_hand` tests (below staffing, site ranking, the cargo rule) and `server::tests::keep_on_hand_*`.
 
 **Wire** (`LaborAssignment`, appended): `maxWorkers` (`0` = no Max), `holdCrew`, `reachCrew`,
 `usefulCrew` (pass 3's ceiling, keepers included, after the Max), `keepersStaffed`, `kittedStaffed`, `bareStaffed` (the last three sum to `workers` on a staffed row).
@@ -266,8 +326,7 @@ after }` per row whose crew falls, High priority first then row order, declared 
 (`kind` is `build:<kind>` for their builders).
 
 **One staffing, two callers.** The row is built by the helpers `assign_labor` shares
-(`staffing_preview::{default_kit_for_target, working_as_it_stands,
-never_renewing_dig_without_a_count}`) and written onto a COPY of the band's allocation with
+(`staffing_preview::{default_kit_for_target, working_as_it_stands}`) and written onto a COPY of the band's allocation with
 `set_staffed_row` and `set_source_priority`; an existing row on that source is overwritten in place.
 The copy is staffed by `staffing::staff_allocation_copy` (`with_band_staffing_over` →
 `staff_rows_settled` with the band's bench and nobody lost → `apply_staffing` +
@@ -279,8 +338,8 @@ run). Nothing is written to the world.
 
 **Refusals** (`query_error` tokens): `unknown_band`, `unknown_herd`, `unknown_patch`,
 `unknown_deposit`, `unknown_kit`, `kit_wrong_job`, `invalid_floor`, `invalid_priority`, and
-`never_renewing_dig_without_a_count` (an extract row on ground that never renews with
-`max_workers` 0, the row `assign_labor` refuses by the same predicate). A hunt `follow` box has no
+`mined_material_is_kept_on_hand` (an extract row of a mined material, the row `assign_labor`
+refuses by the same predicate). A hunt `follow` box has no
 field.
 
 Pinned by `tests/staffing_preview.rs` (a new Normal row takes from the Low row and equals the
@@ -293,6 +352,7 @@ in `query_seat_gate.rs`, and `sim_runtime`'s `the_staffing_preview_round_trips`.
 | File | Purpose |
 |------|---------|
 | `src/data/labor_config.json` | `band_work_range` (**2**) is the apron: past it every job posts a party, and the walk is measured from it. `band_move_tiles_per_turn` (**1**) is read a second time as the party's walking speed — the walk out and every porter's walk home — and is validated `>= 1` for that reason. **No lever of this arc's own exists**: the share of a party on the road falls out of carry, take rate and distance |
+| `src/data/labor_config.json` (keep-on-hand) | `keep_on_hand_refill_turns` (**10**, validated `>= 1`, playtest dial): the turns a mined material's keep-on-hand deficit is spread over - the dig takes `draw + deficit / this` |
 | `src/data/supply_network_config.json` | Read, not written: `reach_tiles` is subtracted from `supply::free_pooling_reach_tiles` to give the **road bonus** — how much of a walk a road takes away. `friction` is **not** read: distance is paid in walking |
 | `src/data/materials.json` | Read, not written: every material's required **`weight`** — biomass-equivalent mass per unit, validated positive and finite — is what a deposit's pack is divided by (wood **2.4**, stone **3.0**; every value PROVISIONAL, stated in the file's `_comment_weight`) |
 | `src/data/equipment.json` | Read, not written: the extract kits `sledding` (`sled`), `woodcutting` (`sled` + `axe`) and `stonework` (`sled` + `wedges`), claimed whole like every job's kit, so a far working's porters haul on the sled on every rung |

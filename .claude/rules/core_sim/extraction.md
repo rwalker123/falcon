@@ -610,6 +610,15 @@ from a new camp.
 risk *from*, so what the row protects is the position itself. A working still on its free floor is a
 wild stand and its row goes.
 
+## A mined material is not crewed with `assign_labor extract` (#874)
+
+A deposit whose branch is `extraction` (stone) is staffed from a **keep-on-hand target**
+(`keep_on_hand <faction> <band> <material> <target> <priority>`); the sim places the one dig row per
+band on the best site and `assign_labor extract`, `stop_labor` and `work_priority` on such a material
+are refused. The floor, Max and per-site grammar above apply to `forestry` (wood) rows and to the
+sim-placed dig row only through its stored fields. The rule, the ranking and the cargo guarantee are
+in `work-party.md` -> "A mined material is kept on hand, not crewed".
+
 ## The three verbs — `fell`, `coppice`, `quarry`
 
 `build fell <faction> <x> <y> <material>`, and the same shape for the other two (`build coppice`,
