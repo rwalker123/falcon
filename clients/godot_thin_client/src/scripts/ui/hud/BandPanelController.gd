@@ -1263,8 +1263,9 @@ func _build_leader_block(band: Dictionary) -> Control:
 
 ## **THE TRIBE LINE** (#861), directly under the leader block: ONE line, `Tribe <split bar> with
 ## <partner> · <one short phrase>`, hovering to the rule and what is still missing; or one dim line when
-## no band lives with this one. `null` for a band with no tribe threshold (no leader yet, or a foreign
-## cohort). See `HudFormat.band_tribe_progress`.
+## no band lives with this one. A band with no leader of its own still gets the block (a chiefless band
+## has a tribe line too); `null` only when `HudFormat.band_tribe_progress` has nothing to draw (a foreign
+## cohort carrying no tribe data). See `HudFormat.band_tribe_progress`.
 func _build_tribe_block(band: Dictionary) -> Control:
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
     var others: Array = []

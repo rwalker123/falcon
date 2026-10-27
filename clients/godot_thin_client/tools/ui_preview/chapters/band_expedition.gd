@@ -1208,12 +1208,12 @@ const ANCESTORS_KIN_FAR_HOPS := 3
 const ANCESTORS_KIN_PLURAL_HOPS := 2
 const ANCESTORS_KIN_LONGEST_HOPS := 254
 const ANCESTORS_KIN_UNREACHED := 255
-const ANCESTORS_KIN_NEAR_ROW := "+0.6%  near the ancestors, through kin (1 hop)"
-const ANCESTORS_KIN_FAR_ROW := "−0.9%  far from the ancestors (12, 7), through kin"
+const ANCESTORS_KIN_NEAR_ROW := "+0.6%  close to its sacred ground through kin"
+const ANCESTORS_KIN_FAR_ROW := "−0.9%  far from its sacred ground, partly through kin"
 ## The row text, spelled as LITERALS — a needle composed through the format under test can only agree
 ## with itself.
-const ANCESTORS_NEAR_ROW := "+0.6%  near the ancestors"
-const ANCESTORS_FAR_ROW := "−0.9%  far from the ancestors (12, 7)"
+const ANCESTORS_NEAR_ROW := "+0.6%  close to its sacred ground"
+const ANCESTORS_FAR_ROW := "−0.9%  far from its sacred ground"
 ## The far band's belief anchor — the row names it in the `Position` row's coordinate form.
 const ANCESTORS_ANCHOR_X := 12
 const ANCESTORS_ANCHOR_Y := 7
@@ -1223,7 +1223,7 @@ const ANCESTORS_TILE_BELIEF := 12.4
 const ANCESTORS_TILE_ROW := "Ancestors: 12 dead"
 const ANCESTORS_TILE_BELIEF_UNDER_ONE := 0.4
 const ANCESTORS_TILE_ROW_UNDER_ONE := "Ancestors: <1 dead"
-const ANCESTORS_FAR_HEADLINE_CAUSE := "— far from the ancestors"
+const ANCESTORS_FAR_HEADLINE_CAUSE := "— far from its sacred ground"
 
 func _ancestors_states() -> void:
 	# NEAR: the healthy reference band, standing within reach of its dead.
@@ -1238,8 +1238,8 @@ func _ancestors_states() -> void:
 	await h._save("band_morale_ancestors_near")
 	var near_popover := _popover_text()
 	h._assert_hud("a band within reach of its belief place itemizes `%s`" % ANCESTORS_NEAR_ROW,
-		_kit_breakdown_line(near_popover, "near the ancestors").contains(ANCESTORS_NEAR_ROW)
-			and _kit_breakdown_line(near_popover, "near the ancestors").contains(
+		_kit_breakdown_line(near_popover, "close to its sacred ground").contains(ANCESTORS_NEAR_ROW)
+			and _kit_breakdown_line(near_popover, "close to its sacred ground").contains(
 				DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH))
 	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_NEAR)
 
@@ -1276,11 +1276,11 @@ func _ancestors_states() -> void:
 	await h._save("band_morale_ancestors_far")
 	var far_popover := _popover_text()
 	h._assert_hud("a band beyond reach of its belief place itemizes `%s`" % ANCESTORS_FAR_ROW,
-		_kit_breakdown_line(far_popover, "far from the ancestors").contains(ANCESTORS_FAR_ROW)
-			and _kit_breakdown_line(far_popover, "far from the ancestors").contains(
+		_kit_breakdown_line(far_popover, "far from its sacred ground").contains(ANCESTORS_FAR_ROW)
+			and _kit_breakdown_line(far_popover, "far from its sacred ground").contains(
 				DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH))
 	h._assert_hud("…and never under the word `culture`, which the cohesion row owns",
-		not _kit_breakdown_line(far_popover, "far from the ancestors").contains("culture"))
+		not _kit_breakdown_line(far_popover, "far from its sacred ground").contains("culture"))
 	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_FAR)
 
 	# THE KIN RELAY — APPENDED. The same two bands tied to their belief place through kin.
@@ -1296,7 +1296,7 @@ func _ancestors_states() -> void:
 	await h._settle()
 	await h._save("band_morale_ancestors_kin_near")
 	h._assert_hud("a band near its dead through kin says so — `%s`" % ANCESTORS_KIN_NEAR_ROW,
-		_kit_breakdown_line(_popover_text(), "near the ancestors").contains(ANCESTORS_KIN_NEAR_ROW))
+		_kit_breakdown_line(_popover_text(), "close to its sacred ground").contains(ANCESTORS_KIN_NEAR_ROW))
 	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_KIN_NEAR)
 
 	var kin_far := far.duplicate(true)
@@ -1307,23 +1307,23 @@ func _ancestors_states() -> void:
 	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_KIN_FAR)
 	await h._settle()
 	await h._save("band_morale_ancestors_kin_far")
-	var kin_far_line := _kit_breakdown_line(_popover_text(), "far from the ancestors")
+	var kin_far_line := _kit_breakdown_line(_popover_text(), "far from its sacred ground")
 	h._assert_hud("a relayed band whose blended term is negative reads `%s`, and no hop count"
 			% ANCESTORS_KIN_FAR_ROW,
 		kin_far_line.contains(ANCESTORS_KIN_FAR_ROW) and not kin_far_line.contains("hop"))
 	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_KIN_FAR)
 
-	# …and the hop-count edge cases, on the producer: plural, the 254 "or longer" cap, and 255
-	# (unreached), which keeps the plain wording.
+	# …and the kin relay at any hop count reads the same, with no count; 255 (unreached) keeps the plain wording.
 	var hop_rows := {}
 	for hops in [ANCESTORS_KIN_PLURAL_HOPS, ANCESTORS_KIN_LONGEST_HOPS, ANCESTORS_KIN_UNREACHED]:
 		var probe := kin_near.duplicate(true)
 		probe["belief_relay_hops"] = hops
 		hop_rows[hops] = "\n".join(h._hud._banddetail._morale_breakdown_lines(probe, ""))
-	h._assert_hud("2 hops reads `(2 hops)`, 254 reads `(254+ hops)`, and 255 (unreached) the plain `near the ancestors`",
-		String(hop_rows[ANCESTORS_KIN_PLURAL_HOPS]).contains("near the ancestors, through kin (2 hops)")
-		and String(hop_rows[ANCESTORS_KIN_LONGEST_HOPS]).contains("near the ancestors, through kin (254+ hops)")
-		and String(hop_rows[ANCESTORS_KIN_UNREACHED]).contains("near the ancestors")
+	h._assert_hud("2 and 254 hops read `close to its sacred ground through kin` with no count, and 255 (unreached) the plain `close to its sacred ground`",
+		String(hop_rows[ANCESTORS_KIN_PLURAL_HOPS]).contains("close to its sacred ground through kin")
+		and String(hop_rows[ANCESTORS_KIN_LONGEST_HOPS]).contains("close to its sacred ground through kin")
+		and not String(hop_rows[ANCESTORS_KIN_PLURAL_HOPS]).contains("hop")
+		and String(hop_rows[ANCESTORS_KIN_UNREACHED]).contains("close to its sacred ground")
 		and not String(hop_rows[ANCESTORS_KIN_UNREACHED]).contains("kin"))
 
 ## ---- THE BELIEFS ROW (#701) — `Beliefs | devout · traditional`, beneath Morale. A TRIO,
@@ -1349,9 +1349,9 @@ const BELIEFS_FLIPPED_TRADITIONAL := 0.27
 ## (The parsed text runs a table row's key and value cells together, so the key abuts the value.)
 const BELIEFS_TIED_ROW := "Beliefs ▸devout · traditional"
 const BELIEFS_FLIPPED_ROW := "Beliefs ▸secular · revisionist"
-const BELIEFS_TIED_TOOLTIP := "Devout 0.4, traditional 0.3. The ancestors pull this band +0.30 devout and +0.30 traditional."
-const BELIEFS_FLIPPED_TOOLTIP := "Secular 0.2, revisionist 0.3. The ancestors pull this band +0.30 secular and +0.30 revisionist."
-const BELIEFS_UNTIED_TOOLTIP := "Devout 0.4, traditional 0.3. Not tied to its dead. Stand within reach of them to be drawn toward devout, traditional ways."
+const BELIEFS_TIED_TOOLTIP := "Devout 0.4, traditional 0.3. Its sacred ground draws it toward devout, traditional ways."
+const BELIEFS_FLIPPED_TOOLTIP := "Secular 0.2, revisionist 0.3. Its sacred ground draws it toward secular, revisionist ways."
+const BELIEFS_UNTIED_TOOLTIP := "Devout 0.4, traditional 0.3. No sacred ground draws it yet."
 const BELIEFS_ROW_KEY := "Beliefs"
 ## The baseline band's table rows (Food, Fodder, Morale, Growth, Position): one row's height is the
 ## baseline content height over this, and a wrapped Beliefs value would add two rows' worth.
@@ -2351,7 +2351,7 @@ func _hay_ledger_states() -> void:
 			"orders_carried_out": 1.0}, "Runs all 32 people well",
 			"A chief runs about 150 people well. Past that, orders still go out, but less of each one is carried out."],
 		["reach_over", {"leader_name": "Orrin", "leader_kind": 2, "leader_reach": 150.0, "leader_load": 170.0,
-			"orders_carried_out": 0.94}, "Runs 150 of 170 people well",
+			"leader_orders_carried_out": 0.94}, "Runs 150 of 170 people well",
 			"The council runs about 150 people well. Past that, orders still go out, but less of each one is carried out — 94% now."],
 		["reach_tribe_over", reach_tribe.merged({"leader_name": "Orrin", "leader_kind": 1, "leader_reach": 150.0,
 			"leader_load": 90.0, "tribe_leader_reach": 4.0, "tribe_leader_load": 5.0, "orders_carried_out": 0.9}),
@@ -2359,6 +2359,11 @@ func _hay_ledger_states() -> void:
 		["reach_chiefless_member", reach_tribe.merged({"leader_name": "", "leader_kind": 0, "leader_reach": 0.0,
 			"leader_load": 0.0, "tribe_leader_reach": 4.0, "tribe_leader_load": 3.0, "orders_carried_out": 0.5}),
 			"", "has no chief of its own: 50% of each order is carried out here."],
+		["reach_tribe_member_over", reach_tribe.merged({"leader_name": "Orrin", "leader_kind": 1, "leader_reach": 150.0,
+			"leader_load": 170.0, "leader_orders_carried_out": 0.88, "orders_carried_out": 0.7,
+			"tribe_leader_reach": 4.0, "tribe_leader_load": 3.0}),
+			"Runs 150 of 170 people well",
+			"A chief runs about 150 people well. Past that, orders still go out, but less of each one is carried out — 88% now."],
 	]
 	for reach_case in reach_cases:
 		var reach_band := BandFx.band_fixture()
@@ -2384,6 +2389,10 @@ func _hay_ledger_states() -> void:
 				h._assert_hud("%s: the line is %s" % [reach_case[0], "amber" if reach_case[0] == "reach_over" else "dim"],
 					reach_text.text.contains(("[color=#%s]" % HudStyle.WARN.to_html(false)) if reach_case[0] == "reach_over"
 						else ("[color=#%s]%s" % [HudStyle.INK_DIM.to_html(false), reach_case[2]])))
+			"reach_tribe_member_over":
+				h._assert_hud("reach_tribe_member_over: the band line reads its OWN 88%%, not the tribe's 70%% (%s)" % reach_tip,
+					reach_plain.contains(String(reach_case[2])) and reach_tip == String(reach_case[3])
+					and not reach_tip.contains("70%"))
 			"reach_tribe_over":
 				h._assert_hud("reach_tribe_over: band reach line + one-line tribe line stretched (%s)" % reach_tribe_line.get_parsed_text(),
 					reach_plain.contains(String(reach_case[2])) and reach_tribe_line.get_line_count() == 1
@@ -2406,9 +2415,9 @@ func _hay_ledger_states() -> void:
 	var tribe_chiefless_case := {"leader_name": "", "leader_kind": 0, "leadership_practice": 7.0,
 		"leadership_threshold": 10.0, "leadership_from_builds": 7.0, "leadership_from_splits": 0.0,
 		"leadership_from_herd": 0.0, "leadership_from_stages": 0.0, "tribe_threshold": 0.0,
-		"tribe_standing": 0, "tribe_pairs": []}
+		"tribe_pairs": []}
 	var tribe_pairs_case := tribe_base.duplicate(true)
-	tribe_pairs_case.merge({"tribe_standing": 0, "tribe_pairs": [
+	tribe_pairs_case.merge({"tribe_pairs": [
 		{"partner_band": 7, "partner_name": "Ridgeway", "history": 0.4,
 			"contribution": {"origin": 0.0, "likeness": 2.2, "tie": 1.0, "history": 1.9, "belief": 0.0,
 			"monument": 0.0, "acting": 0.0}},
@@ -2425,7 +2434,7 @@ func _hay_ledger_states() -> void:
 	var tribe_formed_led_case := tribe_base.duplicate(true)
 	tribe_formed_led_case.merge(tribe_formed, true)
 	var tribe_alone_case := tribe_base.duplicate(true)
-	tribe_alone_case.merge({"tribe_standing": 1, "tribe_pairs": []}, true)
+	tribe_alone_case.merge({"tribe_pairs": []}, true)
 	for tribe_case in [["tribe_chiefless", tribe_chiefless_case], ["tribe_pairs", tribe_pairs_case],
 			["tribe_no_partner", tribe_alone_case], ["tribe_formed_chiefless", tribe_formed_chiefless_case],
 			["tribe_formed_led", tribe_formed_led_case]]:
@@ -2465,15 +2474,14 @@ func _hay_ledger_states() -> void:
 				tribe_line.tooltip_text == "\n".join([HudFormat.TRIBE_TOOLTIP_RULE,
 				"Keep sharing the network and the sacred ground 4 more turns",
 				"Raise a monument at the sacred ground",
-				"More belief at the sacred ground", "", "With: Snowreach, Ridgeway, Dunmere"]))
+				"A stronger sacred ground", "", "With: Snowreach, Ridgeway, Dunmere"]))
 		else:
 			h._assert_hud("tribe_no_partner: one dim line and the reason on hover (%s)" % tribe_text,
 				tribe_text == HudFormat.TRIBE_NO_PLACE_LINE
 				and tribe_line.tooltip_text == HudFormat.TRIBE_TOOLTIP_RULE + "\n" + HudFormat.TRIBE_NO_PLACE_TOOLTIP)
 	# A chiefless band's pull (#870): the Tribe row shows on every band with a threshold.
 	var joiner_base := tribe_chiefless_case.duplicate(true)
-	joiner_base.merge({"tribe_threshold": 9.0, "tribe_history_build_turns": 20.0, "tribe_weights": tribe_weights,
-		"tribe_standing": 0}, true)
+	joiner_base.merge({"tribe_threshold": 9.0, "tribe_history_build_turns": 20.0, "tribe_weights": tribe_weights}, true)
 	var joiner_pair := {"partner_band": 7, "partner_name": "Ridgeway", "history": 0.4,
 		"contribution": {"origin": 3.0, "likeness": 2.2, "tie": 1.0, "history": 1.9, "belief": 0.0,
 		"monument": 0.0, "acting": 0.0}}
@@ -2520,6 +2528,10 @@ func _hay_ledger_states() -> void:
 		"has_belief_anchor": true, "belief_anchor_x": 40, "belief_anchor_y": 37}, true)
 	var reason_far := reason_fen.duplicate(true)
 	reason_far["supply_network_id"] = 2
+	var reason_blank := reason_night.duplicate(true)
+	reason_blank.merge({"name": "Blankmere", "band_id": 64, "entity": 964, "has_belief_anchor": false}, true)
+	var reason_blank_two := reason_blank.duplicate(true)
+	reason_blank_two.merge({"name": "Blankfen", "band_id": 65, "entity": 965}, true)
 	var reason_no_place := reason_here.duplicate(true)
 	reason_no_place["has_belief_anchor"] = false
 	var reason_no_network := reason_here.duplicate(true)
@@ -2529,6 +2541,14 @@ func _hay_ledger_states() -> void:
 			["tribe_reason_different_place", reason_here, [reason_fen, reason_night],
 				HudFormat.TRIBE_DIFFERENT_PLACE_LINE,
 				"Bands become a tribe when they pool goods in one supply network and share one sacred ground.\nFernhollow honours different sacred ground from your other bands — see Beliefs."],
+			["tribe_reason_partner_no_place", reason_here, [reason_blank],
+				"Tribe: Blankmere has no sacred ground yet",
+				HudFormat.TRIBE_TOOLTIP_RULE + "\n" + HudFormat.TRIBE_NO_PLACE_TOOLTIP],
+			["tribe_reason_partners_no_place", reason_here, [reason_blank, reason_blank_two],
+				"Tribe: 2 bands have no sacred ground yet",
+				HudFormat.TRIBE_TOOLTIP_RULE + "\n" + HudFormat.TRIBE_NO_PLACE_TOOLTIP + "\nWithout sacred ground: Blankmere, Blankfen"],
+			["tribe_reason_different_beats_none", reason_here, [reason_blank, reason_fen],
+				HudFormat.TRIBE_DIFFERENT_PLACE_LINE, HudFormat.TRIBE_TOOLTIP_RULE],
 			["tribe_reason_no_network", reason_no_network, [reason_far], HudFormat.TRIBE_NO_NETWORK_LINE, HudFormat.TRIBE_NO_NETWORK_TOOLTIP],
 			["tribe_reason_alone", reason_here, [], HudFormat.TRIBE_ALONE_LINE, HudFormat.TRIBE_TOOLTIP_RULE]]:
 		var reason_band := BandFx.band_fixture()

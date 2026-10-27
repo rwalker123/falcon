@@ -1101,10 +1101,9 @@ pub(crate) struct HuntCrewLevers<'a> {
     pub(crate) drives_known: bool,
 }
 
-/// **A band's progress toward a tribe, as published** — the standing, the lever echoes and one row
+/// **A band's progress toward a tribe, as published** — the lever echoes and one row
 /// per partner band of its people. Built by [`tribe_progress`] off the checkpointed registry.
 pub(crate) struct TribeProgress {
-    pub(crate) standing: u8,
     pub(crate) threshold: f32,
     pub(crate) history_build_turns: f32,
     pub(crate) weights: sim_schema::TribeClosenessState,
@@ -1132,6 +1131,8 @@ pub(crate) struct ReachReadout {
     pub(crate) tribe_leader_reach: f32,
     pub(crate) tribe_leader_load: f32,
     pub(crate) orders_carried_out: f32,
+    /// The band's own leader's factor, whether or not it is in a tribe; 0 with no leader of its own.
+    pub(crate) leader_orders_carried_out: f32,
 }
 
 /// The reach fields of one own band: its own leader's reach and load when it has a leader, the
@@ -1159,6 +1160,7 @@ pub(crate) fn reach_readout(
         tribe_leader_reach: tribe.map_or(0.0, |r| r.reach as f32),
         tribe_leader_load: tribe.map_or(0.0, |r| r.load as f32),
         orders_carried_out: orders_carried_out as f32,
+        leader_orders_carried_out: own.map_or(0.0, |r| r.orders_carried_out(config) as f32),
     }
 }
 
@@ -1236,7 +1238,7 @@ pub(crate) fn tribe_progress(
     names: &BandNameLookup,
     leaders: &BandLeaderLookup,
 ) -> Option<TribeProgress> {
-    let standing = registry.standing_of(band)?;
+    registry.standing_of(band)?;
     let pairs = registry
         .pairs_of(band)
         .map(|(partner, score)| sim_schema::TribePairState {
@@ -1252,7 +1254,6 @@ pub(crate) fn tribe_progress(
         })
         .collect();
     Some(TribeProgress {
-        standing: standing.wire(),
         threshold: config.tribe_score_threshold as f32,
         history_build_turns: config.tribe_history_build_turns as f32,
         weights: tribe_contribution(
@@ -3175,7 +3176,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         independence_grievance_threshold: wellbeing.independence.grievance_threshold,
         culture_pressures,
         band_improvements,
-        tribe_standing: tribe.as_ref().map_or(0, |t| t.standing),
         tribe_threshold: tribe.as_ref().map_or(0.0, |t| t.threshold),
         tribe_history_build_turns: tribe.as_ref().map_or(0.0, |t| t.history_build_turns),
         tribe_weights: tribe.as_ref().map(|t| t.weights).unwrap_or_default(),
@@ -3196,6 +3196,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         tribe_leader_reach: reach.tribe_leader_reach,
         tribe_leader_load: reach.tribe_leader_load,
         orders_carried_out: reach.orders_carried_out,
+        leader_orders_carried_out: reach.leader_orders_carried_out,
         tribe_member_names: tribe_membership.map(|t| t.member_names).unwrap_or_default(),
         culture_traits,
         culture_ancestor_pull,

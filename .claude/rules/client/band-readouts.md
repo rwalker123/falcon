@@ -568,7 +568,7 @@ which is a property of the tier and not of the merge.
   a trend arrow (`▼` falling / `▲` rising / none when `|morale_delta| < MORALE_TREND_EPSILON`) and, when
   falling, the plain-language cause via `_morale_cause_label` — `Terrain`→"harsh terrain", `Cold`→"harsh
   climate" (the server penalty fires on hot **or** cold deviation, so not literally "cold"),
-  `Unrest`→"unrest", `Culture`→"far from the ancestors" (`DetailFormat.MORALE_CAUSE_CULTURE` /
+  `Unrest`→"unrest", `Culture`→"far from its sacred ground" (`DetailFormat.MORALE_CAUSE_CULTURE` /
   `MORALE_CAUSE_LABEL_CULTURE`: the band stands beyond walking reach of the belief place it remembers).
   Every surface that names a cause — this headline, the faction morale rollup, the turn orb's
   `AttentionController._decline_reason` — reads it through the one `DetailFormat.morale_cause_label`.
@@ -608,18 +608,15 @@ which is a property of the tier and not of the merge.
     contributions above `BandFoodStatus.morale_breakdown_epsilon()` (config `morale.breakdown_epsilon`
     = `0.002`) list. Labels: `settling`, `harsh terrain (<terrain_label>)` (matches the headline cause
     treatment), `harsh climate`, `unrest`/`culture` by sign, and the culture term `morale_culture` as
-    `near the ancestors` (positive, `BandDetailLines.MORALE_CONTRIB_LABEL_ANCESTORS_NEAR`) / `far from
-    the ancestors (x, y)` (negative, `DetailFormat.MORALE_CAUSE_LABEL_CULTURE` plus the band's belief
-    anchor in the `Position` row's coordinate form, `MORALE_CONTRIB_ANCESTORS_FAR_FORMAT`, read off
-    `has_belief_anchor` / `belief_anchor_x/y`; the bare label when the cohort carries no anchor). The
-    morale HEADLINE's cause stays the bare `far from the ancestors` — no coordinates on that line.
+    `close to its sacred ground` (positive, `BandDetailLines.MORALE_CONTRIB_LABEL_ANCESTORS_NEAR`) / `far
+    from its sacred ground` (negative, `DetailFormat.MORALE_CAUSE_LABEL_CULTURE`). No coordinates and no hop
+    counts are on screen (the Beliefs panel's [show ▸] finds the place); the morale HEADLINE's cause is the
+    same `far from its sacred ground`.
     **The kin relay** (`belief_relay_hops`, off `PopulationCohortState.beliefRelayHops`): a band with
-    an anchor and `1 ≤ hops ≤ 254` is tied to its belief place through that many bands of kin, and the
-    row says so — `near the ancestors, through kin (1 hop)` / `(n hops)` / `(254+ hops)` (254 is "254
-    or longer"), or `far from the ancestors (x, y), through kin`. The relayed term is a blend, so it is
-    often negative but softer; the SIGN still picks near vs far. The far row carries no hop count: the
-    coordinates already take the popover's second line, and the count yields before `through kin` does.
-    `0` (direct — also what a band with no anchor sends, so `has_belief_anchor` tells them apart) and
+    an anchor and `1 ≤ hops ≤ 254` is tied to its belief place through kin, and the row says so —
+    `close to its sacred ground through kin` / `far from its sacred ground, partly through kin` at any hop
+    count. The relayed term is a blend, so it is often negative but softer; the SIGN still picks near vs
+    far. `0` (direct — also what a band with no anchor sends, so `has_belief_anchor` tells them apart) and
     `255` (`BELIEF_RELAY_UNREACHED`: holds an anchor, no chain of kin reaches it) keep the plain
     wording. The culture term never reads
     as the word `culture`: that word is the positive-unrest (cohesion) row's. A band with no belief
@@ -1727,9 +1724,8 @@ with no pull adds nothing there (`_band_beliefs_compact_clause`).
 - **The ancestors mark** is `BandOverlayRenderer.ANCESTORS_GLYPH` in `HudStyle.BELIEF`, drawn only while
   the pull is non-zero on either axis (`BELIEFS_PULL_EPSILON`). The row's hover is registered on
   `ctx.row_tooltips` under `HudDisclosureVocab.DETAIL_ROW_BELIEFS`: with a pull,
-  `The ancestors pull this band +0.30 devout and +0.30 traditional.` (the two pull magnitudes, words by
-  the pull's own sign); without one, `Not tied to its dead. Stand within reach of them to be drawn
-  toward devout, traditional ways.`
+  `Its sacred ground draws it toward devout, traditional ways.` (words by the pull's own sign, no numbers);
+  without one, `No sacred ground draws it yet.`
 - **The row states the words only; the figures are in the hover.** `devout 0.4 · traditional` filled the
   narrow drawer's value column and the last figure wrapped, so the row is `devout · traditional` (plus
   the mark), one line. The hover leads with the values, `Devout 0.4, traditional 0.3.` (one decimal,
@@ -1882,12 +1878,16 @@ only: `partner_name`, `history`, `contribution`), decoded in `dict/population.rs
   missing lines are the single `Neither band has a chief: nothing builds until one of them has one.`
 - **Not in a tribe, no partner** (`tribe_pairs` empty): a dim line naming the real reason, read off the
   player's OWN bands (`BandPanelController._build_tribe_block` passes the other own, non-expedition
-  bands to `HudFormat.band_tribe_progress(entry, other_bands)`; the wire's `tribe_standing` is not
-  read). Tested in order, one line each: (a) `has_belief_anchor` false: `Tribe: no sacred ground
-  yet`; (b) another band in the same non-zero `supply_network_id` whose sacred ground
-  (`belief_anchor_x/y`) differs or is missing: `Tribe: different sacred ground`, a fixed phrase so
+  bands to `HudFormat.band_tribe_progress(entry, other_bands)`; the client works out the reason from the cohort fields
+  (`has_belief_anchor`, `belief_anchor_x/y`, `supply_network_id`). Tested in order, one line each: (a) `has_belief_anchor` false: `Tribe: no sacred ground
+  yet`; (b) another band in the same non-zero `supply_network_id` with a DIFFERENT sacred ground
+  (`belief_anchor_x/y`): `Tribe: different sacred ground`, a fixed phrase so
   no name can overflow it; the hover is exactly two lines and names no partner and no coordinates: the
   rule, then `<band> honours different sacred ground from your other bands — see Beliefs.`;
+  (b2) when every blocking same-network band has NO sacred ground: `Tribe: <name> has no sacred ground yet`
+  (several: `Tribe: N bands have no sacred ground yet` — the docked strip clips a longer line — with a
+  third hover line `Without sacred ground: A, B`), the hover the rule then `Sacred ground forms where a
+  band buries its people.`; a band with a different ground wins over (b2);
   (c) other bands exist but none shares the network (or this band's is 0): `Tribe: no shared supply network`; (d) no other band:
   `Tribe: no other band of your people`. The visible lines are kept short because the line is one
   non-wrapping `RichTextLabel` whose minimum width widens the docked card.
@@ -1895,13 +1895,13 @@ only: `partner_name`, `history`, `contribution`), decoded in `dict/population.rs
 
 The hover of the progress line is the rule (`Bands become a tribe when they pool goods in one supply
 network and share one sacred ground.`), then only what is still missing as actions, one per line
-(`Keep sharing the network and the sacred ground 4 more turns`, `Raise a monument at the ancestors'
-place`, `More belief at the sacred ground`, `A stronger tie with <name>`; `Forms next turn` when close), then a blank line and `With: A, B` naming
+(`Keep sharing the network and the sacred ground 4 more turns`, `Raise a monument at the sacred
+ground`, `A stronger sacred ground`, `A stronger tie with <name>`; `Forms next turn` when close), then a blank line and `With: A, B` naming
 EVERY local partner, which is where the names the line dropped are kept. Shared origin and culture are
 never listed: the player cannot change them. With no partner the line after the rule is the
 reason's hover from the list above (none for case (d)). 
 
 **Frames:** `tribe_chiefless` (no block), `tribe_pairs`, `tribe_no_partner`, `tribe_formed_chiefless`,
-`tribe_formed_led`, `tribe_joiner_*` and `tribe_reason_{no_place,different_place,no_network,alone}` in `band_expedition` (docked right, Band tab); the harness asserts one line, the
+`tribe_formed_led`, `tribe_joiner_*` and `tribe_reason_{no_place,different_place,partner_no_place,partners_no_place,different_beats_none,no_network,alone}` in `band_expedition` (docked right, Band tab); the harness asserts one line, the
 card's minimum width within the strip, the verbatim tooltips, a council-led tribe, and every suffix off
 the statics.

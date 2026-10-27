@@ -192,8 +192,7 @@ refreshes the anchors), `advance_leadership` (so a band crowned this turn counts
 migration, defection, independence and the culture splits.
 
 **On the wire.** Every own band's progress toward a tribe (a chiefless band can join one) rides
-`PopulationCohortState`, appended last: `tribeStanding` (0 local, 1 no urn, 2 no supply network, 3 alone;
-`sim_schema::TRIBE_STANDING_*`), `tribeThreshold` (`tribe_score_threshold`),
+`PopulationCohortState`, appended last: `tribeThreshold` (`tribe_score_threshold`),
 `tribeHistoryBuildTurns` (`tribe_history_build_turns`), `tribeWeights` (a `TribeClosenessState`: the
 seven weights, the most each input can add) and `tribePairs` (one `TribePairState` per local partner
 band of the band's people, partner id ascending: `partnerBand`, `partnerName`, raw
@@ -210,7 +209,9 @@ tribe, not progress. **Reach** is appended after `tribeLeaderKind` (floats, 0 = 
 `tribeLeaderReach` / `tribeLeaderLoad` (member bands; set for every own member band of a formed
 tribe, the `tribeLeaderName` rule) and `ordersCarriedOut` (the factor this band's orders arrive at:
 `tribe_orders_carried_out_for_member` for a tribe member, the band leader's own
-`orders_carried_out` for a chiefed band in no tribe, 0 with neither leader nor tribe). A foreign
+`orders_carried_out` for a chiefed band in no tribe, 0 with neither leader nor tribe) and `leaderOrdersCarriedOut` (appended last: the band's OWN leader's
+`LeaderReach::orders_carried_out` for its reach against its load, in or out of a tribe, 0 with no leader of
+its own; own bands only). A foreign
 band and an expedition party carry the defaults; the capture builds them in
 `snapshot::population::reach_readout`. A foreign band and an expedition party carry the defaults of
 the progress fields (threshold 0, which a client reads as nothing to show) and of the tribe fields

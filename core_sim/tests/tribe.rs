@@ -706,7 +706,6 @@ fn a_local_pair_publishes_each_input_times_its_weight_and_they_sum_to_the_score(
     let expected = closeness(&config, &stored[0].1);
 
     with_row(&mut app, 1, |row| {
-        assert_eq!(row.tribeStanding(), 0, "local");
         assert_eq!(row.tribeThreshold(), config.tribe_score_threshold as f32);
         assert_eq!(
             row.tribeHistoryBuildTurns(),
@@ -874,10 +873,9 @@ fn standing_says_why_a_band_is_not_in_reach() {
     assert_eq!(r.standing_of(id(3)), Some(TribeStanding::NoUrn));
     assert_eq!(r.standing_of(id(4)), Some(TribeStanding::NoNetwork));
     assert_eq!(r.standing_of(id(5)), Some(TribeStanding::NoUrn));
-    for (n, wire) in [(1, 3u8), (3, 1), (4, 2), (5, 1)] {
+    for n in [1, 3, 4, 5] {
         with_row(&mut app, n, |row| {
-            assert_eq!(row.tribeStanding(), wire, "band {n}");
-            assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
+            assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0, "band {n}");
         });
     }
 }
@@ -954,7 +952,6 @@ fn a_local_pair_with_no_leader_left_holds_its_history_and_a_parted_one_fades() {
     turns(&mut app, 10);
     assert!(registry(&app).shared_history(id(1), id(2)) < built);
     with_row(&mut app, 1, |row| {
-        assert_eq!(row.tribeStanding(), 3, "alone now");
         assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
     });
 }
@@ -972,7 +969,6 @@ fn a_foreign_band_publishes_the_defaults() {
     app.world.insert_resource(config);
     turns(&mut app, 3);
     with_row(&mut app, 3, |row| {
-        assert_eq!(row.tribeStanding(), 0);
         assert_eq!(row.tribeThreshold(), 0.0);
         assert_eq!(row.tribeHistoryBuildTurns(), 0.0);
         assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
@@ -1007,10 +1003,11 @@ fn the_scores_round_trip_the_checkpoint_so_a_load_publishes_progress() {
 
 #[test]
 fn reach_is_published_for_a_chiefed_band_a_tribe_member_and_a_chiefless_member() {
-    // Band 1 (chiefed, 40 people) and 2 (chiefed, 90) form a tribe with chiefless kin band 3.
+    // Band 1 (chiefed, 200 people: over its own reach) and 2 (chiefed, 300: the largest, so its chief is
+    // promoted to lead the tribe) form a tribe with chiefless kin band 3.
     let mut app = spawn_world();
-    member(&mut app, 1, 40, Some(PLACE_A), NET_1, 1);
-    member(&mut app, 2, 90, Some(PLACE_A), NET_1, 1);
+    member(&mut app, 1, 200, Some(PLACE_A), NET_1, 1);
+    member(&mut app, 2, 300, Some(PLACE_A), NET_1, 1);
     band(&mut app, 3, 60, Some(PLACE_A), NET_1);
     set_origin(&mut app, 3, 1);
     // A chiefed band in no tribe, over its reach.
@@ -1033,10 +1030,22 @@ fn reach_is_published_for_a_chiefed_band_a_tribe_member_and_a_chiefless_member()
     let reach = config.reach_chief_people as f32;
     let tribe_reach = config.reach_paramount_bands as f32;
     let eff = config.over_reach_efficiency as f32;
-    // Chiefed tribe member: its own reach and the tribe's; three bands is within reach 4.
+    // Chiefed tribe member over its own reach: the tribe factor (three bands is within reach) is
+    // in `ordersCarriedOut`, the band's own, lower factor in `leaderOrdersCarriedOut`.
+    let over = ((config.reach_chief_people
+        + config.over_reach_efficiency * (200.0 - config.reach_chief_people))
+        / 200.0) as f32;
+    assert!(over < 1.0);
     assert_eq!(
-        with_row(&mut app, 1, read),
-        (reach, 40.0, tribe_reach, 3.0, 1.0)
+        with_row(&mut app, 1, |row| (
+            row.leaderReach(),
+            row.leaderLoad(),
+            row.tribeLeaderReach(),
+            row.tribeLeaderLoad(),
+            row.ordersCarriedOut(),
+            row.leaderOrdersCarriedOut()
+        )),
+        (reach, 200.0, tribe_reach, 3.0, 1.0, over)
     );
     // Chiefless tribe member: no own reach, the tribe's, and the efficiency applied once.
     assert_eq!(
@@ -1044,10 +1053,15 @@ fn reach_is_published_for_a_chiefed_band_a_tribe_member_and_a_chiefless_member()
         (0.0, 0.0, tribe_reach, 3.0, eff)
     );
     // Chiefed, no tribe, over its reach: (150 + 0.5 * 50) / 200.
-    let over = ((config.reach_chief_people
-        + config.over_reach_efficiency * (200.0 - config.reach_chief_people))
-        / 200.0) as f32;
     assert_eq!(with_row(&mut app, 4, read), (reach, 200.0, 0.0, 0.0, over));
+    assert_eq!(
+        with_row(&mut app, 4, |row| row.leaderOrdersCarriedOut()),
+        over
+    );
+    assert_eq!(
+        with_row(&mut app, 3, |row| row.leaderOrdersCarriedOut()),
+        0.0
+    );
     // Neither leader nor tribe: nothing to show.
     assert_eq!(with_row(&mut app, 5, read), (0.0, 0.0, 0.0, 0.0, 0.0));
 }

@@ -8998,6 +8998,7 @@
       "leader_kind": 74,
       "leader_load": 9.03,
       "leader_name": "populations[0].leader_name",
+      "leader_orders_carried_out": 102.989998,
       "leader_reach": 111.169998,
       "leadership_from_builds": 37.580002,
       "leadership_from_herd": 93.699997,
@@ -9399,7 +9400,6 @@
           "partner_name": "populations[0].tribe_pairs[2].partner_name"
         }
       ],
-      "tribe_standing": 79,
       "tribe_threshold": 15.5,
       "tribe_weights": {
         "acting": 61.549999,
@@ -11524,6 +11524,7 @@
       "leader_kind": 81,
       "leader_load": 33.41,
       "leader_name": "populations[1].leader_name",
+      "leader_orders_carried_out": 13.69,
       "leader_reach": 68.720001,
       "leadership_from_builds": 41.080002,
       "leadership_from_herd": 49.389999,
@@ -11852,7 +11853,6 @@
           "partner_name": "populations[1].tribe_pairs[2].partner_name"
         }
       ],
-      "tribe_standing": 78,
       "tribe_threshold": 90.18,
       "tribe_weights": {
         "acting": 7.69,
@@ -13994,6 +13994,7 @@
       "leader_kind": 200,
       "leader_load": 54.830002,
       "leader_name": "populations[2].leader_name",
+      "leader_orders_carried_out": 57.200001,
       "leader_reach": 18.66,
       "leadership_from_builds": 38.580002,
       "leadership_from_herd": 20.91,
@@ -14395,7 +14396,6 @@
           "partner_name": "populations[2].tribe_pairs[2].partner_name"
         }
       ],
-      "tribe_standing": 165,
       "tribe_threshold": 52.619999,
       "tribe_weights": {
         "acting": 106.690002,

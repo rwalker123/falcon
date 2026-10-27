@@ -2109,11 +2109,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "leadership_from_stages",
         f64::from(cohort.leadershipFromStages()),
     );
-    // PROGRESS TOWARD A TRIBE (#861), own bands only: `tribe_standing` is 0 local, 1 no ancestors place, 2 no pooling
-    // network, 3 alone; `tribe_threshold` (0 until the band has a leader) the score that makes a pair close;
+    // PROGRESS TOWARD A TRIBE (#861), own bands only: `tribe_threshold` (0 until the band has a leader) the score that makes a pair close;
     // `tribe_history_build_turns` the turns of being local that fill shared history; `tribe_weights`
     // the most each input can add; `tribe_pairs` one row per band living with this one.
-    let _ = dict.insert("tribe_standing", i64::from(cohort.tribeStanding()));
     let _ = dict.insert("tribe_threshold", f64::from(cohort.tribeThreshold()));
     let _ = dict.insert(
         "tribe_history_build_turns",
@@ -2162,6 +2160,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("tribe_leader_reach", f64::from(cohort.tribeLeaderReach()));
     let _ = dict.insert("tribe_leader_load", f64::from(cohort.tribeLeaderLoad()));
     let _ = dict.insert("orders_carried_out", f64::from(cohort.ordersCarriedOut()));
+    let _ = dict.insert(
+        "leader_orders_carried_out",
+        f64::from(cohort.leaderOrdersCarriedOut()),
+    );
     let _ = dict.insert(
         "long_move_leaves_food",
         f64::from(cohort.longMoveLeavesFood()),

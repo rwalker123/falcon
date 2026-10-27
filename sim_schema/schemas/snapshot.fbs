@@ -1588,8 +1588,6 @@ table PopulationCohortState {
   bandImprovements:[BandImprovementState];
   // --- PROGRESS TOWARD A TRIBE (appended last, #861) ---
   // Own bands only: a foreign (redacted) row carries the defaults.
-  // Why the band is or is not in reach of a tribe: 0 local, 1 no urn, 2 no supply network, 3 alone.
-  tribeStanding:ubyte = 0;
   // leadership_config tribe_score_threshold: the closeness score at which a pair is close.
   tribeThreshold:float = 0;
   // leadership_config tribe_history_build_turns: turns of being local to fill shared history.
@@ -1634,6 +1632,10 @@ table PopulationCohortState {
   // The anchor's saturating weight s = b / (b + belief_half_saturation), in [0, 1): how much of the
   // culture term the band's ancestors carry. 0 with no anchor (hasBeliefAnchor false). Own bands only.
   beliefAnchorWeight:float = 0;
+  // The share of the band's OWN leader's orders that arrive, in (0, 1]: that leader's reach against
+  // the band's load, whether or not the band is in a tribe (ordersCarriedOut is the tribe factor
+  // for a member). 0 when the band has no leader of its own. Own bands only.
+  leaderOrdersCarriedOut:float = 0;
 }
 
 // ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH - a row of `PopulationCohortState.bandImprovements`,

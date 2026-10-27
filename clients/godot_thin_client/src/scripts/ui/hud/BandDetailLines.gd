@@ -159,11 +159,9 @@ const BELIEFS_TERM_SEPARATOR := " · "
 const BELIEFS_ANCESTORS_MARK_FORMAT := " [color=#%s]%s[/color]"
 ## A pull below this magnitude is no pull (float noise on an untied band's zero vector).
 const BELIEFS_PULL_EPSILON := 0.0005
-const BELIEFS_PULL_TOOLTIP_FORMAT := "The ancestors pull this band %s and %s."
-## A pull is stated as a magnitude TOWARD the word its sign names, so it is always `+`.
-const BELIEFS_PULL_TERM_FORMAT := "+%.2f %s"
-const BELIEFS_UNTIED_TOOLTIP_FORMAT := \
-    "Not tied to its dead. Stand within reach of them to be drawn toward %s, %s ways."
+const BELIEFS_PULL_TOOLTIP_FORMAT := "Its sacred ground draws it toward %s, %s ways."
+## A pull is stated as the word its sign names; no figure.
+const BELIEFS_UNTIED_TOOLTIP := "No sacred ground draws it yet."
 
 # ---- THE GROWTH ROW AS A CLAUSE ON THE MORALE LINE, for the `compact` (SHORT band-zone tier) host —
 # the second merge this tier makes, and the same trade for the same reason as the hay clause above:
@@ -277,24 +275,17 @@ const MORALE_TREND_RISING_GLYPH := "▲"
 # contribution reads as "culture" (cohesion), negative as "unrest".
 const MORALE_CONTRIB_LABEL_SETTLING := "settling"
 const MORALE_CONTRIB_LABEL_CULTURE := "culture"
-# A positive `morale_culture` (within walking reach of the remembered belief place) reads as "near the
-# ancestors"; a negative one reads `DetailFormat.MORALE_CAUSE_LABEL_CULTURE` ("far from the ancestors").
-const MORALE_CONTRIB_LABEL_ANCESTORS_NEAR := "near the ancestors"
-# The negative row NAMES THE PLACE — "far from the ancestors (x, y)", the anchor tile in the `Position`
-# row's coordinate form — so the player knows where to walk back to. Only when the band has an anchor.
-const MORALE_CONTRIB_ANCESTORS_FAR_FORMAT := "%s (%d, %d)"
-# THE KIN RELAY (`belief_relay_hops`): a band tied to its belief place through n bands of kin says so
-# on the culture row — `near the ancestors, through kin (1 hop)`, or the far wording with its
-# coordinates and `, through kin`. The far row carries NO hop count: the coordinates already take the
-# popover's second line, and the hop count is what yields before "through kin" does (two-line limit).
-# 0 is direct (and also what a band with no anchor sends), 255 unreached: both keep the plain wording.
+# A positive `morale_culture` (within walking reach of the remembered belief place) reads as "close to
+# its sacred ground"; a negative one reads `DetailFormat.MORALE_CAUSE_LABEL_CULTURE` ("far from its
+# sacred ground"). No coordinates and no hop counts on screen: the Beliefs panel's [show ▸] finds the place.
+const MORALE_CONTRIB_LABEL_ANCESTORS_NEAR := "close to its sacred ground"
+# THE KIN RELAY (`belief_relay_hops`): a band tied to its belief place through kin says so on the
+# culture row -- `close to its sacred ground through kin`, `far from its sacred ground, partly through
+# kin`. 0 is direct (and also what a band with no anchor sends), 255 unreached: both keep the plain wording.
 const BELIEF_RELAY_DIRECT := 0
-const BELIEF_RELAY_LONGEST := 254       # a chain of 254 hops OR LONGER
 const BELIEF_RELAY_UNREACHED := 255     # mirrors `sim_schema::BELIEF_RELAY_UNREACHED`
-const MORALE_CONTRIB_THROUGH_KIN := ", through kin"
-const MORALE_CONTRIB_KIN_HOP_FORMAT := " (%d hop)"
-const MORALE_CONTRIB_KIN_HOPS_FORMAT := " (%d hops)"
-const MORALE_CONTRIB_KIN_HOPS_LONGEST_FORMAT := " (%d+ hops)"
+const MORALE_CONTRIB_NEAR_THROUGH_KIN := " through kin"
+const MORALE_CONTRIB_FAR_THROUGH_KIN := ", partly through kin"
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 # The snapshot herd list, for a raiding party's migrating target.
@@ -941,8 +932,7 @@ func _belief_reading(unit_data: Dictionary) -> Dictionary:
     var sentence := ""
     if pulling:
         sentence = BELIEFS_PULL_TOOLTIP_FORMAT % [
-            BELIEFS_PULL_TERM_FORMAT % [absf(pull_devout), _devout_word(pull_devout)],
-            BELIEFS_PULL_TERM_FORMAT % [absf(pull_traditional), _traditional_word(pull_traditional)]]
+            _devout_word(pull_devout), _traditional_word(pull_traditional)]
     return {"terms": terms, "values": values, "pulling": pulling, "pull_sentence": sentence,
         "at_risk": at_risk, "drift": _drift_reading(unit_data)}
 
@@ -961,7 +951,7 @@ func _beliefs_hover(reading: Dictionary) -> String:
     if bool(reading["pulling"]):
         text += String(reading["pull_sentence"])
     else:
-        text += BELIEFS_UNTIED_TOOLTIP_FORMAT % [BELIEFS_WORD_DEVOUT, BELIEFS_WORD_TRADITIONAL]
+        text += BELIEFS_UNTIED_TOOLTIP
     var drift: Dictionary = reading["drift"]
     if not drift.is_empty():
         text += " " + String(drift["sentence"])
@@ -1341,27 +1331,21 @@ func _fertility_breakdown_lines(unit_data: Dictionary) -> Array[String]:
         lines.append(DetailFormat.fertility_breakdown_row(factor, entry[1]))
     return lines
 
-## The negative culture row's label: `far from the ancestors (x, y)` naming the band's belief anchor,
-## or the bare label when the cohort carries no anchor.
+## The negative culture row's label: `far from its sacred ground`, plus `, partly through kin` when the
+## band is tied in through kin.
 func _ancestors_far_label(unit_data: Dictionary) -> String:
-    if not bool(unit_data.get("has_belief_anchor", false)):
-        return DetailFormat.MORALE_CAUSE_LABEL_CULTURE
-    var label := MORALE_CONTRIB_ANCESTORS_FAR_FORMAT % [DetailFormat.MORALE_CAUSE_LABEL_CULTURE,
-        int(unit_data.get("belief_anchor_x", 0)), int(unit_data.get("belief_anchor_y", 0))]
+    var label := DetailFormat.MORALE_CAUSE_LABEL_CULTURE
     if _belief_relay_hops(unit_data) > BELIEF_RELAY_DIRECT:
-        label += MORALE_CONTRIB_THROUGH_KIN
+        label += MORALE_CONTRIB_FAR_THROUGH_KIN
     return label
 
-## The positive culture row's label: `near the ancestors`, plus `, through kin (n hops)` when the band
-## is tied in through kin.
+## The positive culture row's label: `close to its sacred ground`, plus ` through kin` when the band is
+## tied in through kin.
 func _ancestors_near_label(unit_data: Dictionary) -> String:
-    var hops := _belief_relay_hops(unit_data)
-    if hops == BELIEF_RELAY_DIRECT:
-        return MORALE_CONTRIB_LABEL_ANCESTORS_NEAR
-    var count_format := MORALE_CONTRIB_KIN_HOP_FORMAT if hops == 1 else MORALE_CONTRIB_KIN_HOPS_FORMAT
-    if hops >= BELIEF_RELAY_LONGEST:
-        count_format = MORALE_CONTRIB_KIN_HOPS_LONGEST_FORMAT
-    return MORALE_CONTRIB_LABEL_ANCESTORS_NEAR + MORALE_CONTRIB_THROUGH_KIN + count_format % hops
+    var label := MORALE_CONTRIB_LABEL_ANCESTORS_NEAR
+    if _belief_relay_hops(unit_data) > BELIEF_RELAY_DIRECT:
+        label += MORALE_CONTRIB_NEAR_THROUGH_KIN
+    return label
 
 ## The band's kin-relay hop count, or `BELIEF_RELAY_DIRECT` when it is not tied in through kin — no
 ## anchor, direct, or unreached (255) all answer 0, which is what keeps their wording plain.

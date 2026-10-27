@@ -258,7 +258,7 @@ static func band_leader_reach(entry: Dictionary) -> Dictionary:
         else BAND_REACH_TIP_CHIEF_SUBJECT
     var tooltip := BAND_REACH_TIP_FORMAT % [subject, int(roundf(reach))]
     if over:
-        tooltip += BAND_REACH_TIP_NOW_FORMAT % int(roundf(float(entry.get("orders_carried_out", 1.0)) * REACH_PERCENT_SCALE))
+        tooltip += BAND_REACH_TIP_NOW_FORMAT % int(roundf(float(entry.get("leader_orders_carried_out", 1.0)) * REACH_PERCENT_SCALE))
     return {"line": line, "tooltip": tooltip + BAND_REACH_TIP_END, "over": over}
 
 ## The segment hues, in `CHIEF_SOURCE_KEYS` order. Read at call time because `HudStyle`'s palette is
@@ -637,7 +637,7 @@ static func meter_bar(score: float, cells: int) -> String:
 
 ## `Tribe <bar> with Snowreach · 4 turns`: the word, the split bar, the partner and one short phrase.
 const TRIBE_ROW_LABEL := "Tribe"
-## The no-partner reasons, read off the player's own bands (never the wire's `tribe_standing`), in the
+## The no-partner reasons, read off the player's own bands (the cohort fields, not a wire verdict), in the
 ## order they are tested: this band has no sacred ground; another band is in its supply network but
 ## holds a different place; no other band shares its supply network; there is no other band at all.
 const TRIBE_NO_PLACE_LINE := "Tribe: no sacred ground yet"
@@ -645,6 +645,12 @@ const TRIBE_NO_PLACE_TOOLTIP := "Sacred ground forms where a band buries its peo
 const TRIBE_DIFFERENT_PLACE_LINE := "Tribe: different sacred ground"
 ## The hover on the different-place line: this band's own fact, no partner and no coordinates.
 const TRIBE_DIFFERENT_PLACE_TOOLTIP_FORMAT := "%s honours different sacred ground from your other bands — see Beliefs."
+## A same-network band that has no sacred ground of its own blocks the tribe too; named when no band
+## with a DIFFERENT ground does (that reason wins).
+const TRIBE_PARTNER_NO_PLACE_LINE_FORMAT := "Tribe: %s has no sacred ground yet"
+## Several such bands: the count on the line (the docked strip clips a longer one), the names on the hover.
+const TRIBE_PARTNERS_NO_PLACE_LINE_FORMAT := "Tribe: %d bands have no sacred ground yet"
+const TRIBE_PARTNERS_NO_PLACE_NAMES_FORMAT := "Without sacred ground: %s"
 const TRIBE_NO_NETWORK_LINE := "Tribe: no shared supply network"
 const TRIBE_NO_NETWORK_TOOLTIP := "Bands in one supply network pool goods; link this band to the others."
 const TRIBE_ALONE_LINE := "Tribe: no other band of your people"
@@ -665,7 +671,7 @@ const TRIBE_TOOLTIP_NEEDS_CHIEF := "Neither band has a chief: nothing builds unt
 const TRIBE_TOOLTIP_TURNS_FORMAT := "Keep sharing the network and the sacred ground %d more turns"
 const TRIBE_TOOLTIP_ONE_TURN := "Keep sharing the network and the sacred ground 1 more turn"
 const TRIBE_TOOLTIP_MONUMENT := "Raise a monument at the sacred ground"
-const TRIBE_TOOLTIP_BELIEF := "More belief at the sacred ground"
+const TRIBE_TOOLTIP_BELIEF := "A stronger sacred ground"
 const TRIBE_TOOLTIP_TIE_FORMAT := "A stronger tie with %s"
 const TRIBE_TOOLTIP_WITH_FORMAT := "With: %s"
 ## A formed tribe: `Tribe: Sandreach tribe · 3 bands` (`tribe_name` already ends in "tribe"), its hover the member bands then who leads it.
@@ -852,21 +858,31 @@ static func tribe_no_partner_view(entry: Dictionary, other_bands: Array) -> Dict
     elif not other_bands.is_empty():
         var network := int(entry.get("supply_network_id", SUPPLY_NETWORK_NONE))
         var differs := false
+        var groundless: Array[String] = []
         for other in other_bands:
             if network == SUPPLY_NETWORK_NONE or int(other.get("supply_network_id", SUPPLY_NETWORK_NONE)) != network:
                 continue
-            if bool(other.get("has_belief_anchor", false)) \
-                    and int(other.get("belief_anchor_x", 0)) == int(entry.get("belief_anchor_x", 0)) \
+            if not bool(other.get("has_belief_anchor", false)):
+                groundless.append(band_name(other))
+                continue
+            if int(other.get("belief_anchor_x", 0)) == int(entry.get("belief_anchor_x", 0)) \
                     and int(other.get("belief_anchor_y", 0)) == int(entry.get("belief_anchor_y", 0)):
                 continue
             differs = true
             break
-        if not differs:
-            line = TRIBE_NO_NETWORK_LINE
-            tooltip.append(TRIBE_NO_NETWORK_TOOLTIP)
-        else:
+        if differs:
             line = TRIBE_DIFFERENT_PLACE_LINE
             tooltip.append(TRIBE_DIFFERENT_PLACE_TOOLTIP_FORMAT % here)
+        elif not groundless.is_empty():
+            tooltip.append(TRIBE_NO_PLACE_TOOLTIP)
+            if groundless.size() == 1:
+                line = TRIBE_PARTNER_NO_PLACE_LINE_FORMAT % groundless[0]
+            else:
+                line = TRIBE_PARTNERS_NO_PLACE_LINE_FORMAT % groundless.size()
+                tooltip.append(TRIBE_PARTNERS_NO_PLACE_NAMES_FORMAT % TRIBE_NAME_SEPARATOR.join(groundless))
+        else:
+            line = TRIBE_NO_NETWORK_LINE
+            tooltip.append(TRIBE_NO_NETWORK_TOOLTIP)
     return {"line": "[color=#%s]%s[/color]" % [HudStyle.INK_FAINT.to_html(false), line],
         "tooltip": "\n".join(tooltip), "has_partner": false}
 

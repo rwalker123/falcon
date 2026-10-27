@@ -69,7 +69,7 @@ const MORALE_CAUSE_LABEL_COLD := "harsh climate"
 const MORALE_CAUSE_LABEL_UNREST := "unrest"
 
 # Deliberately not "culture": the positive-unrest breakdown row already reads "culture" (cohesion).
-const MORALE_CAUSE_LABEL_CULTURE := "far from the ancestors"
+const MORALE_CAUSE_LABEL_CULTURE := "far from its sacred ground"
 
 # |morale_delta| below this (0.5%/turn) reads as flat (no arrow), so trivial drift — nearly every tile
 # bleeds a hair today — isn't shown as a decline. (The ▲/▼ ARROWS are `BandDetailLines`', the only
