@@ -643,6 +643,35 @@
           "hint": "Closeness two bands get while a monument stands kept on their shared urn."
         }
       ]
+    },
+    {
+      "kind": "turn_pipeline",
+      "label": "Turn pipeline",
+      "env_var": "TURN_PIPELINE_CONFIG_PATH",
+      "params": [
+        {
+          "pointer": "/population/attrition_morale_tolerance",
+          "label": "Terrain morale allowance",
+          "type": "float",
+          "min": 0,
+          "max": 0.5,
+          "step": 0.01,
+          "default": 0.05,
+          "unit": "attrition",
+          "hint": "Attrition the gentlest ground carries without costing morale. Only a terrain's attrition above this drains morale each turn. 0: every terrain drains. High: rough ground stops mattering."
+        },
+        {
+          "pointer": "/population/fresh_water_morale_bonus",
+          "label": "Fresh water morale",
+          "type": "float",
+          "min": 0,
+          "max": 0.05,
+          "step": 0.001,
+          "default": 0.005,
+          "unit": "morale",
+          "hint": "Morale a band gains each turn standing on or beside fresh water — a river along its tile, a lake or marsh next door. 0: water does nothing for morale."
+        }
+      ]
     }
   ]
 }

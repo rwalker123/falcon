@@ -585,9 +585,9 @@ which is a property of the tier and not of the merge.
   restored band keeps its delta and cause; the sentinel answers for a cohort no turn has resolved.
 - **Civilization Wellbeing — productivity, itemized morale, recovery** (see
   `docs/plan_civ_wellbeing.md`; snapshot `PopulationCohortState.outputMultiplier` /
-  `discontentFraction` / `lastEmigrated` / `lastImmigrated` / `grievance` + the six signed
+  `discontentFraction` / `lastEmigrated` / `lastImmigrated` / `grievance` + the seven signed
   Layer-1 contributions `moraleSettling` / `moraleTerrain` / `moraleClimate` / `moraleUnrest` /
-  `moraleCulture` / `moraleCohesion`,
+  `moraleCulture` / `moraleFreshWater` / `moraleCohesion`,
   decoded in `native/src/lib.rs population_to_dict` as `output_multiplier` / `discontent_fraction`
   / `last_emigrated` / `last_immigrated` / `grievance` (telemetry only, not displayed in P1) /
   `morale_settling` / `morale_terrain` / `morale_climate` / `morale_unrest` / `morale_culture` / `morale_cohesion`, all
@@ -609,10 +609,12 @@ which is a property of the tier and not of the merge.
     renderer's `"Output"` tint branch and `hex_for_output` itself all went with the row — no emitter
     or caller survived — so nothing in the detail path carries the scalar any more. The head item's placement, gate and vocabulary are
     specified in `band-city-panel.md` → Zone `work`.
-  - **Itemized morale breakdown** (`_morale_breakdown_lines`): the six signed contributions
+  - **Itemized morale breakdown** (`_morale_breakdown_lines`): the seven signed contributions
     (their sum IS `morale_delta`) as indented sub-lines (e.g. `    ▲ +1.0%  settling`). Only
     contributions above `BandFoodStatus.morale_breakdown_epsilon()` (config `morale.breakdown_epsilon`
-    = `0.002`) list. Labels: `settling`, `terrain (<terrain_label>)` / `climate`, each prefixed `harsh` on Harsh/Hostile ground (matches the headline cause
+    = `0.002`) list, in the order settling, terrain, climate, unrest, culture, fresh water, cohesion. `morale_fresh_water`
+    (`moraleFreshWater`; the band's tile on or beside fresh water) lists as `fresh water`
+    (`BandDetailLines.MORALE_CONTRIB_LABEL_FRESH_WATER`), never negative and never a morale cause. Labels: `settling`, `terrain (<terrain_label>)` / `climate`, each prefixed `harsh` on Harsh/Hostile ground (matches the headline cause
     treatment), `unrest`/`culture` by sign, and the culture term `morale_culture` as
     `near the ancestors` (positive, `BandDetailLines.MORALE_CONTRIB_LABEL_ANCESTORS_NEAR`) / `far from
     the ancestors (x, y)` (negative, `DetailFormat.MORALE_CAUSE_LABEL_CULTURE` plus the band's belief

@@ -30,6 +30,7 @@ paths:
 
 | File | Purpose |
 |------|---------|
+| `src/data/turn_pipeline_config.json` → `population` | The place-based morale levers: `attrition_penalty_scale` (**0.2**), `hardness_penalty_scale` (**0.05**), `attrition_morale_tolerance` (**0.05** — terrain attrition up to this rate drains no morale; finite, `>= 0`), `fresh_water_morale_bonus` (**0.005** — morale per turn on fresh-watered ground; finite, `>= 0`). OPENING VALUES, playtest levers; the last two are stageable in the Workbench as the `turn_pipeline` kind (env `TURN_PIPELINE_CONFIG_PATH`) |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population/belief), and saturation `references` |
 | `src/data/mobility_config.json` | Mobility Score tuning (strict: required fields, unknown keys refused, no hand `Default`): EMA `smoothing` (**0.95**, in `[0, 1)`), input `weights` (`skills` **0.5**, `distance` **0.5**, finite and `>= 0`), and `references.hexes_per_turn` (**1.0**, `> 0`, equal to `labor_config.json` `band_move_tiles_per_turn` so a band walking every turn at full pace saturates). OPENING VALUES, playtest levers; stageable in the Workbench as the `mobility` kind, env override `MOBILITY_CONFIG_PATH` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), **`keeping`** (how food keeps, #706 — `classes`, each `{ id, shelf_life_turns }`: **`flesh` 4.0**, **`fresh_plant` 8.0**, **`dry` 60.0**; `startup_class` **`dry`**, the class the opening reserve is seeded into; `plant_fallback_class` **`fresh_plant`** / `kill_fallback_class` **`flesh`**, where a take's food lands when no species says; **`preservation`** (#708, a list of `{ rung, class, shelf_life_turns }` — the value a class's shelf life takes while a band holds that store rung: `camp_stores:drying_rack` flesh **20**, `food_stores:storage_pit` dry **180**, PLAYTEST DIALS; see "What a store buys" below). Validated at parse — unique ids, finite positive shelf lives, every named class present — and every fauna/flora species' `keeping` is reconciled against it at boot; see "Food spoils by keeping class" below), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `lineage.founding_lines` (`L`, **8**, a `NonZeroU16` so `0` is a parse error — how many founding lines a starting band holds; see "Founding lines" below), `lineage.people_per_line` (`K`, **19**, a `NonZeroU16` — how many people one line carries before births stop; an isolated starting band ceilings at `L × K` = 152, pinned above the shipped `band_size` by `demographics_config::tests::the_shipped_starting_band_opens_below_its_breeding_ceiling`; see "The breeding ceiling" below), `lineage.free_breeding_at` (**500** PEOPLE, a `NonZeroU32` — the head-count at which a people breeds freely for good: a people is latched into `FreeBreedingPeoples`, and no population of it is capped again, in the pre-pass of the turn a breeding population opens at it or its own ceiling is at least it and its uncapped births carry it there (that turn's births are uncapped, so the head-count can pass it); before the latch the effective ceiling is `min(shared ceiling, free_breeding_at)`; pinned above the shipped `L × K` by `demographics_config::tests::the_shipped_lone_band_ceiling_sits_below_the_free_breeding_size`, so a lone band opens capped; see "The breeding ceiling" below), `lineage.shed_share` (**0.25**, an `f32` validated in `(0, 1]` at parse: the share of a breeding population's excess over its ceiling that leaves each turn, a PLAYTEST DIAL; see "Shedding above the ceiling" below), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
@@ -335,11 +336,11 @@ table exists to make impossible.
 
 **Morale attribution (why morale/population falls).** Morale is now computed as the signed sum of a
 **named contributor set** (`MoraleContributions` on the cohort — the Layer-1 spine of Civilization
-Wellbeing, below): `settling` (`+population_growth_rate`), `terrain` (`−terrain pressure`),
+Wellbeing, below): `settling` (`+population_growth_rate`), `terrain` (`−terrain pressure`, net of the allowance below),
 `climate` (`−cold pressure`), `unrest` (crisis impacts + cultural sentiment, signed), `culture`
 (near / far from the band's belief anchor, signed — `belief.md` → "The culture morale term"), `cohesion`
 (the band over its cohesion ceiling, ≤ 0 — `belief.md` → "The cohesion morale
-term"). Their
+term"), `fresh_water` (≥ 0, below). Their
 sum IS
 `last_morale_delta`; adding a future factor is a new `MoraleFactor` variant + one field, not a
 rewrite of the morale update. The dominant *negative* contributor becomes `last_morale_cause`
@@ -351,12 +352,26 @@ formula").
 Starvation is deliberately **not** a morale cause — it stays on the days-of-food path. The two
 place-based (negative) terms come from the shared **`tile_morale_pressure(terrain, temperature,
 &MoralePressureConfig)`** helper (`systems.rs`), which returns the tile-intrinsic per-turn morale
-drain (terrain + cold, ≥ 0; KarstCavernMouth ≈ 0.0825 at ambient temperature) so the sim and the
+drain (terrain + cold, ≥ 0; KarstCavernMouth ≈ 0.0725 at ambient temperature) so the sim and the
 snapshot read from one source. The cold term has a **tolerance dead-band**: `max(0, |temp − ambient|
 − temperature_morale_tolerance) × temperature_morale_penalty` (config `temperature_morale_tolerance`
 = 9.0 in `simulation_config.json`), so temperate mid-latitudes (|Δ| ≤ 9°) bleed **zero** climate
 morale and only genuine extremes (poles/high-alt/equator) drain — e.g. at ambient 18° a −5° pole
-(|Δ| = 23°) drains `(23−9)·0.004 = 0.056`, a 30° equator (|Δ| = 12°) drains `0.012`. Habitability
+(|Δ| = 23°) drains `(23−9)·0.004 = 0.056`, a 30° equator (|Δ| = 12°) drains `0.012`.
+The terrain term has the same dead-band shape: `max(0, attrition_rate − attrition_morale_tolerance) ×
+attrition_penalty_scale + max(0, logistics_penalty − 1) × hardness_penalty_scale`. At the shipped
+`attrition_morale_tolerance` = 0.05 the gentlest ground (AlluvialPlain, attrition 0.05, logistics
+0.95) drains nothing, so settling's gain is kept there; Floodplain (0.08, 1.05) drains
+`0.03 × 0.2 + 0.05 × 0.05 = 0.0085`; KarstCavernMouth ≈ 0.0725. The allowance lives in
+`MoralePressureConfig`, so `habitability` (the tile's `tile_morale_pressure` total) and the morale
+term stay one computation. **Fresh water** is a separate, positive Layer-1 term, never part of
+`habitability` and never a `MoraleCause`: `+fresh_water_morale_bonus` (0.005) while the band's
+CURRENT tile is fresh-watered by `forage::tile_is_fresh_watered` (FRESHWATER tag, any river edge,
+or a FRESHWATER neighbour; a salt coast does not count), resolved in the `simulate_population`
+pre-pass beside culture and cohesion (`resolve_fresh_water_terms`). Published as
+`moraleFreshWater:long` (native dict `morale_fresh_water`). Both levers are in
+`turn_pipeline_config.json` → `population`, validated finite and `>= 0` at parse; both are Workbench rows under the
+`turn_pipeline` kind. Tests: `core_sim/tests/fresh_water_morale.rs`. Habitability
 reuses this helper, so most of the map rates Hospitable/Fair and only extremes read Harsh/Hostile. These fields are **recomputed each turn** by
 `simulate_population`. Exported as `PopulationCohortState.moraleDelta`
 (fixed-point `long`, `FIXED_POINT_SCALE` = 1e6) + `moraleCause:ubyte` (`0=None, 1=Terrain, 2=Cold,

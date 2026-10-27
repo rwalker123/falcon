@@ -1260,6 +1260,7 @@ fn create_populations<'a>(
                     moraleCohesion: cohort.morale_cohesion,
                     cohesionHeadcount: cohort.cohesion_headcount,
                     cohesionCeiling: cohort.cohesion_ceiling,
+                    moraleFreshWater: cohort.morale_fresh_water,
                 },
             )
         })
@@ -2196,6 +2197,7 @@ fn decode_population(
         morale_cohesion: cohort.moraleCohesion(),
         cohesion_headcount: cohort.cohesionHeadcount(),
         cohesion_ceiling: cohort.cohesionCeiling(),
+        morale_fresh_water: cohort.moraleFreshWater(),
     })
 }
 

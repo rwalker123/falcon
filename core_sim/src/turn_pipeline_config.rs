@@ -29,7 +29,9 @@ impl TurnPipelineConfig {
     }
 
     pub fn from_json_str(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
+        let config: Self = serde_json::from_str(json)?;
+        config.population.validate()?;
+        Ok(config)
     }
 
     pub fn from_file(path: &Path) -> Result<Self, TurnPipelineConfigError> {
@@ -75,6 +77,10 @@ impl ConfigLoadError for TurnPipelineConfigError {
 #[serde(default)]
 pub struct PopulationPhaseConfig {
     attrition_penalty_scale: f32,
+    /// Terrain attrition up to this rate drains no morale (the terrain dead-band).
+    attrition_morale_tolerance: f32,
+    /// Morale per turn a band gains while standing on fresh-watered ground.
+    fresh_water_morale_bonus: f32,
     hardness_penalty_scale: f32,
     temperature_growth_penalty: f32,
     morale_influence_scale: f32,
@@ -84,6 +90,33 @@ pub struct PopulationPhaseConfig {
 }
 
 impl PopulationPhaseConfig {
+    /// The two morale levers added by the terrain allowance / fresh-water term must be finite and
+    /// non-negative: a negative allowance would invent drain, a negative bonus would be a penalty.
+    fn validate(&self) -> Result<(), serde_json::Error> {
+        for (name, value) in [
+            (
+                "attrition_morale_tolerance",
+                self.attrition_morale_tolerance,
+            ),
+            ("fresh_water_morale_bonus", self.fresh_water_morale_bonus),
+        ] {
+            if !value.is_finite() || value < 0.0 {
+                return Err(serde::de::Error::custom(format!(
+                    "population.{name} must be finite and >= 0, got {value}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn attrition_morale_tolerance(&self) -> Scalar {
+        scalar_from_f32(self.attrition_morale_tolerance)
+    }
+
+    pub fn fresh_water_morale_bonus(&self) -> Scalar {
+        scalar_from_f32(self.fresh_water_morale_bonus)
+    }
+
     pub fn attrition_penalty_scale(&self) -> Scalar {
         scalar_from_f32(self.attrition_penalty_scale)
     }
@@ -117,6 +150,8 @@ impl Default for PopulationPhaseConfig {
     fn default() -> Self {
         Self {
             attrition_penalty_scale: 0.2,
+            attrition_morale_tolerance: 0.05,
+            fresh_water_morale_bonus: 0.005,
             hardness_penalty_scale: 0.05,
             temperature_growth_penalty: 0.0005,
             morale_influence_scale: 0.4,

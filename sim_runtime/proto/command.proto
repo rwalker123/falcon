@@ -785,6 +785,9 @@ enum ConfigOverrideKind {
   CONFIG_OVERRIDE_KIND_MOBILITY = 10;
   // The leadership practice levers (#859) - the threshold and the two quanta. Append-only.
   CONFIG_OVERRIDE_KIND_LEADERSHIP = 11;
+  // The turn pipeline's population block - staged for the terrain morale allowance and the
+  // fresh-water morale bonus. Append-only.
+  CONFIG_OVERRIDE_KIND_TURN_PIPELINE = 12;
 }
 
 // Stage a config-tuning override that takes effect at the NEXT new_game — `build_headless_app`

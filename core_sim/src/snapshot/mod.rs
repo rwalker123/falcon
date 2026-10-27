@@ -1068,6 +1068,7 @@ mod tests {
             temperature_morale_penalty: Scalar::zero(),
             temperature_morale_tolerance: Scalar::zero(),
             attrition_penalty_scale: Scalar::zero(),
+            attrition_morale_tolerance: Scalar::zero(),
             hardness_penalty_scale: Scalar::zero(),
         };
         let at = |terrain: TerrainType| Tile {

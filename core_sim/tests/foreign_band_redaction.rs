@@ -71,6 +71,8 @@ struct PublishedRow {
     morale_cohesion: i64,
     cohesion_headcount: u32,
     cohesion_ceiling: u32,
+    /// The fresh-water morale term - an own-band readout.
+    morale_fresh_water: i64,
 }
 
 impl PublishedRow {
@@ -149,6 +151,7 @@ fn published_rows(app: &App) -> Vec<PublishedRow> {
             morale_cohesion: row.moraleCohesion(),
             cohesion_headcount: row.cohesionHeadcount(),
             cohesion_ceiling: row.cohesionCeiling(),
+            morale_fresh_water: row.moraleFreshWater(),
         })
         .collect()
 }

@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 187
+const EXPECTED_CHECKPOINTS := 189
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -1457,6 +1457,36 @@ func _cohesion_states() -> void:
 	await h._settle()
 	h._assert_hud("a band with zero cohesion term draws no cohesion row",
 		_kit_breakdown_line(_popover_text(), "too many to hold together") == "")
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	await _fresh_water_states()
+
+## ---- THE FRESH WATER MORALE TERM -- `morale_fresh_water`, never negative and never a cause.
+const FRESH_WATER_CONTRIB := 0.005
+const FRESH_WATER_LABEL := "fresh water"
+const FRESH_WATER_VALUE_TEXT := "+0.5%"
+
+func _fresh_water_states() -> void:
+	var wet := BandFx.band_fixture()
+	wet["entity"] = COHESION_BAND_ENTITY
+	wet["morale_cohesion"] = 0.0
+	wet["morale_fresh_water"] = FRESH_WATER_CONTRIB
+	h._hud.show_unit_selection(wet)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	await h._settle()
+	var expected := "%s%s %s  %s" % [DetailFormat.MORALE_BREAKDOWN_INDENT,
+		DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH, FRESH_WATER_VALUE_TEXT, FRESH_WATER_LABEL]
+	h._assert_hud("a band beside fresh water itemizes `%s`" % expected.strip_edges(),
+		_kit_breakdown_line(_popover_text(), FRESH_WATER_LABEL) == expected)
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	var dry := wet.duplicate(true)
+	dry["morale_fresh_water"] = 0.0
+	h._hud.show_unit_selection(dry)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	await h._settle()
+	h._assert_hud("a band with zero fresh water term draws no fresh water row",
+		_kit_breakdown_line(_popover_text(), FRESH_WATER_LABEL) == "")
 	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
 
 ## ---- THE MORALE WORDING FOLLOWS THE BAND'S TILE RATING (`TileHabitability`), and the recovery line

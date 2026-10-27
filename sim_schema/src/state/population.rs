@@ -1922,6 +1922,10 @@ pub struct PopulationCohortState {
     /// The cohesion ceiling the cohesion term was priced against, in whole people. Appended last.
     #[serde(default)]
     pub cohesion_ceiling: u32,
+    /// The fresh-water morale contribution (`snapshot.fbs` -> `moraleFreshWater`, >= 0), part of the
+    /// `morale_*` breakdown whose signed sum IS `morale_delta`. Fixed-point raw. Appended last.
+    #[serde(default)]
+    pub morale_fresh_water: i64,
 }
 
 /// `PopulationCohortState::tribe_leader_kind`: the band is in no tribe.

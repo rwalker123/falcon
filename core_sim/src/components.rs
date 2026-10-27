@@ -2037,6 +2037,8 @@ pub enum MoraleFactor {
     /// The band is too big to hold together: its own size over its cohesion ceiling
     /// (≤ 0).
     Cohesion,
+    /// The band stands on fresh-watered ground (`>= 0`; never a cause, causes are negative).
+    FreshWater,
 }
 
 /// The Phase-1 named morale contributions for a cohort this turn (each signed; their sum IS
@@ -2061,6 +2063,9 @@ pub struct MoraleContributions {
     /// cohesion: `−drag × max(0, size − ceiling) / ceiling` for the band's own size
     /// (≤ 0; `wellbeing_config.json` → `cohesion`). Another band on the same tile does not count.
     pub cohesion: Scalar,
+    /// fresh water: `+fresh_water_morale_bonus` while the band's current tile is fresh-watered
+    /// (`forage::tile_is_fresh_watered`), else `0` (>= 0; `turn_pipeline_config.json` -> `population`).
+    pub fresh_water: Scalar,
 }
 
 /// **The head-count and ceiling a band's cohesion term was priced from** — the band's
@@ -2127,13 +2132,14 @@ impl MoraleContributions {
     /// client can render and the single source both `total` and cause attribution iterate. Ordered
     /// by the tie-break priority (Terrain ≥ Climate ≥ Unrest ≥ Culture ≥ Cohesion) so the dominant-cause scan
     /// is a stable first-max.
-    pub fn contributions(&self) -> [(MoraleFactor, Scalar); 6] {
+    pub fn contributions(&self) -> [(MoraleFactor, Scalar); 7] {
         [
             (MoraleFactor::Terrain, self.terrain),
             (MoraleFactor::Climate, self.climate),
             (MoraleFactor::Unrest, self.unrest),
             (MoraleFactor::Culture, self.culture),
             (MoraleFactor::Cohesion, self.cohesion),
+            (MoraleFactor::FreshWater, self.fresh_water),
             (MoraleFactor::Settling, self.settling),
         ]
     }

@@ -11543,6 +11543,8 @@ fn handle_reload_turn_pipeline_config(app: &mut bevy::prelude::App, path: Option
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "builtin".to_string()),
         attrition_penalty_scale = population.attrition_penalty_scale().to_f32(),
+        attrition_morale_tolerance = population.attrition_morale_tolerance().to_f32(),
+        fresh_water_morale_bonus = population.fresh_water_morale_bonus().to_f32(),
         hardness_penalty_scale = population.hardness_penalty_scale().to_f32(),
         "turn_pipeline_config.reloaded"
     );

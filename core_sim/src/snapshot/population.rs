@@ -2726,6 +2726,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         morale_cohesion: cohort.last_morale_contributions.cohesion.raw(),
         cohesion_headcount: cohort.last_cohesion.headcount,
         cohesion_ceiling: cohort.last_cohesion.ceiling,
+        morale_fresh_water: cohort.last_morale_contributions.fresh_water.raw(),
         // **The ancestors' place and the ground near it** — `0,0` and empty with no anchor.
         has_belief_anchor: cohort.belief_anchor.is_some(),
         belief_anchor_x: cohort.belief_anchor.map_or(0, |anchor| anchor.x),
