@@ -58,12 +58,18 @@ const SHEET_SECTION_NEXT_TURN := "Next turn"
 const SHEET_ON_HAND_FORMAT := "%d on hand"
 const SHEET_KEEP_KEY := "keep"
 const SHEET_USES_FORMAT := "%s uses %s %s a turn — its builds and upkeep."
-const SHEET_USES_NOTHING_FORMAT := "%s uses no %s — nothing of its builds or upkeep draws it."
+const SHEET_USES_NOTHING_FORMAT := "%s uses no %s right now."
 const SHEET_CREW_FORMAT := "%s sends %d diggers this turn"
 const SHEET_CREW_ONE_FORMAT := "%s sends 1 digger this turn"
 const SHEET_CREW_AT_TARGET := "At target — nobody digs this turn"
 const SHEET_CREW_NOBODY := "Nobody free to dig this turn"
-const SHEET_SITE_HERE_FORMAT := "Here, the best rock in reach. %d keep up with what the band uses, %d refill toward %d."
+const SHEET_SITE_HERE_LEAD := "Here, the best rock in reach."
+const SHEET_SITE_HOLD_FORMAT := " %d %s up with what the band uses,"
+const SHEET_SITE_REFILL_FORMAT := " %d %s toward %d."
+const SHEET_VERB_KEEP_ONE := "keeps"
+const SHEET_VERB_KEEP_MANY := "keep"
+const SHEET_VERB_REFILL_ONE := "refills"
+const SHEET_VERB_REFILL_MANY := "refill"
 const SHEET_SITE_ELSEWHERE_FORMAT := "The game is digging at (%d, %d)"
 const SHEET_SITE_AT_TARGET_FORMAT := "Diggers go back to work the turn %s drops below %d."
 const SHEET_SITE_NO_TARGET := "Raise the target and diggers go to work."
@@ -207,6 +213,18 @@ static func split_line(keepers: int, kitted: int, bare: int, kit_names: String) 
 	if bare > 0:
 		parts.append(SHEET_SPLIT_BARE_FORMAT % bare)
 	return SHEET_SPLIT_SEPARATOR.join(PackedStringArray(parts))
+
+## **THE SITE LINE ON THE PICKED SITE**, the hold clause dropped when nobody is needed to hold it (a band that
+## uses none of the material): `Here, the best rock in reach. 1 refills toward 10.` The verb agrees with the
+## count (`1 keeps` / `2 keep`, `1 refills` / `2 refill`).
+static func site_here_line(hold: int, refill: int, target: int) -> String:
+	var line := SHEET_SITE_HERE_LEAD
+	if hold > 0:
+		line += SHEET_SITE_HOLD_FORMAT % [hold, SHEET_VERB_KEEP_ONE if hold == 1 else SHEET_VERB_KEEP_MANY]
+		# the hold clause ends on a comma and the refill clause follows it
+	line += SHEET_SITE_REFILL_FORMAT % [refill, SHEET_VERB_REFILL_ONE if refill == 1 else SHEET_VERB_REFILL_MANY,
+		target]
+	return line
 
 static func stock_line(deposit: Dictionary, material: String, renews: bool) -> String:
 	var line := SHEET_STOCK_FORMAT % [int(round(HudDepositVocab.stock_of(deposit))),

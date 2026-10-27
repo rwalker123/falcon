@@ -731,6 +731,18 @@ band-scoped, which is what every surface already holds. "stone" is spelled nowhe
   `keep_on_hand <faction> <band> <material> <target> <high|normal|low>` — **both trailing fields on every
   line**). `ComposeState` holds the composed target (`deposit_keep`), seeded from the entry when the source or
   the acting band changes.
+- **THE ORDER YOU JUST SENT IS REMEMBERED UNTIL THE TURN TURNS** (`HudBandLaborState.note_keep_sent` /
+  `keep_entry_with_pending`). The `keep_on_hand` entry arrives on a snapshot, so it stays at the OLD target
+  for the rest of the turn the player changed it in; a sheet that re-seeded its stepper from it (closed and
+  re-opened, band re-picked) put the player back on the old number and the next `+` re-sent the same step
+  — the reported "I can only select 0 and 10". Every reader (the row, its chip and status, the sheet) reads
+  the entry through the overlay; a new turn's snapshot retires it, and `reset_world_state` clears it.
+- **THE DIG TAKE IS THE ROW'S `material_yield`** (`BandPanelController.dig_take_of` →
+  `SourceForecast.material_rows_of`), never gated on `has_yield`: the sim seeds the take on a row it has just
+  staffed, before any turn has resolved, and the live row carries no `has_yield` at all.
+- **The site line drops the hold clause when no hands hold the draw** (`HudKeepVocab.site_here_line`: `Here,
+  the best rock in reach. 1 refills toward 10.`), and its verbs agree with the counts (`1 keeps` / `2 keep`,
+  `1 refills` / `2 refill`). A band that uses none reads `<Band> uses no stone right now.`
 - **The eyebrow is the material's name** (`STONE`, as in Stone.dc.html), never `Assign diggers`
   (`open_deposit_compose` takes the fork off `_band_keeps_material`).
 - **The site-less sheet** (`open_source_sheet(extract, -1, -1, "", material)` -> a `keep_only` stand-in from

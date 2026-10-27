@@ -2735,7 +2735,8 @@ func _extract_source_models(band: Dictionary) -> Array:
 func _keep_source_models(band: Dictionary) -> Array:
     var models: Array = []
     var camp := SourceForecast.band_tile(band)
-    for entry in HudKeepVocab.entries_of(band):
+    for wire_entry in HudKeepVocab.entries_of(band):
+        var entry := _band_labor.keep_entry_with_pending(band, wire_entry)
         var material := String(entry.get(HudKeepVocab.ENTRY_MATERIAL_KEY, ""))
         var tile := HudKeepVocab.site_of(entry)
         var assignment := _band_labor.extract_assignment_of(band, tile.x, tile.y, material) \
@@ -2772,6 +2773,8 @@ func _keep_source_models(band: Dictionary) -> Array:
 ## Send the band's keep-on-hand order for one mined material. No optimistic write: the entry is captured
 ## live and the server restaffs the band at once, so the new figures arrive on this command's recapture.
 func commit_keep_on_hand(band: Dictionary, material: String, target: int, level: String) -> void:
+    _band_labor.note_keep_sent(int(band.get("band_id", HudConst.NO_BAND_ID)), material, target,
+        HudWorkVocab.work_priority_of(level))
     emit_signal("keep_on_hand_requested", {
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
         "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
@@ -2787,15 +2790,15 @@ func dig_take_of(band: Dictionary, material: String) -> float:
     var site := HudKeepVocab.site_of(HudKeepVocab.entry_of(band, material))
     if site.x < 0:
         return 0.0
-    var assignment := _band_labor.extract_assignment_of(band, site.x, site.y, material)
-    if not bool(assignment.get("has_yield", false)):
-        return 0.0
-    var yld := SourceForecast.source_yield_readout(assignment, HudConst.LABOR_KIND_EXTRACT,
-        HudDepositVocab.published_useful_cutters(assignment))
-    for row in yld.get("material_rows", []):
-        if String((row as Dictionary).get(SourceForecast.MATERIAL_PAYOFF_ID_KEY, "")) == material:
-            return float((row as Dictionary).get(SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
-    return 0.0
+    # The row's own `material_yield` for the material, as every extract row's yield line reads it
+    # (`SourceForecast.material_rows_of`): the sim seeds the take on a row it has just staffed, before any
+    # turn has resolved, so no `has_yield` flag gates it.
+    var take := 0.0
+    for payoff in SourceForecast.material_rows_of(
+            _band_labor.extract_assignment_of(band, site.x, site.y, material)):
+        if String(payoff.get(SourceForecast.MATERIAL_PAYOFF_ID_KEY, "")) == material:
+            take += float(payoff.get(SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
+    return take
 
 ## **THE ROW'S SHORT-CREW REASON, FOLDED INTO ITS ONE `⚠`** (`HudWorkVocab.crew_shortfall`): appended to
 ## `warn_lines` so a row already warning carries both reasons in one hover. A kit reason (any `kit_toe` line

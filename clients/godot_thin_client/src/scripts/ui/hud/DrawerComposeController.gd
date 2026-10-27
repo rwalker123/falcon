@@ -5730,7 +5730,7 @@ func _build_keep_sheet(band: Dictionary, deposit: Dictionary, target: VBoxContai
     _last_chart_model = {}
     var tile := HudDepositVocab.tile_of(deposit)
     var material := HudDepositVocab.material_of(deposit)
-    var entry := HudKeepVocab.entry_of(band, material)
+    var entry := _band_labor.keep_entry_with_pending(band, HudKeepVocab.entry_of(band, material))
     var band_entity := int(band.get("entity", ComposeState.NO_BAND_ENTITY))
     if source_changed or _compose.deposit_seeded_band() != band_entity:
         _compose.seed_deposit(0, SourceForecast.DEFAULT_HARVEST_FLOOR)
@@ -5835,7 +5835,7 @@ func _build_keep_sheet(band: Dictionary, deposit: Dictionary, target: VBoxContai
     elif site.x < 0:
         site_text = HudKeepVocab.SHEET_NO_ROCK
     elif site == tile:
-        site_text = HudKeepVocab.SHEET_SITE_HERE_FORMAT % [hold, maxi(crew - hold, 0), keep]
+        site_text = HudKeepVocab.site_here_line(hold, maxi(crew - hold, 0), keep)
     else:
         site_text = HudKeepVocab.SHEET_SITE_ELSEWHERE_FORMAT % [site.x, site.y]
     digger_box.add_child(_keep_dim_label(site_text, HudStyle.INK_DIM, HudKeepVocab.SHEET_SITE_META))

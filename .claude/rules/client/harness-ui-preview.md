@@ -3975,3 +3975,12 @@ sheet is always the keep sheet. `_below_target` restates the order below its tar
 is the point. The old stone-sheet claims about the Diggers stepper, the forecast runway, the reach verdict,
 the kit picker, the commit verb and the far party block were deleted with the behaviour; the dig-load line and
 the crew / take of a worked quarry moved onto the keep sheet.
+
+**The stepper-walk claims (`_keep_stepper_press_states`)**: three `+` presses in a row with a rebuild between each
+must emit 10, 20, 30 and show each; a snapshot still carrying the OLD target arrives after the first, an
+applied one after the second, and the sheet is CLOSED and RE-OPENED once before the server shows the order
+back (it must show the order sent, not the stale entry). The same walk runs on a roster of several bands with
+the digging one not first. **Sabotage-verified**: making `keep_entry_with_pending` return the bare entry fails
+exactly the re-opened claim and the three after it, and reproduces the played symptom (press 2 sends 10). Each
+state in `_keep_sheet_states` clears the overlay first, because the harness never advances its turn. The dig
+rows stage `material_yield` and no `has_yield`, as the live row has it (`workings_keep_unused`).

@@ -2132,6 +2132,7 @@ func reset_world_state() -> void:
     # The dealings, goodwill and treaties belong to ONE world: their ids and band handles restart in the
     # next, and a held "awaits your answer" row would name a band that no longer exists.
     _band_labor.reset_diplomacy()
+    _band_labor.clear_pending_keep()
     _turnorb.set_dealing_attention([])
     # The Telling is deliberately NOT reset per snapshot (see `TellingPanel.ingest_events`), and this
     # is the one exception: a world CHANGE is not another snapshot of the same story, it is a

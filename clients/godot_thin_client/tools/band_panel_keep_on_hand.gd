@@ -48,7 +48,7 @@ func _band(target: int, on_hand: int, has_site: bool, crew_kitted: int, crew_bar
 		(band["labor_assignments"] as Array).append({
 			"kind": HudConst.LABOR_KIND_EXTRACT, "workers": crew,
 			"target_x": SITE.x, "target_y": SITE.y, "fauna_id": "", "material": STONE,
-			"priority": level, "has_yield": true,
+			"priority": level,
 			"material_yield": [{"material_id": STONE, "amount": DIG_TAKE}],
 			"keepers_staffed": 0, "kitted_staffed": crew_kitted, "bare_staffed": crew_bare,
 			"hold_crew": CREW_HOLD, "reach_crew": crew,
@@ -56,7 +56,11 @@ func _band(target: int, on_hand: int, has_site: bool, crew_kitted: int, crew_bar
 		band["working_age"] = int(band["working_age"]) + crew
 	return band
 
-func _stage(band: Dictionary) -> void:
+## `new_turn` clears the HUD's remembered keep orders: the harness never advances its turn, and every state here
+## is its own.
+func _stage(band: Dictionary, new_turn: bool = true) -> void:
+	if new_turn:
+		h._hud._band_labor.clear_pending_keep()
 	h._hud.update_deposits(h._workings_rows())
 	h._push_bands([band])
 	h._hud._bandpanel.rerender()
@@ -153,6 +157,42 @@ func run(harness) -> void:
 				% [HudKeepVocab.STATUS_NOBODY_FREE, _line_of(row, HudKeepVocab.KEEP_STATUS_META)],
 			_line_of(row, HudKeepVocab.KEEP_STATUS_META) == HudKeepVocab.STATUS_NOBODY_FREE)
 
+	# ---- THE STEPPER WALKS FROM THE ROW'S OWN SHEET -------------------------------------------------
+	# From play: "I can only select 0 and 10". The sheet is opened by a CLICK on the live row (the real
+	# panel, the real snapshot path), pressed three times, with a snapshot still carrying the OLD target
+	# arriving after the first press.
+	await _stage(_band(0, ON_HAND_BELOW, true, 0, 0))
+	row = _row()
+	var walk_sent: Array = []
+	var walk_relay := func(p: Dictionary) -> void: walk_sent.append(p)
+	h._hud.keep_on_hand_requested.connect(walk_relay)
+	if row != null:
+		# What the row's click does on the live map: select the site's hex, deposits and all.
+		h._hud.show_tile_selection({"x": SITE.x, "y": SITE.y, "visibility_state": "active",
+			"deposits": h._hud._band_labor.deposits()})
+		var open_click := InputEventMouseButton.new()
+		open_click.button_index = MOUSE_BUTTON_LEFT
+		open_click.pressed = true
+		row.gui_input.emit(open_click)
+		await h._settle()
+		for step in range(1, 4):
+			var plus := _plus_button(h._hud._drawercompose._compose_sheet)
+			h._assert_band_panel("walk press %d: the sheet's `+` exists" % step, plus != null)
+			if plus == null:
+				break
+			plus.pressed.emit()
+			await h._settle()
+			var want := step * HudKeepVocab.KEEP_STEP
+			var got := "" if walk_sent.size() < step \
+				else String(MAIN_SCRIPT.format_keep_on_hand(walk_sent[step - 1]).get("line", ""))
+			h._assert_band_panel("walk press %d sends target %d (got `%s`)" % [step, want, got],
+				got.contains(" stone %d " % want))
+			if step == 1:
+				await _stage(_band(0, ON_HAND_BELOW, true, 0, 0), false)
+	h._hud.keep_on_hand_requested.disconnect(walk_relay)
+	h._hud._drawercompose.close_compose_sheet()
+	await h._settle()
+
 	# ---- THE PRIORITY PILL SENDS `keep_on_hand` WITH THE TARGET --------------------------------------
 	await _stage(_band(TARGET, ON_HAND_BELOW, true, CREW_KITTED, CREW_BARE))
 	var sent: Array = []
@@ -167,3 +207,12 @@ func run(harness) -> void:
 			line == "keep_on_hand %d %d %s %d high" % [HudConst.PLAYER_FACTION_ID,
 				int(h._hud._band_labor.panel_band().get("band_id", -1)), STONE, TARGET])
 	await h._put_the_workings_roster_back()
+
+func _plus_button(root: Node) -> Button:
+	if root is Button and (root as Button).tooltip_text == HudKeepVocab.KEEP_STEPPER_RAISE_ARIA % "stone":
+		return root as Button
+	for child in root.get_children():
+		var found := _plus_button(child)
+		if found != null and not found.is_queued_for_deletion():
+			return found
+	return null

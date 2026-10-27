@@ -16860,7 +16860,7 @@ func _workings_band_fixture(demand: float, dig_crew: int = WORKINGS_CUTTERS) -> 
 		rows.append({
 			"kind": HudConst.LABOR_KIND_EXTRACT, "workers": dig_crew,
 			"target_x": ROSTER_NEAR_TILE.x, "target_y": ROSTER_NEAR_TILE.y, "fauna_id": "",
-			"material": WORKINGS_STONE, "has_yield": dig_crew > 0,
+			"material": WORKINGS_STONE,
 			"material_yield": [{"material_id": WORKINGS_STONE, "amount": WORKINGS_CREW_TAKE}] \
 				if dig_crew > 0 else [],
 			"keepers_staffed": 0, "kitted_staffed": mini(dig_crew, 1), "bare_staffed": maxi(dig_crew - 1, 0),

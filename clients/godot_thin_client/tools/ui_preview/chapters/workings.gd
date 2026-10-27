@@ -985,6 +985,7 @@ func run(harness) -> void:
 	# stepper, NO kit picker and NO `Stop working here` — its one count is the keep target, stepped
 	# 10 at a time, and `0` reads `None`. Wood's sheet (below) keeps `Max` and `No max`.
 	await _keep_sheet_states()
+	await _keep_stepper_press_states()
 
 	h._hud.update_band_alerts([_band_at_the_working()])
 	h._show_tile(_workings_tile([_wood_working(WOOD_OVER_CUT)]))
@@ -1856,14 +1857,17 @@ const KEEP_CREW_HOLD := 1
 const KEEP_DIG_TAKE := 1.2
 ## Where the game is digging when the sheet is opened on a DIFFERENT deposit.
 const KEEP_OTHER_SITE := Vector2i(30, 10)
+## The order of the band that uses none of the material (the live Bitterbrook's), and the take its one digger seeds.
+const KEEP_UNUSED_TARGET := 10
 
 ## The band at the working's hex, keeping stone on hand. `site` is where the game picked; a crew of `0`
 ## stands no dig row (the pile is at target, or nobody is free).
-func _keep_band(target: int, on_hand: int, site: Vector2i, kitted: int, bare: int) -> Dictionary:
+func _keep_band(target: int, on_hand: int, site: Vector2i, kitted: int, bare: int,
+		hold: int = KEEP_CREW_HOLD, draw: float = KEEP_DRAW) -> Dictionary:
 	var band := _band_at_the_working()
 	band["material_store"] = [{"material_id": STONE_MATERIAL_ID, "amount": float(on_hand)}]
 	band["keep_on_hand"] = [{
-		"material": STONE_MATERIAL_ID, "target": target, "priority": "normal", "draw": KEEP_DRAW,
+		"material": STONE_MATERIAL_ID, "target": target, "priority": "normal", "draw": draw,
 		"has_site": true, "site_x": site.x, "site_y": site.y,
 	}]
 	var crew := kitted + bare
@@ -1871,10 +1875,10 @@ func _keep_band(target: int, on_hand: int, site: Vector2i, kitted: int, bare: in
 		(band["labor_assignments"] as Array).append({
 			"kind": HudConst.LABOR_KIND_EXTRACT, "workers": crew,
 			"target_x": site.x, "target_y": site.y, "fauna_id": "", "material": STONE_MATERIAL_ID,
-			"priority": "normal", "has_yield": true,
+			"priority": "normal",
 			"material_yield": [{"material_id": STONE_MATERIAL_ID, "amount": KEEP_DIG_TAKE}],
 			"keepers_staffed": 0, "kitted_staffed": kitted, "bare_staffed": bare,
-			"hold_crew": KEEP_CREW_HOLD, "reach_crew": crew,
+			"hold_crew": hold, "reach_crew": crew,
 		})
 		band["working_age"] = int(band["working_age"]) + crew
 	return band
@@ -1893,6 +1897,7 @@ func _keep_text(sheet: Node, meta: StringName) -> String:
 func _keep_sheet_states() -> void:
 	var here := Vector2i(WORKING_TILE_X, WORKING_TILE_Y)
 	# ---- BELOW TARGET, THIS DEPOSIT IS THE PICKED SITE -----------------------------------------------
+	h._hud._band_labor.clear_pending_keep()  # each state is its own turn
 	h._hud.update_band_alerts([_keep_band(KEEP_TARGET, KEEP_ON_HAND_BELOW, here,
 		KEEP_CREW_KITTED, KEEP_CREW_BARE)])
 	h._show_tile(_workings_tile([_idle_stone_working()]))
@@ -1938,7 +1943,37 @@ func _keep_sheet_states() -> void:
 	h._hud._drawercompose.close_compose_sheet()
 	await h._settle()
 
+	# ---- A BAND THAT USES NONE OF IT: the hold clause is dropped, and the take reads the row's own yield ----
+	# (the live dig row carries `material_yield` and no `has_yield`, so the take must come off the former)
+	h._hud._band_labor.clear_pending_keep()  # each state is its own turn
+	h._hud.update_band_alerts([_keep_band(KEEP_UNUSED_TARGET, 0, here, 0, 1, 0, 0.0)])
+	h._show_tile(_workings_tile([_idle_stone_working()]))
+	await h._settle()
+	h._hud._drawercompose.open_deposit_compose(_idle_stone_working())
+	await h._settle()
+	sheet = h._hud._drawercompose._compose_sheet
+	await h._save("workings_keep_unused")
+	h._assert_hud("a band that uses none drops the hold clause (got `%s`)"
+			% _keep_text(sheet, HudKeepVocab.SHEET_SITE_META),
+		_keep_text(sheet, HudKeepVocab.SHEET_SITE_META)
+			== "Here, the best rock in reach. 1 refills toward %d." % KEEP_UNUSED_TARGET)
+	h._assert_hud("…and its draw line says so plainly (got `%s`)" % _keep_text(sheet, HudKeepVocab.SHEET_USES_META),
+		_keep_text(sheet, HudKeepVocab.SHEET_USES_META).ends_with("uses no stone right now."))
+	var unused_take := Q.find_live_meta_node(sheet, HudKeepVocab.SHEET_TAKE_META)
+	h._assert_hud("…the next turn's take is the row's `material_yield` (got %s)"
+			% ("none" if unused_take == null else str(unused_take.get_meta(HudKeepVocab.SHEET_TAKE_META))),
+		unused_take != null and is_equal_approx(float(unused_take.get_meta(HudKeepVocab.SHEET_TAKE_META)),
+			KEEP_DIG_TAKE))
+	h._assert_hud("…and the pile's return is stated (got `%s`)" % _keep_text(sheet, HudKeepVocab.SHEET_ETA_META),
+		_keep_text(sheet, HudKeepVocab.SHEET_ETA_META).begins_with("Back to %d in" % KEEP_UNUSED_TARGET))
+	h._assert_hud("the verbs agree with the counts (1 keeps / 2 keep, 1 refills / 2 refill)",
+		HudKeepVocab.site_here_line(1, 2, KEEP_TARGET).contains("1 keeps up with what the band uses, 2 refill toward")
+			and HudKeepVocab.site_here_line(2, 1, KEEP_TARGET).contains("2 keep up with what the band uses, 1 refills toward"))
+	h._hud._drawercompose.close_compose_sheet()
+	await h._settle()
+
 	# ---- AT TARGET ----------------------------------------------------------------------------------
+	h._hud._band_labor.clear_pending_keep()  # each state is its own turn
 	h._hud.update_band_alerts([_keep_band(KEEP_TARGET, KEEP_TARGET, here, 0, 0)])
 	h._show_tile(_workings_tile([_idle_stone_working()]))
 	await h._settle()
@@ -1953,6 +1988,7 @@ func _keep_sheet_states() -> void:
 	await h._settle()
 
 	# ---- NOT THE PICKED SITE ------------------------------------------------------------------------
+	h._hud._band_labor.clear_pending_keep()  # each state is its own turn
 	h._hud.update_band_alerts([_keep_band(KEEP_TARGET, KEEP_ON_HAND_BELOW, KEEP_OTHER_SITE,
 		KEEP_CREW_KITTED, KEEP_CREW_BARE)])
 	h._show_tile(_workings_tile([_idle_stone_working()]))
@@ -1971,6 +2007,7 @@ func _keep_sheet_states() -> void:
 	# ---- NO ROCK KNOWN: THE SITE-LESS SHEET --------------------------------------------------------
 	var no_site_band := _keep_band(KEEP_TARGET, KEEP_ON_HAND_BELOW, here, 0, 0)
 	(no_site_band["keep_on_hand"] as Array)[0]["has_site"] = false
+	h._hud._band_labor.clear_pending_keep()  # each state is its own turn
 	h._hud.update_band_alerts([no_site_band])
 	h._show_tile(_workings_tile([]))
 	await h._settle()
@@ -2007,6 +2044,7 @@ func _keep_sheet_states() -> void:
 	await h._settle()
 
 	# ---- NO TARGET ----------------------------------------------------------------------------------
+	h._hud._band_labor.clear_pending_keep()  # each state is its own turn
 	h._hud.update_band_alerts([_keep_band(0, KEEP_ON_HAND_BELOW, here, 0, 0)])
 	h._show_tile(_workings_tile([_idle_stone_working()]))
 	await h._settle()
@@ -2017,6 +2055,104 @@ func _keep_sheet_states() -> void:
 	var target_node := Q.find_live_meta_node(sheet, HudKeepVocab.SHEET_TARGET_META)
 	h._assert_hud("a target of 0 reads `%s` on the stepper" % HudKeepVocab.KEEP_NONE_WORD,
 		target_node != null and (target_node as Label).text == HudKeepVocab.KEEP_NONE_WORD)
+	h._hud._drawercompose.close_compose_sheet()
+	await h._settle()
+
+## **THE STEPPER MUST WALK, NOT JUST LEAVE 0** (#874, from play: "I can only select 0 and 10"). Three
+## presses of `+` in a row, the sheet rebuilt between each, with a snapshot that still carries the OLD target
+## arriving between the first and the second: every emitted line and every shown value must be 10, 20, 30.
+func _keep_stepper_press_states() -> void:
+	var here := Vector2i(WORKING_TILE_X, WORKING_TILE_Y)
+	h._hud._band_labor.clear_pending_keep()
+	h._hud.update_band_alerts([_keep_band(0, 0, here, 0, 0)])
+	h._show_tile(_workings_tile([_idle_stone_working()]))
+	await h._settle()
+	h._hud._drawercompose.open_deposit_compose(_idle_stone_working())
+	await h._settle()
+	var sent: Array = []
+	var relay := func(p: Dictionary) -> void: sent.append(p)
+	h._hud.keep_on_hand_requested.connect(relay)
+	for step in range(1, 4):
+		var sheet: Node = h._hud._drawercompose._compose_sheet
+		var plus := _button_with_tooltip(sheet, HudKeepVocab.KEEP_STEPPER_RAISE_ARIA % "stone")
+		h._assert_hud("press %d: the `+` exists" % step, plus != null)
+		if plus == null:
+			break
+		plus.pressed.emit()
+		await h._settle()
+		var want := step * HudKeepVocab.KEEP_STEP
+		var line: String = "" if sent.size() < step \
+			else String(MAIN_SCRIPT.format_keep_on_hand(sent[step - 1]).get("line", ""))
+		h._assert_hud("press %d sends `stone %d normal` (got `%s`)" % [step, want, line],
+			line.ends_with(" stone %d normal" % want))
+		var shown := Q.find_live_meta_node(h._hud._drawercompose._compose_sheet, HudKeepVocab.SHEET_TARGET_META)
+		h._assert_hud("…and the rebuilt sheet shows %d (got %s)" % [want,
+			"none" if shown == null else (shown as Label).text],
+			shown != null and (shown as Label).text == str(want))
+		if step == 2:
+			# THE SERVER HAS NOW APPLIED THE FIRST TWO: the snapshot carries the target the sheet shows.
+			h._hud.update_band_alerts([_keep_band(want, 0, here, 0, 0)])
+			await h._settle()
+			var applied := Q.find_live_meta_node(h._hud._drawercompose._compose_sheet, HudKeepVocab.SHEET_TARGET_META)
+			h._assert_hud("a snapshot carrying the APPLIED target keeps the sheet on it (got %s)"
+					% ("none" if applied == null else (applied as Label).text),
+				applied != null and (applied as Label).text == str(want))
+		if step == 1:
+			# THE SERVER HAS NOT APPLIED IT YET: a snapshot arrives still carrying the OLD target.
+			h._hud.update_band_alerts([_keep_band(0, 0, here, 0, 0)])
+			await h._settle()
+			var stale := Q.find_live_meta_node(h._hud._drawercompose._compose_sheet, HudKeepVocab.SHEET_TARGET_META)
+			h._assert_hud("a snapshot carrying the OLD target does not drag the sheet back (got %s)"
+					% ("none" if stale == null else (stale as Label).text),
+				stale != null and (stale as Label).text == str(want))
+			# ...and a sheet CLOSED and re-opened before the server shows the order back re-seeds from the
+			# order the player sent, not from the stale entry, so the next `+` is 20 and never 10 again.
+			h._hud._drawercompose.close_compose_sheet()
+			await h._settle()
+			h._hud._drawercompose.open_deposit_compose(_idle_stone_working())
+			await h._settle()
+			var reopened := Q.find_live_meta_node(h._hud._drawercompose._compose_sheet, HudKeepVocab.SHEET_TARGET_META)
+			h._assert_hud("a re-opened sheet shows the order just sent, not the stale entry (got %s)"
+					% ("none" if reopened == null else (reopened as Label).text),
+				reopened != null and (reopened as Label).text == str(want))
+	await h._save("workings_keep_stepped")
+	h._hud.keep_on_hand_requested.disconnect(relay)
+	h._hud._drawercompose.close_compose_sheet()
+	await h._settle()
+	# ---- THE SAME WALK ON A ROSTER OF SEVERAL BANDS, THE DIGGING ONE NOT FIRST (play: six bands) --------
+	var first_band := _band_at_the_working()
+	var digging := _keep_band(0, 0, here, 1, 0)
+	digging["entity"] = int(first_band["entity"]) + 4294967296 + 1
+	digging["band_id"] = int(first_band["band_id"]) + 7
+	digging["name"] = "Bitterbrook"
+	(digging["labor_assignments"] as Array)[-1]["material_yield"] = [{"material_id": "stone", "amount": 0.4}]
+	h._hud._band_labor.clear_pending_keep()
+	h._hud.update_band_alerts([first_band, digging])
+	h._show_tile(_workings_tile([_idle_stone_working()]))
+	await h._settle()
+	h._hud._drawercompose.open_deposit_compose(_idle_stone_working())
+	await h._settle()
+	sent.clear()
+	relay = func(p: Dictionary) -> void: sent.append(p)
+	h._hud.keep_on_hand_requested.connect(relay)
+	for step in range(1, 4):
+		var multi_plus := _button_with_tooltip(h._hud._drawercompose._compose_sheet,
+			HudKeepVocab.KEEP_STEPPER_RAISE_ARIA % "stone")
+		h._assert_hud("several bands, press %d: the `+` exists" % step, multi_plus != null)
+		if multi_plus == null:
+			break
+		multi_plus.pressed.emit()
+		await h._settle()
+		var multi_line: String = "" if sent.size() < step \
+			else String(MAIN_SCRIPT.format_keep_on_hand(sent[step - 1]).get("line", ""))
+		h._assert_hud("several bands, press %d sends `stone %d` (got `%s`)"
+				% [step, step * HudKeepVocab.KEEP_STEP, multi_line],
+			multi_line.contains(" stone %d " % (step * HudKeepVocab.KEEP_STEP)))
+		if step == 1:
+			h._hud.update_band_alerts([first_band, digging])
+			await h._settle()
+
+	h._hud.keep_on_hand_requested.disconnect(relay)
 	h._hud._drawercompose.close_compose_sheet()
 	await h._settle()
 
@@ -2509,7 +2645,7 @@ func _worked_quarry_band_fixture() -> Dictionary:
 		"kind": HudConst.LABOR_KIND_EXTRACT,
 		"workers": WORKED_QUARRY_CUTTERS,
 		"target_x": WORKING_TILE_X, "target_y": WORKING_TILE_Y, "fauna_id": "",
-		"material": "stone", "has_yield": true,
+		"material": "stone",
 		# ⛔ **THE FLOOR THE SHEET WILL COMPOSE AT, and it is the whole defect in one field.** A finite
 		# seam is offered no dial, so the row carries the sim's own omitted-token default — inert
 		# sim-side since #650, and what the client used to compose above the rung's floor anyway.
