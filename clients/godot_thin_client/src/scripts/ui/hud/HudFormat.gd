@@ -638,13 +638,13 @@ static func meter_bar(score: float, cells: int) -> String:
 ## `Tribe <bar> with Snowreach · 4 turns`: the word, the split bar, the partner and one short phrase.
 const TRIBE_ROW_LABEL := "Tribe"
 ## The no-partner reasons, read off the player's own bands (never the wire's `tribe_standing`), in the
-## order they are tested: this band has no ancestors' place; another band is in its supply network but
+## order they are tested: this band has no sacred ground; another band is in its supply network but
 ## holds a different place; no other band shares its supply network; there is no other band at all.
-const TRIBE_NO_PLACE_LINE := "Tribe: no ancestors' place yet"
-const TRIBE_NO_PLACE_TOOLTIP := "A band takes up an ancestors' place where its people have died."
-const TRIBE_DIFFERENT_PLACE_LINE := "Tribe: different ancestors' place"
+const TRIBE_NO_PLACE_LINE := "Tribe: no sacred ground yet"
+const TRIBE_NO_PLACE_TOOLTIP := "Sacred ground forms where a band buries its people."
+const TRIBE_DIFFERENT_PLACE_LINE := "Tribe: different sacred ground"
 ## The hover on the different-place line: this band's own fact, no partner and no coordinates.
-const TRIBE_DIFFERENT_PLACE_TOOLTIP_FORMAT := "%s keeps a different ancestors' place from your other bands — see Beliefs."
+const TRIBE_DIFFERENT_PLACE_TOOLTIP_FORMAT := "%s honours different sacred ground from your other bands — see Beliefs."
 const TRIBE_NO_NETWORK_LINE := "Tribe: no shared supply network"
 const TRIBE_NO_NETWORK_TOOLTIP := "Bands in one supply network pool goods; link this band to the others."
 const TRIBE_ALONE_LINE := "Tribe: no other band of your people"
@@ -659,13 +659,13 @@ const TRIBE_SUFFIX_ONE_TURN := "1 turn"
 const TRIBE_SUFFIX_MONUMENT := "needs a monument"
 const TRIBE_SUFFIX_BELIEF := "needs more belief"
 const TRIBE_SUFFIX_TIE := "needs a stronger tie"
-const TRIBE_TOOLTIP_RULE := "Bands become a tribe when they pool goods in one supply network and share one ancestors' place."
+const TRIBE_TOOLTIP_RULE := "Bands become a tribe when they pool goods in one supply network and share one sacred ground."
 const TRIBE_TOOLTIP_FORMING := "Forms next turn"
 const TRIBE_TOOLTIP_NEEDS_CHIEF := "Neither band has a chief: nothing builds until one of them has one."
-const TRIBE_TOOLTIP_TURNS_FORMAT := "Keep sharing the network and the ancestors' place %d more turns"
-const TRIBE_TOOLTIP_ONE_TURN := "Keep sharing the network and the ancestors' place 1 more turn"
-const TRIBE_TOOLTIP_MONUMENT := "Raise a monument at the ancestors' place"
-const TRIBE_TOOLTIP_BELIEF := "More belief at the ancestors' place"
+const TRIBE_TOOLTIP_TURNS_FORMAT := "Keep sharing the network and the sacred ground %d more turns"
+const TRIBE_TOOLTIP_ONE_TURN := "Keep sharing the network and the sacred ground 1 more turn"
+const TRIBE_TOOLTIP_MONUMENT := "Raise a monument at the sacred ground"
+const TRIBE_TOOLTIP_BELIEF := "More belief at the sacred ground"
 const TRIBE_TOOLTIP_TIE_FORMAT := "A stronger tie with %s"
 const TRIBE_TOOLTIP_WITH_FORMAT := "With: %s"
 ## A formed tribe: `Tribe: Sandreach tribe · 3 bands` (`tribe_name` already ends in "tribe"), its hover the member bands then who leads it.
@@ -700,7 +700,7 @@ static func tribe_pair_score(pair: Dictionary) -> float:
         total += float(contribution.get(key, 0.0))
     return total
 
-## Turns of sharing the network and the ancestors' place that fill `needed` points of history, rounded up; 0 when it cannot be said.
+## Turns of sharing the network and the sacred ground that fill `needed` points of history, rounded up; 0 when it cannot be said.
 static func _tribe_turns_for(entry: Dictionary, needed: float) -> int:
     var weights: Dictionary = entry.get("tribe_weights", {})
     var build_turns := float(entry.get("tribe_history_build_turns", 0.0))
@@ -840,7 +840,7 @@ static func band_tribe_progress(entry: Dictionary, other_bands: Array = []) -> D
 
 ## The dim line and hover of a band with no partner, naming the real reason from the player's own
 ## bands (`other_bands`: the other own, non-expedition bands). Tested in order: this band has no
-## ancestors' place; another band shares its supply network (non-zero) but not its place; no other band
+## sacred ground; another band shares its supply network (non-zero) but not its place; no other band
 ## shares its network; no other band.
 static func tribe_no_partner_view(entry: Dictionary, other_bands: Array) -> Dictionary:
     var tooltip: Array[String] = [TRIBE_TOOLTIP_RULE]

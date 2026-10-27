@@ -1927,6 +1927,10 @@ pub struct PopulationCohortState {
     /// Appended last.
     #[serde(default)]
     pub orders_carried_out: f32,
+    /// The anchor's saturating weight `b / (b + belief_half_saturation)` in `[0, 1)`; 0 with no
+    /// anchor. Derived at capture. Appended last.
+    #[serde(default)]
+    pub belief_anchor_weight: f32,
 }
 
 /// `PopulationCohortState::tribe_leader_kind`: the band is in no tribe.

@@ -40,6 +40,8 @@ const BREAKDOWN_POPOVER_GAP := 4.0
 const POPOVER_MARGIN_SIDES := ["left", "top", "right", "bottom"]
 ## No disclosure is open.
 const NO_OPEN_KEY := ""
+## A `show ▸` meta carries x, y and the holder band's entity.
+const BELIEFS_SHOW_META_FIELDS := 3
 
 ## The node the lazily-built popover is parented into (a `RefCounted` cannot parent).
 var _popover_host: Node = null
@@ -65,6 +67,9 @@ var _breakdown_popover_label: RichTextLabel = null
 ## because the thing it reaches — "make this band the panel's subject" — belongs to the band panel's
 ## controller, which this one must not depend on (it is wired by whoever owns both).
 var _faction_band_jump: Callable = Callable()
+## Where a Beliefs popover `show ▸` goes: `(x: int, y: int, holder_entity: int)`. The map owns the camera and the
+## shaded region, so this controller only parses the click and hands it on.
+var _belief_show: Callable = Callable()
 
 
 ## Hand over the node the popover parents into and the one re-render edge back into HudLayer.
@@ -111,6 +116,10 @@ func register(row_label: String, kind: String, band: Dictionary, lines: Array[St
 ## controller and the band panel's.
 func set_faction_band_jump(jump: Callable) -> void:
     _faction_band_jump = jump
+
+## Wire where a Beliefs popover's `show ▸` goes. Set once, by whoever owns both this controller and the relay to the map.
+func set_belief_show(show: Callable) -> void:
+    _belief_show = show
 
 ## Register a FACTION row's disclosure — the same popover, with the verdict STATED rather than derived.
 ##
@@ -509,6 +518,14 @@ func _on_meta_clicked(meta: Variant, anchor: Control) -> void:
         if _faction_band_jump.is_valid():
             _faction_band_jump.call(entity)
         return
+    # A Beliefs `show ▸`: pan to the sacred ground and shade its reach. The popover stays up so the next
+    # place can be shown without reopening it.
+    if payload.begins_with(HudDisclosureVocab.BELIEFS_SHOW_META_PREFIX):
+        var parts := payload.substr(HudDisclosureVocab.BELIEFS_SHOW_META_PREFIX.length()).split(
+            HudDisclosureVocab.BELIEFS_SHOW_META_SEPARATOR)
+        if parts.size() == BELIEFS_SHOW_META_FIELDS and _belief_show.is_valid():
+            _belief_show.call(int(parts[0]), int(parts[1]), int(parts[2]))
+        return
     if not payload.begins_with(HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX):
         return
     var key := payload.substr(HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX.length())
@@ -602,6 +619,10 @@ func _refresh_popover_text() -> void:
     if _breakdown_popover_label == null or not is_instance_valid(_breakdown_popover_label):
         return
     _breakdown_popover_label.text = DetailFormat.detail_bbcode(_lines_for(_breakdown_popover_key))
+    # A RichTextLabel has no per-line tooltip, so the Beliefs popover explains what grows sacred ground on the
+    # whole card's hover.
+    _breakdown_popover_label.tooltip_text = HudDisclosureVocab.BELIEFS_PLACE_TOOLTIP \
+        if _breakdown_popover_key.begins_with(HudDisclosureVocab.BREAKDOWN_KIND_BELIEFS + ":") else ""
 
 ## Re-render whichever hosts can be showing a disclosure caret, so it flips with the popover. Both
 ## hosts, unconditionally — that is the `is_panel` fork this cluster exists to remove.

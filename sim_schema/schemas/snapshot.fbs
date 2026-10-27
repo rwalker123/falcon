@@ -1625,6 +1625,9 @@ table PopulationCohortState {
   // member (times the over-reach efficiency again when the band has no leader of its own), else the
   // band leader's own factor. 0 when the band has neither a leader nor a tribe (nothing to show).
   ordersCarriedOut:float = 0;
+  // The anchor's saturating weight s = b / (b + belief_half_saturation), in [0, 1): how much of the
+  // culture term the band's ancestors carry. 0 with no anchor (hasBeliefAnchor false). Own bands only.
+  beliefAnchorWeight:float = 0;
 }
 
 // ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH - a row of `PopulationCohortState.bandImprovements`,

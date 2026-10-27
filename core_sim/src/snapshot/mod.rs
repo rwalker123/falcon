@@ -1492,6 +1492,7 @@ mod tests {
         };
         population_state(PopulationStateInputs {
             belief_reach: Vec::new(),
+            belief_anchor_weight: 0.0,
             belief_relay_region: Vec::new(),
             culture_traits: Vec::new(),
             culture_ancestor_pull: Vec::new(),

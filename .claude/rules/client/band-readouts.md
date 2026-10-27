@@ -1763,22 +1763,38 @@ with no pull adds nothing there (`_band_beliefs_compact_clause`).
   (`CULTURE_PRESSURE_COMPACT_*`, no factor or clock); phases 0/1 add nothing. Pinned in `band_panel_preview`
   (`_assert_beliefs_compact_clause`, frame `band_panel_vitals_worst_case`). The `culture_pull` event is
   Notable (`event-dock.md`).
-- **Beliefs ▸ — the ancestors' place pull-down** (non-compact tier only; the compact tier keeps its
+- **Beliefs ▸ — the sacred-ground pull-down** (non-compact tier only; the compact tier keeps its
   clause). The row is a disclosure like Morale and Growth: `BandDetailLines._beliefs_place_lines`
-  registers `BREAKDOWN_KIND_BELIEFS` under `DETAIL_ROW_BELIEFS`, the row keeps its hover, and the popover
-  holds, in order: (1) the place and its reach, read off `has_belief_anchor`, `belief_anchor_x/y` and
-  `belief_relay_hops` with the tile's dead from `HudBandLaborState.tile_belief_at` rounded to whole
-  people (`Ancestors' place: 14 dead · near` / `· tied in through 1 band of kin` / `· tied in through
-  K bands of kin` / `· out of reach` in the warning ink at hops 255; with no place, `No ancestors' place
-  yet — the band takes one up once its dead lie within walking reach.`); (2) the existing pull sentence,
-  or the untied sentence when there is a place and no pull, and nothing with no place; (3) the stronger
-  places of the player's OTHER own, non-expedition bands (the same set `_build_tribe_block` gathers):
-  distinct places that differ from this band's and hold strictly more dead (no place counts as 0),
-  strongest first, at most three as `<who>: N dead — stand within walking reach to take it up`, then
-  `+N more places`; `<who>` is the formed tribe's name when every holder is in that one tribe, else the
-  lowest-id holder's band name plus ` and N other band(s)`; (4) the rule, dim. The caret tints WARN while
-  the place is unreached. The client states published facts and compares two belief numbers; it never
-  computes walking reach. Frames `band_beliefs_place_direct` / `_unreached` / `_none` (`band_expedition`).
+  registers `BREAKDOWN_KIND_BELIEFS` under `DETAIL_ROW_BELIEFS`, and the row keeps its hover. **The player's
+  word is "sacred ground"; the panel never says dead, urn, anchor, hops, walking reach or near, and shows
+  no raw count.** With a place (`has_belief_anchor`) the popover holds: line A
+  `Honours its sacred ground  ▰▰▰▱▱ sacred  [show ▸]`, then line B by `belief_relay_hops` — 0
+  `Keeps the band devout and traditional, and lifts morale while it stays close.`, 1–254 `Close to it
+  through kin camped between — keeps the band devout and traditional.`, 255 the same slot in the warning
+  ink `Far from its sacred ground — morale is slipping.`; with no place the one line `No sacred ground
+  yet — it forms where the band buries its people.` **THE STRENGTH BAR** steps off the published
+  `belief_anchor_weight` `w` (`PopulationCohortState.beliefAnchorWeight`, [0, 1), 0 with no anchor or on a
+  foreign row): step `clamp(ceil(w × 5), 1, 5)` fills that many ▰ of 5 and names the place — a grave /
+  burial ground / hallowed / sacred / holy (`HudDisclosureVocab.BELIEFS_BAR_*`). A place held by another
+  of the player's bands uses THAT band's weight (the strongest of several holders). **Stronger places** are
+  the player's OTHER own, non-expedition bands' distinct places that differ from this band's and whose
+  published tile belief (`HudBandLaborState.tile_belief_at`, rounded, compared only) is strictly more than
+  this band's own (no place counts as 0), strongest first, at most three, then `+N more places`; each is two
+  lines: `<who>'s sacred ground  ▰▰▰▰▱ holy  6 hexes NE  [show ▸]` then `Camp beside it to join the <tribe>.`
+  (holder is a formed tribe) or `Camp beside it to form a tribe with <who>.`. `<who>` is the formed tribe's
+  name when every holder is in that one tribe, else the lowest-id holder's band name plus ` and N other
+  band(s)`. Distance and bearing are plain geometry from the band's current tile: `SourceForecast.
+  hex_distance_wrapped` and `compass_bearing` (drawn-space 8-point, shortest wrapped way); `1 hex` is
+  singular. The caret tints WARN while the place is unreached. **`[show ▸]`** is a `[url=belief_show:x,y,
+  holder_entity]` run in the popover's own label: `DisclosureController._on_meta_clicked` hands it to
+  `set_belief_show`'s Callable, `BandPanelController` relays `belief_place_show_requested` ->
+  `HudLayer` -> `Main` -> `MapView.show_belief_place`, which pans to the tile (`focus_on_tile`, no selection
+  change) and has `BandOverlayRenderer` outline the HOLDER band's published `belief_reach_x/y` (an own band
+  publishes it; reach is never computed on the client). The popover stays open after a click. **The
+  popover hover** (a `RichTextLabel` has no per-line tooltips, so it is on the whole card; set in
+  `DisclosureController._refresh_popover_text` for the Beliefs key only): `Sacred ground grows stronger as
+  a band buries its people there, holds gatherings there or raises a monument on it.` Frames
+  `band_beliefs_place_direct` / `_unreached` / `_none` (`band_expedition`).
 - **EVERY ROW'S HOVER SHOWS OVER THAT ROW ONLY.** `ctx.row_tooltips` (keyed by row) is still the one
   source, but `DetailFormat.block_tooltip` (one `tooltip_text` joining every row's sentence) is
   retired: it put the Carry sentence under a cursor on Beliefs. A row with a hover wears a
@@ -1867,23 +1883,23 @@ only: `partner_name`, `history`, `contribution`), decoded in `dict/population.rs
 - **Not in a tribe, no partner** (`tribe_pairs` empty): a dim line naming the real reason, read off the
   player's OWN bands (`BandPanelController._build_tribe_block` passes the other own, non-expedition
   bands to `HudFormat.band_tribe_progress(entry, other_bands)`; the wire's `tribe_standing` is not
-  read). Tested in order, one line each: (a) `has_belief_anchor` false: `Tribe: no ancestors' place
-  yet`; (b) another band in the same non-zero `supply_network_id` whose ancestors' place
-  (`belief_anchor_x/y`) differs or is missing: `Tribe: different ancestors' place`, a fixed phrase so
+  read). Tested in order, one line each: (a) `has_belief_anchor` false: `Tribe: no sacred ground
+  yet`; (b) another band in the same non-zero `supply_network_id` whose sacred ground
+  (`belief_anchor_x/y`) differs or is missing: `Tribe: different sacred ground`, a fixed phrase so
   no name can overflow it; the hover is exactly two lines and names no partner and no coordinates: the
-  rule, then `<band> keeps a different ancestors' place from your other bands — see Beliefs.`;
+  rule, then `<band> honours different sacred ground from your other bands — see Beliefs.`;
   (c) other bands exist but none shares the network (or this band's is 0): `Tribe: no shared supply network`; (d) no other band:
   `Tribe: no other band of your people`. The visible lines are kept short because the line is one
   non-wrapping `RichTextLabel` whose minimum width widens the docked card.
 - **No threshold and no tribe** (a foreign cohort): no block.
 
 The hover of the progress line is the rule (`Bands become a tribe when they pool goods in one supply
-network and share one ancestors' place.`), then only what is still missing as actions, one per line
-(`Keep sharing the network and the ancestors' place 4 more turns`, `Raise a monument at the ancestors'
-place`, `More belief at the ancestors' place`, `A stronger tie with <name>`; `Forms next turn` when close), then a blank line and `With: A, B` naming
+network and share one sacred ground.`), then only what is still missing as actions, one per line
+(`Keep sharing the network and the sacred ground 4 more turns`, `Raise a monument at the ancestors'
+place`, `More belief at the sacred ground`, `A stronger tie with <name>`; `Forms next turn` when close), then a blank line and `With: A, B` naming
 EVERY local partner, which is where the names the line dropped are kept. Shared origin and culture are
 never listed: the player cannot change them. With no partner the line after the rule is the
-reason's hover from the list above (none for case (d)). "Ancestors" is the Beliefs row's word.
+reason's hover from the list above (none for case (d)). 
 
 **Frames:** `tribe_chiefless` (no block), `tribe_pairs`, `tribe_no_partner`, `tribe_formed_chiefless`,
 `tribe_formed_led`, `tribe_joiner_*` and `tribe_reason_{no_place,different_place,no_network,alone}` in `band_expedition` (docked right, Band tab); the harness asserts one line, the

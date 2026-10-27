@@ -398,6 +398,11 @@ is in `campaign.md` §Sedentarization.
   (`campaign.md` §Sedentarization); the five sum to the raw score.
 - **The anchor**: `hasBeliefAnchor:bool` gating `beliefAnchorX` / `beliefAnchorY:uint` (`0,0` with no
   anchor — the `isTraveling` / `travelTargetX/Y` idiom on the same table).
+- **The anchor's strength**: `beliefAnchorWeight:float` — `CultureConfig::anchor_weight` of the belief
+  at the anchor, the saturating `b / (b + belief_half_saturation)` in `[0, 1)`; `0` with no anchor.
+  Derived at capture from the live config and registry (not checkpointed), own bands only (the
+  redacted foreign row leaves it at default), so the client draws a strength bar without restating
+  the formula.
 - **The reach region**: `beliefReachX` / `beliefReachY:[uint]`, zipped and row-major (the
   `pendingRevealX/Y` idiom) — every tile a band could stand on and still count as near its anchor.
   **It is the same test the term runs, not a second rule**: `WalkReach::region_around(roads, anchor)`

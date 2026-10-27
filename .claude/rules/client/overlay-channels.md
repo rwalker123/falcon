@@ -984,12 +984,19 @@ the floor-alone reading asserted as the premise.
 
 ---
 
-## The selected band's ANCESTORS — anchor mark and reach outline (issue #699)
+## SACRED GROUND on the map — anchor marks and reach outline (issue #699)
 
 `BandOverlayRenderer._draw_band_ancestors`, called from `draw_band_work_highlights` right after the
-range borders, so it draws only for the SELECTED PLAYER band (`_selected_player_band`) and never for a
+range borders, so it draws the reach outlines only for the SELECTED PLAYER band (`_selected_player_band`) and never for a
 foreign one — whose redacted row carries no anchor anyway. A band whose `has_belief_anchor` is false
-draws nothing.
+draws nothing. **The marks are selection-free:** `draw_belief_places`, called from `MapView._draw` before
+`draw_band_work_highlights`, draws the urn marker once on every DISTINCT sacred-ground tile held by any of
+the player's bands (a shared tile is marked once), at every zoom, selected or not.
+**`show ▸`** (the Beliefs popover, `band-readouts.md`) calls `MapView.show_belief_place`, which pans to the
+tile and stores `{tile, holder entity, selected_unit_id}` on the renderer; `_draw_shown_belief_region` then
+outlines the HOLDER band's published `belief_reach_x/y` (same `_reach_perimeter` / `_draw_reach_outline`,
+solid violet) until the selection differs from the one it was asked under, or another `show ▸` replaces
+it. Frames `map_band_ancestors_always` / `_show` (`map_preview`).
 
 - **The reach outline** is the PERIMETER of the tile set `belief_reach_x/y` (zipped packed arrays off
   `PopulationCohortState.beliefReachX/Y`): every edge between a tile in the set and one outside it,
@@ -1014,7 +1021,7 @@ draws nothing.
   across the wrap seam needs no handling of its own. The direct outline stays solid. Edges the relayed region shares with the direct one are
   dropped from it (the direct set is passed as `skip`), and the direct outline is drawn after it, so a
   shared border reads as the strong "near" line and the faint line marks only "near through kin".
-- **The anchor mark** (`_draw_ancestors_marker`) is the expedition marker's composite: a dark disc
+- **The anchor mark** (`_draw_ancestors_marker`, called by `draw_belief_places`) is the expedition marker's composite: a dark disc
   (`HudStyle.GROUND`, a band token's radius) ringed in violet, with the `BeliefSprites.urn()` sprite
   centred on it through `MapView._draw_marker_sprite`, sized at `ANCESTORS_SPRITE_FACTOR` of the disc's
   diameter — the 24–41 px band the other map markers draw at. When the sprite does not load, the

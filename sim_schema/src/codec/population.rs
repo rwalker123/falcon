@@ -1262,6 +1262,7 @@ fn create_populations<'a>(
                     tribeLeaderReach: cohort.tribe_leader_reach,
                     tribeLeaderLoad: cohort.tribe_leader_load,
                     ordersCarriedOut: cohort.orders_carried_out,
+                    beliefAnchorWeight: cohort.belief_anchor_weight,
                 },
             )
         })
@@ -2201,6 +2202,7 @@ fn decode_population(
         tribe_leader_reach: cohort.tribeLeaderReach(),
         tribe_leader_load: cohort.tribeLeaderLoad(),
         orders_carried_out: cohort.ordersCarriedOut(),
+        belief_anchor_weight: cohort.beliefAnchorWeight(),
     })
 }
 

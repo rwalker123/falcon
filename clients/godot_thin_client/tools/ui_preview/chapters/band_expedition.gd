@@ -1478,8 +1478,8 @@ func _belief_culture_states() -> void:
 	h._hud.show_unit_selection(BandFx.band_fixture())
 	await h._settle()
 
-## THE BELIEFS PULL-DOWN (Beliefs ▸): the ancestors' place, its reach, the pull, the stronger places of the
-## player's other bands and the rule. Needles are LITERALS, not the format under test.
+## THE BELIEFS PULL-DOWN (Beliefs ▸): the band's sacred ground with its strength bar, how it holds the band, and the
+## stronger places of the player's other bands (bar, hexes + compass, join wording, a clickable `show ▸`). Needles are LITERALS, not the format under test.
 const PLACE_HERE_ID := 61
 ## The disclosure key the Beliefs row registers: `beliefs:<entity>` (entity = 970 + band id in `_place_band`).
 const PLACE_DISCLOSURE := "beliefs:1031"
@@ -1493,30 +1493,38 @@ const PLACE_HERE_DEAD := 14.4
 const PLACE_FEN_DEAD := 40.0
 const PLACE_LOW_DEAD := 5.0
 const PLACE_RELAY_UNREACHED := 255
-const PLACE_NEEDLE_NEAR := "Ancestors' place: 14 dead · near"
-const PLACE_NEEDLE_UNREACHED := "Ancestors' place: 14 dead · out of reach"
-const PLACE_NEEDLE_PULL := "The ancestors pull this band +0.30 devout and +0.30 traditional."
-const PLACE_NEEDLE_STRONGER := "Fenwatch tribe: 40 dead — stand within walking reach to take it up"
-const PLACE_NEEDLE_NONE := "No ancestors' place yet — the band takes one up once its dead lie within walking reach."
-const PLACE_NEEDLE_RULE := "A band takes up another ancestors' place when it stands within walking reach of one holding more dead than its own."
-const PLACE_NEEDLE_LOW := "5 dead"
+const PLACE_HERE_WEIGHT := 0.55
+const PLACE_FEN_WEIGHT := 0.9
+const PLACE_LOW_WEIGHT := 0.1
+const PLACE_NEEDLE_OWN := "Honours its sacred ground ▰▰▰▱▱ hallowed [show ▸]"
+const PLACE_NEEDLE_NEAR := "Keeps the band devout and traditional, and lifts morale while it stays close."
+const PLACE_NEEDLE_KIN := "Close to it through kin camped between — keeps the band devout and traditional."
+const PLACE_NEEDLE_UNREACHED := "Far from its sacred ground — morale is slipping."
+const PLACE_NEEDLE_STRONGER := "Fenwatch tribe's sacred ground ▰▰▰▰▰ holy 3 hexes E [show ▸]"
+const PLACE_NEEDLE_JOIN_TRIBE := "Camp beside it to join the Fenwatch tribe."
+const PLACE_NEEDLE_JOIN_WITH := "Camp beside it to form a tribe with Fenwatch and 1 other band."
+const PLACE_NEEDLE_NONE := "No sacred ground yet — it forms where the band buries its people."
+const PLACE_NEEDLE_LOW := "Lowmarsh"
+const PLACE_BANNED_WORDS: Array[String] = ["dead", "walking reach", "near", "+0.", "ancestors", "urn", "anchor", "hops"]
+const PLACE_TOOLTIP := "Sacred ground grows stronger as a band buries its people there, holds gatherings there or raises a monument on it."
 const PLACE_MORE_PLACES := 5
 const PLACE_MORE_NEEDLE := "+2 more places"
 
-func _place_band(band_id: int, band_name: String, tile: Vector2i, tribe_name: String) -> Dictionary:
+func _place_band(band_id: int, band_name: String, tile: Vector2i, tribe_name: String, weight: float = PLACE_FEN_WEIGHT) -> Dictionary:
 	var band := BandFx.band_fixture()
 	band.merge({"name": band_name, "band_id": band_id, "entity": 970 + band_id, "has_belief_anchor": true,
 		"belief_anchor_x": tile.x, "belief_anchor_y": tile.y, "tribe_name": tribe_name,
-		"belief_relay_hops": 0}, true)
+		"belief_relay_hops": 0, "current_x": tile.x, "current_y": tile.y, "pos": [tile.x, tile.y],
+		"belief_anchor_weight": weight}, true)
 	return band
 
 func _beliefs_place_states() -> void:
-	var here := _place_band(PLACE_HERE_ID, "Fernhollow", PLACE_HERE_TILE, "")
+	var here := _place_band(PLACE_HERE_ID, "Fernhollow", PLACE_HERE_TILE, "", PLACE_HERE_WEIGHT)
 	here["culture_traits"] = _culture_vector(BELIEFS_TIED_DEVOUT, BELIEFS_TIED_TRADITIONAL)
 	here["culture_ancestor_pull"] = _culture_vector(BELIEFS_PULL_DEVOUT, BELIEFS_PULL_TRADITIONAL)
 	var fen := _place_band(PLACE_FEN_ID, "Fenwatch", PLACE_FEN_TILE, "Fenwatch tribe")
 	var night := _place_band(PLACE_NIGHT_ID, "Nightbrook", PLACE_FEN_TILE, "Fenwatch tribe")
-	var low := _place_band(PLACE_LOW_ID, "Lowmarsh", PLACE_LOW_TILE, "")
+	var low := _place_band(PLACE_LOW_ID, "Lowmarsh", PLACE_LOW_TILE, "", PLACE_LOW_WEIGHT)
 	h._hud.update_tile_beliefs({PLACE_HERE_TILE: PLACE_HERE_DEAD, PLACE_FEN_TILE: PLACE_FEN_DEAD,
 		PLACE_LOW_TILE: PLACE_LOW_DEAD})
 	var roster: Array = [here, fen, night, low]
@@ -1529,13 +1537,28 @@ func _beliefs_place_states() -> void:
 	await h._settle()
 	await h._save("band_beliefs_place_direct")
 	var direct := _flat(_popover_text())
-	h._assert_hud("Beliefs ▸ direct: place, pull, the formed tribe's stronger place, the rule (%s)" % direct,
-		direct.contains(PLACE_NEEDLE_NEAR) and direct.contains(PLACE_NEEDLE_PULL)
-		and direct.contains(PLACE_NEEDLE_STRONGER) and direct.contains(PLACE_NEEDLE_RULE)
+	h._assert_hud("Beliefs ▸ direct: own bar + show link, the direct line, the formed tribe's stronger place with bar, hexes, join wording (%s)" % direct,
+		direct.contains(PLACE_NEEDLE_OWN) and direct.contains(PLACE_NEEDLE_NEAR)
+		and direct.contains(PLACE_NEEDLE_STRONGER) and direct.contains(PLACE_NEEDLE_JOIN_TRIBE)
 		and not direct.contains(PLACE_NEEDLE_LOW)
-		and direct.find(PLACE_NEEDLE_NEAR) < direct.find(PLACE_NEEDLE_PULL)
-		and direct.find(PLACE_NEEDLE_PULL) < direct.find(PLACE_NEEDLE_STRONGER)
-		and direct.find(PLACE_NEEDLE_STRONGER) < direct.find(PLACE_NEEDLE_RULE))
+		and direct.find(PLACE_NEEDLE_OWN) < direct.find(PLACE_NEEDLE_NEAR)
+		and direct.find(PLACE_NEEDLE_NEAR) < direct.find(PLACE_NEEDLE_STRONGER)
+		and direct.find(PLACE_NEEDLE_STRONGER) < direct.find(PLACE_NEEDLE_JOIN_TRIBE))
+	var banned_hit := ""
+	for word in PLACE_BANNED_WORDS:
+		if direct.to_lower().contains(word):
+			banned_hit = word
+	h._assert_hud("Beliefs ▸ never says a raw count or a code word (hit: `%s`)" % banned_hit, banned_hit == "")
+	var popover_label := h._hud._disclosures._breakdown_popover_label as RichTextLabel
+	h._assert_hud("Beliefs ▸ popover hover explains what grows sacred ground", popover_label.tooltip_text == PLACE_TOOLTIP)
+	# `[show ▸]` is clickable: it reaches the relay with the tile and the HOLDER band's entity.
+	var shown: Array = []
+	h._hud._disclosures.set_belief_show(func(x: int, y: int, holder: int) -> void: shown.append([x, y, holder]))
+	for show_meta in _show_metas(_popover_markup()):
+		popover_label.meta_clicked.emit(show_meta)
+	h._assert_hud("show ▸ names the band's own tile and the stronger place's lowest-id holder (%s)" % str(shown),
+		shown == [[PLACE_HERE_TILE.x, PLACE_HERE_TILE.y, 970 + PLACE_HERE_ID],
+			[PLACE_FEN_TILE.x, PLACE_FEN_TILE.y, 970 + PLACE_FEN_ID]])
 	_click_disclosure(PLACE_DISCLOSURE)
 
 	# The same stronger place with its holders NOT in one formed tribe names the lowest-id band.
@@ -1546,7 +1569,8 @@ func _beliefs_place_states() -> void:
 	await h._settle()
 	var untribed_lines: Array[String] = h._hud._banddetail._stronger_place_lines(here, true, 14)
 	h._assert_hud("a place whose holders are not one formed tribe is named for its lowest-id band",
-		untribed_lines.size() == 1 and untribed_lines[0].contains("Fenwatch and 1 other band: 40 dead"))
+		untribed_lines.size() == 2 and untribed_lines[0].contains("Fenwatch and 1 other band's sacred ground")
+		and untribed_lines[1].contains(PLACE_NEEDLE_JOIN_WITH))
 
 	# More than three stronger places: three lines, then `+N more places`.
 	var crowd: Array = [here]
@@ -1560,8 +1584,8 @@ func _beliefs_place_states() -> void:
 	h._hud.update_band_alerts(crowd)
 	var crowd_lines: Array[String] = h._hud._banddetail._stronger_place_lines(here, true, 14)
 	h._assert_hud("five stronger places: three lines then `+2 more places`, strongest first",
-		crowd_lines.size() == 4 and crowd_lines[3].contains(PLACE_MORE_NEEDLE)
-		and crowd_lines[0].contains("44 dead"))
+		crowd_lines.size() == 7 and crowd_lines[6].contains(PLACE_MORE_NEEDLE)
+		and crowd_lines[0].contains("Crowd4's sacred ground"))
 	h._hud.update_tile_beliefs({PLACE_HERE_TILE: PLACE_HERE_DEAD, PLACE_FEN_TILE: PLACE_FEN_DEAD,
 		PLACE_LOW_TILE: PLACE_LOW_DEAD})
 	h._hud.update_band_alerts(roster)
@@ -1576,10 +1600,20 @@ func _beliefs_place_states() -> void:
 	await h._save("band_beliefs_place_unreached")
 	h._assert_hud("Beliefs ▸ unreached reads `%s`, in the warning ink" % PLACE_NEEDLE_UNREACHED,
 		_flat(_popover_text()).contains(PLACE_NEEDLE_UNREACHED)
-		and _popover_markup().contains("[color=#%s]" % HudStyle.WARN_HEX))
+		and _popover_markup().contains("[color=#%s]%s" % [HudStyle.WARN_HEX, PLACE_NEEDLE_UNREACHED]))
 	_click_disclosure(PLACE_DISCLOSURE)
 
-	# (c) no ancestors' place: the invitation, no pull line.
+	# (b2) tied in through kin: the middle line.
+	var via_kin := here.duplicate(true)
+	via_kin["belief_relay_hops"] = 2
+	h._hud.show_unit_selection(via_kin)
+	await h._settle()
+	_click_disclosure(PLACE_DISCLOSURE)
+	await h._settle()
+	h._assert_hud("Beliefs ▸ through kin reads `%s`" % PLACE_NEEDLE_KIN, _flat(_popover_text()).contains(PLACE_NEEDLE_KIN))
+	_click_disclosure(PLACE_DISCLOSURE)
+
+	# (c) no sacred ground: the invitation, no own line.
 	var bare_place := here.duplicate(true)
 	bare_place["has_belief_anchor"] = false
 	h._hud.update_band_alerts([bare_place, fen, night])
@@ -1590,8 +1624,8 @@ func _beliefs_place_states() -> void:
 	await h._save("band_beliefs_place_none")
 	var none_text := _flat(_popover_text())
 	h._assert_hud("Beliefs ▸ with no place: the invitation, the stronger place, no pull line (%s)" % none_text,
-		none_text.contains(PLACE_NEEDLE_NONE) and none_text.contains(PLACE_NEEDLE_STRONGER)
-		and not none_text.contains("pull this band") and not none_text.contains("Ancestors' place:"))
+		none_text.contains(PLACE_NEEDLE_NONE) and none_text.contains("Fenwatch tribe's sacred ground")
+		and not none_text.contains("Honours"))
 	_click_disclosure(PLACE_DISCLOSURE)
 	h._hud.update_tile_beliefs({})
 	h._hud.update_band_alerts([BandFx.band_fixture()])
@@ -1915,6 +1949,17 @@ func _assert_fodder_row_fits() -> void:
 
 ## The open breakdown popover's text — the RENDERED disclosure, not the producer's return, so the
 ## assertions above cover the click, the payload stash and the popover's own restate.
+## The `show ▸` metas in the popover's raw markup, in order.
+func _show_metas(markup: String) -> Array[String]:
+	var metas: Array[String] = []
+	var marker := "[url=" + HudDisclosureVocab.BELIEFS_SHOW_META_PREFIX
+	var from := markup.find(marker)
+	while from >= 0:
+		var start := from + "[url=".length()
+		metas.append(markup.substr(start, markup.find("]", start) - start))
+		from = markup.find(marker, start)
+	return metas
+
 func _popover_text() -> String:
 	var label = h._hud._disclosures._breakdown_popover_label
 	return "" if label == null else (label as RichTextLabel).get_parsed_text()
@@ -2418,9 +2463,9 @@ func _hay_ledger_states() -> void:
 				and not tribe_text.contains("Ridgeway"))
 			h._assert_hud("tribe_pairs: the tooltip is the rule, what is missing, and every partner (%s)" % tribe_line.tooltip_text.replace("\n", " | "),
 				tribe_line.tooltip_text == "\n".join([HudFormat.TRIBE_TOOLTIP_RULE,
-				"Keep sharing the network and the ancestors' place 4 more turns",
-				"Raise a monument at the ancestors' place",
-				"More belief at the ancestors' place", "", "With: Snowreach, Ridgeway, Dunmere"]))
+				"Keep sharing the network and the sacred ground 4 more turns",
+				"Raise a monument at the sacred ground",
+				"More belief at the sacred ground", "", "With: Snowreach, Ridgeway, Dunmere"]))
 		else:
 			h._assert_hud("tribe_no_partner: one dim line and the reason on hover (%s)" % tribe_text,
 				tribe_text == HudFormat.TRIBE_NO_PLACE_LINE
@@ -2439,7 +2484,7 @@ func _hay_ledger_states() -> void:
 	var joiner_alone := joiner_base.duplicate(true)
 	joiner_alone["tribe_pairs"] = []
 	joiner_alone["has_belief_anchor"] = true
-	for joiner_case in [["tribe_joiner_partner_led", joiner_led, " · 4 turns", "Keep sharing the network and the ancestors' place 4 more turns"],
+	for joiner_case in [["tribe_joiner_partner_led", joiner_led, " · 4 turns", "Keep sharing the network and the sacred ground 4 more turns"],
 			["tribe_joiner_needs_chief", joiner_unled, " · needs a chief", HudFormat.TRIBE_TOOLTIP_NEEDS_CHIEF],
 			["tribe_joiner_no_partner", joiner_alone, "", HudFormat.TRIBE_TOOLTIP_RULE]]:
 		var joiner_band := BandFx.band_fixture()
@@ -2461,7 +2506,7 @@ func _hay_ledger_states() -> void:
 		if String(joiner_case[0]) == "tribe_joiner_needs_chief":
 			h._assert_hud("tribe_joiner_needs_chief: no turn count anywhere in the hover",
 				not joiner_line.tooltip_text.contains("turn"))
-	# The no-partner REASONS (#870), read off the player's own bands: (a) no ancestors' place of its own, (b) a
+	# The no-partner REASONS (#870), read off the player's own bands: (a) no sacred ground of its own, (b) a
 	# band in its supply network holds a different place (the live Fernhollow / Fenwatch case), (c) no other
 	# band shares its supply network, (d) no other band at all.
 	var reason_here := joiner_base.duplicate(true)
@@ -2483,7 +2528,7 @@ func _hay_ledger_states() -> void:
 			["tribe_reason_no_place", reason_no_place, [reason_fen], HudFormat.TRIBE_NO_PLACE_LINE, HudFormat.TRIBE_NO_PLACE_TOOLTIP],
 			["tribe_reason_different_place", reason_here, [reason_fen, reason_night],
 				HudFormat.TRIBE_DIFFERENT_PLACE_LINE,
-				"Bands become a tribe when they pool goods in one supply network and share one ancestors' place.\nFernhollow keeps a different ancestors' place from your other bands — see Beliefs."],
+				"Bands become a tribe when they pool goods in one supply network and share one sacred ground.\nFernhollow honours different sacred ground from your other bands — see Beliefs."],
 			["tribe_reason_no_network", reason_no_network, [reason_far], HudFormat.TRIBE_NO_NETWORK_LINE, HudFormat.TRIBE_NO_NETWORK_TOOLTIP],
 			["tribe_reason_alone", reason_here, [], HudFormat.TRIBE_ALONE_LINE, HudFormat.TRIBE_TOOLTIP_RULE]]:
 		var reason_band := BandFx.band_fixture()

@@ -1340,6 +1340,9 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// near its anchor, resolved at capture by [`crate::supply::WalkReach::region_around`], the same
     /// walk test the culture morale term reads. Empty with no anchor.
     pub(crate) belief_reach: Vec<UVec2>,
+    /// **The anchor's saturating weight** (`CultureConfig::anchor_weight` of the belief standing at
+    /// the band's anchor), `0` with no anchor. Resolved at capture from the live registry.
+    pub(crate) belief_anchor_weight: f32,
     /// **The band's relayed region** — tiles outside the direct region from which it would be tied
     /// in through its other kin, resolved at capture by [`crate::belief_relay`] on the frame's
     /// positions. (The hop count is NOT recounted here: the frame publishes the one the turn's term
@@ -1674,6 +1677,7 @@ pub(crate) fn redacted_population_state(
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
     let PopulationStateInputs {
         belief_reach,
+        belief_anchor_weight,
         belief_relay_region,
         held_preservation,
         culture_traits,
@@ -2777,6 +2781,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         has_belief_anchor: cohort.belief_anchor.is_some(),
         belief_anchor_x: cohort.belief_anchor.map_or(0, |anchor| anchor.x),
         belief_anchor_y: cohort.belief_anchor.map_or(0, |anchor| anchor.y),
+        belief_anchor_weight,
         belief_reach_x: belief_reach.iter().map(|tile| tile.x).collect(),
         belief_reach_y: belief_reach.iter().map(|tile| tile.y).collect(),
         // The hop count the turn's culture term was priced from (`simulate_population`), never a
@@ -3700,6 +3705,7 @@ mod tests {
     ) -> PopulationCohortState {
         population_state(PopulationStateInputs {
             belief_reach: Vec::new(),
+            belief_anchor_weight: 0.0,
             belief_relay_region: Vec::new(),
             culture_traits: Vec::new(),
             culture_ancestor_pull: Vec::new(),

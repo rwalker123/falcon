@@ -987,8 +987,9 @@ func _band_beliefs_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> Str
     ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_BELIEFS] = _beliefs_hover(reading)
     return HudDisclosureVocab.DETAIL_ROW_BELIEFS + DetailFormat.DETAIL_KV_SEPARATOR + value
 
-## The Beliefs pull-down: the band's ancestors' place and its reach, the pull, the stronger places of the
-## player's other bands, then the rule. Facts the sim published only; walking reach is never computed here.
+## The Beliefs pull-down: the band's SACRED GROUND with its strength bar, one line on how it holds the band,
+## then the stronger places of the player's other bands (who, bar, where, what to do). Facts the sim
+## published only: walking reach is never computed here; the distance and bearing are plain geometry.
 func _beliefs_place_lines(unit_data: Dictionary) -> Array[String]:
     var lines: Array[String] = []
     var indent := DetailFormat.MORALE_BREAKDOWN_INDENT
@@ -996,36 +997,66 @@ func _beliefs_place_lines(unit_data: Dictionary) -> Array[String]:
     var own_dead := 0
     if has_place:
         own_dead = _place_dead(unit_data)
+        lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_OWN_FORMAT % [
+            _strength_bar(float(unit_data.get(HudDisclosureVocab.BELIEFS_PLACE_WEIGHT_KEY, 0.0))),
+            _show_link(_place_tile(unit_data), unit_data)])
         var hops := int(unit_data.get(HudDisclosureVocab.BELIEFS_PLACE_RELAY_KEY, HudDisclosureVocab.BELIEFS_PLACE_RELAY_DIRECT))
         if hops >= HudDisclosureVocab.BELIEFS_PLACE_RELAY_UNREACHED:
             lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_INK_FORMAT % [HudStyle.WARN_HEX,
-                HudDisclosureVocab.BELIEFS_PLACE_UNREACHED_FORMAT % own_dead])
+                HudDisclosureVocab.BELIEFS_PLACE_UNREACHED_LINE])
         elif hops == HudDisclosureVocab.BELIEFS_PLACE_RELAY_DIRECT:
-            lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_NEAR_FORMAT % own_dead)
-        elif hops == 1:
-            lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_KIN_ONE_FORMAT % own_dead)
+            lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_DIRECT_LINE)
         else:
-            lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_KIN_FORMAT % [own_dead, hops])
-        var reading := _belief_reading(unit_data)
-        if bool(reading["pulling"]):
-            lines.append(indent + String(reading["pull_sentence"]))
-        else:
-            lines.append(indent + BELIEFS_UNTIED_TOOLTIP_FORMAT % [BELIEFS_WORD_DEVOUT, BELIEFS_WORD_TRADITIONAL])
+            lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_KIN_LINE)
     else:
         lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_NONE)
     lines.append_array(_stronger_place_lines(unit_data, has_place, own_dead))
-    lines.append(indent + HudDisclosureVocab.BELIEFS_PLACE_INK_FORMAT % [HudStyle.INK_DIM_HEX,
-        HudDisclosureVocab.BELIEFS_PLACE_RULE])
     return lines
 
-## The dead standing on a band's ancestors' place, rounded to whole people.
-func _place_dead(band: Dictionary) -> int:
-    return int(round(_band_labor.tile_belief_at(int(band.get(HudDisclosureVocab.BELIEFS_PLACE_X_KEY, 0)),
-        int(band.get(HudDisclosureVocab.BELIEFS_PLACE_Y_KEY, 0)))))
+## `▰▰▰▱▱ sacred` — the strength bar and its word, off the anchor's weight `w` in (0, 1): step
+## `clamp(ceil(w * pips), 1, pips)`. No raw number ever reaches the screen.
+static func _strength_bar(weight: float) -> String:
+    var pips := HudDisclosureVocab.BELIEFS_BAR_PIPS
+    var step := clampi(int(ceil(weight * float(pips))), 1, pips)
+    return HudDisclosureVocab.BELIEFS_BAR_FORMAT % [
+        HudDisclosureVocab.BELIEFS_BAR_FILLED.repeat(step) + HudDisclosureVocab.BELIEFS_BAR_EMPTY.repeat(pips - step),
+        HudDisclosureVocab.BELIEFS_BAR_WORDS[step - 1]]
 
-## Places the player's OTHER bands hold that differ from this band's and hold strictly more dead, strongest
-## first: at most `BELIEFS_STRONGER_MAX_LINES`, then `+N more places`. A place is named for its formed tribe
-## when every band holding it is in that one tribe, else for its lowest-id holder.
+## The clickable `[show ▸]`: the meta names the tile and the band whose published reach the map shades.
+static func _show_link(tile: Vector2i, holder: Dictionary) -> String:
+    var sep := HudDisclosureVocab.BELIEFS_SHOW_META_SEPARATOR
+    var meta := HudDisclosureVocab.BELIEFS_SHOW_META_PREFIX + sep.join(
+        [str(tile.x), str(tile.y), str(int(holder.get("entity", -1)))])
+    return "%s%s][color=#%s][u]%s[/u][/color][/url]" % [
+        DetailFormat.DISCLOSURE_URL_OPEN, meta, HudStyle.SIGNAL_HEX, HudDisclosureVocab.BELIEFS_SHOW_LABEL]
+
+static func _place_tile(band: Dictionary) -> Vector2i:
+    return Vector2i(int(band.get(HudDisclosureVocab.BELIEFS_PLACE_X_KEY, 0)),
+        int(band.get(HudDisclosureVocab.BELIEFS_PLACE_Y_KEY, 0)))
+
+## The published belief on a band's sacred ground tile, rounded — only ever COMPARED (which places are
+## stronger than this band's own), never shown.
+func _place_dead(band: Dictionary) -> int:
+    var tile := _place_tile(band)
+    return int(round(_band_labor.tile_belief_at(tile.x, tile.y)))
+
+## `6 hexes NE` from the band's current tile to the place (wrap-aware, the shortest way round),
+## `1 hex E`, or `here` on the band's own tile.
+func _place_direction(band: Dictionary, place: Vector2i) -> String:
+    var here := SourceForecast.band_tile(band)
+    var width := _band_labor.grid_width()
+    var wrap := _band_labor.wrap_horizontal()
+    var distance := SourceForecast.hex_distance_wrapped(here.x, here.y, place.x, place.y, width, wrap)
+    if distance <= 0:
+        return HudDisclosureVocab.BELIEFS_DISTANCE_HERE
+    var bearing := SourceForecast.compass_bearing(here.x, here.y, place.x, place.y, width, wrap)
+    if distance == 1:
+        return HudDisclosureVocab.BELIEFS_DISTANCE_ONE_FORMAT % bearing
+    return HudDisclosureVocab.BELIEFS_DISTANCE_FORMAT % [distance, bearing]
+
+## Places the player's OTHER bands hold that differ from this band's and hold strictly more belief, strongest
+## first: at most `BELIEFS_STRONGER_MAX_LINES` (two lines each), then `+N more places`. A place is named for
+## its formed tribe when every band holding it is in that one tribe, else for its lowest-id holder.
 func _stronger_place_lines(unit_data: Dictionary, has_place: bool, own_dead: int) -> Array[String]:
     var lines: Array[String] = []
     var band_id := int(unit_data.get("band_id", HudConst.NO_BAND_ID))
@@ -1035,43 +1066,62 @@ func _stronger_place_lines(unit_data: Dictionary, has_place: bool, own_dead: int
                 or bool(other.get("is_expedition", false)) \
                 or not bool(other.get(HudDisclosureVocab.BELIEFS_PLACE_ANCHOR_KEY, false)):
             continue
-        var tile := Vector2i(int(other.get(HudDisclosureVocab.BELIEFS_PLACE_X_KEY, 0)),
-            int(other.get(HudDisclosureVocab.BELIEFS_PLACE_Y_KEY, 0)))
-        if has_place and tile == Vector2i(int(unit_data.get(HudDisclosureVocab.BELIEFS_PLACE_X_KEY, 0)),
-                int(unit_data.get(HudDisclosureVocab.BELIEFS_PLACE_Y_KEY, 0))):
+        var tile := _place_tile(other)
+        if has_place and tile == _place_tile(unit_data):
             continue
         if not places.has(tile):
             places[tile] = []
         (places[tile] as Array).append(other)
     var rows: Array[Dictionary] = []
     for tile in places:
-        var dead := _place_dead(places[tile][0])
+        var holders: Array = places[tile]
+        var dead := _place_dead(holders[0])
         if dead <= own_dead:
             continue
-        rows.append({"dead": dead, "who": _place_holder_name(places[tile])})
+        rows.append({"dead": dead, "tile": tile, "holders": holders})
     rows.sort_custom(func(a, b): return int(a["dead"]) > int(b["dead"]))
     var indent := DetailFormat.MORALE_BREAKDOWN_INDENT
     for index in range(mini(rows.size(), HudDisclosureVocab.BELIEFS_STRONGER_MAX_LINES)):
-        lines.append(indent + HudDisclosureVocab.BELIEFS_STRONGER_FORMAT % [rows[index]["who"], rows[index]["dead"]])
+        var holders: Array = rows[index]["holders"]
+        var tile: Vector2i = rows[index]["tile"]
+        var tribe := _shared_tribe(holders)
+        var weight := 0.0
+        for holder in holders:
+            weight = maxf(weight, float(holder.get(HudDisclosureVocab.BELIEFS_PLACE_WEIGHT_KEY, 0.0)))
+        var who := _place_holder_name(holders)
+        lines.append(indent + HudDisclosureVocab.BELIEFS_STRONGER_FORMAT % [
+            who, _strength_bar(weight), _place_direction(unit_data, tile),
+            _show_link(tile, _lowest_id_holder(holders))])
+        if tribe != "":
+            lines.append(indent + HudDisclosureVocab.BELIEFS_STRONGER_JOIN_TRIBE_FORMAT % tribe)
+        else:
+            lines.append(indent + HudDisclosureVocab.BELIEFS_STRONGER_JOIN_WITH_FORMAT % who)
     if rows.size() > HudDisclosureVocab.BELIEFS_STRONGER_MAX_LINES:
         lines.append(indent + HudDisclosureVocab.BELIEFS_STRONGER_MORE_FORMAT
             % (rows.size() - HudDisclosureVocab.BELIEFS_STRONGER_MAX_LINES))
     return lines
 
-## Who holds a place: the one formed tribe all its holders belong to, else the lowest-id holder plus a count.
-func _place_holder_name(holders: Array) -> String:
+## The formed tribe every holder of a place belongs to, or `""` when they are not all in one.
+static func _shared_tribe(holders: Array) -> String:
     var tribe := String(holders[0].get("tribe_name", ""))
-    var same_tribe := tribe != ""
     for holder in holders:
         if String(holder.get("tribe_name", "")) != tribe:
-            same_tribe = false
-    if same_tribe:
-        return tribe
+            return ""
+    return tribe
+
+static func _lowest_id_holder(holders: Array) -> Dictionary:
     var lowest: Dictionary = holders[0]
     for holder in holders:
         if int(holder.get("band_id", 0)) < int(lowest.get("band_id", 0)):
             lowest = holder
-    var holder_name := HudFormat.band_name(lowest)
+    return lowest
+
+## Who holds a place: the one formed tribe all its holders belong to, else the lowest-id holder plus a count.
+func _place_holder_name(holders: Array) -> String:
+    var tribe := _shared_tribe(holders)
+    if tribe != "":
+        return tribe
+    var holder_name := HudFormat.band_name(_lowest_id_holder(holders))
     if holders.size() == 2:
         return HudDisclosureVocab.BELIEFS_STRONGER_OTHERS_ONE_FORMAT % holder_name
     if holders.size() > 2:

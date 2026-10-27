@@ -39,7 +39,7 @@ const BREAKDOWN_KIND_MORALE := "morale"
 # combine by product; see `DetailFormat.fertility_breakdown_row`.
 const BREAKDOWN_KIND_GROWTH := "growth"
 
-# The Beliefs row's pull-down: the band's ancestors' place, what ties it there, and the stronger places
+# The Beliefs row's pull-down: the band's sacred ground, what ties it there, and the stronger places
 # of its own people. Opens in the same popover; the caret tints WARN while the place is out of reach.
 const BREAKDOWN_KIND_BELIEFS := "beliefs"
 
@@ -207,27 +207,51 @@ const BELIEFS_DRIFT_UNKNOWN_BAND := "another band"
 const BELIEFS_DRIFT_PEOPLE_FORMAT := " (%s)"
 const BELIEFS_DRIFT_SENTENCE_FORMAT := "Drifting toward %s%s — %s +%s/turn."
 
-# ---- THE BELIEFS PULL-DOWN (Beliefs ▸): the band's ancestors' place, in four kinds of line. Words are the
-# on-screen vocabulary ("ancestors' place", "dead"). The relay key is the decoded
-# `PopulationCohortState.beliefRelayHops` (0 direct, n through n kin bands, 255 unreached).
+# ---- THE BELIEFS PULL-DOWN (Beliefs ▸): the band's SACRED GROUND — the player's word for the tile its
+# people are buried on (never "dead", "urn", "anchor", "hops" or "walking reach" on screen). The relay key
+# is the decoded `PopulationCohortState.beliefRelayHops` (0 direct, n through n kin bands, 255 unreached);
+# the weight key is `beliefAnchorWeight`, the anchor's strength in [0, 1), which the STRENGTH BAR steps off.
 const BELIEFS_PLACE_ANCHOR_KEY := "has_belief_anchor"
 const BELIEFS_PLACE_X_KEY := "belief_anchor_x"
 const BELIEFS_PLACE_Y_KEY := "belief_anchor_y"
 const BELIEFS_PLACE_RELAY_KEY := "belief_relay_hops"
+const BELIEFS_PLACE_WEIGHT_KEY := "belief_anchor_weight"
 const BELIEFS_PLACE_RELAY_DIRECT := 0
 const BELIEFS_PLACE_RELAY_UNREACHED := 255
-const BELIEFS_PLACE_NEAR_FORMAT := "Ancestors' place: %d dead · near"
-const BELIEFS_PLACE_KIN_ONE_FORMAT := "Ancestors' place: %d dead · tied in through 1 band of kin"
-const BELIEFS_PLACE_KIN_FORMAT := "Ancestors' place: %d dead · tied in through %d bands of kin"
-const BELIEFS_PLACE_UNREACHED_FORMAT := "Ancestors' place: %d dead · out of reach"
-const BELIEFS_PLACE_NONE := "No ancestors' place yet — the band takes one up once its dead lie within walking reach."
-## A stronger place held by the player's other bands: who holds it, its dead, and what to do about it.
-const BELIEFS_STRONGER_FORMAT := "%s: %d dead — stand within walking reach to take it up"
+## THE STRENGTH BAR: `w` in (0, 1) fills `clamp(ceil(w * BELIEFS_BAR_PIPS), 1, BELIEFS_BAR_PIPS)` pips of the
+## ▰▱ style the Tribe row uses, and the step names the place. Index 0 is step 1.
+const BELIEFS_BAR_PIPS := 5
+const BELIEFS_BAR_FILLED := "▰"
+const BELIEFS_BAR_EMPTY := "▱"
+const BELIEFS_BAR_WORDS: Array[String] = ["a grave", "burial ground", "hallowed", "sacred", "holy"]
+## `%s` = the pips, `%s` = the word.
+const BELIEFS_BAR_FORMAT := "%s %s"
+## The popover's own-ground lines. Line A carries the bar and the clickable `show ▸`; line B is by relay hops.
+const BELIEFS_PLACE_OWN_FORMAT := "Honours its sacred ground  %s  %s"
+const BELIEFS_PLACE_DIRECT_LINE := "Keeps the band devout and traditional, and lifts morale while it stays close."
+const BELIEFS_PLACE_KIN_LINE := "Close to it through kin camped between — keeps the band devout and traditional."
+const BELIEFS_PLACE_UNREACHED_LINE := "Far from its sacred ground — morale is slipping."
+const BELIEFS_PLACE_NONE := "No sacred ground yet — it forms where the band buries its people."
+## What the whole popover says on hover (a `RichTextLabel` has no per-line tooltips).
+const BELIEFS_PLACE_TOOLTIP := \
+    "Sacred ground grows stronger as a band buries its people there, holds gatherings there or raises a monument on it."
+## A stronger place held by the player's other bands. Line 1: who, the bar, where; line 2: what to do about it.
+## `%s` = who, `%s` = bar+word, `%s` = distance and bearing, `%s` = the `show ▸` link.
+const BELIEFS_STRONGER_FORMAT := "%s's sacred ground  %s  %s  %s"
+const BELIEFS_STRONGER_JOIN_TRIBE_FORMAT := "Camp beside it to join the %s."
+const BELIEFS_STRONGER_JOIN_WITH_FORMAT := "Camp beside it to form a tribe with %s."
+## `6 hexes NE` / `1 hex E`; a place on the band's own tile reads `here`.
+const BELIEFS_DISTANCE_FORMAT := "%d hexes %s"
+const BELIEFS_DISTANCE_ONE_FORMAT := "1 hex %s"
+const BELIEFS_DISTANCE_HERE := "here"
 const BELIEFS_STRONGER_OTHERS_ONE_FORMAT := "%s and 1 other band"
 const BELIEFS_STRONGER_OTHERS_FORMAT := "%s and %d other bands"
 const BELIEFS_STRONGER_MORE_FORMAT := "+%d more places"
 const BELIEFS_STRONGER_MAX_LINES := 3
-const BELIEFS_PLACE_RULE := \
-    "A band takes up another ancestors' place when it stands within walking reach of one holding more dead than its own."
+## `show ▸`: a `[url]` in the popover. Its meta is `PREFIX<x>,<y>,<holder entity>`; the click pans the map to
+## the tile and keeps that holder's reach region shaded until the band selection changes.
+const BELIEFS_SHOW_LABEL := "[show ▸]"
+const BELIEFS_SHOW_META_PREFIX := "belief_show:"
+const BELIEFS_SHOW_META_SEPARATOR := ","
 ## The BBCode wrapper for a line that wears its own ink (the renderer's indented branch is neutral).
 const BELIEFS_PLACE_INK_FORMAT := "[color=#%s]%s[/color]"

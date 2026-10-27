@@ -190,12 +190,18 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // draws a wrap-aware reticle + line to it for the selected traveling unit.
     let _ = dict.insert("travel_target_x", i64::from(cohort.travelTargetX()));
     let _ = dict.insert("travel_target_y", i64::from(cohort.travelTargetY()));
-    // The band's ancestors' place — its belief anchor, the tile `morale_culture` is measured against
+    // The band's sacred ground — its belief anchor, the tile `morale_culture` is measured against
     // (`hasBeliefAnchor` gates it; `0,0` with no anchor, the `isTraveling`/`travelTarget` idiom). Own
     // bands only: a foreign band's redacted row leaves all three at their defaults.
     let _ = dict.insert("has_belief_anchor", cohort.hasBeliefAnchor());
     let _ = dict.insert("belief_anchor_x", i64::from(cohort.beliefAnchorX()));
     let _ = dict.insert("belief_anchor_y", i64::from(cohort.beliefAnchorY()));
+    // The anchor's strength in [0, 1): the saturating weight of the dead on that tile. 0 with no anchor
+    // and on a foreign row. The sacred-ground strength bar steps off it (never the raw count).
+    let _ = dict.insert(
+        "belief_anchor_weight",
+        f64::from(cohort.beliefAnchorWeight()),
+    );
     // Every tile the band can STAND on and still count as near its anchor, as two zipped packed
     // arrays (index i of each is one tile). Road-aware, so the set is irregular — the map draws its
     // perimeter, never a circle. Empty with no anchor.

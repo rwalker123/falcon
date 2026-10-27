@@ -3478,8 +3478,12 @@ pub fn capture_snapshot(
                     } else {
                         crate::snapshot::population::ReachReadout::default()
                     };
+                    let belief_anchor_weight = cohort.belief_anchor.map_or(0.0, |anchor| {
+                        wellbeing_config.culture.anchor_weight(belief.get(anchor))
+                    });
                     Some(population_state(PopulationStateInputs {
                         belief_reach,
+                        belief_anchor_weight,
                         belief_relay_region,
                         held_preservation: preservation_scene.held_by(
                             band_id.copied(),

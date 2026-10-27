@@ -300,6 +300,9 @@ const ANCESTORS_GLYPH_FONT_FACTOR := 1.4      # of disc diameter — the ⚱ sit
 const ANCESTORS_GLYPH_FONT_MIN := 14
 
 var _view: MapView = null
+## The sacred ground the Beliefs popover's `show ▸` asked to have shaded: {tile, holder (band entity), selected
+## (the `selected_unit_id` it was asked under)}. Empty = none.
+var _shown_belief: Dictionary = {}
 # Optimistic pending-labor map (per band entity), pushed from the HUD via set_labor_pending.
 # Drawn for the selected band in a distinct dashed-amber style until the snapshot confirms.
 var _labor_pending: Dictionary = {}
@@ -1509,7 +1512,7 @@ func _draw_travel_destination(unit: Dictionary, band_col: int, band_row: int, ef
 	# animated targeting reticle).
 	_view._draw_reticle(dest_center, radius * TRAVEL_DEST_RETICLE_FACTOR, dest_color, 1.0)
 
-## THE BAND'S ANCESTORS — the reach-region PERIMETER (every edge between a tile in
+## THE BAND'S SACRED GROUND — the reach-region PERIMETER (every edge between a tile in
 ## `belief_reach_x/y` and one outside it, off-map counting as outside) and the anchor glyph, both in
 ## the band's effective column frame so the region stays contiguous across the wrap seam. Nothing for
 ## a band with no anchor; a foreign band never reaches here (`_selected_player_band`), and its
@@ -1528,11 +1531,58 @@ func _draw_band_ancestors(band: Dictionary, band_col: int, eff_col: int, radius:
 	_draw_reach_outline(_reach_perimeter(direct, {}, band_col, eff_col, radius, origin),
 		Color(HudStyle.BELIEF, ANCESTORS_REACH_ALPHA), ANCESTORS_REACH_WIDTH,
 		Color(HudStyle.GROUND, ANCESTORS_REACH_UNDER_ALPHA), ANCESTORS_REACH_UNDER_WIDTH)
-	var anchor_y := int(band.get("belief_anchor_y", 0))
-	if anchor_y < 0 or anchor_y >= _view.grid_height:
+	# The anchor MARK is not drawn here: `draw_belief_places` marks every sacred ground of the player's, the
+	# selected band's included, so one tile is marked once.
+
+## SACRED GROUND ON THE MAP, selection-free. Every distinct sacred-ground tile held by any of the player's
+## bands wears the urn marker (a tile several bands share is marked once), and the region the Beliefs
+## popover's `show ▸` asked for is outlined: the HOLDER band's published `belief_reach_x/y`, never a reach
+## computed here. The shown region lasts until the band selection changes or another `show ▸` replaces it.
+func draw_belief_places(radius: float, origin: Vector2) -> void:
+	var marked := {}
+	for unit_variant in _view.units:
+		if not (unit_variant is Dictionary) or not HudConst.is_player_unit(unit_variant):
+			continue
+		var band: Dictionary = unit_variant
+		if not bool(band.get("has_belief_anchor", false)):
+			continue
+		var tile := Vector2i(int(band.get("belief_anchor_x", 0)), int(band.get("belief_anchor_y", 0)))
+		if marked.has(tile) or tile.y < 0 or tile.y >= _view.grid_height:
+			continue
+		marked[tile] = true
+		_draw_ancestors_marker(_view._hex_center_wrapped(tile.x, tile.y, radius, origin), radius)
+	_draw_shown_belief_region(radius, origin)
+
+## Ask for a sacred ground's reach to be shaded (the Beliefs popover's `show ▸`). Tied to the band selected NOW:
+## once the selection moves, `_draw_shown_belief_region` lets it go.
+func show_belief_place(tile: Vector2i, holder_entity: int) -> void:
+	_shown_belief = {"tile": tile, "holder": holder_entity, "selected": _view.selected_unit_id}
+
+func clear_shown_belief_place() -> void:
+	_shown_belief = {}
+
+func _draw_shown_belief_region(radius: float, origin: Vector2) -> void:
+	if _shown_belief.is_empty():
 		return
-	var anchor_col := eff_col + _view._wrapped_col_delta(band_col, int(band.get("belief_anchor_x", 0)))
-	_draw_ancestors_marker(_view._hex_center(anchor_col, anchor_y, radius, origin), radius)
+	if int(_shown_belief["selected"]) != _view.selected_unit_id:
+		_shown_belief = {}
+		return
+	for unit_variant in _view.units:
+		if not (unit_variant is Dictionary) or not HudConst.is_player_unit(unit_variant):
+			continue
+		var holder: Dictionary = unit_variant
+		if int(holder.get("entity", -1)) != int(_shown_belief["holder"]):
+			continue
+		var pos: Array = Array(holder.get("pos", []))
+		if pos.size() != 2 or not bool(holder.get("has_belief_anchor", false)):
+			return
+		var band_col := int(pos[0])
+		var eff_col := _view._band_effective_col(band_col, radius, origin)
+		_draw_reach_outline(_reach_perimeter(_tile_set(holder, "belief_reach_x", "belief_reach_y"), {},
+			band_col, eff_col, radius, origin),
+			Color(HudStyle.BELIEF, ANCESTORS_REACH_ALPHA), ANCESTORS_REACH_WIDTH,
+			Color(HudStyle.GROUND, ANCESTORS_REACH_UNDER_ALPHA), ANCESTORS_REACH_UNDER_WIDTH)
+		return
 
 ## A zipped x/y tile list off the band as a `Vector2i → true` set.
 func _tile_set(band: Dictionary, x_key: String, y_key: String) -> Dictionary:

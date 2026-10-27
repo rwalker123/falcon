@@ -145,6 +145,9 @@ signal split_band_requested(payload: Dictionary)
 signal road_abandon_requested(payload: Dictionary)
 # Recenter + select a hex (a zone row / cycler jump) — relayed to HudLayer.alert_focus_requested.
 signal alert_focus_requested(x: int, y: int)
+# The Beliefs popover's `show ▸`: pan the map to a sacred-ground tile and shade the holder band's reach there.
+# Relayed to HudLayer.belief_place_show_requested -> MapView.show_belief_place.
+signal belief_place_show_requested(x: int, y: int, holder_entity: int)
 # Pin an exact occupant on the map after that recenter — relayed to HudLayer.roster_occupant_selected.
 signal roster_occupant_selected(kind: String, id: Variant)
 # The header's `⚒` was pressed — open Materials & Crafting on this band. Relayed to HudLayer, which
@@ -8988,6 +8991,8 @@ func set_panel(panel: BandCityPanel) -> void:
     # controller's job — the disclosure controller must not know the band panel exists.
     if _disclosures != null:
         _disclosures.set_faction_band_jump(jump_to_band_entity)
+        _disclosures.set_belief_show(
+            func(x: int, y: int, holder: int) -> void: emit_signal("belief_place_show_requested", x, y, holder))
 
 ## The header's `⚒`. From a band page this is that band; from the FACTION page it is the last band
 ## loaded, which is sitting on the model already because `render_faction` deliberately leaves
