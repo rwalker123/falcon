@@ -1362,10 +1362,16 @@ cairn: Flat vector interface mark of a cairn, a small freestanding stack of five
 # ladder chip's face while the dig is queued or offered). Replaces the `▼` dig glyph there.
 # STATUS: ART SHIPPED at `assets/icons/hud/storage_pit.png` and WIRED, through `ui/HudSprites.gd`'s
 # `for_mark("storage_pit")` and `HudTileVocab.RUNG_MARKS`. Keyed `--size 256 --lo 85 --hi 240`;
-# coverage 32.3%. Chosen of four because its grain fill kept full gold after keying (the other three's
-# gold dimmed to olive at 13-16px) and its lid sits closest to the walls, so it reads as a lidded pit,
-# not a cup.
-storage_pit: Flat vector interface mark of a prehistoric grain storage pit shown in simple cut-away side view, a deep rounded U-shaped hole in the earth drawn as a thick pale clay-tan band forming the pit's lining, filled with a heaped mound of golden grain, with one flat oval capstone resting across the top as a lid, seen straight on from the front in a symmetrical pose, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in pale clay-cream and warm wheat-gold in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, no ground line beyond the pit, no grass, no shadow, no landscape, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the shape on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 16 pixels, strategy game interface icon
+# coverage 28.1%. The mark is a GRAIN SACK, not a pit, and the reason is what the pit drawings read as.
+# ⛔ REJECTED IN PLAY — the cut-away pit (a U-shaped lining, a heap of grain, a lid floating above it).
+# At 13-16px in the Work tab row the floating lid became a brow, the two wall tops became EARS and the
+# round gold heap became a FACE: it was reported on sight as "an animal head with ears". Any pit
+# drawing with a floating part, raised wall tops or a round fill inside has that failure; do not retry it.
+# The row's own name says `Food stores`, so the mark only has to say STORED FOOD, and a tied sack does
+# that at any size. Measured at 13/16/24px on #111A1E: the silhouette (round body, cinched neck) carries
+# it; the tie line is gone below 24px and the wheat tuft reads as a small dark crown — detail, not the
+# read. Chosen of two because its tuft is the shorter, so less of the 16px box is spent on it.
+storage_pit: Flat vector interface mark of a single full grain sack, a plump rounded sack of coarse cloth standing upright, cinched and tied with a cord near the top so a small ruffled tuft of cloth stands above the tie, a few grains of golden wheat peeking out at the open tuft, seen straight on from the front in a symmetrical upright pose, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in pale burlap-cream and warm wheat-gold in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, at most one simple line for the tie, no face, no shadow, no ground, no grass, no landscape, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the sack on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 16 pixels, strategy game interface icon
 
 # monument.png — issue #709, the Work tab's tile row for the belief branch (icon slot, and the ladder
 # chip's face while the raise is queued or offered). Replaces the `▲` raise glyph there.
