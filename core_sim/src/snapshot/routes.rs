@@ -137,6 +137,7 @@ pub(crate) fn tile_improvement_states(
                 builders_cap: crew.cap,
                 build_toe: crew.toe,
                 is_queued: queued,
+                build_fraction: improvement.build_fraction(ladder),
             }
         })
         .collect()

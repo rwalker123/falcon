@@ -2825,9 +2825,14 @@ func _build_tile_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var line: HBoxContainer = shell[SITE_ROW_SHELL_LINE]
     row.set_meta(HudWorkVocab.TILE_ROW_META, "%d,%d:%s" % [tile.x, tile.y, branch])
     row.mouse_filter = Control.MOUSE_FILTER_PASS
-    # An empty icon slot keeps the name in the site rows' column (no mark exists for a branch yet).
-    line.add_child(HudWidgets.build_marker_icon(null, "", HudWorkVocab.WORK_ROW_ICON_WIDTH,
-        HudWorkVocab.WORK_ROW_FONT_SIZE))
+    # The icon slot wears the mark of the branch's built rung (read off the catalog); a branch whose rung has
+    # no art keeps an empty slot so the name stays in the site rows' column.
+    var row_ladder := HudTileVocab.tile_ladder(_topbar.ladder_rungs() if _topbar != null else [])
+    var row_mark := HudTileVocab.branch_mark(row_ladder, branch)
+    var row_icon := HudWidgets.build_marker_icon(HudSprites.for_mark(row_mark), "",
+        HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE)
+    row_icon.set_meta(HudWorkVocab.TILE_ROW_MARK_META, row_mark)
+    line.add_child(row_icon)
     var title := Label.new()
     title.text = String(model["name"])
     title.clip_text = true
@@ -2879,6 +2884,7 @@ func _put_tile_ladder_chip(strip_row: Dictionary, improvement: Dictionary, tile:
     if HudDepositVocab.is_queued(site) and not next_entry.is_empty():
         var verb := HudDepositVocab.catalog_verb(next_entry)
         strip_row["building_glyph"] = FoodIcons.for_policy(verb)
+        strip_row["building_sprite"] = HudTileVocab.rung_mark(next_entry)
         strip_row["building_policy"] = verb
         strip_row["building_progress"] = HudDepositVocab.build_fraction_of(site)
         strip_row[WorkStrip.ROW_BUILDERS_KEY] = SourceForecast.build_crew_staffed(improvement,
@@ -2891,6 +2897,7 @@ func _put_tile_ladder_chip(strip_row: Dictionary, improvement: Dictionary, tile:
         _topbar.knowledge_labels() if _topbar != null else {}, crew, tile_info)
     if not ready.is_empty():
         strip_row["ready_glyph"] = FoodIcons.for_policy(HudDepositVocab.catalog_verb(ready))
+        strip_row["ready_sprite"] = HudTileVocab.rung_mark(ready)
 
 ## **ONE WORKING'S ROW — a harvest or hunt row's shape** (the site rows' shell, `_site_row_shell`).
 ## Line one is the icon (the MATERIAL's mark), the name (`Wood · 2 tiles SE`, one ink — it names the

@@ -221,6 +221,8 @@ pub struct TileImprovementState {
     pub store_owner_band: u64,
     /// Food the store rotted or lost this turn.
     pub store_spoiled: f32,
+    /// The meter on the rung being raised, `0..=1` (`intensification::build_fraction`).
+    pub build_fraction: f32,
 }
 
 impl Default for TileImprovementState {
@@ -254,6 +256,7 @@ impl Default for TileImprovementState {
             has_store_owner: false,
             store_owner_band: 0,
             store_spoiled: 0.0,
+            build_fraction: 0.0,
         }
     }
 }

@@ -1521,6 +1521,7 @@ pub(crate) fn tile_improvements_to_array(
         let _ = dict.insert("has_store_owner", row.hasStoreOwner());
         let _ = dict.insert("store_owner_band", row.storeOwnerBand() as i64);
         let _ = dict.insert("store_spoiled", f64::from(row.storeSpoiled()));
+        let _ = dict.insert("build_fraction", f64::from(row.buildFraction()));
         crate::dict::population::insert_build_crew(
             &mut dict,
             row.buildersStaffed(),

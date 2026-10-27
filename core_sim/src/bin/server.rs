@@ -5827,6 +5827,11 @@ fn handle_assign_labor(
             restaff_and_reseed(app, band.entity);
         }
     }
+    // **A TILE CREW ROW IS THE ORDER FOR THE BRANCH'S FIRST BUILD** — see
+    // [`declare_the_branchs_first_build`].
+    if workers > 0 || target.is_staffed() {
+        declare_the_branchs_first_build(app, faction, &target);
+    }
     // The seed must price the dip of whatever this band has **queued** here, rather than the
     // undipped stance — a build in flight is the queue's, not the row's. Read after the allocation
     // borrow is released, because resolving the declaration against the ground needs both webs'
@@ -9316,6 +9321,55 @@ fn handle_build_rung(app: &mut bevy::prelude::App, faction: FactionId, request: 
             "status=declared action={verb} source={label} bands={switched}"
         )),
     );
+}
+
+/// **PUTTING A BAND ON A TILE BRANCH ROW IS THE ORDER FOR ITS FIRST BUILD.**
+///
+/// When a `tile` crew row is created or raised and the tile still stands at the branch's root rung
+/// with no build declared on it, the branch's next rung up from the root is declared - exactly what
+/// `build <verb> <faction> <x> <y>` would declare, through the same gate ([`validate_improvement`])
+/// and the same queueing ([`queue_build_on_working_bands`]). A refusing gate (lesson unlearned, a
+/// site term unmet) declares nothing and is no error: the row stays assigned. A tile already holding
+/// the improvement is kept by the crew as before, and the climb never goes past the first rung above
+/// the root. Driven by the catalog: no branch is named here.
+fn declare_the_branchs_first_build(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    target: &LaborTarget,
+) {
+    let LaborTarget::Tile { tile, branch } = target else {
+        return;
+    };
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let Some(root) = ladder.root_of(*branch) else {
+        return;
+    };
+    let Some(first) = ladder.above_rung(root) else {
+        return;
+    };
+    let Some(verb) = first.verb_id() else {
+        return;
+    };
+    let stands_at_the_root = app
+        .world
+        .resource::<core_sim::TileImprovementRegistry>()
+        .get(*tile, *branch)
+        .is_none_or(|improvement| improvement.held_rung() == root.rung_id());
+    if !stands_at_the_root {
+        return;
+    }
+    let Some(source) = BuildSource::of(target) else {
+        return;
+    };
+    let already_declared = app
+        .world
+        .query::<(&PopulationCohort, &LaborAllocation)>()
+        .iter(&app.world)
+        .any(|(cohort, allocation)| cohort.faction == faction && allocation.has_build(&source));
+    if already_declared || validate_improvement(app, faction, target, verb).is_err() {
+        return;
+    }
+    queue_build_on_working_bands(app, faction, target, BuildJob::Climb(first.rung_id()));
 }
 
 /// **Refuse a `build` line** — a warning in the log and a failure line on the verb's own feed
@@ -16970,6 +17024,186 @@ mod tests {
             queued(&mut app),
             1,
             "with a crew on it the climb is declared"
+        );
+    }
+
+    /// What the first-build tests share: a world, the starting band standing on a bare tile, and the
+    /// three questions they ask of it.
+    struct PitFixture {
+        app: bevy::prelude::App,
+        faction: FactionId,
+        band: u64,
+        tile: UVec2,
+    }
+
+    impl PitFixture {
+        const CREW: u32 = 2;
+
+        fn new() -> Self {
+            let mut app = build_test_app();
+            app.update();
+            let faction = FactionId(0);
+            let band = starting_band_id(&mut app, faction);
+            let (_, tile) =
+                band_entity_and_tile(&mut app, faction, BandId(band)).expect("the band stands");
+            Self {
+                app,
+                faction,
+                band,
+                tile,
+            }
+        }
+
+        fn learn_storage(&mut self) {
+            self.app
+                .world
+                .resource_mut::<core_sim::DiscoveryProgressLedger>()
+                .add_progress(
+                    self.faction,
+                    core_sim::spoilage::STORAGE_DISCOVERY_ID,
+                    core_sim::scalar_one(),
+                );
+        }
+
+        fn put_the_band_on_the_pit_tile(&mut self) {
+            handle_assign_labor(
+                &mut self.app,
+                self.faction,
+                Some(self.band),
+                "tile".to_string(),
+                Self::CREW,
+                Some(self.tile.x),
+                Some(self.tile.y),
+                None,
+                Some("food_stores".to_string()),
+                None,
+                None,
+                Vec::new(),
+                false,
+            );
+        }
+
+        fn digs(&mut self) {
+            handle_build_rung(
+                &mut self.app,
+                self.faction,
+                BuildRungRequest {
+                    verb: "dig".to_string(),
+                    target_x: Some(self.tile.x),
+                    target_y: Some(self.tile.y),
+                    ..BuildRungRequest::default()
+                },
+            );
+        }
+
+        fn declared_builds(&mut self) -> Vec<BuildJob> {
+            self.app
+                .world
+                .query::<&LaborAllocation>()
+                .iter(&self.app.world)
+                .flat_map(|allocation| allocation.builds.iter().map(|entry| entry.declared))
+                .collect()
+        }
+
+        fn crew_rows(&mut self) -> usize {
+            let tile = self.tile;
+            self.app
+                .world
+                .query::<&LaborAllocation>()
+                .iter(&self.app.world)
+                .flat_map(|allocation| allocation.assignments.iter())
+                .filter(
+                    |row| matches!(&row.target, LaborTarget::Tile { tile: at, .. } if *at == tile),
+                )
+                .count()
+        }
+
+        fn builders_staffed(&mut self) -> u32 {
+            self.app
+                .world
+                .query::<&LaborAllocation>()
+                .iter(&self.app.world)
+                .flat_map(|allocation| allocation.build_crews.iter())
+                .map(|(_, crew)| crew.bare + crew.kitted)
+                .sum()
+        }
+    }
+
+    /// **PUTTING A BAND ON A BARE TILE BRANCH ROW IS THE ORDER FOR THE BRANCH'S FIRST BUILD** - the
+    /// storage pit is dug by the tile crew row alone, and the builders are staffed next turn.
+    #[test]
+    fn a_tile_crew_row_on_a_bare_tile_declares_the_branchs_first_rung() {
+        let mut fixture = PitFixture::new();
+        fixture.learn_storage();
+        fixture.put_the_band_on_the_pit_tile();
+        let pit = RungId::new(core_sim::BranchId::new("food_stores"), "storage_pit");
+        assert_eq!(fixture.crew_rows(), 1, "the row is assigned");
+        assert_eq!(
+            fixture.declared_builds(),
+            vec![BuildJob::Climb(pit)],
+            "and the pit is declared with it"
+        );
+        fixture.app.update();
+        assert!(
+            fixture.builders_staffed() > 0,
+            "staffing deals the declared build its builders"
+        );
+    }
+
+    /// The gate is the explicit verb's: an unlearned lesson declares nothing, and is no error.
+    #[test]
+    fn a_refusing_gate_leaves_the_row_assigned_and_declares_nothing() {
+        let mut fixture = PitFixture::new();
+        fixture.put_the_band_on_the_pit_tile();
+        assert_eq!(fixture.crew_rows(), 1, "the row is still assigned");
+        assert!(
+            fixture.declared_builds().is_empty(),
+            "without the storage lesson nothing is declared"
+        );
+    }
+
+    /// A tile that already holds the improvement is kept by the crew, and nothing is raised.
+    #[test]
+    fn a_tile_that_already_holds_the_pit_declares_nothing() {
+        let mut fixture = PitFixture::new();
+        fixture.learn_storage();
+        let ladder = fixture.app.world.resource::<LadderConfigHandle>().get();
+        let food_stores = core_sim::BranchId::new("food_stores");
+        let pit = RungId::new(food_stores, "storage_pit");
+        let (base, width) = core_sim::tile_rung_span(pit, &ladder);
+        let tile = fixture.tile;
+        fixture
+            .app
+            .world
+            .resource_mut::<core_sim::TileImprovementRegistry>()
+            .place(tile, food_stores, fixture.faction, &ladder)
+            .set_position(base + width, &ladder);
+        fixture.put_the_band_on_the_pit_tile();
+        assert_eq!(fixture.crew_rows(), 1, "the crew keeps the pit");
+        assert!(
+            fixture.declared_builds().is_empty(),
+            "a standing pit declares no build"
+        );
+    }
+
+    /// The explicit verb stays a harmless repeat of what the row already declared.
+    #[test]
+    fn an_explicit_dig_after_the_row_does_not_double_queue() {
+        let mut fixture = PitFixture::new();
+        fixture.learn_storage();
+        fixture.put_the_band_on_the_pit_tile();
+        assert_eq!(fixture.declared_builds().len(), 1, "the row declared it");
+        fixture.digs();
+        assert_eq!(
+            fixture.declared_builds().len(),
+            1,
+            "an explicit dig replaces the declaration in place"
+        );
+        fixture.put_the_band_on_the_pit_tile();
+        assert_eq!(
+            fixture.declared_builds().len(),
+            1,
+            "raising the crew again declares nothing more"
         );
     }
 

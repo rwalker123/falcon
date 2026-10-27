@@ -6655,6 +6655,12 @@ table TileImprovementState {
   hasStoreOwner:bool = false;
   storeOwnerBand:ulong = 0;
   storeSpoiled:float = 0;
+  // --- THE BUILD METER (appended last, #709) -----------------------------------------------------
+  // The meter on the rung being RAISED, 0..1, off the shared intensification::build_fraction seam
+  // (`DepositState.buildFraction`'s twin) - the rung the improvement holds once nothing is being
+  // raised above it. Derived at capture from the position; nothing is saved for it. The rung is the
+  // string (`currentRung`, `buildDestinationRung`); never threshold this float to infer one.
+  buildFraction:float = 0;
 }
 
 table RouteSection {

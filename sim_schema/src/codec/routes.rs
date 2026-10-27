@@ -118,6 +118,7 @@ fn create_tile_improvements<'a>(
                     hasStoreOwner: improvement.has_store_owner,
                     storeOwnerBand: improvement.store_owner_band,
                     storeSpoiled: improvement.store_spoiled,
+                    buildFraction: improvement.build_fraction,
                 },
             )
         })
@@ -220,6 +221,7 @@ fn decode_tile_improvement(improvement: fb::TileImprovementState<'_>) -> TileImp
         has_store_owner: improvement.hasStoreOwner(),
         store_owner_band: improvement.storeOwnerBand(),
         store_spoiled: improvement.storeSpoiled(),
+        build_fraction: improvement.buildFraction(),
     }
 }
 

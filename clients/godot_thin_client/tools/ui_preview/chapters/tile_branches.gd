@@ -379,7 +379,7 @@ func run(harness) -> void:
 				branch, crew_row.get(RungLadder.ROW_FACE_KEY, "")],
 			String(crew_row.get(RungLadder.ROW_STATE_KEY, "")) == RungLadder.STATE_LOCKED
 				and String(crew_row.get(RungLadder.ROW_TOOLTIP_KEY, "")).contains(
-					"Put a crew on this tile first"))
+					HudTileVocab.GATE_LONG_NO_CREW))
 		var open_row := _target_row(_track(branch, learned, CREW_TWO, BELIEF_PRESENT,
 			[{SourceForecast.MATERIAL_PAYOFF_ID_KEY: "stone",
 				SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY: STONE_PILE}]))
@@ -484,6 +484,7 @@ func run(harness) -> void:
 
 	await _door_state_claims()
 	await _crew_sheet_chip_claims()
+	await _tile_row_art_claims()
 
 	# Leave the HUD as the next chapter found it.
 	_stage(_band(CREW_NONE, CREW_NONE), [], 0.0, 0.0)
@@ -579,6 +580,85 @@ func _door_state_claims() -> void:
 			and DoorQ.mark_tint(h._hud, stores) == HudStyle.INK_DIM_HEX + "ff")
 	await h._save("tile_branches_door_crews")
 	_stage(_band(CREW_NONE, CREW_NONE), [], 0.0, 0.0)
+
+## **THE WORK TAB TILE ROW'S ART AND ITS PROGRESS** (issue #709). A queued dig carrying the wire's
+## `build_fraction` 0.25 reads 25% on the chip -- asserted on the fill layer's stamped amount and on the chip's
+## own label, found by meta, not by a text search of the row -- and the icon slot and the chip wear the
+## `HudSprites` art of the branch's built rung. A HELD row with nothing queued offers the rung with the same art.
+const QUEUED_BUILD_FRACTION := 0.25
+const ROW_HOST_POS := Vector2(24.0, 24.0)
+const ROW_HOST_WIDTH := 360.0
+
+func _chip_label(chip: Node) -> Label:
+	for node in chip.find_children("*", "Label", true, false):
+		return node as Label
+	return null
+
+func _chip_texture(chip: Node) -> Texture2D:
+	for node in chip.find_children("*", "TextureRect", true, false):
+		return (node as TextureRect).texture
+	return null
+
+func _tile_row_art_claims() -> void:
+	var host := PanelContainer.new()
+	var box := StyleBoxFlat.new()
+	box.bg_color = HudStyle.PANEL_SOLID
+	host.add_theme_stylebox_override("panel", box)
+	host.position = ROW_HOST_POS
+	host.custom_minimum_size = Vector2(ROW_HOST_WIDTH, 0.0)
+	var column := VBoxContainer.new()
+	host.add_child(column)
+	h._hud.add_child(host)
+	h._hud.update_tile_beliefs({Vector2i(TILE_X, TILE_Y): BELIEF_PRESENT})
+	var band := _band_held_unstaffed()
+	var queued := _improvement_row(STORES_BRANCH, "food_stores:unstored")
+	queued["is_queued"] = true
+	queued["build_fraction"] = QUEUED_BUILD_FRACTION
+	queued["builders_staffed"] = 1
+	queued["builders_cap"] = 3
+	queued["build_turns_remaining"] = 3
+	_stage(band, [queued], 1.0, 1.0)
+	var bp = h._hud._bandpanel
+	var assignment := _tile_assignment(STORES_BRANCH, CREW_NONE)
+	var building_row: Control = bp._build_tile_row(band, bp._tile_model(band, TILE_X, TILE_Y, STORES_BRANCH, assignment))
+	column.add_child(building_row)
+	var icon := Q.find_meta_node(building_row, HudWorkVocab.TILE_ROW_MARK_META)
+	var pit_art := HudSprites.for_mark("storage_pit")
+	h._assert_hud("tile row: the pit art is bundled and loads", pit_art != null)
+	h._assert_hud("tile row (food_stores): the icon slot is the built rung's art, a TextureRect",
+		icon is TextureRect and (icon as TextureRect).texture == pit_art
+			and String(icon.get_meta(HudWorkVocab.TILE_ROW_MARK_META)) == "storage_pit")
+	var chip := Q.find_meta_node(building_row, HudWorkVocab.WORK_STRIP_LADDER_META)
+	var fill := Q.find_meta_node(chip, HudWorkVocab.WORK_STRIP_FILL_META) if chip != null else null
+	h._assert_hud("tile row: a queued dig with build_fraction 0.25 stamps the chip fill at 0.25 (%s)"
+			% [fill.get_meta(HudWorkVocab.WORK_STRIP_FILL_META) if fill != null else "no fill"],
+		fill != null and is_equal_approx(float(fill.get_meta(HudWorkVocab.WORK_STRIP_FILL_META)), QUEUED_BUILD_FRACTION))
+	var chip_label := _chip_label(chip) if chip != null else null
+	h._assert_hud("…and the chip reads 25%% with the pit art, not the dig glyph (%s)"
+			% [chip_label.text if chip_label != null else "no label"],
+		chip_label != null and chip_label.text == "25%" and _chip_texture(chip) == pit_art)
+	h._assert_hud("…and the chip's model carries the mark id",
+		String(ForageFx.strip_model(building_row).get(WorkStrip.M_LADDER_MARK, "")) == "storage_pit")
+	await h._settle()
+	await h._save("tile_branches_row_art")
+
+	# A held row with nothing queued: the rung is OFFERED, wearing the same art; the belief branch's is the dolmen.
+	_stage(band, [], 1.0, 1.0)
+	for branch in [STORES_BRANCH, BELIEF_BRANCH]:
+		var mark := "storage_pit" if branch == STORES_BRANCH else "monument"
+		var offer_row: Control = bp._build_tile_row(band,
+			bp._tile_model(band, TILE_X, TILE_Y, branch, _tile_assignment(branch, CREW_TWO)))
+		column.add_child(offer_row)
+		var offer_chip := Q.find_meta_node(offer_row, HudWorkVocab.WORK_STRIP_LADDER_META)
+		var slot := Q.find_meta_node(offer_row, HudWorkVocab.TILE_ROW_MARK_META)
+		h._assert_hud("tile row (%s), offered: icon slot is %s art and the chip wears it" % [branch, mark],
+			slot is TextureRect and (slot as TextureRect).texture == HudSprites.for_mark(mark)
+				and offer_chip != null and _chip_texture(offer_chip) == HudSprites.for_mark(mark))
+	await h._settle()
+	await h._save("tile_branches_row_art_offered")
+	host.queue_free()
+	h._hud.update_tile_beliefs({})
+	await h._settle()
 
 ## The crew sheet's work-strip LADDER CHIP: on every state of the sheet, the same face as the Work tab's row
 ## for the same tile + branch, and a press opens the rung card for THAT branch.

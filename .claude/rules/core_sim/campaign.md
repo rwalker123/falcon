@@ -484,6 +484,13 @@ owner. Sharing between bands goes through the owner's larder and ordinary poolin
   above a `keeping.fixed_stores` entry (`KeepingConfig::store_spec`: the highest such rung; capacity
   plus the per-class in-store lives off that rung's `preservation` entries). Checkpoint state
   (`SAVE_FORMAT_VERSION` 57).
+- **The tile crew row orders the pit.** `assign_labor <faction> <band> tile food_stores <x> <y> <n>`
+  on a tile with no pit declares the dig (`storage_pit`) with the row, once the `storage` lesson is
+  known; with the lesson unknown the row is assigned and nothing is declared. A tile that holds a
+  pit declares nothing. The explicit `build dig` is a harmless repeat. The mechanism is
+  `intensification.md` -> "The tile kind". The improvement's dig meter is published as
+  `TileImprovementState.buildFraction` (`TileImprovement::build_fraction`, the shared
+  `intensification::build_fraction` seam; derived at capture, nothing saved).
 - **The owner** is set when the first crew places it (`TileImprovementRegistry::place_owned`; a
   later crew does not take it over). At the top of `deposit_into_stores` an owner that no longer
   exists as a resident band, or is no longer of the improvement's `faction`, is cleared; an

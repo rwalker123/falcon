@@ -1734,6 +1734,14 @@ const WORK_ROW_RING_META := &"work_row_ring"
 
 ## A rung UNDER WAY: the verb glyph and how far in. No chevron — `⌃` offers, this reports.
 const WORK_ROW_BUILDING_FORMAT := "%s%d%%"
+## The same chip when the rung has bundled art: the art leads, so the text is the percent alone (building) or
+## the offer chevron alone (ready).
+const WORK_ROW_BUILDING_SPRITE_FORMAT := "%d%%"
+const WORK_ROW_READY_SPRITE_TEXT := "⌃"
+## Gap between a ladder chip's art and its text.
+const WORK_STRIP_CHIP_ART_SEPARATION := 2
+## Stamped on a tile row's icon slot: the `HudSprites` mark id it was drawn with ('' = empty slot).
+const TILE_ROW_MARK_META := "tile_row_mark"
 ## A build meter that belongs to ANOTHER people: `Lothari cultivating · 20%` -- the people, the rung's
 ## participle (lowercased) and the percent, in WARN ink at the head of line two. Not ours: nothing here moves it.
 const WORK_ROW_FOREIGN_BUILD_FORMAT := "%s %s · %d%%"

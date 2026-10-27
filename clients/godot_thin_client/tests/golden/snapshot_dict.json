@@ -7776,7 +7776,10 @@
       "fodder_transfer_route_received_turn": 33.290001,
       "fodder_transfer_route_sent_turn": 43.43,
       "food_consumption": 106.57,
+      "food_from_store": 90.919998,
+      "food_in_stores_in_reach": 20.17,
       "food_income": 88.889999,
+      "food_into_store": 83.889999,
       "food_left_behind": 31.52,
       "food_need": 22.969999,
       "food_shortfall": 99.949997,
@@ -10285,7 +10288,10 @@
       "fodder_transfer_route_received_turn": 55.400002,
       "fodder_transfer_route_sent_turn": 82.57,
       "food_consumption": 0.92,
+      "food_from_store": 83.870003,
+      "food_in_stores_in_reach": 25.02,
       "food_income": 52.610001,
+      "food_into_store": 87.440002,
       "food_left_behind": 39.09,
       "food_need": 62.349998,
       "food_shortfall": 104.449997,
@@ -12738,7 +12744,10 @@
       "fodder_transfer_route_received_turn": 94.5,
       "fodder_transfer_route_sent_turn": 56.830002,
       "food_consumption": 30.870001,
+      "food_from_store": 31.66,
+      "food_in_stores_in_reach": 11.95,
       "food_income": 11.58,
+      "food_into_store": 27.51,
       "food_left_behind": 19.709999,
       "food_need": 0.05,
       "food_shortfall": 97.199997,
@@ -14910,6 +14919,7 @@
       "branch": "tile_improvements[0].branch",
       "build_blocked_reason": "tile_improvements[0].build_blocked_reason",
       "build_destination_rung": "tile_improvements[0].build_destination_rung",
+      "build_fraction": 49.209999,
       "build_legs": [
         {
           "rung": "tile_improvements[0].build_legs[0].rung",
@@ -14937,9 +14947,14 @@
       "builders_staffed": 20,
       "current_rung": "tile_improvements[0].current_rung",
       "has_neglect_grace": true,
+      "has_store_owner": false,
       "is_queued": false,
       "neglect_grace_remaining": 28,
       "neglect_turns": 69,
+      "store_capacity": 106.93,
+      "store_owner_band": 31,
+      "store_spoiled": 79.93,
+      "stored_food": 28.75,
       "tile_x": 1,
       "tile_y": 12,
       "upkeep_demand": 29.129999,
@@ -14953,13 +14968,14 @@
           "required": 108.529999
         }
       ],
-      "upkeep_tools_short": false,
+      "upkeep_tools_short": true,
       "upkeep_workers_needed": 122
     },
     {
       "branch": "tile_improvements[1].branch",
       "build_blocked_reason": "tile_improvements[1].build_blocked_reason",
       "build_destination_rung": "tile_improvements[1].build_destination_rung",
+      "build_fraction": 55.360001,
       "build_legs": [
         {
           "rung": "tile_improvements[1].build_legs[0].rung",
@@ -14987,9 +15003,14 @@
       "builders_staffed": 1,
       "current_rung": "tile_improvements[1].current_rung",
       "has_neglect_grace": false,
+      "has_store_owner": true,
       "is_queued": true,
       "neglect_grace_remaining": 199,
       "neglect_turns": 78,
+      "store_capacity": 19.26,
+      "store_owner_band": 154,
+      "store_spoiled": 32.43,
+      "stored_food": 21.709999,
       "tile_x": 184,
       "tile_y": 173,
       "upkeep_demand": 87.389999,
@@ -15003,13 +15024,14 @@
           "required": 35.419998
         }
       ],
-      "upkeep_tools_short": true,
+      "upkeep_tools_short": false,
       "upkeep_workers_needed": 197
     },
     {
       "branch": "tile_improvements[2].branch",
       "build_blocked_reason": "tile_improvements[2].build_blocked_reason",
       "build_destination_rung": "tile_improvements[2].build_destination_rung",
+      "build_fraction": 38.060001,
       "build_legs": [
         {
           "rung": "tile_improvements[2].build_legs[0].rung",
@@ -15037,9 +15059,14 @@
       "builders_staffed": 2,
       "current_rung": "tile_improvements[2].current_rung",
       "has_neglect_grace": false,
-      "is_queued": true,
+      "has_store_owner": true,
+      "is_queued": false,
       "neglect_grace_remaining": 74,
       "neglect_turns": 103,
+      "store_capacity": 30.91,
+      "store_owner_band": 21,
+      "store_spoiled": 18.16,
+      "stored_food": 25.450001,
       "tile_x": 103,
       "tile_y": 114,
       "upkeep_demand": 96.349998,
@@ -15053,7 +15080,7 @@
           "required": 91.32
         }
       ],
-      "upkeep_tools_short": false,
+      "upkeep_tools_short": true,
       "upkeep_workers_needed": 16
     }
   ],

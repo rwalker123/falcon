@@ -942,8 +942,9 @@ static func _deposit_craft_refusal(unlock: String, progress: float, labels: Dict
 #   1. THE SITE -- `min_belief` against the belief standing on the tile (`tile_info.belief`). Outranks the
 #      rest because no crew or lesson closes it.
 #   2. THE CREW -- `build <verb>` declares on every band crewing the tile and the sim refuses with
-#      *Assign a crew first* when none does. The crew line also PLACES the improvement at the root rung,
-#      so "no crew" and "the rung beneath is not held yet" are one remedy for the first rung.
+#      *Assign a crew first* when none does. The crew line also PLACES the improvement at the root rung
+#      and, on a bare tile, DECLARES the branch's first rung itself, so a press on that rung from the card
+#      is a no-op once the row stands.
 #   3. THE LESSON -- `unlock_knowledge`, named from the knowledge roster.
 #   4. THE RUNG BENEATH -- `requires_rung`, for a rung above the first.
 #

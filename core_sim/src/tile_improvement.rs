@@ -257,6 +257,23 @@ impl TileImprovement {
         )
     }
 
+    /// **THE METER ON THE RUNG THIS IMPROVEMENT IS ACTUALLY RAISING**, `0..=1` - the tile kind's twin
+    /// of [`crate::routes::road_build_fraction`] and [`crate::extraction::deposit_build_fraction`],
+    /// through the same `rung_work_done` / `build_fraction` seam and never a subtraction.
+    pub fn build_fraction(&self, ladder: &LadderConfig) -> f32 {
+        let at_risk = self.at_risk_rung();
+        let span = tile_rung_span(at_risk, ladder);
+        crate::intensification::build_fraction(
+            crate::intensification::rung_work_done(
+                self.standing,
+                ladder.rung(at_risk),
+                self.position,
+                span,
+            ),
+            span.1,
+        )
+    }
+
     /// **The rung whose bill is at risk**, the one being raised once work is banked on it, else the
     /// one held ([`crate::routes::road_at_risk_rung`]).
     pub fn at_risk_rung(&self) -> RungId {
