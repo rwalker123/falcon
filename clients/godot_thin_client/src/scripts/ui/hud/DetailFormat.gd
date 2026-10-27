@@ -896,13 +896,15 @@ const OVERGRAZING_WARNING := "%s Overgrazing — range can't sustain this herd" 
 const RECOVERY_GUIDANCE_GLYPH := "↑"
 const RECOVERY_GUIDANCE_PREFIX := RECOVERY_GUIDANCE_GLYPH + " Recover: "
 const RECOVERY_GUIDANCE_TAIL := "Scout · Hunt"
-const RECOVERY_GUIDANCE_MOVE := "move to Hospitable ground · "
-const RECOVERY_GUIDANCE_SPLIT := "split the band · "
-const RECOVERY_GUIDANCE_ANCESTORS := "return to your ancestors · "
+const RECOVERY_GUIDANCE_MOVE := "move to Hospitable ground"
+const RECOVERY_GUIDANCE_SPLIT := "split the band"
+const RECOVERY_GUIDANCE_ANCESTORS := "return to your ancestors"
 
-## The recovery line for the band's DOMINANT cause (`morale_cause`): the lever that answers THAT cause,
-## so a band crowded past its cohesion ceiling is told to split rather than to move, and a band already
-## on Hospitable ground is never told to go there. Unrest / None / unknown name only the generic levers.
+## The recovery line for the band's DOMINANT cause (`morale_cause`): the lever that REMOVES that cause,
+## and only it — a band crowded past its cohesion ceiling is told to split, never to move, and a band
+## already on Hospitable ground is never told to go there. Scout and Hunt lift morale for a while but fix
+## no cause (they shed no people and move no band), so they are named only where no cause-specific lever
+## exists: Unrest / None / unknown, or terrain/climate on ground that is already Hospitable.
 ## Always begins with `RECOVERY_GUIDANCE_GLYPH` (the tint registry keys on it).
 static func recovery_guidance_text(cause: int, terrain_rating: String = "") -> String:
     var lever := ""
@@ -914,7 +916,7 @@ static func recovery_guidance_text(cause: int, terrain_rating: String = "") -> S
                 lever = RECOVERY_GUIDANCE_MOVE
         MORALE_CAUSE_CULTURE:
             lever = RECOVERY_GUIDANCE_ANCESTORS
-    return RECOVERY_GUIDANCE_PREFIX + lever + RECOVERY_GUIDANCE_TAIL
+    return RECOVERY_GUIDANCE_PREFIX + (lever if lever != "" else RECOVERY_GUIDANCE_TAIL)
 
 ## Whether a `TileHabitability` rating justifies the word "harsh". Unknown ("") is NOT harsh.
 static func rating_is_harsh(terrain_rating: String) -> bool:

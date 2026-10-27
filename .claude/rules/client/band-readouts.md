@@ -649,10 +649,12 @@ which is a property of the tier and not of the merge.
     term draws no row, under the same epsilon.
   - **Recovery guidance** (`DetailFormat.recovery_guidance_text(cause, terrain_rating)`): a dim line
     beginning with `RECOVERY_GUIDANCE_GLYPH` (`↑`), appended under the breakdown **only when morale is
-    concerning**. The lever follows the dominant `morale_cause`: Cohesion → `↑ Recover: split the band · Scout ·
-    Hunt`; Terrain/Cold → `… move to Hospitable ground · Scout · Hunt`, dropping the move clause when the
-    band's tile already rates Hospitable (Fair keeps it); Culture → `… return to your ancestors · …`;
-    Unrest/None → `↑ Recover: Scout · Hunt`. Built from `RECOVERY_GUIDANCE_PREFIX` + lever + `_TAIL` consts so
+    concerning**. It names the lever that REMOVES the dominant `morale_cause`, and only it: Cohesion →
+    `↑ Recover: split the band`; Terrain/Cold → `↑ Recover: move to Hospitable ground` (Fair ground keeps
+    it); Culture → `↑ Recover: return to your ancestors`. Scout and Hunt lift morale for a while but fix no
+    cause — they shed no people and move no band — so `↑ Recover: Scout · Hunt` is the line only where no
+    cause-specific lever exists: Unrest/None, or Terrain/Cold on ground already rated Hospitable. Built from
+    `RECOVERY_GUIDANCE_PREFIX` + (lever or `_TAIL`) consts so
     the "text begins with the glyph" invariant holds. `_split_detail_kv` skips lines beginning with `↑` so it
     renders as a dim sentence. ui_preview: `_morale_wording_states` (`band_morale_hospitable`).
   - **Growth row + itemized fertility breakdown** (`_band_growth_line` / `_fertility_breakdown_lines`;

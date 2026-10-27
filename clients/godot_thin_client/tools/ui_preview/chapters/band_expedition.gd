@@ -1551,6 +1551,8 @@ func _morale_wording_states() -> void:
 		split[1].contains(DetailFormat.RECOVERY_GUIDANCE_PREFIX + DetailFormat.RECOVERY_GUIDANCE_SPLIT))
 	h._assert_hud("…and does not send it to Hospitable ground",
 		not split[1].contains(WORDING_HOSPITABLE_WORD))
+	h._assert_hud("…and names no palliative beside the fix (Scout and Hunt shed no people)",
+		not split[1].contains(DetailFormat.RECOVERY_GUIDANCE_TAIL))
 	# CULTURE and UNREST name their own lever / none.
 	var culture: Array[String] = await _wording_read(
 		_wording_band(WORDING_HARSH_CELL, "Karst Cavern Mouth", DetailFormat.MORALE_CAUSE_CULTURE))
