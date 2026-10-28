@@ -61,7 +61,7 @@ gets one — once, permanently.
   every kind in `labor_config.json` -> `band_orders.ordered_kinds` (owner Chief, `starting_target`),
   and `advance_leadership` ends by draining `LaborAllocation::unannounced_takeover` into one
   `Extraction`-kind feed line per band, `.with_band(band)`: "Orrin is chief of Bitterbrook — he takes
-  over the stone digging and keeps 30 on hand." / "Bitterbrook's elders take over ...". Mechanism:
+  over the stone and wood work and keeps 30 stone and 30 wood on hand." / "Bitterbrook's elders take over ...". Mechanism:
   `work-party.md` -> "A chief keeps an ordered material on hand".
 
 ## Config

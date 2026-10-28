@@ -2179,6 +2179,9 @@ pub struct BandOrderState {
     pub has_site: bool,
     pub site_x: u32,
     pub site_y: u32,
+    /// What the order's candidate sites give a turn at its floor without being drawn down; never
+    /// below `draw` for a deposit that does not regrow.
+    pub sustainable: f32,
 }
 
 /// **ONE KEEPING CLASS'S HUNTING MEAL** — a row of [`PopulationCohortState::hunt_meals`]: the food

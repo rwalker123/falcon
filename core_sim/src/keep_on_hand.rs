@@ -100,11 +100,13 @@ pub fn leaderless_refusal(kind: &str, band_label: &str) -> String {
 /// **THE FEED LINE FOR A CHIEF'S ARRIVAL**: what he takes over and keeps. `taken` is the kind and
 /// its opening target, for every kind the arrival created an order for.
 pub fn takeover_line(keeper: &Keeper, band_name: &str, taken: &[(String, u32)]) -> String {
-    let kinds = taken
-        .iter()
-        .map(|(kind, _)| format!("the {kind} digging"))
-        .collect::<Vec<_>>()
-        .join(" and ");
+    let names: Vec<&str> = taken.iter().map(|(kind, _)| kind.as_str()).collect();
+    let (last, rest) = names.split_last().unwrap_or((&"", &[]));
+    let kinds = if rest.is_empty() {
+        format!("the {last} work")
+    } else {
+        format!("the {} and {last} work", rest.join(", "))
+    };
     let keeps = match taken {
         [(_, target)] => format!("{target} on hand"),
         _ => {
@@ -242,6 +244,11 @@ struct SiteRank {
     tile: UVec2,
     per_hand: f32,
     distance: u32,
+    /// The floor the chief works this site at: Best where it regrows, strip-it-bare where it never does.
+    floor: f32,
+    /// What the site gives a turn at that floor without drawing it down - unbounded for a deposit
+    /// that never regrows.
+    sustainable: f32,
 }
 
 impl SiteRank {
@@ -256,6 +263,12 @@ impl SiteRank {
         (self.tile.y, self.tile.x) < (other.tile.y, other.tile.x)
     }
 }
+
+/// What a site that never regrows gives "without drawing it down": there is nothing to draw it
+/// down from, so its share is whatever the want is.
+const UNBOUNDED_SITE: f32 = f32::INFINITY;
+/// No take.
+const NO_TAKE: f32 = 0.0;
 
 /// What the ranking reads: the claim sources, the band's gear and where it camps.
 pub struct DigSiteInputs<'a> {
@@ -295,10 +308,27 @@ fn rank_site(inputs: &DigSiteInputs<'_>, tile: UVec2, material: &str) -> Option<
             equipment.deposit_take_per_worker(kit, inputs.band_kit, rung.branch, Some(&rung_key))
         })
         .fold(NO_DEPOSIT_GEAR, f32::max);
+    let floor = dig_floor(ground_rate);
+    let sustainable = if ground_rate > NEVER_RENEWS {
+        let rate = ground_rate * payoff.regrowth_multiplier;
+        let floor_stock =
+            crate::extraction::deposit_effective_floor(capacity, ground_rate, &payoff, floor);
+        (crate::extraction::deposit_regrowth(
+            floor_stock,
+            capacity,
+            rate,
+            sources.extraction.seed_fraction,
+        ) - floor_stock)
+            .max(NO_TAKE)
+    } else {
+        UNBOUNDED_SITE
+    };
     Some(SiteRank {
         tile,
         per_hand: payoff.yield_per_worker_turn + best_kit,
         distance: inputs.camp.map_or(0, |camp| camp.distance_to(tile)),
+        floor,
+        sustainable,
     })
 }
 
@@ -330,19 +360,30 @@ fn row_is_pinned(allocation: &LaborAllocation, target: &LaborTarget) -> bool {
 ///
 /// - **arrival**: a band with a leader gets an order (owner Chief, `starting_target`, Normal) for
 ///   every ordered kind it has none for, and the kinds are queued for the feed line.
-/// - **per chief-owned material**: publish the best site; create the one row on it, or move it to a
-///   strictly better site (or off a worked-out one); retire the band's other rows of that material
-///   (a takeover). The rows' priority is the order's and their Max is cleared.
+/// - **per chief-owned material**: the order's **want** is the band's draw plus the deficit spread
+///   over `keep_on_hand_refill_turns` (zero at or above the target). The candidate sites are ranked
+///   ([`SiteRank`]: most per hand, then the shortest walk, then tile order) and each gets a share, in
+///   that order, of up to what it gives a turn at the order's floor without drawing it down, until
+///   the want is covered; the best site is always in the set, so a band at target keeps its row. A
+///   deposit that never regrows gives without bound, so it ends with one row. A row is created on each
+///   set site that lacks one, a row on a set site stays, and a row on any other site is retired. Every
+///   row takes the order's priority, loses its Max and is worked at no lower than the site's floor.
+///   The shares ([`LaborAllocation::keep_shares`]) are what staffing reads, and the total the sites
+///   give is [`LaborAllocation::keep_sustainable`].
 /// - a kind the player owns, and a leaderless band, are not touched.
 ///
-/// A pinned row ([`row_is_pinned`]) is never moved or removed.
+/// A pinned row ([`row_is_pinned`]) is never moved or removed; off the set it is staffed to nobody
+/// until the pass that finds it unpinned.
 pub fn manage_dig_rows(
     allocation: &mut LaborAllocation,
     inputs: &DigSiteInputs<'_>,
     has_leader: bool,
     candidate_tiles: &dyn Fn(&str) -> Vec<UVec2>,
+    on_hand: &dyn Fn(&str) -> f32,
 ) {
     allocation.last_keep_site.clear();
+    allocation.keep_shares.clear();
+    allocation.keep_sustainable.clear();
     if !has_leader {
         return;
     }
@@ -373,15 +414,63 @@ pub fn manage_dig_rows(
         .map(|(kind, order)| (kind.clone(), *order))
         .collect();
     for (material, order) in chief_materials {
-        let best = candidate_tiles(&material)
+        let mut ranked: Vec<SiteRank> = candidate_tiles(&material)
             .into_iter()
             .filter_map(|tile| rank_site(inputs, tile, &material))
-            .reduce(|best, next| if next.beats(&best) { next } else { best });
-        if let Some(best) = best {
+            .collect();
+        ranked.sort_by(|a, b| {
+            if a.beats(b) {
+                std::cmp::Ordering::Less
+            } else if b.beats(a) {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        });
+        if let Some(best) = ranked.first() {
             allocation
                 .last_keep_site
                 .insert(material.clone(), best.tile);
         }
+        // The want: what the band uses plus a tenth of the gap, nothing at or above the target.
+        let draw = allocation.material_draw(&material);
+        let deficit = order.target as f32 - on_hand(&material);
+        let want = if deficit > NO_TAKE {
+            draw + deficit / inputs.sources.labor.keep_on_hand_refill_turns as f32
+        } else {
+            NO_TAKE
+        };
+        let mut want_left = want;
+        let mut draw_left = if deficit > NO_TAKE { draw } else { NO_TAKE };
+        let mut set: Vec<SiteRank> = Vec::new();
+        for site in &ranked {
+            if !set.is_empty() && want_left <= NO_TAKE {
+                break;
+            }
+            let take = site.sustainable.min(want_left);
+            let hold = take.min(draw_left);
+            allocation.keep_shares.push((
+                material.clone(),
+                crate::components::KeepShare {
+                    tile: site.tile,
+                    hold,
+                    take,
+                },
+            ));
+            want_left -= take;
+            draw_left -= hold;
+            set.push(*site);
+        }
+        let unbounded = ranked.iter().any(|site| !site.sustainable.is_finite());
+        let sustainable = if unbounded {
+            want.max(draw)
+        } else {
+            ranked.iter().map(|site| site.sustainable).sum()
+        };
+        allocation
+            .keep_sustainable
+            .insert(material.clone(), sustainable);
+
         let rows_of_material = |allocation: &LaborAllocation| -> Vec<(UVec2, LaborTarget)> {
             allocation
                 .assignments
@@ -396,44 +485,46 @@ pub fn manage_dig_rows(
                 })
                 .collect()
         };
-        // The row that stays is the first one still at a site the order wants.
-        let mut stayed: Option<UVec2> = None;
+        // A row on a site of the set stays; a row anywhere else is retired unless it is pinned.
+        let mut held_sites: Vec<UVec2> = Vec::new();
         for (tile, target) in rows_of_material(allocation) {
-            let stays = stayed.is_none()
-                && best.is_some_and(|best| {
-                    rank_site(inputs, tile, &material).is_some_and(|here| !best.beats(&here))
-                });
-            if stays {
-                stayed = Some(tile);
+            if set.iter().any(|site| site.tile == tile) && !held_sites.contains(&tile) {
+                held_sites.push(tile);
             } else if !row_is_pinned(allocation, &target) {
                 allocation.drop_source_row(&target);
             }
         }
-        if let (None, Some(best)) = (stayed, best) {
-            let any_left = !rows_of_material(allocation).is_empty();
-            if !any_left {
-                if let Some((working, ground)) = inputs.sources.working(best.tile, &material) {
-                    let floor = dig_floor(tile_deposit_regrowth(
-                        inputs.sources.extraction,
-                        &material,
-                        &ground,
-                    ));
-                    let kit = working_default_kit(inputs.sources.equipment, &working);
-                    allocation.set_staffed_row(
-                        LaborTarget::Extract {
-                            tile: best.tile,
-                            material: material.clone(),
-                            floor,
-                        },
-                        None,
-                        Some(kit),
-                    );
-                }
+        for site in &set {
+            if held_sites.contains(&site.tile) {
+                continue;
+            }
+            if let Some((working, _)) = inputs.sources.working(site.tile, &material) {
+                let kit = working_default_kit(inputs.sources.equipment, &working);
+                allocation.set_staffed_row(
+                    LaborTarget::Extract {
+                        tile: site.tile,
+                        material: material.clone(),
+                        floor: site.floor,
+                    },
+                    None,
+                    Some(kit),
+                );
             }
         }
         for row in allocation.assignments.iter_mut() {
-            if matches!(&row.target, LaborTarget::Extract { material: held, .. } if *held == material)
+            if let LaborTarget::Extract {
+                tile,
+                material: held,
+                floor,
+            } = &mut row.target
             {
+                if *held != material {
+                    continue;
+                }
+                // **The chief never overdraws**: no row of his is worked below the site's floor.
+                if let Some(site) = set.iter().find(|site| site.tile == *tile) {
+                    *floor = floor.max(site.floor);
+                }
                 row.priority = order.priority;
                 row.max_workers = None;
             }

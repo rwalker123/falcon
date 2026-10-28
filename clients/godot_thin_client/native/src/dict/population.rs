@@ -477,6 +477,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = entry.insert("has_site", row.hasSite());
             let _ = entry.insert("site_x", i64::from(row.siteX()));
             let _ = entry.insert("site_y", i64::from(row.siteY()));
+            let _ = entry.insert("sustainable", f64::from(row.sustainable()));
             band_orders.push(&entry.to_variant());
         }
     }

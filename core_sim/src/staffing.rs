@@ -1684,18 +1684,22 @@ fn extract_input<'a>(
         .order_for(material)
         .filter(|order| order.owner == crate::components::OrderOwner::Chief)
     {
-        // **A MATERIAL A CHIEF KEEPS ON HAND IS STAFFED FROM ITS DEFICIT** (#874): at or above the target
-        // nobody digs (the row's keepers still come, `keep_hands`); below it the crew takes what
-        // the band draws plus the deficit spread over `keep_on_hand_refill_turns`.
-        let deficit = order.target as f32 - (world.on_hand)(material);
-        if deficit <= NO_TAKE_WANTED {
+        // **A MATERIAL A CHIEF KEEPS ON HAND IS STAFFED FROM ITS ROW'S SHARE OF THE WANT** (#860,
+        // #874): the managing pass split the want (the draw plus the deficit spread over
+        // `keep_on_hand_refill_turns`) across the sites, each up to what it gives at the order's
+        // floor without drawing it down. At or above the target the shares are zero and nobody digs
+        // (the row's keepers still come, `keep_hands`); a row off the set has no share and is staffed
+        // to nobody. The order's priority ranks the row among the band's work.
+        let _ = order;
+        let Some(share) = allocation.keep_share(material, tile) else {
+            return;
+        };
+        if share.take <= NO_TAKE_WANTED {
             return;
         }
-        let draw = allocation.material_draw(material);
-        let refill = draw + deficit / sources.labor.keep_on_hand_refill_turns as f32;
-        input.hold_take = draw.min(room);
-        input.useful_take = refill.min(room);
-        input.reach = ReachTarget::Take(refill.min(room));
+        input.hold_take = share.hold.min(room);
+        input.useful_take = share.take.min(room);
+        input.reach = ReachTarget::Take(share.take.min(room));
         return;
     }
     if ground_rate <= crate::extraction_config::NEVER_RENEWS {
@@ -1917,7 +1921,15 @@ fn managed_dig_allocation(
             band_kit: &band_kit,
             camp: camp.as_ref(),
         };
-        crate::keep_on_hand::manage_dig_rows(&mut allocation, &inputs, has_leader, &candidates);
+        let cohort_stores = &cohort.stores;
+        let on_hand = |material: &str| cohort_stores.material_total(material).to_f32();
+        crate::keep_on_hand::manage_dig_rows(
+            &mut allocation,
+            &inputs,
+            has_leader,
+            &candidates,
+            &on_hand,
+        );
     });
     Some(allocation)
 }

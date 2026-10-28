@@ -1720,6 +1720,11 @@ pub(crate) fn band_order_rows(
                 has_site: site.is_some(),
                 site_x: site.map_or(0, |tile| tile.x),
                 site_y: site.map_or(0, |tile| tile.y),
+                sustainable: allocation
+                    .keep_sustainable
+                    .get(kind)
+                    .copied()
+                    .unwrap_or(0.0),
                 kind: kind.clone(),
             }
         })

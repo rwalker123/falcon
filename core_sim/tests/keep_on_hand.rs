@@ -21,6 +21,7 @@ use core_sim::{
 use sim_schema::TerrainType;
 
 const STONE: &str = "stone";
+const WOOD: &str = "wood";
 /// Rock that holds a body of stone and no timber.
 const ROCK: TerrainType = TerrainType::AlpineMountain;
 /// A target well above anything the fixture band stores.
@@ -33,6 +34,15 @@ fn world() -> (App, Entity, UVec2) {
     let (mut app, band, camp) = leaderless_world();
     give_a_leader(&mut app, band);
     (app, band, camp)
+}
+
+/// Name the kinds a chief takes orders for; the stone tests run on a stone-only config so the timber
+/// the same rock may hold does not add rows to what they count.
+fn ordered(app: &mut App, kinds: &[&str]) {
+    let mut handle = app.world.resource_mut::<LaborConfigHandle>();
+    let mut config = (*handle.0).clone();
+    config.band_orders.ordered_kinds = kinds.iter().map(|kind| kind.to_string()).collect();
+    handle.0 = std::sync::Arc::new(config);
 }
 
 /// A world whose band crews by hand: no leader, so no order exists and nothing is managed.
@@ -49,6 +59,7 @@ fn leaderless_world() -> (App, Entity, UVec2) {
     };
     let camp = app.world.get::<Tile>(tile).expect("camp tile").position;
     app.world.entity_mut(band).remove::<BandLeadership>();
+    ordered(&mut app, &[STONE]);
     (app, band, camp)
 }
 
@@ -180,6 +191,7 @@ fn below_the_target_a_dig_row_is_placed_and_staffed_and_at_target_nobody_digs() 
 #[test]
 fn a_chiefs_arrival_creates_the_stone_order_at_the_starting_target() {
     let (mut app, band, camp) = leaderless_world();
+    ordered(&mut app, &[STONE, WOOD]);
     reground(&mut app, camp, ROCK);
     core_sim::staffing::restaff_band(&mut app.world, band);
     assert!(
@@ -208,7 +220,8 @@ fn a_chiefs_arrival_creates_the_stone_order_at_the_starting_target() {
             .get::<LaborAllocation>(band)
             .unwrap()
             .unannounced_takeover,
-        vec![STONE.to_string()]
+        vec![STONE.to_string(), WOOD.to_string()],
+        "the chief takes over every ordered kind, in config order"
     );
 }
 
@@ -216,6 +229,7 @@ fn a_chiefs_arrival_creates_the_stone_order_at_the_starting_target() {
 #[test]
 fn the_arrival_is_one_feed_line_naming_the_chief_and_the_band() {
     let (mut app, band, camp) = leaderless_world();
+    ordered(&mut app, &[STONE, WOOD]);
     reground(&mut app, camp, ROCK);
     give_a_leader(&mut app, band);
     for _ in 0..2 {
@@ -228,7 +242,9 @@ fn the_arrival_is_one_feed_line_naming_the_chief_and_the_band() {
         .band_orders
         .starting_target_for(STONE)
         .unwrap();
-    let wanted = format!("he takes over the stone digging and keeps {opening} on hand");
+    let wanted = format!(
+        "he takes over the stone and wood work and keeps {opening} stone and {opening} wood on hand"
+    );
     let lines: Vec<String> = app
         .world
         .resource::<CommandEventLog>()
@@ -253,6 +269,7 @@ fn the_arrival_is_one_feed_line_naming_the_chief_and_the_band() {
 #[test]
 fn releasing_keeps_the_row_in_place_with_the_crew_as_its_max() {
     let (mut app, band, camp) = world();
+    bare_the_map(&mut app);
     reground(&mut app, camp, ROCK);
     keep(&mut app, band, A_BIG_TARGET);
     let before = stone_rows(&app, band);
@@ -305,6 +322,7 @@ fn a_released_row_staffed_to_nobody_gets_a_max_of_one() {
 #[test]
 fn claiming_takes_the_kind_back_at_its_target_and_clears_the_max() {
     let (mut app, band, camp) = world();
+    bare_the_map(&mut app);
     reground(&mut app, camp, ROCK);
     keep(&mut app, band, A_BIG_TARGET);
     release_order(
@@ -644,13 +662,15 @@ fn a_pinned_hand_row_survives_a_takeover_until_its_cargo_lands() {
         });
     give_a_leader(&mut app, band);
     core_sim::staffing::restaff_band(&mut app.world, band);
+    let rows = stone_rows(&app, band);
     assert_eq!(
-        stone_rows(&app, band)
-            .iter()
-            .map(|r| r.0)
-            .collect::<Vec<_>>(),
-        vec![far],
-        "cargo is walking home from the hand row: it stays"
+        rows.iter().map(|r| r.0).collect::<Vec<_>>(),
+        vec![far, camp],
+        "cargo is walking home from the hand row: it stays, and the best site gets its row"
+    );
+    assert_eq!(
+        rows[0].1, 0,
+        "the pinned row off the set is staffed to nobody"
     );
     app.world
         .get_mut::<LaborAllocation>(band)
@@ -680,4 +700,275 @@ fn a_leaderless_band_is_never_owned_by_an_order() {
     );
     hand_row(&mut app, band, camp, 2);
     assert_eq!(stone_rows(&app, band).len(), 1, "the hand row stands");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Wood: the chief works as many stands as the want needs, each at the Best floor (#860 step 2).
+// ---------------------------------------------------------------------------------------------
+
+/// Standing timber.
+const WOODLAND: TerrainType = TerrainType::MixedWoodland;
+/// How many woodland stands the wood fixtures lay down.
+const STANDS: usize = 3;
+
+/// A leader world on bare ground with `STANDS` woodland tiles beside the camp, the chief's order for
+/// wood only.
+fn timber_world() -> (App, Entity, Vec<UVec2>) {
+    let (mut app, band, camp) = world();
+    ordered(&mut app, &[WOOD]);
+    bare_the_map(&mut app);
+    let width = app.world.resource::<TileRegistry>().width;
+    let stands: Vec<UVec2> = (0..STANDS as u32)
+        .map(|step| UVec2::new((camp.x + step) % width, camp.y))
+        .collect();
+    for stand in &stands {
+        reground(&mut app, *stand, WOODLAND);
+    }
+    (app, band, stands)
+}
+
+fn keep_wood(app: &mut App, band: Entity, target: u32) {
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("allocation")
+        .orders
+        .insert(
+            WOOD.to_string(),
+            BandOrder {
+                target,
+                priority: SourcePriority::Normal,
+                owner: OrderOwner::Chief,
+            },
+        );
+    core_sim::staffing::restaff_band(&mut app.world, band);
+}
+
+/// `(tile, floor, crew)` of every wood row.
+fn wood_rows(app: &App, band: Entity) -> Vec<(UVec2, f32, u32)> {
+    app.world
+        .get::<LaborAllocation>(band)
+        .expect("allocation")
+        .assignments
+        .iter()
+        .filter_map(|row| match &row.target {
+            LaborTarget::Extract {
+                tile,
+                material,
+                floor,
+            } if material == WOOD => Some((*tile, *floor, row.staffing.total())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn sustainable(app: &App, band: Entity) -> f32 {
+    app.world
+        .get::<LaborAllocation>(band)
+        .unwrap()
+        .keep_sustainable[WOOD]
+}
+
+/// What one stand gives a turn at Best, read off the published total of an order that wants more
+/// than every stand together.
+fn one_stands_give(app: &mut App, band: Entity) -> f32 {
+    keep_wood(app, band, A_BIG_TARGET * 20);
+    sustainable(app, band) / STANDS as f32
+}
+
+fn is_wood_row(row: &core_sim::LaborAssignment) -> bool {
+    matches!(&row.target, LaborTarget::Extract { material, .. } if material == WOOD)
+}
+
+/// **A WANT BIGGER THAN ONE STAND GIVES TAKES SEVERAL**, nearest first, each at the Best floor, and
+/// the diggers are really sent.
+#[test]
+fn a_wood_order_takes_several_stands_when_one_gives_too_little() {
+    let (mut app, band, stands) = timber_world();
+    let each = one_stands_give(&mut app, band);
+    assert!(each > 0.0, "**LIVENESS**: a woodland stand regrows");
+    // A want of one and a half stands' regrowth, with nothing on hand and no draw.
+    keep_wood(&mut app, band, (each * 15.0).ceil() as u32);
+    let rows = wood_rows(&app, band);
+    assert_eq!(
+        rows.iter().map(|row| row.0).collect::<Vec<_>>(),
+        stands[..2].to_vec(),
+        "two stands cover the want, the nearest two"
+    );
+    for (tile, floor, _) in &rows {
+        assert_eq!(
+            *floor,
+            core_sim::DEFAULT_ESCAPEMENT_FLOOR,
+            "the chief works {tile:?} at Best"
+        );
+    }
+    assert!(
+        rows.iter().map(|row| row.2).sum::<u32>() > 0,
+        "**LIVENESS**: diggers are sent"
+    );
+}
+
+/// **THE STAND LIST SHRINKS WHEN THE WANT FALLS**, and a stand with cargo walking home from it is
+/// kept (staffed to nobody) until the cargo lands.
+#[test]
+fn the_stand_list_shrinks_when_the_want_falls_and_a_pinned_row_stays() {
+    let (mut app, band, stands) = timber_world();
+    let each = one_stands_give(&mut app, band);
+    keep_wood(&mut app, band, (each * 25.0).ceil() as u32);
+    assert_eq!(
+        wood_rows(&app, band).len(),
+        STANDS,
+        "a big want works every stand"
+    );
+
+    // Cargo is walking home from the farthest stand.
+    let far = *stands.last().unwrap();
+    let target = app
+        .world
+        .get::<LaborAllocation>(band)
+        .unwrap()
+        .assignments
+        .iter()
+        .find(|row| {
+            matches!(&row.target, LaborTarget::Extract { tile, material, .. }
+                if *tile == far && material == WOOD)
+        })
+        .map(|row| row.target.clone())
+        .expect("a row on the far stand");
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .unwrap()
+        .homeward
+        .push(HomewardWalk {
+            target,
+            workers: 1,
+            turns_left: 2,
+            walk_turns: 2,
+            cargo: 5.0,
+            classes: Default::default(),
+            goods: Default::default(),
+            rejoins_row: false,
+        });
+    keep_wood(&mut app, band, (each * 5.0).ceil() as u32);
+    let rows = wood_rows(&app, band);
+    assert_eq!(
+        rows.iter().map(|row| row.0).collect::<Vec<_>>(),
+        vec![stands[0], far],
+        "half a stand's want: the best stand and the pinned one"
+    );
+    assert_eq!(
+        rows[1].2, 0,
+        "the pinned row is off the set, staffed to nobody"
+    );
+
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .unwrap()
+        .homeward
+        .clear();
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    assert_eq!(
+        wood_rows(&app, band)
+            .iter()
+            .map(|row| row.0)
+            .collect::<Vec<_>>(),
+        vec![stands[0]],
+        "once the cargo lands the list is the set"
+    );
+}
+
+/// **WHEN THE LAND GIVES TOO LITTLE THE CHIEF STILL NEVER OVERDRAWS**: every stand is worked at
+/// Best, and the order publishes that the stands give less than the band uses.
+#[test]
+fn stands_that_regrow_less_than_the_draw_are_all_worked_at_best_and_publish_the_shortfall() {
+    let (mut app, band, _) = timber_world();
+    let each = one_stands_give(&mut app, band);
+    let draw = each * STANDS as f32 * 2.0;
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .unwrap()
+        .last_material_need
+        .insert(WOOD.to_string(), draw);
+    keep_wood(&mut app, band, A_BIG_TARGET);
+    let rows = wood_rows(&app, band);
+    assert_eq!(rows.len(), STANDS, "every stand is worked");
+    assert!(
+        rows.iter()
+            .all(|row| row.1 == core_sim::DEFAULT_ESCAPEMENT_FLOOR),
+        "all at Best: {rows:?}"
+    );
+    let published = sustainable(&app, band);
+    assert!(
+        published < draw,
+        "the order says the stands give {published} a turn against a draw of {draw}"
+    );
+    let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+    for (_, share) in allocation.keep_shares.iter() {
+        assert!(
+            share.take <= each * 1.001,
+            "no row is staffed past what its stand regrows: {share:?} vs {each}"
+        );
+    }
+}
+
+/// **RELEASE KEEPS EVERY WOOD ROW** with its crew as the Max, and a claim hands them back with the
+/// Max cleared.
+#[test]
+fn releasing_wood_keeps_every_row_with_its_crew_as_the_max() {
+    let (mut app, band, _) = timber_world();
+    let each = one_stands_give(&mut app, band);
+    keep_wood(&mut app, band, (each * 25.0).ceil() as u32);
+    let before = app
+        .world
+        .get::<LaborAllocation>(band)
+        .unwrap()
+        .assignments
+        .iter()
+        .filter(|row| is_wood_row(row))
+        .map(|row| (row.target.clone(), row.workers))
+        .collect::<Vec<_>>();
+    assert_eq!(before.len(), STANDS);
+    release_order(
+        &mut app.world.get_mut::<LaborAllocation>(band).unwrap(),
+        WOOD,
+    );
+    let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+    for (target, crew) in &before {
+        let row = allocation
+            .assignments
+            .iter()
+            .find(|row| &row.target == target)
+            .expect("the row is still there, floor and all");
+        assert_eq!(row.max_workers, Some((*crew).max(1)));
+    }
+    claim_order(
+        &mut app.world.get_mut::<LaborAllocation>(band).unwrap(),
+        WOOD,
+        1,
+    );
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+    assert!(allocation
+        .assignments
+        .iter()
+        .filter(|row| is_wood_row(row))
+        .all(|row| row.max_workers.is_none()));
+}
+
+/// **STONE STILL ENDS WITH ONE ROW** however much rock is in reach: it never regrows, so its share
+/// is unbounded and the best site covers the want.
+#[test]
+fn stone_ends_with_exactly_one_row_among_many_rock_sites() {
+    let (mut app, band, camp) = world();
+    bare_the_map(&mut app);
+    let width = app.world.resource::<TileRegistry>().width;
+    for step in 0..STANDS as u32 {
+        reground(&mut app, UVec2::new((camp.x + step) % width, camp.y), ROCK);
+    }
+    keep(&mut app, band, A_BIG_TARGET);
+    assert_eq!(stone_rows(&app, band).len(), 1);
+    let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+    assert!(
+        allocation.keep_sustainable[STONE] >= allocation.material_draw(STONE),
+        "stone never reads short"
+    );
 }

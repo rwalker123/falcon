@@ -2241,6 +2241,7 @@ fn decode_population(
             has_site: row.hasSite(),
             site_x: row.siteX(),
             site_y: row.siteY(),
+            sustainable: row.sustainable(),
         }),
     })
 }
@@ -2501,6 +2502,7 @@ fn create_band_orders<'a>(
                     hasSite: row.has_site,
                     siteX: row.site_x,
                     siteY: row.site_y,
+                    sustainable: row.sustainable,
                 },
             )
         })

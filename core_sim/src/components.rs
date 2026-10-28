@@ -6154,7 +6154,28 @@ pub struct BandOrder {
     pub owner: OrderOwner,
 }
 
+/// **ONE SITE'S SHARE OF A CHIEF'S ORDER** (#860): what the managing pass
+/// (`keep_on_hand::manage_dig_rows`) set aside for the row on `tile` this turn - `take` is the per-turn
+/// take the row is staffed for (its part of the want, at most what the site gives at the order's floor
+/// without drawing it down) and `hold` the part of the band's draw it keeps up with. Derived by that pass
+/// before every staffing; outside equality.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct KeepShare {
+    pub tile: UVec2,
+    pub hold: f32,
+    pub take: f32,
+}
+
 impl LaborAllocation {
+    /// The share the chief set aside for the row on `tile` of `kind`, `None` where the row is not on
+    /// a site of the order's set (a pinned row left standing for its cargo).
+    pub fn keep_share(&self, kind: &str, tile: UVec2) -> Option<KeepShare> {
+        self.keep_shares
+            .iter()
+            .find(|(held, share)| held == kind && share.tile == tile)
+            .map(|(_, share)| *share)
+    }
+
     /// The order this band holds for `kind`, whoever owns it.
     pub fn order_for(&self, kind: &str) -> Option<&BandOrder> {
         self.orders.get(kind)
@@ -6379,6 +6400,14 @@ pub struct LaborAllocation {
     /// `leadership::announce_chief_takeover` into one line per band. Saved: the announcement can
     /// span a command.
     pub unannounced_takeover: Vec<String>,
+    /// **EACH CHIEF ROW'S SHARE OF ITS ORDER**, per `(kind, site)` - see [`KeepShare`]. A row with no
+    /// entry is staffed to nobody. Derived by `keep_on_hand::manage_dig_rows` each pass; outside equality.
+    pub keep_shares: Vec<(String, KeepShare)>,
+    /// **WHAT THE ORDER'S CANDIDATE SITES GIVE A TURN AT ITS FLOOR**, per kind: the total of every
+    /// candidate site's take without drawing any down. For a material that never regrows it is the
+    /// larger of the order's want and the band's draw, so it never reads short. Published beside the
+    /// order; derived, outside equality.
+    pub keep_sustainable: std::collections::BTreeMap<String, f32>,
     /// **WHERE THE GAME PICKED TO DIG**, per mined material - the best-ranked site this turn's
     /// management found, whether or not a row stands on it. Published beside the order; derived
     /// telemetry outside equality.

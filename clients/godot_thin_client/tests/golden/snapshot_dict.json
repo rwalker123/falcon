@@ -6906,6 +6906,7 @@
           "priority": "normal",
           "site_x": 129,
           "site_y": 140,
+          "sustainable": 55.080002,
           "target": 38
         },
         {
@@ -6917,6 +6918,7 @@
           "priority": "normal",
           "site_x": 24,
           "site_y": 13,
+          "sustainable": 81.989998,
           "target": 87
         },
         {
@@ -6928,6 +6930,7 @@
           "priority": "normal",
           "site_x": 59,
           "site_y": 70,
+          "sustainable": 58.27,
           "target": 144
         }
       ],
@@ -9474,6 +9477,7 @@
           "priority": "normal",
           "site_x": 186,
           "site_y": 175,
+          "sustainable": 104.120003,
           "target": 25
         },
         {
@@ -9485,6 +9489,7 @@
           "priority": "normal",
           "site_x": 163,
           "site_y": 174,
+          "sustainable": 103.330002,
           "target": 168
         },
         {
@@ -9496,6 +9501,7 @@
           "priority": "normal",
           "site_x": 120,
           "site_y": 109,
+          "sustainable": 8.19,
           "target": 79
         }
       ],
@@ -11986,6 +11992,7 @@
           "priority": "normal",
           "site_x": 147,
           "site_y": 158,
+          "sustainable": 66.449997,
           "target": 96
         },
         {
@@ -11997,6 +12004,7 @@
           "priority": "normal",
           "site_x": 146,
           "site_y": 135,
+          "sustainable": 81.360001,
           "target": 9
         },
         {
@@ -12008,6 +12016,7 @@
           "priority": "normal",
           "site_x": 153,
           "site_y": 164,
+          "sustainable": 62.240002,
           "target": 6
         }
       ],

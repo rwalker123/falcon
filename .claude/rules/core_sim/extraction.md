@@ -613,7 +613,7 @@ wild stand and its row goes.
 ## A chief keeps an ordered material on hand (#860, #874)
 
 A deposit material is crewed by hand like any deposit until the band has a leader. Which kinds a chief
-takes an order for is `labor_config.json` -> `band_orders.ordered_kinds` (stone today; the engine
+takes an order for is `labor_config.json` -> `band_orders.ordered_kinds` (stone and wood; the engine
 classifies by that list, and `extraction.json` carries no mined-branch key). When a chief arrives he
 takes over every ordered kind (`band_order <faction> <band> <kind> set|release|claim`): the sim places
 the band's one dig row on the best site, takes over the band's hand-made rows of that material, and

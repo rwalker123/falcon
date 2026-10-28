@@ -2092,6 +2092,10 @@ table BandOrderState {
   hasSite:bool = false;
   siteX:uint = 0;
   siteY:uint = 0;
+  // What every candidate site of the order gives a turn at its floor without being drawn down, in
+  // the kind's units. For a deposit that never regrows it is the larger of the order's want and the
+  // draw, so it never reads short. The client warns when it is below `draw`.
+  sustainable:float = 0;
 }
 
 // One kit the band's work wants: `kit` is the equipment.json kit id the picker orders in, `count`

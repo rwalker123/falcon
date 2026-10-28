@@ -6487,6 +6487,7 @@ pub fn advance_labor_allocation(
                         .as_deref()
                         .is_some_and(|leadership| leadership.leader.is_some()),
                     &candidates,
+                    &|material: &str| cohort.stores.material_total(material).to_f32(),
                 );
             }
             let progress_context = BuildProgressContext {

@@ -30397,6 +30397,13 @@ mod tests {
     #[test]
     fn a_band_order_needs_a_leader_and_the_chief_owns_the_material_until_it_is_released() {
         let mut app = build_test_app();
+        // Stone only: the timber the same rock holds would add rows to what this test counts.
+        {
+            let mut handle = app.world.resource_mut::<LaborConfigHandle>();
+            let mut config = (*handle.0).clone();
+            config.band_orders.ordered_kinds = vec!["stone".to_string()];
+            handle.0 = std::sync::Arc::new(config);
+        }
         app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
         let faction = FactionId(0);
         let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::AlpineMountain);
@@ -30407,7 +30414,11 @@ mod tests {
                 .get::<LaborAllocation>(band)
                 .expect("band has an allocation")
                 .assignments
-                .len()
+                .iter()
+                .filter(|row| {
+                    matches!(&row.target, LaborTarget::Extract { material, .. } if material == "stone")
+                })
+                .count()
         };
 
         // Leaderless: stone is crewed by hand, and an order is refused.
@@ -30437,7 +30448,7 @@ mod tests {
             }),
             ..Default::default()
         });
-        send_command_line(&mut app, "band_order 0 7 wood set 10 normal");
+        send_command_line(&mut app, "band_order 0 7 hide set 10 normal");
         assert!(extraction_failure_contains(&app, "takes no order"));
         send_command_line(&mut app, "band_order 0 7 stone set 0 normal");
         assert!(
