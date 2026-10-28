@@ -16,6 +16,14 @@ pub struct CommandEnvelope {
     pub correlation_id: Option<u64>,
 }
 
+/// The one row of a food or fodder order a `release` / `claim` names (the grammar `stop_labor` names a
+/// row in): a forage patch by tile, a hunt row by herd id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BandOrderRow {
+    Tile { x: u32, y: u32 },
+    Herd { id: String },
+}
+
 /// What a [`CommandPayload::BandOrder`] does to one kind's order (#860).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BandOrderAction {
@@ -327,6 +335,8 @@ pub enum CommandPayload {
         band_id: u64,
         kind: String,
         action: BandOrderAction,
+        /// The one row a `release` / `claim` is about, `None` for the whole kind.
+        row: Option<BandOrderRow>,
     },
     /// **Say how a band splits a maintenance pool it cannot stretch**
     /// (`docs/plan_standing_upkeep.md` §2.5) — `"spread"` (everything degrades a little) or
@@ -2222,6 +2232,7 @@ impl CommandEnvelope {
                 band_id,
                 kind,
                 action,
+                row,
             } => {
                 let (action, target, priority) = match action {
                     BandOrderAction::Set { target, priority } => {
@@ -2237,6 +2248,18 @@ impl CommandEnvelope {
                     action: action as i32,
                     target,
                     priority,
+                    target_x: match row {
+                        Some(BandOrderRow::Tile { x, .. }) => Some(*x),
+                        _ => None,
+                    },
+                    target_y: match row {
+                        Some(BandOrderRow::Tile { y, .. }) => Some(*y),
+                        _ => None,
+                    },
+                    herd_id: match row {
+                        Some(BandOrderRow::Herd { id }) => Some(id.clone()),
+                        _ => None,
+                    },
                 })
             }
             CommandPayload::UpkeepMode {
@@ -3025,6 +3048,11 @@ impl CommandEnvelope {
                 faction_id: cmd.faction_id,
                 band_id: cmd.band_id,
                 kind: cmd.kind,
+                row: match (cmd.target_x, cmd.target_y, cmd.herd_id.clone()) {
+                    (Some(x), Some(y), _) => Some(BandOrderRow::Tile { x, y }),
+                    (_, _, Some(id)) => Some(BandOrderRow::Herd { id }),
+                    _ => None,
+                },
                 action: match pb::BandOrderAction::try_from(cmd.action) {
                     Ok(pb::BandOrderAction::Set) => BandOrderAction::Set {
                         target: cmd.target,
@@ -4126,6 +4154,27 @@ mod tests {
     /// **`band_order` survives the envelope** in all three forms, every field a distinct value.
     #[test]
     fn band_order_round_trips_through_the_envelope() {
+        for row in [
+            Some(BandOrderRow::Tile { x: 4, y: 9 }),
+            Some(BandOrderRow::Herd {
+                id: "boar_east".to_string(),
+            }),
+        ] {
+            let payload = CommandPayload::BandOrder {
+                faction_id: 2,
+                band_id: 9,
+                kind: "food".to_string(),
+                action: BandOrderAction::Release,
+                row,
+            };
+            let envelope = CommandEnvelope {
+                payload: payload.clone(),
+                correlation_id: None,
+            };
+            let bytes = envelope.encode_to_vec().expect("encode");
+            let decoded = CommandEnvelope::decode(&bytes).expect("decode");
+            assert_eq!(decoded.payload, payload);
+        }
         for action in [
             BandOrderAction::Set {
                 target: 60,
@@ -4139,6 +4188,7 @@ mod tests {
                 band_id: 9,
                 kind: "stone".to_string(),
                 action,
+                row: None,
             };
             let envelope = CommandEnvelope {
                 payload: payload.clone(),

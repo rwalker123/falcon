@@ -1718,6 +1718,7 @@ enum Command {
         band_id: u64,
         kind: String,
         action: sim_runtime::BandOrderAction,
+        row: Option<sim_runtime::BandOrderRow>,
     },
     /// **Stop a staffed row** (#871) — remove the band's row for one source, or its Roadwork pool.
     /// See `handle_stop_labor`.
@@ -5308,11 +5309,13 @@ fn kept_on_hand_refusal(
     band: &SelectedBand,
     target: &LaborTarget,
 ) -> Option<String> {
-    let LaborTarget::Extract { material, .. } = target else {
-        return None;
-    };
     let allocation = app.world.get::<LaborAllocation>(band.entity)?;
     let keeper = band_keeper(app, band);
+    let LaborTarget::Extract { material, .. } = target else {
+        // A forage or hunt row the chief lists under his food or fodder order is his.
+        let kind = allocation.row_order(target)?;
+        return core_sim::keep_on_hand::order_refusal(allocation, kind, keeper.as_ref());
+    };
     core_sim::keep_on_hand::order_refusal(allocation, material, keeper.as_ref())
 }
 
@@ -11067,8 +11070,9 @@ fn handle_band_order(
     band_id: u64,
     kind: &str,
     action: sim_runtime::BandOrderAction,
+    row: Option<sim_runtime::BandOrderRow>,
 ) {
-    use sim_runtime::BandOrderAction;
+    use sim_runtime::{BandOrderAction, BandOrderRow};
     let labor = app.world.resource::<LaborConfigHandle>().get();
     let ordered = labor.band_orders.is_ordered(kind);
     let Some(band) = select_starting_band(
@@ -11148,7 +11152,49 @@ fn handle_band_order(
                 return;
             }
             let mut allocation = band_allocation_mut(app, band.entity);
-            if claiming {
+            if let Some(row) = row {
+                // ONE row of a food or fodder order changes hands; the kind stays the chief's.
+                let key = match &row {
+                    BandOrderRow::Tile { x, y } => format!("f:{x},{y}"),
+                    BandOrderRow::Herd { id } => format!("h:{id}"),
+                };
+                let listed = allocation.order_rows.contains_key(&key);
+                let held = allocation.assignments.iter().any(|assignment| {
+                    core_sim::keep_on_hand::source_key(&assignment.target).as_deref()
+                        == Some(key.as_str())
+                });
+                if !core_sim::keep_on_hand::is_row_kind(kind)
+                    || !allocation.chief_owns(kind)
+                    || !held
+                    || (claiming && listed)
+                    || (!claiming && !listed)
+                {
+                    emit_command_failure(
+                        app,
+                        CommandEventKind::Extraction,
+                        faction,
+                        format!(
+                            "{} has no {kind} row there for the chief to {}.",
+                            band.label,
+                            if claiming { "take back" } else { "hand over" }
+                        ),
+                    );
+                    return;
+                }
+                if claiming {
+                    core_sim::keep_on_hand::claim_row(&mut allocation, &key, kind);
+                    (
+                        "claim",
+                        format!("{}: the chief takes the {kind} row back", band.label),
+                    )
+                } else {
+                    core_sim::keep_on_hand::release_row(&mut allocation, &key);
+                    (
+                        "release",
+                        format!("{}: that {kind} row is crewed by hand", band.label),
+                    )
+                }
+            } else if claiming {
                 core_sim::keep_on_hand::claim_order(
                     &mut allocation,
                     kind,
@@ -12581,11 +12627,13 @@ fn command_from_payload(
             band_id,
             kind,
             action,
+            row,
         } => Some(Command::BandOrder {
             faction: FactionId(faction_id),
             band_id,
             kind,
             action,
+            row,
         }),
         ProtoCommandPayload::WorkPriority {
             faction_id,
@@ -14012,8 +14060,9 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             band_id,
             kind,
             action,
+            row,
         } => {
-            handle_band_order(app, faction, band_id, &kind, action);
+            handle_band_order(app, faction, band_id, &kind, action, row);
         }
         Command::ExtendPen {
             faction,
@@ -30506,6 +30555,98 @@ mod tests {
         assert_eq!(order.target, 60);
         assert_eq!(allocation.assignments.len(), 1);
         assert!(allocation.assignments[0].max_workers.is_none());
+    }
+
+    /// **ONE FOOD ROW CHANGES HANDS WHILE THE KIND STAYS THE CHIEF'S** (#860): a forage row the chief
+    /// lists under his food order refuses hand commands naming him; `band_order ... food release
+    /// <x> <y>` gives that one row to the player (hand commands then work on it, the chief's other
+    /// rows stay refused); `claim <x> <y>` gives it back.
+    #[test]
+    fn one_food_row_can_be_crewed_by_hand_while_the_kind_stays_the_chiefs() {
+        let mut app = build_test_app();
+        app.update();
+        app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
+        {
+            let mut handle = app.world.resource_mut::<LaborConfigHandle>();
+            let mut config = (*handle.0).clone();
+            config.band_orders.ordered_kinds = vec!["food".to_string()];
+            handle.0 = std::sync::Arc::new(config);
+        }
+        let band = {
+            let mut query = app
+                .world
+                .query_filtered::<Entity, bevy::prelude::With<core_sim::ResidentBand>>();
+            query.iter(&app.world).next().expect("a band")
+        };
+        let band_id = app.world.get::<BandId>(band).expect("a band id").0;
+        app.world.entity_mut(band).insert(core_sim::BandLeadership {
+            leader: Some(core_sim::BandLeader {
+                name: "Ash".to_string(),
+                kind: core_sim::LeaderKind::Chief,
+                since_turn: 0,
+            }),
+            ..Default::default()
+        });
+        app.world
+            .get_mut::<PopulationCohort>(band)
+            .unwrap()
+            .last_food_need = 4.0;
+        core_sim::staffing::restaff_band(&mut app.world, band);
+        let listed = |app: &bevy::prelude::App| -> Vec<String> {
+            app.world
+                .get::<LaborAllocation>(band)
+                .unwrap()
+                .order_rows
+                .keys()
+                .filter(|key| key.starts_with("f:"))
+                .cloned()
+                .collect()
+        };
+        let rows = listed(&app);
+        assert!(rows.len() >= 2, "**LIVENESS**: the chief gathers: {rows:?}");
+        let (mine, other) = (rows[0].clone(), rows[1].clone());
+        let at = |key: &str| key.trim_start_matches("f:").replace(',', " ");
+        let refusals = |app: &bevy::prelude::App| {
+            extraction_failure_reasons(app)
+                .iter()
+                .filter(|reason| reason.contains("keeps food on hand"))
+                .count()
+        };
+
+        send_command_line(
+            &mut app,
+            &format!("work_priority 0 {band_id} {} low", at(&mine)),
+        );
+        assert_eq!(refusals(&app), 1, "{:?}", extraction_failure_reasons(&app));
+
+        send_command_line(
+            &mut app,
+            &format!("band_order 0 {band_id} food release {}", at(&mine)),
+        );
+        assert!(
+            !listed(&app).contains(&mine),
+            "that one row is the player's"
+        );
+        assert!(
+            listed(&app).contains(&other),
+            "the kind and the other rows stay the chief's"
+        );
+        send_command_line(
+            &mut app,
+            &format!("work_priority 0 {band_id} {} low", at(&mine)),
+        );
+        assert_eq!(refusals(&app), 1, "a released row takes hand commands");
+        send_command_line(
+            &mut app,
+            &format!("work_priority 0 {band_id} {} low", at(&other)),
+        );
+        assert_eq!(refusals(&app), 2, "the chief's other rows stay refused");
+
+        send_command_line(
+            &mut app,
+            &format!("band_order 0 {band_id} food claim {}", at(&mine)),
+        );
+        assert!(listed(&app).contains(&mine), "claimed back");
     }
 
     /// A council keeps the kind in the elders' name, and the verb agrees.

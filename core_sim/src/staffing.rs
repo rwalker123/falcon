@@ -1301,6 +1301,13 @@ fn build_staff_inputs<'a>(
                     crew_float,
                     &mut input,
                 );
+                if allocation.row_order(&target).is_some() {
+                    apply_chief_share(
+                        &mut input,
+                        allocation
+                            .keep_share(allocation.row_order(&target).unwrap_or_default(), *tile),
+                    );
+                }
             }
             LaborTarget::Hunt {
                 fauna_id, floor, ..
@@ -1310,6 +1317,9 @@ fn build_staff_inputs<'a>(
                 hunt_input(
                     world, band_kit, kit, fauna_id, *floor, crew_float, &mut input,
                 );
+                if allocation.row_order(&target).is_some() {
+                    apply_chief_share(&mut input, allocation.keep_share_of_herd(fauna_id));
+                }
             }
             LaborTarget::Extract {
                 tile,
@@ -1546,6 +1556,24 @@ fn forage_input<'a>(
     input.reach = ReachTarget::Take(reach_target(peak, room));
 }
 
+/// **A CHIEF'S FORAGE OR HUNT ROW IS STAFFED FROM ITS SHARE OF THE ORDER'S WANT** (#860): the hold and
+/// reach the managing pass set aside (biomass), never past the room the row's floor leaves. A row the
+/// pass gave no share (a pinned or improved row off the set, or at a zero want) is staffed to nobody -
+/// its keepers still come.
+fn apply_chief_share(input: &mut StaffRowInput<'_>, share: Option<crate::components::KeepShare>) {
+    let room = input.useful_take;
+    let (hold, take) = share.map_or((NO_TAKE_WANTED, NO_TAKE_WANTED), |share| {
+        (share.hold, share.take)
+    });
+    input.hold_take = hold.min(room);
+    input.useful_take = take.min(room);
+    input.reach = if take <= NO_TAKE_WANTED {
+        ReachTarget::Nothing
+    } else {
+        ReachTarget::Take(take.min(room))
+    };
+}
+
 /// `T_reach`: strictly above the peak regrowth, never past the room, and the whole room where
 /// nothing regrows to out-take.
 fn reach_target(peak: f32, room: f32) -> f32 {
@@ -1722,6 +1750,142 @@ fn extract_input<'a>(
     input.hold_take = hold.min(room);
     input.useful_take = room;
     input.reach = ReachTarget::Take(reach_target(peak, room));
+}
+
+/// **WHAT A FORAGE OR HUNT SOURCE WOULD GIVE A CHIEF'S ROW** - the staffing's own reading of the
+/// source ([`forage_input`] / [`hunt_input`], so the answer is the one the passes will use), probed
+/// before any row exists.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct SourceProbe {
+    /// Whether anyone the band can field takes anything from the source at the floor: there is room
+    /// above it and a crew (kitted as the band is) reaches the take. A herd the kit cannot wound is
+    /// not viable.
+    pub viable: bool,
+    /// What the source gives a turn at the floor without being drawn down, in biomass.
+    pub sustainable: f32,
+    /// What one hand of the best-kitted crew takes a turn (biomass), at the sustainable take.
+    pub per_hand: f32,
+    /// Food units a unit of biomass is worth (`0` where the source pays none).
+    pub food_rate: f32,
+    /// Fodder units a unit of biomass is worth (`0` where the source pays none).
+    pub fodder_rate: f32,
+}
+
+/// Probe the forage or hunt source `target` names at its own floor for a crew of up to `crew`
+/// hands armed as far as the band's gear goes. `None` for any other target and for a source that is
+/// gone.
+pub(crate) fn probe_source(
+    sources: &ClaimSources<'_>,
+    band_kit: &BandEquipment,
+    target: &LaborTarget,
+    crew: f32,
+) -> Option<SourceProbe> {
+    let tile_improvements = crate::tile_improvement::TileImprovementRegistry::default();
+    let roads = crate::routes::RoadRegistry::default();
+    let elsewhere: BTreeMap<TileKey, u32> = BTreeMap::new();
+    let can_progress = |_: &crate::components::BuildDeclaration| false;
+    let on_hand = |_: &str| 0.0_f32;
+    let world = StaffingWorld {
+        sources,
+        tile_improvements: &tile_improvements,
+        roads: &roads,
+        band: None,
+        camp: None,
+        tile_hands_elsewhere: &elsewhere,
+        build_can_progress: &can_progress,
+        on_hand: &on_hand,
+    };
+    let kit = sources.equipment.default_kit(target.kit_job());
+    let kit_items = live_kit_items(&kit, band_kit, &world);
+    let mut input = StaffRowInput {
+        priority: SourcePriority::default(),
+        max: None,
+        keep_hands: NO_HANDS,
+        hold_take: NO_TAKE_WANTED,
+        useful_take: NO_TAKE_WANTED,
+        reach: ReachTarget::Nothing,
+        kit_items,
+        hands: Box::new(|_, _| Some(0.0)),
+        bare_can_work: false,
+        distance: NOBODY,
+        is_build: false,
+        kitless: false,
+        tile: None,
+    };
+    let (food_rate, fodder_rate) = match target {
+        LaborTarget::Forage {
+            tile,
+            floor,
+            take_species,
+            ..
+        } => {
+            let patch = sources.patch(*tile)?;
+            let composition: Vec<crate::flora_config::FloraShare> = (sources.ground_of)(*tile)
+                .map(|ground| {
+                    crate::forage::tile_flora_composition(
+                        sources.flora,
+                        &sources.labor.forage,
+                        &ground,
+                        sources.map_seed,
+                    )
+                    .into_owned()
+                })
+                .unwrap_or_default();
+            let rates = (
+                crate::forage::patch_provisions_per_biomass(
+                    &patch,
+                    &composition,
+                    sources.flora,
+                    &sources.labor.forage,
+                ),
+                crate::forage::patch_fodder_per_biomass(
+                    &patch,
+                    &composition,
+                    sources.flora,
+                    &sources.labor.forage,
+                ),
+            );
+            forage_input(
+                &world,
+                band_kit,
+                &kit,
+                *tile,
+                *floor,
+                take_species,
+                crew,
+                &mut input,
+            );
+            rates
+        }
+        LaborTarget::Hunt {
+            fauna_id, floor, ..
+        } => {
+            let herd = sources.herd(fauna_id)?;
+            let food = sources
+                .fauna
+                .hunt_yield_for(&herd.species)
+                .provisions_per_biomass;
+            hunt_input(&world, band_kit, &kit, fauna_id, *floor, crew, &mut input);
+            (food, 0.0)
+        }
+        _ => return None,
+    };
+    let sustainable = input.hold_take.max(NO_TAKE_WANTED);
+    let armed = crew as u32;
+    let hands = (input.hands)(sustainable.max(NO_TAKE_WANTED), armed);
+    let reaches = sustainable > NO_TAKE_WANTED && hands.is_some();
+    let per_hand = hands
+        .filter(|hands| *hands > NO_HANDS)
+        .map_or(NO_TAKE_WANTED, |hands| {
+            sustainable / hands.max(AT_LEAST_ONE_HAND as f32)
+        });
+    Some(SourceProbe {
+        viable: reaches && input.useful_take > NO_TAKE_WANTED,
+        sustainable,
+        per_hand,
+        food_rate,
+        fodder_rate,
+    })
 }
 
 /// Where `band` is camped, read the way the labor pass reads it; `None` where the world has no map.
@@ -1929,6 +2093,28 @@ fn managed_dig_allocation(
             has_leader,
             &candidates,
             &on_hand,
+        );
+        let known_tile = |tile: UVec2| {
+            !fog_enabled
+                || visibility.is_some_and(|ledger| ledger.is_discovered(faction, tile.x, tile.y))
+        };
+        let known_herd = |herd: &crate::fauna::Herd| {
+            let at = herd.position();
+            !fog_enabled || visibility.is_some_and(|ledger| ledger.is_visible(faction, at.x, at.y))
+        };
+        crate::food_orders::manage_food_orders(
+            &mut allocation,
+            &crate::food_orders::FoodInputs {
+                site: &inputs,
+                tile_known: &known_tile,
+                herd_known: &known_herd,
+                readings: crate::food_orders::OrderReadings {
+                    food_stock: cohort_stores.get(crate::components::FOOD).to_f32(),
+                    food_need: cohort.last_food_need,
+                    fodder_stock: cohort_stores.get(crate::components::FODDER).to_f32(),
+                },
+            },
+            has_leader,
         );
     });
     Some(allocation)

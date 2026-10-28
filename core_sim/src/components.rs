@@ -6159,10 +6159,17 @@ pub struct BandOrder {
 /// take the row is staffed for (its part of the want, at most what the site gives at the order's floor
 /// without drawing it down) and `hold` the part of the band's draw it keeps up with. Derived by that pass
 /// before every staffing; outside equality.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeepShare {
+    /// The site's tile for a deposit or a patch; a hunt row's herd stands elsewhere every turn, so
+    /// it is named by [`Self::herd`] instead and this reads the tile it stood on when ranked.
     pub tile: UVec2,
+    /// The herd's id for a hunt row, empty for every tile-bound source.
+    pub herd: String,
+    /// The part of the draw the row keeps up with, in the **row's own take unit**: material units for
+    /// a deposit, biomass for a patch or a herd.
     pub hold: f32,
+    /// The per-turn take the row is staffed for, in the same unit.
     pub take: f32,
 }
 
@@ -6172,8 +6179,22 @@ impl LaborAllocation {
     pub fn keep_share(&self, kind: &str, tile: UVec2) -> Option<KeepShare> {
         self.keep_shares
             .iter()
-            .find(|(held, share)| held == kind && share.tile == tile)
-            .map(|(_, share)| *share)
+            .find(|(held, share)| held == kind && share.herd.is_empty() && share.tile == tile)
+            .map(|(_, share)| share.clone())
+    }
+
+    /// The share the chief set aside for the hunt row on herd `id`, under whichever order lists it.
+    pub fn keep_share_of_herd(&self, id: &str) -> Option<KeepShare> {
+        self.keep_shares
+            .iter()
+            .find(|(_, share)| share.herd == id)
+            .map(|(_, share)| share.clone())
+    }
+
+    /// The order a forage or hunt row is listed under, `None` for a player-owned row.
+    pub fn row_order(&self, target: &LaborTarget) -> Option<&str> {
+        let key = crate::keep_on_hand::source_key(target)?;
+        self.order_rows.get(&key).map(String::as_str)
     }
 
     /// The order this band holds for `kind`, whoever owns it.
@@ -6400,6 +6421,15 @@ pub struct LaborAllocation {
     /// `leadership::announce_chief_takeover` into one line per band. Saved: the announcement can
     /// span a command.
     pub unannounced_takeover: Vec<String>,
+    /// **WHICH ORDER LISTS EACH FORAGE OR HUNT ROW** (#860): source key (`keep_on_hand::source_key`)
+    /// -> the order kind (`"food"` or `"fodder"`) whose chief works the row. A row absent here is the
+    /// player's, whoever owns the kind: the chief never touches it, hand commands on it work, and the
+    /// order counts what it brings in. Intent: inside equality, saved.
+    pub order_rows: std::collections::BTreeMap<String, String>,
+    /// **KINDS WHOSE EXISTING ROWS THE CHIEF MUST ADOPT ON THE NEXT PASS**: set by his arrival and by
+    /// a whole-kind claim, drained by `food_orders::manage_food_orders` (which lists every forage and
+    /// hunt row the band holds under the order its product belongs to). Saved.
+    pub adopt_pending: std::collections::BTreeSet<String>,
     /// **EACH CHIEF ROW'S SHARE OF ITS ORDER**, per `(kind, site)` - see [`KeepShare`]. A row with no
     /// entry is staffed to nobody. Derived by `keep_on_hand::manage_dig_rows` each pass; outside equality.
     pub keep_shares: Vec<(String, KeepShare)>,
@@ -6579,6 +6609,7 @@ impl PartialEq for LaborAllocation {
     fn eq(&self, other: &Self) -> bool {
         self.assignments == other.assignments
             && self.orders == other.orders
+            && self.order_rows == other.order_rows
             && self.upkeep_fund_mode == other.upkeep_fund_mode
             && self.builds == other.builds
     }

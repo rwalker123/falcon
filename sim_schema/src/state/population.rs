@@ -517,6 +517,13 @@ pub struct LaborAssignmentState {
     /// The crew past which the take stops rising - pass 3's ceiling. Appended last.
     #[serde(default)]
     pub useful_crew: u32,
+    /// The band order whose chief works this row (`"food"`, `"fodder"`, or the material a dig row is
+    /// kept for); empty for a player-crewed row. Appended last (#860).
+    #[serde(default)]
+    pub order_kind: String,
+    /// Whether the chief works this row (`order_kind` is not empty). Appended last (#860).
+    #[serde(default)]
+    pub chief_owned: bool,
     /// Of `workers`: keepers. `keepers + kitted + bare == workers` on a staffed row. Appended last.
     #[serde(default)]
     pub keepers_staffed: u32,
@@ -2179,6 +2186,8 @@ pub struct BandOrderState {
     pub has_site: bool,
     pub site_x: u32,
     pub site_y: u32,
+    /// Whether the order has anything to keep up with (false for fodder while no pen eats hay).
+    pub has_consumers: bool,
     /// What the order's candidate sites give a turn at its floor without being drawn down; never
     /// below `draw` for a deposit that does not regrow.
     pub sustainable: f32,

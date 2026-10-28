@@ -1006,3 +1006,12 @@ now feeds every account at rung 2:
 - **Still provisions-only:** `project_realized_forage` / `project_arrivals_forage` — the forward
   projection reports food, so a cash Field's contribution to it is its calories and nothing else.
 
+## A chief sets his gathering rows' floor and selection (#860)
+
+Under a chief's food or fodder order (`work-party.md` -> "The food and fodder orders") the chief, not
+the player, owns the `floor` and the `take_species` of every forage row he lists in
+`LaborAllocation::order_rows`: the floor is Best below the order's target and the Learning floor
+(`band_orders.learning_floor`) at or above it, and the selection is the whole basket (empty
+`TakeSelection`), so one gathering row fills every store its plants feed. A row the player released
+keeps whatever floor and selection it had, and the chief never rewrites them. The chief never starts a
+Cultivate or a Sow; a patch already improved keeps its row at a zero share.

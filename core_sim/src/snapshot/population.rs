@@ -1701,14 +1701,20 @@ pub(crate) fn redacted_population_state(
 pub(crate) fn band_order_rows(
     allocation: &LaborAllocation,
     on_hand: &dyn Fn(&str) -> f32,
+    readings: &crate::food_orders::OrderReadings,
 ) -> Vec<sim_schema::BandOrderState> {
     allocation
         .orders
         .iter()
         .map(|(kind, order)| {
             let site = allocation.last_keep_site.get(kind).copied();
+            let by_turns = crate::keep_on_hand::is_row_kind(kind);
             sim_schema::BandOrderState {
-                draw: allocation.material_draw(kind),
+                // Food and fodder read in TURNS (`target`, `on_hand`) over a per-turn draw in units;
+                // a material reads in units throughout.
+                draw: readings.draw(kind, allocation),
+                has_consumers: kind != crate::keep_on_hand::FODDER_KIND
+                    || allocation.last_fodder_need > 0.0,
                 target: order.target,
                 priority: match order.priority {
                     SourcePriority::High => sim_schema::state::SourcePriorityState::High,
@@ -1716,7 +1722,11 @@ pub(crate) fn band_order_rows(
                     SourcePriority::Low => sim_schema::state::SourcePriorityState::Low,
                 },
                 chief_owned: order.owner == crate::components::OrderOwner::Chief,
-                on_hand: on_hand(kind),
+                on_hand: if by_turns {
+                    readings.turns(kind, allocation)
+                } else {
+                    on_hand(kind)
+                },
                 has_site: site.is_some(),
                 site_x: site.map_or(0, |tile| tile.x),
                 site_y: site.map_or(0, |tile| tile.y),
@@ -2328,6 +2338,16 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     // **WHICH OF ITS KIT ITEMS ARE SHORT, BY NAME** — read off the same pass as the
                     // coverage above (the mustered one while a crew goes out, the standing one
                     // otherwise), so the line and the reach beside it agree.
+                    // **WHICH ORDER LISTS THIS ROW** (#860): a dig row of a chief-owned material is
+                    // listed under the material; a forage or hunt row under the order
+                    // `order_rows` names; a player-crewed row under none.
+                    row.order_kind = match &assignment.target {
+                        LaborTarget::Extract { material, .. } if a.chief_owns(material) => {
+                            material.clone()
+                        }
+                        target => a.row_order(target).unwrap_or_default().to_string(),
+                    };
+                    row.chief_owned = !row.order_kind.is_empty();
                     row.kit_toe = match &sending_pass {
                         Some(pass) => kit_toe_states(&pass.gear[i].toe),
                         None => row_gear[i].2.clone(),

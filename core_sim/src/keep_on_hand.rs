@@ -41,6 +41,26 @@ use crate::leadership::{BandLeadership, LeaderKind};
 use crate::staffing::CampSite;
 use crate::take_claims::ClaimSources;
 
+/// The kind id of the food order: turns of food on hand over what the band eats in a turn.
+pub const FOOD_KIND: &str = "food";
+/// The kind id of the fodder order: turns of hay on hand over what the band's pens need.
+pub const FODDER_KIND: &str = "fodder";
+
+/// Whether `kind` is carried out by forage and hunt rows rather than by dig rows.
+pub fn is_row_kind(kind: &str) -> bool {
+    kind == FOOD_KIND || kind == FODDER_KIND
+}
+
+/// **A FORAGE OR HUNT ROW'S IDENTITY** for [`LaborAllocation::order_rows`]: `f:<x>,<y>` for a patch,
+/// `h:<herd id>` for a herd. `None` for any other row.
+pub fn source_key(target: &LaborTarget) -> Option<String> {
+    match target {
+        LaborTarget::Forage { tile, .. } => Some(format!("f:{},{}", tile.x, tile.y)),
+        LaborTarget::Hunt { fauna_id, .. } => Some(format!("h:{fauna_id}")),
+        _ => None,
+    }
+}
+
 /// **WHO KEEPS A BAND'S ORDERS, AS THE REFUSALS AND THE FEED NAME THEM**: the chief by name, or the
 /// band's elders.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,10 +200,50 @@ pub fn release_order(allocation: &mut LaborAllocation, kind: &str) {
         return;
     }
     order.owner = OrderOwner::Player;
+    if is_row_kind(kind) {
+        let keys: Vec<String> = allocation
+            .order_rows
+            .iter()
+            .filter(|(_, listed)| listed.as_str() == kind)
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in keys {
+            release_row(allocation, &key);
+        }
+        return;
+    }
     for row in allocation.assignments.iter_mut() {
         if matches!(&row.target, LaborTarget::Extract { material, .. } if material == kind) {
             row.max_workers = Some(row.workers.max(MIN_RELEASED_CREW));
         }
+    }
+}
+
+/// **CREW THIS ROW YOURSELF** (a food or fodder row, the kind staying the chief's): the row leaves
+/// [`LaborAllocation::order_rows`], its Max is the crew it was staffed with (at least one), and its
+/// floor and selection stay. A no-op for a row the chief does not list.
+pub fn release_row(allocation: &mut LaborAllocation, key: &str) {
+    if allocation.order_rows.remove(key).is_none() {
+        return;
+    }
+    for row in allocation.assignments.iter_mut() {
+        if source_key(&row.target).is_some_and(|held| held == key) {
+            row.max_workers = Some(row.workers.max(MIN_RELEASED_CREW));
+        }
+    }
+}
+
+/// **HAND THIS ROW BACK TO THE CHIEF**: list the row under the `kind` order; the next managing pass
+/// clears its Max and sets its floor and selection. A no-op where the band holds no such row.
+pub fn claim_row(allocation: &mut LaborAllocation, key: &str, kind: &str) {
+    let held = allocation
+        .assignments
+        .iter()
+        .any(|row| source_key(&row.target).is_some_and(|held| held == key));
+    if held {
+        allocation
+            .order_rows
+            .insert(key.to_string(), kind.to_string());
     }
 }
 
@@ -204,6 +264,9 @@ pub fn claim_order(allocation: &mut LaborAllocation, kind: &str, starting_target
             priority: SourcePriority::default(),
             owner: OrderOwner::Chief,
         });
+    if is_row_kind(kind) {
+        allocation.adopt_pending.insert(kind.to_string());
+    }
 }
 
 /// **THE FLOOR AN `extract` ROW CARRIES WHEN NOBODY NAMED ONE** - nothing is left standing on a finite
@@ -404,6 +467,9 @@ pub fn manage_dig_rows(
             },
         );
         allocation.unannounced_takeover.push(kind.clone());
+        if is_row_kind(kind) {
+            allocation.adopt_pending.insert(kind.clone());
+        }
     }
     let chief_materials: Vec<(String, BandOrder)> = allocation
         .orders
@@ -453,6 +519,7 @@ pub fn manage_dig_rows(
                 material.clone(),
                 crate::components::KeepShare {
                     tile: site.tile,
+                    herd: String::new(),
                     hold,
                     take,
                 },

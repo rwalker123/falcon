@@ -53,6 +53,7 @@ mod fauna_config;
 pub mod fixed_store;
 mod flora_config;
 mod food;
+pub mod food_orders;
 mod forage;
 pub mod forecast_query;
 mod generations;

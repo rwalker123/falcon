@@ -6476,18 +6476,44 @@ pub fn advance_labor_allocation(
                         tiles.iter(),
                     )
                 };
+                let has_leader = band_leadership
+                    .as_deref()
+                    .is_some_and(|leadership| leadership.leader.is_some());
+                let site_inputs = crate::keep_on_hand::DigSiteInputs {
+                    sources: &staff_sources,
+                    band_kit: &band_kit,
+                    camp: camp.as_ref(),
+                };
                 crate::keep_on_hand::manage_dig_rows(
                     &mut allocation,
-                    &crate::keep_on_hand::DigSiteInputs {
-                        sources: &staff_sources,
-                        band_kit: &band_kit,
-                        camp: camp.as_ref(),
-                    },
-                    band_leadership
-                        .as_deref()
-                        .is_some_and(|leadership| leadership.leader.is_some()),
+                    &site_inputs,
+                    has_leader,
                     &candidates,
                     &|material: &str| cohort.stores.material_total(material).to_f32(),
+                );
+                let fog = sim_config.fog_enabled;
+                crate::food_orders::manage_food_orders(
+                    &mut allocation,
+                    &crate::food_orders::FoodInputs {
+                        site: &site_inputs,
+                        tile_known: &|tile: UVec2| {
+                            !fog || visibility
+                                .as_deref()
+                                .is_some_and(|ledger| ledger.is_discovered(faction, tile.x, tile.y))
+                        },
+                        herd_known: &|herd: &crate::fauna::Herd| {
+                            let at = herd.position();
+                            !fog || visibility
+                                .as_deref()
+                                .is_some_and(|ledger| ledger.is_visible(faction, at.x, at.y))
+                        },
+                        readings: crate::food_orders::OrderReadings {
+                            food_stock: cohort.stores.get(crate::components::FOOD).to_f32(),
+                            food_need: cohort.last_food_need,
+                            fodder_stock: cohort.stores.get(crate::components::FODDER).to_f32(),
+                        },
+                    },
+                    has_leader,
                 );
             }
             let progress_context = BuildProgressContext {

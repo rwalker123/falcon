@@ -2,7 +2,7 @@ use std::num::{ParseFloatError, ParseIntError};
 
 use thiserror::Error;
 
-use crate::commands::{BandOrderAction, BENCH_CREW_UNSPECIFIED};
+use crate::commands::{BandOrderAction, BandOrderRow, BENCH_CREW_UNSPECIFIED};
 
 /// Describes a runtime command verb, its aliases, and usage hint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,8 +218,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "band_order",
         aliases: &[],
-        summary: "A BAND'S ORDER FOR ONE KIND: once a band has a leader, the leader keeps an ordered kind (stone today) on hand. `set` states how much to hold and how urgently - the sim picks the dig site, staffs the digging from the shortfall and stops when the store reaches the target; a target of 0 is refused (there is no 'none'). 'high', 'normal' or 'low' ranks the work against the band's other work. `release` is Crew it yourself: the player takes the kind, the leader's rows stay where they are with their crew as the Max, and the kind is crewed by hand exactly as a leaderless band crews it. `claim` is Hand it to the chief: the leader takes the kind back at its current target. Refused for a band with no leader yet and for a kind that takes no order. While the leader keeps a kind, `assign_labor extract`, `stop_labor` and `work_priority` on it are refused and name the leader.",
-        usage: "band_order <faction_id> <band_id> <kind> set <target> high|normal|low | band_order <faction_id> <band_id> <kind> release | band_order <faction_id> <band_id> <kind> claim",
+        summary: "A BAND'S ORDER FOR ONE KIND: once a band has a leader, the leader keeps an ordered kind (stone today) on hand. `set` states how much to hold and how urgently - the sim picks the dig site, staffs the digging from the shortfall and stops when the store reaches the target; a target of 0 is refused (there is no 'none'). 'high', 'normal' or 'low' ranks the work against the band's other work. `release` is Crew it yourself: the player takes the kind, the leader's rows stay where they are with their crew as the Max, and the kind is crewed by hand exactly as a leaderless band crews it. `claim` is Hand it to the chief: the leader takes the kind back at its current target. For a food or fodder order `release` / `claim` may name ONE row (a patch's `<x> <y>` or a hunt row's `<herd_id>`): only that row changes hands and the kind stays the leader's. Refused for a band with no leader yet and for a kind that takes no order. While the leader keeps a kind, `assign_labor extract`, `stop_labor` and `work_priority` on it are refused and name the leader.",
+        usage: "band_order <faction_id> <band_id> <kind> set <target> high|normal|low | band_order <faction_id> <band_id> <kind> release [<x> <y> | <herd_id>] | band_order <faction_id> <band_id> <kind> claim [<x> <y> | <herd_id>]",
     },
     CommandVerbHelp {
         verb: "upkeep_mode",
@@ -1182,11 +1182,35 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 "claim" => BandOrderAction::Claim,
                 other => return Err(CommandParseError::UnexpectedToken(other.to_string())),
             };
+            // A `release` / `claim` may name ONE row of a food or fodder order: `<x> <y>` for a
+            // patch, `<herd id>` for a hunt row.
+            let row = if matches!(action, BandOrderAction::Set { .. }) {
+                None
+            } else {
+                match parts.next() {
+                    None => None,
+                    Some(first) => match first.parse::<u32>() {
+                        Ok(x) => {
+                            let y_str = parts
+                                .next()
+                                .ok_or(CommandParseError::MissingArgument("y"))?;
+                            Some(BandOrderRow::Tile {
+                                x,
+                                y: parse_u32(y_str, "band_order row y")?,
+                            })
+                        }
+                        Err(_) => Some(BandOrderRow::Herd {
+                            id: first.to_owned(),
+                        }),
+                    },
+                }
+            };
             Ok(CommandPayload::BandOrder {
                 faction_id: parse_u32(faction_str, "band_order faction")?,
                 band_id: parse_u64(band_str, "band_order band")?,
                 kind: kind.to_owned(),
                 action,
+                row,
             })
         }
         // **STOP A STAFFED ROW** (#871) - `work_priority`'s band handle and source addressing with no
@@ -2871,13 +2895,25 @@ pub fn render_command_line(payload: &CommandPayload) -> String {
             band_id,
             kind,
             action,
-        } => match action {
-            BandOrderAction::Set { target, priority } => {
-                format!("band_order {faction_id} {band_id} {kind} set {target} {priority}")
+            row,
+        } => {
+            let row = match row {
+                Some(BandOrderRow::Tile { x, y }) => format!(" {x} {y}"),
+                Some(BandOrderRow::Herd { id }) => format!(" {id}"),
+                None => String::new(),
+            };
+            match action {
+                BandOrderAction::Set { target, priority } => {
+                    format!("band_order {faction_id} {band_id} {kind} set {target} {priority}")
+                }
+                BandOrderAction::Release => {
+                    format!("band_order {faction_id} {band_id} {kind} release{row}")
+                }
+                BandOrderAction::Claim => {
+                    format!("band_order {faction_id} {band_id} {kind} claim{row}")
+                }
             }
-            BandOrderAction::Release => format!("band_order {faction_id} {band_id} {kind} release"),
-            BandOrderAction::Claim => format!("band_order {faction_id} {band_id} {kind} claim"),
-        },
+        }
         CommandPayload::MoveBand {
             faction_id,
             band_id,
@@ -4931,6 +4967,7 @@ mod tests {
                     target: 60,
                     priority: "high".to_string(),
                 },
+                row: None,
             }
         );
         assert_eq!(
@@ -4949,8 +4986,28 @@ mod tests {
                     band_id: 7,
                     kind: "stone".to_string(),
                     action,
+                    row: None,
                 }
             );
+            assert_eq!(render_command_line(&parsed), line);
+        }
+        for (line, row) in [
+            (
+                "band_order 1 7 food release 12 5",
+                BandOrderRow::Tile { x: 12, y: 5 },
+            ),
+            (
+                "band_order 1 7 food claim boar_east",
+                BandOrderRow::Herd {
+                    id: "boar_east".to_string(),
+                },
+            ),
+        ] {
+            let parsed = parse_command_line(line).unwrap();
+            let CommandPayload::BandOrder { row: found, .. } = &parsed else {
+                panic!("a band order");
+            };
+            assert_eq!(found.as_ref(), Some(&row));
             assert_eq!(render_command_line(&parsed), line);
         }
         assert!(parse_command_line("band_order 1 7 stone set 60").is_err());

@@ -524,6 +524,10 @@ pub struct BandOrdersConfig {
     /// The target the chief starts each kind at when he arrives, and a claim falls back to: units
     /// for a material, turns for food and fodder. Every ordered kind needs one, above zero.
     pub starting_target: std::collections::BTreeMap<String, u32>,
+    /// The floor (a fraction of the source's capacity left standing) the chief works his food and
+    /// fodder rows at while the order is AT or ABOVE its target: the *Learning* preset, above the Best
+    /// floor, so spare food buys knowledge. Below the target he works them at Best. In `(0.5, 1.0]`.
+    pub learning_floor: f32,
 }
 
 impl BandOrdersConfig {
@@ -678,6 +682,16 @@ impl LaborConfig {
                     value: kind.clone(),
                 });
             }
+        }
+        // The Learning floor sits above Best (0.5) and at most the whole source.
+        if !(self.band_orders.learning_floor > crate::components::DEFAULT_ESCAPEMENT_FLOOR
+            && self.band_orders.learning_floor <= 1.0)
+        {
+            return Err(LaborConfigError::Invalid {
+                field: "band_orders.learning_floor",
+                constraint: "lie above the Best floor and at most 1.0".to_string(),
+                value: self.band_orders.learning_floor.to_string(),
+            });
         }
         // A party walks at the band's own pace, so a zero would make a far posting's walk never
         // end (`work_party::walk_turns` would divide by zero).

@@ -340,6 +340,7 @@ fn create_populations<'a>(
                         // The deposit this crew is on — `None` on every row that is not
                         // `extract`, the `fauna_id` convention: an absent string is "no selection".
                         let branch = builder.create_string(&assignment.branch);
+                        let order_kind = builder.create_string(&assignment.order_kind);
                         let material = if assignment.material.is_empty() {
                             None
                         } else {
@@ -510,6 +511,8 @@ fn create_populations<'a>(
                                 loadHomeIn: assignment.load_home_in,
                                 scoutingRange: assignment.scouting_range,
                                 scoutingReach: assignment.scouting_reach,
+                                orderKind: Some(order_kind),
+                                chiefOwned: assignment.chief_owned,
                             },
                         )
                     })
@@ -1683,6 +1686,8 @@ fn decode_labor_assignment(
         load_home_in: assignment.loadHomeIn(),
         scouting_range: assignment.scoutingRange(),
         scouting_reach: assignment.scoutingReach(),
+        order_kind: text(assignment.orderKind()),
+        chief_owned: assignment.chiefOwned(),
     })
 }
 
@@ -2241,6 +2246,7 @@ fn decode_population(
             has_site: row.hasSite(),
             site_x: row.siteX(),
             site_y: row.siteY(),
+            has_consumers: row.hasConsumers(),
             sustainable: row.sustainable(),
         }),
     })
@@ -2502,6 +2508,7 @@ fn create_band_orders<'a>(
                     hasSite: row.has_site,
                     siteX: row.site_x,
                     siteY: row.site_y,
+                    hasConsumers: row.has_consumers,
                     sustainable: row.sustainable,
                 },
             )

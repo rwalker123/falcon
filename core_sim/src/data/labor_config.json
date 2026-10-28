@@ -7,9 +7,11 @@
   "tile_worker_cap": 12,
   "_comment_keep_on_hand_refill_turns": "HOW MANY TURNS A KEEP-ON-HAND DEFICIT IS SPREAD OVER (docs/plan_labor_at_scale.md, 'Two interfaces: what grows back, and what is mined'). A band holding a keep-on-hand target for a mined material (a deposit whose branch is extraction: stone) digs at its per-turn draw plus deficit / this many turns, so the stock returns to the target in about this many turns. Validated >= 1. Opening value, a PLAYTEST DIAL.",
   "keep_on_hand_refill_turns": 10,
-  "_comment_band_orders": "THE BAND ORDERS (#860, docs/plan_labor_at_scale.md, 'Band orders - the chief'). ordered_kinds is which kinds a band's chief takes an order for: 'food', 'fodder' or a material id. Stone and wood are listed; food and fodder wait to be listed. When a chief arrives he takes over every listed kind the band has no order for, at starting_target[kind]: units for a material, turns of cover for food and fodder (food on hand over what the band eats in a turn). A claim ('Hand it to the chief') falls back to it for a kind that never had an order. Every listed kind needs a starting_target above zero (a zero target is no order). Opening values, PLAYTEST DIALS.",
+  "_comment_band_orders": "THE BAND ORDERS (#860, docs/plan_labor_at_scale.md, 'Band orders - the chief'). ordered_kinds is which kinds a band's chief takes an order for: 'food', 'fodder' or a material id. All four kinds are listed. When a chief arrives he takes over every listed kind the band has no order for, at starting_target[kind]: units for a material, turns of cover for food and fodder (food on hand over what the band eats in a turn). A claim ('Hand it to the chief') falls back to it for a kind that never had an order. Every listed kind needs a starting_target above zero (a zero target is no order). Opening values, PLAYTEST DIALS.",
   "band_orders": {
-    "ordered_kinds": ["stone", "wood"],
+    "_comment_learning_floor": "THE FLOOR THE CHIEF WORKS HIS FOOD AND FODDER ROWS AT WHILE THE ORDER IS AT OR ABOVE ITS TARGET: the Learning preset (the client's FLOOR_PRESET_LEARN, 0.80), above the Best floor (0.5) he works them at below the target. Spare food buys ladder knowledge instead of drawing a source down. Validated in (0.5, 1.0]. PLAYTEST DIAL.",
+    "learning_floor": 0.8,
+    "ordered_kinds": ["stone", "wood", "food", "fodder"],
     "starting_target": {
       "stone": 30,
       "wood": 30,

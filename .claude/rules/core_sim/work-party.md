@@ -191,8 +191,8 @@ equality, saved). `target` is units for a material and turns for food and fodder
 | a leader and a `Chief`-owned order | **the chief's**: every row of the kind on that band is the order's, and hand commands on it are refused |
 
 **Which kinds take an order is config** - `labor_config.json` -> `band_orders.ordered_kinds` (shipped
-`["stone", "wood"]`), with `starting_target` per kind (`stone` 30, `wood` 30, `food` 20, `fodder` 10; food
-and fodder wait unused until listed). The engine names neither "stone" nor a branch
+`["stone", "wood", "food", "fodder"]`), with `starting_target` per kind (`stone` 30, `wood` 30, `food` 20,
+`fodder` 10; food and fodder in turns). The engine names neither "stone" nor a branch
 (`ladder_ids::tests::no_non_test_source_names_the_shipped_ladder` forbids it); `extraction.json` has no
 mined-branch key. A kind that is not a deposit material (`food`, `fodder`) is carried by the map and
 published but placed by no dig pass.
@@ -293,6 +293,51 @@ for `food`/`fodder` until their kinds are ordered); `hasSite` / `siteX` / `siteY
 managing pass ranked first this turn; `sustainable` the total its candidate sites give a turn at the order's floor (above). Every row of the kind is an ordinary `LaborAssignment`; the dig rows is an ordinary `LaborAssignment` (`kind` extract) on the site.
 Native decode key `band_orders` (one dict per order, `priority` the lowercase word). `SAVE_FORMAT_VERSION`
 61.
+
+### The food and fodder orders (#860)
+
+Engine: `core_sim/src/food_orders.rs` (`manage_food_orders`, run right after `manage_dig_rows` by the
+labor pass and by every command restaff), `staffing::probe_source`, `staffing::apply_chief_share`.
+
+- **Currency.** `target` and `onHand` are in **turns**; `draw` is units a turn. Food: `onHand` = the
+  larder (`stores.get(FOOD)`) over `PopulationCohort::last_food_need` (what the meal was measured against
+  - the sim's own need figure, not a second one); fodder: the `FODDER` store over
+  `LaborAllocation::last_fodder_need` (what the pens need beyond their pasture). `hasConsumers` is false
+  for fodder while `last_fodder_need` is 0, and the order then wants nothing and runs no rows.
+- **The want** = the draw plus the deficit (`(target - turns) * draw`) over `keep_on_hand_refill_turns`
+  below the target, and **the draw itself at or above it** (the band eats every turn, so the keep-up crew
+  still works - unlike a material, where nobody works at the target).
+- **Sources.** Every known forage patch and every visible herbivore herd inside `band_work_range`,
+  probed through the staffing's own reading (`probe_source` runs `forage_input` / `hunt_input` on a
+  hypothetical row), so a herd the band's kit cannot wound is no candidate. Ranked by the order's
+  product per hand at the floor (kitted as the band is), then the shortest walk, then the source key.
+  Each is given a share up to what it gives at the floor without being drawn down, best first, until the
+  want is covered; the share is written as a `KeepShare` (`hold`/`take` in biomass, `herd` set for a hunt
+  row) that `apply_chief_share` turns into the row's hold, reach and useful takes.
+- **Floors.** Best (`DEFAULT_ESCAPEMENT_FLOOR`) below the target, `band_orders.learning_floor` at or
+  above it; never lower than Best. A chief's forage row carries the whole basket.
+- **One patch, one order.** A candidate belongs to the order whose product it gives more of per hand
+  (fodder only when strictly more). Orders are filled in Priority order, food first on a tie; what every
+  row that is not this order's chief row brings in of this order's product (the player's rows, the
+  other order's rows - at their site's sustainable take) is subtracted from the want first.
+- **Rows are listed one by one.** `LaborAllocation::order_rows` (source key `f:<x>,<y>` / `h:<herd id>`
+  -> order kind) is the chief's roster. A row not in it is the player's whoever owns the kind: the chief
+  never changes its floor, Max, selection or existence, hand commands on it work, and its take counts
+  toward the order. `band_order <f> <b> food|fodder release|claim [<x> <y> | <herd id>]` moves one row
+  (a released row's Max is its last crew, at least 1, floor and selection kept); without a row it moves
+  the whole kind. Arrival and a whole-kind claim adopt every existing forage and hunt row
+  (`adopt_pending`) under the order its product belongs to. Hand commands on a listed row are refused
+  with the step-1 sentence.
+- **Hunting herds move.** Each pass re-ranks. A hunt row whose herd is still a candidate stays; one
+  whose herd is gone, out of sight or no longer huntable is retired and the next best herd takes its
+  share - unless the row is pinned (`food_orders::source_pinned`: a party out, a walk of its cargo home,
+  or a build declared on its source), in which case it stays at no share until the pass that finds it
+  unpinned. **A row on an improvement** (a tended patch or Field, a tamed herd or a pen) is never retired
+  by the chief, even at a zero share, so its keepers keep coming; he never starts a build.
+- **Wire.** `BandOrderState.hasConsumers`; `LaborAssignmentState.orderKind` (the order that lists the
+  row, empty for a player-crewed row; a dig row of a chief-owned material names the material) and
+  `chiefOwned`. Every store a row fills is already on the row: `actualYield` (food), `fodderYield`,
+  `materialYield` (fibre, hide, bone).
 
 Pinned by `tests/keep_on_hand.rs` (arrival at the starting target and the one feed line, staffing below
 and at target, the ranking, the cargo rule, the takeover of a hand row, release keeping the row with
@@ -421,7 +466,7 @@ in `query_seat_gate.rs`, and `sim_runtime`'s `the_staffing_preview_round_trips`.
 |------|---------|
 | `src/data/labor_config.json` | `band_work_range` (**2**) is the apron: past it every job posts a party, and the walk is measured from it. `band_move_tiles_per_turn` (**1**) is read a second time as the party's walking speed — the walk out and every porter's walk home — and is validated `>= 1` for that reason. **No lever of this arc's own exists**: the share of a party on the road falls out of carry, take rate and distance |
 | `src/data/labor_config.json` (keep-on-hand) | `keep_on_hand_refill_turns` (**10**, validated `>= 1`, playtest dial): the turns an ordered material's keep-on-hand deficit is spread over - the dig takes `draw + deficit / this` |
-| `src/data/labor_config.json` (`band_orders`) | `ordered_kinds` (**`["stone"]`**, playtest lever): the kinds a chief takes orders for - `food`, `fodder` or a material id; each listed kind needs a `starting_target` above zero. `starting_target` (**stone 30, wood 30, food 20, fodder 10**, playtest levers): the target a chief opens each kind at when he arrives, and a claim falls back to - units for a material, turns for food and fodder. wood, food and fodder are unused until listed. Both are Workbench rows (`/band_orders/starting_target/*`) |
+| `src/data/labor_config.json` (`band_orders`) | `ordered_kinds` (**`["stone", "wood", "food", "fodder"]`**, playtest lever): the kinds a chief takes orders for - `food`, `fodder` or a material id; each listed kind needs a `starting_target` above zero. `starting_target` (**stone 30, wood 30, food 20, fodder 10**, playtest levers): the target a chief opens each kind at when he arrives, and a claim falls back to - units for a material, turns for food and fodder. `learning_floor` (**0.8**, validated in `(0.5, 1.0]`, playtest dial): the floor the chief works his food and fodder rows at while the order is at or above its target (the client's *Learning* preset; below the target he works Best). The `starting_target` values are Workbench rows (`/band_orders/starting_target/*`) |
 | `src/data/supply_network_config.json` | Read, not written: `reach_tiles` is subtracted from `supply::free_pooling_reach_tiles` to give the **road bonus** — how much of a walk a road takes away. `friction` is **not** read: distance is paid in walking |
 | `src/data/materials.json` | Read, not written: every material's required **`weight`** — biomass-equivalent mass per unit, validated positive and finite — is what a deposit's pack is divided by (wood **2.4**, stone **3.0**; every value PROVISIONAL, stated in the file's `_comment_weight`) |
 | `src/data/equipment.json` | Read, not written: the extract kits `sledding` (`sled`), `woodcutting` (`sled` + `axe`) and `stonework` (`sled` + `wedges`), claimed whole like every job's kit, so a far working's porters haul on the sled on every rung |

@@ -2092,6 +2092,9 @@ table BandOrderState {
   hasSite:bool = false;
   siteX:uint = 0;
   siteY:uint = 0;
+  // Whether the order has anything to keep up with. Always true except for fodder, which has none
+  // while the band keeps no penned herd that eats hay (so the client shows its line only then).
+  hasConsumers:bool = true;
   // What every candidate site of the order gives a turn at its floor without being drawn down, in
   // the kind's units. For a deposit that never regrows it is the larger of the order's want and the
   // draw, so it never reads short. The client warns when it is below `draw`.
@@ -2647,6 +2650,11 @@ table LaborAssignment {
   // Both 0 on every other row.
   scoutingRange:uint = 0;
   scoutingReach:uint = 0;
+  // *** WHICH ORDER LISTS THIS ROW (#860). *** orderKind: the band order whose chief works the row
+  // ("food", "fodder", or the material a dig row is kept for); empty for a row the player crews and
+  // for a row no order covers. chiefOwned: the same fact as a bool (orderKind is not empty).
+  orderKind:string;
+  chiefOwned:bool = false;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

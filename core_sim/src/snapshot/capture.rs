@@ -3575,9 +3575,21 @@ pub fn capture_snapshot(
                         band_orders: allocation
                             .filter(|_| leadership.is_some_and(|l| l.leader.is_some()))
                             .map(|allocation| {
-                                crate::snapshot::population::band_order_rows(allocation, &|kind| {
-                                    cohort.stores.material_total(kind).to_f32()
-                                })
+                                crate::snapshot::population::band_order_rows(
+                                    allocation,
+                                    &|kind| cohort.stores.material_total(kind).to_f32(),
+                                    &crate::food_orders::OrderReadings {
+                                        food_stock: cohort
+                                            .stores
+                                            .get(crate::components::FOOD)
+                                            .to_f32(),
+                                        food_need: cohort.last_food_need,
+                                        fodder_stock: cohort
+                                            .stores
+                                            .get(crate::components::FODDER)
+                                            .to_f32(),
+                                    },
+                                )
                             })
                             .unwrap_or_default(),
                         culture_pressures: band_id

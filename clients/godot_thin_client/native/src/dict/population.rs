@@ -477,6 +477,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = entry.insert("has_site", row.hasSite());
             let _ = entry.insert("site_x", i64::from(row.siteX()));
             let _ = entry.insert("site_y", i64::from(row.siteY()));
+            let _ = entry.insert("has_consumers", row.hasConsumers());
             let _ = entry.insert("sustainable", f64::from(row.sustainable()));
             band_orders.push(&entry.to_variant());
         }
@@ -1298,6 +1299,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // `bare_staffed` above are the scouts' split and `workers` the scouts placed.
             let _ = entry.insert("scouting_range", i64::from(assignment.scoutingRange()));
             let _ = entry.insert("scouting_reach", i64::from(assignment.scoutingReach()));
+            // The band order whose chief works this row (#860): "food" | "fodder" | a material id,
+            // empty for a player-crewed row; `chief_owned` is the same fact as a bool.
+            let _ = entry.insert("order_kind", assignment.orderKind().unwrap_or(""));
+            let _ = entry.insert("chief_owned", assignment.chiefOwned());
             array.push(&entry.to_variant());
         }
     }

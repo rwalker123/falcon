@@ -454,6 +454,11 @@ message BandOrderCommand {
   BandOrderAction action = 4;
   uint32 target = 5;
   string priority = 6;
+  // RELEASE / CLAIM of ONE row of a food or fodder order instead of the whole kind: a forage patch's
+  // tile (`target_x`/`target_y`) or a hunt row's herd (`herd_id`). Absent: the whole kind.
+  optional uint32 target_x = 7;
+  optional uint32 target_y = 8;
+  optional string herd_id = 9;
 }
 
 // Travel a band toward a target tile at band_move_tiles_per_turn/turn.
