@@ -136,6 +136,10 @@ signal stop_labor_requested(payload: Dictionary)
 ## carries the one decision the roles cannot express. RELAYED from `BandPanelController`, its only
 ## emitter.
 signal upkeep_mode_requested(payload: Dictionary)
+## Emitted when the player sets, releases or claims a band order (#860). Payload `{ faction, band_id,
+## kind, action, target, priority, x, y, herd_id }`; Main formats `band_order <faction> <band_id> <kind> ...`.
+## RELAYED from `BandOrdersController`, the only emitter.
+signal band_order_requested(payload: Dictionary)
 ## Emitted when the player flips the faction page's OPEN BORDERS toggle (issue #512,
 ## `docs/plan_band_fission.md` §Defection). Payload keys: { faction, open }. Main formats
 ## `set_open_borders <faction> open|closed`. A FACTION policy — whether another people's leavers and
@@ -448,6 +452,9 @@ var _bandpanel: BandPanelController = null
 # Constructed with the compose controller's collaborators and handed to both; its commands leave through
 # `_bandpanel`'s signals, whose relays are wired below.
 var _rungcard: RungCardController = null
+## The band orders door (#860): the sends, the row lookups and the sheet request, shared by the Work tab
+## and the compose sheets.
+var _bandorders: BandOrdersController = null
 # The selection drawer's RENDER DISPATCH (HUD decomposition Phase 2c-3): the one-drawer land/occupant
 # dispatch, the land-drawer terrain-line producer, the `%AllocationPanel` occupant/expedition/band-move
 # branches, and the height-capping fit path. HudLayer keeps the reflectively-reached `_render_selection_panel`
@@ -672,6 +679,9 @@ func _ready() -> void:
     # fills, the selection card it anchors the sheet beside, the HUD CanvasLayer as the host it
     # parents that sheet into, and the three HudLayer helpers that keep callers on this side.
     _rungcard = RungCardController.new(_band_labor, _topbar, self)
+    _bandorders = BandOrdersController.new(_band_labor)
+    _bandorders.band_order_requested.connect(
+        func(payload: Dictionary) -> void: band_order_requested.emit(payload))
     _drawercompose = DrawerComposeController.new(
         _compose, _band_labor, _selection, _topbar, _selectioncard, self,
         herd_assign_controls, tile_panel,
@@ -738,6 +748,9 @@ func _ready() -> void:
         _emit_assign_labor, _herd_label_for_id, _targeting, _topbar)
     _bandpanel.set_rung_card(_rungcard)
     _drawercompose.set_work_strip_sources(_bandpanel, _rungcard)
+    _drawercompose.set_band_orders(_bandorders)
+    _bandpanel.set_band_orders(_bandorders)
+    _bandorders.order_sheet_requested.connect(_drawercompose.open_order_sheet)
     # A click on a Work-tab row opens that source's sheet (issue #877): the row has already selected
     # the source, and the compose controller resolves the selection and opens the right sheet.
     _bandpanel.source_sheet_requested.connect(_drawercompose.open_source_sheet)
@@ -2328,6 +2341,11 @@ func _hide_drawer_blocks() -> void:
 ## Injected by Main: the dockable Band/City panel a player band's detail renders into. It goes to the
 ## dock-row controller too — that one parks the bottom-bar chrome into the panel's single trailing rail
 ## on a horizontal dock (issue #324).
+## The map's terrain-label lookup `(x, y) -> String`, for naming a band order's site. `Main` probes
+## this BY NAME, so it stays a thin delegator.
+func set_terrain_label_lookup(lookup: Callable) -> void:
+    _bandorders.set_terrain_label_lookup(lookup)
+
 func set_band_city_panel(panel: BandCityPanel) -> void:
     _bandpanel.set_panel(panel)
     if _dockrow != null:

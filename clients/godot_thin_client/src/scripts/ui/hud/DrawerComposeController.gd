@@ -2558,6 +2558,16 @@ func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String) -
 ## The herd "Assign hunters" controls (compose a count + policy, then Assign). Shown
 ## only for a huntable herd while a player band exists to staff it.
 func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> void:
+    _build_herd_assign_controls_core(herd, target)
+    if target == null or herd.is_empty():
+        return
+    var herd_id := String(herd.get("id", ""))
+    var band := _band_labor.player_band_by_entity(_compose.hunt_band())
+    _apply_chief_row_strip(target, band, SourceForecast.LABOR_KIND_HUNT, int(herd.get("x", -1)),
+        int(herd.get("y", -1)), herd_id, {"herd_id": herd_id},
+        func() -> void: _build_herd_assign_controls(_live_herd(herd_id, herd), target))
+
+func _build_herd_assign_controls_core(herd: Dictionary, target: VBoxContainer) -> void:
     if target == null:
         return
     # A rebuild frees the chart, so whatever drag was on it is over — see `_end_floor_drag`.
@@ -3396,6 +3406,16 @@ func _resolve_crop_selection(entries: Array[Dictionary], policy: String, committ
 ## itself on any state now.
 
 func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer) -> void:
+    _build_forage_assign_controls_core(tile_info, target)
+    if target == null or tile_info.is_empty():
+        return
+    var x := int(tile_info.get("x", -1))
+    var y := int(tile_info.get("y", -1))
+    var band := _band_labor.player_band_by_entity(_compose.forage_band())
+    _apply_chief_row_strip(target, band, SourceForecast.LABOR_KIND_FORAGE, x, y, "", {"x": x, "y": y},
+        func() -> void: _build_forage_assign_controls(_live_tile_info(_forage_source_key(tile_info), tile_info), target))
+
+func _build_forage_assign_controls_core(tile_info: Dictionary, target: VBoxContainer) -> void:
     if target == null:
         return
     # A rebuild frees the chart, so whatever drag was on it is over — see `_end_floor_drag`.
@@ -4216,6 +4236,99 @@ func _herd_improvement_axis(herd: Dictionary) -> String:
 ## The Band panel and the shared rung card, handed over once both exist. The sheet's work strip is built
 ## by the panel's own producer (`source_strip_row`) so the sheet and the source's Work-tab row are one
 ## control; its `⌃` opens the SAME card (`RungCardController`) with the same commands.
+## **THE BAND ORDERS DOOR** (#860), injected by `HudLayer`.
+var _orders: BandOrdersController = null
+## The band whose Food / Fodder sheet is open (entity), re-resolved every render.
+var _order_sheet_band: int = -1
+
+func set_band_orders(orders: BandOrdersController) -> void:
+    _orders = orders
+
+## The context the chief's sheet sections draw against: the band, the sends, and the three callbacks.
+func _orders_ctx(band: Dictionary, rebuild: Callable) -> Dictionary:
+    return {
+        "band": band, "orders": _orders, "rebuild": rebuild,
+        "close": func() -> void: close_compose_sheet(),
+        "show_on_map": func(x: int, y: int) -> void:
+            _bandpanel.show_source_on_map(HudConst.LABOR_KIND_EXTRACT, x, y, ""),
+    }
+
+## **OPEN A BAND ORDER'S SHEET FROM THE WORK TAB** (#860): Food and Fodder get their own sheet; a
+## material's order opens the material's sheet on the site the chief is working.
+func open_order_sheet(band_entity: int, kind: String) -> void:
+    var band := _band_labor.player_band_by_entity(band_entity)
+    var order := HudOrdersVocab.order_of(band, kind)
+    if band.is_empty() or order.is_empty():
+        return
+    if not HudOrdersVocab.is_turns_kind(kind):
+        if not bool(order.get("has_site", false)):
+            return
+        var site_x := int(order.get("site_x", -1))
+        var site_y := int(order.get("site_y", -1))
+        _compose.set_deposit_band(band_entity)
+        # Through the panel, which selects the site's tile before the sheet opens.
+        _bandpanel.open_site_sheet(site_x, site_y, kind)
+        return
+    _ensure_compose_sheet()
+    _order_sheet_band = band_entity
+    _compose.set_composing(ComposeState.KIND_ORDER, kind)
+    var content := _compose_sheet.open(HudOrdersVocab.order_name(kind), HudFormat.band_name(band),
+        "order:" + kind, _compose_anchor_rect())
+    _build_order_sheet(kind, content)
+    refresh_drawer_actions()
+
+func _band_pens(band: Dictionary) -> Array:
+    var pens: Array = []
+    for herd_variant in _band_labor.world_herds():
+        var herd: Dictionary = herd_variant
+        if bool(herd.get("has_owner", false)) \
+                and int(herd.get("owner", -1)) == int(band.get("faction", HudConst.PLAYER_FACTION_ID)) \
+                and RungQuotes.is_enclosed(herd):
+            pens.append(herd)
+    return pens
+
+func _build_order_sheet(kind: String, target: VBoxContainer) -> void:
+    if target == null:
+        return
+    for child in target.get_children():
+        child.queue_free()
+    var band := _band_labor.player_band_by_entity(_order_sheet_band)
+    var order := HudOrdersVocab.order_of(band, kind)
+    if band.is_empty() or order.is_empty():
+        return
+    var ctx := _orders_ctx(band, func() -> void: _build_order_sheet(kind, target))
+    BandOrdersSheets.build_order_sheet(target, ctx, order,
+        _band_pens(band) if kind == HudOrdersVocab.KIND_FODDER else [], _herd_label_for_id)
+
+## The strip (and the disabled controls) a hunt / gather sheet wears for a row under the chief's order.
+## `source_kind` is `hunt` / `forage`; `address` names the row for a release / claim.
+func _apply_chief_row_strip(target: VBoxContainer, band: Dictionary, source_kind: String,
+        x: int, y: int, herd_id: String, address: Dictionary, rebuild: Callable) -> void:
+    if _orders == null or band.is_empty():
+        return
+    var info := _orders.order_for_source(band, source_kind, x, y, herd_id)
+    if info.is_empty():
+        return
+    var ctx := _orders_ctx(band, rebuild)
+    var strip := BandOrdersSheets.row_strip(ctx, info, source_kind, address)
+    var live: Array = []
+    for child in target.get_children():
+        if not child.is_queued_for_deletion():
+            live.append(child)
+    if live.is_empty():
+        return
+    target.add_child(strip)
+    # Under the `Band:` picker, which is the first live child.
+    target.move_child(strip, (live[0] as Node).get_index() + 1)
+    if bool(info["chief_owned"]):
+        var keep: Array = [HudWorkVocab.WORK_STRIP_META, BandOrdersSheets.META_ROW_STRIP,
+            HudComposeVocab.DONE_BUTTON_META, HudComposeVocab.SHOW_ON_MAP_META]
+        for i in range(1, live.size()):
+            BandOrdersSheets.disable_node(live[i], keep,
+                HudOrdersVocab.CHIEF_ROW_DISABLED_TIP_FORMAT % HudOrdersVocab.who(band))
+            # `Stop working here` is a hand command the sim refuses on his row.
+            BandOrdersSheets.hide_meta(live[i], HudWidgets.COMPOSE_COMMIT_META)
+
 func set_work_strip_sources(band_panel: BandPanelController, rung_card: RungCardController) -> void:
     _bandpanel = band_panel
     _rung = rung_card
@@ -4608,6 +4721,13 @@ func refresh_compose_sheet(may_close: bool = true) -> void:
                     close_compose_sheet()
                 return
             _build_deposit_assign_controls(working, _compose_sheet.content())
+        ComposeState.KIND_ORDER:
+            var order_band := _band_labor.player_band_by_entity(_order_sheet_band)
+            if order_band.is_empty() or HudOrdersVocab.order_of(order_band, _compose.subject()).is_empty():
+                if may_close:
+                    close_compose_sheet()
+                return
+            _build_order_sheet(_compose.subject(), _compose_sheet.content())
         ComposeState.KIND_TILE:
             var tile_branch := _tile_branch_of_key(_compose.subject())
             var live_tile := _selection.tile_info()
@@ -5459,6 +5579,24 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
         _compose.set_deposit_band(int(picked.get("entity", ComposeState.NO_BAND_ENTITY)))
         _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target)))
+    # **A BAND WITH A LEADER HAS AN ORDER FOR THIS MATERIAL** (#860): the chief's version of the sheet
+    # when it is his, today's sheet under an offer strip when it is the player's.
+    var sheet_title := String(_selection.tile_info().get("terrain_label", "")).strip_edges()
+    var material_order := HudOrdersVocab.order_of(band, material)
+    if _orders != null and not material_order.is_empty():
+        var orders_ctx := _orders_ctx(band, func() -> void:
+            _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target))
+        if HudOrdersVocab.is_chief_owned(material_order):
+            _compose_sheet.set_header(material.capitalize(), sheet_title)
+            var stock_text := (HudOrdersVocab.STOCK_RENEWS_FORMAT if HudDepositVocab.renews(deposit) \
+                else HudOrdersVocab.STOCK_FINITE_FORMAT) % [int(HudDepositVocab.stock_of(deposit)),
+                int(HudDepositVocab.capacity_of(deposit)), material, material.capitalize()]
+            BandOrdersSheets.build_material_chief(target, orders_ctx, material_order, material, tile,
+                stock_text)
+            return
+        target.add_child(BandOrdersSheets.material_offer(orders_ctx, material))
+    _compose_sheet.set_header(HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % crew_label.to_lower(),
+        sheet_title)
     # **THE KIT IS RESOLVED UP HERE AND MOUNTED BELOW** — the crew curve is asked AT this kit, and the
     # floor chart's drag re-asks it, so the id has to exist before either. See the kit row below for
     # the picker's own rules (issue #663).

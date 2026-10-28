@@ -68,6 +68,8 @@ const RUNG_FX := preload("res://tools/ui_preview/fixtures_rung.gd")
 const TRADE_TAB_STATES := preload("res://tools/band_panel_trade_tab.gd")
 ## The Family limit row and the split sheet's FAMILY LIMIT block (issue #691), in their own file.
 const FAMILY_LIMIT_STATES := preload("res://tools/band_panel_family_limit.gd")
+## The band orders group on the Work tab (#860), in its own file.
+const BAND_ORDERS_STATES := preload("res://tools/band_panel_orders.gd")
 ## The hex `_band_fixture()` stands on — the tile the map-path state clicks.
 const MAP_PATH_TILE := Vector2i(71, 18)
 ## A grid just large enough to hold MAP_PATH_TILE, and one flat terrain id to fill it with.
@@ -2567,6 +2569,7 @@ func _ready() -> void:
 
 	# The breeding ceiling's Band-tab row and split-sheet block (issue #691), appended last.
 	await FAMILY_LIMIT_STATES.new().run(self)
+	await BAND_ORDERS_STATES.new().run(self)
 
 	# The two rosters under the Work tab's ROADWORK and GROUNDWORK sections, drawn on the Work tab.
 	_panel.set_active_tab(&"work")
@@ -18330,9 +18333,10 @@ func _assert_work_row_states_its_materials(state_name: String, row_name: String,
 	# at any width, and the claim beneath restores the floor's reachability.
 	var accounts_width := _accounts_clause_width(accounts)
 	_assert_band_panel(
-		"%s: …and every account renders whole, un-elided (%.0f of the %.0f they need)"
+		"%s: …and every account renders whole, un-elided, or is trimmed with the whole line on its hover (%.0f of the %.0f they need)"
 			% [state_name, accounts.size.x, accounts_width],
-		accounts.size.x + KEYLESS_KEY_WIDTH_TOLERANCE >= accounts_width)
+		accounts.size.x + KEYLESS_KEY_WIDTH_TOLERANCE >= accounts_width
+			or accounts.tooltip_text == accounts.text)
 	# GUARD: **nothing on this line is unreachable.** The floor's only home is line two — the
 	# inspector's sentence is retired and the row's own tooltip carries the floor's ZONE prose rather
 	# than its percentage — so where the trim reaches it the hover has to.
@@ -20313,7 +20317,7 @@ func _render_work_party_spoil_states() -> void:
 	# between packs.
 	var forage_accounts := _work_row_accounts_text(_work_row_labelled(
 		HudWorkVocab.WORK_ROW_PLANT_FORMAT % [FAR_FORAGE_X, FAR_FORAGE_Y]))
-	var want_forage := SourceForecast.yield_components(FAR_FORAGE_RATE_HOME,
+	var want_forage := SourceForecast.yield_components_labelled(FAR_FORAGE_RATE_HOME,
 		FAR_FORAGE_FODDER_RATE_HOME, SourceForecast.YIELD_ACCOUNT_FOOD,
 		[{"material_id": FAR_FORAGE_FIBRE_ID, "amount": FAR_FORAGE_FIBRE_RATE_HOME}])
 	_assert_band_panel("a far forage row prints its HOME fodder and fibre rates — want %s, got %s"
@@ -20321,7 +20325,7 @@ func _render_work_party_spoil_states() -> void:
 		forage_accounts.contains(want_forage))
 	# **AND A FAR HUNT ROW STATES ITS HOME-ARRIVING HIDE** between packs.
 	var hunt_accounts := _work_row_accounts_text(far_row)
-	var want_hunt := SourceForecast.yield_components(PARTY_FAR_RATE, 0.0,
+	var want_hunt := SourceForecast.yield_components_labelled(PARTY_FAR_RATE, 0.0,
 		SourceForecast.YIELD_ACCOUNT_FOOD,
 		[{"material_id": FAR_HUNT_HIDE_ID, "amount": FAR_HUNT_HIDE_RATE_HOME}])
 	_assert_band_panel("a far hunt row prints its HOME hide rate — want %s, got %s"

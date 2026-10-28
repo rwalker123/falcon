@@ -8331,3 +8331,8 @@ kit picker is kept (a kit pick re-states the current RANGE).
   farther.` The label is set through `HudWidgets.set_label_tooltip` (a `Label` ignores the mouse by
   default) and `KitRoster.build_kit_row`'s `show_hint` false keeps the Scout card's gear line off.
 - The Warrior card is unchanged and stays a player-set head count.
+
+## Band orders (#860)
+
+The chief's orders group and its sheets are `band-orders.md`'s; the compose sheet it extends is this
+file's.

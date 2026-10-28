@@ -112,7 +112,7 @@
         },
         {
           "pointer": "/keep_on_hand_refill_turns",
-          "label": "Keep-on-hand refill",
+          "label": "Order refill (turns)",
           "type": "int",
           "min": 1,
           "max": 40,
@@ -123,7 +123,7 @@
         },
         {
           "pointer": "/band_orders/starting_target/stone",
-          "label": "Chief's opening stone order",
+          "label": "Stone order at start",
           "type": "int",
           "min": 1,
           "max": 500,
@@ -134,7 +134,7 @@
         },
         {
           "pointer": "/band_orders/starting_target/wood",
-          "label": "Chief's opening wood order",
+          "label": "Wood order at start",
           "type": "int",
           "min": 1,
           "max": 500,
@@ -145,7 +145,7 @@
         },
         {
           "pointer": "/band_orders/starting_target/food",
-          "label": "Chief's opening food order",
+          "label": "Food order at start (turns)",
           "type": "int",
           "min": 1,
           "max": 100,
@@ -156,7 +156,7 @@
         },
         {
           "pointer": "/band_orders/starting_target/fodder",
-          "label": "Chief's opening fodder order",
+          "label": "Fodder order at start (turns)",
           "type": "int",
           "min": 1,
           "max": 100,
@@ -559,7 +559,7 @@
         },
         {
           "pointer": "/practice_per_directed_build",
-          "label": "Cultivate, Farm, Tame or Corral finished",
+          "label": "Points per finished build",
           "type": "float",
           "min": 0.5,
           "max": 10,
@@ -619,7 +619,7 @@
         },
         {
           "pointer": "/reach_paramount_bands",
-          "label": "Bands a paramount chief runs well",
+          "label": "Bands per paramount chief",
           "type": "float",
           "min": 1,
           "max": 12,

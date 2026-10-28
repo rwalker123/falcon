@@ -3956,3 +3956,10 @@ through it is about what is drawn and what a click does, never about the produce
 
 Sabotaged: an `open_door` arm that does nothing fails the Wood / Stone claims; a silenced
 `door_selection_changed` fails every selected-wash claim.
+
+## `chapters/band_orders.gd` -- the band-order sheets (#860)
+
+Appended last in `CHAPTERS`. Frames `band_orders_stone_chief`, `_stone_yours`, `_wood_chief`,
+`_wood_short`, `_food_below`, `_food_above`, `_fodder`, `_hunt_chief`, `_hunt_yours`. Every button is
+found by its meta and pressed, and the line `Main.format_band_order` renders from the emitted payload
+is compared with the grammar text. The fixtures reuse `chapters/workings.gd`'s deposits.

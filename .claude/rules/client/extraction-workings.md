@@ -1570,3 +1570,9 @@ branch at the producer, the amber stone aside, and the Work tab's chip.
 - `.claude/rules/client/land-readouts.md` — the retired keeping rows, and why the figures live on a hover
 - `.claude/rules/client/band-city-panel.md` — the Work zone the pool block, the roster and the track share
 - `docs/plan_extraction.md` §7 — which readout a working publishes, and why the rate decides it
+
+## A chief changes the Stone and Wood sheets and the Work tab (#860)
+
+With a leader and an order for the material, `_build_deposit_assign_controls` mounts the chief version of
+the sheet (or an offer strip over today's) and the Work tab lists the chief's extract rows under his
+orders group. `band-orders.md` owns both.

@@ -3537,6 +3537,10 @@ func _herd_at_point(point: Vector2) -> Dictionary:
 			return herd
 	return {}
 
+## The terrain's display label at a hex, `""` off the grid. The band orders sheets name a site by it.
+func terrain_label_at(col: int, row: int) -> String:
+	return String(_tile_info_at(col, row).get("terrain_label", ""))
+
 func _tile_info_at(col: int, row: int) -> Dictionary:
 	var info: Dictionary = {
 		"x": col,
