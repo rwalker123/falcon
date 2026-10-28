@@ -1709,7 +1709,14 @@ pub(crate) fn band_order_rows(
         .map(|(kind, order)| {
             let site = allocation.last_keep_site.get(kind).copied();
             let by_turns = crate::keep_on_hand::is_row_kind(kind);
+            let (hold_heads, hold_wanted, refill_heads, refill_wanted) =
+                allocation.order_crew(kind);
             sim_schema::BandOrderState {
+                hold_heads,
+                hold_wanted,
+                refill_heads,
+                refill_wanted,
+                take: allocation.order_take(kind),
                 // Food and fodder read in TURNS (`target`, `on_hand`) over a per-turn draw in units;
                 // a material reads in units throughout.
                 draw: readings.draw(kind, allocation),

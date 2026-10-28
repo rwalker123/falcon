@@ -20,8 +20,8 @@
 //! - **Whole basket.** A chief's forage row has an empty take selection.
 //! - **One patch, one order.** A candidate belongs to the order whose product it gives more of per
 //!   hand (fodder only when strictly more). The orders are filled in Priority order (food first on a
-//!   tie); what the other rows - the other order's and the player's - already bring in of this order's
-//!   product is subtracted from this order's want first.
+//!   tie); what the other rows - the other order's and the player's - brought in of this order's
+//!   product last turn (`last_yields`) is subtracted from this order's want first.
 //! - **Improvements stay.** A row on a tended patch, a field, a tamed herd or a pen is never retired
 //!   by the chief, even at a zero share, so its keepers keep coming; a pinned row ([`source_pinned`])
 //!   neither moves nor goes. The chief never starts a build.
@@ -108,10 +108,6 @@ struct Candidate {
     sustainable_units: f32,
     /// The product's units per biomass.
     rate: f32,
-    /// Biomass the other product is worth - kept for the by-product count.
-    food_rate: f32,
-    fodder_rate: f32,
-    sustainable: f32,
 }
 
 /// Whether a forage or hunt row may neither move nor go: its party is out, a walk of its cargo is on
@@ -167,9 +163,6 @@ fn candidate_of(
         units_per_hand,
         sustainable_units: probe.sustainable * rate,
         rate,
-        food_rate: probe.food_rate,
-        fodder_rate: probe.fodder_rate,
-        sustainable: probe.sustainable,
     })
 }
 
@@ -315,23 +308,26 @@ pub fn manage_food_orders(
             sources.labor.band_orders.learning_floor
         };
 
-        // What every row that is not this order's chief row already brings in of this product.
+        // What every row that is not this order's chief row brought in of this product LAST TURN
+        // (`last_yields`, the one-turn lag `material_draw` accepts): a row the band was too short of
+        // hands to staff brought in nothing, and counting its site's sustainable take would leave the
+        // other order short.
         let mut incoming = NOTHING;
-        for candidate in &candidates {
-            let listed = allocation.order_rows.get(&candidate.key);
-            let held = allocation
-                .assignments
-                .iter()
-                .any(|row| source_key(&row.target).is_some_and(|key| key == candidate.key));
-            if !held || listed.is_some_and(|listed| listed == kind) {
+        for (index, row) in allocation.assignments.iter().enumerate() {
+            let Some(key) = source_key(&row.target) else {
+                continue;
+            };
+            if allocation.order_rows.get(&key).map(String::as_str) == Some(kind) {
                 continue;
             }
-            let rate = if kind == FOOD_KIND {
-                candidate.food_rate
-            } else {
-                candidate.fodder_rate
+            let Some(yields) = allocation.last_yields.get(index) else {
+                continue;
             };
-            incoming += candidate.sustainable * rate;
+            incoming += if kind == FOOD_KIND {
+                yields.actual
+            } else {
+                yields.fodder
+            };
         }
         let mut want_left = (want - incoming).max(NOTHING);
         let mut draw_left = draw.min(want_left);

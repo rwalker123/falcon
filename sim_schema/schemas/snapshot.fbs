@@ -2099,6 +2099,17 @@ table BandOrderState {
   // the kind's units. For a deposit that never regrows it is the larger of the order's want and the
   // draw, so it never reads short. The client warns when it is below `draw`.
   sustainable:float = 0;
+  // *** THE ORDER'S CREW, from the staffing's own passes (this turn). *** holdHeads: heads staffed on
+  // the order's keep-up crew (pass 1) across all its rows; holdWanted: heads that crew wanted.
+  // refillHeads / refillWanted: the same for the refill toward the target (pass 2; refillWanted is 0
+  // at or above the target). take: what the order's rows brought in LAST turn, in the order's units a
+  // turn (food, hay or the material) - "back to target in T turns" is (target - onHand) [x draw for
+  // food and fodder] / (take - draw).
+  holdHeads:uint = 0;
+  holdWanted:uint = 0;
+  refillHeads:uint = 0;
+  refillWanted:uint = 0;
+  take:float = 0;
 }
 
 // One kit the band's work wants: `kit` is the equipment.json kit id the picker orders in, `count`

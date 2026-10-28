@@ -294,3 +294,296 @@ fn with_no_penned_herd_the_fodder_order_wants_nothing_and_runs_no_rows() {
     let readings = OrderReadings::default();
     assert_eq!(readings.turns(FODDER, allocation), 0.0);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Fodder: hay Fields, the hay draw of a pen, and the by-product rule (#860 step 3 follow-up).
+// ---------------------------------------------------------------------------------------------
+
+use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+/// The hay crop `flora_config.json` ships (the one fodder species).
+const HAY: &str = "hay_grass";
+/// What the pens need beyond their pasture, per turn.
+const HAY_NEED: f32 = 1.0;
+/// A position past the top of the plant ladder: a sown Field.
+const A_FIELD: f32 = 1000.0;
+
+/// The chief's `n` nearest gathering tiles, found by letting the food order pick them first.
+fn gathering_tiles(app: &mut App, band: Entity, n: usize) -> Vec<bevy::prelude::UVec2> {
+    set_target(app, band, FOOD, 1000);
+    set_larder(app, band, NEED);
+    let mut tiles: Vec<bevy::prelude::UVec2> = chief_rows(app, band, FOOD)
+        .into_iter()
+        .filter_map(|row| {
+            let coords = row.0.strip_prefix("f:")?;
+            let (x, y) = coords.split_once(',')?;
+            Some(bevy::prelude::UVec2::new(x.parse().ok()?, y.parse().ok()?))
+        })
+        .collect();
+    tiles.truncate(n);
+    assert_eq!(
+        tiles.len(),
+        n,
+        "**LIVENESS**: enough gathering land in reach"
+    );
+    // Start clean: no rows, no roster, so the converted Fields meet the managing pass fresh.
+    let mut allocation = app.world.get_mut::<LaborAllocation>(band).unwrap();
+    allocation.assignments.clear();
+    allocation.last_yields.clear();
+    allocation.order_rows.clear();
+    allocation.keep_shares.clear();
+    tiles
+}
+
+/// Sow `tile` to hay: a committed Field whose basket yields fodder and no food.
+fn sow_hay(app: &mut App, tile: bevy::prelude::UVec2) {
+    let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+    let mut forage = app.world.resource_mut::<core_sim::ForageRegistry>();
+    let patch = forage.patches.get_mut(&tile).expect("the patch");
+    patch.species = Some(HAY.to_string());
+    patch.set_ladder_position(A_FIELD, &ladder);
+}
+
+fn pens(app: &mut App, band: Entity, need: f32) {
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .unwrap()
+        .last_fodder_need = need;
+}
+
+/// The fodder order's total take across its shares, in biomass.
+fn fodder_take(app: &App, band: Entity) -> f32 {
+    app.world
+        .get::<LaborAllocation>(band)
+        .unwrap()
+        .keep_shares
+        .iter()
+        .filter(|(kind, _)| kind == FODDER)
+        .map(|(_, share)| share.take)
+        .sum()
+}
+
+/// The `bandOrders` row for `kind` as the encoded frame publishes it: `(hasConsumers, onHand, draw,
+/// target)`.
+fn published_order(app: &mut App, kind: &str) -> (bool, f32, f32, u32) {
+    core_sim::recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<core_sim::SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let section = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot")
+        .population()
+        .expect("the population section");
+    for row in section.populations().expect("populations").iter() {
+        for order in row.bandOrders().into_iter().flatten() {
+            if order.kind() == Some(kind) {
+                return (
+                    order.hasConsumers(),
+                    order.onHand(),
+                    order.draw(),
+                    order.target(),
+                );
+            }
+        }
+    }
+    panic!("no {kind} order on the wire");
+}
+
+#[test]
+fn the_fodder_order_fills_hay_fields_at_best_and_publishes_whether_anything_eats_hay() {
+    let (mut app, band) = world();
+    core_sim::run_turn(&mut app);
+    let tiles = gathering_tiles(&mut app, band, 1);
+    sow_hay(&mut app, tiles[0]);
+    set_target(&mut app, band, FODDER, 10);
+    set_target(&mut app, band, FOOD, 1);
+
+    // No pen eats hay: nothing is wanted, nothing runs, and the wire says there is no consumer.
+    set_larder(&mut app, band, MANY_TURNS_OF_FOOD);
+    assert!(chief_rows(&app, band, FODDER).is_empty());
+    let (consumers, ..) = published_order(&mut app, FODDER);
+    assert!(!consumers, "no pen, no Fodder line");
+
+    // A pen whose pasture covers only part of its need.
+    pens(&mut app, band, HAY_NEED);
+    set_larder(&mut app, band, MANY_TURNS_OF_FOOD);
+    pens(&mut app, band, HAY_NEED);
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    let rows = chief_rows(&app, band, FODDER);
+    assert_eq!(
+        rows.len(),
+        1,
+        "the hay Field is the fodder order's: {rows:?}"
+    );
+    assert_eq!(
+        rows[0].1, DEFAULT_ESCAPEMENT_FLOOR,
+        "worked at Best below the target"
+    );
+    assert!(rows[0].3 > 0, "**LIVENESS**: hands are sent to the hay");
+    assert!(fodder_take(&app, band) > 0.0);
+    assert!(
+        chief_rows(&app, band, FOOD)
+            .iter()
+            .all(|row| row.0 != format!("f:{},{}", tiles[0].x, tiles[0].y)),
+        "a hay Field gives more fodder than food, so it is not listed under food"
+    );
+    let (consumers, turns, draw, target) = published_order(&mut app, FODDER);
+    assert!(consumers, "a pen eats hay");
+    assert_eq!(draw, HAY_NEED, "the draw is the hay need, units a turn");
+    assert_eq!(target, 10, "the target is in turns");
+    assert_eq!(turns, 0.0, "no hay on hand: zero turns");
+}
+
+#[test]
+fn what_the_other_rows_brought_in_last_turn_reduces_the_want_and_a_row_staffed_to_nobody_does_not()
+{
+    let (mut app, band) = world();
+    core_sim::run_turn(&mut app);
+    let tiles = gathering_tiles(&mut app, band, 2);
+    sow_hay(&mut app, tiles[0]);
+    sow_hay(&mut app, tiles[1]);
+    set_target(&mut app, band, FODDER, 10);
+    set_target(&mut app, band, FOOD, 1);
+
+    let run = |app: &mut App, brought_in: Option<f32>| -> f32 {
+        {
+            let mut allocation = app.world.get_mut::<LaborAllocation>(band).unwrap();
+            allocation.assignments.clear();
+            allocation.last_yields.clear();
+            allocation.order_rows.clear();
+            allocation.keep_shares.clear();
+            if let Some(fodder) = brought_in {
+                // The second Field is a mixed patch the FOOD order lists; it yielded `fodder` hay
+                // last turn.
+                allocation.set_staffed_row(
+                    LaborTarget::Forage {
+                        tile: tiles[1],
+                        floor: DEFAULT_ESCAPEMENT_FLOOR,
+                        species: None,
+                        take_species: TakeSelection::EVERYTHING,
+                    },
+                    None,
+                    None,
+                );
+                allocation
+                    .order_rows
+                    .insert(format!("f:{},{}", tiles[1].x, tiles[1].y), FOOD.to_string());
+                let last = allocation.assignments.len() - 1;
+                allocation.last_yields[last].fodder = fodder;
+            }
+        }
+        set_larder(app, band, MANY_TURNS_OF_FOOD);
+        pens(app, band, HAY_NEED);
+        core_sim::staffing::restaff_band(&mut app.world, band);
+        fodder_take(app, band)
+    };
+    // The want is the draw plus a tenth of ten turns' deficit: two units a turn.
+    let alone = run(&mut app, None);
+    assert!(alone > 0.0, "**LIVENESS**: the hay Field is worked");
+    let staffed_to_nobody = run(&mut app, Some(0.0));
+    assert!(
+        (staffed_to_nobody - alone).abs() < 1e-4,
+        "a row that brought in nothing does not reduce the want: {staffed_to_nobody} vs {alone}"
+    );
+    let brought_in = run(&mut app, Some(1.5));
+    assert!(
+        brought_in < alone * 0.5,
+        "a row that brought in 1.5 of the 2 wanted leaves a quarter of it: {brought_in} vs {alone}"
+    );
+}
+
+#[test]
+fn the_shipped_learning_floor_is_the_clients_learning_preset() {
+    let config = core_sim::LaborConfig::builtin();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../clients/godot_thin_client/src/scripts/ui/hud/SourceForecast.gd");
+    let text = std::fs::read_to_string(path).expect("the client's SourceForecast.gd");
+    let learn: f32 = text
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("FLOOR_PRESET_LEARN:")
+                .map(|rest| rest.trim_start())
+        })
+        .and_then(|rest| rest.split([',', ' ', '#']).next())
+        .and_then(|number| number.parse().ok())
+        .expect("a FLOOR_PRESET_LEARN entry in FLOOR_PRESET_VALUES");
+    assert_eq!(config.band_orders.learning_floor, learn);
+}
+
+// ---------------------------------------------------------------------------------------------
+// The arrival line: materials as amounts, food and fodder as turns, fodder only with pens.
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn the_arrival_line_reads_food_and_fodder_as_turns_and_materials_as_amounts() {
+    use core_sim::keep_on_hand::{takeover_line, Keeper};
+    let taken = |kinds: &[(&str, u32)]| -> Vec<(String, u32)> {
+        kinds
+            .iter()
+            .map(|(kind, target)| (kind.to_string(), *target))
+            .collect()
+    };
+    let chief = |kind: LeaderKind| {
+        Keeper::of(
+            Some(&BandLeadership {
+                leader: Some(BandLeader {
+                    name: "Orrin".to_string(),
+                    kind,
+                    since_turn: 0,
+                }),
+                ..Default::default()
+            }),
+            "Bitterbrook",
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        takeover_line(
+            &chief(LeaderKind::Chief),
+            "Bitterbrook",
+            &taken(&[("stone", 30), ("wood", 30), ("food", 20)])
+        ),
+        "Orrin is chief of Bitterbrook \u{2014} he takes over the band's work: he keeps 20 turns of food, 30 stone and 30 wood on hand."
+    );
+    assert_eq!(
+        takeover_line(
+            &chief(LeaderKind::Chief),
+            "Bitterbrook",
+            &taken(&[("stone", 30), ("wood", 30), ("food", 20), ("fodder", 10)])
+        ),
+        "Orrin is chief of Bitterbrook \u{2014} he takes over the band's work: he keeps 20 turns of food, 10 turns of fodder, 30 stone and 30 wood on hand."
+    );
+    assert_eq!(
+        takeover_line(
+            &chief(LeaderKind::ElderCouncil),
+            "Bitterbrook",
+            &taken(&[("food", 20), ("stone", 30)])
+        ),
+        "Bitterbrook's elders take over the band's work: they keep 20 turns of food and 30 stone on hand."
+    );
+}
+
+#[test]
+fn the_feed_leaves_fodder_out_of_the_arrival_line_while_no_pen_eats_hay() {
+    let (mut app, _band) = world();
+    for _ in 0..2 {
+        core_sim::run_turn(&mut app);
+    }
+    let lines: Vec<String> = app
+        .world
+        .resource::<core_sim::CommandEventLog>()
+        .iter()
+        .filter(|entry| entry.label.contains("takes over the band's work"))
+        .map(|entry| entry.label.clone())
+        .collect();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains("20 turns of food"), "{lines:?}");
+    assert!(!lines[0].contains("fodder"), "{lines:?}");
+}

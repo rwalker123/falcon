@@ -2247,6 +2247,11 @@ fn decode_population(
             site_x: row.siteX(),
             site_y: row.siteY(),
             has_consumers: row.hasConsumers(),
+            hold_heads: row.holdHeads(),
+            hold_wanted: row.holdWanted(),
+            refill_heads: row.refillHeads(),
+            refill_wanted: row.refillWanted(),
+            take: row.take(),
             sustainable: row.sustainable(),
         }),
     })
@@ -2509,6 +2514,11 @@ fn create_band_orders<'a>(
                     siteX: row.site_x,
                     siteY: row.site_y,
                     hasConsumers: row.has_consumers,
+                    holdHeads: row.hold_heads,
+                    holdWanted: row.hold_wanted,
+                    refillHeads: row.refill_heads,
+                    refillWanted: row.refill_wanted,
+                    take: row.take,
                     sustainable: row.sustainable,
                 },
             )

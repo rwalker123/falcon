@@ -243,7 +243,7 @@ fn the_arrival_is_one_feed_line_naming_the_chief_and_the_band() {
         .starting_target_for(STONE)
         .unwrap();
     let wanted = format!(
-        "he takes over the stone and wood work and keeps {opening} stone and {opening} wood on hand"
+        "he takes over the band's work: he keeps {opening} stone and {opening} wood on hand"
     );
     let lines: Vec<String> = app
         .world
@@ -971,4 +971,91 @@ fn stone_ends_with_exactly_one_row_among_many_rock_sites() {
         allocation.keep_sustainable[STONE] >= allocation.material_draw(STONE),
         "stone never reads short"
     );
+}
+
+/// **THE ORDER'S CREW IS THE STAFFING'S OWN NUMBER**: a band short of hands staffs the High order's
+/// keep-up crew in full and the Low order's short, and the order reports both from the passes.
+#[test]
+fn a_band_short_of_hands_reports_the_low_orders_hold_crew_short_while_the_high_one_is_full() {
+    let (mut app, band, camp) = world();
+    ordered(&mut app, &[STONE, WOOD]);
+    bare_the_map(&mut app);
+    let width = app.world.resource::<TileRegistry>().width;
+    reground(&mut app, camp, ROCK);
+    for step in 1..=STANDS as u32 {
+        reground(
+            &mut app,
+            UVec2::new((camp.x + step) % width, camp.y),
+            WOODLAND,
+        );
+    }
+    {
+        let mut allocation = app.world.get_mut::<LaborAllocation>(band).unwrap();
+        for kind in [STONE, WOOD] {
+            allocation.last_material_need.insert(kind.to_string(), 2.0);
+        }
+        for (kind, priority) in [(STONE, SourcePriority::High), (WOOD, SourcePriority::Low)] {
+            allocation.orders.insert(
+                kind.to_string(),
+                BandOrder {
+                    target: A_BIG_TARGET,
+                    priority,
+                    owner: OrderOwner::Chief,
+                },
+            );
+        }
+    }
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    let crew = |app: &App, kind: &str| {
+        app.world
+            .get::<LaborAllocation>(band)
+            .unwrap()
+            .order_crew(kind)
+    };
+    let (stone_heads, stone_wanted, ..) = crew(&app, STONE);
+    let (wood_heads, wood_wanted, ..) = crew(&app, WOOD);
+    assert!(
+        stone_wanted > 0 && wood_wanted > 0,
+        "**LIVENESS**: both orders want a keep-up crew"
+    );
+    assert_eq!(
+        stone_heads, stone_wanted,
+        "with hands to spare both are full"
+    );
+    assert_eq!(wood_heads, wood_wanted);
+
+    // Only the hands the High order's keep-up crew needs.
+    app.world.get_mut::<PopulationCohort>(band).unwrap().working =
+        scalar_from_f32(stone_wanted as f32);
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    let (stone_heads, stone_wanted, ..) = crew(&app, STONE);
+    let (wood_heads, wood_wanted, ..) = crew(&app, WOOD);
+    assert_eq!(stone_heads, stone_wanted, "the High order is full");
+    assert!(
+        wood_heads < wood_wanted,
+        "the Low order is short: {wood_heads} of {wood_wanted}"
+    );
+}
+
+/// **THE ORDER'S TAKE IS WHAT ITS ROWS BROUGHT IN LAST TURN**, in the order's own units.
+#[test]
+fn an_orders_take_is_what_its_rows_brought_in_last_turn() {
+    let (mut app, band, camp) = world();
+    bare_the_map(&mut app);
+    reground(&mut app, camp, ROCK);
+    keep(&mut app, band, A_BIG_TARGET);
+    let mut allocation = app.world.get_mut::<LaborAllocation>(band).unwrap();
+    assert_eq!(allocation.order_take(STONE), 0.0, "nothing brought in yet");
+    let index = allocation
+        .assignments
+        .iter()
+        .position(
+            |row| matches!(&row.target, LaborTarget::Extract { material, .. } if material == STONE),
+        )
+        .expect("the dig row");
+    allocation.last_yields[index].materials = vec![core_sim::MaterialPayoff {
+        material: STONE.to_string(),
+        amount: 2.5,
+    }];
+    assert_eq!(allocation.order_take(STONE), 2.5);
 }

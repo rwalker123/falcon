@@ -6191,6 +6191,62 @@ impl LaborAllocation {
             .map(|(_, share)| share.clone())
     }
 
+    /// **THE ORDER THAT LISTS A ROW**: a dig row of a chief-owned material is listed under the
+    /// material, a forage or hunt row under the order `order_rows` names, a player-crewed row under
+    /// none.
+    pub fn order_of_row(&self, target: &LaborTarget) -> Option<String> {
+        match target {
+            LaborTarget::Extract { material, .. } => {
+                self.chief_owns(material).then(|| material.clone())
+            }
+            other => self.row_order(other).map(str::to_string),
+        }
+    }
+
+    /// **THE ORDER'S CREW THIS TURN, from the staffing's own numbers**: `(hold heads, hold wanted,
+    /// refill heads, refill wanted)` summed over the order's rows. A row's `hold_crew` / `reach_crew`
+    /// are the heads the passes aimed at (pass 1 and pass 2, keepers included); the heads staffed fill
+    /// pass 1 first, then pass 2.
+    pub fn order_crew(&self, kind: &str) -> (u32, u32, u32, u32) {
+        let mut crew = (0, 0, 0, 0);
+        for row in &self.assignments {
+            if self.order_of_row(&row.target).as_deref() != Some(kind) {
+                continue;
+            }
+            let staffed = row.staffing.total();
+            let hold_wanted = row.staffing.hold_crew;
+            let refill_wanted = row.staffing.reach_crew.saturating_sub(hold_wanted);
+            let hold_heads = staffed.min(hold_wanted);
+            let refill_heads = (staffed - hold_heads).min(refill_wanted);
+            crew.0 += hold_heads;
+            crew.1 += hold_wanted;
+            crew.2 += refill_heads;
+            crew.3 += refill_wanted;
+        }
+        crew
+    }
+
+    /// **WHAT THE ORDER'S ROWS BROUGHT IN LAST TURN**, in the order's units: food provisions, hay or
+    /// the material (`last_yields`, the same one-turn lag as [`Self::material_draw`]).
+    pub fn order_take(&self, kind: &str) -> f32 {
+        self.assignments
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| self.order_of_row(&row.target).as_deref() == Some(kind))
+            .filter_map(|(index, _)| self.last_yields.get(index))
+            .map(|yields| match kind {
+                crate::keep_on_hand::FOOD_KIND => yields.actual,
+                crate::keep_on_hand::FODDER_KIND => yields.fodder,
+                material => yields
+                    .materials
+                    .iter()
+                    .filter(|payoff| payoff.material == material)
+                    .map(|payoff| payoff.amount)
+                    .sum(),
+            })
+            .sum()
+    }
+
     /// The order a forage or hunt row is listed under, `None` for a player-owned row.
     pub fn row_order(&self, target: &LaborTarget) -> Option<&str> {
         let key = crate::keep_on_hand::source_key(target)?;

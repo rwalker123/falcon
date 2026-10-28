@@ -361,8 +361,11 @@ fn announce_chief_takeover(
         let Some(keeper) = crate::keep_on_hand::Keeper::of(Some(&**leadership), &band_name) else {
             continue;
         };
+        // Fodder is left out of the line while the band pens no herd that eats hay.
+        let pens_hay = allocation.last_fodder_need > 0.0;
         let taken: Vec<(String, u32)> = kinds
             .into_iter()
+            .filter(|kind| pens_hay || kind != crate::keep_on_hand::FODDER_KIND)
             .filter_map(|kind| {
                 let target = allocation.order_for(&kind)?.target;
                 Some((kind, target))

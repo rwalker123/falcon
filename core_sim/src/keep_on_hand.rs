@@ -120,31 +120,38 @@ pub fn leaderless_refusal(kind: &str, band_label: &str) -> String {
 /// **THE FEED LINE FOR A CHIEF'S ARRIVAL**: what he takes over and keeps. `taken` is the kind and
 /// its opening target, for every kind the arrival created an order for.
 pub fn takeover_line(keeper: &Keeper, band_name: &str, taken: &[(String, u32)]) -> String {
-    let names: Vec<&str> = taken.iter().map(|(kind, _)| kind.as_str()).collect();
-    let (last, rest) = names.split_last().unwrap_or((&"", &[]));
-    let kinds = if rest.is_empty() {
-        format!("the {last} work")
+    // Food and fodder read in turns, a material as an amount; the turns come first.
+    let mut ordered: Vec<&(String, u32)> = taken.iter().collect();
+    ordered.sort_by_key(|(kind, _)| !is_row_kind(kind));
+    let parts: Vec<String> = ordered
+        .iter()
+        .map(|(kind, target)| {
+            if is_row_kind(kind) {
+                format!("{target} turns of {kind}")
+            } else {
+                format!("{target} {kind}")
+            }
+        })
+        .collect();
+    let (last, rest) = parts
+        .split_last()
+        .map_or((String::new(), &[][..]), |(last, rest)| {
+            (last.clone(), rest)
+        });
+    let keeps = if rest.is_empty() {
+        last
     } else {
-        format!("the {} and {last} work", rest.join(", "))
+        format!("{} and {last}", rest.join(", "))
     };
-    let keeps = match taken {
-        [(_, target)] => format!("{target} on hand"),
-        _ => {
-            taken
-                .iter()
-                .map(|(kind, target)| format!("{target} {kind}"))
-                .collect::<Vec<_>>()
-                .join(" and ")
-                + " on hand"
-        }
-    };
-    let take = keeper.verb("takes", "take");
     let keep = keeper.verb("keeps", "keep");
     if keeper.plural {
-        format!("{} {take} over {kinds} and {keep} {keeps}.", keeper.subject)
+        format!(
+            "{} take over the band's work: they {keep} {keeps} on hand.",
+            keeper.subject
+        )
     } else {
         format!(
-            "{} is chief of {band_name} \u{2014} he {take} over {kinds} and {keep} {keeps}.",
+            "{} is chief of {band_name} \u{2014} he takes over the band's work: he {keep} {keeps} on hand.",
             keeper.subject
         )
     }

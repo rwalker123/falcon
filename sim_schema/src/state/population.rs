@@ -2188,6 +2188,16 @@ pub struct BandOrderState {
     pub site_y: u32,
     /// Whether the order has anything to keep up with (false for fodder while no pen eats hay).
     pub has_consumers: bool,
+    /// Heads staffed on the order's keep-up crew this turn (pass 1), across all its rows.
+    pub hold_heads: u32,
+    /// Heads the keep-up crew wanted.
+    pub hold_wanted: u32,
+    /// Heads staffed toward the refill (pass 2).
+    pub refill_heads: u32,
+    /// Heads the refill wanted; `0` at or above the target.
+    pub refill_wanted: u32,
+    /// What the order's rows brought in last turn, in the order's units a turn.
+    pub take: f32,
     /// What the order's candidate sites give a turn at its floor without being drawn down; never
     /// below `draw` for a deposit that does not regrow.
     pub sustainable: f32,
