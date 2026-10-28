@@ -1668,11 +1668,10 @@ table PopulationCohortState {
   foodIntoStore:float = 0;
   foodFromStore:float = 0;
   foodInStoresInReach:float = 0;
-  // --- KEEP ON HAND (appended last, #874) ---
-  // One row per MINED material (a deposit on the extraction branch: stone) this band's people has
-  // discovered any deposit of, or that holds a nonzero target. Own bands only: a foreign (redacted)
-  // row carries the default (empty). On hand is NOT here: read it from materialStore.
-  keepOnHand:[KeepOnHandState];
+  // --- BAND ORDERS (appended last, #860) ---
+  // One row per order the band's chief keeps or the player took back (stone today). Published only
+  // for a band with a leader. Own bands only: a foreign (redacted) row carries the default (empty).
+  bandOrders:[BandOrderState];
 }
 
 // ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH - a row of `PopulationCohortState.bandImprovements`,
@@ -2074,16 +2073,21 @@ enum SourcePriority : ubyte {
   Low = 2,
 }
 
-// A BAND'S KEEP-ON-HAND ORDER FOR ONE MINED MATERIAL - a row of `PopulationCohortState.keepOnHand`
-// (#874). The dig row itself is an ordinary `LaborAssignment` (kind "extract") on `siteX`/`siteY`.
-table KeepOnHandState {
-  material:string;
-  // The stock the band wants in its store; 0 is no order (nobody digs).
+// A BAND'S ORDER FOR ONE KIND - a row of `PopulationCohortState.bandOrders` (#860). `kind` is
+// "food", "fodder" or a material id. The dig row itself is an ordinary `LaborAssignment` (kind
+// "extract") on `siteX`/`siteY`.
+table BandOrderState {
+  kind:string;
+  // The stock the band wants kept: units for a material, turns for food and fodder. Never 0.
   target:uint = 0;
   priority:SourcePriority;
-  // The band's per-turn draw on the material: its holdings' upkeep, the road keeping it is billed and
-  // its builds' draw (last turn's figures).
+  // True while the chief works the kind; false once the player crews it ("Crew it yourself").
+  chiefOwned:bool = false;
+  // The band's per-turn draw on the kind: its holdings' upkeep, the road keeping it is billed and
+  // its builds' draw (last turn's figures). The hold crew keeps up with it.
   draw:float = 0;
+  // What the band holds of the kind now (a material's store total).
+  onHand:float = 0;
   // The site the game picked to dig at this turn, if any rock is known and reachable.
   hasSite:bool = false;
   siteX:uint = 0;

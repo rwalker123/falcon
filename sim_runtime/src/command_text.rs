@@ -2,7 +2,7 @@ use std::num::{ParseFloatError, ParseIntError};
 
 use thiserror::Error;
 
-use crate::commands::BENCH_CREW_UNSPECIFIED;
+use crate::commands::{BandOrderAction, BENCH_CREW_UNSPECIFIED};
 
 /// Describes a runtime command verb, its aliases, and usage hint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -216,10 +216,10 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "stop_labor <faction_id> <band_id> <x> <y> | stop_labor <faction_id> <band_id> <herd_id> | stop_labor <faction_id> <band_id> <x> <y> <material> | stop_labor <faction_id> <band_id> <branch> <x> <y> | stop_labor <faction_id> <band_id> roadwork",
     },
     CommandVerbHelp {
-        verb: "keep_on_hand",
+        verb: "band_order",
         aliases: &[],
-        summary: "KEEP A MINED MATERIAL ON HAND: a band's LEADER orders how much of a mined material (stone) to hold in its store, and how urgently. The sim picks the dig site, staffs the digging from the shortfall and stops when the store reaches the target. A target of 0 is no order - the band crews the material by hand again. 'high', 'normal' or 'low' ranks the dig against the band's other work. Both the target and the priority are required. Refused for a band with no leader yet (it crews by hand) and for a material that regrows (wood keeps its per-site `assign_labor extract` rows). While a target above 0 stands, `assign_labor extract`, `stop_labor` and `work_priority` on that material and band are refused and name the order.",
-        usage: "keep_on_hand <faction_id> <band_id> <material> <target> high|normal|low",
+        summary: "A BAND'S ORDER FOR ONE KIND: once a band has a leader, the leader keeps an ordered kind (stone today) on hand. `set` states how much to hold and how urgently - the sim picks the dig site, staffs the digging from the shortfall and stops when the store reaches the target; a target of 0 is refused (there is no 'none'). 'high', 'normal' or 'low' ranks the work against the band's other work. `release` is Crew it yourself: the player takes the kind, the leader's rows stay where they are with their crew as the Max, and the kind is crewed by hand exactly as a leaderless band crews it. `claim` is Hand it to the chief: the leader takes the kind back at its current target. Refused for a band with no leader yet and for a kind that takes no order. While the leader keeps a kind, `assign_labor extract`, `stop_labor` and `work_priority` on it are refused and name the leader.",
+        usage: "band_order <faction_id> <band_id> <kind> set <target> high|normal|low | band_order <faction_id> <band_id> <kind> release | band_order <faction_id> <band_id> <kind> claim",
     },
     CommandVerbHelp {
         verb: "upkeep_mode",
@@ -1148,31 +1148,45 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 branch,
             })
         }
-        // **KEEP A MINED MATERIAL ON HAND** (#874): `<faction> <band> <material> <target> <priority>`,
-        // both trailing fields required. The priority is lower-cased on the way in and an unknown
-        // level is the sim's to refuse by name, as `work_priority`'s is.
-        "keep_on_hand" => {
+        // **A BAND ORDER** (#860): `<faction> <band> <kind> set <target> <priority>` |
+        // `<faction> <band> <kind> release` | `<faction> <band> <kind> claim`. The priority is
+        // lower-cased on the way in and an unknown level is the sim's to refuse by name, as
+        // `work_priority`'s is.
+        "band_order" => {
             let faction_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("faction_id"))?;
             let band_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("band_id"))?;
-            let material = parts
+            let kind = parts
                 .next()
-                .ok_or(CommandParseError::MissingArgument("material"))?;
-            let target_str = parts
+                .ok_or(CommandParseError::MissingArgument("kind"))?;
+            let action = match parts
                 .next()
-                .ok_or(CommandParseError::MissingArgument("target"))?;
-            let priority = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("priority"))?;
-            Ok(CommandPayload::KeepOnHand {
-                faction_id: parse_u32(faction_str, "keep_on_hand faction")?,
-                band_id: parse_u64(band_str, "keep_on_hand band")?,
-                material: material.to_owned(),
-                target: parse_u32(target_str, "keep_on_hand target")?,
-                priority: priority.to_ascii_lowercase(),
+                .ok_or(CommandParseError::MissingArgument("action"))?
+            {
+                "set" => {
+                    let target_str = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("target"))?;
+                    let priority = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("priority"))?;
+                    BandOrderAction::Set {
+                        target: parse_u32(target_str, "band_order target")?,
+                        priority: priority.to_ascii_lowercase(),
+                    }
+                }
+                "release" => BandOrderAction::Release,
+                "claim" => BandOrderAction::Claim,
+                other => return Err(CommandParseError::UnexpectedToken(other.to_string())),
+            };
+            Ok(CommandPayload::BandOrder {
+                faction_id: parse_u32(faction_str, "band_order faction")?,
+                band_id: parse_u64(band_str, "band_order band")?,
+                kind: kind.to_owned(),
+                action,
             })
         }
         // **STOP A STAFFED ROW** (#871) - `work_priority`'s band handle and source addressing with no
@@ -2852,13 +2866,18 @@ pub fn render_command_line(payload: &CommandPayload) -> String {
             }
             line
         }
-        CommandPayload::KeepOnHand {
+        CommandPayload::BandOrder {
             faction_id,
             band_id,
-            material,
-            target,
-            priority,
-        } => format!("keep_on_hand {faction_id} {band_id} {material} {target} {priority}"),
+            kind,
+            action,
+        } => match action {
+            BandOrderAction::Set { target, priority } => {
+                format!("band_order {faction_id} {band_id} {kind} set {target} {priority}")
+            }
+            BandOrderAction::Release => format!("band_order {faction_id} {band_id} {kind} release"),
+            BandOrderAction::Claim => format!("band_order {faction_id} {band_id} {kind} claim"),
+        },
         CommandPayload::MoveBand {
             faction_id,
             band_id,
@@ -4900,24 +4919,44 @@ mod tests {
     /// working (`<x> <y> <material>`), a tile improvement (`<branch> <x> <y>`) and the Roadwork pool
     /// (the lone token `roadwork`), with no trailing level and a refusal when no source is named.
     #[test]
-    fn keep_on_hand_parses_and_renders_back_and_needs_both_fields() {
-        let payload = parse_command_line("keep_on_hand 1 7 stone 60 HIGH").unwrap();
+    fn band_order_parses_and_renders_back_in_all_three_forms() {
+        let set = parse_command_line("band_order 1 7 stone set 60 HIGH").unwrap();
         assert_eq!(
-            payload,
-            CommandPayload::KeepOnHand {
+            set,
+            CommandPayload::BandOrder {
                 faction_id: 1,
                 band_id: 7,
-                material: "stone".to_string(),
-                target: 60,
-                priority: "high".to_string(),
+                kind: "stone".to_string(),
+                action: BandOrderAction::Set {
+                    target: 60,
+                    priority: "high".to_string(),
+                },
             }
         );
         assert_eq!(
-            render_command_line(&payload),
-            "keep_on_hand 1 7 stone 60 high"
+            render_command_line(&set),
+            "band_order 1 7 stone set 60 high"
         );
-        assert!(parse_command_line("keep_on_hand 1 7 stone 60").is_err());
-        assert!(parse_command_line("keep_on_hand 1 7 stone").is_err());
+        for (line, action) in [
+            ("band_order 1 7 stone release", BandOrderAction::Release),
+            ("band_order 1 7 stone claim", BandOrderAction::Claim),
+        ] {
+            let parsed = parse_command_line(line).unwrap();
+            assert_eq!(
+                parsed,
+                CommandPayload::BandOrder {
+                    faction_id: 1,
+                    band_id: 7,
+                    kind: "stone".to_string(),
+                    action,
+                }
+            );
+            assert_eq!(render_command_line(&parsed), line);
+        }
+        assert!(parse_command_line("band_order 1 7 stone set 60").is_err());
+        assert!(parse_command_line("band_order 1 7 stone set").is_err());
+        assert!(parse_command_line("band_order 1 7 stone").is_err());
+        assert!(parse_command_line("band_order 1 7 stone drop").is_err());
     }
 
     #[test]

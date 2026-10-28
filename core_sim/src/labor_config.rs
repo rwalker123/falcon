@@ -513,6 +513,31 @@ pub struct ScoutLaborConfig {
     pub range_past_local_max: u32,
 }
 
+/// **WHICH KINDS A BAND'S CHIEF TAKES ORDERS FOR, AND WHERE EACH STARTS** (#860,
+/// `docs/plan_labor_at_scale.md` -> "Band orders - the chief"). A kind id is `"food"`, `"fodder"` or
+/// a material id. Playtest levers.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BandOrdersConfig {
+    /// The kinds that take an order, in the order the chief takes them over. A kind not listed has
+    /// no order and is crewed by hand whoever leads the band.
+    pub ordered_kinds: Vec<String>,
+    /// The target the chief starts each kind at when he arrives, and a claim falls back to: units
+    /// for a material, turns for food and fodder. Every ordered kind needs one, above zero.
+    pub starting_target: std::collections::BTreeMap<String, u32>,
+}
+
+impl BandOrdersConfig {
+    /// Whether `kind` takes an order.
+    pub fn is_ordered(&self, kind: &str) -> bool {
+        self.ordered_kinds.iter().any(|ordered| ordered == kind)
+    }
+
+    /// The chief's opening target for `kind`.
+    pub fn starting_target_for(&self, kind: &str) -> Option<u32> {
+        self.starting_target.get(kind).copied()
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct LaborConfig {
     /// True odd-r **hex-distance** radius (`grid_utils::hex_distance_wrapped`, wrap-aware)
@@ -545,6 +570,8 @@ pub struct LaborConfig {
     /// stock returns to the target in about this many turns. Validated `>= 1`: a zero would divide
     /// the deficit by nothing. A playtest dial (opening value 10).
     pub keep_on_hand_refill_turns: u32,
+    /// **THE BAND ORDERS** (#860): which kinds take an order and the chief's opening target for each.
+    pub band_orders: BandOrdersConfig,
     /// **The forward-projection horizon for a source's steady `realized` yield**, in turns. Each
     /// source's `SourceYield::realized` is the *average food/turn it will deliver over the next N
     /// turns*, computed by simulating the herd/patch forward N turns from its CURRENT state under the
@@ -638,6 +665,19 @@ impl LaborConfig {
                     .to_string(),
                 value: self.keep_on_hand_refill_turns.to_string(),
             });
+        }
+        // Every ordered kind is named once and opens above zero (a zero target is no order).
+        let mut seen = std::collections::BTreeSet::new();
+        for kind in &self.band_orders.ordered_kinds {
+            let opening = self.band_orders.starting_target.get(kind).copied();
+            if !seen.insert(kind.as_str()) || opening.is_none_or(|target| target == 0) {
+                return Err(LaborConfigError::Invalid {
+                    field: "band_orders",
+                    constraint: "list each ordered kind once, with a starting_target above zero"
+                        .to_string(),
+                    value: kind.clone(),
+                });
+            }
         }
         // A party walks at the band's own pace, so a zero would make a far posting's walk never
         // end (`work_party::walk_turns` would divide by zero).

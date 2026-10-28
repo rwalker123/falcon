@@ -3572,13 +3572,12 @@ pub fn capture_snapshot(
                                 )
                             })
                             .unwrap_or_default(),
-                        keep_on_hand: allocation
+                        band_orders: allocation
                             .filter(|_| leadership.is_some_and(|l| l.leader.is_some()))
                             .map(|allocation| {
-                                crate::snapshot::population::keep_on_hand_rows(
-                                    allocation,
-                                    &extraction_config,
-                                )
+                                crate::snapshot::population::band_order_rows(allocation, &|kind| {
+                                    cohort.stores.material_total(kind).to_f32()
+                                })
                             })
                             .unwrap_or_default(),
                         culture_pressures: band_id

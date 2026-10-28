@@ -16,6 +16,17 @@ pub struct CommandEnvelope {
     pub correlation_id: Option<u64>,
 }
 
+/// What a [`CommandPayload::BandOrder`] does to one kind's order (#860).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BandOrderAction {
+    /// Set the target and priority (`high` | `normal` | `low`); a target of `0` is refused.
+    Set { target: u32, priority: String },
+    /// Crew it yourself: the player takes the kind.
+    Release,
+    /// Hand it to the chief: the chief takes the kind back.
+    Claim,
+}
+
 /// Supported command payloads.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
@@ -309,14 +320,13 @@ pub enum CommandPayload {
         branch: Option<String>,
         roadwork: bool,
     },
-    /// **Keep a mined material on hand** (#874): the band holds `target` of `material` in its store
-    /// and the sim digs for the deficit at `priority` (`high` | `normal` | `low`). `0` is no order.
-    KeepOnHand {
+    /// **A band order** (#860): set, release or claim the order for `kind` (`"food"`, `"fodder"` or a
+    /// material id).
+    BandOrder {
         faction_id: u32,
         band_id: u64,
-        material: String,
-        target: u32,
-        priority: String,
+        kind: String,
+        action: BandOrderAction,
     },
     /// **Say how a band splits a maintenance pool it cannot stretch**
     /// (`docs/plan_standing_upkeep.md` §2.5) — `"spread"` (everything degrades a little) or
@@ -2207,19 +2217,28 @@ impl CommandEnvelope {
                 branch: branch.clone(),
                 roadwork: *roadwork,
             }),
-            CommandPayload::KeepOnHand {
+            CommandPayload::BandOrder {
                 faction_id,
                 band_id,
-                material,
-                target,
-                priority,
-            } => pb::command_envelope::Command::KeepOnHand(pb::KeepOnHandCommand {
-                faction_id: *faction_id,
-                band_id: *band_id,
-                material: material.clone(),
-                target: *target,
-                priority: priority.clone(),
-            }),
+                kind,
+                action,
+            } => {
+                let (action, target, priority) = match action {
+                    BandOrderAction::Set { target, priority } => {
+                        (pb::BandOrderAction::Set, *target, priority.clone())
+                    }
+                    BandOrderAction::Release => (pb::BandOrderAction::Release, 0, String::new()),
+                    BandOrderAction::Claim => (pb::BandOrderAction::Claim, 0, String::new()),
+                };
+                pb::command_envelope::Command::BandOrder(pb::BandOrderCommand {
+                    faction_id: *faction_id,
+                    band_id: *band_id,
+                    kind: kind.clone(),
+                    action: action as i32,
+                    target,
+                    priority,
+                })
+            }
             CommandPayload::UpkeepMode {
                 faction_id,
                 band_id,
@@ -3002,12 +3021,24 @@ impl CommandEnvelope {
                 branch: cmd.branch,
                 roadwork: cmd.roadwork,
             },
-            pb::command_envelope::Command::KeepOnHand(cmd) => CommandPayload::KeepOnHand {
+            pb::command_envelope::Command::BandOrder(cmd) => CommandPayload::BandOrder {
                 faction_id: cmd.faction_id,
                 band_id: cmd.band_id,
-                material: cmd.material,
-                target: cmd.target,
-                priority: cmd.priority,
+                kind: cmd.kind,
+                action: match pb::BandOrderAction::try_from(cmd.action) {
+                    Ok(pb::BandOrderAction::Set) => BandOrderAction::Set {
+                        target: cmd.target,
+                        priority: cmd.priority,
+                    },
+                    Ok(pb::BandOrderAction::Release) => BandOrderAction::Release,
+                    Ok(pb::BandOrderAction::Claim) => BandOrderAction::Claim,
+                    _ => {
+                        return Err(CommandDecodeError::InvalidEnum {
+                            field: "BandOrderCommand.action",
+                            value: cmd.action,
+                        })
+                    }
+                },
             },
             pb::command_envelope::Command::UpkeepMode(cmd) => CommandPayload::UpkeepMode {
                 faction_id: cmd.faction_id,
@@ -4092,23 +4123,31 @@ mod tests {
         }
     }
 
-    /// **`keep_on_hand` survives the envelope** with every field a distinct value.
+    /// **`band_order` survives the envelope** in all three forms, every field a distinct value.
     #[test]
-    fn keep_on_hand_round_trips_through_the_envelope() {
-        let payload = CommandPayload::KeepOnHand {
-            faction_id: 2,
-            band_id: 9,
-            material: "stone".to_string(),
-            target: 60,
-            priority: "high".to_string(),
-        };
-        let envelope = CommandEnvelope {
-            payload: payload.clone(),
-            correlation_id: None,
-        };
-        let bytes = envelope.encode_to_vec().expect("encode");
-        let decoded = CommandEnvelope::decode(&bytes).expect("decode");
-        assert_eq!(decoded.payload, payload);
+    fn band_order_round_trips_through_the_envelope() {
+        for action in [
+            BandOrderAction::Set {
+                target: 60,
+                priority: "high".to_string(),
+            },
+            BandOrderAction::Release,
+            BandOrderAction::Claim,
+        ] {
+            let payload = CommandPayload::BandOrder {
+                faction_id: 2,
+                band_id: 9,
+                kind: "stone".to_string(),
+                action,
+            };
+            let envelope = CommandEnvelope {
+                payload: payload.clone(),
+                correlation_id: None,
+            };
+            let bytes = envelope.encode_to_vec().expect("encode");
+            let decoded = CommandEnvelope::decode(&bytes).expect("decode");
+            assert_eq!(decoded.payload, payload);
+        }
     }
 
     /// **The staffing dry run survives the envelope on all three sources**, every field a distinct

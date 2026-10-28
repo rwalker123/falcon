@@ -733,22 +733,25 @@ fn a_bands_last_started_recipes_survive_the_round_trip() {
     assert_eq!(seen, marked, "every band that made a choice came back");
 }
 
-/// **A BAND'S KEEP-ON-HAND ORDERS SURVIVE A SAVE AND A LOAD** (#874): the target and the priority are
-/// intent, and a load that dropped them would silently stop the band digging.
+/// **A BAND'S ORDERS SURVIVE A SAVE AND A LOAD** (#860): the target, the priority and who works the
+/// kind are intent, and a load that dropped them would silently stop the band digging or hand a
+/// player-crewed kind back to the chief.
 #[test]
-fn a_bands_keep_on_hand_orders_survive_the_round_trip() {
+fn a_bands_orders_survive_the_round_trip() {
     const TARGET: u32 = 60;
     let mut original = spawn_world();
     let mut marked = 0;
     let mut allocations = original.world.query::<&mut core_sim::LaborAllocation>();
     for mut allocation in allocations.iter_mut(&mut original.world) {
-        allocation.keep_on_hand.insert(
+        allocation.orders.insert(
             "stone".to_string(),
-            core_sim::KeepOnHand {
+            core_sim::BandOrder {
                 target: TARGET,
                 priority: core_sim::SourcePriority::High,
+                owner: core_sim::OrderOwner::Player,
             },
         );
+        allocation.unannounced_takeover.push("stone".to_string());
         marked += 1;
     }
     assert!(marked > 0, "LIVENESS: the world has a band to mark");
@@ -758,9 +761,11 @@ fn a_bands_keep_on_hand_orders_survive_the_round_trip() {
     let mut restored = loaded.world.query::<&core_sim::LaborAllocation>();
     let mut seen = 0;
     for allocation in restored.iter(&loaded.world) {
-        let order = allocation.keep_on_hand_for("stone");
+        let order = allocation.order_for("stone").expect("the order came back");
         assert_eq!(order.target, TARGET);
         assert_eq!(order.priority, core_sim::SourcePriority::High);
+        assert_eq!(order.owner, core_sim::OrderOwner::Player);
+        assert_eq!(allocation.unannounced_takeover, vec!["stone".to_string()]);
         seen += 1;
     }
     assert_eq!(seen, marked);

@@ -122,6 +122,50 @@
           "hint": "Turns a keep-on-hand deficit is spread over: a band digging a mined material to its target works at its draw plus deficit / this."
         },
         {
+          "pointer": "/band_orders/starting_target/stone",
+          "label": "Chief's opening stone order",
+          "type": "int",
+          "min": 1,
+          "max": 500,
+          "step": 1,
+          "default": 30,
+          "unit": "units",
+          "hint": "Stone the chief keeps on hand when he arrives, and a claim without an earlier order starts at."
+        },
+        {
+          "pointer": "/band_orders/starting_target/wood",
+          "label": "Chief's opening wood order",
+          "type": "int",
+          "min": 1,
+          "max": 500,
+          "step": 1,
+          "default": 30,
+          "unit": "units",
+          "hint": "Wood the chief keeps on hand when he arrives, once wood is an ordered kind."
+        },
+        {
+          "pointer": "/band_orders/starting_target/food",
+          "label": "Chief's opening food order",
+          "type": "int",
+          "min": 1,
+          "max": 100,
+          "step": 1,
+          "default": 20,
+          "unit": "turns",
+          "hint": "Turns of food the chief keeps in hand when he arrives, once food is an ordered kind."
+        },
+        {
+          "pointer": "/band_orders/starting_target/fodder",
+          "label": "Chief's opening fodder order",
+          "type": "int",
+          "min": 1,
+          "max": 100,
+          "step": 1,
+          "default": 10,
+          "unit": "turns",
+          "hint": "Turns of fodder the chief keeps in hand when he arrives, once fodder is an ordered kind."
+        },
+        {
           "pointer": "/forage/per_worker_biomass_capacity",
           "label": "Forage throughput",
           "type": "float",

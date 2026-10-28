@@ -1680,12 +1680,14 @@ fn extract_input<'a>(
     if room <= crate::extraction::DEPOSIT_EMPTY {
         return;
     }
-    if allocation.keep_owned.contains(material) {
-        // **A MATERIAL A LEADER KEEPS ON HAND IS STAFFED FROM ITS DEFICIT** (#874): at or above the target
+    if let Some(order) = allocation
+        .order_for(material)
+        .filter(|order| order.owner == crate::components::OrderOwner::Chief)
+    {
+        // **A MATERIAL A CHIEF KEEPS ON HAND IS STAFFED FROM ITS DEFICIT** (#874): at or above the target
         // nobody digs (the row's keepers still come, `keep_hands`); below it the crew takes what
         // the band draws plus the deficit spread over `keep_on_hand_refill_turns`.
-        let deficit =
-            allocation.keep_on_hand_for(material).target as f32 - (world.on_hand)(material);
+        let deficit = order.target as f32 - (world.on_hand)(material);
         if deficit <= NO_TAKE_WANTED {
             return;
         }

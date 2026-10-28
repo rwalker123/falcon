@@ -1,80 +1,207 @@
-//! ⛔ **A MINED MATERIAL IS KEPT ON HAND, NOT CREWED** (#874, `docs/plan_labor_at_scale.md` → "Two
-//! interfaces: what grows back, and what is mined").
+//! ⛔ **AN ORDERED MATERIAL IS KEPT ON HAND BY THE CHIEF, OR CREWED BY THE PLAYER** (#860 / #874,
+//! `docs/plan_labor_at_scale.md` -> "Band orders - the chief").
 //!
 //! # ⛔ AN ORDER BELONGS TO A BAND WITH A LEADER
 //!
-//! Before a leader the player crews work directly; a keep-on-hand target is an order, and orders
-//! arrive with a leader (`BandLeadership::leader`). A leaderless band, and a leader band whose target
-//! is zero, crew stone by hand exactly as any other deposit (player-made `Extract` rows, the Max as
-//! the crew). A leader band with a target above zero owns **every** row of that material
-//! ([`LaborAllocation::keep_owned`]): its hand-made rows are taken over, and hand commands on the
-//! material are refused ([`order_refusal`]).
+//! Before a leader the player crews work directly. When a leader arrives, the first managing pass
+//! gives the band an order for every kind `labor_config.band_orders.ordered_kinds` lists that it has
+//! none for: owner [`OrderOwner::Chief`], at `starting_target[kind]`, priority Normal, and one feed
+//! line per band says so ([`LaborAllocation::unannounced_takeover`], drained by
+//! `leadership::announce_chief_takeover`). There is no "none": a target is always above zero, and who
+//! works the kind is the order's owner. A chief-owned material owns **every** row of that material
+//! on the band; hand commands on it are refused ([`order_refusal`]). *Crew it yourself*
+//! ([`release_order`]) hands the chief's rows to the player where they stand; *Hand it to the chief*
+//! ([`claim_order`]) takes everything back over. An order the player released stays the player's -
+//! arrival only creates missing orders.
 //!
-//! A *mined* material is one whose `extraction.json` deposit row names the config's `mined_branch`
-//! (`extraction`: stone today; an ore is a config row). For it the band holds a **keep-on-hand target**
-//! ([`crate::components::KeepOnHand`]) instead of crews: `0` is no order, anything above is the stock
-//! the band wants in its store. The sim owns the dig row — one per band per mined material, on a site
-//! the game picks — and staffs it from the deficit ([`crate::staffing`]'s `extract_input`).
+//! The sim owns the chief's dig row - one per band per ordered material, on a site the game picks -
+//! and staffs it from the deficit ([`crate::staffing`]'s `extract_input`).
 //!
-//! This module owns the three things that are not staffing: the classification
-//! ([`is_mined`]), the site the game picks ([`manage_dig_rows`]) and the refusal the player-facing
-//! crew commands share ([`order_refusal`], and [`leaderless_refusal`] for `keep_on_hand` on a band
-//! with no leader).
+//! This module owns what is not staffing: the site the game picks ([`manage_dig_rows`]), the three
+//! order transitions and the refusals the commands share.
 //!
 //! # The cargo rule: a row never moves or goes while anything of it is out
 //!
 //! A row is **pinned** ([`row_is_pinned`]) while its party is out, a walk carries its cargo home or a
-//! build is declared on its site. A pinned row stays where it is: it is staffed to nobody when the
-//! order is gone, its party walks home through the ordinary cut path, and the next pass that finds it
-//! unpinned moves or removes it. No stand-down code runs here, so there is no path that strands a load.
+//! build is declared on its site. A pinned row stays where it is until the next pass that finds it
+//! unpinned moves or removes it. A release removes no row, so nothing is stranded there either.
 
 use bevy::math::UVec2;
 
 use crate::components::{
-    BandEquipment, BuildSource, LaborAllocation, LaborTarget, DEFAULT_ESCAPEMENT_FLOOR,
-    STRIP_IT_BARE,
+    BandEquipment, BandOrder, BuildSource, LaborAllocation, LaborTarget, OrderOwner,
+    SourcePriority, DEFAULT_ESCAPEMENT_FLOOR, STRIP_IT_BARE,
 };
 use crate::extraction::{
     deposit_payoff, deposit_reachable, tile_deposit_capacity, tile_deposit_regrowth,
     working_default_kit, DEPOSIT_EMPTY, NO_DEPOSIT_GEAR,
 };
 use crate::extraction_config::{ExtractionConfig, NEVER_RENEWS, NO_DEPOSIT};
+use crate::leadership::{BandLeadership, LeaderKind};
 use crate::staffing::CampSite;
 use crate::take_claims::ClaimSources;
 
-/// **IS THIS MATERIAL MINED** - its deposit row names the config's `mined_branch`. Wood (`forestry`)
-/// regrows and keeps its per-site rows, Max and floor.
-pub fn is_mined(config: &ExtractionConfig, material: &str) -> bool {
-    config
-        .deposit(material)
-        .is_some_and(|def| def.branch == config.mined_branch)
+/// **WHO KEEPS A BAND'S ORDERS, AS THE REFUSALS AND THE FEED NAME THEM**: the chief by name, or the
+/// band's elders.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Keeper {
+    /// "Orrin" or "Bitterbrook's elders".
+    pub subject: String,
+    /// Whether the subject takes the plural verb ("keep", "take").
+    pub plural: bool,
 }
 
-/// Every mined material, in id order.
-pub fn mined_materials(config: &ExtractionConfig) -> Vec<String> {
-    config
-        .materials_on(config.mined_branch)
-        .map(|(id, _)| id.to_string())
-        .collect()
+impl Keeper {
+    /// The keeper of a band with a leader, `None` for a leaderless band. `band_name` is the band's
+    /// own name (a council is named for it).
+    pub fn of(leadership: Option<&BandLeadership>, band_name: &str) -> Option<Self> {
+        let leader = leadership?.leader.as_ref()?;
+        Some(match leader.kind {
+            LeaderKind::Chief => Self {
+                subject: leader.name.clone(),
+                plural: false,
+            },
+            LeaderKind::ElderCouncil => Self {
+                subject: format!("{band_name}'s elders"),
+                plural: true,
+            },
+        })
+    }
+
+    /// `verb` conjugated for the subject: "keeps" for a chief, "keep" for the elders.
+    fn verb(&self, singular: &str, plural: &str) -> String {
+        if self.plural { plural } else { singular }.to_string()
+    }
 }
 
-/// **THE REFUSAL FOR A HAND COMMAND ON A MATERIAL A LEADER KEEPS ON HAND** (`assign_labor extract`,
-/// `stop_labor`, `work_priority`), naming the order. `None` when the band crews the material by hand.
+/// **THE REFUSAL FOR A HAND COMMAND ON A KIND A CHIEF KEEPS ON HAND** (`assign_labor extract`,
+/// `stop_labor`, `work_priority`), naming the keeper. `None` when the band crews the kind by hand.
 pub fn order_refusal(
     allocation: &LaborAllocation,
-    material: &str,
-    band_label: &str,
+    kind: &str,
+    keeper: Option<&Keeper>,
 ) -> Option<String> {
-    allocation.keep_owned.contains(material).then(|| {
+    if !allocation.chief_owns(kind) {
+        return None;
+    }
+    let keeper = keeper?;
+    Some(format!(
+        "{} {} {kind} on hand - choose Crew it yourself to work it by hand.",
+        keeper.subject,
+        keeper.verb("keeps", "keep")
+    ))
+}
+
+/// **THE REFUSAL FOR AN ORDER ON A BAND WITH NO LEADER.**
+pub fn leaderless_refusal(kind: &str, band_label: &str) -> String {
+    format!("{band_label} has no leader yet - crew {kind} by hand.")
+}
+
+/// **THE FEED LINE FOR A CHIEF'S ARRIVAL**: what he takes over and keeps. `taken` is the kind and
+/// its opening target, for every kind the arrival created an order for.
+pub fn takeover_line(keeper: &Keeper, band_name: &str, taken: &[(String, u32)]) -> String {
+    let kinds = taken
+        .iter()
+        .map(|(kind, _)| format!("the {kind} digging"))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let keeps = match taken {
+        [(_, target)] => format!("{target} on hand"),
+        _ => {
+            taken
+                .iter()
+                .map(|(kind, target)| format!("{target} {kind}"))
+                .collect::<Vec<_>>()
+                .join(" and ")
+                + " on hand"
+        }
+    };
+    let take = keeper.verb("takes", "take");
+    let keep = keeper.verb("keeps", "keep");
+    if keeper.plural {
+        format!("{} {take} over {kinds} and {keep} {keeps}.", keeper.subject)
+    } else {
         format!(
-            "{band_label}'s leader keeps {material} on hand - set the order to None to crew it by hand."
+            "{} is chief of {band_name} \u{2014} he {take} over {kinds} and {keep} {keeps}.",
+            keeper.subject
+        )
+    }
+}
+
+/// **WHY A `band_order ... set` IS REFUSED**, or `None` when it stands: a kind that takes no order
+/// and a target of zero (there is no "none" - the owner says who works the kind).
+pub fn set_refusal(ordered: bool, kind: &str, target: u32) -> Option<String> {
+    if !ordered {
+        return Some(format!(
+            "{kind} takes no order - it is crewed by hand with assign_labor."
+        ));
+    }
+    (target == 0).then(|| {
+        format!(
+            "A {kind} order needs a target above zero - choose Crew it yourself to work it by hand."
         )
     })
 }
 
-/// **THE REFUSAL FOR AN ORDER ON A BAND WITH NO LEADER.**
-pub fn leaderless_refusal(material: &str, band_label: &str) -> String {
-    format!("{band_label} has no leader yet - crew {material} by hand.")
+/// **SET THE TARGET AND PRIORITY OF A KIND'S ORDER.** A kind with no order yet starts as the
+/// chief's; an existing order keeps its owner.
+pub fn set_order(
+    allocation: &mut LaborAllocation,
+    kind: &str,
+    target: u32,
+    priority: SourcePriority,
+) {
+    allocation
+        .orders
+        .entry(kind.to_string())
+        .and_modify(|order| {
+            order.target = target;
+            order.priority = priority;
+        })
+        .or_insert(BandOrder {
+            target,
+            priority,
+            owner: OrderOwner::Chief,
+        });
+}
+
+/// **CREW IT YOURSELF**: the order's owner becomes the player and the chief's rows of `kind` stay
+/// where they stand and become the player's. Each row's Max is the crew it was staffed with (at
+/// least one, so a never-renewing dig keeps the count the hand-crew rule needs); its priority is
+/// kept. No row is removed, so the cargo rule is not involved. A no-op where the player already
+/// owns it or no order exists.
+pub fn release_order(allocation: &mut LaborAllocation, kind: &str) {
+    let Some(order) = allocation.orders.get_mut(kind) else {
+        return;
+    };
+    if order.owner == OrderOwner::Player {
+        return;
+    }
+    order.owner = OrderOwner::Player;
+    for row in allocation.assignments.iter_mut() {
+        if matches!(&row.target, LaborTarget::Extract { material, .. } if material == kind) {
+            row.max_workers = Some(row.workers.max(MIN_RELEASED_CREW));
+        }
+    }
+}
+
+/// The fewest hands a released row's Max can name: a never-renewing dig is staffed by its count,
+/// and a count of zero is no crew.
+const MIN_RELEASED_CREW: u32 = 1;
+
+/// **HAND IT TO THE CHIEF**: the order's owner becomes the chief at its current target (or
+/// `starting_target` where it never had one) and the next managing pass takes over every row of the
+/// kind exactly as it does on his arrival.
+pub fn claim_order(allocation: &mut LaborAllocation, kind: &str, starting_target: u32) {
+    allocation
+        .orders
+        .entry(kind.to_string())
+        .and_modify(|order| order.owner = OrderOwner::Chief)
+        .or_insert(BandOrder {
+            target: starting_target,
+            priority: SourcePriority::default(),
+            owner: OrderOwner::Chief,
+        });
 }
 
 /// **THE FLOOR AN `extract` ROW CARRIES WHEN NOBODY NAMED ONE** - nothing is left standing on a finite
@@ -198,16 +325,15 @@ fn row_is_pinned(allocation: &LaborAllocation, target: &LaborTarget) -> bool {
     party_out || cargo_walking || build_declared
 }
 
-/// **KEEP A LEADER BAND'S DIG ROWS WHERE ITS ORDERS SAY** - run before staffing, by the turn and by
-/// every command restaff. Per mined material:
+/// **KEEP A CHIEF'S DIG ROWS WHERE HIS ORDERS SAY** - run before staffing, by the turn and by every
+/// command restaff.
 ///
-/// - **active** (the band has a leader and the target is above zero): the order owns the material.
-///   Publish the best site; create the one row on it, or move it to a strictly better site (or off
-///   a worked-out one); retire the band's other rows of that material. The row's priority is the
-///   order's.
-/// - **released** (the material is owned but the order is gone - target 0, or no leader): remove the
-///   rows; the material is handed back to the player once none remains.
-/// - **otherwise** the band crews it by hand and nothing here touches its rows.
+/// - **arrival**: a band with a leader gets an order (owner Chief, `starting_target`, Normal) for
+///   every ordered kind it has none for, and the kinds are queued for the feed line.
+/// - **per chief-owned material**: publish the best site; create the one row on it, or move it to a
+///   strictly better site (or off a worked-out one); retire the band's other rows of that material
+///   (a takeover). The rows' priority is the order's and their Max is cleared.
+/// - a kind the player owns, and a leaderless band, are not touched.
 ///
 /// A pinned row ([`row_is_pinned`]) is never moved or removed.
 pub fn manage_dig_rows(
@@ -217,22 +343,40 @@ pub fn manage_dig_rows(
     candidate_tiles: &dyn Fn(&str) -> Vec<UVec2>,
 ) {
     allocation.last_keep_site.clear();
-    for material in mined_materials(inputs.sources.extraction) {
-        let order = allocation.keep_on_hand_for(&material);
-        let active = has_leader && order.target > 0;
-        if active {
-            allocation.keep_owned.insert(material.clone());
-        } else if !allocation.keep_owned.contains(&material) {
+    if !has_leader {
+        return;
+    }
+    let band_orders = &inputs.sources.labor.band_orders;
+    for kind in &band_orders.ordered_kinds {
+        if allocation.orders.contains_key(kind) {
             continue;
         }
-        let best = if has_leader {
-            candidate_tiles(&material)
-                .into_iter()
-                .filter_map(|tile| rank_site(inputs, tile, &material))
-                .reduce(|best, next| if next.beats(&best) { next } else { best })
-        } else {
-            None
+        let Some(target) = band_orders.starting_target_for(kind) else {
+            continue;
         };
+        allocation.orders.insert(
+            kind.clone(),
+            BandOrder {
+                target,
+                priority: SourcePriority::default(),
+                owner: OrderOwner::Chief,
+            },
+        );
+        allocation.unannounced_takeover.push(kind.clone());
+    }
+    let chief_materials: Vec<(String, BandOrder)> = allocation
+        .orders
+        .iter()
+        .filter(|(kind, order)| {
+            order.owner == OrderOwner::Chief && inputs.sources.extraction.deposit(kind).is_some()
+        })
+        .map(|(kind, order)| (kind.clone(), *order))
+        .collect();
+    for (material, order) in chief_materials {
+        let best = candidate_tiles(&material)
+            .into_iter()
+            .filter_map(|tile| rank_site(inputs, tile, &material))
+            .reduce(|best, next| if next.beats(&best) { next } else { best });
         if let Some(best) = best {
             allocation
                 .last_keep_site
@@ -252,12 +396,11 @@ pub fn manage_dig_rows(
                 })
                 .collect()
         };
-        let wanted = if active { best } else { None };
         // The row that stays is the first one still at a site the order wants.
         let mut stayed: Option<UVec2> = None;
         for (tile, target) in rows_of_material(allocation) {
             let stays = stayed.is_none()
-                && wanted.is_some_and(|best| {
+                && best.is_some_and(|best| {
                     rank_site(inputs, tile, &material).is_some_and(|here| !best.beats(&here))
                 });
             if stays {
@@ -266,7 +409,7 @@ pub fn manage_dig_rows(
                 allocation.drop_source_row(&target);
             }
         }
-        if let (None, Some(best)) = (stayed, wanted) {
+        if let (None, Some(best)) = (stayed, best) {
             let any_left = !rows_of_material(allocation).is_empty();
             if !any_left {
                 if let Some((working, ground)) = inputs.sources.working(best.tile, &material) {
@@ -294,9 +437,6 @@ pub fn manage_dig_rows(
                 row.priority = order.priority;
                 row.max_workers = None;
             }
-        }
-        if !active && rows_of_material(allocation).is_empty() {
-            allocation.keep_owned.remove(&material);
         }
     }
 }

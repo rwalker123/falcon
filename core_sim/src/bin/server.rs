@@ -1711,14 +1711,13 @@ enum Command {
         source: BuildSourceRef,
         level: String,
     },
-    /// **Keep a mined material on hand** (#874) — the band's target and dig priority for one mined
-    /// material. See `handle_keep_on_hand`.
-    KeepOnHand {
+    /// **A band order** (#860) — set, release (Crew it yourself) or claim (Hand it to the chief) the
+    /// order for one kind. See `handle_band_order`.
+    BandOrder {
         faction: FactionId,
         band_id: u64,
-        material: String,
-        target: u32,
-        priority: String,
+        kind: String,
+        action: sim_runtime::BandOrderAction,
     },
     /// **Stop a staffed row** (#871) — remove the band's row for one source, or its Roadwork pool.
     /// See `handle_stop_labor`.
@@ -5313,7 +5312,24 @@ fn kept_on_hand_refusal(
         return None;
     };
     let allocation = app.world.get::<LaborAllocation>(band.entity)?;
-    core_sim::keep_on_hand::order_refusal(allocation, material, &band.label)
+    let keeper = band_keeper(app, band);
+    core_sim::keep_on_hand::order_refusal(allocation, material, keeper.as_ref())
+}
+
+/// **WHO KEEPS THIS BAND'S ORDERS** - its chief by name, or its elders named for the band. `None`
+/// for a band with no leader. The band's own name is used where it has one, else its label.
+fn band_keeper(
+    app: &bevy::prelude::App,
+    band: &SelectedBand,
+) -> Option<core_sim::keep_on_hand::Keeper> {
+    let name = app
+        .world
+        .get::<BandName>(band.entity)
+        .map_or_else(|| band.label.clone(), |name| name.0.clone());
+    core_sim::keep_on_hand::Keeper::of(
+        app.world.get::<core_sim::BandLeadership>(band.entity),
+        &name,
+    )
 }
 
 /// **What this row runs on when the player names no kit** — the herd's own default for a Hunt on a
@@ -11040,53 +11056,26 @@ fn handle_unqueue(app: &mut bevy::prelude::App, faction: FactionId, source: Buil
     );
 }
 
-/// **STOP A STAFFED ROW** (#871) - `stop_labor <faction> <band> <source>` removes the band's row for
-/// the source (its work party is stood down and walks home, its declared build goes with it), or its
-/// Roadwork pool for the lone token `roadwork`. It exists because `assign_labor`'s count is the
-/// player's Max now and `0` means *no Max*, so a count can no longer end a staffed row.
-/// **KEEP A MINED MATERIAL ON HAND** (#874) - `keep_on_hand <faction> <band> <material> <target>
-/// <priority>`. Stores the band's order and restaffs at once, so the dig row (placed by the sim,
-/// `core_sim::keep_on_hand`) and its crew show on the next frame. A material that regrows is
-/// refused: it keeps its per-site `assign_labor extract` rows.
-fn handle_keep_on_hand(
+/// **A BAND ORDER** (#860) - `band_order <faction> <band> <kind> set <target> <priority>` |
+/// `release` | `claim`. `set` stores the target and priority, `release` is Crew it yourself (the
+/// chief's rows stay and become the player's), `claim` is Hand it to the chief. Each restaffs at
+/// once, so the dig row (placed by the sim, `core_sim::keep_on_hand`) and its crew show on the next
+/// frame. Refused for a band with no leader, a kind that takes no order and a target of zero.
+fn handle_band_order(
     app: &mut bevy::prelude::App,
     faction: FactionId,
     band_id: u64,
-    material: &str,
-    target: u32,
-    priority: &str,
+    kind: &str,
+    action: sim_runtime::BandOrderAction,
 ) {
-    let extraction = app.world.resource::<ExtractionConfigHandle>().get();
-    if !core_sim::keep_on_hand::is_mined(&extraction, material) {
-        emit_command_failure(
-            app,
-            CommandEventKind::Extraction,
-            faction,
-            format!("{material} is not a mined material - it is crewed with assign_labor extract."),
-        );
-        return;
-    }
-    let Some(priority) = SourcePriority::from_token(priority.trim().to_ascii_lowercase().as_str())
-    else {
-        emit_command_failure(
-            app,
-            CommandEventKind::Extraction,
-            faction,
-            format!(
-                "Unknown work priority '{}' - expected {}, {} or {}.",
-                priority.trim(),
-                SourcePriority::High.as_str(),
-                SourcePriority::Normal.as_str(),
-                SourcePriority::Low.as_str()
-            ),
-        );
-        return;
-    };
+    use sim_runtime::BandOrderAction;
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    let ordered = labor.band_orders.is_ordered(kind);
     let Some(band) = select_starting_band(
         app,
         faction,
         Some(band_id),
-        "keep_on_hand",
+        "band_order",
         CommandEventKind::Extraction,
     ) else {
         return;
@@ -11100,38 +11089,111 @@ fn handle_keep_on_hand(
             app,
             CommandEventKind::Extraction,
             faction,
-            core_sim::keep_on_hand::leaderless_refusal(material, &band.label),
+            core_sim::keep_on_hand::leaderless_refusal(kind, &band.label),
         );
         return;
     }
-    band_allocation_mut(app, band.entity).keep_on_hand.insert(
-        material.to_string(),
-        core_sim::KeepOnHand { target, priority },
-    );
+    let (action_word, summary) = match action {
+        BandOrderAction::Set { target, priority } => {
+            if let Some(reason) = core_sim::keep_on_hand::set_refusal(ordered, kind, target) {
+                emit_command_failure(app, CommandEventKind::Extraction, faction, reason);
+                return;
+            }
+            let Some(priority) =
+                SourcePriority::from_token(priority.trim().to_ascii_lowercase().as_str())
+            else {
+                emit_command_failure(
+                    app,
+                    CommandEventKind::Extraction,
+                    faction,
+                    format!(
+                        "Unknown work priority '{}' - expected {}, {} or {}.",
+                        priority.trim(),
+                        SourcePriority::High.as_str(),
+                        SourcePriority::Normal.as_str(),
+                        SourcePriority::Low.as_str()
+                    ),
+                );
+                return;
+            };
+            core_sim::keep_on_hand::set_order(
+                &mut band_allocation_mut(app, band.entity),
+                kind,
+                target,
+                priority,
+            );
+            (
+                "set",
+                format!(
+                    "{}: keeping {target} {kind} on hand (priority {})",
+                    band.label,
+                    priority.as_str()
+                ),
+            )
+        }
+        BandOrderAction::Release | BandOrderAction::Claim => {
+            let claiming = matches!(action, BandOrderAction::Claim);
+            let opening = labor.band_orders.starting_target_for(kind);
+            let held = app
+                .world
+                .get::<LaborAllocation>(band.entity)
+                .is_some_and(|allocation| allocation.order_for(kind).is_some());
+            if !ordered || (!claiming && !held) || (claiming && !held && opening.is_none()) {
+                emit_command_failure(
+                    app,
+                    CommandEventKind::Extraction,
+                    faction,
+                    format!("{kind} takes no order - it is crewed by hand with assign_labor."),
+                );
+                return;
+            }
+            let mut allocation = band_allocation_mut(app, band.entity);
+            if claiming {
+                core_sim::keep_on_hand::claim_order(
+                    &mut allocation,
+                    kind,
+                    opening.unwrap_or_default(),
+                );
+                (
+                    "claim",
+                    format!("{}: the chief keeps {kind} on hand", band.label),
+                )
+            } else {
+                core_sim::keep_on_hand::release_order(&mut allocation, kind);
+                (
+                    "release",
+                    format!("{}: {kind} is crewed by hand", band.label),
+                )
+            }
+        }
+    };
     restaff_and_reseed(app, band.entity);
     let tick = app.world.resource::<SimulationTick>().0;
     info!(
         target: "shadow_scale::command",
-        command = "keep_on_hand",
+        command = "band_order",
         faction = %faction.0,
         band = band_id,
-        material = %material,
-        keep = target,
-        "command.keep_on_hand.applied"
+        kind = %kind,
+        action = action_word,
+        "command.band_order.applied"
     );
     push_command_event(
         app,
         tick,
         CommandEventKind::Extraction,
         faction,
-        format!("{}: keeping {target} {material} on hand", band.label),
+        summary,
         Some(format!(
-            "status=applied action=keep_on_hand material={material} target={target} priority={} band={band_id}",
-            priority.as_str()
+            "status=applied action=band_order order={action_word} kind={kind} band={band_id}"
         )),
     );
 }
 
+/// **STOP A STAFFED ROW** (#871) - `stop_labor <faction> <band> <source>` removes the band's row for
+/// the source (its work party is stood down and walks home, its declared build goes with it), or its
+/// Roadwork pool for the lone token `roadwork`. It exists because `assign_labor`'s count is the
+/// player's Max now and `0` means *no Max*, so a count can no longer end a staffed row.
 fn handle_stop_labor(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -12514,18 +12576,16 @@ fn command_from_payload(
             },
             roadwork,
         }),
-        ProtoCommandPayload::KeepOnHand {
+        ProtoCommandPayload::BandOrder {
             faction_id,
             band_id,
-            material,
-            target,
-            priority,
-        } => Some(Command::KeepOnHand {
+            kind,
+            action,
+        } => Some(Command::BandOrder {
             faction: FactionId(faction_id),
             band_id,
-            material,
-            target,
-            priority,
+            kind,
+            action,
         }),
         ProtoCommandPayload::WorkPriority {
             faction_id,
@@ -13458,7 +13518,7 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::Abandon { faction, .. } => Some((*faction, "abandon")),
         Command::Unqueue { faction, .. } => Some((*faction, "unqueue")),
         Command::StopLabor { faction, .. } => Some((*faction, "stop_labor")),
-        Command::KeepOnHand { faction, .. } => Some((*faction, "keep_on_hand")),
+        Command::BandOrder { faction, .. } => Some((*faction, "band_order")),
         Command::WorkPriority { faction, .. } => Some((*faction, "work_priority")),
         Command::BenchPriority { faction, .. } => Some((*faction, "bench_priority")),
         Command::BenchAuto { faction, .. } => Some((*faction, "bench_auto")),
@@ -13947,14 +14007,13 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
         } => {
             handle_work_priority(app, faction, band_id, source, level);
         }
-        Command::KeepOnHand {
+        Command::BandOrder {
             faction,
             band_id,
-            material,
-            target,
-            priority,
+            kind,
+            action,
         } => {
-            handle_keep_on_hand(app, faction, band_id, &material, target, &priority);
+            handle_band_order(app, faction, band_id, &kind, action);
         }
         Command::ExtendPen {
             faction,
@@ -30330,12 +30389,13 @@ mod tests {
         assert_eq!(rows(&app), 1, "a Max of one lands the row");
     }
 
-    /// **A KEEP-ON-HAND ORDER BELONGS TO A BAND WITH A LEADER** (#874). A leaderless band crews stone
-    /// by hand and is refused `keep_on_hand`; a leader band at target 0 crews by hand too; at a
-    /// target above zero the order owns the material, so hand commands on it are refused naming the
-    /// order, and the hand-made row is taken over; setting the order back to 0 releases the rows.
+    /// **A BAND ORDER BELONGS TO A BAND WITH A LEADER** (#860). A leaderless band crews stone by hand
+    /// and is refused `band_order`; once a chief arrives he takes the stone over (the hand row is
+    /// his), hand commands are refused naming him, a `set` of zero or on a kind that takes no order
+    /// is refused, *Crew it yourself* gives the row to the player where it stands and hand commands
+    /// work again, and *Hand it to the chief* takes it back.
     #[test]
-    fn a_keep_on_hand_order_needs_a_leader_and_owns_the_material_while_it_stands() {
+    fn a_band_order_needs_a_leader_and_the_chief_owns_the_material_until_it_is_released() {
         let mut app = build_test_app();
         app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
         let faction = FactionId(0);
@@ -30351,16 +30411,24 @@ mod tests {
         };
 
         // Leaderless: stone is crewed by hand, and an order is refused.
-        send_command_line(&mut app, "keep_on_hand 0 7 stone 60 high");
+        send_command_line(&mut app, "band_order 0 7 stone set 60 high");
         assert!(
             extraction_failure_contains(&app, "has no leader yet"),
             "{:?}",
             extraction_failure_reasons(&app)
         );
+        send_command_line(&mut app, "band_order 0 7 stone release");
+        assert!(extraction_failure_contains(&app, "has no leader yet"));
         assign_extract(&mut app, faction, WORKING, "stone", None, 3);
         assert_eq!(rows(&app), 1, "a leaderless band crews stone by hand");
+        assert!(app
+            .world
+            .get::<LaborAllocation>(band)
+            .unwrap()
+            .orders
+            .is_empty());
 
-        // A leader at target 0 still crews by hand.
+        // A chief arrives; the managing pass (any restaff) gives him the stone at its opening target.
         app.world.entity_mut(band).insert(core_sim::BandLeadership {
             leader: Some(core_sim::BandLeader {
                 name: "Ash".to_string(),
@@ -30369,36 +30437,87 @@ mod tests {
             }),
             ..Default::default()
         });
-        send_command_line(&mut app, "keep_on_hand 0 7 wood 10 normal");
-        assert!(extraction_failure_contains(&app, "not a mined material"));
-        send_command_line(&mut app, "keep_on_hand 0 7 stone 0 normal");
-        assign_extract(&mut app, faction, WORKING, "stone", None, 2);
-        assert_eq!(rows(&app), 1, "a leader band at target 0 crews by hand");
-
-        // At a target the order owns the material.
-        send_command_line(&mut app, "keep_on_hand 0 7 stone 60 high");
+        send_command_line(&mut app, "band_order 0 7 wood set 10 normal");
+        assert!(extraction_failure_contains(&app, "takes no order"));
+        send_command_line(&mut app, "band_order 0 7 stone set 0 normal");
+        assert!(
+            extraction_failure_contains(&app, "needs a target above zero"),
+            "{:?}",
+            extraction_failure_reasons(&app)
+        );
+        send_command_line(&mut app, "band_order 0 7 stone set 60 high");
         let allocation = app.world.get::<LaborAllocation>(band).unwrap();
-        assert_eq!(allocation.keep_on_hand_for("stone").target, 60);
-        assert!(allocation.keep_owned.contains("stone"));
-        assert_eq!(allocation.assignments.len(), 1, "one row: the order's");
+        let order = allocation.order_for("stone").expect("the stone order");
+        assert_eq!(order.target, 60);
+        assert_eq!(order.owner, core_sim::OrderOwner::Chief);
+        assert_eq!(allocation.assignments.len(), 1, "one row: the chief's");
         assert_eq!(allocation.assignments[0].priority, SourcePriority::High);
         assert!(allocation.assignments[0].max_workers.is_none());
+        let chief_crew = allocation.assignments[0].workers;
+        assert!(chief_crew > 0, "**LIVENESS**: the chief sends diggers");
+
+        // Hand commands on a chief-owned kind are refused naming him.
         assign_extract(&mut app, faction, WORKING, "stone", None, 3);
         assert!(
-            extraction_failure_contains(&app, "leader keeps stone on hand"),
+            extraction_failure_contains(&app, "Ash keeps stone on hand - choose Crew it yourself"),
             "{:?}",
             extraction_failure_reasons(&app)
         );
         send_command_line(&mut app, "stop_labor 0 7 1 1 stone");
         send_command_line(&mut app, "work_priority 0 7 1 1 stone low");
-        assert!(extraction_failure_contains(&app, "set the order to None"));
+        assert!(extraction_failure_contains(&app, "Crew it yourself"));
         assert_eq!(rows(&app), 1, "refused commands changed nothing");
 
-        // The order goes back to None: its rows are released and the player crews from scratch.
-        send_command_line(&mut app, "keep_on_hand 0 7 stone 0 normal");
-        assert_eq!(rows(&app), 0, "the order's rows are released");
+        // Crew it yourself: the row stays where it is, with the crew as its Max.
+        send_command_line(&mut app, "band_order 0 7 stone release");
+        let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+        assert_eq!(
+            allocation.order_for("stone").unwrap().owner,
+            core_sim::OrderOwner::Player
+        );
+        assert_eq!(allocation.assignments.len(), 1, "no row removed");
+        assert_eq!(
+            allocation.assignments[0].max_workers,
+            Some(chief_crew.max(1))
+        );
         assign_extract(&mut app, faction, WORKING, "stone", None, 2);
-        assert_eq!(rows(&app), 1, "the player crews it again by hand");
+        assert_eq!(rows(&app), 1, "the player crews it by hand now");
+        assert_eq!(
+            app.world.get::<LaborAllocation>(band).unwrap().assignments[0].max_workers,
+            Some(2)
+        );
+
+        // Hand it to the chief: his again at the target it held, the Max cleared.
+        send_command_line(&mut app, "band_order 0 7 stone claim");
+        let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+        let order = allocation.order_for("stone").unwrap();
+        assert_eq!(order.owner, core_sim::OrderOwner::Chief);
+        assert_eq!(order.target, 60);
+        assert_eq!(allocation.assignments.len(), 1);
+        assert!(allocation.assignments[0].max_workers.is_none());
+    }
+
+    /// A council keeps the kind in the elders' name, and the verb agrees.
+    #[test]
+    fn an_elders_council_is_named_in_the_refusal() {
+        let keeper = core_sim::keep_on_hand::Keeper::of(
+            Some(&core_sim::BandLeadership {
+                leader: Some(core_sim::BandLeader {
+                    name: "Ismay".to_string(),
+                    kind: core_sim::LeaderKind::ElderCouncil,
+                    since_turn: 0,
+                }),
+                ..Default::default()
+            }),
+            "Bitterbrook",
+        )
+        .expect("a council keeps");
+        let mut allocation = LaborAllocation::default();
+        core_sim::keep_on_hand::set_order(&mut allocation, "stone", 30, SourcePriority::Normal);
+        assert_eq!(
+            core_sim::keep_on_hand::order_refusal(&allocation, "stone", Some(&keeper)).as_deref(),
+            Some("Bitterbrook's elders keep stone on hand - choose Crew it yourself to work it by hand.")
+        );
     }
 
     /// **STONE TAKES A FLOOR AT THE COMMAND BOUNDARY, AND ON A RATE-0 BODY IT IS INERT**

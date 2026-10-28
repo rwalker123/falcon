@@ -457,11 +457,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // it is this dict's `material_store`. The dig row itself rides `labor_assignments` as an
     // ordinary `extract` row. Listed for every mined material the faction has found rock of or holds
     // a nonzero target for; the key is always present.
-    let mut keep_on_hand = VarArray::new();
-    if let Some(rows) = cohort.keepOnHand() {
+    let mut band_orders = VarArray::new();
+    if let Some(rows) = cohort.bandOrders() {
         for row in rows.iter() {
             let mut entry = VarDictionary::new();
-            let _ = entry.insert("material", row.material().unwrap_or(""));
+            let _ = entry.insert("kind", row.kind().unwrap_or(""));
             let _ = entry.insert("target", i64::from(row.target()));
             let _ = entry.insert(
                 "priority",
@@ -471,14 +471,16 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                     _ => "normal",
                 },
             );
+            let _ = entry.insert("chief_owned", row.chiefOwned());
             let _ = entry.insert("draw", f64::from(row.draw()));
+            let _ = entry.insert("on_hand", f64::from(row.onHand()));
             let _ = entry.insert("has_site", row.hasSite());
             let _ = entry.insert("site_x", i64::from(row.siteX()));
             let _ = entry.insert("site_y", i64::from(row.siteY()));
-            keep_on_hand.push(&entry.to_variant());
+            band_orders.push(&entry.to_variant());
         }
     }
-    let _ = dict.insert("keep_on_hand", &keep_on_hand);
+    let _ = dict.insert("band_orders", &band_orders);
     // Predators Phase 3 (raid legibility pair, appended after fodderStore in the schema):
     //   raid_radius  — echo of `fauna.predators.raid_radius`: how close (odd-r hex distance) an
     //                  aggressive carnivore herd must be to raid this band's larder. The band panel

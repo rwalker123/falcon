@@ -6134,18 +6134,37 @@ pub enum ExcessRejoining {
     Discard,
 }
 
-/// **A BAND'S KEEP-ON-HAND ORDER FOR ONE MINED MATERIAL** (#874): the stock it wants in its store and
-/// the priority its dig row ranks at. A `target` of `0` is no order.
+/// **WHO WORKS AN ORDERED KIND** (`docs/plan_labor_at_scale.md` -> "Band orders - the chief"): the
+/// band's leader, who places the rows and staffs them to keep the target, or the player, who crews
+/// the kind by hand exactly as a leaderless band does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum OrderOwner {
+    #[default]
+    Chief,
+    Player,
+}
+
+/// **A BAND'S ORDER FOR ONE KIND** (#860): the stock it wants kept and the priority its work ranks
+/// at. There is no "none" - a target of zero is refused - so who works the kind is [`Self::owner`].
+/// `target` is in units for a material and in turns for food and fodder.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
-pub struct KeepOnHand {
+pub struct BandOrder {
     pub target: u32,
     pub priority: SourcePriority,
+    pub owner: OrderOwner,
 }
 
 impl LaborAllocation {
-    /// The order this band holds for `material`: `target 0` where none was given.
-    pub fn keep_on_hand_for(&self, material: &str) -> KeepOnHand {
-        self.keep_on_hand.get(material).copied().unwrap_or_default()
+    /// The order this band holds for `kind`, whoever owns it.
+    pub fn order_for(&self, kind: &str) -> Option<&BandOrder> {
+        self.orders.get(kind)
+    }
+
+    /// Whether the leader works `kind`: the band holds an order for it and the chief owns it.
+    pub fn chief_owns(&self, kind: &str) -> bool {
+        self.orders
+            .get(kind)
+            .is_some_and(|order| order.owner == OrderOwner::Chief)
     }
 
     /// **THE BAND'S PER-TURN DRAW ON `material`** - the sum of the three seams that spend it: the
@@ -6351,15 +6370,15 @@ pub struct LaborAllocation {
     /// **WHAT THE BAND'S FUNDED BUILDS DREW IN MATERIAL THIS TURN**, per material id - the third seam
     /// of [`Self::material_draw`], written by `advance_labor_allocation` from the builds' wants.
     pub last_build_material_draw: std::collections::BTreeMap<String, f32>,
-    /// **THE KEEP-ON-HAND ORDERS** (#874): per mined material, how much the band keeps in its store and
-    /// the priority of its dig row. Absent is `target 0`, which is no order. Intent: inside equality.
-    pub keep_on_hand: std::collections::BTreeMap<String, KeepOnHand>,
-    /// **THE MATERIALS WHOSE ROWS ARE A LEADER'S ORDER'S** (#874): a leader band holding a keep-on-hand
-    /// target above zero owns every row of that material, and keeps owning them until the order is
-    /// released and no row remains (a row with cargo out is released once it lands). Written by
-    /// `keep_on_hand::manage_dig_rows`; a material absent here is crewed by hand. Saved: the release
-    /// is a fact that spans turns.
-    pub keep_owned: std::collections::BTreeSet<String>,
+    /// **THE BAND'S ORDERS** (#860), per kind id (`"food"`, `"fodder"` or a material id): the target,
+    /// the priority and who works the kind. Intent: inside equality, saved. A kind absent here has
+    /// no order and is crewed by hand.
+    pub orders: std::collections::BTreeMap<String, BandOrder>,
+    /// **THE KINDS THE CHIEF TOOK OVER THAT THE EVENT FEED HAS NOT SAID YET**: written by
+    /// `keep_on_hand::manage_dig_rows` when the leader's arrival creates orders, drained by
+    /// `leadership::announce_chief_takeover` into one line per band. Saved: the announcement can
+    /// span a command.
+    pub unannounced_takeover: Vec<String>,
     /// **WHERE THE GAME PICKED TO DIG**, per mined material - the best-ranked site this turn's
     /// management found, whether or not a row stands on it. Published beside the order; derived
     /// telemetry outside equality.
@@ -6530,8 +6549,7 @@ pub struct LaborAllocation {
 impl PartialEq for LaborAllocation {
     fn eq(&self, other: &Self) -> bool {
         self.assignments == other.assignments
-            && self.keep_on_hand == other.keep_on_hand
-            && self.keep_owned == other.keep_owned
+            && self.orders == other.orders
             && self.upkeep_fund_mode == other.upkeep_fund_mode
             && self.builds == other.builds
     }

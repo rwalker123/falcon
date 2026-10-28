@@ -155,7 +155,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 58 | Cohesion (#700): `PopulationCohort` gained `last_cohesion` (`CohesionReading`: the band's opening head-count and the cohesion ceiling the cohesion morale term was priced from, published as `PopulationCohortState.cohesionHeadcount` / `cohesionCeiling`), and `MoraleContributions` gained `cohesion` and `fresh_water` (published as `moraleCohesion` / `moraleFreshWater`) — both ride `BandRecord::cohort`, so a save and a rollback keep the reading the frame shows. |
 /// | 59 | The storage pit is its band's second larder (#709): `TileImprovement` gained `owner` (the band that owns it as a store), `contents` (the aged food lots it holds) and `spoiled_this_turn`; `PopulationCohort` gained `last_food_into_store` / `last_food_from_store` (the food ledger's two store terms). The improvement registry rides `SimState::tile_improvements` and the cohort rides `BandRecord::cohort`, so a version-58 blob does not decode |
 /// | 60 | Mined materials are kept on hand (#874): `LaborAllocation` gained `keep_on_hand` (the band's per-material target and priority), `last_road_material_bill`, `last_build_material_draw` (two seams of the band's material draw, read by next turn's staffing) and `last_keep_site`; it rides `BandRecord`, so a version-59 blob does not decode |
-pub const SAVE_FORMAT_VERSION: u32 = 60;
+/// | 61 | Band orders (#860): `LaborAllocation::keep_on_hand` and `keep_owned` are replaced by `orders` (per kind id, a `BandOrder`: target, priority and `OrderOwner` Chief or Player) and gained `unannounced_takeover` (the kinds a chief's arrival took over that the feed has not said yet); it rides `BandRecord`, so a version-60 blob does not decode |
+pub const SAVE_FORMAT_VERSION: u32 = 61;
 
 /// gzip level for the payload document.
 ///

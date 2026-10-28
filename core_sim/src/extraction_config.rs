@@ -167,12 +167,6 @@ pub struct ExtractionConfig {
     /// capacity, where the logistic term is zero or negative, and a cleared wood would never come
     /// back at all.
     pub seed_fraction: f32,
-    /// **THE BRANCH WHOSE MATERIALS ARE MINED** (#874): a deposit whose `branch` is this is kept on
-    /// hand by a target instead of crewed (`crate::keep_on_hand`), because it does not grow back.
-    /// Named here, once, so the engine classifies by the deposit row's own `branch` and never by a
-    /// material or a shipped branch id; a new ore is a deposit row naming this branch. Validated to
-    /// be a branch at least one deposit names - a typo would otherwise silently mine nothing.
-    pub mined_branch: BranchId,
     /// Every deposit, by material id. A `BTreeMap` so iteration — and therefore any published
     /// catalogue, and the order two deposits on one tile are worked in — is stable.
     pub deposits: BTreeMap<String, DepositDef>,
@@ -227,16 +221,6 @@ impl ExtractionConfig {
     }
 
     fn validate(&self) -> Result<(), ExtractionConfigError> {
-        if !self
-            .deposits()
-            .any(|(_, def)| def.branch == self.mined_branch)
-        {
-            return Err(ExtractionConfigError::Invalid {
-                field: "mined_branch".to_string(),
-                constraint: "name a branch at least one deposit row works".to_string(),
-                value: self.mined_branch.to_string(),
-            });
-        }
         if !self.seed_fraction.is_finite()
             || !(NO_SEED..SEED_IS_THE_WHOLE_DEPOSIT).contains(&self.seed_fraction)
         {

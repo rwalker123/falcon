@@ -57,6 +57,12 @@ gets one — once, permanently.
 - **Feed**: a `CommandEventKind::LeaderEmerged` entry `.with_band(band)`, detail
   `kind=chief|elder_council name=<name>`, label "Orrin is chief" / "The elders' council forms; Orrin
   speaks for it".
+- **Arrival takeover** (#860): the first managing pass over a band with a leader gives it an order for
+  every kind in `labor_config.json` -> `band_orders.ordered_kinds` (owner Chief, `starting_target`),
+  and `advance_leadership` ends by draining `LaborAllocation::unannounced_takeover` into one
+  `Extraction`-kind feed line per band, `.with_band(band)`: "Orrin is chief of Bitterbrook — he takes
+  over the stone digging and keeps 30 on hand." / "Bitterbrook's elders take over ...". Mechanism:
+  `work-party.md` -> "A chief keeps an ordered material on hand".
 
 ## Config
 

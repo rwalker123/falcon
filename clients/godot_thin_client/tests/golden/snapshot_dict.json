@@ -6896,6 +6896,41 @@
       "activity": "populations[0].activity",
       "band_id": 141,
       "band_move_tiles_per_turn": 65.150002,
+      "band_orders": [
+        {
+          "chief_owned": true,
+          "draw": 108.489998,
+          "has_site": false,
+          "kind": "populations[0].band_orders[0].kind",
+          "on_hand": 13.97,
+          "priority": "normal",
+          "site_x": 129,
+          "site_y": 140,
+          "target": 38
+        },
+        {
+          "chief_owned": false,
+          "draw": 46.860001,
+          "has_site": true,
+          "kind": "populations[0].band_orders[1].kind",
+          "on_hand": 6.61,
+          "priority": "normal",
+          "site_x": 24,
+          "site_y": 13,
+          "target": 87
+        },
+        {
+          "chief_owned": false,
+          "draw": 36.369999,
+          "has_site": true,
+          "kind": "populations[0].band_orders[2].kind",
+          "on_hand": 102.989998,
+          "priority": "normal",
+          "site_x": 59,
+          "site_y": 70,
+          "target": 144
+        }
+      ],
       "belief_anchor_weight": 30.57,
       "belief_anchor_x": 78,
       "belief_anchor_y": 67,
@@ -7842,35 +7877,6 @@
       "independence_grievance_threshold": 59.740002,
       "is_expedition": true,
       "is_traveling": false,
-      "keep_on_hand": [
-        {
-          "draw": 44.540001,
-          "has_site": true,
-          "material": "populations[0].keep_on_hand[0].material",
-          "priority": "normal",
-          "site_x": 159,
-          "site_y": 170,
-          "target": 172
-        },
-        {
-          "draw": 17.469999,
-          "has_site": false,
-          "material": "populations[0].keep_on_hand[1].material",
-          "priority": "normal",
-          "site_x": 14,
-          "site_y": 3,
-          "target": 165
-        },
-        {
-          "draw": 92.550003,
-          "has_site": false,
-          "material": "populations[0].keep_on_hand[2].material",
-          "priority": "normal",
-          "site_x": 181,
-          "site_y": 192,
-          "target": 42
-        }
-      ],
       "kit_id": "populations[0].kit_id",
       "kit_item_conditions": [
         {
@@ -9458,6 +9464,41 @@
       "activity": "populations[1].activity",
       "band_id": 42,
       "band_move_tiles_per_turn": 61.23,
+      "band_orders": [
+        {
+          "chief_owned": true,
+          "draw": 86.760002,
+          "has_site": false,
+          "kind": "populations[1].band_orders[0].kind",
+          "on_hand": 3.83,
+          "priority": "normal",
+          "site_x": 186,
+          "site_y": 175,
+          "target": 25
+        },
+        {
+          "chief_owned": false,
+          "draw": 110.93,
+          "has_site": true,
+          "kind": "populations[1].band_orders[1].kind",
+          "on_hand": 54.209999,
+          "priority": "normal",
+          "site_x": 163,
+          "site_y": 174,
+          "target": 168
+        },
+        {
+          "chief_owned": false,
+          "draw": 65.639999,
+          "has_site": true,
+          "kind": "populations[1].band_orders[2].kind",
+          "on_hand": 99.610001,
+          "priority": "normal",
+          "site_x": 120,
+          "site_y": 109,
+          "target": 79
+        }
+      ],
       "belief_anchor_weight": 26.4,
       "belief_anchor_x": 49,
       "belief_anchor_y": 60,
@@ -10404,35 +10445,6 @@
       "independence_grievance_threshold": 24.59,
       "is_expedition": true,
       "is_traveling": false,
-      "keep_on_hand": [
-        {
-          "draw": 93.419998,
-          "has_site": true,
-          "material": "populations[1].keep_on_hand[0].material",
-          "priority": "normal",
-          "site_x": 174,
-          "site_y": 163,
-          "target": 149
-        },
-        {
-          "draw": 7.47,
-          "has_site": false,
-          "material": "populations[1].keep_on_hand[1].material",
-          "priority": "normal",
-          "site_x": 47,
-          "site_y": 58,
-          "target": 196
-        },
-        {
-          "draw": 53.419998,
-          "has_site": false,
-          "material": "populations[1].keep_on_hand[2].material",
-          "priority": "normal",
-          "site_x": 196,
-          "site_y": 185,
-          "target": 163
-        }
-      ],
       "kit_id": "populations[1].kit_id",
       "kit_item_conditions": [
         {
@@ -11964,6 +11976,41 @@
       "activity": "populations[2].activity",
       "band_id": 87,
       "band_move_tiles_per_turn": 100.839996,
+      "band_orders": [
+        {
+          "chief_owned": true,
+          "draw": 35.849998,
+          "has_site": false,
+          "kind": "populations[2].band_orders[0].kind",
+          "on_hand": 28.99,
+          "priority": "normal",
+          "site_x": 147,
+          "site_y": 158,
+          "target": 96
+        },
+        {
+          "chief_owned": false,
+          "draw": 18.42,
+          "has_site": true,
+          "kind": "populations[2].band_orders[1].kind",
+          "on_hand": 18.25,
+          "priority": "normal",
+          "site_x": 146,
+          "site_y": 135,
+          "target": 9
+        },
+        {
+          "chief_owned": false,
+          "draw": 16.809999,
+          "has_site": true,
+          "kind": "populations[2].band_orders[2].kind",
+          "on_hand": 53.029999,
+          "priority": "normal",
+          "site_x": 153,
+          "site_y": 164,
+          "target": 6
+        }
+      ],
       "belief_anchor_weight": 10.31,
       "belief_anchor_x": 124,
       "belief_anchor_y": 113,
@@ -12910,35 +12957,6 @@
       "independence_grievance_threshold": 50.919998,
       "is_expedition": false,
       "is_traveling": true,
-      "keep_on_hand": [
-        {
-          "draw": 7.72,
-          "has_site": true,
-          "material": "populations[2].keep_on_hand[0].material",
-          "priority": "normal",
-          "site_x": 33,
-          "site_y": 44,
-          "target": 150
-        },
-        {
-          "draw": 91.290001,
-          "has_site": false,
-          "material": "populations[2].keep_on_hand[1].material",
-          "priority": "normal",
-          "site_x": 24,
-          "site_y": 13,
-          "target": 55
-        },
-        {
-          "draw": 30.9,
-          "has_site": false,
-          "material": "populations[2].keep_on_hand[2].material",
-          "priority": "normal",
-          "site_x": 3,
-          "site_y": 14,
-          "target": 104
-        }
-      ],
       "kit_id": "populations[2].kit_id",
       "kit_item_conditions": [
         {

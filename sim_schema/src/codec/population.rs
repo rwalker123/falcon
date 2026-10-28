@@ -12,15 +12,15 @@ use crate::state::campaign::{OpeningKitDefaultState, OpeningMaterialDefaultState
 use crate::state::population::{
     AccessibleStockpileEntryState, AccessibleStockpileState, BandImprovementState,
     BandKitCrewState, BandKitTiersState, BandLoadoutSupplyRowState, BandLoadoutWindowState,
-    BenchKitOrderState, BenchOrderState, BenchState, BreedingMemberState, BreedingPeopleState,
-    CharacteristicReadingState, CohortStoreState, CraftOfferState, CraftSuggestionSourceState,
-    CraftSuggestionState, CulturePressureState, DrawnInputState, EquipmentBatchState,
-    GenerationState, HarvestTaskState, KeepOnHandState, KeepingMealState, KitItemConditionState,
-    KitNeedItemState, KitNeedRecipeState, KitNeedState, KitToeLineState, LaborAssignmentState,
-    MaterialAmountState, MaterialBatchState, MaterialShortfallState, PoolCrewLineState,
-    PoolToeLineState, PoolingLinkState, PopulationCohortState, PopulationDemographicsState,
-    ScoutTaskState, SettlementStageViewState, SourcePriorityState, TransferCrossingState,
-    TribeClosenessState, TribePairState, WorkKitWantState,
+    BandOrderState, BenchKitOrderState, BenchOrderState, BenchState, BreedingMemberState,
+    BreedingPeopleState, CharacteristicReadingState, CohortStoreState, CraftOfferState,
+    CraftSuggestionSourceState, CraftSuggestionState, CulturePressureState, DrawnInputState,
+    EquipmentBatchState, GenerationState, HarvestTaskState, KeepingMealState,
+    KitItemConditionState, KitNeedItemState, KitNeedRecipeState, KitNeedState, KitToeLineState,
+    LaborAssignmentState, MaterialAmountState, MaterialBatchState, MaterialShortfallState,
+    PoolCrewLineState, PoolToeLineState, PoolingLinkState, PopulationCohortState,
+    PopulationDemographicsState, ScoutTaskState, SettlementStageViewState, SourcePriorityState,
+    TransferCrossingState, TribeClosenessState, TribePairState, WorkKitWantState,
 };
 use crate::state::subsistence::BuildLegState;
 use crate::world::{WorldDelta, WorldSnapshot};
@@ -939,7 +939,7 @@ fn create_populations<'a>(
             let kit_needs = create_kit_needs(builder, &cohort.kit_needs);
             let materials_free = create_material_amounts(builder, &cohort.materials_free);
             let culture_pressures = create_culture_pressures(builder, &cohort.culture_pressures);
-            let keep_on_hand = create_keep_on_hand(builder, &cohort.keep_on_hand);
+            let band_orders = create_band_orders(builder, &cohort.band_orders);
             let envoy_terms = crate::codec::treaties::create_terms(builder, &cohort.envoy_terms);
             let leader_name = builder.create_string(&cohort.leader_name);
             let band_improvements = create_band_improvements(builder, &cohort.band_improvements);
@@ -1275,7 +1275,7 @@ fn create_populations<'a>(
                     foodIntoStore: cohort.food_into_store,
                     foodFromStore: cohort.food_from_store,
                     foodInStoresInReach: cohort.food_in_stores_in_reach,
-                    keepOnHand: Some(keep_on_hand),
+                    bandOrders: Some(band_orders),
                 },
             )
         })
@@ -2227,15 +2227,17 @@ fn decode_population(
         food_into_store: cohort.foodIntoStore(),
         food_from_store: cohort.foodFromStore(),
         food_in_stores_in_reach: cohort.foodInStoresInReach(),
-        keep_on_hand: map_rows(cohort.keepOnHand(), |row| KeepOnHandState {
-            material: text(row.material()),
+        band_orders: map_rows(cohort.bandOrders(), |row| BandOrderState {
+            kind: text(row.kind()),
             target: row.target(),
             priority: match row.priority() {
                 fb::SourcePriority::High => SourcePriorityState::High,
                 fb::SourcePriority::Low => SourcePriorityState::Low,
                 _ => SourcePriorityState::Normal,
             },
+            chief_owned: row.chiefOwned(),
             draw: row.draw(),
+            on_hand: row.onHand(),
             has_site: row.hasSite(),
             site_x: row.siteX(),
             site_y: row.siteY(),
@@ -2474,26 +2476,28 @@ fn create_culture_pressures<'a>(
     builder.create_vector(&offsets)
 }
 
-/// `PopulationCohortState.keepOnHand`.
-fn create_keep_on_hand<'a>(
+/// `PopulationCohortState.bandOrders`.
+fn create_band_orders<'a>(
     builder: &mut FbBuilder<'a>,
-    rows: &[KeepOnHandState],
-) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::KeepOnHandState<'a>>>> {
+    rows: &[BandOrderState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::BandOrderState<'a>>>> {
     let offsets: Vec<_> = rows
         .iter()
         .map(|row| {
-            let material = builder.create_string(&row.material);
-            fb::KeepOnHandState::create(
+            let kind = builder.create_string(&row.kind);
+            fb::BandOrderState::create(
                 builder,
-                &fb::KeepOnHandStateArgs {
-                    material: Some(material),
+                &fb::BandOrderStateArgs {
+                    kind: Some(kind),
                     target: row.target,
                     priority: match row.priority {
                         SourcePriorityState::Normal => fb::SourcePriority::Normal,
                         SourcePriorityState::High => fb::SourcePriority::High,
                         SourcePriorityState::Low => fb::SourcePriority::Low,
                     },
+                    chiefOwned: row.chief_owned,
                     draw: row.draw,
+                    onHand: row.on_hand,
                     hasSite: row.has_site,
                     siteX: row.site_x,
                     siteY: row.site_y,

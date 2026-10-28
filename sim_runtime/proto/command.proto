@@ -433,15 +433,27 @@ message StopLaborCommand {
   bool roadwork = 8;
 }
 
-// KEEP A MINED MATERIAL ON HAND (#874): the band holds `target` of `material` in its store and the sim
-// digs for the deficit. `target` 0 is no order (nobody digs); `priority` is `high`, `normal` or `low`
-// and ranks the dig row among the band's work. Refused for a material that is not mined.
-message KeepOnHandCommand {
+// WHAT A `band_order` COMMAND DOES TO ONE KIND'S ORDER (#860).
+enum BandOrderAction {
+  BAND_ORDER_ACTION_UNSPECIFIED = 0;
+  // Set the order's target and priority. Refused for a target of 0 (there is no "none") and for a
+  // kind that takes no order.
+  BAND_ORDER_ACTION_SET = 1;
+  // "Crew it yourself": the player takes the kind; the chief's rows stay where they are.
+  BAND_ORDER_ACTION_RELEASE = 2;
+  // "Hand it to the chief": the chief takes the kind back at its current target.
+  BAND_ORDER_ACTION_CLAIM = 3;
+}
+
+// A BAND ORDER (#860): `kind` is "food", "fodder" or a material id. `target` and `priority` (`high`,
+// `normal` or `low`) are read for SET only. Refused for a band with no leader yet.
+message BandOrderCommand {
   uint32 faction_id = 1;
   uint64 band_id = 2;
-  string material = 3;
-  uint32 target = 4;
-  string priority = 5;
+  string kind = 3;
+  BandOrderAction action = 4;
+  uint32 target = 5;
+  string priority = 6;
 }
 
 // Travel a band toward a target tile at band_move_tiles_per_turn/turn.
@@ -1853,6 +1865,6 @@ message CommandEnvelope {
     SendEnvoyCommand send_envoy = 93;
     EndTreatyCommand end_treaty = 94;
     StopLaborCommand stop_labor = 95;
-    KeepOnHandCommand keep_on_hand = 96;
+    BandOrderCommand band_order = 97;
   }
 }

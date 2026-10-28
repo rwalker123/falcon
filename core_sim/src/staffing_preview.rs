@@ -279,7 +279,7 @@ pub fn answer_staffing_preview(world: &mut World, ask: &StaffingPreviewQuery) ->
     if let LaborTarget::Extract { material, .. } = &target {
         if world
             .get::<LaborAllocation>(band)
-            .is_some_and(|allocation| allocation.keep_owned.contains(material))
+            .is_some_and(|allocation| allocation.chief_owns(material))
         {
             return refusal(query_error::MATERIAL_IS_KEPT_ON_HAND);
         }
