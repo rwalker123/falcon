@@ -199,9 +199,13 @@ and in the existing `N idle workers` alert — not a remainder the player has to
 passes. That covers foraging, hunting, pens — and **wood**, whose stands regrow. One interface for
 every living resource, whatever it pays.
 
-**Anything mined — it runs out and does not come back — takes a keep-on-hand target** at band level
-(e.g. *keep 60 stone*): stone today, ore and gold later. The player never assigns workers to a mine;
-the game picks the sites. The target is set on the material's row on the Work tab, since it is work.
+**Anything mined — it runs out and does not come back — is crewed by hand per site until the band
+has a chief**: stone today, ore and gold later. Each dig is a row on the Work tab, and its Max is
+the crew, since a seam that never renews has no floor to staff toward. Before a leader the player
+deals with workers directly.
+
+**With a chief, a mined material takes a keep-on-hand order** (e.g. *keep 60 stone*), set on the
+material's sheet — see "Band orders — the chief" below:
 
 - **Hold** (pass 1): the crew whose take matches what the band draws on that material per turn — its
   builds' and its upkeep's draw.
@@ -271,7 +275,7 @@ that today only changes a label or an icon now changes what the player manages.
   consent"). So there is no dead end, and
   the culture still costs something.
 - **A leader is a named person.** The Telling narrates them (*a chief, then a line of chiefs*).
-  Leaders carry no stats yet.
+  Leaders carry no stats yet; what a leader is good at and how hard they push is #905.
 - **Before a nation, the player commands each city and tribe directly.** There are no orders above
   them until level 4 exists.
 
@@ -358,27 +362,72 @@ These are opening rules for playtest.
 The player gives orders at the highest level they have. A change made by hand at a lower level stays
 pinned until the player releases it.
 
-**1. Band orders — the chief.** The player sets goals; the chief sets each source's floor, priority
-and builds.
+**1. Band orders — the chief.** The player sets how much of each store to keep; the chief decides
+who works where, at what setting, to keep it. Prototype: `docs/prototypes/band_orders/`.
 
-- **Food:** *keep N turns of food.* Below it the chief draws food sources harder; above it, eases them
-  toward Best or Learning.
-- **Materials:** keep-on-hand targets — stone works this way (see "Two interfaces" above); wood and
-  hide join it.
-- **Land:** *improve the land.* The chief starts rung builds where they pay best, within a share of the
-  workers the player sets.
-- **Scouting range** (see "Scouts" above) and the self-filling bench (`auto_craft_fill`, which ships
-  today).
-- **Each order is a number or None.** A number starts at the chief's suggestion — about a season of
-  food, keep-on-hand targets sized to what the band's builds and upkeep will draw, a modest share of
-  workers on improvements — and the player moves it from there. **None** gives no order at all: the
-  chief pursues nothing for it. Food None aims for no particular store, so the food rows keep their own
-  floor; a keep-on-hand None sends nobody for that material; Improve None starts no builds.
-- **Each number is set with the game's ordinary − / + stepper**, never by clicking a chip to cycle it.
-  The stone row's keep-on-hand chip on the Work tab is a label; the target is set on the Band orders
-  card (or, before a chief, on the Stone sheet).
-- **A row the player sets by hand is pinned**: its Floor chip reads *yours*, the chief leaves it alone,
-  and *Back to the chief* releases it.
+**The chief runs operations; the player makes the investments.** Choosing among the sources that
+already exist — which hunt, which stand, how many hands, at what floor — is bookkeeping, and it is
+the chief's. What gets built, and where, is strategy: a pen pays sooner and a farm pays more later, a
+hay field is only worth what the herds it feeds are worth, and every finished improvement owes its
+keepers for good. So the chief never starts a build. The player starts every build from the row's
+`⌃` button as before — on a row the chief runs too — and the chief sends its keepers and builders and
+works it once it is finished. There is no *improve the land* order, and the scouting range stays the
+player's band setting (see "Scouts" above), not a chief's order.
+
+The orders:
+
+- **Food:** *keep N turns of food* — food on hand over what the band eats in a turn.
+- **Fodder:** *keep N turns of fodder* — hay on hand over what the band's pens eat in a turn: each
+  pen's need less what its own pasture covers. The order exists only while the band keeps a penned
+  herd.
+- **Stone and wood:** *keep N on hand* — the keep-on-hand order of "Two interfaces" above. Wood is cut
+  across as many stands as it takes.
+- **No other material takes an order.** Hide and bone come only from hunting and fibre only from
+  gathering, so they arrive with the food work; a target for them could only be met by hunting or
+  gathering more, which is the food order's business. Crops come from the fields the player sows.
+- The self-filling bench (`auto_craft_fill`, which ships today).
+
+How every order is carried out:
+
+- **One shape, every order.** Hold (pass 1) is the crew that keeps up with what the band uses each
+  turn; reach (pass 2) is the extra crew that refills toward the target, over
+  `keep_on_hand_refill_turns`; at or above the target, no refill crew. Each order carries a Priority
+  that places it on the band's one priority list, so a short band refills its Low orders slowest and
+  never takes the crew that keeps food coming in.
+- **The chief picks the sources**: the most per worker first, then the shortest walk, filling one up
+  to what it gives at its setting before starting the next.
+- **The chief never overdraws.** Below the target he adds hands and sources, all at Best; above it he
+  eases his rows to Learning, so spare food buys knowledge. Cutting a stand or a herd harder is the
+  player's to do on a row they crew themselves — or, later, a bolder chief's (leader traits, #905).
+- **On a patch the chief runs, every plant is carried home**, so one gathering row fills every store
+  its plants feed. The player chooses plants only on a row they crew themselves. A sown Field is one
+  crop, the one the player sowed.
+- **The chief takes over everything when he arrives.** Every row of an ordered kind becomes his, the
+  order starting at his suggested target; the event dock says so. The starting targets are playtest
+  levers.
+
+Setting it and seeing it:
+
+- **Each order is set on its own sheet**, with the chief's name and portrait over it: stone and wood
+  on the material's sheet opened from any of its sites, food and fodder on a Food and a Fodder sheet.
+  The number is set with the game's ordinary − / + stepper. There is no "None": a material is the
+  chief's or the player's.
+- **The Work tab groups the chief's rows under his orders.** An *Orrin's orders* group at the top holds
+  one line per order — what is on hand, the target, its state (*Refilling*, *Holding — no hands to
+  refill*, *Falling — N hands short of keeping up*), its Priority and a crew bar split into keep-up,
+  refill and short — and under each line today's rows, unchanged: name, rung, take, Priority chip and
+  the work strip with its `⌃`. A summary line says how many workers the orders take, or that there
+  are not enough hands for every order.
+- **A mixed patch is listed once**, under the order it mostly serves. Its row names every store it
+  fills (*+2.40 food · +0.25 hay · +0.05 fibre /turn*), and each other order it fills names it in one
+  *↳ Also* line under that order's rows.
+- **Hide, bone and fibre** show read-only under the group, with what they gain a turn and from what.
+- **Crew it yourself / Hand it to the chief.** A material's sheet carries *Crew it yourself*; it turns
+  the chief's rows into the player's, each with its Max set to the crew he had there, and the rows move
+  under a *Yours* heading. A food or fodder row's own sheet carries the same button for that one row,
+  and the order counts what the player's row brings in and fills the rest. *Hand it to the chief*
+  gives it back.
+- **A band without a chief** shows today's Work tab, and a leaderless band's sheets are today's.
 
 Before a chief, the band runs on the per-source settings in "Decided" above.
 
