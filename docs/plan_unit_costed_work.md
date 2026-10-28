@@ -191,7 +191,7 @@ items exactly as today. Leaving it as a fraction of a normalized threshold while
 a cost is precisely the drift the slice-4 consolidation existed to prevent.
 
 Eventual spread (a later config edit, same PR as §3's): the rung-2 lessons stay 20, the rung-3
-lessons (`seed_selection`, `penning`) rise, `foddering` higher again.
+lessons (`seed_selection`, `penning`) rise.
 
 ## 5. What a worker is worth — and what knowledge does NOT do yet
 

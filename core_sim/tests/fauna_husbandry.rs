@@ -22,8 +22,7 @@ use core_sim::{
     PopulationCohort, ResidentBand, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, VerbId, WellbeingConfigHandle,
-    FODDER, FODDERING_DISCOVERY_ID, FOOD, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION,
-    PENNING_DISCOVERY_ID,
+    FODDER, FOOD, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -1389,13 +1388,10 @@ fn stock_larder(app: &mut App, band: bevy::prelude::Entity, amount: f32) {
 // pen is a barren footprint with no hay behind it: see `feed_the_pens` for the other end of the same
 // lever.
 
-/// **Fill the band's hay store and grant it Foddering**, which is the whole of *"the keeper feeds its
+/// **Fill the band's hay store**, which is the whole of *"the keeper feeds its
 /// pen"*. `run_turns_with_hunt` never runs `advance_herd_grazing`, so a fixture pen's footprint grows
 /// nothing and hay is its only feed — which makes this an exact on/off switch for the feed.
 fn feed_the_pens(app: &mut App, band: bevy::prelude::Entity, hay: f32) {
-    app.world
-        .resource_mut::<DiscoveryProgressLedger>()
-        .add_progress(FactionId(0), FODDERING_DISCOVERY_ID, scalar_one());
     let mut cohort = app
         .world
         .get_mut::<PopulationCohort>(band)

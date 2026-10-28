@@ -254,7 +254,7 @@ pub const FOOD: &str = "provisions";
 /// Commodity key for a band's **fodder** larder — the storable hay a fodder crop grows (Flora Roster
 /// F3, `docs/plan_flora_roster.md` §5). A second key on the *same* [`LocalStore`] as [`FOOD`], so it
 /// round-trips through the snapshot for free and the supply network can already balance it. Hay is
-/// animal feed, not human food: a fodder Field credits this key, a pen that knows Foddering draws it,
+/// animal feed, not human food: a fodder Field credits this key, every pen and tamed herd the band keeps draws it,
 /// and the two stores **never convert** — feeding a pen bread ([`FOOD`]) stays as lossy as ever.
 pub const FODDER: &str = "fodder";
 
@@ -4510,7 +4510,7 @@ pub struct SourceYield {
     /// and *literally* the `min(production, collection)` the band's
     /// `FODDER` [`LocalStore`] was credited with on this turn's resolution (issue #449). Reported,
     /// never recomputed: a readout that re-derived its own number would drift from what the band was
-    /// actually paid, and the knowledge gate on the wild credit (`FODDERING_DISCOVERY_ID`) is part of
+    /// actually paid, and the credit is part of
     /// what it was paid.
     ///
     /// **Plant-only, and that is structural rather than a gap**: no animal pays fodder
@@ -6415,8 +6415,7 @@ pub struct LaborAllocation {
     /// minted under. A client cannot sum pen rows anyway: a herd row is fog-filtered, so a pen out of
     /// sight would silently drop out of a total the band certainly still owes.
     ///
-    /// **Ungated by Foddering**, unlike [`Self::last_fodder_inflow`]'s use downstream: a band that
-    /// cannot draw hay still keeps a herd that is starving for exactly this much.
+    /// A band with no hay still keeps herds that are short for exactly this much.
     ///
     /// Reset then re-summed every turn, and **excluded from equality** below, like the rest of the
     /// per-turn telemetry.
@@ -6426,22 +6425,18 @@ pub struct LaborAllocation {
     /// from). Exported as `PopulationCohortState.fodder_income`, the fodder twin of
     /// `food_income`, and the income term of the fodder runway.
     ///
-    /// **The RAW harvest, deliberately** — not the Foddering-gated per-pen rate stamped onto
-    /// `Herd::fodder_delivery_rate`. What was grown is a fact about the Fields; what a pen may draw
-    /// is a fact about what the faction has learned, and a readout that conflated them would tell a
-    /// band its hay had failed when it had merely not yet learned to feed it out.
+    /// **The RAW harvest, deliberately** — not the per-herd rate stamped onto
+    /// `Herd::fodder_delivery_rate`. What was grown is a fact about the Fields, and a readout that conflated the two would tell a
+    /// band its hay had failed when its herds had merely not yet drawn it.
     ///
     /// Reset then re-summed every turn, and **excluded from equality** below.
     pub last_fodder_inflow: f32,
-    /// **THE HAY THIS BAND'S PENS WILL ACTUALLY DRAW, PER TURN** — [`Self::last_fodder_need`] behind
-    /// the **Foddering gate**, summed over the same pens, in fodder units. A band that has not
-    /// learned to hay a herd draws `0` however short its pens are, because `settle_pen_hay` zeroes
-    /// every bid without the knowledge.
+    /// **THE HAY THIS BAND'S PENS WILL ACTUALLY DRAW, PER TURN** — [`Self::last_fodder_need`] as
+    /// asked of the store, summed over the same pens and tamed herds, in fodder units.
     ///
     /// **It is the rate the fodder runway counts down** (`PopulationCohortState::turns_of_fodder`),
     /// and it is a second number rather than a use of the need beside it because the two answer
-    /// different questions: the need is what the pens are *missing* — the alarm, and ungated on
-    /// purpose — while this is what leaves the `FODDER` store. A runway taken on the need would count
+    /// different questions: the need is what the pens are *missing* — the alarm — while this is what leaves the `FODDER` store. A runway taken on the need would count
     /// a store nothing draws down to empty and then go on reading full, which is the defect this
     /// field exists to close.
     ///

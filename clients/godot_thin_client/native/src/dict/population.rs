@@ -385,7 +385,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // larder distinct from the food larder above. Copied verbatim from `cohort.fodderStore()` — the
     // FODDER `LocalStore` value in fodder/grass units (`fodder_per_biomass × biomass` scale, ~25× the
     // food scale, no conversion), consistent with `fodder_draw`, which is the per-pen draw OUT of this
-    // store and is in the same fodder units. A pen that knows Foddering draws from this each turn
+    // store and is in the same fodder units. A pen or tamed herd draws from this each turn
     // (`HerdTelemetryState.fodderDraw`) to cover feed its own footprint's pasture could not.
     // 0 for a forager band with no fodder economy.
     let _ = dict.insert("fodder_store", cohort.fodderStore() as f64);
@@ -398,13 +398,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     //                       `pen_fodder_shortfall`, that same gap less the hay actually drawn, so this
     //                       total is NOT a sum of anything on the herd rows). THE GAP, not the gross
     //                       demand — pasture is free, hay is farmed. 0 for a band keeping no pens and
-    //                       for pens their footprints cover, and NOT gated on Foddering.
+    //                       for herds their range covers.
     //                       **THE SIM SUMS IT AND THE CLIENT MUST NOT**: herd rows are fog-filtered, so
     //                       a pen out of sight would drop out of a client-side total the band still
     //                       owes — the same mistake the retired `pen_feed_upkeep` was minted to avoid.
     //   `fodder_income`   = what this band's fodder Fields actually HARVESTED this turn. The RAW
-    //                       harvest, not a Foddering-gated share: what was grown is a fact about the
-    //                       Fields, where what a pen may draw is a fact about what the faction learned.
+    //                       harvest of the Fields.
     //                       Rendered against `fodder_need` as "need 6.0/turn · growing 5.0/turn".
     //   `turns_of_fodder` = turns until `fodder_store` empties at `fodder_need − fodder_income`. THE
     //                       SAME IDIOM AS `turns_of_food`, off the same sim function, **INCLUDING ITS

@@ -32,10 +32,7 @@
 //!    a sum is distinguishable from a copy of either term.
 //! 3. **A band with no pens owes nothing and has no runway to speak of** — the ∞ sentinel, not a
 //!    number of turns.
-//! 4. **The need survives the Foddering gate.** A band that cannot draw hay at all still publishes
-//!    what its herd is short: the remedy being knowledge rather than hay is exactly the case the
-//!    player most needs to see, and the fixture pins the draw at `0` beside the need to prove the
-//!    gate really is shut.
+//! 4. **(retired)** — the Foddering gate this item pinned no longer exists.
 //! 5. **A growing herd on a fixed footprint publishes a rising need** — the slow trap the whole
 //!    readout exists for, pinned rather than described.
 //! 6. **The runway is the larder's**, sentinel and all, on a band whose hay Field genuinely
@@ -46,9 +43,7 @@
 //!    quantisation), with the gap and the draw held non-zero and *different* so no arm can pass on a
 //!    copy of either term. The gap it is differenced against is the **fixture's own** figure, not a
 //!    second published field, so the arithmetic is checked rather than restated.
-//! 8. **The runway counts down the DRAIN, not the need.** A band that cannot draw hay at all empties
-//!    nothing however short its pens are, so it publishes the no-drain sentinel while its need still
-//!    states the gap — the same band with Foddering gets a finite runway off the same store.
+//! 8. **(retired)** — the Foddering gate this item pinned no longer exists.
 //! 9. **The ledger dies with the band.** A band that loses its last working hand sheds every row and
 //!    leaves the labor pass early; it publishes `0` need, `0` income and the sentinel, never last
 //!    turn's figures for pens it no longer keeps.
@@ -68,8 +63,7 @@ use core_sim::{
     scalar_one, scalar_zero, FactionId, ForageRegistry, GenerationId, Herd, HerdRegistry,
     LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MoraleCause,
     PopulationCohort, ResidentBand, SimulationConfig, SizeClass, SnapshotHistory, SourcePriority,
-    StartingUnit, TakeSelection, TileRegistry, TransferLink, FODDER, FODDERING_DISCOVERY_ID,
-    NOT_FOOD_LIMITED_TURNS,
+    StartingUnit, TakeSelection, TileRegistry, TransferLink, FODDER, NOT_FOOD_LIMITED_TURNS,
 };
 
 /// The keeper faction — the capture's default viewer, so its own pens are on the wire whatever the
@@ -281,13 +275,6 @@ fn pen_tile(app: &App) -> UVec2 {
     tile
 }
 
-/// Grant the keeper faction **Foddering**, so its pens may draw the hay store at all.
-fn learn_foddering(app: &mut App) {
-    app.world
-        .resource_mut::<core_sim::DiscoveryProgressLedger>()
-        .add_progress(FACTION, FODDERING_DISCOVERY_ID, scalar_one());
-}
-
 /// **The keeping scratch cleared, and nothing else** — the fields the Logistics decay passes clear
 /// at the top of a real turn. A pen's own hunt crew keeps it (`docs/plan_site_crews.md` §2.1), so
 /// every labour pass stamps a supply the next one must not read as its own, and a Field's own
@@ -374,8 +361,7 @@ fn published_hay_need_with_nothing_carried_in(app: &App, id: &str) -> f32 {
     published_hay_shortfall(app, id)
 }
 
-/// The hay this pen actually drew, as published — the *draw* beside the *need*, which is what makes
-/// the Foddering arm a comparison rather than a claim.
+/// The hay this pen actually drew, as published — the *draw* beside the *need*,
 fn published_hay_draw(app: &App, id: &str) -> f32 {
     published_herd_field(app, id, |herd| herd.fodderDraw())
 }
@@ -436,7 +422,6 @@ fn published_band_ledger(app: &App, band: Entity) -> (f32, f32, f32, f32) {
 fn a_pens_published_need_is_the_gap_its_footprint_leaves() {
     let mut app = a_world();
     let tile = pen_tile(&app);
-    learn_foddering(&mut app);
     seat_pens(
         &mut app,
         tile,
@@ -547,7 +532,6 @@ fn a_pens_crew_publishes_its_keeping_hands() {
 fn the_bands_need_is_every_pen_it_keeps_added_up() {
     let mut app = a_world();
     let tile = pen_tile(&app);
-    learn_foddering(&mut app);
     seat_pens(
         &mut app,
         tile,
@@ -617,51 +601,6 @@ fn a_band_with_no_pens_owes_no_hay_and_has_no_runway() {
 }
 
 // --------------------------------------------------------------------------------------------
-// 3. The Foddering gate moves the DRAW, never the NEED
-// --------------------------------------------------------------------------------------------
-
-/// ⛔ **A BAND THAT CANNOT HAY A HERD STILL PUBLISHES WHAT THE HERD IS SHORT.**
-///
-/// Without Foddering the pen draws nothing however full the store is — and the herd is starving for
-/// exactly the same amount it would be if the band could act. Zeroing the need behind the capability
-/// gate would hide the one case the player most needs to see, so the fixture asserts the **draw** at
-/// zero beside the **need** at its full value: the gate really is shut, and the need crossed anyway.
-#[test]
-fn a_band_without_foddering_still_publishes_what_its_pen_needs() {
-    let mut app = a_world();
-    let tile = pen_tile(&app);
-    // Deliberately NO `learn_foddering`.
-    seat_pens(&mut app, tile, &[(BARREN_PEN, BARREN_BIOMASS)]);
-    pose_intake(&mut app, BARREN_PEN, BARREN);
-    let band = spawn_band(&mut app, tile, vec![keeper_row(BARREN_PEN)]);
-    stock_hay(&mut app, band, A_HAY_RESERVE);
-    resolve_and_publish(&mut app);
-
-    let need = published_hay_need_with_nothing_carried_in(&app, BARREN_PEN);
-    let draw = published_hay_draw(&app, BARREN_PEN);
-    let (band_need, _, _, store) = published_band_ledger(&app, band);
-    println!("un-foddered — need {need:.6}, draw {draw:.6}, band {band_need:.6}");
-
-    assert!(
-        draw.abs() < EPSILON,
-        "the capability gate is shut: an un-foddered pen draws no hay (published {draw})"
-    );
-    assert!(
-        store > 0.0,
-        "and the store it could not draw from is genuinely stocked ({store})"
-    );
-    assert!(
-        (need - gross_demand(BARREN_BIOMASS)).abs() < EPSILON,
-        "the need is stated in full anyway: published {need} vs {}",
-        gross_demand(BARREN_BIOMASS)
-    );
-    assert!(
-        (band_need - need).abs() < EPSILON,
-        "and it reaches the band roll-up too (band {band_need} vs pen {need})"
-    );
-}
-
-// --------------------------------------------------------------------------------------------
 // 4. The slow trap: a fixed footprint under a growing herd
 // --------------------------------------------------------------------------------------------
 
@@ -687,7 +626,6 @@ fn a_growing_herd_publishes_a_rising_need_on_a_fixed_footprint() {
 
     let mut app = a_world();
     let tile = pen_tile(&app);
-    learn_foddering(&mut app);
     seat_pens(&mut app, tile, &[(PART_PEN, HERD_BEFORE)]);
     pose_intake(&mut app, PART_PEN, FOOTPRINT_CEILING);
     spawn_band(&mut app, tile, vec![keeper_row(PART_PEN)]);
@@ -749,7 +687,6 @@ fn the_fodder_runway_reads_the_larders_own_no_drain_sentinel() {
     // The band stands ON its hay Field, and its pen is corralled there too: the Field has to be in
     // work range and the pen inside the hunt leash for one band to hold both.
     let hay = a_hay_field(&mut app);
-    learn_foddering(&mut app);
     seat_pens(&mut app, hay, &[(TINY_PEN, TINY_BIOMASS)]);
     pose_intake(&mut app, TINY_PEN, BARREN);
     let band = spawn_band(&mut app, hay, vec![forager_row(hay), keeper_row(TINY_PEN)]);
@@ -792,7 +729,6 @@ fn the_fodder_runway_reads_the_larders_own_no_drain_sentinel() {
 fn a_band_short_of_hay_publishes_a_finite_runway() {
     let mut app = a_world();
     let tile = pen_tile(&app);
-    learn_foddering(&mut app);
     seat_pens(&mut app, tile, &[(SMALL_PEN, SMALL_BIOMASS)]);
     pose_intake(&mut app, SMALL_PEN, BARREN);
     let band = spawn_band(&mut app, tile, vec![keeper_row(SMALL_PEN)]);
@@ -816,75 +752,6 @@ fn a_band_short_of_hay_publishes_a_finite_runway() {
     );
 }
 
-/// ⛔ **A BAND THAT CANNOT DRAW HAY IS NOT DRAINING ITS STORE.**
-///
-/// The runway says *turns until `fodderStore` empties*, so what it counts down is the **drain** —
-/// and the pens' draw is gated on Foddering while the need is deliberately not. A band can hold hay
-/// without Foddering: the harvest credit lifts on the **commitment** to a fodder crop, so a band that
-/// starts a Cultivate on `hay_grass` banks hay turns before it can feed any of it out. Counting such
-/// a store down against the ungated need published a few turns' runway for a store that never moved,
-/// and seven turns later it still read full.
-///
-/// Two worlds, identical but for the knowledge. The un-foddered band draws nothing and reads the
-/// larder's own **no-drain sentinel** — the existing ∞, not a second phrasing for *"cannot draw"* —
-/// while its `fodderNeed` still states the gap in full, because the need is what carries the alarm.
-/// The foddered twin, same pen and same store, gets a finite number off the same arithmetic.
-#[test]
-fn a_band_that_cannot_draw_hay_publishes_the_no_drain_sentinel() {
-    // World A — no Foddering, a full store, a pen short its whole demand.
-    let mut gated = a_world();
-    let tile = pen_tile(&gated);
-    // Deliberately NO `learn_foddering`.
-    seat_pens(&mut gated, tile, &[(SMALL_PEN, SMALL_BIOMASS)]);
-    pose_intake(&mut gated, SMALL_PEN, BARREN);
-    let gated_band = spawn_band(&mut gated, tile, vec![keeper_row(SMALL_PEN)]);
-    stock_hay(&mut gated, gated_band, A_HAY_RESERVE);
-    resolve_and_publish(&mut gated);
-    let gated_draw = published_hay_draw(&gated, SMALL_PEN);
-    let (gated_need, gated_income, gated_runway, gated_store) =
-        published_band_ledger(&gated, gated_band);
-
-    // World B — the same band, one knowledge richer.
-    let mut foddered = a_world();
-    learn_foddering(&mut foddered);
-    seat_pens(&mut foddered, tile, &[(SMALL_PEN, SMALL_BIOMASS)]);
-    pose_intake(&mut foddered, SMALL_PEN, BARREN);
-    let foddered_band = spawn_band(&mut foddered, tile, vec![keeper_row(SMALL_PEN)]);
-    stock_hay(&mut foddered, foddered_band, A_HAY_RESERVE);
-    resolve_and_publish(&mut foddered);
-    let (foddered_need, _, foddered_runway, foddered_store) =
-        published_band_ledger(&foddered, foddered_band);
-
-    println!(
-        "un-foddered — need {gated_need:.6}, draw {gated_draw:.6}, store {gated_store:.3}, \
-         runway {gated_runway}; foddered — need {foddered_need:.6}, store {foddered_store:.3}, \
-         runway {foddered_runway}"
-    );
-
-    assert!(
-        gated_draw.abs() < EPSILON && gated_store > 0.0 && gated_income.abs() < EPSILON,
-        "the un-foddered band holds hay it cannot touch and grows none (draw {gated_draw}, store \
-         {gated_store}, income {gated_income})"
-    );
-    assert!(
-        gated_need > 0.0 && (gated_need - foddered_need).abs() < EPSILON,
-        "and its NEED is untouched by the gate — the same figure its foddered twin publishes \
-         (un-foddered {gated_need}, foddered {foddered_need})"
-    );
-    assert_eq!(
-        gated_runway, NOT_FOOD_LIMITED_TURNS,
-        "a store nothing draws lasts forever: the runway is the larder's own ∞ sentinel, not the \
-         {gated_need}/turn the band is short"
-    );
-    assert!(
-        foddered_runway < NOT_FOOD_LIMITED_TURNS
-            && (foddered_runway - foddered_store / foddered_need).abs() < EPSILON,
-        "while the twin that CAN draw empties its store at the need: published {foddered_runway} \
-         vs {} (store {foddered_store}, need {foddered_need})",
-        foddered_store / foddered_need
-    );
-}
-
 // --------------------------------------------------------------------------------------------
 // 6. The ledger does not outlive the band
 // --------------------------------------------------------------------------------------------
@@ -904,7 +771,6 @@ fn a_band_that_cannot_draw_hay_publishes_the_no_drain_sentinel() {
 fn a_band_that_loses_its_last_worker_publishes_no_hay_ledger() {
     let mut app = a_world();
     let hay = a_hay_field(&mut app);
-    learn_foddering(&mut app);
     // The BIG pen deliberately: its demand has to out-run the Field's harvest, or the band's runway
     // is the no-drain sentinel while it is still alive and the reading below proves nothing.
     seat_pens(&mut app, hay, &[(BIG_PEN, BIG_BIOMASS)]);
@@ -999,7 +865,6 @@ const A_SHORT_HAY_RESERVE: f32 = 4.0;
 fn a_pen_its_own_land_feeds_publishes_no_shortfall() {
     let mut app = a_world();
     let tile = pen_tile(&app);
-    learn_foddering(&mut app);
     seat_pens(
         &mut app,
         tile,
@@ -1044,7 +909,6 @@ fn a_pen_its_own_land_feeds_publishes_no_shortfall() {
 fn a_part_supplied_pen_publishes_what_is_still_missing() {
     let mut app = a_world();
     let tile = pen_tile(&app);
-    learn_foddering(&mut app);
     seat_pens(&mut app, tile, &[(BARREN_PEN, BARREN_BIOMASS)]);
     pose_intake(&mut app, BARREN_PEN, BARREN);
     let band = spawn_band(&mut app, tile, vec![keeper_row(BARREN_PEN)]);
@@ -1086,64 +950,28 @@ fn a_part_supplied_pen_publishes_what_is_still_missing() {
     );
 }
 
-/// ⛔ **A PEN NOTHING IS CARRIED INTO IS SHORT ITS WHOLE NEED — AND KNOWING NOTHING READS THE SAME.**
+/// ⛔ **A PEN NOTHING IS CARRIED INTO IS SHORT ITS WHOLE NEED.**
 ///
-/// Two worlds, one figure. In the first the band **can** hay its pen and simply has no hay; in the
-/// second the store is full and the band has never learned **Foddering**, so the capability gate
-/// shuts the draw. The remedy differs — buy hay, or learn to make it — but the herd is short exactly
-/// the same amount, and the readout says so in both.
-///
-/// A shortfall zeroed behind the Foddering gate would read `0` in the second world and hide the one
-/// case the field exists for: the herd is dying and no amount of hay is the answer.
+/// The band has no hay, so the pen draws nothing and the herd is short exactly the gap its footprint
+/// leaves; the readout says so.
 #[test]
-fn a_pen_with_no_hay_is_short_its_whole_need_gate_shut_or_store_empty() {
+fn a_pen_with_no_hay_is_short_its_whole_need() {
     let whole_need = gross_demand(BARREN_BIOMASS);
-
-    // World A — Foddering known, nothing in the store.
     let mut empty_store = a_world();
     let tile = pen_tile(&empty_store);
-    learn_foddering(&mut empty_store);
     seat_pens(&mut empty_store, tile, &[(BARREN_PEN, BARREN_BIOMASS)]);
     pose_intake(&mut empty_store, BARREN_PEN, BARREN);
     spawn_band(&mut empty_store, tile, vec![keeper_row(BARREN_PEN)]);
     resolve_and_publish(&mut empty_store);
     let starved_short = published_hay_shortfall(&empty_store, BARREN_PEN);
     let starved_draw = published_hay_draw(&empty_store, BARREN_PEN);
-
-    // World B — a stocked store the band has no idea what to do with.
-    let mut no_knowledge = a_world();
-    // Deliberately NO `learn_foddering`.
-    seat_pens(&mut no_knowledge, tile, &[(BARREN_PEN, BARREN_BIOMASS)]);
-    pose_intake(&mut no_knowledge, BARREN_PEN, BARREN);
-    let band = spawn_band(&mut no_knowledge, tile, vec![keeper_row(BARREN_PEN)]);
-    stock_hay(&mut no_knowledge, band, A_HAY_RESERVE);
-    resolve_and_publish(&mut no_knowledge);
-    let ungated_short = published_hay_shortfall(&no_knowledge, BARREN_PEN);
-    let ungated_draw = published_hay_draw(&no_knowledge, BARREN_PEN);
-    let (_, _, _, ungated_store) = published_band_ledger(&no_knowledge, band);
-
-    println!(
-        "no hay — empty store: draw {starved_draw:.6} shortfall {starved_short:.6}; \
-         no Foddering: draw {ungated_draw:.6} shortfall {ungated_short:.6} store {ungated_store:.3}"
-    );
-
     assert!(
-        starved_draw.abs() < EPSILON && ungated_draw.abs() < EPSILON,
-        "neither pen is carried anything (empty store {starved_draw}, un-foddered {ungated_draw})"
-    );
-    assert!(
-        ungated_store > 0.0,
-        "and the un-foddered band's store is genuinely full, so its zero draw is the GATE and not \
-         an empty larder ({ungated_store})"
+        starved_draw.abs() < EPSILON,
+        "the pen is carried nothing (draw {starved_draw})"
     );
     assert!(
         (starved_short - whole_need).abs() < EPSILON,
         "a pen carried nothing is short its whole need: published {starved_short} vs {whole_need}"
-    );
-    assert!(
-        (ungated_short - whole_need).abs() < EPSILON,
-        "and the shortfall crosses the Foddering gate exactly as the need does: published \
-         {ungated_short} vs {whole_need}"
     );
 }
 
@@ -1165,7 +993,6 @@ fn an_over_supplied_pen_floors_at_zero_instead_of_publishing_a_negative() {
 
     let mut app = a_world();
     let tile = pen_tile(&app);
-    learn_foddering(&mut app);
     seat_pens(&mut app, tile, &[(PART_PEN, UNQUANTISED_BIOMASS)]);
     pose_intake(&mut app, PART_PEN, BARREN);
     let band = spawn_band(&mut app, tile, vec![keeper_row(PART_PEN)]);
@@ -1215,7 +1042,6 @@ fn the_shortfall_and_the_need_move_together_on_one_turn() {
 
     let mut app = a_world();
     let tile = pen_tile(&app);
-    learn_foddering(&mut app);
     seat_pens(&mut app, tile, &[(PART_PEN, HERD_BEFORE)]);
     pose_intake(&mut app, PART_PEN, BARREN);
     let band = spawn_band(&mut app, tile, vec![keeper_row(PART_PEN)]);
@@ -1413,7 +1239,6 @@ fn publish_the_turns_transfers(app: &mut App) {
 /// exactly one thing — what crossed to or from a neighbour.
 fn a_band_draining_its_hay(app: &mut App) -> Entity {
     let tile = pen_tile(app);
-    learn_foddering(app);
     seat_pens(app, tile, &[(SMALL_PEN, SMALL_BIOMASS)]);
     pose_intake(app, SMALL_PEN, BARREN);
     let band = spawn_band(app, tile, vec![keeper_row(SMALL_PEN)]);

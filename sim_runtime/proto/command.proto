@@ -1247,7 +1247,7 @@ message ForageCrewTakeRow {
   // The hands this crew would spend keeping the finished rung, fractional.
   float next_rung_keep_hands = 5;
   // The same take's FODDER once the rung is finished, CREDITED - 0 where the sim would refuse the
-  // credit (no Foddering, and no commitment to a fodder-bearing plant).
+  // credit (nothing is gated: every harvest that yields fodder banks it).
   float next_rung_fodder = 6;
   // The same take's MATERIALS once the rung is finished, one row per material, keeping netted.
   // Never summed across materials.
@@ -1539,7 +1539,7 @@ message WorkPartyForecastReply {
   // A FAR ROW'S BY-PRODUCTS, PER TURN, ARRIVING HOME (#706) - a forage basket's fodder and
   // materials, a hunt's or pen's hide, bone and sinew. They ride the packs with the food, so these
   // are delivered rates over the same horizon as `rate_home` (they never rot). Fodder is the
-  // CREDITED figure (0 without Foddering unless the patch is committed to a fodder crop); a hunt
+  // CREDITED figure (the fodder the basket yields); a hunt
   // yields none. 0 / empty inside the apron (nothing walks: the take-site figures apply) and on a
   // deposit, whose material is `rate_home` itself.
   float fodder_rate_home = 11;

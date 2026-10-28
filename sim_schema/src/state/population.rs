@@ -162,8 +162,8 @@ pub struct LaborAssignmentState {
     // reported. Neither is on the wire.
     /// **Fodder this source produced this turn** — the second account beside [`Self::actual_yield`]
     /// (issue #449), and exactly the `min(production, collection)` the
-    /// band's `FODDER` store was credited with, the wild credit's *Foddering* knowledge gate
-    /// included: a gated-off row reports `0.0` because the band was paid `0.0`. Reported, never
+    /// band's `FODDER` store was credited with, the wild credit; a row
+    /// reports `0.0` only when its basket yields no fodder. Reported, never
     /// recomputed.
     ///
     /// **Plant-only, structurally rather than by omission**: no animal pays fodder, so every hunt row
@@ -1090,7 +1090,7 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub band_move_tiles_per_turn: f32,
     /// The band's FODDER larder — the hay it has stored (Flora Roster F3). A second commodity key on
-    /// the same `LocalStore` as provisions; a hay Field harvests into it, a pen that knows Foddering
+    /// the same `LocalStore` as provisions; a hay Field harvests into it, every pen and tamed herd the band keeps
     /// draws it, and it never converts to provisions.
     #[serde(default)]
     pub fodder_store: f32,
@@ -1451,8 +1451,8 @@ pub struct PopulationCohortState {
     /// which is this quantity less the hay the keeper actually carried in.
     ///
     /// **The GAP, not the gross demand**: pasture is free, hay is farmed. `0` for a band keeping no
-    /// pens. **Not gated on Foddering** — a band that cannot draw hay still owes it, and this is the
-    /// field that says so ([`Self::turns_of_fodder`] beside it is the gated one).
+    /// pens. It is the gap the range leaves
+    /// for every pen and tamed herd the band keeps, not what the store paid.
     ///
     /// ⛔ **The sim sums it and a client must not.** Herd rows are fog-filtered, so a pen out of
     /// sight would silently drop out of a client-side total the band certainly still owes.
@@ -1460,8 +1460,7 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub fodder_need: f32,
     /// **THE HAY THIS BAND GREW THIS TURN, PER TURN** — what its fodder Fields harvested into
-    /// [`Self::fodder_store`]. The **raw** harvest, not a Foddering-gated share: what was grown is a
-    /// fact about the Fields, where what a pen may draw is a fact about what the faction has learned.
+    /// [`Self::fodder_store`]. The **raw** harvest of the Fields.
     /// Rendered against [`Self::fodder_need`] as *"need 6.0/turn · growing 5.0/turn"*. Appended last.
     #[serde(default)]
     pub fodder_income: f32,
@@ -1472,9 +1471,9 @@ pub struct PopulationCohortState {
     /// publishes, a band with no pens included). One phrasing for one concept — a client must not
     /// have a second way to say *"turns of buffer left"*, nor branch two ways.
     ///
-    /// ⛔ **The drain is not [`Self::fodder_need`].** The pens' draw is gated on Foddering and the
-    /// need is not, so a band that has not learned to hay a herd is short every turn and empties
-    /// nothing — it publishes the sentinel while `fodder_need` states what its pens are missing. The
+    /// ⛔ **The drain is not [`Self::fodder_need`].** The drain is what the pens
+    /// and tamed herds ask of the store, the need the gap the land leaves; a band with no hay empties
+    /// nothing — it publishes the sentinel while `fodder_need` states what its herds are missing. The
     /// need carries the alarm; this answers only *"how long does this store last"*, and a store
     /// nothing draws lasts forever. Appended last.
     #[serde(default)]

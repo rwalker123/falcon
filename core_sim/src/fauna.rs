@@ -148,24 +148,8 @@ pub const HERDING_DISCOVERY_ID: u32 = 2004;
 /// never be fenced. Next free id after `seed_selection` (2005).
 pub const PENNING_DISCOVERY_ID: u32 = 2006;
 
-/// Discovery id for the faction-level **Foddering** knowledge — the pen's *fodder-draw* unlock (Flora
-/// Roster F3, `docs/plan_flora_roster.md` §5.2). It is **NOT a new ladder rung**: a pen already
-/// exists, and Foddering only unlocks a penned herd's ability to draw the band's `FODDER` store as
-/// delivered graze-flow (the feed term, `advance_labor_allocation`, and the `K_pen` fodder term,
-/// `ecological_carrying_capacity`). Until a faction knows it a pen is byte-identical to its pre-F3
-/// footprint-only self.
-///
-/// **Earned by running a pen**: the `animal:pen` rung's `earns_knowledge` (`null` pre-F3) is now
-/// `foddering`, so working a *penned* herd under a stewardship policy teaches it via the existing
-/// `RungDef::knowledge_earned` seam — *you learn to hay a herd by keeping one*. Declared as a
-/// start-profile knowledge tag (`foddering` → this id in `data/start_profile_knowledge_tags.json`)
-/// purely so it is mappable, and deliberately **not** listed in any start profile's
-/// `starting_knowledge_tags` — nothing on the ladder is start-granted. Next free id after `penning`
-/// (2006).
-pub const FODDERING_DISCOVERY_ID: u32 = 2007;
-
-/// **The discovery id of `selective_breeding`** (`start_profile_knowledge_tags.json`) - taught by
-/// keeping a Ranch-sized pen (the `animal:pen` rung's `size_tiers` entry), and the key of the pen's
+/// **The discovery id of `selective_breeding`** (`start_profile_knowledge_tags.json`) - taught only
+/// by keeping a Ranch-sized pen (the `animal:pen` rung's `size_tiers` entry), and the key of the pen's
 /// `knowledge_gains`: holding it lifts the regrowth of every penned herd of the people that knows it.
 pub const SELECTIVE_BREEDING_DISCOVERY_ID: u32 = 2023;
 
@@ -588,23 +572,24 @@ pub struct Herd {
     /// a tie. `None` when nothing preyed on the herd this turn.
     pub predator_eaten_by: Option<String>,
     /// Transient per-turn scratch: the graze biomass this herd actually drew from its footprint this
-    /// turn (`advance_herd_grazing`, Logistics), read the same turn by the pen feed settlement in
+    /// turn (`advance_herd_grazing`, Logistics), read the same turn by the hay settlement in
     /// `advance_labor_allocation` (Population). For a penned herd it is what the fenced footprint fed
-    /// the pen; hay is asked for the remainder and a shortfall starves the herd — **the keeper's
-    /// larder is not asked**, because human food is not animal feed. Recomputed each turn; sim-side
-    /// only — not on the client wire.
+    /// the pen; for a tamed herd it is what its roam range fed it. Hay is asked for the remainder
+    /// ([`herd_eats_hay`]); a pen's shortfall starves the herd — **the keeper's larder is not asked**,
+    /// because human food is not animal feed. Recomputed each turn; sim-side only — not on the client
+    /// wire.
     pub footprint_intake: f32,
     /// Transient per-turn scratch: the share of a penned herd's feed its footprint covered last FEED
     /// (`footprint_intake / (fodder_per_biomass × biomass)`, clamped `[0, 1]`; Grazing 2d §2.3). `1.0`
     /// = the pasture feeds the pen for free; `0.0` = a barren footprint must be fed entirely on hay,
     /// and starves for whatever the hay does not cover. Exported as `penPastureFraction`, and it is
     /// the LAND half of the feed split — hay is the rest ([`Self::fodder_draw`]), in the same fodder
-    /// units, against the same `fodder_per_biomass × biomass` demand. `0.0` for an unpenned herd.
+    /// units, against the same `fodder_per_biomass × biomass` demand. `0.0` for a wild herd; a tamed herd's
+    /// range plays the footprint's part.
     pub pen_pasture_fraction: f32,
-    /// Transient per-turn scratch: the hay this pen drew from its keeper band's `FODDER` store last
-    /// FEED (Flora Roster F3, §5.2), in fodder units. Written by the corral-tend branch of
-    /// `advance_labor_allocation` (Population); `0.0` for an unpenned herd, a keeper who does not know
-    /// Foddering, or a pen whose footprint already fed it. Exported as `fodderDraw` — with
+    /// Transient per-turn scratch: the hay this pen or tamed herd drew from its keeper band's `FODDER`
+    /// store last FEED (Flora Roster F3, §5.2), in fodder units. Written by `advance_labor_allocation`
+    /// (Population); `0.0` for a wild herd, a store holding no hay, or a herd whose grass already fed it. Exported as `fodderDraw` — with
     /// [`Self::pen_pasture_fraction`] it is the whole of the feed split ("fed by pasture NN% · hay
     /// X.X"), both in fodder units against one demand. Recomputed each turn — it records what was
     /// drawn, while the hay itself lives in the keeper's `LocalStore`.
@@ -634,9 +619,9 @@ pub struct Herd {
     /// surfaces in advance: a pen's carrying capacity is fixed and its herd is not, so a pen that
     /// feeds itself today becomes hay-dependent long before any animal dies of it.
     ///
-    /// **Ungated by Foddering**, unlike [`Self::fodder_draw`]: a band that cannot draw hay draws
-    /// nothing, so its shortfall is its *whole* need — the case where the herd is dying and the
-    /// remedy is knowledge rather than hay, which is precisely the case this field exists for.
+    /// With an empty `FODDER` store the draw is nothing and the shortfall is the herd's *whole* need —
+    /// the case where the herd is dying and the remedy is hay, which is precisely the case this field
+    /// exists for.
     ///
     /// **Clamped at zero.** `settle_pen_hay` never settles a pen more hay than its own gap, so the
     /// difference is non-negative by construction; the clamp is against the
@@ -651,14 +636,16 @@ pub struct Herd {
     // *displaced* from that bill. A pen is fed grass and hay and nothing else now, so the feed split
     // is `footprint_intake + fodder_draw` against `fodder_per_biomass × biomass` — one quantity in one
     // unit, and [`Self::pen_pasture_fraction`] is the whole of the land/hay share the client needs.
-    /// Transient per-turn scratch: the **sustained fodder inflow** in range of this pen's keeper band
+    /// Transient per-turn scratch: the **sustained fodder inflow** in range of this pen's (or tamed
+    /// herd's) keeper band
     /// — the per-turn hay output of the band's fodder Fields (Flora Roster F3, §5.3). Written *after*
     /// the assignment loop in `advance_labor_allocation` (Population) and read the **next** turn by
     /// `ecological_carrying_capacity` (Logistics) as the `K_pen` fodder-flow term. It is the **flow**,
     /// deliberately NOT the store's **stock**: raising `K` off a built-up buffer would spike K → the
     /// herd grows → the store empties → K collapses → starvation, an oscillation. The flow is what the
-    /// farming sustainably delivers, so the loop settles. `0.0` for an unpenned herd or one no hay
+    /// farming sustainably delivers, so the loop settles. `0.0` for a wild herd or one no hay
     /// reaches; sim-side only — not on the client wire (the *draw* it produces rides `fodderDraw`).
+    /// Split evenly across the pens and tamed herds a band keeps.
     pub fodder_delivery_rate: f32,
     /// Transient per-turn flag: a Hunt assignment tended this corralled herd this turn (set in
     /// `advance_labor_allocation`, Population). `advance_husbandry` (Logistics, the *next* turn —
@@ -3792,7 +3779,7 @@ fn ecological_carrying_capacity(
         // point graze does, because hay *is* feed. `fodder_delivery_rate` is the SUSTAINED inflow of
         // the keeper band's hay Fields (written by `advance_labor_allocation`), NOT the store's stock
         // — reading a built-up buffer would spike K and oscillate the coupled loop. It is `0.0`
-        // unless the keeper knows Foddering AND the herd is penned, so a wild/unfoddered herd's `K` is
+        // unless a keeper band stamps it on a pen or a tamed herd, so a wild herd's `K` is
         // footprint-only. Added once per point: the mean of a constant is itself, so it enters `K`
         // exactly as it did over a single footprint, and a barren footprint (`flow = 0`) is carried
         // entirely by delivered hay.
@@ -4881,6 +4868,14 @@ fn owner_camp_tiles(
 /// `RungDef::knowledge_earned`, slice 4). The plant twin is `forage::patch_rung`.
 pub(crate) fn herd_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> &'a RungDef {
     ladder.rung(herd_rung_key(herd))
+}
+
+/// **DOES THIS HERD EAT THE KEEPER BAND'S HAY?** — the one predicate the hay settlement and the
+/// corral/tame arms share. A **penned** herd always does (it is confined and fed grass and hay). A
+/// **tamed** (pastoral, unfenced) herd does when the asking faction owns it: it grazes its roam range
+/// and the hay covers the gap, under the pen's own rule. A **wild** herd never does.
+pub fn herd_eats_hay(herd: &Herd, faction: FactionId) -> bool {
+    herd.is_corralled() || (herd.is_domesticated() && herd.owner == Some(faction))
 }
 
 /// **[`herd_rung`] without the ladder** — the same reading answered as the key, for the callers that

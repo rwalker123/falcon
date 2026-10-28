@@ -202,7 +202,7 @@ leader (`manage_dig_rows`, the turn's labor pass or any command restaff) gives i
 `Chief`, `starting_target[kind]`, priority Normal - for every ordered kind it holds none for, and
 queues the kinds on `LaborAllocation::unannounced_takeover` (saved). `leadership::advance_leadership`
 drains that queue into **one `Extraction`-kind feed line per band** (`announce_chief_takeover`):
-*"Orrin is chief of Bitterbrook — he takes over the band's work: he keeps 20 turns of food, 30 stone and 30 wood on hand."* (food and fodder read as turns, a material as an amount, the turns first; **fodder is left out while the band pens no herd that eats hay**, `last_fodder_need == 0`), or for a
+*"Orrin is chief of Bitterbrook — he takes over the band's work: he keeps 20 turns of food, 30 stone and 30 wood on hand."* (food and fodder read as turns, a material as an amount, the turns first; **fodder is left out while no tamed or penned herd the band keeps needs hay**, `last_fodder_need == 0`), or for a
 council *"Bitterbrook's elders take over the band's work: they keep 20 turns of food, 30 stone and 30 wood on hand."* (not a
 `LeaderEmerged` row: the turn orb reads that kind's `kind=`/`name=` detail as a new leader). The band's
 hand rows of the kind are taken over as below. An order the player released stays the player's - arrival
@@ -302,7 +302,7 @@ labor pass and by every command restaff), `staffing::probe_source`, `staffing::a
 - **Currency.** `target` and `onHand` are in **turns**; `draw` is units a turn. Food: `onHand` = the
   larder (`stores.get(FOOD)`) over `PopulationCohort::last_food_need` (what the meal was measured against
   - the sim's own need figure, not a second one); fodder: the `FODDER` store over
-  `LaborAllocation::last_fodder_need` (what the pens need beyond their pasture). `hasConsumers` is false
+  `LaborAllocation::last_fodder_need` (what the tamed and penned herds need beyond their grazing). `hasConsumers` is false
   for fodder while `last_fodder_need` is 0, and the order then wants nothing and runs no rows.
 - **The want** = the draw plus the deficit (`(target - turns) * draw`) over `keep_on_hand_refill_turns`
   below the target, and **the draw itself at or above it** (the band eats every turn, so the keep-up crew
@@ -711,7 +711,7 @@ rot**; the transit rot strikes food classes only.
   all of it**.
 - **The forecast carries them as bulk**: `CaravanForecast::bulk_rate_home` is the bulk landing per
   turn, and `forecast_forage_caravan` turns it into `CaravanForecast::fodder_rate_home` /
-  `materials_rate_home` through the basket's own per-biomass rates, behind the credit's Foddering gate
+  `materials_rate_home` through the basket's own per-biomass rates, at the credit's own rate
   (passed in as `fodder_credited`; `forecast_query::forage_fodder_credited` for the seed and the
   query). The turn writes them onto the party beside `net_rate_home`, so the row publishes
   `fodderRateHome` / `materialsRateHome` — **the smoothed rates the work row prints**, because its
@@ -901,7 +901,7 @@ Every party field on `LaborAssignment` (`snapshot.fbs`) reads `0` on a local row
 | `netRateHome` | cargo per turn arriving home **and keeping** — net of transit rot — the number the row prints: food on a hunt or forage row, the material's own units on an extract row (the row's `kind` says which) |
 | `spoiledRateHome` | cargo per turn lost on the walk home to transit rot, over the same forecast (#706); `netRateHome + spoiledRateHome` is what the porters carry in. `0` on a local row, an extract row and any walk every class survives |
 | `transitKeepsTurns` | the shortest shelf life among the row's cargo classes that rot on this walk, in turns; `0` when nothing rots |
-| `fodderRateHome` | a far forage row's fodder per turn arriving home (a hunt yields none) — `netRateHome`'s twin, smoothed off the same forecast, where the row's `fodderYield` reads only what landed that turn; the credited figure (Foddering gate). `0` on a local row, a hunt and an extract row |
+| `fodderRateHome` | a far forage row's fodder per turn arriving home (a hunt yields none) — `netRateHome`'s twin, smoothed off the same forecast, where the row's `fodderYield` reads only what landed that turn; the credited figure. `0` on a local row, a hunt and an extract row |
 | `materialsRateHome` | a far forage row's, hunt's or pen's materials per turn arriving home (a hunt's hide, bone and sinew), one `MaterialPayoff` per material id, never summed; absent on a local row and an extract row. `materialYield` beside it reads only what landed |
 
 The query is `QueryPayload::WorkPartyForecast` (`sim_runtime`, proto query field 7, reply field 10),
@@ -943,7 +943,7 @@ read `12.48` beside a sheet whose own keeping left it nothing. Pinned beside the
 **The next-rung half states every account and is priced for a CROP.** Each row also carries
 `next_rung_fodder` (proto 6) and `next_rung_materials:[MaterialPayoff]` (proto 7) — the same take's
 fodder and per-material vector, off one projected turn's biomass through the patch's own rates, as
-the labor arm credits them. Fodder is the **credited** figure: `0` without Foddering unless the
+the labor arm credits them. Fodder is the **credited** figure: `0` only where the basket yields none; the
 commitment is to a fodder-bearing plant (`systems::committed_to_a_fodder_crop`, the credit site's own
 gate). Materials are one row per material and never summed. The ask carries `crop` (proto 9): an
 **uncommitted** patch is priced as committed to it when it grows in the tile's basket, else to

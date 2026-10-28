@@ -27,9 +27,9 @@
 use bevy::prelude::Entity;
 use core_sim::shipped;
 use core_sim::{
-    build_test_app, run_turn, scalar_from_f32, scalar_one, DiscoveryProgressLedger, FactionId,
-    GrazeRegistry, HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget, PopulationCohort,
-    SimulationConfig, SnapshotHistory, SourcePriority, Tile, FODDER, FODDERING_DISCOVERY_ID, FOOD,
+    build_test_app, run_turn, scalar_from_f32, FactionId, GrazeRegistry, HerdRegistry,
+    LaborAllocation, LaborAssignment, LaborTarget, PopulationCohort, SimulationConfig,
+    SnapshotHistory, SourcePriority, Tile, FODDER, FOOD,
 };
 
 /// The shipped default `map_seed` is `0` ("seed from entropy"), so a test must pin its own or every
@@ -43,7 +43,7 @@ const EPSILON: f32 = 0.01;
 /// The keeper's harvest floor: hold the herd on its most productive biomass and carry the surplus
 /// home, which is what a keeper is for.
 const SUSTAIN: f32 = 0.5;
-/// No hay, and no Foddering to draw it with — the pen on a barren footprint has no feed at all.
+/// No hay — the pen on a barren footprint has no feed at all.
 const NO_HAY: f32 = 0.0;
 
 /// Stand a band up with a **penned herd it keeps**, seed its larder, run one real turn, and return
@@ -52,7 +52,7 @@ const NO_HAY: f32 = 0.0;
 /// `pen_fed_fraction` (grass + hay ÷ demand, read off the live herd) is the feeding witness: `1.0` =
 /// fully fed, `< 1.0` = the pen went short and the herd starves for the rest.
 ///
-/// `hay > 0` (Flora Roster F3) grants the band **Foddering** and seeds its `FODDER` store with that
+/// `hay > 0` (Flora Roster F3) seeds its `FODDER` store with that
 /// much hay, which is the only way a pen on a barren footprint can be fed. The ledger identity is over
 /// the FOOD store alone and must read the same either way, because `FODDER` is a separate store that
 /// never converts to `FOOD`.
@@ -155,11 +155,8 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32, floor: f32) -> (f32, f32, f32,
         .stores
         .reset_food("dry", scalar_from_f32(larder));
 
-    // F3: a hayed pen. Grant Foddering and seed the FODDER store — hay is the pen's only feed here.
+    // F3: a hayed pen. Seed the FODDER store — hay is the pen's only feed here.
     if hay > 0.0 {
-        app.world
-            .resource_mut::<DiscoveryProgressLedger>()
-            .add_progress(FactionId(0), FODDERING_DISCOVERY_ID, scalar_one());
         app.world
             .get_mut::<PopulationCohort>(band)
             .expect("band")

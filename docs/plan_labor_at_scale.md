@@ -377,9 +377,9 @@ player's band setting (see "Scouts" above), not a chief's order.
 The orders:
 
 - **Food:** *keep N turns of food* — food on hand over what the band eats in a turn.
-- **Fodder:** *keep N turns of fodder* — hay on hand over what the band's pens eat in a turn: each
-  pen's need less what its own pasture covers. The order exists only while the band keeps a penned
-  herd.
+- **Fodder:** *keep N turns of fodder* — hay on hand over what the band's tamed and penned herds eat beyond their grazing in a turn: each
+  herd's need less what its own pasture or range covers. The order exists only while the band keeps a
+  tamed or penned herd that its grazing does not fully feed.
 - **Stone and wood:** *keep N on hand* — the keep-on-hand order of "Two interfaces" above. Wood is cut
   across as many stands as it takes.
 - **No other material takes an order.** Hide and bone come only from hunting and fibre only from

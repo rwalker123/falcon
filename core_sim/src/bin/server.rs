@@ -3858,15 +3858,6 @@ fn seed_source_yield(
                         .resource::<core_sim::DemographicsConfigHandle>()
                         .get()
                         .keeping,
-                    core_sim::forecast_query::forage_fodder_credited(
-                        &app.world,
-                        patch,
-                        &flora,
-                        app.world
-                            .get::<PopulationCohort>(band)
-                            .map_or(FactionId(0), |cohort| cohort.faction),
-                        &app.world.resource::<core_sim::LadderConfigHandle>().get(),
-                    ),
                 );
                 seed_caravan_row(&mut seeded, &forecast, labor.arrivals_horizon_turns, false);
             }
@@ -23320,7 +23311,7 @@ mod tests {
     const UNCOMMITTED_CREW: u32 = 4;
 
     /// A WILD, uncommitted patch at [`MIXED_STEPPE`] standing at its capacity, worked by a stocked
-    /// band (no Foddering learned) — the state a crop picked on the compose sheet prices.
+    /// band — the state a crop picked on the compose sheet prices.
     fn uncommitted_patch_scene() -> bevy::prelude::App {
         let mut app = build_test_app();
         let faction = FactionId(0);
@@ -23370,7 +23361,7 @@ mod tests {
     ///
     /// - emmer and pulses convert at different rates, so the two picks quote different takes;
     /// - hay grass is a fodder crop, so committing to it is the bid for hay: its fodder is credited
-    ///   with no Foddering learned, and its fibre rides beside it; emmer is not, so the same ground
+    ///   and its fibre rides beside it; emmer is not, so the same ground
     ///   quotes no fodder once tended to emmer;
     /// - the accounts are struck on the hands the keeping leaves: per take hand they are constant
     ///   across crews, where per WORKER they would not be.
@@ -23395,7 +23386,7 @@ mod tests {
         );
         assert_eq!(
             emmer[crew].next_rung_fodder, 0.0,
-            "a grain commitment is no bid for hay, and Foddering is unlearned: {:?}",
+            "a grain commitment banks the hay its basket yields: {:?}",
             emmer[crew]
         );
         let fibre = |row: &sim_runtime::ForageCrewTakeRow| {

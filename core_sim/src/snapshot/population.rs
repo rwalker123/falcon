@@ -2501,10 +2501,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // phrasing for one concept, so a client reads `turns_of_fodder` exactly as it reads
     // `turns_of_food` and never branches two ways on "turns of buffer left".
     //
-    // ⛔ **IT COUNTS DOWN THE DRAIN, NOT THE NEED.** `last_fodder_drain` is the need behind the
-    // Foddering gate (`settle_pen_hay` zeroes every bid without it), and the gap between the two is
-    // reachable: a band may commit a patch to a fodder crop and bank hay *before* it can feed any
-    // out, because the harvest credit lifts on the commitment while the draw waits on the knowledge.
+    // ⛔ **IT COUNTS DOWN THE DRAIN, NOT THE NEED.** `last_fodder_drain` is the hay the pens and
+    // tamed herds ask of the store, and the gap between it and the need is what an empty store leaves.
     // Counting such a band's store down against its ungated need published a runway of a few turns
     // for a store that never moved — the field says "turns until `fodderStore` empties", and nothing
     // was emptying it. The **need** is untouched and still carries the alarm.

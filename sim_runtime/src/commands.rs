@@ -885,7 +885,7 @@ pub struct ForageCrewTakeRow {
     /// **The hands this crew would spend keeping the finished rung**, fractional.
     pub next_rung_keep_hands: f32,
     /// **The same take's fodder once the rung is finished**, credited — `0` where the sim would
-    /// refuse the credit (no Foddering, and no commitment to a fodder-bearing plant).
+    /// refuse the credit (nothing is gated: every harvest that yields fodder banks it).
     pub next_rung_fodder: f32,
     /// **The same take's materials once the rung is finished**, one row per material, keeping
     /// netted. Never summed across materials.

@@ -32,7 +32,7 @@ use core_sim::{
     MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SourcePriority, StartLocation,
     StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry,
-    WellbeingConfigHandle, BUILTIN_LABOR_CONFIG, FODDER, FODDERING_DISCOVERY_ID, WHOLE_BASKET,
+    WellbeingConfigHandle, BUILTIN_LABOR_CONFIG, FODDER, WHOLE_BASKET,
 };
 use sim_runtime::TerrainType;
 
@@ -765,31 +765,17 @@ fn a_wild_gathers_published_material_rate_is_what_the_band_banks() {
     );
 }
 
-/// **THE FODDER CREDIT IS GATED ON FODDERING UNLESS THE PATCH IS COMMITTED TO A FODDER-BEARING
-/// SPECIES.**
+/// **FODDER IS CREDITED ON EVERY HARVEST THAT YIELDS IT, WITH NO KNOWLEDGE ASKED.**
 ///
-/// The invariant reaches fodder too — a tile realizing `hay_grass` pays hay on any harvest — but
-/// crediting it to a faction with nowhere to put it hands out animal feed nobody bid for. So the
-/// credit reads the same 2007 capability the pen's own draw does, at the **credit site**, and the
-/// only thing that lifts it without the capability is a commitment that *is* a bid for hay.
-///
-/// ⛔ **A COMMITMENT TO A GRAIN IS NOT A BID FOR HAY**, and this is the case the gate was silently
-/// failing. A `wild_emmer` patch converts at its basket's share-weighted average like any other, so
-/// on hay-bearing ground it pays a real fodder rate; while the gate read `patch.species.is_some()`
-/// that rate was banked for a faction with no pens, no Foddering and nothing that could ever eat it.
-/// The three crops below are swept against both capability states so the rule reads off the table:
-/// **hay_grass ungated, wild_emmer and the wild basket gated.**
+/// A tile realizing `hay_grass` pays hay on any harvest, wild or committed. The crops below are swept:
+/// the wild basket, a `hay_grass` commitment and a `wild_emmer` commitment on the same hay-bearing
+/// ground each bank the share-weighted fodder rate of their own basket, so none is zero.
 #[test]
-fn fodder_is_gated_on_foddering_unless_the_patch_is_committed_to_a_fodder_crop() {
-    let fodder_credited = |crop: Option<&str>, knows_foddering: bool| -> f32 {
+fn fodder_is_credited_on_every_harvest_that_yields_it() {
+    let fodder_credited = |crop: Option<&str>| -> f32 {
         let mut app = spawn_standard_world();
         let (tile_entity, coord) = a_patch_tile_growing(&mut app, Some("hay_grass"));
         seat_patch(&mut app, coord, crop);
-        if knows_foddering {
-            app.world
-                .resource_mut::<DiscoveryProgressLedger>()
-                .add_progress(FactionId(0), FODDERING_DISCOVERY_ID, scalar_one());
-        }
         let band = spawn_forager(&mut app, tile_entity, coord, 0.5);
         app.world.run_system_once(advance_labor_allocation);
         app.world
@@ -800,77 +786,24 @@ fn fodder_is_gated_on_foddering_unless_the_patch_is_committed_to_a_fodder_crop()
             .to_f32()
     };
 
-    let wild_with = fodder_credited(None, true);
-    let wild_without = fodder_credited(None, false);
-    assert!(
-        wild_with > 0.0,
-        "a hay-bearing wild basket pays hay to a faction that knows Foddering: {wild_with}"
-    );
-    assert_eq!(
-        wild_without, 0.0,
-        "and nothing to one that does not — the credit is bid for at the consumer"
-    );
-
-    let committed_with = fodder_credited(Some("hay_grass"), true);
-    let committed_without = fodder_credited(Some("hay_grass"), false);
-    assert!(
-        committed_with > 0.0 && committed_without > 0.0,
-        "committing a patch to hay IS the bid, so rung 2 is ungated either way: \
-         {committed_with} / {committed_without}"
-    );
-    assert!(
-        (committed_with - committed_without).abs() <= EPSILON,
-        "and the capability changes nothing on a committed patch: \
-         {committed_with} vs {committed_without}"
-    );
-
-    // --- the grain, on the same hay-bearing ground ------------------------------------------------
-    let grain_with = fodder_credited(Some("wild_emmer"), true);
-    let grain_without = fodder_credited(Some("wild_emmer"), false);
-    assert!(
-        grain_with > 0.0,
-        "the fixture's liveness half: this grain patch stands on hay-bearing ground and DOES convert \
-         a real fodder rate, so the zero below is the gate refusing it and not an empty basket: \
-         {grain_with}"
-    );
-    assert_eq!(
-        grain_without, 0.0,
-        "committing to a GRAIN is a bid for grain — a faction that has not learned to hay a herd \
-         must not be paid animal feed by its wheat field, however much hay the ground carries"
-    );
-
-    // ⛔ **THE CLAIM IS ABOUT THE SPECIES, NOT THE TILE.** All six cases stand on the same
-    // hay-bearing ground, so the only thing separating the two committed crops without the
-    // capability is *what was committed to* — and they land on opposite sides of the gate.
-    assert!(
-        committed_without > 0.0 && grain_without == 0.0,
-        "one tile, two commitments, opposite verdicts: hay {committed_without} vs grain \
-         {grain_without}"
-    );
+    for crop in [None, Some("hay_grass"), Some("wild_emmer")] {
+        let credited = fodder_credited(crop);
+        assert!(
+            credited > 0.0,
+            "{crop:?} on hay-bearing ground banks its basket's fodder: {credited}"
+        );
+    }
 }
 
-/// **THE ROW REPORTS THE CREDIT, GATE AND ALL** (issue #449) — `SourceYield::fodder` is the number
-/// the band's `FODDER` store was actually moved by, not a second derivation of it.
-///
-/// This is the invariant the readout exists to keep, and the **gate** is what makes it a real test
-/// rather than a restatement: a row that recomputed `tended_take_fodder` would publish a positive
-/// hay rate to a faction that has not learned Foddering and was therefore paid **nothing** — a
-/// compact readout stating income the band never received. Swept over the same six cases the gate
-/// itself is pinned on — wild, hay and grain, each with and without the capability — so the equality
-/// has to hold on both sides of it. **The grain case is the one that matters most**: it is the
-/// arrangement where the gate refuses a rate the tile really does convert, so a row that recomputed
-/// `tended_take_fodder` would publish a positive hay income to a band that was paid nothing.
+/// **THE ROW REPORTS THE CREDIT** (issue #449) — `SourceYield::fodder` is the number the band's
+/// `FODDER` store was actually moved by, not a second derivation of it. Swept over the wild basket, a
+/// hay commitment and a grain commitment on hay-bearing ground, so the equality holds for each.
 #[test]
 fn the_published_fodder_is_the_fodder_the_band_was_actually_credited() {
-    let credited_and_published = |crop: Option<&str>, knows_foddering: bool| -> (f32, f32) {
+    let credited_and_published = |crop: Option<&str>| -> (f32, f32) {
         let mut app = spawn_standard_world();
         let (tile_entity, coord) = a_patch_tile_growing(&mut app, Some("hay_grass"));
         seat_patch(&mut app, coord, crop);
-        if knows_foddering {
-            app.world
-                .resource_mut::<DiscoveryProgressLedger>()
-                .add_progress(FactionId(0), FODDERING_DISCOVERY_ID, scalar_one());
-        }
         let band = spawn_forager(&mut app, tile_entity, coord, 0.5);
         app.world.run_system_once(advance_labor_allocation);
         let credited = app
@@ -885,12 +818,12 @@ fn the_published_fodder_is_the_fodder_the_band_was_actually_credited() {
 
     let mut saw_a_live_credit = false;
     for crop in [None, Some("hay_grass"), Some("wild_emmer")] {
-        for knows_foddering in [false, true] {
-            let (credited, published) = credited_and_published(crop, knows_foddering);
+        {
+            let (credited, published) = credited_and_published(crop);
             saw_a_live_credit |= credited > 0.0;
             assert!(
                 (published - credited).abs() <= EPSILON,
-                "{crop:?} / foddering={knows_foddering}: the row must state the credit, \
+                "{crop:?}: the row must state the credit, \
                  not recompute it: published {published} vs credited {credited}"
             );
         }

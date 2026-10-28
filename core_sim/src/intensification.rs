@@ -2904,7 +2904,7 @@ impl RungDef {
     ///   escapement **room** and not the take — see the predicate for why `killed == 0` is a
     ///   quantisation fact rather than a fact about work.
     /// - the rung simply teaches nothing (`earns_knowledge: null` — today the `plant:farm` rung, whose
-    ///   `irrigation`/`rotation` is a future rung's business; the `animal:pen` rung teaches Foddering).
+    ///   `irrigation`/`rotation` is a future rung's business; the `animal:pen` rung teaches nothing).
     ///
     /// A zero amount is returned as `None` rather than as `Some(id, 0.0)`: at `floor = 0` there is no
     /// lesson, and a caller crediting `0` to a ledger is a write that says nothing.
@@ -3526,7 +3526,7 @@ pub struct LadderKnowledge {
     ///
     /// Every entry is **20** today, which is this slice's own pacing proof (`1.0 / 20` reproduces the
     /// retired `progress_per_turn` of `0.05` exactly). The spread — rung-3's lessons dearer, and
-    /// `foddering` dearer again — is a later config-only slice.
+    /// is a later config-only slice.
     pub lesson_costs: BTreeMap<String, f32>,
     /// **What one item finished at a bench is worth, in PRACTICE UNITS** — the craft twin of
     /// [`Self::learn_rate`] (`docs/plan_crafting_and_materials.md` §5). At `4.0` against a craft's
@@ -4395,7 +4395,7 @@ impl LadderConfig {
     /// A knowledge belongs to the branch of the rung that teaches it and sits at that rung's `order`
     /// — which is the only pair of facts a reader needs to place it in a column and in that column's
     /// chain — and it is a STEP exactly when some rung's `unlock_knowledge` names it. That last one
-    /// is what makes `foddering` hang off the bottom of the animal branch rather than sit in its
+    /// is what makes a knowledge that gates no rung hang off the bottom of its branch rather than sit in its
     /// chain, and it *falls out* rather than being declared, so a knowledge that stops gating a rung
     /// stops being a step with no second table to remember.
     ///
@@ -6388,7 +6388,7 @@ pub fn load_intensification_ladder_from_env() -> (Arc<LadderConfig>, LadderConfi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fauna::{FODDERING_DISCOVERY_ID, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID};
+    use crate::fauna::{HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID};
     use crate::forage::{CULTIVATION_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID};
     use crate::ladder_ids::shipped;
     use serde_json::Value;
@@ -7126,7 +7126,7 @@ mod tests {
     /// `match` the name lookup used to be.
     #[test]
     fn every_knowledge_name_resolves_through_the_tag_table_to_its_coded_id() {
-        let coded: [(&str, u32); 15] = [
+        let coded: [(&str, u32); 14] = [
             (
                 crate::belief::RITUAL_KNOWLEDGE,
                 crate::belief::RITUAL_DISCOVERY_ID,
@@ -7135,7 +7135,6 @@ mod tests {
             ("herding", crate::fauna::HERDING_DISCOVERY_ID),
             ("seed_selection", crate::forage::SEED_SELECTION_DISCOVERY_ID),
             ("penning", crate::fauna::PENNING_DISCOVERY_ID),
-            ("foddering", crate::fauna::FODDERING_DISCOVERY_ID),
             ("storage", crate::spoilage::STORAGE_DISCOVERY_ID),
             ("roadbuilding", crate::routes::ROADBUILDING_DISCOVERY_ID),
             ("paving", crate::routes::PAVING_DISCOVERY_ID),
@@ -7351,12 +7350,12 @@ mod tests {
 
         // Animal rung 3 — the shipped Corral investment, fenced only by a `pen`-ceiling species and,
         // since the §4.3 reshuffle (slice 4), gated on **Penning** rather than Herding: one
-        // knowledge per transition. Since Flora Roster F3 it TEACHES **Foddering** (2007) — running a
-        // pen is how you learn to hay one (`selective_breeding`, rung 4's lesson, stays parked).
+        // knowledge per transition. A plain pen teaches nothing (the Ranch size tier teaches
+        // `selective_breeding`).
         let pen = ladder.rung(shipped::animal_pen());
         assert_eq!(pen.verb_id(), Some(shipped::corral()));
         assert_eq!(pen.unlock_discovery_id(), Some(PENNING_DISCOVERY_ID));
-        assert_eq!(pen.earns_discovery_id(), Some(FODDERING_DISCOVERY_ID));
+        assert_eq!(pen.earns_discovery_id(), None);
         assert_eq!(pen.ceiling_required, Some(shipped::animal_pen()));
 
         // **The §4.3 invariant, stated as one assertion: every transition has its OWN knowledge.**
@@ -9316,14 +9315,13 @@ mod tests {
                 .map(|(lesson, _)| lesson),
             Some(SEED_SELECTION_DISCOVERY_ID)
         );
-        // The `animal:pen` rung teaches **Foddering** (Flora Roster F3) — running a pen is how you
-        // learn to hay one.
+        // The `animal:pen` rung teaches nothing.
         assert_eq!(
             ladder
                 .rung(shipped::animal_pen())
                 .knowledge_accrual(FOOD_PEAK_FLOOR, true, &ladder.knowledge)
                 .map(|(lesson, _)| lesson),
-            Some(FODDERING_DISCOVERY_ID)
+            None
         );
         // Working a Farm teaches **Worked Land**, the lesson that loosens the Farm's own site rule.
         assert_eq!(
