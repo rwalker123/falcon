@@ -399,7 +399,7 @@ static func source_name(row: Dictionary, herd_label: Callable) -> String:
         return HudWorkVocab.WORK_ROW_HUNT_FORMAT % String(herd_label.call(String(row.get("herd_id", ""))))
     return HudOrdersVocab.ROW_HARVEST_FORMAT % [int(row.get("x", -1)), int(row.get("y", -1))]
 
-## The Food / Fodder sheet body (boards 5 and 6). `pens` are the band's penned herds (fodder only).
+## The Food / Fodder sheet body (boards 5 and 6). `pens` are the tamed and penned herds that draw fodder (fodder only).
 static func build_order_sheet(target: VBoxContainer, ctx: Dictionary, order: Dictionary,
         pens: Array, herd_label: Callable) -> void:
     var band: Dictionary = ctx["band"]

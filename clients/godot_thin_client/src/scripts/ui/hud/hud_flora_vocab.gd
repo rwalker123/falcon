@@ -44,34 +44,6 @@ const GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT := "Your people know Seed Sele
 
 const GATE_REASON_PENNING_KNOWLEDGE_FORMAT := "Your people know Penning %d%% — %s hunt a tamed herd to learn it"
 
-# THE WILD FODDER LOCK — the one gate reason on either web that carries TWO remedies, because there
-# genuinely are two and they are reached from different ends of the game. Foddering is what KEEPING A
-# PENNED HERD teaches, so a pre-pastoral band cannot have it at any price; but the sim credits the hay
-# of a patch COMMITTED TO A FODDER CROP whatever the faction knows, committing to hay being the bid.
-# Naming only the knowledge would
-# tell a forager band the hay is out of reach for another whole ladder, while the improvement control
-# that fixes it sits directly below on the same sheet.
-#
-# **THE SECOND REMEDY NAMES A FODDER CROP, NOT "ITS CROP", and the difference is the whole of the
-# gate.** It read "commit this patch to its crop" while any commitment at all opened the credit —
-# which paid hay to a player whose one cultivated patch was a GRAIN standing on mixed ground, hay that
-# nothing in that game could eat. The sim's arm now asks whether the COMMITTED SPECIES bears fodder
-# (`RungGates.wild_fodder_reason`), so the remedy has to send the player to the crop picker's hay row
-# rather than to the improvement control alone.
-# Format args: %d = the live Foddering percent, then the CORRAL glyph and the CULTIVATE glyph — the
-# rung each remedy is reached through, the `GATE_REASON_HERD_DOMESTICATED_FORMAT` idiom.
-#
-# **THE KNOWLEDGE HALF IS ITS OWN CONST BECAUSE A SECOND SURFACE SAYS IT.** The band's `Fodder:` row
-# states the same lock when the row is dormant for want of the craft, and it has no patch to offer
-# the second remedy about — so the shared clause is the part that is true wherever Foddering is
-# missing, and the patch-only remedy stays on this format. Spelled by CONCATENATION rather than
-# copied (`BandDetailLines.BAND_FODDER_ROW_FORMAT`'s idiom), so the sentence the forage panel renders
-# is byte-identical to the one it always rendered and cannot drift from the row's.
-# Format args: %d = the live Foddering percent, then the CORRAL glyph.
-const FODDERING_NOT_LEARNED_CLAUSE := "your people know Foddering %d%% — %s keep a penned herd to learn it"
-
-const GATE_REASON_WILD_FODDER_FORMAT := "Hay stays in the field: " + FODDERING_NOT_LEARNED_CLAUSE + ", or %s commit this patch to a fodder crop."
-
 # The SOURCE reasons — this one animal/patch's own build meter. `Corral`'s remedy now names the
 # `Tame` VERB (glyph %s), not "Sustain-hunt this Thriving herd": since slice 3a, Sustain tames
 # nothing. That correction is the single most load-bearing copy fix in this slice — the old sentence
@@ -516,15 +488,6 @@ const KNOWLEDGE_TRACK_PENNING := "penning"
 const KNOWLEDGE_TRACK_ROADBUILDING := "roadbuilding"
 
 const KNOWLEDGE_TRACK_PAVING := "paving"
-
-# **THE FIFTH IS DELIBERATELY NOT A RUNG TRANSITION** — no rung waits on it, and nothing about the
-# ladder's shape changes when it is learned. It is what the PEN rung TEACHES (the corral rung's
-# `earns_knowledge`), and what it buys is every FODDER seam a faction has: the pen's hay draw, the
-# pen's `K` fodder term, and the WILD forage patch's fodder credit. So a wild hay meadow can publish a
-# positive `fodder_per_biomass` — what the LAND pays — that a pre-pastoral band cannot bank unless it
-# has committed the ground to a hay crop; see
-# `GATE_REASON_WILD_FODDER_FORMAT` below, and `RungGates.wild_fodder_reason` which composes it.
-const KNOWLEDGE_TRACK_FODDERING := "foddering"
 
 # ---- THE TILE CARD'S TWO FOOD-WEB STOCK ROWS ---------------------------------------------------
 # One row per WEB, named for WHO EATS IT, and rendered ADJACENT with Foraging first.

@@ -165,13 +165,13 @@ const ROW_VERBS := {
 }
 
 const FOOD_EATS_FORMAT := "%s eats %.1f food a turn."
-const FODDER_EATS_FORMAT := "The pens eat %.1f fodder a turn beyond their pasture."
-const FODDER_NO_PENS_FORMAT := "No penned herd eats fodder yet. The order starts the turn %s pens one."
+const FODDER_EATS_FORMAT := "The herds eat %.1f fodder a turn beyond their range."
+const FODDER_NO_HERDS_FORMAT := "No tamed or penned herd eats fodder yet. The order starts the turn %s keeps one."
 const WHAT_EATS_IT := "What eats it"
 const PEN_FODDER_FORMAT := "%.1f fodder a turn"
-const PEN_SPLIT_TIP_FORMAT := "Pasture covers %d%% of what this pen eats; fodder covers the rest."
-const PEN_SPLIT_KEY := "Green is what each pen's pasture covers; the rest is fodder."
-const PEN_NAME_FORMAT := "%s pen (%d, %d)"
+const PEN_SPLIT_TIP_FORMAT := "Range covers %d%% of what this herd eats; fodder covers the rest."
+const PEN_SPLIT_KEY := "Green is what each herd's range covers; the rest is fodder."
+const PEN_NAME_FORMAT := "%s (%d, %d)"
 const PEN_BAR_HEIGHT := 6.0
 
 const SRC_BEST := "Best"

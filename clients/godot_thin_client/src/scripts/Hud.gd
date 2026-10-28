@@ -734,8 +734,7 @@ func _ready() -> void:
     # `_herd_label_for_id` (it reads three collaborators here, so it cannot fold onto the labor model).
     # BOTH detail hosts render through this one instance: the Occupants-card drawer below, and
     # `BandPanelController`'s vitals label + parties inspector strip.
-    # It takes NO faction-scope cluster: the one reading it ever wanted off `_topbar` was the live
-    # Foddering percent for the dormant `Fodder:` row's hover, and that row carries no hover now
+    # It takes NO faction-scope cluster: the dormant `Fodder:` row's hover is a fixed sentence
     # (`DetailFormat.fodder_dormant_row`).
     _banddetail = BandDetailLines.new(_band_labor, _disclosures, _herd_label_for_id)
     # The Band/City panel. Constructed AFTER `_disclosures` (the vitals row wires its carets through

@@ -64,9 +64,11 @@ top of the sections list and partitions the rows through `BandOrdersController.s
   the versions because both render in the same rebuild.
 - **Food and Fodder** (`open_order_sheet`, `ComposeState.KIND_ORDER`): the stepper is in turns; the
   sources list is every chief row of the order (Best / Learning, crew, take) and the player's rows that
-  bring the order's product, marked `yours`. The fodder sheet's pen list reads each enclosed herd the
-  band owns: fodder a turn is `fodder_draw + pen_fodder_shortfall`, and the pasture share of the split bar
-  is `pen_pasture_fraction`.
+  bring the order's product, marked `yours`. The fodder sheet's `What eats it` list reads every tamed or
+  penned herd the band's people keep that draws fodder (`_band_eating_herds`; a tamed herd its range feeds
+  outright draws none and is not listed): fodder a turn is `fodder_draw + pen_fodder_shortfall`, and the
+  range share of the split bar is `pen_pasture_fraction`. The order's `has_consumers` is "keeps a tamed or
+  penned herd".
 - **Opening a material's order from the Work tab** goes through `BandPanelController.open_site_sheet`,
   which selects the order's site tile before the sheet opens, so the title and stock line are the site's.
 - **Hunt and gather sheets**: `_build_herd_assign_controls` / `_build_forage_assign_controls` are thin
@@ -92,7 +94,7 @@ top of the sections list and partitions the rows through `BandOrdersController.s
 - A site is named by the map's terrain label through `Main` -> `Hud.set_terrain_label_lookup` ->
   `BandOrdersController.site_name` (`Karst Highland (21, 14)`); the order itself carries no name, and the
   bare coordinates stand in until the lookup is injected.
-- The fodder sheet's per-pen fodder is `fodder_draw + pen_fodder_shortfall`; the sim publishes no single
+- The fodder sheet's per-herd fodder is `fodder_draw + pen_fodder_shortfall`; the sim publishes no single
   per-pen demand figure.
 - A player row's offer picks the fodder order when the row's `fodder_yield` exceeds its food yield, else
   the food order.

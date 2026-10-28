@@ -23,8 +23,8 @@ extends RefCounted
 ## and the snapshot herd list — so it cannot fold onto `HudBandLaborState` the way `find_world_herd`
 ## did. The is-this-mine test is NOT part of that surface — `HudConst.is_player_unit` is a
 ## `class_name` static, so it is called directly and needs no Callable. It holds NO faction-scope
-## cluster: the one reading it ever wanted off `FactionReadouts` was the live Foddering percent for
-## the dormant Fodder row's old hover, which is a fixed sentence now
+## cluster: its dormant Fodder row's hover is a fixed sentence — no faction reading
+## is wanted for it — and is now
 ## (`DetailFormat.FODDER_DORMANT_HOVER_BAND`).
 ##
 ## IT NEVER SEES THE SELECTION MODEL. The old producers read `_selection` at exactly two sites, both
@@ -71,6 +71,9 @@ extends RefCounted
 # rule for one idea, and dropping it is what stops the two larders disagreeing about what worrying
 # looks like. `fodder_is_concerning` (the food test, on this account) tints the caret and nothing else.
 const BAND_FODDER_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_FODDER + ": %s  (%s)"
+## What the runway reads when no herd the band keeps eats fodder: a store the sim publishes no drain
+## for is `∞` turns, which on a larder nothing eats from is a statement about nothing.
+const BAND_FODDER_NO_HERDS_TEXT := "no herds eat it"
 
 # ---- **THE DORMANT FODDER ROW LIVES ON `DetailFormat` NOW**, vocabulary and producer both
 # (`FODDER_DORMANT_ROW_FORMAT` / `FODDER_DORMANT_VALUE` / `fodder_dormant_row`). It moved the moment
@@ -443,7 +446,7 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         #
         # ⛔ **NO DORMANT FORM, WHICH IS THE ONE PLACE IT DIVERGES FROM FODDER.** A band with no
         # fodder economy still gets a dim `Fodder: —` because there is a *"you could have this"*
-        # story to tell — the Foddering craft is a thing to go and learn. A band holding nothing
+        # story to tell — fodder is an account a herd can start to draw on. A band holding nothing
         # that eats a good has no such story: the bill is a CONSEQUENCE of what you have built, so
         # a row promising one before anything is built would be a readout for an economy the
         # player has not chosen to have. It renders no row at all.
@@ -809,9 +812,14 @@ func _band_fodder_falls_short(unit_data: Dictionary) -> bool:
 func _band_fodder_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
     var turns := float(unit_data.get("turns_of_fodder", BandFoodStatus.UNLIMITED_TURNS))
     ctx.fodder_turns = turns
+    # An unlimited runway over a bill of nothing is a store no herd draws on: no tamed or penned herd
+    # the band keeps eats fodder. (An unlimited runway under a bill is a store that out-grows its herds.)
+    var eaten := float(unit_data.get("fodder_need", 0.0)) >= SourceForecast.FODDER_FLOW_MIN
+    var runway_text := BAND_FODDER_NO_HERDS_TEXT \
+        if not BandFoodStatus.is_limited(turns) and not eaten else DetailFormat.food_turns_text(turns)
     return BAND_FODDER_ROW_FORMAT % [
         SourceForecast.format_fodder(DetailFormat.band_fodder_store(unit_data)),
-        DetailFormat.food_turns_text(turns)]
+        runway_text]
 
 ## The band's standing material bill as the Fodder row's twin: the STOCK and the RUNWAY of the good in
 ## the WORST state, and nothing else. The per-good detail is the disclosure `unit_summary_lines`

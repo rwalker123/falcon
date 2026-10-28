@@ -1110,17 +1110,12 @@ const ONE_WHOLE_ANIMAL := 1.0
 const YIELD_MODEL_ROWS := "rows"
 const YIELD_MODEL_TEXT := "text"
 const YIELD_MODEL_OVERDRAW := "overdraw"
-## WHY one of this model's accounts renders as a dash instead of a number — `""` when every account
-## this take pays is bankable. It rides the MODEL rather than being resolved at the render, so the
-## muted row and the sentence explaining it are two readings of one model dict: whoever evaluates this
-## model at a given floor and crew gets both, and neither can be composed without the other.
-const YIELD_MODEL_LOCKED_REASON := "locked_reason"
 ## **THE HONEST-SILENCE LINES THIS MODEL OWES THE PLAYER** — an `Array[String]` of asides rendered
 ## under the rows, `[]` on the ordinary sheet. A narrowed take earns one when the wire priced no
 ## per-species rate for something the player ticked, and another when the patch pays a MATERIAL (which
 ## is basket-averaged and has no per-species twin on the wire, so a narrowed crew's fibre is a number
-## this client does not have). They ride the MODEL for `YIELD_MODEL_LOCKED_REASON`'s reason: whoever
-## evaluates this model at a floor and a crew gets the rows and the reason they read that way together.
+## this client does not have). They ride the MODEL, so whoever evaluates it at a floor and a crew gets
+## the rows and the reason they read that way together.
 const YIELD_MODEL_NOTES := "notes"
 ## **ARE THESE ROWS ONE POINT OF A BAND?** — the caption's gate (`at the likely take`), `false` on
 ## every model whose readings carry no spread at all: the whole plant web, and the hunt web's degrade
@@ -1270,36 +1265,12 @@ func _forage_model_rows(tile_info: Dictionary, actual: float, actual_fodder: flo
         # composed row like any other, so the readout states what the crew brings home instead of an
         # apology. What still reaches this line is a selection that genuinely pays into nothing.
         return _wordless_take_model(notes)
-    # **THE FODDER ACCOUNT MAY BE REAL AND UNBANKABLE AT ONCE** (issue #485). The sim credits a WILD
-    # patch's hay only to a faction that has learned Foddering (a committed patch is paid
-    # unconditionally — committing is the bid), and Foddering is taught by KEEPING A PEN, so a forager
-    # band reads a live `fodder_per_biomass` off the meadow and banks nothing from it. The take is not
-    # recomputed: it is what the crew MOVES, and only the credit is refused, so the row keeps its unit
-    # and loses its number while the sentence beside it goes to `0.0`.
-    var locked := _wild_fodder_lock(tile_info)
-    var banked_fodder := actual_fodder
-    if locked != "" and SourceForecast.has_component(actual_fodder):
-        for row in rows:
-            if String(row.get(SourceForecast.YIELD_ROW_ACCOUNT, "")) \
-                    != SourceForecast.YIELD_ACCOUNT_FODDER:
-                continue
-            row[HudWidgets.YIELD_ROW_NUMBER] = HudComposeVocab.YIELD_LOCKED_GLYPH
-            row[HudWidgets.YIELD_ROW_MUTED] = true
-            # An arrow to a rate nobody banks is noise — and its presence alone would key the row
-            # header's `now → after` off an account that has neither reading.
-            row.erase(SourceForecast.YIELD_ROW_AFTER)
-        banked_fodder = 0.0
-    else:
-        locked = ""
     return {
         YIELD_MODEL_ROWS: rows,
         # The joined sentence has no room for the reason, so it must not promise the account at all.
         YIELD_MODEL_TEXT: SourceForecast.yield_components(
-            actual, banked_fodder, zero_account, materials),
-        # **THE FODDER LOCK DOES NOT REACH THE ⚠, AND IT NEVER SHOULD HAVE.** The take draws the same
-        # biomass down whether or not the crew banks the hay, and the drawdown is the sim's to state.
+            actual, actual_fodder, zero_account, materials),
         YIELD_MODEL_OVERDRAW: overdraws,
-        YIELD_MODEL_LOCKED_REASON: locked,
         YIELD_MODEL_NOTES: notes,
     }
 
@@ -1564,7 +1535,6 @@ func _wordless_take_model(notes: Array[String]) -> Dictionary:
         YIELD_MODEL_ROWS: ([] as Array[Dictionary]),
         YIELD_MODEL_TEXT: "",
         YIELD_MODEL_OVERDRAW: false,
-        YIELD_MODEL_LOCKED_REASON: "",
         YIELD_MODEL_NOTES: notes,
     }
 
@@ -1720,26 +1690,6 @@ func _take_display_name(species: String, basket: Array[Dictionary]) -> String:
         if String(entry.get("species", "")) == species:
             return String(entry.get("display_name", species))
     return species
-
-## **THE ONE SPELLING OF THE WILD-FODDER LOCK ON THIS SHEET** — `""` when this crew's hay is bankable,
-## the reason when it is not. Two surfaces answer to it and they sit one control apart: the yields
-## row's muted `—` (with the aside sentence explaining it) and the FLOOR PRESETS' dropped fodder
-## ceiling. A second predicate over one gate — even one spelled identically today — is exactly how the
-## presets came to quote a ceiling the row below them was already refusing (issue #485), so both go
-## through this call and through `RungGates.wild_fodder_reason` behind it.
-##
-## **The PUBLISHED commitment, never the composed improvement**: a Cultivate the player has ticked and
-## not yet committed is not a bid the sim has accepted.
-##
-## **AND THE BASKET GOES WITH IT**, because the commitment arm asks WHICH crop: the sim credits a
-## commitment only to a species that actually bears hay, and the per-species payoffs that answer that
-## live on the tile's composition rows. Resolved here rather than at the two call sites so both
-## surfaces read one basket — the reason this function exists at all.
-func _wild_fodder_lock(tile_info: Dictionary) -> String:
-    return RungGates.wild_fodder_reason(
-        String(tile_info.get("patch_committed_species", "")).strip_edges(),
-        SourceForecast.flora_basket_entries(tile_info.get("patch_composition", [])),
-        _player_knowledge())
 
 ## One yield model → the one-line BBCode preview, for both webs. Green + `· renewable` inside the
 ## source's own regrowth, WARN-amber with the shared ⚠ and the web's own overdraw clause outside it;
@@ -2436,24 +2386,6 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
     _register_live(hosts, aside_host, model, workers,
         func(host: Container, live: Dictionary, crew: int) -> void:
             var lines: Array[Dictionary] = []
-            # THE LOCKED-ACCOUNT REASON LEADS, because it is the only aside line answering a mark the
-            # player is already looking at. Its own meta: the two lines below it move with the floor,
-            # so an assertion on "the aside changed" says nothing about this sentence.
-            #
-            # **READ OFF THE SAME `yields_at` ANSWER THE ROW ABOVE IS BUILT FROM, at this floor and
-            # this crew.** Its PRESENCE is floor-dependent — raise the floor (or step the crew to 0)
-            # and the fodder take goes to nothing, the row leaves, and a sentence resolved once before
-            # the render would go on explaining a `—` no longer on screen. This is its OWN `yields_at`
-            # call, not the row's — what makes it impossible for the two to disagree is that the yield
-            # models are PURE and both calls pass the same arguments, which is why the floor and the
-            # reaches flag are spelled `_live_floor` / `_live_reaches` and nowhere else.
-            # The hunt web needs no branch here: its model carries no such key, so this reads `""`.
-            var locked_reason := String((yields_at.call(
-                _live_floor(live), crew, _live_reaches(live)) as Dictionary).get(
-                    YIELD_MODEL_LOCKED_REASON, ""))
-            if locked_reason != "":
-                lines.append(HudWidgets.readout_aside_line(locked_reason, HudStyle.INK_FAINT,
-                    HudWidgets.READOUT_LOCKED_ACCOUNT_META))
             # The floor's own teaching line, whatever zone it is in. A zone with nothing to say
             # answers `""` in `FLOOR_ZONE_HINTS` and `build_readout_aside` drops an empty line, so
             # there is no zone to test for here.
@@ -3187,13 +3119,6 @@ func _forage_floor_takes(tile_info: Dictionary, band: Dictionary) -> Dictionary:
     var takes := {}
     var zero_account := SourceForecast.zero_account_of(
         tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)
-    var locked := _wild_fodder_lock(tile_info) != ""
-    # **THE ACCOUNT'S OWN ZERO GOES WITH ITS CEILING.** On a hay-ONLY patch fodder is the
-    # `zero_account`, so merely zeroing the term would print `up to +0.00 fodder/turn` on every preset
-    # — the refused quantity again, now at a number the ground itself contradicts. `YIELD_ACCOUNT_NONE`
-    # renders no line, leaving the preset its name-only tooltip.
-    if locked and zero_account == SourceForecast.YIELD_ACCOUNT_FODDER:
-        zero_account = SourceForecast.YIELD_ACCOUNT_NONE
     for preset_variant in SourceForecast.FLOOR_PRESETS:
         var preset := String(preset_variant)
         var forecast := _forage_forecast(tile_info, band, SourceForecast.floor_for_preset(preset))
@@ -3201,13 +3126,10 @@ func _forage_floor_takes(tile_info: Dictionary, band: Dictionary) -> Dictionary:
             continue
         # **THE MATERIAL CEILING COMPOSES AT THIS PRESET'S OWN FLOOR**, by the same
         # `max(0, B − floor·K) × rate` rule the two scalars take — which is the whole reason
-        # `material_per_biomass` is a per-biomass RATE rather than a pre-composed ceiling. **No lock
-        # applies to it**: the wild-fodder gate is Foddering's, a claim about FEED and about the
-        # faction's knowledge of penning, and a gatherer banks a cash crop's fibre whether or not it
-        # has ever kept a pen.
+        # `material_per_biomass` is a per-biomass RATE rather than a pre-composed ceiling.
         takes[preset] = SourceForecast.extractive_take_pair(
             float(forecast["ceiling"]),
-            0.0 if locked else float(forecast["ceiling_fodder"]), zero_account,
+            float(forecast["ceiling_fodder"]), zero_account,
             forecast["material_ceiling"])
     return takes
 
@@ -3336,19 +3258,6 @@ func _crop_payoff_terms(tile_info: Dictionary, entries: Array[Dictionary], speci
             fodder = _flora_entry_fodder_payoff(entry, rung)
             materials = _flora_entry_material_payoff(entry, rung)
             break
-    # **THE HAY IN THIS LINE IS GATED, ON THE SAME PREDICATE THE ROW ABOVE IT IS.** `payoff_fodder` is
-    # a LAND fact — what this ground would grow at that rung, species-blind by construction — and the
-    # deal row states it as something the player will RECEIVE. On a patch committed to a crop that
-    # bears no hay, with Foddering unlearned, the sim credits none of it: quoting it here would put a
-    # figure the sim refuses directly under a `— FODDER` cell that refuses it, one line apart.
-    #
-    # **`fodder_payoff_is_refused`, NOT `_wild_fodder_lock`** — the two differ on exactly the
-    # UNCOMMITTED patch, where the row gate fails closed and this line must not: nothing has been bid
-    # for yet, so the land's number is an honest "this ground could". `RungGates` expresses that
-    # narrowing over the one gate rather than restating the rule, so the two cannot drift apart.
-    var fodder_refused := RungGates.fodder_payoff_is_refused(
-        String(tile_info.get("patch_committed_species", "")).strip_edges(), entries,
-        _player_knowledge())
     # **THE FOOD ZERO SURVIVES BESIDE A MATERIAL CLAUSE, AND THAT IS THE READING.** A sown Field of
     # cotton pays exactly `0.00 food`, and stating it next to `0.29 fibre` is the whole land-use
     # bargain in one row — which is what the retired trade scalar was standing in for.
@@ -3356,15 +3265,11 @@ func _crop_payoff_terms(tile_info: Dictionary, entries: Array[Dictionary], speci
     fodder *= output
     if not curve_row.is_empty():
         food = float(curve_row[SourceForecast.FORAGE_CREW_NEXT_RUNG_TAKE_KEY])
-        # The curve CREDITS its fodder, so a refused account arrives as `0`; the land's figure is
-        # kept only to NAME it under the lock, never to state it.
-        if not fodder_refused:
-            fodder = float(curve_row.get(SourceForecast.FORAGE_CREW_NEXT_RUNG_FODDER_KEY, 0.0))
+        fodder = float(curve_row.get(SourceForecast.FORAGE_CREW_NEXT_RUNG_FODDER_KEY, 0.0))
         materials = curve_row.get(SourceForecast.FORAGE_CREW_NEXT_RUNG_MATERIALS_KEY, [])
         output = SourceForecast.OUTPUT_FULL
     var terms := SourceForecast.picker_products(food, fodder,
-        SourceForecast.YIELD_ACCOUNT_FOOD, [],
-        HudComposeVocab.YIELD_LOCKED_GLYPH if fodder_refused else "")
+        SourceForecast.YIELD_ACCOUNT_FOOD, [])
     for row_variant in materials:
         var row: Dictionary = row_variant
         var amount := float(row[SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY]) * output
@@ -4277,15 +4182,21 @@ func open_order_sheet(band_entity: int, kind: String) -> void:
     _build_order_sheet(kind, content)
     refresh_drawer_actions()
 
-func _band_pens(band: Dictionary) -> Array:
-    var pens: Array = []
+## **THE HERDS THE FODDER ORDER FEEDS**: every tamed or penned herd the band's people keep that draws
+## fodder. A herd its own range feeds outright draws none and is not listed.
+func _band_eating_herds(band: Dictionary) -> Array:
+    var herds: Array = []
     for herd_variant in _band_labor.world_herds():
         var herd: Dictionary = herd_variant
-        if bool(herd.get("has_owner", false)) \
-                and int(herd.get("owner", -1)) == int(band.get("faction", HudConst.PLAYER_FACTION_ID)) \
-                and RungQuotes.is_enclosed(herd):
-            pens.append(herd)
-    return pens
+        if not bool(herd.get("has_owner", false)) \
+                or int(herd.get("owner", -1)) != int(band.get("faction", HudConst.PLAYER_FACTION_ID)):
+            continue
+        var kept := RungQuotes.is_enclosed(herd) \
+                or RungQuotes.domestication_progress(herd) >= HudConst.KNOWLEDGE_COMPLETE
+        var eats := float(herd.get("fodder_draw", 0.0)) + float(herd.get("pen_fodder_shortfall", 0.0))
+        if kept and eats >= SourceForecast.FODDER_FLOW_MIN:
+            herds.append(herd)
+    return herds
 
 func _build_order_sheet(kind: String, target: VBoxContainer) -> void:
     if target == null:
@@ -4298,7 +4209,7 @@ func _build_order_sheet(kind: String, target: VBoxContainer) -> void:
         return
     var ctx := _orders_ctx(band, func() -> void: _build_order_sheet(kind, target))
     BandOrdersSheets.build_order_sheet(target, ctx, order,
-        _band_pens(band) if kind == HudOrdersVocab.KIND_FODDER else [], _herd_label_for_id)
+        _band_eating_herds(band) if kind == HudOrdersVocab.KIND_FODDER else [], _herd_label_for_id)
 
 ## The strip (and the disabled controls) a hunt / gather sheet wears for a row under the chief's order.
 ## `source_kind` is `hunt` / `forage`; `address` names the row for a release / claim.

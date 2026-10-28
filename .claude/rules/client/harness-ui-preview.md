@@ -1038,12 +1038,12 @@ afterwards; neither `set_band_city_panel` nor `render_band` re-renders the drawe
 is itself asserted — a drawer that had flipped to the pointer would carry one fodder row instead of
 two and photograph perfectly tidily.
 
-**The block also moves the faction's Foddering and must put it back.** `_ingest_intensification`
+**The block also moves the faction's knowledge row and must put it back.** `_ingest_intensification`
 REPLACES a faction's whole row, and `band_expedition` is the FIRST chapter — every chapter after it
-inherits whatever this one leaves. The row must read DORMANT with the track part-learned and with it
-learned — knowing the craft is not the same as keeping a larder — so the block pushes both and
-restores the untouched zeros on the way out, the same restore `band_panel_preview` makes around its
-own five-track fixture.
+inherits whatever this one leaves, so the block restores the untouched zeros on the way out
+(`_push_knowledge_zero`). The row reads DORMANT whatever the faction knows: it states the band's own
+larders. `band_fodder_no_herds` renders a band holding fodder no herd eats, whose runway reads
+`no herds eat it` rather than `(∞)`; a covered band whose herds do eat keeps its figure.
 
 **A `[url=` SEARCH OVER PRODUCED LINES IS A VACUOUS CARET TEST.** A line producer emits plain
 `Key: value` strings and `detail_bbcode` is what draws the clickable run, so the needle can never
@@ -1730,9 +1730,7 @@ whole-basket half of every claim is then checked against arithmetic that does no
 
 **THE ZERO-FOOD STATE IS A PAIR ON ONE BASKET.** Ticking the hay must state no food row; ticking the
 grain in the same meadow must still state one — without the second half, "no food row" passes on a
-readout that stopped stating the account. Its `Foddering` track is dialled complete in this chapter's
-`update_intensification`, or the fodder account is locked and the `0.0` this state exists for has no
-live sibling beside it.
+readout that stopped stating the account. Fodder needs no knowledge, so the hay account is live beside the `0.0` this state exists for.
 
 **THE BRACKET'S CLAIM IS A DRIVEN PROBE, NOT THE FIXTURE'S NUMBERS.** Both surfaces read the wire's
 `standing_biomass` now, so the fixture's figures MATCH the tile card's split on purpose — a fixture

@@ -760,7 +760,7 @@ const PEN_FEED_FODDER_SEGMENT := " · %d%% fodder"
 
 # **NOTHING CARRIED IN IS A DIFFERENT FACT FROM A LITTLE CARRIED IN**, so a pen whose draw is under
 # `SourceForecast.FODDER_FLOW_MIN` says `no fodder` in the share's place rather than `0% fodder`: the
-# keeper brought none — because the band has none, or has not learned Foddering — which is a
+# keeper brought none — because the band has none — which is a
 # different problem from a ration that fell short.
 const PEN_FEED_NO_FODDER_SEGMENT := " · no fodder"
 
@@ -789,12 +789,12 @@ const PEN_FEED_SHORTFALL_SEGMENT := " · short %s feed/turn"
 
 ## **THE REMEDIES, AS THE SIM SUPPORTS THEM — and only those.** A pen is fed by its fenced footprint's
 ## grass and the keeper band's FODDER store (`graze.md` → "The pasture offset", "FODDER is a STOCK"): a
-## hay Field the band sows credits that store, and a band that has not learned Foddering draws none.
+## fodder Field the band sows credits that store, and a pen or a tamed herd draws on it.
 ## A wider fence grazes more land (`pen_pasture_fraction` is the footprint's intake over the herd's
 ## demand, and `hex_range_tiles(corralled_at, pen_radius)` grows with each ring), so a ring raises the
 ## pasture share wherever the new ground carries grass. Shared by the tile card's `Fed` row and the Work
 ## row's hover so the two cannot word one fix differently.
-const PEN_FEED_FIX_LINE := "Fix: hay field (Foddering) · extend pen"
+const PEN_FEED_FIX_LINE := "Fix: fodder field · extend pen"
 const PEN_FEED_ROW_HOVER_SHORT_FORMAT := "Short %s feed/turn"
 const PEN_FEED_ROW_HOVER_FED_FORMAT := "Only %d%% fed"
 ## The Work row's two hover lines for the same state: the hazard and the fix, the fix indented under it.
@@ -3114,7 +3114,7 @@ static func pen_feed_value_hex(value: String) -> String:
 ## `pen_fed_fraction` is clamped at 1.0 and the two can round-cross.
 ##
 ## **`no fodder` IS NOT `0% fodder`.** Below `SourceForecast.FODDER_FLOW_MIN` the keeper carried
-## nothing in at all — no store, or no Foddering — which is a different problem from a short ration,
+## nothing in at all — no store — which is a different problem from a short ration,
 ## and the shortfall clause drops its `more` to match: there is no "more" than nothing.
 static func pen_feed_value(herd_data: Dictionary) -> String:
     var fed_fraction := PenStatus.fed_fraction(herd_data)
@@ -3629,12 +3629,10 @@ static func fodder_is_concerning(band: Dictionary) -> bool:
 ## signed per-turn figure, so the disagreement is on screen twice.
 ##
 ## ⛔ **THE RUNWAY COUNTS DOWN THE DRAIN; THIS RATE SUBTRACTS THE NEED, AND THEY ARE NOT THE SAME
-## TERM.** `last_fodder_drain` is the pens' gap BEHIND the Foddering gate — `settle_pen_hay` zeroes
-## every bid without that knowledge — while `fodder_need` is the ungated bill the row states. So the
-## two agree on every band that can actually feed hay out, and diverge on exactly one shape: a band
-## that has committed a patch to a fodder crop but does not yet know Foddering. There the sim
-## publishes the no-drain sentinel (∞ turns, because nothing is emptying the store) while this reads
-## negative, because the pens are still short. **The need is deliberate on this side**: it is the term
+## TERM.** `last_fodder_drain` is what the herds actually drew, while `fodder_need` is the bill the
+## row states. So the two agree on every band whose store covers its herds, and diverge where it does
+## not: the sim publishes the no-drain sentinel (∞ turns) for a band with no herd eating fodder while
+## this reads the bill. **The need is deliberate on this side**: it is the term
 ## that carries the alarm, and it is the figure every `Fodder:` reader — row, caret and rollup —
 ## states.
 ##
@@ -3684,14 +3682,14 @@ const FODDER_DORMANT_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_FODDER + ": [co
 const FODDER_DORMANT_VALUE := HudComposeVocab.YIELD_LOCKED_GLYPH
 
 ## The dormant row's hover, per surface.
-const FODDER_DORMANT_HOVER_FACTION := "Hay for penned animals. None of your bands holds or uses any yet."
-const FODDER_DORMANT_HOVER_BAND := "This band holds no hay and feeds no pen with it."
+const FODDER_DORMANT_HOVER_FACTION := "Fodder for tamed and penned herds. None of your bands holds or uses any yet."
+const FODDER_DORMANT_HOVER_BAND := "This band holds no fodder and keeps no herd that eats it."
 
 ## The dormant row, and the WHOLE of that state: a dim dash, and nothing a caller can add to it. It
 ## takes no arguments for that reason — there is no per-faction, per-band or per-render fact left in
 ## the row to vary.
 ##
-## **IT CARRIES A ROW-SCOPED HOVER, filed by the CALLER.** The old pair of hovers (a Foddering lock and
+## **IT CARRIES A ROW-SCOPED HOVER, filed by the CALLER.** The old pair of hovers (a lock and
 ## a calm *no fodder yet*) answered for the whole block, so a paragraph about HAY popped out from under a
 ## cursor resting on Growth, Morale or Food. Hovers are per-row now (`Context.row_tooltips`, keyed by the
 ## row's own key, worn through `hover_wrap` / `wire_row_hovers`), so the row states what it is on hover

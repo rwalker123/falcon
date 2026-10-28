@@ -63,7 +63,7 @@ const PEN_FODDER_DRAW_STARVING := 1.49
 const PEN_FODDER_SHORTFALL_STARVING := 11.30
 
 ## **THE PEN THAT DREW NOTHING AT ALL**, on the same 40% pasture: a 20.0-a-turn demand, its footprint
-## grazing 40% of it and its keeper carrying in NOTHING (no store, or no Foddering), so the herd got
+## grazing 40% of it and its keeper carrying in NOTHING (no store), so the herd got
 ## exactly its pasture share — 40% — and owes the whole uncovered 12.0. `no fodder` is a different
 ## fact from `0% fodder`, and this is the fixture that proves the row can tell them apart.
 const PEN_FED_UNFODDERED := 0.40
@@ -663,8 +663,8 @@ static func starving_pen_herd_fixture() -> Dictionary:
 	return fixture
 
 ## The pen that drew NOTHING — starving on its pasture share alone (`fodder_draw` 0, under
-## `SourceForecast.FODDER_FLOW_MIN`), because the band has no fodder store or has not learned
-## Foddering. Its `Fed:` row reads **"⚠ 40% — 40% pasture · no fodder · needs 12.0 /turn"**: `no
+## `SourceForecast.FODDER_FLOW_MIN`), because the band has no fodder store.
+## Its `Fed:` row reads **"⚠ 40% — 40% pasture · no fodder · needs 12.0 /turn"**: `no
 ## fodder` where the share would sit, since nothing carried in is a different fact from a little
 ## carried in — and the shortfall drops its `more`, there being no "more" than nothing.
 static func unfoddered_pen_herd_fixture() -> Dictionary:

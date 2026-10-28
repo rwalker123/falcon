@@ -3215,8 +3215,7 @@ const TEACHING_NOTHING_UNWORKED := "Teaching nothing: nothing is being taken."
 ## verb in flight: the same crew learns Herding on a wild herd and Penning on a tamed one, so a herd
 ## mid-Corral is still teaching Penning while it builds.
 ##
-## **The rung-3 entries are deliberately absent, and not because the sim has none** (a pen earns
-## Foddering): a Field and a built Pen are MANAGED, so the sheet draws no floor axis there at all and
+## **The rung-3 entries are deliberately absent, and not because the sim has none**: a Field and a built Pen are MANAGED, so the sheet draws no floor axis there at all and
 ## has no rate to state — see `floor_chart_model`'s `known`.
 ##
 ## The value is the lesson's own word in the sentence's lower case; the husbandry ceiling does NOT

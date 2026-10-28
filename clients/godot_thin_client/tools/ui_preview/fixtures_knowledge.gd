@@ -69,7 +69,7 @@ const KNOWLEDGE_CULTIVATION := "cultivation"
 const KNOWLEDGE_SEED_SELECTION := "seed_selection"
 const KNOWLEDGE_HERDING := "herding"
 const KNOWLEDGE_PENNING := "penning"
-const KNOWLEDGE_FODDERING := "foddering"
+const KNOWLEDGE_SELECTIVE_BREEDING := "selective_breeding"
 const KNOWLEDGE_ROADBUILDING := "roadbuilding"
 const KNOWLEDGE_PAVING := "paving"
 const KNOWLEDGE_WOODCRAFT := "woodcraft"
@@ -79,7 +79,7 @@ const KNOWLEDGE_QUARRYING := "quarrying"
 ## **THE ROSTER THE SIM PUBLISHES FOR THE SHIPPED LADDER**, in the rungs' own declaration order.
 ##
 ## Read it as: *this knowledge is taught by the rung at `order` on `branch`, and `is_step` says
-## whether any rung waits on it.* `foddering` is the shipped `false` — the pen rung teaches it and no
+## whether any rung waits on it.* `selective_breeding` is the shipped `false` — the Ranch tier teaches it and no
 ## rung is gated by it, which is what puts it under the Herds chain rather than in it.
 ##
 ## **`roadbuilding` and `paving` are the proof of the whole arrangement**: they are taught by
@@ -98,9 +98,8 @@ static func ladder_roster() -> Array:
 		_row(KNOWLEDGE_SEED_SELECTION, "Seed Selection", BRANCH_PLANT, 2, true, AREA_FOOD),
 		_row(KNOWLEDGE_HERDING, "Herding", BRANCH_ANIMAL, 1, true, AREA_FOOD),
 		_row(KNOWLEDGE_PENNING, "Penning", BRANCH_ANIMAL, 2, true, AREA_FOOD),
-		_row(KNOWLEDGE_FODDERING, "Foddering", BRANCH_ANIMAL, 3, false, AREA_FOOD),
 		_row("worked_land", "Worked Land", BRANCH_PLANT, 3, false, AREA_FOOD),
-		_row("selective_breeding", "Selective Breeding", BRANCH_ANIMAL, 2, false, AREA_FOOD),
+		_row(KNOWLEDGE_SELECTIVE_BREEDING, "Selective Breeding", BRANCH_ANIMAL, 2, false, AREA_FOOD),
 		_row(KNOWLEDGE_ROADBUILDING, "Roadbuilding", BRANCH_ROUTE, 2, true, AREA_WORKS),
 		_row(KNOWLEDGE_PAVING, "Paving", BRANCH_ROUTE, 3, true, AREA_WORKS),
 		_row(KNOWLEDGE_WOODCRAFT, "Woodcraft", BRANCH_FORESTRY, 1, true, AREA_MAKING),

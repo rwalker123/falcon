@@ -110,6 +110,27 @@ func _pens() -> Array:
 		pen["y"] = 18 + 2 * i
 		pen["pen_pasture_fraction"] = 0.4 + 0.2 * float(i)
 		pens.append(pen)
+	# A TAMED herd (not penned) that draws fodder shares the list; one its range feeds outright does not.
+	var tamed: Dictionary = HerdFx.fully_tamed_herd_fixture()
+	tamed["id"] = "tamed_0"
+	tamed["has_owner"] = true
+	tamed["owner"] = 0
+	tamed["x"] = 63
+	tamed["y"] = 17
+	tamed["pen_pasture_fraction"] = 0.7
+	tamed["fodder_draw"] = 2.5
+	tamed["pen_fodder_shortfall"] = 0.5
+	pens.append(tamed)
+	var fed_by_range: Dictionary = HerdFx.fully_tamed_herd_fixture()
+	fed_by_range["id"] = "tamed_1"
+	fed_by_range["has_owner"] = true
+	fed_by_range["owner"] = 0
+	fed_by_range["x"] = 60
+	fed_by_range["y"] = 15
+	fed_by_range["pen_pasture_fraction"] = 1.0
+	fed_by_range["fodder_draw"] = 0.0
+	fed_by_range["pen_fodder_shortfall"] = 0.0
+	pens.append(fed_by_range)
 	return pens
 
 func _sheet() -> Node:
@@ -296,7 +317,9 @@ func _food_sheets() -> void:
 	await h._save("band_orders_fodder")
 	h._assert_hud("the Fodder sheet names the herds", _has_text("Orrin keeps the herds fed"))
 	h._assert_hud("…and what eats the hay", _has_text("What eats it".to_upper()) or _has_text("What eats it"))
-	h._assert_hud("…with a pasture/hay split bar per pen", _find_meta(_sheet(), BandOrdersSheets.META_PEN_BAR) != null)
+	h._assert_hud("…with a range/fodder split bar per herd", _find_meta(_sheet(), BandOrdersSheets.META_PEN_BAR) != null)
+	h._assert_hud("…listing the tamed herd that draws fodder beside the pens", _has_text("(63, 17)"))
+	h._assert_hud("…and not the tamed herd its range feeds outright", not _has_text("(60, 15)"))
 
 # ---- Hunt and gather ---------------------------------------------------------------------------------
 

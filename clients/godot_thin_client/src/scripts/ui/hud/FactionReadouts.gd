@@ -112,9 +112,6 @@ var _ladder_branches: Array = []
 ## it lets you do"* head, and `HudKnowledgeVocab` deliberately does not re-author the sentences so the
 ## screen and any other surface naming a discovery cannot describe it differently.
 ##
-## It also remains the DECLARED SET of tracks that unlock something — `foddering` is in it and gates
-## no verb, which `HudKnowledgeVocab.UNLOCKLESS_TRACKS` is what states.
-##
 ## NOTE: `herding` used to read "The Corral policy is now available on domesticated herds." Both
 ## halves were wrong after the §4.3 reshuffle — Herding gates **Tame** (rung 2) and it is **Penning**
 ## that gates Corral (rung 3).
@@ -128,10 +125,6 @@ const KNOWLEDGE_UNLOCK_NOTES := {
 	# nothing to say about it — which is what keeps the roster wire-driven.
 	"roadbuilding": "The Grade order is now available on trails your traffic has worn in.",
 	"paving": "The Pave order is now available on dirt roads you already keep.",
-	# The one note that names no new VERB, because this discovery unlocks none: it is what keeping a
-	# pen taught your people, and what it buys is an account they could not bank before. Said in the
-	# siblings' voice — what the capability bought, and where it now lands.
-	"foddering": "Hay you gather now goes into the fodder store and feeds your pens.",
 	# The roaming skills (#799): standalone, each a standing effect rather than a new verb.
 	"herd_lore": "See where a migrating herd goes next.",
 	"travois": "Each worker carries more on the move.",
