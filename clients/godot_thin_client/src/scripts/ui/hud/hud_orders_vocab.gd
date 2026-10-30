@@ -51,6 +51,21 @@ const ORDER_SUMMARY_META := &"band_order_summary"
 const ORDER_ALSO_META := &"band_order_also"
 const ORDER_GROUP_META := &"band_orders_group"
 const ORDER_PRIORITY_META := &"band_order_priority"
+## The order line's ways in to its sheet, and the kit clause that opens the bench (playtest: the sheet was
+## findable only from a name that did not look clickable).
+const ORDER_DETAIL_META := &"band_order_detail"
+const ORDER_OPEN_META := &"band_order_open"
+const ORDER_KIT_META := &"band_order_kit"
+const OPEN_CHEVRON := "›"
+const OPEN_TIP_FORMAT := "Set %s %s order"                     # "Set Orrin's food order"
+const COUNCIL_POSSESSIVE_LOWER := "the elders'"
+const OPEN_CHEVRON_FONT_SIZE := 16
+## `· short 3 hoes, 2 spears`: appended in amber to the state; pressing it opens the crafting bench.
+const KIT_CLAUSE_FORMAT := "· short %s"
+const KIT_ITEM_FORMAT := "%d %s"
+const KIT_ITEM_SEPARATOR := ", "
+const KIT_TIP_ROW_FORMAT := "%s needs %s"                      # "Tended Patch (29, 24) needs 3 hoes"
+const KIT_TIP_BENCH_LINE := "Open the crafting bench"
 
 const LINE_TURNS_FORMAT := "· %s · keep %s"
 const LINE_MATERIAL_FORMAT := "· %s on hand · keep %d"
@@ -312,6 +327,62 @@ static func who_verb(band: Dictionary, singular_verb: String) -> String:
 
 static func possessive(band: Dictionary) -> String:
     return COUNCIL_POSSESSIVE if is_council(band) else POSSESSIVE_FORMAT % who(band)
+
+## "Orrin's" / "the elders'" -- the possessive mid-sentence.
+static func possessive_lower(band: Dictionary) -> String:
+    return COUNCIL_POSSESSIVE_LOWER if is_council(band) else possessive(band)
+
+## `Set Orrin's food order`: the tooltip on every way in to the order's sheet.
+static func open_tip(band: Dictionary, kind: String) -> String:
+    return OPEN_TIP_FORMAT % [possessive_lower(band), order_name(kind).to_lower()]
+
+## **WHAT ONE ROW IS SHORT OF**, off its `kit_toe` lines: `{on-screen item name: count short}`. The count is
+## `required - filled` rounded UP (a sub-unit gap is a unit still to make), the name the roster's display name
+## lower-cased -- never the id. A line the roster has no name for is skipped, like the row's own warning.
+static func row_kit_short(toe: Array, item_names: Dictionary) -> Dictionary:
+    var short: Dictionary = {}
+    for line_variant in toe:
+        if not (line_variant is Dictionary) or not HudWorkVocab.pool_toe_row_is_short(line_variant):
+            continue
+        var line: Dictionary = line_variant
+        var item := String(item_names.get(String(line.get(HudBandLaborState.POOL_TOE_ITEM_KEY, "")), "")) \
+            .strip_edges().to_lower()
+        if item == "":
+            continue
+        var required := maxf(float(line.get(HudBandLaborState.POOL_TOE_REQUIRED_KEY, 0.0)), 0.0)
+        var filled := clampf(float(line.get(HudBandLaborState.POOL_TOE_FILLED_KEY, 0.0)), 0.0, required)
+        short[item] = int(short.get(item, 0)) + maxi(ceili(required - filled), 0)
+    return short
+
+## `3 hoes, 2 spears`: items sorted by the count short, descending (ties by name).
+static func kit_items_text(short: Dictionary) -> String:
+    var names: Array = short.keys()
+    names.sort_custom(func(a: String, b: String) -> bool:
+        if int(short[a]) != int(short[b]):
+            return int(short[a]) > int(short[b])
+        return a < b)
+    var parts: Array[String] = []
+    for item in names:
+        parts.append(KIT_ITEM_FORMAT % [int(short[item]), item])
+    return KIT_ITEM_SEPARATOR.join(PackedStringArray(parts))
+
+## **THE ORDER LINE'S KIT CLAUSE** from `entries` (`{name, short}` per chief row of the order):
+## `{clause: "· short 3 hoes", tip: one line per short row}`, or `{}` where nothing is short.
+static func kit_clause(entries: Array) -> Dictionary:
+    var total: Dictionary = {}
+    var lines: Array[String] = []
+    for entry_variant in entries:
+        var entry: Dictionary = entry_variant
+        var short: Dictionary = entry.get("short", {})
+        if short.is_empty():
+            continue
+        for item in short:
+            total[item] = int(total.get(item, 0)) + int(short[item])
+        lines.append(KIT_TIP_ROW_FORMAT % [String(entry.get("name", "")), kit_items_text(short)])
+    if total.is_empty():
+        return {}
+    lines.append(KIT_TIP_BENCH_LINE)
+    return {"clause": KIT_CLAUSE_FORMAT % kit_items_text(total), "tip": "\n".join(PackedStringArray(lines))}
 
 static func group_title(band: Dictionary) -> String:
     return COUNCIL_GROUP_TITLE if is_council(band) else GROUP_TITLE_FORMAT % who(band)

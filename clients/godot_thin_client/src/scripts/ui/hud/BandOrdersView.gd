@@ -27,6 +27,26 @@ static func priority_chip(level: String) -> Control:
         HudOrdersVocab.SMALL_FONT_SIZE, HudStyle.INK_DIM))
     return chip
 
+## The Priority chip as a BUTTON (the order line's): the same chip face, lit with the signal border on hover,
+## pressing it opens the order's sheet where the Priority picker is.
+static func priority_button(level: String, tip: String, on_press: Callable) -> Button:
+    var chip := Button.new()
+    chip.text = HudOrdersVocab.PRIORITY_CHIP_FORMAT % HudOrdersVocab.priority_face(level)
+    chip.focus_mode = Control.FOCUS_NONE
+    chip.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+    chip.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+    chip.tooltip_text = tip
+    chip.add_theme_font_size_override("font_size", HudOrdersVocab.SMALL_FONT_SIZE)
+    chip.add_theme_stylebox_override("normal", HudStyle.chip_stylebox(HudStyle.LINE))
+    chip.add_theme_stylebox_override("hover", HudStyle.chip_stylebox(HudStyle.SIGNAL))
+    chip.add_theme_stylebox_override("pressed", HudStyle.chip_stylebox(HudStyle.SIGNAL))
+    chip.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    chip.add_theme_color_override("font_hover_color", HudStyle.SIGNAL)
+    chip.add_theme_color_override("font_pressed_color", HudStyle.SIGNAL)
+    chip.set_meta(HudOrdersVocab.ORDER_PRIORITY_META, HudWorkVocab.work_priority_of(level))
+    chip.pressed.connect(func() -> void: on_press.call())
+    return chip
+
 ## The three-way crew bar: keeps up / refills / short, a tooltip carrying the numbers.
 static func crew_bar(order: Dictionary) -> Control:
     var keeps := int(order.get("hold_heads", 0))
@@ -56,12 +76,13 @@ static func crew_bar(order: Dictionary) -> Control:
 
 ## `rows_by_kind`: order kind -> Array of `{ROW_NODE: Control, ROW_STAFFED: bool}` (today's rows under that
 ## order). `also_by_kind`: order kind -> Array of `{text, under}` for the dashed `↳ Also` lines.
+## `kit_by_kind`: order kind -> Array of `{name, short}` for the chief rows under it (`HudOrdersVocab.row_kit_short`).
 ## Every order is FOLDED until the player opens it (`BandOrdersController.is_open`).
 const ROW_NODE := "node"
 const ROW_STAFFED := "staffed"
 
 static func build_group(band: Dictionary, controller: BandOrdersController,
-        rows_by_kind: Dictionary, also_by_kind: Dictionary) -> VBoxContainer:
+        rows_by_kind: Dictionary, also_by_kind: Dictionary, kit_by_kind: Dictionary = {}) -> VBoxContainer:
     var orders := HudOrdersVocab.shown_orders(band)
     var group := VBoxContainer.new()
     group.set_meta(HudOrdersVocab.ORDER_GROUP_META, true)
@@ -79,7 +100,8 @@ static func build_group(band: Dictionary, controller: BandOrdersController,
         var order: Dictionary = order_variant
         var kind := String(order.get("kind", ""))
         var is_open := controller.is_open(band, kind)
-        column.add_child(_order_line(band, order, controller, is_open))
+        column.add_child(_order_line(band, order, controller, is_open,
+            HudOrdersVocab.kit_clause(kit_by_kind.get(kind, []))))
         if not is_open:
             continue
         var staffed: Array = []
@@ -149,7 +171,7 @@ static func _reserve_line(band: Dictionary, kind: String, count: int, is_open: b
     return line
 
 static func _order_line(band: Dictionary, order: Dictionary, controller: BandOrdersController,
-        is_open: bool) -> Control:
+        is_open: bool, kit: Dictionary = {}) -> Control:
     var kind := String(order.get("kind", ""))
     var state := HudOrdersVocab.state_of(order)
     var line := HBoxContainer.new()
@@ -168,23 +190,46 @@ static func _order_line(band: Dictionary, order: Dictionary, controller: BandOrd
     middle.add_theme_constant_override("separation", 0)
     var head := HBoxContainer.new()
     head.add_theme_constant_override("separation", HudOrdersVocab.GROUP_SEPARATION)
-    var name_link := HudWidgets.build_inline_link(HudOrdersVocab.order_name(kind), HudStyle.INK,
-        func() -> void: controller.open_sheet(band, kind))
+    var open_sheet := func() -> void: controller.open_sheet(band, kind)
+    var open_tip := HudOrdersVocab.open_tip(band, kind)
+    var name_link := HudWidgets.build_inline_link(HudOrdersVocab.order_name(kind), HudStyle.INK, open_sheet)
+    name_link.tooltip_text = open_tip
     name_link.add_theme_font_size_override("font_size", HudOrdersVocab.NAME_FONT_SIZE)
     name_link.set_meta(HudOrdersVocab.ORDER_NAME_META, kind)
     head.add_child(name_link)
-    var detail := text(HudOrdersVocab.line_text(order), HudOrdersVocab.SMALL_FONT_SIZE + 1,
-        HudStyle.INK_DIM)
+    var detail := HudWidgets.build_inline_link(HudOrdersVocab.line_text(order), HudStyle.INK_DIM, open_sheet)
+    detail.add_theme_font_size_override("font_size", HudOrdersVocab.SMALL_FONT_SIZE + 1)
+    detail.alignment = HORIZONTAL_ALIGNMENT_LEFT
     detail.clip_text = true
     detail.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
     detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    detail.tooltip_text = open_tip
+    detail.set_meta(HudOrdersVocab.ORDER_DETAIL_META, kind)
     head.add_child(detail)
     middle.add_child(head)
     var state_label := text(String(state["text"]), HudOrdersVocab.STATE_FONT_SIZE,
         HudOrdersVocab.tone_color(state["tone"]), true)
     state_label.set_meta(HudOrdersVocab.ORDER_STATE_META, String(state["text"]))
-    middle.add_child(state_label)
-    middle.add_child(priority_chip(String(order.get("priority", HudOrdersVocab.PRIORITY_NORMAL))))
+    if kit.is_empty():
+        middle.add_child(state_label)
+    else:
+        # The state and its amber kit clause share one wrapping line; pressing the clause opens the bench.
+        var flow := HFlowContainer.new()
+        flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        flow.add_theme_constant_override("h_separation", HudOrdersVocab.GROUP_SEPARATION)
+        flow.add_theme_constant_override("v_separation", 0)
+        state_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+        state_label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+        flow.add_child(state_label)
+        var clause := HudWidgets.build_inline_link(String(kit["clause"]), HudStyle.WARN,
+            func() -> void: controller.open_bench(band))
+        clause.add_theme_font_size_override("font_size", HudOrdersVocab.STATE_FONT_SIZE)
+        clause.tooltip_text = String(kit["tip"])
+        clause.set_meta(HudOrdersVocab.ORDER_KIT_META, String(kit["clause"]))
+        flow.add_child(clause)
+        middle.add_child(flow)
+    middle.add_child(priority_button(String(order.get("priority", HudOrdersVocab.PRIORITY_NORMAL)),
+        open_tip, open_sheet))
     line.add_child(middle)
     var crew := VBoxContainer.new()
     crew.add_theme_constant_override("separation", HudOrdersVocab.GROUP_SEPARATION)
@@ -193,6 +238,12 @@ static func _order_line(band: Dictionary, order: Dictionary, controller: BandOrd
     crew.add_child(number)
     crew.add_child(crew_bar(order))
     line.add_child(crew)
+    var open_link := HudWidgets.build_inline_link(HudOrdersVocab.OPEN_CHEVRON, HudStyle.INK_DIM, open_sheet)
+    open_link.add_theme_font_size_override("font_size", HudOrdersVocab.OPEN_CHEVRON_FONT_SIZE)
+    open_link.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+    open_link.tooltip_text = open_tip
+    open_link.set_meta(HudOrdersVocab.ORDER_OPEN_META, kind)
+    line.add_child(open_link)
     return line
 
 static func _also_line(also: Dictionary) -> Control:

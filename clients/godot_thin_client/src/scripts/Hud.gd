@@ -833,6 +833,10 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: bench_raise_kit_requested.emit(payload))
     _bandpanel.crafting_requested.connect(
         func(band: Dictionary) -> void: _crafting.toggle_for(band))
+    # An order line's `· short 3 hoes` clause OPENS the bench (never toggles it shut) on that band; the
+    # bench has no open-at-item seam, so it opens as the header's `⚒` does.
+    _bandorders.crafting_requested.connect(
+        func(band: Dictionary) -> void: _crafting.open_for(band))
     # The knowledge screen, on the same room and the same launch idiom. It takes `_topbar` as well,
     # that cluster being where the player-faction filter over the intensification vector lives.
     _knowledge = KnowledgePanelController.new()

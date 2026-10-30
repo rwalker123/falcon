@@ -18,6 +18,9 @@ extends RefCounted
 signal band_order_requested(payload: Dictionary)
 ## The player pressed an order's name on the Work tab: open its Food / Fodder / material sheet.
 signal order_sheet_requested(band_entity: int, kind: String)
+## The player pressed an order's kit clause (`· short 3 hoes`): open the crafting bench on that band --
+## `Hud` answers it with the same `CraftingPanelController.open_for` the band header's `⚒` lands on.
+signal crafting_requested(band: Dictionary)
 
 ## The player flipped an order's (or its reserve line's) fold: the Work tab re-renders.
 signal view_changed
@@ -93,6 +96,9 @@ func send_claim(band: Dictionary, kind: String, row: Dictionary = {}) -> void:
 
 func open_sheet(band: Dictionary, kind: String) -> void:
     order_sheet_requested.emit(int(band.get("entity", -1)), kind)
+
+func open_bench(band: Dictionary) -> void:
+    crafting_requested.emit(band)
 
 # ---- Lookups ------------------------------------------------------------------------------------
 

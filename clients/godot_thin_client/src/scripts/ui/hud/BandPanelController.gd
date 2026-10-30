@@ -2055,6 +2055,7 @@ func _orders_items(band: Dictionary, models: Array, extract_models: Array) -> Di
     var yours: Array = []
     var keep_models: Array = []
     var keep_extract: Array = []
+    var kit_by_kind: Dictionary = {}
     var shown_kinds: Array = []
     for order in HudOrdersVocab.shown_orders(band):
         shown_kinds.append(String(order.get("kind", "")))
@@ -2076,6 +2077,7 @@ func _orders_items(band: Dictionary, models: Array, extract_models: Array) -> Di
                         BandOrdersView.ROW_NODE: node,
                         BandOrdersView.ROW_STAFFED: int(model.get("workers", 0)) > 0})
                     _note_also_lines(band, model, kind, shown_kinds, also_by_kind)
+                    _note_kit_short(band, model, kind, kit_by_kind)
                 BandOrdersController.SIDE_YOURS:
                     node = _build_extract_row(band, model) \
                         if String(model.get("kind", "")) == HudConst.LABOR_KIND_EXTRACT \
@@ -2084,7 +2086,7 @@ func _orders_items(band: Dictionary, models: Array, extract_models: Array) -> Di
                 _:
                     pair[1].append(model)
     var items: Array = []
-    var group := BandOrdersView.build_group(band, _orders, rows_by_kind, also_by_kind)
+    var group := BandOrdersView.build_group(band, _orders, rows_by_kind, also_by_kind, kit_by_kind)
     items.append({WORK_ITEM_NODE: group,
         WORK_ITEM_HEIGHT: group.get_combined_minimum_size().y, WORK_ITEM_KEEP: false})
     var by_products := BandOrdersView.by_product_lines(band)
@@ -2098,6 +2100,18 @@ func _orders_items(band: Dictionary, models: Array, extract_models: Array) -> Di
     result["models"] = keep_models
     result["extract_models"] = keep_extract
     return result
+
+## What this chief row is short of (its `kit_toe`, in the roster's on-screen item words), noted for its order's
+## line: `kit_by_kind[kind]` gains `{name, short}` where the row is short of anything.
+func _note_kit_short(band: Dictionary, model: Dictionary, kind: String, kit_by_kind: Dictionary) -> void:
+    var assignment := _orders.assignment_of_model(band, model)
+    var short := HudOrdersVocab.row_kit_short(
+        assignment.get(SourceForecast.ASSIGNMENT_KIT_TOE_KEY, []) as Array, _item_display_names)
+    if short.is_empty():
+        return
+    if not kit_by_kind.has(kind):
+        kit_by_kind[kind] = []
+    (kit_by_kind[kind] as Array).append({"name": String(model.get("name", model.get("label", ""))), "short": short})
 
 ## One `↳ Also +0.24 food from Hay Meadow (70, 19) · listed under Fodder` line for each OTHER shown order
 ## this chief row brought product in for last turn (food and fodder cross-fill; a material never does).

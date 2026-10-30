@@ -49,6 +49,23 @@ top of the sections list and partitions the rows through `BandOrdersController.s
   itself a caret toggle (`PART_RESERVE`, remembered the same way) that brings those rows back in full,
   since they can carry a `⌃`. A summary line, a warning line in the tone of the worst shortage, and a
   legend close the group and stay visible folded.
+- **Four doors to the order's sheet, one call** (`controller.open_sheet(band, kind)`): the name (an
+  inline link: hover lifts the ink to `SIGNAL` and boxes it), the `· … keep N` detail (same link
+  treatment, `ORDER_DETAIL_META`), the `Priority: X` chip (a `Button`, `priority_button`, whose border
+  lights on hover; it keeps `ORDER_PRIORITY_META`) and a trailing `›` after the crew column
+  (`ORDER_OPEN_META`). All four carry the tooltip `Set Orrin's food order` (`HudOrdersVocab.open_tip`;
+  council: `Set the elders' food order`).
+- **The kit clause.** Folding hid the rows' own kit warnings, so the order line's state grows an amber
+  `· short 3 hoes, 2 spears` (`HudOrdersVocab.kit_clause`) when its chief rows are short. Per row,
+  `row_kit_short` reads the row's `kit_toe` (`required - filled`, rounded up, short by
+  `pool_toe_row_is_short`) under the roster display name lower-cased (`_item_display_names`, never an
+  id); the order sums them, sorted by count descending. `BandPanelController._note_kit_short` collects
+  the rows (name = the row's own Work-tab title) and `build_group` takes them as `kit_by_kind`. The
+  clause is a link (`ORDER_KIT_META`) in an `HFlowContainer` beside the state, so it wraps under it on
+  a narrow dock; the tooltip is one `Tended Patch (29, 24) needs 3 hoes` line per row. Visible folded
+  and open; absent when nothing is short. Pressing it emits `BandOrdersController.crafting_requested`,
+  which `Hud` answers with `CraftingPanelController.open_for(band)` -- the bench has no
+  open-at-recipe seam, so it opens the bench on that band as the header's `⚒` does (open, never toggle).
 - **The state is the first match of `HudOrdersVocab.state_of`**: (1) `sustainable < draw`, any kind ->
   amber `Falling X a turn — <why>` (`the land gives too little` food, `the patches give too little`
   fodder, `the stands regrow too little` a material); (2) hold short AND `take < draw` -> red

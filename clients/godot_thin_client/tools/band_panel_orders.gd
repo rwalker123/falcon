@@ -229,6 +229,8 @@ func run(harness) -> void:
 	h._assert_band_panel("…wood's stands that regrow too little say so", _has("Falling 0.8 a turn — the stands regrow too little"))
 	h._assert_band_panel("…and the summary goes red, naming the orders", _has("Not enough hands to keep up — Food and Stone are running down."))
 
+	await _kit_and_doors()
+
 	var leaderless: Dictionary = h._workings_band_fixture(h.WORKINGS_DEMAND)
 	await _show(leaderless, "band_orders_work_leaderless")
 	h._assert_band_panel("band orders: a leaderless band's Work tab draws no group", _group_count() == 0)
@@ -237,3 +239,106 @@ func run(harness) -> void:
 	h._push_bands([h._band_fixture()])
 	h._hud._bandpanel.rerender()
 	await h._settle()
+
+
+# ---- The order line's doors and its kit clause --------------------------------------------------------
+
+const HOE := "hoe_item"
+const SPEAR := "spear_item"
+
+func _toe(item: String, required: float, filled: float) -> Dictionary:
+	return {HudBandLaborState.POOL_TOE_ITEM_KEY: item, HudBandLaborState.POOL_TOE_REQUIRED_KEY: required,
+		HudBandLaborState.POOL_TOE_FILLED_KEY: filled}
+
+func _meta_button(meta: StringName, kind: String = "") -> Button:
+	for node in h._collect_meta_controls(h._panel, String(meta)):
+		if node is Button and (kind == "" or String(node.get_meta(meta)) == kind):
+			return node
+	return null
+
+func _kit_and_doors() -> void:
+	h._hud._bandpanel.set_item_display_names({HOE: "Hoes", SPEAR: "Spears"})
+	var orders: BandOrdersController = h._hud._bandorders
+	# One item: Food's forage row wants 6 hoes and holds 3, its fodder twin is not short.
+	var band := chief_band(_all_orders())
+	for row in band["labor_assignments"]:
+		if String(row.get("kind", "")) == "forage" and String(row.get("order_kind", "")) == "food" \
+				and int(row.get("workers", 0)) > 0:
+			row[SourceForecast.ASSIGNMENT_KIT_TOE_KEY] = [_toe(HOE, 6.0, 3.0)]
+	await _show(band, "band_orders_work_kit_one")
+	h._assert_band_panel("band orders: an order whose row is short of hoes says so in amber",
+		_has("· short 3 hoes") and _meta_button(HudOrdersVocab.ORDER_KIT_META) != null)
+	var kit_button := _meta_button(HudOrdersVocab.ORDER_KIT_META)
+	h._assert_band_panel("…the tooltip names the row and the count",
+		kit_button != null and kit_button.tooltip_text.contains(" needs 3 hoes"))
+
+	# Two items across two rows, sorted by the count short.
+	band = chief_band(_all_orders())
+	var seen := 0
+	for row in band["labor_assignments"]:
+		if String(row.get("order_kind", "")) == "food" and int(row.get("workers", 0)) > 0:
+			if String(row.get("kind", "")) == "forage":
+				row[SourceForecast.ASSIGNMENT_KIT_TOE_KEY] = [_toe(HOE, 6.0, 3.0), _toe(SPEAR, 4.0, 2.0)]
+			else:
+				row[SourceForecast.ASSIGNMENT_KIT_TOE_KEY] = [_toe(SPEAR, 3.0, 0.0)]
+			seen += 1
+	await _show(band, "band_orders_work_kit_two")
+	h._assert_band_panel("band orders: two items sort by the count short (%d rows)" % seen,
+		_has("· short 5 spears, 3 hoes"))
+	var tip := _meta_button(HudOrdersVocab.ORDER_KIT_META).tooltip_text
+	h._assert_band_panel("…and the tooltip has one line per short row", tip.split("\n").size() >= 3)
+
+	# Folded and open both show it; open shows the rows too.
+	band = h._hud._band_labor.panel_band()
+	orders.toggle_fold(band, "food")
+	await h._settle()
+	await h._save("band_orders_work_kit_open")
+	h._assert_band_panel("…visible with the order open too", _meta_button(HudOrdersVocab.ORDER_KIT_META) != null)
+	orders.toggle_fold(band, "food")
+	await h._settle()
+
+	# The doors: each opens the sheet; the clause reaches the bench-open path.
+	var opened: Array = []
+	var bench: Array = []
+	var sheet_cb := func(entity: int, kind: String) -> void: opened.append(kind)
+	var bench_cb := func(b: Dictionary) -> void: bench.append(b)
+	orders.order_sheet_requested.connect(sheet_cb)
+	orders.crafting_requested.connect(bench_cb)
+	var doors := {
+		"name": _meta_button(HudOrdersVocab.ORDER_NAME_META, "food"),
+		"detail": _meta_button(HudOrdersVocab.ORDER_DETAIL_META, "food"),
+		"chip": _first_chip(),
+		"chevron": _meta_button(HudOrdersVocab.ORDER_OPEN_META, "food")}
+	for door in doors:
+		var button: Button = doors[door]
+		h._assert_band_panel("band orders: the %s door exists" % door, button != null)
+		if button == null:
+			continue
+		opened.clear()
+		button.pressed.emit()
+		h._assert_band_panel("…pressing the %s opens the Food sheet (got %s)" % [door, str(opened)],
+			opened == ["food"])
+		h._assert_band_panel("…the %s says what it does" % door,
+			button.tooltip_text == "Set Orrin's food order")
+	var clause := _meta_button(HudOrdersVocab.ORDER_KIT_META)
+	bench.clear()
+	clause.pressed.emit()
+	h._assert_band_panel("…pressing the kit clause reaches the bench-open path", bench.size() == 1)
+	h._assert_band_panel("…and the crafting bench opens", h._hud.crafting_panel().is_open())
+	h._hud.close_crafting_panel()
+	orders.order_sheet_requested.disconnect(sheet_cb)
+	orders.crafting_requested.disconnect(bench_cb)
+
+	# Hover looks: the name link, the chip and the chevron lit.
+	var link: Button = doors["name"]
+	var chip: Button = doors["chip"]
+	link.add_theme_stylebox_override("normal", link.get_theme_stylebox("hover"))
+	chip.add_theme_stylebox_override("normal", chip.get_theme_stylebox("hover"))
+	await h._settle()
+	await h._save("band_orders_work_hover")
+
+func _first_chip() -> Button:
+	for node in h._collect_meta_controls(h._panel, String(HudOrdersVocab.ORDER_PRIORITY_META)):
+		if node is Button and node.get_parent().get_parent().has_meta(HudOrdersVocab.ORDER_LINE_META):
+			return node
+	return null
