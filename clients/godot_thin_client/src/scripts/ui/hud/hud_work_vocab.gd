@@ -3381,6 +3381,10 @@ static func site_row_height(party_lines: int) -> float:
         + WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(TWO_LINE_STEPPER_SEPARATION) \
         + WORK_ROW_PILL_LINE_HEIGHT
 
+## What the pill line costs a site row: its own height and the gap above it. A chief's row under an order
+## draws no pill line (the order's Priority governs), so it is this much shorter.
+const WORK_ROW_PILL_LINE_COST := float(TWO_LINE_STEPPER_SEPARATION) + WORK_ROW_PILL_LINE_HEIGHT
+
 ## A GROUNDWORK row's height — a site row's with no party block: line one, the rung line, the yield
 ## line, then the pill line.
 const EXTRACT_ROW_HEIGHT := WORK_ROW_TWO_LINE_HEIGHT + float(TWO_LINE_STEPPER_SEPARATION) \

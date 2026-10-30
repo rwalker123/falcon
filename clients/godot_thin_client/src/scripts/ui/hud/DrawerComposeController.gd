@@ -4760,8 +4760,12 @@ func deposit_standing_facts(working: Dictionary) -> Dictionary:
     if standing.is_empty():
         return {}
     var crew_label := HudDepositVocab.crew_noun(HudDepositVocab.branch_of(working))
-    return _door_facts_of(_standing_summary_model(standing, HudConst.LABOR_KIND_EXTRACT,
+    var facts := _door_facts_of(_standing_summary_model(standing, HudConst.LABOR_KIND_EXTRACT,
         crew_label.to_lower(), working))
+    # A deposit's `⚠` is the deposit predicate's: the dig must be able to reach below the peak.
+    facts["warn"] = bool(facts["warn"]) and HudDepositVocab.overdraws(working,
+        float(standing.get("floor", HudDepositVocab.ROW_FLOOR_UNSTATED)))
+    return facts
 
 ## A standing-summary model as a door row's facts. **The hover carries EVERY line the retired control
 ## drew**, in the order it drew them: the summary text, the overstaff / material-short note, the muted
@@ -5854,11 +5858,14 @@ func _deposit_yield_model(deposit: Dictionary, floor: float, crew: int,
         # deposit take is a RATE with no whole-body lump in it, and there is no `overdraws` flag on
         # the row to read instead. The take is the ASSIGNMENT's, so a crew committed this turn is
         # judged on what it will cut rather than on the zero the working still publishes.
+        # …**AND ONLY WHERE THE DIG CAN REACH BELOW THE STOCK WHERE REGROWTH PEAKS**
+        # (`HudDepositVocab.can_reach_below_peak`, at the dial this sheet is composing).
         YIELD_MODEL_OVERDRAW: HudDepositVocab.renews(deposit)
             and HudDepositVocab.stated_take(deposit,
                 _standing_assignment_extract(HudDepositVocab.tile_of(deposit).x,
                     HudDepositVocab.tile_of(deposit).y, material))
-                > HudDepositVocab.sustainable_take_of(deposit),
+                > HudDepositVocab.sustainable_take_of(deposit)
+            and HudDepositVocab.can_reach_below_peak(deposit, floor),
     }
 
 ## **THE DEPOSIT'S YIELDS, AND ON A FAR WORKING BOTH OF ITS FIGURES.** `_with_home_rate` puts the

@@ -413,11 +413,14 @@ Setting it and seeing it:
   The number is set with the game's ordinary − / + stepper. There is no "None": a material is the
   chief's or the player's.
 - **The Work tab groups the chief's rows under his orders.** An *Orrin's orders* group at the top holds
-  one line per order — what is on hand, the target, its state (*Refilling*, *Holding — no hands to
-  refill*, *Falling — N hands short of keeping up*), its Priority and a crew bar split into keep-up,
-  refill and short — and under each line today's rows, unchanged: name, rung, take, Priority chip and
-  the work strip with its `⌃`. A summary line says how many workers the orders take, or that there
-  are not enough hands for every order.
+  one line per order, Food first, then Fodder, Stone and Wood — what is on hand, the target, its state
+  (*Refilling*, *Refilling slowly*, *Holding — no hands to refill*, *Falling — N hands short of keeping
+  up*, *Falling — the land / patches / stands give too little*), its Priority and a crew bar split into
+  keep-up, refill and short. **Each order starts folded to that one line**: the player sets goals, and
+  opens an order (▸) only to look at its sites — today's rows, with their `⌃`, less the Priority chip
+  the order already states. The sites the chief sends nobody to fold into one *+N sites in reserve*
+  line that opens the same way. A summary line says how many workers the orders take, or names the
+  orders there are not enough hands for.
 - **A mixed patch is listed once**, under the order it mostly serves. Its row names every store it
   fills (*+2.40 food · +0.25 hay · +0.05 fibre /turn*), and each other order it fills names it in one
   *↳ Also* line under that order's rows.

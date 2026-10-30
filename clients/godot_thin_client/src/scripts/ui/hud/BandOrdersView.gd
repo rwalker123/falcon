@@ -54,8 +54,12 @@ static func crew_bar(order: Dictionary) -> Control:
 
 # ---- The group -------------------------------------------------------------------------------------
 
-## `rows_by_kind`: order kind -> Array[Control] (today's rows under that order). `also_by_kind`: order
-## kind -> Array of `{text, under}` for the dashed `↳ Also` lines.
+## `rows_by_kind`: order kind -> Array of `{ROW_NODE: Control, ROW_STAFFED: bool}` (today's rows under that
+## order). `also_by_kind`: order kind -> Array of `{text, under}` for the dashed `↳ Also` lines.
+## Every order is FOLDED until the player opens it (`BandOrdersController.is_open`).
+const ROW_NODE := "node"
+const ROW_STAFFED := "staffed"
+
 static func build_group(band: Dictionary, controller: BandOrdersController,
         rows_by_kind: Dictionary, also_by_kind: Dictionary) -> VBoxContainer:
     var orders := HudOrdersVocab.shown_orders(band)
@@ -74,9 +78,23 @@ static func build_group(band: Dictionary, controller: BandOrdersController,
     for order_variant in orders:
         var order: Dictionary = order_variant
         var kind := String(order.get("kind", ""))
-        column.add_child(_order_line(band, order, controller))
-        for node in rows_by_kind.get(kind, []):
+        var is_open := controller.is_open(band, kind)
+        column.add_child(_order_line(band, order, controller, is_open))
+        if not is_open:
+            continue
+        var staffed: Array = []
+        var reserve: Array = []
+        for entry in rows_by_kind.get(kind, []):
+            (staffed if bool((entry as Dictionary)[ROW_STAFFED]) else reserve).append(
+                (entry as Dictionary)[ROW_NODE])
+        for node in staffed:
             column.add_child(node as Control)
+        if not reserve.is_empty():
+            var reserve_open := controller.is_open(band, kind, BandOrdersController.PART_RESERVE)
+            column.add_child(_reserve_line(band, kind, reserve.size(), reserve_open, controller))
+            if reserve_open:
+                for node in reserve:
+                    column.add_child(node as Control)
         for also in also_by_kind.get(kind, []):
             column.add_child(_also_line(also as Dictionary))
     var summary := HudOrdersVocab.summary_of(band, orders)
@@ -91,13 +109,56 @@ static func build_group(band: Dictionary, controller: BandOrdersController,
     column.add_child(_legend())
     return group
 
-static func _order_line(band: Dictionary, order: Dictionary, controller: BandOrdersController) -> Control:
+## A drawn disclosure triangle on a flat button, the Work sections' chevron idiom.
+static func _caret(is_open: bool, tip: String, on_press: Callable) -> Button:
+    var caret := Button.new()
+    caret.focus_mode = Control.FOCUS_NONE
+    caret.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+    caret.custom_minimum_size = Vector2(HudOrdersVocab.CARET_WIDTH, HudOrdersVocab.CARET_HEIGHT)
+    caret.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+    caret.tooltip_text = tip
+    HudStyle.apply_button(caret, "ghost")
+    var triangle := DisclosureTriangle.new()
+    triangle.side = HudOrdersVocab.CARET_TRIANGLE_SIDE
+    triangle.expanded = is_open
+    triangle.color = HudStyle.INK_DIM
+    triangle.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    caret.add_child(triangle)
+    caret.set_meta(HudOrdersVocab.ORDER_CARET_META, is_open)
+    caret.pressed.connect(func() -> void: on_press.call())
+    return caret
+
+## `+N sites in reserve`: the unstaffed chief rows, folded behind one dim toggle line.
+static func _reserve_line(band: Dictionary, kind: String, count: int, is_open: bool,
+        controller: BandOrdersController) -> Control:
+    var line := HBoxContainer.new()
+    line.add_theme_constant_override("separation", HudOrdersVocab.GROUP_SEPARATION)
+    line.set_meta(HudOrdersVocab.ORDER_RESERVE_META, kind)
+    var toggle := func() -> void:
+        controller.toggle_fold(band, kind, BandOrdersController.PART_RESERVE)
+    var indent := Control.new()
+    indent.custom_minimum_size.x = HudOrdersVocab.RESERVE_INDENT
+    line.add_child(indent)
+    line.add_child(_caret(is_open,
+        HudOrdersVocab.RESERVE_OPEN_TIP if is_open else HudOrdersVocab.RESERVE_CLOSED_TIP, toggle))
+    var words := (HudOrdersVocab.RESERVE_ONE_FORMAT if count == 1
+        else HudOrdersVocab.RESERVE_MANY_FORMAT) % count
+    var link := HudWidgets.build_inline_link(words, HudStyle.INK_FAINT, toggle)
+    link.add_theme_font_size_override("font_size", HudOrdersVocab.STATE_FONT_SIZE)
+    line.add_child(link)
+    return line
+
+static func _order_line(band: Dictionary, order: Dictionary, controller: BandOrdersController,
+        is_open: bool) -> Control:
     var kind := String(order.get("kind", ""))
     var state := HudOrdersVocab.state_of(order)
     var line := HBoxContainer.new()
     line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     line.add_theme_constant_override("separation", HudOrdersVocab.GROUP_SEPARATION)
     line.set_meta(HudOrdersVocab.ORDER_LINE_META, kind)
+    line.add_child(_caret(is_open,
+        HudOrdersVocab.CARET_OPEN_TIP if is_open else HudOrdersVocab.CARET_CLOSED_TIP,
+        func() -> void: controller.toggle_fold(band, kind)))
     var icon := text(HudOrdersVocab.order_icon(kind), HudOrdersVocab.NAME_FONT_SIZE, HudStyle.INK)
     icon.custom_minimum_size.x = HudOrdersVocab.ORDER_ICON_WIDTH
     icon.size_flags_vertical = Control.SIZE_SHRINK_BEGIN

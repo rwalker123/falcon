@@ -561,6 +561,9 @@ var _orders: BandOrdersController = null
 
 func set_band_orders(orders: BandOrdersController) -> void:
     _orders = orders
+    # A fold the player flips redraws the tab; the folds live on the controller.
+    if _orders != null and not _orders.view_changed.is_connected(rerender):
+        _orders.view_changed.connect(rerender)
 
 func set_forecast_query(query: ForecastQuery) -> void:
     _forecast_query = query
@@ -2069,7 +2072,9 @@ func _orders_items(band: Dictionary, models: Array, extract_models: Array) -> Di
                         else _build_work_row(band, model)
                     if not rows_by_kind.has(kind):
                         rows_by_kind[kind] = []
-                    (rows_by_kind[kind] as Array).append(node)
+                    (rows_by_kind[kind] as Array).append({
+                        BandOrdersView.ROW_NODE: node,
+                        BandOrdersView.ROW_STAFFED: int(model.get("workers", 0)) > 0})
                     _note_also_lines(band, model, kind, shown_kinds, also_by_kind)
                 BandOrdersController.SIDE_YOURS:
                     node = _build_extract_row(band, model) \
@@ -3101,10 +3106,12 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var ladder := _deposit_ladder()
     var cutters := int(model.get("workers", 0))
     var useful := _workings_roster_max_useful(band, model)
-    var value_ink := HudDepositVocab.deposit_value_color(deposit, ladder, cutters, useful)
+    var row_floor := _band_labor.floor_for_extract(band, tile.x, tile.y, material) \
+        if HudDepositVocab.renews(deposit) else SourceForecast.FLOOR_UNNAMED
+    var value_ink := HudDepositVocab.deposit_value_color(deposit, ladder, cutters, useful, row_floor)
     var dig_assignment := _band_labor.extract_assignment_of(band, tile.x, tile.y, material)
     var load_line := HudWorkVocab.dig_load_line(dig_assignment, material)
-    var shell := _site_row_shell(HudWorkVocab.EXTRACT_ROW_HEIGHT \
+    var shell := _site_row_shell(HudWorkVocab.EXTRACT_ROW_HEIGHT - _chief_row_pill_saving(model) \
         + (HudWorkVocab.WORK_ROW_PARTY_LINE_HEIGHT if load_line != "" else 0.0),
         false,
         HudStyle.WARN if value_ink == HudStyle.WARN else Color(0.0, 0.0, 0.0, 0.0))
@@ -3132,8 +3139,7 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     title.set_meta(HudWorkVocab.WORKINGS_ROW_NAME_META, title.text)
     line.add_child(title)
     var rung_name := HudDepositVocab.ladder_rung_name(ladder, HudDepositVocab.rung_of(deposit))
-    var floor := _band_labor.floor_for_extract(band, tile.x, tile.y, material) \
-        if HudDepositVocab.renews(deposit) else SourceForecast.FLOOR_UNNAMED
+    var floor := row_floor
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(
         rung_name if rung_name != "" else HudWorkVocab.SITE_CREW_RUNG_WILD)))
     var extract_lent := int(model.get("lent_to_hunt", 0))
@@ -3150,7 +3156,9 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
         var load_node := _build_working_yield_line(load_line, HudStyle.INK_DIM,
             HudWorkVocab.DIG_LOAD_LINE_META)
         col.add_child(load_node)
-    col.add_child(_build_pill_line(band, model, true))
+    # A chief's row drops its own Priority chip: the order's Priority governs.
+    if HudOrdersVocab.row_order_kind(model) == "":
+        col.add_child(_build_pill_line(band, model, true))
     (shell[SITE_ROW_SHELL_BODY] as HBoxContainer).add_child(_build_row_strip(band,
         _extract_strip_row(model, deposit, ladder, cutters), deposit))
     return row
@@ -3212,9 +3220,12 @@ func _working_yield_text(band: Dictionary, model: Dictionary, deposit: Dictionar
         # takes the food headline's ` /turn`.
         if accounts != "":
             parts.append(accounts + SourceForecast.YIELD_PER_TURN_SUFFIX)
-    parts.append_array(HudDepositVocab.deposit_row_qualifiers(deposit, ladder, cutters, useful))
+    parts.append_array(HudDepositVocab.deposit_row_qualifiers(deposit, ladder, cutters, useful, floor))
     if floor != SourceForecast.FLOOR_UNNAMED:
-        parts.append(HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(floor))
+        # The EFFECTIVE floor: a rung that cannot reach below its own floor fraction leaves that much
+        # standing whatever the dial says (`HudDepositVocab.composed_floor`).
+        parts.append(HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(
+            HudDepositVocab.composed_floor(deposit, floor)))
     return HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR.join(parts)
 
 ## The yield line itself — the accounts line's indent and quiet type, its ink the working value's own
@@ -3947,13 +3958,17 @@ func _work_component_sum(models: Array, key: String) -> float:
 ## The rung mark and the policy marks are TWO AXES and both are needed: the rung says what the source
 ## IS (wild / Tended Patch / Field, wild / pastoral / penned), the marks say what is being done to it
 ## right now. A Tended Patch on Sustain and a Tended Patch on Deplete are different situations.
+## The height a chief's row gives back by drawing no Priority pill line.
+func _chief_row_pill_saving(model: Dictionary) -> float:
+    return HudWorkVocab.WORK_ROW_PILL_LINE_COST if HudOrdersVocab.row_order_kind(model) != "" else 0.0
+
 func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var row := PanelContainer.new()
     # **THE ROW GROWS BY ITS PARTY BLOCK, and it is reserved at exactly what it draws at.** The same
     # `work_row_height` the board's capacity arithmetic spends, so a zone that `clip_contents` can
     # never slice a line off the bottom of the page — the rule every height in this zone follows.
     row.custom_minimum_size = Vector2(0.0,
-        HudWorkVocab.site_row_height(_work_row_party_lines(model)))
+        HudWorkVocab.site_row_height(_work_row_party_lines(model)) - _chief_row_pill_saving(model))
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.mouse_filter = Control.MOUSE_FILTER_STOP
     row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -4016,7 +4031,8 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     # **THE PRIORITY MARK, ON ITS OWN LINE UNDER THE ROW** (`docs/plan_site_crews.md` §2.4). A line of
     # its own, so neither the rung line nor the accounts line is cut short to seat it; it ranks the site
     # crew's claim on scarce tools and goods and is on every row.
-    col.add_child(_build_pill_line(band, model, true))
+    if HudOrdersVocab.row_order_kind(model) == "":
+        col.add_child(_build_pill_line(band, model, true))
     # **THE WORK STRIP, AT THE RIGHT OF LINES ONE AND TWO** — the rung mark, the ladder slot, the floor,
     # `⚠`, and the crew number over the crew bar. The sheet of the same source mounts the same control.
     body.add_child(_build_row_strip(band, model))

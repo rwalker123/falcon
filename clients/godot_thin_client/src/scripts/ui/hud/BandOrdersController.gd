@@ -19,12 +19,35 @@ signal band_order_requested(payload: Dictionary)
 ## The player pressed an order's name on the Work tab: open its Food / Fodder / material sheet.
 signal order_sheet_requested(band_entity: int, kind: String)
 
+## The player flipped an order's (or its reserve line's) fold: the Work tab re-renders.
+signal view_changed
+
 var _band_labor: HudBandLaborState
+## Which folds are open, for the session only (never saved): `"<band_id>|<kind>|<part>"` -> true. Every
+## order starts folded; `PART_ORDER` is the order's rows, `PART_RESERVE` its unstaffed chief rows.
+var _open_folds: Dictionary = {}
+const PART_ORDER := "order"
+const PART_RESERVE := "reserve"
+const FOLD_KEY_FORMAT := "%d|%s|%s"
 ## `(x, y) -> String` terrain label, injected by `Main` from the map; empty Callable until then.
 var _terrain_label_lookup: Callable = Callable()
 
 func _init(band_labor: HudBandLaborState) -> void:
     _band_labor = band_labor
+
+func _fold_key(band: Dictionary, kind: String, part: String) -> String:
+    return FOLD_KEY_FORMAT % [int(band.get("band_id", HudConst.NO_BAND_ID)), kind, part]
+
+func is_open(band: Dictionary, kind: String, part: String = PART_ORDER) -> bool:
+    return _open_folds.has(_fold_key(band, kind, part))
+
+func toggle_fold(band: Dictionary, kind: String, part: String = PART_ORDER) -> void:
+    var key := _fold_key(band, kind, part)
+    if _open_folds.has(key):
+        _open_folds.erase(key)
+    else:
+        _open_folds[key] = true
+    view_changed.emit()
 
 func set_terrain_label_lookup(lookup: Callable) -> void:
     _terrain_label_lookup = lookup

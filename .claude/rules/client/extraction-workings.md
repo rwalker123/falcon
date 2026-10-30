@@ -292,7 +292,22 @@ quarry's `sustainable_take` of `0` as though it were a bill met. `ui_preview`'s 
 stands a finite quarry beside a renewing flint scatter of the SAME branch, so either arm alone passes
 and the pair does not.
 
-### The over-cut predicate IS `actual > sustainable`, and on this branch that is correct
+### The over-cut predicate IS `actual > sustainable` AND a dig that can reach below the peak
+
+`HudDepositVocab.overdraws(deposit, row_floor)` is the ONE predicate every deposit surface asks (the
+tile card's `deposit_land_value`, `supply_clause`, the Work row's qualifiers and stripe, the door's `⚠`
+through `deposit_standing_facts`, the sheet's overdraw note): the deposit renews, `actual_take >
+sustainable_take`, **and the lowest stock the dig can reach is below the stock where regrowth peaks**.
+Lowest reachable = `capacity * max(rung_floor_fraction, the row's floor when stated)` (the same max
+`composed_floor` takes); the peak is `SourceForecast.growth_peak_fraction` of `regrowth_samples`, which
+span stock fraction `0..1` evenly (the reading `regrowth_at` interpolates on). A gathering rung reaches
+only the top 15% of a seam, so it can never take the stock down to the half-full level where growth is
+fastest and `⚠ overdrawing` would be false there; a deep rung with the same take still warns. A working
+with no curve answers `true` (nothing says it cannot reach the peak). The row's `left standing` figure
+states the EFFECTIVE floor, `composed_floor` of the dial, so a gathering row reads `85% left standing`.
+The food webs are untouched: they read the sim's `overdraws` flag.
+
+The paragraph below states why the bare comparison was safe at all and is still true of its first term:
 
 The two food webs forbid exactly that comparison and read the sim's `overdraws` flag instead, because
 a hunt's kill turn cashes a banked whole animal and spikes `actual` above a steady `sustainable` under

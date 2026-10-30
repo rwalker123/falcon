@@ -41,6 +41,9 @@ a{color:#f4ead7;text-decoration:none}a:hover{color:#e3cf9f;text-decoration:under
 .by{display:grid;grid-template-columns:18px 1fr auto;gap:6px;font-size:11.5px;color:#bdab90;padding:2px 0}
 .key{display:flex;gap:12px;font-size:10px;color:#8d7e68;align-items:center}
 .rows{display:flex;flex-direction:column;gap:4px}
+.caret{background:transparent;border:0;color:#bdab90;font-size:11px;padding:0 4px 0 0;width:16px}
+.reserve{background:transparent;border:1px dashed #3a2f24;border-radius:3px;color:#8d7e68;font-size:11.5px;text-align:left;padding:4px 8px}
+.reserve:hover{color:#e3cf9f}
 .also{display:flex;gap:8px;align-items:baseline;font-size:12px;color:#bdab90;padding:4px 8px;border:1px dashed #3a2f24;border-radius:3px}
 /* Today's Work tab row, unchanged */
 .row{display:grid;grid-template-columns:4px minmax(0,1fr) auto;column-gap:10px;padding:7px 8px 7px 0;border-radius:3px;background:#1f1913}
@@ -74,15 +77,16 @@ a{color:#f4ead7;text-decoration:none}a:hover{color:#e3cf9f;text-decoration:under
         <div class="order">
           <span>{{o.icon}}</span>
           <div>
-            <div class="on1"><a href="{{o.href}}">{{o.name}}</a> <span class="ol">· {{o.have}} · keep {{o.keep}}</span></div>
+            <div class="on1"><button class="caret" onClick="{{o.toggle}}" title="{{o.caretTip}}">{{o.caret}}</button><a href="{{o.href}}">{{o.name}}</a> <span class="ol">· {{o.have}} · keep {{o.keep}}</span></div>
             <div class="ol"><span class="{{o.stCls}}">{{o.state}}</span></div>
-            <span class="pill">Priority: {{o.pri}}</span>
+            <span class="pill">Priority: {{o.pri}}</span><span class="ol">{{o.sites}}</span>
           </div>
           <div class="crew">
             <span>{{o.crew}}</span>
             <span class="bar" title="{{o.tip}}"><sc-for list="{{o.squares}}" as="s" hint-placeholder-count="4"><span class="sq" style="{{s.style}}"></span></sc-for></span>
           </div>
         </div>
+        <sc-if value="{{o.expanded}}" hint-placeholder-val="{{false}}">
         <div class="rows">
           <sc-for list="{{o.rows}}" as="row" hint-placeholder-count="1">
             <div class="row">
@@ -91,8 +95,7 @@ a{color:#f4ead7;text-decoration:none}a:hover{color:#e3cf9f;text-decoration:under
                 <div class="rname">{{row.name}}</div>
                 <div class="rdet">{{row.rungName}}</div>
                 <div class="rdet">{{row.yieldLine}}</div>
-                <div class="chips"><span class="chip">Priority: {{row.pri}}</span></div>
-              </div>
+                              </div>
               <div class="wstrip">
                 <div class="marks">
                   <span class="mk" title="{{row.rungMarkTip}}">{{row.rungMark}}</span>
@@ -116,10 +119,12 @@ a{color:#f4ead7;text-decoration:none}a:hover{color:#e3cf9f;text-decoration:under
               </div>
             </div>
           </sc-for>
+          <sc-if value="{{o.hasReserve}}" hint-placeholder-val="{{false}}"><button class="reserve" onClick="{{o.reserveToggle}}" title="Sites Orrin has ready but sends nobody to this turn">{{o.reserveFace}}</button></sc-if>
         </div>
         <sc-for list="{{o.also}}" as="a" hint-placeholder-count="0">
           <div class="also"><span>↳ Also</span><span>{{a.text}}</span><span class="ol">listed under {{a.order}}</span></div>
         </sc-for>
+        </sc-if>
       </sc-for>
       <div class="summary"><span class="{{sumCls}}">{{summary}}</span></div>
       <div class="key">
@@ -180,7 +185,7 @@ class Component extends DCLogic {
   constructor(props) {
     super(props);
     // `open` is the row whose rung card is showing; `built` maps a row to a build you started (its progress).
-    this.state = { workers: 34, open: null, built: {} };
+    this.state = { workers: 34, open: null, built: {}, expanded: {}, reserveOpen: {} };
   }
   renderVals() {
     const st = this.state;
@@ -196,7 +201,8 @@ class Component extends DCLogic {
         also: [{ from: 'Hay Meadow (70, 19)', order: 'Fodder', unit: 'food', per: 0.06 }],
         rows: [{ id: 'harvest', name: 'Harvest (71, 18)', rung: 'Wild', lad: RUNGS.plant, cat: 'Forage', unit: 'food', per: 0.48, share: 0.4, floor: 1,
                  extra: [{ unit: 'hay', per: 0.05 }, { unit: 'fibre', per: 0.01 }] },
-               { id: 'deer', name: 'Hunt Red Deer (68, 15)', rung: 'Wild herd', lad: RUNGS.animal, cat: 'Hunt', unit: 'food', per: 0.55, share: 0.6, floor: 1 }] },
+               { id: 'deer', name: 'Hunt Red Deer (68, 15)', rung: 'Wild herd', lad: RUNGS.animal, cat: 'Hunt', unit: 'food', per: 0.55, share: 0.6, floor: 1 }],
+        reserve: [{ id: 'h2826', name: 'Harvest (72, 19)', rung: 'Wild', lad: RUNGS.plant, cat: 'Forage', unit: 'food', per: 0.3, floor: 1 }] },
       { icon: '🌾', name: 'Fodder', href: 'ChiefFodder.dc.html', have: '6 turns', keep: '10 turns', pri: 1, hold: 2, reach: 2, eta: 7,
         also: [{ from: 'Harvest (71, 18)', order: 'Food', unit: 'hay', per: 0.05 }],
         rows: [{ id: 'hay', name: 'Hay Meadow (70, 19)', rung: 'Wild', lad: RUNGS.plant, cat: 'Forage', unit: 'hay', per: 0.4, share: 1, floor: 1,
@@ -205,7 +211,9 @@ class Component extends DCLogic {
         rows: [{ id: 'dig', name: 'Dig stone · Karst Highland (21, 14)', rung: 'Gathering', lad: EXTRACTION, cat: 'Stone', unit: 'stone', per: 0.4, share: 1, floor: null, left: '75 turns left' }] },
       { icon: '🪵', name: 'Wood', href: 'ChiefWood.dc.html', have: '8.0 on hand', keep: '30', pri: 2, hold: 3, reach: 7, eta: 9,
         rows: [{ id: 'fell', name: 'Fell (70, 17)', rung: 'Deadfall', lad: FORESTRY, cat: 'Wood', unit: 'wood', per: 0.3, share: 0.5, floor: 1 },
-               { id: 'karst', name: 'Karst Highland (21, 14)', rung: 'Deadfall', lad: FORESTRY, cat: 'Wood', unit: 'wood', per: 0.3, share: 0.5, floor: 1 }] }
+               { id: 'karst', name: 'Karst Highland (21, 14)', rung: 'Deadfall', lad: FORESTRY, cat: 'Wood', unit: 'wood', per: 0.3, share: 0.5, floor: 1 }],
+        reserve: [{ id: 'oak', name: 'Wood · 1 tile W', rung: 'Deadfall', lad: FORESTRY, cat: 'Wood', unit: 'wood', per: 0.3, floor: 1, unopened: true },
+                  { id: 'birch', name: 'Wood · 1 tile E', rung: 'Deadfall', lad: FORESTRY, cat: 'Wood', unit: 'wood', per: 0.3, floor: 1, unopened: true }] }
     ];
     const yours = { pri: 1, hold: 2 };
     const PRI = ['High', 'Normal', 'Low'];
@@ -248,14 +256,15 @@ class Component extends DCLogic {
       return Object.assign({ name: r.name, rungName: r.rung, yieldLine, pri, stripe: warn ? '#e0a63c' : '#2f261d' }, strip);
     };
 
-    let anyShort = false, anyFalling = false;
+    const falling = [], waiting = [];
+    const names = (xs) => xs.length < 2 ? xs.join('') : xs.slice(0, -1).join(', ') + ' and ' + xs[xs.length - 1];
     const out = orders.map((o) => {
       const holdShort = o.hold - o.gotHold, reachShort = o.reach - o.gotReach;
       const got = o.gotHold + o.gotReach;
       let state, stCls;
-      if (holdShort > 0) { state = 'Falling — ' + holdShort + (holdShort === 1 ? ' hand' : ' hands') + ' short of keeping up'; stCls = 'st-bad'; anyFalling = true; }
-      else if (o.gotReach === 0) { state = 'Holding — no hands to refill (' + o.reach + ' wanted)'; stCls = 'st-warn'; anyShort = true; }
-      else if (reachShort > 0) { state = 'Refilling slowly — ' + reachShort + (reachShort === 1 ? ' hand' : ' hands') + ' short'; stCls = 'st-warn'; anyShort = true; }
+      if (holdShort > 0) { state = 'Falling — ' + holdShort + (holdShort === 1 ? ' hand' : ' hands') + ' short of keeping up'; stCls = 'st-bad'; falling.push(o.name); }
+      else if (o.gotReach === 0) { state = 'Holding — no hands to refill (' + o.reach + ' wanted)'; stCls = 'st-warn'; waiting.push(o.name); }
+      else if (reachShort > 0) { state = 'Refilling slowly — ' + reachShort + (reachShort === 1 ? ' hand' : ' hands') + ' short'; stCls = 'st-warn'; waiting.push(o.name); }
       else { state = 'Refilling · back to ' + o.keep + ' in ≈' + o.eta + ' turns'; stCls = 'st-ok'; }
       const squares = [];
       for (let i = 0; i < o.gotHold; i++) squares.push({ style: 'background:#9fbf7a' });
@@ -267,9 +276,20 @@ class Component extends DCLogic {
         given += n;
         return rowFor(r, n, PRI[o.pri], holdShort > 0 ? state : '');
       });
+      const open = !!st.expanded[o.name];
+      const resOpen = !!st.reserveOpen[o.name];
+      const reserve = (o.reserve || []).map((r) => Object.assign(rowFor(r, 0, PRI[o.pri], ''), r.unopened ? { yieldLine: 'unopened · 50% left standing' } : {}));
+      const nRes = reserve.length;
+      const staffedSites = rows.filter((r) => r.crew > 0).length;
       return {
         icon: o.icon, name: o.name, href: o.href, have: o.have, keep: o.keep, pri: PRI[o.pri],
-        state, stCls, crew: got, squares, rows,
+        state, stCls, crew: got, squares, rows: rows.concat(resOpen ? reserve : []),
+        expanded: open, caret: open ? '▾' : '▸', caretTip: open ? 'Hide the sites' : 'Show the sites',
+        toggle: () => this.setState({ expanded: Object.assign({}, st.expanded, { [o.name]: !open }) }),
+        sites: staffedSites + (staffedSites === 1 ? ' site' : ' sites') + (nRes ? ' · ' + nRes + ' in reserve' : ''),
+        hasReserve: nRes > 0,
+        reserveFace: (resOpen ? '▾ ' : '▸ ') + '+' + nRes + (nRes === 1 ? ' site' : ' sites') + ' in reserve',
+        reserveToggle: () => this.setState({ reserveOpen: Object.assign({}, st.reserveOpen, { [o.name]: !resOpen }) }),
         tip: o.gotHold + ' keep up with what the band uses · ' + o.gotReach + ' refill' + (holdShort + reachShort > 0 ? ' · ' + (holdShort + reachShort) + ' short' : '')
       };
     });
@@ -282,8 +302,8 @@ class Component extends DCLogic {
     });
     const onOrders = orders.reduce((a, o) => a + o.gotHold + o.gotReach, 0);
     let summary, sumCls;
-    if (anyFalling) { summary = 'Not enough hands to keep up — Low orders are running down.'; sumCls = 'st-bad'; }
-    else if (anyShort) { summary = 'Not enough hands for every order — Low ones wait. Orrin\'s orders take ' + onOrders + ' of ' + W + '.'; sumCls = 'st-warn'; }
+    if (falling.length) { summary = 'Not enough hands to keep up — ' + names(falling) + (falling.length === 1 ? ' is' : ' are') + ' running down. Orrin\'s orders take ' + onOrders + ' of ' + W + '.'; sumCls = 'st-bad'; }
+    else if (waiting.length) { summary = 'Not enough hands for every order — ' + names(waiting) + ' wait' + (waiting.length === 1 ? 's' : '') + '. Orrin\'s orders take ' + onOrders + ' of ' + W + '.'; sumCls = 'st-warn'; }
     else { summary = 'Orrin\'s orders take ' + onOrders + ' of ' + W + ' workers.'; sumCls = ''; }
     const ash = { id: 'ash', name: 'Wood · Ash Hollow (66, 20)', rung: 'Deadfall', lad: FORESTRY, cat: 'Wood', unit: 'wood', per: 0.3, floor: 1 };
     return {

@@ -34,17 +34,33 @@ what each button sends.
 With a leader and at least one shown order, `BandPanelController._orders_items` puts the group at the
 top of the sections list and partitions the rows through `BandOrdersController.side_of`:
 
-- **The group** (`BandOrdersView.build_group`): one line per order in wire order (fodder skipped while
-  `has_consumers` is false) -- icon, name (opens the order's sheet), `· 12 turns · keep 20 turns` or
-  `· 12.4 on hand · keep 30`, the state, the order's Priority chip, the crew number over a three-way bar
-  (keeps up / refills / short, tooltip carries the numbers). Under each line sit **today's rows
-  unchanged** (`_build_work_row` / `_build_extract_row`, the same `WorkStrip`, the same `⌃`), then the
-  `↳ Also` lines. A summary line, a warning line in the tone of the worst shortage, and a legend close it.
-- **The state is the first match of `HudOrdersVocab.state_of`**: hold short -> red Falling; a material
-  whose `sustainable < draw` -> amber Falling (the stands regrow too little); refill wanted with no
-  heads -> Holding; some heads -> Refilling slowly; nothing wanted -> At target; else green Refilling
+- **The group** (`BandOrdersView.build_group`): one line per order in a FIXED order -- Food, Fodder, then
+  the materials in wire order (`HudOrdersVocab.shown_orders` ranks them, so the sheets agree; fodder is
+  skipped while `has_consumers` is false) -- each with a ▸/▾ caret, icon, name (opens the order's
+  sheet), `· 12 turns · keep 20 turns` or `· 12.4 on hand · keep 30`, the state, the order's Priority
+  chip, the crew number over a three-way bar (keeps up / refills / short, tooltip carries the numbers).
+  **Every order is FOLDED by default**: collapsed shows that line alone. The open state is
+  `BandOrdersController.is_open` / `toggle_fold`, keyed `band_id|kind|part` for the session only (never
+  saved); a toggle emits `view_changed`, which `BandPanelController` answers with `rerender`.
+  **Open**, the order shows today's rows (`_build_work_row` / `_build_extract_row`, the same `WorkStrip`,
+  the same `⌃`) then the `↳ Also` lines. A chief's row drops its own `Priority` chip there (the order's
+  Priority governs; the row is shorter by `WORK_ROW_PILL_LINE_COST`); a player's row keeps its chip.
+  Chief rows with **0 workers** fold into one dim `+N sites in reserve` line after the staffed rows --
+  itself a caret toggle (`PART_RESERVE`, remembered the same way) that brings those rows back in full,
+  since they can carry a `⌃`. A summary line, a warning line in the tone of the worst shortage, and a
+  legend close the group and stay visible folded.
+- **The state is the first match of `HudOrdersVocab.state_of`**: (1) `sustainable < draw`, any kind ->
+  amber `Falling X a turn — <why>` (`the land gives too little` food, `the patches give too little`
+  fodder, `the stands regrow too little` a material); (2) hold short AND `take < draw` -> red
+  `Falling — N short of keeping up`; (3) hold short, or refill short with some refill heads -> amber
+  `Refilling slowly — N short` (hold short + refill short); (4) refill wanted with no refill heads ->
+  amber Holding; (5) `on_hand >= target` -> `At target` (never below the target); (6) green Refilling
   with its ETA (`eta_turns`: `(target - on_hand) * draw / (take - draw)` for turns kinds,
-  `(target - on_hand) / (take - draw)` for a material, rounded up, omitted when `take <= draw`).
+  `(target - on_hand) / (take - draw)` for a material, rounded up, omitted when `take <= draw`). A band
+  whose take outruns its draw is therefore rising however short its crew is, and reads Refilling slowly.
+- **The summary warning names the orders**, joined `Food`, `Food and Wood`, `Food, Stone and Wood`: red
+  `Not enough hands to keep up — Food is running down.` (`are` for several) when any order is in state 2;
+  else amber `Not enough hands for every order — Food and Wood wait.` when any is hold / refill short.
 - **A mixed patch is listed once**, under the row's `order_kind`; its row names every store it fills
   with its own order's first and `/turn` once at the end (`SourceForecast.yield_components_labelled`:
   `+2.40 food · +0.25 fodder · +0.05 fibre /turn`; a row that fills one store keeps today's text), and every other shown

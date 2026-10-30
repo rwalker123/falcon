@@ -61,7 +61,13 @@ const HANDS_MANY := "%d hands"
 const PRIORITY_CHIP_FORMAT := "Priority: %s"
 
 const STATE_FALLING_HOLD_FORMAT := "Falling — %s short of keeping up"
-const STATE_FALLING_STANDS_FORMAT := "Falling %s a turn — the stands regrow too little"
+const STATE_FALLING_SUPPLY_FORMAT := "Falling %s a turn — %s"
+## Why the supply is short, per order kind: the words after the dash. A material is the stands'.
+const SUPPLY_SHORT_WORDS := {
+    KIND_FOOD: "the land gives too little",
+    KIND_FODDER: "the patches give too little",
+}
+const SUPPLY_SHORT_MATERIAL_WORDS := "the stands regrow too little"
 const STATE_HOLDING_FORMAT := "Holding — no hands to refill (%d wanted)"
 const STATE_SLOW_FORMAT := "Refilling slowly — %s short"
 const STATE_AT_TARGET := "At target"
@@ -84,8 +90,32 @@ const CREW_BAR_WIDTH := 54.0
 const CREW_SHORT_ALPHA := 0.45
 
 const SUMMARY_FORMAT := "%s orders take %d of %d workers."
-const SUMMARY_REFILL_SHORT := "Not enough hands for every order — Low ones wait."
-const SUMMARY_HOLD_SHORT := "Not enough hands to keep up — Low orders are running down."
+const SUMMARY_REFILL_SHORT_FORMAT := "Not enough hands for every order — %s %s."
+const SUMMARY_HOLD_SHORT_FORMAT := "Not enough hands to keep up — %s %s running down."
+const SUMMARY_WAIT_ONE := "waits"
+const SUMMARY_WAIT_MANY := "wait"
+const SUMMARY_ARE_ONE := "is"
+const SUMMARY_ARE_MANY := "are"
+const NAMES_AND := " and "
+const NAMES_SEPARATOR := ", "
+
+# ---- The group's folds ---------------------------------------------------------------------------
+
+## The shown orders in the order they matter: Food, Fodder, then the materials in wire order.
+const ORDER_RANK := {KIND_FOOD: 0, KIND_FODDER: 1}
+const MATERIAL_RANK := 2
+const RESERVE_ONE_FORMAT := "+%d site in reserve"
+const RESERVE_MANY_FORMAT := "+%d sites in reserve"
+const ORDER_CARET_META := &"band_order_caret"
+const ORDER_RESERVE_META := &"band_order_reserve"
+const CARET_OPEN_TIP := "Hide the sites under this order"
+const CARET_CLOSED_TIP := "Show the sites under this order"
+const RESERVE_OPEN_TIP := "Hide the reserve sites"
+const RESERVE_CLOSED_TIP := "Show the reserve sites"
+const CARET_WIDTH := 16.0
+const CARET_HEIGHT := 18.0
+const CARET_TRIANGLE_SIDE := 7.0
+const RESERVE_INDENT := 22
 
 const ALSO_FORMAT := "↳ Also +%s %s from %s"
 const ALSO_UNDER_FORMAT := "listed under %s"
@@ -231,7 +261,16 @@ static func shown_orders(band: Dictionary) -> Array:
         if String(order.get("kind", "")) == KIND_FODDER and not bool(order.get("has_consumers", false)):
             continue
         out.append(order)
-    return out
+    # Rank pass: Food, Fodder, then the materials in wire order.
+    var ranked: Array = []
+    for rank in range(MATERIAL_RANK + 1):
+        for order in out:
+            if order_rank(String(order.get("kind", ""))) == rank:
+                ranked.append(order)
+    return ranked
+
+static func order_rank(kind: String) -> int:
+    return int(ORDER_RANK.get(kind, MATERIAL_RANK))
 
 static func order_of(band: Dictionary, kind: String) -> Dictionary:
     if not has_leader(band):
@@ -335,47 +374,71 @@ static func hold_short(order: Dictionary) -> int:
 static func refill_short(order: Dictionary) -> int:
     return maxi(int(order.get("refill_wanted", 0)) - int(order.get("refill_heads", 0)), 0)
 
-## `{text, tone}`: the first state that matches, in the spec's order.
+## Is the order falling in earnest: a hold crew short AND the take under the draw.
+static func is_falling(order: Dictionary) -> bool:
+    return hold_short(order) > 0 and float(order.get("take", 0.0)) < float(order.get("draw", 0.0))
+
+## `{text, tone}`: the first state that matches --
+## 1. the supply is below the draw (any kind): amber Falling, naming where the shortfall is;
+## 2. a hold crew short AND the take under the draw: red Falling;
+## 3. a hold crew short, or a refill crew short that has some heads: amber Refilling slowly;
+## 4. a refill wanted with no refill heads: amber Holding;
+## 5. on hand has reached the target: At target;
+## 6. else green Refilling.
 static func state_of(order: Dictionary) -> Dictionary:
     var kind := String(order.get("kind", ""))
-    var short_hold := hold_short(order)
-    if short_hold > 0:
-        return {"text": STATE_FALLING_HOLD_FORMAT % hands(short_hold), "tone": TONE_BAD}
     var draw := float(order.get("draw", 0.0))
     var sustainable := float(order.get("sustainable", 0.0))
-    if not is_turns_kind(kind) and sustainable < draw:
-        return {"text": STATE_FALLING_STANDS_FORMAT % ("%.1f" % (draw - sustainable)),
+    if sustainable < draw:
+        var why := String(SUPPLY_SHORT_WORDS.get(kind, SUPPLY_SHORT_MATERIAL_WORDS))
+        return {"text": STATE_FALLING_SUPPLY_FORMAT % ["%.1f" % (draw - sustainable), why],
             "tone": TONE_WARN}
+    var short_hold := hold_short(order)
+    if is_falling(order):
+        return {"text": STATE_FALLING_HOLD_FORMAT % hands(short_hold), "tone": TONE_BAD}
     var wanted := int(order.get("refill_wanted", 0))
     var heads := int(order.get("refill_heads", 0))
+    var short_refill := refill_short(order)
+    if short_hold > 0 or (short_refill > 0 and heads > 0):
+        return {"text": STATE_SLOW_FORMAT % hands(short_hold + short_refill), "tone": TONE_WARN}
     if wanted > 0 and heads == 0:
         return {"text": STATE_HOLDING_FORMAT % wanted, "tone": TONE_WARN}
-    if heads < wanted:
-        return {"text": STATE_SLOW_FORMAT % hands(wanted - heads), "tone": TONE_WARN}
-    if wanted == 0:
+    if float(order.get("on_hand", 0.0)) >= float(order.get("target", 0)):
         return {"text": STATE_AT_TARGET, "tone": TONE_PLAIN}
     var eta := eta_turns(order)
     if eta < 0:
         return {"text": STATE_REFILL_FORMAT % target_text(order), "tone": TONE_OK}
     return {"text": STATE_REFILL_ETA_FORMAT % [target_text(order), turns(eta)], "tone": TONE_OK}
 
+## `Food`, `Food and Wood`, `Food, Stone and Wood`.
+static func join_names(names: Array) -> String:
+    if names.size() <= 1:
+        return "" if names.is_empty() else String(names[0])
+    var head := NAMES_SEPARATOR.join(names.slice(0, names.size() - 1))
+    return head + NAMES_AND + String(names[names.size() - 1])
+
 ## The summary's `{line, warning, tone}` over the shown orders.
 static func summary_of(band: Dictionary, orders: Array) -> Dictionary:
     var takes := 0
-    var any_hold_short := false
-    var any_refill_short := false
+    var falling: Array = []
+    var waiting: Array = []
     for order in orders:
         takes += crew_of(order)
-        any_hold_short = any_hold_short or hold_short(order) > 0
-        any_refill_short = any_refill_short or refill_short(order) > 0
+        var order_label := order_name(String(order.get("kind", "")))
+        if is_falling(order) and float(order.get("sustainable", 0.0)) >= float(order.get("draw", 0.0)):
+            falling.append(order_label)
+        if hold_short(order) > 0 or refill_short(order) > 0:
+            waiting.append(order_label)
     var line := SUMMARY_FORMAT % [possessive(band), takes, int(band.get("working_age", 0))]
     var warning := ""
     var tone := TONE_PLAIN
-    if any_hold_short:
-        warning = SUMMARY_HOLD_SHORT
+    if not falling.is_empty():
+        warning = SUMMARY_HOLD_SHORT_FORMAT % [join_names(falling),
+            SUMMARY_ARE_ONE if falling.size() == 1 else SUMMARY_ARE_MANY]
         tone = TONE_BAD
-    elif any_refill_short:
-        warning = SUMMARY_REFILL_SHORT
+    elif not waiting.is_empty():
+        warning = SUMMARY_REFILL_SHORT_FORMAT % [join_names(waiting),
+            SUMMARY_WAIT_ONE if waiting.size() == 1 else SUMMARY_WAIT_MANY]
         tone = TONE_WARN
     return {"line": line, "warning": warning, "tone": tone}
 
