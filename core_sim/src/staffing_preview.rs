@@ -276,6 +276,19 @@ pub fn answer_staffing_preview(world: &mut World, ask: &StaffingPreviewQuery) ->
         Ok(target) => target,
         Err(reply) => return reply,
     };
+    if let LaborTarget::Extract { .. } = &target {
+        // Only a row the chief LISTS is his; a stand the player crews (or has none on) is not.
+        if world
+            .get::<LaborAllocation>(band)
+            .is_some_and(|allocation| {
+                allocation
+                    .row_order(&target)
+                    .is_some_and(|kind| allocation.chief_owns(kind))
+            })
+        {
+            return refusal(query_error::MATERIAL_IS_KEPT_ON_HAND);
+        }
+    }
     if never_renewing_dig_without_a_count(world, &target, ask.max_workers).is_some() {
         return refusal(query_error::NEVER_RENEWING_DIG_WITHOUT_A_COUNT);
     }

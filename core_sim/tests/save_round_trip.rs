@@ -733,6 +733,44 @@ fn a_bands_last_started_recipes_survive_the_round_trip() {
     assert_eq!(seen, marked, "every band that made a choice came back");
 }
 
+/// **A BAND'S ORDERS SURVIVE A SAVE AND A LOAD** (#860): the target, the priority and who works the
+/// kind are intent, and a load that dropped them would silently stop the band digging or hand a
+/// player-crewed kind back to the chief.
+#[test]
+fn a_bands_orders_survive_the_round_trip() {
+    const TARGET: u32 = 60;
+    let mut original = spawn_world();
+    let mut marked = 0;
+    let mut allocations = original.world.query::<&mut core_sim::LaborAllocation>();
+    for mut allocation in allocations.iter_mut(&mut original.world) {
+        allocation.orders.insert(
+            "stone".to_string(),
+            core_sim::BandOrder {
+                target: TARGET,
+                priority: core_sim::SourcePriority::High,
+                owner: core_sim::OrderOwner::Player,
+            },
+        );
+        allocation.unannounced_takeover.push("stone".to_string());
+        marked += 1;
+    }
+    assert!(marked > 0, "LIVENESS: the world has a band to mark");
+
+    let blob = encode_save(&original.world).expect("the world encodes");
+    let (mut loaded, _) = load_save(&blob).expect("the save loads");
+    let mut restored = loaded.world.query::<&core_sim::LaborAllocation>();
+    let mut seen = 0;
+    for allocation in restored.iter(&loaded.world) {
+        let order = allocation.order_for("stone").expect("the order came back");
+        assert_eq!(order.target, TARGET);
+        assert_eq!(order.priority, core_sim::SourcePriority::High);
+        assert_eq!(order.owner, core_sim::OrderOwner::Player);
+        assert_eq!(allocation.unannounced_takeover, vec!["stone".to_string()]);
+        seen += 1;
+    }
+    assert_eq!(seen, marked);
+}
+
 /// **EQUIPMENT A BENCH FINISHED, NOT YET STOCKED, SURVIVES A SAVE AND A LOAD**
 /// (`BandBench::finished`, issue #720). A finished item waits on the bench until the top of the next
 /// turn, so a save taken in between that dropped it would silently delete a tool the band made. A

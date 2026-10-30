@@ -2240,9 +2240,6 @@ fn a_far_hay_row_publishes_smoothed_fodder_and_materials_rates_home() {
             sites.set_sites(entries);
         }
     }
-    app.world
-        .resource_mut::<core_sim::DiscoveryProgressLedger>()
-        .add_progress(FACTION, core_sim::FODDERING_DISCOVERY_ID, scalar_one());
     spawn_band_camped_at(
         &mut app,
         camp,

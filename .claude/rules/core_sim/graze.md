@@ -442,10 +442,16 @@ both in Logistics, which runs ahead of Population).
 > footprint with no hay behind it (`fauna_husbandry.rs`,
 > `integration_tests/tests/pen_food_ledger.rs`).
 
-**The Foddering gate is asked once, for the faction, in the settlement.** A band that has not learned
-it bids `0` hay, so every term downstream collapses to the pasture-only pen exactly as before hay
-existed — pinned by `a_faction_without_foddering_draws_no_hay_however_full_the_store_is`, which must
-pass *both* before and after this change.
+**There is no Foddering gate.** Hay is drawn from the first turn there is any, by every pen **and every
+tamed herd** the band keeps, under one rule (`fauna::herd_eats_hay`: a penned herd always; a tamed,
+unfenced herd when the asking faction owns it; a wild herd never). A tamed herd's grass is its roam
+range's draw (`Herd::footprint_intake`, from `advance_herd_grazing`), hay covers the gap off the same
+`FODDER` store, pens and tamed herds rank in the same priority tiers, and the delivered hay enters its
+`K` through the same `fodder_delivery_rate` flow (the space cap still bounds it). Unlike a pen, a
+tamed herd is never starved by the gap: `pen_fed_fraction` is not written for it and its shortfall
+shows as a lower `K`. Pinned by `pen_feed_priority::{a_tamed_herd_the_range_under_feeds_draws_hay_and_a_fed_one_does_not,
+pens_and_tamed_herds_share_the_store_by_the_same_priority_rule, a_band_keeping_only_a_tamed_herd_has_hay_consumers,
+delivered_hay_raises_a_tamed_herds_carrying_capacity_by_the_flow}`.
 
 ### The hay bill is published as the GAP, and the sim does its arithmetic
 
@@ -469,20 +475,13 @@ the per-pen remainder, and the sim is what sums and subtracts.
 > still sums it into `LaborAllocation::last_fodder_need`, and still differences it — only the copy on
 > `Herd` and the field on the wire are gone.
 
-> #### ⛔ THE NEED IS PUBLISHED EVEN WHERE THE BAND CANNOT ACT ON IT
+> #### THE NEED IS THE GAP THE LAND LEAVES, whether or not the store covers it
 >
-> The band's `fodderNeed` is struck **before** the Foddering gate, unlike `fodderDraw` beside it. A
-> band that has not learned Foddering bids `0` hay and still keeps herds that are short by exactly
-> this much — zeroing the need because the remedy is a *knowledge* rather than a *harvest* would blank
-> the one case the player most needs to see.
->
-> The three together are the honest sentence: the need says what the *land* leaves, the draw says
-> what was carried in, and `penFodderShortfall` says what is still missing.
-> `a_band_without_foddering_still_publishes_what_its_pen_needs` pins the need/draw pair — draw `0`,
-> need in full, against a genuinely stocked store.
->
-> **But the RUNWAY beside it is gated**, because a band that cannot draw is not draining: see
-> `yield-forecast.md` → "The band's hay ledger".
+> The band's `fodderNeed` is struck from the gap beside `fodderDraw`, which is what the store paid. A
+> band with no hay still keeps herds that are short by exactly this much, so the need stays in full
+> and the draw reads `0`; the three together are the honest sentence: the need says what the *land*
+> leaves, the draw says what was carried in, and `penFodderShortfall` says what is still missing.
+> The runway beside it counts the drain (what the herds ask of the store).
 
 #### The number the player acts on is `penFodderShortfall`, and the sim subtracts
 
@@ -498,12 +497,8 @@ on the same pass that writes both. That is the whole reason it is a field rather
 expression: a difference struck anywhere else could describe a different turn from the numbers it is
 a difference of.
 
-**Ungated by Foddering, exactly as the band's `fodderNeed` is** (and unlike `fodderDraw`). A band
-that cannot draw hay draws nothing, so its shortfall *is* its whole need — the case where the herd is dying and
-the remedy is a knowledge rather than a harvest, which is precisely the case the readout exists for.
-Pinned across both shapes of "no hay arrived" by
-`grazing_hay_readout::a_pen_with_no_hay_is_short_its_whole_need_gate_shut_or_store_empty`: an empty
-store with Foddering known, and a full store without it, publish the same figure.
+With an empty store the draw is nothing, so the shortfall *is* the herd's whole need — the case the
+readout is for. Pinned by `grazing_hay_readout::a_pen_with_no_hay_is_short_its_whole_need`.
 
 **It floors at zero.** `settle_pen_hay` never settles a pen more hay than its own gap, so a negative
 difference is unreachable through the allocation — but the draw is *spent* through the `FODDER`

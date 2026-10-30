@@ -510,7 +510,7 @@ func _extend_pen_button() -> Button:
 			return child as Button
 	return null
 
-## A FODDERED pen (Flora roster F3): the pen knows Foddering, its own footprint grazes most of the
+## A FODDERED pen (Flora roster F3): the pen draws fodder, its own footprint grazes most of the
 ## feed and its keeper tops the rest up, so it is FULLY FED off BOTH sources — `Fed: 100% — 88%
 ## pasture · 12% fodder`. This is the state that proves the split is a split: the pen above it
 ## (`_self_feeding_pen_herd_fixture`, land covering it outright) collapses to `all pasture`, so the
@@ -1266,7 +1266,7 @@ func run(harness) -> void:
 		tame_cap == bare_cap)
 
 	# State — THE PEN THAT DREW NOTHING, appended last so no frame before it moves. Same 40% pasture as
-	# the starving pen above, but its keeper carried in nothing at all (no store, or no Foddering), so
+	# the starving pen above, but its keeper carried in nothing at all (no store), so
 	# the `Fed:` row reads "⚠ 40% — 40% pasture · no fodder · needs 12.0 /turn": `no fodder` where the
 	# share would sit, and a shortfall clause with no `more` in it, there being no more than nothing.
 	# **Its Corral row is the plain "🐄 Corralled 100%" badge**, like every other pen's — the frame that

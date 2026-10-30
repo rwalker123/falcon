@@ -1038,12 +1038,12 @@ afterwards; neither `set_band_city_panel` nor `render_band` re-renders the drawe
 is itself asserted — a drawer that had flipped to the pointer would carry one fodder row instead of
 two and photograph perfectly tidily.
 
-**The block also moves the faction's Foddering and must put it back.** `_ingest_intensification`
+**The block also moves the faction's knowledge row and must put it back.** `_ingest_intensification`
 REPLACES a faction's whole row, and `band_expedition` is the FIRST chapter — every chapter after it
-inherits whatever this one leaves. The row must read DORMANT with the track part-learned and with it
-learned — knowing the craft is not the same as keeping a larder — so the block pushes both and
-restores the untouched zeros on the way out, the same restore `band_panel_preview` makes around its
-own five-track fixture.
+inherits whatever this one leaves, so the block restores the untouched zeros on the way out
+(`_push_knowledge_zero`). The row reads DORMANT whatever the faction knows: it states the band's own
+larders. `band_fodder_no_herds` renders a band holding fodder no herd eats, whose runway reads
+`no herds eat it` rather than `(∞)`; a covered band whose herds do eat keeps its figure.
 
 **A `[url=` SEARCH OVER PRODUCED LINES IS A VACUOUS CARET TEST.** A line producer emits plain
 `Key: value` strings and `detail_bbcode` is what draws the clickable run, so the needle can never
@@ -1242,7 +1242,7 @@ a sentence is a string — a frame shows a plausible verdict whichever clock it 
 
 > #### …AND IT RENDERS THE BAND PAGE'S PEOPLES TAB (issue #549)
 >
-> `EXPECTED_CHECKPOINTS` **180**, RE-MEASURED. Four frames on the 380px right dock's Peoples tab,
+> `EXPECTED_CHECKPOINTS` **180**, RE-MEASURED. Four frames on the right dock's Peoples tab,
 > after the Food-ledger states and before the panel is released: `connections_roster` (thirty
 > ties — growing, fading named by its remembered `subject_name`, fading named by its tile, 26 more
 > fading, parked), `connections_roster_scrolled` (the list scrolled to its end, the parked tie in
@@ -1730,9 +1730,7 @@ whole-basket half of every claim is then checked against arithmetic that does no
 
 **THE ZERO-FOOD STATE IS A PAIR ON ONE BASKET.** Ticking the hay must state no food row; ticking the
 grain in the same meadow must still state one — without the second half, "no food row" passes on a
-readout that stopped stating the account. Its `Foddering` track is dialled complete in this chapter's
-`update_intensification`, or the fodder account is locked and the `0.0` this state exists for has no
-live sibling beside it.
+readout that stopped stating the account. Fodder needs no knowledge, so the hay account is live beside the `0.0` this state exists for.
 
 **THE BRACKET'S CLAIM IS A DRIVEN PROBE, NOT THE FIXTURE'S NUMBERS.** Both surfaces read the wire's
 `standing_biomass` now, so the fixture's figures MATCH the tile card's split on purpose — a fixture
@@ -3956,3 +3954,10 @@ through it is about what is drawn and what a click does, never about the produce
 
 Sabotaged: an `open_door` arm that does nothing fails the Wood / Stone claims; a silenced
 `door_selection_changed` fails every selected-wash claim.
+
+## `chapters/band_orders.gd` -- the band-order sheets (#860)
+
+Appended last in `CHAPTERS`. Frames `band_orders_stone_chief`, `_stone_yours`, `_wood_chief`,
+`_wood_short`, `_food_below`, `_food_above`, `_fodder`, `_hunt_chief`, `_hunt_yours`. Every button is
+found by its meta and pressed, and the line `Main.format_band_order` renders from the emitted payload
+is compared with the grammar text. The fixtures reuse `chapters/workings.gd`'s deposits.

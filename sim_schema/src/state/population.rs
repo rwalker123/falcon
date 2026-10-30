@@ -162,8 +162,8 @@ pub struct LaborAssignmentState {
     // reported. Neither is on the wire.
     /// **Fodder this source produced this turn** — the second account beside [`Self::actual_yield`]
     /// (issue #449), and exactly the `min(production, collection)` the
-    /// band's `FODDER` store was credited with, the wild credit's *Foddering* knowledge gate
-    /// included: a gated-off row reports `0.0` because the band was paid `0.0`. Reported, never
+    /// band's `FODDER` store was credited with, the wild credit; a row
+    /// reports `0.0` only when its basket yields no fodder. Reported, never
     /// recomputed.
     ///
     /// **Plant-only, structurally rather than by omission**: no animal pays fodder, so every hunt row
@@ -517,6 +517,13 @@ pub struct LaborAssignmentState {
     /// The crew past which the take stops rising - pass 3's ceiling. Appended last.
     #[serde(default)]
     pub useful_crew: u32,
+    /// The band order whose chief works this row (`"food"`, `"fodder"`, or the material a dig row is
+    /// kept for); empty for a player-crewed row. Appended last (#860).
+    #[serde(default)]
+    pub order_kind: String,
+    /// Whether the chief works this row (`order_kind` is not empty). Appended last (#860).
+    #[serde(default)]
+    pub chief_owned: bool,
     /// Of `workers`: keepers. `keepers + kitted + bare == workers` on a staffed row. Appended last.
     #[serde(default)]
     pub keepers_staffed: u32,
@@ -1083,7 +1090,7 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub band_move_tiles_per_turn: f32,
     /// The band's FODDER larder — the hay it has stored (Flora Roster F3). A second commodity key on
-    /// the same `LocalStore` as provisions; a hay Field harvests into it, a pen that knows Foddering
+    /// the same `LocalStore` as provisions; a hay Field harvests into it, every pen and tamed herd the band keeps
     /// draws it, and it never converts to provisions.
     #[serde(default)]
     pub fodder_store: f32,
@@ -1444,8 +1451,8 @@ pub struct PopulationCohortState {
     /// which is this quantity less the hay the keeper actually carried in.
     ///
     /// **The GAP, not the gross demand**: pasture is free, hay is farmed. `0` for a band keeping no
-    /// pens. **Not gated on Foddering** — a band that cannot draw hay still owes it, and this is the
-    /// field that says so ([`Self::turns_of_fodder`] beside it is the gated one).
+    /// pens. It is the gap the range leaves
+    /// for every pen and tamed herd the band keeps, not what the store paid.
     ///
     /// ⛔ **The sim sums it and a client must not.** Herd rows are fog-filtered, so a pen out of
     /// sight would silently drop out of a client-side total the band certainly still owes.
@@ -1453,8 +1460,7 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub fodder_need: f32,
     /// **THE HAY THIS BAND GREW THIS TURN, PER TURN** — what its fodder Fields harvested into
-    /// [`Self::fodder_store`]. The **raw** harvest, not a Foddering-gated share: what was grown is a
-    /// fact about the Fields, where what a pen may draw is a fact about what the faction has learned.
+    /// [`Self::fodder_store`]. The **raw** harvest of the Fields.
     /// Rendered against [`Self::fodder_need`] as *"need 6.0/turn · growing 5.0/turn"*. Appended last.
     #[serde(default)]
     pub fodder_income: f32,
@@ -1465,9 +1471,9 @@ pub struct PopulationCohortState {
     /// publishes, a band with no pens included). One phrasing for one concept — a client must not
     /// have a second way to say *"turns of buffer left"*, nor branch two ways.
     ///
-    /// ⛔ **The drain is not [`Self::fodder_need`].** The pens' draw is gated on Foddering and the
-    /// need is not, so a band that has not learned to hay a herd is short every turn and empties
-    /// nothing — it publishes the sentinel while `fodder_need` states what its pens are missing. The
+    /// ⛔ **The drain is not [`Self::fodder_need`].** The drain is what the pens
+    /// and tamed herds ask of the store, the need the gap the land leaves; a band with no hay empties
+    /// nothing — it publishes the sentinel while `fodder_need` states what its herds are missing. The
     /// need carries the alarm; this answers only *"how long does this store last"*, and a store
     /// nothing draws lasts forever. Appended last.
     #[serde(default)]
@@ -1971,6 +1977,10 @@ pub struct PopulationCohortState {
     /// fertility reserve beside the larder. Appended last.
     #[serde(default)]
     pub food_in_stores_in_reach: f32,
+    /// **Keep-on-hand orders** (#874): one row per mined material this people has discovered any
+    /// deposit of or holds a nonzero target for. Own bands only. Appended last.
+    #[serde(default)]
+    pub band_orders: Vec<BandOrderState>,
 }
 
 /// `PopulationCohortState::tribe_leader_kind`: the band is in no tribe.
@@ -2155,6 +2165,41 @@ pub struct CulturePressureState {
     pub close: bool,
     /// Turns left on the clock toward the next phase; `0` when that clock is not running.
     pub turns_to_next: u16,
+}
+
+/// **A BAND'S ORDER FOR ONE KIND** (#860) - a row of [`PopulationCohortState::band_orders`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BandOrderState {
+    /// `"food"`, `"fodder"` or a material id.
+    pub kind: String,
+    /// The stock the band wants kept (units for a material, turns for food and fodder); never `0`.
+    pub target: u32,
+    pub priority: SourcePriorityState,
+    /// Whether the chief works the kind (`false`: the player crews it).
+    pub chief_owned: bool,
+    /// The band's per-turn draw on the kind (upkeep, road keeping, builds).
+    pub draw: f32,
+    /// What the band holds of the kind now.
+    pub on_hand: f32,
+    /// Whether the game picked a site to dig at; `site_x` / `site_y` are meaningful only then.
+    pub has_site: bool,
+    pub site_x: u32,
+    pub site_y: u32,
+    /// Whether the order has anything to keep up with (false for fodder while no pen eats hay).
+    pub has_consumers: bool,
+    /// Heads staffed on the order's keep-up crew this turn (pass 1), across all its rows.
+    pub hold_heads: u32,
+    /// Heads the keep-up crew wanted.
+    pub hold_wanted: u32,
+    /// Heads staffed toward the refill (pass 2).
+    pub refill_heads: u32,
+    /// Heads the refill wanted; `0` at or above the target.
+    pub refill_wanted: u32,
+    /// What the order's rows brought in last turn, in the order's units a turn.
+    pub take: f32,
+    /// What the order's candidate sites give a turn at its floor without being drawn down; never
+    /// below `draw` for a deposit that does not regrow.
+    pub sustainable: f32,
 }
 
 /// **ONE KEEPING CLASS'S HUNTING MEAL** — a row of [`PopulationCohortState::hunt_meals`]: the food

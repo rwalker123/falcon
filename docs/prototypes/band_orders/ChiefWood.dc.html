@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Wood with a chief</title>
+<script src="./support.js"></script>
+<script src="./work-strip.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,600;1,400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1a2629;font-family:"Noto Sans",system-ui,sans-serif;color:#f4ead7}
+button{font-family:inherit;cursor:pointer}
+.setup{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:10px 16px;border:1px dashed #4a5a5d;border-radius:6px;color:#9fb0b2;font-size:12px}
+.setup button{border:1px solid #4a5a5d;background:transparent;color:#9fb0b2;border-radius:4px;padding:6px 10px;font-size:12px}
+.setup button.on{background:#2c3b3e;color:#e6eef0;border-color:#7a8d90}
+.gap{width:18px}
+.game{display:flex;gap:24px;align-items:flex-start}
+.panel{width:470px;background:#221b15;border-right:1px solid #3a2f24;min-height:660px;padding:12px 12px 16px;box-sizing:border-box;display:flex;flex-direction:column;gap:8px}
+.ph{display:flex;align-items:center;gap:8px}
+.bname{font-size:15px}
+.bsub{font-size:10px;color:#8d7e68}
+.tabs{display:flex;gap:10px;font-size:11px;color:#bdab90}
+.tabs .on{color:#f4ead7;border-bottom:2px solid #f4ead7}
+.sec{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68;margin-top:6px}
+.rows{display:flex;flex-direction:column;gap:4px}
+.row{display:grid;grid-template-columns:4px minmax(0,1fr) auto;column-gap:10px;padding:7px 8px 7px 0;border-radius:3px;background:#1f1913}
+.stripe{border-radius:2px}
+.rname{font-size:14px;color:#f4ead7}
+.rdet{font-size:12px;color:#bdab90}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.chip{border:1px solid #4a3c2e;background:#2b221a;color:#bdab90;font-size:11px;border-radius:10px;padding:2px 8px}
+.pill{display:inline-block;font-size:10px;border:1px solid #4a3c2e;border-radius:3px;padding:1px 5px;color:#bdab90;margin-right:4px}
+.chief-pill{border-color:#8a7a5c;color:#e3cf9f}
+a{color:#f4ead7;text-decoration:none}a:hover{color:#e3cf9f;text-decoration:underline}
+.orders{background:#2a2118;border:1px solid #5a4a34;border-radius:4px;padding:8px 10px;display:flex;flex-direction:column;gap:4px}
+.order{display:grid;grid-template-columns:18px 1fr auto;gap:6px;padding:6px 0 2px;border-top:1px solid #3a2f24}
+.on1{font-size:13px}
+.ol{font-size:10.5px;color:#bdab90}
+.st-ok{color:#9fbf7a}
+.st-warn{color:#e0a43a}
+.sub{display:grid;grid-template-columns:18px 1fr auto;gap:6px;padding:1px 0 1px 18px;font-size:11px;color:#bdab90}
+.crew{display:flex;flex-direction:column;align-items:flex-end;gap:4px;font-size:12px}
+.sq{display:inline-block;width:8px;height:8px;border-radius:2px;margin-left:2px}
+.sheet{width:340px;background:#221b15;border:1px solid #3a2f24;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.55);padding:12px 14px;display:flex;flex-direction:column;gap:9px;font-size:13px}
+.head{display:flex;align-items:center;gap:8px}
+.eyebrow{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#bdab90}
+.x{margin-left:auto;width:30px;height:30px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px}
+.field{display:grid;grid-template-columns:54px 1fr;align-items:center;gap:8px}
+.sel{height:32px;border:1px solid #4a3c2e;background:#2b221a;color:#f4ead7;border-radius:4px;padding:0 8px;font-size:13px;font-family:inherit}
+.lbl{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68}
+.box{background:#1d1812;border:1px solid #2f261d;border-radius:4px;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.dim{font-size:11.5px;color:#bdab90}
+.faint{font-size:10.5px;color:#8d7e68}
+.warn{font-size:11px;color:#e0a43a}
+.big{font-size:15px}
+.step{display:flex;align-items:center;gap:8px}
+.sb{width:30px;height:30px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px;font-size:15px}
+.sv{min-width:56px;text-align:center;font-size:15px}
+.seg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.seg button{height:24px;border:1px solid #3a2f24;background:#221b15;color:#bdab90;border-radius:4px;font-size:11px}
+.seg button.on{background:#3a2f24;color:#f4ead7;border-color:#6a5a46}
+.chief{display:flex;gap:10px;align-items:center;background:#2a2118;border:1px solid #5a4a34;border-radius:4px;padding:8px}
+.portrait{width:48px;height:48px;border:1px solid #6a5a46;border-radius:3px;object-fit:cover;flex:none}
+.portrait-sm{width:32px;height:32px;border:1px solid #6a5a46;border-radius:3px;object-fit:cover;flex:none}
+.cname{font-size:14px}
+.ctag{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#e3cf9f}
+.offer{display:flex;gap:8px;align-items:center;border:1px dashed #5a4a34;border-radius:4px;padding:6px 8px}
+.stand{display:grid;grid-template-columns:1fr auto auto;gap:10px;font-size:12px;align-items:baseline}
+.here{color:#e3cf9f}
+.foot{display:flex;align-items:center;gap:8px}
+.link{font-size:11px;color:#f4ead7;background:none;border:none;padding:0}
+.btn{height:32px;border:1px solid #6a5a46;background:#2b221a;color:#f4ead7;border-radius:4px;padding:0 10px;font-size:13px}
+.ghost{height:32px;border:1px solid #3a2f24;background:transparent;color:#bdab90;border-radius:4px;padding:0 10px;font-size:12px}
+.graph{position:relative;height:56px;background:#2b221a;border:1px solid #3a2f24;border-radius:3px}
+.graph .line{position:absolute;left:0;right:0;border-top:1px solid #f4ead7}
+.graph .tag{position:absolute;left:6px;font-size:9.5px;background:#1d1812;border:1px solid #4a3c2e;border-radius:2px;padding:0 4px;color:#f4ead7}
+.event{position:relative;margin-top:14px;width:760px;background:#221b15;border:1px solid #3a2f24;border-radius:6px;padding:8px 12px;font-size:12px;display:flex;gap:10px;align-items:center}
+.evt{color:#8d7e68;font-size:11px}
+</style>
+</helmet>
+<div style="width:1480px;padding:20px;box-sizing:border-box;display:flex;flex-direction:column;gap:16px">
+
+  <div class="setup">
+    <span>Prototype setup (not in the game) — the Wood sheet is opened on:</span>
+    <button class="{{standFellCls}}" onClick="{{openFell}}">Fell (70, 17) — a stand Orrin cuts</button>
+    <button class="{{standAshCls}}" onClick="{{openAsh}}">Ash Hollow (66, 20) — one he doesn't</button>
+    <span class="gap"></span>
+    <span>Stands in reach regrow:</span>
+    <button class="{{plentyCls}}" onClick="{{setPlenty}}">enough</button>
+    <button class="{{shortCls}}" onClick="{{setShort}}">too little</button>
+  </div>
+
+  <div class="game">
+    <!-- THE BAND PANEL'S WORK TAB: today's rows, grouped under Orrin's orders when the band has a chief -->
+    <div class="panel">
+      <div class="ph">
+        <sc-if value="{{hasChief}}" hint-placeholder-val="{{true}}"><img class="portrait-sm" src="/_blob/2f3207086b7fa19fcc1abc1942be6ecb" alt="Orrin, chief of Bitterbrook"></sc-if>
+        <div style="display:flex;flex-direction:column"><span class="bname">{{band}}</span><span class="bsub">{{bandSub}}</span></div>
+      </div>
+      <div class="tabs"><span>Band</span><span class="on">Work</span><span>Parties</span><span>Trade</span><span>Peoples</span></div>
+      <sc-if value="{{hasChief}}" hint-placeholder-val="{{true}}">
+        <div class="orders">
+          <span class="ctag">Orrin's orders</span>
+          <sc-for list="{{orderLines}}" as="o" hint-placeholder-count="3">
+            <div class="order">
+              <span>{{o.icon}}</span>
+              <div><div class="on1"><a href="{{o.href}}">{{o.name}}</a> <span class="ol">· {{o.have}} · keep {{o.keep}}</span></div><div class="ol {{o.stCls}}">{{o.state}}</div><span class="pill">Priority: {{o.pri}}</span></div>
+              <div class="crew">{{o.crew}}<span><sc-for list="{{o.squares}}" as="s" hint-placeholder-count="3"><span class="sq" style="background:{{s.c}}"></span></sc-for></span></div>
+            </div>
+            <div class="rows">
+              <sc-for list="{{o.rows}}" as="row" hint-placeholder-count="1">
+                <div class="row">
+                  <span class="stripe" style="background:{{row.stripe}}"></span>
+                  <div style="min-width:0">
+                    <div class="rname">{{row.name}}</div>
+                    <div class="rdet">{{row.rungName}}</div>
+                    <div class="rdet">{{row.yieldLine}}</div>
+                    <div class="chips"><span class="chip">Priority: {{row.pri}}</span><sc-if value="{{row.maxSet}}" hint-placeholder-val="{{false}}"><span class="chip">{{row.maxLabel}}</span></sc-if></div>
+                  </div>
+                  <div class="wstrip">
+                    <div class="marks">
+                      <span class="mk" title="{{row.rungMarkTip}}">{{row.rungMark}}</span>
+                      <sc-if value="{{row.hasLadder}}" hint-placeholder-val="{{true}}"><button class="ladder {{row.ladderCls}}" onClick="{{row.ladderClick}}" title="{{row.ladderTip}}"><span class="lfill" style="width:{{row.ladderFill}}"></span><span class="ltxt">{{row.ladderFace}}</span></button></sc-if>
+                      <sc-if value="{{row.cardOpen}}" hint-placeholder-val="{{false}}">
+                        <div class="rcard">
+                          <span class="rclbl">Take it to…</span>
+                          <sc-for list="{{row.card}}" as="r" hint-placeholder-count="3">
+                            <sc-if value="{{r.isButton}}" hint-placeholder-val="{{true}}"><button class="rbtn {{r.cls}}" onClick="{{r.click}}" title="{{r.tip}}"><span class="rfill" style="width:{{r.fill}}"></span><span class="rl">{{r.glyph}} {{r.label}}</span><span class="rf">{{r.face}}</span></button></sc-if>
+                            <sc-if value="{{r.isMarker}}" hint-placeholder-val="{{false}}"><div class="rmark {{r.cls}}"><span>{{r.glyph}} {{r.label}}</span><span class="rmf">{{r.face}}</span></div></sc-if>
+                          </sc-for>
+                        </div>
+                      </sc-if>
+                      <span class="mk" title="{{row.policyTip}}">{{row.policyMark}}</span>
+                      <span class="mk warnmk" title="{{row.warnTip}}">{{row.warnMark}}</span>
+                    </div>
+                    <div class="crewbox">
+                      <span class="crewnum {{row.zeroCls}}">{{row.crew}}</span>
+                      <div class="cbar" title="{{row.tip}}" aria-label="{{row.tip}}"><span style="flex:{{row.keepN}} 1 0;background:{{row.keepC}}"></span><span style="flex:{{row.buildN}} 1 0;background:{{row.buildC}}"></span><span style="flex:{{row.gearN}} 1 0;background:{{row.gearC}}"></span><span style="flex:{{row.bareN}} 1 0;background:{{row.bareC}}"></span></div>
+                    </div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <!-- Rows outside the orders: Yours (taken back from Orrin), or a leaderless band's whole Work tab -->
+      <sc-for list="{{sections}}" as="sec" hint-placeholder-count="1">
+        <div class="sec">{{sec.title}}</div>
+        <div class="rows">
+          <sc-for list="{{sec.rows}}" as="row" hint-placeholder-count="1">
+            <div class="row">
+              <span class="stripe" style="background:{{row.stripe}}"></span>
+              <div style="min-width:0">
+                <div class="rname">{{row.name}}</div>
+                <div class="rdet">{{row.rungName}}</div>
+                <div class="rdet">{{row.yieldLine}}</div>
+                <div class="chips"><span class="chip">Priority: {{row.pri}}</span><sc-if value="{{row.maxSet}}" hint-placeholder-val="{{false}}"><span class="chip">{{row.maxLabel}}</span></sc-if></div>
+              </div>
+              <div class="wstrip">
+                <div class="marks">
+                  <span class="mk" title="{{row.rungMarkTip}}">{{row.rungMark}}</span>
+                  <sc-if value="{{row.hasLadder}}" hint-placeholder-val="{{true}}"><button class="ladder {{row.ladderCls}}" onClick="{{row.ladderClick}}" title="{{row.ladderTip}}"><span class="lfill" style="width:{{row.ladderFill}}"></span><span class="ltxt">{{row.ladderFace}}</span></button></sc-if>
+                  <sc-if value="{{row.cardOpen}}" hint-placeholder-val="{{false}}">
+                    <div class="rcard">
+                      <span class="rclbl">Take it to…</span>
+                      <sc-for list="{{row.card}}" as="r" hint-placeholder-count="3">
+                        <sc-if value="{{r.isButton}}" hint-placeholder-val="{{true}}"><button class="rbtn {{r.cls}}" onClick="{{r.click}}" title="{{r.tip}}"><span class="rfill" style="width:{{r.fill}}"></span><span class="rl">{{r.glyph}} {{r.label}}</span><span class="rf">{{r.face}}</span></button></sc-if>
+                        <sc-if value="{{r.isMarker}}" hint-placeholder-val="{{false}}"><div class="rmark {{r.cls}}"><span>{{r.glyph}} {{r.label}}</span><span class="rmf">{{r.face}}</span></div></sc-if>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                  <span class="mk" title="{{row.policyTip}}">{{row.policyMark}}</span>
+                  <span class="mk warnmk" title="{{row.warnTip}}">{{row.warnMark}}</span>
+                </div>
+                <div class="crewbox">
+                  <span class="crewnum {{row.zeroCls}}">{{row.crew}}</span>
+                  <div class="cbar" title="{{row.tip}}" aria-label="{{row.tip}}"><span style="flex:{{row.keepN}} 1 0;background:{{row.keepC}}"></span><span style="flex:{{row.buildN}} 1 0;background:{{row.buildC}}"></span><span style="flex:{{row.gearN}} 1 0;background:{{row.gearC}}"></span><span style="flex:{{row.bareN}} 1 0;background:{{row.bareC}}"></span></div>
+                </div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+
+    <!-- THE WOOD SHEET -->
+    <div class="sheet">
+      <div class="head"><span class="eyebrow">{{eyebrow}}</span><span>{{standName}}</span><button class="x" aria-label="Close">✕</button></div>
+      <div class="field">
+        <label for="bandpick">Band:</label>
+        <select id="bandpick" class="sel" value="{{band}}" onChange="{{pickBand}}">
+          <option value="Bitterbrook">Bitterbrook</option>
+          <option value="Saltmarch">Saltmarch</option>
+        </select>
+      </div>
+
+      <!-- THE CHIEF'S ORDER -->
+      <sc-if value="{{chiefMode}}" hint-placeholder-val="{{true}}">
+        <div class="chief">
+          <img class="portrait" src="/_blob/2f3207086b7fa19fcc1abc1942be6ecb" alt="Orrin, chief of Bitterbrook">
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span class="ctag">Chief's order</span>
+            <span class="cname">Orrin keeps wood on hand</span>
+          </div>
+        </div>
+        <div class="faint">{{standLine}}</div>
+        <div class="lbl">Keep on hand</div>
+        <div class="box">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="big">8.0 on hand</span>
+            <span class="dim" style="margin-left:auto">keep</span>
+            <div class="step"><button class="sb" onClick="{{dec}}" aria-label="Keep less wood">−</button><span class="sv">{{target}}</span><button class="sb" onClick="{{inc}}" aria-label="Keep more wood">+</button></div>
+          </div>
+        </div>
+        <div class="lbl">Priority</div>
+        <div class="seg"><sc-for list="{{pris}}" as="p" hint-placeholder-count="3"><button class="{{p.cls}}" onClick="{{p.pick}}">{{p.label}}</button></sc-for></div>
+        <div class="lbl">Foresters</div>
+        <div class="box">
+          <span class="big">{{crewLine}}</span>
+          <sc-for list="{{standRows}}" as="s" hint-placeholder-count="2">
+            <div class="stand"><span class="{{s.cls}}">{{s.name}}</span><span class="faint">{{s.crew}}</span><span class="dim">{{s.take}}</span></div>
+          </sc-for>
+          <span class="faint">{{splitLine}}</span>
+          <span class="dim">He leaves every stand to grow back.</span>
+          <sc-if value="{{short}}" hint-placeholder-val="{{false}}"><span class="warn">⚠ Stands in reach regrow {{regrowAll}} wood a turn — Bitterbrook uses 1.5.</span></sc-if>
+        </div>
+        <div class="box">
+          <span class="lbl">Next turn</span>
+          <div style="display:flex;gap:8px;align-items:baseline"><span class="big">{{take}}</span><span class="lbl">wood</span></div>
+          <span class="faint">{{etaLine}}</span>
+        </div>
+        <div class="foot">
+          <button class="link">Show on map</button>
+          <span style="margin-left:auto"></span>
+          <button class="ghost" onClick="{{takeBack}}">Crew it yourself</button>
+          <button class="btn">Done</button>
+        </div>
+      </sc-if>
+
+      <!-- TODAY'S ASSIGN FORESTERS SHEET (no leader, or wood taken back) -->
+      <sc-if value="{{handMode}}" hint-placeholder-val="{{false}}">
+        <sc-if value="{{hasChief}}" hint-placeholder-val="{{true}}">
+          <div class="offer">
+            <img class="portrait-sm" src="/_blob/2f3207086b7fa19fcc1abc1942be6ecb" alt="Orrin, chief of Bitterbrook">
+            <span class="dim" style="flex:1">Orrin could keep wood on hand for you.</span>
+            <button class="ghost" onClick="{{handBack}}">Hand it to Orrin</button>
+          </div>
+        </sc-if>
+        <div class="seg"><button>Everything</button><button class="on">♻ Best</button><button>⬆ Learning</button></div>
+        <div class="lbl">Leave standing</div>
+        <div class="graph"><div class="line" style="top:22px"></div><span class="tag" style="top:14px">leave 50% · {{leaveAmt}}</span></div>
+        <div class="lbl">Foresters</div>
+        <div class="dim">{{handCrewLine}}</div>
+        <div class="lbl">Priority</div>
+        <div class="seg"><button>High</button><button class="on">Normal</button><button>Low</button></div>
+        <div class="step" style="gap:10px"><span>Max</span><button class="sb" onClick="{{mDec}}" aria-label="Lower the max">−</button><span class="sv">{{maxFace}}</span><button class="sb" onClick="{{mInc}}" aria-label="Raise the max">+</button></div>
+        <div class="box">
+          <span class="lbl">Next turn</span>
+          <div style="display:flex;gap:8px;align-items:baseline"><span class="big">{{handTake}}</span><span class="lbl">wood</span></div>
+          <span class="faint">Teaching conservationism at ×1.00 — a higher floor teaches faster.</span>
+        </div>
+        <div class="foot">
+          <button class="link">Show on map</button>
+          <span style="margin-left:auto"></span>
+          <button class="btn">{{commitFace}}</button>
+          <sc-if value="{{worked}}" hint-placeholder-val="{{true}}"><button class="ghost">Stop working here</button></sc-if>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <!-- THE EVENT DOCK: the line that says the chief took over -->
+  <sc-if value="{{hasChief}}" hint-placeholder-val="{{true}}">
+    <div class="event">
+      <img class="portrait-sm" src="/_blob/2f3207086b7fa19fcc1abc1942be6ecb" alt="">
+      <span class="evt">Turn 72</span>
+      <span>Orrin is chief of Bitterbrook — he takes over the wood cutting and keeps 30 on hand.</span>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1480,"height":1250}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    // `mine` is Bitterbrook's wood taken back from Orrin; `stand` is which stand the sheet was opened on.
+    // `max` holds each hand row's Max (0 = No max).
+    this.state = { band: 'Bitterbrook', mine: false, stand: 'fell', plenty: true, target: 30, pri: 1,
+      max: { fell: 0, karst: 0, ash: 0, salt: 0 }, open: null, built: {} };
+  }
+  ladders() {
+    const R = WorkStrip.RUNGS;
+    return {
+      plant: R.plant, animal: R.animal,
+      forestry: [{ label: 'Deadfall', mark: '' }, { label: 'Felling', mark: '🪓', verb: 'Fell', verbGlyph: '🪓', work: 60, cap: 3 }, { label: 'Coppice', mark: '🌳', verb: 'Coppice', verbGlyph: '🌳', work: 120, cap: 3 }],
+      extraction: [{ label: 'Surface gathering', mark: '' }, { label: 'Quarry', mark: '⛏', verb: 'Quarry', verbGlyph: '⛏', work: 200, cap: 4 }]
+    };
+  }
+  // Today's Work tab row, drawn by the shared work strip (work-strip.js). r: {id, name, rung, lad, cat, crew, yieldLine, pri, floor, maxLabel, warn}
+  workRow(r) {
+    const st = this.state;
+    const COLOR = { Forage: '#94a361', Hunt: '#efe3cd', Wood: '#7d6a4f', Stone: '#8d7e68' };
+    const q = st.built[r.id];
+    const bld = q === undefined ? null : { q, rem: r.lad[1].work * (1 - q) };
+    const builders = bld && r.crew > 0 ? 1 : 0;
+    const work = Math.max(0, r.crew - builders);
+    const strip = WorkStrip.props({
+      rungs: r.lad, at: 0, build: bld, builders, turns: bld ? Math.ceil(bld.rem / 1.5) : 0,
+      buildTip: builders + ' building', open: st.open === r.id,
+      toggle: () => this.setState({ open: st.open === r.id ? null : r.id }),
+      start: () => this.setState({ built: Object.assign({}, st.built, { [r.id]: 0 }), open: null }),
+      stop: () => { const nb = Object.assign({}, st.built); delete nb[r.id]; this.setState({ built: nb, open: null }); },
+      floor: r.floor === undefined ? null : r.floor, warn: r.warn || '',
+      crew: { keep: 0, build: builders, gear: work, bare: 0 }, color: COLOR[r.cat],
+      tip: r.crew === 0 ? 'Nobody here this turn' : (builders ? builders + ' building · ' : '') + work + ' working'
+    });
+    return Object.assign({
+      name: r.name, rungName: r.rung, yieldLine: r.crew === 0 ? 'Nobody sent this turn' : r.yieldLine, pri: r.pri,
+      maxSet: !!r.maxLabel, maxLabel: r.maxLabel || '', stripe: r.warn ? '#e0a63c' : '#2f261d'
+    }, strip);
+  }
+  stands() {
+    // What each stand gives a turn when it is cut at Best (left to grow back).
+    return this.state.plenty
+      ? [{ key: 'fell', name: 'Fell (70, 17)', regrow: 2.4 }, { key: 'karst', name: 'Karst Highland (21, 14)', regrow: 1.8 }]
+      : [{ key: 'fell', name: 'Fell (70, 17)', regrow: 0.7 }, { key: 'karst', name: 'Karst Highland (21, 14)', regrow: 0.5 }];
+  }
+  plan(target) {
+    // Orrin wants the band's use (1.5 a turn) plus a tenth of the gap to the target, and fills the
+    // nearest stand up to what it regrows before starting the next. Axe hands cut 0.6, bare 0.3; 3 axes.
+    const onHand = 8.0, draw = 1.5, refill = 10;
+    const deficit = Math.max(0, target - onHand);
+    let wantLeft = deficit > 0 ? draw + deficit / refill : 0;
+    let axes = 3, kitted = 0, bare = 0, take = 0;
+    const rows = [];
+    for (const s of this.stands()) {
+      const need = Math.min(wantLeft, s.regrow);
+      let k = 0, b = 0, t = 0;
+      while (t + 1e-6 < need) { if (axes > 0) { axes--; k++; t += 0.6; } else { b++; t += 0.3; } }
+      t = Math.min(t, s.regrow);
+      if (k + b > 0) rows.push({ key: s.key, name: s.name, crew: k + b, take: t });
+      kitted += k; bare += b; take += t; wantLeft -= t;
+    }
+    const regrowAll = this.stands().reduce((a, s) => a + s.regrow, 0);
+    return { rows, kitted, bare, crew: kitted + bare, take, deficit, regrowAll };
+  }
+  renderVals() {
+    const st = this.state;
+    const hasChief = st.band === 'Bitterbrook';
+    const chiefMode = hasChief && !st.mine;
+    const handMode = !chiefMode;
+    const p = this.plan(st.target);
+    const PRI = ['High', 'Normal', 'Low'];
+    const atTarget = p.crew === 0;
+    const short = p.regrowAll < 1.5;
+    const net = p.take - 1.5;
+    const openKey = hasChief ? st.stand : 'salt';
+    const standName = st.stand === 'fell' ? 'Fell' : 'Ash Hollow';
+    const squares = [];
+    for (let i = 0; i < p.kitted; i++) squares.push({ c: '#9fbf7a' });
+    for (let i = 0; i < p.bare; i++) squares.push({ c: '#8d7e68' });
+    // The sim staffs a hand stand up to its Max; with No max it sends the stand's hold crew (3 here).
+    const handCrew = (key) => st.max[key] > 0 ? st.max[key] : (key === 'ash' ? 0 : 3);
+    const handTakeOf = (n) => Math.min(n, 3) * 0.6 + Math.max(0, n - 3) * 0.3;
+    const maxFaceOf = (m) => m > 0 ? 'Max ' + m : 'No max';
+    const bitterRows = [];
+    for (const key of ['fell', 'karst', 'ash']) {
+      const n = handCrew(key);
+      if (n === 0 && !(key === st.stand)) continue;
+      const nm = { fell: 'Wood · Fell (70, 17)', karst: 'Wood · Karst Highland (21, 14)', ash: 'Wood · Ash Hollow (66, 20)' }[key];
+      bitterRows.push({ name: nm, crew: n, maxFace: maxFaceOf(st.max[key]), line: n > 0 ? '+' + handTakeOf(n).toFixed(2) + ' wood /turn · 50% left standing' : 'no crew yet' });
+    }
+    const saltRows = [{ name: 'Wood · 1 tile E', crew: handCrew('salt'), maxFace: maxFaceOf(st.max.salt), line: '+' + handTakeOf(handCrew('salt')).toFixed(2) + ' wood /turn · 50% left standing' }];
+    const openCrew = handCrew(openKey);
+    const setMax = (m) => this.setState({ max: Object.assign({}, st.max, { [openKey]: Math.max(0, m) }) });
+    const curMax = st.max[openKey];
+    // The Work tab: Orrin's orders with today's rows under each, then Yours; a leaderless band has today's sections.
+    const L = this.ladders();
+    const row = (o) => this.workRow(o);
+    const woodLine = (n) => '+' + n.toFixed(2) + ' wood /turn · 50% left standing';
+    const orderLines = [
+      { icon: '🍖', name: 'Food', href: 'ChiefFood.dc.html', have: '12 turns', keep: '20 turns', state: 'Refilling · back to 20 turns in ≈10 turns', stCls: 'st-ok', pri: 'High', crew: 14, squares: [],
+        rows: [row({ id: 'harvest', name: 'Harvest (71, 18)', rung: 'Wild', lad: L.plant, cat: 'Forage', crew: 6, yieldLine: '+2.88 food /turn · 50% left standing', pri: 'High', floor: 1 }),
+               row({ id: 'deer', name: 'Hunt Red Deer (68, 15)', rung: 'Wild herd', lad: L.animal, cat: 'Hunt', crew: 8, yieldLine: '+4.40 food /turn · 50% left standing', pri: 'High', floor: 1 })] },
+      { icon: '🪨', name: 'Stone', href: 'ChiefStone.dc.html', have: '12.4 on hand', keep: '30', state: 'Refilling · back to 30 in ≈9 turns', stCls: 'st-ok', pri: 'Normal', crew: 5, squares: [],
+        rows: [row({ id: 'dig', name: 'Dig stone · Karst Highland (21, 14)', rung: 'Gathering', lad: L.extraction, cat: 'Stone', crew: 5, yieldLine: '+2.00 stone /turn · 75 turns left', pri: 'Normal' })] }
+    ];
+    if (chiefMode) orderLines.push({ icon: '🪵', name: 'Wood', href: '#', have: '8.0 on hand', keep: String(st.target),
+      state: atTarget ? 'At target — nobody cuts'
+        : net > 0.01 ? 'Refilling · back to ' + st.target + ' in ≈' + Math.ceil(p.deficit / net) + ' turns'
+        : 'Falling ' + (-net).toFixed(1) + ' a turn — the stands regrow too little',
+      stCls: atTarget || net > 0.01 ? 'st-ok' : 'st-warn', pri: PRI[st.pri], crew: p.crew, squares,
+      rows: p.rows.map((r) => row({ id: r.key, name: r.name, rung: 'Deadfall', lad: L.forestry, cat: 'Wood', crew: r.crew, yieldLine: woodLine(r.take), pri: PRI[st.pri], floor: 1,
+        warn: !atTarget && net <= 0.01 ? 'The stands regrow too little' : '' })) });
+    let sections = [];
+    if (hasChief && handMode) {
+      sections = [{ title: 'Yours', rows: ['fell', 'karst', 'ash'].filter((key) => handCrew(key) > 0 || key === st.stand).map((key) => row({
+        id: key, name: { fell: 'Wood · Fell (70, 17)', karst: 'Wood · Karst Highland (21, 14)', ash: 'Wood · Ash Hollow (66, 20)' }[key],
+        rung: 'Deadfall', lad: L.forestry, cat: 'Wood', crew: handCrew(key), yieldLine: woodLine(handTakeOf(handCrew(key))), pri: 'Normal', floor: 1,
+        maxLabel: st.max[key] > 0 ? 'Max ' + st.max[key] : '' })) }];
+    } else if (!hasChief) {
+      sections = [
+        { title: 'Agriculture', rows: [row({ id: 'sharvest', name: 'Harvest (71, 18)', rung: 'Wild', lad: L.plant, cat: 'Forage', crew: 5, yieldLine: '+0.48 /turn · 50% left standing', pri: 'Normal', floor: 1 })] },
+        { title: 'Groundwork', rows: [row({ id: 'swood', name: 'Wood · 1 tile E', rung: 'Deadfall', lad: L.forestry, cat: 'Wood', crew: handCrew('salt'), yieldLine: woodLine(handTakeOf(handCrew('salt'))), pri: 'Normal', floor: 1,
+          maxLabel: st.max.salt > 0 ? 'Max ' + st.max.salt : '' })] }
+      ];
+    }
+    return {
+      orderLines, sections,
+      band: st.band,
+      bandSub: hasChief ? 'Chief Orrin · Nomadic band (64, 18)' : 'Nomadic band (71, 18) · no leader yet',
+      hasChief, chiefMode, handMode, short, noChief: !hasChief,
+      orderState: atTarget ? 'At target — nobody cuts'
+        : net > 0.01 ? 'Refilling · back to ' + st.target + ' in ≈' + Math.ceil(p.deficit / net) + ' turns'
+        : 'Falling ' + (-net).toFixed(1) + ' a turn — the stands regrow too little',
+      orderCls: atTarget || net > 0.01 ? 'st-ok' : 'st-warn',
+      standRowsWork: p.rows.map((r) => ({ name: r.name, crew: r.crew })),
+      standFellCls: st.stand === 'fell' ? 'on' : '', standAshCls: st.stand === 'ash' ? 'on' : '',
+      openFell: () => this.setState({ stand: 'fell' }),
+      openAsh: () => this.setState({ stand: 'ash' }),
+      plentyCls: st.plenty ? 'on' : '', shortCls: st.plenty ? '' : 'on',
+      setPlenty: () => this.setState({ plenty: true }),
+      setShort: () => this.setState({ plenty: false }),
+      pickBand: (e) => this.setState({ band: e.target.value }),
+      eyebrow: chiefMode ? 'Wood' : 'Assign foresters',
+      standName,
+      standLine: st.stand === 'fell' ? '412 of 600 wood standing here. Wood grows back.' : '540 of 600 wood standing here. Wood grows back.',
+      target: st.target,
+      inc: () => this.setState({ target: st.target + 1 }),
+      dec: () => this.setState({ target: Math.max(1, st.target - 1) }),
+      pris: PRI.map((label, i) => ({ label, cls: i === st.pri ? 'on' : '', pick: () => this.setState({ pri: i }) })),
+      priFace: PRI[st.pri],
+      crewLine: atTarget ? 'At target — nobody cuts this turn' : 'Orrin sends ' + p.crew + ' foresters this turn',
+      standRows: p.rows.map((r) => ({
+        name: r.name + (r.key === st.stand ? ' · here' : ''),
+        cls: r.key === st.stand ? 'here' : '',
+        crew: r.crew + (r.crew === 1 ? ' forester' : ' foresters'),
+        take: '+' + r.take.toFixed(2)
+      })),
+      standCount: p.rows.length === 1 ? '1 stand' : p.rows.length + ' stands',
+      splitLine: atTarget ? '' : p.kitted + ' with axes · ' + p.bare + ' bare-handed',
+      regrowAll: p.regrowAll.toFixed(1),
+      take: p.take.toFixed(2),
+      etaLine: atTarget ? 'Nothing cut while the pile is full.'
+        : net > 0.01 ? 'Back to ' + st.target + ' in ≈' + Math.ceil(p.deficit / net) + ' turns.'
+        : 'The pile falls ' + (-net).toFixed(1) + ' a turn.',
+      rowTake: atTarget ? 'At target — nobody cuts' : '+' + p.take.toFixed(2) + ' wood /turn · Refilling to ' + st.target,
+      chiefCrew: p.crew, chiefSquares: squares,
+      // Crew it yourself: each stand he was cutting becomes your row, its Max set to his crew there.
+      takeBack: () => {
+        const max = Object.assign({}, st.max, { fell: 0, karst: 0 });
+        for (const r of p.rows) max[r.key] = r.crew;
+        this.setState({ mine: true, max });
+      },
+      handBack: () => this.setState({ mine: false }),
+      handRows: hasChief ? bitterRows : saltRows,
+      leaveAmt: st.stand === 'fell' && hasChief ? 300 : 300,
+      handCrewLine: openCrew > 0 ? openCrew + (openCrew === 1 ? ' forester' : ' foresters') + ' this turn' : 'Nobody cuts here yet.',
+      maxFace: maxFaceOf(curMax),
+      mInc: () => setMax(curMax + 1),
+      mDec: () => setMax(curMax - 1),
+      handTake: handTakeOf(openCrew).toFixed(2),
+      worked: openCrew > 0,
+      commitFace: openCrew > 0 ? 'Done' : 'Cut'
+    };
+  }
+}
+</script>
+</body>
+</html>

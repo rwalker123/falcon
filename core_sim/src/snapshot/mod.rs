@@ -932,7 +932,7 @@ mod tests {
     use crate::components::{
         ElementKind, LocalStore, MoraleCause, SourcePriority, TakeSelection, YieldRange,
     };
-    use crate::fauna::{FODDERING_DISCOVERY_ID, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID};
+    use crate::fauna::HERDING_DISCOVERY_ID;
     use crate::forage::ForagePatch;
     use crate::forage::CULTIVATION_DISCOVERY_ID;
     use crate::intensification::LadderConfig;
@@ -1519,6 +1519,7 @@ mod tests {
             loadout_window: None,
             heart: None,
             culture_pressures: Vec::new(),
+            band_orders: Vec::new(),
             band_improvements: Vec::new(),
             held_preservation: crate::spoilage::HeldPreservation::none(),
             reachable_stores: crate::fixed_store::ReachableStores::none(),
@@ -1646,6 +1647,15 @@ mod tests {
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
             last_material_need: Default::default(),
+            last_road_material_bill: Default::default(),
+            last_build_material_draw: Default::default(),
+            orders: Default::default(),
+            order_rows: Default::default(),
+            adopt_pending: Default::default(),
+            keep_shares: Default::default(),
+            keep_sustainable: Default::default(),
+            unannounced_takeover: Default::default(),
+            last_keep_site: Default::default(),
             last_material_income: Default::default(),
             material_shortfall_warned: Vec::new(),
             bench_short_warned: Vec::new(),
@@ -1786,6 +1796,15 @@ mod tests {
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
             last_material_need: Default::default(),
+            last_road_material_bill: Default::default(),
+            last_build_material_draw: Default::default(),
+            orders: Default::default(),
+            order_rows: Default::default(),
+            adopt_pending: Default::default(),
+            keep_shares: Default::default(),
+            keep_sustainable: Default::default(),
+            unannounced_takeover: Default::default(),
+            last_keep_site: Default::default(),
             last_material_income: Default::default(),
             material_shortfall_warned: Vec::new(),
             bench_short_warned: Vec::new(),
@@ -1862,6 +1881,15 @@ mod tests {
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
             last_material_need: Default::default(),
+            last_road_material_bill: Default::default(),
+            last_build_material_draw: Default::default(),
+            orders: Default::default(),
+            order_rows: Default::default(),
+            adopt_pending: Default::default(),
+            keep_shares: Default::default(),
+            keep_sustainable: Default::default(),
+            unannounced_takeover: Default::default(),
+            last_keep_site: Default::default(),
             last_material_income: Default::default(),
             material_shortfall_warned: Vec::new(),
             bench_short_warned: Vec::new(),
@@ -2643,8 +2671,7 @@ mod tests {
     ///
     /// Three claims, and each is a different way the derivation could be wrong: the route branch's
     /// two lessons are PRESENT (a hard-coded roster is exactly what could not carry them), a
-    /// knowledge sits in the branch and at the order of the rung that TEACHES it, and `foddering` is
-    /// the shipped `is_step: false` because no rung's `unlock_knowledge` names it.
+    /// knowledge sits in the branch and at the order of the rung that TEACHES it.
     #[test]
     fn the_published_roster_places_every_knowledge_the_ladder_teaches() {
         let ladder = LadderConfig::builtin();
@@ -2669,16 +2696,6 @@ mod tests {
         assert_eq!(
             seed.display_name, "Seed Selection",
             "the player-facing name is resolved sim-side, not by a client table"
-        );
-
-        let fodder = roster
-            .iter()
-            .find(|row| row.knowledge_id == "foddering")
-            .expect("foddering is taught");
-        assert_eq!(fodder.branch, "animal");
-        assert!(
-            !fodder.is_step,
-            "no rung waits on Foddering — it is a capability, and that FALLS OUT of the config"
         );
 
         let road = roster
@@ -2739,11 +2756,6 @@ mod tests {
         assert_eq!(f2.faction, 2);
         assert!((track(f2, "cultivation") - 1.0).abs() < 1e-6);
         assert!((track(f2, "herding") - 0.5).abs() < 1e-6);
-        assert_eq!(
-            track(f2, "foddering"),
-            0.0,
-            "a faction that never ran a pen has no fodder capability"
-        );
         // ⛔ **SPARSE IN VALUE, NEVER IN MEMBERSHIP.** An untouched knowledge rides at `0` rather
         // than being dropped, so no reader has to tell "not begun" from "not published".
         assert_eq!(
@@ -2751,47 +2763,6 @@ mod tests {
             snapshot_ladder_knowledge(&ladder).len(),
             "every knowledge the roster declares carries a reading on every published row"
         );
-    }
-
-    /// **Foddering is published, and it alone keeps a faction's row alive.** It is not a rung gate,
-    /// so nothing else in the row implies it — a faction whose only non-zero track is Foddering must
-    /// still be emitted, or the client cannot tell "cannot bank this hay" from "no row at all".
-    #[test]
-    fn snapshot_intensification_knowledge_reports_foddering_on_its_own() {
-        /// Partway to Foddering — a learning meter, so the row must carry the fraction rather than a
-        /// known/unknown bit.
-        const PARTIAL_FODDERING: f32 = 0.25;
-
-        let ladder = LadderConfig::builtin();
-        let mut ledger = DiscoveryProgressLedger::default();
-        ledger.add_progress(FactionId(7), PENNING_DISCOVERY_ID, Scalar::one());
-        ledger.add_progress(FactionId(7), FODDERING_DISCOVERY_ID, Scalar::one());
-        // Faction 9 has NOTHING but Foddering progress — the all-zero skip must not drop it.
-        ledger.add_progress(
-            FactionId(9),
-            FODDERING_DISCOVERY_ID,
-            Scalar::from_f32(PARTIAL_FODDERING),
-        );
-
-        // **Asked once per viewer, because the list is viewer-scoped** (`factions.md` → "Which
-        // frame sections are viewer-scoped"). The claim being pinned is the all-zero skip's, not the
-        // list's membership: each faction, asked about ITSELF, gets its row.
-        let penned_rows = snapshot_intensification_knowledge(&ledger, &ladder, FactionId(7));
-        assert_eq!(penned_rows.len(), 1, "a faction reads its own row");
-        let penned = &penned_rows[0];
-        assert_eq!(penned.faction, 7);
-        assert!((track(penned, "foddering") - 1.0).abs() < 1e-6);
-
-        let fodder_rows = snapshot_intensification_knowledge(&ledger, &ladder, FactionId(9));
-        assert_eq!(
-            fodder_rows.len(),
-            1,
-            "Foddering alone is still something learned"
-        );
-        let fodder_only = &fodder_rows[0];
-        assert_eq!(fodder_only.faction, 9);
-        assert!((track(fodder_only, "foddering") - PARTIAL_FODDERING).abs() < 1e-6);
-        assert_eq!(track(fodder_only, "penning"), 0.0);
     }
 
     #[test]

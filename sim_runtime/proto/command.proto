@@ -433,6 +433,34 @@ message StopLaborCommand {
   bool roadwork = 8;
 }
 
+// WHAT A `band_order` COMMAND DOES TO ONE KIND'S ORDER (#860).
+enum BandOrderAction {
+  BAND_ORDER_ACTION_UNSPECIFIED = 0;
+  // Set the order's target and priority. Refused for a target of 0 (there is no "none") and for a
+  // kind that takes no order.
+  BAND_ORDER_ACTION_SET = 1;
+  // "Crew it yourself": the player takes the kind; the chief's rows stay where they are.
+  BAND_ORDER_ACTION_RELEASE = 2;
+  // "Hand it to the chief": the chief takes the kind back at its current target.
+  BAND_ORDER_ACTION_CLAIM = 3;
+}
+
+// A BAND ORDER (#860): `kind` is "food", "fodder" or a material id. `target` and `priority` (`high`,
+// `normal` or `low`) are read for SET only. Refused for a band with no leader yet.
+message BandOrderCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  string kind = 3;
+  BandOrderAction action = 4;
+  uint32 target = 5;
+  string priority = 6;
+  // RELEASE / CLAIM of ONE row of a food or fodder order instead of the whole kind: a forage patch's
+  // tile (`target_x`/`target_y`) or a hunt row's herd (`herd_id`). Absent: the whole kind.
+  optional uint32 target_x = 7;
+  optional uint32 target_y = 8;
+  optional string herd_id = 9;
+}
+
 // Travel a band toward a target tile at band_move_tiles_per_turn/turn.
 message MoveBandCommand {
   uint32 faction_id = 1;
@@ -1219,7 +1247,7 @@ message ForageCrewTakeRow {
   // The hands this crew would spend keeping the finished rung, fractional.
   float next_rung_keep_hands = 5;
   // The same take's FODDER once the rung is finished, CREDITED - 0 where the sim would refuse the
-  // credit (no Foddering, and no commitment to a fodder-bearing plant).
+  // credit (nothing is gated: every harvest that yields fodder banks it).
   float next_rung_fodder = 6;
   // The same take's MATERIALS once the rung is finished, one row per material, keeping netted.
   // Never summed across materials.
@@ -1511,7 +1539,7 @@ message WorkPartyForecastReply {
   // A FAR ROW'S BY-PRODUCTS, PER TURN, ARRIVING HOME (#706) - a forage basket's fodder and
   // materials, a hunt's or pen's hide, bone and sinew. They ride the packs with the food, so these
   // are delivered rates over the same horizon as `rate_home` (they never rot). Fodder is the
-  // CREDITED figure (0 without Foddering unless the patch is committed to a fodder crop); a hunt
+  // CREDITED figure (the fodder the basket yields); a hunt
   // yields none. 0 / empty inside the apron (nothing walks: the take-site figures apply) and on a
   // deposit, whose material is `rate_home` itself.
   float fodder_rate_home = 11;
@@ -1842,5 +1870,6 @@ message CommandEnvelope {
     SendEnvoyCommand send_envoy = 93;
     EndTreatyCommand end_treaty = 94;
     StopLaborCommand stop_labor = 95;
+    BandOrderCommand band_order = 97;
   }
 }

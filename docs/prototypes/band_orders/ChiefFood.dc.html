@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The food order</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,600;1,400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1a2629;font-family:"Noto Sans",system-ui,sans-serif;color:#f4ead7}
+button{font-family:inherit;cursor:pointer}
+button:disabled{cursor:default}
+a{color:#e3cf9f;text-decoration:underline}a:hover{color:#f4ead7}
+.setup{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:10px 16px;border:1px dashed #4a5a5d;border-radius:6px;color:#9fb0b2;font-size:12px}
+.setup button{border:1px solid #4a5a5d;background:transparent;color:#9fb0b2;border-radius:4px;padding:6px 10px;font-size:12px}
+.setup button.on{background:#2c3b3e;color:#e6eef0;border-color:#7a8d90}
+.gap{width:18px}
+.game{display:flex;gap:24px;align-items:flex-start}
+.sheet{width:360px;background:#221b15;border:1px solid #3a2f24;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.55);padding:12px 14px;display:flex;flex-direction:column;gap:9px;font-size:13px}
+.head{display:flex;align-items:center;gap:8px}
+.eyebrow{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#bdab90}
+.x{margin-left:auto;width:30px;height:30px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px}
+.field{display:grid;grid-template-columns:54px 1fr;align-items:center;gap:8px}
+.sel{height:32px;border:1px solid #4a3c2e;background:#2b221a;color:#f4ead7;border-radius:4px;padding:0 8px;font-size:13px;font-family:inherit}
+.sel:disabled{color:#8d7e68}
+.lbl{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#8d7e68}
+.box{background:#1d1812;border:1px solid #2f261d;border-radius:4px;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.dim{font-size:11.5px;color:#bdab90}
+.faint{font-size:10.5px;color:#8d7e68}
+.ok{font-size:11px;color:#9fbf7a}
+.big{font-size:15px}
+.step{display:flex;align-items:center;gap:8px}
+.sb{width:30px;height:30px;border:1px solid #3a2f24;background:#2b221a;color:#f4ead7;border-radius:4px;font-size:15px}
+.sb:disabled{color:#5a4a34}
+.sv{min-width:70px;text-align:center;font-size:15px}
+.seg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.seg button{height:24px;border:1px solid #3a2f24;background:#221b15;color:#bdab90;border-radius:4px;font-size:11px}
+.seg button.on{background:#3a2f24;color:#f4ead7;border-color:#6a5a46}
+.seg button:disabled{color:#6a5a46}
+.seg button.on:disabled{color:#bdab90}
+.chief{display:flex;gap:10px;align-items:center;background:#2a2118;border:1px solid #5a4a34;border-radius:4px;padding:8px}
+.portrait{width:48px;height:48px;border:1px solid #6a5a46;border-radius:3px;object-fit:cover;flex:none}
+.portrait-sm{width:32px;height:32px;border:1px solid #6a5a46;border-radius:3px;object-fit:cover;flex:none}
+.cname{font-size:14px}
+.ctag{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#e3cf9f}
+.strip{display:flex;gap:8px;align-items:center;background:#2a2118;border:1px solid #5a4a34;border-radius:4px;padding:6px 8px}
+.offer{display:flex;gap:8px;align-items:center;border:1px dashed #5a4a34;border-radius:4px;padding:6px 8px}
+.src{display:grid;grid-template-columns:1fr 62px 24px 44px;gap:8px;font-size:12px;align-items:baseline}
+.mine{color:#e3cf9f}
+.foot{display:flex;align-items:center;gap:8px}
+.link{font-size:11px;color:#f4ead7;background:none;border:none;padding:0}
+.btn{height:32px;border:1px solid #6a5a46;background:#2b221a;color:#f4ead7;border-radius:4px;padding:0 10px;font-size:13px}
+.ghost{height:32px;border:1px solid #3a2f24;background:transparent;color:#bdab90;border-radius:4px;padding:0 10px;font-size:12px}
+.graph{position:relative;height:56px;background:#3a3a26;border:1px solid #3a2f24;border-radius:3px}
+.graph .line{position:absolute;left:0;right:0;border-top:1px solid #f4ead7}
+.graph .tag{position:absolute;left:6px;font-size:9.5px;background:#1d1812;border:1px solid #4a3c2e;border-radius:2px;padding:0 4px;color:#f4ead7}
+.ctl{display:flex;align-items:center;gap:8px}
+.owner{font-size:10px;color:#e3cf9f}
+</style>
+</helmet>
+<div style="width:1480px;padding:20px;box-sizing:border-box;display:flex;flex-direction:column;gap:16px">
+
+  <div class="setup">
+    <span>Prototype setup (not in the game) — Bitterbrook's food:</span>
+    <button class="{{lowCls}}" onClick="{{setLow}}">below the target (12 turns)</button>
+    <button class="{{highCls}}" onClick="{{setHigh}}">above the target (26 turns)</button>
+    <span class="gap"></span>
+    <span>The Red Deer hunt is:</span>
+    <button class="{{orrinCls}}" onClick="{{handBack}}">Orrin's</button>
+    <button class="{{yoursCls}}" onClick="{{takeBack}}">yours</button>
+  </div>
+
+  <div class="game">
+    <!-- THE FOOD SHEET: opened from the Food line in Orrin's orders -->
+    <div class="sheet">
+      <div class="head"><span class="eyebrow">Food</span><span>Bitterbrook</span><button class="x" aria-label="Close">✕</button></div>
+      <div class="chief">
+        <img class="portrait" src="/_blob/2f3207086b7fa19fcc1abc1942be6ecb" alt="Orrin, chief of Bitterbrook">
+        <div style="display:flex;flex-direction:column;gap:2px">
+          <span class="ctag">Chief's order</span>
+          <span class="cname">Orrin keeps the band fed</span>
+        </div>
+      </div>
+      <div class="faint">Bitterbrook eats 4.0 food a turn.</div>
+      <div class="lbl">Keep on hand</div>
+      <div class="box">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="big">{{haveTurns}} turns</span>
+          <span class="dim" style="margin-left:auto">keep</span>
+          <div class="step"><button class="sb" onClick="{{dec}}" aria-label="Keep fewer turns of food">−</button><span class="sv">{{target}} turns</span><button class="sb" onClick="{{inc}}" aria-label="Keep more turns of food">+</button></div>
+        </div>
+      </div>
+      <div class="lbl">Priority</div>
+      <div class="seg"><sc-for list="{{pris}}" as="p" hint-placeholder-count="3"><button class="{{p.cls}}" onClick="{{p.pick}}">{{p.label}}</button></sc-for></div>
+      <div class="lbl">Food sources</div>
+      <div class="box">
+        <span class="big">{{crewLine}}</span>
+        <sc-for list="{{srcRows}}" as="s" hint-placeholder-count="3">
+          <div class="src"><span class="{{s.cls}}">{{s.name}}</span><span class="faint">{{s.setting}}</span><span class="faint">{{s.crew}}</span><span class="dim">{{s.take}}</span></div>
+        </sc-for>
+        <span class="dim">{{easeLine}}</span>
+      </div>
+      <div class="box">
+        <span class="lbl">Next turn</span>
+        <div style="display:flex;gap:8px;align-items:baseline"><span class="big">{{take}}</span><span class="lbl">food</span><span class="faint" style="margin-left:auto">{{netLine}}</span></div>
+        <span class="faint">{{etaLine}}</span>
+        <span class="faint">Also brings in hide +{{hide}} and bone +{{bone}} a turn.</span>
+      </div>
+      <div class="foot">
+        <span style="margin-left:auto"></span>
+        <button class="btn">Done</button>
+      </div>
+    </div>
+
+    <!-- THE ASSIGN HUNTERS SHEET: a row the food order is working -->
+    <div class="sheet">
+      <div class="head"><span class="eyebrow">Assign hunters</span><span>Red Deer</span><button class="x" aria-label="Close">✕</button></div>
+      <div class="field">
+        <label for="bandpick">Band:</label>
+        <select id="bandpick" class="sel"><option>Bitterbrook</option><option>Saltmarch</option></select>
+      </div>
+      <sc-if value="{{orrins}}" hint-placeholder-val="{{true}}">
+        <div class="strip">
+          <img class="portrait-sm" src="/_blob/2f3207086b7fa19fcc1abc1942be6ecb" alt="Orrin, chief of Bitterbrook">
+          <span class="dim" style="flex:1">Orrin hunts this for <a href="ChiefFood.dc.html">the food order</a>.</span>
+          <button class="ghost" onClick="{{takeBack}}">Crew it yourself</button>
+        </div>
+      </sc-if>
+      <sc-if value="{{yours}}" hint-placeholder-val="{{false}}">
+        <div class="offer">
+          <img class="portrait-sm" src="/_blob/2f3207086b7fa19fcc1abc1942be6ecb" alt="Orrin, chief of Bitterbrook">
+          <span class="dim" style="flex:1">Orrin could hunt this for the food order.</span>
+          <button class="ghost" onClick="{{handBack}}">Hand it to Orrin</button>
+        </div>
+      </sc-if>
+      <div class="seg"><sc-for list="{{settings}}" as="p" hint-placeholder-count="3"><button class="{{p.cls}}" onClick="{{p.pick}}" disabled="{{orrins}}">{{p.label}}</button></sc-for></div>
+      <div class="lbl">Leave standing</div>
+      <div class="graph"><div class="line" style="{{lineStyle}}"></div><span class="tag" style="{{tagStyle}}">{{leaveTag}}</span></div>
+      <div class="lbl">Hunters</div>
+      <div class="dim">{{deerCrewLine}}</div>
+      <div class="lbl">Priority</div>
+      <div class="seg"><sc-for list="{{deerPris}}" as="p" hint-placeholder-count="3"><button class="{{p.cls}}" disabled="{{orrins}}">{{p.label}}</button></sc-for></div>
+      <div class="ctl"><span style="width:40px">Max</span><button class="sb" onClick="{{mDec}}" disabled="{{orrins}}" aria-label="Lower the max">−</button><span class="sv">{{maxFace}}</span><button class="sb" onClick="{{mInc}}" disabled="{{orrins}}" aria-label="Raise the max">+</button></div>
+      <div class="field"><span>Kit</span><select class="sel" disabled="{{orrins}}"><option>Stalking kit</option></select></div>
+      <div class="box">
+        <span class="lbl">Next turn · at the likely take</span>
+        <div style="display:flex;gap:8px;align-items:baseline"><span class="big">{{deerTake}}</span><span class="lbl">food</span><span class="lbl">{{deerKind}}</span></div>
+        <span class="ok">• The herd breeds back ≈0.01 Red Deer a turn.</span>
+      </div>
+      <div class="foot">
+        <button class="link">Show on map</button>
+        <span style="margin-left:auto"></span>
+        <button class="btn">Done</button>
+        <sc-if value="{{yours}}" hint-placeholder-val="{{false}}"><button class="ghost">Stop working here</button></sc-if>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1480,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    // `low` — the band holds 12 turns of food (below a 20-turn target) or 26 (above it).
+    // `mine` — the Red Deer hunt taken back with Crew it yourself; `mySetting` and `myMax` are then yours.
+    this.state = { low: true, target: 20, pri: 0, mine: false, mySetting: 1, myMax: 8 };
+  }
+  // Food per worker, and the most a source gives a turn, under each setting (0 Everything, 1 Best, 2 Learning).
+  sources() {
+    return [
+      { key: 'deer', name: 'Hunt Red Deer (68, 15)', per: 0.55, cap: [8.0, 4.4, 3.0] },
+      { key: 'harvest', name: 'Harvest (71, 18)', per: 0.48, cap: [5.0, 3.4, 2.2] },
+      { key: 'gather', name: 'Gather (66, 19)', per: 0.40, cap: [4.0, 2.8, 1.9] },
+      { key: 'gather2', name: 'Gather (63, 17)', per: 0.35, cap: [3.0, 2.1, 1.4] }
+    ];
+  }
+  renderVals() {
+    const st = this.state;
+    const eat = 4.0, refill = 10;
+    const have = st.low ? 12 : 26;
+    const deficitFood = Math.max(0, st.target - have) * eat;
+    const above = have >= st.target;
+    // Orrin keeps every row at Best while below the target, and eases them to Learning above it. Never Everything.
+    const setting = above ? 2 : 1;
+    const SET = ['Everything', 'Best', 'Learning'];
+    let wantLeft = eat + deficitFood / refill;
+    const rows = [];
+    let crew = 0, take = 0;
+    for (const s of this.sources()) {
+      if (s.key === 'deer' && st.mine) {
+        // Your hunt still feeds the band; Orrin counts it and fills the rest.
+        const n = st.myMax;
+        const t = Math.min(n * s.per, s.cap[st.mySetting]);
+        rows.push({ name: s.name, cls: 'mine', setting: SET[st.mySetting] + ' · yours', crew: n, take: '+' + t.toFixed(2) });
+        take += t; wantLeft -= t;
+        continue;
+      }
+      if (wantLeft <= 1e-6) continue;
+      const need = Math.min(wantLeft, s.cap[setting]);
+      const n = Math.ceil(need / s.per - 1e-6);
+      const t = Math.min(n * s.per, s.cap[setting]);
+      rows.push({ name: s.name, cls: '', setting: SET[setting], crew: n, take: '+' + t.toFixed(2) });
+      crew += n; take += t; wantLeft -= t;
+    }
+    const net = take - eat;
+    const deer = this.sources()[0];
+    const deerCrew = st.mine ? st.myMax : (rows.find((r) => r.name.startsWith('Hunt')) || { crew: 0 }).crew;
+    const deerSetting = st.mine ? st.mySetting : setting;
+    const deerTake = Math.min(deerCrew * deer.per, deer.cap[deerSetting]);
+    const leave = [10, 50, 70][deerSetting];
+    const PRI = ['High', 'Normal', 'Low'];
+    return {
+      lowCls: st.low ? 'on' : '', highCls: st.low ? '' : 'on',
+      setLow: () => this.setState({ low: true }),
+      setHigh: () => this.setState({ low: false }),
+      orrinCls: st.mine ? '' : 'on', yoursCls: st.mine ? 'on' : '',
+      orrins: !st.mine, yours: st.mine,
+      // Crew it yourself: the hunt becomes yours at Orrin's setting, its Max set to his crew there.
+      takeBack: () => { if (!st.mine) this.setState({ mine: true, mySetting: setting, myMax: deerCrew }); },
+      handBack: () => this.setState({ mine: false }),
+      haveTurns: have,
+      target: st.target,
+      inc: () => this.setState({ target: st.target + 1 }),
+      dec: () => this.setState({ target: Math.max(1, st.target - 1) }),
+      pris: PRI.map((label, i) => ({ label, cls: i === st.pri ? 'on' : '', pick: () => this.setState({ pri: i }) })),
+      crewLine: 'Orrin sends ' + crew + ' to food this turn',
+      srcRows: rows,
+      easeLine: above ? 'Above ' + st.target + ' turns — he eases every row to Learning.' : 'He works every row at Best and never overdraws.',
+      take: take.toFixed(2),
+      netLine: (net >= 0 ? '+' : '−') + Math.abs(net).toFixed(2) + ' after eating',
+      etaLine: above ? 'Teaching conservationism at ×1.40 — Learning leaves more standing.'
+        : net > 0.01 ? 'Back to ' + st.target + ' turns in ≈' + Math.ceil(deficitFood / net) + ' turns.'
+        : 'Food falls ' + (-net).toFixed(2) + ' a turn.',
+      hide: (deerTake * 0.1).toFixed(1), bone: (deerTake * 0.05).toFixed(1),
+      settings: SET.map((label, i) => ({
+        label: ['☠ ', '♻ ', '⬆ '][i] + label,
+        cls: i === deerSetting ? 'on' : '',
+        pick: () => { if (st.mine) this.setState({ mySetting: i }); }
+      })),
+      leaveTag: 'leave ' + leave + '% · ≈' + Math.round(22 * leave / 100) + ' Red Deer',
+      lineStyle: 'top:' + (54 - leave * 0.5) + 'px',
+      tagStyle: 'top:' + (46 - leave * 0.5) + 'px',
+      deerCrewLine: deerCrew + (deerCrew === 1 ? ' hunter' : ' hunters') + ' this turn',
+      deerPris: PRI.map((label, i) => ({ label, cls: i === (st.mine ? 1 : st.pri) ? 'on' : '' })),
+      maxFace: st.mine ? 'Max ' + st.myMax : 'Orrin\'s',
+      mInc: () => this.setState({ myMax: st.myMax + 1 }),
+      mDec: () => this.setState({ myMax: Math.max(0, st.myMax - 1) }),
+      deerTake: deerTake.toFixed(2),
+      deerKind: deerSetting === 0 ? '⚠ Overdraws the herd' : 'Renewable'
+    };
+  }
+}
+</script>
+</body>
+</html>

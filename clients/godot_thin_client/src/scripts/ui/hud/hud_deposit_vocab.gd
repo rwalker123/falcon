@@ -343,6 +343,36 @@ static func ladder_position_of(deposit: Dictionary) -> float:
 static func sustainable_take_of(deposit: Dictionary) -> float:
 	return float(deposit.get("sustainable_take", 0.0))
 
+## **THE ROW FLOOR THAT WAS NOT STATED** -- the crew's own dial is unknown to a caller with no band in
+## hand, and the rung's reach floor then stands alone. `SourceForecast.FLOOR_UNNAMED` is the same
+## *no floor named* sentinel, outside `0..1`.
+const ROW_FLOOR_UNSTATED := SourceForecast.FLOOR_UNNAMED
+
+## **CAN THIS DIG EVER TAKE THE STOCK BELOW WHERE REGROWTH PEAKS?** The lowest stock the crew can reach
+## is `capacity * max(rung floor fraction, the row's own floor if stated)` -- the same maximum
+## `composed_floor` takes -- and the stock where regrowth peaks is the curve's own argmax
+## (`SourceForecast.growth_peak_fraction`; the samples span stock fraction `0..1` evenly, which is how
+## `SourceForecast.regrowth_at` reads them). A rung that only reaches the top of the seam can never
+## draw the stock down to the half-full level where growth is fastest, so taking more than the MSY
+## figure from it is not overdrawing anything. A working with no curve answers `true`: nothing says the
+## dig cannot reach the peak.
+static func can_reach_below_peak(deposit: Dictionary, row_floor: float = ROW_FLOOR_UNSTATED) -> bool:
+	var samples := regrowth_samples_of(deposit)
+	if not SourceForecast.has_growth_curve(samples):
+		return true
+	var lowest := rung_floor_fraction_of(deposit)
+	if row_floor != ROW_FLOOR_UNSTATED:
+		lowest = maxf(lowest, SourceForecast.clamp_floor(row_floor))
+	return lowest < SourceForecast.growth_peak_fraction(samples)
+
+## **THE ONE OVER-CUT PREDICATE FOR A DEPOSIT**: it renews, it pays out more than its MSY figure, AND the
+## dig can reach below the peak (`can_reach_below_peak`). Every surface that says `overdrawing` of a
+## deposit asks this and nothing else; the food webs read the sim's `overdraws` flag instead.
+static func overdraws(deposit: Dictionary, row_floor: float = ROW_FLOOR_UNSTATED) -> bool:
+	return renews(deposit) \
+		and actual_take_of(deposit) > sustainable_take_of(deposit) \
+		and can_reach_below_peak(deposit, row_floor)
+
 ## …and its second half — what the working actually paid out last turn, summed over every band
 ## cutting it.
 static func actual_take_of(deposit: Dictionary) -> float:
@@ -596,16 +626,18 @@ static func overstaffed_clause(workers: int, useful: int) -> String:
 ## spends two clauses saying one thing. The band's own reading is the one the player can act on from
 ## this roster, so it is the one that stays.
 static func deposit_row_value(deposit: Dictionary, ladder: Array[Dictionary] = [],
-		cutters: int = CUTTERS_UNSTATED, useful: int = CUTTERS_UNCAPPED) -> String:
+		cutters: int = CUTTERS_UNSTATED, useful: int = CUTTERS_UNCAPPED,
+		row_floor: float = ROW_FLOOR_UNSTATED) -> String:
 	var clauses: Array[String] = [ladder_rung_name(ladder, rung_of(deposit))]
-	clauses.append_array(deposit_row_qualifiers(deposit, ladder, cutters, useful))
+	clauses.append_array(deposit_row_qualifiers(deposit, ladder, cutters, useful, row_floor))
 	return DEPOSIT_CLAUSE_SEPARATOR.join(clauses)
 
 ## **THE VALUE'S QUALIFIERS WITHOUT ITS RUNG** — everything `deposit_row_value` says after the rung,
 ## as clauses. The Work tab's GROUNDWORK row states the rung on its own second line and these on its
 ## yield line, so the rung is said once and every other clause still reaches the row.
 static func deposit_row_qualifiers(deposit: Dictionary, ladder: Array[Dictionary] = [],
-		cutters: int = CUTTERS_UNSTATED, useful: int = CUTTERS_UNCAPPED) -> Array[String]:
+		cutters: int = CUTTERS_UNSTATED, useful: int = CUTTERS_UNCAPPED,
+		row_floor: float = ROW_FLOOR_UNSTATED) -> Array[String]:
 	var clauses: Array[String] = []
 	# ⛔ **UNTOUCHED GROUND STATES WHAT IT IS AND STOPS.** Every clause below this line describes
 	# something being DONE to a working — a rung rising, a seam being cut faster than it grows, a
@@ -621,7 +653,7 @@ static func deposit_row_qualifiers(deposit: Dictionary, ladder: Array[Dictionary
 	var idle := is_idle(cutters)
 	if idle:
 		clauses.append(DEPOSIT_IDLE_WORD)
-	var supply := supply_clause(deposit)
+	var supply := supply_clause(deposit, row_floor)
 	if supply != "" and not (idle and supply == DEPOSIT_RUNWAY_IDLE):
 		clauses.append(supply)
 	var hazard := hazard_clause(deposit, cutters, useful)
@@ -658,9 +690,9 @@ static func hazard_clause(deposit: Dictionary, cutters: int = CUTTERS_UNSTATED,
 ## ⛔ **§7's FORK, AND IT IS THE ONLY PLACE IT IS TAKEN.** A renewing working warns that you are
 ## over-cutting it; a finite one warns that it runs out. `""` on a renewing working cut inside its own
 ## renewal — nothing is wrong, and a clause saying so would be a row spent on the absence of news.
-static func supply_clause(deposit: Dictionary) -> String:
+static func supply_clause(deposit: Dictionary, row_floor: float = ROW_FLOOR_UNSTATED) -> String:
 	if renews(deposit):
-		if actual_take_of(deposit) > sustainable_take_of(deposit):
+		if overdraws(deposit, row_floor):
 			return DEPOSIT_HAZARD_CLAUSE_FORMAT % [
 				HudSelectionVocab.RUNG_HAZARD_GLYPH, over_cut_word()]
 		return ""
@@ -683,8 +715,9 @@ static func runway_clause(deposit: Dictionary) -> String:
 ## reading of the working — `HudRouteVocab.road_value_hex`'s shape, so a working at risk reads in the
 ## same amber a slipping patch does.
 static func deposit_value_color(deposit: Dictionary, ladder: Array[Dictionary] = [],
-		cutters: int = CUTTERS_UNSTATED, useful: int = CUTTERS_UNCAPPED) -> Color:
-	return HudStyle.WARN if deposit_row_value(deposit, ladder, cutters, useful).contains(
+		cutters: int = CUTTERS_UNSTATED, useful: int = CUTTERS_UNCAPPED,
+		row_floor: float = ROW_FLOOR_UNSTATED) -> Color:
+	return HudStyle.WARN if deposit_row_value(deposit, ladder, cutters, useful, row_floor).contains(
 		HudSelectionVocab.RUNG_HAZARD_GLYPH) else HudStyle.INK_DIM
 
 # ---- THE FIGURES, AND WHERE THEY GO NOW --------------------------------------------------------
@@ -1171,7 +1204,7 @@ static func deposit_land_value(deposit: Dictionary, ladder: Array[Dictionary]) -
 	var clauses: Array[String] = [deposit_stock_clause(deposit),
 		ladder_rung_name(ladder, rung_of(deposit))]
 	var hazard := hazard_clause(deposit)
-	if hazard == "" and renews(deposit) and actual_take_of(deposit) > sustainable_take_of(deposit):
+	if hazard == "" and overdraws(deposit):
 		# **THE OVER-CUT WORD IS THE SECOND HAZARD THIS ROW CAN CARRY**, and it is the food webs' own
 		# word (`SourceForecast.YIELD_OVERDRAW_WORD`) rather than a second spelling of one idea. The
 		# under-kept clause outranks it: a working sliding back down its ladder is the louder fact and
@@ -1209,9 +1242,9 @@ static func deposit_stock_clause(deposit: Dictionary) -> String:
 ##     player looks for it);
 ##   * `warn` is the standing summary's over-take warning, withheld where the hazard clause already leads with
 ##     the mark so one row never states the warning twice.
-static func crew_mark(deposit: Dictionary, cutters: int, overdraws: bool = false) -> Dictionary:
+static func crew_mark(deposit: Dictionary, cutters: int, take_warns: bool = false) -> Dictionary:
 	var crew := maxi(cutters, CUTTERS_NONE)
-	var warn := overdraws and crew > CUTTERS_NONE \
+	var warn := take_warns and crew > CUTTERS_NONE \
 		and not hazard_clause(deposit).begins_with(HudSelectionVocab.RUNG_HAZARD_GLYPH)
 	return {"crew": crew, "warn": warn}
 
@@ -1680,7 +1713,7 @@ static func deposit_verdict(deposit: Dictionary, ladder: Array[Dictionary],
 		var actual := DetailFormat.format_trimmed(take, CARD_STOCK_DECIMALS)
 		var sustainable := DetailFormat.format_trimmed(
 			sustainable_take_of(deposit), CARD_STOCK_DECIMALS)
-		if take > sustainable_take_of(deposit):
+		if take > sustainable_take_of(deposit) and can_reach_below_peak(deposit):
 			return {
 				"severity": SourceForecast.VERDICT_BLOCKED,
 				"text": DEPOSIT_VERDICT_OVER_CUT_FORMAT % [actual, sustainable],

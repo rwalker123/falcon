@@ -53,6 +53,7 @@ mod fauna_config;
 pub mod fixed_store;
 mod flora_config;
 mod food;
+pub mod food_orders;
 mod forage;
 pub mod forecast_query;
 mod generations;
@@ -66,6 +67,7 @@ pub mod hunt_by_need;
 mod hydrology;
 mod influencers;
 mod intensification;
+pub mod keep_on_hand;
 pub mod knowledge_contact;
 mod knowledge_contact_config;
 mod knowledge_ledger;
@@ -164,18 +166,19 @@ pub use combat_config::{
 };
 pub use components::{
     available_workers, floor_is_valid, floor_overdraws, take_overdraws, BandBench, BandEquipment,
-    BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BenchOrder, BenchQueueError,
-    BuildDeclaration, BuildJob, BuildSource, BuildToeLine, CohesionReading, DeathCause,
-    DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind, EquipmentBatch,
-    Expedition, ExpeditionMission, ExpeditionPhase, FinishedBatch, FoodBatch, FoodMix,
-    KeepingIssue, KeepingToolLine, KitOrder, KnowledgeFragment, LaborAllocation, LaborAssignment,
-    LaborTarget, LocalStore, MaterialBatch, MaterialDraw, MoraleCause, MusterBench, MusterKit,
-    MusterPlan, PoolToeLine, PopulationCohort, PowerNode, ResidentBand, ScoutPack, Settlement,
-    ShedCrew, ShedFacts, ShedStep, ShedSubject, ShipmentTerms, SourcePriority, SourceShedFacts,
-    SourceYield, StaffedCrew, StartingUnit, StationReport, StrangersOrder, TakeSelection, Tile,
-    TownCenter, TransferCause, TransferCounterparty, TransferCrossing, TransferDirection,
-    TransferLedger, TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER,
-    MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+    BandId, BandName, BandOrder, BandTravel, BandWorkforce, BatchGrade, BenchOrder,
+    BenchQueueError, BuildDeclaration, BuildJob, BuildSource, BuildToeLine, CohesionReading,
+    DeathCause, DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind,
+    EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase, FinishedBatch, FoodBatch,
+    FoodMix, KeepShare, KeepingIssue, KeepingToolLine, KitOrder, KnowledgeFragment,
+    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw,
+    MoraleCause, MusterBench, MusterKit, MusterPlan, OrderOwner, PoolToeLine, PopulationCohort,
+    PowerNode, ResidentBand, ScoutPack, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject,
+    ShipmentTerms, SourcePriority, SourceShedFacts, SourceYield, StaffedCrew, StartingUnit,
+    StationReport, StrangersOrder, TakeSelection, Tile, TownCenter, TransferCause,
+    TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
+    YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT,
+    NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -290,10 +293,9 @@ pub use fauna::{
     HuntCrewCurveInputs, HuntCrewTake, HuntDraw, HuntEngagement, HuntFight, HuntProjection,
     HuntTakeBound, HuntingParty, OutcomeKills, PartyResolution, PenSiteScene, PreyDatum,
     ProjectedHuntTurn, ProjectionStart, QuarryFight, RetreatOutcome, RoamState,
-    SourceYieldForecast, TakeRange, TakeReading, FODDERING_DISCOVERY_ID, FULLY_HERDED,
-    HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, NO_HANDS,
-    NO_STANDING_COMMITMENT, NO_USEFUL_CREW, ONE_KEEPER_LOAD, PENNING_DISCOVERY_ID,
-    SELECTIVE_BREEDING_DISCOVERY_ID,
+    SourceYieldForecast, TakeRange, TakeReading, FULLY_HERDED, HERDING_DISCOVERY_ID,
+    MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, NO_HANDS, NO_STANDING_COMMITMENT, NO_USEFUL_CREW,
+    ONE_KEEPER_LOAD, PENNING_DISCOVERY_ID, SELECTIVE_BREEDING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,

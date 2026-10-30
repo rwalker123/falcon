@@ -343,8 +343,6 @@ static func _forage_next_rung_quote(hud: Node, tile: Dictionary, basket: Array[D
 		out["fodder"] = compose._flora_entry_fodder_payoff(entry, rung)
 		out["materials"] = compose._flora_entry_material_payoff(entry, rung)
 		break
-	if RungGatesRef.fodder_payoff_is_refused(committed, basket, compose._player_knowledge()):
-		out["fodder"] = 0.0
 	out["food"] = float(out["food"]) * output
 	out["fodder"] = float(out["fodder"]) * output
 	out["materials"] = SourceForecastRef.scaled_material_rows(out["materials"], output)

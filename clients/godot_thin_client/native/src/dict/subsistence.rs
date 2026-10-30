@@ -462,9 +462,8 @@ pub(crate) fn herds_to_array(
         // into a number describing a different turn from its own terms. It is struck on the same pass
         // as `fodder_draw`.
         //
-        // UNGATED BY FODDERING, unlike `fodder_draw`: a band that cannot draw hay draws nothing, so
-        // its shortfall is its WHOLE need — precisely the case the row exists for, where the remedy
-        // is knowledge rather than hay. Clamped at zero sim-side, and 0 both on an unpenned herd and
+        // With an empty hay store `fodder_draw` is nothing, so the shortfall is the WHOLE need —
+        // the case the row exists for. Clamped at zero sim-side, and 0 both on an unpenned herd and
         // on a pen its own land feeds, so the readout says nothing rather than `needs 0.0`.
         //
         // **A FIXED FOOTPRINT UNDER A GROWING HERD IS A RISING SHORTFALL** — a pen's carrying
@@ -1308,9 +1307,9 @@ pub(crate) fn ladder_knowledge_to_array(
         let _ = dict.insert("branch", state.branch().unwrap_or_default());
         // ...and that rung's order, bottom step first.
         let _ = dict.insert("order", state.order() as i64);
-        // **STEP OR CAPABILITY.** `true` when some rung's `unlock_knowledge` names it. `foddering` is
-        // the shipped `false` -- it changes what a pen may draw on rather than opening a further
-        // rung, which is why it hangs off the bottom of its column rather than sitting in the chain.
+        // **STEP OR CAPABILITY.** `true` when some rung's `unlock_knowledge` names it. A knowledge
+        // that opens no rung is the shipped `false`, which is why it hangs off the bottom of its
+        // column rather than sitting in the chain.
         let _ = dict.insert("is_step", state.isStep());
         // **THE SUBJECT AREA of the branch that teaches it** -- "food" | "making" | "works", one
         // level above `branch`. WHICH HEADING the knowledge's row is gathered under. Read off

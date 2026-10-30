@@ -582,9 +582,12 @@ const YIELD_AFTER_FORMAT := "%s " + YIELD_AFTER_GLYPH + " %s"
 ## material row too, though nothing quotes a material's holding rate today.
 static func yield_rows(food: float, fodder: float = 0.0,
         zero_account: String = YIELD_ACCOUNT_FOOD, after: Dictionary = {},
-        materials: Array = []) -> Array[Dictionary]:
+        materials: Array = [], fodder_first: bool = false) -> Array[Dictionary]:
     var rows: Array[Dictionary] = []
     var pairs: Array = [[YIELD_ACCOUNT_FOOD, food], [YIELD_ACCOUNT_FODDER, fodder]]
+    # A row the fodder order lists names its own store first (#860).
+    if fodder_first:
+        pairs.reverse()
     for row_variant in materials:
         if not (row_variant is Dictionary):
             continue
@@ -1806,9 +1809,10 @@ static func row_posts_party(row: Dictionary) -> bool:
 ## hay-only meadow reads `+0.00 fodder` rather than the `+0.00 /turn` that says its hay is worth no
 ## meals, and a source that pays nothing in either account renders no line at all.
 static func yield_components(food: float, fodder: float = 0.0,
-        zero_account: String = YIELD_ACCOUNT_FOOD, materials: Array = []) -> String:
+        zero_account: String = YIELD_ACCOUNT_FOOD, materials: Array = [],
+        fodder_first: bool = false) -> String:
     var parts: Array[String] = []
-    for row in yield_rows(food, fodder, zero_account, {}, materials):
+    for row in yield_rows(food, fodder, zero_account, {}, materials, fodder_first):
         var material_id := _row_material_id(row)
         if material_id != "":
             parts.append(PICKER_MATERIAL_PRODUCT_FORMAT % [
@@ -1818,6 +1822,29 @@ static func yield_components(food: float, fodder: float = 0.0,
         else:
             parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_signed(row[YIELD_ROW_VALUE]))
     return COMPONENT_SEPARATOR.join(parts)
+
+## **A ROW THAT FILLS MORE THAN ONE STORE NAMES EVERY ONE** (#860): `+2.40 food · +0.25 fodder · +0.05 fibre
+## /turn`, its order's store first (`fodder_first`) and the `/turn` once at the end. A source that fills
+## one store (or none) answers `yield_components` byte for byte, so every existing row is unchanged.
+static func yield_components_labelled(food: float, fodder: float = 0.0,
+        zero_account: String = YIELD_ACCOUNT_FOOD, materials: Array = [],
+        fodder_first: bool = false) -> String:
+    var rows := yield_rows(food, fodder, zero_account, {}, materials, fodder_first)
+    if rows.size() < 2:
+        return yield_components(food, fodder, zero_account, materials, fodder_first)
+    var parts: Array[String] = []
+    for row in rows:
+        var material_id := _row_material_id(row)
+        if material_id != "":
+            parts.append(PICKER_MATERIAL_PRODUCT_FORMAT % [format_signed(row[YIELD_ROW_VALUE]), material_id])
+        elif String(row[YIELD_ROW_ACCOUNT]) == YIELD_ACCOUNT_FOOD:
+            parts.append(format_signed(row[YIELD_ROW_VALUE]) + YIELD_FOOD_WORD_SUFFIX)
+        else:
+            parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_signed(row[YIELD_ROW_VALUE]))
+    return COMPONENT_SEPARATOR.join(parts) + YIELD_PER_TURN_SUFFIX
+
+## The food account's word, when a row names every store it fills.
+const YIELD_FOOD_WORD_SUFFIX := " food"
 
 ## THE COMPACT TWIN of `yield_components`, for a surface that supplies its own framing and has no room
 ## to repeat "/turn" — today the work zone's per-kind filter chips (`🌿 1 · 0.40 fodder`). Same
@@ -3188,8 +3215,7 @@ const TEACHING_NOTHING_UNWORKED := "Teaching nothing: nothing is being taken."
 ## verb in flight: the same crew learns Herding on a wild herd and Penning on a tamed one, so a herd
 ## mid-Corral is still teaching Penning while it builds.
 ##
-## **The rung-3 entries are deliberately absent, and not because the sim has none** (a pen earns
-## Foddering): a Field and a built Pen are MANAGED, so the sheet draws no floor axis there at all and
+## **The rung-3 entries are deliberately absent, and not because the sim has none**: a Field and a built Pen are MANAGED, so the sheet draws no floor axis there at all and
 ## has no rate to state — see `floor_chart_model`'s `known`.
 ##
 ## The value is the lesson's own word in the sentence's lower case; the husbandry ceiling does NOT

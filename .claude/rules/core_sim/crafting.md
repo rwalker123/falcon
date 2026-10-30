@@ -500,7 +500,7 @@ can see them. **None ships known**, the same rule every ladder knowledge follows
 > a renumber.
 
 **Crafting is the fourth teacher.** Hunting teaches Herding and Penning, foraging teaches Cultivation
-and Seed Selection, keeping a pen teaches Foddering — and crafting teaches its own crafts. **The
+and Seed Selection, keeping tamed herds teaches Penning — and crafting teaches its own crafts. **The
 lesson is the RECIPE's craft**, so what is being made decides what is learned, and a band that cannot
 reach bone never advances Bone-working.
 

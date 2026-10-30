@@ -465,7 +465,7 @@ Plus:
 | 2 | **Preset naming.** | *Keep it thriving / take everything* name the sim's band; the player may want the promise instead. |
 | 3 | **The default floor on a fresh assignment.** | **SETTLED — shipped as the constant `components::DEFAULT_ESCAPEMENT_FLOOR` (`0.5`, the food peak).** No config key exists; if one is ever wanted, that constant is the single site. |
 | 4 | **Where the market question goes.** | See §6. |
-| 5 | **The Foddering gate.** | A *wild* patch's fodder credit is gated on the faction knowing Foddering; rungs 2–3 are ungated. Does that gate survive, and if so how does the panel say so without a fourth state on the readout row? |
+| 5 | **The Foddering gate.** | Retired: fodder is credited at every rung with no knowledge gate. |
 
 ---
 

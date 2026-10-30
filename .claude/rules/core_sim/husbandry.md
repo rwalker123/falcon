@@ -702,7 +702,7 @@ a separate account in a separate currency: **fodder**. Its demand is the herd's 
 hay off the band's `FODDER` store (`fodderDraw`); `pen_fed_fraction` records how much of the demand the
 two covered between them, and `husbandry.pen.starve_shrink_rate` is what an underfed pen loses. **What
 the footprint leaves for the keeper to grow is published as the band's `fodderNeed`** — the gap,
-ungated by Foddering, with its income and its (gated) runway beside it — and what that gap still
+with its income and its runway beside it — and what that gap still
 leaves *after* the draw is `penFodderShortfall`, the per-pen figure the row actually asks the player
 for; the reasoning for both is in `graze.md` → "The hay bill is published as the GAP". A
 keeper who is present but has **no grass and no hay** starves the herd; a keeper who is **absent** lets

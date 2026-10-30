@@ -260,7 +260,7 @@ leaves, which the sim computes but does NOT publish per pen — see `pen_fodder_
 is a DIFFERENT quantity and does not sum to this one): herd rows are fog-filtered, so a client-side
 sum silently drops the pens it cannot see — the
 mistake the retired `pen_feed_upkeep` was minted to avoid. `fodder_income` is the raw harvest its
-fodder Fields took, not a Foddering-gated share. `turns_of_fodder` comes off the sim's own
+fodder Fields took. `turns_of_fodder` comes off the sim's own
 `larder_runway_turns`, **999 no-drain sentinel included**, so the client reads it through
 `BandFoodStatus.is_limited` / `DetailFormat.food_turns_text` exactly as it reads the food runway —
 one idea, one spelling, no second constant and no second branch.
@@ -269,8 +269,9 @@ one idea, one spelling, no second constant and no second branch.
 how much MORE fodder this pen needs per turn, in fodder units — `max(0, hay gap − fodderDraw)`, the
 gap its own fenced footprint leaves less the hay its keeper actually carried in. `0` on an unpenned
 herd and on a pen its land already feeds (so the readout says nothing rather than `needs 0.0`). It is
-**not gated on Foddering** — a keeper who cannot draw hay is short its WHOLE need, which is precisely
-the case the row exists for. A FIXED footprint under a growing herd is a RISING shortfall, which is
+**not gated on the keeper's store** — a keeper with no fodder is short its WHOLE need, which is precisely
+the case the row exists for. The `pen*` and `fodder_draw` fields cover a tamed (pastoral) herd as well as a
+pen; a tamed herd's `pen_fed_fraction` is never written, so it reads the unpenned default (1.0). A FIXED footprint under a growing herd is a RISING shortfall, which is
 the slow trap the field surfaces before an animal dies of it.
 
 **THE GAP ITSELF IS NOT DECODED, BECAUSE IT IS NOT PUBLISHED.** It rode this row as `penHayNeed` until

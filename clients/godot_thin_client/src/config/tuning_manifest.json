@@ -111,6 +111,61 @@
           "hint": "Most hands one tile holds across every band: keepers, builders and harvesters together."
         },
         {
+          "pointer": "/keep_on_hand_refill_turns",
+          "label": "Order refill (turns)",
+          "type": "int",
+          "min": 1,
+          "max": 40,
+          "step": 1,
+          "default": 10,
+          "unit": "turns",
+          "hint": "Turns a keep-on-hand deficit is spread over: a band digging a mined material to its target works at its draw plus deficit / this."
+        },
+        {
+          "pointer": "/band_orders/starting_target/stone",
+          "label": "Stone order at start",
+          "type": "int",
+          "min": 1,
+          "max": 500,
+          "step": 1,
+          "default": 30,
+          "unit": "units",
+          "hint": "Stone the chief keeps on hand when he arrives, and a claim without an earlier order starts at."
+        },
+        {
+          "pointer": "/band_orders/starting_target/wood",
+          "label": "Wood order at start",
+          "type": "int",
+          "min": 1,
+          "max": 500,
+          "step": 1,
+          "default": 30,
+          "unit": "units",
+          "hint": "Wood the chief keeps on hand when he arrives, once wood is an ordered kind."
+        },
+        {
+          "pointer": "/band_orders/starting_target/food",
+          "label": "Food order at start (turns)",
+          "type": "int",
+          "min": 1,
+          "max": 100,
+          "step": 1,
+          "default": 20,
+          "unit": "turns",
+          "hint": "Turns of food the chief keeps in hand when he arrives, once food is an ordered kind."
+        },
+        {
+          "pointer": "/band_orders/starting_target/fodder",
+          "label": "Fodder order at start (turns)",
+          "type": "int",
+          "min": 1,
+          "max": 100,
+          "step": 1,
+          "default": 10,
+          "unit": "turns",
+          "hint": "Turns of fodder the chief keeps in hand when he arrives, once fodder is an ordered kind."
+        },
+        {
           "pointer": "/forage/per_worker_biomass_capacity",
           "label": "Forage throughput",
           "type": "float",
@@ -504,7 +559,7 @@
         },
         {
           "pointer": "/practice_per_directed_build",
-          "label": "Cultivate, Farm, Tame or Corral finished",
+          "label": "Points per finished build",
           "type": "float",
           "min": 0.5,
           "max": 10,
@@ -564,7 +619,7 @@
         },
         {
           "pointer": "/reach_paramount_bands",
-          "label": "Bands a paramount chief runs well",
+          "label": "Bands per paramount chief",
           "type": "float",
           "min": 1,
           "max": 12,

@@ -1,0 +1,72 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-10-27T18:00:00Z"
+  },
+  "title": "Chief's stone order (#860)",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1480,
+      "h": 1060,
+      "title": "1 · Before a chief — the Work tab, stone crewed by a site and a Max (as today)",
+      "is_interactive": true
+    },
+    "ChiefStone.dc.html": {
+      "x": 0,
+      "y": 1180,
+      "w": 1480,
+      "h": 1250,
+      "title": "2 · With a chief — the Stone sheet as his order, Crew it yourself, Hand it back",
+      "is_interactive": true
+    },
+    "ChiefWood.dc.html": {
+      "x": 0,
+      "y": 2550,
+      "w": 1480,
+      "h": 1250,
+      "title": "3 · Wood with a chief — keep on hand, across stands he leaves to grow back",
+      "is_interactive": true
+    },
+    "ChiefOrders.dc.html": {
+      "x": 0,
+      "y": 3920,
+      "w": 760,
+      "h": 1500,
+      "title": "4 · The chief's orders on the Work tab — one line each, open one to see its sites",
+      "is_interactive": true
+    },
+    "ChiefFood.dc.html": {
+      "x": 0,
+      "y": 5540,
+      "w": 1480,
+      "h": 900,
+      "title": "5 · The food order — the Food sheet, and a hunt the order is working",
+      "is_interactive": true
+    },
+    "ChiefFodder.dc.html": {
+      "x": 0,
+      "y": 6560,
+      "w": 1480,
+      "h": 980,
+      "title": "6 · The fodder order — what the pens eat, and a hay meadow the order is cutting",
+      "is_interactive": true
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "ChiefStone.dc.html",
+    "ChiefWood.dc.html",
+    "ChiefOrders.dc.html",
+    "ChiefFood.dc.html",
+    "ChiefFodder.dc.html"
+  ],
+  "notes": {},
+  "designSystems": []
+}

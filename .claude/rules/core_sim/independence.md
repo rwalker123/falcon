@@ -69,7 +69,7 @@ The pass then re-groups against the post-break-away roster and writes every band
 
 `cohort.knowledge` holds the start profile's fragments and whatever migration has merged into the
 band. Lessons a people earns by practice (the intensification ladder's knowledges — Cultivation,
-Herding, Foddering…) are credited to the **faction's** `DiscoveryProgressLedger` and never to a
+Herding, Penning…) are credited to the **faction's** `DiscoveryProgressLedger` and never to a
 band's `knowledge`. Seeding from the bands alone would leave a break-away unable to work the Field it
 worked the turn before; "they keep everything they knew" needs the ledger. Pinned by
 `a_lesson_the_old_people_earned_by_practice_goes_with_the_break_away`, which credits Cultivation to

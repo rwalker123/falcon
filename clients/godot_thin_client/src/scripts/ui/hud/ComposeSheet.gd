@@ -334,8 +334,8 @@ func _sync_to_viewport() -> void:
 
 ## Float the card BESIDE the card that summoned it — the selection panel stays readable (it holds
 ## the subject list and the standing summary the sheet is editing), and the map stays uncovered
-## where it can. Falls back to hugging the viewport's left margin when the anchor would push the
-## sheet off-screen.
+## where it can. Placement order: RIGHT of the anchor, else LEFT of it, else (an anchor too wide for either - a top /
+## bottom dock) ABOVE or BELOW it, whichever has more room, else hugging the viewport's left margin.
 func _place_card() -> void:
 	if _card == null:
 		return
@@ -347,12 +347,29 @@ func _place_card() -> void:
 	# (see `_fit_width`), so placing it as if it were 340 would hang the widest rows off whichever
 	# edge it was clamped against, which is the same lie in a different place.
 	var card_width := maxf(_card.size.x, CARD_WIDTH)
-	var x := _anchor_rect.end.x + ANCHOR_GAP
-	if _anchor_rect.size == Vector2.ZERO or x + card_width > bounds.x - VIEWPORT_MARGIN:
-		x = VIEWPORT_MARGIN
-	var y := _anchor_rect.position.y if _anchor_rect.size != Vector2.ZERO else VIEWPORT_MARGIN
-	y = clampf(y, VIEWPORT_MARGIN, maxf(bounds.y - _card.size.y - VIEWPORT_MARGIN, VIEWPORT_MARGIN))
-	_card.position = Vector2(clampf(x, VIEWPORT_MARGIN, maxf(bounds.x - card_width - VIEWPORT_MARGIN, VIEWPORT_MARGIN)), y)
+	var card_height := _card.size.y
+	var max_x := maxf(bounds.x - card_width - VIEWPORT_MARGIN, VIEWPORT_MARGIN)
+	var max_y := maxf(bounds.y - card_height - VIEWPORT_MARGIN, VIEWPORT_MARGIN)
+	var has_anchor := _anchor_rect.size != Vector2.ZERO
+	var x := VIEWPORT_MARGIN
+	var y := VIEWPORT_MARGIN
+	if has_anchor:
+		y = _anchor_rect.position.y
+		var right_x := _anchor_rect.end.x + ANCHOR_GAP
+		var left_x := _anchor_rect.position.x - ANCHOR_GAP - card_width
+		var above_room := _anchor_rect.position.y - ANCHOR_GAP - VIEWPORT_MARGIN
+		var below_room := bounds.y - VIEWPORT_MARGIN - (_anchor_rect.end.y + ANCHOR_GAP)
+		if right_x + card_width <= bounds.x - VIEWPORT_MARGIN:
+			x = right_x
+		elif left_x >= VIEWPORT_MARGIN:
+			x = left_x
+		elif maxf(above_room, below_room) >= card_height:
+			# An anchor too wide for either side - a top / bottom dock: clear the strip vertically.
+			x = _anchor_rect.position.x
+			y = _anchor_rect.position.y - ANCHOR_GAP - card_height if above_room >= below_room \
+				else _anchor_rect.end.y + ANCHOR_GAP
+	y = clampf(y, VIEWPORT_MARGIN, max_y)
+	_card.position = Vector2(clampf(x, VIEWPORT_MARGIN, max_x), y)
 
 # ---- input -----------------------------------------------------------------
 

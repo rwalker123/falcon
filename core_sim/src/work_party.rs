@@ -1192,7 +1192,7 @@ pub struct CaravanForecast {
     /// per-biomass rates. Not struck for rot: fodder and materials keep.
     pub bulk_rate_home: f32,
     /// **A far forage row's fodder per turn arriving home** (#706) — [`Self::bulk_rate_home`] through
-    /// the basket's fodder rate, behind the credit's own Foddering gate. Filled by
+    /// the basket's fodder rate. Filled by
     /// [`forecast_forage_caravan`]; `0` on every other web.
     pub fodder_rate_home: f32,
     /// **Its materials per turn arriving home**, one row per material id — filled by
@@ -1561,9 +1561,6 @@ pub fn forecast_forage_caravan(
     horizon: u32,
     // **How food keeps** (#706) — the basket's classes, decomposed as the take site credits them.
     keeping: &crate::demographics_config::KeepingConfig,
-    // **Does this faction bank the basket's fodder?** — the credit site's own gate (a fodder-crop
-    // commitment, or Foddering), so the fodder rate home is what would actually be credited.
-    fodder_credited: bool,
 ) -> CaravanForecast {
     let mut projection = ForageProjection::new(patch);
     let one_unit = crate::scalar::scalar_one();
@@ -1608,17 +1605,15 @@ pub fn forecast_forage_caravan(
     // ⛔ **THE BASKET'S OTHER ACCOUNTS ARRIVE WITH ITS PACKS** (#706) — the bulk landing per turn
     // through the basket's own per-biomass rates, the arithmetic the take site packs them by. Never
     // struck for rot: fodder and materials keep.
-    if fodder_credited {
-        forecast.fodder_rate_home = crate::forage::tended_take_fodder(
-            forecast.bulk_rate_home,
-            patch,
-            tile_composition,
-            flora,
-            forage,
-            output_multiplier,
-            take_species,
-        );
-    }
+    forecast.fodder_rate_home = crate::forage::tended_take_fodder(
+        forecast.bulk_rate_home,
+        patch,
+        tile_composition,
+        flora,
+        forage,
+        output_multiplier,
+        take_species,
+    );
     forecast.materials_rate_home = crate::materials_config::merge_material_payoffs(
         crate::forage::patch_material_yields_taking(
             patch,

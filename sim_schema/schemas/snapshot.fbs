@@ -643,7 +643,7 @@ table PopulationCohortState {
   // Appended last (append-only schema discipline).
   bandMoveTilesPerTurn:float = 0;
   // The band's FODDER larder — the hay it has stored (Flora Roster F3). A second commodity key on the
-  // same LocalStore as provisions: a hay Field harvests into it, a pen that knows Foddering draws it,
+  // same LocalStore as provisions: a hay Field harvests into it, every pen and tamed herd the band keeps draws it,
   // and it NEVER converts to provisions. Lets the client show a band's hay reserve beside its food
   // reserve.
   fodderStore:float = 0;
@@ -1071,8 +1071,8 @@ table PopulationCohortState {
   // `fodderNeed` = the hay this band's pens are short PER TURN, summed over every pen it keeps (each
   // pen's own share is not published - `HerdTelemetryState.penFodderShortfall` states what a pen
   // needs MORE OF, which is a different number). THE GAP, not the gross demand - pasture is free, hay
-  // is farmed. 0 for a band keeping no pens, and for pens their footprints cover. NOT gated on
-  // Foddering: a band that cannot draw hay still owes it, and this is the field that says so.
+  // is farmed. 0 for a band keeping no pens, and for pens their footprints cover. It is
+  // the gap the range leaves, not what the store paid for.
   //
   // *** THE SIM SUMS IT, AND A CLIENT MUST NOT. *** Herd rows are fog-filtered, so a pen out of
   // sight would silently drop out of a client-side total the band certainly still owes - and summing
@@ -1080,8 +1080,7 @@ table PopulationCohortState {
   // avoid.
   fodderNeed:float = 0;
   // `fodderIncome` = the hay this band's fodder Fields HARVESTED this turn, per turn. The RAW
-  // harvest, not a Foddering-gated share: what was grown is a fact about the Fields, where what a pen
-  // may draw is a fact about what the faction has learned. Render it against `fodderNeed` as
+  // harvest of the Fields. Render it against `fodderNeed` as
   // "need 6.0/turn - growing 5.0/turn".
   fodderIncome:float = 0;
   // `turnsOfFodder` = turns until `fodderStore` empties, and it is the SAME idiom as `turnsOfFood`
@@ -1091,10 +1090,9 @@ table PopulationCohortState {
   // ONE phrasing for one concept: a client must not need a second way to say "turns of buffer left",
   // and must not branch two ways.
   //
-  // *** IT COUNTS DOWN THE DRAIN, WHICH IS NOT ALWAYS `fodderNeed`. *** The pens' draw is gated on
-  // Foddering and the need above is not, so a band that has not learned to hay a herd is short every
-  // turn and empties nothing - it publishes the no-drain sentinel while `fodderNeed` still states
-  // what its pens are missing. That is the pairing to render: the NEED carries the alarm, the runway
+  // *** IT COUNTS DOWN THE DRAIN, WHICH IS NOT ALWAYS `fodderNeed`. *** The drain is what the
+  // pens and tamed herds ask of the store, and the need above is the gap the land leaves; a band
+  // with no hay publishes the no-drain sentinel while `fodderNeed` still states what they are missing. That is the pairing to render: the NEED carries the alarm, the runway
   // answers only "how long does this store last", and a store nothing draws lasts forever.
   turnsOfFodder:float = 0;
 
@@ -1668,6 +1666,10 @@ table PopulationCohortState {
   foodIntoStore:float = 0;
   foodFromStore:float = 0;
   foodInStoresInReach:float = 0;
+  // --- BAND ORDERS (appended last, #860) ---
+  // One row per order the band's chief keeps or the player took back (stone today). Published only
+  // for a band with a leader. Own bands only: a foreign (redacted) row carries the default (empty).
+  bandOrders:[BandOrderState];
 }
 
 // ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH - a row of `PopulationCohortState.bandImprovements`,
@@ -2069,6 +2071,45 @@ enum SourcePriority : ubyte {
   Low = 2,
 }
 
+// A BAND'S ORDER FOR ONE KIND - a row of `PopulationCohortState.bandOrders` (#860). `kind` is
+// "food", "fodder" or a material id. The dig row itself is an ordinary `LaborAssignment` (kind
+// "extract") on `siteX`/`siteY`.
+table BandOrderState {
+  kind:string;
+  // The stock the band wants kept: units for a material, turns for food and fodder. Never 0.
+  target:uint = 0;
+  priority:SourcePriority;
+  // True while the chief works the kind; false once the player crews it ("Crew it yourself").
+  chiefOwned:bool = false;
+  // The band's per-turn draw on the kind: its holdings' upkeep, the road keeping it is billed and
+  // its builds' draw (last turn's figures). The hold crew keeps up with it.
+  draw:float = 0;
+  // What the band holds of the kind now (a material's store total).
+  onHand:float = 0;
+  // The site the game picked to dig at this turn, if any rock is known and reachable.
+  hasSite:bool = false;
+  siteX:uint = 0;
+  siteY:uint = 0;
+  // Whether the order has anything to keep up with. Always true except for fodder, which has none
+  // while the band keeps no penned herd that eats hay (so the client shows its line only then).
+  hasConsumers:bool = true;
+  // What every candidate site of the order gives a turn at its floor without being drawn down, in
+  // the kind's units. For a deposit that never regrows it is the larger of the order's want and the
+  // draw, so it never reads short. The client warns when it is below `draw`.
+  sustainable:float = 0;
+  // *** THE ORDER'S CREW, from the staffing's own passes (this turn). *** holdHeads: heads staffed on
+  // the order's keep-up crew (pass 1) across all its rows; holdWanted: heads that crew wanted.
+  // refillHeads / refillWanted: the same for the refill toward the target (pass 2; refillWanted is 0
+  // at or above the target). take: what the order's rows brought in LAST turn, in the order's units a
+  // turn (food, hay or the material) - "back to target in T turns" is (target - onHand) [x draw for
+  // food and fodder] / (take - draw).
+  holdHeads:uint = 0;
+  holdWanted:uint = 0;
+  refillHeads:uint = 0;
+  refillWanted:uint = 0;
+  take:float = 0;
+}
+
 // One kit the band's work wants: `kit` is the equipment.json kit id the picker orders in, `count`
 // the whole kits the rows using it would arm in the unlimited-shelf run, `priority` the highest
 // rank among those rows (the same wire enum a labor row carries).
@@ -2219,7 +2260,7 @@ table LaborAssignment {
   // --- THE FEED CURRENCY (appended last, issue #449) ---------------------------------------------
   // The FODDER this source produced this turn — the third account beside actualYield/tradeYield, and
   // exactly the min(production, collection) the band's FODDER store was credited with, the wild
-  // credit's Foddering knowledge gate included (a gated-off row reports 0 because the band was paid
+  // credit (a row reports 0 only when the basket yields no fodder; the band was paid
   // 0). Reported, never recomputed.
   //
   // PLANT-ONLY, structurally rather than by omission: no animal pays fodder, so every hunt row is an
@@ -2514,7 +2555,7 @@ table LaborAssignment {
   // the packs with the food, so the row's per-turn fodderYield / materialYield read only what
   // LANDED that turn (zero between packs). These are their netRateHome: the same caravan forecast's
   // bulk landing per turn through the source's own per-biomass rates - smoothed, the numbers the
-  // work row prints. Fodder is the CREDITED figure (0 without Foddering unless the patch is
+  // work row prints. Fodder is the CREDITED figure (the fodder the basket yields; the patch is
   // committed to a fodder crop; a hunt yields none); none of it rots. A far pen's per-head fleece
   // is in it (its milk is in netRateHome), at the projected head count. 0 / absent on a local row
   // and an extract row (whose material is netRateHome itself).
@@ -2618,6 +2659,11 @@ table LaborAssignment {
   // Both 0 on every other row.
   scoutingRange:uint = 0;
   scoutingReach:uint = 0;
+  // *** WHICH ORDER LISTS THIS ROW (#860). *** orderKind: the band order whose chief works the row
+  // ("food", "fodder", or the material a dig row is kept for); empty for a row the player crews and
+  // for a row no order covers. chiefOwned: the same fact as a bool (orderKind is not empty).
+  orderKind:string;
+  chiefOwned:bool = false;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -3782,8 +3828,7 @@ table LadderKnowledgeState {
   // ...and that rung's `order`. THE POSITION WITHIN THE COLUMN, bottom step first.
   order:uint = 0;
   // Does any rung's `unlock_knowledge` name this? A STEP in the chain when it does; a CAPABILITY
-  // hanging off the bottom of its column when it does not. `foddering` is the shipped `false`: it
-  // changes what a pen may draw on rather than opening a further rung. DERIVED, never declared.
+  // hanging off the bottom of its column when it does not. A knowledge that opens no rung is the shipped `false`. DERIVED, never declared.
   isStep:bool = false;
   // --- THE SUBJECT AREA (appended last) ---------------------------------------------------------
   // The subject area of the branch that TEACHES it: "food", "making", "works", "reach" (the roaming
@@ -3944,8 +3989,8 @@ table HerdTelemetryState {
   // The hay this pen drew from its keeper band's FODDER store last turn (Flora Roster F3, §5.2), in
   // fodder units. With `penPastureFraction` it is the WHOLE feed split — "Fed by pasture NN% · hay
   // X.X", both sources in fodder against one fodder demand — and whatever the two leave uncovered is
-  // what `penFedFraction` falls short by. 0 for an unpenned herd, a keeper that has not learned
-  // Foddering, or a pen whose own footprint already fed it. Appended (append-only).
+  // what `penFedFraction` falls short by. 0 for an unpenned herd, a store holding no hay,
+  // or a herd whose own range already fed it. Appended (append-only).
   fodderDraw:float = 0;
   // --- Predators Phase 0 (docs/plan_predators.md, appended last) --- the RAW combat components of this
   // herd's species, so the client can DERIVE danger itself (danger is never stored server-side, because
@@ -4432,9 +4477,8 @@ table HerdTelemetryState {
   // describing a different turn from its own terms, and this one is struck on the same pass as both
   // of them.
   //
-  // UNGATED BY FODDERING, unlike `fodderDraw`. A band that has not learned Foddering draws nothing,
-  // so its shortfall is its WHOLE need - the case where the herd is dying and the remedy is
-  // knowledge rather than hay, which is precisely the case this readout exists for.
+  // With an empty hay store the draw (`fodderDraw`) is nothing,
+  // so the shortfall is the herd's WHOLE need - the case this readout exists for.
   //
   // A FIXED FOOTPRINT UNDER A GROWING HERD IS A RISING NEED, which is the slow trap it surfaces in
   // advance: a pen's carrying capacity is fixed and its herd is not, so a pen that feeds itself today

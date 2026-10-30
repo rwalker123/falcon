@@ -38,8 +38,8 @@ class_name KnowledgeRoster
 ##   with a field is certainly using its Cultivation.
 ## - **A craft knowledge** is in use when the faction holds, or is making, something that is made of
 ##   it — see `craft_is_in_use`.
-## - **A knowledge that unlocks nothing cannot be unspent at all.** `foddering` changes what a pen may
-##   draw on rather than unlocking a step, so there is no source that could stand on it, and calling
+## - **A knowledge that unlocks nothing cannot be unspent at all.** A capability changes what a source
+##   may do rather than unlocking a step, so there is no source that could stand on it, and calling
 ##   it "unused" would be a sentence about nothing. **That is READ OFF THE ROSTER's `is_step`, not off
 ##   a declared set here** — the ladder already knows whether any rung waits on a knowledge.
 ##
@@ -126,9 +126,7 @@ static func build_domains(model: Dictionary) -> Array[Dictionary]:
 	for branch in branch_order:
 		var rows: Array = by_branch[branch]
 		# **WITHIN A ROW, THE ORDER IS THE TEACHING RUNG'S**, bottom step first, so a row read left to
-		# right reads as a progression. A CAPABILITY sorts after every step at the same rung —
-		# `foddering` is taught by the top animal rung and belongs at the end of the chain, not inside
-		# it.
+		# right reads as a progression. A CAPABILITY sorts after every step at the same rung.
 		rows.sort_custom(_before_on_the_ladder)
 		var nodes: Array[Dictionary] = []
 		for row_variant in rows:
@@ -178,9 +176,8 @@ static func build_domains(model: Dictionary) -> Array[Dictionary]:
 	return domains
 
 ## Ladder order within one row: by the teaching rung's `order`, and a CAPABILITY after a STEP that
-## shares it. The second term is what puts `foddering` at the end of the animal chain rather than
-## beside `penning` — both are taught by rungs of the same branch, and only one of them is a step
-## somebody climbs to.
+## shares it. The second term is what puts a capability at the end of a chain rather than beside
+## a step taught by a rung of the same branch.
 static func _before_on_the_ladder(a: Dictionary, b: Dictionary) -> bool:
 	var order_a := int(a.get(HudKnowledgeVocab.ROSTER_ORDER, 0))
 	var order_b := int(b.get(HudKnowledgeVocab.ROSTER_ORDER, 0))

@@ -65,8 +65,8 @@ const VIEWPORT_MARGIN := 12.0
 const ANCHOR_GAP := 12.0
 
 ## **THE COLUMN THE STRIP WAS AUTHORED FOR.** Every line in `_build_work_inspector` elides against the
-## narrow shell's work-zone width, and `BandCityPanel.ZONE_PARTY_WIDTH` is that width stated once
-## (`PANEL_WIDTH − PANEL_CHROME_H`). Naming it rather than a literal is what keeps the card the width
+## a 354px column (the work zone the side dock gave before it widened to 440), and
+## `BandCityPanel.ZONE_PARTY_WIDTH` is that width stated once. Naming it rather than a literal is what keeps the card the width
 ## the wording was measured at — a wider card would un-elide lines whose elision is a decision, and a
 ## narrower one would wrap them.
 const CONTENT_WIDTH := BandCityPanel.ZONE_PARTY_WIDTH

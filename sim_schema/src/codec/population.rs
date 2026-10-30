@@ -12,15 +12,15 @@ use crate::state::campaign::{OpeningKitDefaultState, OpeningMaterialDefaultState
 use crate::state::population::{
     AccessibleStockpileEntryState, AccessibleStockpileState, BandImprovementState,
     BandKitCrewState, BandKitTiersState, BandLoadoutSupplyRowState, BandLoadoutWindowState,
-    BenchKitOrderState, BenchOrderState, BenchState, BreedingMemberState, BreedingPeopleState,
-    CharacteristicReadingState, CohortStoreState, CraftOfferState, CraftSuggestionSourceState,
-    CraftSuggestionState, CulturePressureState, DrawnInputState, EquipmentBatchState,
-    GenerationState, HarvestTaskState, KeepingMealState, KitItemConditionState, KitNeedItemState,
-    KitNeedRecipeState, KitNeedState, KitToeLineState, LaborAssignmentState, MaterialAmountState,
-    MaterialBatchState, MaterialShortfallState, PoolCrewLineState, PoolToeLineState,
-    PoolingLinkState, PopulationCohortState, PopulationDemographicsState, ScoutTaskState,
-    SettlementStageViewState, SourcePriorityState, TransferCrossingState, TribeClosenessState,
-    TribePairState, WorkKitWantState,
+    BandOrderState, BenchKitOrderState, BenchOrderState, BenchState, BreedingMemberState,
+    BreedingPeopleState, CharacteristicReadingState, CohortStoreState, CraftOfferState,
+    CraftSuggestionSourceState, CraftSuggestionState, CulturePressureState, DrawnInputState,
+    EquipmentBatchState, GenerationState, HarvestTaskState, KeepingMealState,
+    KitItemConditionState, KitNeedItemState, KitNeedRecipeState, KitNeedState, KitToeLineState,
+    LaborAssignmentState, MaterialAmountState, MaterialBatchState, MaterialShortfallState,
+    PoolCrewLineState, PoolToeLineState, PoolingLinkState, PopulationCohortState,
+    PopulationDemographicsState, ScoutTaskState, SettlementStageViewState, SourcePriorityState,
+    TransferCrossingState, TribeClosenessState, TribePairState, WorkKitWantState,
 };
 use crate::state::subsistence::BuildLegState;
 use crate::world::{WorldDelta, WorldSnapshot};
@@ -340,6 +340,7 @@ fn create_populations<'a>(
                         // The deposit this crew is on — `None` on every row that is not
                         // `extract`, the `fauna_id` convention: an absent string is "no selection".
                         let branch = builder.create_string(&assignment.branch);
+                        let order_kind = builder.create_string(&assignment.order_kind);
                         let material = if assignment.material.is_empty() {
                             None
                         } else {
@@ -510,6 +511,8 @@ fn create_populations<'a>(
                                 loadHomeIn: assignment.load_home_in,
                                 scoutingRange: assignment.scouting_range,
                                 scoutingReach: assignment.scouting_reach,
+                                orderKind: Some(order_kind),
+                                chiefOwned: assignment.chief_owned,
                             },
                         )
                     })
@@ -939,6 +942,7 @@ fn create_populations<'a>(
             let kit_needs = create_kit_needs(builder, &cohort.kit_needs);
             let materials_free = create_material_amounts(builder, &cohort.materials_free);
             let culture_pressures = create_culture_pressures(builder, &cohort.culture_pressures);
+            let band_orders = create_band_orders(builder, &cohort.band_orders);
             let envoy_terms = crate::codec::treaties::create_terms(builder, &cohort.envoy_terms);
             let leader_name = builder.create_string(&cohort.leader_name);
             let band_improvements = create_band_improvements(builder, &cohort.band_improvements);
@@ -1274,6 +1278,7 @@ fn create_populations<'a>(
                     foodIntoStore: cohort.food_into_store,
                     foodFromStore: cohort.food_from_store,
                     foodInStoresInReach: cohort.food_in_stores_in_reach,
+                    bandOrders: Some(band_orders),
                 },
             )
         })
@@ -1681,6 +1686,8 @@ fn decode_labor_assignment(
         load_home_in: assignment.loadHomeIn(),
         scouting_range: assignment.scoutingRange(),
         scouting_reach: assignment.scoutingReach(),
+        order_kind: text(assignment.orderKind()),
+        chief_owned: assignment.chiefOwned(),
     })
 }
 
@@ -2225,6 +2232,28 @@ fn decode_population(
         food_into_store: cohort.foodIntoStore(),
         food_from_store: cohort.foodFromStore(),
         food_in_stores_in_reach: cohort.foodInStoresInReach(),
+        band_orders: map_rows(cohort.bandOrders(), |row| BandOrderState {
+            kind: text(row.kind()),
+            target: row.target(),
+            priority: match row.priority() {
+                fb::SourcePriority::High => SourcePriorityState::High,
+                fb::SourcePriority::Low => SourcePriorityState::Low,
+                _ => SourcePriorityState::Normal,
+            },
+            chief_owned: row.chiefOwned(),
+            draw: row.draw(),
+            on_hand: row.onHand(),
+            has_site: row.hasSite(),
+            site_x: row.siteX(),
+            site_y: row.siteY(),
+            has_consumers: row.hasConsumers(),
+            hold_heads: row.holdHeads(),
+            hold_wanted: row.holdWanted(),
+            refill_heads: row.refillHeads(),
+            refill_wanted: row.refillWanted(),
+            take: row.take(),
+            sustainable: row.sustainable(),
+        }),
     })
 }
 
@@ -2452,6 +2481,45 @@ fn create_culture_pressures<'a>(
                     phase: row.phase,
                     close: row.close,
                     turnsToNext: row.turns_to_next,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+/// `PopulationCohortState.bandOrders`.
+fn create_band_orders<'a>(
+    builder: &mut FbBuilder<'a>,
+    rows: &[BandOrderState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::BandOrderState<'a>>>> {
+    let offsets: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            let kind = builder.create_string(&row.kind);
+            fb::BandOrderState::create(
+                builder,
+                &fb::BandOrderStateArgs {
+                    kind: Some(kind),
+                    target: row.target,
+                    priority: match row.priority {
+                        SourcePriorityState::Normal => fb::SourcePriority::Normal,
+                        SourcePriorityState::High => fb::SourcePriority::High,
+                        SourcePriorityState::Low => fb::SourcePriority::Low,
+                    },
+                    chiefOwned: row.chief_owned,
+                    draw: row.draw,
+                    onHand: row.on_hand,
+                    hasSite: row.has_site,
+                    siteX: row.site_x,
+                    siteY: row.site_y,
+                    hasConsumers: row.has_consumers,
+                    holdHeads: row.hold_heads,
+                    holdWanted: row.hold_wanted,
+                    refillHeads: row.refill_heads,
+                    refillWanted: row.refill_wanted,
+                    take: row.take,
+                    sustainable: row.sustainable,
                 },
             )
         })

@@ -1110,17 +1110,12 @@ const ONE_WHOLE_ANIMAL := 1.0
 const YIELD_MODEL_ROWS := "rows"
 const YIELD_MODEL_TEXT := "text"
 const YIELD_MODEL_OVERDRAW := "overdraw"
-## WHY one of this model's accounts renders as a dash instead of a number — `""` when every account
-## this take pays is bankable. It rides the MODEL rather than being resolved at the render, so the
-## muted row and the sentence explaining it are two readings of one model dict: whoever evaluates this
-## model at a given floor and crew gets both, and neither can be composed without the other.
-const YIELD_MODEL_LOCKED_REASON := "locked_reason"
 ## **THE HONEST-SILENCE LINES THIS MODEL OWES THE PLAYER** — an `Array[String]` of asides rendered
 ## under the rows, `[]` on the ordinary sheet. A narrowed take earns one when the wire priced no
 ## per-species rate for something the player ticked, and another when the patch pays a MATERIAL (which
 ## is basket-averaged and has no per-species twin on the wire, so a narrowed crew's fibre is a number
-## this client does not have). They ride the MODEL for `YIELD_MODEL_LOCKED_REASON`'s reason: whoever
-## evaluates this model at a floor and a crew gets the rows and the reason they read that way together.
+## this client does not have). They ride the MODEL, so whoever evaluates it at a floor and a crew gets
+## the rows and the reason they read that way together.
 const YIELD_MODEL_NOTES := "notes"
 ## **ARE THESE ROWS ONE POINT OF A BAND?** — the caption's gate (`at the likely take`), `false` on
 ## every model whose readings carry no spread at all: the whole plant web, and the hunt web's degrade
@@ -1270,36 +1265,12 @@ func _forage_model_rows(tile_info: Dictionary, actual: float, actual_fodder: flo
         # composed row like any other, so the readout states what the crew brings home instead of an
         # apology. What still reaches this line is a selection that genuinely pays into nothing.
         return _wordless_take_model(notes)
-    # **THE FODDER ACCOUNT MAY BE REAL AND UNBANKABLE AT ONCE** (issue #485). The sim credits a WILD
-    # patch's hay only to a faction that has learned Foddering (a committed patch is paid
-    # unconditionally — committing is the bid), and Foddering is taught by KEEPING A PEN, so a forager
-    # band reads a live `fodder_per_biomass` off the meadow and banks nothing from it. The take is not
-    # recomputed: it is what the crew MOVES, and only the credit is refused, so the row keeps its unit
-    # and loses its number while the sentence beside it goes to `0.0`.
-    var locked := _wild_fodder_lock(tile_info)
-    var banked_fodder := actual_fodder
-    if locked != "" and SourceForecast.has_component(actual_fodder):
-        for row in rows:
-            if String(row.get(SourceForecast.YIELD_ROW_ACCOUNT, "")) \
-                    != SourceForecast.YIELD_ACCOUNT_FODDER:
-                continue
-            row[HudWidgets.YIELD_ROW_NUMBER] = HudComposeVocab.YIELD_LOCKED_GLYPH
-            row[HudWidgets.YIELD_ROW_MUTED] = true
-            # An arrow to a rate nobody banks is noise — and its presence alone would key the row
-            # header's `now → after` off an account that has neither reading.
-            row.erase(SourceForecast.YIELD_ROW_AFTER)
-        banked_fodder = 0.0
-    else:
-        locked = ""
     return {
         YIELD_MODEL_ROWS: rows,
         # The joined sentence has no room for the reason, so it must not promise the account at all.
         YIELD_MODEL_TEXT: SourceForecast.yield_components(
-            actual, banked_fodder, zero_account, materials),
-        # **THE FODDER LOCK DOES NOT REACH THE ⚠, AND IT NEVER SHOULD HAVE.** The take draws the same
-        # biomass down whether or not the crew banks the hay, and the drawdown is the sim's to state.
+            actual, actual_fodder, zero_account, materials),
         YIELD_MODEL_OVERDRAW: overdraws,
-        YIELD_MODEL_LOCKED_REASON: locked,
         YIELD_MODEL_NOTES: notes,
     }
 
@@ -1564,7 +1535,6 @@ func _wordless_take_model(notes: Array[String]) -> Dictionary:
         YIELD_MODEL_ROWS: ([] as Array[Dictionary]),
         YIELD_MODEL_TEXT: "",
         YIELD_MODEL_OVERDRAW: false,
-        YIELD_MODEL_LOCKED_REASON: "",
         YIELD_MODEL_NOTES: notes,
     }
 
@@ -1720,26 +1690,6 @@ func _take_display_name(species: String, basket: Array[Dictionary]) -> String:
         if String(entry.get("species", "")) == species:
             return String(entry.get("display_name", species))
     return species
-
-## **THE ONE SPELLING OF THE WILD-FODDER LOCK ON THIS SHEET** — `""` when this crew's hay is bankable,
-## the reason when it is not. Two surfaces answer to it and they sit one control apart: the yields
-## row's muted `—` (with the aside sentence explaining it) and the FLOOR PRESETS' dropped fodder
-## ceiling. A second predicate over one gate — even one spelled identically today — is exactly how the
-## presets came to quote a ceiling the row below them was already refusing (issue #485), so both go
-## through this call and through `RungGates.wild_fodder_reason` behind it.
-##
-## **The PUBLISHED commitment, never the composed improvement**: a Cultivate the player has ticked and
-## not yet committed is not a bid the sim has accepted.
-##
-## **AND THE BASKET GOES WITH IT**, because the commitment arm asks WHICH crop: the sim credits a
-## commitment only to a species that actually bears hay, and the per-species payoffs that answer that
-## live on the tile's composition rows. Resolved here rather than at the two call sites so both
-## surfaces read one basket — the reason this function exists at all.
-func _wild_fodder_lock(tile_info: Dictionary) -> String:
-    return RungGates.wild_fodder_reason(
-        String(tile_info.get("patch_committed_species", "")).strip_edges(),
-        SourceForecast.flora_basket_entries(tile_info.get("patch_composition", [])),
-        _player_knowledge())
 
 ## One yield model → the one-line BBCode preview, for both webs. Green + `· renewable` inside the
 ## source's own regrowth, WARN-amber with the shared ⚠ and the web's own overdraw clause outside it;
@@ -2436,24 +2386,6 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
     _register_live(hosts, aside_host, model, workers,
         func(host: Container, live: Dictionary, crew: int) -> void:
             var lines: Array[Dictionary] = []
-            # THE LOCKED-ACCOUNT REASON LEADS, because it is the only aside line answering a mark the
-            # player is already looking at. Its own meta: the two lines below it move with the floor,
-            # so an assertion on "the aside changed" says nothing about this sentence.
-            #
-            # **READ OFF THE SAME `yields_at` ANSWER THE ROW ABOVE IS BUILT FROM, at this floor and
-            # this crew.** Its PRESENCE is floor-dependent — raise the floor (or step the crew to 0)
-            # and the fodder take goes to nothing, the row leaves, and a sentence resolved once before
-            # the render would go on explaining a `—` no longer on screen. This is its OWN `yields_at`
-            # call, not the row's — what makes it impossible for the two to disagree is that the yield
-            # models are PURE and both calls pass the same arguments, which is why the floor and the
-            # reaches flag are spelled `_live_floor` / `_live_reaches` and nowhere else.
-            # The hunt web needs no branch here: its model carries no such key, so this reads `""`.
-            var locked_reason := String((yields_at.call(
-                _live_floor(live), crew, _live_reaches(live)) as Dictionary).get(
-                    YIELD_MODEL_LOCKED_REASON, ""))
-            if locked_reason != "":
-                lines.append(HudWidgets.readout_aside_line(locked_reason, HudStyle.INK_FAINT,
-                    HudWidgets.READOUT_LOCKED_ACCOUNT_META))
             # The floor's own teaching line, whatever zone it is in. A zone with nothing to say
             # answers `""` in `FLOOR_ZONE_HINTS` and `build_readout_aside` drops an empty line, so
             # there is no zone to test for here.
@@ -2558,6 +2490,16 @@ func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String) -
 ## The herd "Assign hunters" controls (compose a count + policy, then Assign). Shown
 ## only for a huntable herd while a player band exists to staff it.
 func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> void:
+    _build_herd_assign_controls_core(herd, target)
+    if target == null or herd.is_empty():
+        return
+    var herd_id := String(herd.get("id", ""))
+    var band := _band_labor.player_band_by_entity(_compose.hunt_band())
+    _apply_chief_row_strip(target, band, SourceForecast.LABOR_KIND_HUNT, int(herd.get("x", -1)),
+        int(herd.get("y", -1)), herd_id, {"herd_id": herd_id},
+        func() -> void: _build_herd_assign_controls(_live_herd(herd_id, herd), target))
+
+func _build_herd_assign_controls_core(herd: Dictionary, target: VBoxContainer) -> void:
     if target == null:
         return
     # A rebuild frees the chart, so whatever drag was on it is over — see `_end_floor_drag`.
@@ -3177,13 +3119,6 @@ func _forage_floor_takes(tile_info: Dictionary, band: Dictionary) -> Dictionary:
     var takes := {}
     var zero_account := SourceForecast.zero_account_of(
         tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)
-    var locked := _wild_fodder_lock(tile_info) != ""
-    # **THE ACCOUNT'S OWN ZERO GOES WITH ITS CEILING.** On a hay-ONLY patch fodder is the
-    # `zero_account`, so merely zeroing the term would print `up to +0.00 fodder/turn` on every preset
-    # — the refused quantity again, now at a number the ground itself contradicts. `YIELD_ACCOUNT_NONE`
-    # renders no line, leaving the preset its name-only tooltip.
-    if locked and zero_account == SourceForecast.YIELD_ACCOUNT_FODDER:
-        zero_account = SourceForecast.YIELD_ACCOUNT_NONE
     for preset_variant in SourceForecast.FLOOR_PRESETS:
         var preset := String(preset_variant)
         var forecast := _forage_forecast(tile_info, band, SourceForecast.floor_for_preset(preset))
@@ -3191,13 +3126,10 @@ func _forage_floor_takes(tile_info: Dictionary, band: Dictionary) -> Dictionary:
             continue
         # **THE MATERIAL CEILING COMPOSES AT THIS PRESET'S OWN FLOOR**, by the same
         # `max(0, B − floor·K) × rate` rule the two scalars take — which is the whole reason
-        # `material_per_biomass` is a per-biomass RATE rather than a pre-composed ceiling. **No lock
-        # applies to it**: the wild-fodder gate is Foddering's, a claim about FEED and about the
-        # faction's knowledge of penning, and a gatherer banks a cash crop's fibre whether or not it
-        # has ever kept a pen.
+        # `material_per_biomass` is a per-biomass RATE rather than a pre-composed ceiling.
         takes[preset] = SourceForecast.extractive_take_pair(
             float(forecast["ceiling"]),
-            0.0 if locked else float(forecast["ceiling_fodder"]), zero_account,
+            float(forecast["ceiling_fodder"]), zero_account,
             forecast["material_ceiling"])
     return takes
 
@@ -3326,19 +3258,6 @@ func _crop_payoff_terms(tile_info: Dictionary, entries: Array[Dictionary], speci
             fodder = _flora_entry_fodder_payoff(entry, rung)
             materials = _flora_entry_material_payoff(entry, rung)
             break
-    # **THE HAY IN THIS LINE IS GATED, ON THE SAME PREDICATE THE ROW ABOVE IT IS.** `payoff_fodder` is
-    # a LAND fact — what this ground would grow at that rung, species-blind by construction — and the
-    # deal row states it as something the player will RECEIVE. On a patch committed to a crop that
-    # bears no hay, with Foddering unlearned, the sim credits none of it: quoting it here would put a
-    # figure the sim refuses directly under a `— FODDER` cell that refuses it, one line apart.
-    #
-    # **`fodder_payoff_is_refused`, NOT `_wild_fodder_lock`** — the two differ on exactly the
-    # UNCOMMITTED patch, where the row gate fails closed and this line must not: nothing has been bid
-    # for yet, so the land's number is an honest "this ground could". `RungGates` expresses that
-    # narrowing over the one gate rather than restating the rule, so the two cannot drift apart.
-    var fodder_refused := RungGates.fodder_payoff_is_refused(
-        String(tile_info.get("patch_committed_species", "")).strip_edges(), entries,
-        _player_knowledge())
     # **THE FOOD ZERO SURVIVES BESIDE A MATERIAL CLAUSE, AND THAT IS THE READING.** A sown Field of
     # cotton pays exactly `0.00 food`, and stating it next to `0.29 fibre` is the whole land-use
     # bargain in one row — which is what the retired trade scalar was standing in for.
@@ -3346,15 +3265,11 @@ func _crop_payoff_terms(tile_info: Dictionary, entries: Array[Dictionary], speci
     fodder *= output
     if not curve_row.is_empty():
         food = float(curve_row[SourceForecast.FORAGE_CREW_NEXT_RUNG_TAKE_KEY])
-        # The curve CREDITS its fodder, so a refused account arrives as `0`; the land's figure is
-        # kept only to NAME it under the lock, never to state it.
-        if not fodder_refused:
-            fodder = float(curve_row.get(SourceForecast.FORAGE_CREW_NEXT_RUNG_FODDER_KEY, 0.0))
+        fodder = float(curve_row.get(SourceForecast.FORAGE_CREW_NEXT_RUNG_FODDER_KEY, 0.0))
         materials = curve_row.get(SourceForecast.FORAGE_CREW_NEXT_RUNG_MATERIALS_KEY, [])
         output = SourceForecast.OUTPUT_FULL
     var terms := SourceForecast.picker_products(food, fodder,
-        SourceForecast.YIELD_ACCOUNT_FOOD, [],
-        HudComposeVocab.YIELD_LOCKED_GLYPH if fodder_refused else "")
+        SourceForecast.YIELD_ACCOUNT_FOOD, [])
     for row_variant in materials:
         var row: Dictionary = row_variant
         var amount := float(row[SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY]) * output
@@ -3396,6 +3311,16 @@ func _resolve_crop_selection(entries: Array[Dictionary], policy: String, committ
 ## itself on any state now.
 
 func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer) -> void:
+    _build_forage_assign_controls_core(tile_info, target)
+    if target == null or tile_info.is_empty():
+        return
+    var x := int(tile_info.get("x", -1))
+    var y := int(tile_info.get("y", -1))
+    var band := _band_labor.player_band_by_entity(_compose.forage_band())
+    _apply_chief_row_strip(target, band, SourceForecast.LABOR_KIND_FORAGE, x, y, "", {"x": x, "y": y},
+        func() -> void: _build_forage_assign_controls(_live_tile_info(_forage_source_key(tile_info), tile_info), target))
+
+func _build_forage_assign_controls_core(tile_info: Dictionary, target: VBoxContainer) -> void:
     if target == null:
         return
     # A rebuild frees the chart, so whatever drag was on it is over — see `_end_floor_drag`.
@@ -4136,6 +4061,13 @@ func _compose_anchor_rect() -> Rect2:
         return Rect2()
     return _tile_panel.get_global_rect()
 
+## The rect an ORDER sheet floats beside: the Band panel's card (the Work tab the order was opened from),
+## so the sheet sits next to the panel rather than over it. Falls back to the selection card's rect while
+## the Band panel is hidden.
+func _order_anchor_rect() -> Rect2:
+    var card := _bandpanel.card_rect_if_shown() if _bandpanel != null else Rect2()
+    return card if card.size != Vector2.ZERO else _compose_anchor_rect()
+
 ## Can this LAND offer a forage compose at all? The gate the drawer's button and the sheet share, so
 ## the button can never open an empty sheet. (A workable patch is live state — redacted on a
 ## remembered hex like its occupants — and there must be a player band to staff it.)
@@ -4216,6 +4148,99 @@ func _herd_improvement_axis(herd: Dictionary) -> String:
 ## The Band panel and the shared rung card, handed over once both exist. The sheet's work strip is built
 ## by the panel's own producer (`source_strip_row`) so the sheet and the source's Work-tab row are one
 ## control; its `⌃` opens the SAME card (`RungCardController`) with the same commands.
+## **THE BAND ORDERS DOOR** (#860), injected by `HudLayer`.
+var _orders: BandOrdersController = null
+## The band whose Food / Fodder sheet is open (entity), re-resolved every render.
+var _order_sheet_band: int = -1
+
+func set_band_orders(orders: BandOrdersController) -> void:
+    _orders = orders
+
+## The context the chief's sheet sections draw against: the band, the sends, and the three callbacks.
+func _orders_ctx(band: Dictionary, rebuild: Callable) -> Dictionary:
+    return {
+        "band": band, "orders": _orders, "rebuild": rebuild,
+        "close": func() -> void: close_compose_sheet(),
+        "show_on_map": func(x: int, y: int) -> void:
+            _bandpanel.show_source_on_map(HudConst.LABOR_KIND_EXTRACT, x, y, ""),
+    }
+
+## **OPEN A BAND ORDER'S SHEET FROM THE WORK TAB** (#860): Food, Fodder, Stone and Wood each get the
+## whole-order sheet, anchored beside the band panel. A stand's own sheet is the tile card's.
+func open_order_sheet(band_entity: int, kind: String) -> void:
+    var band := _band_labor.player_band_by_entity(band_entity)
+    var order := HudOrdersVocab.order_of(band, kind)
+    if band.is_empty() or order.is_empty():
+        return
+    _ensure_compose_sheet()
+    _order_sheet_band = band_entity
+    _compose.set_composing(ComposeState.KIND_ORDER, kind)
+    var content := _compose_sheet.open(HudOrdersVocab.order_name(kind), HudFormat.band_name(band),
+        "order:" + kind, _order_anchor_rect())
+    _build_order_sheet(kind, content)
+    refresh_drawer_actions()
+
+## **THE HERDS THE FODDER ORDER FEEDS**: every tamed or penned herd the band's people keep that draws
+## fodder. A herd its own range feeds outright draws none and is not listed.
+func _band_eating_herds(band: Dictionary) -> Array:
+    var herds: Array = []
+    for herd_variant in _band_labor.world_herds():
+        var herd: Dictionary = herd_variant
+        if not bool(herd.get("has_owner", false)) \
+                or int(herd.get("owner", -1)) != int(band.get("faction", HudConst.PLAYER_FACTION_ID)):
+            continue
+        var kept := RungQuotes.is_enclosed(herd) \
+                or RungQuotes.domestication_progress(herd) >= HudConst.KNOWLEDGE_COMPLETE
+        var eats := float(herd.get("fodder_draw", 0.0)) + float(herd.get("pen_fodder_shortfall", 0.0))
+        if kept and eats >= SourceForecast.FODDER_FLOW_MIN:
+            herds.append(herd)
+    return herds
+
+func _build_order_sheet(kind: String, target: VBoxContainer) -> void:
+    if target == null:
+        return
+    for child in target.get_children():
+        child.queue_free()
+    var band := _band_labor.player_band_by_entity(_order_sheet_band)
+    var order := HudOrdersVocab.order_of(band, kind)
+    if band.is_empty() or order.is_empty():
+        return
+    var ctx := _orders_ctx(band, func() -> void: _build_order_sheet(kind, target))
+    if HudOrdersVocab.is_turns_kind(kind):
+        BandOrdersSheets.build_order_sheet(target, ctx, order,
+            _band_eating_herds(band) if kind == HudOrdersVocab.KIND_FODDER else [], _herd_label_for_id)
+    else:
+        BandOrdersSheets.build_material_chief(target, ctx, order, kind)
+
+## The strip (and the disabled controls) a hunt / gather sheet wears for a row under the chief's order.
+## `source_kind` is `hunt` / `forage`; `address` names the row for a release / claim.
+func _apply_chief_row_strip(target: VBoxContainer, band: Dictionary, source_kind: String,
+        x: int, y: int, herd_id: String, address: Dictionary, rebuild: Callable) -> void:
+    if _orders == null or band.is_empty():
+        return
+    var info := _orders.order_for_source(band, source_kind, x, y, herd_id)
+    if info.is_empty():
+        return
+    var ctx := _orders_ctx(band, rebuild)
+    var strip := BandOrdersSheets.row_strip(ctx, info, source_kind, address)
+    var live: Array = []
+    for child in target.get_children():
+        if not child.is_queued_for_deletion():
+            live.append(child)
+    if live.is_empty():
+        return
+    target.add_child(strip)
+    # Under the `Band:` picker, which is the first live child.
+    target.move_child(strip, (live[0] as Node).get_index() + 1)
+    if bool(info["chief_owned"]):
+        var keep: Array = [HudWorkVocab.WORK_STRIP_META, BandOrdersSheets.META_ROW_STRIP,
+            HudComposeVocab.DONE_BUTTON_META, HudComposeVocab.SHOW_ON_MAP_META]
+        for i in range(1, live.size()):
+            BandOrdersSheets.disable_node(live[i], keep,
+                HudOrdersVocab.CHIEF_ROW_DISABLED_TIP_FORMAT % HudOrdersVocab.who(band))
+            # `Stop working here` is a hand command the sim refuses on his row.
+            BandOrdersSheets.hide_meta(live[i], HudWidgets.COMPOSE_COMMIT_META)
+
 func set_work_strip_sources(band_panel: BandPanelController, rung_card: RungCardController) -> void:
     _bandpanel = band_panel
     _rung = rung_card
@@ -4608,6 +4633,13 @@ func refresh_compose_sheet(may_close: bool = true) -> void:
                     close_compose_sheet()
                 return
             _build_deposit_assign_controls(working, _compose_sheet.content())
+        ComposeState.KIND_ORDER:
+            var order_band := _band_labor.player_band_by_entity(_order_sheet_band)
+            if order_band.is_empty() or HudOrdersVocab.order_of(order_band, _compose.subject()).is_empty():
+                if may_close:
+                    close_compose_sheet()
+                return
+            _build_order_sheet(_compose.subject(), _compose_sheet.content())
         ComposeState.KIND_TILE:
             var tile_branch := _tile_branch_of_key(_compose.subject())
             var live_tile := _selection.tile_info()
@@ -4729,8 +4761,12 @@ func deposit_standing_facts(working: Dictionary) -> Dictionary:
     if standing.is_empty():
         return {}
     var crew_label := HudDepositVocab.crew_noun(HudDepositVocab.branch_of(working))
-    return _door_facts_of(_standing_summary_model(standing, HudConst.LABOR_KIND_EXTRACT,
+    var facts := _door_facts_of(_standing_summary_model(standing, HudConst.LABOR_KIND_EXTRACT,
         crew_label.to_lower(), working))
+    # A deposit's `⚠` is the deposit predicate's: the dig must be able to reach below the peak.
+    facts["warn"] = bool(facts["warn"]) and HudDepositVocab.overdraws(working,
+        float(standing.get("floor", HudDepositVocab.ROW_FLOOR_UNSTATED)))
+    return facts
 
 ## A standing-summary model as a door row's facts. **The hover carries EVERY line the retired control
 ## drew**, in the order it drew them: the summary text, the overstaff / material-short note, the muted
@@ -5406,6 +5442,44 @@ func open_deposit_compose(deposit: Dictionary) -> void:
 ##   7. the readout box;
 ##   8. the commit button.
 func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) -> void:
+    _build_deposit_assign_controls_core(deposit, target)
+    if target == null or deposit.is_empty() or _orders == null:
+        return
+    var tile := HudDepositVocab.tile_of(deposit)
+    var material := HudDepositVocab.material_of(deposit)
+    var band := _band_labor.player_band_by_entity(_compose.deposit_band())
+    var order := HudOrdersVocab.order_of(band, material)
+    if band.is_empty() or order.is_empty() or not HudOrdersVocab.is_chief_owned(order):
+        return
+    var subject_key := _deposit_source_key(deposit)
+    var rebuild := func() -> void: _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target)
+    var row := _band_labor.extract_assignment_of(band, tile.x, tile.y, material)
+    var chiefs := HudOrdersVocab.row_is_chiefs(row)
+    var info := {"kind": material, "chief_owned": chiefs, "order": order}
+    var ctx := _orders_ctx(band, rebuild)
+    var mounted: Control
+    if chiefs or not row.is_empty():
+        mounted = BandOrdersSheets.row_strip(ctx, info, HudConst.LABOR_KIND_EXTRACT, {"x": tile.x, "y": tile.y})
+    else:
+        mounted = BandOrdersSheets.no_row_note(band, material)
+    var live: Array = []
+    for child in target.get_children():
+        if not child.is_queued_for_deletion():
+            live.append(child)
+    if live.is_empty():
+        return
+    target.add_child(mounted)
+    # Under the `Band:` picker, which is the first live child.
+    target.move_child(mounted, (live[0] as Node).get_index() + 1)
+    if chiefs:
+        var keep: Array = [HudWorkVocab.WORK_STRIP_META, BandOrdersSheets.META_ROW_STRIP,
+            HudComposeVocab.DONE_BUTTON_META, HudComposeVocab.SHOW_ON_MAP_META]
+        for i in range(1, live.size()):
+            BandOrdersSheets.disable_node(live[i], keep,
+                HudOrdersVocab.CHIEF_STAND_DISABLED_TIP_FORMAT % HudOrdersVocab.who(band))
+            BandOrdersSheets.hide_meta(live[i], HudWidgets.COMPOSE_COMMIT_META)
+
+func _build_deposit_assign_controls_core(deposit: Dictionary, target: VBoxContainer) -> void:
     if target == null:
         return
     # A rebuild frees whatever the sheet held, so any drag on it is over — the forage builder's rule.
@@ -5459,6 +5533,17 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
         _compose.set_deposit_band(int(picked.get("entity", ComposeState.NO_BAND_ENTITY)))
         _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target)))
+    # **A BAND WITH A LEADER HAS AN ORDER FOR THIS MATERIAL** (#860): when it is the PLAYER's, today's
+    # sheet wears the `could keep it for you` strip. When it is the chief's the sheet is today's sheet
+    # too, and the wrapper `_build_deposit_assign_controls` mounts the per-stand strip over it.
+    var sheet_title := String(_selection.tile_info().get("terrain_label", "")).strip_edges()
+    var material_order := HudOrdersVocab.order_of(band, material)
+    if _orders != null and not material_order.is_empty() and not HudOrdersVocab.is_chief_owned(material_order):
+        var orders_ctx := _orders_ctx(band, func() -> void:
+            _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target))
+        target.add_child(BandOrdersSheets.material_offer(orders_ctx, material))
+    _compose_sheet.set_header(HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % crew_label.to_lower(),
+        sheet_title)
     # **THE KIT IS RESOLVED UP HERE AND MOUNTED BELOW** — the crew curve is asked AT this kit, and the
     # floor chart's drag re-asks it, so the id has to exist before either. See the kit row below for
     # the picker's own rules (issue #663).
@@ -5805,11 +5890,14 @@ func _deposit_yield_model(deposit: Dictionary, floor: float, crew: int,
         # deposit take is a RATE with no whole-body lump in it, and there is no `overdraws` flag on
         # the row to read instead. The take is the ASSIGNMENT's, so a crew committed this turn is
         # judged on what it will cut rather than on the zero the working still publishes.
+        # …**AND ONLY WHERE THE DIG CAN REACH BELOW THE STOCK WHERE REGROWTH PEAKS**
+        # (`HudDepositVocab.can_reach_below_peak`, at the dial this sheet is composing).
         YIELD_MODEL_OVERDRAW: HudDepositVocab.renews(deposit)
             and HudDepositVocab.stated_take(deposit,
                 _standing_assignment_extract(HudDepositVocab.tile_of(deposit).x,
                     HudDepositVocab.tile_of(deposit).y, material))
-                > HudDepositVocab.sustainable_take_of(deposit),
+                > HudDepositVocab.sustainable_take_of(deposit)
+            and HudDepositVocab.can_reach_below_peak(deposit, floor),
     }
 
 ## **THE DEPOSIT'S YIELDS, AND ON A FAR WORKING BOTH OF ITS FIGURES.** `_with_home_rate` puts the

@@ -406,7 +406,7 @@ const DETAIL_NEEDS_NOT_BEGUN := "Your people have not started on this."
 ## (`RungGates.RUNG_KNOWLEDGE_TRACKS`), but nothing that says which step TEACHES it. So these five
 ## sentences are a transcription of the config, which is authoritative — `plant:wild` earns
 ## `cultivation`, `plant:tended` earns `seed_selection`, `animal:wild` earns `herding`,
-## `animal:pastoral` earns `penning`, `animal:pen` earns `foddering`. **Re-read the config, do not
+## `animal:pastoral` earns `penning`; the pen rung teaches nothing. **Re-read the config, do not
 ## re-word these, if a rung's `earns_knowledge` ever moves.**
 ##
 ## The two "leave more standing" clauses are the `learn_multiplier` (`_comment_knowledge`: practice
@@ -414,7 +414,7 @@ const DETAIL_NEEDS_NOT_BEGUN := "Your people have not started on this."
 ## nothing) — and they appear on exactly the two tracks earned by DRAWING from a source. A rung-3
 ## source is tended rather than drawn from, so the floor axis has collapsed there
 ## (`intensification::MANAGED_SOURCE_FLOOR`) and the clause would be a lie on `penning` /
-## `seed_selection` / `foddering`.
+## `seed_selection`.
 ##
 ## The voice is the unlock notes' — what your people do, in the second person — so the two lines of
 ## the detail pane read as one paragraph rather than as two data fields.
@@ -423,7 +423,6 @@ const PRACTISE_NOTES := {
 	"seed_selection": "Your people learn it by working patches they have already cultivated.",
 	"herding": "Your people learn it by hunting wild herds — leave more standing and they learn faster.",
 	"penning": "Your people learn it by keeping herds they have already tamed.",
-	"foddering": "Your people learn it by keeping a herd in a pen.",
 	# **THE ROUTE BRANCH'S TWO.** Neither carries a "leave more standing" clause: a road is not drawn
 	# from, so there is no floor axis for practice to scale with — what teaches these is the road
 	# being USED and being HELD. `route:trail` earns `roadbuilding`, `route:dirt_road` earns `paving`.
@@ -450,10 +449,10 @@ const CRAFT_UNLOCK_NOTE_FORMAT := "Things made of %s can be worked at a bench."
 
 ## ⛔ **`UNLOCKLESS_TRACKS` IS RETIRED — *step or capability* FALLS OUT OF THE CONFIG NOW.**
 ##
-## It was a declared set holding exactly `foddering`, and it had to be declared because the client
+## It was a declared set of the knowledges that gate nothing, and it had to be declared because the client
 ## could not tell a knowledge that gates nothing from one somebody forgot to wire up. The roster's
 ## `is_step` answers that from the ladder itself — *does any rung's `unlock_knowledge` name this* —
-## so `foddering` hangs off the end of the Herds ladder because the config says no rung waits on
+## so a capability hangs off the end of its ladder because the config says no rung waits on
 ## it, rather than because this file says so. A knowledge that stops gating a rung stops being a step
 ## with no second table to remember.
 ##

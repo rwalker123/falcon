@@ -279,6 +279,8 @@ pub fn source_has_a_meter_at_risk(
 pub struct PerTileWorks<'w> {
     pub roads: ResMut<'w, crate::routes::RoadRegistry>,
     pub tile_improvements: ResMut<'w, crate::tile_improvement::TileImprovementRegistry>,
+    /// What each faction has explored - the fog gate the keep-on-hand dig sites are picked behind.
+    pub visibility: Option<Res<'w, crate::visibility::VisibilityLedger>>,
 }
 
 /// The config handles [`advance_labor_allocation`] reads, bundled into one `SystemParam` so the
@@ -1840,32 +1842,6 @@ fn rung_build_gate(rung: &RungDef, facts: &GateFacts) -> BuildGate {
             BuildGate::OwnedByOther,
         ),
     ])
-}
-
-/// **DID THE PLAYER BID FOR HAY?** — the ungated arm of the wild-fodder credit (#433, issue #590's
-/// follow-up), and the one question that arm is entitled to ask.
-///
-/// A patch committed to a fodder-bearing plant is a patch whose owner chose to grow animal feed, so
-/// the harvest banks hay whether or not the faction has learned Foddering. A patch committed to
-/// anything else — a grain, a fruit, a fibre crop — is a bid for **that**, and the hay the tile's
-/// basket happens to contain is not something anyone asked for. Testing the rate on the **committed
-/// species** rather than on the tile is the whole distinction: a `wild_emmer` field on ground that
-/// is 31% `hay_grass` still converts at the basket average, so an `is_some()` test paid a faction
-/// with no pens and no Foddering a hay income nothing it owned could ever eat.
-///
-/// **Fails closed on both `None` arms.** An uncommitted patch is the wild basket and was never a bid
-/// at all; a committed id that does not resolve in the flora table is a config the sim cannot read,
-/// and an unreadable commitment must refuse the credit rather than open the gate.
-///
-/// It answers only *whether* the fodder component is banked. **How much** is untouched: a committed
-/// patch still converts at the share-weighted average of its own basket.
-pub(crate) fn committed_to_a_fodder_crop(
-    species: Option<&str>,
-    flora: &crate::flora_config::FloraConfig,
-) -> bool {
-    species
-        .and_then(|key| flora.species.get(key))
-        .is_some_and(|def| def.yield_.bears_fodder())
 }
 
 /// **THE HERD'S ROOM TERM OF A BUILD'S GATE — AND WHO EMPTIED IT.** [`BuildGate::Open`] when the
@@ -3685,7 +3661,7 @@ pub fn bill_and_stock_roads(
     ladder: Res<LadderConfigHandle>,
     tile_registry: Res<TileRegistry>,
     tiles: Query<&Tile>,
-    mut bands: Query<(&mut PopulationCohort, &BandId), With<BandId>>,
+    mut bands: Query<(&mut PopulationCohort, &BandId, Option<&mut LaborAllocation>), With<BandId>>,
 ) {
     let ladder = ladder.get();
 
@@ -3705,9 +3681,24 @@ pub fn bill_and_stock_roads(
     }
 
     // ## (b) The STONE, out of each keeper's own stores.
-    for (mut cohort, band) in bands.iter_mut() {
+    for (mut cohort, band, mut allocation) in bands.iter_mut() {
         let (kept, claims) =
             route_keeping_claims(&registry, Some(*band), &tile_registry, &tiles, &ladder);
+        // **THE ROAD SEAM OF THE BAND'S MATERIAL DRAW** (`LaborAllocation::material_draw`): the stone
+        // its roads are billed this turn, restated for every band (a band that keeps none reads empty).
+        if let Some(allocation) = allocation.as_deref_mut() {
+            allocation.last_road_material_bill.clear();
+            for claim in &claims {
+                if let Some(road) = registry.road(kept[claim.index]) {
+                    for (material, amount) in &road.upkeep_materials_demanded {
+                        *allocation
+                            .last_road_material_bill
+                            .entry(material.clone())
+                            .or_insert(NOTHING_DEMANDED) += amount;
+                    }
+                }
+            }
+        }
         if claims.is_empty() {
             continue;
         }
@@ -3849,7 +3840,7 @@ pub fn bill_and_stock_roads(
 ///
 /// **The demand is summed before the head-count gate**, so a band with nobody on the role publishes
 /// the bill it is failing to pay rather than a zero. That is the alarm, and it is the same reason
-/// the hay need is ungated by Foddering.
+/// the hay need is struck whether or not the store can cover it.
 ///
 /// **Both are cleared ahead of every exit**, the [`advance_labor_allocation`] rule: a band that
 /// abandons its last road must stop republishing last turn's bill. It is also why the call site sits
@@ -4039,8 +4030,7 @@ struct PenFeedShare {
     /// The share of this pen's grass demand its footprint already covers
     /// (`Herd::pen_pasture_fraction`).
     pasture_fraction: f32,
-    /// Grass units off the band's `FODDER` store — `0.0` without Foddering, which is what keeps a
-    /// pen byte-identical to the pre-hay pasture-only one.
+    /// Grass units off the band's `FODDER` store — `0.0` when the store is empty.
     fodder_share: f32,
     /// **The whole fed fraction** — `(footprint_intake + fodder_share) / demand_grass`, clamped
     /// `[0, 1]`, and [`FULLY_SERVED`] when nothing was demanded (a pen with no biomass is not
@@ -4052,12 +4042,10 @@ struct PenFeedShare {
     /// differenced against the draw for `Herd::pen_fodder_shortfall`. Those are its only readers —
     /// the gap itself is not published (`penHayNeed` is retired).
     ///
-    /// ⛔ **It is the bid BEFORE the Foddering gate**, unlike [`Self::fodder_share`] beside it. A
-    /// band that cannot draw hay at all still keeps a herd that is short exactly this much, and a
-    /// need zeroed because the remedy is knowledge would hide the very case the readout is for.
+    /// It is the bid, unlike [`Self::fodder_share`] beside it, which is what a short store could
+    /// pay: a band with no hay still keeps a herd that is short exactly this much.
     hay_need: f32,
-    /// **The hay this pen ASKED THE STORE FOR** — [`Self::hay_need`] *after* the Foddering gate and
-    /// *before* the split, so it is what the pen would draw every turn if the store could cover it.
+    /// **The hay this pen ASKED THE STORE FOR** — the same gap, *before* the split, so it is what the pen would draw every turn if the store could cover it.
     /// Summed into the band's `LaborAllocation::last_fodder_drain`, which is the rate the published
     /// fodder runway counts down.
     ///
@@ -5035,47 +5023,83 @@ fn bring_the_party_home(
     }
 }
 
-/// **THE HAY SPLIT, STRUCK ONCE FOR EVERY PEN THIS BAND KEEPS** — the fix for the positional
-/// allocation described on [`settle_scarce_store`], and the one place the corral arm's pasture-and-hay
+/// **APPLY ONE HERD'S SETTLED HAY SHARE** — the stamping a pen and a tamed herd both owe, so the two
+/// kinds cannot differ in what they publish. Stamps `pen_pasture_fraction`, spends the settled hay
+/// off the store into `fodder_draw`, stamps `pen_fodder_shortfall`, and adds the herd's gap and ask
+/// to the band's own hay ledger (`band_fodder_need` / `band_fodder_drain`).
+///
+/// **A herd with no settled share is one the settlement did not see**, which is only possible if the
+/// arm and [`settle_pen_hay`] disagree about which rows are in reach — so it feeds on nothing rather
+/// than silently inventing a draw the split never accounted for.
+fn spend_herd_hay_share(
+    herd: &mut Herd,
+    share: Option<PenFeedShare>,
+    stores: &mut LocalStore,
+    band_fodder_need: &mut f32,
+    band_fodder_drain: &mut f32,
+) {
+    herd.pen_pasture_fraction = share.map_or(NOTHING_DEMANDED, |share| share.pasture_fraction);
+    // The share is bounded by what the store held when it was struck and nothing takes `FODDER`
+    // between then and here, so this take pays in full; `LocalStore::take` still reports what it
+    // actually took, which is the number the herd is stamped with.
+    let fodder_draw = share.map_or(NOTHING_DEMANDED, |share| {
+        stores
+            .take(FODDER, scalar_from_f32(share.fodder_share))
+            .to_f32()
+    });
+    herd.fodder_draw = fodder_draw;
+    // What the footprint's grass leaves uncovered, in fodder units per turn.
+    let hay_need = share.map_or(NOTHING_DEMANDED, |share| share.hay_need);
+    *band_fodder_need += hay_need;
+    // What the herd asked the store for — the rate the published runway counts down.
+    *band_fodder_drain += share.map_or(NOTHING_DEMANDED, |share| share.fodder_demand);
+    // **HOW MUCH MORE FODDER THIS HERD NEEDS** — the need less the draw, published as
+    // `penFodderShortfall`. Clamped: the take is quantised through `Scalar`, which can round a
+    // fully-served herd's draw a fraction above the need it was settled from.
+    herd.pen_fodder_shortfall = (hay_need - fodder_draw).max(NOTHING_DEMANDED);
+}
+
+/// **THE HAY SPLIT, STRUCK ONCE FOR EVERY PEN AND TAMED HERD THIS BAND KEEPS** — the fix for the
+/// positional allocation described on [`settle_scarce_store`], and the one place the pasture-and-hay
 /// arithmetic lives. Served by [`settle_scarce_store`], so within one priority tier a short `FODDER`
-/// store splits in proportion to demand and no pen's place in `assignments` decides anything.
+/// store splits in proportion to demand and no herd's place in `assignments` decides anything.
 ///
-/// **The arithmetic is the corral arm's own, lifted rather than re-derived.** The Foddering gate is
-/// applied here, once for the faction, and a band that has not learned it settles a `0.0` hay share
-/// — so every term below collapses to the pasture-only pen exactly as it did before hay existed.
+/// **A pen and a tamed herd bid under ONE rule** ([`fauna::herd_eats_hay`]): the demand is
+/// `fodder_per_biomass × biomass`, the footprint's grass (`Herd::footprint_intake`) covers what it
+/// can, and hay off the store covers the gap. Both kinds rank in the same priority tiers. A wild herd
+/// never bids. There is no knowledge gate: hay is eaten from the first turn there is any.
 ///
-/// **It settles only the rows the corral arm will actually reach**: the herd must exist and must be
-/// inside the hunt leash, the two gates the arm itself applies before its tend branch. A pen the arm
-/// lapses would otherwise hold a reservation nothing ever draws, starving a pen that is in reach.
+/// **It settles only the rows the arm will actually reach**: the herd must exist and must be
+/// inside the hunt leash, the two gates the arm itself applies before its tend branch. A herd the arm
+/// lapses would otherwise hold a reservation nothing ever draws, starving one that is in reach.
 ///
 /// # ⛔ `FODDER` IS A STOCK, AND THAT IS THE MODEL
 ///
-/// It is settled here, against the store standing at the **top of the pass** — so a pen eats the hay
+/// It is settled here, against the store standing at the **top of the pass** — so a herd eats the hay
 /// its band harvested on a *previous* turn. That is the store's own nature (the buffer the
 /// overwintering carry rides), and the alternative is the defect this settlement exists to kill:
-/// same-turn hay was reachable only by a pen whose row happened to sit after the hay Field's in
+/// same-turn hay was reachable only by a herd whose row happened to sit after the hay Field's in
 /// `assignments`.
 ///
 /// **There is no second store to settle.** A pen used to bid on the keeper's `FOOD` larder for
 /// whatever pasture and hay left unpaid, which had to wait until after the loop because provisions
 /// are credited *inside* it. Human food is not animal feed, so that bid is gone and with it the whole
-/// second pass: what grass and hay do not cover is a **shortfall**, and a shortfall starves the herd.
-#[allow(clippy::too_many_arguments)] // the store, the config, the reach, and the knowledge gate
+/// second pass: what grass and hay do not cover is a **shortfall**.
 fn settle_pen_hay(
     assignments: &[LaborAssignment],
     registry: &HerdRegistry,
     stores: &LocalStore,
-    foddering_known: bool,
+    faction: FactionId,
     reach: BandReach,
 ) -> HashMap<String, PenFeedShare> {
-    /// One pen's bid: its id, the player's rank on the row, its grass demand, the share of that
+    /// One herd's bid: its id, the player's rank on the row, its grass demand, the share of that
     /// demand the footprint covers, and the hay it is asking the `FODDER` store for.
     struct PenBid<'a> {
         fauna_id: &'a str,
         priority: SourcePriority,
         demand_grass: f32,
         pasture_fraction: f32,
-        /// What the footprint leaves uncovered, **ungated** — the readout's `hay_need`.
+        /// What the footprint leaves uncovered — the readout's `hay_need`, and the hay bid.
         grass_shortfall: f32,
         fodder_demand: f32,
     }
@@ -5089,7 +5113,7 @@ fn settle_pen_hay(
         let Some(herd) = registry.find(fauna_id) else {
             continue;
         };
-        if !herd.is_corralled() {
+        if !fauna::herd_eats_hay(herd, faction) {
             continue;
         }
         // **The gate the corral arm itself applies** — see [`BandReach`].
@@ -5105,12 +5129,8 @@ fn settle_pen_hay(
             0.0
         };
         let grass_shortfall = (demand_grass - herd.footprint_intake).max(0.0);
-        // **THE FODDERING GATE, ASKED ONCE.** No Foddering, no hay bid at all.
-        let fodder_demand = if foddering_known {
-            grass_shortfall
-        } else {
-            NOTHING_DEMANDED
-        };
+        // **The hay bid is the gap the footprint leaves** — nothing gates it.
+        let fodder_demand = grass_shortfall;
         pens.push(PenBid {
             fauna_id: fauna_id.as_str(),
             priority: assignment.priority,
@@ -5935,6 +5955,7 @@ pub fn advance_labor_allocation(
     let PerTileWorks {
         mut roads,
         mut tile_improvements,
+        visibility,
     } = per_tile;
     // # ⛔ THIS PASS MAY RUN ONCE PER LOGISTICS CLEAR, AND A SECOND RUN OVERSTATES THE KEEPING
     //
@@ -6440,6 +6461,64 @@ pub fn advance_labor_allocation(
                 drives_known,
                 start: fauna::ProjectionStart::AfterRegrowth,
             };
+            // **THE KEEP-ON-HAND DIG ROWS ARE PLACED BEFORE STAFFING** (#874): the sim owns the one
+            // row per mined material, on the site the game picks.
+            {
+                let camp = band_pos.map(|position| crate::staffing::CampSite {
+                    position,
+                    grid_width,
+                    wrap_horizontal,
+                });
+                let candidates = |material: &str| {
+                    crate::keep_on_hand::discovered_deposit_tiles(
+                        &extraction_cfg,
+                        material,
+                        faction,
+                        visibility.as_deref(),
+                        sim_config.fog_enabled,
+                        tiles.iter(),
+                    )
+                };
+                let has_leader = band_leadership
+                    .as_deref()
+                    .is_some_and(|leadership| leadership.leader.is_some());
+                let site_inputs = crate::keep_on_hand::DigSiteInputs {
+                    sources: &staff_sources,
+                    band_kit: &band_kit,
+                    camp: camp.as_ref(),
+                };
+                crate::keep_on_hand::manage_dig_rows(
+                    &mut allocation,
+                    &site_inputs,
+                    has_leader,
+                    &candidates,
+                    &|material: &str| cohort.stores.material_total(material).to_f32(),
+                );
+                let fog = sim_config.fog_enabled;
+                crate::food_orders::manage_food_orders(
+                    &mut allocation,
+                    &crate::food_orders::FoodInputs {
+                        site: &site_inputs,
+                        tile_known: &|tile: UVec2| {
+                            !fog || visibility
+                                .as_deref()
+                                .is_some_and(|ledger| ledger.is_discovered(faction, tile.x, tile.y))
+                        },
+                        herd_known: &|herd: &crate::fauna::Herd| {
+                            let at = herd.position();
+                            !fog || visibility
+                                .as_deref()
+                                .is_some_and(|ledger| ledger.is_visible(faction, at.x, at.y))
+                        },
+                        readings: crate::food_orders::OrderReadings {
+                            food_stock: cohort.stores.get(crate::components::FOOD).to_f32(),
+                            food_need: cohort.last_food_need,
+                            fodder_stock: cohort.stores.get(crate::components::FODDER).to_f32(),
+                        },
+                    },
+                    has_leader,
+                );
+            }
             let progress_context = BuildProgressContext {
                 sources: &staff_sources,
                 roads: &roads,
@@ -6457,10 +6536,12 @@ pub fn advance_labor_allocation(
             let can_progress = |declaration: &BuildDeclaration| {
                 declared_build_can_progress(&progress_context, &allocation, declaration)
             };
+            let on_hand = |material: &str| cohort.stores.material_total(material).to_f32();
             let staffing_world = crate::staffing::StaffingWorld {
                 sources: &staff_sources,
                 tile_improvements: &tile_improvements,
                 roads: &roads,
+                on_hand: &on_hand,
                 band: band_id,
                 camp: band_pos.map(|position| crate::staffing::CampSite {
                     position,
@@ -6584,6 +6665,7 @@ pub fn advance_labor_allocation(
         // ahead of the shed's `continue`s, so a band that loses its last worker stops republishing
         // last turn's need for holdings it no longer keeps.
         allocation.last_material_need.clear();
+        allocation.last_build_material_draw.clear();
         allocation.last_material_income.clear();
         allocation.last_fodder_drain = NO_FODDER_LEDGER;
         // **THE POOLS' TOOLS RIDE THE SAME CYCLE AND THE SAME EARLY-EXIT RULE** — cleared ahead of
@@ -6900,15 +6982,14 @@ pub fn advance_labor_allocation(
         // arithmetic**, which is the rule the retired `pen_feed_upkeep` was minted under.
         let mut band_fodder_need = 0.0_f32;
         // **The hay this band's pens will actually DRAW, summed** (in fodder units per turn) — the
-        // need above *after* the Foddering gate, so a band that has not learned to hay a herd draws
-        // nothing however short its pens are. It is the rate the published fodder runway counts down
+        // need above, as asked of the store. It is the rate the published fodder runway counts down
         // (`turnsOfFodder`), which is why it is a second accumulator and not the need: the need is
         // the alarm and this is the drain, and only one of them empties the store.
         let mut band_fodder_drain = 0.0_f32;
         // The fauna ids of the pens this band tends this turn — the keepers whose `K_pen` gets the
         // fodder term. Collected in the loop; the rate is stamped on them post-loop (the take arm
         // already borrows the herd mutably, so a second pass keeps the borrows simple).
-        let mut kept_pens: Vec<String> = Vec::new();
+        let mut kept_herds: Vec<String> = Vec::new();
         // **EVERY PEN'S HAY, SETTLED BEFORE A SINGLE ROW IS VISITED** (`docs/plan_standing_upkeep.md`
         // §4.9 item 9b). The corral arm used to draw hay and then bread off the band's stores *inside*
         // the loop below, so a store that could not cover every pen fed the earliest row in
@@ -6959,6 +7040,16 @@ pub fn advance_labor_allocation(
                 (draw, plan.priority)
             })
             .collect();
+        // **THE THIRD SEAM OF THE BAND'S MATERIAL DRAW** (`LaborAllocation::material_draw`): what its
+        // funded builds draw this turn, read by next turn's staffing.
+        for (draw, _) in &build_wants {
+            for (material, amount) in &draw.wanted {
+                *allocation
+                    .last_build_material_draw
+                    .entry(material.clone())
+                    .or_insert(NOTHING_DEMANDED) += amount;
+            }
+        }
         let material_settlement = settle_material_upkeep(
             &allocation.assignments,
             &forage_registry,
@@ -6999,12 +7090,7 @@ pub fn advance_labor_allocation(
             &allocation.assignments,
             &registry,
             &cohort.stores,
-            knows(
-                &discovery,
-                faction,
-                FODDERING_DISCOVERY_ID,
-                knowledge_threshold,
-            ),
+            faction,
             band_reach,
         );
         // **ONE BAND, ONE SET OF GEAR** — the per-item unit budget every row below cuts its crews
@@ -8004,29 +8090,17 @@ pub fn advance_labor_allocation(
                         food_keeping,
                     ));
                     // ⛔ **A FAR ROW'S FODDER AND MATERIALS WALK HOME WITH ITS FOOD** (#706). The
-                    // gate on the fodder is the credit's own (see the fodder account below), read
-                    // here because a far take packs the fodder instead of crediting it.
-                    let fodder_permitted =
-                        committed_to_a_fodder_crop(patch.species.as_deref(), &flora)
-                            || knows(
-                                &discovery,
-                                faction,
-                                FODDERING_DISCOVERY_ID,
-                                knowledge_threshold,
-                            );
-                    let fodder_cut = if fodder_permitted {
-                        tended_take_fodder(
-                            take,
-                            patch,
-                            &tile_composition,
-                            &flora,
-                            &labor.forage,
-                            mult_f,
-                            take_species,
-                        )
-                    } else {
-                        crate::work_party::NOTHING_CARRIED
-                    };
+                    // fodder is credited on every harvest that yields it (see the fodder account
+                    // below), so a far take packs it instead of crediting it.
+                    let fodder_cut = tended_take_fodder(
+                        take,
+                        patch,
+                        &tile_composition,
+                        &flora,
+                        &labor.forage,
+                        mult_f,
+                        take_species,
+                    );
                     let far_posting = postings.contains_key(&idx);
                     let goods_cut = if far_posting {
                         packed_goods(
@@ -8097,7 +8171,6 @@ pub fn advance_labor_allocation(
                             keep_hands,
                             realized_horizon,
                             food_keeping,
-                            fodder_permitted,
                         ));
                     }
                     let spoiled = land_food_home(
@@ -8119,35 +8192,12 @@ pub fn advance_labor_allocation(
                     // since `docs/plan_standing_upkeep.md` §4.10; **every** plant rung is drawn down
                     // and worker-capped through this one path.)
                     //
-                    // **The credit is gated on Foddering** (#433) — the same 2007 capability the
-                    // pen's own hay draw reads. Since every rate is now the basket's average, a tile
-                    // that happens to realize `hay_grass` pays hay on any harvest; banking it for a
-                    // faction that has not learned to hay a herd would hand out animal feed nobody
-                    // bid for.
-                    //
-                    // ⛔ **THE OTHER ARM IS A COMMITMENT TO A FODDER-BEARING SPECIES, NOT A
-                    // COMMITMENT TO ANYTHING.** A crop the player chose to grow *for hay* is a bid
-                    // for hay, and needs no capability to be honoured — but committing to
-                    // `wild_emmer` is a bid for **grain**, and a grain field standing on ground that
-                    // is 31% `hay_grass` still converts at the basket average, so an
-                    // `is_some()` test paid animal feed to a faction with no pens, no Foddering and
-                    // nothing that could ever eat it. That is verbatim the failure the gate exists to
-                    // prevent, so the predicate asks what was actually bid for.
-                    //
-                    // **It is the COMMITMENT, not the rung**, so the gate lifts on the first turn of
-                    // a Cultivate/Sow build on a fodder crop, while the patch still stands at rung 1
-                    // and still converts at the wild basket's rate: the bid is placed when the crew
-                    // starts, not when the meter fills. (Reading this as "rungs 2 and 3 are ungated"
-                    // is narrower than the code and mis-states which turn the credit begins.)
-                    //
-                    // **It FAILS CLOSED**: a `patch.species` that does not resolve in the flora table
-                    // is not fodder-bearing, so an unknown id refuses the credit rather than opening
-                    // the gate. And the gate lives here, at the credit site, so the rate seam in
-                    // `forage.rs` stays free of knowledge lookups.
-                    //
-                    // **What it does NOT touch is the conversion.** A committed patch still converts
-                    // at the share-weighted average of its own basket (#433); this decides only
-                    // whether the fodder component is banked at all, never how much of it there is.
+                    // **The credit is UNGATED.** Every harvest of a basket that names a fodder
+                    // crop banks that fodder from the first turn — wild, gathered, tended or a
+                    // Field — and the rate is the share-weighted average of the patch's own basket,
+                    // so a basket with no fodder crop in it banks `0` by arithmetic, with no `role`
+                    // branch. There is no Foddering knowledge: hay is eaten by every pen and every
+                    // tamed herd from the beginning, so banking it needs no capability.
                     //
                     // **A FAR ROW CREDITS WHAT ITS PACKS LANDED, not what it cut** (#706): the cut
                     // rode the load, and `land_delivered_goods` already put the landed fodder in the
@@ -8471,13 +8521,9 @@ pub fn advance_labor_allocation(
                         meat: provisions.to_f32(),
                         standing: NO_STANDING_YIELD_HERE,
                         // **The credited value, not a recomputation** (issue #449) — the very
-                        // `fodder` scalar added to the `FODDER` store above, **including the
-                        // `fodder_permitted` gate**: a faction that has not learned Foddering was
-                        // credited nothing unless the patch is committed to a fodder-bearing species,
-                        // so the row must read `0.0` on a grain field for exactly the turns nobody
-                        // was paid. Re-deriving `tended_take_fodder` here would publish a number
-                        // nobody was ever paid, which is precisely what this readout exists not to
-                        // do.
+                        // `fodder` scalar added to the `FODDER` store above. Re-deriving
+                        // `tended_take_fodder` here would publish a number nobody was ever paid,
+                        // which is precisely what this readout exists not to do.
                         fodder: fodder.to_f32(),
                         // **The credited materials, not a recomputation** — exactly what
                         // `credit_material_yield` deposited (the discipline `fodder` above carries).
@@ -8694,7 +8740,7 @@ pub fn advance_labor_allocation(
                     // `eligible` differently (a pen is *tended*, a wild herd must have stock standing
                     // above the crew's floor). It used to be one call here, which was behaviour-
                     // neutral only while the gate read `ecology_phase`, a value no take moves. Both branches call `credit_rung_lesson`, so every rung still reaches the
-                    // earn path — including the pen, whose `earns_knowledge` is Foddering.
+                    // earn path — including the pen, whose `earns_knowledge` is null.
                     //
                     // The two webs cannot cross-teach (§4.2) for free: a herd resolves to an `animal`
                     // rung, so only an animal knowledge is reachable from here.
@@ -8718,11 +8764,29 @@ pub fn advance_labor_allocation(
                     //
                     // Marks the herd tended so it doesn't escape in `advance_husbandry`. The animal
                     // mirror of the tended-patch arm in Forage.
+                    // **A TAMED HERD EATS HAY UNDER THE PEN'S OWN RULE.** A pastoral herd the band
+                    // keeps grazes its range (`Herd::footprint_intake`, drawn by
+                    // `advance_herd_grazing`) and draws hay off the `FODDER` store for the gap,
+                    // settled with the pens in one [`settle_pen_hay`] pass. The hay enters its `K`
+                    // through the same `fodder_delivery_rate` flow. It is never starved here: it
+                    // roams, so what grass and hay leave short is a smaller `K`, not a shrinking
+                    // herd, and `pen_fed_fraction` stays at its fully-fed reading.
+                    if !herd.is_corralled() && fauna::herd_eats_hay(herd, faction) {
+                        let share = pen_feed.get(fauna_id).copied();
+                        spend_herd_hay_share(
+                            herd,
+                            share,
+                            &mut cohort.stores,
+                            &mut band_fodder_need,
+                            &mut band_fodder_drain,
+                        );
+                        kept_herds.push(fauna_id.clone());
+                    }
                     if herd.is_corralled() {
                         herd.corralled_tended_this_turn = true;
                         // **THE FEED IS ALREADY SETTLED** (`docs/plan_standing_upkeep.md` §4.9 item
                         // 9b). Both terms below — the pasture offset (Grazing 2d §2.3) and the hay
-                        // draw with its Foddering gate (Flora Roster F3 §5.2) — are struck by
+                        // draw (Flora Roster F3 §5.2) — are struck by
                         // [`settle_pen_hay`] across **every** pen this band keeps, before the loop.
                         // What is left here is applying this pen's share: the arm stamps the herd and
                         // spends the settled hay, and takes no allocation decision of its own.
@@ -8742,65 +8806,23 @@ pub fn advance_labor_allocation(
                         // rows are pens in reach — so it feeds on nothing (and reads starving) rather
                         // than silently inventing a draw the split never accounted for.
                         let share = pen_feed.get(fauna_id).copied();
-                        herd.pen_pasture_fraction =
-                            share.map_or(NOTHING_DEMANDED, |share| share.pasture_fraction);
-                        // The settled hay, spent. The share is bounded by what the store held when it
-                        // was struck and nothing takes `FODDER` between then and here, so this take
-                        // pays in full; `LocalStore::take` still reports what it actually took, which
-                        // is the number the herd is stamped with.
-                        let fodder_draw = share.map_or(NOTHING_DEMANDED, |share| {
-                            cohort
-                                .stores
-                                .take(FODDER, scalar_from_f32(share.fodder_share))
-                                .to_f32()
-                        });
-                        herd.fodder_draw = fodder_draw;
-                        // **WHAT THIS PEN STILL HAS TO BE GROWN FOR**, in fodder units per turn —
-                        // the gap the footprint's own grass leaves. It is summed into this band's own
-                        // `last_fodder_need` below and differenced against the draw just above, and
-                        // those are its only two readers: it rode the wire as `penHayNeed` until
-                        // nothing turned out to read it (`Herd::pen_hay_need`), because what a pen row
-                        // states is how much MORE it needs.
-                        //
-                        // **Ungated, unlike the draw above.** A band that has not learned Foddering
-                        // settles a `0.0` hay *share* and still keeps a herd short by exactly this
-                        // much, so the need states the herd's condition and the draw states what was
-                        // done about it.
-                        let hay_need = share.map_or(NOTHING_DEMANDED, |share| share.hay_need);
-                        band_fodder_need += hay_need;
-                        // **AND WHAT IT WILL ACTUALLY ASK THE STORE FOR** — the same gap behind the
-                        // Foddering gate the draw above is behind, summed into the band's drain so
-                        // the runway counts down the hay that really leaves the store.
-                        band_fodder_drain +=
-                            share.map_or(NOTHING_DEMANDED, |share| share.fodder_demand);
-                        // **HOW MUCH MORE FODDER THIS PEN NEEDS** — the need above less the draw
-                        // above it, published as `penFodderShortfall`. It is the number the player
-                        // acts on: the row reads "40% pasture · 7% fodder · needs 11.3 more/turn"
-                        // instead of asking a reader to subtract two figures sitting on one line.
-                        //
-                        // **Stamped here, between its own two terms**, so the difference cannot
-                        // describe a different turn from the numbers it is a difference of.
-                        //
-                        // **Ungated, like the need and unlike the draw.** A band without Foddering
-                        // draws nothing, so its shortfall is its whole need — the herd is dying and
-                        // the remedy is knowledge, which is the case this readout is most for.
-                        //
-                        // **Clamped**, though [`settle_pen_hay`] never settles a pen more hay than
-                        // its own gap: the take is quantised through `Scalar`, which can round a
-                        // fully-served pen's draw a fraction of a unit above the need it was
-                        // settled from. A negative shortfall is not a reading, so it floors.
-                        herd.pen_fodder_shortfall = (hay_need - fodder_draw).max(NOTHING_DEMANDED);
+                        spend_herd_hay_share(
+                            herd,
+                            share,
+                            &mut cohort.stores,
+                            &mut band_fodder_need,
+                            &mut band_fodder_drain,
+                        );
                         // **THE FED FRACTION, IN ONE UNIT** — `(footprint_intake + hay) ÷ demand`, all
-                        // fodder. It used to add this land-and-hay share to the paid share of a
-                        // *food*-unit larder bill, and mixing the two units is precisely how the
-                        // people's bread came to be counted as feed. Read a stage later and a turn
-                        // later (`advance_husbandry`'s `starve_underfed_pen` / `regrow_biomass`, both
-                        // in Logistics, which precedes Population), so nothing in this loop depends on
-                        // when in the pass it is stamped.
+                        // fodder. A pen is confined, so what grass and hay leave uncovered starves it
+                        // (read a stage and a turn later by `advance_husbandry`'s
+                        // `starve_underfed_pen` / `regrow_biomass`, both in Logistics, which precedes
+                        // Population). A tamed herd's `pen_fed_fraction` is never written: it roams,
+                        // and its shortfall shows as a lower `K`.
                         herd.pen_fed_fraction =
                             share.map_or(NOTHING_DEMANDED, |share| share.fed_fraction);
                         // This band keeps this pen — its `K_pen` gets the fodder-flow term next turn.
-                        kept_pens.push(fauna_id.clone());
+                        kept_herds.push(fauna_id.clone());
                         // Shared with the pre-commit forecast (`fauna::hunt_forecast`) so the
                         // client's "expected yield" for a corralled herd is exactly what it is paid.
                         // **THE ORDINARY ESCAPEMENT CEILING, AT THIS ASSIGNMENT'S OWN FLOOR** — the
@@ -9057,8 +9079,7 @@ pub fn advance_labor_allocation(
                             &herd_class,
                         );
                         cohort.last_food_spoiled += spoiled;
-                        // **THE earn path, rung 3** — *you learn to hay a herd by keeping one*
-                        // (`animal:pen` earns Foddering). Kept on the **managed** credit even though
+                        // **THE earn path, rung 3** —                         // (the plain pen teaches nothing; the Ranch tier teaches Selective breeding). Kept on the **managed** credit even though
                         // the take is drawn down now: the work rung 3 teaches is the *tending*, which
                         // a keeper does whether or not this turn's escapement room cleared a whole
                         // body — see [`credit_managed_rung_lesson`]. Pacing a keeper's learning off
@@ -9072,7 +9093,7 @@ pub fn advance_labor_allocation(
                             &mut discovery,
                         );
                         // **AND THE SIZE TIER'S OWN LESSON** - keeping a Ranch-sized pen teaches
-                        // Selective breeding beside Foddering ("a Ranch earns both"). A tier is a
+                        // Selective breeding - the only knowledge a pen teaches. A tier is a
                         // derived standing of the footprint, so this reads it fresh; a small pen
                         // is in no tier and teaches only what its rung does.
                         if let Some(tier) = crate::fauna::herd_size_tier(herd, &ladder) {
@@ -11165,11 +11186,8 @@ pub fn advance_labor_allocation(
         // that the whole band's hay harvest (`band_fodder_inflow`) is summed. Split evenly across the
         // band's pens so the *total* K contribution reflects the *total* hay grown, not N copies of
         // it. Read next turn by `ecological_carrying_capacity` (the one-turn Logistics-reads-Population
-        // lag). **Gated on Foddering** exactly as the feed draw is: a faction that grew hay but has not
-        // learned to hay a herd delivers nothing to the pen's ceiling, so `K_pen` stays byte-identical
-        // to its footprint-only self — the fodder term is all-or-nothing with the capability, never a
-        // free K boost from unusable hay. Always written (0 when un-foddered), so a pen a band stops
-        // keeping does not carry a stale rate.
+        // lag). Ungated: any hay the band's Fields grew enters the ceiling of every pen and tamed
+        // herd it keeps, and a herd the band stops keeping is not re-stamped.
         // **THE BAND'S OWN HAY LEDGER, stamped once the loop has seen every row** — the need its pens
         // carry and the hay they will draw against it (both summed above), against the hay its Fields
         // grew this turn. All three are per-turn **rates** in fodder units.
@@ -11179,9 +11197,7 @@ pub fn advance_labor_allocation(
         // sheds every row, leaves through the empty-assignments `continue`, and would otherwise
         // republish last turn's figures forever for pens it no longer keeps.
         //
-        // **The inflow is the RAW harvest, not the Foddering-gated share below.** What the pens may
-        // *draw* is a capability question; what the Fields *grew* is not, and a band watching its hay
-        // arrive is entitled to see it before it has learned what to do with it.
+        // **The inflow is the RAW harvest** — what the Fields grew this turn.
         allocation.last_fodder_need = band_fodder_need;
         allocation.last_fodder_inflow = band_fodder_inflow;
         // **THE STANDING MATERIAL BILL, SUMMED BY THE SIM** (`docs/plan_standing_upkeep.md` §2.7) —
@@ -11247,20 +11263,11 @@ pub fn advance_labor_allocation(
             &cohort.stores,
             &band_material_income,
         );
-        if !kept_pens.is_empty() {
-            let per_pen = if knows(
-                &discovery,
-                faction,
-                FODDERING_DISCOVERY_ID,
-                knowledge_threshold,
-            ) {
-                band_fodder_inflow / kept_pens.len() as f32
-            } else {
-                0.0
-            };
-            for fauna_id in &kept_pens {
+        if !kept_herds.is_empty() {
+            let per_herd = band_fodder_inflow / kept_herds.len() as f32;
+            for fauna_id in &kept_herds {
                 if let Some(herd) = registry.herds.iter_mut().find(|herd| &herd.id == fauna_id) {
-                    herd.fodder_delivery_rate = per_pen;
+                    herd.fodder_delivery_rate = per_herd;
                 }
             }
         }

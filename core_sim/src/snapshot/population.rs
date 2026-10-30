@@ -1381,6 +1381,9 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// [`crate::systems::CulturePressureLedger`]. Empty for a detached party and for a world no
     /// turn has judged.
     pub(crate) culture_pressures: Vec<sim_schema::CulturePressureState>,
+    /// **This band's orders** (#860) - see [`band_order_rows`]. Empty for a detached party and for a
+    /// band with no leader.
+    pub(crate) band_orders: Vec<sim_schema::BandOrderState>,
     /// **The improvements this band holds at its camp** (#708), one row per band-kind branch - see
     /// [`band_improvement_rows`]. Empty for a detached party.
     pub(crate) band_improvements: Vec<sim_schema::BandImprovementState>,
@@ -1692,6 +1695,59 @@ pub(crate) fn redacted_population_state(
     }
 }
 
+/// **A BAND'S ORDER ROWS** (#860): one per order the allocation holds, chief-owned or the player's.
+/// Draw, target, priority and owner come from the allocation; `on_hand` is the band's store total of
+/// the kind, read through `on_hand`.
+pub(crate) fn band_order_rows(
+    allocation: &LaborAllocation,
+    on_hand: &dyn Fn(&str) -> f32,
+    readings: &crate::food_orders::OrderReadings,
+) -> Vec<sim_schema::BandOrderState> {
+    allocation
+        .orders
+        .iter()
+        .map(|(kind, order)| {
+            let site = allocation.last_keep_site.get(kind).copied();
+            let by_turns = crate::keep_on_hand::is_row_kind(kind);
+            let (hold_heads, hold_wanted, refill_heads, refill_wanted) =
+                allocation.order_crew(kind);
+            sim_schema::BandOrderState {
+                hold_heads,
+                hold_wanted,
+                refill_heads,
+                refill_wanted,
+                take: allocation.order_take(kind),
+                // Food and fodder read in TURNS (`target`, `on_hand`) over a per-turn draw in units;
+                // a material reads in units throughout.
+                draw: readings.draw(kind, allocation),
+                has_consumers: kind != crate::keep_on_hand::FODDER_KIND
+                    || allocation.last_fodder_need > 0.0,
+                target: order.target,
+                priority: match order.priority {
+                    SourcePriority::High => sim_schema::state::SourcePriorityState::High,
+                    SourcePriority::Normal => sim_schema::state::SourcePriorityState::Normal,
+                    SourcePriority::Low => sim_schema::state::SourcePriorityState::Low,
+                },
+                chief_owned: order.owner == crate::components::OrderOwner::Chief,
+                on_hand: if by_turns {
+                    readings.turns(kind, allocation)
+                } else {
+                    on_hand(kind)
+                },
+                has_site: site.is_some(),
+                site_x: site.map_or(0, |tile| tile.x),
+                site_y: site.map_or(0, |tile| tile.y),
+                sustainable: allocation
+                    .keep_sustainable
+                    .get(kind)
+                    .copied()
+                    .unwrap_or(0.0),
+                kind: kind.clone(),
+            }
+        })
+        .collect()
+}
+
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
     let PopulationStateInputs {
         belief_reach,
@@ -1734,6 +1790,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         loadout_window,
         heart,
         culture_pressures,
+        band_orders,
         band_improvements,
     } = inputs;
     let homeward: &[crate::work_party::HomewardWalk] =
@@ -2288,6 +2345,13 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     // **WHICH OF ITS KIT ITEMS ARE SHORT, BY NAME** — read off the same pass as the
                     // coverage above (the mustered one while a crew goes out, the standing one
                     // otherwise), so the line and the reach beside it agree.
+                    // **WHICH ORDER LISTS THIS ROW** (#860): the order `order_rows` names for a
+                    // forage, hunt or dig row; a player-crewed row under none.
+                    row.order_kind = a
+                        .row_order(&assignment.target)
+                        .unwrap_or_default()
+                        .to_string();
+                    row.chief_owned = !row.order_kind.is_empty();
                     row.kit_toe = match &sending_pass {
                         Some(pass) => kit_toe_states(&pass.gear[i].toe),
                         None => row_gear[i].2.clone(),
@@ -2434,10 +2498,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // phrasing for one concept, so a client reads `turns_of_fodder` exactly as it reads
     // `turns_of_food` and never branches two ways on "turns of buffer left".
     //
-    // ⛔ **IT COUNTS DOWN THE DRAIN, NOT THE NEED.** `last_fodder_drain` is the need behind the
-    // Foddering gate (`settle_pen_hay` zeroes every bid without it), and the gap between the two is
-    // reachable: a band may commit a patch to a fodder crop and bank hay *before* it can feed any
-    // out, because the harvest credit lifts on the commitment while the draw waits on the knowledge.
+    // ⛔ **IT COUNTS DOWN THE DRAIN, NOT THE NEED.** `last_fodder_drain` is the hay the pens and
+    // tamed herds ask of the store, and the gap between it and the need is what an empty store leaves.
     // Counting such a band's store down against its ungated need published a runway of a few turns
     // for a store that never moved — the field says "turns until `fodderStore` empties", and nothing
     // was emptying it. The **need** is untouched and still carries the alarm.
@@ -3202,6 +3264,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .map_or(sim_schema::state::NO_HEART_CONTACT, |turn| turn as i64),
         independence_grievance_threshold: wellbeing.independence.grievance_threshold,
         culture_pressures,
+        band_orders,
         band_improvements,
         tribe_threshold: tribe.as_ref().map_or(0.0, |t| t.threshold),
         tribe_history_build_turns: tribe.as_ref().map_or(0.0, |t| t.history_build_turns),
@@ -3766,6 +3829,7 @@ mod tests {
             loadout_window: None,
             heart: None,
             culture_pressures: Vec::new(),
+            band_orders: Vec::new(),
             band_improvements: Vec::new(),
             held_preservation: crate::spoilage::HeldPreservation::none(),
             reachable_stores: crate::fixed_store::ReachableStores::none(),
