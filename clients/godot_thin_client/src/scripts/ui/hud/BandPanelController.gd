@@ -710,6 +710,14 @@ func _herd_label_for_id(herd_id: String) -> String:
 func has_panel() -> bool:
     return _panel != null
 
+## The Band panel's CARD rect, READ-ONLY, or a zero rect while the panel is absent or hidden. The rect the
+## chief's order sheet floats beside (`DrawerComposeController.open_order_sheet`): an order has no tile
+## subject, so without it the sheet fell back to the viewport's top-left corner - over a left-docked panel.
+func card_rect_if_shown() -> Rect2:
+    if _panel == null or not _panel.is_visible_in_tree():
+        return Rect2()
+    return _panel.card_rect()
+
 ## Push a registered ACTION's pip count through to the panel. A thin delegator because **the panel
 ## handle is private to this controller** — `HudLayer` holds no node — and because the pip's producer
 ## (`KnowledgePanelController.unspent_count`) is nothing this controller knows about. It is the

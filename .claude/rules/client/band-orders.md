@@ -115,6 +115,15 @@ The side dock is 440 wide (`BandCityPanel.PANEL_WIDTH`); the wrapping is what ho
   outright draws none and is not listed): fodder a turn is `fodder_draw + pen_fodder_shortfall`, and the
   range share of the split bar is `pen_pasture_fraction`. The order's `has_consumers` is "keeps a tamed or
   penned herd".
+- **Where an order sheet sits.** `open_order_sheet` anchors the shared `ComposeSheet` to the Band panel's
+  CARD rect (`BandPanelController.card_rect_if_shown`, read-only; a zero rect while the panel is hidden,
+  in which case the selection card's rect is the anchor as for every other sheet). `ComposeSheet._place_card`
+  tries RIGHT of the anchor, else LEFT of it, else (an anchor too wide for either: a top / bottom dock)
+  ABOVE or BELOW it, whichever has more room, else the viewport margin. y stays the anchor's, clamped.
+  An order has no tile subject, so the sheet used to land at the top-left margin, over a left-docked panel.
+- **Wire rows name their tile `target_x` / `target_y`**, never `x` / `y`: the source and stand lists read
+  those. (`x` / `y` belong to herd dicts and the Work-tab models, which is where the pen line and
+  `BandOrdersController` read them.)
 - **Opening a material's order from the Work tab** goes through `BandPanelController.open_site_sheet`,
   which selects the order's site tile before the sheet opens, so the title and stock line are the site's.
 - **Hunt and gather sheets**: `_build_herd_assign_controls` / `_build_forage_assign_controls` are thin

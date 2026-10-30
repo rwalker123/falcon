@@ -26,7 +26,7 @@ func _order(kind: String, target: int, priority: String, draw: float, on_hand: f
 		"refill_heads": refill[0], "refill_wanted": refill[1], "take": take}
 
 func _row(kind: String, x: int, y: int, workers: int, order_kind: String, chief: bool, extra: Dictionary = {}) -> Dictionary:
-	var row := {"kind": kind, "workers": workers, "target_x": x, "target_y": y, "x": x, "y": y,
+	var row := {"kind": kind, "workers": workers, "target_x": x, "target_y": y,
 		"order_kind": order_kind if chief else "", "chief_owned": chief, "floor": 0.5, "has_yield": true,
 		"kit_id": "", "max_workers": 0, "hold_crew": 1, "reach_crew": workers,
 		"kitted_staffed": workers / 2, "bare_staffed": workers - workers / 2, "useful_crew": workers}
@@ -348,6 +348,33 @@ func _kit_and_doors() -> void:
 	await h._settle()
 	await h._save("band_orders_work_hover")
 	_fits("band_orders_work_hover")
+	await _food_sheet_beside_panel()
+
+## The chief's Food sheet floats BESIDE the Band panel's card, whichever edge it is docked to, and its
+## FOOD SOURCES rows carry each patch's real tile (the wire's `target_x` / `target_y`), never `(-1, -1)`.
+func _food_sheet_beside_panel() -> void:
+	var band := chief_band(_all_orders())
+	h._push_bands([band])
+	h._hud._bandpanel.rerender()
+	for side in [SIDE_LEFT, SIDE_RIGHT]:
+		h._panel.set_dock(side)
+		h._hud._bandpanel.rerender()
+		await h._settle()
+		h._hud._drawercompose.open_order_sheet(int(band["entity"]), "food")
+		await h._settle()
+		await h._settle()
+		var frame := "band_orders_food_sheet_dock_%s" % ("left" if side == SIDE_LEFT else "right")
+		await h._save(frame)
+		var sheet = h._hud._drawercompose._compose_sheet
+		var sheet_rect := Rect2(sheet._card.global_position, sheet._card.size)
+		var panel_rect: Rect2 = h._panel.card_rect()
+		h._assert_band_panel("%s: the Food sheet clears the Band panel's card (%s vs %s)" % [frame, sheet_rect, panel_rect],
+			not sheet_rect.intersects(panel_rect))
+		var joined := "\n".join(PackedStringArray(_texts(sheet)))
+		h._assert_band_panel("%s: a source row names the patch's real tile" % frame,
+			joined.contains("(71, 18)") and not joined.contains("(-1, -1)"))
+		h._hud._drawercompose.close_compose_sheet()
+	h._panel.set_dock(SIDE_RIGHT)
 
 func _first_chip() -> Button:
 	for node in h._collect_meta_controls(h._panel, String(HudOrdersVocab.ORDER_PRIORITY_META)):

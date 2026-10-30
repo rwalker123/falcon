@@ -55,7 +55,7 @@ func _order(kind: String, target: int, priority: String, owned: bool, draw: floa
 
 func _row(kind: String, x: int, y: int, workers: int, order_kind: String, chief: bool,
 		extra: Dictionary = {}) -> Dictionary:
-	var row := {"kind": kind, "workers": workers, "target_x": x, "target_y": y, "x": x, "y": y,
+	var row := {"kind": kind, "workers": workers, "target_x": x, "target_y": y,
 		"order_kind": order_kind if chief else "", "chief_owned": chief, "floor": 0.5,
 		"has_yield": true, "kit_id": "", "max_workers": 0, "hold_crew": 1, "reach_crew": workers,
 		"kitted_staffed": workers / 2, "bare_staffed": workers - workers / 2, "useful_crew": workers}
@@ -297,6 +297,8 @@ func _food_sheets() -> void:
 	h._assert_hud("the Food sheet names the chief", _has_text("Orrin keeps the band fed"))
 	h._assert_hud("…states what the band eats", _has_text("eats 4.0 food a turn."))
 	h._assert_hud("…lists a hunt source", _has_text("Hunt Red Deer"))
+	h._assert_hud("…and names a patch by its real tile, not (-1, -1)",
+		_has_text("Harvest (%d, %d)" % [HARVEST_X, HARVEST_Y]) and not _has_text("(-1, -1)"))
 	h._assert_hud("…and that he works every row at Best", _has_text("works every row at Best and never overdraws."))
 	h._assert_hud("…and the by-products", _has_text("Also brings in hide +0.4 and bone +0.2 a turn."))
 	_sent.clear()

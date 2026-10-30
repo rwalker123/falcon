@@ -313,7 +313,7 @@ static func build_material_chief(target: VBoxContainer, ctx: Dictionary, order: 
         for row in rows:
             var line := HBoxContainer.new()
             line.add_theme_constant_override("separation", HudOrdersVocab.SRC_ROW_SEPARATION)
-            var row_tile := Vector2i(int(row.get("x", -1)), int(row.get("y", -1)))
+            var row_tile := Vector2i(int(row.get("target_x", -1)), int(row.get("target_y", -1)))
             var here := row_tile == tile
             var name_text := HudOrdersVocab.SITE_NAME_FORMAT % [material.capitalize(), row_tile.x, row_tile.y]
             if here:
@@ -397,7 +397,7 @@ static func order_sources(band: Dictionary, kind: String) -> Array:
 static func source_name(row: Dictionary, herd_label: Callable) -> String:
     if String(row.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT:
         return HudWorkVocab.WORK_ROW_HUNT_FORMAT % String(herd_label.call(String(row.get("herd_id", ""))))
-    return HudOrdersVocab.ROW_HARVEST_FORMAT % [int(row.get("x", -1)), int(row.get("y", -1))]
+    return HudOrdersVocab.ROW_HARVEST_FORMAT % [int(row.get("target_x", -1)), int(row.get("target_y", -1))]
 
 ## The Food / Fodder sheet body (boards 5 and 6). `pens` are the tamed and penned herds that draw fodder (fodder only).
 static func build_order_sheet(target: VBoxContainer, ctx: Dictionary, order: Dictionary,

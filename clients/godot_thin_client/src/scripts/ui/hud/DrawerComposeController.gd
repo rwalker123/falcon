@@ -4061,6 +4061,13 @@ func _compose_anchor_rect() -> Rect2:
         return Rect2()
     return _tile_panel.get_global_rect()
 
+## The rect an ORDER sheet floats beside: the Band panel's card (the Work tab the order was opened from),
+## so the sheet sits next to the panel rather than over it. Falls back to the selection card's rect while
+## the Band panel is hidden.
+func _order_anchor_rect() -> Rect2:
+    var card := _bandpanel.card_rect_if_shown() if _bandpanel != null else Rect2()
+    return card if card.size != Vector2.ZERO else _compose_anchor_rect()
+
 ## Can this LAND offer a forage compose at all? The gate the drawer's button and the sheet share, so
 ## the button can never open an empty sheet. (A workable patch is live state — redacted on a
 ## remembered hex like its occupants — and there must be a player band to staff it.)
@@ -4178,7 +4185,7 @@ func open_order_sheet(band_entity: int, kind: String) -> void:
     _order_sheet_band = band_entity
     _compose.set_composing(ComposeState.KIND_ORDER, kind)
     var content := _compose_sheet.open(HudOrdersVocab.order_name(kind), HudFormat.band_name(band),
-        "order:" + kind, _compose_anchor_rect())
+        "order:" + kind, _order_anchor_rect())
     _build_order_sheet(kind, content)
     refresh_drawer_actions()
 
