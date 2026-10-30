@@ -6203,6 +6203,17 @@ impl LaborAllocation {
         }
     }
 
+    /// **A ROW THE CHIEF'S FOOD ORDER KEEPS UP**: a forage or hunt row the `food` order lists while
+    /// the chief owns it. Its keep-up (hold) crew is dealt bare hands ahead of every row's kitted
+    /// reach heads (`staffing`, pass 1c) and is the last thing the settle trim takes.
+    pub fn keeps_food_up(&self, target: &LaborTarget) -> bool {
+        matches!(
+            target,
+            LaborTarget::Forage { .. } | LaborTarget::Hunt { .. }
+        ) && self.chief_owns(crate::keep_on_hand::FOOD_KIND)
+            && self.row_order(target) == Some(crate::keep_on_hand::FOOD_KIND)
+    }
+
     /// **THE ORDER'S CREW THIS TURN, from the staffing's own numbers**: `(hold heads, hold wanted,
     /// refill heads, refill wanted)` summed over the order's rows. A row's `hold_crew` / `reach_crew`
     /// are the heads the passes aimed at (pass 1 and pass 2, keepers included); the heads staffed fill

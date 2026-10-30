@@ -101,6 +101,7 @@ Pinned by `server::tests::a_band_improvements_crew_is_the_keepers_the_sim_staffs
 | 0 | the band's **scouts** (below), off the top of the pool and shelf, before any row |
 | 1a | the site's **keepers** on every row at every priority, High to Low: `floor(keep_hands)` whole-keeper heads round-robin, then, for a row with a fraction of a hand of keeping left, one head that carries it (a kitted gatherer if the shelf can arm one, else a bare one where a bare hand works, else a keeper; a row with no hold take gives it a keeper's head so the improvement is kept) |
 | 1b | per priority group High to Low: the group's **builds'** first builder (kitted if the shelf can arm one, else bare), then the group's **kitted** hands up to the row's **hold crew** |
+| 1c | a **chief's FOOD order** only (`LaborAllocation::keeps_food_up`: a forage or hunt row `order_rows` lists under `food` while the chief owns the kind): per priority group High to Low, round-robin nearest first, **bare** hands up to the row's hold crew under its Max, only where a bare hand takes something. After every group's pass 1b, before any row's pass 2 |
 | 2 | **kitted** hands up to the row's **reach crew** |
 | 3 | every row up to its **useful crew** (the room above the floor, clear-it-now; the crew past which the take stops rising): the kit's units still unspent first, then **bare** hands, only on a web where a bare hand takes something (never on a hunt that needs a weapon) |
 
@@ -328,6 +329,19 @@ labor pass and by every command restaff), `staffing::probe_source`, `staffing::a
   the whole kind. Arrival and a whole-kind claim adopt every existing forage and hunt row
   (`adopt_pending`) under the order its product belongs to. Hand commands on a listed row are refused
   with the step-1 sentence.
+- **The food order's keep-up crew is dealt before any reach (pass 1c).** Passes otherwise run kitted
+  first across priorities, so a band short of gathering kit used to hand its sleds' kitted stone or wood
+  refill heads before a food row's bare hold heads, and food fell. The food order's rows
+  (`StaffRowInput::food_keep_up`) therefore get their hold crew in bare hands right after pass 1b and
+  before pass 2; fodder, the materials, player-crewed rows (including a released food row or a Player-owned
+  food order) and leaderless bands are unchanged. Bare hold heads are ordinary `bare` heads, so
+  `order_crew` counts them in `holdHeads`. The settle trim (`trim_one_hand`) takes a protected row last
+  among rows: a food-order row whose crew is down to its `hold_crew` goes after every unprotected
+  row of any priority (against builds the ordinary priority comparison still applies). Pinned by
+  `staffing::tests::{a_chiefs_food_hold_is_dealt_bare_before_another_orders_kitted_refill,
+  without_the_food_order_the_kitted_refill_still_goes_first,
+  a_food_hold_never_deals_bare_where_a_bare_hand_takes_nothing}` and
+  `food_orders::a_short_bands_food_keep_up_crew_is_filled_before_a_stone_orders_kitted_refill`.
 - **Hunting herds move.** Each pass re-ranks. A hunt row whose herd is still a candidate stays; one
   whose herd is gone, out of sight or no longer huntable is retired and the next best herd takes its
   share - unless the row is pinned (`food_orders::source_pinned`: a party out, a walk of its cargo home,

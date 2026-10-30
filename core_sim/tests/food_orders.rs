@@ -587,3 +587,117 @@ fn the_feed_leaves_fodder_out_of_the_arrival_line_while_no_pen_eats_hay() {
     assert!(lines[0].contains("20 turns of food"), "{lines:?}");
     assert!(!lines[0].contains("fodder"), "{lines:?}");
 }
+
+/// The `bandOrders` row for `kind` as the encoded frame publishes it: `(holdHeads, holdWanted)`.
+fn published_hold(app: &mut App, kind: &str) -> (u32, u32) {
+    core_sim::recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<core_sim::SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let section = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot")
+        .population()
+        .expect("the population section");
+    for row in section.populations().expect("populations").iter() {
+        for order in row.bandOrders().into_iter().flatten() {
+            if order.kind() == Some(kind) {
+                return (order.holdHeads(), order.holdWanted());
+            }
+        }
+    }
+    panic!("no {kind} order on the wire");
+}
+
+/// **THE FOOD ORDER'S KEEP-UP CREW IS NEVER TAKEN BY ANOTHER ORDER'S KITTED REFILL**: a chief's band
+/// with sleds and no gathering kit, a High stone order and a Normal food order, and hands for the
+/// food order's hold crew and a few over. The food order's published `holdHeads` is its
+/// `holdWanted`; handed to the player, the stone order's kitted reach takes the hands first.
+#[test]
+fn a_short_bands_food_keep_up_crew_is_filled_before_a_stone_orders_kitted_refill() {
+    use bevy::prelude::UVec2;
+    use core_sim::{BandEquipment, Tile, TileRegistry};
+
+    let (mut app, band) = world();
+    {
+        let mut handle = app.world.resource_mut::<LaborConfigHandle>();
+        let mut config = (*handle.0).clone();
+        config.band_orders.ordered_kinds = vec![FOOD.to_string(), "stone".to_string()];
+        handle.0 = std::sync::Arc::new(config);
+    }
+    // Rock under the camp for the stone order, and a stock of sleds with no gathering kit.
+    let camp: UVec2 = {
+        let tile = app
+            .world
+            .get::<PopulationCohort>(band)
+            .unwrap()
+            .current_tile;
+        app.world.get::<Tile>(tile).unwrap().position
+    };
+    let rock = app
+        .world
+        .resource::<TileRegistry>()
+        .index(camp.x, camp.y)
+        .unwrap();
+    app.world.get_mut::<Tile>(rock).unwrap().terrain = sim_schema::TerrainType::AlpineMountain;
+    {
+        let mut equipment = app.world.get_mut::<BandEquipment>(band).unwrap();
+        *equipment = BandEquipment::default();
+        equipment.stock("sled", 30, "plain", None);
+    }
+    for (kind, priority) in [
+        (FOOD, SourcePriority::Normal),
+        ("stone", SourcePriority::High),
+    ] {
+        app.world
+            .get_mut::<LaborAllocation>(band)
+            .unwrap()
+            .orders
+            .insert(
+                kind.to_string(),
+                BandOrder {
+                    target: 1000,
+                    priority,
+                    owner: OrderOwner::Chief,
+                },
+            );
+    }
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .unwrap()
+        .last_material_need
+        .insert("stone".to_string(), NEED);
+    set_larder(&mut app, band, NEED);
+
+    // Plenty of hands: learn the food order's hold crew.
+    let (_, wanted) = published_hold(&mut app, FOOD);
+    assert!(
+        wanted > 0,
+        "**LIVENESS**: the food order wants a keep-up crew"
+    );
+    let (stone_heads, stone_wanted, ..) = app
+        .world
+        .get::<LaborAllocation>(band)
+        .unwrap()
+        .order_crew("stone");
+    assert!(
+        stone_heads > 0 && stone_wanted > 0,
+        "**LIVENESS**: the stone order digs"
+    );
+
+    // Hands for the stone order's kitted keep-up (pass 1b), the food hold crew and two over, which
+    // the sleds' kitted refill would take.
+    let working = stone_wanted + wanted + 2;
+    app.world.get_mut::<PopulationCohort>(band).unwrap().working = scalar_from_f32(working as f32);
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    let (held, wanted) = published_hold(&mut app, FOOD);
+    assert_eq!(
+        held, wanted,
+        "the chief's food keep-up crew is full: {held} of {wanted}"
+    );
+}

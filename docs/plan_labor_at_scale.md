@@ -393,7 +393,11 @@ How every order is carried out:
   turn; reach (pass 2) is the extra crew that refills toward the target, over
   `keep_on_hand_refill_turns`; at or above the target, no refill crew. Each order carries a Priority
   that places it on the band's one priority list, so a short band refills its Low orders slowest and
-  never takes the crew that keeps food coming in.
+  never takes the crew that keeps food coming in: the food order's hold crew is filled with bare
+  hands (where a bare hand takes something) after every row's kitted hold heads and before any row's
+  kitted reach, so a stone or wood refill never beats it to the hands. Only the chief's food order
+  has this step; fodder, the materials, player-crewed rows and leaderless bands keep "kitted first,
+  across priorities".
 - **The chief picks the sources**: the most per worker first, then the shortest walk, filling one up
   to what it gives at its setting before starting the next.
 - **The chief never overdraws.** Below the target he adds hands and sources, all at Best; above it he
