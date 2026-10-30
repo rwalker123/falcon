@@ -2065,7 +2065,7 @@ func _orders_items(band: Dictionary, models: Array, extract_models: Array) -> Di
     var keep_extract: Array = []
     var kit_by_kind: Dictionary = {}
     var shown_kinds: Array = []
-    for order in HudOrdersVocab.shown_orders(band):
+    for order in HudOrdersVocab.chief_orders(HudOrdersVocab.shown_orders(band)):
         shown_kinds.append(String(order.get("kind", "")))
     for pair in [[models, keep_models], [extract_models, keep_extract]]:
         for model_variant in pair[0]:

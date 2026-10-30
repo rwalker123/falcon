@@ -173,14 +173,21 @@ static func _reserve_line(band: Dictionary, kind: String, count: int, is_open: b
 static func _order_line(band: Dictionary, order: Dictionary, controller: BandOrdersController,
         is_open: bool, kit: Dictionary = {}) -> Control:
     var kind := String(order.get("kind", ""))
-    var state := HudOrdersVocab.state_of(order)
+    var released := not HudOrdersVocab.is_chief_owned(order)
     var line := HBoxContainer.new()
     line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     line.add_theme_constant_override("separation", HudOrdersVocab.GROUP_SEPARATION)
     line.set_meta(HudOrdersVocab.ORDER_LINE_META, kind)
-    line.add_child(_caret(is_open,
-        HudOrdersVocab.CARET_OPEN_TIP if is_open else HudOrdersVocab.CARET_CLOSED_TIP,
-        func() -> void: controller.toggle_fold(band, kind)))
+    if released:
+        # No fold: its rows live under Yours. A spacer keeps the icon in the column of the other lines.
+        var spacer := Control.new()
+        spacer.custom_minimum_size = Vector2(HudOrdersVocab.CARET_WIDTH, HudOrdersVocab.CARET_HEIGHT)
+        line.add_child(spacer)
+        line.set_meta(HudOrdersVocab.ORDER_RELEASED_META, kind)
+    else:
+        line.add_child(_caret(is_open,
+            HudOrdersVocab.CARET_OPEN_TIP if is_open else HudOrdersVocab.CARET_CLOSED_TIP,
+            func() -> void: controller.toggle_fold(band, kind)))
     var icon := text(HudOrdersVocab.order_icon(kind), HudOrdersVocab.NAME_FONT_SIZE, HudStyle.INK)
     icon.custom_minimum_size.x = HudOrdersVocab.ORDER_ICON_WIDTH
     icon.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
@@ -201,13 +208,26 @@ static func _order_line(band: Dictionary, order: Dictionary, controller: BandOrd
     name_link.add_theme_font_size_override("font_size", HudOrdersVocab.NAME_FONT_SIZE)
     name_link.set_meta(HudOrdersVocab.ORDER_NAME_META, kind)
     head.add_child(name_link)
-    var detail := HudWidgets.build_inline_link(HudOrdersVocab.line_text(order), HudStyle.INK_DIM, open_sheet)
+    var detail_words := HudOrdersVocab.released_line_text(order) if released \
+        else HudOrdersVocab.line_text(order)
+    var detail := HudWidgets.build_inline_link(detail_words, HudStyle.INK_DIM, open_sheet)
     detail.add_theme_font_size_override("font_size", HudOrdersVocab.SMALL_FONT_SIZE + 1)
     detail.alignment = HORIZONTAL_ALIGNMENT_LEFT
     detail.tooltip_text = open_tip
     detail.set_meta(HudOrdersVocab.ORDER_DETAIL_META, kind)
     head.add_child(detail)
     middle.add_child(head)
+    if released:
+        middle.add_child(_released_state(band, kind, controller))
+        line.add_child(middle)
+        var open_released := HudWidgets.build_inline_link(HudOrdersVocab.OPEN_CHEVRON, HudStyle.INK_DIM, open_sheet)
+        open_released.add_theme_font_size_override("font_size", HudOrdersVocab.OPEN_CHEVRON_FONT_SIZE)
+        open_released.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+        open_released.tooltip_text = open_tip
+        open_released.set_meta(HudOrdersVocab.ORDER_OPEN_META, kind)
+        line.add_child(open_released)
+        return line
+    var state := HudOrdersVocab.state_of(order)
     var state_label := text(String(state["text"]), HudOrdersVocab.STATE_FONT_SIZE,
         HudOrdersVocab.tone_color(state["tone"]), true)
     state_label.set_meta(HudOrdersVocab.ORDER_STATE_META, String(state["text"]))
@@ -248,6 +268,23 @@ static func _order_line(band: Dictionary, order: Dictionary, controller: BandOrd
     open_link.set_meta(HudOrdersVocab.ORDER_OPEN_META, kind)
     line.add_child(open_link)
     return line
+
+## `You crew it — Hand it to Orrin`: dim, the link sending the whole-kind claim.
+static func _released_state(band: Dictionary, kind: String, controller: BandOrdersController) -> Control:
+    var flow := HFlowContainer.new()
+    flow.add_theme_constant_override("h_separation", 0)
+    flow.add_theme_constant_override("v_separation", 0)
+    flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    var lead := text(HudOrdersVocab.CREWED_BY_YOU, HudOrdersVocab.STATE_FONT_SIZE, HudStyle.INK_DIM)
+    lead.set_meta(HudOrdersVocab.ORDER_STATE_META, HudOrdersVocab.CREWED_BY_YOU)
+    flow.add_child(lead)
+    var hand := HudWidgets.build_inline_link(HudOrdersVocab.HAND_IT_FORMAT % HudOrdersVocab.who_lower(band),
+        HudStyle.INK_DIM, func() -> void: controller.send_claim(band, kind))
+    hand.add_theme_font_size_override("font_size", HudOrdersVocab.STATE_FONT_SIZE)
+    hand.alignment = HORIZONTAL_ALIGNMENT_LEFT
+    hand.set_meta(HudOrdersVocab.ORDER_HAND_BACK_META, kind)
+    flow.add_child(hand)
+    return flow
 
 static func _also_line(also: Dictionary) -> Control:
     var panel := PanelContainer.new()

@@ -13,6 +13,8 @@ extends RefCounted
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
+const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
+
 var h
 
 const WORKERS := 34
@@ -241,6 +243,8 @@ func run(harness) -> void:
 
 	await _kit_and_doors()
 
+	await _released_wood()
+
 	var leaderless: Dictionary = h._workings_band_fixture(h.WORKINGS_DEMAND)
 	await _show(leaderless, "band_orders_work_leaderless")
 	h._assert_band_panel("band orders: a leaderless band's Work tab draws no group", _group_count() == 0)
@@ -250,6 +254,55 @@ func run(harness) -> void:
 	h._hud._bandpanel.rerender()
 	await h._settle()
 
+
+# ---- A released order: the player crews it ("Crew it yourself" on the wood sheet) -----------------------
+
+func _released_wood() -> void:
+	var orders: BandOrdersController = h._hud._bandorders
+	var all := _all_orders()
+	all[3]["chief_owned"] = false
+	var band := chief_band(all)
+	# The wire after a release: the wood rows are the player's, on one worker's cap, tile on target_x/target_y.
+	for row in band["labor_assignments"]:
+		if String(row.get("kind", "")) == "extract" and String(row.get("material", "")) == "wood":
+			row["order_kind"] = ""
+			row["chief_owned"] = false
+			row["max_workers"] = 1
+			row["workers"] = 1
+	await _show(band, "band_orders_work_released")
+	var wood_line: Node = null
+	for line in _lines():
+		if String((line as Node).get_meta(HudOrdersVocab.ORDER_LINE_META)) == "wood":
+			wood_line = line
+	h._assert_band_panel("released: wood keeps its line in the group", wood_line != null and _line_kinds().size() == 4)
+	var words := _texts(wood_line)
+	var joined := " ".join(words)
+	h._assert_band_panel("…it reads 'You crew it' with the hand-back link (%s)" % joined,
+		joined.contains("You crew it") and joined.contains("Hand it to Orrin") and joined.contains("on hand")
+		and not joined.contains("keep 30") and not joined.contains("Refilling"))
+	h._assert_band_panel("…no Priority chip, crew bar or caret on it",
+		_descendant_meta_count(wood_line, HudOrdersVocab.ORDER_PRIORITY_META) == 0
+		and _descendant_meta_count(wood_line, HudOrdersVocab.ORDER_CREW_BAR_META) == 0
+		and _descendant_meta_count(wood_line, HudOrdersVocab.ORDER_CARET_META) == 0)
+	h._assert_band_panel("…the summary counts the other three orders only",
+		_has("Orrin's orders take 21 of 34 workers"))
+	var sent: Array = []
+	orders.band_order_requested.connect(func(payload: Dictionary) -> void: sent.append(payload))
+	var hand := _meta_button(HudOrdersVocab.ORDER_HAND_BACK_META, "wood")
+	if hand != null:
+		hand.pressed.emit()
+	h._assert_band_panel("…pressing the link sends the whole-kind wood claim",
+		sent.size() == 1 and String(sent[0].get("kind", "")) == "wood"
+		and String(sent[0].get("action", "")) == "claim" and not sent[0].has("x") and not sent[0].has("herd_id"))
+	if sent.size() == 1:
+		h._assert_band_panel("…rendered as band_order <f> <b> wood claim",
+			String(MAIN_SCRIPT.format_band_order(sent[0]).get("line", "")).ends_with("wood claim"))
+
+func _descendant_meta_count(node: Node, meta: StringName) -> int:
+	var count := 1 if node.has_meta(meta) else 0
+	for child in node.get_children():
+		count += _descendant_meta_count(child, meta)
+	return count
 
 # ---- The order line's doors and its kit clause --------------------------------------------------------
 

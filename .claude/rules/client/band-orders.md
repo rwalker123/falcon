@@ -49,6 +49,15 @@ top of the sections list and partitions the rows through `BandOrdersController.s
   itself a caret toggle (`PART_RESERVE`, remembered the same way) that brings those rows back in full,
   since they can carry a `⌃`. A summary line, a warning line in the tone of the worst shortage, and a
   legend close the group and stay visible folded.
+- **A released order** (`chief_owned` false -- "Crew it yourself" on the whole kind) keeps its line in its
+  usual place but is no longer drawn as the chief's: icon, name and `· 8.0 on hand` (`· 12 turns`;
+  `HudOrdersVocab.released_line_text`, no `keep N`), then a dim `INK_DIM` state `You crew it — Hand it to Orrin`
+  (`CREWED_BY_YOU` + `HAND_IT_FORMAT`, `who_lower` for a council) whose link sends the whole-kind
+  `claim` (`BandOrdersController.send_claim(band, kind)`; meta `ORDER_HAND_BACK_META`). No caret / fold,
+  Priority chip, crew number or crew bar (its rows sit under `Yours`); the name and `›` still open the sheet.
+  `state_of` is never consulted for it, no kit clause, and `HudOrdersVocab.chief_orders` filters it out of
+  `summary_of` (the `take N of M workers` line and the warning names) and out of the `↳ Also` target kinds.
+  A chief-owned order with one released ROW is unchanged (row-level release).
 - **Four doors to the order's sheet, one call** (`controller.open_sheet(band, kind)`): the name (an
   inline link: hover lifts the ink to `SIGNAL` and boxes it), the `· … keep N` detail (same link
   treatment, `ORDER_DETAIL_META`), the `Priority: X` chip (a `Button`, `priority_button`, whose border

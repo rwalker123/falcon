@@ -68,6 +68,7 @@ const KIT_TIP_ROW_FORMAT := "%s needs %s"                      # "Tended Patch (
 const KIT_TIP_BENCH_LINE := "Open the crafting bench"
 
 const LINE_TURNS_FORMAT := "· %s · keep %s"
+const LINE_RELEASED_FORMAT := "· %s"
 const LINE_MATERIAL_FORMAT := "· %s on hand · keep %d"
 const TURNS_ONE := "%d turn"
 const TURNS_MANY := "%d turns"
@@ -197,6 +198,10 @@ const AFTER_EATING_FORMAT := "%s after eating"
 const SHOW_ON_MAP := "Show on map"
 const CREW_IT_YOURSELF := "Crew it yourself"
 const HAND_IT_FORMAT := "Hand it to %s"
+## A released order's state line on the Work tab: the player crews it, and the link hands it back.
+const CREWED_BY_YOU := "You crew it — "
+const ORDER_HAND_BACK_META := &"band_order_hand_back"
+const ORDER_RELEASED_META := &"band_order_released"
 const DONE := "Done"
 const OFFER_MATERIAL_FORMAT := "%s could keep %s on hand for you."
 const OFFER_ROW_FORMAT := "%s could %s this for the %s order."
@@ -308,6 +313,14 @@ static func row_order_kind(row: Dictionary) -> String:
 static func is_chief_owned(order: Dictionary) -> bool:
     return bool(order.get("chief_owned", false))
 
+## The orders the chief is working: a released order (`chief_owned` false) is the player's and is left out.
+static func chief_orders(orders: Array) -> Array:
+    var out: Array = []
+    for order in orders:
+        if is_chief_owned(order as Dictionary):
+            out.append(order)
+    return out
+
 # ---- Names ---------------------------------------------------------------------------------------
 
 ## "Orrin" / "The elders" -- the subject of a sentence.
@@ -418,6 +431,10 @@ static func have_text(order: Dictionary) -> String:
         return turns(int(floorf(on_hand)))
     return "%.1f on hand" % on_hand
 
+## A released order's detail, no target (nothing is being worked toward it): `· 12 turns` / `· 12.4 on hand`.
+static func released_line_text(order: Dictionary) -> String:
+    return LINE_RELEASED_FORMAT % have_text(order)
+
 ## `· 12 turns · keep 20 turns` / `· 12.4 on hand · keep 30`.
 static func line_text(order: Dictionary) -> String:
     if is_turns_kind(String(order.get("kind", ""))):
@@ -493,7 +510,7 @@ static func summary_of(band: Dictionary, orders: Array) -> Dictionary:
     var takes := 0
     var falling: Array = []
     var waiting: Array = []
-    for order in orders:
+    for order in chief_orders(orders):
         takes += crew_of(order)
         var order_label := order_name(String(order.get("kind", "")))
         if is_falling(order) and float(order.get("sustainable", 0.0)) >= float(order.get("draw", 0.0)):
