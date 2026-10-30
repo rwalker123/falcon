@@ -34,7 +34,11 @@ what each button sends.
 With a leader and at least one shown order, `BandPanelController._orders_items` puts the group at the
 top of the sections list and partitions the rows through `BandOrdersController.side_of`:
 
-- **The group** (`BandOrdersView.build_group`): one line per order in a FIXED order -- Food, Fodder, then
+- **The group** (`BandOrdersView.build_group`) opens with a header: the leader's small portrait (`BandOrdersSheets.portrait`,
+  the chief box's art, `GROUP_PORTRAIT_SIZE`; the council badge for an elders' council; tooltip `Dara, chief of
+  Moonhollow` / `The elders of Moonhollow`; it does nothing on click) left of the dim `ORRIN'S ORDERS` title. With no
+  art on disk (`LeaderPortrait.has_art()`) the title stands alone; the title clips, so the header never widens the
+  group. Then one line per order in a FIXED order -- Food, Fodder, then
   the materials in wire order (`HudOrdersVocab.shown_orders` ranks them, so the sheets agree; fodder is
   skipped while `has_consumers` is false) -- each with a ▸/▾ caret, icon, name (opens the order's
   sheet), `· 12 turns · keep 20 turns` or `· 12.4 on hand · keep 30`, the state, the order's Priority
@@ -92,7 +96,9 @@ top of the sections list and partitions the rows through `BandOrdersController.s
   `+2.40 food · +0.25 fodder · +0.05 fibre /turn`; a row that fills one store keeps today's text), and every other shown
   order it brought product to gets one dashed `↳ Also` line.
 - **`Also coming in`** (hide, bone, fibre -- on hand or gained this turn) and **`Yours`** (the player's
-  forage / hunt rows while a food order exists, and extract rows of a material that has an order) are
+  forage / hunt rows while a food order exists, and extract rows of a material that has an order -- a stand with
+  `chief_owned` false under a chief-owned material order lands here, and the order's line, crew bar and kit clause
+  read chief rows only) are
   ordinary collapsible sections (`WORK_SECTION_BY_PRODUCTS`, `WORK_SECTION_YOURS`). Every other row stays
   in today's sections. A leaderless band skips all of it and draws today's tab.
 
@@ -111,12 +117,23 @@ The side dock is 440 wide (`BandCityPanel.PANEL_WIDTH`); the wrapping is what ho
 
 ## The sheets
 
-- **Stone and wood** (`DrawerComposeController._build_deposit_assign_controls`): when the band has an
-  order for the material, `BandOrdersSheets.build_material_chief` replaces the Assign sheet if the order
-  is the chief's (eyebrow = the material name, `Chief's order` box with the portrait, the Keep-on-hand
-  stepper, Priority, the Diggers / Foresters box, Next turn, `Crew it yourself`); if the order is the
-  player's, today's sheet wears a `could keep it for you` strip with `Hand it to`. The Band picker swaps
-  the versions because both render in the same rebuild.
+- **Stone and wood are per stand.** The tile's cutters / diggers icon opens the TILE's Assign sheet
+  (`DrawerComposeController._build_deposit_assign_controls`, a wrapper over `_build_deposit_assign_controls_core`,
+  the hunt / gather pattern) and never the whole order. Under a chief-owned order: a stand the chief works
+  (`chief_owned` row) gets `Orrin cuts this stand for the wood order.` (`digs` for stone) and `Crew this stand
+  yourself` (release with `{x, y}`) under the Band picker, every control disabled but the work strip, Show on map
+  and Done, `Stop working here` hidden; a player's stand gets the dashed `Orrin could cut this stand for you` with
+  `Hand it to Orrin` (claim with `{x, y}`), the sheet live; a site with no row gets the dim line `Orrin keeps wood
+  — what you cut here counts toward his order.` and a live Cut. A player-owned (released) order keeps today's
+  sheet under the `could keep it for you` strip (whole-kind claim). The strip's button sits on its own line
+  (`offer_strip(..., stacked)`) because `Crew this stand yourself` would squeeze the sentence.
+- **The whole-order sheet of a material** opens only from the Work tab's four doors, as a `KIND_ORDER` sheet
+  exactly like Food / Fodder (`open_order_sheet`, anchored by `_order_anchor_rect`, titled `Wood  <Band name>`):
+  `BandOrdersSheets.build_material_chief` -- the `Chief's order` box, Keep-on-hand stepper, Priority, the Diggers /
+  Foresters box with every chief stand listed by its coordinates (`target_x` / `target_y`), Next turn, and a footer
+  of `Show on map`, `Crew all wood yourself` (tooltip `Takes Orrin's 3 wood stands back to you`, count = the chief's
+  listed rows, whole-kind release) and, after the gap, `Done`. The release is at the left so it is never where a
+  commit button sits.
 - **Food and Fodder** (`open_order_sheet`, `ComposeState.KIND_ORDER`): the stepper is in turns; the
   sources list is every chief row of the order (Best / Learning, crew, take) and the player's rows that
   bring the order's product, marked `yours`. The fodder sheet's `What eats it` list reads every tamed or
@@ -133,8 +150,6 @@ The side dock is 440 wide (`BandCityPanel.PANEL_WIDTH`); the wrapping is what ho
 - **Wire rows name their tile `target_x` / `target_y`**, never `x` / `y`: the source and stand lists read
   those. (`x` / `y` belong to herd dicts and the Work-tab models, which is where the pen line and
   `BandOrdersController` read them.)
-- **Opening a material's order from the Work tab** goes through `BandPanelController.open_site_sheet`,
-  which selects the order's site tile before the sheet opens, so the title and stock line are the site's.
 - **Hunt and gather sheets**: `_build_herd_assign_controls` / `_build_forage_assign_controls` are thin
   wrappers over the unchanged `_core` builders; after the core they mount a strip under the Band picker.
   A chief's row gets `<Leader> hunts this for the food order.` with `Crew it yourself` (release with the

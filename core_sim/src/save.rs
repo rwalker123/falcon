@@ -156,7 +156,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 59 | The storage pit is its band's second larder (#709): `TileImprovement` gained `owner` (the band that owns it as a store), `contents` (the aged food lots it holds) and `spoiled_this_turn`; `PopulationCohort` gained `last_food_into_store` / `last_food_from_store` (the food ledger's two store terms). The improvement registry rides `SimState::tile_improvements` and the cohort rides `BandRecord::cohort`, so a version-58 blob does not decode |
 /// | 60 | Mined materials are kept on hand (#874): `LaborAllocation` gained `keep_on_hand` (the band's per-material target and priority), `last_road_material_bill`, `last_build_material_draw` (two seams of the band's material draw, read by next turn's staffing) and `last_keep_site`; it rides `BandRecord`, so a version-59 blob does not decode |
 /// | 61 | Band orders (#860): `LaborAllocation::keep_on_hand` and `keep_owned` are replaced by `orders` (per kind id, a `BandOrder`: target, priority and `OrderOwner` Chief or Player) and gained `unannounced_takeover` (the kinds a chief's arrival took over that the feed has not said yet); it rides `BandRecord`, so a version-60 blob does not decode |
-pub const SAVE_FORMAT_VERSION: u32 = 61;
+/// | 62 | Materials are ordered stand by stand (#860): a dig row joins `LaborAllocation::order_rows` (key `d:<material>:<x>,<y>`), and a chief-owned material's chief rows are the ones listed there; a version-61 blob read its dig rows as the chief's by ownership alone, so it does not decode |
+pub const SAVE_FORMAT_VERSION: u32 = 62;
 
 /// gzip level for the payload document.
 ///

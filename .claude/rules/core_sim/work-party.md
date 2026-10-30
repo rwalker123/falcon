@@ -189,7 +189,7 @@ equality, saved). `target` is units for a material and turns for food and fodder
 |---|---|
 | no leader | crewed **by hand**, per site: player-made `Extract` rows, the Max is the crew (`ReachTarget::Heads`), a dig with no count refused (`never_renewing_dig_without_a_count`), `assign_labor` / `stop_labor` / `work_priority` accepted |
 | a leader and a `Player`-owned order | the same: crewed by hand exactly as a leaderless band crews it; the managing pass leaves its rows alone |
-| a leader and a `Chief`-owned order | **the chief's**: every row of the kind on that band is the order's, and hand commands on it are refused |
+| a leader and a `Chief`-owned order | **the chief's, stand by stand**: the rows `order_rows` lists under the material (`d:<material>:<x>,<y>`) are his and refuse hand commands; any other stand of the material is the player's (see "Stands are listed one by one" below) |
 
 **Which kinds take an order is config** - `labor_config.json` -> `band_orders.ordered_kinds` (shipped
 `["stone", "wood", "food", "fodder"]`), with `starting_target` per kind (`stone` 30, `wood` 30, `food` 20,
@@ -206,7 +206,7 @@ drains that queue into **one `Extraction`-kind feed line per band** (`announce_c
 *"Orrin is chief of Bitterbrook — he takes over the band's work: he keeps 20 turns of food, 30 stone and 30 wood on hand."* (food and fodder read as turns, a material as an amount, the turns first; **fodder is left out while no tamed or penned herd the band keeps needs hay**, `last_fodder_need == 0`), or for a
 council *"Bitterbrook's elders take over the band's work: they keep 20 turns of food, 30 stone and 30 wood on hand."* (not a
 `LeaderEmerged` row: the turn orb reads that kind's `kind=`/`name=` detail as a new leader). The band's
-hand rows of the kind are taken over as below. An order the player released stays the player's - arrival
+existing dig rows of the kind are listed under the order (`adopt_pending`). An order the player released stays the player's - arrival
 only creates missing orders.
 
 **The three transitions** (`band_order <faction> <band> <kind> set <target> <priority>` | `release` |
@@ -216,21 +216,53 @@ only creates missing orders.
   chief's). Refused for a target of 0 (*"A stone order needs a target above zero - choose Crew it
   yourself to work it by hand."*) and for a kind not in `ordered_kinds` (*"wood takes no order - it is
   crewed by hand with assign_labor."*).
-- **`release`** (*Crew it yourself*, `release_order`): owner becomes `Player`. The chief's rows **stay
-  where they are** and become the player's: each row's `max_workers` is the crew it was staffed with (at
-  least 1, so a never-renewing dig keeps the count the hand-crew rule needs), its priority kept. No row is
-  removed, so the cargo rule is not involved.
+- **`release`** (*Crew it yourself*, `release_order`): owner becomes `Player`. Every row the order lists
+  is unlisted (`release_row`) and **stays where it is**: its `max_workers` is the crew it was staffed with
+  (at least 1, so a never-renewing dig keeps the count the hand-crew rule needs), its priority kept. No
+  row is removed, so the cargo rule is not involved. `release <x> <y>` unlists ONE stand the same way
+  and the order stays the chief's.
 - **`claim`** (*Hand it to the chief*, `claim_order`): owner becomes `Chief` at the order's current target
-  (the kind's `starting_target` if it never had one); the next managing pass takes every row over.
+  (the kind's `starting_target` if it never had one); the next managing pass lists every dig row of the
+  kind (`adopt_pending`, as arrival does). `claim <x> <y>` lists ONE player stand (`claim_row`); the
+  next pass clears its Max and applies the chief's floor rules.
 
 Every one is refused for a band with no leader (*"<Band> has no leader yet - crew stone by hand."*).
 
-**A hand command on a chief-owned kind** (`assign_labor extract`, `stop_labor`, `work_priority`) is
-refused naming the keeper (`keep_on_hand::order_refusal`, `Keeper::of`): *"Orrin keeps stone on hand -
-choose Crew it yourself to work it by hand."*, and for a council *"Bitterbrook's elders keep stone on
-hand - ..."*. The band's own name is used (`BandName`), its `Band <id>` label only where it has none. The
-staffing preview refuses the same row with `material_is_kept_on_hand`. `abandon` of a working and the
-`quarry` build verb are unchanged.
+**A hand command on a row the chief LISTS** (`assign_labor extract`, `stop_labor`, `work_priority`) is
+refused naming the keeper (`keep_on_hand::order_refusal`, `Keeper::of`, asked of `row_order(target)`):
+*"Orrin keeps stone on hand - choose Crew it yourself to work it by hand."*, and for a council
+*"Bitterbrook's elders keep stone on hand - ..."*. The band's own name is used (`BandName`), its
+`Band <id>` label only where it has none. The same commands on an unlisted stand, or on a site with no
+row (which creates a player row, never listed), are accepted. The staffing preview refuses a listed
+row with `material_is_kept_on_hand` and nothing else. The never-renewing-dig-with-no-count rule applies
+to a player stand as before. `abandon` of a working and the `quarry` build verb are unchanged.
+
+### Stands are listed one by one (#860)
+
+`LaborAllocation::order_rows` holds the chief's roster for every order: `source_key` is `f:<x>,<y>` for
+a forage patch, `h:<herd id>` for a herd and **`d:<material>:<x>,<y>`** for a working
+(`keep_on_hand::dig_key`). A row not listed is the player's whoever owns the order - `row_order` /
+`order_of_row` answer `None` for it, so `order_crew` and `order_take` count the chief's rows only, the
+wire's `orderKind` is empty and `chiefOwned` false (as for a player food row under a chief-owned food
+order).
+
+- **`manage_dig_rows` only creates, moves, retires and staffs LISTED rows.** A row it creates is listed
+  on creation. It never touches a player stand's floor, Max or existence, and a site the player crews is
+  not a candidate (one row per site per material). The old "a hand-made row on a set site is taken over
+  (Max cleared)" rule is gone: a hand row becomes the chief's only by arrival, a whole-kind `claim`
+  (both through `adopt_pending`) or a row `claim <x> <y>`.
+- **The want counts the player's stands.** What the player's stands of the material brought in last
+  turn (`last_yields` material amount, the reading `order_take` uses) is subtracted from the want before
+  the chief's sites are dealt, as food subtracts every non-chief row; the published `sustainable` adds
+  it back. `order_take` stays the chief's rows' take, as food's does.
+- **`band_order <f> <b> <material> release|claim <x> <y>`** moves one stand. Refused (*"<Band> has no
+  <kind> row there for the chief to hand over / take back."*) when the order is not the chief's, the band
+  has no row at that address, or the row is already on the asked side. A herd id is no stand of a
+  material. `set_order` on a kind with no order starts it as the chief's and adopts the existing rows,
+  as arrival does.
+- **Wire for the client**: a player stand under a chief-owned material reads `orderKind` "" and
+  `chiefOwned` false, a listed stand `orderKind` = the material and `chiefOwned` true; the order's own
+  `BandOrderState` is unchanged.
 
 - **on hand** = `LocalStore::material_total` (the store only - not a load at the site or on the road;
   overshooting by a pack is accepted). **deficit** = target - on hand.
@@ -241,7 +273,7 @@ staffing preview refuses the same row with `material_is_kept_on_hand`. `abandon`
 - **the want** = the draw plus the deficit spread over `keep_on_hand_refill_turns` (**10**, validated
   >= 1, a playtest dial); zero at or above the target. The managing pass splits it across the sites
   (below) and staffing reads each row's part.
-- **staffing** (`extract_input`, for a `Chief`-owned order): the row reads its **share**
+- **staffing** (`extract_input`, for a row a `Chief`-owned order lists): the row reads its **share**
   (`LaborAllocation::keep_share(kind, tile)`, written by `manage_dig_rows` before every staffing). Share
   zero (at or above the target) -> take 0, reach `Nothing`, nobody digs, **the row's keepers still come**
   (`keep_hands`). Otherwise pass 1 `hold_take = share.hold` (the row's part of the draw), pass 2
@@ -249,9 +281,9 @@ staffing preview refuses the same row with `material_is_kept_on_hand`. `abandon`
   never past the share); each capped by the room (`deposit_crew_needed`'s own sizing). A row with no
   share (a pinned row off the set) is staffed to nobody. The order's priority ranks the rows.
 
-**The game picks the sites and owns the rows while the chief holds the order**
+**The game picks the sites and owns the rows it lists while the chief holds the order**
 (`keep_on_hand::manage_dig_rows`, run at the head of the labor pass before staffing and by every command
-restaff, `staffing::managed_dig_allocation`; a band that crews by hand is not touched). Candidates are
+restaff, `staffing::managed_dig_allocation`; a band that crews by hand is not touched, nor is a stand the player crews). Candidates are
 the faction's discovered tiles holding the material (the `deposit_states` fog gate) with something
 reachable above `DEPOSIT_EMPTY`; opened or not (`ClaimSources::working` derives the unopened one).
 Rank (`SiteRank`): most **per hand** first (`yield_per_worker_turn` of the working's ladder position
@@ -269,11 +301,11 @@ nearest stands until their regrowth covers the want. The hold part of the draw i
 ranking. One `Extract { tile, material }` row per set site: a row on a set site stays (the set's order
 changing moves nothing), a site that lacks one gets one (`max_workers = None`, the working's default kit
 for its rung, priority = the order's), a row on any other site is retired - all under the cargo rule
-below. A hand-made row on a set site is taken over (Max cleared).
+below.
 
 **The chief never overdraws.** Every row of his carries the Best floor on a material that regrows
 (`DEFAULT_ESCAPEMENT_FLOOR`, **0.5** - the `MSY_BIOMASS_FRACTION` the client's *Best* preset sends) and the
-strip-it-bare floor on one that never does (rock has no regrowth to protect); a row taken over from the
+strip-it-bare floor on one that never does (rock has no regrowth to protect); a row adopted from the
 player keeps a higher floor if it had one and is never worked below the site's. When every candidate's
 regrowth together is below the draw he still works every site at Best and the pile runs down: the order
 publishes the shortfall as `BandOrderState.sustainable` (`LaborAllocation::keep_sustainable[kind]`, the
@@ -293,7 +325,7 @@ a band with a leader** (own bands only). `onHand` is the band's material store t
 for `food`/`fodder` until their kinds are ordered); `hasSite` / `siteX` / `siteY` the best site the
 managing pass ranked first this turn; `sustainable` the total its candidate sites give a turn at the order's floor (above). Every row of the kind is an ordinary `LaborAssignment`; the dig rows is an ordinary `LaborAssignment` (`kind` extract) on the site.
 Native decode key `band_orders` (one dict per order, `priority` the lowercase word). `SAVE_FORMAT_VERSION`
-61.
+62.
 
 ### The food and fodder orders (#860)
 
@@ -322,7 +354,7 @@ labor pass and by every command restaff), `staffing::probe_source`, `staffing::a
   row that is not this order's chief row brings in of this order's product (the player's rows, the
   other order's rows - at their site's sustainable take) is subtracted from the want first.
 - **Rows are listed one by one.** `LaborAllocation::order_rows` (source key `f:<x>,<y>` / `h:<herd id>`
-  -> order kind) is the chief's roster. A row not in it is the player's whoever owns the kind: the chief
+  / `d:<material>:<x>,<y>` -> order kind) is the chief's roster. A row not in it is the player's whoever owns the kind: the chief
   never changes its floor, Max, selection or existence, hand commands on it work, and its take counts
   toward the order. `band_order <f> <b> food|fodder release|claim [<x> <y> | <herd id>]` moves one row
   (a released row's Max is its last crew, at least 1, floor and selection kept); without a row it moves
@@ -350,8 +382,7 @@ labor pass and by every command restaff), `staffing::probe_source`, `staffing::a
   by the chief, even at a zero share, so its keepers keep coming; he never starts a build.
 - **The order's crew and take** (`BandOrderState.holdHeads` / `holdWanted` / `refillHeads` /
   `refillWanted` / `take`, for every kind): the staffing's own numbers, not a re-derivation.
-  `LaborAllocation::order_crew(kind)` sums over the order's rows (`order_of_row`: a chief-owned
-  material's dig rows, or the forage/hunt rows `order_rows` lists) each row's `StaffedCrew`: the
+  `LaborAllocation::order_crew(kind)` sums over the order's rows (`order_of_row`: the forage, hunt and dig rows `order_rows` lists) each row's `StaffedCrew`: the
   `hold_crew` is the keep-up heads wanted (pass 1), `reach_crew - hold_crew` the refill heads wanted
   (pass 2; zero when the share has no refill, at or above the target), and the heads staffed
   (`total()`) fill pass 1 first and then pass 2, so `holdHeads = min(staffed, hold_wanted)` and
@@ -362,14 +393,16 @@ labor pass and by every command restaff), `staffing::probe_source`, `staffing::a
   "back to the target in about T turns" is `(target - onHand) * draw / (take - draw)` for food and
   fodder (turns times a per-turn draw) and `(target - onHand) / (take - draw)` for a material.
 - **Wire.** `BandOrderState.hasConsumers`; `LaborAssignmentState.orderKind` (the order that lists the
-  row, empty for a player-crewed row; a dig row of a chief-owned material names the material) and
+  row, empty for a player-crewed row; a listed dig row names the material) and
   `chiefOwned`. Every store a row fills is already on the row: `actualYield` (food), `fodderYield`,
   `materialYield` (fibre, hide, bone).
 
 Pinned by `tests/keep_on_hand.rs` (arrival at the starting target and the one feed line, staffing below
-and at target, the ranking, the cargo rule, the takeover of a hand row, release keeping the row with
+and at target, the ranking, the cargo rule, arrival listing a hand row, a player stand under a chief-owned order staying the player's across
+turns and shrinking the want, one stand released and claimed back, release keeping the row with
 its crew as the Max, claim clearing it, a player-owned kind crewed by hand under a chief, a leaderless
-band untouched) and `server::tests::{a_band_order_needs_a_leader_and_the_chief_owns_the_material_until_it_is_released,
+band untouched) and `server::tests::{one_stand_can_be_crewed_by_hand_while_the_material_stays_the_chiefs,
+a_band_order_needs_a_leader_and_the_chief_owns_the_material_until_it_is_released,
 an_elders_council_is_named_in_the_refusal, a_never_renewing_dig_with_no_count_is_refused_and_a_count_is_not}`.
 
 **Wire** (`LaborAssignment`, appended): `maxWorkers` (`0` = no Max), `holdCrew`, `reachCrew`,

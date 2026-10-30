@@ -409,6 +409,11 @@ How every order is carried out:
 - **The chief takes over everything when he arrives.** Every row of an ordered kind becomes his, the
   order starting at his suggested target; the event dock says so. The starting targets are playtest
   levers.
+- **Rows are the chief's one by one, for every order.** The rows the chief lists under an order are
+  his; any other row of the kind (a stand the player crews, whoever owns the order) is the player's —
+  the chief never moves, re-floors or retires it, hand commands on it work, and what it brought in
+  last turn comes off the order's want before the chief deals his sites. A site the player crews is not
+  a candidate for the chief. A hand command on a row the chief lists is refused, naming him.
 
 Setting it and seeing it:
 
@@ -431,9 +436,10 @@ Setting it and seeing it:
 - **Hide, bone and fibre** show read-only under the group, with what they gain a turn and from what.
 - **Crew it yourself / Hand it to the chief.** A material's sheet carries *Crew it yourself*; it turns
   the chief's rows into the player's, each with its Max set to the crew he had there, and the rows move
-  under a *Yours* heading. A food or fodder row's own sheet carries the same button for that one row,
-  and the order counts what the player's row brings in and fills the rest. *Hand it to the chief*
-  gives it back.
+  under a *Yours* heading. Any single row's own sheet — a food or fodder row, a stand of stone or wood —
+  carries the same button for that one row: the order stays the chief's, and it counts what the
+  player's row brings in and fills the rest. Cutting one stand yourself never costs the whole order.
+  *Hand it to the chief* gives a row, or the whole kind, back.
 - **A band without a chief** shows today's Work tab, and a leaderless band's sheets are today's.
 
 Before a chief, the band runs on the per-source settings in "Decided" above.

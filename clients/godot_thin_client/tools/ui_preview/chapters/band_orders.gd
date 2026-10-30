@@ -14,7 +14,7 @@ const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 const WorkingsCh := preload("res://tools/ui_preview/chapters/workings.gd")
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 
-const EXPECTED_CHECKPOINTS := 30
+const EXPECTED_CHECKPOINTS := 63
 
 var h
 var _workings
@@ -189,10 +189,12 @@ func _stone_sheets() -> void:
 	var band := chief_band()
 	var bid := int(band["band_id"])
 	_push(band)
-	_open_deposit(_workings._stone_working(_workings.STONE_TAKE))
+	# The whole-order sheet opens from the Work tab only, as a KIND_ORDER sheet.
+	h._hud._drawercompose.close_compose_sheet()
+	h._hud._drawercompose.open_order_sheet(int(band["entity"]), "stone")
 	await h._settle()
 	await h._save("band_orders_stone_chief")
-	h._assert_hud("the stone sheet as the chief's order names him and the material",
+	h._assert_hud("the stone order sheet names him and the material",
 		_has_text("Orrin keeps stone on hand"))
 	h._assert_hud("…and says what he sends", _has_text("Orrin sends 5 diggers this turn"))
 	h._assert_hud("…and the kitted/bare split", _has_text("2 with sleds · 3 bare-handed"))
@@ -216,28 +218,8 @@ func _stone_sheets() -> void:
 		_last_line() == "band_order 0 %d stone set 30 high" % bid)
 	_sent.clear()
 	_press(BandOrdersSheets.META_RELEASE)
-	h._assert_hud("Crew it yourself sends `release` (got `%s`)" % _last_line(),
+	h._assert_hud("Crew all stone yourself sends the whole-kind `release` (got `%s`)" % _last_line(),
 		_last_line() == "band_order 0 %d stone release" % bid)
-
-	# Opened from the ORDER LINE: the panel selects the order's site tile first (the harness has no map,
-	# so the focus is stood in for by showing that tile), and the sheet is the site's own.
-	var stone: Dictionary = _workings._stone_working(_workings.STONE_TAKE)
-	h._hud.update_deposits([stone])
-	h._show_tile(_workings._workings_tile([stone]))
-	h._hud._drawercompose.close_compose_sheet()
-	h._hud._drawercompose.open_order_sheet(int(band["entity"]), "stone")
-	await h._settle()
-	h._assert_hud("opening Stone from the order line opens the chief's sheet on the site's terrain",
-		_has_text("Orrin keeps stone on hand") and _has_text("Karst Highland"))
-
-	# Another rock than the one he digs: his site is named.
-	var other: Dictionary = _workings._stone_working(_workings.STONE_TAKE)
-	other["tile_x"] = 24
-	other["tile_y"] = 16
-	_open_deposit(other)
-	await h._settle()
-	h._assert_hud("on a rock he is not digging, the sheet says where he is",
-		_has_text("Orrin is digging at (%d, %d)." % [_workings.WORKING_TILE_X, _workings.WORKING_TILE_Y]))
 
 	# The player's stone.
 	var mine := chief_band(false)
@@ -268,22 +250,130 @@ func _find_priority(node: Node, level: String) -> Button:
 
 # ---- Wood -----------------------------------------------------------------------------------------
 
+## The wood band with the working-tile stand handed to the player: his order stays the chief's, the
+## row there is the player's (`chief_owned` false, `order_kind` ""), the other stand stays his.
+func _band_with_player_wood_stand() -> Dictionary:
+	var band := chief_band(true, true)
+	for row in band["labor_assignments"]:
+		if String(row.get("material", "")) == "wood" \
+				and int(row.get("target_x", -1)) == _workings.WORKING_TILE_X:
+			row["chief_owned"] = false
+			row["order_kind"] = ""
+	return band
+
+func _footer_buttons() -> Array:
+	var out: Array = []
+	var done := _find_meta(_sheet(), HudComposeVocab.DONE_BUTTON_META)
+	if done == null:
+		return out
+	for child in done.get_parent().get_children():
+		out.append(child)
+	return out
+
 func _wood_sheets() -> void:
 	var band := chief_band(true, true, true, 12.0, 4.0)
+	var bid := int(band["band_id"])
+	var wx: int = _workings.WORKING_TILE_X
+	var wy: int = _workings.WORKING_TILE_Y
 	_push(band)
-	_open_deposit(_workings._wood_working(_workings.WOOD_OVER_CUT))
+	# 1. The whole-order sheet, opened from the Work tab's order line.
+	h._hud._drawercompose.close_compose_sheet()
+	h._hud._drawercompose.open_order_sheet(int(band["entity"]), "wood")
 	await h._settle()
 	await h._save("band_orders_wood_chief")
-	h._assert_hud("the wood sheet names the stands he works, with `here`", _has_text("· here"))
+	h._assert_hud("the wood order sheet is titled for the material and the band",
+		_has_text("Wood") and _has_text(HudFormat.band_name(band)))
+	h._assert_hud("…names the stands he works by their coordinates, with no tile `here` mark",
+		_has_text("Wood (%d, %d)" % [wx, wy]) and _has_text("Wood (70, 17)") and not _has_text("· here"))
 	h._assert_hud("…and that he leaves them to grow back", _has_text("He leaves every stand to grow back."))
 	h._assert_hud("…and no short warning while the stands regrow enough", not _has_text("⚠ Stands in reach"))
+	var release := _find_meta(_sheet(), BandOrdersSheets.META_RELEASE)
+	h._assert_hud("…with `Crew all wood yourself` carrying the stand count",
+		release is Button and (release as Button).text == "Crew all wood yourself"
+		and (release as Button).tooltip_text == "Takes Orrin's 2 wood stands back to you")
+	var footer := _footer_buttons()
+	var done := _find_meta(_sheet(), HudComposeVocab.DONE_BUTTON_META)
+	h._assert_hud("…at the LEFT of the footer, before the gap, with Done at the right",
+		release != null and done != null and footer.find(release) >= 0 and footer.find(release) < footer.find(done) - 1
+		and (release as Control).global_position.x < (done as Control).global_position.x)
+	_sent.clear()
+	_press(BandOrdersSheets.META_RELEASE)
+	h._assert_hud("…and it sends the whole-kind `release` (got `%s`)" % _last_line(),
+		_last_line() == "band_order 0 %d wood release" % bid)
 	var short := chief_band(true, true, true, 12.0, 0.7)
 	_push(short)
-	_open_deposit(_workings._wood_working(_workings.WOOD_OVER_CUT))
+	h._hud._drawercompose.refresh_compose_sheet()
 	await h._settle()
 	await h._save("band_orders_wood_short")
 	h._assert_hud("stands that regrow too little draw the amber line",
 		_has_text("⚠ Stands in reach regrow 0.7 wood a turn"))
+
+	# 2. The tile's own sheet on a stand the chief works.
+	_push(band)
+	_sent.clear()
+	_open_deposit(_workings._wood_working(_workings.WOOD_OVER_CUT))
+	await h._settle()
+	await h._save("band_orders_wood_stand_chief")
+	h._assert_hud("a chief's stand opens the Assign sheet, not the whole order",
+		not _has_text("Orrin keeps wood on hand") and _has_text("Orrin cuts this stand for"))
+	h._assert_hud("…with `Crew this stand yourself` and no Stop working here",
+		_find_meta(_sheet(), BandOrdersSheets.META_RELEASE) is Button
+		and (_find_meta(_sheet(), BandOrdersSheets.META_RELEASE) as Button).text == "Crew this stand yourself"
+		and not _commit_visible())
+	h._assert_hud("…every other control disabled", _has_disabled_button())
+	_press(BandOrdersSheets.META_RELEASE)
+	h._assert_hud("…and releasing the stand sends its tile (got `%s`)" % _last_line(),
+		_last_line() == "band_order 0 %d wood release %d %d" % [bid, wx, wy])
+
+	# 3. An empty site under the chief's order: today's sheet, Cut live, one dim line.
+	var empty: Dictionary = _workings._wood_working(_workings.WOOD_OVER_CUT)
+	empty["tile_x"] = 24
+	empty["tile_y"] = 16
+	_open_deposit(empty)
+	await h._settle()
+	await h._save("band_orders_wood_site_empty")
+	h._assert_hud("an empty site shows the dim line",
+		_has_text("Orrin keeps wood — what you cut here counts toward his order."))
+	h._assert_hud("…with the commit live and no strip", _commit_visible() and not _commit_disabled()
+		and _find_meta(_sheet(), BandOrdersSheets.META_ROW_STRIP) == null)
+
+	# 4. A stand the player holds under the chief's order: dashed offer, sheet fully live.
+	var mine := _band_with_player_wood_stand()
+	_push(mine)
+	_open_deposit(_workings._wood_working(_workings.WOOD_OVER_CUT))
+	await h._settle()
+	await h._save("band_orders_wood_stand_yours")
+	h._assert_hud("a player's stand offers `Orrin could cut this stand for you`",
+		_has_text("Orrin could cut this stand for you"))
+	h._assert_hud("…over a fully live sheet", _commit_visible() and not _commit_disabled())
+	_sent.clear()
+	_press(BandOrdersSheets.META_CLAIM)
+	h._assert_hud("…and Hand it to Orrin sends `claim` with the tile (got `%s`)" % _last_line(),
+		_last_line() == "band_order 0 %d wood claim %d %d" % [int(mine["band_id"]), wx, wy])
+
+func _commit_button() -> Button:
+	var node := _find_meta(_sheet(), HudWidgets.COMPOSE_COMMIT_META)
+	return node as Button if node is Button else null
+
+func _commit_visible() -> bool:
+	var button := _commit_button()
+	return button != null and button.visible
+
+func _commit_disabled() -> bool:
+	var button := _commit_button()
+	return button == null or button.disabled
+
+func _has_disabled_button(node: Node = null) -> bool:
+	if node == null:
+		node = _sheet()
+	if node.is_queued_for_deletion():
+		return false
+	if node is BaseButton and (node as BaseButton).disabled:
+		return true
+	for child in node.get_children():
+		if _has_disabled_button(child):
+			return true
+	return false
 
 # ---- Food and fodder --------------------------------------------------------------------------------
 

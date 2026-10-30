@@ -4165,21 +4165,12 @@ func _orders_ctx(band: Dictionary, rebuild: Callable) -> Dictionary:
             _bandpanel.show_source_on_map(HudConst.LABOR_KIND_EXTRACT, x, y, ""),
     }
 
-## **OPEN A BAND ORDER'S SHEET FROM THE WORK TAB** (#860): Food and Fodder get their own sheet; a
-## material's order opens the material's sheet on the site the chief is working.
+## **OPEN A BAND ORDER'S SHEET FROM THE WORK TAB** (#860): Food, Fodder, Stone and Wood each get the
+## whole-order sheet, anchored beside the band panel. A stand's own sheet is the tile card's.
 func open_order_sheet(band_entity: int, kind: String) -> void:
     var band := _band_labor.player_band_by_entity(band_entity)
     var order := HudOrdersVocab.order_of(band, kind)
     if band.is_empty() or order.is_empty():
-        return
-    if not HudOrdersVocab.is_turns_kind(kind):
-        if not bool(order.get("has_site", false)):
-            return
-        var site_x := int(order.get("site_x", -1))
-        var site_y := int(order.get("site_y", -1))
-        _compose.set_deposit_band(band_entity)
-        # Through the panel, which selects the site's tile before the sheet opens.
-        _bandpanel.open_site_sheet(site_x, site_y, kind)
         return
     _ensure_compose_sheet()
     _order_sheet_band = band_entity
@@ -4215,8 +4206,11 @@ func _build_order_sheet(kind: String, target: VBoxContainer) -> void:
     if band.is_empty() or order.is_empty():
         return
     var ctx := _orders_ctx(band, func() -> void: _build_order_sheet(kind, target))
-    BandOrdersSheets.build_order_sheet(target, ctx, order,
-        _band_eating_herds(band) if kind == HudOrdersVocab.KIND_FODDER else [], _herd_label_for_id)
+    if HudOrdersVocab.is_turns_kind(kind):
+        BandOrdersSheets.build_order_sheet(target, ctx, order,
+            _band_eating_herds(band) if kind == HudOrdersVocab.KIND_FODDER else [], _herd_label_for_id)
+    else:
+        BandOrdersSheets.build_material_chief(target, ctx, order, kind)
 
 ## The strip (and the disabled controls) a hunt / gather sheet wears for a row under the chief's order.
 ## `source_kind` is `hunt` / `forage`; `address` names the row for a release / claim.
@@ -5448,6 +5442,44 @@ func open_deposit_compose(deposit: Dictionary) -> void:
 ##   7. the readout box;
 ##   8. the commit button.
 func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) -> void:
+    _build_deposit_assign_controls_core(deposit, target)
+    if target == null or deposit.is_empty() or _orders == null:
+        return
+    var tile := HudDepositVocab.tile_of(deposit)
+    var material := HudDepositVocab.material_of(deposit)
+    var band := _band_labor.player_band_by_entity(_compose.deposit_band())
+    var order := HudOrdersVocab.order_of(band, material)
+    if band.is_empty() or order.is_empty() or not HudOrdersVocab.is_chief_owned(order):
+        return
+    var subject_key := _deposit_source_key(deposit)
+    var rebuild := func() -> void: _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target)
+    var row := _band_labor.extract_assignment_of(band, tile.x, tile.y, material)
+    var chiefs := HudOrdersVocab.row_is_chiefs(row)
+    var info := {"kind": material, "chief_owned": chiefs, "order": order}
+    var ctx := _orders_ctx(band, rebuild)
+    var mounted: Control
+    if chiefs or not row.is_empty():
+        mounted = BandOrdersSheets.row_strip(ctx, info, HudConst.LABOR_KIND_EXTRACT, {"x": tile.x, "y": tile.y})
+    else:
+        mounted = BandOrdersSheets.no_row_note(band, material)
+    var live: Array = []
+    for child in target.get_children():
+        if not child.is_queued_for_deletion():
+            live.append(child)
+    if live.is_empty():
+        return
+    target.add_child(mounted)
+    # Under the `Band:` picker, which is the first live child.
+    target.move_child(mounted, (live[0] as Node).get_index() + 1)
+    if chiefs:
+        var keep: Array = [HudWorkVocab.WORK_STRIP_META, BandOrdersSheets.META_ROW_STRIP,
+            HudComposeVocab.DONE_BUTTON_META, HudComposeVocab.SHOW_ON_MAP_META]
+        for i in range(1, live.size()):
+            BandOrdersSheets.disable_node(live[i], keep,
+                HudOrdersVocab.CHIEF_STAND_DISABLED_TIP_FORMAT % HudOrdersVocab.who(band))
+            BandOrdersSheets.hide_meta(live[i], HudWidgets.COMPOSE_COMMIT_META)
+
+func _build_deposit_assign_controls_core(deposit: Dictionary, target: VBoxContainer) -> void:
     if target == null:
         return
     # A rebuild frees whatever the sheet held, so any drag on it is over — the forage builder's rule.
@@ -5501,21 +5533,14 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
         _compose.set_deposit_band(int(picked.get("entity", ComposeState.NO_BAND_ENTITY)))
         _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target)))
-    # **A BAND WITH A LEADER HAS AN ORDER FOR THIS MATERIAL** (#860): the chief's version of the sheet
-    # when it is his, today's sheet under an offer strip when it is the player's.
+    # **A BAND WITH A LEADER HAS AN ORDER FOR THIS MATERIAL** (#860): when it is the PLAYER's, today's
+    # sheet wears the `could keep it for you` strip. When it is the chief's the sheet is today's sheet
+    # too, and the wrapper `_build_deposit_assign_controls` mounts the per-stand strip over it.
     var sheet_title := String(_selection.tile_info().get("terrain_label", "")).strip_edges()
     var material_order := HudOrdersVocab.order_of(band, material)
-    if _orders != null and not material_order.is_empty():
+    if _orders != null and not material_order.is_empty() and not HudOrdersVocab.is_chief_owned(material_order):
         var orders_ctx := _orders_ctx(band, func() -> void:
             _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target))
-        if HudOrdersVocab.is_chief_owned(material_order):
-            _compose_sheet.set_header(material.capitalize(), sheet_title)
-            var stock_text := (HudOrdersVocab.STOCK_RENEWS_FORMAT if HudDepositVocab.renews(deposit) \
-                else HudOrdersVocab.STOCK_FINITE_FORMAT) % [int(HudDepositVocab.stock_of(deposit)),
-                int(HudDepositVocab.capacity_of(deposit)), material, material.capitalize()]
-            BandOrdersSheets.build_material_chief(target, orders_ctx, material_order, material, tile,
-                stock_text)
-            return
         target.add_child(BandOrdersSheets.material_offer(orders_ctx, material))
     _compose_sheet.set_header(HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % crew_label.to_lower(),
         sheet_title)

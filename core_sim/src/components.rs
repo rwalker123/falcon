@@ -6191,16 +6191,10 @@ impl LaborAllocation {
             .map(|(_, share)| share.clone())
     }
 
-    /// **THE ORDER THAT LISTS A ROW**: a dig row of a chief-owned material is listed under the
-    /// material, a forage or hunt row under the order `order_rows` names, a player-crewed row under
-    /// none.
+    /// **THE ORDER THAT LISTS A ROW**: the order `order_rows` names for a forage, hunt or dig row, a
+    /// player-crewed row under none.
     pub fn order_of_row(&self, target: &LaborTarget) -> Option<String> {
-        match target {
-            LaborTarget::Extract { material, .. } => {
-                self.chief_owns(material).then(|| material.clone())
-            }
-            other => self.row_order(other).map(str::to_string),
-        }
+        self.row_order(target).map(str::to_string)
     }
 
     /// **A ROW THE CHIEF'S FOOD ORDER KEEPS UP**: a forage or hunt row the `food` order lists while
@@ -6258,7 +6252,7 @@ impl LaborAllocation {
             .sum()
     }
 
-    /// The order a forage or hunt row is listed under, `None` for a player-owned row.
+    /// The order a forage, hunt or dig row is listed under, `None` for a player-owned row.
     pub fn row_order(&self, target: &LaborTarget) -> Option<&str> {
         let key = crate::keep_on_hand::source_key(target)?;
         self.order_rows.get(&key).map(String::as_str)

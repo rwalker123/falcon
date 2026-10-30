@@ -8,10 +8,12 @@
 //! none for: owner [`OrderOwner::Chief`], at `starting_target[kind]`, priority Normal, and one feed
 //! line per band says so ([`LaborAllocation::unannounced_takeover`], drained by
 //! `leadership::announce_chief_takeover`). There is no "none": a target is always above zero, and who
-//! works the kind is the order's owner. A chief-owned material owns **every** row of that material
-//! on the band; hand commands on it are refused ([`order_refusal`]). *Crew it yourself*
-//! ([`release_order`]) hands the chief's rows to the player where they stand; *Hand it to the chief*
-//! ([`claim_order`]) takes everything back over. An order the player released stays the player's -
+//! works the kind is the order's owner. The chief's rows are the ones [`LaborAllocation::order_rows`] lists
+//! under the order, for a material as for food - a row not listed is the player's whoever owns the
+//! order, hand commands on it work, and what it brings in counts toward the order's want. A hand
+//! command on a LISTED row is refused ([`order_refusal`]). *Crew it yourself* ([`release_order`])
+//! hands every listed row to the player where it stands (one stand: [`release_row`]); *Hand it to the
+//! chief* ([`claim_order`]) takes every row of the kind back over (one stand: [`claim_row`]). An order the player released stays the player's -
 //! arrival only creates missing orders.
 //!
 //! The sim owns the chief's dig row - one per band per ordered material, on a site the game picks -
@@ -51,14 +53,21 @@ pub fn is_row_kind(kind: &str) -> bool {
     kind == FOOD_KIND || kind == FODDER_KIND
 }
 
-/// **A FORAGE OR HUNT ROW'S IDENTITY** for [`LaborAllocation::order_rows`]: `f:<x>,<y>` for a patch,
-/// `h:<herd id>` for a herd. `None` for any other row.
+/// **A ROW'S IDENTITY** for [`LaborAllocation::order_rows`]: `f:<x>,<y>` for a forage patch,
+/// `h:<herd id>` for a herd, `d:<material>:<x>,<y>` for a working (a dig row of one material on one
+/// tile). `None` for any other row.
 pub fn source_key(target: &LaborTarget) -> Option<String> {
     match target {
         LaborTarget::Forage { tile, .. } => Some(format!("f:{},{}", tile.x, tile.y)),
         LaborTarget::Hunt { fauna_id, .. } => Some(format!("h:{fauna_id}")),
+        LaborTarget::Extract { tile, material, .. } => Some(dig_key(material, tile.x, tile.y)),
         _ => None,
     }
+}
+
+/// The [`source_key`] of the working of `material` at `(x, y)`.
+pub fn dig_key(material: &str, x: u32, y: u32) -> String {
+    format!("d:{material}:{x},{y}")
 }
 
 /// **WHO KEEPS A BAND'S ORDERS, AS THE REFUSALS AND THE FEED NAME THEM**: the chief by name, or the
@@ -173,13 +182,17 @@ pub fn set_refusal(ordered: bool, kind: &str, target: u32) -> Option<String> {
 }
 
 /// **SET THE TARGET AND PRIORITY OF A KIND'S ORDER.** A kind with no order yet starts as the
-/// chief's; an existing order keeps its owner.
+/// chief's, and adopts the band's existing rows of it as his arrival would; an existing order keeps
+/// its owner.
 pub fn set_order(
     allocation: &mut LaborAllocation,
     kind: &str,
     target: u32,
     priority: SourcePriority,
 ) {
+    if !allocation.orders.contains_key(kind) {
+        allocation.adopt_pending.insert(kind.to_string());
+    }
     allocation
         .orders
         .entry(kind.to_string())
@@ -207,26 +220,18 @@ pub fn release_order(allocation: &mut LaborAllocation, kind: &str) {
         return;
     }
     order.owner = OrderOwner::Player;
-    if is_row_kind(kind) {
-        let keys: Vec<String> = allocation
-            .order_rows
-            .iter()
-            .filter(|(_, listed)| listed.as_str() == kind)
-            .map(|(key, _)| key.clone())
-            .collect();
-        for key in keys {
-            release_row(allocation, &key);
-        }
-        return;
-    }
-    for row in allocation.assignments.iter_mut() {
-        if matches!(&row.target, LaborTarget::Extract { material, .. } if material == kind) {
-            row.max_workers = Some(row.workers.max(MIN_RELEASED_CREW));
-        }
+    let keys: Vec<String> = allocation
+        .order_rows
+        .iter()
+        .filter(|(_, listed)| listed.as_str() == kind)
+        .map(|(key, _)| key.clone())
+        .collect();
+    for key in keys {
+        release_row(allocation, &key);
     }
 }
 
-/// **CREW THIS ROW YOURSELF** (a food or fodder row, the kind staying the chief's): the row leaves
+/// **CREW THIS ROW YOURSELF** (one row of any order, the kind staying the chief's): the row leaves
 /// [`LaborAllocation::order_rows`], its Max is the crew it was staffed with (at least one), and its
 /// floor and selection stay. A no-op for a row the chief does not list.
 pub fn release_row(allocation: &mut LaborAllocation, key: &str) {
@@ -271,9 +276,7 @@ pub fn claim_order(allocation: &mut LaborAllocation, kind: &str, starting_target
             priority: SourcePriority::default(),
             owner: OrderOwner::Chief,
         });
-    if is_row_kind(kind) {
-        allocation.adopt_pending.insert(kind.to_string());
-    }
+    allocation.adopt_pending.insert(kind.to_string());
 }
 
 /// **THE FLOOR AN `extract` ROW CARRIES WHEN NOBODY NAMED ONE** - nothing is left standing on a finite
@@ -474,9 +477,7 @@ pub fn manage_dig_rows(
             },
         );
         allocation.unannounced_takeover.push(kind.clone());
-        if is_row_kind(kind) {
-            allocation.adopt_pending.insert(kind.clone());
-        }
+        allocation.adopt_pending.insert(kind.clone());
     }
     let chief_materials: Vec<(String, BandOrder)> = allocation
         .orders
@@ -487,8 +488,56 @@ pub fn manage_dig_rows(
         .map(|(kind, order)| (kind.clone(), *order))
         .collect();
     for (material, order) in chief_materials {
+        // Adoption: a chief's arrival or a whole-kind claim lists every existing dig row of the
+        // material under the order.
+        if allocation.adopt_pending.remove(&material) {
+            let keys: Vec<String> = allocation
+                .assignments
+                .iter()
+                .filter(|row| {
+                    matches!(&row.target, LaborTarget::Extract { material: held, .. } if *held == material)
+                })
+                .filter_map(|row| source_key(&row.target))
+                .collect();
+            for key in keys {
+                allocation.order_rows.insert(key, material.clone());
+            }
+        }
+        // A listed key whose row is gone is dropped from the roster.
+        let stale: Vec<String> = allocation
+            .order_rows
+            .iter()
+            .filter(|(key, listed)| {
+                listed.as_str() == material
+                    && !allocation
+                        .assignments
+                        .iter()
+                        .any(|row| source_key(&row.target).as_deref() == Some(key.as_str()))
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in stale {
+            allocation.order_rows.remove(&key);
+        }
+        let is_listed = |allocation: &LaborAllocation, target: &LaborTarget| {
+            allocation.row_order(target) == Some(material.as_str())
+        };
+        // The player's stands of this material: a site the player crews is not a candidate.
+        let player_sites: Vec<UVec2> = allocation
+            .assignments
+            .iter()
+            .filter_map(|row| match &row.target {
+                LaborTarget::Extract {
+                    tile,
+                    material: held,
+                    ..
+                } if *held == material && !is_listed(allocation, &row.target) => Some(*tile),
+                _ => None,
+            })
+            .collect();
         let mut ranked: Vec<SiteRank> = candidate_tiles(&material)
             .into_iter()
+            .filter(|tile| !player_sites.contains(tile))
             .filter_map(|tile| rank_site(inputs, tile, &material))
             .collect();
         ranked.sort_by(|a, b| {
@@ -505,16 +554,36 @@ pub fn manage_dig_rows(
                 .last_keep_site
                 .insert(material.clone(), best.tile);
         }
+        // What the player's stands of the material brought in LAST TURN (`last_yields`, the one-turn
+        // lag `material_draw` accepts), subtracted from the want before the chief's sites are dealt.
+        let incoming: f32 = allocation
+            .assignments
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| {
+                matches!(&row.target, LaborTarget::Extract { material: held, .. } if *held == material)
+                    && !is_listed(allocation, &row.target)
+            })
+            .filter_map(|(index, _)| allocation.last_yields.get(index))
+            .flat_map(|yields| yields.materials.iter())
+            .filter(|payoff| payoff.material == material)
+            .map(|payoff| payoff.amount)
+            .sum();
         // The want: what the band uses plus a tenth of the gap, nothing at or above the target.
         let draw = allocation.material_draw(&material);
         let deficit = order.target as f32 - on_hand(&material);
-        let want = if deficit > NO_TAKE {
+        let gross_want = if deficit > NO_TAKE {
             draw + deficit / inputs.sources.labor.keep_on_hand_refill_turns as f32
         } else {
             NO_TAKE
         };
+        let want = (gross_want - incoming).max(NO_TAKE);
         let mut want_left = want;
-        let mut draw_left = if deficit > NO_TAKE { draw } else { NO_TAKE };
+        let mut draw_left = if deficit > NO_TAKE {
+            draw.min(want)
+        } else {
+            NO_TAKE
+        };
         let mut set: Vec<SiteRank> = Vec::new();
         for site in &ranked {
             if !set.is_empty() && want_left <= NO_TAKE {
@@ -537,34 +606,33 @@ pub fn manage_dig_rows(
         }
         let unbounded = ranked.iter().any(|site| !site.sustainable.is_finite());
         let sustainable = if unbounded {
-            want.max(draw)
+            gross_want.max(draw)
         } else {
-            ranked.iter().map(|site| site.sustainable).sum()
+            ranked.iter().map(|site| site.sustainable).sum::<f32>() + incoming
         };
         allocation
             .keep_sustainable
             .insert(material.clone(), sustainable);
 
-        let rows_of_material = |allocation: &LaborAllocation| -> Vec<(UVec2, LaborTarget)> {
-            allocation
-                .assignments
-                .iter()
-                .filter_map(|row| match &row.target {
-                    LaborTarget::Extract {
-                        tile,
-                        material: held,
-                        ..
-                    } if *held == material => Some((*tile, row.target.clone())),
-                    _ => None,
-                })
-                .collect()
-        };
-        // A row on a site of the set stays; a row anywhere else is retired unless it is pinned.
+        // The chief's rows on a site of the set stay; a listed row anywhere else is retired unless it
+        // is pinned. A row the player crews is never touched.
+        let listed_rows: Vec<(UVec2, LaborTarget)> = allocation
+            .assignments
+            .iter()
+            .filter(|row| is_listed(allocation, &row.target))
+            .filter_map(|row| match &row.target {
+                LaborTarget::Extract { tile, .. } => Some((*tile, row.target.clone())),
+                _ => None,
+            })
+            .collect();
         let mut held_sites: Vec<UVec2> = Vec::new();
-        for (tile, target) in rows_of_material(allocation) {
+        for (tile, target) in listed_rows {
             if set.iter().any(|site| site.tile == tile) && !held_sites.contains(&tile) {
                 held_sites.push(tile);
             } else if !row_is_pinned(allocation, &target) {
+                if let Some(key) = source_key(&target) {
+                    allocation.order_rows.remove(&key);
+                }
                 allocation.drop_source_row(&target);
             }
         }
@@ -574,34 +642,39 @@ pub fn manage_dig_rows(
             }
             if let Some((working, _)) = inputs.sources.working(site.tile, &material) {
                 let kit = working_default_kit(inputs.sources.equipment, &working);
-                allocation.set_staffed_row(
-                    LaborTarget::Extract {
-                        tile: site.tile,
-                        material: material.clone(),
-                        floor: site.floor,
-                    },
-                    None,
-                    Some(kit),
-                );
+                let target = LaborTarget::Extract {
+                    tile: site.tile,
+                    material: material.clone(),
+                    floor: site.floor,
+                };
+                let key = source_key(&target);
+                allocation.set_staffed_row(target, None, Some(kit));
+                if let Some(key) = key {
+                    allocation.order_rows.insert(key, material.clone());
+                }
             }
         }
+        let mine: Vec<String> = allocation
+            .order_rows
+            .iter()
+            .filter(|(_, listed)| listed.as_str() == material)
+            .map(|(key, _)| key.clone())
+            .collect();
         for row in allocation.assignments.iter_mut() {
-            if let LaborTarget::Extract {
-                tile,
-                material: held,
-                floor,
-            } = &mut row.target
-            {
-                if *held != material {
-                    continue;
-                }
+            let Some(key) = source_key(&row.target) else {
+                continue;
+            };
+            if !mine.contains(&key) {
+                continue;
+            }
+            if let LaborTarget::Extract { tile, floor, .. } = &mut row.target {
                 // **The chief never overdraws**: no row of his is worked below the site's floor.
                 if let Some(site) = set.iter().find(|site| site.tile == *tile) {
                     *floor = floor.max(site.floor);
                 }
-                row.priority = order.priority;
-                row.max_workers = None;
             }
+            row.priority = order.priority;
+            row.max_workers = None;
         }
     }
 }

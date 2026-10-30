@@ -36,7 +36,7 @@ use crate::components::{
     DEFAULT_ESCAPEMENT_FLOOR,
 };
 use crate::fauna::Herd;
-use crate::keep_on_hand::{source_key, DigSiteInputs, FODDER_KIND, FOOD_KIND};
+use crate::keep_on_hand::{is_row_kind, source_key, DigSiteInputs, FODDER_KIND, FOOD_KIND};
 use crate::staffing::probe_source;
 
 /// What the food and fodder orders read of the band beyond its allocation.
@@ -249,7 +249,7 @@ pub fn manage_food_orders(
     let adopting: Vec<String> = allocation
         .adopt_pending
         .iter()
-        .filter(|kind| allocation.chief_owns(kind))
+        .filter(|kind| is_row_kind(kind) && allocation.chief_owns(kind))
         .cloned()
         .collect();
     if !adopting.is_empty() {
@@ -259,6 +259,9 @@ pub fn manage_food_orders(
             .map(|row| row.target.clone())
             .collect();
         for target in rows {
+            if matches!(target, LaborTarget::Extract { .. }) {
+                continue;
+            }
             let Some(key) = source_key(&target) else {
                 continue;
             };
@@ -314,6 +317,9 @@ pub fn manage_food_orders(
         // other order short.
         let mut incoming = NOTHING;
         for (index, row) in allocation.assignments.iter().enumerate() {
+            if matches!(row.target, LaborTarget::Extract { .. }) {
+                continue;
+            }
             let Some(key) = source_key(&row.target) else {
                 continue;
             };

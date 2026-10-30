@@ -5302,12 +5302,9 @@ fn kept_on_hand_refusal(
 ) -> Option<String> {
     let allocation = app.world.get::<LaborAllocation>(band.entity)?;
     let keeper = band_keeper(app, band);
-    let LaborTarget::Extract { material, .. } = target else {
-        // A forage or hunt row the chief lists under his food or fodder order is his.
-        let kind = allocation.row_order(target)?;
-        return core_sim::keep_on_hand::order_refusal(allocation, kind, keeper.as_ref());
-    };
-    core_sim::keep_on_hand::order_refusal(allocation, material, keeper.as_ref())
+    // A forage, hunt or dig row the chief lists under an order is his; any other row is the player's.
+    let kind = allocation.row_order(target)?;
+    core_sim::keep_on_hand::order_refusal(allocation, kind, keeper.as_ref())
 }
 
 /// **WHO KEEPS THIS BAND'S ORDERS** - its chief by name, or its elders named for the band. `None`
@@ -11145,8 +11142,14 @@ fn handle_band_order(
             let mut allocation = band_allocation_mut(app, band.entity);
             if let Some(row) = row {
                 // ONE row of a food or fodder order changes hands; the kind stays the chief's.
+                let material_kind = !core_sim::keep_on_hand::is_row_kind(kind);
                 let key = match &row {
+                    BandOrderRow::Tile { x, y } if material_kind => {
+                        core_sim::keep_on_hand::dig_key(kind, *x, *y)
+                    }
                     BandOrderRow::Tile { x, y } => format!("f:{x},{y}"),
+                    // A herd is no stand of a material.
+                    BandOrderRow::Herd { .. } if material_kind => String::new(),
                     BandOrderRow::Herd { id } => format!("h:{id}"),
                 };
                 let listed = allocation.order_rows.contains_key(&key);
@@ -11154,7 +11157,7 @@ fn handle_band_order(
                     core_sim::keep_on_hand::source_key(&assignment.target).as_deref()
                         == Some(key.as_str())
                 });
-                if !core_sim::keep_on_hand::is_row_kind(kind)
+                if key.is_empty()
                     || !allocation.chief_owns(kind)
                     || !held
                     || (claiming && listed)
@@ -30546,6 +30549,95 @@ mod tests {
         assert_eq!(order.target, 60);
         assert_eq!(allocation.assignments.len(), 1);
         assert!(allocation.assignments[0].max_workers.is_none());
+    }
+
+    /// **ONE STAND CHANGES HANDS WHILE THE MATERIAL STAYS THE CHIEF'S** (#860): a dig row the chief
+    /// lists refuses hand commands naming him; `band_order ... stone release <x> <y>` gives that one
+    /// stand to the player (hand commands then work on it, the order stays the chief's); `claim <x>
+    /// <y>` lists it again; an address with no such row is refused.
+    #[test]
+    fn one_stand_can_be_crewed_by_hand_while_the_material_stays_the_chiefs() {
+        let mut app = build_test_app();
+        {
+            let mut handle = app.world.resource_mut::<LaborConfigHandle>();
+            let mut config = (*handle.0).clone();
+            config.band_orders.ordered_kinds = vec!["stone".to_string()];
+            handle.0 = std::sync::Arc::new(config);
+        }
+        app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
+        let faction = FactionId(0);
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::AlpineMountain);
+        let band = spawn_idle_band(&mut app, faction, tile);
+        app.world.entity_mut(band).insert(BandId(7));
+        app.world.entity_mut(band).insert(core_sim::BandLeadership {
+            leader: Some(core_sim::BandLeader {
+                name: "Ash".to_string(),
+                kind: core_sim::LeaderKind::Chief,
+                since_turn: 0,
+            }),
+            ..Default::default()
+        });
+        send_command_line(&mut app, "band_order 0 7 stone set 60 high");
+        let at = {
+            let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+            match &allocation.assignments[0].target {
+                LaborTarget::Extract { tile, .. } => *tile,
+                other => panic!("a dig row, found {other:?}"),
+            }
+        };
+        let row_at = |app: &bevy::prelude::App| {
+            let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+            allocation
+                .assignments
+                .iter()
+                .find(|row| matches!(&row.target, LaborTarget::Extract { tile, .. } if *tile == at))
+                .map(|row| (allocation.row_order(&row.target).is_some(), row.max_workers))
+        };
+        let listed = |app: &bevy::prelude::App| row_at(app).is_some_and(|(listed, _)| listed);
+        let refusals = |app: &bevy::prelude::App| {
+            extraction_failure_reasons(app)
+                .iter()
+                .filter(|reason| reason.contains("keeps stone on hand"))
+                .count()
+        };
+        assert!(listed(&app), "**LIVENESS**: the chief lists his stand");
+        let priority = format!("work_priority 0 7 {} {} stone low", at.x, at.y);
+        send_command_line(&mut app, &priority);
+        assert_eq!(refusals(&app), 1, "a listed stand is refused");
+
+        send_command_line(
+            &mut app,
+            &format!("band_order 0 7 stone release {} {}", at.x, at.y),
+        );
+        let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+        assert!(
+            allocation.chief_owns("stone"),
+            "the order stays the chief's"
+        );
+        assert!(
+            !listed(&app),
+            "that stand is the player's: {:?}",
+            extraction_failure_reasons(&app)
+        );
+        assert!(row_at(&app).is_some_and(|(_, max)| max.is_some_and(|max| max >= 1)));
+        send_command_line(&mut app, &priority);
+        assert_eq!(refusals(&app), 1, "a player stand takes the command");
+
+        send_command_line(&mut app, "band_order 0 7 stone release 0 0");
+        assert!(
+            extraction_failure_contains(&app, "no stone row there"),
+            "{:?}",
+            extraction_failure_reasons(&app)
+        );
+
+        send_command_line(
+            &mut app,
+            &format!("band_order 0 7 stone claim {} {}", at.x, at.y),
+        );
+        assert!(listed(&app), "claimed back");
+        assert!(row_at(&app).is_some_and(|(_, max)| max.is_none()));
+        send_command_line(&mut app, &priority);
+        assert_eq!(refusals(&app), 2, "a listed stand is refused again");
     }
 
     /// **ONE FOOD ROW CHANGES HANDS WHILE THE KIND STAYS THE CHIEF'S** (#860): a forage row the chief

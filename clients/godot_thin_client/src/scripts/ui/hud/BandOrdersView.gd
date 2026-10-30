@@ -81,6 +81,27 @@ static func crew_bar(order: Dictionary) -> Control:
 const ROW_NODE := "node"
 const ROW_STAFFED := "staffed"
 
+## The group's header: the leader's portrait (the chief box's art) beside the title. With no art on disk the
+## title stands alone. The title is clipped so it can never ask for more than the zone's width.
+static func _group_header(band: Dictionary) -> Control:
+    var title := HudWidgets.alloc_section_label(HudOrdersVocab.group_title(band))
+    if not LeaderPortrait.has_art():
+        return title
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation", HudOrdersVocab.GROUP_HEADER_SEPARATION)
+    var face := BandOrdersSheets.portrait(band, HudOrdersVocab.GROUP_PORTRAIT_SIZE)
+    face.mouse_filter = Control.MOUSE_FILTER_PASS
+    face.tooltip_text = (HudOrdersVocab.COUNCIL_PORTRAIT_TIP_FORMAT % HudFormat.band_name(band)) \
+        if HudOrdersVocab.is_council(band) \
+        else HudOrdersVocab.PORTRAIT_TIP_FORMAT % [HudOrdersVocab.who(band), HudFormat.band_name(band)]
+    face.set_meta(HudOrdersVocab.GROUP_PORTRAIT_META, true)
+    row.add_child(face)
+    title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+    title.clip_text = true
+    row.add_child(title)
+    return row
+
 static func build_group(band: Dictionary, controller: BandOrdersController,
         rows_by_kind: Dictionary, also_by_kind: Dictionary, kit_by_kind: Dictionary = {}) -> VBoxContainer:
     var orders := HudOrdersVocab.shown_orders(band)
@@ -95,7 +116,7 @@ static func build_group(band: Dictionary, controller: BandOrdersController,
     column.add_theme_constant_override("separation", HudOrdersVocab.GROUP_SEPARATION)
     box.add_child(column)
     group.add_child(box)
-    column.add_child(HudWidgets.alloc_section_label(HudOrdersVocab.group_title(band)))
+    column.add_child(_group_header(band))
     for order_variant in orders:
         var order: Dictionary = order_variant
         var kind := String(order.get("kind", ""))

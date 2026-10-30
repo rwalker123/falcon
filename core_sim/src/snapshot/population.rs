@@ -2345,15 +2345,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     // **WHICH OF ITS KIT ITEMS ARE SHORT, BY NAME** — read off the same pass as the
                     // coverage above (the mustered one while a crew goes out, the standing one
                     // otherwise), so the line and the reach beside it agree.
-                    // **WHICH ORDER LISTS THIS ROW** (#860): a dig row of a chief-owned material is
-                    // listed under the material; a forage or hunt row under the order
-                    // `order_rows` names; a player-crewed row under none.
-                    row.order_kind = match &assignment.target {
-                        LaborTarget::Extract { material, .. } if a.chief_owns(material) => {
-                            material.clone()
-                        }
-                        target => a.row_order(target).unwrap_or_default().to_string(),
-                    };
+                    // **WHICH ORDER LISTS THIS ROW** (#860): the order `order_rows` names for a
+                    // forage, hunt or dig row; a player-crewed row under none.
+                    row.order_kind = a
+                        .row_order(&assignment.target)
+                        .unwrap_or_default()
+                        .to_string();
                     row.chief_owned = !row.order_kind.is_empty();
                     row.kit_toe = match &sending_pass {
                         Some(pass) => kit_toe_states(&pass.gear[i].toe),

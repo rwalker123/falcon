@@ -714,7 +714,7 @@ func has_panel() -> bool:
 ## chief's order sheet floats beside (`DrawerComposeController.open_order_sheet`): an order has no tile
 ## subject, so without it the sheet fell back to the viewport's top-left corner - over a left-docked panel.
 func card_rect_if_shown() -> Rect2:
-    if _panel == null or not _panel.is_visible_in_tree():
+    if _panel == null or not _panel.visible:
         return Rect2()
     return _panel.card_rect()
 
@@ -3458,12 +3458,6 @@ func show_source_on_map(kind: String, x: int, y: int, herd_id: String) -> void:
 ## **A CLICK ON A SOURCE'S ROW OPENS ITS SHEET** (issue #877): select the source exactly as `Jump to
 ## source` does, then ask the HUD to open the compose sheet on it. The sheet is a different surface
 ## from this controller's, so the request leaves as a signal and `Hud` relays it.
-## Open a working's sheet from a band order's name: select the order's site tile first, so the
-## sheet's title and stock line are that site's.
-func open_site_sheet(x: int, y: int, material: String) -> void:
-    _open_source_sheet({"kind": HudConst.LABOR_KIND_EXTRACT, "x": x, "y": y, "herd_id": "",
-        "material": material})
-
 func _open_source_sheet(model: Dictionary) -> void:
     _focus_work_source(model)
     source_sheet_requested.emit(String(model.get("kind", "")), int(model.get("x", -1)),

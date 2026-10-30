@@ -218,7 +218,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "band_order",
         aliases: &[],
-        summary: "A BAND'S ORDER FOR ONE KIND: once a band has a leader, the leader keeps an ordered kind (stone today) on hand. `set` states how much to hold and how urgently - the sim picks the dig site, staffs the digging from the shortfall and stops when the store reaches the target; a target of 0 is refused (there is no 'none'). 'high', 'normal' or 'low' ranks the work against the band's other work. `release` is Crew it yourself: the player takes the kind, the leader's rows stay where they are with their crew as the Max, and the kind is crewed by hand exactly as a leaderless band crews it. `claim` is Hand it to the chief: the leader takes the kind back at its current target. For a food or fodder order `release` / `claim` may name ONE row (a patch's `<x> <y>` or a hunt row's `<herd_id>`): only that row changes hands and the kind stays the leader's. Refused for a band with no leader yet and for a kind that takes no order. While the leader keeps a kind, `assign_labor extract`, `stop_labor` and `work_priority` on it are refused and name the leader.",
+        summary: "A BAND'S ORDER FOR ONE KIND: once a band has a leader, the leader keeps an ordered kind (stone today) on hand. `set` states how much to hold and how urgently - the sim picks the dig site, staffs the digging from the shortfall and stops when the store reaches the target; a target of 0 is refused (there is no 'none'). 'high', 'normal' or 'low' ranks the work against the band's other work. `release` is Crew it yourself: the player takes the kind, the leader's rows stay where they are with their crew as the Max, and the kind is crewed by hand exactly as a leaderless band crews it. `claim` is Hand it to the chief: the leader takes the kind back at its current target. `release` / `claim` may name ONE row (a patch's or a stand's `<x> <y>`, or a hunt row's `<herd_id>`): only that row changes hands and the kind stays the leader's. Refused for a band with no leader yet and for a kind that takes no order. The leader's rows are the ones he lists: `assign_labor extract`, `stop_labor` and `work_priority` on a row he lists are refused and name him, and on any other row (a stand the player crews) they work.",
         usage: "band_order <faction_id> <band_id> <kind> set <target> high|normal|low | band_order <faction_id> <band_id> <kind> release [<x> <y> | <herd_id>] | band_order <faction_id> <band_id> <kind> claim [<x> <y> | <herd_id>]",
     },
     CommandVerbHelp {
@@ -1182,8 +1182,8 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 "claim" => BandOrderAction::Claim,
                 other => return Err(CommandParseError::UnexpectedToken(other.to_string())),
             };
-            // A `release` / `claim` may name ONE row of a food or fodder order: `<x> <y>` for a
-            // patch, `<herd id>` for a hunt row.
+            // A `release` / `claim` may name ONE row of an order: `<x> <y>` for a patch or a stand,
+            // `<herd id>` for a hunt row.
             let row = if matches!(action, BandOrderAction::Set { .. }) {
                 None
             } else {

@@ -1747,17 +1747,20 @@ fn extract_input<'a>(
     if room <= crate::extraction::DEPOSIT_EMPTY {
         return;
     }
-    if let Some(order) = allocation
-        .order_for(material)
-        .filter(|order| order.owner == crate::components::OrderOwner::Chief)
-    {
+    let listed = allocation
+        .row_order(&LaborTarget::Extract {
+            tile,
+            material: material.to_string(),
+            floor,
+        })
+        .is_some_and(|kind| kind == material && allocation.chief_owns(material));
+    if listed {
         // **A MATERIAL A CHIEF KEEPS ON HAND IS STAFFED FROM ITS ROW'S SHARE OF THE WANT** (#860,
         // #874): the managing pass split the want (the draw plus the deficit spread over
         // `keep_on_hand_refill_turns`) across the sites, each up to what it gives at the order's
         // floor without drawing it down. At or above the target the shares are zero and nobody digs
         // (the row's keepers still come, `keep_hands`); a row off the set has no share and is staffed
         // to nobody. The order's priority ranks the row among the band's work.
-        let _ = order;
         let Some(share) = allocation.keep_share(material, tile) else {
             return;
         };

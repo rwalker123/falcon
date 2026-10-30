@@ -276,10 +276,15 @@ pub fn answer_staffing_preview(world: &mut World, ask: &StaffingPreviewQuery) ->
         Ok(target) => target,
         Err(reply) => return reply,
     };
-    if let LaborTarget::Extract { material, .. } = &target {
+    if let LaborTarget::Extract { .. } = &target {
+        // Only a row the chief LISTS is his; a stand the player crews (or has none on) is not.
         if world
             .get::<LaborAllocation>(band)
-            .is_some_and(|allocation| allocation.chief_owns(material))
+            .is_some_and(|allocation| {
+                allocation
+                    .row_order(&target)
+                    .is_some_and(|kind| allocation.chief_owns(kind))
+            })
         {
             return refusal(query_error::MATERIAL_IS_KEPT_ON_HAND);
         }

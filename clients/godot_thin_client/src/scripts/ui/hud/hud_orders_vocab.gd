@@ -178,10 +178,8 @@ const SPLIT_KIT_WORDS := {"stone": "sleds", "wood": "axes"}
 const HOLD_REFILL_FORMAT := "%d keep up with what the band uses, %s toward %d."
 const REFILL_ONE := "%d refills"
 const REFILL_MANY := "%d refill"
-const DIGGING_ELSEWHERE_FORMAT := "%s is digging at %s."
 const SITE_NAME_FORMAT := "%s (%d, %d)"
 const SITE_COORDS_FORMAT := "(%d, %d)"
-const STAND_HERE := "here"
 const LEAVES_STANDS := "He leaves every stand to grow back."
 const LEAVES_STANDS_COUNCIL := "They leave every stand to grow back."
 const STANDS_SHORT_FORMAT := "⚠ Stands in reach regrow %.1f wood a turn — %s uses %.1f."
@@ -197,6 +195,27 @@ const AFTER_EATING_FORMAT := "%s after eating"
 
 const SHOW_ON_MAP := "Show on map"
 const CREW_IT_YOURSELF := "Crew it yourself"
+## The tile sheet's per-stand strip (a chief's stand, a player's stand, an empty site) and the order
+## sheet's whole-kind release.
+const CREW_STAND_YOURSELF := "Crew this stand yourself"
+const STRIP_STAND_FORMAT := "%s this stand for "
+const OFFER_STAND_FORMAT := "%s could %s this stand for you"
+const NO_ROW_NOTE_FORMAT := "%s keeps %s — what you %s here counts toward his order."
+const NO_ROW_NOTE_COUNCIL_FORMAT := "%s keep %s — what you %s here counts toward their order."
+const CREW_ALL_FORMAT := "Crew all %s yourself"
+const CREW_ALL_TIP_FORMAT := "Takes %s %d %s %s back to you"
+const STAND_SINGULAR := "stand"
+const STAND_PLURAL := "stands"
+const CHIEF_STAND_DISABLED_TIP_FORMAT := "%s sets this while the order runs it. Press Crew this stand yourself to take it back."
+## What the player does on a stand of each material, in the infinitive ("what you cut here").
+const PLAYER_VERBS := {"wood": "cut", "stone": "dig"}
+## The header portrait's tooltip: `Dara, chief of Moonhollow` / `The elders of Moonhollow`.
+const PORTRAIT_TIP_FORMAT := "%s, chief of %s"
+const COUNCIL_PORTRAIT_TIP_FORMAT := "The elders of %s"
+## The portrait beside the orders group's header: one to two lines of header text tall.
+const GROUP_PORTRAIT_SIZE := 28.0
+const GROUP_HEADER_SEPARATION := 6
+const GROUP_PORTRAIT_META := &"band_order_group_portrait"
 const HAND_IT_FORMAT := "Hand it to %s"
 ## A released order's state line on the Work tab: the player crews it, and the link hands it back.
 const CREWED_BY_YOU := "You crew it — "
@@ -212,6 +231,8 @@ const STRIP_ROW_END := "."
 const ROW_VERBS := {
     KIND_FOOD: {"hunt": "hunts", "forage": "gathers"},
     KIND_FODDER: {"hunt": "cuts", "forage": "cuts"},
+    "wood": {"extract": "cuts"},
+    "stone": {"extract": "digs"},
 }
 
 const FOOD_EATS_FORMAT := "%s eats %.1f food a turn."

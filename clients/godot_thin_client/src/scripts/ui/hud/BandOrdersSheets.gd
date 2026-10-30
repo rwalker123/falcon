@@ -21,23 +21,24 @@ const META_ROW_STRIP := &"band_order_row_strip"
 const META_ORDER_LINK := &"band_order_link"
 const META_PEN_BAR := &"band_order_pen_bar"
 const META_SOURCE_ROW := &"band_order_source_row"
+const META_NO_ROW_NOTE := &"band_order_no_row_note"
 
 # ---- Pieces ---------------------------------------------------------------------------------------
 
-static func _portrait(band: Dictionary, size: float) -> Control:
-    var portrait := LeaderPortrait.make(int(band.get("faction", HudConst.PLAYER_FACTION_ID)), false,
+static func portrait(band: Dictionary, size: float) -> Control:
+    var art := LeaderPortrait.make(int(band.get("faction", HudConst.PLAYER_FACTION_ID)), false,
         HudOrdersVocab.is_council(band))
     if is_equal_approx(size, LeaderPortrait.PORTRAIT_SIZE):
-        return portrait
+        return art
     # A scaled Control still reserves its unscaled minimum, so the portrait rides inside a holder
     # of the drawn size and is scaled down within it.
     var holder := Control.new()
     holder.custom_minimum_size = Vector2(size, size)
     holder.size_flags_vertical = Control.SIZE_SHRINK_CENTER
     holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    portrait.custom_minimum_size = Vector2.ZERO
-    portrait.scale = Vector2.ONE * (size / LeaderPortrait.PORTRAIT_SIZE)
-    holder.add_child(portrait)
+    art.custom_minimum_size = Vector2.ZERO
+    art.scale = Vector2.ONE * (size / LeaderPortrait.PORTRAIT_SIZE)
+    holder.add_child(art)
     return holder
 
 static func _box(parent: Container, meta: StringName) -> VBoxContainer:
@@ -60,7 +61,7 @@ static func chief_box(band: Dictionary, headline: String) -> Control:
     box.set_meta(META_CHIEF_BOX, true)
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", HudOrdersVocab.SRC_ROW_SEPARATION)
-    row.add_child(_portrait(band, LeaderPortrait.PORTRAIT_SIZE))
+    row.add_child(portrait(band, LeaderPortrait.PORTRAIT_SIZE))
     var words := VBoxContainer.new()
     words.size_flags_vertical = Control.SIZE_SHRINK_CENTER
     words.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -72,16 +73,26 @@ static func chief_box(band: Dictionary, headline: String) -> Control:
     return box
 
 ## A strip with the small portrait and one dim sentence, plus a ghost button (`Hand it to Orrin`).
-static func offer_strip(band: Dictionary, sentence: String, button: Button) -> Control:
+## `stacked` puts the button on its own line under the portrait and sentence, for a label too long to
+## share the line with them (`Crew this stand yourself`).
+static func offer_strip(band: Dictionary, sentence: String, button: Button, stacked: bool = false) -> Control:
     var strip := PanelContainer.new()
     strip.add_theme_stylebox_override("panel", HudStyle.chip_stylebox(HudStyle.LINE))
     strip.set_meta(META_OFFER, true)
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", HudOrdersVocab.SRC_ROW_SEPARATION)
-    row.add_child(_portrait(band, HudOrdersVocab.PORTRAIT_SMALL))
+    row.add_child(portrait(band, HudOrdersVocab.PORTRAIT_SMALL))
     var words := BandOrdersView.text(sentence, HudOrdersVocab.LINE_FONT_SIZE, HudStyle.INK_DIM, true)
     words.size_flags_vertical = Control.SIZE_SHRINK_CENTER
     row.add_child(words)
+    if stacked:
+        var column := VBoxContainer.new()
+        column.add_theme_constant_override("separation", HudOrdersVocab.SRC_ROW_SEPARATION)
+        column.add_child(row)
+        button.size_flags_horizontal = Control.SIZE_SHRINK_END
+        column.add_child(button)
+        strip.add_child(column)
+        return strip
     row.add_child(button)
     strip.add_child(row)
     return strip
@@ -105,17 +116,19 @@ static func row_strip(ctx: Dictionary, order_info: Dictionary, source_kind: Stri
     var orders: BandOrdersController = ctx["orders"]
     var kind := String(order_info["kind"])
     var verbs: Dictionary = HudOrdersVocab.ROW_VERBS.get(kind, {})
-    var verb := String(verbs.get("hunt" if source_kind == SourceForecast.LABOR_KIND_HUNT else "forage",
-        "works"))
+    var verb_key := _verb_key(source_kind)
+    var verb := String(verbs.get(verb_key, "works"))
+    var is_stand := source_kind == HudConst.LABOR_KIND_EXTRACT
     var chiefs := bool(order_info["chief_owned"])
     var strip: Control
     if chiefs:
-        var button := _ghost_button(HudOrdersVocab.CREW_IT_YOURSELF, "", func() -> void:
+        var button := _ghost_button(HudOrdersVocab.CREW_STAND_YOURSELF if is_stand \
+            else HudOrdersVocab.CREW_IT_YOURSELF, "", func() -> void:
             orders.send_release(band, kind, address)
             (ctx["rebuild"] as Callable).call())
         button.set_meta(META_RELEASE, kind)
-        strip = offer_strip(band, "", button)
-        var row: HBoxContainer = strip.get_child(0)
+        strip = offer_strip(band, "", button, is_stand)
+        var row: HBoxContainer = strip.get_child(0).get_child(0) if is_stand else strip.get_child(0)
         var words: Label = row.get_child(1)
         row.remove_child(words)
         words.queue_free()
@@ -129,7 +142,8 @@ static func row_strip(ctx: Dictionary, order_info: Dictionary, source_kind: Stri
         rich.add_theme_font_size_override("normal_font_size", HudOrdersVocab.LINE_FONT_SIZE)
         rich.add_theme_color_override("default_color", HudStyle.INK_DIM)
         rich.text = "%s[url=order][color=#%s]%s[/color][/url]%s" % [
-            HudOrdersVocab.STRIP_ROW_FORMAT % HudOrdersVocab.who_verb(band, verb),
+            (HudOrdersVocab.STRIP_STAND_FORMAT if is_stand else HudOrdersVocab.STRIP_ROW_FORMAT) \
+                % HudOrdersVocab.who_verb(band, verb),
             HudStyle.INK_HEX, HudOrdersVocab.STRIP_ROW_LINK_FORMAT % kind, HudOrdersVocab.STRIP_ROW_END]
         rich.meta_clicked.connect(func(_meta: Variant) -> void: orders.open_sheet(band, kind))
         rich.set_meta(META_ORDER_LINK, kind)
@@ -141,12 +155,29 @@ static func row_strip(ctx: Dictionary, order_info: Dictionary, source_kind: Stri
                 orders.send_claim(band, kind, address)
                 (ctx["rebuild"] as Callable).call())
         offer.set_meta(META_CLAIM, kind)
-        strip = offer_strip(band, HudOrdersVocab.OFFER_ROW_FORMAT % [HudOrdersVocab.who(band),
-            String(HudOrdersVocab.ROW_VERBS.get(kind, {}).get(
-                "hunt" if source_kind == SourceForecast.LABOR_KIND_HUNT else "forage", "work")).trim_suffix("s"),
-            kind], offer)
+        var base_verb := String(HudOrdersVocab.ROW_VERBS.get(kind, {}).get(verb_key, "work")).trim_suffix("s")
+        strip = offer_strip(band, (HudOrdersVocab.OFFER_STAND_FORMAT % [HudOrdersVocab.who(band), base_verb]) \
+            if is_stand else HudOrdersVocab.OFFER_ROW_FORMAT % [HudOrdersVocab.who(band), base_verb, kind], offer)
     strip.set_meta(META_ROW_STRIP, kind)
     return strip
+
+## The `ROW_VERBS` key a source kind reads: hunt, extract, else forage.
+static func _verb_key(source_kind: String) -> String:
+    if source_kind == SourceForecast.LABOR_KIND_HUNT:
+        return "hunt"
+    if source_kind == HudConst.LABOR_KIND_EXTRACT:
+        return "extract"
+    return "forage"
+
+## The dim line on a tile sheet with no stand of the chief's or the player's on it, under a chief-owned
+## material order: `Orrin keeps wood — what you cut here counts toward his order.`
+static func no_row_note(band: Dictionary, material: String) -> Label:
+    var format := HudOrdersVocab.NO_ROW_NOTE_COUNCIL_FORMAT if HudOrdersVocab.is_council(band) \
+        else HudOrdersVocab.NO_ROW_NOTE_FORMAT
+    var label := BandOrdersView.text(format % [HudOrdersVocab.who(band), material,
+        HudOrdersVocab.PLAYER_VERBS.get(material, "work")], HudOrdersVocab.LINE_FONT_SIZE, HudStyle.INK_DIM, true)
+    label.set_meta(META_NO_ROW_NOTE, material)
+    return label
 
 ## Disable the live controls under `root` (the chief's values stay shown), leaving the buttons whose
 ## meta is in `keep` and anything inside a node carrying a `keep` meta live.
@@ -241,25 +272,21 @@ static func next_turn_box(parent: Container, take: float, unit: String, lines: A
             box.add_child(BandOrdersView.text(String(line), HudOrdersVocab.SMALL_FONT_SIZE + 1,
                 HudStyle.INK_FAINT, true))
 
-static func footer(ctx: Dictionary, kind: String, show_map: Callable, with_release: bool) -> Control:
-    var band: Dictionary = ctx["band"]
-    var orders: BandOrdersController = ctx["orders"]
+## The sheet's foot: `Show on map` and (a material sheet) the whole-kind release at the LEFT, a gap, then
+## `Done` at the right -- so the release is never where a commit button sits.
+static func footer(ctx: Dictionary, show_map: Callable, release: Button = null) -> Control:
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", HudOrdersVocab.SRC_ROW_SEPARATION)
     if show_map.is_valid():
         var link := HudWidgets.build_inline_link(HudOrdersVocab.SHOW_ON_MAP, HudStyle.INK, show_map)
         link.set_meta(HudComposeVocab.SHOW_ON_MAP_META, true)
         row.add_child(link)
+    if release != null:
+        row.add_child(release)
     var gap := Control.new()
     gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
     row.add_child(gap)
-    if with_release:
-        var release := _ghost_button(HudOrdersVocab.CREW_IT_YOURSELF, "", func() -> void:
-            orders.send_release(band, kind)
-            (ctx["rebuild"] as Callable).call())
-        release.set_meta(META_RELEASE, kind)
-        row.add_child(release)
     var done := Button.new()
     done.text = HudOrdersVocab.DONE
     done.set_meta(HudComposeVocab.DONE_BUTTON_META, true)
@@ -280,17 +307,14 @@ static func material_rows(band: Dictionary, material: String) -> Array:
             rows.append(row)
     return rows
 
-## The chief version of a stone / wood sheet (boards 2 and 3). `stock_line` is the site's own stock
-## sentence; `tile` is the sheet's hex.
+## The whole-order sheet of a stone / wood order (opened from the Work tab; boards 2 and 3): the keep
+## stepper, priority, the stands the chief works (each with its coordinates) and `Crew all <material> yourself`.
 static func build_material_chief(target: VBoxContainer, ctx: Dictionary, order: Dictionary,
-        material: String, tile: Vector2i, stock_line: String) -> void:
+        material: String) -> void:
     var band: Dictionary = ctx["band"]
     var orders: BandOrdersController = ctx["orders"]
-    var who := HudOrdersVocab.who(band)
     target.add_child(chief_box(band, HudOrdersVocab.CHIEF_KEEPS_MATERIAL_FORMAT % [
         HudOrdersVocab.who_verb(band, "keeps"), material]))
-    if stock_line != "":
-        target.add_child(HudWidgets.alloc_hint_label(stock_line))
     var priority := String(order.get("priority", HudOrdersVocab.PRIORITY_NORMAL))
     var current_target := int(order.get("target", 0))
     keep_box(target, order, material, func(new_target: int) -> void:
@@ -309,34 +333,24 @@ static func build_material_chief(target: VBoxContainer, ctx: Dictionary, order: 
     box.add_child(BandOrdersView.text(headline, HudOrdersVocab.NAME_FONT_SIZE + 2, HudStyle.INK, true))
     var hold := int(order.get("hold_heads", 0))
     var refill := int(order.get("refill_heads", 0))
-    if material == "wood":
-        for row in rows:
-            var line := HBoxContainer.new()
-            line.add_theme_constant_override("separation", HudOrdersVocab.SRC_ROW_SEPARATION)
-            var row_tile := Vector2i(int(row.get("target_x", -1)), int(row.get("target_y", -1)))
-            var here := row_tile == tile
-            var name_text := HudOrdersVocab.SITE_NAME_FORMAT % [material.capitalize(), row_tile.x, row_tile.y]
-            if here:
-                name_text += " · " + HudOrdersVocab.STAND_HERE
-            var name_label := BandOrdersView.text(name_text, HudOrdersVocab.LINE_FONT_SIZE,
-                HudStyle.INK if here else HudStyle.INK_DIM)
-            name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-            line.add_child(name_label)
-            line.add_child(BandOrdersView.text(str(int(row.get("workers", 0))),
-                HudOrdersVocab.SMALL_FONT_SIZE + 1, HudStyle.INK_FAINT))
-            line.add_child(BandOrdersView.text(HudOrdersVocab.SRC_TAKE_FORMAT % HudOrdersVocab.product_of(row, material),
-                HudOrdersVocab.LINE_FONT_SIZE, HudStyle.INK_DIM))
-            line.set_meta(META_SOURCE_ROW, row_tile)
-            box.add_child(line)
-    elif not at_target:
-        var site := Vector2i(int(order.get("site_x", -1)), int(order.get("site_y", -1)))
-        if bool(order.get("has_site", false)) and site != tile:
-            box.add_child(BandOrdersView.text(HudOrdersVocab.DIGGING_ELSEWHERE_FORMAT % [who,
-                orders.site_name(site.x, site.y)], HudOrdersVocab.LINE_FONT_SIZE, HudStyle.INK_DIM, true))
-        else:
-            var refill_text := (HudOrdersVocab.REFILL_ONE if refill == 1 else HudOrdersVocab.REFILL_MANY) % refill
-            box.add_child(BandOrdersView.text(HudOrdersVocab.HOLD_REFILL_FORMAT % [hold, refill_text,
-                current_target], HudOrdersVocab.LINE_FONT_SIZE, HudStyle.INK_DIM, true))
+    for row in rows:
+        var line := HBoxContainer.new()
+        line.add_theme_constant_override("separation", HudOrdersVocab.SRC_ROW_SEPARATION)
+        var row_tile := Vector2i(int(row.get("target_x", -1)), int(row.get("target_y", -1)))
+        var name_text := HudOrdersVocab.SITE_NAME_FORMAT % [material.capitalize(), row_tile.x, row_tile.y]
+        var name_label := BandOrdersView.text(name_text, HudOrdersVocab.LINE_FONT_SIZE, HudStyle.INK_DIM)
+        name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        line.add_child(name_label)
+        line.add_child(BandOrdersView.text(str(int(row.get("workers", 0))),
+            HudOrdersVocab.SMALL_FONT_SIZE + 1, HudStyle.INK_FAINT))
+        line.add_child(BandOrdersView.text(HudOrdersVocab.SRC_TAKE_FORMAT % HudOrdersVocab.product_of(row, material),
+            HudOrdersVocab.LINE_FONT_SIZE, HudStyle.INK_DIM))
+        line.set_meta(META_SOURCE_ROW, row_tile)
+        box.add_child(line)
+    if rows.is_empty() and not at_target:
+        var refill_text := (HudOrdersVocab.REFILL_ONE if refill == 1 else HudOrdersVocab.REFILL_MANY) % refill
+        box.add_child(BandOrdersView.text(HudOrdersVocab.HOLD_REFILL_FORMAT % [hold, refill_text,
+            current_target], HudOrdersVocab.LINE_FONT_SIZE, HudStyle.INK_DIM, true))
     if at_target:
         box.add_child(BandOrdersView.text(HudOrdersVocab.AT_TARGET_DIGGERS_FORMAT % current_target
             if material == "stone" else "", HudOrdersVocab.LINE_FONT_SIZE, HudStyle.INK_DIM, true))
@@ -369,10 +383,19 @@ static func build_material_chief(target: VBoxContainer, ctx: Dictionary, order: 
         lines.append(HudOrdersVocab.NEXT_TURN_FALLS_FORMAT % [material.capitalize(),
             float(order.get("draw", 0.0)) - float(order.get("take", 0.0))])
     next_turn_box(target, float(order.get("take", 0.0)), material, lines)
-    var site_x := int(order.get("site_x", tile.x))
-    var site_y := int(order.get("site_y", tile.y))
-    target.add_child(footer(ctx, material,
-        func() -> void: (ctx["show_on_map"] as Callable).call(site_x, site_y), true))
+    var release := _ghost_button(HudOrdersVocab.CREW_ALL_FORMAT % material, HudOrdersVocab.CREW_ALL_TIP_FORMAT % [
+        HudOrdersVocab.possessive(band), rows.size(), material,
+        HudOrdersVocab.STAND_SINGULAR if rows.size() == 1 else HudOrdersVocab.STAND_PLURAL],
+        func() -> void:
+            orders.send_release(band, material)
+            (ctx["rebuild"] as Callable).call())
+    release.set_meta(META_RELEASE, material)
+    var show_map := Callable()
+    if bool(order.get("has_site", false)):
+        var site_x := int(order.get("site_x", -1))
+        var site_y := int(order.get("site_y", -1))
+        show_map = func() -> void: (ctx["show_on_map"] as Callable).call(site_x, site_y)
+    target.add_child(footer(ctx, show_map, release))
 
 # ---- The food and fodder sheets -------------------------------------------------------------------
 
@@ -509,4 +532,4 @@ static func build_order_sheet(target: VBoxContainer, ctx: Dictionary, order: Dic
                 lines.append(HudOrdersVocab.FODDER_COMES_HOME_FORMAT % [hay_here, source_name(other["row"], herd_label)])
     var note := (HudOrdersVocab.AFTER_EATING_FORMAT % ("%+.2f" % net)) if is_food else ("%+.2f" % net)
     next_turn_box(target, take, "food" if is_food else "fodder", lines, note)
-    target.add_child(footer(ctx, kind, Callable(), false))
+    target.add_child(footer(ctx, Callable()))

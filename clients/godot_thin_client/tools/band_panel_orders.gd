@@ -152,6 +152,8 @@ func run(harness) -> void:
 	await _show(band, "band_orders_work_all")
 	h._assert_band_panel("band orders: the Work tab draws ONE orders group", _group_count() == 1)
 	h._assert_band_panel("…titled for the chief", _has("ORRIN'S ORDERS") or _has("Orrin's orders"))
+	h._assert_band_panel("…and the header carries the leader's portrait (art on disk: %s)" % LeaderPortrait.has_art(),
+		h._collect_meta_controls(h._panel, String(HudOrdersVocab.GROUP_PORTRAIT_META)).size() == (1 if LeaderPortrait.has_art() else 0))
 	h._assert_band_panel("…with a line per order (4 got %d)" % _lines().size(), _lines().size() == 4)
 	h._assert_band_panel("…in the fixed order Food, Fodder, Stone, Wood", _line_kinds() == ["food", "fodder", "stone", "wood"])
 	h._assert_band_panel("…Food's own line", _has("· 12 turns · keep 20 turns"))
@@ -426,6 +428,14 @@ func _food_sheet_beside_panel() -> void:
 		var joined := "\n".join(PackedStringArray(_texts(sheet)))
 		h._assert_band_panel("%s: a source row names the patch's real tile" % frame,
 			joined.contains("(71, 18)") and not joined.contains("(-1, -1)"))
+		h._hud._drawercompose.close_compose_sheet()
+		# The Wood order sheet is a KIND_ORDER sheet too: beside the panel, never over it.
+		h._hud._drawercompose.open_order_sheet(int(band["entity"]), "wood")
+		await h._settle()
+		await h._settle()
+		var wood_rect := Rect2(sheet._card.global_position, sheet._card.size)
+		h._assert_band_panel("%s: the Wood sheet clears the Band panel's card too (%s vs %s)" % [frame, wood_rect, panel_rect],
+			not wood_rect.intersects(panel_rect) and "\n".join(PackedStringArray(_texts(sheet))).contains("Crew all wood yourself"))
 		h._hud._drawercompose.close_compose_sheet()
 	h._panel.set_dock(SIDE_RIGHT)
 

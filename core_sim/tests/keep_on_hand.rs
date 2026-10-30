@@ -1059,3 +1059,244 @@ fn an_orders_take_is_what_its_rows_brought_in_last_turn() {
     }];
     assert_eq!(allocation.order_take(STONE), 2.5);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Orders are PER STAND: the chief's rows are the ones he lists, a stand the player crews is the
+// player's whoever owns the order.
+// ---------------------------------------------------------------------------------------------
+
+/// A hand-made wood row at `tile`, staffed with a Max.
+fn hand_wood(app: &mut App, band: Entity, tile: UVec2, max: u32) {
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("allocation")
+        .set_staffed_row(
+            LaborTarget::Extract {
+                tile,
+                material: WOOD.to_string(),
+                floor: 0.0,
+            },
+            Some(max),
+            None,
+        );
+    core_sim::staffing::restaff_band(&mut app.world, band);
+}
+
+/// The tiles of every wood row the chief lists under the wood order.
+fn listed_wood(app: &App, band: Entity) -> Vec<UVec2> {
+    let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+    let mut tiles: Vec<UVec2> = allocation
+        .assignments
+        .iter()
+        .filter(|row| allocation.row_order(&row.target) == Some(WOOD))
+        .filter_map(|row| match &row.target {
+            LaborTarget::Extract { tile, .. } => Some(*tile),
+            _ => None,
+        })
+        .collect();
+    tiles.sort_by_key(|tile| (tile.y, tile.x));
+    tiles
+}
+
+fn wood_max(app: &App, band: Entity, tile: UVec2) -> Option<u32> {
+    app.world
+        .get::<LaborAllocation>(band)
+        .unwrap()
+        .assignments
+        .iter()
+        .find(|row| {
+            matches!(&row.target, LaborTarget::Extract { tile: at, material, .. } if *at == tile && material == WOOD)
+        })
+        .expect("a wood row there")
+        .max_workers
+}
+
+/// `(orderKind, chiefOwned)` of the extract row at `tile` read off the ENCODED snapshot.
+fn published_dig_row(app: &mut App, tile: UVec2) -> (String, bool) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    core_sim::recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<core_sim::SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("cohorts")
+        .iter()
+        .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+        .find(|row| {
+            row.kind().unwrap_or_default() == "extract"
+                && row.targetX() == tile.x
+                && row.targetY() == tile.y
+        })
+        .expect("the dig row is published");
+    (
+        row.orderKind().unwrap_or_default().to_string(),
+        row.chiefOwned(),
+    )
+}
+
+fn total_take(app: &App, band: Entity) -> f32 {
+    app.world
+        .get::<LaborAllocation>(band)
+        .unwrap()
+        .keep_shares
+        .iter()
+        .map(|(_, share)| share.take)
+        .sum()
+}
+
+/// **A STAND THE PLAYER CREWS UNDER A CHIEF-OWNED ORDER IS THE PLAYER'S**: it is not listed, the
+/// chief neither retires nor re-floors it nor clears its Max across turns, he deals his rows on the
+/// other stands, the wire says `chiefOwned: false`, and what it brought in last turn shrinks his want.
+#[test]
+fn a_player_stand_under_a_chiefs_wood_order_stays_the_players() {
+    let (mut app, band, stands) = timber_world();
+    let each = one_stands_give(&mut app, band);
+    // The player takes the nearest stand over (release), then crews it himself.
+    core_sim::keep_on_hand::release_row(
+        &mut app.world.get_mut::<LaborAllocation>(band).unwrap(),
+        &core_sim::keep_on_hand::dig_key(WOOD, stands[0].x, stands[0].y),
+    );
+    hand_wood(&mut app, band, stands[0], 2);
+    keep_wood(&mut app, band, (each * 15.0).ceil() as u32);
+    assert_eq!(
+        listed_wood(&app, band),
+        stands[1..].to_vec(),
+        "**LIVENESS**: the chief lists the other two, not the player's stand"
+    );
+    for _ in 0..3 {
+        app.update();
+        assert_eq!(wood_max(&app, band, stands[0]), Some(2), "his Max stands");
+        assert!(
+            !listed_wood(&app, band).contains(&stands[0]),
+            "never taken over"
+        );
+    }
+    let (kind, chief_owned) = published_dig_row(&mut app, stands[0]);
+    assert_eq!((kind.as_str(), chief_owned), ("", false));
+    let (kind, chief_owned) = published_dig_row(&mut app, stands[1]);
+    assert_eq!((kind.as_str(), chief_owned), (WOOD, true));
+
+    // What the player's stand brought in last turn comes off the chief's want.
+    let before = total_take(&app, band);
+    assert!(before > 0.0, "**LIVENESS**: the chief wants something");
+    {
+        let mut allocation = app.world.get_mut::<LaborAllocation>(band).unwrap();
+        let index = allocation
+            .assignments
+            .iter()
+            .position(|row| {
+                matches!(&row.target, LaborTarget::Extract { tile, .. } if *tile == stands[0])
+            })
+            .unwrap();
+        allocation.last_yields[index].materials = vec![core_sim::MaterialPayoff {
+            material: WOOD.to_string(),
+            amount: before / 2.0,
+        }];
+    }
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    assert!(
+        total_take(&app, band) < before,
+        "the want shrinks by the player's stand: {} against {before}",
+        total_take(&app, band)
+    );
+}
+
+/// **ONE STAND RELEASED**: the order stays the chief's, the other stands stay listed, and the released
+/// stand is the player's with its crew as the Max. `claim` of that stand lists it and the next pass
+/// clears the Max.
+#[test]
+fn releasing_one_stand_leaves_the_order_the_chiefs_and_claiming_it_back_clears_the_max() {
+    use core_sim::keep_on_hand::{claim_row, dig_key, release_row};
+    let (mut app, band, _stands) = timber_world();
+    let each = one_stands_give(&mut app, band);
+    keep_wood(&mut app, band, (each * 15.0).ceil() as u32);
+    let listed = listed_wood(&app, band);
+    assert_eq!(listed.len(), 2, "**LIVENESS**: two chief stands");
+    let key = dig_key(WOOD, listed[0].x, listed[0].y);
+    release_row(
+        &mut app.world.get_mut::<LaborAllocation>(band).unwrap(),
+        &key,
+    );
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    assert!(app
+        .world
+        .get::<LaborAllocation>(band)
+        .unwrap()
+        .chief_owns(WOOD));
+    assert!(
+        wood_max(&app, band, listed[0]).is_some_and(|max| max >= 1),
+        "Max = crew"
+    );
+    assert!(
+        listed_wood(&app, band).contains(&listed[1]),
+        "the other stand stays listed"
+    );
+    assert!(
+        !listed_wood(&app, band).contains(&listed[0]),
+        "the released stand is the player's"
+    );
+
+    claim_row(
+        &mut app.world.get_mut::<LaborAllocation>(band).unwrap(),
+        &key,
+        WOOD,
+    );
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    assert!(listed_wood(&app, band).contains(&listed[0]), "listed again");
+    assert_eq!(wood_max(&app, band, listed[0]), None, "the Max is cleared");
+}
+
+/// **A LISTED STAND REFUSES A HAND COMMAND; A PLAYER STAND TAKES ONE** (the keeper sentence is the
+/// refusal on the listed row only).
+#[test]
+fn a_hand_command_is_refused_on_a_listed_stand_and_taken_on_a_players() {
+    let (mut app, band, stands) = timber_world();
+    let each = one_stands_give(&mut app, band);
+    keep_wood(&mut app, band, (each * 15.0).ceil() as u32);
+    hand_wood(&mut app, band, stands[2], 2);
+    let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+    let keeper = core_sim::keep_on_hand::Keeper::of(app.world.get::<BandLeadership>(band), "Camp");
+    let refusal = |tile: UVec2| {
+        let target = LaborTarget::Extract {
+            tile,
+            material: WOOD.to_string(),
+            floor: 0.5,
+        };
+        allocation.row_order(&target).and_then(|kind| {
+            core_sim::keep_on_hand::order_refusal(allocation, kind, keeper.as_ref())
+        })
+    };
+    assert!(refusal(stands[0]).is_some(), "a listed stand is refused");
+    assert!(refusal(stands[2]).is_none(), "a player stand is accepted");
+}
+
+/// **ARRIVAL LISTS THE BAND'S EXISTING DIG ROWS OF EACH ORDERED MATERIAL** (and clears their Max).
+#[test]
+fn arrival_lists_the_hand_rows_of_each_ordered_material() {
+    let (mut app, band, camp) = leaderless_world();
+    ordered(&mut app, &[WOOD]);
+    bare_the_map(&mut app);
+    reground(&mut app, camp, WOODLAND);
+    hand_wood(&mut app, band, camp, 2);
+    assert!(
+        listed_wood(&app, band).is_empty(),
+        "a hand row is nobody's order"
+    );
+    give_a_leader(&mut app, band);
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    assert_eq!(
+        listed_wood(&app, band),
+        vec![camp],
+        "the arrival lists the hand row"
+    );
+    assert_eq!(wood_max(&app, band, camp), None, "and clears its Max");
+}
