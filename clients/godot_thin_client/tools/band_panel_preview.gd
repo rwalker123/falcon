@@ -4461,7 +4461,7 @@ func _render_interface_scale_states() -> void:
 	_report_zone_content_extent("band_panel_scale_bottom")
 
 	# LEFT — the other dock in the report. A vertical strip is `PANEL_WIDTH` at every scale, so the
-	# claim here is the containment one: the fixed 380px column and its full-height card must still
+	# claim here is the containment one: the fixed `PANEL_WIDTH` column and its full-height card must still
 	# lie inside a viewport that is now 800px tall.
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()

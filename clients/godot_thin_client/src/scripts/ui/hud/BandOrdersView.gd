@@ -188,8 +188,12 @@ static func _order_line(band: Dictionary, order: Dictionary, controller: BandOrd
     var middle := VBoxContainer.new()
     middle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     middle.add_theme_constant_override("separation", 0)
-    var head := HBoxContainer.new()
-    head.add_theme_constant_override("separation", HudOrdersVocab.GROUP_SEPARATION)
+    # A flow, not a row: the name and its `· 12 turns · keep 20 turns` detail sit on one line while they fit
+    # and the detail drops under the name when they do not, whole -- never elided, never wider than the zone.
+    var head := HFlowContainer.new()
+    head.add_theme_constant_override("h_separation", HudOrdersVocab.GROUP_SEPARATION)
+    head.add_theme_constant_override("v_separation", 0)
+    head.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     var open_sheet := func() -> void: controller.open_sheet(band, kind)
     var open_tip := HudOrdersVocab.open_tip(band, kind)
     var name_link := HudWidgets.build_inline_link(HudOrdersVocab.order_name(kind), HudStyle.INK, open_sheet)
@@ -200,9 +204,6 @@ static func _order_line(band: Dictionary, order: Dictionary, controller: BandOrd
     var detail := HudWidgets.build_inline_link(HudOrdersVocab.line_text(order), HudStyle.INK_DIM, open_sheet)
     detail.add_theme_font_size_override("font_size", HudOrdersVocab.SMALL_FONT_SIZE + 1)
     detail.alignment = HORIZONTAL_ALIGNMENT_LEFT
-    detail.clip_text = true
-    detail.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     detail.tooltip_text = open_tip
     detail.set_meta(HudOrdersVocab.ORDER_DETAIL_META, kind)
     head.add_child(detail)
@@ -213,21 +214,23 @@ static func _order_line(band: Dictionary, order: Dictionary, controller: BandOrd
     if kit.is_empty():
         middle.add_child(state_label)
     else:
-        # The state and its amber kit clause share one wrapping line; pressing the clause opens the bench.
-        var flow := HFlowContainer.new()
-        flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        flow.add_theme_constant_override("h_separation", HudOrdersVocab.GROUP_SEPARATION)
-        flow.add_theme_constant_override("v_separation", 0)
-        state_label.autowrap_mode = TextServer.AUTOWRAP_OFF
-        state_label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-        flow.add_child(state_label)
+        # The state, then its amber kit clause under it. BOTH wrap in the column's own width: a non-wrapping
+        # state label (the old flow) asked for its whole sentence as a minimum width and pushed the Work
+        # tab wider than the dock whenever the kit clause was up.
+        var stack := VBoxContainer.new()
+        stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        stack.add_theme_constant_override("separation", 0)
+        stack.add_child(state_label)
         var clause := HudWidgets.build_inline_link(String(kit["clause"]), HudStyle.WARN,
             func() -> void: controller.open_bench(band))
         clause.add_theme_font_size_override("font_size", HudOrdersVocab.STATE_FONT_SIZE)
         clause.tooltip_text = String(kit["tip"])
         clause.set_meta(HudOrdersVocab.ORDER_KIT_META, String(kit["clause"]))
-        flow.add_child(clause)
-        middle.add_child(flow)
+        clause.alignment = HORIZONTAL_ALIGNMENT_LEFT
+        clause.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        clause.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        stack.add_child(clause)
+        middle.add_child(stack)
     middle.add_child(priority_button(String(order.get("priority", HudOrdersVocab.PRIORITY_NORMAL)),
         open_tip, open_sheet))
     line.add_child(middle)
@@ -251,12 +254,9 @@ static func _also_line(also: Dictionary) -> Control:
     panel.add_theme_stylebox_override("panel", HudStyle.chip_stylebox(HudStyle.LINE_SOFT))
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", HudOrdersVocab.GROUP_PADDING)
-    var main := text(String(also.get("text", "")), HudOrdersVocab.ALSO_FONT_SIZE, HudStyle.INK_DIM)
-    main.clip_text = true
-    main.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    main.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    # Wraps rather than elides: the whole `↳ Also +0.36 food from Harvest (31, 24)` is the point of the line.
+    var main := text(String(also.get("text", "")), HudOrdersVocab.ALSO_FONT_SIZE, HudStyle.INK_DIM, true)
     main.tooltip_text = main.text
-    main.mouse_filter = Control.MOUSE_FILTER_PASS
     row.add_child(main)
     row.add_child(text(String(also.get("under", "")), HudOrdersVocab.SMALL_FONT_SIZE, HudStyle.INK_FAINT))
     panel.add_child(row)
@@ -292,8 +292,7 @@ static func by_product_lines(band: Dictionary) -> Array:
         var icon := text(String(entry["icon"]), HudOrdersVocab.LINE_FONT_SIZE, HudStyle.INK)
         icon.custom_minimum_size.x = HudOrdersVocab.ORDER_ICON_WIDTH
         row.add_child(icon)
-        var left := text(String(entry["left"]), HudOrdersVocab.LINE_FONT_SIZE - 1, HudStyle.INK_DIM)
-        left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        var left := text(String(entry["left"]), HudOrdersVocab.LINE_FONT_SIZE - 1, HudStyle.INK_DIM, true)
         row.add_child(left)
         row.add_child(text(String(entry["right"]), HudOrdersVocab.LINE_FONT_SIZE - 1, HudStyle.INK_DIM))
         nodes.append(row)

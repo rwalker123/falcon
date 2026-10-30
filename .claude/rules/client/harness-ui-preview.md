@@ -1242,7 +1242,7 @@ a sentence is a string — a frame shows a plausible verdict whichever clock it 
 
 > #### …AND IT RENDERS THE BAND PAGE'S PEOPLES TAB (issue #549)
 >
-> `EXPECTED_CHECKPOINTS` **180**, RE-MEASURED. Four frames on the 380px right dock's Peoples tab,
+> `EXPECTED_CHECKPOINTS` **180**, RE-MEASURED. Four frames on the right dock's Peoples tab,
 > after the Food-ledger states and before the panel is released: `connections_roster` (thirty
 > ties — growing, fading named by its remembered `subject_name`, fading named by its tile, 26 more
 > fading, parked), `connections_roster_scrolled` (the list scrolled to its end, the parked tie in

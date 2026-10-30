@@ -81,6 +81,13 @@ func _show(band: Dictionary, frame: String) -> void:
 	h._hud._bandpanel.rerender()
 	await h._settle()
 	await h._save(frame)
+	_fits(frame)
+
+## Every Work-tab frame is also judged against its zone: nothing the orders group draws may ask for more
+## width or height than the zone holds (a clipping host hides an overrun in the PNG).
+func _fits(frame: String) -> void:
+	h._current_state = frame
+	h._assert_zone_content_fits()
 
 func _texts(node: Node, out: Array = []) -> Array:
 	if node is Label:
@@ -163,6 +170,7 @@ func run(harness) -> void:
 	orders.toggle_fold(band, "fodder")
 	await h._settle()
 	await h._save("band_orders_work_open")
+	_fits("band_orders_work_open")
 	h._assert_band_panel("band orders: opening an order shows its rows and Also lines",
 		_has("↳ Also +0.25 fodder from") and _has("↳ Also +0.06 food from"))
 	h._assert_band_panel("…the caret is remembered per kind (food, fodder open)",
@@ -175,6 +183,7 @@ func run(harness) -> void:
 	orders.toggle_fold(band, "food", BandOrdersController.PART_RESERVE)
 	await h._settle()
 	await h._save("band_orders_work_reserve_open")
+	_fits("band_orders_work_reserve_open")
 	h._assert_band_panel("…and opening the reserve line brings its two rows back (%d -> %d)" % [before_reserve, _row_count()],
 		_row_count() == before_reserve + 2)
 	orders.toggle_fold(band, "food", BandOrdersController.PART_RESERVE)
@@ -190,6 +199,7 @@ func run(harness) -> void:
 		scroll.scroll_vertical = 100000
 		await h._settle()
 		await h._save("band_orders_work_all_foot")
+		_fits("band_orders_work_all_foot")
 
 	var no_fodder := _all_orders()
 	no_fodder[1]["has_consumers"] = false
@@ -293,6 +303,7 @@ func _kit_and_doors() -> void:
 	orders.toggle_fold(band, "food")
 	await h._settle()
 	await h._save("band_orders_work_kit_open")
+	_fits("band_orders_work_kit_open")
 	h._assert_band_panel("…visible with the order open too", _meta_button(HudOrdersVocab.ORDER_KIT_META) != null)
 	orders.toggle_fold(band, "food")
 	await h._settle()
@@ -336,6 +347,7 @@ func _kit_and_doors() -> void:
 	chip.add_theme_stylebox_override("normal", chip.get_theme_stylebox("hover"))
 	await h._settle()
 	await h._save("band_orders_work_hover")
+	_fits("band_orders_work_hover")
 
 func _first_chip() -> Button:
 	for node in h._collect_meta_controls(h._panel, String(HudOrdersVocab.ORDER_PRIORITY_META)):

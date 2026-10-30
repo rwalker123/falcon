@@ -87,6 +87,19 @@ top of the sections list and partitions the rows through `BandOrdersController.s
   ordinary collapsible sections (`WORK_SECTION_BY_PRODUCTS`, `WORK_SECTION_YOURS`). Every other row stays
   in today's sections. A leaderless band skips all of it and draws today's tab.
 
+## Nothing in the group may ask for more width than the zone
+
+The Work tab sits in a scroll with no horizontal scroll, so any child whose MINIMUM width exceeds the zone
+(less the vertical scrollbar) pushes the whole tab wider than the dock and the right edge is clipped: the
+crew bars, the `↳ Also` line, the summary and the `Also coming in` rows. The group therefore wraps
+instead of declaring a width: the order line's name and `· … keep N` detail sit in an `HFlowContainer` (the
+detail drops under the name, whole), the state label always wraps and the kit clause is its own wrapping
+link under it (an `AUTOWRAP_OFF` state beside the clause in a flow asked for the whole sentence as its
+minimum -- 349px of a 356px zone, 5px over once the scrollbar took 12), the `↳ Also` text wraps, and the
+by-product row's left label wraps. Nothing in the group is elided to a tooltip any more.
+`band_panel_orders.gd` runs `_assert_zone_content_fits` (height and width) on every frame it saves.
+The side dock is 440 wide (`BandCityPanel.PANEL_WIDTH`); the wrapping is what holds at any width.
+
 ## The sheets
 
 - **Stone and wood** (`DrawerComposeController._build_deposit_assign_controls`): when the band has an
