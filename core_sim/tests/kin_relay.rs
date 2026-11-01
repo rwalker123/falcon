@@ -269,7 +269,8 @@ fn a_chain_through_another_people_relays_nothing() {
 fn relay_fires_no_gathering_and_teaches_no_ritual() {
     fn first_turn(max_hops: u32) -> (u64, f32, bool) {
         let mut t = trio(max_hops);
-        let sightings = chain_sightings(&t);
+        // MUTUAL sight along the chain: a gathering needs both bands to have seen each other.
+        let sightings = [(t.a, t.b), (t.b, t.a), (t.b, t.c), (t.c, t.b)];
         turn(&mut t.app, FIRST_TURN, &sightings);
         let held = t.app.world.resource::<GatheringLedger>().held_by(t.people);
         let progress = t
@@ -289,8 +290,8 @@ fn relay_fires_no_gathering_and_teaches_no_ritual() {
             .world
             .resource::<SimulationMetrics>()
             .connections_formed;
-        // Two direct edges, plus the relayed A to C edge when relay is on.
-        let expected = if max_hops > 0 { 3 } else { 2 };
+        // Four direct edges, plus the relayed A to C and C to A edges when relay is on.
+        let expected = if max_hops > 0 { 6 } else { 4 };
         assert_eq!(formed, expected, "relay-formed edges are counted");
         (held, progress, ac_formed)
     }

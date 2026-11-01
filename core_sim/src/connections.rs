@@ -60,6 +60,7 @@ use crate::{
     belief_config::BeliefConfigHandle,
     components::{BandId, BandName, PopulationCohort, ResidentBand, Tile},
     connections_config::{ConnectionsConfig, ConnectionsConfigHandle},
+    faction_names::FactionNames,
     intensification::LadderConfigHandle,
     metrics::SimulationMetrics,
     orders::FactionId,
@@ -68,7 +69,7 @@ use crate::{
         SimulationTick,
     },
     scalar::Scalar,
-    systems::band_label,
+    systems::{band_label, faction_label},
 };
 
 /// **A full tie.** Strength is a `0..=1` fraction by definition, so its ceiling is what the number
@@ -651,6 +652,7 @@ pub fn advance_connections(
     belief_config: Res<BeliefConfigHandle>,
     mut belief: ResMut<BeliefRegistry>,
     mut gatherings: ResMut<GatheringLedger>,
+    faction_names: Res<FactionNames>,
     mut event_log: ResMut<CommandEventLog>,
     ladder: Res<LadderConfigHandle>,
     mut discovery: ResMut<DiscoveryProgressLedger>,
@@ -665,6 +667,9 @@ pub fn advance_connections(
         .iter()
         .map(|(key, _)| key)
         .filter(|key| contacts.is_live_sighting(key))
+        // **Mutual sight.** A one-way sighting forms the tie but is no meeting: the other band
+        // never saw this one, so nobody gathered.
+        .filter(|key| contacts.is_live_sighting(&ConnectionKey::new(key.subject, key.observer)))
         .filter(|key| !ledger.tie_is_live(key.observer, key.subject))
         .map(|key| band_pair(key.observer, key.subject))
         .collect();
@@ -744,6 +749,16 @@ pub fn advance_connections(
                     continue;
                 }
                 gatherings.record(own.faction);
+                // A band of another people is named with its people, since band names are
+                // unique only within a people.
+                let other_name = if other.faction == own.faction {
+                    other.name.clone()
+                } else {
+                    let people = faction_names
+                        .name(other.faction)
+                        .map_or_else(|| faction_label(other.faction), str::to_string);
+                    format!("{} of the {}", other.name, people)
+                };
                 event_log.push(
                     CommandEventEntry::new(
                         turn,
@@ -752,7 +767,7 @@ pub fn advance_connections(
                         GATHERING_LABEL,
                         Some(format!(
                             "{} met {} at ({}, {}).",
-                            own.name, other.name, place.position.x, place.position.y
+                            own.name, other_name, place.position.x, place.position.y
                         )),
                     )
                     .with_band(other.band),

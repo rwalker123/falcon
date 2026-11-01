@@ -136,14 +136,21 @@ Design of record: `docs/plan_civilization_steps.md` §"The gathering is detected
 (issue #698). Nobody commands a gathering; `connections::advance_connections` detects one and the
 place it happened on gains belief.
 
-**What a gathering is.** A band-to-band sighting this turn between two bands whose pair held **no
-live tie** before it: no edge at all (a first meeting), or only a parked edge (strength at or below
+**What a gathering is.** A **mutual** band-to-band sighting this turn — `a→b` AND `b→a` both live
+sightings — between two bands whose pair held **no live tie** before it: no edge at all (a first meeting), or only a parked edge (strength at or below
 `NO_TIE` — the tie faded and the bands have found each other again). It is read off
 `ConnectionLedger::tie_is_live` for the pair, in either direction, **before** any of the turn's
 contacts is folded in, so the first directed edge of a pair to be refreshed cannot make the pair look
 tied to the second. Edges are directed, so the pair is deduplicated on its UNORDERED bands: one pair
 is at most one gathering a turn. A pair that camps together stays tied and never re-fires. Bands of
 one people count as well as bands of different peoples. `metrics.connections_formed` is untouched.
+
+> **One-way sight is watching, not meeting.** Sight is asymmetric — a large camp is seen from
+> further away, terrain and elevation differ per observer — so one band can see another that does
+> not see it back. That still forms or refreshes the seer's tie, but it is **no gathering**: no
+> belief, no ritual lesson, no `GatheringLedger` count, no line. It used to count, and both peoples
+> were told: in playtest a foreign band watched a fresh splinter from eleven tiles off and the
+> player's Telling narrated *"we sat with them"* about a people its band had never seen.
 
 **The world's opening sightings are a gathering; a later-founded band sees only where it started.**
 Bands in sight of each other when the game starts met "at turn 0": on the world's first resolved turn
@@ -179,8 +186,13 @@ seam as the dead.
 people — one line when both bands are of one people — filed under that people, tagged `.with_band`
 with the OTHER band, the one the reader met (a same-people pair, told once from its lower band, names the
 higher), because that is the band the turn orb's row jumps to; label `A gathering`, detail
-`<own band's name> met <other band's name> at (x, y).` (the pair is named from each people's own side; a band with no `BandName` reads as `Band <id>`). Both
-sides were in contact, so each is told; fog does not gate it.
+`<own band's name> met <other band's name> at (x, y).` for a same-people pair and
+`<own band's name> met <other band's name> of the <other people's name> at (x, y).` across peoples
+(the pair is named from each people's own side; a band with no `BandName` reads as `Band <id>`; the
+people name is `FactionNames`', falling back to `Faction N`). **The people is named because band
+names are unique only within a people** (`band-names.md`): a foreign band can share a name with one
+of the reader's own, and the bare line then read as the player's own two bands meeting. Both sides
+saw each other, so each is told; fog does not gate it.
 
 **The Telling.** `GatheringLedger` (`connections.rs`) holds a cumulative per-people count of
 gatherings; it is checkpoint state (`SimState::gatherings`, `SAVE_FORMAT_VERSION` 52, classified in
@@ -194,7 +206,9 @@ and does hold one with a people its own had never met; a gathering is held where
 stands, not its home; a pair that stays in contact does not re-fire; a pair whose
 tie parked and re-meets fires again; a same-people pair fires and is told once; an expedition report
 does not fire; a size tie goes to the lower band id; each people's line carries the band it met and its
-own wording; `belief_per_gathering` scales the credit; the Telling's beat lands once.
+own wording; `belief_per_gathering` scales the credit; the Telling's beat lands once; a one-way
+sighting forms the tie but holds no gathering, on the opening turn too; a cross-people line names
+the other people and a same-people line does not.
 
 ## The culture morale term — near / far from the ancestors
 

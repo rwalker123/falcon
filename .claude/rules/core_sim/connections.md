@@ -339,8 +339,9 @@ position, name and people are one observation, so they never come from two diffe
 
 **A first or revived edge is a gathering's trigger.** `ContactsThisTurn` also remembers which edges
 a live band-to-band sighting found (`record`), as against a contact only an expedition's report
-carried (`record_report`). `advance_connections` reads, before folding the turn in, which of the
-live-sighted pairs held no live tie (no edge, or a parked one) and treats each as a gathering —
+carried (`record_report`). `advance_connections` reads, before folding the turn in, which pairs
+were live-sighted **both ways** and held no live tie (no edge, or a parked one) and treats each as a
+gathering —
 `belief.md` → "The gatherings source". The set is derived and cleared with the sightings, never
 checkpointed; `record_contact` and `connections_formed` are unchanged.
 
