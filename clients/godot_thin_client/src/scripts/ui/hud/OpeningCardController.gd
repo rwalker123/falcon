@@ -40,6 +40,10 @@ const PANEL_NODE_NAME := "OpeningCardPanel"
 ## The command-event kind this card reads — the Telling's own definition, not a second spelling.
 const KIND_NARRATIVE_BEAT := TellingPanel.KIND_NARRATIVE_BEAT
 
+## The opening lines should be read aloud / the voice stopped. `HudLayer` relays both to the narrator.
+signal narration_requested(lines: PackedStringArray)
+signal narration_stopped
+
 # --- Collaborators handed in by HudLayer ---
 var _host: Node = null
 var _loadout: StartingLoadoutController = null
@@ -108,6 +112,7 @@ func reset_world_state() -> void:
 	_shown = false
 	if _panel != null and is_instance_valid(_panel):
 		_panel.close()
+	narration_stopped.emit()
 
 # ---- queries / ESC ----------------------------------------------------------
 
@@ -151,6 +156,7 @@ func _resolve() -> void:
 	_loadout.collapse()
 	_ensure_panel()
 	_panel.show_lines(_story)
+	narration_requested.emit(PackedStringArray(_story))
 
 func _ensure_panel() -> void:
 	if _panel != null and is_instance_valid(_panel):
@@ -161,4 +167,5 @@ func _ensure_panel() -> void:
 	_host.add_child(_panel)
 
 func _on_handed_off() -> void:
+	narration_stopped.emit()
 	_loadout.open_band(_held_band)
