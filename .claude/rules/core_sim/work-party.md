@@ -359,6 +359,21 @@ labor pass and by every command restaff), `staffing::probe_source`, `staffing::a
   Each is given a share up to what it gives at the floor without being drawn down, best first, until the
   want is covered; the share is written as a `KeepShare` (`hold`/`take` in biomass, `herd` set for a hunt
   row) that `apply_chief_share` turns into the row's hold, reach and useful takes.
+- **The chief lists only as many sources as his hands cover.** Listing stops when the want is covered
+  OR the heads the listed set takes reach his head budget, so the staffing's one-head-per-row round
+  robin never spreads a few hands over many weak patches. A listed source takes `ceil(share units /
+  units per hand at the floor)` heads, at least one (`MIN_HEADS_PER_SOURCE`; the share's `take` is
+  biomass, not hands); the source that crosses the budget is still listed, the rest are not and retire
+  like any unlisted chief row. The budget is `FoodInputs::pool` (`staffing::staffable_pool`: working
+  hands less the bench, the walkers and every hand-set crew) less the last staffing
+  (`StaffedCrew::total`) of the dig rows, the builders, and the chief's improvement and pinned rows of
+  the order that no candidate stands for. A player's forage or hunt row is not subtracted: staffing
+  deals every forage and hunt row from the one pool, so its last crew is a result, not a claim - and
+  subtracting it left the chief a zero budget behind a crew the player had stacked on one patch. The
+  budget is shared across the orders in fill order (Priority, food first on a tie), so fodder gets what
+  food left. The heads the unlisted sources would have asked for are
+  `LaborAllocation::keep_unlisted_heads`, added to `refillWanted` in `band_order_rows`, so the order
+  line keeps reading the full want ("N hands short"). Pinned by `food_orders::a_chief_lists_only_as_many_sources_as_his_hands_cover_so_the_best_one_gets_a_crew`.
 - **Floors.** Best (`DEFAULT_ESCAPEMENT_FLOOR`) below the target, `band_orders.learning_floor` at or
   above it; never lower than Best. A chief's forage row carries the whole basket.
 - **One patch, one order.** A candidate belongs to the order whose product it gives more of per hand

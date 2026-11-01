@@ -6495,6 +6495,8 @@ pub fn advance_labor_allocation(
                     &|material: &str| cohort.stores.material_total(material).to_f32(),
                 );
                 let fog = sim_config.fog_enabled;
+                let pool =
+                    crate::staffing::staffable_pool(&allocation, available, bench_hands(&bench));
                 crate::food_orders::manage_food_orders(
                     &mut allocation,
                     &crate::food_orders::FoodInputs {
@@ -6510,6 +6512,7 @@ pub fn advance_labor_allocation(
                                 .as_deref()
                                 .is_some_and(|ledger| ledger.is_visible(faction, at.x, at.y))
                         },
+                        pool,
                         readings: crate::food_orders::OrderReadings {
                             food_stock: cohort.stores.get(crate::components::FOOD).to_f32(),
                             food_need: cohort.last_food_need,

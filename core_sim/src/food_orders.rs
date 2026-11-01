@@ -14,7 +14,11 @@
 //!   the staffing's own reading ([`crate::staffing::probe_source`]) so a herd the band's kit cannot
 //!   wound is no candidate. Ranked by food (or fodder) per hand at the floor, then the shortest walk,
 //!   then the source key; each is given a share up to what it gives at the floor without being drawn
-//!   down, best first, until the want is covered.
+//!   down, best first, until the want is covered **or the heads the listed set takes reach the heads
+//!   the chief has to deal** ([`FoodInputs::pool`] less the heads the other rows keep; a listed
+//!   source takes its share's hands at the probe's per-hand rate, rounded up, at least one). The source that crosses the line is
+//!   still listed; the rest are not, and what they would have asked is
+//!   [`LaborAllocation::keep_unlisted_heads`], so the order still reads its full want.
 //! - **The floor.** Best (`DEFAULT_ESCAPEMENT_FLOOR`) below the target, the Learning floor
 //!   (`band_orders.learning_floor`) at or above it. Never lower than Best.
 //! - **Whole basket.** A chief's forage row has an empty take selection.
@@ -47,6 +51,9 @@ pub struct FoodInputs<'a> {
     pub tile_known: &'a dyn Fn(UVec2) -> bool,
     /// Whether the band can see the herd now.
     pub herd_known: &'a dyn Fn(&Herd) -> bool,
+    /// The hands the sim may staff ([`crate::staffing::staffable_pool`]): the working people less the
+    /// bench, the walkers and every crew the player set by hand.
+    pub pool: u32,
     /// The band's readings the two orders are judged on.
     pub readings: OrderReadings,
 }
@@ -92,6 +99,28 @@ impl OrderReadings {
 }
 
 const NOTHING: f32 = 0.0;
+
+/// A listed source takes at least one head, however small its share.
+const MIN_HEADS_PER_SOURCE: u32 = 1;
+
+/// Whether a forage or hunt row stands on an improvement (a tended patch, a field, a tamed or
+/// corralled herd), which the chief never retires.
+fn row_is_improvement(
+    sources: &crate::take_claims::ClaimSources<'_>,
+    target: &LaborTarget,
+) -> bool {
+    match target {
+        LaborTarget::Forage { tile, .. } => sources
+            .forage
+            .patch(*tile)
+            .is_some_and(|patch| patch.ladder_position() > NOTHING),
+        LaborTarget::Hunt { fauna_id, .. } => sources
+            .herds
+            .find(fauna_id)
+            .is_some_and(|herd| herd.is_corralled() || herd.ladder_position() > NOTHING),
+        _ => false,
+    }
+}
 
 /// One forage patch or herd the chief could work.
 struct Candidate {
@@ -289,6 +318,19 @@ pub fn manage_food_orders(
         .collect();
     orders.sort_by_key(|order| std::cmp::Reverse(order.1));
 
+    // The heads the chief has to deal across both orders, filled in the orders' own sequence: the
+    // pool less what the dig rows held last turn and the builders. A player's forage or hunt row is
+    // NOT subtracted: staffing deals every forage and hunt row from the one pool, round-robin, so
+    // its last crew is a result of that deal, not a claim on hands.
+    let other_heads: u32 = allocation
+        .assignments
+        .iter()
+        .filter(|row| matches!(row.target, LaborTarget::Extract { .. }))
+        .map(|row| row.staffing.total())
+        .sum::<u32>()
+        + allocation.builders_total();
+    let mut hands_left = inputs.pool.saturating_sub(other_heads);
+
     for (kind, priority) in orders {
         let order = *allocation.order_for(kind).expect("a chief-owned order");
         let draw = inputs.readings.draw(kind, allocation);
@@ -360,6 +402,27 @@ pub fn manage_food_orders(
                 .then(a.distance.cmp(&b.distance))
                 .then(a.key.cmp(&b.key))
         });
+        // Rows kept at no share whatever the listing (improvements, pinned rows) keep their last
+        // staffing out of the budget, unless a candidate stands for them below.
+        let kept_heads: u32 = allocation
+            .order_rows
+            .iter()
+            .filter(|(key, listed)| {
+                listed.as_str() == kind && !ranked.iter().any(|candidate| &candidate.key == *key)
+            })
+            .filter_map(|(key, _)| {
+                allocation
+                    .assignments
+                    .iter()
+                    .find(|row| source_key(&row.target).is_some_and(|held| &held == key))
+            })
+            .filter(|row| {
+                row_is_improvement(sources, &row.target) || source_pinned(allocation, &row.target)
+            })
+            .map(|row| row.staffing.total())
+            .sum();
+        hands_left = hands_left.saturating_sub(kept_heads);
+        let mut unlisted_heads: u32 = 0;
         let mut set: Vec<&Candidate> = Vec::new();
         let mut shares: Vec<(String, KeepShare)> = Vec::new();
         for candidate in ranked {
@@ -368,20 +431,32 @@ pub fn manage_food_orders(
             }
             let units = candidate.sustainable_units.min(want_left);
             let hold_units = units.min(draw_left);
+            let take = units / candidate.rate.max(f32::EPSILON);
+            // Hands at the probe's per-hand rate (`take` above is biomass, not hands).
+            let heads = ((units / candidate.units_per_hand.max(f32::EPSILON)).ceil() as u32)
+                .max(MIN_HEADS_PER_SOURCE);
+            want_left -= units;
+            draw_left -= hold_units;
+            if hands_left == 0 {
+                unlisted_heads += heads;
+                continue;
+            }
+            hands_left = hands_left.saturating_sub(heads);
             shares.push((
                 kind.to_string(),
                 KeepShare {
                     tile: candidate.tile,
                     herd: candidate.herd.clone(),
                     hold: hold_units / candidate.rate.max(f32::EPSILON),
-                    take: units / candidate.rate.max(f32::EPSILON),
+                    take,
                 },
             ));
-            want_left -= units;
-            draw_left -= hold_units;
             set.push(candidate);
         }
         allocation.keep_shares.extend(shares);
+        allocation
+            .keep_unlisted_heads
+            .insert(kind.to_string(), unlisted_heads);
 
         // The chief's existing rows of this order: in the set they stay, improvements and pinned
         // rows stay at no share, the rest go.
@@ -402,17 +477,7 @@ pub fn manage_food_orders(
                 continue;
             };
             let in_set = set.iter().any(|candidate| candidate.key == key);
-            let improvement = match &target {
-                LaborTarget::Forage { tile, .. } => sources
-                    .forage
-                    .patch(*tile)
-                    .is_some_and(|patch| patch.ladder_position() > NOTHING),
-                LaborTarget::Hunt { fauna_id, .. } => sources
-                    .herds
-                    .find(fauna_id)
-                    .is_some_and(|herd| herd.is_corralled() || herd.ladder_position() > NOTHING),
-                _ => false,
-            };
+            let improvement = row_is_improvement(sources, &target);
             if !in_set && !improvement && !source_pinned(allocation, &target) {
                 allocation.drop_source_row(&target);
                 allocation.order_rows.remove(&key);

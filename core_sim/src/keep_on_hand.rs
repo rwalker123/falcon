@@ -457,6 +457,7 @@ pub fn manage_dig_rows(
     allocation.last_keep_site.clear();
     allocation.keep_shares.clear();
     allocation.keep_sustainable.clear();
+    allocation.keep_unlisted_heads.clear();
     if !has_leader {
         return;
     }

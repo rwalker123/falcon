@@ -2091,6 +2091,9 @@ fn managed_dig_allocation(
             crate::EquipmentConfigHandle::get,
         );
     let available = crate::components::available_workers(cohort.working);
+    let bench_workers = world
+        .get::<crate::components::BandBench>(band)
+        .map_or(NOBODY, |bench| bench.workers);
     let band_kit = world
         .get::<BandEquipment>(band)
         .cloned()
@@ -2128,6 +2131,7 @@ fn managed_dig_allocation(
             band_kit: &band_kit,
             camp: camp.as_ref(),
         };
+        let pool = staffable_pool(&allocation, available, bench_workers);
         let cohort_stores = &cohort.stores;
         let on_hand = |material: &str| cohort_stores.material_total(material).to_f32();
         crate::keep_on_hand::manage_dig_rows(
@@ -2151,6 +2155,7 @@ fn managed_dig_allocation(
                 site: &inputs,
                 tile_known: &known_tile,
                 herd_known: &known_herd,
+                pool,
                 readings: crate::food_orders::OrderReadings {
                     food_stock: cohort_stores.get(crate::components::FOOD).to_f32(),
                     food_need: cohort.last_food_need,

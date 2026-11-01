@@ -18,6 +18,15 @@ const NEED: f32 = 4.0;
 /// A larder that covers far more than any target.
 const MANY_TURNS_OF_FOOD: f32 = NEED * 200.0;
 
+/// Hands enough that the chief's head budget never limits the listing: the fixtures that want a
+/// spread of rows get one by being this big.
+const MANY_HANDS: f32 = 400.0;
+
+/// Set the band's working-age head count (children and elders untouched).
+fn set_hands(app: &mut App, band: Entity, hands: f32) {
+    app.world.get_mut::<PopulationCohort>(band).unwrap().working = scalar_from_f32(hands);
+}
+
 /// A world whose band has a chief, only the food and fodder orders listed.
 fn world() -> (App, Entity) {
     let mut app = build_test_app();
@@ -46,6 +55,12 @@ fn world() -> (App, Entity) {
 
 /// Set what the band holds of food and what it eats a turn, then run the managing pass and staffing.
 fn set_larder(app: &mut App, band: Entity, stock: f32) {
+    set_larder_with_hands(app, band, stock, MANY_HANDS);
+}
+
+/// [`set_larder`] for a band of `hands` working-age people.
+fn set_larder_with_hands(app: &mut App, band: Entity, stock: f32, hands: f32) {
+    set_hands(app, band, hands);
     {
         let mut cohort = app.world.get_mut::<PopulationCohort>(band).unwrap();
         cohort.last_food_need = NEED;
@@ -699,5 +714,70 @@ fn a_short_bands_food_keep_up_crew_is_filled_before_a_stone_orders_kitted_refill
     assert_eq!(
         held, wanted,
         "the chief's food keep-up crew is full: {held} of {wanted}"
+    );
+}
+
+/// A band with few hands: the chief's head budget.
+const FEW_HANDS: f32 = 12.0;
+
+#[test]
+fn a_chief_lists_only_as_many_sources_as_his_hands_cover_so_the_best_one_gets_a_crew() {
+    let (mut app, band) = world();
+    set_target(&mut app, band, FOOD, 1000);
+    set_larder(&mut app, band, NEED);
+    let spread = chief_rows(&app, band, FOOD);
+    let spread_wanted = app
+        .world
+        .get::<LaborAllocation>(band)
+        .unwrap()
+        .order_crew(FOOD)
+        .3;
+    assert!(
+        spread.len() > FEW_HANDS as usize,
+        "**LIVENESS**: with many hands the short larder lists more sources than the few-handed band has hands ({})",
+        spread.len()
+    );
+
+    // The same band down to a few hands, from a clean slate.
+    {
+        let mut allocation = app.world.get_mut::<LaborAllocation>(band).unwrap();
+        allocation.assignments.clear();
+        allocation.last_yields.clear();
+        allocation.order_rows.clear();
+        allocation.keep_shares.clear();
+    }
+    set_larder_with_hands(&mut app, band, NEED, FEW_HANDS);
+    let few = chief_rows(&app, band, FOOD);
+    assert!(
+        !few.is_empty(),
+        "**LIVENESS**: the chief still lists sources"
+    );
+    assert!(
+        few.len() < spread.len(),
+        "fewer hands list fewer sources: {} vs {}",
+        few.len(),
+        spread.len()
+    );
+    let crews: Vec<u32> = few.iter().map(|row| row.3).collect();
+    assert!(
+        crews.iter().sum::<u32>() <= FEW_HANDS as u32,
+        "no more heads than hands: {crews:?}"
+    );
+    assert!(
+        crews.iter().any(|crew| *crew > 1),
+        "the best source is staffed with more than one bare hand: {crews:?}"
+    );
+    assert!(
+        few.iter()
+            .all(|row| spread.iter().any(|kept| kept.0 == row.0)),
+        "the sources listed are the best ones of the longer listing"
+    );
+    // The shortfall still reads the whole want.
+    let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+    assert!(allocation.keep_unlisted_heads[FOOD] > 0);
+    let wanted = allocation.order_crew(FOOD).3 + allocation.keep_unlisted_heads[FOOD];
+    assert!(
+        wanted >= spread_wanted.min(FEW_HANDS as u32),
+        "the order still asks for the full want: {wanted}"
     );
 }

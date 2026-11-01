@@ -6494,6 +6494,12 @@ pub struct LaborAllocation {
     /// larger of the order's want and the band's draw, so it never reads short. Published beside the
     /// order; derived, outside equality.
     pub keep_sustainable: std::collections::BTreeMap<String, f32>,
+    /// **THE HEADS THE ORDER'S WANT STILL ASKS FOR PAST THE ROWS THE CHIEF LISTED**, per kind: the
+    /// chief lists sources only while the hands he can deal last
+    /// (`food_orders::manage_food_orders`), and the sources he left off would have taken this many
+    /// more. The order line adds it to the wanted refill crew so "N hands short" reads the whole
+    /// want. Published beside the order; derived, outside equality.
+    pub keep_unlisted_heads: std::collections::BTreeMap<String, u32>,
     /// **WHERE THE GAME PICKED TO DIG**, per mined material - the best-ranked site this turn's
     /// management found, whether or not a row stands on it. Published beside the order; derived
     /// telemetry outside equality.

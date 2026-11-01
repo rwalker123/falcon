@@ -1714,8 +1714,16 @@ pub(crate) fn band_order_rows(
         .map(|(kind, order)| {
             let site = allocation.last_keep_site.get(kind).copied();
             let by_turns = crate::keep_on_hand::is_row_kind(kind);
-            let (hold_heads, hold_wanted, refill_heads, refill_wanted) =
+            let (hold_heads, hold_wanted, refill_heads, listed_refill_wanted) =
                 allocation.order_crew(kind);
+            // The sources the chief left off for want of hands still count toward the crew the order
+            // asks for.
+            let refill_wanted = listed_refill_wanted
+                + allocation
+                    .keep_unlisted_heads
+                    .get(kind)
+                    .copied()
+                    .unwrap_or(0);
             sim_schema::BandOrderState {
                 hold_heads,
                 hold_wanted,

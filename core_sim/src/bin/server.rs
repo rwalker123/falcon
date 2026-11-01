@@ -30670,10 +30670,12 @@ mod tests {
             }),
             ..Default::default()
         });
-        app.world
-            .get_mut::<PopulationCohort>(band)
-            .unwrap()
-            .last_food_need = 4.0;
+        {
+            // Hands enough that the chief's head budget lists a second source.
+            let mut cohort = app.world.get_mut::<PopulationCohort>(band).unwrap();
+            cohort.last_food_need = 4.0;
+            cohort.working = core_sim::scalar_from_f32(400.0);
+        }
         core_sim::staffing::restaff_band(&mut app.world, band);
         let listed = |app: &bevy::prelude::App| -> Vec<String> {
             app.world
