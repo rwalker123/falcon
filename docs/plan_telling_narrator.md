@@ -49,7 +49,7 @@ one. Lines of one page play in order with a short pause between them.
 
 Not in git. `scripts/fetch_narrator_model.sh` downloads the model and voices into a gitignored
 directory. The default is the **int8** model (88 MB, ~2× faster than fp32 on CPU); `--fp32`
-fetches the 310 MB model. Measured on the evaluation set (16 tellings, ~2 minutes of audio per
+fetches the 310 MB model, which the client prefers whenever it is present. Measured on the evaluation set (16 tellings, ~2 minutes of audio per
 voice, Apple Silicon CPU): fp32 ~15 s, int8 ~8 s per voice — a single telling is ready well
 under a second after it is requested either way.
 

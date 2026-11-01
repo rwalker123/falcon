@@ -53,6 +53,24 @@ impl NarratorEngine {
         self.narrator.as_ref().is_some_and(Narrator::is_ready)
     }
 
+    /// True once the worker tried to load the model and failed. Final: the load is never retried.
+    #[func]
+    pub fn is_failed(&self) -> bool {
+        self.narrator
+            .as_ref()
+            .is_some_and(|n| n.load_error().is_some())
+    }
+
+    /// Why the model failed to load; empty while it has not failed.
+    #[func]
+    pub fn load_error(&self) -> GString {
+        self.narrator
+            .as_ref()
+            .and_then(Narrator::load_error)
+            .map(|e| GString::from(e.as_str()))
+            .unwrap_or_default()
+    }
+
     /// Queues synthesis on the background worker and returns the request id (-1 when
     /// narration is not configured).
     #[func]

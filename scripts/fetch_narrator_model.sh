@@ -4,7 +4,7 @@
 # clients/godot_thin_client/narrator_model/ directory the client looks in by default.
 #
 #   scripts/fetch_narrator_model.sh            # int8 model (88 MB, ~2x faster on CPU) + voices
-#   scripts/fetch_narrator_model.sh --fp32     # the 310 MB fp32 model instead
+#   scripts/fetch_narrator_model.sh --fp32     # the 310 MB fp32 model instead (preferred over int8 when both are present)
 #
 # Idempotent: a file already present is skipped. Narration also needs espeak-ng installed on the
 # machine (brew install espeak-ng / apt install libespeak-ng1); it is loaded at runtime, never bundled.

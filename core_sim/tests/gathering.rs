@@ -345,6 +345,34 @@ fn a_tie_on_size_is_held_at_the_lower_band_id() {
 }
 
 #[test]
+fn a_glimpse_does_not_swallow_the_mutual_meeting_that_follows() {
+    let mut app = two_faction_world();
+    let (a, b) = pair(&mut app, HOME, RIVAL);
+    set_size(&mut app, &a, SMALL);
+    set_size(&mut app, &b, BIG);
+
+    glimpse(&mut app, FIRST_TURN, &a, &b);
+    assert!(
+        gathering_events(&app).is_empty(),
+        "a glimpse gathers no one"
+    );
+
+    meet(&mut app, FIRST_TURN + 1, &a, &b);
+    assert_eq!(belief_at(&app, b.tile), per_gathering(&app));
+    assert_eq!(gathering_events(&app).len(), 2, "each people hears it once");
+    assert_eq!(app.world.resource::<GatheringLedger>().held_by(HOME), 1);
+
+    meet(&mut app, FIRST_TURN + 2, &a, &b);
+    assert_eq!(
+        belief_at(&app, b.tile),
+        per_gathering(&app),
+        "staying in sight is not a second gathering"
+    );
+    assert_eq!(gathering_events(&app).len(), 2);
+    assert_eq!(app.world.resource::<GatheringLedger>().held_by(HOME), 1);
+}
+
+#[test]
 fn a_one_way_sighting_forms_the_tie_but_holds_no_gathering() {
     let mut app = two_faction_world();
     let (a, b) = pair(&mut app, HOME, RIVAL);

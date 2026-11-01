@@ -63,6 +63,8 @@ func speak(lines: PackedStringArray, source: String = HudNarratorVocab.SOURCE_NO
 		return
 	if not _ensure_configured():
 		return
+	if _engine_load_failed():
+		return
 	# A newer speaker preempts whoever spoke before, from any HUD.
 	_engine.call("cancel_all")
 	_results_owner_id = get_instance_id()
@@ -108,6 +110,8 @@ func stop() -> void:
 
 ## Driven every frame by the HUD: collects finished lines and starts the next one when due.
 func process(delta: float) -> void:
+	if _engine != null and _engine_load_failed():
+		return
 	if _engine == null or _results_owner_id != get_instance_id():
 		return
 	if not ClientSettings.narration_enabled:
@@ -124,6 +128,22 @@ func process(delta: float) -> void:
 	_play_next_if_ready()
 
 # ---- internals -------------------------------------------------------------
+
+## True once the shared engine's model failed to load. The first sighting logs the error ONCE, marks
+## the process-wide verdict dead and drops the engine, so nothing is requested again this process;
+## every controller (each holds the same engine) then silences its own playback and queue.
+func _engine_load_failed() -> bool:
+	if _engine == null:
+		return false
+	if _shared_engine == _engine and bool(_engine.call("is_failed")):
+		push_warning(HudNarratorVocab.LOG_LOAD_FAILED_FORMAT % String(_engine.call("load_error")))
+		_shared_dead = true
+		_shared_engine = null
+	if _shared_engine == _engine:
+		return false
+	stop()
+	_engine = null
+	return true
 
 func _collect_finished() -> void:
 	for result_variant in (_engine.call("poll") as Array):
@@ -237,9 +257,10 @@ static func _model_dir() -> String:
 		return env
 	return ProjectSettings.globalize_path(HudNarratorVocab.FETCHED_MODEL_DIR)
 
-## The int8 model if present, else the fp32 one, else "".
+## The fp32 model if present (it sounds better; the fetch script's `--fp32` drops it beside int8),
+## else the int8 one, else "".
 static func _model_file(dir: String) -> String:
-	for file_name in [HudNarratorVocab.MODEL_FILE_INT8, HudNarratorVocab.MODEL_FILE_FP32]:
+	for file_name in [HudNarratorVocab.MODEL_FILE_FP32, HudNarratorVocab.MODEL_FILE_INT8]:
 		var path := dir.path_join(file_name)
 		if FileAccess.file_exists(path):
 			return path

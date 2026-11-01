@@ -317,7 +317,9 @@ fn relay_fires_no_gathering_and_teaches_no_ritual() {
 fn relayed_kin_who_later_meet_directly_hold_no_gathering() {
     fn gatherings_the_meeting_adds(max_hops: u32) -> u64 {
         let mut t = trio(max_hops);
-        let chain = chain_sightings(&t);
+        // Mutual sight along the chain, so the relay hands A and C a two-way tie (a one-way relayed
+        // edge is no more than a glimpse, which never blocks a later meeting).
+        let chain = [(t.a, t.b), (t.b, t.a), (t.b, t.c), (t.c, t.b)];
         turn(&mut t.app, FIRST_TURN, &chain);
         let before = t.app.world.resource::<GatheringLedger>().held_by(t.people);
         let meeting = [(t.a, t.c), (t.c, t.a)];

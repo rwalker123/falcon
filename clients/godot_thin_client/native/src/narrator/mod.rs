@@ -69,6 +69,9 @@ struct Shared {
     warm: AtomicBool,
     /// The model is loaded and the worker can synthesize at once.
     ready: AtomicBool,
+    /// Why the model could not load (espeak, ORT, a corrupt file). Set once by the worker; the
+    /// load is never retried, so this verdict is final.
+    load_error: Mutex<Option<String>>,
 }
 
 #[derive(Default)]
@@ -159,6 +162,11 @@ impl Narrator {
         self.shared.wake.notify_one();
     }
 
+    /// The reason the model failed to load, once the worker has tried and failed.
+    pub fn load_error(&self) -> Option<String> {
+        self.shared.load_error.lock().ok().and_then(|e| e.clone())
+    }
+
     /// True once the model is loaded.
     pub fn is_ready(&self) -> bool {
         self.shared.ready.load(Ordering::SeqCst)
@@ -214,6 +222,16 @@ fn load_model(paths: &Paths) -> Result<Kokoro, String> {
     )
 }
 
+/// Publishes whether the model loaded: `ready` on success, `load_error` on failure.
+fn publish_load_verdict(shared: &Shared, loaded: &Result<Kokoro, String>) {
+    shared.ready.store(loaded.is_ok(), Ordering::SeqCst);
+    if let (Err(e), Ok(mut slot)) = (loaded, shared.load_error.lock()) {
+        if slot.is_none() {
+            *slot = Some(e.clone());
+        }
+    }
+}
+
 fn worker_loop(shared: Arc<Shared>, paths: Paths) {
     // Loaded lazily on the first job, so a game that never narrates never pays for it.
     let mut model: Option<Result<Kokoro, String>> = None;
@@ -237,14 +255,14 @@ fn worker_loop(shared: Arc<Shared>, paths: Paths) {
         };
         let Some(job) = job else {
             let loaded = model.get_or_insert_with(|| load_model(&paths));
-            shared.ready.store(loaded.is_ok(), Ordering::SeqCst);
+            publish_load_verdict(&shared, loaded);
             continue;
         };
         if job.generation != shared.generation.load(Ordering::SeqCst) {
             continue;
         }
         let loaded = model.get_or_insert_with(|| load_model(&paths));
-        shared.ready.store(loaded.is_ok(), Ordering::SeqCst);
+        publish_load_verdict(&shared, loaded);
         let result = match loaded {
             Ok(kokoro) => kokoro
                 .synthesize(&job.text, &job.voice, job.speed)

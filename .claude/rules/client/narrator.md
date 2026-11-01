@@ -18,13 +18,13 @@ The page/card seams it listens to are `telling-panel.md`.
 
 | Script | Purpose |
 |--------|---------|
-| `native/src/narrator/engine.rs` | `NarratorEngine` (`#[godot_api]`): `configure(model, voices, espeak_lib, espeak_data) -> bool` (paths only), `warm_up()` (load the model on the worker now, non-blocking), `is_ready()`, `request(text, voice, speed) -> id` (`-1` unconfigured), `poll() -> [{id, pcm16, sample_rate} \| {id, error}]`, `cancel_all()` |
+| `native/src/narrator/engine.rs` | `NarratorEngine` (`#[godot_api]`): `configure(model, voices, espeak_lib, espeak_data) -> bool` (paths only), `warm_up()` (load the model on the worker now, non-blocking), `is_ready()`, `is_failed()` / `load_error()` (the worker's one load attempt failed — final), `request(text, voice, speed) -> id` (`-1` unconfigured), `poll() -> [{id, pcm16, sample_rate} \| {id, error}]`, `cancel_all()` |
 | `native/src/narrator/mod.rs` | The ONE worker thread, the request queue, the generation counter `cancel_all` bumps, the 64-entry cache keyed (voice, speed bits, text); the parity, synth and cache tests |
 | `native/src/narrator/espeak.rs` | espeak-ng `dlopen`ed via `libloading`, IPA phonemes, and a port of phonemizer's punctuation preserve/restore |
 | `native/src/narrator/kokoro.rs` · `tokenizer.rs` · `vocab.json` | The ORT session, the npz voices (style row = token count − 1), the 510-phoneme chunker, trim and inter-batch pauses, PCM16 out |
 | `ui/hud/NarratorController.gd` | `RefCounted` controller held by `HudLayer` as `_narrator`: the process-wide engine (static), its own `AudioStreamPlayer`, the page's line queue, the medium and the owning SOURCE. `speak(lines, source)` / `stop_source(source)` / `stop()` / `activate()` / `process(delta)`, and the static `warm_up(tree)` the landing screen calls |
 | `ui/hud/hud_narrator_vocab.gd` | `HudNarratorVocab`: the medium → `{voice, speed}` table with its `oral` fallback, the `SOURCE_*` ids, `LINE_PAUSE_SECONDS`, the path candidates and env var names, the one-shot log strings |
-| `scripts/fetch_narrator_model.sh` | Downloads the int8 model (default) or fp32 (`--fp32`) plus `voices-v1.0.bin` into the gitignored `clients/godot_thin_client/narrator_model/`; idempotent |
+| `scripts/fetch_narrator_model.sh` | Downloads the int8 model (default) or fp32 (`--fp32`; preferred over int8 when both are present) plus `voices-v1.0.bin` into the gitignored `clients/godot_thin_client/narrator_model/`; idempotent |
 
 ## espeak-ng is LOADED, never linked
 
@@ -83,7 +83,9 @@ in `HudNarratorVocab.NARRATION_SCENE_PATHS`** — `Main.tscn` and `LandingScreen
 runs under its own scene or headless, and none instances `LandingScreen`, so none configures the
 engine, let alone loads 88 MB of model. "Not one of those scenes yet" is not a verdict — the scene
 may simply not be current yet — so it is re-asked; a missing model, espeak or native class IS a
-verdict, logged once and never retried.
+verdict, logged once and never retried. So is a model that is present but **fails to load** on the
+worker (wrong-architecture espeak, corrupt `.onnx`): the engine reports `is_failed()`, the
+controller warns once and drops the engine, rather than warning on every line of every page.
 
 ## One engine per PROCESS, warmed up in the menu
 

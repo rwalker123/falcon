@@ -130,27 +130,37 @@ bracket that was there. A fight asking for more dead than the band holds credits
 The two labor sites pass `systems::labor::BeliefSink` — the band's position, the registry and the
 config — so the hunt seam names one place its dead go rather than taking three loose arguments.
 
-## The gatherings source: two bands meeting after having no live tie
+## The gatherings source: two bands meeting after having been apart
 
 Design of record: `docs/plan_civilization_steps.md` §"The gathering is detected, not commanded"
 (issue #698). Nobody commands a gathering; `connections::advance_connections` detects one and the
 place it happened on gains belief.
 
 **What a gathering is.** A **mutual** band-to-band sighting this turn — `a→b` AND `b→a` both live
-sightings — between two bands whose pair held **no live tie** before it: no edge at all (a first meeting), or only a parked edge (strength at or below
-`NO_TIE` — the tie faded and the bands have found each other again). It is read off
-`ConnectionLedger::tie_is_live` for the pair, in either direction, **before** any of the turn's
-contacts is folded in, so the first directed edge of a pair to be refreshed cannot make the pair look
-tied to the second. Edges are directed, so the pair is deduplicated on its UNORDERED bands: one pair
-is at most one gathering a turn. A pair that camps together stays tied and never re-fires. Bands of
-one people count as well as bands of different peoples. `metrics.connections_formed` is untouched.
+sightings — between two bands that have **not met since their tie last parked**. Two things make a
+pair "already met", both read **before** any of the turn's contacts is folded in, so the first
+directed edge of a pair to be refreshed cannot make the pair look tied to the second:
+- **`ConnectionLedger::met`** holds the pair (unordered, low id first): a gathering fired for it and
+  its tie has not parked (strength at or below `NO_TIE`) since. Each turn first prunes every pair
+  whose tie is no longer live, so bands that drifted apart and found each other again gather again.
+- **The tie is live in BOTH directions** — each band already holds the other through news (kin
+  relay, an expedition's report), so they have not been apart.
+
+A tie live in only **one** direction blocks nothing: that is a one-way glimpse, and it must not
+swallow the meeting that follows it. Edges are directed, so the pair is deduplicated on its UNORDERED
+bands: one pair is at most one gathering a turn, and a pair that camps together is in `met` and never
+re-fires. Bands of one people count as well as bands of different peoples.
+`metrics.connections_formed` is untouched.
 
 > **One-way sight is watching, not meeting.** Sight is asymmetric — a large camp is seen from
 > further away, terrain and elevation differ per observer — so one band can see another that does
 > not see it back. That still forms or refreshes the seer's tie, but it is **no gathering**: no
 > belief, no ritual lesson, no `GatheringLedger` count, no line. It used to count, and both peoples
 > were told: in playtest a foreign band watched a fresh splinter from eleven tiles off and the
-> player's Telling narrated *"we sat with them"* about a people its band had never seen.
+> player's Telling narrated *"we sat with them"* about a people its band had never seen. And a glimpse
+> must not swallow the meeting it precedes: the band that is seen first usually comes close enough
+> to see back a turn later, which is why a one-way edge never counts as "already met"
+> (`a_glimpse_does_not_swallow_the_mutual_meeting_that_follows`).
 
 **The world's opening sightings are a gathering; a later-founded band sees only where it started.**
 Bands in sight of each other when the game starts met "at turn 0": on the world's first resolved turn
@@ -204,7 +214,8 @@ at world start hold a gathering on the opening turn (tick `0`, founding ages and
 founded after the opening turn holds none on its founding turn with a band its people already knew,
 and does hold one with a people its own had never met; a gathering is held where the band
 stands, not its home; a pair that stays in contact does not re-fire; a pair whose
-tie parked and re-meets fires again; a same-people pair fires and is told once; an expedition report
+tie parked and re-meets fires again; a glimpse followed by a mutual sighting fires once, on the
+mutual turn; a same-people pair fires and is told once; an expedition report
 does not fire; a size tie goes to the lower band id; each people's line carries the band it met and its
 own wording; `belief_per_gathering` scales the credit; the Telling's beat lands once; a one-way
 sighting forms the tie but holds no gathering, on the opening turn too; a cross-people line names
