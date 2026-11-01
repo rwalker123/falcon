@@ -19,12 +19,23 @@ extends RefCounted
 ## Anything missing (no model, no espeak-ng, no native class) turns narration off with ONE log line.
 
 var _host: Node = null
-var _engine: Object = null
+## This HUD's handle on the process-wide engine (below), set once it exists.
+var _engine: RefCounted = null
 var _player: AudioStreamPlayer = null
-## Resolved on first use. `false` after a failure — it is not retried, so a missing model costs one
-## log line and nothing per page turn.
+## This controller has its engine handle and its player.
 var _configured: bool = false
-var _gave_up: bool = false
+
+# ---- process-wide state ----------------------------------------------------
+## ONE engine per PROCESS: a Main.tscn reload, Abandon → New Game or a world change builds a new HUD
+## (and a new controller) but must not load the model again. `NarratorEngine` is a RefCounted, so this
+## static is a strong reference — never freed early, and nothing else needs to free it.
+static var _shared_engine: RefCounted = null
+## A permanent verdict (no native class, no model, no espeak-ng, a bad path), logged once.
+static var _shared_dead: bool = false
+## Whichever controller spoke last owns the engine's results: only it polls, so a controller left over
+## from a previous HUD can never drain a line a newer one asked for. (An instance id, not a reference,
+## so a dead HUD's controller is not kept alive by it.)
+static var _results_owner_id: int = 0
 var _medium_id: String = HudNarratorVocab.MEDIUM_ORAL
 
 # ---- the page being read ---------------------------------------------------
@@ -52,6 +63,9 @@ func speak(lines: PackedStringArray, source: String = HudNarratorVocab.SOURCE_NO
 		return
 	if not _ensure_configured():
 		return
+	# A newer speaker preempts whoever spoke before, from any HUD.
+	_engine.call("cancel_all")
+	_results_owner_id = get_instance_id()
 	var row: Dictionary = HudNarratorVocab.VOICES.get(
 		_medium_id, HudNarratorVocab.VOICES[HudNarratorVocab.MEDIUM_ORAL])
 	var voice := String(row[HudNarratorVocab.KEY_VOICE])
@@ -81,7 +95,7 @@ func activate() -> void:
 
 ## Stop reading and drop everything queued.
 func stop() -> void:
-	if _engine != null:
+	if _engine != null and (_results_owner_id == 0 or _results_owner_id == get_instance_id()):
 		_engine.call("cancel_all")
 	if _player != null and _player.playing:
 		_player.stop()
@@ -94,7 +108,7 @@ func stop() -> void:
 
 ## Driven every frame by the HUD: collects finished lines and starts the next one when due.
 func process(delta: float) -> void:
-	if _engine == null:
+	if _engine == null or _results_owner_id != get_instance_id():
 		return
 	if not ClientSettings.narration_enabled:
 		if not _pending_ids.is_empty() or _is_speaking:
@@ -151,70 +165,87 @@ func _apply_volume() -> void:
 	if _player != null:
 		_player.volume_db = linear_to_db(ClientSettings.narration_volume)
 
-## Configure the engine and build the player, once. False when narration cannot run here.
+## Take the shared engine and build this HUD's player, once. False when narration cannot run here.
 func _ensure_configured() -> bool:
 	if _configured:
 		return true
-	if _gave_up:
+	if _host == null:
 		return false
-	# Not being the game is not a verdict: the scene may simply not be current yet, so ask again later.
-	if _host == null or not _is_the_game():
+	var engine := _shared_engine_for(_host.get_tree())
+	if engine == null:
 		return false
-	_gave_up = true
+	_engine = engine
+	_player = AudioStreamPlayer.new()
+	_player.name = HudNarratorVocab.PLAYER_NODE_NAME
+	_player.finished.connect(_on_line_finished)
+	_host.add_child(_player)
+	_configured = true
+	return true
+
+## Configure and warm the process-wide engine if narration can run here. Called by the landing screen
+## (while the player is still in the menu) and by the HUD; a no-op unless narration is enabled, on a
+## real display, in the landing or game scene.
+static func warm_up(tree: SceneTree) -> void:
+	if ClientSettings.narration_enabled:
+		_shared_engine_for(tree)
+
+## The one engine, created and warmed on first use. Null while narration cannot run — either not
+## here (a harness, headless, the scene not current yet: asked again later) or never (a verdict).
+static func _shared_engine_for(tree: SceneTree) -> RefCounted:
+	if _shared_engine != null:
+		return _shared_engine
+	if _shared_dead or not _is_a_narration_scene(tree):
+		return null
+	_shared_dead = true
 	if not ClassDB.class_exists(HudNarratorVocab.ENGINE_CLASS):
 		_log_off(HudNarratorVocab.REASON_NO_ENGINE)
-		return false
+		return null
 	var model_dir := _model_dir()
 	var model := _model_file(model_dir)
 	var voices := model_dir.path_join(HudNarratorVocab.VOICES_FILE)
 	if model.is_empty() or not FileAccess.file_exists(voices):
 		_log_off(HudNarratorVocab.REASON_NO_MODEL % [
 			HudNarratorVocab.MODEL_FILE_INT8, HudNarratorVocab.VOICES_FILE])
-		return false
+		return null
 	var espeak_lib := _espeak_lib()
 	var espeak_data := _espeak_data(espeak_lib)
 	if espeak_lib.is_empty() or espeak_data.is_empty():
 		_log_off(HudNarratorVocab.REASON_NO_ESPEAK % [
 			HudNarratorVocab.ENV_ESPEAK_LIB, HudNarratorVocab.ENV_ESPEAK_DATA])
-		return false
-	_engine = ClassDB.instantiate(HudNarratorVocab.ENGINE_CLASS)
-	if not bool(_engine.call("configure", model, voices, espeak_lib, espeak_data)):
-		_engine = null
+		return null
+	var engine: RefCounted = ClassDB.instantiate(HudNarratorVocab.ENGINE_CLASS)
+	if not bool(engine.call("configure", model, voices, espeak_lib, espeak_data)):
 		_log_off(HudNarratorVocab.REASON_CONFIGURE_FAILED)
-		return false
-	_player = AudioStreamPlayer.new()
-	_player.name = HudNarratorVocab.PLAYER_NODE_NAME
-	_player.finished.connect(_on_line_finished)
-	_host.add_child(_player)
-	_gave_up = false
-	_configured = true
-	_engine.call("warm_up")
-	return true
+		return null
+	_shared_dead = false
+	_shared_engine = engine
+	engine.call("warm_up")
+	return engine
 
-## True only when the client booted as the game on a real display.
-func _is_the_game() -> bool:
+## True only on a real display, in the menu or the game proper. Every harness runs under its own
+## scene (or headless), so none of them can pass — and none can trigger the model load.
+static func _is_a_narration_scene(tree: SceneTree) -> bool:
 	if DisplayServer.get_name() == "headless":
 		return false
-	var tree := _host.get_tree()
 	if tree == null or tree.current_scene == null:
 		return false
-	return tree.current_scene.scene_file_path == HudNarratorVocab.GAME_SCENE_PATH
+	return HudNarratorVocab.NARRATION_SCENE_PATHS.has(tree.current_scene.scene_file_path)
 
-func _model_dir() -> String:
+static func _model_dir() -> String:
 	var env := OS.get_environment(HudNarratorVocab.ENV_MODEL_DIR)
 	if not env.is_empty():
 		return env
 	return ProjectSettings.globalize_path(HudNarratorVocab.FETCHED_MODEL_DIR)
 
 ## The int8 model if present, else the fp32 one, else "".
-func _model_file(dir: String) -> String:
+static func _model_file(dir: String) -> String:
 	for file_name in [HudNarratorVocab.MODEL_FILE_INT8, HudNarratorVocab.MODEL_FILE_FP32]:
 		var path := dir.path_join(file_name)
 		if FileAccess.file_exists(path):
 			return path
 	return ""
 
-func _espeak_lib() -> String:
+static func _espeak_lib() -> String:
 	var env := OS.get_environment(HudNarratorVocab.ENV_ESPEAK_LIB)
 	if not env.is_empty():
 		return env
@@ -223,7 +254,7 @@ func _espeak_lib() -> String:
 			return candidate
 	return ""
 
-func _espeak_data(lib: String) -> String:
+static func _espeak_data(lib: String) -> String:
 	var env := OS.get_environment(HudNarratorVocab.ENV_ESPEAK_DATA)
 	if not env.is_empty():
 		return env
@@ -233,5 +264,5 @@ func _espeak_data(lib: String) -> String:
 	var data := prefix.path_join(HudNarratorVocab.ESPEAK_DATA_RELATIVE)
 	return data if DirAccess.dir_exists_absolute(data) else ""
 
-func _log_off(reason: String) -> void:
+static func _log_off(reason: String) -> void:
 	print(HudNarratorVocab.LOG_OFF_FORMAT % reason)

@@ -57,6 +57,10 @@ const ESPEAK_DATA_RELATIVE := "share/espeak-ng-data"
 const ENGINE_CLASS := "NarratorEngine"
 ## Narration runs only in the game proper: every harness instances HudLayer under its own scene.
 const GAME_SCENE_PATH := "res://src/Main.tscn"
+## The menu the game boots into: the model loads there, while the player is still choosing, so it is
+## ready by the time the opening card shows. Narration (and its load) is allowed in these two scenes only.
+const LANDING_SCENE_PATH := "res://src/ui/LandingScreen.tscn"
+const NARRATION_SCENE_PATHS := [GAME_SCENE_PATH, LANDING_SCENE_PATH]
 const PLAYER_NODE_NAME := "NarratorPlayer"
 
 # ---- log lines (one each, never repeated) ----------------------------------

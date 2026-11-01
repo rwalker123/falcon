@@ -5,6 +5,7 @@ paths:
   - "clients/godot_thin_client/native/src/narrator/**"
   - "clients/godot_thin_client/native/tests/fixtures/phoneme_fixture.json"
   - "scripts/fetch_narrator_model.sh"
+  - "clients/godot_thin_client/src/scripts/ui/LandingScreen.gd"
 ---
 
 # The spoken narrator
@@ -21,7 +22,7 @@ The page/card seams it listens to are `telling-panel.md`.
 | `native/src/narrator/mod.rs` | The ONE worker thread, the request queue, the generation counter `cancel_all` bumps, the 64-entry cache keyed (voice, speed bits, text); the parity, synth and cache tests |
 | `native/src/narrator/espeak.rs` | espeak-ng `dlopen`ed via `libloading`, IPA phonemes, and a port of phonemizer's punctuation preserve/restore |
 | `native/src/narrator/kokoro.rs` · `tokenizer.rs` · `vocab.json` | The ORT session, the npz voices (style row = token count − 1), the 510-phoneme chunker, trim and inter-batch pauses, PCM16 out |
-| `ui/hud/NarratorController.gd` | `RefCounted` controller held by `HudLayer` as `_narrator`: owns the engine, the `AudioStreamPlayer`, the page's line queue, the medium and the owning SOURCE. `speak(lines, source)` / `stop_source(source)` / `stop()` / `activate()` / `process(delta)` |
+| `ui/hud/NarratorController.gd` | `RefCounted` controller held by `HudLayer` as `_narrator`: the process-wide engine (static), its own `AudioStreamPlayer`, the page's line queue, the medium and the owning SOURCE. `speak(lines, source)` / `stop_source(source)` / `stop()` / `activate()` / `process(delta)`, and the static `warm_up(tree)` the landing screen calls |
 | `ui/hud/hud_narrator_vocab.gd` | `HudNarratorVocab`: the medium → `{voice, speed}` table with its `oral` fallback, the `SOURCE_*` ids, `LINE_PAUSE_SECONDS`, the path candidates and env var names, the one-shot log strings |
 | `scripts/fetch_narrator_model.sh` | Downloads the int8 model (default) or fp32 (`--fp32`) plus `voices-v1.0.bin` into the gitignored `clients/godot_thin_client/narrator_model/`; idempotent |
 
@@ -59,8 +60,11 @@ whole rule, and every trigger is an instance of it:
   written never speak on arrival** — the book does not turn its own page there, and a voice reading a
   line the player cannot see breaks that. Never on a full-snapshot backfill, the first paint, a
   medium-change re-render, `reset()`, `debug_jump_to`, or while collapsed; collapsing stops it.
-- **The opening card** speaks its turn-0 lines when it shows. A first oral beat into an EMPTY panel is
-  treated as initial population and not spoken — the tick-0 lines are the opening card's.
+- **The opening card** speaks its turn-0 lines when it shows, and **the hand-off to the outfitting
+  card does NOT stop them** — they keep playing while the player picks kits. Only a newer `speak`
+  or a world reset cuts them off. (Stopping on hand-off silenced the opening entirely in playtest:
+  the player had clicked through before the first line was ready.) A first oral beat into an EMPTY
+  panel is treated as initial population and not spoken — the tick-0 lines are the opening card's.
 - **The fork card** speaks its narration in the active register on open, and again on a register
   toggle. Never the choices. Its echo line arrives as a `narrative_fork` feed entry and is the panel's.
 - **Never the gloss** — the sampled numbers are proof for the reader, not prose.
@@ -74,18 +78,26 @@ in order — and played with `LINE_PAUSE_SECONDS` between them; a failed line is
 ## Inert under every harness — by scene, not by flag
 
 The ui_preview and other harnesses drive the LIVE TellingPanel paths, so a `page_shown` fires under
-them. The controller therefore configures only when **`Main.tscn` is the current scene on a
-non-headless display** (`_is_the_game`). Every harness instances `HudLayer` under its own scene or
-headless, so none configures the engine, let alone loads 88 MB of model. "Not the game scene" is
-not a verdict — the scene may simply not be current yet — so it is re-asked; a missing model,
-espeak or native class IS a verdict, logged once and never retried.
+them. The engine is therefore configured only on a **non-headless display whose current scene is
+in `HudNarratorVocab.NARRATION_SCENE_PATHS`** — `Main.tscn` and `LandingScreen.tscn`. Every harness
+runs under its own scene or headless, and none instances `LandingScreen`, so none configures the
+engine, let alone loads 88 MB of model. "Not one of those scenes yet" is not a verdict — the scene
+may simply not be current yet — so it is re-asked; a missing model, espeak or native class IS a
+verdict, logged once and never retried.
 
-## Warm-up — the first line is the one the player hears first
+## One engine per PROCESS, warmed up in the menu
 
-Loading the model takes ~2.4 s; synthesizing a line after that ~0.5 s. Loading lazily on the first
-`speak` put that load in front of the opening card's lines — the first narration a player ever
-hears. So `HudLayer._ready` calls `activate()` deferred, which configures and calls the engine's
-`warm_up()`; the worker loads the model while the world is still generating. The warm flag is
-separate from the request queue, so `cancel_all` / `stop()` cannot drop it. A cold OS page cache
-(first launch after a build) can stretch the load to several seconds; that is the disk, not the
-engine.
+Loading the model takes ~2.4 s warm and several seconds on a cold OS page cache; a line after that
+~0.5 s. The opening card's lines are the first narration a player hears, and in playtest a load
+paid at game start made them ~5 s late.
+
+- **The engine and the permanent verdict are process-wide `static var`s on `NarratorController`.**
+  A `Main.tscn` reload, Abandon → New Game and an in-session world change all reuse the loaded
+  model. Only the `AudioStreamPlayer` is per HUD.
+- **The last controller to `speak` owns the engine's results** (a static instance id, not a
+  reference, so it keeps no freed HUD alive). Only the owner polls or cancels, so an old HUD's
+  controller cannot drain a newer one's lines.
+- **`LandingScreen._ready` warms it** (`NarratorController.warm_up(tree)`, deferred), so the load
+  runs while the player is in the menu and is done before a world generates. `HudLayer._ready`'s
+  `activate()` is the backstop for a direct `Main.tscn` launch.
+- The worker's warm flag is separate from the request queue, so `cancel_all` / `stop()` cannot drop it.
