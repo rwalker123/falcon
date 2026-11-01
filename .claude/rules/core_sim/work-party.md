@@ -151,9 +151,21 @@ hands the passes armed (plus the keeping remainder: the leftover fraction of a k
 for), so the band's item budget grants a staffed row its `kitted` units and no more. `RowClaims::asks`
 keeps the ask beside the granted `claims`. A staffed row's ask is struck at the crew it was DENIED
 (`take_claims::wanted_ask_crew`, mirroring the client's short-crew warning, `HudWorkVocab.crew_shortfall`):
-a row with a Max asks at `min(Max, useful_crew)`; a row with no Max that got nobody asks at one head;
-any other row asks at the hands present (a no-Max `useful_crew` is the take curve's ceiling, never a
-crew the band would field). Read only while the stamp is current (`staffing.total() == workers`; a
+a row with a Max asks at `min(Max, useful_crew)`; a **player** row with no Max that got nobody asks at
+one head (a row the player made is a row they want worked); any other row asks at the hands present
+(a no-Max `useful_crew` is the take curve's ceiling, never a crew the band would field).
+**A chief's row (one `order_rows` lists, `row_order` non-empty) asks only for the hands it has, plus
+the hands he would have sent had the kit been there**: staffed, it asks at the hands present; staffed
+to nobody, it asks one head only while the band has idle hands the staffing left unused (the published
+`idleWorkers`), which `row_claims_with_idle` deals out one per unstaffed chief row in the staffing's
+own row order (priority High to Low, ties by row index), so at most `idle` such rows ask, and with no
+idle hand it asks nothing - a reserve site the chief cannot staff never inflates the kit the band is
+told it lacks, while a chief's hunt row nobody can staff for want of spears still asks for one spear
+whenever a hand is idle. `row_claims` (the grants alone: item budget, competing rows) strikes no idle;
+the readers of `RowClaims::asks` - the capture's `kitToe`, auto-craft's suggestions and
+`mustered_take_gear` (idle less the hands the muster takes) - call `row_claims_with_idle`. Pinned by
+`work_party_caravan::{a_chiefs_unstaffed_reserve_rows_with_no_idle_hand_ask_for_no_kit,
+idle_hands_deal_one_asking_head_each_to_the_unstaffed_chief_rows}`. Read only while the stamp is current (`staffing.total() == workers`; a
 muster-cut donor row falls back to its hands present, so a lent hand's kit is not asked for twice),
 and it still counts only take hands that would take something with the kit. A row's published `kitToe`
 states `required` from the ask and `filled` from the grant, so a row the pool starved of every head

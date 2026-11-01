@@ -558,7 +558,12 @@ pub(crate) fn mustered_take_gear(
         mustered.assignments[*row].workers -= hands;
     }
     mustered.assignments[need_idx].workers = plan.total();
-    let mut claims = crate::take_claims::row_claims(sources, &mustered, wear);
+    let mut claims = crate::take_claims::row_claims_with_idle(
+        sources,
+        &mustered,
+        wear,
+        idle.saturating_sub(plan.from_idle),
+    );
     // **A CREW THE BAND CANNOT ARM STILL CLAIMS THE KIT IT WOULD NEED.** On a quarry bare hands
     // cannot wound, a band holding none of the kit prices its need row's one equipped hand at the
     // bare attack - a claim of nothing, so the row would show no shortfall and no spear would be
@@ -1916,8 +1921,13 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         drives_known: hunt_crew_levers.drives_known,
         start: crate::fauna::ProjectionStart::BeforeRegrowth,
     };
-    let row_claims =
-        allocation.map(|alloc| crate::take_claims::row_claims(&claim_sources, alloc, &kit));
+    // **The asks follow the band's idle hands** (the published `idleWorkers`): an unstaffed chief row
+    // asks for a head's kit only while the staffing left a hand unused for it.
+    let idle_hands =
+        crate::components::BandWorkforce::resolve(Some(cohort), allocation, bench).idle();
+    let row_claims = allocation.map(|alloc| {
+        crate::take_claims::row_claims_with_idle(&claim_sources, alloc, &kit, idle_hands)
+    });
     let no_claims = crate::take_claims::RowClaims::default();
     let claims = row_claims.as_ref().unwrap_or(&no_claims);
     let row_gear: Vec<(

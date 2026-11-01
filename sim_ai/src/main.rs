@@ -26,6 +26,7 @@ mod instruments;
 mod link;
 mod oracle;
 mod orchestrator;
+mod orders;
 mod profile;
 mod rungs;
 mod specialists;
