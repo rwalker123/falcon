@@ -18,6 +18,9 @@ extends RefCounted
 # --- The controller's OWN signals (HudLayer connects + relays each; see the class header) ---
 # The player answered a fork — relayed to HudLayer.answer_fork_requested.
 signal answer_fork_requested(payload: Dictionary)
+# The fork card's narration should be read / stopped — relayed by HudLayer to the narrator.
+signal narration_requested(lines: PackedStringArray)
+signal narration_stopped
 # The orb face advanced the turn (after catching the book up) — relayed to HudLayer.next_turn_requested(1).
 signal advance_requested
 # An orb row's "Jump →" — HudLayer wires this to AttentionController.on_turn_orb_focus (the band-routing handler).
@@ -79,6 +82,7 @@ var _dealing_attention: Array = []
 # subsequent snapshot. Keyed by beat_id.
 var _auto_opened_forks: Dictionary = {}
 var _fork_panel: NarrativeForkPanel = null
+var _voice_medium_id: String = TellingPanel.MEDIUM_ORAL
 
 func _init(turn_orb: TurnOrb, host: Node, telling: TellingPanel, note_sink: Callable) -> void:
 	_turn_orb = turn_orb
@@ -113,6 +117,9 @@ func _ensure_fork_panel() -> void:
 	_fork_panel = NarrativeForkPanel.new()
 	_fork_panel.name = "NarrativeForkPanel"
 	_fork_panel.answer_selected.connect(_on_fork_answer_selected)
+	_fork_panel.narration_requested.connect(
+		func(text: String) -> void: narration_requested.emit(PackedStringArray([text])))
+	_fork_panel.narration_stopped.connect(func() -> void: narration_stopped.emit())
 	_host.add_child(_fork_panel)
 
 ## Cache the PLAYER faction's pending forks and rebuild the orb registry.
@@ -145,10 +152,16 @@ func update_voice_medium(medium_variant: Variant) -> void:
 		if entry_variant is Dictionary and int((entry_variant as Dictionary).get("faction", -1)) == HudConst.PLAYER_FACTION_ID:
 			medium_id = String((entry_variant as Dictionary).get("medium_id", ""))
 			break
+	_voice_medium_id = medium_id
 	if _telling != null:
 		_telling.set_voice_medium(medium_id)
 	if _fork_panel != null:
 		_fork_panel.set_voice_medium(medium_id)
+
+## The narrator's medium id as last pushed (`oral` until the first snapshot names one) — the voice
+## selector for the spoken narrator, which `HudLayer` reads back after each update.
+func current_voice_medium() -> String:
+	return _voice_medium_id
 
 ## Pull the player faction's nested child array out of a per-faction wire array
 ## (`[{faction, <key>: [...]}, …]`), the shape `discovered_sites`/`sedentarization` also use.

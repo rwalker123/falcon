@@ -55,6 +55,16 @@ static func handles_kind(kind: String) -> bool:
 # Far deeper than the command feed's 6. These are short strings, the panel IS this arc's product, and
 # `painted`/`written` reveal history the sim was holding all along ("the voice never lies"). The
 # server's own `commandEvents` ring is only 32, so backfill on connect is partial by nature.
+# ---- the spoken narrator (docs/plan_telling_narrator.md) ---------------------------
+# The panel only SAYS when a page has come into view and what it reads; `NarratorController` decides
+# how it is voiced. `page_shown` carries the PLAIN TEXT of the visible page's beats (never the gloss).
+# It fires on an oral beat's arrival that turns the page, `leaf(±1)` and `reveal_newest()` when they
+# actually change the page — and on nothing else: not the backfill of a full snapshot, a reset, a
+# medium-change re-render, `debug_jump_to`, nor while collapsed. `narration_stopped` fires when the
+# panel is collapsed or reset, so the voice never outlives the page that was being read.
+signal page_shown(lines: PackedStringArray)
+signal narration_stopped
+
 const ENTRY_LIMIT := 40
 
 # ---- geometry / typography (named constants; no magic literals) ------------
@@ -237,7 +247,13 @@ func ingest_events(events_variant: Variant) -> void:
 		_append_entry(tick, kind, label, detail)
 		appended = true
 	if appended:
+		# An oral arrival is spoken only when it turns a page already on screen: the first paint is the
+		# initial population or a backfill, which is never read aloud.
+		var was_showing := _shown_bbcode != EMPTY_TEXT
+		var before := _shown_bbcode
 		render()
+		if was_showing and _is_oral() and _shown_bbcode != before:
+			_announce_current_page()
 
 func reset() -> void:
 	_entries.clear()
@@ -245,6 +261,7 @@ func reset() -> void:
 	_pages.clear()
 	_page_index = 0
 	render()
+	narration_stopped.emit()
 
 ## Set the player faction's narrator medium. Unknown/absent ids fall back to `oral` styling, so a medium
 ## the client has never heard of degrades to the first rung instead of rendering unstyled.
@@ -274,6 +291,7 @@ func leaf(delta: int) -> void:
 	var direction := signi(target - _page_index)
 	_page_index = target
 	_paint_page(true, direction)
+	_announce_current_page()
 
 ## Catch the reader up to the latest telling — the turn-advance path (`TurnOrbController._on_turn_orb_advance`). A
 ## player who moves on is shown the newest page; mid-turn beats only mark unread, advancing reveals.
@@ -287,6 +305,13 @@ func reveal_newest() -> void:
 	# Catch-up reads as a forward turn, whatever medium.
 	_page_index = last
 	_paint_page(true, 1)
+	_announce_current_page()
+
+## Say what the visible page reads, unless the panel is collapsed (nothing is on screen to read).
+func _announce_current_page() -> void:
+	if _collapsed or _pages.is_empty():
+		return
+	page_shown.emit(PackedStringArray(_pages[_page_index]["lines"]))
 
 # ---- collapsed-state preference --------------------------------------------
 
@@ -437,7 +462,7 @@ func _append_entry(tick: int, kind: String, label: String, detail: String) -> vo
 		message += "\n[font_size=%d][i][color=#%s]%s[/color][/i][/font_size]" % [
 			GLOSS_FONT_SIZE, HudStyle.INK_DIM_HEX, detail,
 		]
-	_entries.append({"tick": tick, "bbcode": message})
+	_entries.append({"tick": tick, "bbcode": message, "plain": line})
 	while _entries.size() > ENTRY_LIMIT:
 		_entries.pop_front()
 
@@ -446,16 +471,19 @@ func _append_entry(tick: int, kind: String, label: String, detail: String) -> vo
 func _rebuild_pages() -> void:
 	_pages.clear()
 	var by_tick: Dictionary = {}
+	var plain_by_tick: Dictionary = {}
 	var order: Array = []
 	for entry in _entries:
 		var tick: int = int(entry["tick"])
 		if not by_tick.has(tick):
 			by_tick[tick] = []
+			plain_by_tick[tick] = []
 			order.append(tick)
 		(by_tick[tick] as Array).append(entry["bbcode"])
+		(plain_by_tick[tick] as Array).append(entry["plain"])
 	order.sort()
 	for tick in order:
-		_pages.append({"tick": tick, "beats": by_tick[tick]})
+		_pages.append({"tick": tick, "beats": by_tick[tick], "lines": plain_by_tick[tick]})
 
 # ---- rendering -------------------------------------------------------------
 
@@ -746,6 +774,8 @@ func _on_collapse_pressed() -> void:
 	_collapsed = not _collapsed
 	save_collapsed(_collapsed)
 	_render_static()
+	if _collapsed:
+		narration_stopped.emit()
 
 # ---- ui_preview hooks (dev harness only) -----------------------------------
 # The PNG harness renders single frames, so it needs to (a) park the book on a page without playing the
