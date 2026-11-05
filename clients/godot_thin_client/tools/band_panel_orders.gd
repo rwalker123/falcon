@@ -490,3 +490,61 @@ func _limits() -> void:
 	h._assert_band_panel("…limit kit with two short and no heads reads Holding, plural",
 		_has("Holding — short 2 sleds to refill"))
 	h._assert_band_panel("…no limit names no shortfall", _has("Holding") and not _has("Holding — the patches"))
+	await _limits_falling_and_full()
+
+
+# ---- Falling and slow lines that name a kit or a full tile (the order's `limit` + `limit_count`) ----------
+
+const BASKET := "basket_item"
+const KIT_SHORT_COUNT := 7
+
+func _limits_falling_and_full() -> void:
+	h._hud._bandpanel.set_item_display_names({BASKET: "Baskets", HOE: "Hoes", SLED: "Sled"})
+	var orders := _all_orders()
+	var by_kind := {}
+	for order in orders:
+		by_kind[String(order["kind"])] = order
+	# Four ways to fall: a kit short, every tile full, the land's cap, and plain hands.
+	by_kind["food"].merge({"draw": 4.0, "take": 3.0, "sustainable": 8.0, "limit": "kit", "limit_item": BASKET,
+		"limit_count": KIT_SHORT_COUNT}, true)
+	by_kind["fodder"].merge({"draw": 2.0, "take": 1.0, "sustainable": 3.0, "limit": "full"}, true)
+	by_kind["stone"].merge({"draw": 1.0, "take": 0.5, "sustainable": 5.0, "limit": "land", "land_gives": 4.2}, true)
+	by_kind["wood"].merge({"draw": 1.5, "take": 1.0, "sustainable": 4.0, "limit": "hands", "hold_heads": 3,
+		"hold_wanted": 5}, true)
+	await _show(chief_band(orders), "band_orders_work_falling_limits")
+	h._assert_band_panel("band orders: falling names a kit short, with the count",
+		_has("Falling — short 7 baskets"))
+	h._assert_band_panel("…falling with every tile full says so", _has("Falling — the patches near camp are full"))
+	h._assert_band_panel("…falling under the land's cap names the cap",
+		_has("Falling — the stands near camp give 4.2 a turn at most"))
+	h._assert_band_panel("…falling on hands keeps the hand count", _has("Falling — 2 hands short of keeping up"))
+	h._assert_band_panel("…several falling orders: the bare summary, no cause",
+		_has("Food, Fodder, Stone and Wood are running down."))
+	# One order falling on a kit: the summary gives its reason as the line words it.
+	var lone := _all_orders()
+	lone[0].merge({"draw": 4.0, "take": 3.0, "sustainable": 8.0, "limit": "kit", "limit_item": BASKET,
+		"limit_count": KIT_SHORT_COUNT}, true)
+	await _show(chief_band(lone), "band_orders_work_falling_kit")
+	h._assert_band_panel("…one order falling on a kit: the summary names the kit",
+		_has("Food is running down — short 7 baskets."))
+	h._assert_band_panel("…and never says hands", not _has("hands to keep up"))
+	# Refilling slowly with the take above the draw: a kit short, and every tile full, with no hands short.
+	var slow := _all_orders()
+	slow[0].merge({"on_hand": 12.0, "limit": "kit", "limit_item": BASKET, "limit_count": KIT_SHORT_COUNT}, true)
+	slow[1].merge({"on_hand": 6.0, "limit": "full"}, true)
+	await _show(chief_band(slow), "band_orders_work_slow_limits")
+	h._assert_band_panel("…kit limit below target reads Refilling slowly, not green Refilling",
+		_has("Refilling slowly — short 7 baskets"))
+	h._assert_band_panel("…every tile full below target reads Refilling slowly",
+		_has("Refilling slowly — the patches near camp are full"))
+	h._assert_band_panel("…the waiting summary names no hands",
+		_has("Food and Fodder wait.") and not _has("Not enough hands"))
+	var solo := _all_orders()
+	solo[0].merge({"on_hand": 12.0, "limit": "kit", "limit_item": BASKET, "limit_count": KIT_SHORT_COUNT}, true)
+	await _show(chief_band(solo), "band_orders_work_slow_kit")
+	h._assert_band_panel("…one waiting order gives its reason", _has("Food waits — short 7 baskets."))
+	# Holding with the tiles full.
+	var held := _all_orders()
+	held[0].merge({"on_hand": 12.0, "refill_heads": 0, "refill_wanted": 4, "limit": "full"}, true)
+	await _show(chief_band(held), "band_orders_work_holding_full")
+	h._assert_band_panel("…holding with every tile full", _has("Holding — the patches near camp are full"))

@@ -2411,9 +2411,16 @@ fn a_herds_regrowth_staffs_the_hands_that_average_it_not_a_whole_animal_a_turn()
             .run_system_once(core_sim::advance_labor_allocation);
         recapture_snapshot_in_place(&mut app.world);
         let row = published_hunt_crews(&app);
+        let tile_room = app
+            .world
+            .resource::<core_sim::LaborConfigHandle>()
+            .get()
+            .tile_worker_cap;
         assert_eq!(
-            row.useful, row.needed,
-            "the staffing's useful crew and the row's workersNeeded are one function of one room"
+            row.useful,
+            row.needed.min(tile_room),
+            "the staffing's useful crew and the row's workersNeeded are one function of one room, \
+             the useful crew held to what the tile seats"
         );
         assert!(
             row.hold <= row.useful && row.hold < WHOLE_ANIMAL_CREW,

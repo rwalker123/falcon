@@ -2207,6 +2207,8 @@ pub struct BandOrderState {
     pub limit_item: String,
     /// When `limit` is `"land"`: what the order's candidate sites could give a turn at most.
     pub land_gives: f32,
+    /// When `limit` is `"kit"`: the units of `limit_item` the order's listed rows lack.
+    pub limit_count: u32,
 }
 
 /// **ONE KEEPING CLASS'S HUNTING MEAL** — a row of [`PopulationCohortState::hunt_meals`]: the food

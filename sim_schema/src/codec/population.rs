@@ -2256,6 +2256,7 @@ fn decode_population(
             limit: text(row.limit()),
             limit_item: text(row.limitItem()),
             land_gives: row.landGives(),
+            limit_count: row.limitCount(),
         }),
     })
 }
@@ -2528,6 +2529,7 @@ fn create_band_orders<'a>(
                     limit: Some(limit),
                     limitItem: Some(limit_item),
                     landGives: row.land_gives,
+                    limitCount: row.limit_count,
                 },
             )
         })

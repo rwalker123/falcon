@@ -20,8 +20,9 @@ what each button sends.
 - `band_orders` on a band dict (a band with a leader only): one dict per order -- `kind` (`food`,
   `fodder` or a material id), `target`, `priority` (lowercase word), `chief_owned`, `draw`, `on_hand`,
   `has_site` / `site_x` / `site_y`, `sustainable`, `has_consumers`, `hold_heads` / `hold_wanted`,
-  `refill_heads` / `refill_wanted`, `take`, `limit` (`""` / `"hands"` / `"kit"` / `"land"`), `limit_item`
-  (the equipment id when `limit` is `"kit"`), `land_gives`. For food and fodder `target` and `on_hand` are **turns** and
+  `refill_heads` / `refill_wanted`, `take`, `limit` (`""` / `"hands"` / `"kit"` / `"land"` / `"full"`), `limit_item`
+  (the equipment id when `limit` is `"kit"`), `limit_count` (units of that item missing across the order's
+  rows), `land_gives`. `"kit"` and `"full"` can be set with no hands short. For food and fodder `target` and `on_hand` are **turns** and
   `draw` / `take` are units a turn; for a material all of them are units.
 - `order_kind` and `chief_owned` on every labor row: the order the row is listed under (`""` for a
   player-crewed row). `HudOrdersVocab` is the only reader of both.
@@ -82,17 +83,24 @@ top of the sections list and partitions the rows through `BandOrdersController.s
   open-at-recipe seam, so it opens the bench on that band as the header's `⚒` does (open, never toggle).
 - **The state is the first match of `HudOrdersVocab.state_of`**: (1) `sustainable < draw`, any kind ->
   amber `Falling X a turn — <why>` (`the land gives too little` food, `the patches give too little`
-  fodder, `the stands regrow too little` a material); (2) hold short AND `take < draw` -> red
-  `Falling — N short of keeping up`; (3) hold short, or refill short with some refill heads -> amber
-  `Refilling slowly — N short` (hold short + refill short); (4) refill wanted with no refill heads ->
+  fodder, `the stands regrow too little` a material); (2) `take < draw` AND (hold short OR `limit` is
+  not `""`; `is_falling`) -> red Falling, worded by the limit (below), with `Falling — N hands short of
+  keeping up` for hands and for no limit; (3) hold short, refill short with some refill heads, or a
+  `"kit"` / `"full"` limit with `on_hand < target` (`is_limit_held`, hands short or not) -> amber
+  `Refilling slowly — <reason>`; (4) refill wanted with no refill heads ->
   amber Holding; (5) `on_hand >= target` -> `At target` (never below the target); (6) green Refilling
   with its ETA (`eta_turns`: `(target - on_hand) * draw / (take - draw)` for turns kinds,
   `(target - on_hand) / (take - draw)` for a material, rounded up, omitted when `take <= draw`). A band
   whose take outruns its draw is therefore rising however short its crew is, and reads Refilling slowly.
-- **What holds a refill up is the wire's `limit`, and it words the amber state** (`_refill_short_state`; only
-  the Refilling slowly / Holding states, never the `Falling` ones): `"hands"` keeps the hand wording
-  (`N hands short`, `no hands to refill (N wanted)`); `"kit"` names the item, `Refilling slowly — short 1 sled` /
-  `Holding — short 2 baskets to refill`, the count being `refill_wanted - refill_heads` and the noun the roster
+- **What holds an order up is the wire's `limit`, and it words the Falling line and the amber state**
+  (`limit_phrase` is the one reason phrase; `_refill_short_state` words Refilling slowly / Holding): `"hands"`
+  keeps the hand wording (`N hands short`, `no hands to refill (N wanted)`); `"full"` (every site the order
+  works is full) reads `the patches near camp are full` (`stands` for a material), as `Falling — …`,
+  `Refilling slowly — …` or `Holding — …`, with a tooltip saying a tile holds only so many workers and better
+  kit or more sites raises the take; `"kit"` names the item, `Falling — short 7 baskets` /
+  `Refilling slowly — short 1 sled` /
+  `Holding — short 2 baskets to refill`, the count being `limit_count` (the hands short when it is 0) and the
+  noun the roster
   display name lower-cased and made to agree with the count (`kit_noun`), and that item is dropped from the
   `· short …` clause (`kit_clause(entries, skip_item)`) so it is said once; `"land"` gives no hand count and no
   `(N wanted)` -- `Holding — the patches near camp give 4.2 a turn at most` (`stands` for a material), or
@@ -100,7 +108,12 @@ top of the sections list and partitions the rows through `BandOrdersController.s
   except that a short hold crew still reads as hands. The state's tooltip carries one sentence per limit.
 - **The summary warning names the orders**, joined `Food`, `Food and Wood`, `Food, Stone and Wood`: red
   `Not enough hands to keep up — Food is running down.` (`are` for several) when any order is in state 2;
-  else amber `Not enough hands for every order — Food and Wood wait.` when any is hold / refill short.
+  else amber `Not enough hands for every order — Food and Wood wait.` when any is hold / refill short or
+  held by a kit / full limit. **The summary says "hands" only where the held-up orders' limit is hands (or
+  none)** (`summary_of(band, orders, item_names)`): when every held-up order has a limit phrase, one order
+  gives its reason exactly as its line words it (`Food is running down — short 7 baskets.`,
+  `Food waits — short 7 baskets.`) and several give the bare `Food and Stone are running down.` /
+  `Food and Stone wait.`; a mix of hands and limit orders also takes the bare form.
 - **A mixed patch is listed once**, under the row's `order_kind`; its row names every store it fills
   with its own order's first and `/turn` once at the end (`SourceForecast.yield_components_labelled`:
   `+2.40 food · +0.25 fodder · +0.05 fibre /turn`; a row that fills one store keeps today's text), and every other shown

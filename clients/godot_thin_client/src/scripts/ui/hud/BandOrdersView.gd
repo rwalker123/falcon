@@ -142,7 +142,7 @@ static func build_group(band: Dictionary, controller: BandOrdersController,
                     column.add_child(node as Control)
         for also in also_by_kind.get(kind, []):
             column.add_child(_also_line(also as Dictionary))
-    var summary := HudOrdersVocab.summary_of(band, orders)
+    var summary := HudOrdersVocab.summary_of(band, orders, item_names)
     column.add_child(HudWidgets.build_dashed_rule())
     var summary_label := text(String(summary["line"]), HudOrdersVocab.LINE_FONT_SIZE,
         HudStyle.INK_DIM, true)

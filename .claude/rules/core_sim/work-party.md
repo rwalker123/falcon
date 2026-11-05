@@ -140,8 +140,17 @@ already at or under its floor staffs its keepers only. Each web builds its own t
 keeping bill alone) and at least one hand is asked of a take that rounds to nothing
 (`AT_LEAST_ONE_HAND`).
 
+**A row's crew targets never exceed what its tile can hold.** `hold_crew`, `reach_crew` and
+`useful_crew` are capped at the room the row's tile has left for this band (`tile_worker_cap` less the
+hands every other band holds there; an untiled row is unbounded), on top of the Max. The heads the
+cap cut off ride the row as `StaffedCrew::tile_short` = the uncapped aim (the larger of hold and
+reach, after the Max) less the capped reach crew; `> 0` means the row's site is full. It is outside
+`LaborAssignment`'s equality with the rest of `staffing`, rides the save (`SAVE_FORMAT_VERSION` 64)
+and has no wire field of its own: the capture reads it into `BandOrderState.limit` (below). Pinned by
+`staffing::tests::a_rows_targets_are_capped_at_its_tile_room_and_tile_short_is_the_excess`.
+
 **What is written on the row** is `workers` plus `StaffedCrew { keepers, kitted, bare, hold_crew,
-reach_crew, useful_crew }` (`staffing`), applied by `LaborAllocation::apply_staffing(staffed, lost_people)`. A far
+reach_crew, useful_crew, tile_short }` (`staffing`), applied by `LaborAllocation::apply_staffing(staffed, lost_people)`. A far
 row that loses hands hands them to its party (`cut_crew` / `walk_home`); hands lost to people the band
 no longer has are discarded where they stand (`discard_lost_hands`), not walked home, so the loss is
 not counted against next turn's pool and cut again.
@@ -341,21 +350,28 @@ a band with a leader** (own bands only). `onHand` is the band's material store t
 for `food`/`fodder` until their kinds are ordered); `hasSite` / `siteX` / `siteY` the best site the
 managing pass ranked first this turn; `sustainable` the total its candidate sites give a turn at the order's floor (above). Every row of the kind is an ordinary `LaborAssignment`; the dig rows is an ordinary `LaborAssignment` (`kind` extract) on the site.
 Native decode key `band_orders` (one dict per order, `priority` the lowercase word). `SAVE_FORMAT_VERSION`
-63.
+64.
 
-**What holds an order up** (`BandOrderState.limit` / `limitItem` / `landGives`, appended; derived in
-`snapshot::population::apply_order_limits` once the band's rows are published). The hands wanted are
-`refillWanted` (the listed rows' refill crew plus the unlisted sources' heads, counted at what a worker
-with the band's kit takes: a dig row's `per_hand` includes the best live kit, a food probe's per-hand rate is
-struck by `forage_input` / `hunt_input` over the band's own kit coverage); the hands short are that less
-`refillHeads`. `limit` is exactly one of:
+**What holds an order up** (`BandOrderState.limit` / `limitItem` / `limitCount` / `landGives`,
+appended; derived in `snapshot::population::apply_order_limits` once the band's rows are published).
+The hands wanted are `refillWanted` (the listed rows' refill crew plus the unlisted sources' heads,
+counted at what a worker with the band's kit takes: a dig row's `per_hand` includes the best live
+kit, a food probe's per-hand rate is struck by `forage_input` / `hunt_input` over the band's own kit
+coverage); the hands short are the hold crew's shortfall (`holdWanted - holdHeads`) plus the refill's
+(`refillWanted - refillHeads`). `limit` is exactly one of, **decided in this order**:
 
 | `limit` | when | other fields |
 |---|---|---|
-| `""` | no hands short | |
+| `"kit"` (full tile) | a row the order lists has a full tile (`StaffedCrew::tile_short > 0`) **and** a full row reads a `kitToe` line with `required > filled` - whether or not any hands are short | `limitItem` is that line's item id; `limitCount` is the units of it the order's listed rows lack, `ceil(sum of (required - filled))` over every listed row's lines for the item |
+| `"full"` | a listed row's tile is full and no full row is short of kit: the site holds no more hands | |
 | `"land"` | the hands wanted exceed the band's staffable pool (`LaborAllocation::order_pool`, `staffing::staffable_pool` as the last managing pass read it), **or** every candidate site's cap summed (`LaborAllocation::keep_reach[kind].gives`) is below the order's want net of what the player's own rows bring in | `refillWanted` is capped at the pool (never a hand count larger than the band); `landGives` is the sum of the caps (`0` where a never-renewing deposit makes the land unbounded) |
-| `"kit"` | hands short, the band's idle hands (`idleWorkers`, what pass 3 left unused) number at least the heads short, and a row the order lists reads a `kitToe` line with `required > filled` | `limitItem` is that line's item id |
+| `"kit"` (idle hands) | hands short, the band's idle hands (`idleWorkers`, what pass 3 left unused) number at least the heads short, and a row the order lists reads a `kitToe` line with `required > filled` | `limitItem` and `limitCount` as above |
 | `"hands"` | hands short, nothing above | |
+| `""` | no hands short | |
+
+The full-tile rows come first because a full tile is why the take falls short even with nobody short
+of hands: the client reads the take against the draw to say whether the order is falling and uses
+`limit` / `limitItem` / `limitCount` to say why. Pinned by `snapshot::population::order_limit_tests`.
 
 `keep_reach` and `order_pool` are derived allocation fields written by the managing pass (outside equality,
 saved with the allocation). The sites' caps include stock above the floor, so an order the land can give is

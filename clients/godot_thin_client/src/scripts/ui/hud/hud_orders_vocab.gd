@@ -95,6 +95,9 @@ const LIMIT_NONE := ""
 const LIMIT_HANDS := "hands"
 const LIMIT_KIT := "kit"
 const LIMIT_LAND := "land"
+## Every site the order works is full: a tile holds only so many workers (`limit`, wire value "full").
+const LIMIT_FULL := "full"
+const LIMIT_COUNT_KEY := "limit_count"
 const STATE_HOLDING_BARE := "Holding"
 const STATE_SLOW_BARE := "Refilling slowly"
 const STATE_HOLDING_KIT_FORMAT := "Holding — short %s to refill"
@@ -103,6 +106,12 @@ const STATE_SLOW_KIT_FORMAT := "Refilling slowly — short %s"
 const STATE_HOLDING_LAND_FORMAT := "Holding — %s"
 const STATE_SLOW_LAND_FORMAT := "Refilling slowly — %s"
 const LAND_GIVES_FORMAT := "the %s near camp give %.1f a turn at most"
+const STATE_HOLDING_FULL_FORMAT := "Holding — %s"
+const STATE_SLOW_FULL_FORMAT := "Refilling slowly — %s"
+const STATE_FALLING_LIMIT_FORMAT := "Falling — %s"
+const STATE_FALLING_BARE := "Falling"
+const KIT_SHORT_PHRASE_FORMAT := "short %s"
+const LAND_FULL_FORMAT := "the %s near camp are full"
 const LAND_GIVES_NOTHING_FORMAT := "the %s near camp give too little"
 ## What the order's sites are called: food and fodder have patches, a material has stands.
 const LAND_SITE_WORDS := {KIND_FOOD: "patches", KIND_FODDER: "patches"}
@@ -110,6 +119,7 @@ const LAND_SITE_MATERIAL_WORDS := "stands"
 const LIMIT_TIP_HANDS := "The band has no more hands to send."
 const LIMIT_TIP_KIT_FORMAT := "Hands are free, but the band has no more %s to give them."
 const LIMIT_TIP_LAND := "More hands would not bring in more: the sites in reach give no more than this."
+const LIMIT_TIP_FULL := "A tile holds only so many workers, and these are full. Better kit or more sites is what raises the take."
 const STATE_AT_TARGET := "At target"
 const STATE_REFILL_ETA_FORMAT := "Refilling · back to %s in ≈%s"
 const STATE_REFILL_FORMAT := "Refilling · back to %s"
@@ -132,6 +142,11 @@ const CREW_SHORT_ALPHA := 0.45
 const SUMMARY_FORMAT := "%s orders take %d of %d workers."
 const SUMMARY_REFILL_SHORT_FORMAT := "Not enough hands for every order — %s %s."
 const SUMMARY_HOLD_SHORT_FORMAT := "Not enough hands to keep up — %s %s running down."
+## `Food is running down — short 7 baskets.` / `Food and Stone are running down.` / `Food waits — ...`
+const SUMMARY_DOWN_REASON_FORMAT := "%s %s running down — %s."
+const SUMMARY_DOWN_FORMAT := "%s %s running down."
+const SUMMARY_WAIT_REASON_FORMAT := "%s %s — %s."
+const SUMMARY_WAIT_FORMAT := "%s %s."
 const SUMMARY_WAIT_ONE := "waits"
 const SUMMARY_WAIT_MANY := "wait"
 const SUMMARY_ARE_ONE := "is"
@@ -509,14 +524,56 @@ static func hold_short(order: Dictionary) -> int:
 static func refill_short(order: Dictionary) -> int:
     return maxi(int(order.get("refill_wanted", 0)) - int(order.get("refill_heads", 0)), 0)
 
-## Is the order falling in earnest: a hold crew short AND the take under the draw.
+## Is the order falling in earnest: the take under the draw AND something holding the order up -- a hold
+## crew short, or a named `limit` (kit, full, land or hands).
 static func is_falling(order: Dictionary) -> bool:
-    return hold_short(order) > 0 and float(order.get("take", 0.0)) < float(order.get("draw", 0.0))
+    return float(order.get("take", 0.0)) < float(order.get("draw", 0.0)) \
+        and (hold_short(order) > 0 or String(order.get(LIMIT_KEY, LIMIT_NONE)) != LIMIT_NONE)
+
+## Is the order held up by a limit that is not hands (kit or full) and still short of its target? Those
+## enter the limit-worded state even with no hands short.
+static func is_limit_held(order: Dictionary) -> bool:
+    var limit := String(order.get(LIMIT_KEY, LIMIT_NONE))
+    return (limit == LIMIT_KIT or limit == LIMIT_FULL) \
+        and float(order.get("on_hand", 0.0)) < float(order.get("target", 0))
+
+## **WHY THE ORDER IS HELD UP, in words** for kit / full / land: `short 7 baskets`, `the patches near camp
+## are full`, `the patches near camp give 4.2 a turn at most`. `""` for hands, no limit, or a kit limit
+## with nothing countable. The Falling line, the slow line and the summary all use this one phrase.
+static func limit_phrase(order: Dictionary, item_names: Dictionary) -> String:
+    var kind := String(order.get("kind", ""))
+    var words := String(LAND_SITE_WORDS.get(kind, LAND_SITE_MATERIAL_WORDS))
+    match String(order.get(LIMIT_KEY, LIMIT_NONE)):
+        LIMIT_KIT:
+            var count := int(order.get(LIMIT_COUNT_KEY, 0))
+            if count <= 0:
+                count = hold_short(order) + refill_short(order)
+            var noun := kit_noun(order, item_names, count) if count > 0 else ""
+            return (KIT_SHORT_PHRASE_FORMAT % noun) if noun != "" else ""
+        LIMIT_FULL:
+            return LAND_FULL_FORMAT % words
+        LIMIT_LAND:
+            var gives := float(order.get(LAND_GIVES_KEY, 0.0))
+            return (LAND_GIVES_FORMAT % [words, gives]) if gives > 0.0 else (LAND_GIVES_NOTHING_FORMAT % words)
+    return ""
+
+static func limit_tip(order: Dictionary, item_names: Dictionary) -> String:
+    match String(order.get(LIMIT_KEY, LIMIT_NONE)):
+        LIMIT_KIT:
+            return LIMIT_TIP_KIT_FORMAT % kit_item_name(order, item_names)
+        LIMIT_FULL:
+            return LIMIT_TIP_FULL
+        LIMIT_LAND:
+            return LIMIT_TIP_LAND
+        LIMIT_HANDS:
+            return LIMIT_TIP_HANDS
+    return ""
 
 ## `{text, tone}`: the first state that matches --
 ## 1. the supply is below the draw (any kind): amber Falling, naming where the shortfall is;
-## 2. a hold crew short AND the take under the draw: red Falling;
-## 3. a hold crew short, or a refill crew short that has some heads: amber Refilling slowly;
+## 2. the take under the draw AND (a hold crew short OR a named limit): red Falling, naming the limit;
+## 3. a hold crew short, a refill crew short that has some heads, or a kit/full limit below target: amber
+##    Refilling slowly;
 ## 4. a refill wanted with no refill heads: amber Holding;
 ## 5. on hand has reached the target: At target;
 ## 6. else green Refilling.
@@ -530,12 +587,18 @@ static func state_of(order: Dictionary, item_names: Dictionary = {}) -> Dictiona
             "tone": TONE_WARN}
     var short_hold := hold_short(order)
     if is_falling(order):
+        var phrase := limit_phrase(order, item_names)
+        if phrase != "":
+            return {"text": STATE_FALLING_LIMIT_FORMAT % phrase, "tone": TONE_BAD,
+                "tip": limit_tip(order, item_names)}
+        if short_hold == 0:
+            return {"text": STATE_FALLING_BARE, "tone": TONE_BAD, "tip": limit_tip(order, item_names)}
         return {"text": STATE_FALLING_HOLD_FORMAT % hands(short_hold), "tone": TONE_BAD}
     var wanted := int(order.get("refill_wanted", 0))
     var heads := int(order.get("refill_heads", 0))
     var short_refill := refill_short(order)
     var holding := wanted > 0 and heads == 0 and short_hold == 0
-    if short_hold > 0 or (short_refill > 0 and heads > 0) or holding:
+    if short_hold > 0 or (short_refill > 0 and heads > 0) or holding or is_limit_held(order):
         return _refill_short_state(order, kind, item_names, holding, short_hold, short_refill, wanted)
     if float(order.get("on_hand", 0.0)) >= float(order.get("target", 0)):
         return {"text": STATE_AT_TARGET, "tone": TONE_PLAIN}
@@ -551,14 +614,17 @@ static func _refill_short_state(order: Dictionary, kind: String, item_names: Dic
     var limit := String(order.get(LIMIT_KEY, LIMIT_NONE))
     match limit:
         LIMIT_KIT:
-            var noun := kit_noun(order, item_names, short_refill)
-            if noun != "":
+            var phrase := limit_phrase(order, item_names)
+            if phrase != "":
+                var noun := phrase.trim_prefix(KIT_SHORT_PHRASE_FORMAT % "")
                 return {"text": (STATE_HOLDING_KIT_FORMAT if holding else STATE_SLOW_KIT_FORMAT) % noun,
-                    "tone": TONE_WARN, "tip": LIMIT_TIP_KIT_FORMAT % kit_item_name(order, item_names)}
+                    "tone": TONE_WARN, "tip": limit_tip(order, item_names)}
+        LIMIT_FULL:
+            var full := limit_phrase(order, item_names)
+            return {"text": (STATE_HOLDING_FULL_FORMAT if holding else STATE_SLOW_FULL_FORMAT) % full,
+                "tone": TONE_WARN, "tip": LIMIT_TIP_FULL}
         LIMIT_LAND:
-            var gives := float(order.get(LAND_GIVES_KEY, 0.0))
-            var words := String(LAND_SITE_WORDS.get(kind, LAND_SITE_MATERIAL_WORDS))
-            var why := (LAND_GIVES_FORMAT % [words, gives]) if gives > 0.0 else (LAND_GIVES_NOTHING_FORMAT % words)
+            var why := limit_phrase(order, item_names)
             return {"text": (STATE_HOLDING_LAND_FORMAT if holding else STATE_SLOW_LAND_FORMAT) % why,
                 "tone": TONE_WARN, "tip": LIMIT_TIP_LAND}
         LIMIT_HANDS:
@@ -597,30 +663,55 @@ static func join_names(names: Array) -> String:
     var head := NAMES_SEPARATOR.join(names.slice(0, names.size() - 1))
     return head + NAMES_AND + String(names[names.size() - 1])
 
-## The summary's `{line, warning, tone}` over the shown orders.
-static func summary_of(band: Dictionary, orders: Array) -> Dictionary:
+## The summary's `{line, warning, tone}` over the shown orders. "hands" appears only where a held-up
+## order's limit is hands (or none): a kit/full/land limit is worded as its line words it.
+static func summary_of(band: Dictionary, orders: Array, item_names: Dictionary = {}) -> Dictionary:
     var takes := 0
     var falling: Array = []
     var waiting: Array = []
+    var falling_reasons: Array = []
+    var waiting_reasons: Array = []
     for order in chief_orders(orders):
         takes += crew_of(order)
         var order_label := order_name(String(order.get("kind", "")))
+        var phrase := limit_phrase(order, item_names)
         if is_falling(order) and float(order.get("sustainable", 0.0)) >= float(order.get("draw", 0.0)):
             falling.append(order_label)
-        if hold_short(order) > 0 or refill_short(order) > 0:
+            falling_reasons.append(phrase)
+        if hold_short(order) > 0 or refill_short(order) > 0 or is_limit_held(order):
             waiting.append(order_label)
+            waiting_reasons.append(phrase)
     var line := SUMMARY_FORMAT % [possessive(band), takes, int(band.get("working_age", 0))]
     var warning := ""
     var tone := TONE_PLAIN
     if not falling.is_empty():
-        warning = SUMMARY_HOLD_SHORT_FORMAT % [join_names(falling),
-            SUMMARY_ARE_ONE if falling.size() == 1 else SUMMARY_ARE_MANY]
+        warning = _summary_warning(falling, falling_reasons, SUMMARY_HOLD_SHORT_FORMAT,
+            SUMMARY_DOWN_REASON_FORMAT, SUMMARY_DOWN_FORMAT, SUMMARY_ARE_ONE, SUMMARY_ARE_MANY)
         tone = TONE_BAD
     elif not waiting.is_empty():
-        warning = SUMMARY_REFILL_SHORT_FORMAT % [join_names(waiting),
-            SUMMARY_WAIT_ONE if waiting.size() == 1 else SUMMARY_WAIT_MANY]
+        warning = _summary_warning(waiting, waiting_reasons, SUMMARY_REFILL_SHORT_FORMAT,
+            SUMMARY_WAIT_REASON_FORMAT, SUMMARY_WAIT_FORMAT, SUMMARY_WAIT_ONE, SUMMARY_WAIT_MANY)
         tone = TONE_WARN
     return {"line": line, "warning": warning, "tone": tone}
+
+## One summary warning. Every order's reason empty -> the hands wording (`hands_format`). Every reason
+## present and one order -> `Food is running down — short 7 baskets.`. Several orders, or a mix of hands
+## and limit orders -> the bare `Food and Stone are running down.`, which names no cause at all.
+static func _summary_warning(names: Array, reasons: Array, hands_format: String, reason_format: String,
+        bare_format: String, one_verb: String, many_verb: String) -> String:
+    var verb := one_verb if names.size() == 1 else many_verb
+    var any_reason := false
+    var all_reason := true
+    for reason in reasons:
+        if String(reason) != "":
+            any_reason = true
+        else:
+            all_reason = false
+    if not any_reason:
+        return hands_format % [join_names(names), verb]
+    if names.size() == 1 and all_reason:
+        return reason_format % [join_names(names), verb, String(reasons[0])]
+    return bare_format % [join_names(names), verb]
 
 static func tone_color(tone: StringName) -> Color:
     match tone:

@@ -411,17 +411,24 @@ fn staff_passes_scouting(
     let pool_left = pool;
     let cap_left: Vec<u32> = rows.iter().map(cap_of).collect();
 
-    // ## What each row would aim at ignoring the pool and the other rows — published after the Max.
+    // ## What each row would aim at ignoring the pool and the other rows — published after the Max
+    // and after the room its tile has left this band (`tile_room`): a tile never holds more than
+    // that, so no target names a head the tile cannot seat. `tile_short` is what the room cut off.
     for &i in &order {
         let row = &rows[i];
         let kmax = kitted_capacity(row, NOBODY, shelf);
-        out[i].hold_crew = hold_heads(row, kmax).min(cap_of(row));
-        out[i].reach_crew = reach_heads(row, kmax)
-            .max(out[i].hold_crew)
-            .min(cap_of(row));
-        out[i].useful_crew = useful_heads(row, kmax)
-            .max(out[i].reach_crew)
-            .min(cap_of(row));
+        let room = row
+            .tile
+            .and_then(|tile| tile_room.get(&tile_key(tile)).copied())
+            .unwrap_or(u32::MAX);
+        let max_cap = cap_of(row);
+        let hold = hold_heads(row, kmax).min(max_cap);
+        let reach = reach_heads(row, kmax).max(hold).min(max_cap);
+        let useful = useful_heads(row, kmax).max(reach).min(max_cap);
+        out[i].hold_crew = hold.min(room);
+        out[i].reach_crew = reach.min(room).max(out[i].hold_crew);
+        out[i].useful_crew = useful.min(room).max(out[i].reach_crew);
+        out[i].tile_short = hold.max(reach).saturating_sub(out[i].reach_crew);
     }
 
     let mut ledger = Ledger {
@@ -2807,6 +2814,41 @@ mod tests {
             out[0].total() >= 1 && out[1].total() >= 1,
             "each still gets its one"
         );
+    }
+
+    /// **A ROW'S CREW TARGETS NEVER EXCEED WHAT ITS TILE CAN HOLD**, and `tile_short` is the excess
+    /// the room cut off.
+    #[test]
+    fn a_rows_targets_are_capped_at_its_tile_room_and_tile_short_is_the_excess() {
+        const TILE_ROOM: u32 = 3;
+        let site = UVec2::new(4, 7);
+        let mut row = linear_row(
+            SourcePriority::Normal,
+            None,
+            0,
+            8.0,
+            8.0,
+            1.0,
+            1.0,
+            spears(),
+        );
+        row.tile = Some(site);
+        let rows = vec![row];
+        let uncapped = staff_band(&rows, 20, &mut shelf(10));
+        assert!(
+            uncapped[0].reach_crew > TILE_ROOM,
+            "the fixture must aim past the room"
+        );
+        assert_eq!(uncapped[0].tile_short, 0, "no room entry, nothing cut");
+        let room = BTreeMap::from([(tile_key(site), TILE_ROOM)]);
+        let out = staff_passes(&rows, 20, &mut shelf(10), Passes::All, &room);
+        assert!(out[0].reach_crew <= TILE_ROOM && out[0].useful_crew <= TILE_ROOM);
+        assert!(out[0].hold_crew <= out[0].reach_crew);
+        assert_eq!(
+            out[0].tile_short,
+            uncapped[0].hold_crew.max(uncapped[0].reach_crew) - out[0].reach_crew
+        );
+        assert!(out[0].tile_short > 0);
     }
 
     /// **WITHIN A PRIORITY GROUP A BUILD IS DEALT BEFORE A SOURCE REACHES TOWARD ITS FLOOR.**

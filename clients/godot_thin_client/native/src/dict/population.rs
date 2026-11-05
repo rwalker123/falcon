@@ -487,6 +487,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = entry.insert("limit", row.limit().unwrap_or_default());
             let _ = entry.insert("limit_item", row.limitItem().unwrap_or_default());
             let _ = entry.insert("land_gives", f64::from(row.landGives()));
+            // Units of `limit_item` missing across the order's rows when `limit` is "kit".
+            let _ = entry.insert("limit_count", i64::from(row.limitCount()));
             band_orders.push(&entry.to_variant());
         }
     }

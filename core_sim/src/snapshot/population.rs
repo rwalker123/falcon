@@ -1759,6 +1759,7 @@ pub(crate) fn band_order_rows(
                 limit: String::new(),
                 limit_item: String::new(),
                 land_gives: 0.0,
+                limit_count: 0,
             }
         })
         .collect()
@@ -1773,28 +1774,64 @@ pub const LIMIT_LAND: &str = "land";
 pub const LIMIT_KIT: &str = "kit";
 /// Hands are short and nothing else is in the way.
 pub const LIMIT_HANDS: &str = "hands";
+/// A row the order lists has a full tile: it holds no more hands, whatever the band could send.
+pub const LIMIT_FULL: &str = "full";
 
 /// **STATE WHAT HOLDS EACH ORDER UP** (`BandOrderState::limit`), read off the staffing's own numbers
-/// once the band's rows are published:
+/// once the band's rows are published. `tile_short` is the row-aligned `StaffedCrew::tile_short`.
+/// The decision, in order:
 ///
-/// - the hands wanted are `refill_wanted` (the listed rows' refill crew plus the unlisted sources'
-///   heads); the hands short are that less `refill_heads`;
-/// - **land**: the hands wanted exceed the staffable pool (`order_pool`), or the sum of every
-///   candidate site's per-turn cap (`keep_reach.gives`) is below the order's want. The wanted heads
-///   are then capped at the pool - never a hand count larger than the band - and `land_gives` carries
-///   what the sites could give;
-/// - otherwise no hands short reads `""`;
-/// - **kit**: hands are short, the band's idle hands (`idleWorkers`, what pass 3 left unused) number
-///   at least the heads short, and a row the order lists reads a kit item `required > filled` on its
-///   `kitToe` - `limit_item` names the first;
-/// - **hands**: hands short and nothing above.
+/// 1. **full / kit**: a row the order lists has a full tile (`tile_short > 0`). If such a row reads
+///    a kit item `required > filled`, the limit is `kit` - `limit_item` names it and `limit_count`
+///    is the units the order's listed rows lack of it, rounded up - else `full`. This holds with
+///    no hands short: a full tile with baskets missing is the reason the take falls short;
+/// 2. **land**: the hands wanted exceed the staffable pool (`order_pool`), or the sum of every
+///    candidate site's per-turn cap (`keep_reach.gives`) is below the order's want. The wanted heads
+///    are then capped at the pool and `land_gives` carries what the sites could give;
+/// 3. hands short (hold short plus refill short) with the band's idle hands (`idleWorkers`) at least
+///    that many and a listed row's `kitToe` short of an item: `kit` (item and count as in 1), else
+///    `hands`;
+/// 4. otherwise `""`.
 pub(crate) fn apply_order_limits(
     orders: &mut [sim_schema::BandOrderState],
     allocation: &LaborAllocation,
     rows: &[sim_schema::LaborAssignmentState],
+    tile_short: &[u32],
     idle_workers: u32,
 ) {
     for order in orders.iter_mut() {
+        let listed = || {
+            rows.iter()
+                .enumerate()
+                .filter(|(_, row)| row.order_kind == order.kind)
+        };
+        let short_item_of = |full_only: bool| {
+            listed()
+                .filter(|(i, _)| !full_only || tile_short.get(*i).copied().unwrap_or(0) > 0)
+                .flat_map(|(_, row)| row.kit_toe.iter())
+                .find(|line| line.required > line.filled)
+                .map(|line| line.item_id.clone())
+        };
+        let lacking = |item: &str| -> u32 {
+            let units: f32 = listed()
+                .flat_map(|(_, row)| row.kit_toe.iter())
+                .filter(|line| line.item_id == item)
+                .map(|line| (line.required - line.filled).max(0.0))
+                .sum();
+            units.ceil() as u32
+        };
+        let site_is_full = listed().any(|(i, _)| tile_short.get(i).copied().unwrap_or(0) > 0);
+        if site_is_full {
+            match short_item_of(true) {
+                Some(item) => {
+                    order.limit_count = lacking(&item);
+                    order.limit = LIMIT_KIT.to_string();
+                    order.limit_item = item;
+                }
+                None => order.limit = LIMIT_FULL.to_string(),
+            }
+            continue;
+        }
         let sites_short = allocation.keep_reach.get(&order.kind).is_some_and(|reach| {
             reach.want > 0.0 && reach.gives.is_some_and(|gives| gives < reach.want)
         });
@@ -1809,19 +1846,15 @@ pub(crate) fn apply_order_limits(
                 .unwrap_or(0.0);
             continue;
         }
-        let short = order.refill_wanted.saturating_sub(order.refill_heads);
+        let short = order.hold_wanted.saturating_sub(order.hold_heads)
+            + order.refill_wanted.saturating_sub(order.refill_heads);
         if short == 0 {
             order.limit = LIMIT_NONE.to_string();
             continue;
         }
-        let short_item = rows
-            .iter()
-            .filter(|row| row.order_kind == order.kind)
-            .flat_map(|row| row.kit_toe.iter())
-            .find(|line| line.required > line.filled)
-            .map(|line| line.item_id.clone());
-        match short_item {
+        match short_item_of(false) {
             Some(item) if idle_workers >= short => {
+                order.limit_count = lacking(&item);
                 order.limit = LIMIT_KIT.to_string();
                 order.limit_item = item;
             }
@@ -2880,10 +2913,16 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     let materials_free =
         crate::snapshot::crafting::materials_free(&queue_forecast, &cohort.stores, craft_inputs);
     if let Some(allocation) = allocation {
+        let tile_short: Vec<u32> = allocation
+            .assignments
+            .iter()
+            .map(|row| row.staffing.tile_short)
+            .collect();
         apply_order_limits(
             &mut band_orders,
             allocation,
             &labor_assignments,
+            &tile_short,
             idle_workers,
         );
     }
@@ -4579,6 +4618,27 @@ mod order_limit_tests {
 
     const KIND: &str = "stone";
     const POOL: u32 = 10;
+    /// No listed row's tile is full.
+    const NOT_FULL: [u32; 8] = [0; 8];
+    /// Every listed row's tile is full.
+    const ALL_FULL: [u32; 8] = [1; 8];
+
+    fn limit_full_tiles(
+        order: sim_schema::BandOrderState,
+        rows: &[sim_schema::LaborAssignmentState],
+        tile_short: &[u32],
+        idle: u32,
+    ) -> sim_schema::BandOrderState {
+        let mut orders = vec![order];
+        apply_order_limits(
+            &mut orders,
+            &allocation(Some(9.0), 5.0),
+            rows,
+            tile_short,
+            idle,
+        );
+        orders.remove(0)
+    }
 
     fn order(refill_wanted: u32, refill_heads: u32) -> sim_schema::BandOrderState {
         sim_schema::BandOrderState {
@@ -4619,7 +4679,7 @@ mod order_limit_tests {
         idle: u32,
     ) -> sim_schema::BandOrderState {
         let mut orders = vec![order];
-        apply_order_limits(&mut orders, allocation, rows, idle);
+        apply_order_limits(&mut orders, allocation, rows, &NOT_FULL, idle);
         orders.remove(0)
     }
 
@@ -4686,5 +4746,38 @@ mod order_limit_tests {
     fn a_met_order_at_target_is_not_land() {
         let out = limit_of(order(0, 0), &allocation(Some(0.0), 0.0), &[], 3);
         assert_eq!(out.limit, LIMIT_NONE);
+    }
+
+    #[test]
+    fn a_full_tile_with_a_kit_short_reads_kit_with_the_count_even_with_no_hands_short() {
+        let mut second = row_short_of("sled");
+        second.kit_toe[0].required = 3.5;
+        second.kit_toe[0].filled = 1.0;
+        let rows = [row_short_of("sled"), second];
+        let out = limit_full_tiles(order(5, 5), &rows, &ALL_FULL, 0);
+        assert_eq!(out.limit, LIMIT_KIT);
+        assert_eq!(out.limit_item, "sled");
+        assert_eq!(out.limit_count, 5, "(2 - 0) + (3.5 - 1) = 4.5 rounds up");
+    }
+
+    #[test]
+    fn a_full_tile_with_no_kit_short_reads_full() {
+        let mut row = row_short_of("sled");
+        row.kit_toe[0].filled = row.kit_toe[0].required;
+        let out = limit_full_tiles(order(5, 5), &[row], &ALL_FULL, 9);
+        assert_eq!(out.limit, LIMIT_FULL);
+        assert_eq!(out.limit_item, "");
+        assert_eq!(out.limit_count, 0);
+    }
+
+    #[test]
+    fn hold_short_only_with_idle_hands_and_kit_short_reads_kit() {
+        let mut o = order(3, 3);
+        o.hold_wanted = 4;
+        o.hold_heads = 2;
+        let rows = [row_short_of("sled")];
+        let out = limit_full_tiles(o, &rows, &NOT_FULL, 2);
+        assert_eq!(out.limit, LIMIT_KIT);
+        assert_eq!(out.limit_count, 2);
     }
 }

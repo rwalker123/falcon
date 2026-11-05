@@ -3879,6 +3879,10 @@ pub struct StaffedCrew {
     /// The crew past which the take stops rising - pass 3's ceiling (keepers included), after the
     /// row's Max.
     pub useful_crew: u32,
+    /// The heads the row's tile could not fit: the crew the row would aim at (hold or reach, after
+    /// the Max, before the tile's room) less the crew it aims at once the room caps it. `0` on an
+    /// untiled row and on a tile with room for the whole aim; `> 0` means the site is full.
+    pub tile_short: u32,
 }
 
 impl StaffedCrew {
