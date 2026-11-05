@@ -440,13 +440,19 @@ bands (`extinction_floor < collapse_fraction < stressed_fraction < 1`) in all th
 ### THE KEEPER DEMAND IS AN UPKEEP RATE, and the shed is its shortfall penalty
 
 **`herders_needed` stopped being a declared head count and became work per turn**
-(`docs/plan_standing_upkeep.md` §2.4). Both managed rungs declare
-`upkeep: { work_per_turn: 1.0, scaled_by: source_load, meter_decay: null }`, and the source supplies
-the **keeper load**
+(`docs/plan_standing_upkeep.md` §2.4). The two managed rungs declare
+`upkeep: { work_per_turn: R, scaled_by: source_load, meter_decay: null }` — **`animal:pastoral` at
+`R = 0.6`, `animal:pen` at `R = 1.0`** — and the source supplies the **keeper load**
 — `head count / animals_per_herder` (`fauna::herd_keeper_loads`). Since one worker-turn is
-`PER_WORKER_OUTPUT`, `upkeep_crew_needed = ceil(load)` **is** the
-`ceil((biomass/body_mass)/animals_per_herder)` the retired helper computed, so every species asks for
-exactly the keepers it always asked for (`every_species_asks_for_the_keepers_it_asked_for_before`).
+`PER_WORKER_OUTPUT`, `upkeep_crew_needed = ceil(load × R)` at the rung's own rate: a pen asks for the
+`ceil((biomass/body_mass)/animals_per_herder)` the retired helper computed, and a tamed herd asks for
+`0.6` of that (a Wild Boar herd's pastoral bill is ~0.94 work, one keeper, where it was 1.56 and two).
+The pastoral `0.6` is a chosen playtest dial: at `1.0` a tamed herd's keeping cost more hands than
+taming bought back, so three hunters on a tamed Wild Boar paid less than on the wild herd
+(1.26 against 1.48 food a turn with spears). `LadderConfig::validate` only asks that a higher rung
+never cost less to hold, so the pen's `1.0` above the pastoral `0.6` is accepted
+(`every_species_asks_for_the_keepers_its_rung_rate_names` pins `ceil(load × rate)` per species and
+rung).
 
 - **The species owns the ratio, the rung owns the rate** — the same division `taming_cost_multiplier`
   and `work_cost` make of the taming job. `animals_per_herder` stays in `fauna_config.json` and is
@@ -756,25 +762,26 @@ with `pen_is_a_larder` on: **not one animal row is a drawdown.** Every wild, pas
 sits at or below what its herd reproduces that turn. The pen figures are the tightest — a pen is
 *designed* to sit on its production line — and they sit **on** it, not past it:
 
-| species | rung | `r` per turn | `K` biomass | reproduces food/turn | taken at 5 keepers | verdict |
+| species | rung | `r` per turn | `K` biomass | reproduces food/turn | taken at 5 hands | verdict |
 |---|---|---|---|---|---|---|
-| Wild Aurochs | pen | `0.360` | 3968 | **7.14** | 7.0200 | at the line |
-| Wild Sheep | pen | `0.800` | 1587 | **6.35** | 6.3252 | at the line |
-| Wild Boar | pen | `0.400` | 3171 | **6.34** | 6.3240 | at the line |
-| Crag Goats | pen | `0.880` | 1443 | **6.35** | 6.3120 | at the line |
-| Wild Fowl | pen | `1.000` | 1015 | **5.07** | 5.0458 | at the line |
-| Rabbit Warren | pen | `1.000` | 951 | **4.76** | 2.9916 | 37% under — reaches its line at 8 |
-| Snow Hare Warren | pen | `1.000` | 951 | **4.76** | 4.7220 | at the line |
+| Wild Aurochs | pen | `0.135` | 3968 | **8.04** | 7.9200 | at the line |
+| Wild Sheep | pen | `0.300` | 1587 | **7.14** | 7.1316 | at the line |
+| Wild Boar | pen | `0.150` | 3171 | **7.14** | 7.1280 | at the line |
+| Crag Goats | pen | `0.330` | 1443 | **7.14** | 7.1190 | at the line |
+| Wild Fowl | pen | `0.525` | 1015 | **7.99** | 3.3930 | 58% under |
+| Rabbit Warren | pen | `0.525` | 951 | **7.49** | 2.6451 | 65% under |
+| Snow Hare Warren | pen | `0.450` | 951 | **6.42** | 5.4630 | 15% under |
+
+**Every managed row is priced KEEPING FIRST**: a crew of five hands is split by `fauna::crew_keep_hands`
+(the seed's own seam) into the hands that keep the herd and the rest that take, so "5 hands" is
+`5 − keepers` takers. The big four pens reach their line at five hands; fowl, rabbit and snow hare
+spend more of the five on keeping (their keeper bills are struck at much larger head counts) and sit
+under the line, reaching it only with more hands.
 
 **The aurochs' slow reproduction does not cost it the top of the ladder**, because `K` and `r` trade
-off: `r_pen 0.36` against a 3968 `K` reproduces 7.14 food/turn, while a fowl's `r_pen 1.0` against a
-1015 `K` reproduces 5.07. **`sustainable ≈ r · K / 4`, and `K` is the bigger lever on this roster** —
+off: `r_pen 0.135` against a 3968 `K` reproduces 8.04 food/turn, while a fowl's `r_pen 0.525` against a
+1015 `K` reproduces 7.99. **`sustainable ≈ r · K / 4`, and `K` is the bigger lever on this roster** —
 which is why `pen_density` is where the pens were tuned and `pen_engage_gain` only decides the crew.
-
-**The rabbit is the one row deliberately off the line at five keepers**, and it is a reach reading
-rather than a production one: its `pen_engage_gain` is tuned to reach its ceiling at **8** where every
-other pen reaches it at 5, so a five-keeper column catches it part-way up its own curve. At eight it
-takes **4.7230** against the same 4.76 line — at the line, like the rest.
 
 **Both plant-web drawdowns this measurement used to report are gone with the gear**, and the callout
 above says why: they were a *basketed* crew out-taking a narrowed food-only stand. **Nothing on
@@ -949,24 +956,24 @@ bodies lands on a lattice.
 the `enclosed` rung (`rung_density_gain`). Verified — every wild and pastoral row is byte-identical
 across the retune.
 
-### What each pen is actually limited by, at five keepers
+### What each pen is actually limited by, at five hands
 
 Nothing is a drawdown; every row takes its sustainable line or less.
 
-| species | reproduces food/turn | takes at 5 keepers | limited by |
+| species | reproduces food/turn | takes at 5 hands | limited by |
 |---|---|---|---|
-| Wild Aurochs | 7.14 | 7.0200 | herd production |
-| Wild Sheep | 6.35 | 6.3252 | herd production |
-| Wild Boar | 6.34 | 6.3240 | herd production |
-| Crag Goats | 6.35 | 6.3120 | herd production |
-| Wild Fowl | 5.07 | 5.0458 | herd production |
-| Rabbit Warren | 4.76 | 2.9916 | the keepers' handling rate — it wants 8 |
-| Snow Hare Warren | 4.76 | 4.7220 | herd production |
+| Wild Aurochs | 8.04 | 7.9200 | herd production |
+| Wild Sheep | 7.14 | 7.1316 | herd production |
+| Wild Boar | 7.14 | 7.1280 | herd production |
+| Crag Goats | 7.14 | 7.1190 | herd production |
+| Wild Fowl | 7.99 | 3.3930 | the hands left after keeping |
+| Rabbit Warren | 7.49 | 2.6451 | the hands left after keeping |
+| Snow Hare Warren | 6.42 | 5.4630 | the hands left after keeping |
 
-**Every row but the rabbit is herd-production-bound at five keepers**, because that is the crew each
-of them is tuned to reach its ceiling at. The rabbit is tuned to reach its ceiling at **8**, so at 5
-its keepers' handling rate is still the binding term — deliberately, and it is the only pen for which
-adding a keeper still buys anything.
+**The first four are herd-production-bound at five hands** (keeping is struck first and what remains
+still reaches the line). **The last three are bound by the take crew keeping leaves**: the five hands
+include their keepers, so fewer than five take. They are the pens for which adding a hand still buys
+something.
 
 ### `pen_engage_gain` is overridable too, and it sets HOW MANY KEEPERS a pen wants
 
@@ -974,7 +981,9 @@ The take at `W` keepers is bounded by `reach = W × engage_rate × pen_engage_ga
 dial **does not move a pen's maximum** — that is `r × K / 4`, set by `pen_density`. It moves the
 **crew size at which the maximum is reached**.
 
-**Every penned species except rabbit is tuned to reach its line at exactly 5 keepers:**
+**Every penned species except rabbit is tuned to reach its line at exactly 5 keepers** (a reach
+reading, every hand taking; with keeping priced first the five hands of the Section E table above
+include the keepers):
 
 | species | `pen_engage_gain` | reaches its max at |
 |---|---|---|
@@ -1466,11 +1475,12 @@ gated, **paid** verb, so both food webs read the same:
   `unlock_knowledge: "herding"`, **`earns_knowledge: "penning"`** (slice 4 — a config edit, exactly as
   promised),
   `ceiling_required: "pastoral"`, `build: { work_cost 50, grace_turns null }`,
-  `upkeep: { work_per_turn 1.0, scaled_by source_load, grace_turns 2 }`.
+  `upkeep: { work_per_turn 0.6, scaled_by source_load, grace_turns 2 }`.
   The **50 is a reference-crew choice, not a derivation** — the rung declares no crew, so there was
   nothing to multiply today's 25 turns by, and 2 keepers is what rung 2 of the plant web wants for the
-  same claim. The **upkeep is the pacing-neutral inversion of `herders_needed`**: at `1.0` work per
-  keeper-load, `ceil(demand)` is the count this rung has always asked for. `grace_turns 2` is this
+  same claim. The **upkeep rate `0.6` is a chosen playtest dial**, below the pen's `1.0`: it began as
+  the pacing-neutral inversion of `herders_needed` at `1.0`, and at that rate a tamed herd's keeping
+  cost more hands than taming bought back. `ceil(demand)` is `ceil(keeper load × 0.6)`. `grace_turns 2` is this
   rung's own former *build* grace moved onto the upkeep's trigger unchanged — a tamed herd with no
   fence stays near its people for a turn or two, then drifts — and `build.grace_turns` is `null`
   because there is only one trigger now;

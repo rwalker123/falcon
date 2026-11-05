@@ -3051,7 +3051,16 @@ mod tests {
         // A herd sized so its keeper load at the top of the pastoral rung is `LOADS_AT_THE_TOP`,
         // derived from the config rather than stated, so a roster retune moves the fixture with it.
         let aurochs_per_herder = fauna.animals_per_herder_for(SWEPT_SPECIES);
-        let herd_biomass = LOADS_AT_THE_TOP * aurochs_per_herder * SNAPSHOT_BODY_MASS;
+        // The bill at the top of the pastoral rung is `load x the rung's rate`, so the keeper load that
+        // bills `LOADS_AT_THE_TOP` worker-loads is that over the rate - read off the ladder, not stated.
+        let pastoral_rate = ladder
+            .rung(shipped::animal_pastoral())
+            .upkeep
+            .as_ref()
+            .expect("the pastoral rung declares an upkeep")
+            .work_per_turn;
+        let herd_biomass =
+            LOADS_AT_THE_TOP / pastoral_rate * aurochs_per_herder * SNAPSHOT_BODY_MASS;
         let mut herd_crews: Vec<u32> = Vec::new();
         let mut herd_head_counts: Vec<u32> = Vec::new();
         let mut a_herd_bill_was_fractional = false;

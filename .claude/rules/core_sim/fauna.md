@@ -912,10 +912,12 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > #### Herding is standing labor, and it scales with the HERD (slice 8)
 >
 > **It is a STANDING UPKEEP** (`docs/plan_standing_upkeep.md` §2.4): both managed rungs declare
-> `upkeep: { work_per_turn: 1.0, scaled_by: source_load }` and the herd supplies the **keeper load**
+> `upkeep: { work_per_turn: R, scaled_by: source_load }` (`animal:pastoral` `R = 0.6`, `animal:pen`
+> `R = 1.0`) and the herd supplies the **keeper load**
 > (`fauna::herd_keeper_loads` = `head count / animals_per_herder`), so the demand is
-> `ceil((biomass / body_mass) / animals_per_herder)` keepers — the number this has always been, now
-> quoted in the same work units as every other cost on the ladder. It is owed **every turn** by a
+> `ceil(((biomass / body_mass) / animals_per_herder) × R)` keepers — a pen's is the number this has
+> always been, a tamed herd's `0.6` of it, both quoted in the same work units as every other cost on
+> the ladder. It is owed **every turn** by a
 > pastoral or penned herd, **including wait turns** when it cannot spare an animal. *Just because you
 > aren't killing an animal doesn't mean you aren't tending them, keeping them from running off,
 > repairing fences.* Before this a pen of 2 and a pen of 200 needed the same single keeper; only the

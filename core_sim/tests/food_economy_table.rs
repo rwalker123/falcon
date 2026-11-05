@@ -464,6 +464,58 @@ fn forage_preview(
     carry: f32,
     shipped: &Shipped,
 ) -> SourceYield {
+    forage_preview_keeping(
+        patch,
+        composition,
+        take,
+        workers,
+        patch_keep_hands(patch, workers, shipped),
+        carry,
+        shipped,
+    )
+}
+
+/// **THE HANDS A CREW OF `workers` SPENDS KEEPING THIS PATCH BEFORE IT TAKES** — the seed's own seam
+/// (`crew_keep_hands` over `patch_crew_keeping`), against the ledger every spawn path inserts. A wild
+/// patch claims no keeping and answers zero. Every managed patch this harness seats is the
+/// reference basket, whose tile capacity is what the bill is struck at.
+fn patch_keep_hands(patch: &ForagePatch, workers: u32, shipped: &Shipped) -> f32 {
+    let keeping = core_sim::patch_crew_keeping(
+        patch,
+        &shipped.ladder,
+        &shipped.labor.forage,
+        Some(basket::capacity_of(&shipped.labor, basket::TERRAIN)),
+        None,
+    );
+    core_sim::crew_keep_hands(
+        keeping,
+        &shipped.equipment,
+        &BandEquipment::start_stocked_for(&shipped.equipment, workers as f32),
+        workers,
+    )
+}
+
+/// The herd twin of [`patch_keep_hands`]: a tamed herd or a pen keeps first, a wild one keeps nothing.
+fn herd_keep_hands(herd: &Herd, workers: u32, shipped: &Shipped) -> f32 {
+    let keeping = core_sim::herd_crew_keeping(herd, &shipped.fauna, &shipped.ladder, None);
+    core_sim::crew_keep_hands(
+        keeping,
+        &shipped.equipment,
+        &BandEquipment::start_stocked_for(&shipped.equipment, workers as f32),
+        workers,
+    )
+}
+
+/// [`forage_preview`] with the hands the crew spends keeping the patch first stated.
+fn forage_preview_keeping(
+    patch: &ForagePatch,
+    composition: &[core_sim::FloraShare],
+    take: &TakeSelection,
+    workers: u32,
+    keep_hands: f32,
+    carry: f32,
+    shipped: &Shipped,
+) -> SourceYield {
     forage_source_yield_preview(
         patch,
         composition,
@@ -473,7 +525,7 @@ fn forage_preview(
         FULL_SEASONAL_WEIGHT,
         UNIT_OUTPUT_MULTIPLIER,
         workers,
-        core_sim::NO_HANDS,
+        keep_hands,
         DEFAULT_ESCAPEMENT_FLOOR,
         take,
         shipped.labor.yield_average_horizon_turns,
@@ -580,7 +632,11 @@ fn flora_rows(shipped: &Shipped) -> Vec<Row> {
                     shipped.labor.forage.per_worker_biomass_capacity,
                     shipped,
                 ),
-                carry_utilisation: utilisation(biomass_per_worker, carry),
+                carry_utilisation: utilisation(
+                    biomass_per_worker * REFERENCE_CREW as f32,
+                    (REFERENCE_CREW as f32 - patch_keep_hands(&patch, REFERENCE_CREW, shipped))
+                        * carry,
+                ),
                 bound: [None; CREWS.len()],
                 drive: None,
                 sustainable: reference.sustainable,
@@ -661,19 +717,27 @@ fn seated_herd(key: &str, def: &SpeciesDef, rung: RungId, shipped: &Shipped) -> 
     // The one write `advance_herds` makes: the range's `K` times the density gain the standing buys,
     // **`min`'d against what the footprint physically holds** — the same `min(feed_K, space_K)`
     // `ecological_carrying_capacity` applies, with the density gain on the feed side only.
+    restrike_herd(&mut herd, def, shipped);
+    Some(herd)
+}
+
+/// **Re-strike a fixture herd's `K`, operating-point stock and keeping after its standing moved** —
+/// the tail of [`seated_herd`], shared so Sections G–I can seat a herd part-way up a rung without a
+/// second copy of the arithmetic.
+fn restrike_herd(herd: &mut Herd, def: &SpeciesDef, shipped: &Shipped) {
+    let range_capacity = full_group_capacity(def);
     herd.carrying_capacity = (range_capacity
-        * herd_density_gain(&herd.standing(), &herd, &shipped.fauna))
+        * herd_density_gain(&herd.standing(), herd, &shipped.fauna))
     .min(herd_space_capacity(
-        fixture_footprint_tiles(&herd, def),
+        fixture_footprint_tiles(herd, def),
         herd.body_mass,
         &shipped.fauna,
     ));
     herd.biomass = herd.carrying_capacity * DEFAULT_ESCAPEMENT_FLOOR;
     herd.biomass_before_regrowth = herd.biomass;
     // A managed herd whose keeping went unmet would be measuring neglect, not the rung.
-    herd.upkeep_supplied = herd_upkeep_demand(&herd, &shipped.fauna, &shipped.ladder);
+    herd.upkeep_supplied = herd_upkeep_demand(herd, &shipped.fauna, &shipped.ladder);
     herd.refresh_ecology_phase(&shipped.fauna);
-    Some(herd)
 }
 
 /// **HOW MANY TILES THIS FIXTURE HERD'S FOOTPRINT COVERS** — the fenced disk once it is penned, the
@@ -712,6 +776,25 @@ fn hunt_preview(
     carry: f32,
     shipped: &Shipped,
 ) -> SourceYield {
+    hunt_preview_keeping(
+        herd,
+        party,
+        workers,
+        herd_keep_hands(herd, workers, shipped),
+        carry,
+        shipped,
+    )
+}
+
+/// [`hunt_preview`] with the hands the crew spends keeping the herd first stated.
+fn hunt_preview_keeping(
+    herd: &Herd,
+    party: &HuntingParty,
+    workers: u32,
+    keep_hands: f32,
+    carry: f32,
+    shipped: &Shipped,
+) -> SourceYield {
     hunt_source_yield_preview(
         herd,
         &shipped.fauna,
@@ -719,7 +802,7 @@ fn hunt_preview(
         party,
         UNIT_OUTPUT_MULTIPLIER,
         workers,
-        core_sim::NO_HANDS,
+        keep_hands,
         DEFAULT_ESCAPEMENT_FLOOR,
         shipped.labor.yield_average_horizon_turns,
         shipped.labor.arrivals_horizon_turns,
@@ -812,6 +895,22 @@ fn drive_take(
     carry: f32,
     shipped: &Shipped,
 ) -> Drive {
+    let take_hands =
+        (workers as f32 - herd_keep_hands(herd, workers, shipped)).max(core_sim::NO_HANDS);
+    drive_take_hands(herd, party, workers, take_hands, carry, shipped)
+}
+
+/// [`drive_take`] with the take crew stated apart from the row's crew: a kept site spends its keeping
+/// hands first and `hunt_take` is handed only the rest (the corral-tend branch's own call), while the
+/// retreat seed still names the whole row.
+fn drive_take_hands(
+    herd: &Herd,
+    party: &HuntingParty,
+    workers: u32,
+    take_hands: f32,
+    carry: f32,
+    shipped: &Shipped,
+) -> Drive {
     let ecology = herd_ecology(herd, &shipped.fauna);
     let capacity = herd.carrying_capacity;
     let mut tally: BTreeMap<&'static str, (HuntTakeBound, u32)> = BTreeMap::new();
@@ -828,7 +927,7 @@ fn drive_take(
             let seed = retreat_seed(DRIVE_MAP_SEED + run, u64::from(turn), &quarry.id, workers);
             let outcome = hunt_take(
                 &mut quarry,
-                workers as f32,
+                take_hands,
                 DEFAULT_ESCAPEMENT_FLOOR,
                 carry,
                 party,
@@ -980,7 +1079,11 @@ fn fauna_rows(shipped: &Shipped) -> Vec<(Row, FaunaExtras)> {
                         shipped.labor.hunt.per_worker_biomass_capacity,
                         shipped,
                     ),
-                    carry_utilisation: utilisation(biomass_per_worker, carry),
+                    carry_utilisation: utilisation(
+                        biomass_per_worker * REFERENCE_CREW as f32,
+                        (REFERENCE_CREW as f32 - herd_keep_hands(&herd, REFERENCE_CREW, shipped))
+                            * carry,
+                    ),
                     bound,
                     drive: Some(drive_take(&herd, &party, REFERENCE_CREW, carry, shipped)),
                     sustainable: reference.sustainable,
@@ -1703,7 +1806,7 @@ fn print_plant_crew_curve(shipped: &Shipped) {
                 let food =
                     forage_preview(&patch, &composition, take, crew, carry, shipped).realized;
                 let biomass = biomass_behind(food, per_biomass).unwrap_or(0.0);
-                let crew_carry = crew as f32 * carry;
+                let crew_carry = (crew as f32 - patch_keep_hands(&patch, crew, shipped)) * carry;
                 println!(
                     "  {crew:>7} {food:>12.4} {:>14.4} {biomass:>14.2} {crew_carry:>12.2} {:<8}  {}",
                     food / crew as f32,
@@ -2420,6 +2523,79 @@ fn the_food_economy_table() {
     print_mammoth(&shipped);
     print_species_coverage(&shipped, &fauna);
 
+    // Sections G–J: the early-game route comparison, under both kit states.
+    let stocked = stocked_shipped();
+    let sweep = print_crew_sweep(&shipped, &stocked);
+    let reaches = print_pen_diagnosis(&shipped);
+    assert!(
+        reaches.iter().all(|reach| reach.is_finite()) && reaches.iter().any(|reach| *reach > 0.0),
+        "the stage diagnosis printed no engagement"
+    );
+    let bills = print_bill(&shipped, &stocked);
+    let payback = print_payback(&shipped, &stocked, &bills);
+    let context = print_band_context();
+
+    // ---- Liveness for G–J: an empty or all-zero table must fail; no number is pinned. ----
+    assert!(!sweep.is_empty(), "the crew sweep printed nothing");
+    assert!(
+        sweep
+            .iter()
+            .all(|(_, _, total)| total.is_finite() && *total >= 0.0),
+        "the crew sweep printed a non-finite or negative food total"
+    );
+    for kit in [KitState::Bare, KitState::Stocked] {
+        for label in [
+            Source::Boar(BoarState::Pen).label(),
+            Source::Plant(PlantState::Wild).label(),
+            Source::Plant(PlantState::Tended).label(),
+        ] {
+            assert!(
+                sweep
+                    .iter()
+                    .any(|(k, l, total)| *k == kit && *l == label && *total > 0.0),
+                "{label} paid nothing at any crew under {} — a dead row is a broken harness, not a reading",
+                kit.label()
+            );
+        }
+    }
+    assert!(
+        sweep
+            .iter()
+            .any(|(k, l, total)| *k == KitState::Stocked && l.starts_with("boar") && *total > 0.0),
+        "no stocked boar row paid anything — the stocked ledger is not reaching the hunt"
+    );
+    for bill in &bills {
+        assert!(
+            bill.leg_work > 0.0
+                && bill.build_turns.iter().all(|t| t.is_finite() && *t > 0.0)
+                && bill
+                    .build_worker_turns
+                    .iter()
+                    .all(|t| t.is_finite() && *t > 0.0)
+                && bill.craft_worker_turns.iter().all(|t| t.is_finite()),
+            "{} printed an empty or non-finite bill",
+            bill.label
+        );
+    }
+    assert!(
+        bills[2].craft_worker_turns[0] > 0.0,
+        "the pen's hurdles must cost bench work"
+    );
+    assert!(
+        !payback.is_empty()
+            && payback
+                .iter()
+                .all(|(cost, gain)| cost.is_finite() && gain.is_finite()),
+        "the payback table is empty or non-finite"
+    );
+    assert!(
+        !context.is_empty()
+            && context
+                .iter()
+                .all(|c| c.demand > 0.0 && c.working > 0.0 && c.demand.is_finite()),
+        "the band context printed no demand"
+    );
+
     // ---- Liveness. A diff-based reading of a table improves when the table breaks. ----
     assert!(
         !flora.is_empty() && !fauna.is_empty(),
@@ -2528,4 +2704,1061 @@ fn print_species_coverage(shipped: &Shipped, rows: &[(Row, FaunaExtras)]) {
         missing.is_empty(),
         "every roster species must appear in Section B; missing: {missing:?}"
     );
+}
+
+// =============================================================================================
+// SECTIONS G–J — THE EARLY-GAME QUESTION: WHY DOES hunt → tame → pen LOSE TO forage → cultivate?
+// =============================================================================================
+//
+// MEASUREMENT ONLY. Nothing below changes a number or a behaviour; it prices the two routes a
+// young band can take through the SAME seams the rest of this file uses:
+//
+//   G  the crew sweep (1..=10) — Wild Boar at the wild/pastoral/pen rungs against the reference
+//      basket at wild/tended/field, at the operating point AND at a fresh full stand, under TWO kit
+//      states (bare-handed as shipped, and a fully stocked ledger);
+//   H  the whole bill to reach each rung — build work, builders, turns, hurdles, lessons;
+//   I  payback — what each investment returns against the hands it takes off the wild row;
+//   J  the band context those numbers are spent in.
+//
+// Every food figure is `forage_source_yield_preview` / `hunt_source_yield_preview`'s `realized`
+// (through the helpers above), every binding stage is the live `hunt_take` drive, every keeping-hand
+// count is `crew_keep_hands` over `herd_crew_keeping` / `patch_crew_keeping`. No yield arithmetic.
+
+/// The crews Section G sweeps — a band's first ten hands.
+const SWEEP_CREW_MAX: u32 = 10;
+/// The crews Section I prices payback at.
+const PAYBACK_CREWS: [u32; 2] = [3, 5];
+/// How far up a rung "half built" is.
+const HALF_BUILT: f32 = 0.5;
+/// The reference quarry — the roster row the designer's playtest hunted.
+const SWEEP_QUARRY: &str = "Wild Boar";
+/// The material a pen's hurdles are made partly from, and that the boar pays as a by-product.
+const HIDE: &str = "hide";
+/// The pen's hurdle material.
+const HURDLES: &str = "hurdles";
+/// The tanning craft the hurdle recipe practises.
+const TANNING: &str = "tanning";
+/// A binding stage column's entry when the drive had no turn to read (no take hands, or a spent herd).
+const NO_BOUND: &str = "-";
+/// A band's opening archetype the context section reads: the human seat.
+const START_PROFILE: &str = "late_forager_tribe";
+
+/// Which gear the band is priced with.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KitState {
+    /// As shipped: `start_stock_fraction` 0, so a spawn owns nothing and every job is bare-handed.
+    Bare,
+    /// `EquipmentConfig::for_a_stocked_fixture()` — enough units of every kit item to arm the crew.
+    Stocked,
+}
+
+impl KitState {
+    fn label(self) -> &'static str {
+        match self {
+            KitState::Bare => "BARE-HANDED (as shipped)",
+            KitState::Stocked => "STOCKED (default kits fully armed)",
+        }
+    }
+}
+
+/// The stocked twin of [`Shipped::load`] — identical but for the equipment ledger's opening stock.
+fn stocked_shipped() -> Shipped {
+    let mut shipped = Shipped::load();
+    shipped.equipment = Arc::new(EquipmentConfig::for_a_stocked_fixture());
+    shipped
+}
+
+/// Where a source's stock is seated.
+#[derive(Clone, Copy)]
+enum Seat {
+    /// `floor · K` — the steady state every other section quotes.
+    Operating,
+    /// `B = K` — what an early band meets: a fresh herd's first-harvest windfall, averaged over the
+    /// same horizon `realized` always averages over.
+    Fresh,
+}
+
+#[derive(Clone, Copy)]
+enum BoarState {
+    Wild,
+    Pastoral,
+    Pen,
+    /// Half-way through the Tame build (the pastoral rung's meter at [`HALF_BUILT`]).
+    HalfTamed,
+    /// A tamed herd half-way through the pen build.
+    HalfPenned,
+}
+
+impl BoarState {
+    fn label(self) -> &'static str {
+        match self {
+            BoarState::Wild => "boar wild",
+            BoarState::Pastoral => "boar pastoral",
+            BoarState::Pen => "boar pen",
+            BoarState::HalfTamed => "boar half-tamed",
+            BoarState::HalfPenned => "boar half-penned",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PlantState {
+    Wild,
+    Tended,
+    Field,
+    HalfTended,
+}
+
+impl PlantState {
+    fn label(self) -> &'static str {
+        match self {
+            PlantState::Wild => "basket wild",
+            PlantState::Tended => "basket tended",
+            PlantState::Field => "basket field",
+            PlantState::HalfTended => "basket half-tended",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Source {
+    Boar(BoarState),
+    Plant(PlantState),
+}
+
+impl Source {
+    fn label(self) -> &'static str {
+        match self {
+            Source::Boar(state) => state.label(),
+            Source::Plant(state) => state.label(),
+        }
+    }
+}
+
+/// One cell of the sweep.
+struct Point {
+    /// The preview's `realized` for the whole row, food per turn.
+    total: f32,
+    /// Hands the crew spends keeping the source first (`crew_keep_hands`).
+    keep: f32,
+    /// The binding stage: the live drive's modal stage (animal) or carry/stand + carry used (plant).
+    bound: String,
+}
+
+fn boar_def(shipped: &Shipped) -> (&String, &SpeciesDef) {
+    shipped
+        .fauna
+        .species
+        .iter()
+        .find(|(_, def)| def.display_name == SWEEP_QUARRY)
+        .expect("the roster carries the reference quarry")
+}
+
+/// A boar seated on `state`, at `seat`, on `shipped`'s configs.
+fn seat_boar(state: BoarState, seat: Seat, shipped: &Shipped) -> Herd {
+    let (key, def) = boar_def(shipped);
+    let rung = |rung: RungId| {
+        seated_herd(key, def, rung, shipped).expect("the boar's ceiling allows every rung")
+    };
+    let mut herd = match state {
+        BoarState::Wild => rung(shipped::animal_wild()),
+        BoarState::Pastoral => rung(shipped::animal_pastoral()),
+        BoarState::Pen => rung(shipped::animal_pen()),
+        BoarState::HalfTamed => {
+            let mut herd = rung(shipped::animal_wild());
+            let work = HALF_BUILT * herd.rung_cost(shipped::animal_pastoral(), &shipped.ladder);
+            let multiplier = herd.taming_cost_multiplier;
+            herd.accrue_domestication(TABLE_FACTION, work, multiplier, &shipped.ladder);
+            restrike_herd(&mut herd, def, shipped);
+            herd
+        }
+        BoarState::HalfPenned => {
+            let mut herd = rung(shipped::animal_pastoral());
+            let position = animal_build_work(&herd, shipped::animal_pastoral(), shipped)
+                + HALF_BUILT * herd.rung_cost(shipped::animal_pen(), &shipped.ladder);
+            herd.set_ladder_position(position, &shipped.ladder);
+            restrike_herd(&mut herd, def, shipped);
+            herd
+        }
+    };
+    if let Seat::Fresh = seat {
+        herd.biomass = herd.carrying_capacity;
+        herd.biomass_before_regrowth = herd.biomass;
+        herd.refresh_ecology_phase(&shipped.fauna);
+    }
+    herd
+}
+
+/// A patch seated on `state`, at `seat`.
+fn seat_patch(state: PlantState, seat: Seat, shipped: &Shipped) -> ForagePatch {
+    let tile_capacity = basket::capacity_of(&shipped.labor, basket::TERRAIN);
+    let mut patch = match state {
+        PlantState::Wild => seated_patch(basket::TERRAIN, None, shipped),
+        PlantState::Tended => seated_patch(basket::TERRAIN, Some(shipped::plant_tended()), shipped),
+        PlantState::Field => seated_patch(basket::TERRAIN, Some(shipped::plant_farm()), shipped),
+        PlantState::HalfTended => {
+            let mut patch = seated_patch(basket::TERRAIN, None, shipped);
+            patch.species = Some(basket::CROP.to_string());
+            patch.owner = Some(TABLE_FACTION);
+            let (base, width) = plant_rung_span(shipped::plant_tended(), &shipped.ladder);
+            patch.set_ladder_position(base + HALF_BUILT * width, &shipped.ladder);
+            patch.carrying_capacity =
+                patch_carrying_capacity(tile_capacity, &patch, &shipped.labor.forage);
+            patch.biomass = patch.carrying_capacity * DEFAULT_ESCAPEMENT_FLOOR;
+            patch.biomass_before_regrowth = patch.biomass;
+            patch
+        }
+    };
+    if let Seat::Fresh = seat {
+        patch.biomass = patch.carrying_capacity;
+        patch.biomass_before_regrowth = patch.biomass;
+    }
+    patch
+}
+
+/// The ladder credit the seated source carries — what the sim's own `RungStanding` says a source in
+/// this position is worth of the rung it is raising.
+fn standing_credit(source: Source, shipped: &Shipped) -> f32 {
+    match source {
+        Source::Boar(state) => seat_boar(state, Seat::Operating, shipped).standing().credit,
+        Source::Plant(state) => {
+            seat_patch(state, Seat::Operating, shipped)
+                .standing()
+                .credit
+        }
+    }
+}
+
+fn boar_point(state: BoarState, seat: Seat, crew: u32, shipped: &Shipped) -> Point {
+    let herd = seat_boar(state, seat, shipped);
+    let (_, def) = boar_def(shipped);
+    let gear = hunt_outfit(def, herd.is_corralled(), crew, shipped);
+    let carry = hunt_carry(&gear, shipped);
+    let party = hunt_party(&gear, herd.body_mass, shipped);
+    let keeping = core_sim::herd_crew_keeping(&herd, &shipped.fauna, &shipped.ladder, None);
+    let keep = core_sim::crew_keep_hands(keeping, &shipped.equipment, &gear.wear, crew);
+    let preview = hunt_preview_keeping(&herd, &party, crew, keep, carry, shipped);
+    let take_hands = (crew as f32 - keep).max(core_sim::NO_HANDS);
+    let drive = drive_take_hands(&herd, &party, crew, take_hands, carry, shipped);
+    Point {
+        total: preview.realized,
+        keep,
+        bound: drive
+            .modal()
+            .map_or(NO_BOUND, |bound| bound.as_str())
+            .to_string(),
+    }
+}
+
+fn plant_point(state: PlantState, seat: Seat, crew: u32, shipped: &Shipped) -> Point {
+    let patch = seat_patch(state, seat, shipped);
+    let tile_capacity = basket::capacity_of(&shipped.labor, basket::TERRAIN);
+    let composition = basket::composition(&shipped.flora);
+    let take = TakeSelection::EVERYTHING;
+    let gear = forage_outfit(crew, shipped);
+    let carry = forage_carry(&gear, shipped);
+    let declared = matches!(state, PlantState::HalfTended).then(shipped::plant_tended);
+    let keeping = core_sim::patch_crew_keeping(
+        &patch,
+        &shipped.ladder,
+        &shipped.labor.forage,
+        Some(tile_capacity),
+        declared,
+    );
+    let keep = core_sim::crew_keep_hands(keeping, &shipped.equipment, &gear.wear, crew);
+    let preview = forage_preview_keeping(&patch, &composition, &take, crew, keep, carry, shipped);
+    let per_biomass = patch_provisions_per_biomass_taking(
+        &patch,
+        &composition,
+        &shipped.flora,
+        &shipped.labor.forage,
+        &take,
+    );
+    let biomass = biomass_behind(preview.realized, per_biomass).unwrap_or(0.0);
+    let take_hands = (crew as f32 - keep).max(core_sim::NO_HANDS);
+    let crew_carry = take_hands * carry;
+    Point {
+        total: preview.realized,
+        keep,
+        bound: format!(
+            "{} {:.0}%",
+            plant_bound(biomass, crew_carry),
+            utilisation(biomass, crew_carry) * 100.0
+        ),
+    }
+}
+
+fn source_point(source: Source, seat: Seat, crew: u32, shipped: &Shipped) -> Point {
+    match source {
+        Source::Boar(state) => boar_point(state, seat, crew, shipped),
+        Source::Plant(state) => plant_point(state, seat, crew, shipped),
+    }
+}
+
+/// The food/turn a source pays at the operating point at `crew` — Sections H/I's lookup.
+fn operating_total(source: Source, crew: u32, shipped: &Shipped) -> f32 {
+    source_point(source, Seat::Operating, crew, shipped).total
+}
+
+/// **SECTION G — the crew sweep.** Returns every printed total, for the liveness guards, tagged
+/// `(kit, source label, total)`.
+fn print_crew_sweep(bare: &Shipped, stocked: &Shipped) -> Vec<(KitState, &'static str, f32)> {
+    println!("\n{RULE}");
+    println!("SECTION G — EARLY-GAME CREW SWEEP, crews 1..={SWEEP_CREW_MAX}: Wild Boar (wild / pastoral / pen) against the reference basket (wild / tended / field).");
+    println!("{RULE}");
+    println!("  What it measures: total food/turn, food per worker, the marginal food of the LAST worker added, and what binds, at two seatings:");
+    println!("    (a) OPERATING POINT  biomass = floor*K   — the steady state every other section quotes;");
+    println!("    (b) FRESH STAND      biomass = K         — the same horizon-averaged `realized`, i.e. a fresh source's first-harvest windfall.");
+    println!("  and under two kit states: BARE-HANDED (as shipped: start_stock_fraction 0, a spawn owns nothing) and STOCKED");
+    println!("  (EquipmentConfig::for_a_stocked_fixture — fraction 1.5, so every kit item has a unit per hand). Plant rows are the WHOLE basket;");
+    println!("  tended/field carry the committed favoured crop exactly as Section A seats them.");
+    println!("  KEEPING IS PRICED FIRST: a managed row (pastoral herd, pen, tended patch, field) spends `keep` hands on its upkeep before the");
+    println!("  rest take (`crew_keep_hands` over `herd_crew_keeping` / `patch_crew_keeping`, the seed's own seam); `take` = crew - keep.");
+    println!("  Binding stage: animal rows = the live `hunt_take` drive's modal stage on the TAKE hands (engagement/fight/carry/floor...);");
+    println!("  plant rows = carry|stand with carry utilisation (biomass brought home / take hands' carry).");
+
+    let mut totals = Vec::new();
+    for kit in [KitState::Bare, KitState::Stocked] {
+        let shipped = match kit {
+            KitState::Bare => bare,
+            KitState::Stocked => stocked,
+        };
+        let (_, def) = boar_def(shipped);
+        println!(
+            "\n  ===== KIT STATE: {} — boar kit `{}` (pen kit `{}`), basket kit `{}` =====",
+            kit.label(),
+            hunt_outfit(def, false, SWEEP_CREW_MAX, shipped).id(),
+            hunt_outfit(def, true, SWEEP_CREW_MAX, shipped).id(),
+            forage_outfit(SWEEP_CREW_MAX, shipped).id(),
+        );
+        for source in [
+            Source::Boar(BoarState::Wild),
+            Source::Boar(BoarState::Pastoral),
+            Source::Boar(BoarState::Pen),
+            Source::Plant(PlantState::Wild),
+            Source::Plant(PlantState::Tended),
+            Source::Plant(PlantState::Field),
+        ] {
+            println!(
+                "\n  [{}] {}",
+                kit.label().split(' ').next().unwrap_or(""),
+                source.label()
+            );
+            println!(
+                "  {:>4} {:>5} {:>5} | {:>8} {:>8} {:>8} {:<14} | {:>8} {:>8} {:>8} {:<14}",
+                "crew",
+                "keep",
+                "take",
+                "(a)total",
+                "/worker",
+                "marginal",
+                "(a)binds",
+                "(b)total",
+                "/worker",
+                "marginal",
+                "(b)binds",
+            );
+            let mut previous = (0.0_f32, 0.0_f32);
+            for crew in 1..=SWEEP_CREW_MAX {
+                let a = source_point(source, Seat::Operating, crew, shipped);
+                let b = source_point(source, Seat::Fresh, crew, shipped);
+                println!(
+                    "  {crew:>4} {:>5.2} {:>5.2} | {:>8.3} {:>8.3} {:>8.3} {:<14} | {:>8.3} {:>8.3} {:>8.3} {:<14}",
+                    a.keep,
+                    crew as f32 - a.keep,
+                    a.total,
+                    a.total / crew as f32,
+                    a.total - previous.0,
+                    a.bound,
+                    b.total,
+                    b.total / crew as f32,
+                    b.total - previous.1,
+                    b.bound,
+                );
+                previous = (a.total, b.total);
+                totals.push((kit, source.label(), a.total));
+                totals.push((kit, source.label(), b.total));
+            }
+        }
+    }
+    totals
+}
+
+// ---------------------------------------------------------------------------------------------
+// SECTION H — the whole bill
+// ---------------------------------------------------------------------------------------------
+
+/// **One builder's work per turn, bare and with the roster's builders kit.** The kit is the roster's
+/// own answer for the web (`build_kit_for_branch`), outfitted for `builders` hands against the
+/// stocked ledger and divided by `coverage` exactly as `keeping_rate_from` does — then run through
+/// `intensification::build_work_per_worker_turn`. `default_kits.builders` ships `none`, so the
+/// "default" builder arrives bare; the roster kit is what a stocked, kitted band would carry.
+fn builder_rates(
+    stocked: &Shipped,
+    branch: core_sim::BranchId,
+    builders: u32,
+) -> (f32, f32, String) {
+    let bare = core_sim::build_work_per_worker_turn(core_sim::NO_BUILD_GEAR);
+    let Some(kit) = stocked.equipment.build_kit_for_branch(branch, None) else {
+        return (bare, bare, "(none on the roster)".to_string());
+    };
+    let wear = BandEquipment::start_stocked_for(&stocked.equipment, builders as f32);
+    let coverage = stocked.equipment.coverage(&kit, builders as f32, &wear);
+    let gear = coverage.weighted_rate(|crew| {
+        stocked
+            .equipment
+            .build_work_per_worker(crew, &wear, branch, None)
+    });
+    (
+        bare,
+        core_sim::build_work_per_worker_turn(gear),
+        kit.id().to_string(),
+    )
+}
+
+/// What the hurdle recipe costs to bench, through the loaded `RecipesConfig` / `MaterialsConfig`.
+struct HurdleBill {
+    hurdles: f32,
+    wood_each: f32,
+    hide_each: f32,
+    work_each: f32,
+    crafters_per_item: u32,
+    bench_material: String,
+    /// Worker-turns of bench work per hurdle, bare-handed and with the stocked ledger's bench tool.
+    worker_turns_each: [f32; 2],
+    tooled: [bool; 2],
+    craft: String,
+}
+
+fn hurdle_bill(bare: &Shipped, stocked: &Shipped) -> HurdleBill {
+    let recipes = core_sim::RecipesConfig::builtin();
+    let materials = core_sim::MaterialsConfig::builtin();
+    let (_, recipe) = recipes
+        .recipes()
+        .find(|(_, recipe)| {
+            recipe
+                .outputs
+                .iter()
+                .any(|output| output.material_id() == Some(HURDLES))
+        })
+        .expect("a recipe makes hurdles");
+    let amount_of = |material: &str| {
+        recipe
+            .inputs
+            .iter()
+            .find(|input| input.material == material)
+            .map_or(0.0, |input| input.amount)
+    };
+    let bench_material = recipe
+        .bench_material()
+        .expect("the hurdle recipe names a bench material")
+        .to_string();
+    let hurdles = shipped::ladder()
+        .rung(shipped::animal_pen())
+        .build
+        .as_ref()
+        .and_then(|build| build.materials.get(HURDLES).copied())
+        .expect("the pen's build names its hurdles");
+    let tiers = |shipped: &Shipped, wear: &BandEquipment| {
+        core_sim::bench_tiers(&bench_material, &materials, &shipped.equipment, wear)
+    };
+    let bare_tiers = tiers(bare, &BandEquipment::default());
+    let stocked_tiers = tiers(stocked, &BandEquipment::start_stocked(&stocked.equipment));
+    // `rate_per_turn` (systems::crafting) is `workers × progress_per_worker_turn × speed`; it is not
+    // exported, so the one product is restated here for ONE worker.
+    let per_worker = |speed: f32| recipes.crafting.progress_per_worker_turn * speed;
+    HurdleBill {
+        hurdles,
+        wood_each: amount_of("wood"),
+        hide_each: amount_of(HIDE),
+        work_each: recipe.work,
+        crafters_per_item: recipe.crafters_per_item,
+        bench_material,
+        worker_turns_each: [
+            recipe.work / per_worker(bare_tiers.speed),
+            recipe.work / per_worker(stocked_tiers.speed),
+        ],
+        tooled: [bare_tiers.tooled, stocked_tiers.tooled],
+        craft: recipe.craft.clone(),
+    }
+}
+
+/// `(ledger credit per worked turn, lesson name)` the rung teaches at `floor`, through
+/// `RungDef::knowledge_accrual` — the seam the labor arm credits through.
+fn lesson_rate(rung: RungId, floor: f32, shipped: &Shipped) -> Option<(String, f32)> {
+    let def = shipped.ladder.rung(rung);
+    let (_, amount) = def.knowledge_accrual(floor, true, &shipped.ladder.knowledge)?;
+    Some((def.earns_knowledge.clone()?, amount))
+}
+
+/// One rung's bill, in the numbers Sections H and I both read.
+struct RungBill {
+    label: &'static str,
+    leg_work: f32,
+    cumulative_work: f32,
+    max_builders: u32,
+    /// Worker-turns the BUILD takes, `[bare, kitted]`.
+    build_worker_turns: [f32; 2],
+    /// Calendar turns at max builders, `[bare, kitted]`.
+    build_turns: [f32; 2],
+    kit_id: String,
+    /// Worker-turns of hurdle crafting (zero unless the rung needs hurdles), `[bare, stocked bench]`.
+    craft_worker_turns: [f32; 2],
+}
+
+fn rung_bills(bare: &Shipped, stocked: &Shipped, hurdles: &HurdleBill) -> [RungBill; 3] {
+    let (key, def) = boar_def(bare);
+    let herd = seated_herd(key, def, shipped::animal_pastoral(), bare).expect("boar tames");
+    let make = |label: &'static str,
+                rung: RungId,
+                leg_work: f32,
+                cumulative_work: f32,
+                craft: [f32; 2]| {
+        let max_builders = bare
+            .ladder
+            .rung(rung)
+            .build
+            .as_ref()
+            .expect("an investment rung carries a build")
+            .max_builders;
+        let (bare_rate, kit_rate, kit_id) = builder_rates(stocked, rung.branch, max_builders);
+        let worker_turns = [leg_work / bare_rate, leg_work / kit_rate];
+        RungBill {
+            label,
+            leg_work,
+            cumulative_work,
+            max_builders,
+            build_worker_turns: worker_turns,
+            build_turns: [
+                worker_turns[0] / max_builders as f32,
+                worker_turns[1] / max_builders as f32,
+            ],
+            kit_id,
+            craft_worker_turns: craft,
+        }
+    };
+    let (tended_base, tended_width) = plant_rung_span(shipped::plant_tended(), &bare.ladder);
+    let pen_hurdles = hurdles.hurdles;
+    [
+        make(
+            "tended (plant)",
+            shipped::plant_tended(),
+            tended_width,
+            tended_base + tended_width,
+            [0.0, 0.0],
+        ),
+        make(
+            "pastoral (boar)",
+            shipped::animal_pastoral(),
+            herd.rung_cost(shipped::animal_pastoral(), &bare.ladder),
+            animal_build_work(&herd, shipped::animal_pastoral(), bare),
+            [0.0, 0.0],
+        ),
+        make(
+            "pen (boar)",
+            shipped::animal_pen(),
+            herd.rung_cost(shipped::animal_pen(), &bare.ladder),
+            animal_build_work(&herd, shipped::animal_pen(), bare),
+            [
+                pen_hurdles * hurdles.worker_turns_each[0],
+                pen_hurdles * hurdles.worker_turns_each[1],
+            ],
+        ),
+    ]
+}
+
+/// Hide the boar pays per unit of biomass carried, through the one material-quote expression.
+fn hide_per_biomass(shipped: &Shipped) -> f32 {
+    let (_, def) = boar_def(shipped);
+    let rows = shipped.fauna.hunt_materials_for(&def.display_name);
+    material_yield_totals(rows, 1.0, UNIT_OUTPUT_MULTIPLIER)
+        .iter()
+        .filter(|payoff| payoff.material == HIDE)
+        .map(|payoff| payoff.amount)
+        .sum()
+}
+
+/// Worker-turns to hunt the pen's hide, at `crew` hands on the WILD boar at the operating point —
+/// an ESTIMATE: hide ÷ (hide per biomass × biomass taken per turn), times the crew. `None` where the
+/// wild take is zero (the hunt never lands).
+fn hide_worker_turns(hurdles: &HurdleBill, crew: u32, shipped: &Shipped) -> Option<f32> {
+    let hide_needed = hurdles.hurdles * hurdles.hide_each;
+    let food = operating_total(Source::Boar(BoarState::Wild), crew, shipped);
+    let (_, def) = boar_def(shipped);
+    let per_biomass = shipped
+        .fauna
+        .hunt_yield_for(&def.display_name)
+        .provisions_per_biomass;
+    let biomass_per_turn = biomass_behind(food, per_biomass)?;
+    let hide_per_turn = biomass_per_turn * hide_per_biomass(shipped);
+    (hide_per_turn > 0.0).then(|| hide_needed / hide_per_turn * crew as f32)
+}
+
+/// **SECTION H.** Returns the bills for the liveness guards.
+fn print_bill(bare: &Shipped, stocked: &Shipped) -> [RungBill; 3] {
+    let hurdles = hurdle_bill(bare, stocked);
+    let bills = rung_bills(bare, stocked, &hurdles);
+    println!("\n{RULE}");
+    println!(
+        "SECTION H — WHAT EACH RUNG COSTS TO REACH: the whole bill, not just the build meter."
+    );
+    println!("{RULE}");
+    println!("  work_cost / max_builders come off the loaded ladder (and the boar's own taming price list: taming_cost_multiplier {:.2}).",
+        seat_boar(BoarState::Wild, Seat::Operating, bare).taming_cost_multiplier);
+    println!("  Build rate = intensification::build_work_per_worker_turn(gear): 1 bare worker-turn per turn, plus the kit's build_work. The");
+    println!("  shipped default_kits.builders is `none`, so \"bare\" is what a default builder delivers; \"kitted\" is the roster's builders kit");
+    println!("  for the web (EquipmentConfig::build_kit_for_branch) with a unit per builder (stocked ledger).");
+    println!("  Hurdles are expanded through the loaded RecipesConfig; the bench rate is bench_tiers(...).speed x crafting.progress_per_worker_turn");
+    println!("  (the product `rate_per_turn` takes is NOT exported, so it is restated for one worker — said here, not hidden).");
+    println!();
+    println!(
+        "  {:<16} {:>9} {:>11} {:>9} | {:>10} {:>10} | {:>10} {:>10} | kit",
+        "rung",
+        "leg work",
+        "cumulative",
+        "builders",
+        "turns bare",
+        "turns kit",
+        "wkr-t bare",
+        "wkr-t kit"
+    );
+    for bill in &bills {
+        println!(
+            "  {:<16} {:>9.1} {:>11.1} {:>9} | {:>10.1} {:>10.1} | {:>10.1} {:>10.1} | {}",
+            bill.label,
+            bill.leg_work,
+            bill.cumulative_work,
+            bill.max_builders,
+            bill.build_turns[0],
+            bill.build_turns[1],
+            bill.build_worker_turns[0],
+            bill.build_worker_turns[1],
+            bill.kit_id,
+        );
+    }
+
+    let pen = &bills[2];
+    println!(
+        "\n  PEN MATERIALS: {} {HURDLES}, each = {} wood + {} {HIDE}, bench work {} (crafters_per_item {}), bench material `{}`, craft `{}`.",
+        hurdles.hurdles, hurdles.wood_each, hurdles.hide_each, hurdles.work_each,
+        hurdles.crafters_per_item, hurdles.bench_material, hurdles.craft
+    );
+    println!(
+        "    totals: {:.0} wood, {:.0} {HIDE}. Bench worker-turns per hurdle: {:.1} bare{} / {:.1} with the stocked ledger{} -> {:.1} / {:.1} worker-turns for the set.",
+        hurdles.hurdles * hurdles.wood_each,
+        hurdles.hurdles * hurdles.hide_each,
+        hurdles.worker_turns_each[0],
+        if hurdles.tooled[0] { " (tool)" } else { " (no tool, hand_working rate)" },
+        hurdles.worker_turns_each[1],
+        if hurdles.tooled[1] { " (bench tool in ledger)" } else { " (no bench tool in any kit)" },
+        pen.craft_worker_turns[0],
+        pen.craft_worker_turns[1],
+    );
+    println!(
+        "    The pen also owes standing hurdle upkeep: {} per turn (ladder `upkeep.materials`).",
+        shipped::ladder()
+            .rung(shipped::animal_pen())
+            .upkeep
+            .as_ref()
+            .and_then(|upkeep| upkeep.materials.get(HURDLES).copied())
+            .unwrap_or(0.0)
+    );
+
+    println!("\n  STANDING UPKEEP once the rung is held (work/turn, then the keepers that bill takes at a bare worker-turn each):");
+    for (label, herd_state) in [
+        ("boar pastoral", BoarState::Pastoral),
+        ("boar pen", BoarState::Pen),
+    ] {
+        let herd = seat_boar(herd_state, Seat::Operating, bare);
+        println!(
+            "    {label:<14} demand {:.3} work/turn -> {} keeper(s) (herd_upkeep_workers_needed)",
+            herd_upkeep_demand(&herd, &bare.fauna, &bare.ladder),
+            core_sim::herd_upkeep_workers_needed(&herd, &bare.fauna, &bare.ladder),
+        );
+    }
+    let tile_capacity = basket::capacity_of(&bare.labor, basket::TERRAIN);
+    for (label, plant_state) in [
+        ("basket tended", PlantState::Tended),
+        ("basket field", PlantState::Field),
+    ] {
+        let patch = seat_patch(plant_state, Seat::Operating, bare);
+        let demand = patch_upkeep_demand(&patch, &bare.ladder, tile_capacity, &bare.labor.forage);
+        println!(
+            "    {label:<14} demand {demand:.3} work/turn -> {} keeper(s) at a bare worker-turn",
+            (demand / core_sim::PER_WORKER_OUTPUT).ceil()
+        );
+    }
+    println!("    (Section G's `keep` column is the same bill struck at each crew through crew_keep_hands, with the kit state's keeping tools.)");
+
+    println!("\n  KNOWLEDGE GATES (cost in practice units; ledger completes at completion_threshold {:.1}):", bare.ladder.knowledge.completion_threshold);
+    println!("    practice is credited per WORKED TURN of a source (RungDef::knowledge_accrual = learn_rate x learn_multiplier(floor) / lesson_cost),");
+    println!("    NEVER per worker — extra hands do not speed a lesson. Eligibility is the labor arm's gate: a crew standing on the source with");
+    println!(
+        "    escapement room above its floor (managed rungs: any crew present, at the food peak)."
+    );
+    let learn = bare.ladder.knowledge.learn_rate;
+    println!("    learn_rate {learn:.2}; default floor {DEFAULT_ESCAPEMENT_FLOOR:.2} => learn_multiplier {:.2}.", core_sim::learn_multiplier(DEFAULT_ESCAPEMENT_FLOOR));
+    let lessons: [(&str, &str, RungId, f32); 4] = [
+        (
+            "tended needs Cultivation",
+            "worked on a WILD patch (plant:wild)",
+            shipped::plant_wild(),
+            DEFAULT_ESCAPEMENT_FLOOR,
+        ),
+        (
+            "pastoral needs Herding",
+            "hunting a WILD herd (animal:wild)",
+            shipped::animal_wild(),
+            DEFAULT_ESCAPEMENT_FLOOR,
+        ),
+        (
+            "pen needs Penning",
+            "keeping a TAMED herd (animal:pastoral) — only after the Tame completes",
+            shipped::animal_pastoral(),
+            DEFAULT_ESCAPEMENT_FLOOR,
+        ),
+        (
+            "(pen then teaches) Foddering",
+            "keeping a PENNED herd (animal:pen)",
+            shipped::animal_pen(),
+            DEFAULT_ESCAPEMENT_FLOOR,
+        ),
+    ];
+    for (what, how, rung, floor) in lessons {
+        match lesson_rate(rung, floor, bare) {
+            Some((name, amount)) => println!(
+                "    {what:<30} lesson `{name}`: cost {:.0}; earned {how}; +{amount:.4} of a lesson/turn -> {:.1} turns for ONE source worked.",
+                bare.ladder.knowledge.lesson_cost(&name).unwrap_or(0.0),
+                bare.ladder.knowledge.completion_threshold / amount,
+            ),
+            None => println!("    {what:<30} (the rung teaches nothing at this floor)"),
+        }
+    }
+    let per_item = bare
+        .ladder
+        .knowledge
+        .ledger_credit(TANNING, bare.ladder.knowledge.craft_lesson_per_item)
+        .unwrap_or(0.0);
+    println!(
+        "    hurdles need `{}`? The recipe's requires_knowledge is empty: it is queueable on day one and CRAFTING it teaches `{TANNING}` — craft_lesson_per_item {:.1} / cost {:.0} = +{per_item:.3} per finished item -> {:.0} items complete it (the set is {:.0}).",
+        hurdles.craft,
+        bare.ladder.knowledge.craft_lesson_per_item,
+        bare.ladder.knowledge.lesson_cost(TANNING).unwrap_or(0.0),
+        (bare.ladder.knowledge.completion_threshold / per_item).ceil(),
+        hurdles.hurdles,
+    );
+
+    println!("\n  TOTAL WORKER-TURNS FROM A FRESH START (build + hurdle crafting + hide gathering; lessons are TURNS of ordinary work, shown beside):");
+    println!(
+        "  {:<16} {:>9} | {:>10} {:>10} | {:>10} {:>10} | {:>17} | {:>12}",
+        "rung",
+        "lesson t",
+        "build bare",
+        "build kit",
+        "craft bare",
+        "craft kit",
+        "hide (crew 3)*",
+        "TOTAL bare/kit"
+    );
+    let lesson_turns = |rung: RungId, floor: f32| {
+        lesson_rate(rung, floor, bare).map_or(0.0, |(_, amount)| {
+            bare.ladder.knowledge.completion_threshold / amount
+        })
+    };
+    let lesson_cols = [
+        lesson_turns(shipped::plant_wild(), DEFAULT_ESCAPEMENT_FLOOR),
+        lesson_turns(shipped::animal_wild(), DEFAULT_ESCAPEMENT_FLOOR),
+        lesson_turns(shipped::animal_pastoral(), DEFAULT_ESCAPEMENT_FLOOR),
+    ];
+    for (bill, lesson) in bills.iter().zip(lesson_cols) {
+        let is_pen = bill.label.starts_with("pen");
+        let hide = if is_pen {
+            hide_worker_turns(&hurdles, REFERENCE_CREW, bare)
+        } else {
+            Some(0.0)
+        };
+        let hide_kit = if is_pen {
+            hide_worker_turns(&hurdles, REFERENCE_CREW, stocked)
+        } else {
+            Some(0.0)
+        };
+        let show =
+            |value: Option<f32>| value.map_or("never lands".to_string(), |v| format!("{v:.0}"));
+        println!(
+            "  {:<16} {:>9.1} | {:>10.1} {:>10.1} | {:>10.1} {:>10.1} | {:>11}/{:<5} | {:>5.0}/{:<6.0}",
+            bill.label,
+            lesson,
+            bill.build_worker_turns[0],
+            bill.build_worker_turns[1],
+            bill.craft_worker_turns[0],
+            bill.craft_worker_turns[1],
+            show(hide),
+            show(hide_kit),
+            bill.build_worker_turns[0] + bill.craft_worker_turns[0] + hide.unwrap_or(0.0),
+            bill.build_worker_turns[1] + bill.craft_worker_turns[1] + hide_kit.unwrap_or(0.0),
+        );
+    }
+    println!(
+        "  * hide estimate: {:.0} {HIDE} / (boar hide per biomass {:.4} x the WILD boar's biomass taken per turn at crew {REFERENCE_CREW}, operating point) x {REFERENCE_CREW} hands; bare/kit columns are each kit state's own take.",
+        hurdles.hurdles * hurdles.hide_each,
+        hide_per_biomass(bare),
+    );
+    println!("    Hide is a CO-PRODUCT of hunting boar (the hands also earn the food take), so Section I does not charge it as opportunity cost.");
+    println!("    'lesson t' is turns of wild-source work at ANY crew; the pen's penning lesson (and so the pen's clock) only starts once the Tame is finished.");
+    bills
+}
+
+// ---------------------------------------------------------------------------------------------
+// SECTION I — payback
+// ---------------------------------------------------------------------------------------------
+
+fn recoup(cost: f32, gain: f32) -> String {
+    if gain <= 0.0 {
+        return "never".to_string();
+    }
+    format!("{:.0}", cost / gain)
+}
+
+/// **SECTION I.** Returns every finite payback cost/gain pair printed (`(cost, gain)`), for the guards.
+fn print_payback(bare: &Shipped, stocked: &Shipped, bills: &[RungBill; 3]) -> Vec<(f32, f32)> {
+    println!("\n{RULE}");
+    println!("SECTION I — PAYBACK: what each investment returns against the hands it takes.");
+    println!("{RULE}");
+    println!("  gain      = food/turn AFTER the rung minus BEFORE it, same crew on the source, at the OPERATING POINT (Section G (a)).");
+    println!("  cost      = builder worker-turns (the rung's build + the pen's hurdle crafting) x the food per worker those hands would have");
+    println!("              earned on the WILD row of the same web (boar wild for both boar legs; basket wild for tended), same crew, same kit state.");
+    println!("              Lesson turns and hide gathering are NOT charged: they are work the hands do on the wild source / the boar anyway.");
+    println!("  recoup    = cost / gain turns; `never` when the gain is <= 0.");
+    println!("  during    = what the source pays while its rung is HALF built, resolved through RungStanding (partial_credit: tended/pastoral are");
+    println!("              Continuous so they interpolate; animal:pen is on_completion so a half-built pen pays the pastoral rate); `credit` is the");
+    println!("              standing's own number. The builders are a separate pool, so the crew on the source keeps taking while they build.");
+
+    let investments: [(&str, Source, Source, Source, Source, usize); 3] = [
+        (
+            "wild -> tended",
+            Source::Plant(PlantState::Wild),
+            Source::Plant(PlantState::HalfTended),
+            Source::Plant(PlantState::Tended),
+            Source::Plant(PlantState::Wild),
+            0,
+        ),
+        (
+            "wild -> pastoral",
+            Source::Boar(BoarState::Wild),
+            Source::Boar(BoarState::HalfTamed),
+            Source::Boar(BoarState::Pastoral),
+            Source::Boar(BoarState::Wild),
+            1,
+        ),
+        (
+            "pastoral -> pen",
+            Source::Boar(BoarState::Pastoral),
+            Source::Boar(BoarState::HalfPenned),
+            Source::Boar(BoarState::Pen),
+            Source::Boar(BoarState::Wild),
+            2,
+        ),
+    ];
+    let mut pairs = Vec::new();
+    for kit in [KitState::Bare, KitState::Stocked] {
+        let shipped = match kit {
+            KitState::Bare => bare,
+            KitState::Stocked => stocked,
+        };
+        let slot = match kit {
+            KitState::Bare => 0,
+            KitState::Stocked => 1,
+        };
+        println!("\n  ===== KIT STATE: {} =====", kit.label());
+        println!(
+            "  {:<17} {:>4} | {:>8} {:>8} {:>8} | {:>8} {:>6} {:>8} | {:>9} {:>9} {:>9} | {:>8}",
+            "investment",
+            "crew",
+            "before",
+            "during",
+            "after",
+            "gain",
+            "credit",
+            "wkr-t",
+            "wild f/w",
+            "opp cost",
+            "(food)",
+            "recoup t"
+        );
+        for (label, before, during, after, wild, bill_index) in investments {
+            let bill = &bills[bill_index];
+            let builder_wt = bill.build_worker_turns[slot] + bill.craft_worker_turns[slot];
+            for crew in PAYBACK_CREWS {
+                let before_food = operating_total(before, crew, shipped);
+                let during_food = operating_total(during, crew, shipped);
+                let after_food = operating_total(after, crew, shipped);
+                let gain = after_food - before_food;
+                let wild_per_worker = operating_total(wild, crew, shipped) / crew as f32;
+                let cost = builder_wt * wild_per_worker;
+                println!(
+                    "  {:<17} {:>4} | {:>8.3} {:>8.3} {:>8.3} | {:>8.3} {:>6.2} {:>8.1} | {:>9.4} {:>9.2} {:>9} | {:>8}",
+                    label,
+                    crew,
+                    before_food,
+                    during_food,
+                    after_food,
+                    gain,
+                    standing_credit(during, shipped),
+                    builder_wt,
+                    wild_per_worker,
+                    cost,
+                    "food",
+                    recoup(cost, gain),
+                );
+                pairs.push((cost, gain));
+            }
+        }
+    }
+    println!("\n  'opp cost' is in food (provisions): wkr-t x wild food per worker. A zero opp cost means the wild row pays nothing to give up,");
+    println!(
+        "  so the investment is free to start — it can still read `never` if its gain is <= 0."
+    );
+    pairs
+}
+
+// ---------------------------------------------------------------------------------------------
+// SECTION J — band context
+// ---------------------------------------------------------------------------------------------
+
+/// What Section J prints, returned for the guards.
+struct BandContext {
+    demand: f32,
+    working: f32,
+}
+
+fn print_band_context() -> Vec<BandContext> {
+    let profiles = core_sim::StartProfiles::builtin();
+    let demographics = core_sim::DemographicsConfig::builtin();
+    println!("\n{RULE}");
+    println!("SECTION J — BAND CONTEXT: who is eating, and who replaces a lost worker.");
+    println!("{RULE}");
+    println!("  Sizes from start_profiles.json (profile `{START_PROFILE}`), brackets from demographics_config.json initial_distribution");
+    println!("  (size x share, the very multiply PopulationCohort::set_brackets_from_size does). `food_demand` is pub(crate) and not reachable");
+    println!("  from an integration test, so its one expression is RESTATED here: per_capita_draw x (children x child_factor + working x");
+    println!("  working_factor + elders x elder_factor). Replacement = maturation inflow (children x maturation_rate) minus aging outflow");
+    println!("  (working x aging_rate) at that split, per systems::population's own flows; births are not counted.");
+    let dist = &demographics.initial_distribution;
+    let consumption = &demographics.consumption;
+    println!(
+        "  split {:.3}/{:.3}/{:.3} (children/working/elders); draw {:.2} per capita; factors child {:.2} working {:.2} elder {:.2}; maturation {:.3}, aging {:.3}.",
+        dist.children, dist.working, dist.elders, consumption.per_capita_draw,
+        consumption.child_factor, consumption.working_factor, consumption.elder_factor,
+        demographics.maturation_rate, demographics.aging_rate,
+    );
+    let profile = profiles
+        .get(START_PROFILE)
+        .expect("the shipped start profile exists");
+    let mut contexts = Vec::new();
+    println!(
+        "\n  {:<8} {:<10} {:>5} | {:>6} {:>7} {:>6} | {:>9} {:>14} | {:>9} {:>9} {:>9} {:>15}",
+        "archetype",
+        "unit",
+        "size",
+        "child",
+        "working",
+        "elder",
+        "food/turn",
+        "break-even f/w",
+        "mature/t",
+        "aging/t",
+        "net w/t",
+        "t to replace 1"
+    );
+    for archetype in &profile.overrides().archetypes {
+        for unit in &archetype.starting_units {
+            let size = unit
+                .band_size
+                .expect("the shipped profile states every band_size") as f32;
+            let children = size * dist.children;
+            let working = size * dist.working;
+            let elders = size * dist.elders;
+            let demand = consumption.per_capita_draw
+                * (children * consumption.child_factor
+                    + working * consumption.working_factor
+                    + elders * consumption.elder_factor);
+            let inflow = children * demographics.maturation_rate;
+            let outflow = working * demographics.aging_rate;
+            let net = inflow - outflow;
+            println!(
+                "  {:<8} {:<10} {:>5.0} | {:>6.1} {:>7.1} {:>6.1} | {:>9.3} {:>14.4} | {:>9.3} {:>9.3} {:>9.3} {:>15}",
+                archetype.id,
+                unit.kind,
+                size,
+                children,
+                working,
+                elders,
+                demand,
+                demand / working,
+                inflow,
+                outflow,
+                net,
+                if net > 0.0 { format!("{:.1}", 1.0 / net) } else { "never".to_string() },
+            );
+            contexts.push(BandContext { demand, working });
+        }
+        let kits: Vec<String> = archetype
+            .opening_loadout
+            .kit_defaults
+            .iter()
+            .map(|(kit, count)| format!("{kit} x{count}"))
+            .collect();
+        println!(
+            "    opening loadout `{}`: default kits [{}], default materials {:?}",
+            archetype.id,
+            kits.join(", "),
+            archetype.opening_loadout.material_defaults
+        );
+    }
+    println!("  'break-even f/w' is the food each WORKING-age hand must bring home for the working cohort alone to feed the whole band");
+    println!("  (demand / working). Compare it to Section G's food per worker: a row below it cannot carry the band by itself.");
+    contexts
+}
+
+/// **WHY DOES A BARE-HANDED PEN PAY WHEN A BARE-HANDED WILD OR PASTORAL HUNT PAYS NOTHING?** — the
+/// three stages of the take read off the same herd at each rung, through the sim's own seams
+/// (`herd_engage_rate`, `herd_wariness`, `herd_fight_stage`), against the bare party's own profile.
+fn print_pen_diagnosis(bare: &Shipped) -> Vec<f32> {
+    println!("\n  WHY A BARE-HANDED PEN PAYS (stage by stage, the live seams, boar at each rung):");
+    println!(
+        "  {:<10} {:>11} {:>12} {:>9} {:<10} quarry combat body (only where there is a fight)",
+        "rung", "engage/hand", "reach@crew3", "wariness", "kill arm"
+    );
+    let mut reaches = Vec::new();
+    for (label, state) in [
+        ("wild", BoarState::Wild),
+        ("pastoral", BoarState::Pastoral),
+        ("pen", BoarState::Pen),
+    ] {
+        let herd = seat_boar(state, Seat::Operating, bare);
+        let engage = herd_engage_rate(&herd, &bare.fauna, false);
+        let reach = animals_engaged(REFERENCE_CREW as f32, engage);
+        let fight = herd_fight_stage(&herd, &bare.fauna);
+        reaches.push(reach);
+        println!(
+            "  {:<10} {:>11.3} {:>12.3} {:>9.3} {:<10} {}",
+            label,
+            engage,
+            reach,
+            herd_wariness(&herd, &bare.fauna),
+            if fight.is_some() {
+                "FIGHT"
+            } else {
+                "SLAUGHTER"
+            },
+            fight.map_or(
+                "— (herd_fight_stage answers None at animal:pen)".to_string(),
+                |quarry| format!("{:?}", quarry.profile)
+            ),
+        );
+    }
+    println!(
+        "  bare party's hunter profile: {:?}",
+        bare_party().crews[0].hunter
+    );
+    reaches
 }

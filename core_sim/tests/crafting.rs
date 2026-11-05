@@ -35,6 +35,10 @@ const BAND_POP: u32 = 30;
 /// A crew big enough that the bench finishes in a small number of turns at the bare-handed rate, so
 /// a test can measure a completion without simulating a season.
 const CREW: u32 = 8;
+/// **One hand at the bench** - too few to finish a hurdle pass in a single turn at the bare-handed
+/// rate, so a test that reads the pile one pass drew sees exactly one pass drawn (a bigger crew now
+/// completes an item inside the turn and draws the next pass off the other pile).
+const ONE_HAND_AT_THE_BENCH: u32 = 1;
 
 const HIDE: &str = "hide";
 const TOUGHNESS: &str = "toughness";
@@ -589,7 +593,7 @@ fn the_hurdles_draw_still_spends_hide_by_suppleness_and_not_by_its_first_axis() 
             &[(TOUGHNESS, 0.05), (SUPPLENESS, 0.95)],
         )
         .stock(WOOD, WOOD_TO_SPARE, &[(HARDNESS, 0.5), (PLIANCY, 0.6)])
-        .start(HURDLES, CREW)
+        .start(HURDLES, ONE_HAND_AT_THE_BENCH)
         .turns(1);
 
     assert!(

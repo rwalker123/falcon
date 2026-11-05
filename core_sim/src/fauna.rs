@@ -13268,7 +13268,7 @@ mod tests {
     /// can exercise the real number rather than a second `ceil` of their own.
     fn raw_for(herd: &Herd, animals_per_herder: f32) -> u32 {
         LadderConfig::builtin()
-            .rung(shipped::animal_pastoral())
+            .rung(shipped::animal_pen())
             .upkeep_crew_needed(herd_keeper_loads(
                 herd.biomass,
                 herd.body_mass,

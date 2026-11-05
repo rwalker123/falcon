@@ -3629,6 +3629,27 @@ fn species_shed_params(app: &App, id: &str) -> (f32, f32) {
     (fauna.animals_per_herder_for(&herd.species), herd.body_mass)
 }
 
+/// The `animal:pastoral` rung's own upkeep rate (work per keeper-load), read off the ladder. A tamed
+/// herd's bill is `load × this`, so a worker-turn of keeping covers `1 / this` loads of animals.
+fn pastoral_rate(app: &App) -> f32 {
+    app.world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(shipped::animal_pastoral())
+        .upkeep
+        .as_ref()
+        .expect("the pastoral rung declares an upkeep")
+        .work_per_turn
+}
+
+/// [`species_shed_params`] for a TAMED herd: the first number is the heads ONE WORKER-TURN of keeping
+/// covers (`animals_per_herder / the pastoral rate`), which is what a shed capacity of `hands × heads`
+/// is denominated in once the rung's rate is not `1.0`.
+fn pastoral_shed_params(app: &App, id: &str) -> (f32, f32) {
+    let (aph, body_mass) = species_shed_params(app, id);
+    (aph / pastoral_rate(app), body_mass)
+}
+
 /// **Seat the keeping exactly as `herders` hands would supply it** — `herders` worker-turns, which is
 /// what the labor arm stamps for a `maintain` crew of that size. The shed's capacity is then
 /// `herders × animals_per_herder` by construction, so it tracks the herd as it shrinks (the §2.2
@@ -3706,33 +3727,48 @@ fn probe_the_price_of_holding_a_herd() {
     );
 }
 
-/// **THE SHIPPED ROSTER ASKS FOR EXACTLY THE KEEPERS IT ALWAYS ASKED FOR** — the pacing-neutrality
-/// claim of `docs/plan_standing_upkeep.md` §2.4's animal half, asserted per species.
+/// **EVERY SPECIES ASKS FOR THE KEEPERS ITS RUNG'S RATE NAMES** — the keeper count is
+/// `ceil(load × rate)`, where the load is `head count / animals_per_herder` and the rate is the
+/// standing rung's own `upkeep.work_per_turn`.
 ///
 /// The keeper demand stopped being a declared **head count** and became **work per turn**: the rung
-/// declares `work_per_turn: 1.0, scaled_by: source_load` and the species supplies the load
-/// (`head count / animals_per_herder`). Since one worker-turn is `PER_WORKER_OUTPUT`, `ceil(demand)`
-/// is the same `ceil((biomass/body_mass)/animals_per_herder)` the retired helper computed — so a
-/// shepherd still minds 200 fowl and a cowherd still minds 12 aurochs.
+/// declares `work_per_turn: R, scaled_by: source_load` and the species supplies the load. One
+/// worker-turn is `PER_WORKER_OUTPUT`, so `ceil(demand)` is `ceil(load × R)`. The pen's `R` is `1.0`
+/// (the retired head count exactly); the pastoral rung's is a chosen playtest dial below it, so a
+/// tamed herd asks for fewer keepers than a pen of the same head count.
 ///
-/// **Asserted against the retired arithmetic restated here, not against a table of literals**, so a
-/// roster retune moves the expectation with the game and only a change to the *model* can fail it.
+/// **Asserted against the ladder's own rate read here, not against a table of literals**, so a
+/// retune of either rate moves the expectation with the game and only a change to the *model*
+/// (the load, the `ceil`, the rung the herd stands on) can fail it. The pen rate being at least the
+/// pastoral rate is the validated ordering and is asserted too.
 #[test]
-fn every_species_asks_for_the_keepers_it_asked_for_before() {
-    /// The demand `fauna::herders_needed` computed before it became an upkeep — the one thing this
-    /// test may not read off the sim, because reproducing it is the whole assertion.
-    fn retired_herders_needed(biomass: f32, body_mass: f32, animals_per_herder: f32) -> u32 {
-        let animals = biomass / body_mass;
-        ((animals / animals_per_herder).ceil() as u32).max(1)
-    }
-
+fn every_species_asks_for_the_keepers_its_rung_rate_names() {
     let app = spawn_world();
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let rate_of = |rung| {
+        ladder
+            .rung(rung)
+            .upkeep
+            .as_ref()
+            .expect("a managed rung declares an upkeep")
+            .work_per_turn
+    };
+    let (pastoral_rate, pen_rate) = (
+        rate_of(shipped::animal_pastoral()),
+        rate_of(shipped::animal_pen()),
+    );
+    assert!(
+        pen_rate >= pastoral_rate,
+        "the ladder's validated ordering: a higher rung never costs less to hold"
+    );
+    let keepers =
+        |load: f32, rate: f32| ((load * rate) / core_sim::PER_WORKER_OUTPUT).ceil() as u32;
     let mut checked = 0;
+    let mut pen_checked = 0;
     for species in fauna.species.values() {
         // A `wild`-ceiling species is never herded, so it declares no `animals_per_herder` and has
-        // no keeper demand to be neutral about.
+        // no keeper demand to check.
         if species.husbandry_ceiling != Some(shipped::animal_pastoral())
             && species.husbandry_ceiling != Some(shipped::animal_pen())
         {
@@ -3740,8 +3776,8 @@ fn every_species_asks_for_the_keepers_it_asked_for_before() {
         }
         let aph = fauna.animals_per_herder_for(&species.display_name);
         let body_mass = species.body_mass;
-        // Sweep head counts across several `animals_per_herder` boundaries — the `ceil` is where an
-        // inversion like this goes wrong, so the boundaries are the point.
+        // Sweep head counts across several `animals_per_herder` boundaries — the `ceil` is where
+        // this goes wrong, so the boundaries are the point.
         for heads in [1.0_f32, aph - 0.5, aph, aph + 0.5, aph * 3.0, aph * 7.25] {
             let mut herd = herd_of(&app, &prime_thriving_herd(&mut spawn_world()));
             herd.species = species.display_name.clone();
@@ -3749,19 +3785,34 @@ fn every_species_asks_for_the_keepers_it_asked_for_before() {
             herd.biomass = heads * body_mass;
             herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
             herd.herders_needed = 0; // unstabilized, so the raw reading is what answers
+            let load = herd.biomass / body_mass / aph;
             assert_eq!(
                 core_sim::herd_herders_needed(&herd, &fauna, &ladder),
-                retired_herders_needed(herd.biomass, body_mass, aph),
-                "{} at {heads} head (animals_per_herder {aph}): the keeper count must not have \
-                 moved when it became a work rate",
+                keepers(load, pastoral_rate),
+                "{} tamed at {heads} head (animals_per_herder {aph}): keepers must be \
+                 ceil(load x the pastoral rate {pastoral_rate})",
                 species.display_name
             );
             checked += 1;
+            if species.husbandry_ceiling == Some(shipped::animal_pen())
+                && herd.corral_at(UVec2::new(1, 1), &core_sim::LadderConfig::builtin())
+            {
+                herd.herders_needed = 0;
+                assert_eq!(
+                    core_sim::herd_herders_needed(&herd, &fauna, &ladder),
+                    keepers(load, pen_rate),
+                    "{} penned at {heads} head (animals_per_herder {aph}): keepers must be \
+                     ceil(load x the pen rate {pen_rate})",
+                    species.display_name
+                );
+                pen_checked += 1;
+            }
         }
     }
     assert!(
-        checked >= 30,
-        "fixture: the sweep must actually cover the herdable roster, got {checked} readings"
+        checked >= 30 && pen_checked >= 30,
+        "fixture: the sweep must cover the herdable roster at both rungs, got {checked} tamed and \
+         {pen_checked} penned readings"
     );
 }
 
@@ -4040,10 +4091,14 @@ fn a_tamed_herds_crew_short_of_its_bill_sheds_and_a_kept_one_culls() {
                 .world
                 .resource::<FaunaConfigHandle>()
                 .get()
-                .animals_per_herder_for(FIXTURE_SPECIES);
+                .animals_per_herder_for(FIXTURE_SPECIES)
+                / pastoral_rate(&app);
             let mut registry = app.world.resource_mut::<HerdRegistry>();
             let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
             herd.biomass = HANDS_THE_HERD_WANTS * heads_per_hand * herd.body_mass;
+            // K at the stock: at the pastoral rate a bill of this many hands is MORE heads
+            // than the fixture species' own range holds, and a herd capped at K owes a smaller bill.
+            herd.carrying_capacity = herd.biomass;
         }
         domesticate(&mut app, &id);
         let seated = herd_of(&app, &id).biomass;
@@ -4106,7 +4161,8 @@ fn two_bands_keeping_one_herd_sum_their_hands() {
             .world
             .resource::<FaunaConfigHandle>()
             .get()
-            .animals_per_herder_for(FIXTURE_SPECIES);
+            .animals_per_herder_for(FIXTURE_SPECIES)
+            / pastoral_rate(&app);
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
         herd.biomass = HANDS_THE_HERD_WANTS * heads_per_hand * herd.body_mass;
@@ -4197,7 +4253,7 @@ fn set_maintain_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32
 fn an_over_stocked_managed_herd_converges_to_its_labor_capacity() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
-    let (aph, body_mass) = species_shed_params(&app, &id);
+    let (aph, body_mass) = pastoral_shed_params(&app, &id);
 
     // A fixed keeper crew of `herders` hands ⇒ a labor capacity of `herders × aph` animals. Over-stock
     // the herd well above it, owned + domesticated (so it is managed and sheds).
@@ -4255,7 +4311,7 @@ fn an_over_stocked_managed_herd_converges_to_its_labor_capacity() {
 fn the_shed_is_bounded_by_the_true_overage_near_a_ceil_boundary() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
-    let (aph, body_mass) = species_shed_params(&app, &id);
+    let (aph, body_mass) = pastoral_shed_params(&app, &id);
 
     // `current = 2·aph + 2` ⇒ needed = ceil = 3; staffed at 2 herders ⇒ herded_fraction = 2/3, real
     // capacity = 2·aph, true overage = **2 animals**. The old shorthand would read
@@ -4307,7 +4363,7 @@ fn the_shed_is_bounded_by_the_true_overage_near_a_ceil_boundary() {
 fn a_partially_herded_pastoral_herd_stays_tame_with_regrowth() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
-    let (aph, body_mass) = species_shed_params(&app, &id);
+    let (aph, body_mass) = pastoral_shed_params(&app, &id);
     let herders = 3.0_f32;
     let capacity_animals = herders * aph;
     let cap = {
