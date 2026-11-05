@@ -102,7 +102,7 @@ Pinned by `server::tests::a_band_improvements_crew_is_the_keepers_the_sim_staffs
 | 1a | the site's **keepers** on every row at every priority, High to Low: `floor(keep_hands)` whole-keeper heads round-robin, then, for a row with a fraction of a hand of keeping left, one head that carries it (a kitted gatherer if the shelf can arm one, else a bare one where a bare hand works, else a keeper; a row with no hold take gives it a keeper's head so the improvement is kept) |
 | 1b | per priority group High to Low: the group's **builds'** first builder (kitted if the shelf can arm one, else bare), then the group's **kitted** hands up to the row's **hold crew** |
 | 1c | a **chief's FOOD order** only (`LaborAllocation::keeps_food_up`: a forage or hunt row `order_rows` lists under `food` while the chief owns the kind): per priority group High to Low, round-robin nearest first, **bare** hands up to the row's hold crew under its Max, only where a bare hand takes something. After every group's pass 1b, before any row's pass 2 |
-| 2 | **kitted** hands up to the row's **reach crew** |
+| 2 | per priority group High to Low: first a chief's FOOD order's rows (same `keeps_food_up` rows) get **bare** hands up to their **reach crew** (hold + refill), round-robin nearest first, only where a bare hand takes something; then the group's **kitted** hands up to the row's **reach crew**. A High stone refill therefore goes before a Normal food refill, and a Normal food refill before a Normal stone refill; player rows, a released food row, fodder and the materials keep kitted-first |
 | 3 | every row up to its **useful crew** (the room above the floor, clear-it-now; the crew past which the take stops rising): the kit's units still unspent first, then **bare** hands, only on a web where a bare hand takes something (never on a hunt that needs a weapon) |
 
 **The reason for the order is what each head protects.** Only keepers guard the ground the band
@@ -303,14 +303,17 @@ plus the best `deposit_take_per_worker` among kits whose items the band holds li
 **shortest walk**, then tile order - so a quarry outranks a nearer gathering site, and on a tie the
 nearer wins.
 
-**As many rows as the want needs.** Walking the ranking, each site gets a share of the want: up to what
-it gives a turn **at the order's floor without drawing it down** - for a site that regrows,
-`deposit_regrowth(floor_stock) - floor_stock` (the regrowth at the Best floor, the same figure
-`extract_input` calls the hold), for a deposit that never regrows (`NEVER_RENEWS`) **without bound** - and
-the walk stops when the want is covered. The best site is always in the set, so a band at target keeps
-its row (staffed to nobody); stone's unbounded share means stone ends with one row; wood takes the
-nearest stands until their regrowth covers the want. The hold part of the draw is dealt down the same
-ranking. One `Extract { tile, material }` row per set site: a row on a set site stays (the set's order
+**As many rows as the want needs.** Walking the ranking, each site gets a share of the want: up to its
+**cap** - what it gives a turn at the order's floor without drawing it down (for a site that regrows,
+`deposit_regrowth(floor_stock) - floor_stock`, the same figure `extract_input` calls the hold) **plus its
+stock above the floor spread over `keep_on_hand_refill_turns`** (`max(0, stock - floor_stock) / refill`; no new
+lever), and never more than a full tile crew takes (`per_hand x tile_worker_cap`). The floor stays the floor:
+the chief never draws a stand below `deposit_effective_floor`. A deposit that never regrows
+(`NEVER_RENEWS`) is **unbounded**, as before. The walk stops when the want is covered. So a full stand is asked
+for its stock, and the hands stack on rich stands instead of one head per stand: the want is not split into
+slivers each rounding up to a head. The best site is always in the set, so a band at target keeps its row
+(staffed to nobody); stone's unbounded share means stone ends with one row; wood takes the nearest stands
+until their caps cover the want. The hold part of the draw is dealt down the same ranking. One `Extract { tile, material }` row per set site: a row on a set site stays (the set's order
 changing moves nothing), a site that lacks one gets one (`max_workers = None`, the working's default kit
 for its rung, priority = the order's), a row on any other site is retired - all under the cargo rule
 below.
@@ -322,7 +325,8 @@ player keeps a higher floor if it had one and is never worked below the site's. 
 regrowth together is below the draw he still works every site at Best and the pile runs down: the order
 publishes the shortfall as `BandOrderState.sustainable` (`LaborAllocation::keep_sustainable[kind]`, the
 total the candidate sites give a turn at the floor; for a material that never regrows the larger of the
-want and the draw, so it never reads short). The client warns when `sustainable < draw`.
+want and the draw, so it never reads short). The client warns when `sustainable < draw`. **`sustainable` is
+regrowth only**: the stock above the floor that a site's cap adds is not folded into it.
 
 > **The cargo rule.** A row is *pinned* (`row_is_pinned`) while its party is out
 > (`LaborAssignment::party`), a walk of that source is on `homeward`, or a build is declared on its
@@ -337,7 +341,25 @@ a band with a leader** (own bands only). `onHand` is the band's material store t
 for `food`/`fodder` until their kinds are ordered); `hasSite` / `siteX` / `siteY` the best site the
 managing pass ranked first this turn; `sustainable` the total its candidate sites give a turn at the order's floor (above). Every row of the kind is an ordinary `LaborAssignment`; the dig rows is an ordinary `LaborAssignment` (`kind` extract) on the site.
 Native decode key `band_orders` (one dict per order, `priority` the lowercase word). `SAVE_FORMAT_VERSION`
-62.
+63.
+
+**What holds an order up** (`BandOrderState.limit` / `limitItem` / `landGives`, appended; derived in
+`snapshot::population::apply_order_limits` once the band's rows are published). The hands wanted are
+`refillWanted` (the listed rows' refill crew plus the unlisted sources' heads, counted at what a worker
+with the band's kit takes: a dig row's `per_hand` includes the best live kit, a food probe's per-hand rate is
+struck by `forage_input` / `hunt_input` over the band's own kit coverage); the hands short are that less
+`refillHeads`. `limit` is exactly one of:
+
+| `limit` | when | other fields |
+|---|---|---|
+| `""` | no hands short | |
+| `"land"` | the hands wanted exceed the band's staffable pool (`LaborAllocation::order_pool`, `staffing::staffable_pool` as the last managing pass read it), **or** every candidate site's cap summed (`LaborAllocation::keep_reach[kind].gives`) is below the order's want net of what the player's own rows bring in | `refillWanted` is capped at the pool (never a hand count larger than the band); `landGives` is the sum of the caps (`0` where a never-renewing deposit makes the land unbounded) |
+| `"kit"` | hands short, the band's idle hands (`idleWorkers`, what pass 3 left unused) number at least the heads short, and a row the order lists reads a `kitToe` line with `required > filled` | `limitItem` is that line's item id |
+| `"hands"` | hands short, nothing above | |
+
+`keep_reach` and `order_pool` are derived allocation fields written by the managing pass (outside equality,
+saved with the allocation). The sites' caps include stock above the floor, so an order the land can give is
+not called land-bound for want of regrowth.
 
 ### The food and fodder orders (#860)
 
@@ -356,8 +378,9 @@ labor pass and by every command restaff), `staffing::probe_source`, `staffing::a
   probed through the staffing's own reading (`probe_source` runs `forage_input` / `hunt_input` on a
   hypothetical row), so a herd the band's kit cannot wound is no candidate. Ranked by the order's
   product per hand at the floor (kitted as the band is), then the shortest walk, then the source key.
-  Each is given a share up to what it gives at the floor without being drawn down, best first, until the
-  want is covered; the share is written as a `KeepShare` (`hold`/`take` in biomass, `herd` set for a hunt
+  Each is given a share up to its cap (what it gives at the floor without being drawn down plus its stock
+  above the floor over `keep_on_hand_refill_turns`, never more than `tile_worker_cap` hands take;
+  `staffing::SourceProbe::cap`), best first, until the want is covered; the share is written as a `KeepShare` (`hold`/`take` in biomass, `herd` set for a hunt
   row) that `apply_chief_share` turns into the row's hold, reach and useful takes.
 - **The chief lists only as many sources as his hands cover.** Listing stops when the want is covered
   OR the heads the listed set takes reach his head budget, so the staffing's one-head-per-row round
@@ -388,6 +411,7 @@ labor pass and by every command restaff), `staffing::probe_source`, `staffing::a
   the whole kind. Arrival and a whole-kind claim adopt every existing forage and hunt row
   (`adopt_pending`) under the order its product belongs to. Hand commands on a listed row are refused
   with the step-1 sentence.
+- **The food order's refill crew is dealt before another order's kitted refill at the same Priority (pass 2).** Pass 1c protects only the hold crew; the refill (`reach_crew - hold_crew`) is dealt in pass 2 at the head of the food rows' own priority group, in bare hands, so a stone or wood refill stacked on a rich stand cannot starve the food refill at equal Priority while a higher Priority group still goes first. Pinned by `staffing::tests::{a_chiefs_food_refill_is_dealt_bare_before_a_kitted_stone_refill_at_equal_priority, a_high_stone_refill_still_goes_before_a_normal_food_refill}`.
 - **The food order's keep-up crew is dealt before any reach (pass 1c).** Passes otherwise run kitted
   first across priorities, so a band short of gathering kit used to hand its sleds' kitted stone or wood
   refill heads before a food row's bare hold heads, and food fell. The food order's rows

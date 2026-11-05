@@ -2253,6 +2253,9 @@ fn decode_population(
             refill_wanted: row.refillWanted(),
             take: row.take(),
             sustainable: row.sustainable(),
+            limit: text(row.limit()),
+            limit_item: text(row.limitItem()),
+            land_gives: row.landGives(),
         }),
     })
 }
@@ -2497,6 +2500,8 @@ fn create_band_orders<'a>(
         .iter()
         .map(|row| {
             let kind = builder.create_string(&row.kind);
+            let limit = builder.create_string(&row.limit);
+            let limit_item = builder.create_string(&row.limit_item);
             fb::BandOrderState::create(
                 builder,
                 &fb::BandOrderStateArgs {
@@ -2520,6 +2525,9 @@ fn create_band_orders<'a>(
                     refillWanted: row.refill_wanted,
                     take: row.take,
                     sustainable: row.sustainable,
+                    limit: Some(limit),
+                    limitItem: Some(limit_item),
+                    landGives: row.land_gives,
                 },
             )
         })

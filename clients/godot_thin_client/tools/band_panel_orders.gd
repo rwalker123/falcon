@@ -25,7 +25,8 @@ func _order(kind: String, target: int, priority: String, draw: float, on_hand: f
 	return {"kind": kind, "target": target, "priority": priority, "chief_owned": true, "draw": draw,
 		"on_hand": on_hand, "has_site": true, "site_x": h.ROSTER_NEAR_TILE.x, "site_y": h.ROSTER_NEAR_TILE.y,
 		"sustainable": sustainable, "has_consumers": consumers, "hold_heads": hold[0], "hold_wanted": hold[1],
-		"refill_heads": refill[0], "refill_wanted": refill[1], "take": take}
+		"refill_heads": refill[0], "refill_wanted": refill[1], "take": take,
+		"limit": "hands", "limit_item": "", "land_gives": 0.0}
 
 func _row(kind: String, x: int, y: int, workers: int, order_kind: String, chief: bool, extra: Dictionary = {}) -> Dictionary:
 	var row := {"kind": kind, "workers": workers, "target_x": x, "target_y": y,
@@ -245,6 +246,8 @@ func run(harness) -> void:
 
 	await _kit_and_doors()
 
+	await _limits()
+
 	await _released_wood()
 
 	var leaderless: Dictionary = h._workings_band_fixture(h.WORKINGS_DEMAND)
@@ -444,3 +447,46 @@ func _first_chip() -> Button:
 		if node is Button and node.get_parent().get_parent().has_meta(HudOrdersVocab.ORDER_LINE_META):
 			return node
 	return null
+
+
+# ---- What holds a refill up: the wire's `limit` words the order's amber state -------------------------------
+
+const SLED := "sled"
+
+func _limits() -> void:
+	h._hud._bandpanel.set_item_display_names({HOE: "Hoes", SLED: "Sled"})
+	var orders := _all_orders()
+	# Food: the land is the limit (4.2 a turn). Fodder: a sled is, 1 of 2 hands short. Stone: hands.
+	# Wood: the land again, with no figure on the wire.
+	var by_kind := {}
+	for order in orders:
+		by_kind[String(order["kind"])] = order
+	var food: Dictionary = by_kind["food"]
+	food.merge({"refill_heads": 0, "refill_wanted": 12, "limit": "land", "land_gives": 4.2}, true)
+	var fodder: Dictionary = by_kind["fodder"]
+	fodder.merge({"refill_heads": 1, "refill_wanted": 2, "limit": "kit", "limit_item": SLED}, true)
+	var stone: Dictionary = by_kind["stone"]
+	stone.merge({"refill_heads": 0, "refill_wanted": 3, "limit": "hands"}, true)
+	var wood: Dictionary = by_kind["wood"]
+	wood.merge({"refill_heads": 2, "refill_wanted": 5, "limit": "land", "land_gives": 0.0}, true)
+	var band := chief_band(orders)
+	for row in band["labor_assignments"]:
+		if String(row.get("order_kind", "")) == "fodder":
+			row[SourceForecast.ASSIGNMENT_KIT_TOE_KEY] = [_toe(SLED, 2.0, 1.0), _toe(HOE, 3.0, 0.0)]
+	await _show(band, "band_orders_work_limits")
+	h._assert_band_panel("band orders: limit land with a figure says what the patches give, no hand count",
+		_has("Holding — the patches near camp give 4.2 a turn at most") and not _has("12 wanted"))
+	h._assert_band_panel("…limit kit names the sled, singular",
+		_has("Refilling slowly — short 1 sled"))
+	h._assert_band_panel("…the kit clause drops the sled the state names and keeps the hoes",
+		_has("· short 3 hoes") and not _has("short 3 hoes, 1 sled") and not _has("1 sled, "))
+	h._assert_band_panel("…limit hands keeps the hand wording", _has("Holding — no hands to refill (3 wanted)"))
+	h._assert_band_panel("…limit land with no figure says the stands give too little",
+		_has("Refilling slowly — the stands near camp give too little"))
+	# Plural, and no limit at all.
+	fodder.merge({"refill_heads": 0, "refill_wanted": 2}, true)
+	food.merge({"limit": "", "land_gives": 0.0}, true)
+	await _show(chief_band(orders), "band_orders_work_limits_plural")
+	h._assert_band_panel("…limit kit with two short and no heads reads Holding, plural",
+		_has("Holding — short 2 sleds to refill"))
+	h._assert_band_panel("…no limit names no shortfall", _has("Holding") and not _has("Holding — the patches"))

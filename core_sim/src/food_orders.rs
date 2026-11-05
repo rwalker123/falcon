@@ -13,12 +13,18 @@
 //! - **Which sources.** Every known forage patch and huntable herd in work range, each probed through
 //!   the staffing's own reading ([`crate::staffing::probe_source`]) so a herd the band's kit cannot
 //!   wound is no candidate. Ranked by food (or fodder) per hand at the floor, then the shortest walk,
-//!   then the source key; each is given a share up to what it gives at the floor without being drawn
-//!   down, best first, until the want is covered **or the heads the listed set takes reach the heads
+//!   then the source key; each is given a share up to its **cap**, best first - what it gives at the
+//!   floor without being drawn down plus its stock above the floor over `keep_on_hand_refill_turns`,
+//!   never more than a full tile crew takes ([`crate::staffing::SourceProbe::cap`]; the floor stays the
+//!   floor) - until the want is covered **or the heads the listed set takes reach the heads
 //!   the chief has to deal** ([`FoodInputs::pool`] less the heads the other rows keep; a listed
 //!   source takes its share's hands at the probe's per-hand rate, rounded up, at least one). The source that crosses the line is
 //!   still listed; the rest are not, and what they would have asked is
-//!   [`LaborAllocation::keep_unlisted_heads`], so the order still reads its full want.
+//!   [`LaborAllocation::keep_unlisted_heads`], so the order still reads its full want. The per-hand
+//!   rate the heads are counted at is the probe's, struck over the band's own kit. The sum of every
+//!   candidate's cap against the want ([`LaborAllocation::keep_reach`]) and the pool it read
+//!   ([`LaborAllocation::order_pool`]) are what the published `limit` reads; `keep_sustainable`
+//!   stays regrowth only.
 //! - **The floor.** Best (`DEFAULT_ESCAPEMENT_FLOOR`) below the target, the Learning floor
 //!   (`band_orders.learning_floor`) at or above it. Never lower than Best.
 //! - **Whole basket.** A chief's forage row has an empty take selection.
@@ -135,6 +141,9 @@ struct Candidate {
     units_per_hand: f32,
     /// The product's units the source gives a turn at the floor without being drawn down.
     sustainable_units: f32,
+    /// The most of the product the chief may ask of the source a turn: [`Self::sustainable_units`]
+    /// plus its stock above the floor spread over `keep_on_hand_refill_turns`.
+    cap_units: f32,
     /// The product's units per biomass.
     rate: f32,
 }
@@ -169,7 +178,8 @@ fn candidate_of(
     crew: f32,
 ) -> Option<Candidate> {
     let sources = inputs.site.sources;
-    let probe = probe_source(sources, inputs.site.band_kit, &target, crew)?;
+    let refill = sources.labor.keep_on_hand_refill_turns as f32;
+    let probe = probe_source(sources, inputs.site.band_kit, &target, crew, refill)?;
     if !probe.viable {
         return None;
     }
@@ -191,6 +201,9 @@ fn candidate_of(
         order,
         units_per_hand,
         sustainable_units: probe.sustainable * rate,
+        // A tile holds at most `tile_worker_cap` hands, so no source can be asked for more than a
+        // full crew takes.
+        cap_units: (probe.cap * rate).min(units_per_hand * crew),
         rate,
     })
 }
@@ -220,6 +233,7 @@ pub fn manage_food_orders(
     inputs: &FoodInputs<'_>,
     has_leader: bool,
 ) {
+    allocation.order_pool = inputs.pool;
     if !has_leader {
         return;
     }
@@ -423,13 +437,20 @@ pub fn manage_food_orders(
             .sum();
         hands_left = hands_left.saturating_sub(kept_heads);
         let mut unlisted_heads: u32 = 0;
+        allocation.keep_reach.insert(
+            kind.to_string(),
+            crate::components::KeepReach {
+                gives: Some(ranked.iter().map(|candidate| candidate.cap_units).sum()),
+                want: want_left,
+            },
+        );
         let mut set: Vec<&Candidate> = Vec::new();
         let mut shares: Vec<(String, KeepShare)> = Vec::new();
         for candidate in ranked {
             if want_left <= NOTHING {
                 break;
             }
-            let units = candidate.sustainable_units.min(want_left);
+            let units = candidate.cap_units.min(want_left);
             let hold_units = units.min(draw_left);
             let take = units / candidate.rate.max(f32::EPSILON);
             // Hands at the probe's per-hand rate (`take` above is biomass, not hands).

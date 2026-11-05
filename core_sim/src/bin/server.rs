@@ -30676,6 +30676,20 @@ mod tests {
             cohort.last_food_need = 4.0;
             cohort.working = core_sim::scalar_from_f32(400.0);
         }
+        // A target past what one patch can be asked a turn (its regrowth plus its stock above the
+        // floor), so the chief lists a second patch.
+        app.world
+            .get_mut::<LaborAllocation>(band)
+            .unwrap()
+            .orders
+            .insert(
+                "food".to_string(),
+                core_sim::BandOrder {
+                    target: 100_000,
+                    priority: core_sim::SourcePriority::Normal,
+                    owner: core_sim::OrderOwner::Chief,
+                },
+            );
         core_sim::staffing::restaff_band(&mut app.world, band);
         let listed = |app: &bevy::prelude::App| -> Vec<String> {
             app.world

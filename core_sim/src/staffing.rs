@@ -523,10 +523,31 @@ fn staff_passes_scouting(
 
     // ## Pass 2 — kitted heads up to the reach crew, from whatever units and heads remain. A group's
     // builds go first, up to their cap.
+    //
+    // **The chief's FOOD order's refill is dealt first in its own group** (still after every higher
+    // group's pass 2, so a High stone refill goes before a Normal food refill): bare heads up to the
+    // row's reach crew, round-robin nearest first, only where a bare hand takes something. Player
+    // rows and the other orders keep kitted-first.
     for (builds, sources) in &split {
         if passes == Passes::All {
             deal_kitted(rows, builds, &mut ledger, shelf, |_, row, _| cap_of(row));
         }
+        let food_refill: Vec<usize> = sources
+            .iter()
+            .copied()
+            .filter(|&i| rows[i].food_keep_up && rows[i].bare_can_work)
+            .collect();
+        let mut needed: Vec<Option<u32>> = vec![None; rows.len()];
+        deal_round_robin(&food_refill, |i| {
+            let row = &rows[i];
+            let kitted = ledger.out[i].kitted;
+            let reach = *needed[i].get_or_insert_with(|| {
+                reach_heads(row, kitted)
+                    .max(hold_heads(row, kitted))
+                    .saturating_sub(kept[i])
+            });
+            ledger.deal_head(i, kitted + ledger.out[i].bare < reach, HeadKind::Bare)
+        });
         deal_kitted(rows, sources, &mut ledger, shelf, |i, row, kmax| {
             reach_heads(row, kmax)
                 .max(hold_heads(row, kmax))
@@ -1805,7 +1826,12 @@ pub(crate) struct SourceProbe {
     pub viable: bool,
     /// What the source gives a turn at the floor without being drawn down, in biomass.
     pub sustainable: f32,
-    /// What one hand of the best-kitted crew takes a turn (biomass), at the sustainable take.
+    /// The most the chief may ask of the source a turn, in biomass: its regrowth at the floor
+    /// ([`Self::sustainable`]) plus the stock standing above the floor spread over the refill turns.
+    /// The floor stays the floor - the chief never draws the source below it.
+    pub cap: f32,
+    /// What one hand of the best-kitted crew takes a turn (biomass), at the [`Self::cap`] take - the
+    /// rate the band's kit and carry really give a worker on this source.
     pub per_hand: f32,
     /// Food units a unit of biomass is worth (`0` where the source pays none).
     pub food_rate: f32,
@@ -1821,6 +1847,7 @@ pub(crate) fn probe_source(
     band_kit: &BandEquipment,
     target: &LaborTarget,
     crew: f32,
+    refill_turns: f32,
 ) -> Option<SourceProbe> {
     let tile_improvements = crate::tile_improvement::TileImprovementRegistry::default();
     let roads = crate::routes::RoadRegistry::default();
@@ -1914,17 +1941,22 @@ pub(crate) fn probe_source(
         _ => return None,
     };
     let sustainable = input.hold_take.max(NO_TAKE_WANTED);
+    // The stock above the floor (`useful_take` is the room the floor leaves) is spread over the refill
+    // turns; the floor itself is never drawn below.
+    let cap = (sustainable + input.useful_take.max(NO_TAKE_WANTED) / refill_turns.max(1.0))
+        .min(sustainable.max(input.useful_take));
     let armed = crew as u32;
-    let hands = (input.hands)(sustainable.max(NO_TAKE_WANTED), armed);
-    let reaches = sustainable > NO_TAKE_WANTED && hands.is_some();
+    let hands = (input.hands)(cap, armed);
+    let reaches = cap > NO_TAKE_WANTED && hands.is_some();
     let per_hand = hands
         .filter(|hands| *hands > NO_HANDS)
         .map_or(NO_TAKE_WANTED, |hands| {
-            sustainable / hands.max(AT_LEAST_ONE_HAND as f32)
+            cap / hands.max(AT_LEAST_ONE_HAND as f32)
         });
     Some(SourceProbe {
         viable: reaches && input.useful_take > NO_TAKE_WANTED,
         sustainable,
+        cap,
         per_hand,
         food_rate,
         fodder_rate,
@@ -2627,6 +2659,57 @@ mod tests {
             out[1].hold_crew
         );
         assert!(out[0].kitted > 0 && out[1].total() > 0, "liveness");
+    }
+
+    /// A stone refill (kitted heads, sleds) and a food row with a one-hand hold and a four-hand
+    /// refill, at the given priorities.
+    fn food_refill_and_stone_refill<'a>(
+        stone: SourcePriority,
+        food: SourcePriority,
+        food_kept_up: bool,
+    ) -> Vec<StaffRowInput<'a>> {
+        let sleds: Vec<(Arc<str>, u32)> = vec![(Arc::from("sleds"), 1)];
+        let mut food = linear_row(food, None, 0, 1.0, 4.0, 1.0, 1.0, Vec::new());
+        food.food_keep_up = food_kept_up;
+        vec![linear_row(stone, None, 0, 0.0, 4.0, 1.0, 1.0, sleds), food]
+    }
+
+    #[test]
+    fn a_chiefs_food_refill_is_dealt_bare_before_a_kitted_stone_refill_at_equal_priority() {
+        let mut sleds = BTreeMap::from([(Arc::from("sleds"), 3)]);
+        let rows =
+            food_refill_and_stone_refill(SourcePriority::Normal, SourcePriority::Normal, true);
+        let out = staff_band(&rows, 5, &mut sleds);
+        assert_eq!(
+            out[1].total(),
+            4,
+            "the food row's whole refill crew is filled"
+        );
+        assert_eq!(
+            out[0].kitted, 1,
+            "stone gets only what the food refill left"
+        );
+
+        let mut sleds = BTreeMap::from([(Arc::from("sleds"), 3)]);
+        let rows =
+            food_refill_and_stone_refill(SourcePriority::Normal, SourcePriority::Normal, false);
+        let out = staff_band(&rows, 5, &mut sleds);
+        assert_eq!(out[0].kitted, 3, "a player's food row keeps kitted-first");
+        assert!(out[1].total() < 4, "its refill is left short");
+        assert!(out[0].kitted > 0 && out[1].total() > 0, "liveness");
+    }
+
+    #[test]
+    fn a_high_stone_refill_still_goes_before_a_normal_food_refill() {
+        let mut sleds = BTreeMap::from([(Arc::from("sleds"), 3)]);
+        let rows = food_refill_and_stone_refill(SourcePriority::High, SourcePriority::Normal, true);
+        let out = staff_band(&rows, 5, &mut sleds);
+        assert_eq!(out[0].kitted, 3, "the High stone refill is dealt first");
+        assert_eq!(out[1].total(), 2, "food gets what is left, hold crew first");
+        assert!(
+            out[1].total() >= out[1].hold_crew,
+            "liveness: the hold is kept"
+        );
     }
 
     #[test]

@@ -2108,6 +2108,18 @@ table BandOrderState {
   refillHeads:uint = 0;
   refillWanted:uint = 0;
   take:float = 0;
+  // *** WHAT HOLDS THE ORDER UP. *** One of "" (no hands short), "land" (even every hand would not
+  // cover it: the hands wanted exceed the band's staffable pool, or all the order's candidate sites
+  // together give less a turn than it wants - refillWanted is then capped at the pool and landGives
+  // is what the sites give), "kit" (hands short, the band has idle hands to fill them, but they
+  // would lack the kit item named in limitItem) or "hands" (hands short, nothing else in the way).
+  limit:string;
+  // The kit item (equipment id) the order's rows are short of when limit is "kit"; "" otherwise.
+  limitItem:string;
+  // When limit is "land": the most the order's candidate sites could give a turn, in the order's
+  // units (a site's regrowth at its floor plus its stock above the floor over the refill turns).
+  // 0 otherwise, and 0 when the land has no bound (a deposit that never renews).
+  landGives:float = 0;
 }
 
 // One kit the band's work wants: `kit` is the equipment.json kit id the picker orders in, `count`

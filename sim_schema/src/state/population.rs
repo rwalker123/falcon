@@ -2200,6 +2200,13 @@ pub struct BandOrderState {
     /// What the order's candidate sites give a turn at its floor without being drawn down; never
     /// below `draw` for a deposit that does not regrow.
     pub sustainable: f32,
+    /// What holds the order up: `""` (no hands short), `"land"`, `"kit"` or `"hands"` - see
+    /// `snapshot.fbs`.
+    pub limit: String,
+    /// The kit item the order's rows are short of when `limit` is `"kit"`.
+    pub limit_item: String,
+    /// When `limit` is `"land"`: what the order's candidate sites could give a turn at most.
+    pub land_gives: f32,
 }
 
 /// **ONE KEEPING CLASS'S HUNTING MEAL** — a row of [`PopulationCohortState::hunt_meals`]: the food

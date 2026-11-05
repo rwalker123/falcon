@@ -1756,9 +1756,78 @@ pub(crate) fn band_order_rows(
                     .copied()
                     .unwrap_or(0.0),
                 kind: kind.clone(),
+                limit: String::new(),
+                limit_item: String::new(),
+                land_gives: 0.0,
             }
         })
         .collect()
+}
+
+/// What holds an order up: nothing (`""`).
+pub const LIMIT_NONE: &str = "";
+/// Even every hand would not cover the order: the hands it wants exceed the band's staffable pool,
+/// or all its candidate sites together give less a turn than it wants.
+pub const LIMIT_LAND: &str = "land";
+/// Hands are short, the band has idle hands to fill them, and the order's rows lack a kit item.
+pub const LIMIT_KIT: &str = "kit";
+/// Hands are short and nothing else is in the way.
+pub const LIMIT_HANDS: &str = "hands";
+
+/// **STATE WHAT HOLDS EACH ORDER UP** (`BandOrderState::limit`), read off the staffing's own numbers
+/// once the band's rows are published:
+///
+/// - the hands wanted are `refill_wanted` (the listed rows' refill crew plus the unlisted sources'
+///   heads); the hands short are that less `refill_heads`;
+/// - **land**: the hands wanted exceed the staffable pool (`order_pool`), or the sum of every
+///   candidate site's per-turn cap (`keep_reach.gives`) is below the order's want. The wanted heads
+///   are then capped at the pool - never a hand count larger than the band - and `land_gives` carries
+///   what the sites could give;
+/// - otherwise no hands short reads `""`;
+/// - **kit**: hands are short, the band's idle hands (`idleWorkers`, what pass 3 left unused) number
+///   at least the heads short, and a row the order lists reads a kit item `required > filled` on its
+///   `kitToe` - `limit_item` names the first;
+/// - **hands**: hands short and nothing above.
+pub(crate) fn apply_order_limits(
+    orders: &mut [sim_schema::BandOrderState],
+    allocation: &LaborAllocation,
+    rows: &[sim_schema::LaborAssignmentState],
+    idle_workers: u32,
+) {
+    for order in orders.iter_mut() {
+        let sites_short = allocation.keep_reach.get(&order.kind).is_some_and(|reach| {
+            reach.want > 0.0 && reach.gives.is_some_and(|gives| gives < reach.want)
+        });
+        let beyond_the_pool = order.refill_wanted > allocation.order_pool;
+        if sites_short || beyond_the_pool {
+            order.limit = LIMIT_LAND.to_string();
+            order.refill_wanted = order.refill_wanted.min(allocation.order_pool);
+            order.land_gives = allocation
+                .keep_reach
+                .get(&order.kind)
+                .and_then(|reach| reach.gives)
+                .unwrap_or(0.0);
+            continue;
+        }
+        let short = order.refill_wanted.saturating_sub(order.refill_heads);
+        if short == 0 {
+            order.limit = LIMIT_NONE.to_string();
+            continue;
+        }
+        let short_item = rows
+            .iter()
+            .filter(|row| row.order_kind == order.kind)
+            .flat_map(|row| row.kit_toe.iter())
+            .find(|line| line.required > line.filled)
+            .map(|line| line.item_id.clone());
+        match short_item {
+            Some(item) if idle_workers >= short => {
+                order.limit = LIMIT_KIT.to_string();
+                order.limit_item = item;
+            }
+            _ => order.limit = LIMIT_HANDS.to_string(),
+        }
+    }
 }
 
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
@@ -1803,7 +1872,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         loadout_window,
         heart,
         culture_pressures,
-        band_orders,
+        mut band_orders,
         band_improvements,
     } = inputs;
     let homeward: &[crate::work_party::HomewardWalk] =
@@ -2277,7 +2346,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // Zip each assignment with its retained per-source yield telemetry (same index order). An
     // assignment with no telemetry row yet → default 0 yields rather than a panic.
     const NO_YIELD: SourceYield = SourceYield::ZERO;
-    let labor_assignments = allocation
+    let labor_assignments: Vec<sim_schema::LaborAssignmentState> = allocation
         .map(|a| {
             a.assignments
                 .iter()
@@ -2810,6 +2879,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     };
     let materials_free =
         crate::snapshot::crafting::materials_free(&queue_forecast, &cohort.stores, craft_inputs);
+    if let Some(allocation) = allocation {
+        apply_order_limits(
+            &mut band_orders,
+            allocation,
+            &labor_assignments,
+            idle_workers,
+        );
+    }
     PopulationCohortState {
         entity: entity.to_bits(),
         band_id: band_id.map(|id| id.0).unwrap_or_default(),
@@ -4492,5 +4569,122 @@ mod culture_pressure_rows_tests {
         // Asked with no forced clock running: nothing counting down.
         assert_eq!(rows[0].turns_to_next, 0);
         assert_eq!(rows[0].phase, 2);
+    }
+}
+
+#[cfg(test)]
+mod order_limit_tests {
+    use super::*;
+    use crate::components::KeepReach;
+
+    const KIND: &str = "stone";
+    const POOL: u32 = 10;
+
+    fn order(refill_wanted: u32, refill_heads: u32) -> sim_schema::BandOrderState {
+        sim_schema::BandOrderState {
+            kind: KIND.to_string(),
+            refill_wanted,
+            refill_heads,
+            ..Default::default()
+        }
+    }
+
+    fn allocation(gives: Option<f32>, want: f32) -> LaborAllocation {
+        let mut allocation = LaborAllocation {
+            order_pool: POOL,
+            ..Default::default()
+        };
+        allocation
+            .keep_reach
+            .insert(KIND.to_string(), KeepReach { gives, want });
+        allocation
+    }
+
+    fn row_short_of(item: &str) -> sim_schema::LaborAssignmentState {
+        sim_schema::LaborAssignmentState {
+            order_kind: KIND.to_string(),
+            kit_toe: vec![sim_schema::KitToeLineState {
+                item_id: item.to_string(),
+                required: 2.0,
+                filled: 0.0,
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn limit_of(
+        order: sim_schema::BandOrderState,
+        allocation: &LaborAllocation,
+        rows: &[sim_schema::LaborAssignmentState],
+        idle: u32,
+    ) -> sim_schema::BandOrderState {
+        let mut orders = vec![order];
+        apply_order_limits(&mut orders, allocation, rows, idle);
+        orders.remove(0)
+    }
+
+    #[test]
+    fn nothing_short_reads_no_limit() {
+        let out = limit_of(order(3, 3), &allocation(Some(9.0), 5.0), &[], 4);
+        assert_eq!(out.limit, LIMIT_NONE);
+        assert_eq!(out.refill_wanted, 3);
+    }
+
+    #[test]
+    fn hands_short_with_kit_and_the_hands_to_fill_them_reads_kit_and_names_the_item() {
+        let rows = [row_short_of("sled")];
+        let out = limit_of(order(5, 2), &allocation(Some(9.0), 5.0), &rows, 3);
+        assert_eq!(out.limit, LIMIT_KIT);
+        assert_eq!(out.limit_item, "sled");
+    }
+
+    #[test]
+    fn hands_short_without_idle_hands_to_fill_them_reads_hands_even_when_kit_is_short() {
+        let rows = [row_short_of("sled")];
+        let out = limit_of(order(5, 2), &allocation(Some(9.0), 5.0), &rows, 2);
+        assert_eq!(
+            out.limit, LIMIT_HANDS,
+            "two idle hands cannot fill three heads"
+        );
+        assert_eq!(out.limit_item, "");
+    }
+
+    #[test]
+    fn hands_short_with_kit_in_hand_reads_hands() {
+        let out = limit_of(order(5, 2), &allocation(Some(9.0), 5.0), &[], 9);
+        assert_eq!(out.limit, LIMIT_HANDS);
+    }
+
+    #[test]
+    fn a_row_of_another_order_does_not_make_this_orders_kit_short() {
+        let mut other = row_short_of("sled");
+        other.order_kind = "wood".to_string();
+        let out = limit_of(order(5, 2), &allocation(Some(9.0), 5.0), &[other], 9);
+        assert_eq!(out.limit, LIMIT_HANDS);
+    }
+
+    #[test]
+    fn sites_that_give_less_than_the_want_read_land_with_what_they_give() {
+        let out = limit_of(order(4, 4), &allocation(Some(1.5), 5.0), &[], 0);
+        assert_eq!(out.limit, LIMIT_LAND);
+        assert!((out.land_gives - 1.5).abs() < 1e-6);
+        assert_eq!(out.refill_wanted, 4);
+    }
+
+    #[test]
+    fn more_hands_wanted_than_the_band_has_reads_land_and_is_capped_at_the_pool() {
+        let out = limit_of(order(48, 2), &allocation(None, 5.0), &[], 0);
+        assert_eq!(out.limit, LIMIT_LAND);
+        assert_eq!(
+            out.refill_wanted, POOL,
+            "never a hand count larger than the band"
+        );
+        assert_eq!(out.land_gives, 0.0, "an unbounded land states no figure");
+    }
+
+    #[test]
+    fn a_met_order_at_target_is_not_land() {
+        let out = limit_of(order(0, 0), &allocation(Some(0.0), 0.0), &[], 3);
+        assert_eq!(out.limit, LIMIT_NONE);
     }
 }

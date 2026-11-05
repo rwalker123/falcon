@@ -483,6 +483,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = entry.insert("refill_wanted", i64::from(row.refillWanted()));
             let _ = entry.insert("take", f64::from(row.take()));
             let _ = entry.insert("sustainable", f64::from(row.sustainable()));
+            // What holds the refill up: "" / "land" / "kit" / "hands" (`BandOrderState.limit`).
+            let _ = entry.insert("limit", row.limit().unwrap_or_default());
+            let _ = entry.insert("limit_item", row.limitItem().unwrap_or_default());
+            let _ = entry.insert("land_gives", f64::from(row.landGives()));
             band_orders.push(&entry.to_variant());
         }
     }

@@ -775,6 +775,18 @@ fn one_stands_give(app: &mut App, band: Entity) -> f32 {
     sustainable(app, band) / STANDS as f32
 }
 
+/// What one stand can be asked for a turn: its regrowth at Best plus the stock standing above the
+/// floor over the refill turns, read off the order's published reach when the want exceeds every
+/// stand together (the sites' caps in the order's units).
+fn one_stands_cap(app: &mut App, band: Entity) -> f32 {
+    keep_wood(app, band, A_BIG_TARGET * 20);
+    let reach = app.world.get::<LaborAllocation>(band).unwrap().keep_reach[WOOD];
+    reach
+        .gives
+        .expect("wood regrows, so its sites give a bounded amount")
+        / STANDS as f32
+}
+
 fn is_wood_row(row: &core_sim::LaborAssignment) -> bool {
     matches!(&row.target, LaborTarget::Extract { material, .. } if material == WOOD)
 }
@@ -784,7 +796,7 @@ fn is_wood_row(row: &core_sim::LaborAssignment) -> bool {
 #[test]
 fn a_wood_order_takes_several_stands_when_one_gives_too_little() {
     let (mut app, band, stands) = timber_world();
-    let each = one_stands_give(&mut app, band);
+    let each = one_stands_cap(&mut app, band);
     assert!(each > 0.0, "**LIVENESS**: a woodland stand regrows");
     // A want of one and a half stands' regrowth, with nothing on hand and no draw.
     keep_wood(&mut app, band, (each * 15.0).ceil() as u32);
@@ -812,7 +824,7 @@ fn a_wood_order_takes_several_stands_when_one_gives_too_little() {
 #[test]
 fn the_stand_list_shrinks_when_the_want_falls_and_a_pinned_row_stays() {
     let (mut app, band, stands) = timber_world();
-    let each = one_stands_give(&mut app, band);
+    let each = one_stands_cap(&mut app, band);
     keep_wood(&mut app, band, (each * 25.0).ceil() as u32);
     assert_eq!(
         wood_rows(&app, band).len(),
@@ -881,7 +893,8 @@ fn the_stand_list_shrinks_when_the_want_falls_and_a_pinned_row_stays() {
 #[test]
 fn stands_that_regrow_less_than_the_draw_are_all_worked_at_best_and_publish_the_shortfall() {
     let (mut app, band, _) = timber_world();
-    let each = one_stands_give(&mut app, band);
+    let regrowth = one_stands_give(&mut app, band);
+    let each = one_stands_cap(&mut app, band);
     let draw = each * STANDS as f32 * 2.0;
     app.world
         .get_mut::<LaborAllocation>(band)
@@ -898,6 +911,10 @@ fn stands_that_regrow_less_than_the_draw_are_all_worked_at_best_and_publish_the_
     );
     let published = sustainable(&app, band);
     assert!(
+        (published - regrowth * STANDS as f32).abs() < 1e-3,
+        "the published `sustainable` stays what the stands regrow at Best ({regrowth} each), the stock above the floor is not folded in: {published}"
+    );
+    assert!(
         published < draw,
         "the order says the stands give {published} a turn against a draw of {draw}"
     );
@@ -905,7 +922,7 @@ fn stands_that_regrow_less_than_the_draw_are_all_worked_at_best_and_publish_the_
     for (_, share) in allocation.keep_shares.iter() {
         assert!(
             share.take <= each * 1.001,
-            "no row is staffed past what its stand regrows: {share:?} vs {each}"
+            "no row is staffed past what its stand can be asked: {share:?} vs {each}"
         );
     }
 }
@@ -915,7 +932,7 @@ fn stands_that_regrow_less_than_the_draw_are_all_worked_at_best_and_publish_the_
 #[test]
 fn releasing_wood_keeps_every_row_with_its_crew_as_the_max() {
     let (mut app, band, _) = timber_world();
-    let each = one_stands_give(&mut app, band);
+    let each = one_stands_cap(&mut app, band);
     keep_wood(&mut app, band, (each * 25.0).ceil() as u32);
     let before = app
         .world
@@ -1159,7 +1176,7 @@ fn total_take(app: &App, band: Entity) -> f32 {
 #[test]
 fn a_player_stand_under_a_chiefs_wood_order_stays_the_players() {
     let (mut app, band, stands) = timber_world();
-    let each = one_stands_give(&mut app, band);
+    let each = one_stands_cap(&mut app, band);
     // The player takes the nearest stand over (release), then crews it himself.
     core_sim::keep_on_hand::release_row(
         &mut app.world.get_mut::<LaborAllocation>(band).unwrap(),
@@ -1217,7 +1234,7 @@ fn a_player_stand_under_a_chiefs_wood_order_stays_the_players() {
 fn releasing_one_stand_leaves_the_order_the_chiefs_and_claiming_it_back_clears_the_max() {
     use core_sim::keep_on_hand::{claim_row, dig_key, release_row};
     let (mut app, band, _stands) = timber_world();
-    let each = one_stands_give(&mut app, band);
+    let each = one_stands_cap(&mut app, band);
     keep_wood(&mut app, band, (each * 15.0).ceil() as u32);
     let listed = listed_wood(&app, band);
     assert_eq!(listed.len(), 2, "**LIVENESS**: two chief stands");
@@ -1260,7 +1277,7 @@ fn releasing_one_stand_leaves_the_order_the_chiefs_and_claiming_it_back_clears_t
 #[test]
 fn a_hand_command_is_refused_on_a_listed_stand_and_taken_on_a_players() {
     let (mut app, band, stands) = timber_world();
-    let each = one_stands_give(&mut app, band);
+    let each = one_stands_cap(&mut app, band);
     keep_wood(&mut app, band, (each * 15.0).ceil() as u32);
     hand_wood(&mut app, band, stands[2], 2);
     let allocation = app.world.get::<LaborAllocation>(band).unwrap();
@@ -1299,4 +1316,125 @@ fn arrival_lists_the_hand_rows_of_each_ordered_material() {
         "the arrival lists the hand row"
     );
     assert_eq!(wood_max(&app, band, camp), None, "and clears its Max");
+}
+
+// ---------------------------------------------------------------------------------------------
+// A stand's share includes its stock above the floor (#860).
+// ---------------------------------------------------------------------------------------------
+
+/// The `bandOrders` row for `kind` as the capture publishes it, round-tripped through the encoded
+/// frame (the shipped representation).
+fn published_order(app: &mut App, kind: &str) -> sim_schema::BandOrderState {
+    core_sim::recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<core_sim::SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let decoded = sim_schema::decode_snapshot_flatbuffer(bytes.as_ref()).expect("a valid frame");
+    decoded
+        .populations
+        .iter()
+        .flat_map(|cohort| cohort.band_orders.iter())
+        .find(|order| order.kind == kind)
+        .cloned()
+        .unwrap_or_else(|| panic!("no {kind} order on the wire"))
+}
+
+/// **A FULL STAND IS ASKED FOR ITS STOCK ABOVE THE FLOOR, NOT ONLY ITS REGROWTH**: a want bigger than
+/// what one stand regrows at Best but within what it can be asked (regrowth plus the stock above the
+/// floor over the refill turns) is one stand's work, so the order lists one row and wants the heads
+/// that one row takes - never a head per stand - and the published `sustainable` stays what the
+/// stands regrow.
+#[test]
+fn a_full_stand_gives_its_stock_above_the_floor_so_one_row_covers_a_want_past_its_regrowth() {
+    let (mut app, band, stands) = timber_world();
+    let regrowth = one_stands_give(&mut app, band);
+    let cap = one_stands_cap(&mut app, band);
+    assert!(
+        cap > regrowth * 1.5,
+        "**LIVENESS**: the stock above the floor adds to the share: {cap} vs {regrowth}"
+    );
+    // A want past what one stand regrows, inside what one full stand can be asked.
+    let want = regrowth * 1.5;
+    assert!(want < cap, "the fixture's want fits one stand");
+    keep_wood(&mut app, band, (want * 10.0).ceil() as u32);
+    let rows = wood_rows(&app, band);
+    assert_eq!(
+        rows.iter().map(|row| row.0).collect::<Vec<_>>(),
+        stands[..1].to_vec(),
+        "one stand covers the want"
+    );
+    let order = published_order(&mut app, WOOD);
+    let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+    assert_eq!(
+        order.refill_wanted,
+        allocation.order_crew(WOOD).3,
+        "the published hands wanted are the one row's, with no head per stand left over"
+    );
+    assert!(order.refill_wanted > 0, "**LIVENESS**: the row wants hands");
+    assert!(
+        (order.sustainable - regrowth * STANDS as f32).abs() < 1e-3,
+        "sustainable stays regrowth only: {} vs {}",
+        order.sustainable,
+        regrowth * STANDS as f32
+    );
+}
+
+/// **THE CHIEF NEVER DRAWS A STAND BELOW ITS FLOOR**, however much the order asks of its stock.
+#[test]
+fn a_stand_worked_through_real_turns_is_never_drawn_below_its_floor() {
+    const TURNS: u32 = 25;
+    /// Stock left standing above the floor when the stands are set up.
+    const JUST_ABOVE_THE_FLOOR: f32 = 5.0;
+    let (mut app, band, stands) = timber_world();
+    // A want past every stand together, so every stand is asked as much as it can be.
+    keep_wood(&mut app, band, A_BIG_TARGET * 20);
+    let capacity = {
+        let config = app.world.resource::<ExtractionConfigHandle>().get();
+        let tile = app
+            .world
+            .resource::<TileRegistry>()
+            .index(stands[0].x, stands[0].y)
+            .unwrap();
+        tile_deposit_capacity(&config, WOOD, app.world.get::<Tile>(tile).unwrap())
+    };
+    let floor_stock = core_sim::DEFAULT_ESCAPEMENT_FLOOR * capacity;
+    // One turn opens the workings; then every stand is stood just above its floor, so the want can
+    // only be met by drawing below it.
+    core_sim::run_turn(&mut app);
+    for stand in &stands {
+        if let Some(source) = app
+            .world
+            .resource_mut::<DepositRegistry>()
+            .source_mut(*stand, WOOD)
+        {
+            source.stock = floor_stock + JUST_ABOVE_THE_FLOOR;
+        }
+    }
+    for _ in 0..TURNS {
+        core_sim::run_turn(&mut app);
+        for stand in &stands {
+            if let Some(source) = app.world.resource::<DepositRegistry>().source(*stand, WOOD) {
+                assert!(
+                    source.stock >= floor_stock - 1e-3,
+                    "{stand:?} was drawn below its floor: {} < {floor_stock}",
+                    source.stock
+                );
+            }
+        }
+    }
+    let wood_home = app
+        .world
+        .get::<PopulationCohort>(band)
+        .unwrap()
+        .stores
+        .material_total(WOOD)
+        .to_f32();
+    assert!(
+        wood_home > 0.0,
+        "**LIVENESS**: the chief drew wood from the stands: {wood_home}"
+    );
 }

@@ -1581,8 +1581,10 @@ nothing — so all three joined 20, 50 and 54 as `declined` rows with a note.
 
 **The chief's food keep-up (#860) moved it once more.** `Land` wins one `move_band` on seeds 50
 (tick 57) and 59 (tick 43), because the band's runway falls there again, so the `declined` rows for
-those two seeds are withdrawn; the file's `declined` rows are seeds 20, 22, 37 and 54 (`Land` has
-nothing to propose there). A refused hand command on a chief's row no longer happens: the seat
+those two seeds were withdrawn. Asking a stand or patch for its stock above the floor and dealing
+the food refill ahead of another order's kitted refill then holds seed 50's runway near 27 turns, so
+`Land` proposes nothing there again and seed 50's `declined` row is back; seed 59 stays withdrawn
+(`Land` decides there). The file's `declined` rows are seeds 20, 22, 37, 50 and 54. A refused hand command on a chief's row no longer happens: the seat
 releases the row first ("A chief's rows", above), so `commands_failed_total` is 0 on all eight seeds.
 
 ⛔ **The start kinds above are what the seeds read NOW, not what they were chosen for.** The

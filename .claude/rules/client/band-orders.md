@@ -20,7 +20,8 @@ what each button sends.
 - `band_orders` on a band dict (a band with a leader only): one dict per order -- `kind` (`food`,
   `fodder` or a material id), `target`, `priority` (lowercase word), `chief_owned`, `draw`, `on_hand`,
   `has_site` / `site_x` / `site_y`, `sustainable`, `has_consumers`, `hold_heads` / `hold_wanted`,
-  `refill_heads` / `refill_wanted`, `take`. For food and fodder `target` and `on_hand` are **turns** and
+  `refill_heads` / `refill_wanted`, `take`, `limit` (`""` / `"hands"` / `"kit"` / `"land"`), `limit_item`
+  (the equipment id when `limit` is `"kit"`), `land_gives`. For food and fodder `target` and `on_hand` are **turns** and
   `draw` / `take` are units a turn; for a material all of them are units.
 - `order_kind` and `chief_owned` on every labor row: the order the row is listed under (`""` for a
   player-crewed row). `HudOrdersVocab` is the only reader of both.
@@ -88,6 +89,15 @@ top of the sections list and partitions the rows through `BandOrdersController.s
   with its ETA (`eta_turns`: `(target - on_hand) * draw / (take - draw)` for turns kinds,
   `(target - on_hand) / (take - draw)` for a material, rounded up, omitted when `take <= draw`). A band
   whose take outruns its draw is therefore rising however short its crew is, and reads Refilling slowly.
+- **What holds a refill up is the wire's `limit`, and it words the amber state** (`_refill_short_state`; only
+  the Refilling slowly / Holding states, never the `Falling` ones): `"hands"` keeps the hand wording
+  (`N hands short`, `no hands to refill (N wanted)`); `"kit"` names the item, `Refilling slowly — short 1 sled` /
+  `Holding — short 2 baskets to refill`, the count being `refill_wanted - refill_heads` and the noun the roster
+  display name lower-cased and made to agree with the count (`kit_noun`), and that item is dropped from the
+  `· short …` clause (`kit_clause(entries, skip_item)`) so it is said once; `"land"` gives no hand count and no
+  `(N wanted)` -- `Holding — the patches near camp give 4.2 a turn at most` (`stands` for a material), or
+  `… give too little` when `land_gives` is 0; `""` names no shortfall (`Holding` / `Refilling slowly`),
+  except that a short hold crew still reads as hands. The state's tooltip carries one sentence per limit.
 - **The summary warning names the orders**, joined `Food`, `Food and Wood`, `Food, Stone and Wood`: red
   `Not enough hands to keep up — Food is running down.` (`are` for several) when any order is in state 2;
   else amber `Not enough hands for every order — Food and Wood wait.` when any is hold / refill short.

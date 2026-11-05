@@ -86,6 +86,30 @@ const SUPPLY_SHORT_WORDS := {
 const SUPPLY_SHORT_MATERIAL_WORDS := "the stands regrow too little"
 const STATE_HOLDING_FORMAT := "Holding — no hands to refill (%d wanted)"
 const STATE_SLOW_FORMAT := "Refilling slowly — %s short"
+## WHAT HOLDS A REFILL UP (`limit` on the wire): "" nothing named, "hands" the band is short of workers,
+## "kit" the idle hands would lack the item in `limit_item`, "land" the order's sites cannot give more.
+const LIMIT_KEY := "limit"
+const LIMIT_ITEM_KEY := "limit_item"
+const LAND_GIVES_KEY := "land_gives"
+const LIMIT_NONE := ""
+const LIMIT_HANDS := "hands"
+const LIMIT_KIT := "kit"
+const LIMIT_LAND := "land"
+const STATE_HOLDING_BARE := "Holding"
+const STATE_SLOW_BARE := "Refilling slowly"
+const STATE_HOLDING_KIT_FORMAT := "Holding — short %s to refill"
+const STATE_SLOW_KIT_FORMAT := "Refilling slowly — short %s"
+## `Holding — the patches near camp give 4.2 a turn at most` / `... give too little` (no figure on the wire).
+const STATE_HOLDING_LAND_FORMAT := "Holding — %s"
+const STATE_SLOW_LAND_FORMAT := "Refilling slowly — %s"
+const LAND_GIVES_FORMAT := "the %s near camp give %.1f a turn at most"
+const LAND_GIVES_NOTHING_FORMAT := "the %s near camp give too little"
+## What the order's sites are called: food and fodder have patches, a material has stands.
+const LAND_SITE_WORDS := {KIND_FOOD: "patches", KIND_FODDER: "patches"}
+const LAND_SITE_MATERIAL_WORDS := "stands"
+const LIMIT_TIP_HANDS := "The band has no more hands to send."
+const LIMIT_TIP_KIT_FORMAT := "Hands are free, but the band has no more %s to give them."
+const LIMIT_TIP_LAND := "More hands would not bring in more: the sites in reach give no more than this."
 const STATE_AT_TARGET := "At target"
 const STATE_REFILL_ETA_FORMAT := "Refilling · back to %s in ≈%s"
 const STATE_REFILL_FORMAT := "Refilling · back to %s"
@@ -402,12 +426,14 @@ static func kit_items_text(short: Dictionary) -> String:
 
 ## **THE ORDER LINE'S KIT CLAUSE** from `entries` (`{name, short}` per chief row of the order):
 ## `{clause: "· short 3 hoes", tip: one line per short row}`, or `{}` where nothing is short.
-static func kit_clause(entries: Array) -> Dictionary:
+## `skip_item` (a lower-cased roster name) is left out: the state line names it already.
+static func kit_clause(entries: Array, skip_item: String = "") -> Dictionary:
     var total: Dictionary = {}
     var lines: Array[String] = []
     for entry_variant in entries:
         var entry: Dictionary = entry_variant
-        var short: Dictionary = entry.get("short", {})
+        var short: Dictionary = (entry.get("short", {}) as Dictionary).duplicate()
+        short.erase(skip_item)   # the state line already names this one
         if short.is_empty():
             continue
         for item in short:
@@ -494,7 +520,7 @@ static func is_falling(order: Dictionary) -> bool:
 ## 4. a refill wanted with no refill heads: amber Holding;
 ## 5. on hand has reached the target: At target;
 ## 6. else green Refilling.
-static func state_of(order: Dictionary) -> Dictionary:
+static func state_of(order: Dictionary, item_names: Dictionary = {}) -> Dictionary:
     var kind := String(order.get("kind", ""))
     var draw := float(order.get("draw", 0.0))
     var sustainable := float(order.get("sustainable", 0.0))
@@ -508,16 +534,61 @@ static func state_of(order: Dictionary) -> Dictionary:
     var wanted := int(order.get("refill_wanted", 0))
     var heads := int(order.get("refill_heads", 0))
     var short_refill := refill_short(order)
-    if short_hold > 0 or (short_refill > 0 and heads > 0):
-        return {"text": STATE_SLOW_FORMAT % hands(short_hold + short_refill), "tone": TONE_WARN}
-    if wanted > 0 and heads == 0:
-        return {"text": STATE_HOLDING_FORMAT % wanted, "tone": TONE_WARN}
+    var holding := wanted > 0 and heads == 0 and short_hold == 0
+    if short_hold > 0 or (short_refill > 0 and heads > 0) or holding:
+        return _refill_short_state(order, kind, item_names, holding, short_hold, short_refill, wanted)
     if float(order.get("on_hand", 0.0)) >= float(order.get("target", 0)):
         return {"text": STATE_AT_TARGET, "tone": TONE_PLAIN}
     var eta := eta_turns(order)
     if eta < 0:
         return {"text": STATE_REFILL_FORMAT % target_text(order), "tone": TONE_OK}
     return {"text": STATE_REFILL_ETA_FORMAT % [target_text(order), turns(eta)], "tone": TONE_OK}
+
+## The amber state of a refill held up, worded by the wire's `limit`. A hand count appears only where the
+## limit IS hands (or a hold crew is short): under "land" `refill_wanted` is already capped at the band.
+static func _refill_short_state(order: Dictionary, kind: String, item_names: Dictionary, holding: bool,
+        short_hold: int, short_refill: int, wanted: int) -> Dictionary:
+    var limit := String(order.get(LIMIT_KEY, LIMIT_NONE))
+    match limit:
+        LIMIT_KIT:
+            var noun := kit_noun(order, item_names, short_refill)
+            if noun != "":
+                return {"text": (STATE_HOLDING_KIT_FORMAT if holding else STATE_SLOW_KIT_FORMAT) % noun,
+                    "tone": TONE_WARN, "tip": LIMIT_TIP_KIT_FORMAT % kit_item_name(order, item_names)}
+        LIMIT_LAND:
+            var gives := float(order.get(LAND_GIVES_KEY, 0.0))
+            var words := String(LAND_SITE_WORDS.get(kind, LAND_SITE_MATERIAL_WORDS))
+            var why := (LAND_GIVES_FORMAT % [words, gives]) if gives > 0.0 else (LAND_GIVES_NOTHING_FORMAT % words)
+            return {"text": (STATE_HOLDING_LAND_FORMAT if holding else STATE_SLOW_LAND_FORMAT) % why,
+                "tone": TONE_WARN, "tip": LIMIT_TIP_LAND}
+        LIMIT_HANDS:
+            var text := (STATE_HOLDING_FORMAT % wanted) if holding \
+                else STATE_SLOW_FORMAT % hands(short_hold + short_refill)
+            return {"text": text, "tone": TONE_WARN, "tip": LIMIT_TIP_HANDS}
+    # Nothing named: a short hold crew is still hands; otherwise there is no shortfall phrase.
+    if short_hold > 0:
+        return {"text": STATE_SLOW_FORMAT % hands(short_hold + short_refill), "tone": TONE_WARN}
+    return {"text": STATE_HOLDING_BARE if holding else STATE_SLOW_BARE, "tone": TONE_WARN}
+
+## The kit item the order is held up on, lower-cased in the roster's words (`""` unless `limit` is "kit").
+static func kit_item_name(order: Dictionary, item_names: Dictionary) -> String:
+    if String(order.get(LIMIT_KEY, LIMIT_NONE)) != LIMIT_KIT:
+        return ""
+    var id := String(order.get(LIMIT_ITEM_KEY, ""))
+    var named := String(item_names.get(id, "")).strip_edges().to_lower()
+    return named if named != "" else id.replace("_", " ")
+
+## `1 sled` / `2 baskets`: the roster names an item as it likes (`Sled`, `Baskets`), so the noun is made to
+## agree with the count.
+static func kit_noun(order: Dictionary, item_names: Dictionary, count: int) -> String:
+    var name := kit_item_name(order, item_names)
+    if name == "":
+        return ""
+    if count == 1 and name.ends_with("s") and not name.ends_with("ss"):
+        name = name.substr(0, name.length() - 1)
+    elif count != 1 and not name.ends_with("s"):
+        name += "s"
+    return KIT_ITEM_FORMAT % [count, name]
 
 ## `Food`, `Food and Wood`, `Food, Stone and Wood`.
 static func join_names(names: Array) -> String:

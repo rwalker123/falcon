@@ -709,6 +709,10 @@ fn a_short_bands_food_keep_up_crew_is_filled_before_a_stone_orders_kitted_refill
     // the sleds' kitted refill would take.
     let working = stone_wanted + wanted + 2;
     app.world.get_mut::<PopulationCohort>(band).unwrap().working = scalar_from_f32(working as f32);
+    // Twice: the chief's food budget deducts the dig rows' LAST staffing, and the first restaff on
+    // the smaller crew still reads the one the plenty of hands gave them (the stone order's refill
+    // now spreads over the stock above the stand's floor, so that last crew is a large one).
+    core_sim::staffing::restaff_band(&mut app.world, band);
     core_sim::staffing::restaff_band(&mut app.world, band);
     let (held, wanted) = published_hold(&mut app, FOOD);
     assert_eq!(
@@ -780,4 +784,96 @@ fn a_chief_lists_only_as_many_sources_as_his_hands_cover_so_the_best_one_gets_a_
         wanted >= spread_wanted.min(FEW_HANDS as u32),
         "the order still asks for the full want: {wanted}"
     );
+}
+
+/// The `bandOrders` row for `kind` as the capture publishes it, through the encoded frame.
+fn published_order_state(app: &mut App, kind: &str) -> sim_schema::BandOrderState {
+    core_sim::recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<core_sim::SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let decoded = sim_schema::decode_snapshot_flatbuffer(bytes.as_ref()).expect("a valid frame");
+    decoded
+        .populations
+        .iter()
+        .flat_map(|cohort| cohort.band_orders.iter())
+        .find(|order| order.kind == kind)
+        .cloned()
+        .unwrap_or_else(|| panic!("no {kind} order on the wire"))
+}
+
+/// **A FULL PATCH IS ASKED FOR ITS STOCK ABOVE THE FLOOR, NOT ONLY ITS REGROWTH**: what every patch
+/// near camp can be asked (the order's reach) is above what they regrow at the floor (the published
+/// `sustainable`, which keeps meaning regrowth only), and a want between the two is not land-bound.
+#[test]
+fn a_full_patch_above_its_floor_is_asked_for_more_than_its_regrowth() {
+    let (mut app, band) = world();
+    set_target(&mut app, band, FOOD, 100_000);
+    set_larder(&mut app, band, NEED);
+    let (regrowth, asked) = {
+        let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+        (
+            allocation.keep_sustainable[FOOD],
+            allocation.keep_reach[FOOD]
+                .gives
+                .expect("food sources are bounded"),
+        )
+    };
+    assert!(
+        asked > regrowth * 1.2,
+        "**LIVENESS**: the stock above the floor adds to what the patches can be asked: {asked} vs {regrowth}"
+    );
+
+    // A want between what the patches regrow and what they can be asked: refill over ten turns.
+    let between = (regrowth + asked) / 2.0;
+    let target = ((between - NEED) * 10.0 / NEED).ceil() as u32 + 1;
+    set_target(&mut app, band, FOOD, target);
+    set_larder(&mut app, band, NEED);
+    let reach = app.world.get::<LaborAllocation>(band).unwrap().keep_reach[FOOD];
+    assert!(
+        reach.want > regrowth,
+        "**LIVENESS**: the want is past the regrowth: {} vs {regrowth}",
+        reach.want
+    );
+    let order = published_order_state(&mut app, FOOD);
+    assert_ne!(
+        order.limit, "land",
+        "the patches can be asked for the want, so the land is not what holds it up"
+    );
+    assert!(
+        (order.sustainable - regrowth).abs() < 1e-3,
+        "sustainable stays regrowth only"
+    );
+}
+
+/// **THIN LAND IS SAID TO BE THIN**: a want far past what every patch near camp can be asked
+/// publishes `limit = "land"`, never more hands wanted than the band has, and what the sites give.
+#[test]
+fn a_want_past_what_the_land_gives_publishes_land_capped_at_the_pool() {
+    let (mut app, band) = world();
+    set_target(&mut app, band, FOOD, 1_000_000);
+    set_larder_with_hands(&mut app, band, NEED, FEW_HANDS);
+    let order = published_order_state(&mut app, FOOD);
+    let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+    let reach = allocation.keep_reach[FOOD];
+    assert_eq!(order.limit, "land");
+    assert!(
+        order.refill_wanted <= allocation.order_pool,
+        "the hands wanted ({}) never exceed the band's staffable pool ({})",
+        order.refill_wanted,
+        allocation.order_pool
+    );
+    assert!(order.refill_wanted > 0, "**LIVENESS**: hands are wanted");
+    let gives = reach.gives.expect("food sources are bounded");
+    assert!(gives > 0.0, "**LIVENESS**: the land gives something");
+    assert!(
+        (order.land_gives - gives).abs() < 1e-3,
+        "land_gives is the sum of the sites' caps: {} vs {gives}",
+        order.land_gives
+    );
+    assert!(reach.want > gives, "the want is past what the land gives");
 }

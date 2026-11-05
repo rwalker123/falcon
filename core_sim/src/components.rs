@@ -6154,6 +6154,17 @@ pub struct BandOrder {
     pub owner: OrderOwner,
 }
 
+/// **WHAT AN ORDER'S SITES CAN GIVE, AGAINST WHAT IT WANTS** (per turn, in the order's units): `gives`
+/// is the sum of every site the chief may work, each at its cap (regrowth at the floor plus its stock
+/// above the floor over the refill turns), `None` when a deposit that never renews is among them (it
+/// gives without bound); `want` is the order's want net of what the player's own rows bring in.
+/// `gives < want` means even every hand could not cover the order from the land near camp.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct KeepReach {
+    pub gives: Option<f32>,
+    pub want: f32,
+}
+
 /// **ONE SITE'S SHARE OF A CHIEF'S ORDER** (#860): what the managing pass
 /// (`keep_on_hand::manage_dig_rows`) set aside for the row on `tile` this turn - `take` is the per-turn
 /// take the row is staffed for (its part of the want, at most what the site gives at the order's floor
@@ -6500,6 +6511,12 @@ pub struct LaborAllocation {
     /// more. The order line adds it to the wanted refill crew so "N hands short" reads the whole
     /// want. Published beside the order; derived, outside equality.
     pub keep_unlisted_heads: std::collections::BTreeMap<String, u32>,
+    /// **WHAT THE ORDER'S CHIEF-AVAILABLE SITES CAN GIVE A TURN AGAINST WHAT IT WANTS**, per kind - see
+    /// [`KeepReach`]. Published beside the order as its `limit`; derived, outside equality.
+    pub keep_reach: std::collections::BTreeMap<String, KeepReach>,
+    /// **THE HANDS THE SIM MAY STAFF** (`staffing::staffable_pool`) as the last managing pass read
+    /// them - the ceiling on any one order's hands wanted. Derived, outside equality.
+    pub order_pool: u32,
     /// **WHERE THE GAME PICKED TO DIG**, per mined material - the best-ranked site this turn's
     /// management found, whether or not a row stands on it. Published beside the order; derived
     /// telemetry outside equality.

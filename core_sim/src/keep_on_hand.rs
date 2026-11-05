@@ -322,6 +322,11 @@ struct SiteRank {
     /// What the site gives a turn at that floor without drawing it down - unbounded for a deposit
     /// that never regrows.
     sustainable: f32,
+    /// The most the chief may ask of the site a turn: [`Self::sustainable`] plus the stock standing
+    /// above the site's floor spread over `keep_on_hand_refill_turns`. The chief never draws the site
+    /// below its floor, so this is never more than the stock above it. Unbounded for a deposit that
+    /// never regrows.
+    cap: f32,
 }
 
 impl SiteRank {
@@ -382,26 +387,38 @@ fn rank_site(inputs: &DigSiteInputs<'_>, tile: UVec2, material: &str) -> Option<
         })
         .fold(NO_DEPOSIT_GEAR, f32::max);
     let floor = dig_floor(ground_rate);
-    let sustainable = if ground_rate > NEVER_RENEWS {
+    let (sustainable, cap) = if ground_rate > NEVER_RENEWS {
         let rate = ground_rate * payoff.regrowth_multiplier;
         let floor_stock =
             crate::extraction::deposit_effective_floor(capacity, ground_rate, &payoff, floor);
-        (crate::extraction::deposit_regrowth(
+        let sustainable = (crate::extraction::deposit_regrowth(
             floor_stock,
             capacity,
             rate,
             sources.extraction.seed_fraction,
         ) - floor_stock)
-            .max(NO_TAKE)
+            .max(NO_TAKE);
+        let above_floor = (working.stock - floor_stock).max(NO_TAKE);
+        let refill = sources.labor.keep_on_hand_refill_turns as f32;
+        (sustainable, sustainable + above_floor / refill)
     } else {
-        UNBOUNDED_SITE
+        (UNBOUNDED_SITE, UNBOUNDED_SITE)
+    };
+    // A tile holds at most `tile_worker_cap` hands, so no stand can be asked for more than a full
+    // crew takes.
+    let per_hand = payoff.yield_per_worker_turn + best_kit;
+    let cap = if cap.is_finite() {
+        cap.min(per_hand * sources.labor.tile_worker_cap as f32)
+    } else {
+        cap
     };
     Some(SiteRank {
         tile,
-        per_hand: payoff.yield_per_worker_turn + best_kit,
+        per_hand,
         distance: inputs.camp.map_or(0, |camp| camp.distance_to(tile)),
         floor,
         sustainable,
+        cap,
     })
 }
 
@@ -458,6 +475,7 @@ pub fn manage_dig_rows(
     allocation.keep_shares.clear();
     allocation.keep_sustainable.clear();
     allocation.keep_unlisted_heads.clear();
+    allocation.keep_reach.clear();
     if !has_leader {
         return;
     }
@@ -590,7 +608,7 @@ pub fn manage_dig_rows(
             if !set.is_empty() && want_left <= NO_TAKE {
                 break;
             }
-            let take = site.sustainable.min(want_left);
+            let take = site.cap.min(want_left);
             let hold = take.min(draw_left);
             allocation.keep_shares.push((
                 material.clone(),
@@ -606,6 +624,14 @@ pub fn manage_dig_rows(
             set.push(*site);
         }
         let unbounded = ranked.iter().any(|site| !site.sustainable.is_finite());
+        allocation.keep_reach.insert(
+            material.clone(),
+            crate::components::KeepReach {
+                gives: (!ranked.iter().any(|site| !site.cap.is_finite()))
+                    .then(|| ranked.iter().map(|site| site.cap).sum()),
+                want,
+            },
+        );
         let sustainable = if unbounded {
             gross_want.max(draw)
         } else {

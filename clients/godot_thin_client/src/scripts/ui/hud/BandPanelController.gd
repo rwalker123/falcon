@@ -2094,7 +2094,8 @@ func _orders_items(band: Dictionary, models: Array, extract_models: Array) -> Di
                 _:
                     pair[1].append(model)
     var items: Array = []
-    var group := BandOrdersView.build_group(band, _orders, rows_by_kind, also_by_kind, kit_by_kind)
+    var group := BandOrdersView.build_group(band, _orders, rows_by_kind, also_by_kind, kit_by_kind,
+        _item_display_names)
     items.append({WORK_ITEM_NODE: group,
         WORK_ITEM_HEIGHT: group.get_combined_minimum_size().y, WORK_ITEM_KEEP: false})
     var by_products := BandOrdersView.by_product_lines(band)

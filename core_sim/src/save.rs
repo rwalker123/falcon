@@ -157,7 +157,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 60 | Mined materials are kept on hand (#874): `LaborAllocation` gained `keep_on_hand` (the band's per-material target and priority), `last_road_material_bill`, `last_build_material_draw` (two seams of the band's material draw, read by next turn's staffing) and `last_keep_site`; it rides `BandRecord`, so a version-59 blob does not decode |
 /// | 61 | Band orders (#860): `LaborAllocation::keep_on_hand` and `keep_owned` are replaced by `orders` (per kind id, a `BandOrder`: target, priority and `OrderOwner` Chief or Player) and gained `unannounced_takeover` (the kinds a chief's arrival took over that the feed has not said yet); it rides `BandRecord`, so a version-60 blob does not decode |
 /// | 62 | Materials are ordered stand by stand (#860): a dig row joins `LaborAllocation::order_rows` (key `d:<material>:<x>,<y>`), and a chief-owned material's chief rows are the ones listed there; a version-61 blob read its dig rows as the chief's by ownership alone, so it does not decode |
-pub const SAVE_FORMAT_VERSION: u32 = 62;
+/// | 63 | Band orders publish what holds them up (#860): `LaborAllocation` gained `keep_reach` (per order kind, what its chief-available sites can give a turn against its want) and `order_pool` (the hands the sim may staff, as the last managing pass read them); a version-62 blob does not decode |
+pub const SAVE_FORMAT_VERSION: u32 = 63;
 
 /// gzip level for the payload document.
 ///

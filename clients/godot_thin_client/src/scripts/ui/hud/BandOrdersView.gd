@@ -103,7 +103,8 @@ static func _group_header(band: Dictionary) -> Control:
     return row
 
 static func build_group(band: Dictionary, controller: BandOrdersController,
-        rows_by_kind: Dictionary, also_by_kind: Dictionary, kit_by_kind: Dictionary = {}) -> VBoxContainer:
+        rows_by_kind: Dictionary, also_by_kind: Dictionary, kit_by_kind: Dictionary = {},
+        item_names: Dictionary = {}) -> VBoxContainer:
     var orders := HudOrdersVocab.shown_orders(band)
     var group := VBoxContainer.new()
     group.set_meta(HudOrdersVocab.ORDER_GROUP_META, true)
@@ -122,7 +123,8 @@ static func build_group(band: Dictionary, controller: BandOrdersController,
         var kind := String(order.get("kind", ""))
         var is_open := controller.is_open(band, kind)
         column.add_child(_order_line(band, order, controller, is_open,
-            HudOrdersVocab.kit_clause(kit_by_kind.get(kind, []))))
+            HudOrdersVocab.kit_clause(kit_by_kind.get(kind, []), HudOrdersVocab.kit_item_name(order, item_names)),
+            item_names))
         if not is_open:
             continue
         var staffed: Array = []
@@ -192,7 +194,7 @@ static func _reserve_line(band: Dictionary, kind: String, count: int, is_open: b
     return line
 
 static func _order_line(band: Dictionary, order: Dictionary, controller: BandOrdersController,
-        is_open: bool, kit: Dictionary = {}) -> Control:
+        is_open: bool, kit: Dictionary = {}, item_names: Dictionary = {}) -> Control:
     var kind := String(order.get("kind", ""))
     var released := not HudOrdersVocab.is_chief_owned(order)
     var line := HBoxContainer.new()
@@ -248,9 +250,10 @@ static func _order_line(band: Dictionary, order: Dictionary, controller: BandOrd
         open_released.set_meta(HudOrdersVocab.ORDER_OPEN_META, kind)
         line.add_child(open_released)
         return line
-    var state := HudOrdersVocab.state_of(order)
+    var state := HudOrdersVocab.state_of(order, item_names)
     var state_label := text(String(state["text"]), HudOrdersVocab.STATE_FONT_SIZE,
         HudOrdersVocab.tone_color(state["tone"]), true)
+    state_label.tooltip_text = String(state.get("tip", ""))
     state_label.set_meta(HudOrdersVocab.ORDER_STATE_META, String(state["text"]))
     if kit.is_empty():
         middle.add_child(state_label)
