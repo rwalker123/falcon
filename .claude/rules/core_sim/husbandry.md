@@ -449,7 +449,7 @@ bands (`extinction_floor < collapse_fraction < stressed_fraction < 1`) in all th
 `0.6` of that (a Wild Boar herd's pastoral bill is ~0.94 work, one keeper, where it was 1.56 and two).
 The pastoral `0.6` is a chosen playtest dial: at `1.0` a tamed herd's keeping cost more hands than
 taming bought back, so three hunters on a tamed Wild Boar paid less than on the wild herd
-(1.26 against 1.48 food a turn with spears). `LadderConfig::validate` only asks that a higher rung
+(1.26 against 1.48 food a turn with spears, before the boar's `pastoral_resistance` override). `LadderConfig::validate` only asks that a higher rung
 never cost less to hold, so the pen's `1.0` above the pastoral `0.6` is accepted
 (`every_species_asks_for_the_keepers_its_rung_rate_names` pins `ceil(load × rate)` per species and
 rung).
@@ -1322,7 +1322,7 @@ did. Measured, no global pair lifts both halves without inflating the first:
 
 ### The shipped allocation
 
-Globals stay at `engage 2.0` / `resistance 1.0` (the identity), and eight species carry a row:
+Globals stay at `engage 2.0` / `resistance 1.0` (the identity), and nine species carry a row:
 
 | species | override | why |
 |---|---|---|
@@ -1330,6 +1330,7 @@ Globals stay at `engage 2.0` / `resistance 1.0` (the identity), and eight specie
 | `wild_sheep`, `crag_goat` | resistance `0.5` | the **first herded animals** (~11,000 BP) because they are docile, flock-following and small — a tame flock resists handling *less* than a tame aurochs, not more. They inherited the global `1.0` before, which ranked them tougher to handle than the aurochs |
 | `marsh_grazer`, `steppe_runner` | resistance `0.75` | fight-bound at `durability 60`, the toughest nomads — **and pastoral is their top rung** (`husbandry_ceiling: pastoral`), so it has to pay |
 | `aurochs` | engage `4.0` **and** resistance `0.75` | the only species that needed **both** arms: `engage_rate 0.17` is the lowest of any tameable so `×2` barely clears one animal, and `durability 150` / `defense 6` is the toughest body on the roster, so unlocking reach alone just handed it to the fight |
+| `boar` | resistance `0.75` | fight-bound on the early herd route: at the global `1.0` the doubled reach went to the fight, and three spear-armed hunters on a tamed herd paid `1.53` food a turn against the wild herd's `1.48`. At `0.75` they pay `2.07` (`food_economy_table` Section G). A tamed boar is the pig, so it handles easier than the wild animal. Bare hands still land nothing (attack `1.0` against defense `1.5`) |
 
 **Everything else uses the global**, which is what keeps the roster readable: only exceptions carry a
 row. It is deliberately **explicit per animal** rather than a body-mass formula a reader would have to
