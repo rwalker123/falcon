@@ -446,9 +446,12 @@ func run(harness) -> void:
 		# `HudComposeVocab.LOCAL_OVERDRAW_NOTES` — while the card's one-line clause states the bare
 		# adjective (`HudDepositVocab.over_cut_word`). Two registers of one idea, and the deposit
 		# readout takes the register its two neighbours take because it is now the same widget.
-		h._assert_hud("…and a renewing seam cut over its renewal wears the SHEET's overdraw note (%s)"
+		# **AT THE DEFAULT 50% DIAL THE CREW STOPS AT THE STOCK WHERE REGROWTH PEAKS**, so it can never
+		# draw the stand below it and the sheet states no overdraw (`HudDepositVocab.can_reach_below_peak`).
+		# `workings_floor_stripped` below drags the dial under the peak and asserts the note arrives.
+		h._assert_hud("…and a crew held at the default dial reaches no lower than the peak: no overdraw note (%s)"
 				% Readout.yields_text(sheet),
-			Readout.yields_text(sheet).contains(
+			not Readout.yields_text(sheet).contains(
 				HudComposeVocab.LOCAL_EXTRACT_OVERDRAW_NOTE.to_upper()))
 		# ⛔ **A CHARTED SHEET STATES NO VERDICT SENTENCE** (issue #650). The chart above the take draws
 		# whether this crew gets the stand down to the floor, so a sentence under it said the same
@@ -1353,6 +1356,7 @@ func run(harness) -> void:
 		DoorQ.all_metas(h._hud).is_empty())
 
 	await _deposit_kit_states()
+	await _surface_overdraw_states()
 
 # ---- THE TAKE KITS (issue #663) ---------------------------------------------------------------
 #
@@ -2829,5 +2833,60 @@ func _assert_every_door_opens_its_sheet() -> void:
 	# the whole card's door count is exactly its door rows: forage + wood + stone + two roads
 	h._assert_hud("the card carries exactly five doors (%d)" % DoorQ.all_metas(h._hud).size(),
 		DoorQ.all_metas(h._hud).size() == 5)
+	h._show_tile(_workings_tile([]))
+	await h._settle()
+
+# ---- "overdrawing" ONLY WHERE THE DIG CAN OVERDRAW -------------------------------------------------
+#
+# A renewing seam whose rung reaches only its top (`extraction:gathering`, 15% of the body) can never be
+# drawn below the half-full stock where regrowth peaks, so taking more than the MSY figure from it is
+# not overdrawing. The same take on a deep rung still is. `HudDepositVocab.overdraws` is the one
+# predicate every deposit surface asks.
+
+const SURFACE_CAPACITY := 25.0
+const SURFACE_STOCK := 22.67
+const SURFACE_SUSTAINABLE := 0.19
+const SURFACE_ACTUAL := 0.8
+
+func _surface_stone() -> Dictionary:
+	var working := _scatter_working()
+	working["material"] = "stone"
+	working["capacity"] = SURFACE_CAPACITY
+	working["stock"] = SURFACE_STOCK
+	working["reachable"] = SURFACE_STOCK - SURFACE_CAPACITY * GATHERING_RUNG_FLOOR
+	working["sustainable_take"] = SURFACE_SUSTAINABLE
+	working["actual_take"] = SURFACE_ACTUAL
+	working["regrowth_samples"] = _deposit_regrowth_samples(SURFACE_CAPACITY, SCATTER_REGROWTH)
+	return working
+
+## The same renewing stone on a rung that reaches deep (a quarry-like body): it CAN be drawn down to the peak.
+func _deep_renewing_stone() -> Dictionary:
+	var working := _surface_stone()
+	working["rung_floor_fraction"] = QUARRY_RUNG_FLOOR
+	working["stock"] = SURFACE_CAPACITY * 0.6
+	return working
+
+func _surface_overdraw_states() -> void:
+	var surface := _surface_stone()
+	var deep := _deep_renewing_stone()
+	h._assert_hud("surface stone: it pays out more than its MSY figure", HudDepositVocab.actual_take_of(surface)
+		> HudDepositVocab.sustainable_take_of(surface))
+	h._assert_hud("…but the gathering rung cannot reach the stock where regrowth peaks, so it does not overdraw",
+		not HudDepositVocab.overdraws(surface))
+	h._assert_hud("…and neither the supply clause nor the land value says overdrawing",
+		not HudDepositVocab.supply_clause(surface).contains(HudDepositVocab.over_cut_word())
+			and not HudDepositVocab.deposit_land_value(surface, _ladder()).contains(HudDepositVocab.over_cut_word()))
+	h._assert_hud("a deep renewing rung taking the same amount still overdraws",
+		HudDepositVocab.overdraws(deep)
+			and HudDepositVocab.supply_clause(deep).contains(HudDepositVocab.over_cut_word())
+			and HudDepositVocab.deposit_land_value(deep, _ladder()).contains(HudDepositVocab.over_cut_word()))
+	h._assert_hud("…and a row floor above the peak stops that dig overdrawing too",
+		not HudDepositVocab.overdraws(deep, 0.9) and HudDepositVocab.overdraws(deep, 0.1))
+	h._show_tile(_workings_tile([surface]))
+	await h._settle()
+	await h._save("workings_surface_no_overdraw")
+	h._show_tile(_workings_tile([deep]))
+	await h._settle()
+	await h._save("workings_deep_overdraw")
 	h._show_tile(_workings_tile([]))
 	await h._settle()

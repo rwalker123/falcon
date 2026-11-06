@@ -1137,7 +1137,7 @@ enum RungAsked<'a> {
 /// **WHAT THE ASKED CREW'S NEXT-TURN TAKE PAYS BESIDES FOOD** — the fodder and the per-material
 /// vector of the same take, filled by [`answer_work_party_forecast`] on a forage ask and read by the
 /// crew curve's next-rung half. Fodder is the **credited** figure: `0` where the sim would refuse
-/// it (no Foddering and no fodder-bearing commitment), exactly as the labor arm's gate does.
+/// it, exactly as the labor arm's credit does.
 #[derive(Debug, Clone, Default, PartialEq)]
 struct TakeAccounts {
     fodder: f32,
@@ -1626,20 +1626,15 @@ fn answer_work_party_forecast(
             take,
         )
         .map_or(NOTHING_TAKEN_ONCE_RAISED, |turn| turn.biomass);
-        let fodder_credited = forage_fodder_credited(world, patch, &flora, faction, &ladder);
-        accounts.fodder = if fodder_credited {
-            crate::forage::tended_take_fodder(
-                taken,
-                patch,
-                &composition,
-                &flora,
-                &labor.forage,
-                output_multiplier,
-                take,
-            )
-        } else {
-            NOTHING_TAKEN_ONCE_RAISED
-        };
+        accounts.fodder = crate::forage::tended_take_fodder(
+            taken,
+            patch,
+            &composition,
+            &flora,
+            &labor.forage,
+            output_multiplier,
+            take,
+        );
         let mut by_material: std::collections::BTreeMap<String, f32> = Default::default();
         for row in crate::forage::patch_material_yields_taking(
             patch,
@@ -1724,7 +1719,6 @@ fn answer_work_party_forecast(
                 keep_hands,
                 horizon,
                 &demographics.keeping,
-                forage_fodder_credited(world, patch, &flora, faction, &ladder),
             )
         }
         Asked::Extract {
@@ -1770,24 +1764,6 @@ fn answer_work_party_forecast(
         take_next_turn,
         keep_hands,
     })
-}
-
-/// **Does this faction bank a patch's fodder?** — the labor arm's credit gate: a commitment to a
-/// fodder-bearing crop, or knowing Foddering.
-pub fn forage_fodder_credited(
-    world: &World,
-    patch: &crate::forage::ForagePatch,
-    flora: &crate::flora_config::FloraConfig,
-    faction: FactionId,
-    ladder: &crate::intensification::LadderConfig,
-) -> bool {
-    crate::systems::committed_to_a_fodder_crop(patch.species.as_deref(), flora)
-        || crate::intensification::knows(
-            world.resource::<crate::DiscoveryProgressLedger>(),
-            faction,
-            crate::FODDERING_DISCOVERY_ID,
-            ladder.knowledge.completion_threshold,
-        )
 }
 
 /// One turn of projection — the next turn's take ([`WorkPartyForecastReply::take_next_turn`]).

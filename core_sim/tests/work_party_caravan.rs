@@ -2240,9 +2240,6 @@ fn a_far_hay_row_publishes_smoothed_fodder_and_materials_rates_home() {
             sites.set_sites(entries);
         }
     }
-    app.world
-        .resource_mut::<core_sim::DiscoveryProgressLedger>()
-        .add_progress(FACTION, core_sim::FODDERING_DISCOVERY_ID, scalar_one());
     spawn_band_camped_at(
         &mut app,
         camp,
@@ -3508,10 +3505,21 @@ fn published_wood_row_at(app: &App, distance: u32) -> (u32, u32, Vec<(String, f3
 
 /// A pool of `pool` hands, gear for everybody, and wood rows (`(distance, priority, max)`).
 fn wood_rows_world(pool: u32, rows: &[(u32, SourcePriority, Option<u32>)]) -> App {
+    wood_rows_world_with(pool, rows, pool * 2, false)
+}
+
+/// [`wood_rows_world`] with `sleds` sleds on the shelf (and as many axes), and, when `chief`, every
+/// row listed under a wood order - the chief's rows rather than the player's.
+fn wood_rows_world_with(
+    pool: u32,
+    rows: &[(u32, SourcePriority, Option<u32>)],
+    sleds: u32,
+    chief: bool,
+) -> App {
     let (mut app, band) = world_extracting_at(rows[0].0, Some(WOODCUTTING_KIT));
     let mut gear = BandEquipment::default();
-    gear.stock("sled", pool * 2, "plain", None);
-    gear.stock("axe", pool * 2, "plain", None);
+    gear.stock("sled", sleds, "plain", None);
+    gear.stock("axe", sleds, "plain", None);
     app.world.entity_mut(band).insert(gear);
     app.world
         .get_mut::<PopulationCohort>(band)
@@ -3550,6 +3558,16 @@ fn wood_rows_world(pool: u32, rows: &[(u32, SourcePriority, Option<u32>)]) -> Ap
             });
         }
         allocation.last_yields = vec![core_sim::SourceYield::ZERO; allocation.assignments.len()];
+        if chief {
+            let keys: Vec<String> = allocation
+                .assignments
+                .iter()
+                .filter_map(|row| core_sim::keep_on_hand::source_key(&row.target))
+                .collect();
+            for key in keys {
+                allocation.order_rows.insert(key, WOOD.to_string());
+            }
+        }
     }
     core_sim::staffing::restaff_band(&mut app.world, band);
     resolve_a_turn(&mut app);
@@ -3635,5 +3653,166 @@ fn a_row_starved_of_hands_in_a_band_with_no_sleds_is_kit_short() {
     assert!(
         sled.1 > 0.0 && sled.2.abs() < 1e-4,
         "required, none filled, got {sled:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// A CHIEF'S RESERVE SITE HE CANNOT STAFF ASKS FOR NO KIT
+// ---------------------------------------------------------------------------------------------
+
+/// Rows a chief lists, of which the few hands staff only some.
+const LISTED_ROWS: u32 = 5;
+
+/// Every wood row's `(distance, workers, sled required)` and the sleds the craft suggestions ask
+/// for, read off the ENCODED frame.
+fn encoded_wood_view(app: &App) -> (Vec<(u32, u32, f32)>, u32) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == BAND)
+        .expect("the band is on the wire");
+    let rows = cohort
+        .laborAssignments()
+        .into_iter()
+        .flatten()
+        .map(|row| {
+            let sled = row
+                .kitToe()
+                .into_iter()
+                .flatten()
+                .filter(|line| line.itemId() == Some("sled"))
+                .map(|line| line.required())
+                .sum();
+            (row.targetX() - CAMP.x, row.workers(), sled)
+        })
+        .collect();
+    let suggested = cohort
+        .craftSuggestions()
+        .into_iter()
+        .flatten()
+        .filter(|row| row.itemId() == Some("sled"))
+        .map(|row| row.count())
+        .sum();
+    (rows, suggested)
+}
+
+fn five_wood_rows() -> Vec<(u32, SourcePriority, Option<u32>)> {
+    (1..=LISTED_ROWS)
+        .map(|distance| (distance, SourcePriority::Normal, None))
+        .collect()
+}
+
+/// A chief's unstaffed rows, with no idle hand, ask for nothing: the band's sled requirement is
+/// the staffed hands alone, and no sled is suggested beyond them. The same rows the PLAYER made
+/// each ask for one head.
+#[test]
+fn a_chiefs_unstaffed_reserve_rows_with_no_idle_hand_ask_for_no_kit() {
+    let no_sleds = 0;
+    let chief = wood_rows_world_with(POOL_OF_FEW, &five_wood_rows(), no_sleds, true);
+    let (rows, suggested) = encoded_wood_view(&chief);
+    let staffed: u32 = rows.iter().map(|(_, workers, _)| workers).sum();
+    let unstaffed: Vec<_> = rows
+        .iter()
+        .filter(|(_, workers, _)| *workers == 0)
+        .collect();
+    assert!(
+        staffed > 0 && !unstaffed.is_empty(),
+        "liveness: some rows are staffed and some are not: {rows:?}"
+    );
+    assert!(
+        unstaffed.iter().all(|(_, _, sled)| *sled < 1e-4),
+        "an unstaffed chief row asks for no sled with no idle hand: {rows:?}"
+    );
+    let required: f32 = rows.iter().map(|(_, _, sled)| sled).sum();
+    assert!(
+        required <= staffed as f32 + 1e-4,
+        "the sleds required ({required}) are the staffed hands' ({staffed}): {rows:?}"
+    );
+    assert!(
+        suggested as f32 <= staffed as f32 + 1e-4,
+        "no sled is suggested beyond the staffed hands: {suggested} vs {staffed}"
+    );
+
+    // Control: the same rows are the player's, and each unstaffed one asks for one head.
+    let player = wood_rows_world_with(POOL_OF_FEW, &five_wood_rows(), no_sleds, false);
+    let (rows, _) = encoded_wood_view(&player);
+    let unstaffed_asks: Vec<f32> = rows
+        .iter()
+        .filter(|(_, workers, _)| *workers == 0)
+        .map(|(_, _, sled)| *sled)
+        .collect();
+    assert!(
+        !unstaffed_asks.is_empty() && unstaffed_asks.iter().all(|sled| (sled - 1.0).abs() < 1e-4),
+        "a player row nobody staffed still asks for one head's sled: {rows:?}"
+    );
+}
+
+/// Idle hands the staffing left deal one head each to the unstaffed chief rows, in row order -
+/// exactly that many ask; the rest ask nothing.
+#[test]
+fn idle_hands_deal_one_asking_head_each_to_the_unstaffed_chief_rows() {
+    const IDLE: u32 = 2;
+    let mut app = wood_rows_world_with(0, &five_wood_rows(), 0, true);
+    let band = app
+        .world
+        .query::<(Entity, &BandId)>()
+        .iter(&app.world)
+        .find(|(_, id)| id.0 == BAND)
+        .map(|(entity, _)| entity)
+        .expect("the fixture band");
+    // Nobody is staffed (a pool of nothing), every row has a crew that would be useful, and the
+    // band then holds `IDLE` hands the staffing left unused.
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the allocation");
+        for row in allocation.assignments.iter_mut() {
+            row.staffing.useful_crew = ONE_HEAD;
+        }
+    }
+    let asks = |idle: u32| -> Vec<f32> {
+        let allocation = app
+            .world
+            .get::<LaborAllocation>(band)
+            .expect("the allocation")
+            .clone();
+        core_sim::take_claims::with_world_sources(&app.world, FACTION, |sources| {
+            core_sim::take_claims::row_claims_with_idle(
+                sources,
+                &allocation,
+                &BandEquipment::default(),
+                idle,
+            )
+            .asks
+        })
+    };
+    assert!(
+        asks(0).iter().all(|ask| *ask < 1e-4),
+        "no idle hand: no chief row asks: {:?}",
+        asks(0)
+    );
+    let asking: Vec<usize> = asks(IDLE)
+        .iter()
+        .enumerate()
+        .filter(|(_, ask)| **ask > 1e-4)
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(
+        asking,
+        vec![0, 1],
+        "exactly the first {IDLE} rows in staffing order ask one head"
     );
 }

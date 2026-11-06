@@ -68,6 +68,8 @@ const RUNG_FX := preload("res://tools/ui_preview/fixtures_rung.gd")
 const TRADE_TAB_STATES := preload("res://tools/band_panel_trade_tab.gd")
 ## The Family limit row and the split sheet's FAMILY LIMIT block (issue #691), in their own file.
 const FAMILY_LIMIT_STATES := preload("res://tools/band_panel_family_limit.gd")
+## The band orders group on the Work tab (#860), in its own file.
+const BAND_ORDERS_STATES := preload("res://tools/band_panel_orders.gd")
 ## The hex `_band_fixture()` stands on — the tile the map-path state clicks.
 const MAP_PATH_TILE := Vector2i(71, 18)
 ## A grid just large enough to hold MAP_PATH_TILE, and one flat terrain id to fill it with.
@@ -2567,6 +2569,7 @@ func _ready() -> void:
 
 	# The breeding ceiling's Band-tab row and split-sheet block (issue #691), appended last.
 	await FAMILY_LIMIT_STATES.new().run(self)
+	await BAND_ORDERS_STATES.new().run(self)
 
 	# The two rosters under the Work tab's ROADWORK and GROUNDWORK sections, drawn on the Work tab.
 	_panel.set_active_tab(&"work")
@@ -4458,7 +4461,7 @@ func _render_interface_scale_states() -> void:
 	_report_zone_content_extent("band_panel_scale_bottom")
 
 	# LEFT — the other dock in the report. A vertical strip is `PANEL_WIDTH` at every scale, so the
-	# claim here is the containment one: the fixed 380px column and its full-height card must still
+	# claim here is the containment one: the fixed `PANEL_WIDTH` column and its full-height card must still
 	# lie inside a viewport that is now 800px tall.
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
@@ -9079,11 +9082,6 @@ const FACTION_SUB_FLOOR_FRACTION := 0.5
 
 const FACTION_SUB_FLOOR_FODDER := SourceForecast.FODDER_FLOW_MIN * FACTION_SUB_FLOOR_FRACTION
 
-## Foddering LEARNED, for the other half of the dormant claim. The standing faction fixture carries
-## `foddering: 0.07`, so learning the craft is staged by moving one track and putting the fixture
-## back, never by two rosters: the row must stay dim either way, a craft not being an economy.
-const FACTION_FODDERING_LEARNED := 1.0
-
 ## **THE WORDS A FODDER SENTENCE CANNOT AVOID.** The dormant row registers NO hover, and the defect
 ## that is about is block-wide: the stat block is one `RichTextLabel`, so anything the row registered
 ## popped under a cursor resting on Growth, Morale or Food. Asked as words rather than against the two
@@ -9181,7 +9179,7 @@ func _assert_faction_fodder_dormant() -> void:
 		band_dormant and vitals.contains(dormant_needle))
 
 	# **AND IT SAYS NOTHING ELSE — THE DIM DASH IS THE WHOLE STATE.** The row registered two sentences
-	# here, a Foddering lock and a calm *no fodder yet*, and a row's hover on this surface is the
+	# here, a lock and a calm *no fodder yet*, and a row's hover on this surface is the
 	# BLOCK's: one `RichTextLabel`, one `tooltip_text`, `[hint=…]` unparsed by this build. So a
 	# paragraph about hay popped out from under a cursor resting on Growth, Morale or Food. Asserted
 	# on the label the block IS, since that is the only place such a sentence could land.
@@ -9196,23 +9194,6 @@ func _assert_faction_fodder_dormant() -> void:
 	_hud._banddetail.unit_summary_lines(_fodderless_faction_roster()[0], "", band_ctx)
 	_assert_band_panel("band dormant: the Fodder row carries the band wording",
 		String(band_ctx.row_tooltips.get(HudDisclosureVocab.DETAIL_ROW_FODDER, "")) == DetailFormat.FODDER_DORMANT_HOVER_BAND)
-
-	# **AND KNOWING THE CRAFT DOES NOT MAKE AN ECONOMY.** Learn Foddering and the page is still
-	# dormant — nobody keeps a pen — which is the half that catches a page reading the knowledge track
-	# instead of the roster's larders.
-	var learned := _faction_knowledge_fixture()
-	(learned["knowledges"] as Dictionary)[HudFloraVocab.KNOWLEDGE_TRACK_FODDERING] = \
-		FACTION_FODDERING_LEARNED
-	_hud.update_intensification([learned])
-	_push_bands(_fodderless_faction_roster())
-	await _settle()
-	_assert_band_panel("faction dormant: …and the row is dim either way — the craft is not an economy",
-		_faction_vitals_text(_panel._zones.get(BandCityPanel.ZONE_BAND)).contains(dormant_needle))
-	# The standing five-track row goes back before the frame: every claim above this line was made
-	# against it, and the rest of the faction block reads it too.
-	_hud.update_intensification([_faction_knowledge_fixture()])
-	_push_bands(_fodderless_faction_roster())
-	await _settle()
 
 	# **NOW THE LIVE HALF, ON THE OTHER SURFACE.** The dock is detached so the drawer will take a
 	# player band down its own fallback path instead of handing it to the panel; the panel keeps
@@ -18330,9 +18311,10 @@ func _assert_work_row_states_its_materials(state_name: String, row_name: String,
 	# at any width, and the claim beneath restores the floor's reachability.
 	var accounts_width := _accounts_clause_width(accounts)
 	_assert_band_panel(
-		"%s: …and every account renders whole, un-elided (%.0f of the %.0f they need)"
+		"%s: …and every account renders whole, un-elided, or is trimmed with the whole line on its hover (%.0f of the %.0f they need)"
 			% [state_name, accounts.size.x, accounts_width],
-		accounts.size.x + KEYLESS_KEY_WIDTH_TOLERANCE >= accounts_width)
+		accounts.size.x + KEYLESS_KEY_WIDTH_TOLERANCE >= accounts_width
+			or accounts.tooltip_text == accounts.text)
 	# GUARD: **nothing on this line is unreachable.** The floor's only home is line two — the
 	# inspector's sentence is retired and the row's own tooltip carries the floor's ZONE prose rather
 	# than its percentage — so where the trim reaches it the hover has to.
@@ -20313,7 +20295,7 @@ func _render_work_party_spoil_states() -> void:
 	# between packs.
 	var forage_accounts := _work_row_accounts_text(_work_row_labelled(
 		HudWorkVocab.WORK_ROW_PLANT_FORMAT % [FAR_FORAGE_X, FAR_FORAGE_Y]))
-	var want_forage := SourceForecast.yield_components(FAR_FORAGE_RATE_HOME,
+	var want_forage := SourceForecast.yield_components_labelled(FAR_FORAGE_RATE_HOME,
 		FAR_FORAGE_FODDER_RATE_HOME, SourceForecast.YIELD_ACCOUNT_FOOD,
 		[{"material_id": FAR_FORAGE_FIBRE_ID, "amount": FAR_FORAGE_FIBRE_RATE_HOME}])
 	_assert_band_panel("a far forage row prints its HOME fodder and fibre rates — want %s, got %s"
@@ -20321,7 +20303,7 @@ func _render_work_party_spoil_states() -> void:
 		forage_accounts.contains(want_forage))
 	# **AND A FAR HUNT ROW STATES ITS HOME-ARRIVING HIDE** between packs.
 	var hunt_accounts := _work_row_accounts_text(far_row)
-	var want_hunt := SourceForecast.yield_components(PARTY_FAR_RATE, 0.0,
+	var want_hunt := SourceForecast.yield_components_labelled(PARTY_FAR_RATE, 0.0,
 		SourceForecast.YIELD_ACCOUNT_FOOD,
 		[{"material_id": FAR_HUNT_HIDE_ID, "amount": FAR_HUNT_HIDE_RATE_HOME}])
 	_assert_band_panel("a far hunt row prints its HOME hide rate — want %s, got %s"

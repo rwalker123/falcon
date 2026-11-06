@@ -4877,9 +4877,6 @@ fn a_far_hay_row_lands_its_fodder_and_fibre_only_when_a_pack_lands() {
         patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
     }
     declare_gathering_site(&mut app, coord);
-    app.world
-        .resource_mut::<DiscoveryProgressLedger>()
-        .add_progress(FactionId(0), core_sim::FODDERING_DISCOVERY_ID, scalar_one());
     let band = spawn_forager_of(&mut app, camp, coord, None, CREW);
     {
         let mut allocation = app

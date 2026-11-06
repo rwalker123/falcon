@@ -107,11 +107,10 @@ LISTS ARE RETIRED" below. **Plus the investment rung**:
 > `flora_config.json`'s `hay_grass`: no provisions, `fodder_per_biomass 0.20` — published `+0.00` in
 > every compact yield readout while feeding the band's pens every turn. It is filled at the **two** sites that credit the `FODDER` store (the
 > Field arm and the wild/tended gather arm of `advance_labor_allocation`) and nowhere else:
-> - **It is the CREDITED value, never a recomputation**, gate included. The wild credit is gated on
->   *Foddering* at the credit site (`flora.md` → "Wild fodder is gated at the CONSUMER"), so a row
->   that re-derived `tended_take_fodder` would publish hay income to a faction that was paid nothing.
->   Pinned by `forage_basket_reweight::the_published_fodder_is_the_fodder_the_band_was_actually_credited`,
->   which sweeps both sides of the gate.
+> - **It is the CREDITED value, never a recomputation.** A row that re-derived `tended_take_fodder`
+>   would drift from what the store was moved by (`flora.md` → "Fodder is credited on every harvest
+>   that yields it"). Pinned by
+>   `forage_basket_reweight::the_published_fodder_is_the_fodder_the_band_was_actually_credited`.
 > - **It is not food income.** `food_income` stays `Σ actual`; fodder credits the band's `FODDER`
 >   store and never touches the larder.
 > - **There is no `realized_fodder` twin and no `YieldRange` fodder band, deliberately.** Fodder is
@@ -926,18 +925,15 @@ of `foodIncome` / `foodConsumption` / `turnsOfFood`, all in fodder units per tur
 
 | field | what it is | written by |
 |---|---|---|
-| `fodderNeed` | Σ over the pens this band keeps of each pen's own gap — **the gap**, not the gross demand (`graze.md` → "The hay bill is published as the GAP"); ungated by Foddering | `advance_labor_allocation`, accumulated by the corral arm onto `LaborAllocation::last_fodder_need` |
+| `fodderNeed` | Σ over the pens **and tamed herds** this band keeps of each one's own gap — **the gap**, not the gross demand (`graze.md` → "The hay bill is published as the GAP") | `advance_labor_allocation`, accumulated by the corral arm onto `LaborAllocation::last_fodder_need` |
 | `fodderIncome` | the hay this band's fodder Fields **harvested this turn** — `band_fodder_inflow`, which previously reached only the pens' `K_pen` term and never the wire | the same pass, onto `last_fodder_inflow` |
-| `turnsOfFodder` | the runway: `fodderStore ÷ (drain − income − net LOCAL crossings)`, where the **drain** is the need *behind* the Foddering gate and the crossings are the hay that pooled to or from a neighbour standing alongside — a route crossing is an event and is not a term | the capture, through `larder_runway_turns`, off `last_fodder_drain` and `PopulationCohort::last_turn_fodder_transfers.local_net()` |
+| `turnsOfFodder` | the runway: `fodderStore ÷ (drain − income − net LOCAL crossings)`, where the **drain** is what the herds ask of the store and the crossings are the hay that pooled to or from a neighbour standing alongside — a route crossing is an event and is not a term | the capture, through `larder_runway_turns`, off `last_fodder_drain` and `PopulationCohort::last_turn_fodder_transfers.local_net()` |
 
-**⛔ THE RUNWAY COUNTS DOWN THE DRAIN, AND THE DRAIN IS NOT THE NEED.** `settle_pen_hay` zeroes every
-pen's bid without Foddering, so an un-foddered band's store does not move however short its pens are
-— and it *can* hold hay, because the harvest credit lifts on the **commitment** to a fodder crop
-(`patch.species.is_some() || knows(FODDERING)`) while the draw waits on the knowledge. Counted
-against the ungated need, such a band published a runway of a few turns for a store that never
-emptied. So the corral arm sums a second accumulator, `last_fodder_drain`, from the same gap
-*after* the gate, and a band that cannot draw reads the existing **no-drain sentinel** — not a second
-sentinel and not a second phrasing. The **need** is untouched and is what carries the alarm.
+**⛔ THE RUNWAY COUNTS DOWN THE DRAIN, AND THE DRAIN IS NOT THE NEED.** The corral and tamed-herd
+arms sum two accumulators from the same gap: `last_fodder_need` (the alarm) and `last_fodder_drain`
+(what each herd asked of the store), and the runway divides the store by the drain. They coincide
+while every herd's bid is the whole of its gap; a band with no herd to feed reads the existing
+**no-drain sentinel** — not a second sentinel and not a second phrasing.
 
 **⛔ HAY THAT CROSSED BETWEEN BANDS IS A TERM OF THE RATE.** `balance_supply_networks` walks a
 band's whole store and `FODDER` is an ordinary key in it, so linked camps have always equalized their
@@ -978,10 +974,9 @@ drain, a band with no pens at all, and a keeper who cannot feed hay out. It is a
 selects that function's smooth `stock ÷ net drain` arm — a hay Field is a steady harvest into a
 stock, where the food runway walks per-source arrivals because a hunt lands in lumps.
 
-**The income is the RAW harvest, not the Foddering-gated share** stamped onto
-`Herd::fodder_delivery_rate`. What was grown is a fact about the Fields; what a pen may draw is a
-fact about what the faction has learned, and conflating them would tell a band its hay had failed
-when it had merely not yet learned to feed it out.
+**The income is the RAW harvest** of the Fields, not the per-herd share stamped onto
+`Herd::fodder_delivery_rate`; conflating them would tell a band its hay had failed when its herds
+had merely not yet drawn it.
 
 **⛔ THE LEDGER IS CLEARED BEFORE THE PASS'S EARLY EXITS, NOT ONLY WRITTEN AT ITS FOOT.** All three
 accumulators are written after the assignment loop, and a band whose working-age population reaches
@@ -1050,24 +1045,16 @@ capture publishes.
 teaches, sparse in value and never in membership — and one entry on it is a different kind of thing.
 Cultivation / Seed Selection / Herding / Penning / Roadbuilding / Paving are one per **rung
 transition**; a rung waits on each, which is exactly what the roster beside them states as `is_step`.
-**`foddering` (2007) is a capability**: no rung waits on it, the pen rung *teaches* it
-(`intensification_ladder.json`, corral's `earns_knowledge`), and what it unlocks is every fodder seam
-a faction has — the pen's hay draw, the pen's `K` fodder term, and the **wild** forage patch's
-`FODDER` credit in `systems/labor.rs`. The design ruling behind that credit gate is
-`.claude/rules/core_sim/flora.md` → "Wild fodder is gated at the CONSUMER".
+A knowledge that opens no rung (`storage`, the crafts) is a capability: no rung waits on it, which the
+roster beside it states as `is_step: false`. Fodder is not one of them: there is no Foddering knowledge,
+and the wild credit and the pens' and tamed herds' hay draw are ungated.
 
-**It is published because a rate alone cannot answer the question the client is asking.**
-`ForagePatchState.fodderPerBiomass` states what the **land** pays and is deliberately knowledge-blind
-(the gate lives at the credit site, so the rate seam stays commodity-generic). Without the capability
-beside it, a viewer holding a patch row cannot tell a **refused** fodder credit — real hay, no
-Foddering — from an **absent** one, and composes an account the sim will discard. That is issue #485.
-
-> **THE ALL-ZERO SKIP IS OVER THE WHOLE LIST, and `foddering` is why that matters.** The rung gates
+> **THE ALL-ZERO SKIP IS OVER THE WHOLE LIST, and a knowledge no rung waits on is why that matters.** The rung gates
 > chain (you cannot hold Penning without Herding), so a condition over them alone would answer the
-> same in almost every case — but a faction whose only ladder progress is Foddering has no chaining
+> same in almost every case — but a faction whose only ladder progress is such a capability has no chaining
 > gate to be caught by, and skipping it silently loses the row. Walking the list closes that by
 > construction rather than by remembering to list a sixth name. Pinned by
-> `snapshot_intensification_knowledge_reports_foddering_on_its_own`.
+> `snapshot_intensification_knowledge_reports_learned_ladders`.
 
 ⛔ **THE FIVE NAMED FLOAT FIELDS ARE RETIRED** and off the wire. Adding a knowledge meant adding a
 schema field, which is why the route branch's two lessons had nowhere to appear and a client's

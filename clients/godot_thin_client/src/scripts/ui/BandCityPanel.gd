@@ -50,7 +50,9 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 # ---- geometry (canvas-space px) --------------------------------------------
 ## Cross-axis size of the expanded panel when docked L/R. FIXED — it is never fitted to the band
 ## content, so the reserved strip (and therefore the map inset) cannot move when a section grows.
-const PANEL_WIDTH := 380.0
+## 440 gives the Work tab's orders group its crew bars and `↳ Also` lines room beside the scrollbar; it is a
+## SIDE-dock number only -- the wide shell's flanks (`ZONE_BAND_WIDTH`, `ZONE_PARTY_WIDTH`) are their own.
+const PANEL_WIDTH := 440.0
 ## Cross-axis size of the expanded panel when docked T/B. Fixed, so a content edit never moves the
 ## reservation. It is the BODY's budget: `_horizontal_panel_height()` adds whatever the active shell spends
 ## on its own chrome (the narrow shell's tab bar) before clamping to `MAX_WIDE_HEIGHT_FRACTION`, so both
@@ -123,19 +125,16 @@ const PANEL_BORDER_WIDTH := 1.0
 ## What the card's own horizontal chrome costs — the border plus the content margins the card draws
 ## with, i.e. exactly what `_interior_size()` subtracts from `_panel_extent().x`. Named so the shell
 ## threshold (which is tested against the panel's OUTER width) can add it back, and so
-## `ZONE_PARTY_WIDTH` below can state the narrow shell's zone width as a derivation. Declared HERE,
+## the narrow shell's zone width (`PANEL_WIDTH - PANEL_CHROME_H`) is a derivation of it. Declared HERE,
 ## with the two terms it sums, because a `const` may not reference one declared further down.
 const PANEL_CHROME_H := 2.0 * (float(PANEL_CONTENT_MARGIN_H) + PANEL_BORDER_WIDTH)
 # ---- responsive body layout (wide 3-column shell vs narrow tabbed shell) -----
 ## Fixed widths of the two flanking zones in the wide shell; Work takes whatever is left.
-## **THE BAND ZONE IS `PANEL_WIDTH` WIDE, DELIBERATELY THE SAME NUMBER**: the NARROW shell hands its
-## one zone the panel's strip less chrome (`ZONE_PARTY_WIDTH` below is exactly that), so a band column
-## narrower than that gave the layout with a whole screen to spend LESS width for the same rows than
-## the layout squeezed into a side dock — and the band zone CLIPS rather than scrolls, so the width it
-## lacks comes straight off its vitals rows as wraps. It takes the full 380 rather than that floor
-## because it is the zone whose rows are widest (the merged Food line measures 353px) and, unlike the
-## parties zone, 380 here still leaves the work board two columns at 1920 on every shipped map. 380 is
-## already this file's vocabulary (`PANEL_WIDTH`, `ZONE_WORK_MIN_WIDTH`): one readable column of rows.
+## **THE BAND ZONE IS 380 WIDE**, one readable column of rows: the zone whose rows are widest (the merged
+## Food line measures 353px) and, unlike the parties zone, 380 here still leaves the work board two columns
+## at 1920 on every shipped map. It is its own number -- the side dock's `PANEL_WIDTH` (440) is wider and the
+## two are independent: the band column is the wide shell's flank, `PANEL_WIDTH` the narrow shell's strip.
+## 380 is also `ZONE_WORK_MIN_WIDTH`'s value, which it matches in kind, not by derivation.
 const ZONE_BAND_WIDTH := 380.0
 ## The most columns the BAND flank will lay its blocks out across on a horizontal dock.
 ##
@@ -152,16 +151,16 @@ const ZONE_BAND_WIDTH := 380.0
 ## reflow produces nonsense, and a third column would need a third authored split with nothing
 ## measured to put in it. Measured at 380px on the SHORT tier: vitals 52, PEOPLE 58, WORKFORCE 139.
 const BAND_ZONE_MAX_COLUMNS := 2
-## **THE PARTIES ZONE IS EXACTLY THE NARROW SHELL'S ZONE WIDTH** — the panel's strip less the card
-## chrome — which IS the requirement: the wide shell must never hand a zone LESS room than the side
-## dock does for the same content, and this zone's four-rung compose picker is already 2×2 at that
-## width because 3-across does not fit. It is deliberately NOT `ZONE_BAND_WIDTH`'s 380, and the
-## difference is MEASURED, not taste: the flanks come out of the work zone, and at 1920 in a bottom
-## dock on the widest shipped map (Large, whose chrome rail is 308px against Standard's 296) a 380px
-## parties zone leaves the board 751px — under 2 × `ZONE_WORK_MIN_WIDTH`, so the work board drops to
-## ONE column, which is the very thing the wide shell exists to prevent. The ceiling that keeps two
-## columns there is 371; 354 clears it by 17px. Raise this only with that measurement re-run.
-const ZONE_PARTY_WIDTH := PANEL_WIDTH - PANEL_CHROME_H
+## **THE PARTIES ZONE IS 354 WIDE, A MEASURED CEILING AND NOT A DERIVATION.** It was the narrow shell's zone
+## width (the strip less the card chrome) while that strip was 380, and it is no longer tied to the strip:
+## it is the width that keeps the wide shell's work board at TWO columns, and the four-rung compose picker
+## 2×2 (3-across does not fit). The difference from `ZONE_BAND_WIDTH`'s 380 is MEASURED, not taste: the
+## flanks come out of the work zone, and at 1920 in a bottom dock on the widest shipped map (Large, whose
+## chrome rail is 308px against Standard's 296) a 380px parties zone leaves the board 751px -- under
+## 2 × `ZONE_WORK_MIN_WIDTH`, so the work board drops to ONE column, which is the very thing the wide shell
+## exists to prevent. The ceiling that keeps two columns there is 371; 354 clears it by 17px. Raise this
+## only with that measurement re-run.
+const ZONE_PARTY_WIDTH := 354.0
 ## The NARROWEST the WORK zone may be for the wide shell to be worth choosing: one readable board
 ## column. MIRRORS Hud's `WORK_COLUMN_MIN_WIDTH` (380) — the width below which `_work_board_capacity`
 ## clamps to a single column, and a single column crammed into less than that clips its row labels.
@@ -343,7 +342,7 @@ const ACTION_MOUNT_NONE := 0
 ## whole monitor and height is the axis the strip reserves, so a row of its own is map given up.
 const ACTION_MOUNT_SUBJECT_ROW := 1
 ## The BAR under the subject row: an EXPANDED VERTICAL dock's mount. There is no strip to grow — the
-## card is the window's height — so the row is nearly free, while the 380px width is the axis that binds.
+## card is the window's height — so the row is nearly free, while the side dock's `PANEL_WIDTH` is the axis that binds.
 const ACTION_MOUNT_BAR := 2
 ## The COLLAPSED RAIL, in BOTH orientations: the verbs stay reachable from a railed panel, which is
 ## what makes collapsing it a way to keep working rather than a way to put the panel away. The rail
@@ -1941,7 +1940,7 @@ func _card_width() -> float:
 ## **It RETURNS the count it actually applied, and the caller must build to that** — a want is not a
 ## grant. The board can ask for four columns on a band with 34 sources while the strip can only pay for
 ## one (a narrow side dock, or the wide shell at its own minimum width), and a board built to the want
-## rather than the grant overflows its zone by ~190px in a 380px dock and ~725px at the shell
+## rather than the grant overflows its zone by ~190px in a side dock and ~725px at the shell
 ## threshold — silently, since the zone hosts CLIP.
 func set_work_columns(columns: int) -> int:
 	var want := clampi(columns, 1, WORK_MAX_COLUMNS)
@@ -2281,7 +2280,7 @@ func _add_wide_zone_host(zone: StringName, fixed_width: float) -> Control:
 
 ## A zone host. Deliberately a PLAIN `Control`, not a container: a container reports its children's
 ## combined minimum size, so an over-wide zone content would push the whole card past its FIXED
-## cross-axis size (a 380 L/R strip rendering 456px wide, spilling over the map) — the very
+## cross-axis size (a `PANEL_WIDTH` L/R strip rendering 456px wide, spilling over the map) — the very
 ## content-dependence this rework removes. A plain Control reports no minimum, so the zone stays the
 ## size the shell gave it, and `clip_contents` keeps anything that does not fit inside its own zone
 ## instead of painting over its neighbour. Zone content is anchored full-rect into it by
@@ -2405,7 +2404,7 @@ func set_rail_widths(nav_width: float, turn_width: float) -> void:
 	_notify_zones_resized()
 
 ## Size + show the rail for the current dock. The rail exists only on a HORIZONTAL dock: a vertical strip
-## is `PANEL_WIDTH` (380) wide and has no room beside the zones for a ~300px chrome column.
+## is `PANEL_WIDTH` (440) wide and has no room beside the zones for a ~300px chrome column.
 ## The rail's RECT is written by `_position_card_and_rail`, which runs on the same layout pass.
 func _apply_rail() -> void:
 	if _rail == null:

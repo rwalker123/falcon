@@ -461,12 +461,24 @@ const ONE_HEAD_ASKED: u32 = 1;
 /// is told it lacks is the kit of the crew it was denied:
 /// - a row with a Max asks at `min(Max, useful_crew)` (the staffing already caps `useful_crew` at
 ///   the Max), so a row the pool starved still names its kit;
-/// - a row with no Max that got nobody, where a crew would be useful, asks at one head;
+/// - a **player** row with no Max that got nobody, where a crew would be useful, asks at one head;
+/// - a **chief** row (one the band's order lists) that got nobody asks at one head only when
+///   `chief_hand_dealt` - the band had an idle hand the staffing left unused and [`row_claims`]
+///   dealt it to this row - and asks nothing otherwise, so a reserve site the chief cannot staff
+///   never inflates the kit the band is told it lacks;
 /// - any other row asks at the hands present - a no-Max `useful_crew` is the take curve's ceiling,
 ///   never a crew the band would field.
 ///
 /// Read only while the staffing stamp is current (`total() == workers`), as the grant is.
-pub fn wanted_ask_crew(assignment: &LaborAssignment, hands_present: u32) -> Option<u32> {
+pub fn wanted_ask_crew(
+    assignment: &LaborAssignment,
+    hands_present: u32,
+    is_chief_row: bool,
+    chief_hand_dealt: bool,
+) -> Option<u32> {
+    if is_chief_row && hands_present == NO_STAFFED_CREW && !chief_hand_dealt {
+        return None;
+    }
     let staffing = &assignment.staffing;
     if !assignment.target.is_staffed()
         || staffing.total() != assignment.workers
@@ -481,14 +493,59 @@ pub fn wanted_ask_crew(assignment: &LaborAssignment, hands_present: u32) -> Opti
     }
 }
 
-/// [`RowClaims`] for every row of `allocation`, at each row's own crew.
+/// **WHICH UNSTAFFED CHIEF ROWS THE BAND'S IDLE HANDS ARE DEALT TO** - index-aligned with
+/// `allocation.assignments`. `idle` is the band's free hands after the staffing (the published
+/// `idleWorkers`); they are dealt one per chief row that got nobody, in the staffing's own row order
+/// (priority High to Low, ties by row index), so at most `idle` such rows are `true`. These are the
+/// rows a chief would have sent a hand to had the kit been there.
+fn chief_rows_dealt_an_idle_hand(allocation: &LaborAllocation, idle: u32) -> Vec<bool> {
+    let mut dealt = vec![false; allocation.assignments.len()];
+    let mut order: Vec<usize> = (0..allocation.assignments.len()).collect();
+    order.sort_by_key(|&i| (std::cmp::Reverse(allocation.assignments[i].priority), i));
+    let mut hands_left = idle;
+    for i in order {
+        if hands_left == NO_STAFFED_CREW {
+            break;
+        }
+        let row = &allocation.assignments[i];
+        if allocation.row_order(&row.target).is_some()
+            && allocation.hands_present_on(row) == NO_STAFFED_CREW
+        {
+            dealt[i] = true;
+            hands_left -= ONE_HEAD_ASKED;
+        }
+    }
+    dealt
+}
+
+/// No idle hands: what [`row_claims`] strikes its (non-authoritative) asks with.
+const NO_IDLE_HANDS: u32 = 0;
+
+/// [`RowClaims`] for every row of `allocation`, at each row's own crew, for a caller that reads
+/// only the GRANTS (`claims`, `keep_hands`) - the item budget, the competing-rows ledger. Neither
+/// depends on the band's idle hands, so this strikes the asks with none; **`asks` read off this
+/// are not the published ask** - a reader of `asks` (the `kitToe` lines, craft suggestions,
+/// auto-craft) calls [`row_claims_with_idle`].
 pub fn row_claims(
     sources: &ClaimSources<'_>,
     allocation: &LaborAllocation,
     band_kit: &BandEquipment,
 ) -> RowClaims {
+    row_claims_with_idle(sources, allocation, band_kit, NO_IDLE_HANDS)
+}
+
+/// [`RowClaims`] for every row of `allocation`, at each row's own crew. `idle` is the band's free
+/// hands after the staffing (`BandWorkforce::idle`, the published `idleWorkers`): it decides which
+/// unstaffed chief rows still ask for a head's kit ([`wanted_ask_crew`]).
+pub fn row_claims_with_idle(
+    sources: &ClaimSources<'_>,
+    allocation: &LaborAllocation,
+    band_kit: &BandEquipment,
+    idle: u32,
+) -> RowClaims {
     let mut rows = RowClaims::default();
-    for assignment in &allocation.assignments {
+    let dealt = chief_rows_dealt_an_idle_hand(allocation, idle);
+    for (index, assignment) in allocation.assignments.iter().enumerate() {
         // The kit claim is struck on the hands PRESENT at the source: the row's crew less its
         // rejoining walkers (`LaborAllocation::hands_present_on`).
         let mut split = if assignment.target.is_standing_pool() {
@@ -507,7 +564,13 @@ pub fn row_claims(
         // pool starved still states the kit it lacked, and a row with no Max never asks for the
         // take curve's ceiling.
         let mut planned_claim = split.claim;
-        if let Some(crew) = wanted_ask_crew(assignment, allocation.hands_present_on(assignment)) {
+        let is_chief_row = allocation.row_order(&assignment.target).is_some();
+        if let Some(crew) = wanted_ask_crew(
+            assignment,
+            allocation.hands_present_on(assignment),
+            is_chief_row,
+            dealt[index],
+        ) {
             planned_claim = take_kit_claim(
                 sources,
                 band_kit,

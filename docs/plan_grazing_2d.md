@@ -158,6 +158,10 @@ Add a per-species `husbandry_ceiling` enum to each species def (`fauna_config.js
   `extend_pen` reject ("{Species} cannot be penned").
 - **`pen`** — the full ladder (today's universal behaviour).
 
+A tamed (`pastoral`) herd the band keeps eats hay under the pen's own rule: its roam range plays the
+fenced footprint's part, the `FODDER` store covers the gap, and it ranks with the pens in the one
+priority draw. A wild herd never draws.
+
 **Default `pen`** (preserves current behaviour for any untagged/future species). Initial roster:
 
 | species | ceiling | why |

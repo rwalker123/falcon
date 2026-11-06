@@ -329,7 +329,7 @@ func _assert_greyed_zero_tracks() -> void:
 ##    in the client names either knowledge and no client edit put them there.
 ## 2. **The row a knowledge lands in is the BRANCH of the rung that teaches it**, so Paving is on
 ##    Roads and Penning is on Herds.
-## 3. **`foddering` is a CAPABILITY and it FALLS OUT** — no rung's `unlock_knowledge` names it, so the
+## 3. **`selective_breeding` is a CAPABILITY and it FALLS OUT** — no rung's `unlock_knowledge` names it, so the
 ##    roster says `is_step: false` and it cannot be unspent. A client-side declared set is what this
 ##    replaced, and the difference is that a knowledge which stops gating a rung now stops being a
 ##    step with nothing to remember to edit.
@@ -365,16 +365,16 @@ func _assert_the_roster_builds_the_rows() -> void:
 			and not _node_keys(land).has(KnowledgeFx.KNOWLEDGE_PENNING))
 
 	# CLAIM 3 — step vs capability, and it is the ROSTER's answer rather than a set in the client.
-	var fodder := _node_of(herds, KnowledgeFx.KNOWLEDGE_FODDERING)
+	var fodder := _node_of(herds, KnowledgeFx.KNOWLEDGE_SELECTIVE_BREEDING)
 	var penning := _node_of(herds, KnowledgeFx.KNOWLEDGE_PENNING)
-	h._assert_hud("knowledge — `foddering` is a CAPABILITY, so `unspent` cannot be asked of it",
+	h._assert_hud("knowledge — `selective_breeding` is a CAPABILITY, so `unspent` cannot be asked of it",
 		not fodder.is_empty()
 			and not bool(fodder[HudKnowledgeVocab.NODE_UNSPENT_TESTABLE]))
 	h._assert_hud("knowledge — …while a STEP beside it in the same row can be asked",
 		not penning.is_empty() and bool(penning[HudKnowledgeVocab.NODE_UNSPENT_TESTABLE]))
 	h._assert_hud("knowledge — …and the capability sorts LAST along the chain, at the end of its row (%s)"
 			% str(_node_keys(herds)),
-		_node_keys(herds).back() == KnowledgeFx.KNOWLEDGE_FODDERING)
+		_node_keys(herds).back() == KnowledgeFx.KNOWLEDGE_SELECTIVE_BREEDING)
 
 	# ⛔ CLAIM 4 — THE FALSIFICATION. A knowledge dropped from the roster is dropped from the panel,
 	# and nothing in the client had to change for that to be true.
@@ -452,7 +452,7 @@ func _assert_ladder_usage() -> void:
 	# **A KNOWLEDGE THAT UNLOCKS NOTHING IS NEVER UNSPENT**, whatever the faction is standing on. It
 	# is not a step with a verb — there is no source that could stand on it — so calling it unused
 	# would be a sentence about nothing.
-	_assert_unspent("Foddering (it unlocks no rung)", "foddering", _model(tracks, [], []), false)
+	_assert_unspent("Selective Breeding (it unlocks no rung)", "selective_breeding", _model(tracks, [], []), false)
 
 	# **AND ONLY A KNOWN NODE CAN BE UNSPENT.** A track at 18% has nothing standing on it either, and
 	# counting that would put every unlearned thing in the launcher's nudge.
@@ -2512,7 +2512,7 @@ func _mixed_model() -> Dictionary:
 
 ## `cultivation` known WITH a tended patch under it (so in use), `herding` known with no herd at all
 ## (so unspent), `seed_selection` close, `penning` barely begun. Every other track the roster carries
-## — `foddering`, the route branch's two and the making branches' three — is untouched, which an
+## — `selective_breeding`, the route branch's two and the making branches' three — is untouched, which an
 ## absent key already says.
 func _tracks_mixed() -> Dictionary:
 	return {

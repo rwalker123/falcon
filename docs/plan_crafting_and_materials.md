@@ -212,7 +212,7 @@ states for husbandry.
 ### Crafting is the fourth teacher
 
 Hunting teaches Herding and Penning, foraging teaches Cultivation and Seed Selection, keeping a pen
-teaches Foddering — and **crafting teaches its own crafts**. The lesson is charged on the **same
+teaches Penning — and **crafting teaches its own crafts**. The lesson is charged on the **same
 quantum as the wear**: per item completed, so the thing that consumes the tool and the thing that
 teaches the craft cannot drift. What is being made decides what is learned.
 

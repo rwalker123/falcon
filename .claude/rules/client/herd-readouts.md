@@ -306,7 +306,7 @@ paths:
       demand, taken on the rounded percentages so the two terms visibly add to the headline and
       clamped at zero (`pen_fed_fraction` is clamped at 1.0, so the pair can round-cross).
     - **`no fodder`** in that term's place when `fodder_draw` is under
-      `SourceForecast.FODDER_FLOW_MIN`: nothing was carried in — no store, or no Foddering — which is
+      `SourceForecast.FODDER_FLOW_MIN`: nothing was carried in — no store — which is
       a different fact from a short ration. The draw's MAGNITUDE is never printed; this presence test
       is all it decides.
     - **`all pasture`** when the land covers the pen outright (`pen_pasture_fraction` at 1.0 within
@@ -320,8 +320,8 @@ paths:
       what it lacked).
     - **The `Fed` row's hover is two lines** (`DetailFormat.pen_fed_row_hover`, set in the producer's
       `row_tooltips` on `PenStatus.is_starving` only): `Short 6.6 feed/turn` (`Only N% fed` where no
-      shortfall is published) over `Fix: hay field (Foddering) · extend pen`. The fixes are the ones the sim
-      supports: a hay field fills the keeper band's FODDER store (which needs Foddering - `graze.md` ->
+      shortfall is published) over `Fix: fodder field · extend pen`. The fixes are the ones the sim
+      supports: a fodder field fills the keeper band's FODDER store (`graze.md` ->
       "FODDER is a STOCK"), and a wider fence grazes more land (`pen_pasture_fraction` is the footprint's
       intake over the herd's demand, and the footprint is `hex_range_tiles(corralled_at, pen_radius)`).
       The Work row's hover states the same two facts (`pen_underfed_hover`): `⚠ Underfed: short 6.6

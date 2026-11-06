@@ -48,7 +48,7 @@ use core_sim::{
     SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FODDER,
-    FODDERING_DISCOVERY_ID, FOOD,
+    FOOD,
 };
 
 const MAP_SEED: u64 = core_sim::HARNESS_MAP_SEED;
@@ -68,8 +68,6 @@ const EPSILON: f32 = 1e-5;
 /// A larder deep enough that *"nothing was taken from it"* is a claim with something to take. Every
 /// fixture stocks it, and every fixture asserts it comes out whole.
 const STOCKED_LARDER: f32 = 1_000_000.0;
-/// Hay enough that the `FODDER` store is never the binding constraint.
-const AMPLE_HAY: f32 = 1_000_000.0;
 /// The Sustain floor every fixture keeper works its pen at.
 const SUSTAIN: f32 = 0.5;
 /// The two pens' biomasses. The **richer** one asks for twice the feed of the **leaner** one, so a
@@ -80,7 +78,7 @@ const LEAN_PEN_BIOMASS: f32 = 100.0;
 /// A barren footprint — the drylot case, so the whole grass demand is a shortfall and every term
 /// under test is decided by the two stores rather than by the land.
 const BARREN: f32 = 0.0;
-/// No hay at all, and no Foddering to draw it with.
+/// No hay at all.
 const NO_HAY: f32 = 0.0;
 
 fn base_world() -> App {
@@ -167,13 +165,6 @@ fn pen_tile(app: &App) -> UVec2 {
         .richest_patch()
         .expect("the earthlike map seeds graze patches")
         .0
-}
-
-/// Grant the keeper faction **Foddering** so its pens may draw the hay store.
-fn learn_foddering(app: &mut App) {
-    app.world
-        .resource_mut::<DiscoveryProgressLedger>()
-        .add_progress(FactionId(0), FODDERING_DISCOVERY_ID, scalar_one());
 }
 
 /// Seat TWO penned, domesticated herds on `tile`. Both are corralled where the keeper stands, so both
@@ -405,15 +396,11 @@ fn run_two_pen_turn(
     arrangement: Arrangement,
     rich_rank: SourcePriority,
     lean_rank: SourcePriority,
-    foddering: bool,
     hay: f32,
     larder: f32,
 ) -> (App, Entity) {
     let mut app = base_world();
     let tile = pen_tile(&app);
-    if foddering {
-        learn_foddering(&mut app);
-    }
     seat_two_pens(&mut app, tile, RICH_PEN_BIOMASS, LEAN_PEN_BIOMASS);
     let rows: Vec<LaborAssignment> = match arrangement {
         Arrangement::First | Arrangement::Edited => {
@@ -455,7 +442,6 @@ fn a_high_marked_pen_is_fed_whole_and_a_low_one_starves_whatever_the_vector_says
             arrangement,
             SourcePriority::High,
             SourcePriority::Low,
-            true,
             rich_grass,
             STOCKED_LARDER,
         );
@@ -495,7 +481,6 @@ fn swapping_the_marks_swaps_which_pen_eats() {
         Arrangement::First,
         SourcePriority::Low,
         SourcePriority::High,
-        true,
         grass_demand(LEAN_PEN_BIOMASS),
         STOCKED_LARDER,
     );
@@ -528,7 +513,6 @@ fn two_equally_ranked_pens_split_a_short_hay_store_in_proportion_to_demand() {
         Arrangement::Last,
         SourcePriority::Normal,
         SourcePriority::Normal,
-        true,
         (rich_grass + lean_grass) * HALF,
         STOCKED_LARDER,
     );
@@ -560,50 +544,6 @@ fn two_equally_ranked_pens_split_a_short_hay_store_in_proportion_to_demand() {
         "NEITHER pen gets everything and neither is starved out: rich {rich}, lean {lean}"
     );
     assert_larder_untouched(&app, keeper, "equal marks");
-}
-
-/// **WITHOUT FODDERING NOTHING FEEDS THEM AT ALL.** A faction that has not learned to hay a herd bids
-/// `0` into the settlement, so a full `FODDER` store is untouched — and on a barren footprint that
-/// leaves both pens with **no feed whatsoever**.
-///
-/// This is the fix stated at its plainest. The same fixture used to assert *"both pens fall back on
-/// the larder exactly as a pasture-only pen always did"* and *"the whole debit is bread": a band that
-/// could not use its hay fed its animals its people's food instead. Now the hay pile and the larder
-/// both come out whole and the herds shrink.
-#[test]
-fn a_faction_without_foddering_draws_no_hay_and_its_pens_go_unfed() {
-    let (app, keeper) = run_two_pen_turn(
-        Arrangement::First,
-        SourcePriority::Normal,
-        SourcePriority::Normal,
-        false,
-        AMPLE_HAY,
-        STOCKED_LARDER,
-    );
-    for id in ["pen_rich", "pen_lean"] {
-        assert!(
-            hay_drawn(&app, id).abs() < EPSILON,
-            "{id} drew hay with no Foddering"
-        );
-        assert!(
-            fed_fraction(&app, id).abs() < EPSILON,
-            "{id} is fed NOTHING — a barren footprint and undrawable hay leave no feed, and the \
-             larder is not a fallback (got {})",
-            fed_fraction(&app, id)
-        );
-    }
-    let hay_left = app
-        .world
-        .get::<PopulationCohort>(keeper)
-        .unwrap()
-        .stores
-        .get(FODDER)
-        .to_f32();
-    assert!(
-        (hay_left - AMPLE_HAY).abs() < EPSILON,
-        "the hay store is untouched (got {hay_left})"
-    );
-    assert_larder_untouched(&app, keeper, "no Foddering");
 }
 
 /// **THE STRONGEST STATEMENT OF THE RULE: A BAND'S LARDER IS UNTOUCHED BY ITS PENS, TURN AFTER TURN.**
@@ -658,5 +598,247 @@ fn a_bands_larder_is_untouched_by_its_pens_across_repeated_turns() {
         grass_demand(LEAN_PEN_BIOMASS) > 0.0,
         "the leaner pen demands real fodder ({})",
         grass_demand(LEAN_PEN_BIOMASS)
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// TAMED (PASTORAL) HERDS EAT HAY UNDER THE PEN'S OWN RULE
+// ---------------------------------------------------------------------------------------------
+
+/// Seat one **tamed, unfenced** herd owned by faction 0 on `tile`: a pastoral herd the keeper band
+/// works, which grazes its roam range and draws hay for the gap.
+fn seat_tamed(app: &mut App, tile: UVec2, id: &str, biomass: f32) {
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let mut herd = Herd::new(
+        id.to_string(),
+        format!("Fixture {id}"),
+        SizeClass::Small,
+        vec![tile],
+        biomass,
+        PEN_CAPACITY,
+        FODDER_RATE,
+        WILD_R,
+        PEN_BODY_MASS,
+        shipped::root_standing(shipped::animal()),
+    );
+    herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
+    assert!(
+        herd.is_domesticated() && !herd.is_corralled(),
+        "the fixture herd is tamed and unfenced"
+    );
+    registry.herds.push(herd);
+}
+
+/// Seat one untamed, unowned herd on `tile` — the wild control.
+fn seat_wild(app: &mut App, tile: UVec2, id: &str, biomass: f32) {
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    registry.herds.push(Herd::new(
+        id.to_string(),
+        format!("Fixture {id}"),
+        SizeClass::Small,
+        vec![tile],
+        biomass,
+        PEN_CAPACITY,
+        FODDER_RATE,
+        WILD_R,
+        PEN_BODY_MASS,
+        shipped::root_standing(shipped::animal()),
+    ));
+}
+
+fn pose_intake(app: &mut App, id: &str, intake: f32) {
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    registry
+        .herds
+        .iter_mut()
+        .find(|herd| herd.id == id)
+        .expect("seated")
+        .footprint_intake = intake;
+}
+
+fn band_hay_need(app: &App, keeper: Entity) -> f32 {
+    app.world
+        .get::<LaborAllocation>(keeper)
+        .expect("keeper")
+        .last_fodder_need
+}
+
+/// **A TAMED HERD WHOSE RANGE UNDER-FEEDS IT DRAWS HAY; A FULLY FED ONE DRAWS NONE; A WILD ONE NEVER
+/// DOES.** The need is the gap the range leaves, it rides the band's own hay ledger, and the herd is
+/// never starved by it (`pen_fed_fraction` keeps its fully-fed reading) — a roaming herd's
+/// shortfall is a smaller `K`, not a shrinking flock.
+#[test]
+fn a_tamed_herd_the_range_under_feeds_draws_hay_and_a_fed_one_does_not() {
+    let demand = grass_demand(RICH_PEN_BIOMASS);
+    let intake = demand * 0.5;
+    let mut app = base_world();
+    let tile = pen_tile(&app);
+    app.world.resource_mut::<HerdRegistry>().herds.clear();
+    seat_tamed(&mut app, tile, "tame_hungry", RICH_PEN_BIOMASS);
+    seat_tamed(&mut app, tile, "tame_fed", RICH_PEN_BIOMASS);
+    seat_wild(&mut app, tile, "wild_one", RICH_PEN_BIOMASS);
+    let keeper = spawn_keeper(
+        &mut app,
+        vec![
+            hunt_row("tame_hungry", SourcePriority::Normal, KEEPER_WORKERS),
+            hunt_row("tame_fed", SourcePriority::Normal, KEEPER_WORKERS),
+            hunt_row("wild_one", SourcePriority::Normal, KEEPER_WORKERS),
+        ],
+        tile,
+    );
+    stock(&mut app, keeper, 1_000_000.0, STOCKED_LARDER);
+    pose_intake(&mut app, "tame_hungry", intake);
+    pose_intake(&mut app, "tame_fed", demand);
+    pose_intake(&mut app, "wild_one", 0.0);
+    app.world.run_system_once(advance_labor_allocation);
+
+    let gap = demand - intake;
+    let hungry_draw = hay_drawn(&app, "tame_hungry");
+    assert!(
+        (hungry_draw - gap).abs() < EPSILON,
+        "the hungry tamed herd draws exactly the gap its range leaves: {hungry_draw} vs {gap}"
+    );
+    assert!(
+        hay_drawn(&app, "tame_fed").abs() < EPSILON,
+        "a herd its range fully feeds draws no hay"
+    );
+    assert!(
+        hay_drawn(&app, "wild_one").abs() < EPSILON,
+        "a wild herd never draws hay, however full the store"
+    );
+    let hungry = app
+        .world
+        .resource::<HerdRegistry>()
+        .find("tame_hungry")
+        .unwrap()
+        .clone();
+    assert!(
+        (hungry.pen_pasture_fraction - 0.5).abs() < EPSILON
+            && hungry.pen_fodder_shortfall.abs() < EPSILON,
+        "the range covers half, the hay the rest (pasture {}, shortfall {})",
+        hungry.pen_pasture_fraction,
+        hungry.pen_fodder_shortfall
+    );
+    assert!(
+        (fed_fraction(&app, "tame_hungry") - 1.0).abs() < EPSILON,
+        "and a tamed herd is never marked underfed — its range limits its K instead"
+    );
+    assert!(
+        (band_hay_need(&app, keeper) - gap).abs() < EPSILON,
+        "the band's hay need is the tamed herd's gap alone: {} vs {gap}",
+        band_hay_need(&app, keeper)
+    );
+    assert_larder_untouched(&app, keeper, "a tamed herd's feed");
+}
+
+/// **PENS AND TAMED HERDS SHARE THE ONE STORE BY THE SAME PRIORITY RULE** — whichever kind carries the
+/// higher mark is fed whole, and swapping the marks swaps who eats.
+#[test]
+fn pens_and_tamed_herds_share_the_store_by_the_same_priority_rule() {
+    let demand = grass_demand(RICH_PEN_BIOMASS);
+    for (pen_rank, tame_rank, pen_eats) in [
+        (SourcePriority::High, SourcePriority::Low, true),
+        (SourcePriority::Low, SourcePriority::High, false),
+    ] {
+        let mut app = base_world();
+        let tile = pen_tile(&app);
+        seat_pens(&mut app, tile, &[("a_pen", RICH_PEN_BIOMASS)]);
+        seat_tamed(&mut app, tile, "a_flock", RICH_PEN_BIOMASS);
+        let keeper = spawn_keeper(
+            &mut app,
+            vec![
+                hunt_row("a_pen", pen_rank, KEEPER_WORKERS),
+                hunt_row("a_flock", tame_rank, KEEPER_WORKERS),
+            ],
+            tile,
+        );
+        // The store holds exactly one herd's whole gap, so exactly one of the two eats.
+        stock(&mut app, keeper, demand, STOCKED_LARDER);
+        pose_footprints(&mut app, BARREN);
+        app.world.run_system_once(advance_labor_allocation);
+        let (fed, hungry) = if pen_eats {
+            ("a_pen", "a_flock")
+        } else {
+            ("a_flock", "a_pen")
+        };
+        assert!(
+            (hay_drawn(&app, fed) - demand).abs() < EPSILON,
+            "the higher-marked {fed} is fed whole"
+        );
+        assert!(
+            hay_drawn(&app, hungry).abs() < EPSILON,
+            "and the lower-marked {hungry} gets nothing from what is left"
+        );
+    }
+}
+
+/// **A BAND THAT KEEPS ONLY A TAMED HERD HAS HAY CONSUMERS** — the band's `last_fodder_need`, which the
+/// fodder order's draw, its `hasConsumers` flag and the arrival line's fodder clause all read, is
+/// positive for a band whose only herd is tamed and under-fed, and zero for one whose range feeds it.
+#[test]
+fn a_band_keeping_only_a_tamed_herd_has_hay_consumers() {
+    let demand = grass_demand(RICH_PEN_BIOMASS);
+    let need_with = |intake: f32| {
+        let mut app = base_world();
+        let tile = pen_tile(&app);
+        app.world.resource_mut::<HerdRegistry>().herds.clear();
+        seat_tamed(&mut app, tile, "only_flock", RICH_PEN_BIOMASS);
+        let keeper = spawn_keeper(
+            &mut app,
+            vec![hunt_row(
+                "only_flock",
+                SourcePriority::Normal,
+                KEEPER_WORKERS,
+            )],
+            tile,
+        );
+        stock(&mut app, keeper, 0.0, STOCKED_LARDER);
+        pose_intake(&mut app, "only_flock", intake);
+        app.world.run_system_once(advance_labor_allocation);
+        band_hay_need(&app, keeper)
+    };
+    assert!(
+        (need_with(0.0) - demand).abs() < EPSILON,
+        "a barren range leaves the whole demand as hay need"
+    );
+    assert!(
+        need_with(demand).abs() < EPSILON,
+        "a range that feeds the flock leaves no hay need"
+    );
+}
+
+/// **DELIVERED HAY ENTERS A TAMED HERD'S `K` THE WAY GRAZE DOES** — through the one flow term, so a
+/// herd whose keeper delivers hay has a ceiling raised by `flow / fodder_per_biomass`.
+#[test]
+fn delivered_hay_raises_a_tamed_herds_carrying_capacity_by_the_flow() {
+    const FLOW: f32 = 4.0;
+    let k_with = |rate: f32| {
+        let mut app = base_world();
+        let tile = pen_tile(&app);
+        app.world.resource_mut::<HerdRegistry>().herds.clear();
+        seat_tamed(&mut app, tile, "flock", RICH_PEN_BIOMASS);
+        app.world
+            .resource_mut::<HerdRegistry>()
+            .herds
+            .iter_mut()
+            .for_each(|herd| herd.fodder_delivery_rate = rate);
+        app.world.run_system_once(core_sim::advance_herds);
+        app.world
+            .resource::<HerdRegistry>()
+            .find("flock")
+            .unwrap()
+            .carrying_capacity
+    };
+    let without = k_with(0.0);
+    let with = k_with(FLOW);
+    assert!(
+        with > without,
+        "delivered hay lifts a tamed herd's K ({without} -> {with})"
+    );
+    assert!(
+        (with - without - FLOW / FODDER_RATE).abs() < FLOW / FODDER_RATE * 0.5,
+        "by about the flow over the herd's appetite ({} expected, got {})",
+        FLOW / FODDER_RATE,
+        with - without
     );
 }

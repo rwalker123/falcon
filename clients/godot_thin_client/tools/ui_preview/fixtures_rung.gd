@@ -68,7 +68,7 @@ static func ladder_rungs(with_extra_steps: bool = false) -> Array:
 		_rung(KEY_PASTORAL, "animal", 2, "tame", ["managed", "domesticated"], "herding", "penning",
 			KEY_WILD_ANIMAL, "Tamed herd", "herd", ["requires_work_room", "requires_ownership"]),
 		_rung(KEY_PEN, "animal", 3, "corral", ["managed", "domesticated", "enclosed"], "penning",
-			"foddering", KEY_PASTORAL, "Pen", "herd", ["requires_held_rung_below", "requires_ownership"],
+			"", KEY_PASTORAL, "Pen", "herd", ["requires_held_rung_below", "requires_ownership"],
 			{"size_tiers": [{"id": TIER_RANCH, "label": "Ranch", "label_fallback": "a ranch",
 				"min_rings": RANCH_MIN_RINGS, "keeper_ratio_gain": RANCH_KEEPER_RATIO_GAIN,
 				"earns_knowledge": KNOWLEDGE_SELECTIVE_BREEDING}],

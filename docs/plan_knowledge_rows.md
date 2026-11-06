@@ -72,7 +72,7 @@ section first — it is the obvious fix and it does not work.
 ├────────────────────────────────────────────────────────────────────────────────────┤
 │ ▾ FOOD                                                    2 learning · 1 unused    │
 │      LAND   ●Cultivation ── ◐Seed Selection 62%                                    │
-│      HERDS  ●Herding ── ●Penning • ── ◐Foddering 71% (gates nothing)               │
+│      HERDS  ●Herding ── ●Penning • ── ◐Selective Breeding 71% (gates nothing)      │
 │ ▾ MAKING                                                  2 learning · 1 unused    │
 │      FORESTRY   ●Woodcraft ── ○Conservationism                                     │
 │      EXTRACTION ◐Quarrying 18%                                                     │
@@ -84,7 +84,7 @@ section first — it is the obvious fix and it does not work.
 - **A ladder domain draws the rail between its rungs; the craft fan draws none.** Unchanged from
   the shipped rule — it is a property of the domain descriptor, not a branch in the renderer. Rotated
   ninety degrees, the rail is the connector between chips rather than a line down a column's edge.
-- **A capability that gates nothing** (`is_step` false — `foddering` today) hangs off the end of its
+- **A capability that gates nothing** (`is_step` false — `selective_breeding` today) hangs off the end of its
   ladder and is marked, so it reads as hanging off rather than continuing the steps.
 - **Filters still dim rather than remove**, under `All`. What a filter now also does is fold the
   areas it does not match (§5).

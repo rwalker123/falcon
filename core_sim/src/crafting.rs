@@ -11,7 +11,7 @@
 //! | **Tools** ([`crate::equipment_config`]) | band-local | consumable, worn per use | *how well this band makes it* |
 //!
 //! **Crafting is the fourth teacher.** Hunting teaches Herding and Penning, foraging teaches
-//! Cultivation and Seed Selection, keeping a pen teaches Foddering — and crafting teaches its own
+//! Cultivation and Seed Selection, keeping tamed herds teaches Penning — and crafting teaches its own
 //! crafts. **The lesson is charged on the SAME quantum as the tool's wear: per item completed**
 //! ([`crate::systems::advance_crafting`]), so the thing that consumes the tool and the thing that
 //! teaches the craft cannot drift apart. What is being made decides what is learned.
@@ -27,7 +27,7 @@ use crate::materials_config::MaterialsConfig;
 /// **Earned by tanning**: every item completed on a bench whose recipe's craft is `tanning` credits
 /// one lesson. Declared as a start-profile knowledge tag (`tanning` → this id in
 /// `data/start_profile_knowledge_tags.json`) purely so it is mappable, and deliberately **not**
-/// listed in any start profile's `starting_knowledge_tags`. Next free id after `foddering` (2007).
+/// listed in any start profile's `starting_knowledge_tags`. Id 2007 is retired and unused.
 pub const TANNING_DISCOVERY_ID: u32 = 2008;
 
 /// Discovery id for the faction-level **Weaving** knowledge — the craft of `fibre`. See
@@ -173,8 +173,10 @@ mod tests {
         sorted.dedup();
         assert_eq!(sorted.len(), ids.len(), "the craft ids must be distinct");
         assert!(
-            sorted[0] > crate::fauna::FODDERING_DISCOVERY_ID,
-            "a craft id must not collide with the ladder's five"
+            sorted[0]
+                > crate::fauna::SELECTIVE_BREEDING_DISCOVERY_ID
+                    .min(crate::fauna::PENNING_DISCOVERY_ID),
+            "a craft id must not collide with the ladder's own"
         );
     }
 

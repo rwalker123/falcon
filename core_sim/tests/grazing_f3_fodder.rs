@@ -1,6 +1,6 @@
 //! **Flora Roster F3 — the fodder coupling convergence gate + the "provisions stays lossy" invariant.**
 //!
-//! Hay is *delivered graze-flow*: a pen that knows Foddering draws the band's `FODDER` store to cover
+//! Hay is *delivered graze-flow*: a pen draws the band's `FODDER` store to cover
 //! the gap its footprint left, and its ceiling `K_pen` reads the *sustained fodder inflow* (the flow),
 //! never the store's *stock* (`docs/plan_flora_roster.md` §5). This test runs the **real** coupled pen
 //! systems forward against a controlled steady hay supply and asserts:
@@ -11,8 +11,7 @@
 //!   *flow* (a constant) and not the *stock* (which balloons as the buffer fills), it cannot oscillate:
 //!   a buffer spike would spike K only if the ceiling read the stock, which it deliberately does not.
 //! - **(C4) provisions stays lossy** — a pen fed by hay draws **zero** provisions for the hay-covered
-//!   share, while an identical pen whose faction has *not* learned Foddering pays the **full** lossy
-//!   bread bill; the two stores move independently and `FODDER` never converts to `FOOD`.
+//!   share, while an identical pen with no hay starves rather than eating bread; the two stores move independently and `FODDER` never converts to `FOOD`.
 //!
 //! Deterministic (a pinned map seed, no `Date`/rand), mirroring `grazing_2d_pen.rs`.
 
@@ -36,7 +35,7 @@ use core_sim::{
     SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FODDER,
-    FODDERING_DISCOVERY_ID, FOOD,
+    FOOD,
 };
 
 const MAP_SEED: u64 = core_sim::HARNESS_MAP_SEED;
@@ -50,6 +49,8 @@ const SMALL_BAND: f32 = 1e-2;
 const KEEPER_WORKERS: u32 = 5000;
 /// Provisions re-stocked each turn so the *bread* bill is always payable — the tests read how much of
 /// it the pen actually pays, not whether it can.
+/// Hay put into the control keeper's store each turn: none.
+const NO_HAY_TO_STORE: f32 = 0.0;
 const RESTOCK: f32 = 1_000_000.0;
 /// The pen species' metabolic demand — fodder eaten per unit biomass/turn.
 const FODDER_RATE: f32 = 0.10;
@@ -158,26 +159,6 @@ fn barren_pen_tile(app: &mut App) -> UVec2 {
     tile
 }
 
-/// Grant the keeper faction **Foddering** so a pen may draw the hay store.
-fn learn_foddering(app: &mut App) {
-    app.world
-        .resource_mut::<DiscoveryProgressLedger>()
-        .add_progress(FactionId(0), FODDERING_DISCOVERY_ID, scalar_one());
-}
-
-/// Wipe the faction's **Foddering** progress — the control state for the no-hay-draw case.
-///
-/// It has to be *wiped*, not avoided: `animal:pen` teaches Foddering whenever a keeper works the pen
-/// (*you learn to hay a herd by keeping one*), and since `docs/plan_harvest_floor.md` §3 that earn is
-/// a **rate** rather than a floor-gated predicate — a rung-3 source's floor axis has collapsed, so
-/// there is no dial a keeper can hold that teaches nothing. Settling a pen for a few dozen turns
-/// therefore learns it, whatever the assignment says.
-fn unlearn_foddering(app: &mut App) {
-    app.world
-        .resource_mut::<DiscoveryProgressLedger>()
-        .add_progress(FactionId(0), FODDERING_DISCOVERY_ID, -scalar_one());
-}
-
 /// Seat one **penned, domesticated** herd (fixture name → neutral density gain) at `tile`, radius 0.
 fn seat_pen(app: &mut App, tile: UVec2, cap: f32, biomass: f32) -> String {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
@@ -204,9 +185,7 @@ fn seat_pen(app: &mut App, tile: UVec2, cap: f32, biomass: f32) -> String {
 }
 
 /// A keeper band on the pen tile with one Hunt assignment — it tends the pen (feeds + harvests). The
-/// `policy` only decides whether tending **teaches** knowledge (the corral-tend branch feeds + harvests
-/// regardless): `Sustain` earns Foddering by running the pen (the real earn path), `Surplus` teaches
-/// nothing — the honest way to hold a control faction ignorant of Foddering while it keeps a pen.
+/// `policy` is the assignment's floor (the corral-tend branch feeds + harvests under any).
 fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: f32) -> Entity {
     let tile_entity = app
         .world
@@ -286,11 +265,10 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: f32) -> Entit
 
 /// The Logistics half of a controlled pen turn, standing in for a hay Field in range:
 /// - the keeper's `FODDER` store gets `hay_to_store` fresh hay (a hay Field harvests into the store
-///   regardless of Foddering — growing hay needs only `Sow`), and its `FOOD` store is topped up so any
+///   growing hay needs only `Sow`), and its `FOOD` store is topped up so any
 ///   bread bill is payable;
 /// - the pen's `fodder_delivery_rate` (the K term) is set to `k_rate` — which the caller sets to the
-///   flow for a **foddering** keeper and to `0` for a control, mirroring the Foddering gate the labor
-///   arm applies to the real stamping (a hay pile the faction cannot use lifts neither K nor feed).
+///   flow for a hay-fed keeper and to `0` for a control with no hay.
 ///
 /// Re-set every turn because `advance_labor_allocation` recomputes `fodder_delivery_rate` from the
 /// band's (here absent) hay Fields and would otherwise leave it 0. Runs Logistics only, so a caller may
@@ -371,7 +349,6 @@ fn tail_spread(series: &[f32]) -> f32 {
 fn run_to_settle(start: f32) -> (f32, f32) {
     let mut app = base_world();
     let tile = barren_pen_tile(&mut app);
-    learn_foddering(&mut app);
     let id = seat_pen(&mut app, tile, 400.0, start);
     let keeper = spawn_keeper(&mut app, &id, tile, 0.5);
 
@@ -465,19 +442,16 @@ fn feed_split(app: &App, keeper: Entity, id: &str) -> (f32, f32, f32) {
 
 /// **HAY IS WHAT FEEDS A BARREN PEN — AND WITHOUT IT THE PEN STARVES RATHER THAN EATING BREAD.**
 ///
-/// The control half used to read *"a pen whose faction lacks Foddering pays the full lossy provisions
-/// bill"*: it sat on an undrawable hay pile and ate its keepers' food instead. That was the modelling
-/// error. It now goes **unfed** — `pen_fed_fraction` `0`, the herd shrinking — while the larder it
+/// The control is a pen with no hay: it goes **unfed** — `pen_fed_fraction` `0`, the herd shrinking — while the larder it
 /// used to drain stands exactly where the turn restocked it.
 #[test]
-fn a_hay_fed_pen_is_fed_while_a_pen_that_cannot_draw_its_hay_starves() {
+fn a_hay_fed_pen_is_fed_while_a_pen_with_no_hay_starves() {
     const SETTLE_TURNS: u32 = 120;
     const START: f32 = 80.0;
 
-    // --- HAY-FED: the faction knows Foddering and a hay store is filled each turn. ---
+    // --- HAY-FED: a hay store is filled each turn (no knowledge is asked for). ---
     let mut app = base_world();
     let tile = barren_pen_tile(&mut app);
-    learn_foddering(&mut app);
     let id = seat_pen(&mut app, tile, 400.0, START);
     let keeper = spawn_keeper(&mut app, &id, tile, 0.5);
     let food_before = RESTOCK;
@@ -506,27 +480,21 @@ fn a_hay_fed_pen_is_fed_while_a_pen_that_cannot_draw_its_hay_starves() {
         food_before - hay_food_remaining
     );
 
-    // --- STARVING CONTROL: identical pen, hay STILL grown into its store each turn (a hay Field
-    // harvests regardless of Foddering), but the faction has NOT learned Foddering — so the K term is
-    // gated off (`k_rate = 0`, mirroring the labor arm's gate) and the hay is undrawable. With a
-    // barren footprint under it the pen therefore has NO feed at all: it starves, and the hay just
-    // piles up beside it. The ledger is wiped immediately before every turn (`unlearn_foddering`)
-    // because keeping a pen *teaches* Foddering and no floor prevents it. ---
+    // --- STARVING CONTROL: identical pen with an EMPTY hay store and no hay inflow (`k_rate = 0`).
+    // With a barren footprint under it the pen has NO feed at all: it starves and never touches the
+    // larder. ---
     let mut app = base_world();
     let tile = barren_pen_tile(&mut app);
-    // (no learn_foddering)
     let id = seat_pen(&mut app, tile, 400.0, START);
     let keeper = spawn_keeper(&mut app, &id, tile, 0.3);
     // Settle, then run ONE instrumented final turn: read the FEED-time biomass (post-regrow,
     // pre-harvest) — what the bill is actually charged on — and compare exactly, as `grazing_2d_pen`
     // does for the barren-pen case.
     for _ in 0..SETTLE_TURNS - 1 {
-        unlearn_foddering(&mut app);
-        run_fodder_turn(&mut app, keeper, &id, HAY_FLOW, 0.0);
+        run_fodder_turn(&mut app, keeper, &id, NO_HAY_TO_STORE, 0.0);
     }
-    run_fodder_logistics(&mut app, keeper, &id, HAY_FLOW, 0.0);
+    run_fodder_logistics(&mut app, keeper, &id, NO_HAY_TO_STORE, 0.0);
     let feed_biomass = biomass_of(&app, &id); // post-regrow, pre-harvest = what FEED charges on
-    unlearn_foddering(&mut app);
     app.world.run_system_once(advance_labor_allocation);
     let (starved_draw, starved_fed, starved_larder) = feed_split(&app, keeper, &id);
     let starved_hay_store = app
@@ -540,19 +508,19 @@ fn a_hay_fed_pen_is_fed_while_a_pen_that_cannot_draw_its_hay_starves() {
         "UNFODDERED: hay drawn/turn {starved_draw:.4}, fed {starved_fed:.4}, \
          larder {starved_larder:.4}, biomass {feed_biomass:.3}"
     );
-    // No Foddering → no hay draw, and the FODDER store only accumulates (never spent).
+    // An empty store → no hay draw.
     assert!(
         starved_draw.abs() < 1e-9,
-        "a pen whose faction lacks Foddering draws no hay (got {starved_draw})"
+        "a pen with an empty hay store draws no hay (got {starved_draw})"
     );
     assert!(
-        starved_hay_store > HAY_FLOW,
-        "the hay store only accumulated for a non-foddering pen (got {starved_hay_store})"
+        starved_hay_store.abs() < 1e-9,
+        "the hay store stays empty (got {starved_hay_store})"
     );
     // **And it STARVES rather than eating bread.** This is the behaviour the larder fallback hid.
     assert!(
         starved_fed.abs() < 1e-6,
-        "with a barren footprint and undrawable hay the pen is fed NOTHING — it does not fall back \
+        "with a barren footprint and no hay the pen is fed NOTHING — it does not fall back \
          on its keeper's larder (fed fraction {starved_fed})"
     );
     assert!(
@@ -581,30 +549,17 @@ fn pen_tile(app: &App) -> UVec2 {
 /// Drive ONE corral-tend turn on a directly-posed pen and read back the stamped feed terms.
 ///
 /// The pen at `biomass` demands `grass_demand = FODDER_RATE × biomass` of graze; we hand it exactly
-/// `pasture` from the footprint and `hay_in_store` in the keeper's `FODDER` store (drawn only if
-/// `foddering`), overriding the graze/grazing systems so each scenario is exact. `advance_labor_allocation`
+/// `pasture` from the footprint and `hay_in_store` in the keeper's `FODDER` store , overriding the graze/grazing systems so each scenario is exact. `advance_labor_allocation`
 /// then runs the real corral-tend FEED+HARVEST, stamping the split on `Herd`. Returns
 /// `(demand, pasture_share, hay_share, fed_fraction, larder_spent)` — the fodder demand
 /// (`FODDER_RATE × biomass`, an INDEPENDENT reconstruction from the biomass we set), the two fodder
 /// sources, the fraction they covered, and what the pen took out of the keeper's `FOOD` store, which
 /// must be nothing at all.
-fn feed_split_terms(
-    biomass: f32,
-    pasture: f32,
-    foddering: bool,
-    hay_in_store: f32,
-) -> (f32, f32, f32, f32, f32) {
+fn feed_split_terms(biomass: f32, pasture: f32, hay_in_store: f32) -> (f32, f32, f32, f32, f32) {
     let mut app = base_world();
     let tile = pen_tile(&app);
-    if foddering {
-        learn_foddering(&mut app);
-    }
     let id = seat_pen(&mut app, tile, 400.0, biomass);
-    // `Surplus` when NOT foddering so tending never teaches Foddering (the lossy-bread test's control
-    // trick); `Sustain` is fine once we granted it outright. The corral-tend branch FEEDs + HARVESTs
-    // under either policy.
-    let policy = if foddering { 0.5 } else { 0.3 };
-    let keeper = spawn_keeper(&mut app, &id, tile, policy);
+    let keeper = spawn_keeper(&mut app, &id, tile, 0.5);
     {
         let mut cohort = app.world.get_mut::<PopulationCohort>(keeper).unwrap();
         cohort.stores.reset_food("dry", scalar_from_f32(RESTOCK));
@@ -655,7 +610,7 @@ fn the_pen_feed_terms_sum_to_the_fodder_demand_and_never_touch_the_larder() {
 
     // (1) Pasture-only pen: the footprint covers 4 of the 10 grass demand, no hay. The pen is 40% fed
     //     and starves for the rest — pasture > 0, hay == 0, fed < 1.
-    let (demand, pasture, hay, fed, spent) = feed_split_terms(BIOMASS, 4.0, false, 0.0);
+    let (demand, pasture, hay, fed, spent) = feed_split_terms(BIOMASS, 4.0, 0.0);
     println!("pasture-only: demand {demand:.6}, pasture {pasture:.6}, hay {hay:.6}, fed {fed:.6}");
     assert!(pasture > 0.0, "the footprint fed part of the pen");
     assert!(hay.abs() < EPS, "no hay was drawn (fodder_draw == 0)");
@@ -674,7 +629,7 @@ fn the_pen_feed_terms_sum_to_the_fodder_demand_and_never_touch_the_larder() {
 
     // (2) Hay-fed pen: barren footprint, hay in store covers 5 of the 10 demand. Half fed, half
     //     starving — pasture == 0, hay > 0, fed == 0.5.
-    let (demand, pasture, hay, fed, spent) = feed_split_terms(BIOMASS, 0.0, true, 5.0);
+    let (demand, pasture, hay, fed, spent) = feed_split_terms(BIOMASS, 0.0, 5.0);
     println!("hay-fed:      demand {demand:.6}, pasture {pasture:.6}, hay {hay:.6}, fed {fed:.6}");
     assert!(pasture.abs() < EPS, "a barren footprint feeds nothing");
     assert!(hay > 0.0, "hay was drawn (fodder_draw > 0)");
@@ -692,7 +647,7 @@ fn the_pen_feed_terms_sum_to_the_fodder_demand_and_never_touch_the_larder() {
     );
 
     // (3) Fully-fed pen: footprint 4 + ample hay together cover the whole demand → fed in full.
-    let (demand, pasture, hay, fed, spent) = feed_split_terms(BIOMASS, 4.0, true, 100.0);
+    let (demand, pasture, hay, fed, spent) = feed_split_terms(BIOMASS, 4.0, 100.0);
     println!("fully-fed:    demand {demand:.6}, pasture {pasture:.6}, hay {hay:.6}, fed {fed:.6}");
     assert!(pasture > 0.0 && hay > 0.0, "pasture and hay both feed it");
     assert!(
@@ -724,7 +679,6 @@ fn a_lost_pen_drops_its_hay_delivery_rate() {
     // the flock bleeds out and the empty pen despawns.
     let mut app = base_world();
     let tile = pen_tile(&app);
-    learn_foddering(&mut app);
     let id = seat_pen(&mut app, tile, 400.0, 100.0);
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();

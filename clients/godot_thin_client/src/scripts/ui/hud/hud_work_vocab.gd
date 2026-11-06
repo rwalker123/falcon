@@ -3132,6 +3132,10 @@ const WORK_SECTION_AGRICULTURE := &"agriculture"
 const WORK_SECTION_HUSBANDRY := &"husbandry"
 const WORK_SECTION_ROADWORK := &"roadwork"
 const WORK_SECTION_GROUNDWORK := &"groundwork"
+## The two sections a chief adds (#860): the by-products no order asks for, and the player-crewed rows
+## of an ordered kind.
+const WORK_SECTION_BY_PRODUCTS := &"by_products"
+const WORK_SECTION_YOURS := &"yours"
 
 ## ⛔ **`Groundwork` NAMES THE WORKINGS SECTION, AND `quarrywork` NEVER REACHES A PLAYER.** `Quarry` is
 ## the extraction ladder's own rung, so a section named for it would put one word on two things.
@@ -3140,6 +3144,8 @@ const WORK_SECTION_TITLES := {
     WORK_SECTION_HUSBANDRY: "Husbandry",
     WORK_SECTION_ROADWORK: "Roadwork",
     WORK_SECTION_GROUNDWORK: "Groundwork",
+    WORK_SECTION_BY_PRODUCTS: "Also coming in",
+    WORK_SECTION_YOURS: "Yours",
 }
 
 
@@ -3374,6 +3380,10 @@ static func site_row_height(party_lines: int) -> float:
     return work_row_height(party_lines) + float(TWO_LINE_STEPPER_SEPARATION) \
         + WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(TWO_LINE_STEPPER_SEPARATION) \
         + WORK_ROW_PILL_LINE_HEIGHT
+
+## What the pill line costs a site row: its own height and the gap above it. A chief's row under an order
+## draws no pill line (the order's Priority governs), so it is this much shorter.
+const WORK_ROW_PILL_LINE_COST := float(TWO_LINE_STEPPER_SEPARATION) + WORK_ROW_PILL_LINE_HEIGHT
 
 ## A GROUNDWORK row's height — a site row's with no party block: line one, the rung line, the yield
 ## line, then the pill line.

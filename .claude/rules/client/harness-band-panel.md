@@ -2447,3 +2447,10 @@ scout row carries `scouting_range` / `scouting_reach` / `kitted_staffed` / `bare
 `scouting_range_max`. `BAND_FLANK_BALANCE_FLOOR` is 0.60: the Scout card lost its third hint line, which
 took the shorter flank column to 0.61. `command_guard`'s role sweep still drives `scout` as one number on
 the shared grammar.
+
+## `band_panel_orders.gd` -- the Work tab orders group (#860)
+
+Appended after the family-limit states. Frames `band_orders_work_all` (+ `_foot`), `_no_fodder`,
+`_slow`, `_short` and `_leaderless`; the last asserts a leaderless band draws no group. `command_guard`
+drives `BandOrdersController` for all three `band_order` forms and routes each line through the real
+server parser.

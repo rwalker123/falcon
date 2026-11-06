@@ -558,7 +558,12 @@ pub(crate) fn mustered_take_gear(
         mustered.assignments[*row].workers -= hands;
     }
     mustered.assignments[need_idx].workers = plan.total();
-    let mut claims = crate::take_claims::row_claims(sources, &mustered, wear);
+    let mut claims = crate::take_claims::row_claims_with_idle(
+        sources,
+        &mustered,
+        wear,
+        idle.saturating_sub(plan.from_idle),
+    );
     // **A CREW THE BAND CANNOT ARM STILL CLAIMS THE KIT IT WOULD NEED.** On a quarry bare hands
     // cannot wound, a band holding none of the kit prices its need row's one equipped hand at the
     // bare attack - a claim of nothing, so the row would show no shortfall and no spear would be
@@ -1381,6 +1386,9 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// [`crate::systems::CulturePressureLedger`]. Empty for a detached party and for a world no
     /// turn has judged.
     pub(crate) culture_pressures: Vec<sim_schema::CulturePressureState>,
+    /// **This band's orders** (#860) - see [`band_order_rows`]. Empty for a detached party and for a
+    /// band with no leader.
+    pub(crate) band_orders: Vec<sim_schema::BandOrderState>,
     /// **The improvements this band holds at its camp** (#708), one row per band-kind branch - see
     /// [`band_improvement_rows`]. Empty for a detached party.
     pub(crate) band_improvements: Vec<sim_schema::BandImprovementState>,
@@ -1692,6 +1700,169 @@ pub(crate) fn redacted_population_state(
     }
 }
 
+/// **A BAND'S ORDER ROWS** (#860): one per order the allocation holds, chief-owned or the player's.
+/// Draw, target, priority and owner come from the allocation; `on_hand` is the band's store total of
+/// the kind, read through `on_hand`.
+pub(crate) fn band_order_rows(
+    allocation: &LaborAllocation,
+    on_hand: &dyn Fn(&str) -> f32,
+    readings: &crate::food_orders::OrderReadings,
+) -> Vec<sim_schema::BandOrderState> {
+    allocation
+        .orders
+        .iter()
+        .map(|(kind, order)| {
+            let site = allocation.last_keep_site.get(kind).copied();
+            let by_turns = crate::keep_on_hand::is_row_kind(kind);
+            let (hold_heads, hold_wanted, refill_heads, listed_refill_wanted) =
+                allocation.order_crew(kind);
+            // The sources the chief left off for want of hands still count toward the crew the order
+            // asks for.
+            let refill_wanted = listed_refill_wanted
+                + allocation
+                    .keep_unlisted_heads
+                    .get(kind)
+                    .copied()
+                    .unwrap_or(0);
+            sim_schema::BandOrderState {
+                hold_heads,
+                hold_wanted,
+                refill_heads,
+                refill_wanted,
+                take: allocation.order_take(kind),
+                // Food and fodder read in TURNS (`target`, `on_hand`) over a per-turn draw in units;
+                // a material reads in units throughout.
+                draw: readings.draw(kind, allocation),
+                has_consumers: kind != crate::keep_on_hand::FODDER_KIND
+                    || allocation.last_fodder_need > 0.0,
+                target: order.target,
+                priority: match order.priority {
+                    SourcePriority::High => sim_schema::state::SourcePriorityState::High,
+                    SourcePriority::Normal => sim_schema::state::SourcePriorityState::Normal,
+                    SourcePriority::Low => sim_schema::state::SourcePriorityState::Low,
+                },
+                chief_owned: order.owner == crate::components::OrderOwner::Chief,
+                on_hand: if by_turns {
+                    readings.turns(kind, allocation)
+                } else {
+                    on_hand(kind)
+                },
+                has_site: site.is_some(),
+                site_x: site.map_or(0, |tile| tile.x),
+                site_y: site.map_or(0, |tile| tile.y),
+                sustainable: allocation
+                    .keep_sustainable
+                    .get(kind)
+                    .copied()
+                    .unwrap_or(0.0),
+                kind: kind.clone(),
+                limit: String::new(),
+                limit_item: String::new(),
+                land_gives: 0.0,
+                limit_count: 0,
+            }
+        })
+        .collect()
+}
+
+/// What holds an order up: nothing (`""`).
+pub const LIMIT_NONE: &str = "";
+/// Even every hand would not cover the order: the hands it wants exceed the band's staffable pool,
+/// or all its candidate sites together give less a turn than it wants.
+pub const LIMIT_LAND: &str = "land";
+/// Hands are short, the band has idle hands to fill them, and the order's rows lack a kit item.
+pub const LIMIT_KIT: &str = "kit";
+/// Hands are short and nothing else is in the way.
+pub const LIMIT_HANDS: &str = "hands";
+/// A row the order lists has a full tile: it holds no more hands, whatever the band could send.
+pub const LIMIT_FULL: &str = "full";
+
+/// **STATE WHAT HOLDS EACH ORDER UP** (`BandOrderState::limit`), read off the staffing's own numbers
+/// once the band's rows are published. `tile_short` is the row-aligned `StaffedCrew::tile_short`.
+/// The decision, in order:
+///
+/// 1. **full / kit**: a row the order lists has a full tile (`tile_short > 0`). If such a row reads
+///    a kit item `required > filled`, the limit is `kit` - `limit_item` names it and `limit_count`
+///    is the units the order's listed rows lack of it, rounded up - else `full`. This holds with
+///    no hands short: a full tile with baskets missing is the reason the take falls short;
+/// 2. **land**: the hands wanted exceed the staffable pool (`order_pool`), or the sum of every
+///    candidate site's per-turn cap (`keep_reach.gives`) is below the order's want. The wanted heads
+///    are then capped at the pool and `land_gives` carries what the sites could give;
+/// 3. hands short (hold short plus refill short) with the band's idle hands (`idleWorkers`) at least
+///    that many and a listed row's `kitToe` short of an item: `kit` (item and count as in 1), else
+///    `hands`;
+/// 4. otherwise `""`.
+pub(crate) fn apply_order_limits(
+    orders: &mut [sim_schema::BandOrderState],
+    allocation: &LaborAllocation,
+    rows: &[sim_schema::LaborAssignmentState],
+    tile_short: &[u32],
+    idle_workers: u32,
+) {
+    for order in orders.iter_mut() {
+        let listed = || {
+            rows.iter()
+                .enumerate()
+                .filter(|(_, row)| row.order_kind == order.kind)
+        };
+        let short_item_of = |full_only: bool| {
+            listed()
+                .filter(|(i, _)| !full_only || tile_short.get(*i).copied().unwrap_or(0) > 0)
+                .flat_map(|(_, row)| row.kit_toe.iter())
+                .find(|line| line.required > line.filled)
+                .map(|line| line.item_id.clone())
+        };
+        let lacking = |item: &str| -> u32 {
+            let units: f32 = listed()
+                .flat_map(|(_, row)| row.kit_toe.iter())
+                .filter(|line| line.item_id == item)
+                .map(|line| (line.required - line.filled).max(0.0))
+                .sum();
+            units.ceil() as u32
+        };
+        let site_is_full = listed().any(|(i, _)| tile_short.get(i).copied().unwrap_or(0) > 0);
+        if site_is_full {
+            match short_item_of(true) {
+                Some(item) => {
+                    order.limit_count = lacking(&item);
+                    order.limit = LIMIT_KIT.to_string();
+                    order.limit_item = item;
+                }
+                None => order.limit = LIMIT_FULL.to_string(),
+            }
+            continue;
+        }
+        let sites_short = allocation.keep_reach.get(&order.kind).is_some_and(|reach| {
+            reach.want > 0.0 && reach.gives.is_some_and(|gives| gives < reach.want)
+        });
+        let beyond_the_pool = order.refill_wanted > allocation.order_pool;
+        if sites_short || beyond_the_pool {
+            order.limit = LIMIT_LAND.to_string();
+            order.refill_wanted = order.refill_wanted.min(allocation.order_pool);
+            order.land_gives = allocation
+                .keep_reach
+                .get(&order.kind)
+                .and_then(|reach| reach.gives)
+                .unwrap_or(0.0);
+            continue;
+        }
+        let short = order.hold_wanted.saturating_sub(order.hold_heads)
+            + order.refill_wanted.saturating_sub(order.refill_heads);
+        if short == 0 {
+            order.limit = LIMIT_NONE.to_string();
+            continue;
+        }
+        match short_item_of(false) {
+            Some(item) if idle_workers >= short => {
+                order.limit_count = lacking(&item);
+                order.limit = LIMIT_KIT.to_string();
+                order.limit_item = item;
+            }
+            _ => order.limit = LIMIT_HANDS.to_string(),
+        }
+    }
+}
+
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
     let PopulationStateInputs {
         belief_reach,
@@ -1734,6 +1905,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         loadout_window,
         heart,
         culture_pressures,
+        mut band_orders,
         band_improvements,
     } = inputs;
     let homeward: &[crate::work_party::HomewardWalk] =
@@ -1859,8 +2031,13 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         drives_known: hunt_crew_levers.drives_known,
         start: crate::fauna::ProjectionStart::BeforeRegrowth,
     };
-    let row_claims =
-        allocation.map(|alloc| crate::take_claims::row_claims(&claim_sources, alloc, &kit));
+    // **The asks follow the band's idle hands** (the published `idleWorkers`): an unstaffed chief row
+    // asks for a head's kit only while the staffing left a hand unused for it.
+    let idle_hands =
+        crate::components::BandWorkforce::resolve(Some(cohort), allocation, bench).idle();
+    let row_claims = allocation.map(|alloc| {
+        crate::take_claims::row_claims_with_idle(&claim_sources, alloc, &kit, idle_hands)
+    });
     let no_claims = crate::take_claims::RowClaims::default();
     let claims = row_claims.as_ref().unwrap_or(&no_claims);
     let row_gear: Vec<(
@@ -2202,7 +2379,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // Zip each assignment with its retained per-source yield telemetry (same index order). An
     // assignment with no telemetry row yet → default 0 yields rather than a panic.
     const NO_YIELD: SourceYield = SourceYield::ZERO;
-    let labor_assignments = allocation
+    let labor_assignments: Vec<sim_schema::LaborAssignmentState> = allocation
         .map(|a| {
             a.assignments
                 .iter()
@@ -2288,6 +2465,13 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     // **WHICH OF ITS KIT ITEMS ARE SHORT, BY NAME** — read off the same pass as the
                     // coverage above (the mustered one while a crew goes out, the standing one
                     // otherwise), so the line and the reach beside it agree.
+                    // **WHICH ORDER LISTS THIS ROW** (#860): the order `order_rows` names for a
+                    // forage, hunt or dig row; a player-crewed row under none.
+                    row.order_kind = a
+                        .row_order(&assignment.target)
+                        .unwrap_or_default()
+                        .to_string();
+                    row.chief_owned = !row.order_kind.is_empty();
                     row.kit_toe = match &sending_pass {
                         Some(pass) => kit_toe_states(&pass.gear[i].toe),
                         None => row_gear[i].2.clone(),
@@ -2434,10 +2618,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // phrasing for one concept, so a client reads `turns_of_fodder` exactly as it reads
     // `turns_of_food` and never branches two ways on "turns of buffer left".
     //
-    // ⛔ **IT COUNTS DOWN THE DRAIN, NOT THE NEED.** `last_fodder_drain` is the need behind the
-    // Foddering gate (`settle_pen_hay` zeroes every bid without it), and the gap between the two is
-    // reachable: a band may commit a patch to a fodder crop and bank hay *before* it can feed any
-    // out, because the harvest credit lifts on the commitment while the draw waits on the knowledge.
+    // ⛔ **IT COUNTS DOWN THE DRAIN, NOT THE NEED.** `last_fodder_drain` is the hay the pens and
+    // tamed herds ask of the store, and the gap between it and the need is what an empty store leaves.
     // Counting such a band's store down against its ungated need published a runway of a few turns
     // for a store that never moved — the field says "turns until `fodderStore` empties", and nothing
     // was emptying it. The **need** is untouched and still carries the alarm.
@@ -2730,6 +2912,20 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     };
     let materials_free =
         crate::snapshot::crafting::materials_free(&queue_forecast, &cohort.stores, craft_inputs);
+    if let Some(allocation) = allocation {
+        let tile_short: Vec<u32> = allocation
+            .assignments
+            .iter()
+            .map(|row| row.staffing.tile_short)
+            .collect();
+        apply_order_limits(
+            &mut band_orders,
+            allocation,
+            &labor_assignments,
+            &tile_short,
+            idle_workers,
+        );
+    }
     PopulationCohortState {
         entity: entity.to_bits(),
         band_id: band_id.map(|id| id.0).unwrap_or_default(),
@@ -3202,6 +3398,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .map_or(sim_schema::state::NO_HEART_CONTACT, |turn| turn as i64),
         independence_grievance_threshold: wellbeing.independence.grievance_threshold,
         culture_pressures,
+        band_orders,
         band_improvements,
         tribe_threshold: tribe.as_ref().map_or(0.0, |t| t.threshold),
         tribe_history_build_turns: tribe.as_ref().map_or(0.0, |t| t.history_build_turns),
@@ -3766,6 +3963,7 @@ mod tests {
             loadout_window: None,
             heart: None,
             culture_pressures: Vec::new(),
+            band_orders: Vec::new(),
             band_improvements: Vec::new(),
             held_preservation: crate::spoilage::HeldPreservation::none(),
             reachable_stores: crate::fixed_store::ReachableStores::none(),
@@ -4410,5 +4608,176 @@ mod culture_pressure_rows_tests {
         // Asked with no forced clock running: nothing counting down.
         assert_eq!(rows[0].turns_to_next, 0);
         assert_eq!(rows[0].phase, 2);
+    }
+}
+
+#[cfg(test)]
+mod order_limit_tests {
+    use super::*;
+    use crate::components::KeepReach;
+
+    const KIND: &str = "stone";
+    const POOL: u32 = 10;
+    /// No listed row's tile is full.
+    const NOT_FULL: [u32; 8] = [0; 8];
+    /// Every listed row's tile is full.
+    const ALL_FULL: [u32; 8] = [1; 8];
+
+    fn limit_full_tiles(
+        order: sim_schema::BandOrderState,
+        rows: &[sim_schema::LaborAssignmentState],
+        tile_short: &[u32],
+        idle: u32,
+    ) -> sim_schema::BandOrderState {
+        let mut orders = vec![order];
+        apply_order_limits(
+            &mut orders,
+            &allocation(Some(9.0), 5.0),
+            rows,
+            tile_short,
+            idle,
+        );
+        orders.remove(0)
+    }
+
+    fn order(refill_wanted: u32, refill_heads: u32) -> sim_schema::BandOrderState {
+        sim_schema::BandOrderState {
+            kind: KIND.to_string(),
+            refill_wanted,
+            refill_heads,
+            ..Default::default()
+        }
+    }
+
+    fn allocation(gives: Option<f32>, want: f32) -> LaborAllocation {
+        let mut allocation = LaborAllocation {
+            order_pool: POOL,
+            ..Default::default()
+        };
+        allocation
+            .keep_reach
+            .insert(KIND.to_string(), KeepReach { gives, want });
+        allocation
+    }
+
+    fn row_short_of(item: &str) -> sim_schema::LaborAssignmentState {
+        sim_schema::LaborAssignmentState {
+            order_kind: KIND.to_string(),
+            kit_toe: vec![sim_schema::KitToeLineState {
+                item_id: item.to_string(),
+                required: 2.0,
+                filled: 0.0,
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn limit_of(
+        order: sim_schema::BandOrderState,
+        allocation: &LaborAllocation,
+        rows: &[sim_schema::LaborAssignmentState],
+        idle: u32,
+    ) -> sim_schema::BandOrderState {
+        let mut orders = vec![order];
+        apply_order_limits(&mut orders, allocation, rows, &NOT_FULL, idle);
+        orders.remove(0)
+    }
+
+    #[test]
+    fn nothing_short_reads_no_limit() {
+        let out = limit_of(order(3, 3), &allocation(Some(9.0), 5.0), &[], 4);
+        assert_eq!(out.limit, LIMIT_NONE);
+        assert_eq!(out.refill_wanted, 3);
+    }
+
+    #[test]
+    fn hands_short_with_kit_and_the_hands_to_fill_them_reads_kit_and_names_the_item() {
+        let rows = [row_short_of("sled")];
+        let out = limit_of(order(5, 2), &allocation(Some(9.0), 5.0), &rows, 3);
+        assert_eq!(out.limit, LIMIT_KIT);
+        assert_eq!(out.limit_item, "sled");
+    }
+
+    #[test]
+    fn hands_short_without_idle_hands_to_fill_them_reads_hands_even_when_kit_is_short() {
+        let rows = [row_short_of("sled")];
+        let out = limit_of(order(5, 2), &allocation(Some(9.0), 5.0), &rows, 2);
+        assert_eq!(
+            out.limit, LIMIT_HANDS,
+            "two idle hands cannot fill three heads"
+        );
+        assert_eq!(out.limit_item, "");
+    }
+
+    #[test]
+    fn hands_short_with_kit_in_hand_reads_hands() {
+        let out = limit_of(order(5, 2), &allocation(Some(9.0), 5.0), &[], 9);
+        assert_eq!(out.limit, LIMIT_HANDS);
+    }
+
+    #[test]
+    fn a_row_of_another_order_does_not_make_this_orders_kit_short() {
+        let mut other = row_short_of("sled");
+        other.order_kind = "wood".to_string();
+        let out = limit_of(order(5, 2), &allocation(Some(9.0), 5.0), &[other], 9);
+        assert_eq!(out.limit, LIMIT_HANDS);
+    }
+
+    #[test]
+    fn sites_that_give_less_than_the_want_read_land_with_what_they_give() {
+        let out = limit_of(order(4, 4), &allocation(Some(1.5), 5.0), &[], 0);
+        assert_eq!(out.limit, LIMIT_LAND);
+        assert!((out.land_gives - 1.5).abs() < 1e-6);
+        assert_eq!(out.refill_wanted, 4);
+    }
+
+    #[test]
+    fn more_hands_wanted_than_the_band_has_reads_land_and_is_capped_at_the_pool() {
+        let out = limit_of(order(48, 2), &allocation(None, 5.0), &[], 0);
+        assert_eq!(out.limit, LIMIT_LAND);
+        assert_eq!(
+            out.refill_wanted, POOL,
+            "never a hand count larger than the band"
+        );
+        assert_eq!(out.land_gives, 0.0, "an unbounded land states no figure");
+    }
+
+    #[test]
+    fn a_met_order_at_target_is_not_land() {
+        let out = limit_of(order(0, 0), &allocation(Some(0.0), 0.0), &[], 3);
+        assert_eq!(out.limit, LIMIT_NONE);
+    }
+
+    #[test]
+    fn a_full_tile_with_a_kit_short_reads_kit_with_the_count_even_with_no_hands_short() {
+        let mut second = row_short_of("sled");
+        second.kit_toe[0].required = 3.5;
+        second.kit_toe[0].filled = 1.0;
+        let rows = [row_short_of("sled"), second];
+        let out = limit_full_tiles(order(5, 5), &rows, &ALL_FULL, 0);
+        assert_eq!(out.limit, LIMIT_KIT);
+        assert_eq!(out.limit_item, "sled");
+        assert_eq!(out.limit_count, 5, "(2 - 0) + (3.5 - 1) = 4.5 rounds up");
+    }
+
+    #[test]
+    fn a_full_tile_with_no_kit_short_reads_full() {
+        let mut row = row_short_of("sled");
+        row.kit_toe[0].filled = row.kit_toe[0].required;
+        let out = limit_full_tiles(order(5, 5), &[row], &ALL_FULL, 9);
+        assert_eq!(out.limit, LIMIT_FULL);
+        assert_eq!(out.limit_item, "");
+        assert_eq!(out.limit_count, 0);
+    }
+
+    #[test]
+    fn hold_short_only_with_idle_hands_and_kit_short_reads_kit() {
+        let mut o = order(3, 3);
+        o.hold_wanted = 4;
+        o.hold_heads = 2;
+        let rows = [row_short_of("sled")];
+        let out = limit_full_tiles(o, &rows, &NOT_FULL, 2);
+        assert_eq!(out.limit, LIMIT_KIT);
+        assert_eq!(out.limit_count, 2);
     }
 }

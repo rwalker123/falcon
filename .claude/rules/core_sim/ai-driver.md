@@ -34,7 +34,7 @@ link-backed and unasked answerers), `view.rs` (`SeatView`,
 (`AiProfile`, `Difficulty`, the file), `orchestrator/` (`Plan`, `ConstantStance`), `specialists/`
 (the trait, `Food`, `Land`, `Dealings`, `Scripted`), `arbiter.rs` (the six steps), `brain.rs` (`Brain`,
 `PassBrain`, and the `Composite` the scripted and utility brains are configurations of),
-`board.rs` (the demand board), `instruments/` (`scoreboard.rs`, `decisions.rs`,
+`board.rs` (the demand board), `orders.rs` (the release of a chief-run row before a hand command), `instruments/` (`scoreboard.rs`, `decisions.rs`,
 `observations.rs`, the `Instruments` writer trio), `bench/` (`mod.rs` the harness,
 `measures.rs` the logs → measures, `ratchet.rs` report ·
 compare · check · baselines), `viewer/` (`mod.rs` the join and the page writer, `page.html` the
@@ -230,6 +230,23 @@ every bid, in score order among the bills, still under the budget and the claims
 the bids are then selected with those claims taken. A hold is a bill the seat owes, not a bid:
 priced as the rung lost it still lost 51,9 on seed 23 to a same-band assignment through `conflict`
 the turn the rung completed, and the patch unwound.
+
+## A chief's rows (`orders.rs`)
+
+A band with a leader has a chief who works the rows its band orders list (`.claude/rules/core_sim/leadership.md`;
+the wire carries `chiefOwned` / `orderKind` on each `LaborAssignmentState`), and the sim refuses
+`assign_labor`, `stop_labor` and `work_priority` on such a row ("<Leader> keeps food on hand - choose Crew
+it yourself"). The seat plays by the player's rule: `orders::release_chief_rows` runs over the turn's
+commands in `Composite::decide`, **after** the arbiter, and puts `band_order <faction> <band> <orderKind>
+release <x> <y>` (a patch or a dig stand) or `release <herd id>` (a hunt row) directly in front of the first
+hand command on each row the frame shows `chiefOwned`; the command itself follows in the same turn. A
+row two commands name is released once. It is per ROW: the seat never releases a whole kind and never
+claims a row back, and a row that is not `chiefOwned` (a new patch, a row already released) gets no
+release. The release is derived from the commands, not proposed, so no specialist bids on it and
+`Cost::claimed` claims a one-row `band_order` under the same `row_key` the labor commands on that
+row claim. The scripted brain goes through the same `Composite::decide`. The release is not in
+`decisions.jsonl` `commands_text` (that is the arbiter's accepted proposal); it is in the commands sent
+and the server's run record.
 
 ## The demand board (`board.rs`)
 
@@ -1561,6 +1578,14 @@ better, 4 worse), `patches_improved` 0.10 → 0.75 (10 better, none worse), chil
 working 19.0 → 18.9, hunger deaths 0.05 → 0.10 (one death on one seed). The band's own cluster now
 feeds it for the whole run on seeds 22, 37 and 59 — `Land` raises no `land_short` and proposes
 nothing — so all three joined 20, 50 and 54 as `declined` rows with a note.
+
+**The chief's food keep-up (#860) moved it once more.** `Land` wins one `move_band` on seeds 50
+(tick 57) and 59 (tick 43), because the band's runway falls there again, so the `declined` rows for
+those two seeds were withdrawn. Asking a stand or patch for its stock above the floor and dealing
+the food refill ahead of another order's kitted refill then holds seed 50's runway near 27 turns, so
+`Land` proposes nothing there again and seed 50's `declined` row is back; seed 59 stays withdrawn
+(`Land` decides there). The file's `declined` rows are seeds 20, 22, 37, 50 and 54. A refused hand command on a chief's row no longer happens: the seat
+releases the row first ("A chief's rows", above), so `commands_failed_total` is 0 on all eight seeds.
 
 ⛔ **The start kinds above are what the seeds read NOW, not what they were chosen for.** The
 eight were picked to span `stay` / `split_local` / `split_far` / `short`; the sim changes since

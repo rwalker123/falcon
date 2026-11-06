@@ -4364,7 +4364,7 @@ const NO_UNCOMMITTED_YIELD_RATE: f32 = 0.0;
 /// tended grain patch credits no hay with no `role` branch.
 ///
 /// **The wild credit's KNOWLEDGE gate is not here.** Whether a band may bank hay it did not commit to
-/// is a question about the *faction* (Foddering), and it lives at the credit site in `systems/labor.rs`
+/// is a question about the *faction*, and it lives at the credit site in `systems/labor.rs`
 /// so this seam stays free of knowledge lookups and commodity-generic.
 pub(crate) fn patch_fodder_per_biomass(
     patch: &ForagePatch,

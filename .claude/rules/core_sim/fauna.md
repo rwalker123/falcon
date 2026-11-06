@@ -1397,3 +1397,12 @@ forager's rate; the other four keep their order.
 `engage_rate × pen_engage_gain` — the rule `husbandry.md` records for the boar. Sheep `8.5 → 5.1` and
 goat `7.9 → 5.266667` hold the pens at 12.75 and 11.85 animals per keeper; the pastoral rung cannot be
 held the same way and rises with the wild reach.
+
+## A chief's hunting rows (#860)
+
+Under a chief's food order (`work-party.md` -> "The food and fodder orders") a hunt row the chief lists in
+`LaborAllocation::order_rows` carries his floor (Best below the order's target, the Learning floor at or
+above it), and the managing pass re-ranks the herds every turn: a herd that is gone, out of sight or one
+the band's kit cannot wound (`staffing::probe_source`) loses its row unless cargo is walking home from it
+or a party is out, and the next best herd takes its share. A pen or a tamed herd the band keeps is never
+retired by the chief, even at a zero share, so its keepers keep coming.

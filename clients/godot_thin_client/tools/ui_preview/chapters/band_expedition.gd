@@ -2830,17 +2830,9 @@ func _hay_ledger_states() -> void:
 	await h._settle()
 
 	await _fodder_dormant_states()
+	await _fodder_no_herds_state()
 
 # ---- THE DORMANT FODDER ROW — the state the old gate rendered as nothing at all ------------------
-
-## The two values this block stages the faction's Foddering at: part-learned (the craft is missing)
-## and learned (the craft is there and the band still keeps no pen). The row is DIM at both, which is
-## the claim they exist as a pair to make. The track's own KEY is read from the vocabulary the gate
-## reason reads (`HudFloraVocab.KNOWLEDGE_TRACK_FODDERING`), so a renamed track cannot leave this
-## pushing a key nothing consults and quietly staging neither half.
-const FODDER_KNOWLEDGE_PART := 0.35
-
-const FODDER_KNOWLEDGE_LEARNED := 1.0
 
 ## **THE WORDS A FODDER SENTENCE CANNOT AVOID.** The dormant row registers NO hover. When a hover
 ## answered for the whole block the two sentences it used to register popped out from under a cursor
@@ -2873,14 +2865,11 @@ const FODDER_DORMANT_ZERO_NEEDLE := HudDisclosureVocab.DETAIL_ROW_FODDER + ": 0.
 func _forager_band_fixture() -> Dictionary:
 	return BandFx.band_fixture()
 
-## The player faction's Foddering, pushed the way the snapshot pushes it. Every OTHER track goes in
-## at zero with it — `_ingest_intensification` replaces the faction's whole row — which is also what
-## the restore at the end of this block relies on.
-func _push_foddering(progress: float) -> void:
-	h._hud.update_intensification([{
-		"faction": HudConst.PLAYER_FACTION_ID,
-		"knowledges": {HudFloraVocab.KNOWLEDGE_TRACK_FODDERING: progress},
-	}])
+## The player faction's knowledge row at its untouched zeros, pushed the way the snapshot pushes it.
+## `_ingest_intensification` replaces the faction's whole row, so this is also what the restore at the
+## end of the dormant block relies on.
+func _push_knowledge_zero() -> void:
+	h._hud.update_intensification([{"faction": HudConst.PLAYER_FACTION_ID, "knowledges": {}}])
 
 ## Is `text` free of EVERY word in `words`, case-insensitively? The negative the dormant fodder row's
 ## no-hover claim is made with.
@@ -2917,13 +2906,8 @@ func _panel_vitals_label(node: Node) -> RichTextLabel:
 ## side of it instead of a herd. `show_unit_selection` renders both hosts, then `render_band` puts a
 ## different subject back into the dock alone.
 ##
-## **AND THE TWO REASONS A ROW CAN BE DORMANT ARE DIFFERENT NEWS.** A faction without Foddering
-## CANNOT bank hay at any price — the craft is a whole rung away — while one that simply keeps no pen
-## is not blocked by anything. Both sentences are asserted, over the same fixture with the faction's
-## knowledge moved between them, because a single tooltip claim passes on a build that states one
-## sentence in both states.
 func _fodder_dormant_states() -> void:
-	_push_foddering(FODDER_KNOWLEDGE_PART)
+	_push_knowledge_zero()
 	var panel: BandCityPanel = h.BAND_CITY_PANEL_SCENE.instantiate()
 	h.add_child(panel)
 	await h.get_tree().process_frame
@@ -2998,7 +2982,7 @@ func _fodder_dormant_states() -> void:
 				_forager_band_fixture())) == null)
 
 	# **AND THE DIM DASH IS THE WHOLE STATE — NO HOVER, ON EITHER HOST.** The row registered two
-	# sentences here, a Foddering lock and a calm *no fodder yet*, and a row's hover on this surface
+	# sentences here, a lock and a calm *no fodder yet*, and a row's hover on this surface
 	# is the BLOCK's: one `RichTextLabel`, one `tooltip_text`. So a paragraph about hay reached a
 	# cursor resting on Growth, Morale or Food — rows a fodder lock bears on not at all. Claimed on
 	# BOTH hosts, which attach the block hover separately, and on the DORMANT band in each: the frame
@@ -3016,23 +3000,34 @@ func _fodder_dormant_states() -> void:
 		dormant_vitals != null
 			and _mentions_none_of(dormant_vitals.tooltip_text, RETIRED_FODDER_HOVER_WORDS))
 
-	# **AND KNOWING THE CRAFT DOES NOT HAND THE BAND A LARDER.** Learn Foddering and the same band's
-	# row is still dormant — it keeps no pen and grows no fodder crop — which is what catches a row
-	# reading the knowledge track instead of the band's own two flows.
-	_push_foddering(FODDER_KNOWLEDGE_LEARNED)
-	h._hud.show_unit_selection(_forager_band_fixture())
-	await h._settle()
-	h._assert_hud("…and the row is dim either way — the craft is not a fodder economy",
-		_lines_any_contain(_band_lines(_forager_band_fixture()), dormant_needle))
-
 	# Release the dock and put the faction's knowledge back to the untouched zeros every chapter after
 	# this one inherits — a stranded reserved edge moves later frames, and a stranded knowledge row
 	# would silently unlock gates in chapters that stage their own.
 	h._hud.set_band_city_panel(null)
 	panel.queue_free()
-	_push_foddering(0.0)
+	_push_knowledge_zero()
 	h._hud._band_labor._player_bands = []
 	h._hud._band_labor._player_band = BandFx.band_fixture()
+	h._hud.clear_selection()
+	await h._settle()
+
+## **A STORE NO HERD DRAWS ON READS `no herds eat it`, NOT `∞`.** A band holding fodder with no tamed or
+## penned herd eating it has an unlimited runway over a bill of nothing; the row says so in words. The
+## covered band beside it (a bill the Fields out-grow) keeps its figure. Asked of the produced lines
+## AND rendered, as a PAIR.
+func _fodder_no_herds_state() -> void:
+	var idle_store := _hay_band_fixture(HAY_STORE_SHORT, 0.0, 0.0, BandFoodStatus.UNLIMITED_TURNS)
+	h._hud.show_unit_selection(idle_store)
+	await h._settle()
+	await h._save("band_fodder_no_herds")
+	var idle_lines := _band_lines(idle_store)
+	h._assert_hud("a fodder store no herd eats reads `no herds eat it`",
+		_lines_any_contain(idle_lines, BandDetailLines.BAND_FODDER_NO_HERDS_TEXT))
+	h._assert_hud("…and never the meaningless `(∞)` beside it",
+		not _lines_any_contain(idle_lines, "(" + DetailFormat.FOOD_UNLIMITED_GLYPH + ")"))
+	h._assert_hud("…while a covered band whose herds DO eat keeps its own figure",
+		not _lines_any_contain(_band_lines(_hay_covered_band_fixture()),
+			BandDetailLines.BAND_FODDER_NO_HERDS_TEXT))
 	h._hud.clear_selection()
 	await h._settle()
 

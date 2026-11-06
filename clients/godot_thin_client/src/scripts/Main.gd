@@ -405,6 +405,8 @@ func _ready() -> void:
             hud.connect("split_band_requested", Callable(self, "_on_hud_split_band"))
         if hud.has_signal("extend_pen_requested") and not hud.is_connected("extend_pen_requested", Callable(self, "_on_hud_extend_pen")):
             hud.connect("extend_pen_requested", Callable(self, "_on_hud_extend_pen"))
+        if hud.has_signal("band_order_requested") and not hud.is_connected("band_order_requested", Callable(self, "_on_hud_band_order")):
+            hud.connect("band_order_requested", Callable(self, "_on_hud_band_order"))
         if hud.has_signal("upkeep_mode_requested") and not hud.is_connected("upkeep_mode_requested", Callable(self, "_on_hud_upkeep_mode")):
             hud.connect("upkeep_mode_requested", Callable(self, "_on_hud_upkeep_mode"))
         if hud.has_signal("open_borders_requested") and not hud.is_connected("open_borders_requested", Callable(self, "_on_hud_open_borders")):
@@ -513,6 +515,8 @@ func _ready() -> void:
                 map_view.connect("zoom_changed", Callable(hud, "set_zoom_readout"))
             # Seed the readout once from the current factor (no zoom event has fired yet).
             _hud_invoke("set_zoom_readout", [map_view.zoom_factor])
+        if hud != null and hud.has_method("set_terrain_label_lookup") and map_view.has_method("terrain_label_at"):
+            hud.call("set_terrain_label_lookup", Callable(map_view, "terrain_label_at"))
         # Optimistic pending-labor: HUD publishes the per-band pending map, MapView draws the
         # dashed-amber pending hexes for the selected band.
         if hud != null and hud.has_signal("labor_pending_changed") and map_view.has_method("set_labor_pending"):
@@ -2474,6 +2478,38 @@ static func format_upkeep_mode(payload: Dictionary) -> Dictionary:
             HudWorkVocab.UPKEEP_MODE_COMMAND_MESSAGE_FALLBACK % mode),
     }
 
+## **`band_order <faction> <band_id> <kind> set <target> <priority> | release [<x> <y> | <herd_id>] |
+## claim [<x> <y> | <herd_id>]`** -- a band's standing order to its leader (#860). `kind` is `food`,
+## `fodder` or a material id; a row address (`x`/`y` or `herd_id`) moves ONE food/fodder row, none moves
+## the whole kind. Declines on a missing band, kind or action rather than guessing one.
+static func format_band_order(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    var kind := String(payload.get("kind", "")).strip_edges().to_lower()
+    var action := String(payload.get("action", "")).strip_edges().to_lower()
+    if band_id == HudConst.NO_BAND_ID or kind == "":
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    var head := "band_order %d %d %s" % [faction, band_id, kind]
+    match action:
+        HudOrdersVocab.ACTION_SET:
+            var level := String(payload.get("priority", "")).strip_edges().to_lower()
+            if not HudWorkVocab.WORK_PRIORITY_FACES.has(level):
+                return {}
+            var target := maxi(int(payload.get("target", 0)), 0)
+            return {"line": "%s set %d %s" % [head, target, level],
+                "message": HudOrdersVocab.COMMAND_SET_MESSAGE % [HudOrdersVocab.order_name(kind), target]}
+        HudOrdersVocab.ACTION_RELEASE, HudOrdersVocab.ACTION_CLAIM:
+            var address := ""
+            var herd_id := String(payload.get("herd_id", "")).strip_edges()
+            if herd_id != "":
+                address = " " + herd_id
+            elif payload.has("x") and payload.has("y"):
+                address = " %d %d" % [int(payload["x"]), int(payload["y"])]
+            var message: String = HudOrdersVocab.COMMAND_RELEASE_MESSAGE \
+                if action == HudOrdersVocab.ACTION_RELEASE else HudOrdersVocab.COMMAND_CLAIM_MESSAGE
+            return {"line": "%s %s%s" % [head, action, address], "message": message}
+    return {}
+
 ## **`set_open_borders <faction> open|closed`** — the player people's Open Borders policy (issue #512,
 ## `docs/plan_band_fission.md` §Defection): whether another people's leavers and defecting parties may
 ## join its bands. A faction-wide setting, so it names no band. The state is REQUIRED in the payload —
@@ -2806,6 +2842,11 @@ func _on_hud_stop_labor(payload: Dictionary) -> void:
 ## standing policy on the band's allocation, not part of any source's commit.
 func _on_hud_upkeep_mode(payload: Dictionary) -> void:
     _send_formatted_command(format_upkeep_mode(payload))
+
+## Send a band order (set / release / claim). No optimistic write: the server restaffs at once and the
+## next snapshot carries the order and its rows.
+func _on_hud_band_order(payload: Dictionary) -> void:
+    _send_formatted_command(format_band_order(payload))
 
 ## Set the player people's Open Borders policy. No optimistic write: the faction page reads the state
 ## off `faction_policies`, which the server's recapture after this command carries back.

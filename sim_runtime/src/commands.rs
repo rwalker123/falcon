@@ -16,6 +16,25 @@ pub struct CommandEnvelope {
     pub correlation_id: Option<u64>,
 }
 
+/// The one row of a food or fodder order a `release` / `claim` names (the grammar `stop_labor` names a
+/// row in): a forage patch by tile, a hunt row by herd id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BandOrderRow {
+    Tile { x: u32, y: u32 },
+    Herd { id: String },
+}
+
+/// What a [`CommandPayload::BandOrder`] does to one kind's order (#860).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BandOrderAction {
+    /// Set the target and priority (`high` | `normal` | `low`); a target of `0` is refused.
+    Set { target: u32, priority: String },
+    /// Crew it yourself: the player takes the kind.
+    Release,
+    /// Hand it to the chief: the chief takes the kind back.
+    Claim,
+}
+
 /// Supported command payloads.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
@@ -308,6 +327,16 @@ pub enum CommandPayload {
         material: Option<String>,
         branch: Option<String>,
         roadwork: bool,
+    },
+    /// **A band order** (#860): set, release or claim the order for `kind` (`"food"`, `"fodder"` or a
+    /// material id).
+    BandOrder {
+        faction_id: u32,
+        band_id: u64,
+        kind: String,
+        action: BandOrderAction,
+        /// The one row a `release` / `claim` is about, `None` for the whole kind.
+        row: Option<BandOrderRow>,
     },
     /// **Say how a band splits a maintenance pool it cannot stretch**
     /// (`docs/plan_standing_upkeep.md` §2.5) — `"spread"` (everything degrades a little) or
@@ -856,7 +885,7 @@ pub struct ForageCrewTakeRow {
     /// **The hands this crew would spend keeping the finished rung**, fractional.
     pub next_rung_keep_hands: f32,
     /// **The same take's fodder once the rung is finished**, credited — `0` where the sim would
-    /// refuse the credit (no Foddering, and no commitment to a fodder-bearing plant).
+    /// refuse the credit (nothing is gated: every harvest that yields fodder banks it).
     pub next_rung_fodder: f32,
     /// **The same take's materials once the rung is finished**, one row per material, keeping
     /// netted. Never summed across materials.
@@ -1309,6 +1338,9 @@ pub mod query_error {
     /// A staffing preview of a dig on ground that never renews, with no Max: the sim sizes such a
     /// crew from the player's count, so `assign_labor` refuses the same row.
     pub const NEVER_RENEWING_DIG_WITHOUT_A_COUNT: &str = "never_renewing_dig_without_a_count";
+    /// A staffing preview of a crew on a material the band's leader keeps on hand: the dig is the
+    /// order's, so `assign_labor` refuses the same row.
+    pub const MATERIAL_IS_KEPT_ON_HAND: &str = "material_is_kept_on_hand";
 }
 
 /// **How a receiver answers a pending dealing** (`answer_dealing`): accept, refuse, or counter.
@@ -2195,6 +2227,41 @@ impl CommandEnvelope {
                 branch: branch.clone(),
                 roadwork: *roadwork,
             }),
+            CommandPayload::BandOrder {
+                faction_id,
+                band_id,
+                kind,
+                action,
+                row,
+            } => {
+                let (action, target, priority) = match action {
+                    BandOrderAction::Set { target, priority } => {
+                        (pb::BandOrderAction::Set, *target, priority.clone())
+                    }
+                    BandOrderAction::Release => (pb::BandOrderAction::Release, 0, String::new()),
+                    BandOrderAction::Claim => (pb::BandOrderAction::Claim, 0, String::new()),
+                };
+                pb::command_envelope::Command::BandOrder(pb::BandOrderCommand {
+                    faction_id: *faction_id,
+                    band_id: *band_id,
+                    kind: kind.clone(),
+                    action: action as i32,
+                    target,
+                    priority,
+                    target_x: match row {
+                        Some(BandOrderRow::Tile { x, .. }) => Some(*x),
+                        _ => None,
+                    },
+                    target_y: match row {
+                        Some(BandOrderRow::Tile { y, .. }) => Some(*y),
+                        _ => None,
+                    },
+                    herd_id: match row {
+                        Some(BandOrderRow::Herd { id }) => Some(id.clone()),
+                        _ => None,
+                    },
+                })
+            }
             CommandPayload::UpkeepMode {
                 faction_id,
                 band_id,
@@ -2976,6 +3043,30 @@ impl CommandEnvelope {
                 material: cmd.material,
                 branch: cmd.branch,
                 roadwork: cmd.roadwork,
+            },
+            pb::command_envelope::Command::BandOrder(cmd) => CommandPayload::BandOrder {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                kind: cmd.kind,
+                row: match (cmd.target_x, cmd.target_y, cmd.herd_id.clone()) {
+                    (Some(x), Some(y), _) => Some(BandOrderRow::Tile { x, y }),
+                    (_, _, Some(id)) => Some(BandOrderRow::Herd { id }),
+                    _ => None,
+                },
+                action: match pb::BandOrderAction::try_from(cmd.action) {
+                    Ok(pb::BandOrderAction::Set) => BandOrderAction::Set {
+                        target: cmd.target,
+                        priority: cmd.priority,
+                    },
+                    Ok(pb::BandOrderAction::Release) => BandOrderAction::Release,
+                    Ok(pb::BandOrderAction::Claim) => BandOrderAction::Claim,
+                    _ => {
+                        return Err(CommandDecodeError::InvalidEnum {
+                            field: "BandOrderCommand.action",
+                            value: cmd.action,
+                        })
+                    }
+                },
             },
             pb::command_envelope::Command::UpkeepMode(cmd) => CommandPayload::UpkeepMode {
                 faction_id: cmd.faction_id,
@@ -4050,6 +4141,55 @@ mod tests {
                 roadwork: true,
             },
         ] {
+            let envelope = CommandEnvelope {
+                payload: payload.clone(),
+                correlation_id: None,
+            };
+            let bytes = envelope.encode_to_vec().expect("encode");
+            let decoded = CommandEnvelope::decode(&bytes).expect("decode");
+            assert_eq!(decoded.payload, payload);
+        }
+    }
+
+    /// **`band_order` survives the envelope** in all three forms, every field a distinct value.
+    #[test]
+    fn band_order_round_trips_through_the_envelope() {
+        for row in [
+            Some(BandOrderRow::Tile { x: 4, y: 9 }),
+            Some(BandOrderRow::Herd {
+                id: "boar_east".to_string(),
+            }),
+        ] {
+            let payload = CommandPayload::BandOrder {
+                faction_id: 2,
+                band_id: 9,
+                kind: "food".to_string(),
+                action: BandOrderAction::Release,
+                row,
+            };
+            let envelope = CommandEnvelope {
+                payload: payload.clone(),
+                correlation_id: None,
+            };
+            let bytes = envelope.encode_to_vec().expect("encode");
+            let decoded = CommandEnvelope::decode(&bytes).expect("decode");
+            assert_eq!(decoded.payload, payload);
+        }
+        for action in [
+            BandOrderAction::Set {
+                target: 60,
+                priority: "high".to_string(),
+            },
+            BandOrderAction::Release,
+            BandOrderAction::Claim,
+        ] {
+            let payload = CommandPayload::BandOrder {
+                faction_id: 2,
+                band_id: 9,
+                kind: "stone".to_string(),
+                action,
+                row: None,
+            };
             let envelope = CommandEnvelope {
                 payload: payload.clone(),
                 correlation_id: None,

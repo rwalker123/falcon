@@ -148,11 +148,8 @@ const ABSENT_SPECIES := "wild_barley"
 const BASKET_WORKERS := 3
 
 ## The knowledge these states render at. Cultivation complete, so the single-pick variant's composed
-## rung is one the sheet renders a control for rather than a gate reason; **Foddering complete too**,
-## or the hay-meadow state's fodder account is locked and the `0.0` food reading it exists to exercise
-## has no live sibling beside it. The rest of the ladder is left where the chapters above put it.
+## rung is one the sheet renders a control for rather than a gate reason; The rest of the ladder is left where the chapters above put it.
 const CULTIVATION_KNOWN := 1.0
-const FODDERING_KNOWN := 1.0
 
 ## ---- The hay meadow — the tile whose selection can pay NO FOOD AT ALL ------------------------
 ##
@@ -628,7 +625,7 @@ func _assert_bracket_follows_the_wire(tile: Dictionary) -> void:
 func run(harness) -> void:
 	h = harness
 	var tile := _gather_tile()
-	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": CULTIVATION_KNOWN, "foddering": FODDERING_KNOWN}}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": CULTIVATION_KNOWN}}])
 
 	# ---- The DEFAULT state — nothing ticked anywhere, so everything is coming home ---------------
 	# The band's own row carries NO selection, which is what the sheet seeds from; the state exists to

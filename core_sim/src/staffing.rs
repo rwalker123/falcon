@@ -13,7 +13,10 @@
 //!    outranks everything). Then, per priority group High to Low, the group's builds get their
 //!    first builder and the group's rows get **kitted** heads up to the crew that takes what
 //!    regrows at the floor (`T_hold`) - a hold crew is a food take, so a Normal row's never beats a
-//!    High build. If the band's units run out the row stays short: there is no bare fallback here.
+//!    High build. If the band's units run out the row stays short: there is no bare fallback here,
+//!    except for a chief's FOOD order (pass 1c): once every group's kitted hold heads are dealt
+//!    and before any row's reach, its rows' hold crews are filled with bare hands where a bare hand
+//!    takes something, so another order's kitted refill never takes the crew that keeps food coming in.
 //!    A crew is sized `ceil(keep_hands + gather hands)`, rounded ONCE: the keeper keeps first and
 //!    gathers with what is left, so the fraction of a hand of keeping rides inside a gatherer's head.
 //! 2. **Reach, kitted** — with heads and units remaining, kitted heads up to the crew that draws the
@@ -99,8 +102,9 @@ pub enum ReachTarget {
     Nothing,
     /// Draw the stock down at this take per turn (already strictly above the peak regrowth).
     Take(f32),
-    /// A mined seam with no regrowth, until keep-on-hand stone (#874): there is no regrowth to
-    /// out-take, so the target is the player's Max in heads — this many **take hands**.
+    /// A hand-crewed mined seam with no regrowth: there is no regrowth to out-take, so the target is
+    /// the player's Max in heads - this many **take hands**. (A leader's keep-on-hand order sizes a
+    /// mined seam by its deficit instead.)
     Heads(u32),
 }
 
@@ -142,6 +146,9 @@ pub struct StaffRowInput<'a> {
     /// The tile the row's or build's hands stand on, when it is tile-bound; its room is shared with
     /// every other row and build on it and with the other bands.
     pub tile: Option<UVec2>,
+    /// **A ROW THE CHIEF'S FOOD ORDER KEEPS UP**: its hold crew is dealt bare hands (where a bare
+    /// hand takes something) in pass 1c, ahead of every row's kitted reach heads.
+    pub food_keep_up: bool,
 }
 
 /// What the passes decided for one row, in the order the inputs came.
@@ -372,6 +379,7 @@ fn scout_arming_input(plan: &ScoutPlan) -> StaffRowInput<'static> {
         is_build: false,
         kitless: false,
         tile: None,
+        food_keep_up: false,
     }
 }
 
@@ -403,17 +411,24 @@ fn staff_passes_scouting(
     let pool_left = pool;
     let cap_left: Vec<u32> = rows.iter().map(cap_of).collect();
 
-    // ## What each row would aim at ignoring the pool and the other rows — published after the Max.
+    // ## What each row would aim at ignoring the pool and the other rows — published after the Max
+    // and after the room its tile has left this band (`tile_room`): a tile never holds more than
+    // that, so no target names a head the tile cannot seat. `tile_short` is what the room cut off.
     for &i in &order {
         let row = &rows[i];
         let kmax = kitted_capacity(row, NOBODY, shelf);
-        out[i].hold_crew = hold_heads(row, kmax).min(cap_of(row));
-        out[i].reach_crew = reach_heads(row, kmax)
-            .max(out[i].hold_crew)
-            .min(cap_of(row));
-        out[i].useful_crew = useful_heads(row, kmax)
-            .max(out[i].reach_crew)
-            .min(cap_of(row));
+        let room = row
+            .tile
+            .and_then(|tile| tile_room.get(&tile_key(tile)).copied())
+            .unwrap_or(u32::MAX);
+        let max_cap = cap_of(row);
+        let hold = hold_heads(row, kmax).min(max_cap);
+        let reach = reach_heads(row, kmax).max(hold).min(max_cap);
+        let useful = useful_heads(row, kmax).max(reach).min(max_cap);
+        out[i].hold_crew = hold.min(room);
+        out[i].reach_crew = reach.min(room).max(out[i].hold_crew);
+        out[i].useful_crew = useful.min(room).max(out[i].reach_crew);
+        out[i].tile_short = hold.max(reach).saturating_sub(out[i].reach_crew);
     }
 
     let mut ledger = Ledger {
@@ -493,12 +508,53 @@ fn staff_passes_scouting(
         });
     }
 
+    // ## Pass 1c — the chief's FOOD order keeps its rows' hold crews up with bare hands, after every
+    // group's kitted hold heads (pass 1b) and before ANY row's pass 2: another order's kitted refill
+    // never takes the crew that keeps food coming in. Priority High to Low, round-robin nearest
+    // first, only on a web where a bare hand takes something, up to the hold crew under the Max.
+    for (_, sources) in &split {
+        let keepers_of_food: Vec<usize> = sources
+            .iter()
+            .copied()
+            .filter(|&i| rows[i].food_keep_up && rows[i].bare_can_work)
+            .collect();
+        let mut needed: Vec<Option<u32>> = vec![None; rows.len()];
+        deal_round_robin(&keepers_of_food, |i| {
+            let row = &rows[i];
+            let kitted = ledger.out[i].kitted;
+            let hold =
+                *needed[i].get_or_insert_with(|| hold_heads(row, kitted).saturating_sub(kept[i]));
+            ledger.deal_head(i, kitted + ledger.out[i].bare < hold, HeadKind::Bare)
+        });
+    }
+
     // ## Pass 2 — kitted heads up to the reach crew, from whatever units and heads remain. A group's
     // builds go first, up to their cap.
+    //
+    // **The chief's FOOD order's refill is dealt first in its own group** (still after every higher
+    // group's pass 2, so a High stone refill goes before a Normal food refill): bare heads up to the
+    // row's reach crew, round-robin nearest first, only where a bare hand takes something. Player
+    // rows and the other orders keep kitted-first.
     for (builds, sources) in &split {
         if passes == Passes::All {
             deal_kitted(rows, builds, &mut ledger, shelf, |_, row, _| cap_of(row));
         }
+        let food_refill: Vec<usize> = sources
+            .iter()
+            .copied()
+            .filter(|&i| rows[i].food_keep_up && rows[i].bare_can_work)
+            .collect();
+        let mut needed: Vec<Option<u32>> = vec![None; rows.len()];
+        deal_round_robin(&food_refill, |i| {
+            let row = &rows[i];
+            let kitted = ledger.out[i].kitted;
+            let reach = *needed[i].get_or_insert_with(|| {
+                reach_heads(row, kitted)
+                    .max(hold_heads(row, kitted))
+                    .saturating_sub(kept[i])
+            });
+            ledger.deal_head(i, kitted + ledger.out[i].bare < reach, HeadKind::Bare)
+        });
         deal_kitted(rows, sources, &mut ledger, shelf, |i, row, kmax| {
             reach_heads(row, kmax)
                 .max(hold_heads(row, kmax))
@@ -666,6 +722,9 @@ pub struct StaffingWorld<'a> {
     /// **Whether a declared build can make progress this turn** — not complete, not gated, not stalled
     /// on materials. A build that cannot gets no builders.
     pub build_can_progress: &'a dyn Fn(&crate::components::BuildDeclaration) -> bool,
+    /// **WHAT THE BAND'S STORE HOLDS OF A MATERIAL** - the "on hand" a keep-on-hand target is
+    /// judged against (`LocalStore::material_total`: the store only, not loads at the site).
+    pub on_hand: &'a dyn Fn(&str) -> f32,
 }
 
 /// **A TILE AS A MAP KEY** — `(y, x)`, row-major like every registry keyed by tile (`UVec2` is not
@@ -718,7 +777,7 @@ pub struct CampSite {
 
 impl CampSite {
     /// Hex steps from camp to `site`, the metric the work-party walk is measured in.
-    fn distance_to(&self, site: UVec2) -> u32 {
+    pub(crate) fn distance_to(&self, site: UVec2) -> u32 {
         crate::grid_utils::hex_distance_wrapped(
             self.position,
             site,
@@ -1019,7 +1078,17 @@ fn trim_one_hand(allocation: &LaborAllocation, staffed: &mut StaffedBand) -> boo
         .iter()
         .enumerate()
         .filter(|(_, (target, crew))| crew.total() > standing(target))
-        .map(|(index, (target, _))| (priority_of(target), std::cmp::Reverse(index), index))
+        .map(|(index, (target, crew))| {
+            // A chief's food row down to its hold crew is the last of the rows to lose a hand: pass
+            // 1c dealt those heads ahead of every other row's reach.
+            let protected = allocation.keeps_food_up(target) && crew.total() <= crew.hold_crew;
+            (
+                protected,
+                priority_of(target),
+                std::cmp::Reverse(index),
+                index,
+            )
+        })
         .min();
     let build_pick = staffed
         .builds
@@ -1030,11 +1099,11 @@ fn trim_one_hand(allocation: &LaborAllocation, staffed: &mut StaffedBand) -> boo
         .min();
     match (row_pick, build_pick) {
         (None, None) => return false,
-        (Some((_, _, at)), None) => take_one_row_hand(&mut staffed.rows[at].1),
+        (Some((_, _, _, at)), None) => take_one_row_hand(&mut staffed.rows[at].1),
         (None, Some((_, _, at))) => take_one_builder(&mut staffed.builds[at].1),
         (Some(row), Some(build)) => {
-            if row.0 <= build.0 {
-                take_one_row_hand(&mut staffed.rows[row.2].1);
+            if row.1 <= build.0 {
+                take_one_row_hand(&mut staffed.rows[row.3].1);
             } else {
                 take_one_builder(&mut staffed.builds[build.2].1);
             }
@@ -1271,6 +1340,7 @@ fn build_staff_inputs<'a>(
             is_build: false,
             kitless: false,
             tile: crate::systems::party_source_position(&target, sources.herds),
+            food_keep_up: allocation.keeps_food_up(&target),
         };
         if let (Some(camp), Some(site)) = (
             &world.camp,
@@ -1297,6 +1367,13 @@ fn build_staff_inputs<'a>(
                     crew_float,
                     &mut input,
                 );
+                if allocation.row_order(&target).is_some() {
+                    apply_chief_share(
+                        &mut input,
+                        allocation
+                            .keep_share(allocation.row_order(&target).unwrap_or_default(), *tile),
+                    );
+                }
             }
             LaborTarget::Hunt {
                 fauna_id, floor, ..
@@ -1306,6 +1383,9 @@ fn build_staff_inputs<'a>(
                 hunt_input(
                     world, band_kit, kit, fauna_id, *floor, crew_float, &mut input,
                 );
+                if allocation.row_order(&target).is_some() {
+                    apply_chief_share(&mut input, allocation.keep_share_of_herd(fauna_id));
+                }
             }
             LaborTarget::Extract {
                 tile,
@@ -1315,7 +1395,8 @@ fn build_staff_inputs<'a>(
                 input.keep_hands =
                     planned_keep_hands(sources, band_kit, declared, &target, crew_bound);
                 extract_input(
-                    world, band_kit, kit, *tile, material, *floor, crew_float, &mut input,
+                    world, allocation, band_kit, kit, *tile, material, *floor, crew_float,
+                    &mut input,
                 );
             }
             LaborTarget::Tile { .. } => {
@@ -1454,6 +1535,7 @@ fn build_inputs<'a>(
             is_build: true,
             kitless: toe.tools().is_empty(),
             tile,
+            food_keep_up: false,
         });
         metas.push(BuildMeta {
             source: source.clone(),
@@ -1539,6 +1621,24 @@ fn forage_input<'a>(
     input.hold_take = hold.min(room);
     input.useful_take = room;
     input.reach = ReachTarget::Take(reach_target(peak, room));
+}
+
+/// **A CHIEF'S FORAGE OR HUNT ROW IS STAFFED FROM ITS SHARE OF THE ORDER'S WANT** (#860): the hold and
+/// reach the managing pass set aside (biomass), never past the room the row's floor leaves. A row the
+/// pass gave no share (a pinned or improved row off the set, or at a zero want) is staffed to nobody -
+/// its keepers still come.
+fn apply_chief_share(input: &mut StaffRowInput<'_>, share: Option<crate::components::KeepShare>) {
+    let room = input.useful_take;
+    let (hold, take) = share.map_or((NO_TAKE_WANTED, NO_TAKE_WANTED), |share| {
+        (share.hold, share.take)
+    });
+    input.hold_take = hold.min(room);
+    input.useful_take = take.min(room);
+    input.reach = if take <= NO_TAKE_WANTED {
+        ReachTarget::Nothing
+    } else {
+        ReachTarget::Take(take.min(room))
+    };
 }
 
 /// `T_reach`: strictly above the peak regrowth, never past the room, and the whole room where
@@ -1633,6 +1733,7 @@ fn hunt_input<'a>(
 #[allow(clippy::too_many_arguments)] // the row's own inputs
 fn extract_input<'a>(
     world: &'a StaffingWorld<'a>,
+    allocation: &LaborAllocation,
     band_kit: &'a BandEquipment,
     kit: &KitChoice,
     tile: UVec2,
@@ -1674,8 +1775,33 @@ fn extract_input<'a>(
     if room <= crate::extraction::DEPOSIT_EMPTY {
         return;
     }
+    let listed = allocation
+        .row_order(&LaborTarget::Extract {
+            tile,
+            material: material.to_string(),
+            floor,
+        })
+        .is_some_and(|kind| kind == material && allocation.chief_owns(material));
+    if listed {
+        // **A MATERIAL A CHIEF KEEPS ON HAND IS STAFFED FROM ITS ROW'S SHARE OF THE WANT** (#860,
+        // #874): the managing pass split the want (the draw plus the deficit spread over
+        // `keep_on_hand_refill_turns`) across the sites, each up to what it gives at the order's
+        // floor without drawing it down. At or above the target the shares are zero and nobody digs
+        // (the row's keepers still come, `keep_hands`); a row off the set has no share and is staffed
+        // to nobody. The order's priority ranks the row among the band's work.
+        let Some(share) = allocation.keep_share(material, tile) else {
+            return;
+        };
+        if share.take <= NO_TAKE_WANTED {
+            return;
+        }
+        input.hold_take = share.hold.min(room);
+        input.useful_take = share.take.min(room);
+        input.reach = ReachTarget::Take(share.take.min(room));
+        return;
+    }
     if ground_rate <= crate::extraction_config::NEVER_RENEWS {
-        // A seam that never renews holds nothing; its reach is the player's Max in heads.
+        // A seam that never renews holds nothing; crewed by hand, its reach is the player's Max in heads.
         let wanted = input.max.map_or(NOBODY, |max| {
             max.saturating_sub(input.keep_hands.ceil() as u32)
         });
@@ -1694,6 +1820,154 @@ fn extract_input<'a>(
     input.hold_take = hold.min(room);
     input.useful_take = room;
     input.reach = ReachTarget::Take(reach_target(peak, room));
+}
+
+/// **WHAT A FORAGE OR HUNT SOURCE WOULD GIVE A CHIEF'S ROW** - the staffing's own reading of the
+/// source ([`forage_input`] / [`hunt_input`], so the answer is the one the passes will use), probed
+/// before any row exists.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct SourceProbe {
+    /// Whether anyone the band can field takes anything from the source at the floor: there is room
+    /// above it and a crew (kitted as the band is) reaches the take. A herd the kit cannot wound is
+    /// not viable.
+    pub viable: bool,
+    /// What the source gives a turn at the floor without being drawn down, in biomass.
+    pub sustainable: f32,
+    /// The most the chief may ask of the source a turn, in biomass: its regrowth at the floor
+    /// ([`Self::sustainable`]) plus the stock standing above the floor spread over the refill turns.
+    /// The floor stays the floor - the chief never draws the source below it.
+    pub cap: f32,
+    /// What one hand of the best-kitted crew takes a turn (biomass), at the [`Self::cap`] take - the
+    /// rate the band's kit and carry really give a worker on this source.
+    pub per_hand: f32,
+    /// Food units a unit of biomass is worth (`0` where the source pays none).
+    pub food_rate: f32,
+    /// Fodder units a unit of biomass is worth (`0` where the source pays none).
+    pub fodder_rate: f32,
+}
+
+/// Probe the forage or hunt source `target` names at its own floor for a crew of up to `crew`
+/// hands armed as far as the band's gear goes. `None` for any other target and for a source that is
+/// gone.
+pub(crate) fn probe_source(
+    sources: &ClaimSources<'_>,
+    band_kit: &BandEquipment,
+    target: &LaborTarget,
+    crew: f32,
+    refill_turns: f32,
+) -> Option<SourceProbe> {
+    let tile_improvements = crate::tile_improvement::TileImprovementRegistry::default();
+    let roads = crate::routes::RoadRegistry::default();
+    let elsewhere: BTreeMap<TileKey, u32> = BTreeMap::new();
+    let can_progress = |_: &crate::components::BuildDeclaration| false;
+    let on_hand = |_: &str| 0.0_f32;
+    let world = StaffingWorld {
+        sources,
+        tile_improvements: &tile_improvements,
+        roads: &roads,
+        band: None,
+        camp: None,
+        tile_hands_elsewhere: &elsewhere,
+        build_can_progress: &can_progress,
+        on_hand: &on_hand,
+    };
+    let kit = sources.equipment.default_kit(target.kit_job());
+    let kit_items = live_kit_items(&kit, band_kit, &world);
+    let mut input = StaffRowInput {
+        priority: SourcePriority::default(),
+        max: None,
+        keep_hands: NO_HANDS,
+        hold_take: NO_TAKE_WANTED,
+        useful_take: NO_TAKE_WANTED,
+        reach: ReachTarget::Nothing,
+        kit_items,
+        hands: Box::new(|_, _| Some(0.0)),
+        bare_can_work: false,
+        distance: NOBODY,
+        is_build: false,
+        kitless: false,
+        tile: None,
+        food_keep_up: false,
+    };
+    let (food_rate, fodder_rate) = match target {
+        LaborTarget::Forage {
+            tile,
+            floor,
+            take_species,
+            ..
+        } => {
+            let patch = sources.patch(*tile)?;
+            let composition: Vec<crate::flora_config::FloraShare> = (sources.ground_of)(*tile)
+                .map(|ground| {
+                    crate::forage::tile_flora_composition(
+                        sources.flora,
+                        &sources.labor.forage,
+                        &ground,
+                        sources.map_seed,
+                    )
+                    .into_owned()
+                })
+                .unwrap_or_default();
+            let rates = (
+                crate::forage::patch_provisions_per_biomass(
+                    &patch,
+                    &composition,
+                    sources.flora,
+                    &sources.labor.forage,
+                ),
+                crate::forage::patch_fodder_per_biomass(
+                    &patch,
+                    &composition,
+                    sources.flora,
+                    &sources.labor.forage,
+                ),
+            );
+            forage_input(
+                &world,
+                band_kit,
+                &kit,
+                *tile,
+                *floor,
+                take_species,
+                crew,
+                &mut input,
+            );
+            rates
+        }
+        LaborTarget::Hunt {
+            fauna_id, floor, ..
+        } => {
+            let herd = sources.herd(fauna_id)?;
+            let food = sources
+                .fauna
+                .hunt_yield_for(&herd.species)
+                .provisions_per_biomass;
+            hunt_input(&world, band_kit, &kit, fauna_id, *floor, crew, &mut input);
+            (food, 0.0)
+        }
+        _ => return None,
+    };
+    let sustainable = input.hold_take.max(NO_TAKE_WANTED);
+    // The stock above the floor (`useful_take` is the room the floor leaves) is spread over the refill
+    // turns; the floor itself is never drawn below.
+    let cap = (sustainable + input.useful_take.max(NO_TAKE_WANTED) / refill_turns.max(1.0))
+        .min(sustainable.max(input.useful_take));
+    let armed = crew as u32;
+    let hands = (input.hands)(cap, armed);
+    let reaches = cap > NO_TAKE_WANTED && hands.is_some();
+    let per_hand = hands
+        .filter(|hands| *hands > NO_HANDS)
+        .map_or(NO_TAKE_WANTED, |hands| {
+            cap / hands.max(AT_LEAST_ONE_HAND as f32)
+        });
+    Some(SourceProbe {
+        viable: reaches && input.useful_take > NO_TAKE_WANTED,
+        sustainable,
+        cap,
+        per_hand,
+        food_rate,
+        fodder_rate,
+    })
 }
 
 /// Where `band` is camped, read the way the labor pass reads it; `None` where the world has no map.
@@ -1822,6 +2096,7 @@ pub(crate) fn with_band_staffing_over<R>(
                     declaration,
                 )
             };
+            let on_hand = |material: &str| stores.material_total(material).to_f32();
             let staffing_world = StaffingWorld {
                 sources,
                 tile_improvements,
@@ -1830,10 +2105,106 @@ pub(crate) fn with_band_staffing_over<R>(
                 camp,
                 tile_hands_elsewhere: &elsewhere,
                 build_can_progress: &can_progress,
+                on_hand: &on_hand,
             };
             body(&staffing_world, &allocation, &band_kit, pool, available)
         },
     ))
+}
+
+/// **THE BAND'S ALLOCATION WITH ITS KEEP-ON-HAND DIG ROWS PLACED** - [`crate::keep_on_hand::manage_dig_rows`]
+/// run over a copy, read from the world the way a command restaff reads it. The caller writes it back
+/// before staffing. `None` where the band has no cohort or allocation.
+fn managed_dig_allocation(
+    world: &bevy::prelude::World,
+    band: bevy::prelude::Entity,
+) -> Option<LaborAllocation> {
+    let mut allocation = world.get::<LaborAllocation>(band)?.clone();
+    let cohort = world.get::<crate::components::PopulationCohort>(band)?;
+    let faction = cohort.faction;
+    let camp = camp_of(world, band);
+    let equipment = world
+        .get_resource::<crate::EquipmentConfigHandle>()
+        .map_or_else(
+            crate::equipment_config::EquipmentConfig::builtin,
+            crate::EquipmentConfigHandle::get,
+        );
+    let available = crate::components::available_workers(cohort.working);
+    let bench_workers = world
+        .get::<crate::components::BandBench>(band)
+        .map_or(NOBODY, |bench| bench.workers);
+    let band_kit = world
+        .get::<BandEquipment>(band)
+        .cloned()
+        .unwrap_or_else(|| BandEquipment::start_stocked_for(&equipment, available as f32));
+    let has_leader = world
+        .get::<crate::leadership::BandLeadership>(band)
+        .is_some_and(|leadership| leadership.leader.is_some());
+    let visibility = world.get_resource::<crate::visibility::VisibilityLedger>();
+    let fog_enabled = world
+        .get_resource::<crate::resources::SimulationConfig>()
+        .is_none_or(|config| config.fog_enabled);
+    let registry = world.get_resource::<crate::resources::TileRegistry>()?;
+    crate::take_claims::with_world_sources(world, faction, |sources| {
+        let tiles = || {
+            (0..registry.height).flat_map(move |y| {
+                (0..registry.width).filter_map(move |x| {
+                    registry
+                        .index(x, y)
+                        .and_then(|entity| world.get::<crate::components::Tile>(entity))
+                })
+            })
+        };
+        let candidates = |material: &str| {
+            crate::keep_on_hand::discovered_deposit_tiles(
+                sources.extraction,
+                material,
+                faction,
+                visibility,
+                fog_enabled,
+                tiles(),
+            )
+        };
+        let inputs = crate::keep_on_hand::DigSiteInputs {
+            sources,
+            band_kit: &band_kit,
+            camp: camp.as_ref(),
+        };
+        let pool = staffable_pool(&allocation, available, bench_workers);
+        let cohort_stores = &cohort.stores;
+        let on_hand = |material: &str| cohort_stores.material_total(material).to_f32();
+        crate::keep_on_hand::manage_dig_rows(
+            &mut allocation,
+            &inputs,
+            has_leader,
+            &candidates,
+            &on_hand,
+        );
+        let known_tile = |tile: UVec2| {
+            !fog_enabled
+                || visibility.is_some_and(|ledger| ledger.is_discovered(faction, tile.x, tile.y))
+        };
+        let known_herd = |herd: &crate::fauna::Herd| {
+            let at = herd.position();
+            !fog_enabled || visibility.is_some_and(|ledger| ledger.is_visible(faction, at.x, at.y))
+        };
+        crate::food_orders::manage_food_orders(
+            &mut allocation,
+            &crate::food_orders::FoodInputs {
+                site: &inputs,
+                tile_known: &known_tile,
+                herd_known: &known_herd,
+                pool,
+                readings: crate::food_orders::OrderReadings {
+                    food_stock: cohort_stores.get(crate::components::FOOD).to_f32(),
+                    food_need: cohort.last_food_need,
+                    fodder_stock: cohort_stores.get(crate::components::FODDER).to_f32(),
+                },
+            },
+            has_leader,
+        );
+    });
+    Some(allocation)
 }
 
 /// **STAFF A COPY OF A BAND'S ALLOCATION THE WAY THE COMMAND PATH DOES** — `restaff_band`'s staffing
@@ -1920,6 +2291,11 @@ pub fn restaff_band_after_loss(
     let bench_workers = world
         .get::<crate::components::BandBench>(band)
         .map_or(NOBODY, |bench| bench.workers);
+    if let Some(managed) = managed_dig_allocation(world, band) {
+        if let Some(mut allocation) = world.get_mut::<LaborAllocation>(band) {
+            *allocation = managed;
+        }
+    }
     let Some(staffed) = with_band_staffing(
         world,
         band,
@@ -2084,6 +2460,7 @@ mod tests {
             is_build: false,
             kitless: false,
             tile: None,
+            food_keep_up: false,
         }
     }
 
@@ -2247,6 +2624,113 @@ mod tests {
         );
     }
 
+    /// A band short of gathering kit with sleds: a High stone refill (kitted heads only help it
+    /// past a bare hand's one in four) and a Low food row whose hold crew is three bare hands.
+    fn food_hold_and_stone_refill<'a>(food_kept_up: bool) -> Vec<StaffRowInput<'a>> {
+        let sleds: Vec<(Arc<str>, u32)> = vec![(Arc::from("sleds"), 1)];
+        let mut food = linear_row(SourcePriority::Low, None, 0, 3.0, 3.0, 1.0, 1.0, Vec::new());
+        food.food_keep_up = food_kept_up;
+        vec![
+            linear_row(SourcePriority::High, None, 0, 0.0, 4.0, 1.0, 1.0, sleds),
+            food,
+        ]
+    }
+
+    #[test]
+    fn a_chiefs_food_hold_is_dealt_bare_before_another_orders_kitted_refill() {
+        let mut sleds = BTreeMap::from([(Arc::from("sleds"), 3)]);
+        let kept = staff_band(&food_hold_and_stone_refill(true), 5, &mut sleds);
+        assert_eq!(
+            kept[1].bare, 3,
+            "the food row's hold crew is filled bare first"
+        );
+        assert_eq!(kept[1].hold_crew, 3);
+        assert_eq!(
+            (kept[0].kitted, kept[0].bare),
+            (2, 0),
+            "stone gets only the pool the food hold left, kitted"
+        );
+        assert!(kept[0].kitted > 0 && kept[1].total() > 0, "liveness");
+    }
+
+    #[test]
+    fn without_the_food_order_the_kitted_refill_still_goes_first() {
+        // No leader, or food released to the player: the row is not `food_keep_up`.
+        let mut sleds = BTreeMap::from([(Arc::from("sleds"), 3)]);
+        let out = staff_band(&food_hold_and_stone_refill(false), 5, &mut sleds);
+        assert_eq!(out[0].kitted, 3, "stone's kitted reach comes first");
+        assert!(
+            out[1].total() < out[1].hold_crew,
+            "the food hold is left short: {} of {}",
+            out[1].total(),
+            out[1].hold_crew
+        );
+        assert!(out[0].kitted > 0 && out[1].total() > 0, "liveness");
+    }
+
+    /// A stone refill (kitted heads, sleds) and a food row with a one-hand hold and a four-hand
+    /// refill, at the given priorities.
+    fn food_refill_and_stone_refill<'a>(
+        stone: SourcePriority,
+        food: SourcePriority,
+        food_kept_up: bool,
+    ) -> Vec<StaffRowInput<'a>> {
+        let sleds: Vec<(Arc<str>, u32)> = vec![(Arc::from("sleds"), 1)];
+        let mut food = linear_row(food, None, 0, 1.0, 4.0, 1.0, 1.0, Vec::new());
+        food.food_keep_up = food_kept_up;
+        vec![linear_row(stone, None, 0, 0.0, 4.0, 1.0, 1.0, sleds), food]
+    }
+
+    #[test]
+    fn a_chiefs_food_refill_is_dealt_bare_before_a_kitted_stone_refill_at_equal_priority() {
+        let mut sleds = BTreeMap::from([(Arc::from("sleds"), 3)]);
+        let rows =
+            food_refill_and_stone_refill(SourcePriority::Normal, SourcePriority::Normal, true);
+        let out = staff_band(&rows, 5, &mut sleds);
+        assert_eq!(
+            out[1].total(),
+            4,
+            "the food row's whole refill crew is filled"
+        );
+        assert_eq!(
+            out[0].kitted, 1,
+            "stone gets only what the food refill left"
+        );
+
+        let mut sleds = BTreeMap::from([(Arc::from("sleds"), 3)]);
+        let rows =
+            food_refill_and_stone_refill(SourcePriority::Normal, SourcePriority::Normal, false);
+        let out = staff_band(&rows, 5, &mut sleds);
+        assert_eq!(out[0].kitted, 3, "a player's food row keeps kitted-first");
+        assert!(out[1].total() < 4, "its refill is left short");
+        assert!(out[0].kitted > 0 && out[1].total() > 0, "liveness");
+    }
+
+    #[test]
+    fn a_high_stone_refill_still_goes_before_a_normal_food_refill() {
+        let mut sleds = BTreeMap::from([(Arc::from("sleds"), 3)]);
+        let rows = food_refill_and_stone_refill(SourcePriority::High, SourcePriority::Normal, true);
+        let out = staff_band(&rows, 5, &mut sleds);
+        assert_eq!(out[0].kitted, 3, "the High stone refill is dealt first");
+        assert_eq!(out[1].total(), 2, "food gets what is left, hold crew first");
+        assert!(
+            out[1].total() >= out[1].hold_crew,
+            "liveness: the hold is kept"
+        );
+    }
+
+    #[test]
+    fn a_food_hold_never_deals_bare_where_a_bare_hand_takes_nothing() {
+        let mut rows = food_hold_and_stone_refill(true);
+        // A hunt bare hands cannot wound: no bare head.
+        rows[1] = linear_row(SourcePriority::Low, None, 0, 3.0, 3.0, 1.0, 0.0, Vec::new());
+        rows[1].food_keep_up = true;
+        let mut sleds = BTreeMap::from([(Arc::from("sleds"), 3)]);
+        let out = staff_band(&rows, 5, &mut sleds);
+        assert_eq!(out[1].bare, 0);
+        assert!(out[0].kitted > 0, "liveness: stone still staffs");
+    }
+
     /// A declared build as the staffing sees it: a bare hand always builds, the rung caps the
     /// hands, and `tile` is shared with whatever else stands there.
     fn a_build<'a>(
@@ -2268,6 +2752,7 @@ mod tests {
             is_build: true,
             kitless: true,
             tile,
+            food_keep_up: false,
         }
     }
 
@@ -2329,6 +2814,41 @@ mod tests {
             out[0].total() >= 1 && out[1].total() >= 1,
             "each still gets its one"
         );
+    }
+
+    /// **A ROW'S CREW TARGETS NEVER EXCEED WHAT ITS TILE CAN HOLD**, and `tile_short` is the excess
+    /// the room cut off.
+    #[test]
+    fn a_rows_targets_are_capped_at_its_tile_room_and_tile_short_is_the_excess() {
+        const TILE_ROOM: u32 = 3;
+        let site = UVec2::new(4, 7);
+        let mut row = linear_row(
+            SourcePriority::Normal,
+            None,
+            0,
+            8.0,
+            8.0,
+            1.0,
+            1.0,
+            spears(),
+        );
+        row.tile = Some(site);
+        let rows = vec![row];
+        let uncapped = staff_band(&rows, 20, &mut shelf(10));
+        assert!(
+            uncapped[0].reach_crew > TILE_ROOM,
+            "the fixture must aim past the room"
+        );
+        assert_eq!(uncapped[0].tile_short, 0, "no room entry, nothing cut");
+        let room = BTreeMap::from([(tile_key(site), TILE_ROOM)]);
+        let out = staff_passes(&rows, 20, &mut shelf(10), Passes::All, &room);
+        assert!(out[0].reach_crew <= TILE_ROOM && out[0].useful_crew <= TILE_ROOM);
+        assert!(out[0].hold_crew <= out[0].reach_crew);
+        assert_eq!(
+            out[0].tile_short,
+            uncapped[0].hold_crew.max(uncapped[0].reach_crew) - out[0].reach_crew
+        );
+        assert!(out[0].tile_short > 0);
     }
 
     /// **WITHIN A PRIORITY GROUP A BUILD IS DEALT BEFORE A SOURCE REACHES TOWARD ITS FLOOR.**

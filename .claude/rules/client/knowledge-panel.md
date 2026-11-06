@@ -73,8 +73,8 @@ the thing, where a latch would go quiet forever after one use.
   ROW PER RECIPE, ALWAYS, so mere presence is true of every craft on every turn and would answer
   *in use* for all of them forever. The bench arm is what stops a faction building its first loom
   reading unspent for the whole time it is being built.
-- **A knowledge that unlocks nothing cannot be unspent at all.** `foddering` changes what a pen may
-  draw on rather than unlocking a step, so there is no source that could stand on it.
+- **A knowledge that unlocks nothing cannot be unspent at all.** A capability such as `selective_breeding`
+  changes what a pen does rather than unlocking a step, so there is no source that could stand on it.
 - **Only a KNOWN node can be unspent.** A track at 40% has nothing standing on it either, and counting
   that would put every unlearned thing in the launcher's nudge.
 
@@ -89,7 +89,7 @@ the inverse of each rung's `unlock_knowledge`; `RungGates.RUNG_KNOWLEDGE_TRACKS`
 and "allowed" there the same question.
 
 **The two halves catch different faults.** `is_step` comes off the LADDER and is what distinguishes
-`foddering` — a capability no rung waits on — from a step. The verb lookup is the client's own table,
+`selective_breeding` — a capability no rung waits on — from a step. The verb lookup is the client's own table,
 and a route rung missing from it would read as a knowledge unlocking nothing at all; that is why
 `grade` / `pave` are catalog rungs beside the four food-web verbs.
 
@@ -210,10 +210,10 @@ one row per knowledge the ladder teaches — and every domain row is built from 
 | order within it | that rung's **order**, bottom step first |
 | step vs. capability | whether any rung's `unlock_knowledge` names it — `is_step` |
 
-⛔ **`UNLOCKLESS_TRACKS` IS RETIRED, AND THAT IS THE POINT OF `is_step`.** It was a DECLARED set holding
-exactly `foddering`, and it had to be declared because the client could not tell a knowledge that gates
-nothing from one somebody forgot to wire up. The ladder answers that itself now, so `foddering` hangs
-off the end of the Herds ladder because the config says no rung waits on it — and a knowledge that
+⛔ **`UNLOCKLESS_TRACKS` IS RETIRED, AND THAT IS THE POINT OF `is_step`.** It was a DECLARED set of the
+knowledges that gate nothing, and it had to be declared because the client could not tell a knowledge that gates
+nothing from one somebody forgot to wire up. The ladder answers that itself now, so a capability hangs
+off the end of its ladder because the config says no rung waits on it — and a knowledge that
 STOPS gating a rung stops being a step with no second table to remember.
 
 **What is left in the client is COPY, and only copy**: `HudKnowledgeVocab.DOMAIN_BRANCH_LABELS` (the
@@ -252,7 +252,7 @@ card minimum 546 against a fixed 820.**
 > restores the defect.
 
 **The shipped ladder teaches TEN, across FIVE branches** — Land: `cultivation`, `seed_selection`.
-Herds: `herding`, `penning`, `foddering`. **Roads: `roadbuilding`, `paving`.** **Forestry:
+Herds: `herding`, `penning`, `selective_breeding`. **Roads: `roadbuilding`, `paving`.** **Forestry:
 `woodcraft`, `conservationism`. Extraction: `quarrying`.** Craft: whatever `craft_knowledge`
 publishes — which is **six domain rows**, the last two arriving with the wood-and-stone branches
 (`extraction-workings.md`) and needing no client edit at all, not even a label: `forestry` and
@@ -520,8 +520,7 @@ fits.
 order of the teaching rung, so the client no longer needs a table to know WHERE a knowledge sits; what
 these sentences add is HOW it is practised, which the wire does not carry. They are a transcription of
 the config, which is authoritative — `plant:wild` earns `cultivation`, `plant:tended` earns
-`seed_selection`, `animal:wild` earns `herding`, `animal:pastoral` earns `penning`, `animal:pen` earns
-`foddering`, `route:trail` earns `roadbuilding`, `route:dirt_road` earns `paving`. **Re-read the
+`seed_selection`, `animal:wild` earns `herding`, `animal:pastoral` earns `penning` (the pen rung teaches nothing), `route:trail` earns `roadbuilding`, `route:dirt_road` earns `paving`. **Re-read the
 config, do not re-word them, if a rung's `earns_knowledge` ever moves.**
 
 ⛔ **A KNOWLEDGE WITH NO NOTE STILL DRAWS, AND SO DOES ITS SECTION.** Absence leaves the column with
@@ -863,7 +862,7 @@ non-vacuous legs still passing.
 
 - **A branch with no step in it is a FAN, not a ladder** (`KnowledgeRoster.build_domains`): a rail
   between three knowledges would claim an order they do not have. The ladder shape is kept for any
-  branch with at least one step, so `animal` (with its non-step `foddering`) is unchanged. This is
+  branch with at least one step, so `animal` (with its non-step `selective_breeding`) is unchanged. This is
   the first time `reach` draws; its row label is **Roaming** (`DOMAIN_KEY_ROAM`).
 - **Their copy is authored beside the siblings'**: the unlock lines in
   `FactionReadouts.KNOWLEDGE_UNLOCK_NOTES` (*See where a migrating herd goes next.* / *Each worker
