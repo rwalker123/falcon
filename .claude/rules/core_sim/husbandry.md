@@ -253,7 +253,7 @@ domestication *reduce* capacity). **Playtest dials.**
   `pen_capacity` are **deleted** (a penned herd's `K` is just `herd.carrying_capacity`, so
   `herd_capacity` collapses to that field for every herd). A penned herd **grazes its footprint**
   (escapement-floored, like a wild herd) and the grass it eats is **the first of the two things that
-  feed it**: `pasture_fraction = clamp(footprint_intake / (fodder_per_biomass × biomass), 0, 1)`, and
+  feed it**: `pasture_fraction = clamp(footprint_intake / demand_grass, 0, 1)`, and
   **hay** covers what is left. A pen on lush steppe feeds itself for free (`pasture_fraction → 1`); a
   **wholly-barren** footprint keeps the herd's frozen `K` and lives entirely on hay — and, with none,
   goes unfed and shrinks. See "Phase 2d".
@@ -698,7 +698,10 @@ is here.
 
 The `upkeep` block is the **work** half of holding a rung — hands, in work units. What a pen *eats* is
 a separate account in a separate currency: **fodder**. Its demand is the herd's own
-`fodder_per_biomass × biomass`, met by the fenced footprint's grass (`penPastureFraction`) and then by
+`fodder_per_biomass × biomass ÷ density gain` (`fauna::herd_feed_demand`: taming lowers per-animal
+appetite by the factor it raises `K`, so a herd at its `K` is fed by the land that sets `K` and hay
+covers only what poorer ground or a herd above `K` leaves), met by the fenced footprint's grass
+(`penPastureFraction`) and then by
 hay off the band's `FODDER` store (`fodderDraw`); `pen_fed_fraction` records how much of the demand the
 two covered between them, and `husbandry.pen.starve_shrink_rate` is what an underfed pen loses. **What
 the footprint leaves for the keeper to grow is published as the band's `fodderNeed`** — the gap,
@@ -1671,7 +1674,8 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
     the turn has two halves (the tend branch of `advance_labor_allocation`'s Hunt arm, which `continue`s
     before `hunt_take` — a corralled herd is never both hunt-drawn AND paid):
     1. **FEED (grass then hay, one unit — Grazing 2d §2.3, Flora Roster F3 §5.2).** The pen demands
-       `demand_grass = fodder_per_biomass × biomass` of **fodder**. Its fenced footprint covers what it
+       `demand_grass = fodder_per_biomass × biomass ÷ density gain` (`fauna::herd_feed_demand`) of
+       **fodder**. Its fenced footprint covers what it
        can (`advance_herd_grazing` → `footprint_intake`, `pasture_fraction =
        clamp(footprint_intake / demand_grass, 0, 1)`) and **hay** off the band's `FODDER` store covers
        the rest, priority-ranked across every pen the band keeps (`settle_pen_hay`). Then
@@ -1815,7 +1819,7 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
     > (already penned, a gate refuses, no crew, or a stalled build). `intensification.md` → "The build
     > on the wire" owns the seam, the gates it carries and which `*WorkCost` it belongs beside.
   - **`penFedFraction`** = last turn's fed fraction, `(footprint_intake + fodderDraw) ÷
-    (fodder_per_biomass × biomass)` (`1.0` = fully fed, `< 1` = **starving** — the herd and its yield
+    demand_grass` (`1.0` = fully fed, `< 1` = **starving** — the herd and its yield
     are shrinking, and it recovers when fed again). **One expression in one unit**: it used to add a
     fodder-unit land share to the paid share of a food-unit larder bill, which is how the two units
     came to be mixed at all.

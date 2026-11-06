@@ -287,7 +287,7 @@ pub struct Herd {
     pub carrying_capacity: f32,
     /// Per-species **fodder demand per unit biomass** (Grazing Phase 2b-i), cached from the
     /// `SpeciesDef` at spawn exactly as `carrying_capacity` is. Each turn a mobile herd draws
-    /// `fodder_per_biomass × biomass` graze from the tiles in its range (`advance_herd_grazing`).
+    /// `fodder_per_biomass × biomass ÷ density gain` graze from the tiles in its range (`advance_herd_grazing`).
     /// `0.0` for a non-grazing species. **Inert on carrying capacity this slice** — the eating only
     /// draws the graze layer down (visible on the pasture overlay); `K` is still the species constant.
     pub fodder_per_biomass: f32,
@@ -580,11 +580,11 @@ pub struct Herd {
     /// wire.
     pub footprint_intake: f32,
     /// Transient per-turn scratch: the share of a penned herd's feed its footprint covered last FEED
-    /// (`footprint_intake / (fodder_per_biomass × biomass)`, clamped `[0, 1]`; Grazing 2d §2.3). `1.0`
+    /// (`footprint_intake / (fodder_per_biomass × biomass ÷ density gain)`, clamped `[0, 1]`; Grazing 2d §2.3). `1.0`
     /// = the pasture feeds the pen for free; `0.0` = a barren footprint must be fed entirely on hay,
     /// and starves for whatever the hay does not cover. Exported as `penPastureFraction`, and it is
     /// the LAND half of the feed split — hay is the rest ([`Self::fodder_draw`]), in the same fodder
-    /// units, against the same `fodder_per_biomass × biomass` demand. `0.0` for a wild herd; a tamed herd's
+    /// units, against the same `fodder_per_biomass × biomass ÷ density gain` demand. `0.0` for a wild herd; a tamed herd's
     /// range plays the footprint's part.
     pub pen_pasture_fraction: f32,
     /// Transient per-turn scratch: the hay this pen or tamed herd drew from its keeper band's `FODDER`
@@ -604,7 +604,7 @@ pub struct Herd {
     // `penHayNeed` is off the wire.
     /// Transient per-turn scratch: **how much more fodder this pen needs per turn** —
     /// `max(0, hay_need − fodder_draw)`, in fodder units, where `hay_need` is the gap the pen's own
-    /// fenced footprint leaves (`max(0, fodder_per_biomass × biomass − footprint_intake)`). Written
+    /// fenced footprint leaves (`max(0, fodder_per_biomass × biomass ÷ density gain − footprint_intake)`). Written
     /// by the corral-tend branch of `advance_labor_allocation` (Population) on the **same pass** as
     /// both its terms, so the difference can never describe a different turn from them. Exported as
     /// `penFodderShortfall`.
@@ -634,7 +634,7 @@ pub struct Herd {
     // Both existed only to price a pen's feed in the units the PEOPLE eat in: the larder bill was the
     // human food a keeper handed its livestock, and `pen_hay_food` was hay converted into the food it
     // *displaced* from that bill. A pen is fed grass and hay and nothing else now, so the feed split
-    // is `footprint_intake + fodder_draw` against `fodder_per_biomass × biomass` — one quantity in one
+    // is `footprint_intake + fodder_draw` against `fodder_per_biomass × biomass ÷ density gain` — one quantity in one
     // unit, and [`Self::pen_pasture_fraction`] is the whole of the land/hay share the client needs.
     /// Transient per-turn scratch: the **sustained fodder inflow** in range of this pen's (or tamed
     /// herd's) keeper band
@@ -659,7 +659,7 @@ pub struct Herd {
     /// rebuild).
     pub corralled_tended_this_turn: bool,
     /// Transient per-turn flag: the fraction of the pen's **feed** demand its grass and hay covered
-    /// last turn — `(footprint_intake + fodder_draw) / (fodder_per_biomass × biomass)`, clamped
+    /// last turn — `(footprint_intake + fodder_draw) / (fodder_per_biomass × biomass ÷ density gain)`, clamped
     /// `[0, 1]`; `1.0` = fully fed, and the value when nothing was demanded. **One quantity in one
     /// unit**: it used to add a fodder-unit land share to a food-unit larder payment, which is how
     /// human food came to be animal feed at all.
@@ -1800,6 +1800,26 @@ pub fn herd_density_gain(standing: &RungStanding, herd: &Herd, fauna: &FaunaConf
     })
 }
 
+/// **WHAT A HERD EATS: `fodder_per_biomass × biomass ÷ density gain`** — the one expression for a herd's
+/// feed demand, read by the grazing draw ([`advance_herd_grazing`]) and by the pen / tamed-herd hay
+/// settlement (`systems::labor::settle_pen_hay`). Domestication lets the land hold `density_gain ×` more
+/// animals ([`herd_density_gain`], applied at the K seam), and it does so by lowering each animal's
+/// appetite by the same factor, so a herd standing at its `K` is fed by the land that sets that `K` and
+/// hay covers only what poorer ground or a herd above `K` leaves. The gain is the herd's **live**
+/// standing (`Herd::standing`), the one `CapacityStanding::live` hands the K seam. A wild herd's gain
+/// is [`DEFAULT_HUSBANDRY_DENSITY`] (`1.0`), so its demand is the plain `fodder_per_biomass × biomass`.
+pub fn herd_feed_demand(herd: &Herd, fauna: &FaunaConfig) -> f32 {
+    let gain = herd_density_gain(&herd.standing(), herd, fauna);
+    // Validation requires every density `>= 1.0`; a non-positive gain is unreachable, but a divide by
+    // it would poison the demand, so it reads as the neutral gain.
+    let gain = if gain > 0.0 {
+        gain
+    } else {
+        DEFAULT_HUSBANDRY_DENSITY
+    };
+    (herd.fodder_per_biomass * herd.biomass / gain).max(0.0)
+}
+
 /// **THE DENSITY GAIN A RUNG BUYS**, asked about a rung the herd may not stand on — the animal twin
 /// of `forage::rung_capacity_gain`, and the per-rung seam [`herd_density_gain`] interpolates over.
 fn rung_density_gain(rung: HerdPayoff, herd: &Herd, fauna: &FaunaConfig) -> f32 {
@@ -1812,7 +1832,7 @@ fn rung_density_gain(rung: HerdPayoff, herd: &Herd, fauna: &FaunaConfig) -> f32 
 
 // **RETIRED: `pen_upkeep`** — `upkeep_per_biomass × biomass`, the food a pen drew from its keeper's
 // larder, answered for every herd (a projection when unpenned) and exported as `penUpkeep`. **Human
-// food is not animal feed.** A pen eats what a herd always ate — `fodder_per_biomass × biomass` of
+// food is not animal feed.** A pen eats what a herd always ate — `fodder_per_biomass × biomass ÷ density gain` of
 // grass, off its fenced footprint and out of the hay store — so there is no food-unit running cost
 // left to quote, and nothing to subtract from `corral_yield` in a pre-commit preview. What a pen can
 // still cost its keeper is *work* (`herders_needed`, the `animal:pen` rung's standing upkeep) and the
@@ -3785,7 +3805,8 @@ fn ecological_carrying_capacity(
         // entirely by delivered hay.
         flow += herd.fodder_delivery_rate.max(0.0);
         // **The per-species husbandry DENSITY gain** (the density ladder): domestication makes the
-        // land hold *more* animals per unit of feed, so it scales the feed side ONLY, above the
+        // land hold *more* animals — each eats `1 / density_gain` as much ([`herd_feed_demand`]), so a
+        // herd at this `K` is fed by the land that sets it. It scales the feed side ONLY, above the
         // `min` — it does not enlarge the ground. A wild herd's `×1.0` leaves this untouched;
         // recomputed fresh each turn from `flow`, so it never compounds.
         total += (flow / herd.fodder_per_biomass * density_gain).min(space);
@@ -3970,7 +3991,7 @@ pub fn carnivore_k_at(
 /// instead (`advance_pen_grazing`), on a different draw, so it is skipped here.
 ///
 /// Per herd: enumerate its **range** = [`hex_range_tiles`]`(current_pos, graze_range_radius)`, demand
-/// `fodder_per_biomass × biomass` fodder, and draw it from the range's patches ([`graze_take`]),
+/// `fodder_per_biomass × biomass ÷ density gain` fodder, and draw it from the range's patches ([`graze_take`]),
 /// **proportional to each tile's available graze** and floored at the **overgrazing escapement floor**
 /// (never below `overgraze_escapement_fraction × capacity` — 2b-ii's convergence discipline; a barren
 /// tile with no patch contributes nothing).
@@ -4011,7 +4032,8 @@ pub fn advance_herd_grazing(
         // it draws (`footprint_intake`) is the pasture share of its feed this turn (§2.3, read in
         // `advance_labor_allocation`); hay covers what it leaves, and a shortfall starves the herd. `herd_footprint` picks the fenced footprint for a penned herd,
         // the roam range for a mobile one.
-        let demand = (herd.fodder_per_biomass * herd.biomass).max(0.0);
+        // The herd's appetite: `fodder_per_biomass × biomass ÷ density gain` ([`herd_feed_demand`]).
+        let demand = herd_feed_demand(herd, &fauna);
         if demand <= 0.0 {
             herd.footprint_intake = 0.0;
             continue;

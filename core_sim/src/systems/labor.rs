@@ -4017,7 +4017,7 @@ fn source_with_keeping_already_banked(
 /// *before* the assignment loop and merely applied inside it.
 ///
 /// **Two sources, one unit.** A pen eats the grass its fenced footprint grew and the hay its keeper
-/// carried in, both fodder, both measured against one demand (`fodder_per_biomass × biomass`).
+/// carried in, both fodder, both measured against one demand (`fodder_per_biomass × biomass ÷ density gain`).
 /// Nothing else feeds it: the keeper's `FOOD` larder is what the *people* eat, and a pen its pasture
 /// and hay cannot fill goes underfed and shrinks (`Herd::pen_fed_fraction` → `starve_underfed_pen`).
 ///
@@ -5065,7 +5065,7 @@ fn spend_herd_hay_share(
 /// store splits in proportion to demand and no herd's place in `assignments` decides anything.
 ///
 /// **A pen and a tamed herd bid under ONE rule** ([`fauna::herd_eats_hay`]): the demand is
-/// `fodder_per_biomass × biomass`, the footprint's grass (`Herd::footprint_intake`) covers what it
+/// `fodder_per_biomass × biomass ÷ density gain`, the footprint's grass (`Herd::footprint_intake`) covers what it
 /// can, and hay off the store covers the gap. Both kinds rank in the same priority tiers. A wild herd
 /// never bids. There is no knowledge gate: hay is eaten from the first turn there is any.
 ///
@@ -5091,6 +5091,7 @@ fn settle_pen_hay(
     stores: &LocalStore,
     faction: FactionId,
     reach: BandReach,
+    fauna_cfg: &crate::fauna_config::FaunaConfig,
 ) -> HashMap<String, PenFeedShare> {
     /// One herd's bid: its id, the player's rank on the row, its grass demand, the share of that
     /// demand the footprint covers, and the hay it is asking the `FODDER` store for.
@@ -5120,9 +5121,10 @@ fn settle_pen_hay(
         if !reach.holds(&assignment.target, registry) {
             continue;
         }
-        // The grass this pen would eat if nothing else fed it, and the gap its footprint leaves —
+        // The grass this herd would eat if nothing else fed it (`fodder_per_biomass × biomass ÷ density
+        // gain`, [`fauna::herd_feed_demand`]), and the gap its footprint leaves —
         // the corral arm's own two lines.
-        let demand_grass = (herd.fodder_per_biomass * herd.biomass).max(0.0);
+        let demand_grass = fauna::herd_feed_demand(herd, fauna_cfg);
         let pasture_fraction = if demand_grass > 0.0 {
             (herd.footprint_intake / demand_grass).clamp(0.0, 1.0)
         } else {
@@ -7095,6 +7097,7 @@ pub fn advance_labor_allocation(
             &cohort.stores,
             faction,
             band_reach,
+            &fauna,
         );
         // **ONE BAND, ONE SET OF GEAR** — the per-item unit budget every row below cuts its crews
         // from ([`LaborAllocation::item_budget`]). Resolved here, before the walk, for the reason
@@ -8752,7 +8755,7 @@ pub fn advance_labor_allocation(
                     // assignment on a **corralled** herd is herding/tending it, not hunting, and the
                     // turn has two halves (`docs/plan_corral_managed_population.md` §3.1):
                     //
-                    // 1. **FEED.** The pen demands `fodder_per_biomass × biomass` in **fodder** — a
+                    // 1. **FEED.** The pen demands `fodder_per_biomass × biomass ÷ density gain` in **fodder** — a
                     //    penned herd is confined and cannot roam to graze, so it eats the grass its
                     //    fenced footprint grew and the hay its keeper carried in, and nothing else.
                     //    **The keeper's larder is not on the table**: human food is not animal feed,
@@ -8797,7 +8800,7 @@ pub fn advance_labor_allocation(
                         // **Why it moved.** The draws used to happen here, in loop order, so a store
                         // that could not cover every pen fed the earliest row and starved the last.
                         //
-                        //   demand_grass     = fodder_per_biomass × biomass   (grass to fully feed it)
+                        //   demand_grass     = fodder_per_biomass × biomass ÷ density gain   (grass to fully feed it)
                         //   pasture_fraction = clamp(footprint_intake / demand_grass, 0, 1)
                         //   fed_fraction     = clamp((footprint_intake + hay) / demand_grass, 0, 1)
                         //

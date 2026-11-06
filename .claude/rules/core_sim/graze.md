@@ -188,7 +188,8 @@ layer inert.
   the whole route).
 - **`advance_herd_grazing`** (Logistics, registered **after `advance_herds`** and **before
   `advance_graze_regrowth`**) — the `forage_take`-style draw-down: each **mobile, non-corralled** herd
-  demands `fodder_per_biomass × biomass` and draws it from its range's `GrazeRegistry` patches,
+  demands `fodder_per_biomass × biomass ÷ density gain` (`fauna::herd_feed_demand`; a wild herd's
+  gain is `1.0`) and draws it from its range's `GrazeRegistry` patches,
   **proportional to each tile's available graze** and floored at each patch's `reseed_floor_fraction ×
   capacity` (never permanently kills a tile). Herds draw **sequentially in `HerdRegistry` order** (that
   Vec is rollback-persisted in a fixed order), so a shared tile is order-independent under rollback.
@@ -351,8 +352,10 @@ entirely from the keeper's stores) and becomes **a piece of fenced land the herd
   down with the same `graze_take` + `overgraze_escapement_fraction` (0.25) floor as a wild herd,
   capturing `footprint_intake`.
 - **The pasture offset** (§2.3) — the FEED phase measures `pasture_fraction =
-  clamp(footprint_intake / (fodder_per_biomass × biomass), 0, 1)`, and hay covers what is left;
-  `pen_fed_fraction = clamp((footprint_intake + fodder_draw) / (fodder_per_biomass × biomass), 0, 1)`.
+  clamp(footprint_intake / demand, 0, 1)`, and hay covers what is left;
+  `pen_fed_fraction = clamp((footprint_intake + fodder_draw) / demand, 0, 1)`, with `demand = fodder_per_biomass × biomass ÷ density gain`
+  (`fauna::herd_feed_demand`). A kept herd eats `fodder_per_biomass × biomass ÷ density gain`, so a herd at its `K` is fed by the land that
+  sets `K`, and hay covers only what poorer ground or a herd above `K` leaves.
 
   > #### ⛔ THE LARDER OFFSET IS RETIRED — HUMAN FOOD IS NOT ANIMAL FEED
   >
@@ -456,7 +459,7 @@ delivered_hay_raises_a_tamed_herds_carrying_capacity_by_the_flow}`.
 ### The hay bill is published as the GAP, and the sim does its arithmetic
 
 **Feeding off the land is free; hay is the thing you have to grow.** So what the readout carries is
-the *gap the fenced footprint leaves*, never the gross demand — `max(0, fodder_per_biomass × biomass
+the *gap the fenced footprint leaves*, never the gross demand — `max(0, herd_feed_demand
 − footprint_intake)`, in fodder units per turn. The gross gets no field of its own precisely because
 `penPastureFraction` already states the land's share of it.
 

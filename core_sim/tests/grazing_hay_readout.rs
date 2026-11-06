@@ -1395,3 +1395,120 @@ fn a_route_crossing_is_an_event_and_never_moves_the_runway() {
         store / (need - income)
     );
 }
+
+// --------------------------------------------------------------------------------------------
+// 10. A kept herd eats `fodder_per_biomass x biomass / density gain`
+// --------------------------------------------------------------------------------------------
+
+/// A shipped species with a real `pen_density` and `pastoral_density` -- the density gain is what
+/// these fixtures are about, so the fixture species must carry one.
+const DENSE_SPECIES: &str = "Wild Boar";
+/// The biomass the density fixtures seat -- large enough that the demand is far above the quantum.
+const DENSE_BIOMASS: f32 = 200.0;
+/// The smallest density gain that counts as domestication changing the herd at all.
+const MEANINGFUL_GAIN: f32 = 1.5;
+
+/// Seat one penned `DENSE_SPECIES` herd with its real appetite, returning `(appetite, density gain)`.
+fn seat_dense_pen(app: &mut App, tile: UVec2) -> (f32, f32) {
+    seat_pens(app, tile, &[(FED_PEN, DENSE_BIOMASS)]);
+    let fauna = app.world.resource::<core_sim::FaunaConfigHandle>().get();
+    let appetite = fauna
+        .species_by_display(DENSE_SPECIES)
+        .expect("the shipped roster carries the species")
+        .fodder_per_biomass;
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let herd = &mut registry.herds[0];
+    herd.species = DENSE_SPECIES.to_string();
+    herd.fodder_per_biomass = appetite;
+    let gain = core_sim::herd_density_gain(&herd.standing(), herd, &fauna);
+    (appetite, gain)
+}
+
+/// TAMING LOWERS PER-ANIMAL APPETITE BY THE FACTOR IT RAISES `K`. A penned herd's land feeds it
+/// `density gain x` more animals, so the grass its footprint hands over at `K` is the *whole* of its
+/// demand: the hay bill at `K` is zero. Read off the encoded frame.
+///
+/// Liveness half: the same herd on barren ground still needs hay -- the whole of `demand / gain` --
+/// and a herd whose land hands over only half of that is short the other half, so the shortfall is a
+/// live field and the zero above is a measurement rather than a dead path.
+#[test]
+fn a_penned_herd_at_its_k_needs_no_hay_and_a_starved_one_still_does() {
+    let mut app = a_world();
+    let tile = pen_tile(&app);
+    let (appetite, gain) = seat_dense_pen(&mut app, tile);
+    assert!(
+        gain > MEANINGFUL_GAIN,
+        "the fixture species must be one domestication changes (gain {gain})"
+    );
+    let demand = appetite * DENSE_BIOMASS / gain;
+    let band = spawn_band(&mut app, tile, vec![keeper_row(FED_PEN)]);
+    stock_hay(&mut app, band, 0.0);
+
+    // At K: the footprint hands over exactly what the land that sets K grows per animal.
+    pose_intake(&mut app, FED_PEN, demand);
+    resolve_and_publish(&mut app);
+    let at_k = published_hay_shortfall(&app, FED_PEN);
+    assert!(
+        at_k.abs() < EPSILON,
+        "a herd at its K is fed by the land that sets K: published shortfall {at_k}"
+    );
+    let fed = published_herd_field(&app, FED_PEN, |herd| herd.penFedFraction());
+    assert!((fed - 1.0).abs() < EPSILON, "and it is fully fed ({fed})");
+
+    // Barren footprint: the whole of demand / gain is hay, not the undivided appetite.
+    pose_intake(&mut app, FED_PEN, BARREN);
+    resolve_and_publish(&mut app);
+    let barren = published_hay_need_with_nothing_carried_in(&app, FED_PEN);
+    assert!(
+        (barren - demand).abs() < EPSILON,
+        "a barren pen needs demand / gain ({demand}), published {barren}"
+    );
+    assert!(
+        barren > EPSILON,
+        "liveness: a barren pen must still need hay"
+    );
+
+    // Above K (land hands over half what the herd needs): short by the other half.
+    pose_intake(&mut app, FED_PEN, demand * 0.5);
+    resolve_and_publish(&mut app);
+    let half = published_hay_need_with_nothing_carried_in(&app, FED_PEN);
+    assert!(
+        (half - demand * 0.5).abs() < EPSILON,
+        "a herd the land half-feeds is short half its demand: published {half} vs {}",
+        demand * 0.5
+    );
+}
+
+/// The same herd, wild and tamed, at equal biomass: the tamed one demands `1/gain` of the grass.
+/// A wild herd's gain is `1.0`, so its demand is the plain `fodder_per_biomass x biomass`.
+#[test]
+fn a_tamed_herd_demands_one_over_gain_of_a_wild_herds_grass() {
+    let mut app = a_world();
+    let tile = pen_tile(&app);
+    let (appetite, gain) = seat_dense_pen(&mut app, tile);
+    let fauna = app.world.resource::<core_sim::FaunaConfigHandle>().get();
+    let tamed = app.world.resource::<HerdRegistry>().herds[0].clone();
+    let wild = Herd::new(
+        "wild_twin".to_string(),
+        DENSE_SPECIES.to_string(),
+        SizeClass::Small,
+        vec![tile],
+        DENSE_BIOMASS,
+        PEN_CAPACITY,
+        appetite,
+        WILD_R,
+        PEN_BODY_MASS,
+        shipped::root_standing(shipped::animal()),
+    );
+    let wild_demand = core_sim::herd_feed_demand(&wild, &fauna);
+    let tamed_demand = core_sim::herd_feed_demand(&tamed, &fauna);
+    assert!((wild_demand - appetite * DENSE_BIOMASS).abs() < EPSILON);
+    assert!(
+        gain > MEANINGFUL_GAIN,
+        "liveness: the tamed herd has a real gain"
+    );
+    assert!(
+        (tamed_demand * gain - wild_demand).abs() < EPSILON * gain,
+        "tamed {tamed_demand} x gain {gain} must equal wild {wild_demand}"
+    );
+}
