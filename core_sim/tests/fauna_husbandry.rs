@@ -3508,16 +3508,22 @@ fn the_full_wild_to_pen_climb_is_paced_by_practising_each_rung() {
         herd_of(app, &id).is_domesticated()
     });
 
-    // Leg 3 — **the new leg**: practise the PASTORAL rung. The same Sustain hunt now teaches
-    // Penning, because the herd stands on a different rung.
+    // Leg 3 - **the Penning leg OVERLAPS the Tame.** A source with work banked on the rung it is
+    // raising teaches THAT rung's lesson, so the herd taught Penning on every turn its crew worked
+    // it mid-Tame. Whatever the Tame did not cover is the remainder, paid hunting the pastoral herd.
+    let penning_during_tame = ladder_knowledge(&app, PENNING_DISCOVERY_ID);
     assert!(
-        ladder_knowledge(&app, PENNING_DISCOVERY_ID) < LESSON_LEARNED,
-        "Penning cannot already be known — taming a WILD herd practises rung 1, not rung 2"
+        penning_during_tame > 0.0,
+        "a herd mid-Tame must already be teaching Penning, got {penning_during_tame}"
     );
     set_hunt_improvement(&mut app, band, None);
-    let leg3 = turns_until(&mut app, "learn Penning", 60, |app| {
-        ladder_knowledge(app, PENNING_DISCOVERY_ID) >= LESSON_LEARNED
-    });
+    let leg3 = if ladder_knowledge(&app, PENNING_DISCOVERY_ID) >= LESSON_LEARNED {
+        0
+    } else {
+        turns_until(&mut app, "learn Penning", 60, |app| {
+            ladder_knowledge(app, PENNING_DISCOVERY_ID) >= LESSON_LEARNED
+        })
+    };
 
     // Leg 4 — `Corral`, gated on the Penning the leg above just earned. Re-staffed to the herd's
     // CURRENT keeper crew: it has grown while the legs above ran, and an under-staffed keeper sheds.
@@ -3528,40 +3534,74 @@ fn the_full_wild_to_pen_climb_is_paced_by_practising_each_rung() {
         herd_of(app, &id).is_corralled()
     });
 
-    let total = leg1 + leg2 + leg3 + leg4;
+    // The Penning clock starts with the Tame, so the climb is Herding, then the longer of the Tame
+    // and the Penning lesson, then the Corral.
+    let penning_clock = leg2 + leg3;
+    let total = leg1 + penning_clock + leg4;
     println!(
-        "wild -> pen climb (Wild Boar): Herding {leg1} + Tame {leg2} + Penning {leg3} + Corral \
-         {leg4} = {total} turns"
+        "wild -> pen climb (Wild Boar): Herding {leg1} + Tame {leg2} (Penning {penning_during_tame:.2} \
+         banked meanwhile) + Penning remainder {leg3} + Corral {leg4} = {total} turns"
     );
 
-    // Each knowledge leg is ~20 turns of practice (threshold / progress_per_turn).
-    for (leg, turns) in [("Herding", leg1), ("Penning", leg3)] {
-        assert!(
-            (18..=22).contains(&turns),
-            "the {leg} leg should be ~20 turns of practice, got {turns}"
-        );
-    }
-    // **THE CLIMB IS KNOWLEDGE-PACED, and since improvements were priced in work it is emphatically
-    // so** (`docs/plan_unit_costed_work.md` §1.2). A build's turns are now `work_cost / crew output`,
-    // and an animal build's crew is the herd's own `herders_needed` — a real boar herd wants enough
-    // keepers to clear a 62.5-unit Tame in a handful of turns. Under-staffing it to slow the build
-    // down is not available: an under-herded flock **sheds**, so the keeper crew is the herd's, not
-    // the player's. So the two build legs are short and the two lessons dominate, which is exactly
-    // what this test's name claims.
+    // Herding is ~20 turns of practice (threshold / progress_per_turn).
+    assert!(
+        (18..=22).contains(&leg1),
+        "the Herding leg should be ~20 turns of practice, got {leg1}"
+    );
+    // **Penning is ~20 turns of practice too, but it starts WITH the Tame**, so its clock (the Tame
+    // plus whatever remainder was left) lands in that band - unless the Tame outlasted it.
+    assert!(
+        (leg3 == 0) || (18..=22).contains(&penning_clock),
+        "unless the Tame outlasted it, Penning should land ~20 turns after the Tame began, got \
+         {penning_clock}"
+    );
     for (leg, turns) in [("Tame", leg2), ("Corral", leg4)] {
         assert!(turns >= 1, "the {leg} leg must take at least a turn");
-        assert!(
-            turns < leg1 + leg3,
-            "the {leg} leg ({turns}) is capped by the rung's builders, so it is shorter than the \
-             two lessons together ({leg1} + {leg3}) - the climb is paced by PRACTISING each rung"
-        );
     }
-    // The headline: a pen is a ~45-turn commitment on this fixture herd, and better than half of it
-    // is the two lessons. Broad band — these are playtest dials.
+    // The headline: Penning overlapping the Tame removes up to a lesson's worth of serial turns, so
+    // the climb is shorter than the four legs run one after the other (a lesson is ~20 turns).
     assert!(
-        total > leg1 + leg3,
-        "building adds turns to the two lessons: {total} against {} of practice",
-        leg1 + leg3
+        total < leg1 + leg2 + 20 + leg4,
+        "overlapping the Penning lesson with the Tame must beat the serial climb: {total}"
+    );
+}
+
+/// **A herd mid-`Tame` teaches PENNING, and a wild herd with nothing banked teaches only Herding.**
+/// A source with work banked on the rung it is raising teaches that rung's lesson, so the Penning
+/// clock starts with the Tame instead of waiting for it to finish. Herding is granted so the Tame may
+/// run; Penning starts from zero, so it alone can show which lesson was credited.
+#[test]
+fn a_herd_mid_tame_teaches_penning_and_a_wild_herd_teaches_herding_only() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    rebadge_as(&mut app, &id, "boar");
+    let keepers = keeper_crew(&app, &id);
+    spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, keepers);
+    run_turns_with_hunt(&mut app, 3);
+    assert!(ladder_knowledge(&app, HERDING_DISCOVERY_ID) > 0.0);
+    assert_eq!(
+        ladder_knowledge(&app, PENNING_DISCOVERY_ID),
+        0.0,
+        "a wild herd with nothing banked teaches Herding only"
+    );
+
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    rebadge_as(&mut app, &id, "boar");
+    app.world
+        .resource_mut::<core_sim::DiscoveryProgressLedger>()
+        .add_progress(FactionId(0), HERDING_DISCOVERY_ID, scalar_one());
+    let keepers = keeper_crew(&app, &id);
+    let band = spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, keepers);
+    set_hunt_improvement(&mut app, band, Some(shipped::tame()));
+    run_turns_with_hunt(&mut app, 3);
+    assert!(
+        !herd_of(&app, &id).is_domesticated() && herd_of(&app, &id).ladder_position() > 0.0,
+        "the fixture must be mid-Tame"
+    );
+    assert!(
+        ladder_knowledge(&app, PENNING_DISCOVERY_ID) > 0.0,
+        "a herd with work banked on the pastoral rung teaches Penning while it is tamed"
     );
 }
 

@@ -715,7 +715,7 @@ whose fresh-water rule rung 1 does not carry.
 
 **Rung 3 places a food source where you want it** (`docs/plan_intensification_ladder.md` §2, slice 5).
 Once a faction knows **Seed Selection** (`SEED_SELECTION_DISCOVERY_ID` = 2005 — earned by *working
-tended patches*, slice 4's `plant:tended` `earns_knowledge`; earned then, spent here), a crew working
+tended patches or a patch with a `Cultivate` in flight*, slice 4's `plant:tended` `earns_knowledge`; earned then, spent here), a crew working
 a tile with the **`sow`** verb in flight builds a **Field** on it. A Field is not a new entity: it is a
 `ForagePatch` **at rung 3** — its `ladder_position` carried up into that rung's span, exactly as a
 `Herd`'s position carries up into `animal:pen`'s. There is **no "extend

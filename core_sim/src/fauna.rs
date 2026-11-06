@@ -4878,7 +4878,7 @@ fn owner_camp_tiles(
 ///
 /// Two systems resolve a herd through it: `advance_herds` (which movement primitive to run) and the
 /// Hunt arm of `advance_labor_allocation` (**which knowledge this herd's rung teaches** —
-/// `RungDef::knowledge_earned`, slice 4). The plant twin is `forage::patch_rung`.
+/// `RungDef::knowledge_earned`, slice 4). The plant twin is `forage::patch_rung_key`.
 pub(crate) fn herd_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> &'a RungDef {
     ladder.rung(herd_rung_key(herd))
 }

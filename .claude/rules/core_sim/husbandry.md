@@ -1495,7 +1495,7 @@ gated, **paid** verb, so both food webs read the same:
   "The husbandry yield ladder") and the **`drift_to_owner`** movement primitive is live (see "Herd
   movement is a rung primitive").
 - **Slice 4 completed the rung's knowledge half:** practising it (hunting the resulting **pastoral**
-  herd) earns **Penning**, which now gates `corral` — so Herding gates `tame` and **only** `tame`.
+  herd, or a herd mid-`Tame`) earns **Penning**, which now gates `corral` — so Herding gates `tame` and **only** `tame`.
   See "The knowledge pattern".
 
 See Also: "Cultivation (Intensification Phase 1a)" (the plant rung 2 this now mirrors exactly), "Corral
@@ -1513,7 +1513,7 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
 `corralled_tended_this_turn` flag. *Sim-only — the client readout is a follow-up (see below).*
 
 - **Rung-3 earned-knowledge gate — PENNING** (slice 4's §4.3 reshuffle; **it was Herding**). *Learned
-  by doing* and **never start-granted**: hunting a **pastoral** (tamed) herd accrues faction
+  by doing* and **never start-granted**: hunting a **pastoral** (tamed) herd — or one with a `Tame` in flight (work banked on the rung it is raising) — accrues faction
   **Penning** knowledge (discovery `PENNING_DISCOVERY_ID` = 2006, `fauna.rs`) at the ladder's
   `knowledge.learn_rate` **scaled by the assignment's floor, over Penning's own `lesson_cost`** —
   *"you learn penning by managing tamed herds"*, and how fast depends on how much you leave standing.

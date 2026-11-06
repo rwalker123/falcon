@@ -3413,7 +3413,7 @@ fn print_bill(bare: &Shipped, stocked: &Shipped) -> [RungBill; 3] {
         ),
         (
             "pen needs Penning",
-            "keeping a TAMED herd (animal:pastoral) — only after the Tame completes",
+            "working a herd WHILE it is tamed (work banked on animal:pastoral) or once tamed",
             shipped::animal_pastoral(),
             DEFAULT_ESCAPEMENT_FLOOR,
         ),
@@ -3504,7 +3504,7 @@ fn print_bill(bare: &Shipped, stocked: &Shipped) -> [RungBill; 3] {
         hide_per_biomass(bare),
     );
     println!("    Hide is a CO-PRODUCT of hunting boar (the hands also earn the food take), so Section I does not charge it as opportunity cost.");
-    println!("    'lesson t' is turns of wild-source work at ANY crew; the pen's penning lesson (and so the pen's clock) only starts once the Tame is finished.");
+    println!("    'lesson t' is turns of source work at ANY crew; a source teaches the lesson of the rung it is RAISING once work is banked on it, so the pen's penning lesson accrues WHILE the Tame is built and the two clocks overlap (the pen's clock is the longer of the Tame and the lesson, not their sum).");
     bills
 }
 
