@@ -129,7 +129,27 @@ a turn holds with four hunters, where the whole-animal sizing named eleven and s
 stone rows of hands.
 
 A kitted hand holds the whole of its row's live kit items, drawn from one shelf per item shared by
-every row (so two rows cannot arm one spear twice). **Hold crew** is the hands that take the
+every row (so two rows cannot arm one spear twice).
+
+**A camp-kill hunt row is held to the kit items that bind a kill, not the whole kit.** A hunt whose
+herd stands within `band_work_range` of camp (`work_party::party_begins_past`, read at the herd's
+current tile by `staffing::is_camp_kill`) posts no party: it hauls nothing and charges no sled wear.
+Its kit is `EquipmentConfig::camp_kill_kit` - the kit narrowed to `kill_bearing_items`, the items
+declaring `attack`, `dispersion` or `exposure` (`EquipmentStat::bears_on_a_kill`; the same list the
+need crew's cap and shortfall read), never an item id. The staffing stamps the verdict on the row
+(`StaffedCrew::camp_kill`) and **`LaborAssignment::binding_kit` is the one seam** every reader of
+"which items this row needs, claims and asks for" goes through: the staffing's kitted heads
+(`live_kit_items` / `kitted_capacity` / `arm`), the budget's rows (`LaborAllocation::kitted_rows`, so
+`item_budget` / `rows_excluding_source`), the published `kitToe` / `kitWorkersHolding`
+(`craft_suggestions::take_row_gear`) and `hunt_by_need::row_carried_hands`. **The wear follows the same kit**: a local pen's `biomass_collected` / `biomass_hauled` charge is
+struck against `camp_kill_kit(crew_kit)`, so a camp-kill pen leaves the sled's life untouched, and a
+posted pen wears it (`pen_standing_yield::a_local_pen_wears_no_sled_and_a_far_pen_still_does`). So a
+camp kill neither needs, claims nor asks for a sled, and a
+sled the wood row holds is not also reserved for the hunt. A hunt past the apron keeps the whole kit
+(its sled is the haul carry). `take_claims::useful_take_hands` still prices a claim over the
+row's full kit (`kit_choice`), and so do the take's pricing and the crew curves, so no yield, forecast or
+`workersNeeded` figure moves; only which items the budget, the staffing and the published lines
+count does. **Hold crew** is the hands that take the
 regrowth at the floor; **reach crew** is the hands whose take is strictly above the peak regrowth
 between the floor and today's stock (`REACH_STRICTLY_ABOVE_PEAK`), so they draw the stock down
 toward the floor. Stone has no regrowth and takes `ReachTarget::Heads(Max - keepers)`. A source
@@ -150,8 +170,11 @@ for), so the band's item budget grants a staffed row its `kitted` units and no m
 keeps the ask beside the granted `claims`. A staffed row's ask is struck at the crew it was DENIED
 (`take_claims::wanted_ask_crew`, mirroring the client's short-crew warning, `HudWorkVocab.crew_shortfall`):
 a row with a Max asks at `min(Max, useful_crew)`; a row with no Max that got nobody asks at one head;
-any other row asks at the hands present (a no-Max `useful_crew` is the take curve's ceiling, never a
-crew the band would field). Read only while the stamp is current (`staffing.total() == workers`; a
+a no-Max row where an unarmed hand adds nothing (`StaffedCrew::bare_idle`, the staffing's
+`bare_can_work == false` on a take row: a quarry bare hands cannot wound) asks at
+`max(hands present, hold_crew)`, the crew that holds the source at its floor, so the shortage of the
+kit that crew needs is stated even though pass 3 adds no bare heads; any other row asks at the hands
+present (a no-Max `useful_crew` is the take curve's ceiling, never a crew the band would field). Read only while the stamp is current (`staffing.total() == workers`; a
 muster-cut donor row falls back to its hands present, so a lent hand's kit is not asked for twice),
 and it still counts only take hands that would take something with the kit. A row's published `kitToe`
 states `required` from the ask and `filled` from the grant, so a row the pool starved of every head
@@ -1093,7 +1116,12 @@ stands in for:
   class). A class that keeps longer is a reserve. `snapshot::kill_food_terms` /
   `kill_turns_of_food` are `band_food_terms` / `band_turns_of_food` over that subset
   (`FoodMix::retaining`), with `rot_ahead` applied to the subset; **net eating (demand less steady
-  income) is unchanged**, and `turnsOfFood` is untouched.
+  income) is unchanged**, and `turnsOfFood` is untouched. **The pooling term is the band's STEADY
+  one** (`snapshot::pooling_steady_nets`, the published runway's own, `campaign.md` -> "`turnsOfFood`
+  is `larder / net drain`"), struck for the labor pass over every networked band before any band is
+  paid and passed to `need_clock` / `kill_turns_of_food`: a neighbour's lumpy whole-animal turn
+  neither fires nor delays a hunt. The term is a share of the network's net (demand less income),
+  which the larder-class subset does not touch, so it applies to the kill-class larder unchanged.
 - **Both the trigger's runway and the meal's usable larder read it** (`hunt_by_need::need_clock`,
   one call per herd for the turn and the capture). Today only `flesh` counts, so a band arriving with
   no meat has a runway near nothing and the first hunt goes out at once; after a kill the next goes

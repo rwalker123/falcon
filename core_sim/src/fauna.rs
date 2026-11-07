@@ -4878,7 +4878,7 @@ fn owner_camp_tiles(
 ///
 /// Two systems resolve a herd through it: `advance_herds` (which movement primitive to run) and the
 /// Hunt arm of `advance_labor_allocation` (**which knowledge this herd's rung teaches** —
-/// `RungDef::knowledge_earned`, slice 4). The plant twin is `forage::patch_rung`.
+/// `RungDef::knowledge_earned`, slice 4). The plant twin is `forage::patch_rung_key`.
 pub(crate) fn herd_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> &'a RungDef {
     ladder.rung(herd_rung_key(herd))
 }
@@ -11369,6 +11369,11 @@ pub struct HuntCrewCurveInputs<'a> {
     /// `w` hands collect after keeping, exactly as the deposit curve does. `None` for a herd that
     /// owes nothing.
     pub keeping: Option<CrewKeeping>,
+    /// **THIS HUNT IS A CAMP KILL** - the herd stands within `band_work_range` of camp
+    /// ([`crate::hunt_by_need::camp_kill_hunt`], the geometry the staffing stamps), so the
+    /// prospective row claims only the kit items that bind a kill and the sled is left for the rows
+    /// that haul. The pricing kit (`kit`) is unchanged: only the claim narrows.
+    pub camp_kill: bool,
 }
 
 /// **THE QUARRY AS NEXT TURN'S TAKE WILL FIND IT** — a clone with one Logistics regrowth applied,
@@ -11448,9 +11453,14 @@ fn curve_coverage(
         }
         None => inputs.other_rows,
     };
+    let claim_kit = if inputs.camp_kill {
+        inputs.equipment.camp_kill_kit(inputs.kit)
+    } else {
+        inputs.kit.clone()
+    };
     let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
         other_rows.iter().cloned(),
-        inputs.kit,
+        &claim_kit,
         workers.min(useful),
         inputs.priority,
     );
@@ -13268,7 +13278,7 @@ mod tests {
     /// can exercise the real number rather than a second `ceil` of their own.
     fn raw_for(herd: &Herd, animals_per_herder: f32) -> u32 {
         LadderConfig::builtin()
-            .rung(shipped::animal_pastoral())
+            .rung(shipped::animal_pen())
             .upkeep_crew_needed(herd_keeper_loads(
                 herd.biomass,
                 herd.body_mass,

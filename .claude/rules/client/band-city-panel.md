@@ -222,9 +222,9 @@ command center**: shown whenever ≥1 player band exists, always displaying a
     block** (`_build_food_outlook_block`, appended right after the summary block, headed `FOOD OUTLOOK`;
     BBCode can't host a drawn chart, so it is NOT a summary line). Composed CLIENT-SIDE: start from the
     band's larder (`stores.provisions`), walk `food += Σ arrival_schedule[i] over the band's assignments
-    + pooled food net − food_consumption`, clamped at 0, over the 20-turn horizon (drain and pooled net
-    held flat). The pooled net (`DetailFormat.band_pooled_food_net`, this turn's `pooled` crossings on
-    `provisions`, signed) is the sim's `standing_net` in `larder_runway_turns`, so the empty marker
+    + steady pooling term − food_consumption`, clamped at 0, over the 20-turn horizon (drain and pooling
+    held flat). The pooling term (`DetailFormat.band_pooling_steady_net`, the band's `pooling_steady_net`,
+    signed) is the sim's `standing_net` in `larder_runway_turns`, so the empty marker
     lands on the turn `turnsOfFood` names; `trade_tab_outlook_pooling` asserts it. **The pens' feed is
     not a term** — a pen eats its fenced pasture and its keeper's hay, never the larder — and raids stay
     out for the reason they always did: an episodic past loss is not a steady drain.
@@ -6152,7 +6152,10 @@ control the sheets used to mount; and it retired the Work inspector for source r
   **A staffed row short of the crew it asked for joins the same ⚠** (forage, hunt, extract, tile and band
   improvement rows, and the compose sheet's strip; not need rows): `BandPanelController._add_short_crew_warn`
   appends `HudWorkVocab.short_crew_reason` to `warn_lines`. SHORT (`HudWorkVocab.crew_shortfall`) is
-  `max_workers > 0` and `workers < min(max_workers, useful_crew)`, or a no-Max row that got nobody
+  `max_workers > 0` and `workers < min(max_workers, useful_crew)`; or a no-Max `bare_idle` row (an unarmed
+  hand adds nothing there, `LaborAssignment.bareIdle`, carried through `HudBandLaborState.STAFFED_KEYS`),
+  short by `max(hold_crew - workers, 0)`, mirroring the sim's `wanted_ask_crew` asking at
+  `max(hands present, hold_crew)`; or any other no-Max row that got nobody
   (`workers == 0` and `useful_crew > 0`), which is short by ONE head (`SHORT_CREW_NO_MAX_STARVED`, mirroring the
   sim kit ask's `ONE_HEAD_ASKED`; `useful_crew` there is the take curve's ceiling and can exceed the band);
   a no-Max row with some hands under its useful crew is not short. The hover is two lines: `⚠ Short N

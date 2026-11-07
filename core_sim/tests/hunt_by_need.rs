@@ -937,7 +937,6 @@ fn a_herd_beyond_work_range_is_not_hunted_and_posts_no_party() {
         .resource::<core_sim::LaborConfigHandle>()
         .get()
         .band_work_range;
-    let board = hands(&app, band);
     let (mut waited_far, mut hunted_near) = (0, 0);
     for _ in 0..TURNS_TO_CATCH_UP {
         set_larder(&mut app, band, LEAN_LARDER);
@@ -967,7 +966,15 @@ fn a_herd_beyond_work_range_is_not_hunted_and_posts_no_party() {
         if distance > range {
             waited_far += 1;
             assert_eq!(crew, 0, "{distance} hexes out: no crew");
-            assert_eq!(hands(&app, band), board, "and nobody was moved");
+            // Nobody was LENT: the published plan names no donor and no idle hand. The board's
+            // head counts are not compared whole: the donors' herds stand where the band started,
+            // so as the band walks away they pass the apron and a donor's kit stops being a
+            // camp-kill kit - its staffing changes with the distance, not with any muster.
+            let wire = published(&app);
+            assert_eq!(wire.idle_mustered, 0, "and nobody was moved");
+            for donor in [NORMAL_DONOR_HERD, LOW_DONOR_HERD] {
+                assert_eq!(wire.row(donor).lent_to_hunt, 0, "{donor} lent nothing");
+            }
             assert_eq!(
                 published(&app).row(NEED_HERD).turns_until_hunt,
                 NO_HUNT_NEEDED
@@ -2914,4 +2921,234 @@ fn a_short_kit_is_lent_by_its_donor_before_any_idle_hand_goes() {
     assert_eq!(wire.row(NORMAL_DONOR_HERD).lent_to_hunt, STALKING_HANDS);
     assert_eq!(wire.row(LOW_DONOR_HERD).lent_to_hunt, 0);
     assert_eq!(wire.idle_mustered, 0, "no bare idle hand goes");
+}
+
+// ---------------------------------------------------------------------------------------------
+// A CAMP-KILL HUNT ROW BINDS ONLY THE KIT ITEMS THAT BEAR ON A KILL
+//
+// The Oxenford shape: spears and sleds, one hunt row on a quarry bare hands cannot wound (no Max),
+// one wood row on the sled kit (no Max). A camp kill hauls nothing, so the hunt row neither needs,
+// claims nor asks for a sled, and its shortage of spears is stated at its hold crew.
+// ---------------------------------------------------------------------------------------------
+
+const SPEARS: &str = "spears";
+const SLED: &str = "sled";
+const WOOD: &str = "wood";
+const BIG_GAME_KIT: &str = "big_game";
+const SLEDDING_KIT: &str = "sledding";
+/// The gear the band holds: a spear and a sled for each of three hunters.
+const HELD_SPEARS: u32 = 3;
+const HELD_SLEDS: u32 = 3;
+/// The band's hands, as in the playtest band.
+const OXENFORD_WORKING: u32 = 11;
+
+/// What the encoded frame says about the two rows of the Oxenford scene.
+struct KitScene {
+    kitted_staffed: u32,
+    hold_crew: u32,
+    /// `(item, required, filled)` of the hunt row's `kitToe`.
+    hunt_toe: Vec<(String, f32, f32)>,
+    /// The craft suggestions, top first.
+    suggestions: Vec<String>,
+}
+
+/// A band with [`HELD_SPEARS`] spears and [`HELD_SLEDS`] sleds, a no-Max hunt row on the defended
+/// game at `herd_at`, and a no-Max wood row on the camp's own (wooded) tile on the sled kit.
+fn oxenford(herd_at: UVec2) -> KitScene {
+    let stock = Stock {
+        herd_at,
+        working: OXENFORD_WORKING,
+        elders: 0.0,
+        ..Stock::ROOMY
+    };
+    let (mut app, band) = world_hunting(stock, DEFENDED_GAME);
+    // The camp stands on woodland, so the wood row has a working to cut.
+    let camp_tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(CAMP.x, CAMP.y)
+        .expect("the camp tile exists");
+    app.world
+        .get_mut::<core_sim::Tile>(camp_tile)
+        .expect("the camp tile carries terrain")
+        .terrain = sim_schema::TerrainType::MixedWoodland;
+    arm_the_band_with(&mut app, band, HELD_SPEARS, HELD_SLEDS);
+    let equipment = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get();
+    let hunt_kit = equipment.kit(BIG_GAME_KIT).expect("big_game is shipped");
+    let wood_kit = equipment.kit(SLEDDING_KIT).expect("sledding is shipped");
+    let mut hunt = hunt_row(NEED_HERD, 0, SourcePriority::Normal, false);
+    hunt.max_workers = None;
+    hunt.kit = Some(hunt_kit);
+    let wood = LaborAssignment {
+        max_workers: None,
+        kit: Some(wood_kit),
+        target: LaborTarget::Extract {
+            tile: CAMP,
+            material: WOOD.to_string(),
+            floor: FLOOR,
+        },
+        ..hunt_row(NEED_HERD, 0, SourcePriority::Normal, false)
+    };
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .assignments = vec![hunt, wood];
+    turn(&mut app);
+    let snapshot = decode_latest(&app);
+    let cohort = snapshot
+        .populations
+        .iter()
+        .find(|cohort| cohort.band_id == BAND)
+        .expect("the band is on the wire");
+    let hunt = cohort
+        .labor_assignments
+        .iter()
+        .find(|row| row.fauna_id == NEED_HERD)
+        .expect("the hunt row is on the wire");
+    KitScene {
+        kitted_staffed: hunt.kitted_staffed,
+        hold_crew: hunt.hold_crew,
+        hunt_toe: hunt
+            .kit_toe
+            .iter()
+            .map(|line| (line.item_id.clone(), line.required, line.filled))
+            .collect(),
+        suggestions: cohort
+            .craft_suggestions
+            .iter()
+            .map(|suggestion| suggestion.item_id.clone())
+            .collect(),
+    }
+}
+
+impl KitScene {
+    fn toe(&self, item: &str) -> Option<(f32, f32)> {
+        self.hunt_toe
+            .iter()
+            .find(|(id, ..)| id == item)
+            .map(|(_, required, filled)| (*required, *filled))
+    }
+}
+
+/// ⛔ **A CAMP-KILL HUNT ROW IS NOT HELD TO A SLED, AND ASKS FOR THE SPEARS ITS HOLD CREW NEEDS.**
+/// Every spear is staffed (the wood row's head no longer takes the sled the third hunter needs),
+/// the row's `kitToe` has no sled line, its spear line reads the hold crew against the spears held,
+/// and the top craft suggestion is spears.
+#[test]
+fn a_camp_kill_hunt_staffs_every_spear_and_asks_for_the_spears_its_hold_crew_needs() {
+    let scene = oxenford(CAMP);
+    assert!(
+        scene.hold_crew > HELD_SPEARS,
+        "premise: the herd needs more hunters than there are spears (hold crew {})",
+        scene.hold_crew
+    );
+    assert_eq!(
+        scene.kitted_staffed, HELD_SPEARS,
+        "all three spears are staffed"
+    );
+    assert_eq!(scene.toe(SLED), None, "a camp kill claims no sled");
+    assert_eq!(
+        scene.toe(SPEARS),
+        Some((scene.hold_crew as f32, HELD_SPEARS as f32)),
+        "the spear line reads the hold crew required, the spears held filled"
+    );
+    assert_eq!(
+        scene.suggestions.first().map(String::as_str),
+        Some(SPEARS),
+        "the top craft suggestion is spears: {:?}",
+        scene.suggestions
+    );
+}
+
+/// The control: the same herd past the apron posts a party, whose sled is its haul carry - the row
+/// still claims the whole kit, sled included.
+#[test]
+fn a_far_hunt_still_claims_the_sled() {
+    let scene = oxenford(FAR_HERD_AT);
+    assert!(
+        scene.toe(SLED).is_some(),
+        "a far hunt claims its sled: {:?}",
+        scene.hunt_toe
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE CAMP-KILL VERDICT: ONE GEOMETRY FOR THE STAMP AND EVERY PROSPECTIVE QUOTE
+// ---------------------------------------------------------------------------------------------
+
+/// `hunt_by_need::camp_kill_hunt` is the geometry `staffing::is_camp_kill` stamps and the compose
+/// query, the capture's crew curve and the need assessment all read for a prospective row: a hunt is
+/// a camp kill exactly when its herd stands within `band_work_range` of the camp. The apron's edge is
+/// local and one hex past it is not; a non-hunt row is never one.
+///
+/// (The compose reply carries no sled-sensitive figure - the hunt curve is reach- and fight-bound -
+/// so the verdict is pinned here, where a quote's `camp_kill` flag is decided, rather than on the
+/// reply.)
+#[test]
+fn a_hunt_is_a_camp_kill_exactly_within_the_apron() {
+    let (mut app, _band) = world(Stock::ROOMY);
+    let range = app
+        .world
+        .resource::<core_sim::LaborConfigHandle>()
+        .get()
+        .band_work_range;
+    let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+    let width = app.world.resource::<TileRegistry>().width;
+    let wrap = app
+        .world
+        .resource::<core_sim::SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let target = LaborTarget::Hunt {
+        fauna_id: NEED_HERD.to_string(),
+        floor: FLOOR,
+        move_with_herd: false,
+    };
+    fn stand_herd_east_of_camp(app: &mut App, tiles: u32) {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|herd| herd.id == NEED_HERD)
+            .expect("the herd exists");
+        herd.current_pos = UVec2::new(CAMP.x + tiles, CAMP.y);
+        herd.route = vec![herd.current_pos];
+    }
+    stand_herd_east_of_camp(&mut app, range);
+    let registry = app.world.resource::<HerdRegistry>();
+    assert!(
+        core_sim::hunt_by_need::camp_kill_hunt(
+            &target,
+            registry,
+            Some(CAMP),
+            &labor,
+            (width, wrap)
+        ),
+        "a herd at the edge of the apron is a camp kill"
+    );
+    stand_herd_east_of_camp(&mut app, range + 1);
+    let registry = app.world.resource::<HerdRegistry>();
+    assert!(
+        !core_sim::hunt_by_need::camp_kill_hunt(
+            &target,
+            registry,
+            Some(CAMP),
+            &labor,
+            (width, wrap)
+        ),
+        "one hex past it posts a party"
+    );
+    assert!(
+        !core_sim::hunt_by_need::camp_kill_hunt(
+            &LaborTarget::Warrior,
+            registry,
+            Some(CAMP),
+            &labor,
+            (width, wrap)
+        ),
+        "a role row is never a camp-kill hunt"
+    );
 }

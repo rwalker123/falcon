@@ -826,6 +826,13 @@ func _short_crew_claims() -> void:
 	h._assert_hud("short crew (b): the same row with no kit claim wears the hands sentence (%s)"
 			% [(marks_b[0] as Label).tooltip_text if not marks_b.is_empty() else "no mark"],
 		marks_b.size() == 1 and (marks_b[0] as Label).tooltip_text == HANDS_SENTENCE)
+	# (b2) NO Max on a `bare_idle` row (bare hands add nothing): asks at max(hands, hold_crew), so it is
+	# short by the hold crew's missing hands, and not short once the hold crew is present.
+	h._assert_hud("short crew (b2): a no-Max bare_idle row is short by hold_crew - workers, never negative",
+		HudWorkVocab.crew_shortfall(1, 0, 8, true, 3) == 2
+			and HudWorkVocab.crew_shortfall(3, 0, 8, true, 3) == 0
+			and HudWorkVocab.crew_shortfall(5, 0, 8, true, 3) == 0
+			and HudWorkVocab.crew_shortfall(0, 0, 8, false, 3) == HudWorkVocab.SHORT_CREW_NO_MAX_STARVED)
 	# (c) NO Max and 3 of a useful 8: not short, no ⚠ (noise).
 	var c := _short_assignment(3, 0, 8, [])
 	var row_c := _short_row([c], c, [])

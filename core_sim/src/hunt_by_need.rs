@@ -49,6 +49,20 @@ pub(crate) fn source_is_local(
         <= crate::work_party::party_begins_past(labor)
 }
 
+/// **IS THIS A CAMP-KILL HUNT?** - a hunt target whose herd stands within the work range
+/// ([`source_is_local`]). The one geometry the staffing stamps (`staffing::is_camp_kill`) and every
+/// prospective quote reads, so the stamp and the quotes cannot disagree.
+pub fn camp_kill_hunt(
+    target: &crate::LaborTarget,
+    herds: &crate::HerdRegistry,
+    band_pos: Option<bevy::math::UVec2>,
+    labor: &crate::LaborConfig,
+    grid: (u32, bool),
+) -> bool {
+    matches!(target, crate::LaborTarget::Hunt { .. })
+        && source_is_local(target, herds, band_pos, labor, grid)
+}
+
 /// The crew cap of a kit that names no item: nothing can run short of it, so it never caps.
 pub const NO_KIT_CAP: u32 = u32::MAX;
 
@@ -132,6 +146,9 @@ pub(crate) fn meals_by_class(
 /// hunts again as the meat runs low rather than burning the reserve to its last turn. When drying
 /// (#708) lengthens the kill's shelf life the longer classes join the count with no new lever. Net
 /// eating — demand less steady income — is unchanged. The turn and the snapshot both call this.
+/// **The pooling term is the band's steady one** ([`crate::snapshot::pooling_steady_nets`]), the
+/// runway's own: it is a share of the network's net (demand less income), which the larder subset
+/// does not touch, so it applies to the kill-class larder unchanged.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct NeedClock {
     pub meal: NeedMeal,
@@ -140,6 +157,7 @@ pub(crate) struct NeedClock {
     pub runway: f32,
 }
 
+#[allow(clippy::too_many_arguments)] // the band's terms, the herd, the config and the pooling term
 pub(crate) fn need_clock(
     cohort: &PopulationCohort,
     allocation: Option<&LaborAllocation>,
@@ -148,6 +166,7 @@ pub(crate) fn need_clock(
     is_expedition: bool,
     herd: &crate::fauna::Herd,
     fauna: &FaunaConfig,
+    pooling_steady: f32,
 ) -> NeedClock {
     let keeping = &demographics.keeping;
     let class = fauna
@@ -162,7 +181,15 @@ pub(crate) fn need_clock(
             ),
             food_per_animal: herd_food_per_animal(herd, fauna),
         },
-        runway: kill_turns_of_food(cohort, allocation, demographics, held, is_expedition, class),
+        runway: kill_turns_of_food(
+            cohort,
+            allocation,
+            demographics,
+            held,
+            is_expedition,
+            class,
+            pooling_steady,
+        ),
     }
 }
 
@@ -177,11 +204,7 @@ fn kill_bearing_items<'a>(
     kit: &'a KitChoice,
     equipment: &'a EquipmentConfig,
 ) -> impl Iterator<Item = &'a str> {
-    kit.uses().filter(|item| {
-        equipment
-            .item(item)
-            .is_some_and(|def| def.bears_on_a_kill())
-    })
+    equipment.kill_bearing_items(kit)
 }
 
 /// The `need_idx` of a hunt no row stands on yet: the Assign hunters sheet pricing a crew before the
@@ -260,7 +283,7 @@ fn row_carried_hands(
     wear: &BandEquipment,
     equipment: &EquipmentConfig,
 ) -> u32 {
-    if !row.kit_choice(equipment).uses().any(|used| used == item) {
+    if !row.binding_kit(equipment).uses().any(|used| used == item) {
         return 0;
     }
     let at = budget.row_of(&row.target);
