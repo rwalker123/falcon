@@ -1518,7 +1518,7 @@ lies in the direction nobody checks. The floor is gone, `validate` relaxed from 
 pile of `wood` and `stone` seeded by `worldgen::start_stocked_materials`, off a `start_stock` block on
 the material's own roster row. Both the block and the function are gone. Neither material has a
 producer, so **the opening allocation is the only way a band ever holds either** — a paved tile
-(20 stone) and a pen (6 hurdles = wood 24 + hide 12) are reachable exactly insofar as the player spent
+(20 stone) and a pen (6 hurdles = wood 24 + hide 3) are reachable exactly insofar as the player spent
 points on them. That is a stated consequence of shipping the consumers ahead of forest foraging and
 quarrying (issue #583), not an accident.
 

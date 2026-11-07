@@ -1089,7 +1089,7 @@ nothing else; a floor in place of the ceiling fails only the non-dividing remain
 unconditionally fails only the idle bench's absence claim; wiring the ✕ to Make's signal fails
 both halves of the verb pair (`[]` against `[{…recipe_id: "baskets"}]`); and composing the tooltip
 out of the recipe's inputs — the forbidden implementation — fails both tooltip halves at *"20 fibre
-already cut"* against the 5 fibre · 1 hide the store really lost.
+already cut"* against the 2 fibre · 0.2 hide the store really lost.
 
 ### A scroll over the card must not also drive the map
 

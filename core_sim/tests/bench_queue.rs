@@ -460,9 +460,13 @@ fn publish_worked(app: &mut App, band: Entity) -> PublishedWorked {
     }
 }
 
-/// **Fibre for two sled passes and short of one basket pass** — the sled takes 2 a pass bare-handed
-/// and the baskets 5, so baskets at the head are short while the sled behind them can be made.
+/// **Fibre for two sled passes.** Both sled and baskets take 2 fibre a pass, so the scarcity that
+/// makes one makeable while the other is short is HIDE: the sled takes 2 a pass and the baskets 0.2.
 const FIBRE_FOR_TWO_SLEDS: f32 = 4.0;
+/// Hide enough for a basket pass or several and short of one sled pass (2).
+const HIDE_SHORT_OF_A_SLED: f32 = 1.0;
+/// The toughness / suppleness a fixture's hide is banked at.
+const HIDE_AXES: [(&str, f32); 2] = [("toughness", 0.6), ("suppleness", 0.5)];
 /// The order index of the head and of the order behind it.
 const HEAD: usize = 0;
 const SECOND: usize = 1;
@@ -494,6 +498,11 @@ fn bank(app: &mut App, band: Entity, material: &str, amount: f32, axes: &[(&str,
 /// A band holding NO tools (so every draw is bare-handed, at the book's own amounts), plenty of hide
 /// and `fibre` fibre, with `orders` queued and a crew that finishes either recipe in one turn.
 fn bench_with(app: &mut App, band: Entity, fibre: f32, orders: &[(&str, u32)]) {
+    bench_with_hide(app, band, fibre, PLENTY, orders);
+}
+
+/// `bench_with` with the hide held set as well, for the scenarios whose scarcity is hide.
+fn bench_with_hide(app: &mut App, band: Entity, fibre: f32, hide: f32, orders: &[(&str, u32)]) {
     *app.world
         .get_mut::<BandEquipment>(band)
         .expect("a spawned band carries an equipment ledger") = BandEquipment::default();
@@ -502,13 +511,7 @@ fn bench_with(app: &mut App, band: Entity, fibre: f32, orders: &[(&str, u32)]) {
         .expect("the band has a cohort")
         .stores
         .clear_materials();
-    bank(
-        app,
-        band,
-        HIDE,
-        PLENTY,
-        &[("toughness", 0.6), ("suppleness", 0.5)],
-    );
+    bank(app, band, HIDE, hide, &HIDE_AXES);
     bank(app, band, FIBRE, fibre, &FIBRE_AXES);
     let mut bench = app
         .world
@@ -520,30 +523,34 @@ fn bench_with(app: &mut App, band: Entity, fibre: f32, orders: &[(&str, u32)]) {
     bench.workers = CREW_THAT_FINISHES_A_SLED_IN_ONE_TURN;
 }
 
-/// **A SHORT HEAD NO LONGER STALLS THE QUEUE.** Baskets at the head are short of fibre; the sled
-/// behind them can be made. The bench works the sled — it completes and leaves — while the baskets
-/// keep index 0 with their skip reason on the wire. Once only the short head is left, nothing can be
+/// **A SHORT HEAD NO LONGER STALLS THE QUEUE.** The sled at the head is short of hide; the baskets
+/// behind it can be made. The bench works the baskets — they complete and leave — while the sled
+/// keeps index 0 with their skip reason on the wire. Once only the short head is left, nothing can be
 /// worked, and the row reads as the blocked head: `worked` 0 and the head's reason.
 #[test]
 fn a_short_head_is_skipped_and_the_next_makeable_order_is_worked() {
     let (mut app, band) = world();
-    bench_with(
+    bench_with_hide(
         &mut app,
         band,
         FIBRE_FOR_TWO_SLEDS,
-        &[(BASKETS_RECIPE, ONE), (SLED_RECIPE, ONE)],
+        HIDE_SHORT_OF_A_SLED,
+        &[(SLED_RECIPE, ONE), (BASKETS_RECIPE, ONE)],
     );
 
     let before = publish_worked(&mut app, band);
-    assert_eq!(before.worked, SECOND_WORKED, "the sled is the worked order");
     assert_eq!(
-        before.recipe_id, SLED_RECIPE,
+        before.worked, SECOND_WORKED,
+        "the baskets are the worked order"
+    );
+    assert_eq!(
+        before.recipe_id, BASKETS_RECIPE,
         "and the bench row describes it"
     );
     let head = &before.orders[HEAD];
-    assert_eq!(head.0, BASKETS_RECIPE);
+    assert_eq!(head.0, SLED_RECIPE);
     assert!(
-        head.3.contains(FIBRE) && head.4 == DANGER,
+        head.3.contains(HIDE) && head.4 == DANGER,
         "the skipped head says why, in the bench's own words: {head:?}"
     );
     assert!(
@@ -556,9 +563,9 @@ fn a_short_head_is_skipped_and_the_next_makeable_order_is_worked() {
     assert_eq!(
         after.orders.len(),
         1,
-        "the sled was made and left; the baskets are still queued"
+        "the baskets were made and left; the sled is still queued"
     );
-    assert_eq!(after.orders[HEAD].0, BASKETS_RECIPE, "…at index 0");
+    assert_eq!(after.orders[HEAD].0, SLED_RECIPE, "…at index 0");
     assert_eq!(after.orders[HEAD].1, NONE_MADE, "…unmade");
     assert_eq!(
         app.world
@@ -567,7 +574,7 @@ fn a_short_head_is_skipped_and_the_next_makeable_order_is_worked() {
             .finished
             .len(),
         1,
-        "the sled made past the short head is parked for delivery"
+        "the baskets made past the short head are parked for delivery"
     );
 
     // A FULLY STUCK QUEUE reads as its blocked head.
@@ -575,7 +582,7 @@ fn a_short_head_is_skipped_and_the_next_makeable_order_is_worked() {
         after.worked, HEAD_WORKED,
         "nothing is workable: the row describes the head"
     );
-    assert_eq!(after.recipe_id, BASKETS_RECIPE);
+    assert_eq!(after.recipe_id, SLED_RECIPE);
     assert!(
         !after.orders[HEAD].3.is_empty()
             && after.blocked_reason.contains(after.orders[HEAD].3.as_str()),
@@ -586,30 +593,31 @@ fn a_short_head_is_skipped_and_the_next_makeable_order_is_worked() {
 }
 
 /// **THE HEAD TAKES PRIORITY BACK WHEN ITS STOCK ARRIVES**, and the order it overtakes mid-item is
-/// paused with its pile. The sled (×3) makes one and re-draws while the baskets are short; fibre then
-/// arrives, the baskets are worked again — made, and gone — and the sled still holds the pile it cut.
+/// paused with its pile. The baskets (×3) make one and re-draw while the sled is short of hide; hide
+/// then arrives, the sled is worked again — made, and gone — and the baskets still hold the pile they cut.
 #[test]
 fn the_head_resumes_priority_when_its_stock_arrives() {
     let (mut app, band) = world();
-    bench_with(
+    bench_with_hide(
         &mut app,
         band,
-        FIBRE_FOR_TWO_SLEDS,
-        &[(BASKETS_RECIPE, ONE), (SLED_RECIPE, THREE)],
+        PLENTY,
+        HIDE_SHORT_OF_A_SLED,
+        &[(SLED_RECIPE, ONE), (BASKETS_RECIPE, THREE)],
     );
     app.world.run_system_once(advance_crafting);
     let skipped = publish_worked(&mut app, band);
     assert_eq!(
         skipped.worked, SECOND_WORKED,
-        "fixture: the sled was worked"
+        "fixture: the baskets were worked"
     );
     assert_eq!(
         (skipped.orders[SECOND].1, skipped.orders[SECOND].2),
         (ONE, true),
-        "fixture: one sled made and the next pass's pile already cut"
+        "fixture: one basket made and the next pass's pile already cut"
     );
 
-    bank(&mut app, band, FIBRE, PLENTY, &FIBRE_AXES);
+    bank(&mut app, band, HIDE, PLENTY, &HIDE_AXES);
     let resumed = publish_worked(&mut app, band);
     assert_eq!(
         resumed.worked, HEAD_WORKED,
@@ -624,13 +632,13 @@ fn the_head_resumes_priority_when_its_stock_arrives() {
     let done = publish_worked(&mut app, band);
     assert_eq!(
         done.orders.iter().map(|o| o.0.as_str()).collect::<Vec<_>>(),
-        vec![SLED_RECIPE],
-        "the baskets were worked to their count and left"
+        vec![BASKETS_RECIPE],
+        "the sled was worked to its count and left"
     );
     assert_eq!(
         (done.orders[HEAD].1, done.orders[HEAD].2),
         (ONE, true),
-        "the overtaken sled kept its made count and the pile it had cut"
+        "the overtaken baskets kept their made count and the pile they had cut"
     );
 }
 
@@ -770,8 +778,8 @@ fn publish_forecast(app: &mut App, band: Entity) -> PublishedForecast {
     (orders, suggestions)
 }
 
-/// Three sleds want 18 hide and 6 fibre; the band holds 4 fibre. A SECOND order behind it (baskets,
-/// 5 fibre a pass) sees none left. **Read off the encoded frame.**
+/// Three sleds want 6 hide and 6 fibre; the band holds 4 fibre. A SECOND order behind it (baskets,
+/// 2 fibre a pass) sees none left. **Read off the encoded frame.**
 #[test]
 fn short_to_finish_forecasts_the_whole_run_and_a_later_order_sees_what_the_first_left() {
     /// Three sleds at 2 fibre a pass; the band holds two passes' worth.
@@ -779,8 +787,8 @@ fn short_to_finish_forecasts_the_whole_run_and_a_later_order_sees_what_the_first
     const FIBRE_HELD: f32 = 4.0;
     const FIBRE_FOR_THREE_SLEDS: f32 = 6.0;
     const FIBRE_SHORT: f32 = 2.0;
-    /// One basket pass: 5 fibre.
-    const BASKET_FIBRE: f32 = 5.0;
+    /// One basket pass: 2 fibre.
+    const BASKET_FIBRE: f32 = 2.0;
     let (mut app, band) = world();
     bench_with(&mut app, band, FIBRE_HELD, &[(SLED_RECIPE, SLEDS)]);
     let (orders, _) = publish_forecast(&mut app, band);
@@ -809,14 +817,14 @@ fn short_to_finish_forecasts_the_whole_run_and_a_later_order_sees_what_the_first
 }
 
 /// **A SUGGESTION'S FORECAST DRAWS AGAINST WHAT THE QUEUE LEAVES.** Two earthmoving sets are
-/// suggested (3 wood + 2 stone a pass). With 4 wood and 10 stone banked the whole count is short
-/// 2 wood; queueing one set nets the suggestion to one and leaves 1 wood, so the one set it still
-/// names is short 2 wood — and the stone is covered either way.
+/// suggested (1 wood + 1 stone a pass). With 1.5 wood and 10 stone banked the whole count is short
+/// 0.5 wood; queueing one set nets the suggestion to one and leaves 0.5 wood, so the one set it still
+/// names is short 0.5 wood — and the stone is covered either way.
 #[test]
 fn a_suggestions_shortfalls_are_struck_against_the_stock_the_queue_leaves() {
-    const WOOD_HELD: f32 = 4.0;
+    const WOOD_HELD: f32 = 1.5;
     const STONE_HELD: f32 = 10.0;
-    const WOOD_PER_SET: f32 = 3.0;
+    const WOOD_PER_SET: f32 = 1.0;
     const WOOD_AXES: [(&str, f32); 2] = [("hardness", 0.5), ("pliancy", 0.5)];
     const STONE_AXES: [(&str, f32); 2] = [("hardness", 0.5), ("workability", 0.5)];
     const SETS_SUGGESTED: f32 = 2.0;
@@ -844,7 +852,7 @@ fn a_suggestions_shortfalls_are_struck_against_the_stock_the_queue_leaves() {
             WOOD_HELD,
             WOOD_PER_SET * SETS_SUGGESTED - WOOD_HELD
         )],
-        "two sets need 6 wood against 4 held; the stone covers both"
+        "two sets need 2 wood against 1.5 held; the stone covers both"
     );
 
     app.world
@@ -864,7 +872,7 @@ fn a_suggestions_shortfalls_are_struck_against_the_stock_the_queue_leaves() {
             WOOD_HELD - WOOD_PER_SET,
             WOOD_PER_SET - (WOOD_HELD - WOOD_PER_SET)
         )],
-        "the queued set claimed 3 of the 4 wood, so the suggestion sees 1"
+        "the queued set claimed 1 of the 1.5 wood, so the suggestion sees 0.5"
     );
 }
 
@@ -946,7 +954,7 @@ fn the_bench_short_notice_is_edge_gated_and_refires_after_recovering() {
 /// **ONE MATERIAL STORY PER ORDER** — a skipped order's `blockedReason` and the bench's own quote the
 /// order's `shortToFinish` numbers (the whole remaining run against what earlier orders leave), not
 /// one pass. Three sleds at 2 fibre a pass with 1 fibre held: the per-pass gap is 1.0 but the run is
-/// short 5.0; the baskets behind (5 a pass) see the head's claim and read the full 5.0, not 4.0.
+/// short 5.0; the baskets behind (2 a pass) see the head's claim and read their full 2.0.
 /// Also holds the sanity that a material-skipped order always has forecast rows.
 #[test]
 fn a_skipped_orders_reason_quotes_its_forecast_not_one_pass() {
@@ -961,7 +969,7 @@ fn a_skipped_orders_reason_quotes_its_forecast_not_one_pass() {
     let published = publish_worked(&mut app, band);
     let (_, forecast_orders) = (0, publish_forecast(&mut app, band).0);
     assert_eq!(published.orders[0].3, "Short 5.0 fibre");
-    assert_eq!(published.orders[1].3, "Short 5.0 fibre");
+    assert_eq!(published.orders[1].3, "Short 2.0 fibre");
     assert_eq!(
         published.blocked_reason, "Short 5.0 fibre",
         "the bench row agrees with the head's queue row"

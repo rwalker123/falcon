@@ -430,8 +430,8 @@ not a blocker: the deposit works whatever the metal is for.
   nothing — and wears nothing — off its own rungs. The axe also declares `build_work` on `forestry`, so a crew raising a felling or coppice
   working and the hands keeping one are geared by it through the rung requirement.
 - **The road tools' pacing moved a long way and nobody has played it.** `earthmoving` and
-  `stone_dressing` cost 2 **stone** instead of 2 bone since §8's change: about 5 worker-turns on a
-  scatter against about 22 turns of a whole band's hunting. `recipes.json`'s `_comment_road_tools`
+  `stone_dressing` cost 2 **stone** instead of 2 bone since §8's change, and are now 1 stone + 1 wood: about
+  2.5 worker-turns of stone on a scatter against about 22 turns of a whole band's hunting. `recipes.json`'s `_comment_road_tools`
   says what these cost *"is what decides whether a faction roads its first link at turn 40 or turn
   100"*, and this makes it much sooner. Intended — the bone head was a stand-in — but it is the first
   number to look at if roads start arriving too early.

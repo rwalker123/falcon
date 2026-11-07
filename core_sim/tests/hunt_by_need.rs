@@ -2248,8 +2248,9 @@ fn a_waiting_rows_planned_crew_is_equipped_ahead_of_the_hunt() {
 // THE CRAFTING BENCH LENDS LIKE A ROW
 // ---------------------------------------------------------------------------------------------
 
-/// Hands at the crafting bench in the bench-donor worlds.
-const BENCH_CREW: u32 = 4;
+/// Hands at the crafting bench in the bench-donor worlds: few enough that the unfinished sled
+/// (`work: 8`, banked at 2.0 x 0.5 a hand-turn) stays unfinished across the fixture's turns.
+const BENCH_CREW: u32 = 2;
 /// The bench's job: the sled (8 work; hide and fibre, both banked by the fixture).
 const BENCH_RECIPE: &str = "sled";
 /// An order the fixture never finishes, so a turn's progress is never a completion.
