@@ -158,7 +158,7 @@ name via `FaunaConfig::pen_density_for` / `pastoral_density_for`), applied at th
 `ecological_carrying_capacity` — it multiplies each wander point's feed `K` (`flow /
 fodder × gain`, before the mean over the points — see `graze.md` → "Phase 2b-ii"), so it is recomputed fresh each turn (idempotent, never a compounding read). Roster:
 crag_goat/aurochs **2.0 / 5.0**, boar **1.5 / 4.0**, rabbit/fowl **1.1 / 1.5**,
-steppe_runner/marsh_grazer **1.5 / 1.0** (pastoral only, so `pen_density` is inert), wild_horse **1.5 / 1.0** (pennable, but its pen `K` is space-bound, so `pen_density` is inert there too — see "Wild Horses"), deer/mammoth omit
+steppe_runner/marsh_grazer **1.5 / 1.0** (pastoral only, so `pen_density` is inert), wild_horse **1.5 / 1.0** (pennable; base `K` 4000, feed-bound — see "Wild Horses"), deer/mammoth omit
 both (wild ceiling → always `×1.0`). Validated finite & `>= 1.0` (a gain below 1 would make
 domestication *reduce* capacity). **Playtest dials.**
 
@@ -830,7 +830,7 @@ tile carried entirely by trucked-in hay held any number of animals. The cap exis
 that. **A budget that changes no normally-grazed source is the dial working**, not the dial being
 inert — the number it buys is the **headroom**: how much hay a pen may be fed before space stops it.
 
-Measured at the shipped `2530.3`, over all twenty species at every rung, **nothing clips except the wild_horse pen** (see "Wild Horses" below):
+Measured at the shipped `2530.3`, over all twenty species at every rung, **nothing clips**:
 
 | rung | tightest headroom (space `K` ÷ feed `K`) |
 |---|---|
@@ -840,7 +840,7 @@ Measured at the shipped `2530.3`, over all twenty species at every rung, **nothi
 | snow_hare pen | 1.778× |
 | wild_sheep pen | 2.006× |
 | aurochs pen | 2.743× |
-| **wild_horse pen** | **0.96× — space-bound** |
+| wild_horse pen | 2.163× |
 | every wild and pastoral row | 2.46× (`river_fish`) to 257× (`wolf`) |
 
 So a penned aurochs may be fed to **2.7× the herd its ground grazes** before space refuses more, and a
@@ -889,7 +889,7 @@ that states nothing about why.
 | snow_hare | 0.6 | **3420.1** | 2052 | 300 | feed |
 | rabbit | 0.27 | **5824.2** | 1573 | 300 | feed |
 | fowl | 0.13 | **9480.8** | 1233 | 240 | feed |
-| wild_horse | 40 | **208.0** | 8321 | 9000 | **space** (8654 at the shipped `2530.3`) |
+| wild_horse | 40 | **208.0** | 8321 | 4000 | feed |
 
 ### Measured at three anchors
 
@@ -965,7 +965,7 @@ Nothing is a drawdown; every row takes its sustainable line or less.
 | species | reproduces food/turn | takes at 5 hands | limited by |
 |---|---|---|---|
 | Wild Aurochs | 8.04 | 7.9200 | herd production |
-| Wild Horses | 7.79 | 7.7400 | herd production (space-bound `K`) |
+| Wild Horses | 8.10 | 7.9800 | herd production |
 | Wild Sheep | 7.14 | 7.1316 | herd production |
 | Wild Boar | 7.14 | 7.1280 | herd production |
 | Crag Goats | 7.14 | 7.1190 | herd production |
@@ -991,7 +991,7 @@ include the keepers):
 | species | `pen_engage_gain` | reaches its max at |
 |---|---|---|
 | aurochs | **4.2** | 5 keepers |
-| wild_horse | **3.5** | 5 |
+| wild_horse | **2.3** | 5 |
 | wild_sheep | **5.1** (was 8.5) | 5 |
 | crag_goat | **5.266667** (was 7.9) | 5 |
 | snow_hare | **9.4** | 5 |
@@ -1053,34 +1053,36 @@ pastoral_engage_gain`), not on the globals: either arm may be overridden, and co
 against the global it does not belong beside would let a fence handle worse than a halter on exactly
 the animal carrying a row.
 
-### Wild Horses — a migratory herd that pens, and a pen the space term sizes
+### Wild Horses — a migratory herd that pens
 
 `wild_horse` carries `husbandry_ceiling: "animal:pen"`. Nothing in the sim stops a migratory herd being
 penned (`Herd::corral_at` pins it and the pen rung's `behavior.movement` is `fixed`), and the earliest
-horse herders (Botai, ~3500 BC) kept horses in corrals. It was `pastoral` only because it was grouped
-with the migrators when it was added; reindeer, steppe_runner and marsh_grazer stay pastoral.
+horse herders (Botai, ~3500 BC) kept horses in corrals. Reindeer, steppe_runner and marsh_grazer stay
+`pastoral`.
 
-**Its pen `K` is space-bound, so `pen_density` is inert and sits at its `1.0` floor.** The herd's base
-`K` is `biomass[1]` = **9000** (a 40 kg animal, 225 head), against a `hex_space_budget` allowance of
-`2530.3 / 40^(2/3) = 216.3` animals = **8654** on one tile. `K = min(feed_K, space_K) = 8654` at any
-density `>= 1.0`, and the validator forbids going below `1.0`, so no value of the dial changes it:
-`food/turn = 0.06 × 8654 × 0.06 / 4 = 7.79`, inside the big pens' band (Wild Sheep / Boar / Crag Goats
-7.14, aurochs 8.04) with no tuning. Headroom (space `K` ÷ feed `K`) is **0.96×**, the one pen on the
-roster where space clips feed (by 3.8%).
+**The row is a horse's, not the migratory megafauna's.** `regrowth_rate` is **0.09** (the aurochs' value:
+real wild and feral herds grow 10-20% a year, about as fast as cattle) where the mammoth
+keeps 0.04 (reindeer 0.10 and steppe_runner/marsh_grazer 0.09 were retuned the same way, `biomass` scaled to hold `r · K` at 360, wild line 5.40 and pastoral line 10.125 unchanged). `biomass` is **[1800, 4000]**, which holds the wild herd's `r · K` at 360 (0.09 × 4000 =
+0.04 × 9000), so the wild hunt's sustainable line is unchanged at **5.40** food/turn. `taming_cost_multiplier`
+is **3.0** (150 work units): horses were domesticated far later than cattle, sheep, goats and pigs, so
+dearer than the aurochs' 2.0, but not the reindeer's 5.0.
 
-**`pen_engage_gain` is `3.5`**, measured against the sim with `food_economy_table`:
+**`pen_density` stays `1.0`.** Base `K` is 4000 (100 head), so the pen is feed-bound: pen `K` 4000 against a
+space `K` of 8654 (`2530.3 / 40^(2/3) = 216.3` animals), a headroom of **2.16×**. The pen line is
+`0.135 × 4000 × 0.06 / 4 = ` **8.10 food/turn** (`r_pen` 0.135 = 0.09 × `pen_gain` 1.5), a little above
+the aurochs' 8.04. The pastoral line (`r` 0.1125, `K` 6000) is 10.125, as before.
 
-| `pen_engage_gain` | crew that reaches the line (max table) | 5-hand take |
+**`pen_engage_gain` is `2.3`**, measured against the sim with `food_economy_table` (crew that first reaches
+the line in the max table):
+
+| `pen_engage_gain` | crew that reaches the line | 5-hand take |
 |---|---|---|
-| 2.5 / 2.75 | 6 | 6.60 |
-| **3.0 – 4.0** | **5** | 7.74 (at the line) |
-| 4.5 / 5.0 | 4 | 7.74 |
+| 2.1 / 2.3 / 2.5 | **5** | 7.98 (at the line) |
+| 2.75 / 3.0 / 3.5 | 4 | 7.98 |
 
-`3.5` is the middle of the five-keeper bracket. It exceeds the horse's effective
-`pastoral_engage_gain` (the global `2.0`), as the per-species ladder-ordering check requires; that floor
-also means a horse pen cannot be made to need more than about six keepers by lowering the gain further
-without first overriding its pastoral arm. `taming_cost_multiplier` stays `5.0`, `animals_per_herder` `50`
-and `pastoral_density` `1.5`.
+The five-keeper bracket sits between the horse's effective `pastoral_engage_gain` (the global `2.0`, which
+the per-species ordering check requires the gain to exceed) and about 2.6; `2.3` is mid-bracket.
+`animals_per_herder` stays `50` and `pastoral_density` `1.5`.
 
 ## Deleting the `pen_is_a_larder` flag — the shape of it
 

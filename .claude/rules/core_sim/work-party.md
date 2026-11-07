@@ -1346,8 +1346,8 @@ no party exists yet. `resolve_hunt_engagement`, `engagement_reach`, `hunt_useful
 value; every construction site resolves it for ITS faction (`labor.rs` per band, `advance_expeditions`
 off the home people, `forecast_query` / `seed_source_yield` off the asking band,
 `take_claims::with_world_sources(world, faction, ..)`). The shipped `drive_full_head_count` **100** is
-in heads: a migratory herd is 4,000–12,000 biomass, which at the light roster's body masses
-(reindeer 20 … steppe runner 53) is roughly 75–600 head, while a mammoth herd (5–15 head) gains almost
+in heads: a migratory herd is 1,600–12,000 biomass (mammoth 8,000–12,000, the others 1,600–4,000), which at the light roster's body masses
+(reindeer 20 … steppe runner 53) is roughly 34–180 head, so 100 is the top of a horse-sized herd, while a mammoth herd (5–15 head) gains almost
 nothing.
 
 **The roster carries them as a branch of their own.** `LadderConfig::standalone_knowledges` (required)
