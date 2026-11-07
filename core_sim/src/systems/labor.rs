@@ -9549,7 +9549,7 @@ pub fn advance_labor_allocation(
                     // branch's own line, and the reason it is here too is
                     // `docs/plan_pen_standing_yield.md` §3: `steppe_runner` and `marsh_grazer` carry
                     // `husbandry_ceiling: "pastoral"` and can **never** be penned, so a pen-only
-                    // payout would hand the two migratory species nothing at all. The scale folds
+                    // payout would hand the pastoral-only migratory species (steppe_runner, marsh_grazer, reindeer) nothing at all. The scale folds
                     // in the rung share itself ([`fauna::herd_standing_rung_share`]), so a **wild**
                     // herd on this same path resolves an honest zero with no branch here.
                     let standing_scale = fauna::herd_standing_scale(herd, &fauna);

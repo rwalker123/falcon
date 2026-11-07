@@ -111,8 +111,8 @@ rather than species-specific. `rung_fraction` is `1.0` at `animal:pen` and this 
 a wild herd yields nothing.
 
 This is load-bearing rather than a nicety: `steppe_runner` and `marsh_grazer` carry
-`husbandry_ceiling: "pastoral"` and **can never be penned**, so a pen-only gate would hand the two
-migratory species nothing at all. It is also the first thing that makes the mobile rung worth
+`husbandry_ceiling: "pastoral"` and **can never be penned**, so a pen-only gate would hand
+the pastoral-only migratory species (steppe_runner, marsh_grazer, reindeer) nothing at all. It is also the first thing that makes the mobile rung worth
 *staying* on rather than a waypoint to the pen — the steppe economy was milk.
 
 ---

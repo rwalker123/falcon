@@ -1666,7 +1666,7 @@ pub struct HusbandryConfig {
     /// # ⛔ IT IS LOAD-BEARING, NOT A NICETY
     ///
     /// `steppe_runner` and `marsh_grazer` carry `husbandry_ceiling: "pastoral"` and **can never be
-    /// penned**, so a pen-only gate would hand the two migratory species nothing at all. It is also
+    /// penned**, so a pen-only gate would hand the pastoral-only migratory species (steppe_runner, marsh_grazer, reindeer) nothing at all. It is also
     /// the first thing that makes the mobile rung worth *staying* on rather than a waypoint to the
     /// pen — the steppe economy was milk.
     ///

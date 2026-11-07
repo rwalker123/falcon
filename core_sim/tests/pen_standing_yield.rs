@@ -600,8 +600,8 @@ const FIXTURE_PASTORAL_SHARE: f32 = 0.4;
 /// The pen's own share — the pastoral dial at the value that milks a roaming herd like a penned one.
 const PEN_EQUIVALENT_SHARE: f32 = 1.0;
 
-/// **THE PASTORAL SHARE IS A DIAL ON THE ROAMING HERD'S MILK, AND IT IS LOAD-BEARING** — the two
-/// migratory species can never be penned, so a pen-only gate would hand them nothing at all.
+/// **THE PASTORAL SHARE IS A DIAL ON THE ROAMING HERD'S MILK, AND IT IS LOAD-BEARING** — the
+/// pastoral-only migratory species can never be penned, so a pen-only gate would hand them nothing at all.
 #[test]
 fn the_pastoral_rung_pays_its_share_and_the_wild_rung_pays_nothing() {
     const {
