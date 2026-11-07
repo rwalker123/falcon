@@ -1804,7 +1804,16 @@ impl BandItemBudget {
         config: &EquipmentConfig,
     ) -> KitCoverage {
         let row = self.row_of(source);
-        let spare = |item: &str| self.unclaimed_units(item, wear, config);
+        // **An item no row claims is all "settled" already** ([`Self::units_for_row`] answers the
+        // whole live stock), so counting it again as spare would double it. A camp-kill hunt row
+        // does not claim the sled its full kit names, which is how an item reaches this unclaimed.
+        let spare = |item: &str| {
+            if self.is_claimed(item) {
+                self.unclaimed_units(item, wear, config)
+            } else {
+                NO_UNITS_IN_HAND
+            }
+        };
         let spare_hands: f32 = kit
             .uses
             .iter()
@@ -1819,6 +1828,13 @@ impl BandItemBudget {
         config.coverage_from_units(kit, take_hands + spare_hands, wear, |item| {
             self.units_for_row(item, row, wear, config) + spare(item)
         })
+    }
+
+    /// Whether any row of the budget carries `item` in its kit.
+    fn is_claimed(&self, item: &str) -> bool {
+        self.rows
+            .iter()
+            .any(|claim| claim.kit.uses.iter().any(|used| used.as_ref() == item))
     }
 
     /// **One row's settled units of `item`** — `row` is its index in the budget. An item no row
@@ -2813,6 +2829,27 @@ impl EquipmentConfig {
             id: Arc::from(""),
             uses: Arc::from(Vec::new()),
         }
+    }
+
+    /// **THE ITEMS OF A KIT THAT BIND A KILL** - the kit's items declaring a stat the kill itself
+    /// reads (attack, dispersion, exposure: [`ItemDefinition::bears_on_a_kill`]), never an item id.
+    /// The sled (`hunt_carry`, `deposit_take`) is not one: it hauls and wears only on a posted
+    /// party's pack. The one list the need crew's cap and shortfall
+    /// (`hunt_by_need`) and a camp-kill hunt row's kit ([`Self::camp_kill_kit`]) both read.
+    pub fn kill_bearing_items<'a>(
+        &'a self,
+        kit: &'a KitChoice,
+    ) -> impl Iterator<Item = &'a str> + 'a {
+        kit.uses()
+            .filter(|item| self.item(item).is_some_and(|def| def.bears_on_a_kill()))
+    }
+
+    /// **THE KIT A CAMP-KILL HUNT ROW IS HELD TO** - `kit` narrowed to [`Self::kill_bearing_items`].
+    /// A hunt inside `band_work_range` posts no party: nothing is hauled and the sled wears nothing,
+    /// so the row neither needs, claims nor asks for it. The id is kept (the player's choice).
+    pub fn camp_kill_kit(&self, kit: &KitChoice) -> KitChoice {
+        let items: Vec<Arc<str>> = self.kill_bearing_items(kit).map(Arc::<str>::from).collect();
+        kit.restricted_to(items)
     }
 
     /// Every item, in id order — the stable iteration the wire and the refusal messages ride.

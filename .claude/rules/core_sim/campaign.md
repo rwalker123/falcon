@@ -1096,19 +1096,40 @@ with the most workers in the band's `LaborAllocation`). Both are computed at cap
 > `net_drain <= 0` (net-positive): the `999.0` **not-food-limited** sentinel, which the client
 > renders as ∞.
 >
-> **Income includes this turn's POOLED food net** (`snapshot::population::pooled_food_net` — the
-> band's `Pooled` crossings on `FOOD` off `last_turn_transfer_crossings`, in minus out). It enters
-> both arms as a standing per-turn rate: added to every turn of the arrival walk, and to the steady
-> income in the smooth arm. It is signed and unclamped, so a band pooling food away drains faster and
-> one receiving it lasts longer, and income plus pooled net covering demand is the sentinel as
-> before. **Pooled only, never `TransferLedger::local_net`**: the local arm also carries a split's
-> dowry, a one-off that would swing the runway for the turn it lands. It is the same basis as the
-> client's Food headline rate (`DetailFormat.band_headline_food_rate`), and it is read off the
-> per-turn twin, so a recapture republishes the same runway. The fodder runway keeps its own
-> reading (`local_net()` folded into its income). Pinned by
-> `snapshot::population::tests::{pooling_food_out_shortens_the_runway_and_pooling_it_in_lengthens_it,
-> a_dowry_turn_does_not_move_the_runway}` and
-> `transfer_food_ledger::a_recapture_publishes_the_same_food_runway`.
+> **Income includes the STEADY POOLING term, not this turn's pooled crossing**
+> (`snapshot::population::pooling_steady_nets`, published as `PopulationCohortState.poolingSteadyNet`,
+> native key `pooling_steady_net`). Pooling keeps per-capita larders level across a supply network, so
+> in steady state each band lives on its **share** of the network's net rather than on its own:
+>
+> ```text
+> pooling_steady = share x network_net - own_net
+> share          = the band's balancing weight (cohort.total(), what balance_supply_networks weights by)
+>                  / the sum of the network's members' weights
+> net            = steady income (the runway's Σ realized, a need row at its sustainable) - demand
+> ```
+>
+> It is clamped in magnitude to `supply_network_config.throughput_per_turn` and an inflow is cut by
+> `friction` (the receiver gets `1 - friction` of what is shipped). It enters both arms as a standing
+> per-turn rate - added to every turn of the arrival walk and to the steady income in the smooth arm -
+> signed and otherwise unclamped, so a band that feeds its neighbours drains faster, a band they feed
+> lasts longer, and income plus the term covering demand is the sentinel as before. A band in no
+> network has no entry and reads `0`.
+>
+> **Why not this turn's crossing** (the earlier basis, `pooled_food_net`): a neighbour's whole-animal
+> kill swings one turn's pooling by several food while the network's drain is steady - a band read a
+> 4-turn runway after pooling out 4.59 in one turn, when the whole network was losing about 1.3 a
+> turn. A band fed by its neighbours (own income below demand, network in surplus) still reads fed,
+> because its term is the share of a surplus. **Membership is a per-turn resource**
+> (`SupplyNetworkMembership`), so the term is a capture pre-pass over every member of a network (the
+> share needs the other members' nets), computed from the same per-band terms the runway uses; a
+> recapture republishes the same value. The hunting need clock (`kill_turns_of_food`) keeps reading
+> this turn's `Pooled` crossing (`pooled_food_net`), and the fodder runway keeps its own reading
+> (`local_net()` folded into its income). **A dowry is still not a term** (a split's one-off). Pinned by
+> `snapshot::population::tests::{the_steady_pooling_term_shortens_the_runway_out_and_lengthens_it_in,
+> a_turns_pooled_crossing_does_not_move_the_runway, a_band_fed_by_its_pool_reports_the_not_food_limited_sentinel}`
+> and, on the encoded frame, `integration_tests/tests/pooling_steady_runway.rs` (a neighbour's lumpy
+> turn moves no runway and the three bands agree; a band fed by its neighbours reads the sentinel; a
+> lone band reads `0`).
 >
 > **The drain is NEED — the forward `food_demand`** (what the people must eat), never
 > `last_food_consumption`: the actual debit is `0` before a band's first turn and falls short of

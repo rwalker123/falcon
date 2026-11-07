@@ -13,8 +13,8 @@ class_name FoodOutlookChart
 ##     food += standing_net                       (pooling settles in Logistics, ahead of the meal)
 ##     short = food < drain                        (the meal cannot be covered: the band goes hungry)
 ##     food = max(0, food − drain) + Σ arrival_schedule[i] over the band's sources
-## with `drain` (the people's NEED, `food_need` — not what they ate) and `standing_net` (this turn's POOLED food net, signed —
-## `DetailFormat.band_pooled_food_net`) held FLAT across the projection — this is a "if nothing
+## with `drain` (the people's NEED, `food_need` — not what they ate) and `standing_net` (the band's STEADY pooling term, signed —
+## `DetailFormat.band_pooling_steady_net`) held FLAT across the projection — this is a "if nothing
 ## changes" readout, not a forecast of the player's future decisions.
 ##
 ## **IT IS THE SIM'S RUNWAY WALK, TERM FOR TERM** (`snapshot::population::larder_runway_turns`,

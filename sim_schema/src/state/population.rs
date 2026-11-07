@@ -541,6 +541,9 @@ pub struct LaborAssignmentState {
     /// Appended last.
     #[serde(default)]
     pub scouting_reach: u32,
+    /// An unarmed hand adds nothing on this take row (`StaffedCrew::bare_idle`). Appended last.
+    #[serde(default)]
+    pub bare_idle: bool,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].
@@ -1971,6 +1974,10 @@ pub struct PopulationCohortState {
     /// fertility reserve beside the larder. Appended last.
     #[serde(default)]
     pub food_in_stores_in_reach: f32,
+    /// **The steady pooling term of the food runway**, food per turn, signed: the band's share of
+    /// its network's net less its own net, `0` in no network. Appended last.
+    #[serde(default)]
+    pub pooling_steady_net: f32,
 }
 
 /// `PopulationCohortState::tribe_leader_kind`: the band is in no tribe.

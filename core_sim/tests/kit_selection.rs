@@ -2684,9 +2684,26 @@ fn two_rows_on_different_kits_cannot_each_sled_a_full_crew() {
     /// Four sleds for eight hunters, held across two rows that named different kits.
     const SLEDS_FOR_HALF_THE_BAND: u32 = ROW_CREW;
 
+    // **BOTH HERDS STAND PAST THE APRON**: a camp kill hauls nothing, so a hunt row inside
+    // `band_work_range` is held to its kill-bearing items and claims no sled at all - the shared
+    // sled is a far hunt's haul carry.
+    const FAR: u32 = 5;
+
     let mut app = placid_world();
     let (first, pos) = pin_herd(&mut app);
-    let second = pin_second_herd(&mut app, pos, SECOND_HERD_ID);
+    let width = app.world.resource::<TileRegistry>().width;
+    let far_tile = UVec2::new((pos.x + FAR) % width, pos.y);
+    let second = pin_second_herd(&mut app, far_tile, SECOND_HERD_ID);
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|h| h.id == first)
+            .expect("the pinned herd is in the registry");
+        herd.current_pos = far_tile;
+        herd.route = vec![far_tile];
+    }
     let band = spawn_band_hunting(
         &mut app,
         pos,

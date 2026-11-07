@@ -11369,6 +11369,11 @@ pub struct HuntCrewCurveInputs<'a> {
     /// `w` hands collect after keeping, exactly as the deposit curve does. `None` for a herd that
     /// owes nothing.
     pub keeping: Option<CrewKeeping>,
+    /// **THIS HUNT IS A CAMP KILL** - the herd stands within `band_work_range` of camp
+    /// ([`crate::hunt_by_need::camp_kill_hunt`], the geometry the staffing stamps), so the
+    /// prospective row claims only the kit items that bind a kill and the sled is left for the rows
+    /// that haul. The pricing kit (`kit`) is unchanged: only the claim narrows.
+    pub camp_kill: bool,
 }
 
 /// **THE QUARRY AS NEXT TURN'S TAKE WILL FIND IT** — a clone with one Logistics regrowth applied,
@@ -11448,9 +11453,14 @@ fn curve_coverage(
         }
         None => inputs.other_rows,
     };
+    let claim_kit = if inputs.camp_kill {
+        inputs.equipment.camp_kill_kit(inputs.kit)
+    } else {
+        inputs.kit.clone()
+    };
     let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
         other_rows.iter().cloned(),
-        inputs.kit,
+        &claim_kit,
         workers.min(useful),
         inputs.priority,
     );

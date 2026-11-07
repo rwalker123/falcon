@@ -1388,7 +1388,7 @@ panel, the AI's Craft specialist (#668) and auto-craft (#779) read one list.
 |---|---|---|
 | a standing pool | `LaborAllocation::last_pool_toe` (`poolToe`) | `pool` / the pool token |
 | a site crew | `LaborAllocation::last_keeping_issued` — each `KeepingIssue` carries `required` beside the `units` issued | `site` / the row kind keeping it (`forage` / `hunt` / `extract`) + target keys |
-| a take row | the row's kit lines from `craft_suggestions::take_row_gear` — the very lines `kitToe` is copied from | `take` / the row kind (+ target keys; none on `scout` / `warrior`) |
+| a take row | the row's kit lines from `craft_suggestions::take_row_gear` — the very lines `kitToe` is copied from; a camp-kill hunt row's lines cover only its kill-bearing items and its spear ask is its hold crew when bare hands cannot wound (`work-party.md`) | `take` / the row kind (+ target keys; none on `scout` / `warrior`) |
 | a declared build | `LaborAllocation::last_build_toe` (`BuildToeLine { source, item, required, filled }`) — what the build's own builders claimed beside what the settlement gave them (`buildToe` on the wire) | `build` / the build's kind + target keys |
 
 `KeepingIssue::required` exists for this: `keeping_issued` used to write only what was **paid**, so a

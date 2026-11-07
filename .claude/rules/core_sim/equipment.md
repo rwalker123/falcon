@@ -276,7 +276,9 @@ coppice 2.5, quarry 2.2), and a replacement would erase that climb.
   along. **The kit is stored on the row** at assignment and a working climbs, so a row keeps the kit
   it was sent with — a crew sent on `sledding` to a deadfall working is still on `sledding` after
   it is raised to felling, and the player re-sends the row to hand it axes. **The row claims every
-  item its kit uses, on every rung**, through
+  item its kit uses, on every rung** (an extract row's kit is claimed whole; a hunt row's is whole only past
+  the apron - a camp-kill hunt claims just the kill-bearing items, `work-party.md` -> "A camp-kill hunt row
+  is held to the kit items that bind a kill"), through
   the one claim / coverage / budget path a hunt row's kit goes through — `LaborAllocation::item_budget`
   counts its sleds and its axes against the band's stock, and `kitWorkersHolding` is the whole-kit
   count (the scarcer item). **Which tool lifts the cut is effect resolution**: the sled's

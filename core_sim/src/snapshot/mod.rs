@@ -1530,6 +1530,7 @@ mod tests {
             demographics: &demographics,
             wellbeing: &wellbeing,
             supply_membership: &membership,
+            pooling_steady: 0.0,
             band_names: &crate::snapshot::population::BandNameLookup::default(),
             work_range: 0,
             raid_radius: 0,

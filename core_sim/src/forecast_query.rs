@@ -731,6 +731,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
             .hunt
             .per_worker_biomass_capacity,
         max_workers,
+        camp_kill: crate::hunt_by_need::camp_kill_hunt(&herd_row, herds, band_tile, &labor, grid),
         drives_known: crate::roaming_skills::world_faction_knows(
             world,
             FactionId(ask.faction_id),

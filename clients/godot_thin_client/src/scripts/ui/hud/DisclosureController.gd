@@ -194,10 +194,6 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
     var hunted := DetailFormat.sum_realized_yield(band, SourceForecast.LABOR_KIND_HUNT)
     if hunted >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(hunted, DetailFormat.FOOD_LABEL_HUNTED))
-    # The band's OWN parties, beside the hunting and foraging they are part of (issue #731).
-    for row in _party_transfer_rows(band, HudTradeVocab.COMMODITY_FOOD):
-        if absf(float(row[1])) >= SourceForecast.FOOD_FLOW_MIN:
-            lines.append(DetailFormat.food_breakdown_row(float(row[1]), String(row[0])))
     # **CONSUMED IS WHAT WAS EATEN, and it stays the larder identity's term.** The meal is eaten
     # before the turn's take lands, so a hand-to-mouth band eats `min(need, larder)` — less than it
     # needed. The gap is its own ▼ row naming the NEED (`Went hungry — needed 3.60`), so the rows
@@ -252,7 +248,20 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
     # can act on: a `Trade route` is a thing they built and sent a party down, a `Local exchange`
     # happens whether they look or not. That generic pair is retired — the wire carries the four
     # link-kind terms on every band — so there is one rendering of a crossing, not two.
-    lines.append_array(_link_transfer_lines(band))
+    # **BELOW A THIN RULE, because they are not in the headline.** The rows above sum to the headline
+    # `/turn` (`band_net_food`); pooling is lumpy and a shipment is one-off, so the `⇄` rows are
+    # itemized apart from it. The rule is shown whenever any row sits below it.
+    # **THE RULE MEANS ONE THING: everything above it sums to the headline.** So the band's OWN parties'
+    # rows (a haul brought home, the rations a party launched with, a defector's pack — issue #731,
+    # none of them in the headline) sit below it with the `⇄` rows, party rows first.
+    var transfer_lines: Array[String] = []
+    for row in _party_transfer_rows(band, HudTradeVocab.COMMODITY_FOOD):
+        if absf(float(row[1])) >= SourceForecast.FOOD_FLOW_MIN:
+            transfer_lines.append(DetailFormat.food_breakdown_row(float(row[1]), String(row[0])))
+    transfer_lines.append_array(_link_transfer_lines(band))
+    if not transfer_lines.is_empty():
+        lines.append(DetailFormat.BREAKDOWN_DIVIDER_LINE)
+        lines.append_array(transfer_lines)
     return lines
 
 ## The transfer rows named by the LINK the goods crossed — `⇄ Local exchange` and `⇄ Trade route`.

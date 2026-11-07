@@ -744,6 +744,22 @@ pub fn staffable_pool(allocation: &LaborAllocation, available: u32, bench_worker
         .saturating_sub(player_set)
 }
 
+/// **IS THIS ROW A CAMP-KILL HUNT?** - a hunt row whose herd, at its current tile, stands within
+/// `band_work_range` of the camp (`work_party::party_begins_past`, the threshold that decides
+/// whether a party posts). Such a row hauls nothing, so it is held to the kit items that bind a kill
+/// ([`crate::components::LaborAssignment::binding_kit`]). `false` with no camp to measure from.
+fn is_camp_kill(world: &StaffingWorld<'_>, target: &LaborTarget) -> bool {
+    world.camp.as_ref().is_some_and(|camp| {
+        crate::hunt_by_need::camp_kill_hunt(
+            target,
+            world.sources.herds,
+            Some(camp.position),
+            world.sources.labor,
+            (camp.grid_width, camp.wrap_horizontal),
+        )
+    })
+}
+
 /// The kit's items still serving the band, each with the people one unit arms.
 fn live_kit_items(
     kit: &KitChoice,
@@ -858,6 +874,8 @@ struct StaffInputs<'a> {
     targets: Vec<LaborTarget>,
     /// Each staffed row's resolved kit, in `rows` order.
     kits: Vec<KitChoice>,
+    /// Whether each staffed row is a camp-kill hunt ([`is_camp_kill`]), in `rows` order.
+    camp_kills: Vec<bool>,
     /// The declared builds, in the order they follow the source rows.
     builds: Vec<BuildMeta>,
     /// The room each referenced tile has for this band: the cap less the other bands' hands.
@@ -930,6 +948,21 @@ pub fn staff_rows<'a>(
         &inputs.scouts,
     );
     let source_rows = inputs.targets.len();
+    let mut staffed = staffed;
+    for ((crew, camp_kill), (row, target)) in staffed
+        .iter_mut()
+        .zip(&inputs.camp_kills)
+        .zip(inputs.rows.iter().zip(&inputs.targets))
+    {
+        crew.camp_kill = *camp_kill;
+        // Only a take row has a bare rate to be idle: a tile, band or roadwork row is not asked a
+        // take kit at all.
+        crew.bare_idle = !row.bare_can_work
+            && matches!(
+                target,
+                LaborTarget::Forage { .. } | LaborTarget::Hunt { .. } | LaborTarget::Extract { .. }
+            );
+    }
     let builds = inputs
         .builds
         .iter()
@@ -1231,10 +1264,26 @@ fn build_staff_inputs<'a>(
     let mut rows: Vec<StaffRowInput<'a>> = Vec::new();
     let mut targets: Vec<LaborTarget> = Vec::new();
     let mut staffed_kits: Vec<KitChoice> = Vec::new();
+    let mut staffed_camp_kills: Vec<bool> = Vec::new();
+    // **THE ONE KIT A ROW IS HELD TO** - a camp-kill hunt's is narrowed to the items that bind a
+    // kill, read off the herd's tile as the passes see it, not off a stamp from an earlier staffing.
+    let camp_kills: Vec<bool> = allocation
+        .assignments
+        .iter()
+        .map(|row| is_camp_kill(world, &row.target))
+        .collect();
     let kits: Vec<KitChoice> = allocation
         .assignments
         .iter()
-        .map(|row| row.kit_choice(equipment))
+        .zip(&camp_kills)
+        .map(|(row, camp_kill)| {
+            let kit = row.kit_choice(equipment);
+            if *camp_kill {
+                equipment.camp_kill_kit(&kit)
+            } else {
+                kit
+            }
+        })
         .collect();
     let items: Vec<Vec<(Arc<str>, u32)>> = allocation
         .assignments
@@ -1333,6 +1382,7 @@ fn build_staff_inputs<'a>(
         rows.push(input);
         targets.push(target);
         staffed_kits.push(kit.clone());
+        staffed_camp_kills.push(camp_kills[idx]);
     }
     let builds = build_inputs(world, allocation, band_kit, &mut rows);
     // The room each referenced tile has for this band: the cap less what the other bands hold.
@@ -1364,6 +1414,7 @@ fn build_staff_inputs<'a>(
         rows,
         targets,
         kits: staffed_kits,
+        camp_kills: staffed_camp_kills,
         builds,
         tile_room,
         scouts: scout_plan(world, allocation, band_kit),

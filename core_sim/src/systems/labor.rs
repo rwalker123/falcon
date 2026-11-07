@@ -313,6 +313,10 @@ pub struct LaborConfigs<'w> {
     /// party's walk a road takes away (`crate::work_party::resolve_walk`). Read here rather than
     /// re-stated so what a road does for a caravan and what it does for pooling are one reading.
     pub supply_network: Res<'w, crate::supply_network_config::SupplyNetworkConfigHandle>,
+    /// **This turn's supply networks** - what the steady pooling term the hunting need clock reads
+    /// is struck over ([`crate::snapshot::pooling_steady_nets`]).
+    /// `Option`: a hand-built test world that never installed it has no networks.
+    pub supply_membership: Option<Res<'w, crate::supply::SupplyNetworkMembership>>,
     /// **Whose feet are on a road** — the treaties and the foreign-road share a party's walk is
     /// read through ([`crate::routes::road_reach_for`]).
     pub rights: crate::routes::RoadRights<'w>,
@@ -6139,6 +6143,18 @@ pub fn advance_labor_allocation(
         .map(|parts| (parts.4.map_or(u64::MAX, |id| id.0), parts.0))
         .collect();
     band_order.sort_unstable();
+    // **EVERY NETWORKED BAND'S STEADY POOLING TERM**, struck once over the whole network before any
+    // band is paid - the need clock's runway reads it, as the published runway does, so a
+    // neighbour's lumpy turn neither fires nor delays a hunt.
+    let no_networks = crate::supply::SupplyNetworkMembership::default();
+    let pooling_steady = crate::snapshot::pooling_steady_nets(
+        cohorts
+            .iter()
+            .map(|parts| (parts.0, parts.1, Some(parts.2))),
+        configs.supply_membership.as_deref().unwrap_or(&no_networks),
+        &demographics_cfg,
+        &supply_cfg,
+    );
     // **THE HANDS THE BANDS STAFFED EARLIER THIS TURN HOLD ON EACH TILE** — what a later band's tile
     // room is cut by.
     let mut tile_load: BTreeMap<crate::staffing::TileKey, u32> = BTreeMap::new();
@@ -8936,17 +8952,29 @@ pub fn advance_labor_allocation(
                         //
                         // Each charge is gated on the predicate that chose its own tier, so a keeper
                         // with no sled dragged the carcass by hand and wore nothing out doing it.
+                        //
+                        // **A CAMP KILL HAULS NOTHING AND WEARS NO SLED**: inside the apron the
+                        // wear is charged against the row's kill-bearing items alone
+                        // ([`EquipmentConfig::camp_kill_kit`], the kit `binding_kit` resolves),
+                        // so a local pen's butchering leaves the sled's life untouched. A posted
+                        // pen keeps the whole kit. (Only the wear: the pricing `crew_kit` stays
+                        // whole.)
                         if let Some(kit) = band_equipment.as_mut() {
+                            let wear_kit = if postings.contains_key(&idx) {
+                                crew_kit.clone()
+                            } else {
+                                equipment_cfg.camp_kill_kit(&crew_kit)
+                            };
                             outcome.fight.charge_strike_wear(kit, &equipment_cfg);
                             kit.wear_kit(
                                 &equipment_cfg,
-                                &crew_kit,
+                                &wear_kit,
                                 crate::equipment_config::WearQuantum::BiomassHauled,
                                 biomass_hauled(postings.contains_key(&idx), &take),
                             );
                             kit.wear_kit(
                                 &equipment_cfg,
-                                &crew_kit,
+                                &wear_kit,
                                 crate::equipment_config::WearQuantum::BiomassCollected,
                                 take.killed_biomass(),
                             );
@@ -11834,6 +11862,7 @@ pub fn advance_labor_allocation(
                         false,
                         herd,
                         &fauna,
+                        pooling_steady.get(&band_entity).copied().unwrap_or(0.0),
                     );
                     let kit = row.kit_choice(&equipment_cfg);
                     let other_rows = allocation.rows_excluding_source(
@@ -11880,6 +11909,7 @@ pub fn advance_labor_allocation(
                             floor: *floor,
                             baseline_haul_rate,
                             drives_known,
+                            camp_kill: is_local(&row.target),
                             max_workers: allocation.musterable_pool(
                                 idle_now,
                                 idx,
