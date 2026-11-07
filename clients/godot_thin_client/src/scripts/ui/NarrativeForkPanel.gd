@@ -18,6 +18,11 @@ signal answer_selected(payload: Dictionary)
 ## The panel closed without an answer (catcher click / ✕). The fork is still pending — the orb
 ## keeps its row and the end-turn gate keeps holding.
 signal dismissed
+## The fork's narration, in the active register, for the spoken narrator — fired when the fork opens and
+## when the register toggle changes it. Never the choices. `narration_stopped` fires on every way off
+## the card (answering, dismissing, a world reset), via `close()`.
+signal narration_requested(text: String)
+signal narration_stopped
 
 # ---- voice register preference --------------------------------------------
 # `VoiceLine.register` is a FREE-FORM string precisely so a new register needs no schema change,
@@ -82,6 +87,15 @@ func show_fork(fork: Dictionary) -> void:
 	_register = _resolve_register(fork)
 	_gloss_expanded = false
 	_show_and_render()
+	_request_narration()
+
+## Stop the voice with the card: every way off it (answer, ✕, a click outside, a world reset) is a close.
+func close() -> void:
+	narration_stopped.emit()
+	super.close()
+
+func _request_narration() -> void:
+	narration_requested.emit(text_in_register(_fork.get("narration", []), _register))
 
 func _card_name() -> String:
 	return FORK_CARD_NAME
@@ -305,6 +319,7 @@ func _on_register_picked(register: String) -> void:
 	_register = register
 	save_voice_register(register)
 	_render()
+	_request_narration()
 
 func _on_choice_pressed(beat_id: String, choice_id: String) -> void:
 	if beat_id == "" or choice_id == "":

@@ -59,6 +59,10 @@ const MAX_FPS_KEY := "max_fps"
 ## The map-layer toggles get their own section: they are a set of independent layers keyed by the
 ## registry, not map-navigation multipliers.
 const MAP_TOGGLES_SECTION := "map_toggles"
+## The spoken narrator's two preferences (docs/plan_telling_narrator.md).
+const NARRATION_SECTION := "narration"
+const NARRATION_ENABLED_KEY := "narration_enabled"
+const NARRATION_VOLUME_KEY := "narration_volume"
 
 const PAN_SPEED_MIN := 0.25
 const PAN_SPEED_MAX := 3.0
@@ -70,6 +74,14 @@ const ZOOM_SPEED_DEFAULT := 1.0
 
 ## Fog of war ships ON: a new player should meet a map they have to explore.
 const FOG_OF_WAR_DEFAULT := true
+
+## Narration ships ON (it does nothing until the model files are fetched) at a comfortable volume.
+## Volume is LINEAR 0..1; the narrator converts it to dB.
+const NARRATION_ENABLED_DEFAULT := true
+const NARRATION_VOLUME_MIN := 0.0
+const NARRATION_VOLUME_MAX := 1.0
+const NARRATION_VOLUME_DEFAULT := 0.8
+const NARRATION_VOLUME_STEP := 0.05
 
 ## Interface scale bounds. The floor is where the smallest HUD type is still legible; the ceiling is
 ## what the densest panel can grow to before the 1920x1080 design viewport can no longer hold it
@@ -107,6 +119,8 @@ var theme: String = HudPalette.DEFAULT_THEME
 ## default (`is_map_toggle_on`), so this holds only what the file held or the player changed.
 var map_toggles: Dictionary = {}
 var max_fps: int = MAX_FPS_DEFAULT
+var narration_enabled: bool = NARRATION_ENABLED_DEFAULT
+var narration_volume: float = NARRATION_VOLUME_DEFAULT
 
 ## True only when the client booted as the GAME (the project's main scene is the current scene).
 ## The preview harnesses (`tools/*.tscn`) run this same project and load this autoload, and an
@@ -163,6 +177,11 @@ func _load() -> void:
 		UI_SCALE_MIN, UI_SCALE_MAX)
 	theme = _valid_theme(String(cfg.get_value(UI_SECTION, THEME_KEY, HudPalette.DEFAULT_THEME)))
 	max_fps = _valid_max_fps(int(cfg.get_value(DISPLAY_SECTION, MAX_FPS_KEY, MAX_FPS_DEFAULT)))
+	narration_enabled = bool(cfg.get_value(
+		NARRATION_SECTION, NARRATION_ENABLED_KEY, NARRATION_ENABLED_DEFAULT))
+	narration_volume = clampf(
+		float(cfg.get_value(NARRATION_SECTION, NARRATION_VOLUME_KEY, NARRATION_VOLUME_DEFAULT)),
+		NARRATION_VOLUME_MIN, NARRATION_VOLUME_MAX)
 	map_toggles = {}
 	for row in MapTogglesRegistry.ROWS:
 		var key := String(row[MapTogglesRegistry.KEY])
@@ -181,6 +200,16 @@ func set_zoom_speed_multiplier(v: float) -> void:
 
 func set_fog_of_war_enabled(v: bool) -> void:
 	fog_of_war_enabled = v
+	_save()
+	changed.emit()
+
+func set_narration_enabled(v: bool) -> void:
+	narration_enabled = v
+	_save()
+	changed.emit()
+
+func set_narration_volume(v: float) -> void:
+	narration_volume = clampf(v, NARRATION_VOLUME_MIN, NARRATION_VOLUME_MAX)
 	_save()
 	changed.emit()
 
@@ -236,6 +265,8 @@ func restore_defaults() -> void:
 	ui_scale = UI_SCALE_DEFAULT
 	theme = HudPalette.DEFAULT_THEME
 	max_fps = MAX_FPS_DEFAULT
+	narration_enabled = NARRATION_ENABLED_DEFAULT
+	narration_volume = NARRATION_VOLUME_DEFAULT
 	map_toggles = {}
 	_save()
 	_apply_frame_cap()
@@ -250,6 +281,8 @@ func _save() -> void:
 	cfg.set_value(UI_SECTION, UI_SCALE_KEY, ui_scale)
 	cfg.set_value(UI_SECTION, THEME_KEY, theme)
 	cfg.set_value(DISPLAY_SECTION, MAX_FPS_KEY, max_fps)
+	cfg.set_value(NARRATION_SECTION, NARRATION_ENABLED_KEY, narration_enabled)
+	cfg.set_value(NARRATION_SECTION, NARRATION_VOLUME_KEY, narration_volume)
 	# The section is rewritten whole, so a restore-to-defaults (an empty `map_toggles`) clears the
 	# saved choices rather than leaving the last ones in the file.
 	if cfg.has_section(MAP_TOGGLES_SECTION):

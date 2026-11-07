@@ -8,10 +8,12 @@ use godot::prelude::*;
 
 mod bridge;
 mod dict;
+mod narrator;
 mod runtime;
 mod snapshot;
 
 pub use bridge::{CommandBridge, ScriptHostBridge, SnapshotDecoder};
+pub use narrator::NarratorEngine;
 pub use runtime::{
     manifest_to_json as script_manifest_to_json, responses_to_json as script_responses_to_json,
     Manager as ScriptRuntimeManager, ScriptError as ScriptHostError,

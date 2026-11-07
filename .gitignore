@@ -31,3 +31,6 @@ __pycache__/
 clients/godot_thin_client/build_stamp.txt
 # Recorded runs written by scripts/run_stack.sh (`SIM_RECORD_DIR`, under runs/run-<secs>-<pid>/record).
 /runs/
+
+# Spoken narrator model files fetched by scripts/fetch_narrator_model.sh.
+clients/godot_thin_client/narrator_model/

@@ -53,6 +53,7 @@ wrapped `##` section instead. Follow the shape the file already uses.
 | `inspector-panels.md` | Every `ui/inspector/` panel | `Inspector.gd`, `ui/inspector/**` |
 | `workbench.md` | The designer surface replacing the Inspector: shell, page registry, config tuning | `ui/workbench/**`, `tools/workbench_*` |
 | `telling-panel.md` | The Telling book UX and the narrative fork | `TellingPanel.gd`, `NarrativeForkPanel.gd` |
+| `narrator.md` | The spoken narrator — Kokoro voice per medium, what is spoken when, the runtime espeak-ng rule, harness inertness | `NarratorController.gd`, `hud_narrator_vocab.gd`, `native/src/narrator/**`, `fetch_narrator_model.sh` |
 | `sprites-widgets.md` | Sprites, icons, `HudStyle`, small widgets | `*Sprites.gd`, `HudStyle.gd`, `IconSprites.gd` |
 | `test-harnesses.md` | The shared harness contract: the exit-status verdict, the quiet window, the hang guard | `tools/**` |
 | `harness-ui-preview.md` | The HUD PNG walk, its chapters, its frame/`PASS` tally | `ui_preview.gd`, `ui_preview/**` |

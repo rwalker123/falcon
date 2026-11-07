@@ -1071,6 +1071,22 @@ func _build_options_pane() -> void:
 		ClientSettings.ZOOM_SPEED_MAX,
 		ClientSettings.SPEED_STEP,
 		ClientSettings.set_zoom_speed_multiplier))
+	# The spoken narrator (docs/plan_telling_narrator.md). Both rows write `ClientSettings` and stop:
+	# `NarratorController` reads the live values, so a toggle or drag takes effect on the next line.
+	_pane_body.add_child(_make_toggle_row(
+		"Narration",
+		ClientSettings.narration_enabled,
+		ClientSettings.NARRATION_ENABLED_DEFAULT,
+		ClientSettings.set_narration_enabled))
+	_pane_body.add_child(_make_speed_slider_row(
+		"Narration volume",
+		ClientSettings.narration_volume,
+		ClientSettings.NARRATION_VOLUME_DEFAULT,
+		ClientSettings.NARRATION_VOLUME_MIN,
+		ClientSettings.NARRATION_VOLUME_MAX,
+		ClientSettings.NARRATION_VOLUME_STEP,
+		ClientSettings.set_narration_volume,
+		_format_percent_readout))
 	var actions := _make_actions_row()
 	var restore := Button.new()
 	restore.text = "Restore defaults"

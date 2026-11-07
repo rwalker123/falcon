@@ -16,3 +16,9 @@ serde_json = "1.0"
 thiserror = "1.0"
 anyhow = "1.0"
 sim_runtime = { path = "../../../sim_runtime" }
+# Spoken narrator (Kokoro-82M through ONNX Runtime). espeak-ng is GPL-3 and is
+# therefore only ever dlopen'd at runtime through libloading, never linked.
+ort = "2.0.0-rc.15"
+libloading = "0.8"
+ndarray = "0.17"
+ndarray-npy = { version = "0.10", default-features = false, features = ["npz"] }

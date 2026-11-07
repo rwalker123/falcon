@@ -35,6 +35,12 @@ func _ready() -> void:
 	_shell.load_requested.connect(_on_load_requested)
 	_show_pending_notice()
 	_setup_query_seams()
+	# Load the narrator's model while the player is in the menu (process-wide, a no-op under harnesses).
+	_warm_narrator.call_deferred()
+
+
+func _warm_narrator() -> void:
+	NarratorController.warm_up(get_tree())
 
 
 ## **READ THE ONE MESSAGE A FAILED SESSION LEFT BEHIND, AND CLEAR IT.** `Main` bounces back here when a
