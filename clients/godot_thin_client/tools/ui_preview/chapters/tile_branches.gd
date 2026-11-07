@@ -832,7 +832,9 @@ func _short_crew_claims() -> void:
 		HudWorkVocab.crew_shortfall(1, 0, 8, true, 3) == 2
 			and HudWorkVocab.crew_shortfall(3, 0, 8, true, 3) == 0
 			and HudWorkVocab.crew_shortfall(5, 0, 8, true, 3) == 0
-			and HudWorkVocab.crew_shortfall(0, 0, 8, false, 3) == HudWorkVocab.SHORT_CREW_NO_MAX_STARVED)
+			and HudWorkVocab.crew_shortfall(0, 0, 8, false, 3) == HudWorkVocab.SHORT_CREW_NO_MAX_STARVED
+			and HudWorkVocab.crew_shortfall(0, 0, 8, true, 0) == HudWorkVocab.SHORT_CREW_NO_MAX_STARVED
+			and HudWorkVocab.crew_shortfall(2, 0, 8, true, 0) == 0)
 	# (c) NO Max and 3 of a useful 8: not short, no ⚠ (noise).
 	var c := _short_assignment(3, 0, 8, [])
 	var row_c := _short_row([c], c, [])

@@ -562,6 +562,9 @@ pub(crate) fn mustered_take_gear(
         mustered.assignments[*row].workers -= hands;
     }
     mustered.assignments[need_idx].workers = plan.total();
+    // The turn stamps a crewed need row a camp kill (`apply_muster`); the same predicate here.
+    mustered.assignments[need_idx].staffing.camp_kill =
+        is_local(&mustered.assignments[need_idx].target);
     let mut claims = crate::take_claims::row_claims(sources, &mustered, wear);
     // **A CREW THE BAND CANNOT ARM STILL CLAIMS THE KIT IT WOULD NEED.** On a quarry bare hands
     // cannot wound, a band holding none of the kit prices its need row's one equipped hand at the
@@ -2461,13 +2464,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // the people will want to eat), not `last_food_consumption`: `demand` is always resolvable,
     // where the actual debit is `0` before a band's first turn and short of demand in a famine.
     //
-    // ⛔ **POOLED FOOD IS A TERM OF THE RATE** ([`pooled_food_net`]), for the fodder runway's reason
-    // below: two linked camps pool every turn, so a band sending food away empties sooner and a band
-    // receiving it lasts longer, and a runway blind to that contradicts the larder it counts down.
-    // **Pooled only — never `local_net()`**: the local arm also carries a split's dowry, a one-off
-    // that would swing the runway for the one turn it lands. It is the same basis the client's Food
-    // headline rate adds (`DetailFormat.band_headline_food_rate`), so the rate and the runway beside
-    // it agree. Read off the per-turn twin on the cohort, so a recapture republishes the same runway.
+    // ⛔ **THE STEADY POOLING SHARE IS A TERM OF THE RATE** (`pooling_steady`, from
+    // [`pooling_steady_nets`]): linked camps pool every turn, so a band sending food away empties
+    // sooner and a band receiving it lasts longer, and a runway blind to that contradicts the
+    // larder it counts down. The term is the band's share of its network's steady net less its own
+    // net, never this turn's lumpy `Pooled` crossing and never `local_net()` (which also carries a
+    // split's one-off dowry). It is the same basis `poolingSteadyNet` publishes and the hunting
+    // need clock reads, so the rate, the runway and the clock agree. It rides the cohort's per-band
+    // terms, so a recapture republishes the same runway.
     //
     // ⛔ **A RESIDENT BAND'S LARDER IS READ LESS WHAT WILL ROT UNEATEN** (#706,
     // `crate::spoilage::rot_ahead`) — food rots at the END of its shelf life, so the larder is

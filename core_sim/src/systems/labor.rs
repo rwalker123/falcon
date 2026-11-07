@@ -5791,15 +5791,15 @@ fn apply_muster(
         .map(|(idx, _)| idx)
         .collect();
     for need_idx in need_rows {
-        let in_camp_range = match (&allocation.assignments[need_idx].target, band_pos) {
-            (LaborTarget::Hunt { fauna_id, .. }, Some(band)) => {
-                herds.find(fauna_id).is_some_and(|herd| {
-                    crate::grid_utils::hex_distance_wrapped(herd.current_pos, band, grid.0, grid.2)
-                        <= crate::work_party::party_begins_past(labor)
-                })
-            }
-            _ => false,
-        };
+        // **ONE DEFINITION OF A CAMP KILL**: the staffing's own predicate, so a mustered need row is
+        // held to the kill-bearing kit exactly as a staffed camp hunt is.
+        let in_camp_range = crate::hunt_by_need::camp_kill_hunt(
+            &allocation.assignments[need_idx].target,
+            herds,
+            band_pos,
+            labor,
+            (grid.0, grid.2),
+        );
         if !in_camp_range {
             allocation.assignments[need_idx].muster_crew = 0;
             continue;
@@ -5843,6 +5843,9 @@ fn apply_muster(
         }
         idle -= plan.from_idle;
         allocation.assignments[need_idx].workers = plan.total();
+        // The crewed row hauls nothing (it is a camp kill by the gate above), so its kit claim,
+        // settlement and wear all narrow to the items that bind a kill (`binding_kit`).
+        allocation.assignments[need_idx].staffing.camp_kill = true;
         applied.crewed.push(need_idx);
     }
     applied
@@ -5866,6 +5869,7 @@ fn restore_muster(
     }
     for row in &applied.crewed {
         allocation.assignments[*row].workers = NO_CREW_ON_THIS_ACTIVITY;
+        allocation.assignments[*row].staffing.camp_kill = false;
     }
 }
 

@@ -1105,7 +1105,7 @@ with the most workers in the band's `LaborAllocation`). Both are computed at cap
 > pooling_steady = share x network_net - own_net
 > share          = the band's balancing weight (cohort.total(), what balance_supply_networks weights by)
 >                  / the sum of the network's members' weights
-> net            = steady income (the runway's Σ realized, a need row at its sustainable) - demand
+> net            = steady income (the runway's Σ realized over standing_yields, need rows left out) - demand
 > ```
 >
 > It is clamped in magnitude to `supply_network_config.throughput_per_turn` and an inflow is cut by
@@ -1122,9 +1122,10 @@ with the most workers in the band's `LaborAllocation`). Both are computed at cap
 > because its term is the share of a surplus. **Membership is a per-turn resource**
 > (`SupplyNetworkMembership`), so the term is a capture pre-pass over every member of a network (the
 > share needs the other members' nets), computed from the same per-band terms the runway uses; a
-> recapture republishes the same value. The hunting need clock (`kill_turns_of_food`) keeps reading
-> this turn's `Pooled` crossing (`pooled_food_net`), and the fodder runway keeps its own reading
-> (`local_net()` folded into its income). **A dowry is still not a term** (a split's one-off). Pinned by
+> recapture republishes the same value. The hunting need clock (`kill_turns_of_food`,
+> `hunt_by_need`) reads the same steady term — `systems::labor` runs the `pooling_steady_nets`
+> pre-pass for it — so the clock and the runway agree on one basis. The fodder runway keeps its own
+> reading (`local_net()` folded into its income). **A dowry is still not a term** (a split's one-off). Pinned by
 > `snapshot::population::tests::{the_steady_pooling_term_shortens_the_runway_out_and_lengthens_it_in,
 > a_turns_pooled_crossing_does_not_move_the_runway, a_band_fed_by_its_pool_reports_the_not_food_limited_sentinel}`
 > and, on the encoded frame, `integration_tests/tests/pooling_steady_runway.rs` (a neighbour's lumpy

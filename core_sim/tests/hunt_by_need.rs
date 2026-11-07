@@ -3076,6 +3076,175 @@ fn a_far_hunt_still_claims_the_sled() {
     );
 }
 
+/// The Oxenford scene with the hunt row a NEED row (`follow`), `High` priority, and a crew of
+/// [`HELD_SPEARS`] planned, read as published.
+fn mustered_oxenford(herd_at: UVec2, plan_by_hand: bool, sleds: u32) -> MusteredScene {
+    let stock = Stock {
+        herd_at,
+        working: OXENFORD_WORKING,
+        elders: 0.0,
+        ..Stock::ROOMY
+    };
+    let (mut app, band) = world_hunting(stock, DEFENDED_GAME);
+    let camp_tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(CAMP.x, CAMP.y)
+        .expect("the camp tile exists");
+    app.world
+        .get_mut::<core_sim::Tile>(camp_tile)
+        .expect("the camp tile carries terrain")
+        .terrain = sim_schema::TerrainType::MixedWoodland;
+    arm_the_band_with(&mut app, band, HELD_SPEARS, sleds);
+    let equipment = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get();
+    let hunt_kit = equipment.kit(BIG_GAME_KIT).expect("big_game is shipped");
+    let wood_kit = equipment.kit(SLEDDING_KIT).expect("sledding is shipped");
+    let mut hunt = hunt_row(NEED_HERD, 0, SourcePriority::High, true);
+    // With the plan written by hand the crew is mustered on the scene's one turn too.
+    hunt.muster_crew = if plan_by_hand { HELD_SPEARS } else { 0 };
+    hunt.max_workers = None;
+    hunt.kit = Some(hunt_kit);
+    let wood = LaborAssignment {
+        max_workers: None,
+        kit: Some(wood_kit),
+        target: LaborTarget::Extract {
+            tile: CAMP,
+            material: WOOD.to_string(),
+            floor: FLOOR,
+        },
+        ..hunt_row(NEED_HERD, 0, SourcePriority::Normal, false)
+    };
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .assignments = vec![hunt, wood];
+    turn(&mut app);
+    if plan_by_hand {
+        set_muster(&mut app, band, HELD_SPEARS);
+    }
+    let snapshot = decode_latest(&app);
+    let cohort = snapshot
+        .populations
+        .iter()
+        .find(|cohort| cohort.band_id == BAND)
+        .expect("the band is on the wire");
+    let toe = |row: &sim_schema::LaborAssignmentState| -> Vec<(String, f32, f32)> {
+        row.kit_toe
+            .iter()
+            .map(|line| (line.item_id.clone(), line.required, line.filled))
+            .collect()
+    };
+    let need = cohort
+        .labor_assignments
+        .iter()
+        .find(|row| row.fauna_id == NEED_HERD)
+        .expect("the need row is on the wire");
+    let wood = cohort
+        .labor_assignments
+        .iter()
+        .find(|row| row.material == WOOD)
+        .expect("the wood row is on the wire");
+    MusteredScene {
+        muster_crew: need.muster_crew,
+        need_toe: toe(need),
+        wood_toe: toe(wood),
+        wood_cut: wood.material_yield.iter().map(|payoff| payoff.amount).sum(),
+    }
+}
+
+struct MusteredScene {
+    muster_crew: u32,
+    need_toe: Vec<(String, f32, f32)>,
+    wood_toe: Vec<(String, f32, f32)>,
+    /// The wood the wood row cut on the scene's one turn.
+    wood_cut: f32,
+}
+
+/// The turn's own settlement: a crew mustered on the turn leaves the wood row its sleds, so it cuts
+/// more than the same turn with no sleds in the band (which is all a need row claiming them would
+/// leave it).
+#[test]
+fn the_wood_row_cuts_with_its_sleds_on_a_turn_the_need_row_musters() {
+    let sledded = mustered_oxenford(CAMP, true, HELD_SLEDS);
+    let bare = mustered_oxenford(CAMP, true, 0);
+    assert!(
+        bare.wood_cut > 0.0,
+        "liveness: the wood row cuts bare-handed"
+    );
+    assert!(
+        sledded.wood_cut > bare.wood_cut,
+        "the sledded wood row cuts more: {} against {}",
+        sledded.wood_cut,
+        bare.wood_cut
+    );
+}
+
+fn toe_line(toe: &[(String, f32, f32)], item: &str) -> Option<(f32, f32)> {
+    toe.iter()
+        .find(|(id, ..)| id == item)
+        .map(|(_, required, filled)| (*required, *filled))
+}
+
+/// ⛔ **A MUSTERED NEED ROW IS A CAMP KILL, SO IT NEVER CLAIMS A SLED.** A `High` need row musters
+/// every spear's hunter beside a `Normal` wood row, with three sleds in the band: the need row's
+/// published kit holds no sled line and the wood row keeps its sled filled. The verdict is the
+/// staffing's own predicate, stamped on the row by `apply_muster`.
+#[test]
+fn a_mustered_need_row_claims_no_sled_and_the_wood_row_keeps_its() {
+    let scene = mustered_oxenford(CAMP, true, HELD_SLEDS);
+    assert_eq!(
+        scene.muster_crew, HELD_SPEARS,
+        "liveness: the crew is mustered"
+    );
+    assert_eq!(
+        toe_line(&scene.need_toe, SLED),
+        None,
+        "a mustered camp kill claims no sled: {:?}",
+        scene.need_toe
+    );
+    let (_, filled) = toe_line(&scene.wood_toe, SLED).expect("the wood row names its sled");
+    assert_eq!(
+        filled, HELD_SLEDS as f32,
+        "the wood row keeps every sled: {:?}",
+        scene.wood_toe
+    );
+}
+
+/// The stamp lives for the muster only: the hands are handed back and the row reads unstamped.
+#[test]
+fn the_camp_kill_stamp_on_a_mustered_row_lasts_only_the_muster() {
+    let (mut app, band) = world_hunting(Stock::ROOMY, DEFENDED_GAME);
+    arm_the_band_with(&mut app, band, HELD_SPEARS, HELD_SLEDS);
+    let idx = index_of(&app, band, NEED_HERD);
+    {
+        let mut allocation = app.world.get_mut::<LaborAllocation>(band).unwrap();
+        allocation.assignments[idx].target = LaborTarget::Hunt {
+            fauna_id: NEED_HERD.to_string(),
+            floor: FLOOR,
+            move_with_herd: true,
+        };
+        allocation.assignments[idx].workers = 0;
+        allocation.assignments[idx].max_workers = None;
+        allocation.assignments[idx].muster_crew = HELD_SPEARS;
+    }
+    turn(&mut app);
+    assert!(
+        !row(&app, band, NEED_HERD).staffing.camp_kill,
+        "the stamp is cleared when the muster is handed back"
+    );
+}
+
+/// The control: a need row whose herd stands past the apron is never mustered (a one-turn crew
+/// cannot run a caravan), so it never reaches the posted-party case that would keep the sled.
+#[test]
+fn a_need_row_past_the_apron_musters_nobody() {
+    let scene = mustered_oxenford(FAR_HERD_AT, false, HELD_SLEDS);
+    assert_eq!(scene.muster_crew, 0, "a far herd is not mustered");
+}
+
 // ---------------------------------------------------------------------------------------------
 // THE CAMP-KILL VERDICT: ONE GEOMETRY FOR THE STAMP AND EVERY PROSPECTIVE QUOTE
 // ---------------------------------------------------------------------------------------------

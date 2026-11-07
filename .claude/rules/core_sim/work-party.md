@@ -145,7 +145,7 @@ need crew's cap and shortfall read), never an item id. The staffing stamps the v
 struck against `camp_kill_kit(crew_kit)`, so a camp-kill pen leaves the sled's life untouched, and a
 posted pen wears it (`pen_standing_yield::a_local_pen_wears_no_sled_and_a_far_pen_still_does`). So a
 camp kill neither needs, claims nor asks for a sled, and a
-sled the wood row holds is not also reserved for the hunt. A hunt past the apron keeps the whole kit
+sled the wood row holds is not also reserved for the hunt. **A mustered need row is a camp kill by the same predicate**: `apply_muster` gates on `hunt_by_need::camp_kill_hunt` (the staffing's own) and stamps `StaffedCrew::camp_kill` on the crewed row for the turn (`restore_muster` clears it), and `mustered_take_gear` stamps its clone the same way, so the settlement, the wear and the published `kitToe` all narrow it; a need row past the apron is never mustered, so no need row ever holds a sled claim for a posting (`hunt_by_need::{a_mustered_need_row_claims_no_sled_and_the_wood_row_keeps_its, the_wood_row_cuts_with_its_sleds_on_a_turn_the_need_row_musters}`). A hunt past the apron keeps the whole kit
 (its sled is the haul carry). `take_claims::useful_take_hands` still prices a claim over the
 row's full kit (`kit_choice`), and so do the take's pricing and the crew curves, so no yield, forecast or
 `workersNeeded` figure moves; only which items the budget, the staffing and the published lines
