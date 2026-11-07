@@ -80,6 +80,19 @@ impl SupplyNetworkMembership {
         self.networks.get(&entity).copied().unwrap_or(0)
     }
 
+    /// **Every multi-band network's members**, by network id then entity order - what a reader
+    /// that needs a network as a whole (the steady pooling term) walks.
+    pub fn network_members(&self) -> BTreeMap<u32, Vec<Entity>> {
+        let mut members: BTreeMap<u32, Vec<Entity>> = BTreeMap::new();
+        for (&entity, &network) in &self.networks {
+            members.entry(network).or_default().push(entity);
+        }
+        for list in members.values_mut() {
+            list.sort_by_key(|entity| entity.to_bits());
+        }
+        members
+    }
+
     /// **This band's own pooling links this turn**, in the other band's id order — every link the
     /// balancer formed with it, not every member of its component (a network is a chain as often as
     /// a star). Empty for a band in no network.

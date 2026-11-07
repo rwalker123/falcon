@@ -497,7 +497,7 @@ after it.
   panel, always visible. A per-batch split here was built and then withdrawn — measured, the
   characteristic chips wrap in the 172px column and cost the ledger 29px, which is width and height
   spent on a second copy of the rail's own fact.
-  The yield moved to the Rebuild-costs cell — `4 wood · 2 hide → 1 hurdles` — where `inputs → output`
+  The yield moved to the Rebuild-costs cell — `4 wood · 0.5 hide → 1 hurdles` — where `inputs → output`
   is what an arrow means; alone in a cell it named a relation with nothing on its left.
 - **A band may hold one item at two grades, and the cell lists them** — three spears knapped off poor
   bone and two off excellent are genuinely different objects, and the sim already stores them as

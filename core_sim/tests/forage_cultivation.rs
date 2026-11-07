@@ -874,6 +874,49 @@ fn sustain_forage_teaches_cultivation_but_never_tames_the_patch() {
         .is_cultivated());
 }
 
+/// **A patch with a Cultivate in flight teaches the lesson of the rung it is RAISING** - Seed
+/// Selection, not Cultivation - and one with nothing banked still teaches what it holds. Cultivation
+/// is granted so the Cultivate may run; its own ledger entry is full, so it cannot show which lesson
+/// was credited, but Seed Selection starting from zero can.
+#[test]
+fn a_patch_mid_cultivate_teaches_seed_selection_and_a_wild_one_teaches_cultivation() {
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    spawn_forager(&mut app, tile, coord, None);
+    run_turns_with_forage(&mut app, 3);
+    let seed_selection = |app: &App| {
+        app.world
+            .resource::<DiscoveryProgressLedger>()
+            .get_progress(FactionId(0), core_sim::SEED_SELECTION_DISCOVERY_ID)
+            .to_f32()
+    };
+    assert_eq!(
+        seed_selection(&app),
+        0.0,
+        "a wild patch with nothing banked teaches its held rung's lesson only"
+    );
+
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+    spawn_builder(&mut app, tile, coord, shipped::cultivate());
+    run_turns_with_forage(&mut app, 3);
+    assert!(
+        progress_of(&app, coord) > 0.0
+            && !app
+                .world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .unwrap()
+                .is_cultivated(),
+        "the fixture must be mid-Cultivate"
+    );
+    assert!(
+        seed_selection(&app) > 0.0,
+        "a patch with work banked on the tended rung teaches Seed Selection while it is raised"
+    );
+}
+
 /// **The investment cost is HANDS, and the gatherers beside them are untouched**
 /// (`docs/plan_standing_upkeep.md` §2.2). A Cultivate is staffed in its own right, so what it costs
 /// is the people who are clearing instead of gathering — a number the player typed — and the patch

@@ -116,18 +116,21 @@ const GATHERING_KIT_ID: &str = "gathering";
 /// The tillage kit's recipe id (`recipes.json` → `recipes.hoes`), the item a `craft` demand
 /// names. Pinned by `config_pins`.
 const HOES_RECIPE_ID: &str = "hoes";
-/// One hoe's bone (`recipes.json` → `recipes.hoes.inputs[material == "bone"].amount`, `1`).
+/// One hoe's bone (`recipes.json` → `recipes.hoes.inputs[material == "bone"].amount`, `0.2`).
 /// Pinned by `config_pins`.
-const HOE_RECIPE_BONE: u32 = 1;
-/// One hoe's fibre (`recipes.json` → `recipes.hoes.inputs[material == "fibre"].amount`, `2`).
+const HOE_RECIPE_BONE: f32 = 0.2;
+/// One hoe's fibre (`recipes.json` → `recipes.hoes.inputs[material == "fibre"].amount`, `1`).
 /// Pinned by `config_pins`.
-const HOE_RECIPE_FIBRE: u32 = 2;
+const HOE_RECIPE_FIBRE: f32 = 1.0;
+/// Slack under which a recipe total's float noise is not a whole unit more (`5 × 0.2` must demand
+/// one bone, not two): a demand is a whole-unit ask, rounded up from the recipe's fractional total.
+const DEMAND_ROUNDING_TOLERANCE: f32 = 1e-3;
 /// One hoe's bench work in worker-turns (`recipes.json` → `recipes.hoes.work`, `5`). Pinned by
 /// `config_pins`.
 const HOE_RECIPE_WORK: f32 = 5.0;
 /// What a worker-turn at the bench is worth (`recipes.json` → `crafting.progress_per_worker_turn`,
-/// `1.0`). Pinned by `config_pins`.
-const CRAFT_PROGRESS_PER_WORKER_TURN: f32 = 1.0;
+/// `2.0`). Pinned by `config_pins`.
+const CRAFT_PROGRESS_PER_WORKER_TURN: f32 = 2.0;
 /// The bare hand's craft speed on the hoes' bench material (`materials.json` →
 /// `materials.bone.hand_working.rate`, `0.5` — the hoes read bone's `density`, so bone is the
 /// bench material and its rate applies with no tool). Pinned by `config_pins`.
@@ -218,8 +221,8 @@ mod config_pins {
             MATERIAL_BONE,
         );
         assert_eq!(
-            f64_at(bone, "amount"),
-            f64::from(HOE_RECIPE_BONE),
+            f64_at(bone, "amount") as f32,
+            HOE_RECIPE_BONE,
             "recipes.json `{hoes}.inputs[material == \"{MATERIAL_BONE}\"].amount`: HOE_RECIPE_BONE"
         );
         let fibre = element_where(
@@ -229,8 +232,8 @@ mod config_pins {
             MATERIAL_FIBRE,
         );
         assert_eq!(
-            f64_at(fibre, "amount"),
-            f64::from(HOE_RECIPE_FIBRE),
+            f64_at(fibre, "amount") as f32,
+            HOE_RECIPE_FIBRE,
             "recipes.json `{hoes}.inputs[material == \"{MATERIAL_FIBRE}\"].amount`: HOE_RECIPE_FIBRE"
         );
         assert_eq!(
@@ -1964,12 +1967,12 @@ impl Food {
         }) {
             demands.push(demand(
                 Resource::Material(MATERIAL_BONE.to_owned()),
-                estimate.hoes * HOE_RECIPE_BONE,
+                Self::whole_units_for(estimate.hoes, HOE_RECIPE_BONE),
                 DEMAND_PRIORITY_HOES,
             ));
             demands.push(demand(
                 Resource::Material(MATERIAL_FIBRE.to_owned()),
-                estimate.hoes * HOE_RECIPE_FIBRE,
+                Self::whole_units_for(estimate.hoes, HOE_RECIPE_FIBRE),
                 DEMAND_PRIORITY_HOES,
             ));
             demands.push(demand(
@@ -1982,6 +1985,14 @@ impl Food {
             ));
         }
         demands
+    }
+
+    /// **The whole units a `count` of a recipe's fractional input amount asks of the store**,
+    /// rounded up past [`DEMAND_ROUNDING_TOLERANCE`] of float noise.
+    fn whole_units_for(count: u32, per_item: f32) -> u32 {
+        (count as f32 * per_item - DEMAND_ROUNDING_TOLERANCE)
+            .ceil()
+            .max(0.0) as u32
     }
 
     /// **The hoes the first cultivate would want, and when to start making them.** From the
@@ -3330,9 +3341,9 @@ mod tests {
     }
 
     /// Beside the value walk's kits, the hoe estimate: the shape's climbable patch's 2 hoed
-    /// keepers plus the 4-hand founding crew, one hoe each — 6 bone, 12 fibre, and a craft of 6
+    /// keepers plus the 4-hand founding crew, one hoe each — 2 bone (6 × 0.2, rounded up), 6 fibre, and a craft of 6
     /// timed from the lesson (20 practice over 2 worked patches = 10 turns) less the bench time
-    /// (6 × 5 work at 0.5 a turn = 60 turns, so now) — which the orchestrator declines: nothing
+    /// (6 × 5 work at 1.0 a turn = 30 turns, so now) — which the orchestrator declines: nothing
     /// crafts. A shape with no climbable patch, or no reading at all, posts the kits alone.
     #[test]
     fn an_open_window_posts_the_hoe_estimate_beside_the_kits_and_the_craft_is_declined() {
@@ -3360,8 +3371,8 @@ mod tests {
             vec![
                 ("kit:gathering".to_owned(), 16, DEMAND_PRIORITY_GATHERING),
                 (format!("kit:{HUNT_KIT}"), 1, DEMAND_PRIORITY_HUNTING),
-                ("material:bone".to_owned(), 6, DEMAND_PRIORITY_HOES),
-                ("material:fibre".to_owned(), 12, DEMAND_PRIORITY_HOES),
+                ("material:bone".to_owned(), 2, DEMAND_PRIORITY_HOES),
+                ("material:fibre".to_owned(), 6, DEMAND_PRIORITY_HOES),
                 (format!("craft:hoes@t{TICK}"), 6, DEMAND_PRIORITY_HOES),
             ]
         );
@@ -3387,7 +3398,7 @@ mod tests {
         );
         assert_eq!(
             outfit.materials,
-            vec![("bone".to_owned(), 6), ("fibre".to_owned(), 12)]
+            vec![("bone".to_owned(), 2), ("fibre".to_owned(), 6)]
         );
         assert_eq!(outfit.grants[4].1, Grant::declined(DECLINED_NO_CRAFTER));
         // No climbable patch: the kits alone.
@@ -3397,7 +3408,7 @@ mod tests {
         let demands = food().outfit_demands(&view, &memory(), own_band(&view), Some(&no_climb));
         assert_eq!(demands.len(), 2, "{demands:?}");
         // The timing: with one worked patch the lesson takes 20 turns, and one hoe (no keepers,
-        // a founding crew of 1) is 10 bench turns — the crafter starts at t+10.
+        // a founding crew of 1) is 5 bench turns — the crafter starts at t+15.
         let mut one = a_band_at_its_window(5.0);
         one.snapshot.populations[0].founding_min_workers = 1;
         let sites = vec![patch_site(NEAR_PATCH, 3.0, 3, 8.0, 0)];
@@ -3413,7 +3424,7 @@ mod tests {
             craft.resource,
             Resource::Craft {
                 item: "hoes".to_owned(),
-                start_tick: TICK + 20 - 10,
+                start_tick: TICK + 20 - 5,
             }
         );
     }

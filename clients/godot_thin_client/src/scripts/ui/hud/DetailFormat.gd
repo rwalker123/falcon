@@ -230,6 +230,18 @@ const TRANSFER_GLYPH := "⇄"
 const TRANSFER_LABEL_LOCAL := "%s Local exchange" % TRANSFER_GLYPH
 const TRANSFER_LABEL_ROUTE := "%s Trade route" % TRANSFER_GLYPH
 
+## **THE THIN RULE BETWEEN THE ROWS THAT SUM TO THE FOOD HEADLINE AND THE `⇄` TRANSFER ROWS BELOW IT.**
+## A popover line, not a word: `detail_bbcode` draws it as a dim dashed rule. It leads with a control
+## character (the lineage sentinels' idiom) so no row text can collide with it, and it carries no digit,
+## so a reader summing the rows' figures skips it.
+const BREAKDOWN_DIVIDER_LINE := "\u001c"
+## The rule is a run of box-drawing dashes, indented like the rows it separates (an `[hr]` was tried: the
+## engine draws it inline, so it either vanished or pushed the next row's text to its right). The count
+## spans the rows' text within the 300px breakdown popover.
+const BREAKDOWN_DIVIDER_GLYPH := "─"
+const BREAKDOWN_DIVIDER_LENGTH := 26
+## Small, so the rule's line stays a hairline of space between the two groups rather than a blank row.
+const BREAKDOWN_DIVIDER_FONT_SIZE := 6
 # ---- WHAT A BAND'S OWN PARTIES MOVED (issue #731) --------------------------------------------------
 # The Route arm carries more than trade: a hunt's haul dropped off, a party folding home, and the
 # larder a party takes when it launches all book there because a party CARRIED them. To a player they
@@ -1105,6 +1117,14 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
                 out += "[/table]"
                 table_open = false
             out += "\n"
+            continue
+        if line == BREAKDOWN_DIVIDER_LINE:
+            if table_open:
+                out += "[/table]\n"
+                table_open = false
+            out += "[font_size=%d][color=#%s]%s%s[/color][/font_size]\n" % [BREAKDOWN_DIVIDER_FONT_SIZE,
+                HudStyle.INK_FAINT.to_html(false), MORALE_BREAKDOWN_INDENT,
+                BREAKDOWN_DIVIDER_GLYPH.repeat(BREAKDOWN_DIVIDER_LENGTH)]
             continue
         # THE BREEDING CEILING'S LINES (issue #691): popover table rows and the faint notes. They ride behind
         # control-character sentinels (`HudLineageVocab`) because the
@@ -3328,22 +3348,17 @@ static func food_starving_line(band: Dictionary) -> String:
         return ""
     return FOOD_STARVING_LINE_FORMAT % SourceForecast.format_magnitude(band_food_shortfall(band))
 
-## **THE BAND PANEL'S FOOD HEADLINE RATE** — `band_net_food` plus this turn's POOLED food net, so the
-## Food popover's rows (Gathered, Hunted, Consumed, Lost to raids, Spoiled, `⇄ Local exchange`) sum to the
-## headline on a turn when nothing else crossed. Only `pooled`: pooling happens most turns, so it
-## belongs in a rate; a shipment, a party's haul or rations and a split's dowry are one-off events
-## and stay out of it.
-##
-## ⛔ **A SEPARATE FUNCTION, AND `band_net_food` KEEPS ITS MEANING.** `band_net_food` is also read by
-## `food_is_concerning` and by the faction page (`FactionRollup`'s summed Food line and its per-band
-## drill rows); those keep the steady net. Only `BandDetailLines._band_food_line` reads this one.
-static func band_headline_food_rate(band: Dictionary) -> float:
-    return band_net_food(band) + band_pooled_food_net(band)
-
 ## This turn's POOLED food, in minus out — the `pooled` crossings on `provisions`, off the per-cause
 ## list (`TradeLedger.cause_net`). The Local arm's four terms also carry a split's dowry; this does not.
 static func band_pooled_food_net(band: Dictionary) -> float:
     return TradeLedger.cause_net(band, HudConst.STORE_ITEM_PROVISIONS, [HudTradeVocab.CAUSE_POOLED])
+
+## The band's STEADY pooling term, food per turn, signed (`PopulationCohortState.poolingSteadyNet`): its
+## share of its supply network's steady net minus its own steady net, `0` in no network. This — not
+## this turn's lumpy crossings (`band_pooled_food_net`) — is the standing rate the sim's runway
+## (`turnsOfFood`) walks, so the FOOD OUTLOOK chart reads it.
+static func band_pooling_steady_net(band: Dictionary) -> float:
+    return float(band.get("pooling_steady_net", 0.0))
 
 ## The STEADY total food income = Gathered + Hunted (Σ per-source realized average across the band's
 ## forage + hunt assignments). Summed from the SAME per-source realized values as the breakdown rows, so

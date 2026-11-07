@@ -1677,7 +1677,7 @@ func _grade_color(grade: String, payload: Dictionary) -> Color:
 ## refusal beside it was computed against. A short material is tinted so the eye finds it without
 ## reading the button.
 ##
-## **A STOCK RECIPE'S YIELD IS THIS CELL'S SECOND LINE — `4 wood · 2 hide` over `→ 1 hurdles`.** It
+## **A STOCK RECIPE'S YIELD IS THIS CELL'S SECOND LINE — `4 wood · 0.5 hide` over `→ 1 hurdles`.** It
 ## hung in the Owned cell until the arrow was reported as meaningless, which it was: `→ 1 hurdles`
 ## alone in a cell names a relation with nothing on its left. Here the inputs ARE the left-hand side,
 ## which is the only place in the panel where an arrow reads. It renders on a MATERIAL output and on

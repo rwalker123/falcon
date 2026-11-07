@@ -909,7 +909,7 @@ mod forecast_tests {
     use crate::components::{BenchOrder, DrawnInputs};
     use std::collections::BTreeMap;
 
-    /// The shipped sled recipe: 6 hide + 2 fibre a pass, bare-handed.
+    /// The shipped sled recipe: 2 hide + 2 fibre a pass, bare-handed.
     const SLED: &str = "sled";
     const HIDE: &str = "hide";
     const FIBRE: &str = "fibre";
@@ -920,7 +920,7 @@ mod forecast_tests {
     const SIX: u32 = 6;
     /// One pass of the sled's bill, in the units the order draws.
     const FIBRE_PER_PASS: f32 = 2.0;
-    const HIDE_PER_PASS: f32 = 6.0;
+    const HIDE_PER_PASS: f32 = 2.0;
     /// The reading every fixture axis is banked at.
     const MID_READING: f32 = 0.5;
 

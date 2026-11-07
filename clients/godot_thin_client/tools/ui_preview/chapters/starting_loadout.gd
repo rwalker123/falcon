@@ -123,17 +123,17 @@ const RECIPE_BASKETS := "baskets"
 const RECIPE_TRAPS := "traps"
 const RECIPE_SLED := "sled"
 const RECIPE_CROOK := "crook"
-## Costs 3 WOOD, and the default pile holds none — the unreachable row, which must be DIMMED and
+## Costs 1 WOOD, and the default pile holds none — the unreachable row, which must be DIMMED and
 ## present rather than filtered away.
 const RECIPE_EARTHMOVING := "earthmoving"
 
 ## What each row must read against the default pile (bone 3, fibre 17, hide 8, wood 0):
 ## `floor(min over inputs of held / required)`.
-const EXPECTED_SPEARS := 3     # bone 1 → 3, fibre 2 → 8, hide 1 → 8
-const EXPECTED_BASKETS := 3    # fibre 5 → 3, hide 1 → 8
-const EXPECTED_TRAPS := 2      # fibre 6 → 2, bone 1 → 3
-const EXPECTED_SLED := 1       # hide 6 → 1, fibre 2 → 8
-const EXPECTED_CROOK := 3      # bone 1 → 3, fibre 2 → 8
+const EXPECTED_SPEARS := 17    # bone 0.1 → 30, fibre 1 → 17, hide 0.2 → 40
+const EXPECTED_BASKETS := 8    # fibre 2 → 8, hide 0.2 → 40
+const EXPECTED_TRAPS := 5      # fibre 3 → 5, bone 0.05 → 60
+const EXPECTED_SLED := 4       # hide 2 → 4, fibre 2 → 8
+const EXPECTED_CROOK := 15     # bone 0.2 → 15, fibre 1 → 17
 const EXPECTED_EARTHMOVING := 0
 
 ## The kit the chapter buys, and how many of it.
@@ -2209,13 +2209,13 @@ func _kit(id: String, display_name: String, jobs: Array, uses: Array) -> Diction
 ## that must not be drawn.
 func _recipes() -> Array:
 	return [
-		_recipe(RECIPE_SLED, "Sled", 8.0, {"hide": 6.0, "fibre": 2.0}),
-		_recipe(RECIPE_CROOK, "Crook", 5.0, {"bone": 1.0, "fibre": 2.0}),
-		_recipe(RECIPE_BASKETS, "Baskets", 6.0, {"fibre": 5.0, "hide": 1.0}),
-		_recipe(RECIPE_TRAPS, "Traps", 6.0, {"fibre": 6.0, "bone": 1.0}),
-		_recipe(RECIPE_SPEARS, "Spears", 6.0, {"bone": 1.0, "fibre": 2.0, "hide": 1.0}),
-		_recipe(RECIPE_EARTHMOVING, "Earthmoving tools", 8.0, {"wood": 3.0, "bone": 2.0}),
-		_recipe(RECIPE_GATED, "Tanning frame", 12.0, {"fibre": 8.0, "bone": 2.0}),
+		_recipe(RECIPE_SLED, "Sled", 8.0, {"hide": 2.0, "fibre": 2.0}),
+		_recipe(RECIPE_CROOK, "Crook", 5.0, {"bone": 0.2, "fibre": 1.0}),
+		_recipe(RECIPE_BASKETS, "Baskets", 6.0, {"fibre": 2.0, "hide": 0.2}),
+		_recipe(RECIPE_TRAPS, "Traps", 6.0, {"fibre": 3.0, "bone": 0.05}),
+		_recipe(RECIPE_SPEARS, "Spears", 6.0, {"bone": 0.1, "fibre": 1.0, "hide": 0.2}),
+		_recipe(RECIPE_EARTHMOVING, "Earthmoving tools", 8.0, {"wood": 1.0, "stone": 1.0}),
+		_recipe(RECIPE_GATED, "Tanning frame", 12.0, {"fibre": 3.0, "wood": 2.0, "bone": 0.1}),
 	]
 
 func _recipe(id: String, display_name: String, work: float, inputs: Dictionary) -> Dictionary:

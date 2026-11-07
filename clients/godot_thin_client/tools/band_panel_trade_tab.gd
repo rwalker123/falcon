@@ -457,7 +457,7 @@ func run(harness) -> void:
 	h._assert_zone_content_fits()
 
 	# ---- 8. THE FOOD OUTLOOK CHART EMPTIES WHEN THE RUNWAY SAYS IT DOES ---------------------------
-	# The sim's runway carries this turn's POOLED food as a standing rate on every step of its walk;
+	# The sim's runway carries the band's STEADY pooling term as a standing rate on every step of its walk;
 	# the chart walks the same arrivals and must carry it too, or on a pooling turn the dashed
 	# `empty` marker lands on a different turn than the `(N turns)` beside it. The fixture's
 	# `turns_of_food` is DERIVED here the sim's way (`_sim_runway`), never typed.
@@ -891,7 +891,8 @@ func _outlook_pooling_band() -> Dictionary:
 	band[HudTradeVocab.CROSSINGS_KEY] = [
 		_x(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_OUT, HudTradeVocab.CAUSE_POOLED,
 			OUTLOOK_POOLED_OUT)]
-	band["turns_of_food"] = _sim_runway(band, DetailFormat.band_pooled_food_net(band))
+	band["pooling_steady_net"] = -OUTLOOK_POOLED_OUT
+	band["turns_of_food"] = _sim_runway(band, DetailFormat.band_pooling_steady_net(band))
 	return band
 
 func _x(commodity: String, direction: int, cause: int, amount: float, readings: Array = []) -> Dictionary:

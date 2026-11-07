@@ -62,11 +62,13 @@ shows neither whatever colour its reason is in.
 
 ### THE UNIT IS `work`, AND THE TURNS ARE STATED BECAUSE A WORKER-TURN IS NOT A WORKER'S TURN
 
-The progress line reads **`3.0 of 6 work · +1.0/turn · done in 3 turns`**. It said `worker-turns`, and
+The progress line reads **`1.0 of 6 work · +4.0/turn · done in 2 turns`**. It said `worker-turns`, and
 that unit produced a real playtest error: a player with two crafters divided 6 by 2, expected three
-turns and measured six. Bare-handed `craft_speed` is `0.5`, so two crafters deliver **1.0** a turn —
-the name invited an arithmetic wrong by exactly the tool multiplier, so the unit is the recipe's own
-`work` and what a turn adds is stated rather than left to be inferred.
+turns and measured six (the bench then ran at `progress_per_worker_turn` 1.0). The bench now runs at 2.0
+and bare-handed `craft_speed` is `0.5`, so a bare crew delivers its head count a turn; a tool-bounded
+bench (`craft_speed` 1.0) delivers twice that. The name invited an arithmetic wrong by exactly the tool
+multiplier, so the unit is the recipe's own `work` and what a turn adds is stated rather than left to
+be inferred.
 
 - **The rate is `bench.rate_per_turn` rendered VERBATIM and is never re-derived.** It is
   `workers × progress_per_worker_turn × craft_speed` with `craft_speed` already resolved through the
@@ -99,7 +101,7 @@ panel (`order_remove_requested`) → `CraftingPanelController` → `HudLayer` �
 own.
 
 **Its tooltip names what will be destroyed, off `drawn_inputs`** — *"Take this order off the bench —
-5 fibre · 1 hide already cut are lost"*, and the no-pile wording on an undrawn bench. **Composed from the WITHDRAWAL,
+2 fibre · 0.2 hide already cut are lost"*, and the no-pile wording on an undrawn bench. **Composed from the WITHDRAWAL,
 never from the recipe's inputs**: the two differ the moment a bench tool's material efficiency applies
 (a tooled sled cuts 4.8 hide against a book price of 6), and naming what will really be lost is the
 whole point. **No confirmation dialog** — the tooltip states the cost, the loss is small and
@@ -212,7 +214,7 @@ where a folded group is a preference.
   **`Not made`, the ledger's one none-wording** — the same sentence the kit and tool rows answer this
   column with. It had a third of its own, `None on hand`, for the identical fact under the identical
   head, and three spellings of *we have none* read down the column as three different states.
-- **THE YIELD RIDES WITH THE COST, ON ITS OWN LINE — `4 wood · 2 hide` over `→ 1 hurdles`.**
+- **THE YIELD RIDES WITH THE COST, ON ITS OWN LINE — `4 wood · 0.5 hide` over `→ 1 hurdles`.**
   `inputs → output` is what an arrow means; alone in the Owned cell it named a relation with nothing
   on its left, which is why it read as a badge nobody could parse. Rendered on a MATERIAL output and
   on no other — a kit recipe's output is the row's own name, and an arrow back at the title says
@@ -415,7 +417,7 @@ so a cell reading `tier_id` would say `plain` on almost every row of the early g
   `Tanning · worst suppleness spent first`. It read `Reads hide suppleness` until it was reported as
   meaningless, and both halves of that were wrong: two bare nouns collide with no separator between
   them, and the MATERIAL is the one fact the row already states twice — the cost cell beside it says
-  `4 wood · 2 hide`, and the sim's own refusal under the button says `Hide, no tanning frame`.
+  `4 wood · 0.5 hide`, and the sim's own refusal under the button says `Hide, no tanning frame`.
   Leading with the craft is also what keeps line two a CATEGORY on every row — the stock row was the
   only one whose line two was a sentence, which is part of why it read as an error.
 
@@ -866,7 +868,7 @@ over four wire terms — `kit_needs[]` and `materials_free[]` on the cohort, `be
   `craftOffers` entry is `queueable` — a radio per recipe with its cost, the bare cost for a sole one.
   **The footer's shortage is exact arithmetic over published terms**, the estimate precedent: passes =
   `ceil(N / output_per_pass)` and `need[m] = Σ passes × amount` against `materials_free`, one decimal
-  (`Short 4.2 hide for all 3`, danger), else `Queues <items × N> items as one kit order` (dim).
+  (`Short 2.2 hide for all 3`, danger), else `Queues <items × N> items as one kit order` (dim).
   **Need never caps the order or disables Start** (Ray: *"We shouldn't prevent a kit from being built.
   The number should be the number of new kits to build"*). The only disable is an item with no queueable
   recipe — its offer's reason sits in the RECIPE cell in its severity tint — because the sim refuses a

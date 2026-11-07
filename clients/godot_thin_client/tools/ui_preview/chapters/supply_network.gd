@@ -52,6 +52,14 @@ const LINKED_ENTITY := 952
 const BOTH_WAYS_ENTITY := 953
 const PARTY_ENTITY := 954
 const POOLING_ENTITY := 955
+const OXENFORD_ENTITY := 956
+
+## **STATE 7'S OXENFORD** — the playtest's figures. Gathered + Hunted - Eaten is the steady net.
+const OXENFORD_GATHERED := 0.90
+const OXENFORD_HUNTED := 1.80
+const OXENFORD_EATEN := 2.72
+const OXENFORD_LOCAL_IN := 2.74
+const OXENFORD_STEADY_NET := -0.02
 
 ## **STATE 6'S POOLED FOOD** — a camp giving food to the network this turn, and nothing else crossing.
 const FOOD_POOLED_OUT := 0.4
@@ -230,7 +238,7 @@ func run(harness) -> void:
 	# **STATE 5 — THE BAND'S OWN PARTIES ARE NOT A TRADE ROUTE** (issue #731). A hunt's haul brought home
 	# and the rations a party launched with both cross on the Route arm, because a party carried them;
 	# the popover used to render the whole arm as `⇄ Trade route`, labelling a hunt as trade. Split by
-	# the crossing's cause: the shipment keeps the route row, the two party rows sit beside Hunted.
+	# the crossing's cause: the shipment keeps the route row, the party rows sit with it below the rule.
 	h._hud.show_unit_selection(_party_band())
 	await h._settle()
 	_click_breakdown(HudDisclosureVocab.BREAKDOWN_KIND_FOOD, PARTY_ENTITY)
@@ -252,39 +260,72 @@ func run(harness) -> void:
 	var arm := float(party_band[DetailFormat.TRANSFER_ROUTE_RECEIVED_TURN_KEY]) \
 		- float(party_band[DetailFormat.TRANSFER_ROUTE_SENT_TURN_KEY])
 	var split := FOOD_ROUTE_IN + PARTY_HOME_IN - PARTY_RATIONS_OUT
+	var party_divider := party_rows.find(DetailFormat.BREAKDOWN_DIVIDER_LINE)
 	h._assert_hud("…and the three rows sum to the route arm the wire carries (%.2f = %.2f)" % [split, arm],
-		is_equal_approx(split, arm) and party_rows.find(home_row) < party_rows.find(
-			DetailFormat.food_breakdown_row(-float(party_band["food_consumption"]),
-				DetailFormat.FOOD_LABEL_CONSUMED)))
+		is_equal_approx(split, arm))
+	# **THEY SIT BELOW THE RULE with the `⇄` rows**, none of them being in the headline: the divider
+	# follows Consumed and leads all three, and the rows above it sum to the headline.
+	h._assert_hud("…and all three sit below the rule, after Consumed, which the headline does not count",
+		party_divider > party_rows.find(DetailFormat.food_breakdown_row(
+			-float(party_band["food_consumption"]), DetailFormat.FOOD_LABEL_CONSUMED))
+			and party_rows.find(home_row) > party_divider and party_rows.find(rations_row) > party_divider
+			and party_rows.find(route_in_row) > party_divider
+			and SourceForecast.format_signed(_non_transfer_sum(party_rows))
+				== SourceForecast.format_signed(DetailFormat.band_net_food(party_band)))
 	_click_breakdown(HudDisclosureVocab.BREAKDOWN_KIND_FOOD, PARTY_ENTITY)
 	await h._settle()
 
-	# **STATE 6 — THE HEADLINE RATE IS THE SUM OF THE ROWS** (issue #731). A camp that pooled food out
-	# this turn and nothing else crossed: its Food popover's rows — Gathered, Hunted, Consumed and
-	# `⇄ Local exchange` — must add up to the `/turn` headline, or the player cannot check the Trade
-	# tab against the Band tab. The headline carries this turn's POOLED net; the rows are read back off
-	# the RENDERED popover and summed, so a headline or a row that drifted fails here.
+	# **STATE 6 — THE HEADLINE IS THE BAND'S OWN STEADY NET; THE `⇄` ROWS SIT BELOW A RULE** (issue #731
+	# and the Oxenford playtest report). A camp that pooled food out this turn and nothing else crossed:
+	# the rows ABOVE the divider — Gathered, Hunted, Consumed… — add up to the `/turn` headline
+	# (`band_net_food`), and the `⇄ Local exchange` row under the divider is itemized but NOT summed in.
+	# The rows are read back off the RENDERED popover and summed, so a headline or a row that drifted
+	# fails here.
 	h._hud.show_unit_selection(_pooling_band())
 	await h._settle()
 	_click_breakdown(HudDisclosureVocab.BREAKDOWN_KIND_FOOD, POOLING_ENTITY)
 	await h._settle()
 	await h._save("supply_food_headline_sums")
 	var pooling_rows: Array[String] = h._hud._disclosures.food_breakdown_lines(_pooling_band())
-	var rows_sum := 0.0
-	for row in pooling_rows:
-		rows_sum += _row_value(row)
-	var headline := DetailFormat.band_headline_food_rate(_pooling_band())
+	var local_row := DetailFormat.food_breakdown_row(-FOOD_POOLED_OUT, DetailFormat.TRANSFER_LABEL_LOCAL)
+	var rows_sum := _non_transfer_sum(pooling_rows)
+	var headline := DetailFormat.band_net_food(_pooling_band())
 	var headline_text := SourceForecast.format_yield(headline)
-	h._assert_hud("the popover states the pooled food as its own row (%s)"
-			% DetailFormat.food_breakdown_row(-FOOD_POOLED_OUT, DetailFormat.TRANSFER_LABEL_LOCAL).strip_edges(),
-		pooling_rows.has(DetailFormat.food_breakdown_row(-FOOD_POOLED_OUT, DetailFormat.TRANSFER_LABEL_LOCAL)))
-	h._assert_hud("…and the headline rate (%s) is the sum of the popover's rows (%s)"
+	h._assert_hud("the popover states the pooled food as its own row (%s)" % local_row.strip_edges(),
+		pooling_rows.has(local_row))
+	h._assert_hud("…below a thin divider, after every row that sums to the headline",
+		pooling_rows.find(DetailFormat.BREAKDOWN_DIVIDER_LINE) == pooling_rows.find(local_row) - 1
+			and pooling_rows.find(DetailFormat.BREAKDOWN_DIVIDER_LINE) > 0)
+	h._assert_hud("…and the headline rate (%s) is the sum of the rows above the divider (%s)"
 			% [headline_text, SourceForecast.format_signed(rows_sum)],
 		SourceForecast.format_signed(rows_sum) == SourceForecast.format_signed(headline)
 			and _collect_text(h).contains(headline_text))
-	h._assert_hud("…and it is the steady net PLUS the pooled food, not the steady net alone",
-		is_equal_approx(headline, DetailFormat.band_net_food(_pooling_band()) - FOOD_POOLED_OUT))
 	_click_breakdown(HudDisclosureVocab.BREAKDOWN_KIND_FOOD, POOLING_ENTITY)
+	await h._settle()
+
+	# **STATE 7 — OXENFORD: BREAKING EVEN, NOT IMPORTING.** The playtest read `+2.71 /turn` for a camp
+	# whose own rows were Gathered +0.90, Hunted +1.80, Consumed -2.72, because the headline counted the
+	# turn's `⇄ Local exchange +2.74` as income. The headline is -0.02 now and the exchange is listed
+	# below the rule.
+	var oxenford := _oxenford_band()
+	h._hud.show_unit_selection(oxenford)
+	await h._settle()
+	_click_breakdown(HudDisclosureVocab.BREAKDOWN_KIND_FOOD, OXENFORD_ENTITY)
+	await h._settle()
+	await h._save("supply_food_headline_oxenford")
+	var oxenford_rows: Array[String] = h._hud._disclosures.food_breakdown_lines(oxenford)
+	var oxenford_local := DetailFormat.food_breakdown_row(OXENFORD_LOCAL_IN, DetailFormat.TRANSFER_LABEL_LOCAL)
+	var oxenford_headline := DetailFormat.band_net_food(oxenford)
+	h._assert_hud("Oxenford: the headline is the steady net %s, not the pooled-in %s"
+			% [SourceForecast.format_yield(oxenford_headline), SourceForecast.format_yield(oxenford_headline + OXENFORD_LOCAL_IN)],
+		SourceForecast.format_signed(oxenford_headline) == SourceForecast.format_signed(OXENFORD_STEADY_NET)
+			and _collect_text(h).contains(SourceForecast.format_yield(oxenford_headline)))
+	h._assert_hud("Oxenford: the rows above the divider sum to the headline",
+		SourceForecast.format_signed(_non_transfer_sum(oxenford_rows)) == SourceForecast.format_signed(oxenford_headline))
+	h._assert_hud("Oxenford: ⇄ Local exchange +2.74 is listed below the divider",
+		oxenford_rows.has(oxenford_local)
+			and oxenford_rows.find(DetailFormat.BREAKDOWN_DIVIDER_LINE) == oxenford_rows.find(oxenford_local) - 1)
+	_click_breakdown(HudDisclosureVocab.BREAKDOWN_KIND_FOOD, OXENFORD_ENTITY)
 	await h._settle()
 
 	# Hand the reference band back, so a chapter appended after this one starts where the rest do.
@@ -363,6 +404,40 @@ func _pooling_band() -> Dictionary:
 	band[HudTradeVocab.CROSSINGS_KEY] = [
 		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_OUT,
 			HudTradeVocab.CAUSE_POOLED, FOOD_POOLED_OUT),
+	]
+	return band
+
+## **THE ROWS THAT SUM TO THE HEADLINE**: every row above the divider. Everything below it (the `⇄`
+## rows and the band's own parties' rows) is itemized and not in the headline.
+func _non_transfer_sum(rows: Array[String]) -> float:
+	var total := 0.0
+	for row in rows:
+		if row == DetailFormat.BREAKDOWN_DIVIDER_LINE:
+			break
+		total += _row_value(row)
+	return total
+
+## The playtest's Oxenford: Gathered +0.90, Hunted +1.80, Consumed -2.72 (a steady -0.02) while the turn's
+## automatic pooling brought in +2.74. Nothing else crossed and the band's steady pooling term is zero.
+func _oxenford_band() -> Dictionary:
+	var band := _hay_keeper(OXENFORD_ENTITY, "Oxenford")
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 1, "target_x": 1, "target_y": 1, "actual_yield": OXENFORD_GATHERED,
+			"realized_yield": OXENFORD_GATHERED},
+		{"kind": "hunt", "workers": 1, "target_x": 2, "target_y": 2, "actual_yield": OXENFORD_HUNTED,
+			"realized_yield": OXENFORD_HUNTED},
+	]
+	band["food_need"] = OXENFORD_EATEN
+	band["food_consumption"] = OXENFORD_EATEN
+	band["food_shortfall"] = 0.0
+	band["raid_forfeit"] = 0.0
+	band["food_spoiled"] = 0.0
+	band["food_left_behind"] = 0.0
+	band["pooling_steady_net"] = 0.0
+	band[DetailFormat.TRANSFER_LOCAL_RECEIVED_TURN_KEY] = OXENFORD_LOCAL_IN
+	band[HudTradeVocab.CROSSINGS_KEY] = [
+		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_IN,
+			HudTradeVocab.CAUSE_POOLED, OXENFORD_LOCAL_IN),
 	]
 	return band
 
@@ -445,6 +520,9 @@ func _transfer_phrases(lines: Array) -> Array:
 func _prose_lines(lines: Array) -> Array:
 	var prose: Array = []
 	for line in lines:
+		# The divider is a rule, not a sentence: it carries no words.
+		if String(line) == DetailFormat.BREAKDOWN_DIVIDER_LINE:
+			continue
 		if not String(line).begins_with(DetailFormat.MORALE_BREAKDOWN_INDENT):
 			prose.append(String(line))
 	return prose

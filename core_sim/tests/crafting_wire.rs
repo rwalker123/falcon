@@ -87,6 +87,9 @@ const A_CRUMB: f32 = 0.5;
 /// A crew large enough that a bench visibly progresses in one pass and small enough that it does not
 /// finish the sled — `3 × 1.0 × 2.0` tooled is `6.0` against a `work` of `8.0`.
 const BENCH_CREW: u32 = 3;
+/// One crafter: a sled (`work: 8`) is then more than a turn off even with a live tanning frame, so
+/// a fixture that reads one turn's progress or one draw sees neither a completion nor a re-draw.
+const ONE_CRAFTER: u32 = 1;
 /// **One pass in one turn, bare-handed** — `16 × 1.0 × 0.5` is exactly the sled's `work` of `8.0`,
 /// so the fixture gets a delivered batch without looping a system to watch progress accumulate.
 const CREW_THAT_FINISHES_A_SLED_BARE_HANDED: u32 = 16;
@@ -246,7 +249,7 @@ fn sled_input_materials(app: &App) -> Vec<String> {
 /// **Stand a sled up on a fresh world's bench, publish the rate it promises, then buy exactly one
 /// turn of it and publish the progress that bought.** `(rate, progress)`.
 ///
-/// The crew is [`BENCH_CREW`] on both halves of the pairing and neither completes a pass — a
+/// The crew is [`ONE_CRAFTER`] on both halves of the pairing and neither completes a pass — a
 /// completion resets `progress` to zero, which would make the comparison meaningless rather than
 /// merely wrong.
 fn rate_then_one_turn_of_progress(tooled: bool) -> (f32, f32) {
@@ -258,7 +261,7 @@ fn rate_then_one_turn_of_progress(tooled: bool) -> (f32, f32) {
             .stock(TANNING_FRAME_ITEM, 1, PLAIN_TIER, None);
     }
     stock_a_sleds_worth_of_material(&mut app, band);
-    set_bench(&mut app, band, BENCH_CREW);
+    set_bench(&mut app, band, ONE_CRAFTER);
 
     let promised = publish(&mut app, band).bench;
     assert_eq!(
@@ -1773,7 +1776,7 @@ fn the_published_drawn_pile_is_what_the_store_actually_lost() {
         .expect("a spawned band carries an equipment ledger")
         .stock(TANNING_FRAME_ITEM, 1, PLAIN_TIER, None);
     stock_a_sleds_worth_of_material(&mut app, band);
-    set_bench(&mut app, band, BENCH_CREW);
+    set_bench(&mut app, band, ONE_CRAFTER);
 
     let undrawn = publish(&mut app, band);
     assert!(
@@ -2661,10 +2664,10 @@ fn the_standing_material_bill_reaches_the_client() {
 fn a_bench_that_cannot_draw_its_pile_publishes_no_income() {
     const WOOD: &str = "wood";
     const HURDLES: &str = "hurdles";
-    /// A crew big enough that the rate is unmistakably positive while the `work: 7` recipe still
+    /// A crew big enough that the rate is unmistakably positive while the `work: 3.5` recipe still
     /// takes more than one turn — so the *stocked* arm shows progress without a completion resetting
     /// the meter this reads.
-    const BENCH_HANDS: u32 = 4;
+    const BENCH_HANDS: u32 = 2;
     /// Enough wood for a pass, banked at the material's own axes.
     const A_PASS_OF_WOOD: f32 = 40.0;
 
@@ -3116,7 +3119,7 @@ fn with_nothing_makeable_a_row_keeps_the_last_started_recipe_else_the_first() {
 }
 
 /// One knapped spear's worth of stone: the recipe's own `amount`, so the draw leaves the pile empty.
-const ONE_KNAPPED_SPEAR_OF_STONE: f32 = 1.0;
+const ONE_KNAPPED_SPEAR_OF_STONE: f32 = 0.1;
 /// What "the stone is gone" means on the store — the draw is exact, so anything above a crumb of
 /// float noise is stone the fixture forgot to spend.
 const NO_STONE_LEFT: f32 = 1e-4;

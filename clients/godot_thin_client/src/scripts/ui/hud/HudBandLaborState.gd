@@ -1463,10 +1463,11 @@ const STAFFED_KINDS: Array[String] = [
 ## The wire keys the three staffing passes publish on a row, copied onto the merged row as integers:
 ## the player's Max, the hands to hold / reach the floor, the three-way split of `workers` into keepers
 ## / kitted / bare, and the pass-3 ceiling. **This map is a hand-listed allowlist**, so a key not copied
-## here does not exist as far as the work board is concerned.
+## here does not exist as far as the work board is concerned. `bare_idle` is a wire bool that rides
+## as 0/1 like its neighbours (read back with `!= 0`).
 const STAFFED_KEYS: Array[String] = [
 	"max_workers", "hold_crew", "reach_crew", "keepers_staffed", "kitted_staffed", "bare_staffed",
-	"useful_crew",
+	"useful_crew", "bare_idle",
 ]
 
 ## Is this row's crew the sim's? `move_with_herd` is the hunting-by-need row, whose count is not.

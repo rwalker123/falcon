@@ -8,8 +8,8 @@
 //!
 //! The arithmetic the fixtures share: `hoes` wear 0.16 condition per work unit built over a durability
 //! of 100, and `baskets` 0.04 per biomass gathered. A bare-handed crafter works bone and fibre at
-//! `progress_per_worker_turn x hand_working.rate` = 0.5 a turn, so the hoes recipe (work 5) takes ten
-//! crafter-turns and the baskets recipe (work 6) twelve.
+//! `progress_per_worker_turn x hand_working.rate` = 1.0 a turn (2.0 x 0.5), so the hoes recipe (work
+//! 5) takes five crafter-turns and the baskets recipe (work 6) six.
 
 use bevy::prelude::{App, Entity, UVec2, With};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
@@ -31,9 +31,9 @@ const BONE: &str = "bone";
 const HIDE: &str = "hide";
 const FIBRE: &str = "fibre";
 const PLENTY: f32 = 40.0;
-/// Four crafters: the hoes recipe (work 5) at 0.5 a crafter-turn is 2.5 turns, quoted as 3.
-const FOUR_CRAFTERS: u32 = 4;
-/// Nobody at the bench: quoted at ONE crafter, so the hoes recipe is 10 turns.
+/// Two crafters: the hoes recipe (work 5) at 1.0 a crafter-turn is 2.5 turns, quoted as 3.
+const TWO_CRAFTERS: u32 = 2;
+/// Nobody at the bench: quoted at ONE crafter, so the hoes recipe is 5 turns.
 const UNSTAFFED: u32 = 0;
 /// Uses of `build_progress` a turn: x0.16 = 4 condition a turn.
 const FOUR_A_TURN: f32 = 25.0;
@@ -218,10 +218,10 @@ fn find<'a>(rows: &'a [Published], item: &str) -> Option<&'a Published> {
 }
 
 /// **THE BASE FIXTURE**: two hoes, the unit in hand worn to 90 after a full window of 4 a turn, both
-/// consumers' lines covered (so nothing is short TODAY), four crafters at the bench. The unit in hand
+/// consumers' lines covered (so nothing is short TODAY), two crafters at the bench. The unit in hand
 /// has 10 left, so at 4 a turn it runs out in 2.5 turns - inside the 3-turn lead.
 fn two_hoes_wearing_out(app: &mut App, band: Entity) {
-    bare_bench(app, band, FOUR_CRAFTERS);
+    bare_bench(app, band, TWO_CRAFTERS);
     consumers(app, band, &[(HOES, 2.0, 2.0)]);
     let window = window_turns(app);
     hold(app, band, HOES, 2, 90.0 - 4.0 * window as f32);
@@ -251,7 +251,7 @@ fn a_unit_forecast_to_wear_out_within_the_lead_really_does() {
     );
     assert_eq!(
         hoes.lead, 3,
-        "work 5 at four crafters x 0.5 = 2.5 turns, quoted whole"
+        "work 5 at two crafters x 1.0 = 2.5 turns, quoted whole"
     );
     assert!(
         (hoes.expires - 2.5).abs() < 1e-3,
@@ -287,7 +287,7 @@ fn a_unit_forecast_to_wear_out_within_the_lead_really_does() {
 
     // CONTROL: the same band with a fresh unit in hand forecasts nothing, and retires nothing.
     let (mut control, band) = world();
-    bare_bench(&mut control, band, FOUR_CRAFTERS);
+    bare_bench(&mut control, band, TWO_CRAFTERS);
     consumers(&mut control, band, &[(HOES, 2.0, 2.0)]);
     hold(&mut control, band, HOES, 2, 0.0);
     warm_up(
@@ -308,7 +308,7 @@ fn a_unit_forecast_to_wear_out_within_the_lead_really_does() {
 #[test]
 fn a_spare_unit_absorbs_the_forecast_loss() {
     let (mut app, band) = world();
-    bare_bench(&mut app, band, FOUR_CRAFTERS);
+    bare_bench(&mut app, band, TWO_CRAFTERS);
     consumers(&mut app, band, &[(HOES, 2.0, 2.0)]);
     let window = window_turns(&app);
     hold(&mut app, band, HOES, 3, 90.0 - 4.0 * window as f32);
@@ -337,7 +337,7 @@ fn a_spare_unit_absorbs_the_forecast_loss() {
 #[test]
 fn an_item_short_today_and_wearing_out_is_one_entry_with_both_counts() {
     let (mut app, band) = world();
-    bare_bench(&mut app, band, FOUR_CRAFTERS);
+    bare_bench(&mut app, band, TWO_CRAFTERS);
     // Three needed, two issued: one short today. Two held, the one in hand about to expire.
     consumers(&mut app, band, &[(HOES, 3.0, 2.0)]);
     let window = window_turns(&app);
@@ -395,7 +395,7 @@ fn an_item_short_today_and_wearing_out_is_one_entry_with_both_counts() {
 #[test]
 fn upcoming_only_items_rank_below_every_shortage_soonest_first() {
     let (mut app, band) = world();
-    bare_bench(&mut app, band, FOUR_CRAFTERS);
+    bare_bench(&mut app, band, TWO_CRAFTERS);
     consumers(
         &mut app,
         band,
@@ -452,13 +452,13 @@ fn the_lead_time_follows_the_crew_and_the_queue() {
     fixture(&mut app, UNSTAFFED);
     let rows = publish(&mut app, band);
     let unstaffed = find(&rows, HOES).expect("an unstaffed bench still quotes");
-    assert_eq!(unstaffed.lead, 10, "work 5 at ONE crafter x 0.5 = 10 turns");
+    assert_eq!(unstaffed.lead, 5, "work 5 at ONE crafter x 1.0 = 5 turns");
     assert_eq!(unstaffed.upcoming, 1);
 
-    fixture(&mut app, FOUR_CRAFTERS);
+    fixture(&mut app, TWO_CRAFTERS);
     let rows = publish(&mut app, band);
     let staffed = find(&rows, HOES).expect("suggested");
-    assert_eq!(staffed.lead, 3, "four crafters: 2.5 turns, quoted whole");
+    assert_eq!(staffed.lead, 3, "two crafters: 2.5 turns, quoted whole");
     assert_eq!(
         staffed.upcoming, 1,
         "24 condition lost: the unit in hand and none of the next"
@@ -497,7 +497,7 @@ fn the_lead_time_follows_the_crew_and_the_queue() {
 #[test]
 fn no_recorded_wear_forecasts_nothing() {
     let (mut app, band) = world();
-    bare_bench(&mut app, band, FOUR_CRAFTERS);
+    bare_bench(&mut app, band, TWO_CRAFTERS);
     consumers(&mut app, band, &[(HOES, 2.0, 2.0)]);
     hold(&mut app, band, HOES, 2, 99.0);
     assert_eq!(
@@ -525,7 +525,7 @@ fn no_recorded_wear_forecasts_nothing() {
 #[test]
 fn the_window_forgets_turns_beyond_its_length() {
     let (mut app, band) = world();
-    bare_bench(&mut app, band, FOUR_CRAFTERS);
+    bare_bench(&mut app, band, TWO_CRAFTERS);
     hold(&mut app, band, HOES, 50, 0.0);
     warm_up(
         &mut app,
@@ -758,7 +758,7 @@ fn expiry_is_the_turn_the_shortage_starts_and_a_spare_defers_it() {
     let (mut app, band) = world();
     let window = window_turns(&app) as f32;
     let fixture = |app: &mut App, held: u32| {
-        bare_bench(app, band, FOUR_CRAFTERS);
+        bare_bench(app, band, TWO_CRAFTERS);
         consumers(app, band, &[(HOES, 2.0, 2.0)]);
         hold(app, band, HOES, held, 90.0 - 4.0 * window);
         warm_up(app, band, HOES, WearQuantum::BuildProgress, FOUR_A_TURN);
@@ -796,7 +796,7 @@ fn expiry_is_the_turn_the_shortage_starts_and_a_spare_defers_it() {
 fn ranking_follows_when_the_shortage_starts() {
     let (mut app, band) = world();
     let window = window_turns(&app) as f32;
-    bare_bench(&mut app, band, FOUR_CRAFTERS);
+    bare_bench(&mut app, band, TWO_CRAFTERS);
     consumers(&mut app, band, &[(HOES, 2.0, 2.0), (BASKETS, 1.0, 1.0)]);
     hold(&mut app, band, HOES, 3, 90.0 - 4.0 * window);
     hold(&mut app, band, BASKETS, 1, 88.0 - 4.0 * window);
@@ -832,7 +832,7 @@ fn ranking_follows_when_the_shortage_starts() {
 fn a_huge_queue_gives_the_answer_a_long_enough_one_does() {
     let (mut app, band) = world();
     let window = window_turns(&app) as f32;
-    bare_bench(&mut app, band, FOUR_CRAFTERS);
+    bare_bench(&mut app, band, TWO_CRAFTERS);
     consumers(&mut app, band, &[(HOES, 2.0, 2.0)]);
     hold(&mut app, band, HOES, 2, 90.0 - 4.0 * window);
     warm_up(

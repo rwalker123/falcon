@@ -1679,9 +1679,15 @@ const SHORT_CREW_NOUN_ONE := "worker"
 const SHORT_CREW_NOUN_MANY := "workers"
 
 ## How many workers short the row is, `0` = not short. `max_workers` 0 = no Max.
-static func crew_shortfall(workers: int, max_workers: int, useful_crew: int) -> int:
+## A no-Max row where an unarmed hand adds nothing (`bare_idle`) AND that has a hold crew (`hold_crew > 0`) asks at
+## `max(hands present, hold_crew)`, mirroring `take_claims::wanted_ask_crew`, so it is short by whatever of the
+## hold crew is missing. A `bare_idle` row with no hold crew falls through to the ordinary no-Max one-head ask.
+static func crew_shortfall(workers: int, max_workers: int, useful_crew: int,
+        bare_idle: bool = false, hold_crew: int = 0) -> int:
     if max_workers > 0:
         return maxi(mini(max_workers, useful_crew) - workers, 0)
+    if bare_idle and hold_crew > 0:
+        return maxi(hold_crew - workers, 0)
     if workers == 0 and useful_crew > 0:
         return SHORT_CREW_NO_MAX_STARVED
     return 0

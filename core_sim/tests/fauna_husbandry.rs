@@ -3508,16 +3508,22 @@ fn the_full_wild_to_pen_climb_is_paced_by_practising_each_rung() {
         herd_of(app, &id).is_domesticated()
     });
 
-    // Leg 3 — **the new leg**: practise the PASTORAL rung. The same Sustain hunt now teaches
-    // Penning, because the herd stands on a different rung.
+    // Leg 3 - **the Penning leg OVERLAPS the Tame.** A source with work banked on the rung it is
+    // raising teaches THAT rung's lesson, so the herd taught Penning on every turn its crew worked
+    // it mid-Tame. Whatever the Tame did not cover is the remainder, paid hunting the pastoral herd.
+    let penning_during_tame = ladder_knowledge(&app, PENNING_DISCOVERY_ID);
     assert!(
-        ladder_knowledge(&app, PENNING_DISCOVERY_ID) < LESSON_LEARNED,
-        "Penning cannot already be known — taming a WILD herd practises rung 1, not rung 2"
+        penning_during_tame > 0.0,
+        "a herd mid-Tame must already be teaching Penning, got {penning_during_tame}"
     );
     set_hunt_improvement(&mut app, band, None);
-    let leg3 = turns_until(&mut app, "learn Penning", 60, |app| {
-        ladder_knowledge(app, PENNING_DISCOVERY_ID) >= LESSON_LEARNED
-    });
+    let leg3 = if ladder_knowledge(&app, PENNING_DISCOVERY_ID) >= LESSON_LEARNED {
+        0
+    } else {
+        turns_until(&mut app, "learn Penning", 60, |app| {
+            ladder_knowledge(app, PENNING_DISCOVERY_ID) >= LESSON_LEARNED
+        })
+    };
 
     // Leg 4 — `Corral`, gated on the Penning the leg above just earned. Re-staffed to the herd's
     // CURRENT keeper crew: it has grown while the legs above ran, and an under-staffed keeper sheds.
@@ -3528,40 +3534,74 @@ fn the_full_wild_to_pen_climb_is_paced_by_practising_each_rung() {
         herd_of(app, &id).is_corralled()
     });
 
-    let total = leg1 + leg2 + leg3 + leg4;
+    // The Penning clock starts with the Tame, so the climb is Herding, then the longer of the Tame
+    // and the Penning lesson, then the Corral.
+    let penning_clock = leg2 + leg3;
+    let total = leg1 + penning_clock + leg4;
     println!(
-        "wild -> pen climb (Wild Boar): Herding {leg1} + Tame {leg2} + Penning {leg3} + Corral \
-         {leg4} = {total} turns"
+        "wild -> pen climb (Wild Boar): Herding {leg1} + Tame {leg2} (Penning {penning_during_tame:.2} \
+         banked meanwhile) + Penning remainder {leg3} + Corral {leg4} = {total} turns"
     );
 
-    // Each knowledge leg is ~20 turns of practice (threshold / progress_per_turn).
-    for (leg, turns) in [("Herding", leg1), ("Penning", leg3)] {
-        assert!(
-            (18..=22).contains(&turns),
-            "the {leg} leg should be ~20 turns of practice, got {turns}"
-        );
-    }
-    // **THE CLIMB IS KNOWLEDGE-PACED, and since improvements were priced in work it is emphatically
-    // so** (`docs/plan_unit_costed_work.md` §1.2). A build's turns are now `work_cost / crew output`,
-    // and an animal build's crew is the herd's own `herders_needed` — a real boar herd wants enough
-    // keepers to clear a 62.5-unit Tame in a handful of turns. Under-staffing it to slow the build
-    // down is not available: an under-herded flock **sheds**, so the keeper crew is the herd's, not
-    // the player's. So the two build legs are short and the two lessons dominate, which is exactly
-    // what this test's name claims.
+    // Herding is ~20 turns of practice (threshold / progress_per_turn).
+    assert!(
+        (18..=22).contains(&leg1),
+        "the Herding leg should be ~20 turns of practice, got {leg1}"
+    );
+    // **Penning is ~20 turns of practice too, but it starts WITH the Tame**, so its clock (the Tame
+    // plus whatever remainder was left) lands in that band - unless the Tame outlasted it.
+    assert!(
+        (leg3 == 0) || (18..=22).contains(&penning_clock),
+        "unless the Tame outlasted it, Penning should land ~20 turns after the Tame began, got \
+         {penning_clock}"
+    );
     for (leg, turns) in [("Tame", leg2), ("Corral", leg4)] {
         assert!(turns >= 1, "the {leg} leg must take at least a turn");
-        assert!(
-            turns < leg1 + leg3,
-            "the {leg} leg ({turns}) is capped by the rung's builders, so it is shorter than the \
-             two lessons together ({leg1} + {leg3}) - the climb is paced by PRACTISING each rung"
-        );
     }
-    // The headline: a pen is a ~45-turn commitment on this fixture herd, and better than half of it
-    // is the two lessons. Broad band — these are playtest dials.
+    // The headline: Penning overlapping the Tame removes up to a lesson's worth of serial turns, so
+    // the climb is shorter than the four legs run one after the other (a lesson is ~20 turns).
     assert!(
-        total > leg1 + leg3,
-        "building adds turns to the two lessons: {total} against {} of practice",
-        leg1 + leg3
+        total < leg1 + leg2 + 20 + leg4,
+        "overlapping the Penning lesson with the Tame must beat the serial climb: {total}"
+    );
+}
+
+/// **A herd mid-`Tame` teaches PENNING, and a wild herd with nothing banked teaches only Herding.**
+/// A source with work banked on the rung it is raising teaches that rung's lesson, so the Penning
+/// clock starts with the Tame instead of waiting for it to finish. Herding is granted so the Tame may
+/// run; Penning starts from zero, so it alone can show which lesson was credited.
+#[test]
+fn a_herd_mid_tame_teaches_penning_and_a_wild_herd_teaches_herding_only() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    rebadge_as(&mut app, &id, "boar");
+    let keepers = keeper_crew(&app, &id);
+    spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, keepers);
+    run_turns_with_hunt(&mut app, 3);
+    assert!(ladder_knowledge(&app, HERDING_DISCOVERY_ID) > 0.0);
+    assert_eq!(
+        ladder_knowledge(&app, PENNING_DISCOVERY_ID),
+        0.0,
+        "a wild herd with nothing banked teaches Herding only"
+    );
+
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    rebadge_as(&mut app, &id, "boar");
+    app.world
+        .resource_mut::<core_sim::DiscoveryProgressLedger>()
+        .add_progress(FactionId(0), HERDING_DISCOVERY_ID, scalar_one());
+    let keepers = keeper_crew(&app, &id);
+    let band = spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, keepers);
+    set_hunt_improvement(&mut app, band, Some(shipped::tame()));
+    run_turns_with_hunt(&mut app, 3);
+    assert!(
+        !herd_of(&app, &id).is_domesticated() && herd_of(&app, &id).ladder_position() > 0.0,
+        "the fixture must be mid-Tame"
+    );
+    assert!(
+        ladder_knowledge(&app, PENNING_DISCOVERY_ID) > 0.0,
+        "a herd with work banked on the pastoral rung teaches Penning while it is tamed"
     );
 }
 
@@ -3627,6 +3667,27 @@ fn species_shed_params(app: &App, id: &str) -> (f32, f32) {
     let registry = app.world.resource::<HerdRegistry>();
     let herd = registry.find(id).unwrap();
     (fauna.animals_per_herder_for(&herd.species), herd.body_mass)
+}
+
+/// The `animal:pastoral` rung's own upkeep rate (work per keeper-load), read off the ladder. A tamed
+/// herd's bill is `load × this`, so a worker-turn of keeping covers `1 / this` loads of animals.
+fn pastoral_rate(app: &App) -> f32 {
+    app.world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(shipped::animal_pastoral())
+        .upkeep
+        .as_ref()
+        .expect("the pastoral rung declares an upkeep")
+        .work_per_turn
+}
+
+/// [`species_shed_params`] for a TAMED herd: the first number is the heads ONE WORKER-TURN of keeping
+/// covers (`animals_per_herder / the pastoral rate`), which is what a shed capacity of `hands × heads`
+/// is denominated in once the rung's rate is not `1.0`.
+fn pastoral_shed_params(app: &App, id: &str) -> (f32, f32) {
+    let (aph, body_mass) = species_shed_params(app, id);
+    (aph / pastoral_rate(app), body_mass)
 }
 
 /// **Seat the keeping exactly as `herders` hands would supply it** — `herders` worker-turns, which is
@@ -3706,33 +3767,48 @@ fn probe_the_price_of_holding_a_herd() {
     );
 }
 
-/// **THE SHIPPED ROSTER ASKS FOR EXACTLY THE KEEPERS IT ALWAYS ASKED FOR** — the pacing-neutrality
-/// claim of `docs/plan_standing_upkeep.md` §2.4's animal half, asserted per species.
+/// **EVERY SPECIES ASKS FOR THE KEEPERS ITS RUNG'S RATE NAMES** — the keeper count is
+/// `ceil(load × rate)`, where the load is `head count / animals_per_herder` and the rate is the
+/// standing rung's own `upkeep.work_per_turn`.
 ///
 /// The keeper demand stopped being a declared **head count** and became **work per turn**: the rung
-/// declares `work_per_turn: 1.0, scaled_by: source_load` and the species supplies the load
-/// (`head count / animals_per_herder`). Since one worker-turn is `PER_WORKER_OUTPUT`, `ceil(demand)`
-/// is the same `ceil((biomass/body_mass)/animals_per_herder)` the retired helper computed — so a
-/// shepherd still minds 200 fowl and a cowherd still minds 12 aurochs.
+/// declares `work_per_turn: R, scaled_by: source_load` and the species supplies the load. One
+/// worker-turn is `PER_WORKER_OUTPUT`, so `ceil(demand)` is `ceil(load × R)`. The pen's `R` is `1.0`
+/// (the retired head count exactly); the pastoral rung's is a chosen playtest dial below it, so a
+/// tamed herd asks for fewer keepers than a pen of the same head count.
 ///
-/// **Asserted against the retired arithmetic restated here, not against a table of literals**, so a
-/// roster retune moves the expectation with the game and only a change to the *model* can fail it.
+/// **Asserted against the ladder's own rate read here, not against a table of literals**, so a
+/// retune of either rate moves the expectation with the game and only a change to the *model*
+/// (the load, the `ceil`, the rung the herd stands on) can fail it. The pen rate being at least the
+/// pastoral rate is the validated ordering and is asserted too.
 #[test]
-fn every_species_asks_for_the_keepers_it_asked_for_before() {
-    /// The demand `fauna::herders_needed` computed before it became an upkeep — the one thing this
-    /// test may not read off the sim, because reproducing it is the whole assertion.
-    fn retired_herders_needed(biomass: f32, body_mass: f32, animals_per_herder: f32) -> u32 {
-        let animals = biomass / body_mass;
-        ((animals / animals_per_herder).ceil() as u32).max(1)
-    }
-
+fn every_species_asks_for_the_keepers_its_rung_rate_names() {
     let app = spawn_world();
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let rate_of = |rung| {
+        ladder
+            .rung(rung)
+            .upkeep
+            .as_ref()
+            .expect("a managed rung declares an upkeep")
+            .work_per_turn
+    };
+    let (pastoral_rate, pen_rate) = (
+        rate_of(shipped::animal_pastoral()),
+        rate_of(shipped::animal_pen()),
+    );
+    assert!(
+        pen_rate >= pastoral_rate,
+        "the ladder's validated ordering: a higher rung never costs less to hold"
+    );
+    let keepers =
+        |load: f32, rate: f32| ((load * rate) / core_sim::PER_WORKER_OUTPUT).ceil() as u32;
     let mut checked = 0;
+    let mut pen_checked = 0;
     for species in fauna.species.values() {
         // A `wild`-ceiling species is never herded, so it declares no `animals_per_herder` and has
-        // no keeper demand to be neutral about.
+        // no keeper demand to check.
         if species.husbandry_ceiling != Some(shipped::animal_pastoral())
             && species.husbandry_ceiling != Some(shipped::animal_pen())
         {
@@ -3740,8 +3816,8 @@ fn every_species_asks_for_the_keepers_it_asked_for_before() {
         }
         let aph = fauna.animals_per_herder_for(&species.display_name);
         let body_mass = species.body_mass;
-        // Sweep head counts across several `animals_per_herder` boundaries — the `ceil` is where an
-        // inversion like this goes wrong, so the boundaries are the point.
+        // Sweep head counts across several `animals_per_herder` boundaries — the `ceil` is where
+        // this goes wrong, so the boundaries are the point.
         for heads in [1.0_f32, aph - 0.5, aph, aph + 0.5, aph * 3.0, aph * 7.25] {
             let mut herd = herd_of(&app, &prime_thriving_herd(&mut spawn_world()));
             herd.species = species.display_name.clone();
@@ -3749,19 +3825,34 @@ fn every_species_asks_for_the_keepers_it_asked_for_before() {
             herd.biomass = heads * body_mass;
             herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
             herd.herders_needed = 0; // unstabilized, so the raw reading is what answers
+            let load = herd.biomass / body_mass / aph;
             assert_eq!(
                 core_sim::herd_herders_needed(&herd, &fauna, &ladder),
-                retired_herders_needed(herd.biomass, body_mass, aph),
-                "{} at {heads} head (animals_per_herder {aph}): the keeper count must not have \
-                 moved when it became a work rate",
+                keepers(load, pastoral_rate),
+                "{} tamed at {heads} head (animals_per_herder {aph}): keepers must be \
+                 ceil(load x the pastoral rate {pastoral_rate})",
                 species.display_name
             );
             checked += 1;
+            if species.husbandry_ceiling == Some(shipped::animal_pen())
+                && herd.corral_at(UVec2::new(1, 1), &core_sim::LadderConfig::builtin())
+            {
+                herd.herders_needed = 0;
+                assert_eq!(
+                    core_sim::herd_herders_needed(&herd, &fauna, &ladder),
+                    keepers(load, pen_rate),
+                    "{} penned at {heads} head (animals_per_herder {aph}): keepers must be \
+                     ceil(load x the pen rate {pen_rate})",
+                    species.display_name
+                );
+                pen_checked += 1;
+            }
         }
     }
     assert!(
-        checked >= 30,
-        "fixture: the sweep must actually cover the herdable roster, got {checked} readings"
+        checked >= 30 && pen_checked >= 30,
+        "fixture: the sweep must cover the herdable roster at both rungs, got {checked} tamed and \
+         {pen_checked} penned readings"
     );
 }
 
@@ -4040,10 +4131,14 @@ fn a_tamed_herds_crew_short_of_its_bill_sheds_and_a_kept_one_culls() {
                 .world
                 .resource::<FaunaConfigHandle>()
                 .get()
-                .animals_per_herder_for(FIXTURE_SPECIES);
+                .animals_per_herder_for(FIXTURE_SPECIES)
+                / pastoral_rate(&app);
             let mut registry = app.world.resource_mut::<HerdRegistry>();
             let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
             herd.biomass = HANDS_THE_HERD_WANTS * heads_per_hand * herd.body_mass;
+            // K at the stock: at the pastoral rate a bill of this many hands is MORE heads
+            // than the fixture species' own range holds, and a herd capped at K owes a smaller bill.
+            herd.carrying_capacity = herd.biomass;
         }
         domesticate(&mut app, &id);
         let seated = herd_of(&app, &id).biomass;
@@ -4106,7 +4201,8 @@ fn two_bands_keeping_one_herd_sum_their_hands() {
             .world
             .resource::<FaunaConfigHandle>()
             .get()
-            .animals_per_herder_for(FIXTURE_SPECIES);
+            .animals_per_herder_for(FIXTURE_SPECIES)
+            / pastoral_rate(&app);
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
         herd.biomass = HANDS_THE_HERD_WANTS * heads_per_hand * herd.body_mass;
@@ -4197,7 +4293,7 @@ fn set_maintain_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32
 fn an_over_stocked_managed_herd_converges_to_its_labor_capacity() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
-    let (aph, body_mass) = species_shed_params(&app, &id);
+    let (aph, body_mass) = pastoral_shed_params(&app, &id);
 
     // A fixed keeper crew of `herders` hands ⇒ a labor capacity of `herders × aph` animals. Over-stock
     // the herd well above it, owned + domesticated (so it is managed and sheds).
@@ -4255,7 +4351,7 @@ fn an_over_stocked_managed_herd_converges_to_its_labor_capacity() {
 fn the_shed_is_bounded_by_the_true_overage_near_a_ceil_boundary() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
-    let (aph, body_mass) = species_shed_params(&app, &id);
+    let (aph, body_mass) = pastoral_shed_params(&app, &id);
 
     // `current = 2·aph + 2` ⇒ needed = ceil = 3; staffed at 2 herders ⇒ herded_fraction = 2/3, real
     // capacity = 2·aph, true overage = **2 animals**. The old shorthand would read
@@ -4307,7 +4403,7 @@ fn the_shed_is_bounded_by_the_true_overage_near_a_ceil_boundary() {
 fn a_partially_herded_pastoral_herd_stays_tame_with_regrowth() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
-    let (aph, body_mass) = species_shed_params(&app, &id);
+    let (aph, body_mass) = pastoral_shed_params(&app, &id);
     let herders = 3.0_f32;
     let capacity_animals = herders * aph;
     let cap = {
