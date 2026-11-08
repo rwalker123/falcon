@@ -3797,20 +3797,8 @@ pub fn next_turns_stand(patch: &ForagePatch, forage: &ForageLaborConfig) -> Fora
     stand
 }
 
-/// **The rung a patch stands on** — the plant ladder resolved for one patch, top-down: sown →
-/// `plant:farm`, cultivated → `plant:tended`, else `plant:wild`. The exact twin of
-/// `fauna::herd_rung`, and the same seam: a system asks the patch for its rung and reads what that
-/// rung declares, rather than re-deriving the ladder from `is_cultivated()` at the call site.
-///
-/// Its one reader today is the Forage arm of `advance_labor_allocation` — **which knowledge this
-/// patch's rung teaches** (`RungDef::knowledge_earned`, slice 4). The plant web has no movement
-/// primitive to dispatch (a patch is a place), so unlike the animal side there is no second caller.
-pub(crate) fn patch_rung<'a>(patch: &ForagePatch, ladder: &'a LadderConfig) -> &'a RungDef {
-    ladder.rung(patch_rung_key(patch))
-}
-
-/// **[`patch_rung`] without the ladder** — the same top-down reading, answered as the key rather than
-/// the record, for the callers that want to walk the ladder from it (`LadderConfig::above_id`, and the
+/// **The rung a patch stands on, as a key** — the plant ladder resolved top-down for one patch (sown →
+/// `plant:farm`, cultivated → `plant:tended`, else `plant:wild`), for the callers that want to walk the ladder from it (`LadderConfig::above_id`, and the
 /// `RungId`-taking seams like [`resolve_committed_species`]) instead of reading a record's dials.
 ///
 /// It exists so the "sown → field, cultivated → tended, else wild" test has exactly **one** home: a

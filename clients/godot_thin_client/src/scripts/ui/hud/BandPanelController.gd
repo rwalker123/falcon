@@ -799,12 +799,13 @@ func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxC
     # STEADY debit the Food breakdown itemizes, so the two readouts cannot disagree. **The pens' feed
     # is no longer a term** — a pen eats its fenced pasture and its keeper's hay, never the larder — and
     # raids stay out for the reason they always did: an episodic past loss is not a steady drain.
-    # **This turn's POOLED food rides every step** as the sim's runway walk carries it
-    # (`larder_runway_turns`' `standing_net`), so the empty marker and the `(N turns)` agree.
+    # **The band's STEADY pooling term rides every step** as the sim's runway walk carries it
+    # (`larder_runway_turns`' `standing_net`, `pooling_steady_net`), so the empty marker and the
+    # `(N turns)` agree.
     chart.set_projection(
         DetailFormat.band_provisions(band), arrivals,
         DetailFormat.band_food_need(band), _band_labor.current_turn(),
-        DetailFormat.band_pooled_food_net(band))
+        DetailFormat.band_pooling_steady_net(band))
     # A short zone gets a COMPACT chart — same series, same empty marker, less height. This is the
     # whole of what the band zone's tier now buys: the chart is built either way, and drawing it
     # denser is cheaper for the reader than pushing the blocks below it under the scroll.
@@ -2839,8 +2840,8 @@ func _extract_source_models(band: Dictionary) -> Array:
 ## with `filled < required`, named off the roster) REPLACES the row's own `kit_note` line, so the kit shortfall
 ## is stated once, in the one sentence; otherwise the hands reason.
 func _add_short_crew_warn(warn_lines: Array, workers: int, max_workers: int, useful_crew: int,
-        toe: Array, kit_note: String = "") -> void:
-    var short := HudWorkVocab.crew_shortfall(workers, max_workers, useful_crew)
+        toe: Array, kit_note: String = "", bare_idle: bool = false, hold_crew: int = 0) -> void:
+    var short := HudWorkVocab.crew_shortfall(workers, max_workers, useful_crew, bare_idle, hold_crew)
     if short <= 0:
         return
     var kit_names := HudWorkVocab.toe_short_item_names(toe, _item_display_names)
@@ -2856,7 +2857,8 @@ func _put_staffed_fields(model: Dictionary, merged: Dictionary, assignment: Dict
     model["max_workers"] = int(merged.get("max_workers", 0))
     var warn_lines: Array = (model.get("warn_lines", []) as Array).duplicate()
     _add_short_crew_warn(warn_lines, int(model.get("workers", 0)), int(merged.get("max_workers", 0)),
-        int(merged.get("useful_crew", 0)), assignment.get(SourceForecast.ASSIGNMENT_KIT_TOE_KEY, []) as Array)
+        int(merged.get("useful_crew", 0)), assignment.get(SourceForecast.ASSIGNMENT_KIT_TOE_KEY, []) as Array,
+        "", int(merged.get("bare_idle", 0)) != 0, int(merged.get("hold_crew", 0)))
     model["warn_lines"] = warn_lines
     model["hold_crew"] = int(merged.get("hold_crew", 0))
     model["keepers_staffed"] = int(merged.get("keepers_staffed", 0))
@@ -4946,7 +4948,8 @@ func _work_source_model(band: Dictionary, key: Variant, m: Dictionary, kind: Str
     # **…AND THE ROW SHORT OF THE CREW IT ASKED FOR** shares that one ⚠ (a need row has no standing crew to be short).
     if not is_need_row:
         _add_short_crew_warn(warn_lines, workers, int(m.get("max_workers", 0)), int(m.get("useful_crew", 0)),
-            m.get(SourceForecast.ASSIGNMENT_KIT_TOE_KEY, []) as Array, kit_note)
+            m.get(SourceForecast.ASSIGNMENT_KIT_TOE_KEY, []) as Array, kit_note,
+            int(m.get("bare_idle", 0)) != 0, int(m.get("hold_crew", 0)))
     # **THE WORK PARTY ON THIS ROW** (`docs/plan_civilization_steps.md` §One work party), read
     # ONCE here so the row's block, its height and the board's own reservation all ask the same
     # answer. `SourceForecast.party_readout` is the only place the wire's party keys are read and

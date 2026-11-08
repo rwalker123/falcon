@@ -3349,6 +3349,17 @@ pub fn capture_snapshot(
                     weight.max(crate::forage::NO_FORAGE_SEASON)
                 })
         };
+        // **The steady pooling term of every networked band**, resolved once over the whole
+        // network (a band's share of its network's net needs the other members' terms).
+        let pooling_steady = crate::snapshot::population::pooling_steady_nets(
+            populations
+                .iter()
+                .filter(|(_, _, _, _, expedition, ..)| expedition.is_none())
+                .map(|(entity, cohort, allocation, ..)| (entity, cohort, allocation)),
+            &supply_membership,
+            &demographics_config,
+            &supply_network_cfg,
+        );
         let mut population_states: Vec<PopulationCohortState> = populations
             .iter()
             .filter_map(
@@ -3529,6 +3540,7 @@ pub fn capture_snapshot(
                         demographics: &demographics_config,
                         wellbeing: &wellbeing_config,
                         supply_membership: &supply_membership,
+                        pooling_steady: pooling_steady.get(&entity).copied().unwrap_or(0.0),
                         band_names: &band_names,
                         work_range: band_work_range,
                         raid_radius: fauna_config.predators.raid_radius,

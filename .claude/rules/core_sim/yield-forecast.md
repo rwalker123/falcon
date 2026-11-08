@@ -1171,6 +1171,16 @@ Both webs are seated at the *same operating point*: `biomass = floor · K`, wher
 drawdown windfall, which is not a rate — and the validation block below measures that difference
 rather than asserting it.
 
+### Managed rows are priced KEEPING FIRST, and Sections G–J read the early route
+
+A kept source (a tamed herd, a pen, a tended patch, a Field) spends `keep` hands on its standing
+upkeep before the rest take, so every managed row hands the previews `crew_keep_hands` over
+`herd_crew_keeping` / `patch_crew_keeping` (the seed's own split) rather than `NO_HANDS`, and the live
+drive hands `hunt_take` only the take hands. Sections G–J of the same file sweep crews 1..=10 for Wild
+Boar and the reference basket under a bare and a fully stocked kit, price each rung's whole bill
+(build, hurdles, lessons), its payback against the hands it takes off the wild row, and the band the
+numbers are spent in.
+
 ### Three numbers the two seams cannot give it
 
 - **Materials.** `SourceYield::materials` is deliberately empty from a preview (`forecast_source_yield`

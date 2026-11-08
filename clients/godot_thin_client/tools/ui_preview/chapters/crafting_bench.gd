@@ -129,20 +129,21 @@ const BENCH_CREW := 2
 const BENCH_BOUND_WORKING_AGE := 3
 
 ## **THE RUNNING BENCH'S OWN THREE NUMBERS.** Named because every claim about the finish estimate is
-## arithmetic ABOUT them: 3.0 of the 6 `work` a pass costs, and a rate of 1.0 a turn — which is the
-## playtest's own shape, two crafters delivering 1.0 because bare-handed `craft_speed` is 0.5. **The
-## fixture is chosen so a re-derivation fails visibly**: `remaining / rate` is 3 turns while
-## `remaining / crew` is 2, so a panel that guessed the rate off the head count renders a different
-## sentence rather than the same one.
+## arithmetic ABOUT them: 1.0 of the 6 `work` a pass costs, and a rate of 4.0 a turn — two crafters at
+## `progress_per_worker_turn` 2.0 with a tool bounding the bench at `craft_speed` 1.0. (Bare-handed,
+## `craft_speed` is 0.5 and the rate equals the head count, so a bare bench could not tell a panel that
+## reads the wire from one that guessed off the crew.) **The fixture is chosen so a re-derivation fails
+## visibly**: `remaining / rate` is 2 turns while `remaining / crew` is 3, so a panel that guessed the
+## rate off the head count renders a different sentence rather than the same one.
 const BENCH_WORK := 6.0
-const BENCH_PROGRESS := 3.0
-const BENCH_RATE := 1.0
+const BENCH_PROGRESS := 1.0
+const BENCH_RATE := 4.0
 
 ## What the bench has already withdrawn for the pass in flight — the amounts the STORE lost, which is
 ## what a clear destroys and what its tooltip has to name. Deliberately unlike the recipe's own input
 ## row, since the two differ the moment a bench tool's material efficiency applies.
-const BENCH_DRAWN_FIBRE := 5.0
-const BENCH_DRAWN_HIDE := 1.0
+const BENCH_DRAWN_FIBRE := 2.0
+const BENCH_DRAWN_HIDE := 0.2
 
 ## **THE RUNNING BENCH'S HEAD ORDER** — two baskets asked for, one made, which is what the head row's
 ## `1/2` reads. Its `−` is DEAD (a count of one would finish the order); the queue state below stages
@@ -152,19 +153,19 @@ const BENCH_ORDER_MADE := 1
 
 ## **THE PROGRESS LINE, SPELLED OUT RATHER THAN RECOMPOSED** through the vocab formats the panel
 ## builds it with — an expectation borrowed from the code under test can only agree with itself. It
-## is the running fixture's own reading: 3.0 of the 6 work a pass costs, what a turn adds and the
+## is the running fixture's own reading: 1.0 of the 6 work a pass costs, what a turn adds and the
 ## turns that implies, and the grade the pile in flight fixed. What the order has already delivered
 ## is NOT on it — that is the head queue row's `made/count`, the one home that fact has.
-const BENCH_PROGRESS_LINE := "3.0 of 6 work · +1.0/turn · done in 3 turns · this pile → good"
+const BENCH_PROGRESS_LINE := "1.0 of 6 work · +4.0/turn · done in 2 turns · this pile → good"
 
 ## **THE SAME BENCH WITH THE ESTIMATE WITHHELD**, which is what a stopped bench reads: the progress
 ## and the grade, and nothing about turns. Spelled out for the same reason as the line
 ## above, and it is what makes "shows neither" a claim about the WHOLE line rather than about two
 ## needles that could each be missing for their own reason.
-const BENCH_STOPPED_PROGRESS_LINE := "3.0 of 6 work · this pile → good"
+const BENCH_STOPPED_PROGRESS_LINE := "1.0 of 6 work · this pile → good"
 
 ## The tooltip the ✕ carries on a DRAWN bench — the withdrawal, named material by material.
-const BENCH_CLEAR_TOOLTIP := "Take this order off the bench — 5 fibre · 1 hide already cut are lost"
+const BENCH_CLEAR_TOOLTIP := "Take this order off the bench — 2 fibre · 0.2 hide already cut are lost"
 
 ## **THE CHEAPEST GENUINE REFUSAL THERE IS**, and the sim's own wording for it
 ## (`core_sim/src/snapshot/crafting.rs`): the crew walked off. It is also the reason that SURVIVES the
@@ -187,7 +188,7 @@ const BLOCKED_BENCH_SEVERITY := HudCraftingVocab.SEVERITY_NEUTRAL
 ## is not happening. Its pile is undrawn too, which is the other tooltip this chapter has to see.
 const SHORT_BENCH_REASON := "Short 0.6 fibre"
 const SHORT_BENCH_CREW := 2
-const SHORT_BENCH_RATE := 1.0
+const SHORT_BENCH_RATE := 2.0
 const SHORT_BENCH_PROGRESS := 1.0
 const SHORT_BENCH_PROGRESS_LINE := "1.0 of 6 work"
 ## **AND THE SIM CALLS THIS ONE A FAULT.** The band cannot cover the next draw and nothing but the
@@ -211,7 +212,7 @@ const CEIL_BENCH_PROGRESS := 1.5
 const CEIL_BENCH_RATE := 1.3
 const CEIL_BENCH_PROGRESS_LINE := "1.5 of 6 work · +1.3/turn · done in 4 turns · this pile → good"
 const NEXT_TURN_BENCH_PROGRESS := 5.6
-const NEXT_TURN_BENCH_PROGRESS_LINE := "5.6 of 6 work · +1.0/turn · done next turn · this pile → good"
+const NEXT_TURN_BENCH_PROGRESS_LINE := "5.6 of 6 work · +4.0/turn · done next turn · this pile → good"
 
 ## The theme entry a Label's ink is read back out of. `get_theme_color` answers the override where one
 ## is set, which is how this HUD colours every label.
@@ -2093,8 +2094,8 @@ func _assert_panel_renders() -> void:
 	h._assert_hud("crafting — a running bench says how far along it is and nothing beneath it",
 		_label_with_text(panel, BENCH_PROGRESS_LINE) != null and _blocked_line(panel) == null)
 	# **THE ESTIMATE IS `ceil((work − progress) / rate)`, and the fixture is what makes the claim
-	# discriminating**: 3 remaining at 1.0 a turn is three turns, where a panel dividing by the CREW
-	# would say two. The expected number is computed from this chapter's own constants rather than
+	# discriminating**: 5 remaining at 4.0 a turn is two turns, where a panel dividing by the CREW
+	# would say three. The expected number is computed from this chapter's own constants rather than
 	# through the panel's format, an expectation borrowed from the code under test agreeing only with
 	# itself.
 	var expected_turns := int(ceil((BENCH_WORK - BENCH_PROGRESS) / BENCH_RATE))
@@ -2654,7 +2655,7 @@ func _recipes() -> Array:
 		{
 			"id": "cordage", "display_name": "Cordage", "craft": "weaving",
 			"group": HudCraftingVocab.GROUP_STOCK, "work": 3.0, "requires_knowledge": [],
-			# TWO inputs, because the shipped stock recipe has two (`hurdles` = 4 wood · 2 hide) and a
+			# TWO inputs, because the shipped stock recipe has two (`hurdles` = 4 wood · 0.5 hide) and a
 			# one-input fixture cannot show whether the cost cell fits `a · b` PLUS the yield. `fibre`
 			# stays first and keeps the `reads_axis` the row's role line reads; `hide` carries none,
 			# and is a material the fixture already publishes and the band already banks, so no
@@ -3784,9 +3785,9 @@ func _assert_a_single_recipe_bench_names_no_recipe() -> void:
 func _assert_one_row_per_material_made() -> void:
 	var recipes := _recipes()
 	recipes.append(_stock_recipe(HURDLES_WOOD_RECIPE, HURDLES_WOOD_LABEL, [["wood", 4.0, ""],
-		["hide", 2.0, ""]]))
+		["hide", 0.5, ""]]))
 	recipes.append(_stock_recipe(HURDLES_WITHY_RECIPE, HURDLES_WITHY_LABEL, [["fibre", 6.0, ""],
-		["hide", 2.0, ""]]))
+		["hide", 0.5, ""]]))
 	h._hud.update_crafting_catalogues(_materials(), _characteristic_bands(), recipes,
 		_craft_knowledge())
 	var band := _crafting_band()
@@ -3828,7 +3829,7 @@ const HURDLES_COUNT := 6
 func _material_suggestion_state() -> void:
 	var recipes := _recipes()
 	recipes.append(_stock_recipe(HURDLES_WOOD_RECIPE, HURDLES_WOOD_LABEL, [["wood", 4.0, ""],
-		["hide", 2.0, ""]]))
+		["hide", 0.5, ""]]))
 	h._hud.update_crafting_catalogues(_materials(), _characteristic_bands(), recipes, _craft_knowledge())
 	var band := _crafting_band()
 	var offers: Array = band["craft_offers"]
@@ -4218,7 +4219,7 @@ func _assert_the_kits_group_reads(panel: CraftingPanel) -> void:
 		_owned_of(panel, KIT_STALKING) == "1 of 6 equipped")
 	h._assert_hud("crafting/kits — …one kit costs each item's suggested recipe, summed (%s)"
 			% [_cost_of(panel, KIT_STALKING)],
-		_cost_of(panel, KIT_STALKING) == "1 stone · 2 wood · 3 fibre · 6 hide each")
+		_cost_of(panel, KIT_STALKING) == "0.1 stone · 0.5 wood · 3 fibre · 2 hide each")
 	var stalking_why := _by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_STALKING) as Label
 	h._assert_hud("crafting/kits — …and its reason names the units short, red while one is not coming (%s)"
 			% [_text_of(stalking_why)],
@@ -4288,7 +4289,7 @@ func _assert_the_picker_states_a_shortage(panel: CraftingPanel) -> void:
 			and (_radio_for(panel, SLED_HIDE_RECIPE)).button_pressed)
 	var message := _by_meta(panel, HudCraftingVocab.KIT_PICKER_MESSAGE_META, KIT_STALKING) as Label
 	h._assert_hud("crafting/kits — the footer says what the picked recipes cannot cover (%s)" % [_text_of(message)],
-		_text_of(message) == "Short 4.2 hide for all 3"
+		_text_of(message) == "Short 2.2 hide for all 3"
 			and message.get_theme_color("font_color") == HudStyle.DANGER)
 	h._assert_hud("crafting/kits — …and Start stays LIVE: a shortage never blocks an order",
 		not (_by_meta(panel, HudCraftingVocab.KIT_PICKER_START_META, KIT_STALKING) as Button).disabled)
@@ -4367,7 +4368,7 @@ func _assert_the_well_names_its_kit(panel: CraftingPanel) -> void:
 func _kit_recipe_book() -> Array:
 	var book := _recipes()
 	book.append(_kit_recipe(SLED_FRAMED_RECIPE, "Sled", "tanning",
-		[["hide", 3.0, ""], ["wood", 2.0, ""], ["fibre", 2.0, ""]], "sled", SLED_FRAMED_LABEL))
+		[["hide", 1.0, ""], ["wood", 1.5, ""], ["fibre", 2.0, ""]], "sled", SLED_FRAMED_LABEL))
 	return book
 
 ## The reference band with the whole-kit wire on it: `kit_needs` (the efficiency-applied per-pass inputs,
@@ -4387,7 +4388,7 @@ func _kit_band() -> Dictionary:
 	band["craft_offers"] = offers
 	band["kit_needs"] = _kit_needs()
 	band["materials_free"] = [
-		{"material_id": "fibre", "amount": 20.8}, {"material_id": "hide", "amount": 13.8},
+		{"material_id": "fibre", "amount": 20.8}, {"material_id": "hide", "amount": 3.8},
 		{"material_id": "bone", "amount": 3.1}, {"material_id": "wood", "amount": 14.0},
 		{"material_id": "stone", "amount": 6.0}]
 	return band
@@ -4434,7 +4435,7 @@ const COMING_KIT := "hunting_coming"
 func _finished_kit_state(base_band: Dictionary) -> void:
 	var band := base_band.duplicate(true)
 	var needs: Array = band["kit_needs"]
-	var spears_recipe := _need_recipe(SPEARS_FLINT_RECIPE, 1.0, [["stone", 1.0], ["wood", 2.0], ["fibre", 1.0]])
+	var spears_recipe := _need_recipe(SPEARS_FLINT_RECIPE, 1.0, [["stone", 0.1], ["wood", 0.5], ["fibre", 1.0]])
 	needs.append(_need(FINISHED_KIT, "Finished kit", ["hunt"], 1, [
 		_need_item("spears", 1, 0, 1, 1, 1, [spears_recipe], 1)]))
 	needs.append(_need(COMING_KIT, "Coming kit", ["hunt"], 1, [
@@ -4463,26 +4464,26 @@ func _kit_needs() -> Array:
 	return [
 		_need(KIT_STALKING, "Stalking kit", ["hunt"], KIT_HUNTERS, [
 			_need_item("spears", 1, KIT_SPEARS_HAVE, 0, KIT_HUNTERS, KIT_HUNTERS - KIT_SPEARS_HAVE, [
-				_need_recipe(SPEARS_BONE_RECIPE, 1.0, [["bone", 1.0], ["fibre", 2.0], ["hide", 1.0]]),
-				_need_recipe(SPEARS_FLINT_RECIPE, 1.0, [["stone", 1.0], ["wood", 2.0], ["fibre", 1.0]])]),
+				_need_recipe(SPEARS_BONE_RECIPE, 1.0, [["bone", 0.1], ["fibre", 1.0], ["hide", 0.2]]),
+				_need_recipe(SPEARS_FLINT_RECIPE, 1.0, [["stone", 0.1], ["wood", 0.5], ["fibre", 1.0]])]),
 			_need_item("sled", 1, KIT_SLED_HAVE, KIT_SLED_QUEUED, KIT_HUNTERS, KIT_HUNTERS - KIT_SLED_HAVE, [
-				_need_recipe(SLED_HIDE_RECIPE, 1.0, [["hide", 6.0], ["fibre", 2.0]]),
-				_need_recipe(SLED_FRAMED_RECIPE, 1.0, [["hide", 3.0], ["wood", 2.0], ["fibre", 2.0]])])]),
+				_need_recipe(SLED_HIDE_RECIPE, 1.0, [["hide", 2.0], ["fibre", 2.0]]),
+				_need_recipe(SLED_FRAMED_RECIPE, 1.0, [["hide", 1.0], ["wood", 1.5], ["fibre", 2.0]])])]),
 		_need(KIT_HARVESTING, "Harvesting kit", ["forage"], KIT_HARVESTERS, [
 			_need_item("baskets", 1, KIT_BASKETS_HAVE, KIT_BASKETS_QUEUED, KIT_HARVESTERS, KIT_HARVESTERS - KIT_BASKETS_HAVE, [
-				_need_recipe(BASKETS_REED_RECIPE, 1.0, [["fibre", 5.0], ["hide", 1.0]]),
-				_need_recipe(BASKETS_WITHY_RECIPE, 1.0, [["wood", 3.0], ["fibre", 2.0]])])]),
+				_need_recipe(BASKETS_REED_RECIPE, 1.0, [["fibre", 2.0], ["hide", 0.2]]),
+				_need_recipe(BASKETS_WITHY_RECIPE, 1.0, [["wood", 1.0], ["fibre", 2.0]])])]),
 		_need(KIT_WARRIOR, "Warrior kit", ["warrior"], KIT_WARRIORS, [
 			_need_item("clubs", 1, KIT_CLUBS_HAVE, 0, KIT_WARRIORS, 0, [
-				_need_recipe("clubs", 1.0, [["bone", 2.0], ["hide", 1.0]])])]),
+				_need_recipe("clubs", 1.0, [["bone", 0.3], ["hide", 0.2]])])]),
 		_need(KIT_WAYFINDING, "Wayfinding kit", ["scout"], KIT_SCOUTS, [
 			_need_item("wayfinding", 1, 0, 0, 0, 0, [
-				_need_recipe("wayfinding", 1.0, [["bone", 1.0], ["hide", 1.0], ["fibre", 1.0]])])]),
+				_need_recipe("wayfinding", 1.0, [["bone", 0.1], ["hide", 0.2], ["fibre", 1.0]])])]),
 		_need(KIT_RANGING, "Ranging kit", ["expedition"], 0, [
 			_need_item("spears", 1, KIT_SPEARS_HAVE, 0, 0, 0, [
-				_need_recipe(SPEARS_FLINT_RECIPE, 1.0, [["stone", 1.0], ["wood", 2.0], ["fibre", 1.0]])]),
+				_need_recipe(SPEARS_FLINT_RECIPE, 1.0, [["stone", 0.1], ["wood", 0.5], ["fibre", 1.0]])]),
 			_need_item("baskets", 1, KIT_BASKETS_HAVE, KIT_BASKETS_QUEUED, 0, 0, [
-				_need_recipe(BASKETS_REED_RECIPE, 1.0, [["fibre", 5.0], ["hide", 1.0]])])]),
+				_need_recipe(BASKETS_REED_RECIPE, 1.0, [["fibre", 2.0], ["hide", 0.2]])])]),
 	]
 
 func _need(kit_id: String, display_name: String, jobs: Array, people: int, items: Array) -> Dictionary:

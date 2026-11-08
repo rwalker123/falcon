@@ -461,6 +461,10 @@ const ONE_HEAD_ASKED: u32 = 1;
 /// is told it lacks is the kit of the crew it was denied:
 /// - a row with a Max asks at `min(Max, useful_crew)` (the staffing already caps `useful_crew` at
 ///   the Max), so a row the pool starved still names its kit;
+/// - a row with no Max where an unarmed hand adds nothing (`StaffedCrew::bare_idle`: a quarry bare
+///   hands cannot wound) asks at `max(hands present, hold_crew)` - the crew that holds the source at
+///   its floor, which the band would field if it had the kit. Bare hands cannot fill the gap, so
+///   asking only the hands present would hide the shortage;
 /// - a **player** row with no Max that got nobody, where a crew would be useful, asks at one head;
 /// - a **chief** row (one the band's order lists) that got nobody asks at one head only when
 ///   `chief_hand_dealt` - the band had an idle hand the staffing left unused and [`row_claims`]
@@ -488,6 +492,9 @@ pub fn wanted_ask_crew(
     }
     match assignment.max_workers {
         Some(max) if max > NO_STAFFED_CREW => Some(max.min(staffing.useful_crew)),
+        _ if staffing.bare_idle && staffing.hold_crew > NO_STAFFED_CREW => {
+            Some(hands_present.max(staffing.hold_crew))
+        }
         _ if hands_present == NO_STAFFED_CREW => Some(ONE_HEAD_ASKED),
         _ => None,
     }
@@ -603,4 +610,86 @@ pub fn row_claims_with_idle(
         rows.asks.push(planned_claim.max(split.claim));
     }
     rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::components::{SourcePriority, StaffedCrew};
+
+    const HOLD_CREW: u32 = 8;
+    const USEFUL_CREW: u32 = 12;
+    const HANDS_PRESENT: u32 = 2;
+    const PLAYERS_MAX: u32 = 5;
+
+    /// A staffed hunt row whose stamp is current for `HANDS_PRESENT` hands.
+    fn hunt_row(max: Option<u32>, bare_idle: bool) -> LaborAssignment {
+        LaborAssignment {
+            party: None,
+            muster_crew: 0,
+            planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
+            max_workers: max,
+            staffing: StaffedCrew {
+                kitted: HANDS_PRESENT,
+                hold_crew: HOLD_CREW,
+                useful_crew: USEFUL_CREW,
+                bare_idle,
+                ..StaffedCrew::default()
+            },
+            target: LaborTarget::Hunt {
+                fauna_id: "herd".to_string(),
+                floor: 0.5,
+                move_with_herd: false,
+            },
+            workers: HANDS_PRESENT,
+            kit: None,
+            priority: SourcePriority::default(),
+        }
+    }
+
+    /// A row bare hands cannot work asks for the crew that would hold the source.
+    #[test]
+    fn a_row_bare_hands_cannot_work_asks_at_its_hold_crew() {
+        assert_eq!(
+            wanted_ask_crew(&hunt_row(None, true), HANDS_PRESENT, false, false),
+            Some(HOLD_CREW)
+        );
+    }
+
+    /// The control: where bare hands work, a no-Max row keeps asking at the hands present.
+    #[test]
+    fn a_row_bare_hands_can_work_keeps_the_hands_present_ask() {
+        assert_eq!(
+            wanted_ask_crew(&hunt_row(None, false), HANDS_PRESENT, false, false),
+            None
+        );
+    }
+
+    /// A Max keeps the existing `min(Max, useful_crew)` rule, bare hands or not.
+    #[test]
+    fn a_max_keeps_its_rule_even_where_bare_hands_cannot_work() {
+        assert_eq!(
+            wanted_ask_crew(
+                &hunt_row(Some(PLAYERS_MAX), true),
+                HANDS_PRESENT,
+                false,
+                false
+            ),
+            Some(PLAYERS_MAX)
+        );
+    }
+
+    /// A row already holding more hands than its hold crew asks for the hands it has.
+    #[test]
+    fn the_ask_is_never_below_the_hands_present() {
+        let mut row = hunt_row(None, true);
+        row.workers = HOLD_CREW + 1;
+        row.staffing.kitted = HOLD_CREW + 1;
+        assert_eq!(
+            wanted_ask_crew(&row, HOLD_CREW + 1, false, false),
+            Some(HOLD_CREW + 1)
+        );
+    }
 }

@@ -906,7 +906,7 @@ const PICKER_MARGIN_BOTTOM := 12
 ## **THE STOCK LINE NAMES NO MATERIAL, and leads with the craft like every other row.** It read
 ## `Reads hide suppleness` until it was reported as meaningless, and both halves of that were wrong:
 ## two bare nouns collide with no separator between them, and the *material* is the one fact the row
-## already states twice over — the Rebuild-costs cell beside it says `4 wood · 2 hide`, and the sim's
+## already states twice over — the Rebuild-costs cell beside it says `4 wood · 0.5 hide`, and the sim's
 ## own refusal under the button says `Hide, no tanning frame`. Leading with the craft is also what
 ## keeps line two a CATEGORY on every row — the stock row was the only one whose line two was a
 ## sentence.
@@ -943,7 +943,7 @@ const ROLE_STOCK_NO_CRAFT_FORMAT := "Worst %s spent first"
 ## The cost cell's per-material clause: the amount, then the material.
 const COST_CLAUSE_FORMAT := "%s %s"
 const COST_SEPARATOR := " · "
-## **WHAT A PASS YIELDS, ON ITS OWN LINE UNDER WHAT IT COSTS** — `4 wood · 2 hide` and then
+## **WHAT A PASS YIELDS, ON ITS OWN LINE UNDER WHAT IT COSTS** — `4 wood · 0.5 hide` and then
 ## `→ 1 hurdles` beneath it. It sits in the cost cell rather than in the Owned cell because
 ## `inputs → output` is what an arrow means: alone in a cell, with nothing on its left, `→ 1 hurdles`
 ## named a relation whose other side was missing. The break is DELIBERATE and not a wrap — the cell

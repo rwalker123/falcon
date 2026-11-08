@@ -27,6 +27,7 @@ server side, so the two ends of the wire have the same shape.
 | `bridge/script_host.rs` | `ScriptHostBridge` (`#[godot_api]`) over the embedded script runtime |
 | `bridge/decoder.rs` | `SnapshotDecoder` (`#[godot_api]`) + the free `decode_snapshot` / `decode_delta`. **The only entry into the decode path** (`SnapshotLoader.gd` is its one caller) |
 | `bridge/variant.rs` | `Variant` ↔ `serde_json` marshalling shared by the bridges |
+| `narrator/` | `NarratorEngine` (`#[godot_api]`) — the Telling's spoken voice: Kokoro-82M through `ort` on one worker thread, espeak-ng `dlopen`ed at runtime for phonemes (GPL-3, never linked). Not part of the decode path; the design and its invariants are `.claude/rules/client/narrator.md` |
 | `snapshot/mod.rs` | The two top-level assemblers: `snapshot_dict` (rasters + sections → the client dict) and `snapshot_to_dict` (walks a `WorldSnapshot`) |
 | `snapshot/raster.rs` | `GridSize`, `OverlaySlices`, `TerrainSlices`, `OverlayChannelParams`, `packed_from_slice`, `insert_overlay_channel`, `normalize_overlay` |
 | `snapshot/delta.rs` | `DeltaAggregator` + `CrisisAnnotationRecord` — a delta carries only changed sections, so it accumulates them into full-snapshot shape and re-enters `snapshot_dict` |

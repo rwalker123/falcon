@@ -495,6 +495,9 @@ var _loadout: StartingLoadoutController = null
 # The OPENING CARD: the Telling's tick-0 lines on a modal card, once per world, in place of the
 # outfitting card's first auto-open — and handing off to it. See `OpeningCardController`.
 var _opening: OpeningCardController = null
+# The spoken narrator (docs/plan_telling_narrator.md). Triggers arrive as signals from the Telling panel,
+# the opening card and the fork card; this holds the controller that voices them.
+var _narrator: NarratorController = null
 var _inset_left: float = 0.0
 var _inset_right: float = 0.0
 var _inset_top: float = 0.0
@@ -663,6 +666,14 @@ func _ready() -> void:
     # relays each onto the signals Main connects to (the controller never emits a HudLayer signal).
     _turnorb = TurnOrbController.new(turn_orb, self, _telling, _note_sink)
     _turnorb.answer_fork_requested.connect(func(payload: Dictionary) -> void: answer_fork_requested.emit(payload))
+    _narrator = NarratorController.new()
+    _narrator.setup(self)
+    _telling.page_shown.connect(_narrator.speak.bind(HudNarratorVocab.SOURCE_PANEL))
+    _telling.narration_stopped.connect(_narrator.stop_source.bind(HudNarratorVocab.SOURCE_PANEL))
+    _turnorb.narration_requested.connect(_narrator.speak.bind(HudNarratorVocab.SOURCE_FORK))
+    _turnorb.narration_stopped.connect(_narrator.stop_source.bind(HudNarratorVocab.SOURCE_FORK))
+    # Preload the model once the HUD is in the tree (a no-op outside the game scene).
+    _narrator.activate.call_deferred()
     _turnorb.advance_requested.connect(func() -> void: next_turn_requested.emit(1))
     # `_turnorb.focus_requested` is wired to `_attention.on_turn_orb_focus` further down, once `_attention`
     # exists (it needs `_bandpanel` for the expedition/pen jumps). The orb never emits during construction,
@@ -871,6 +882,8 @@ func _ready() -> void:
     _opening.setup(self, _loadout)
     _loadout.yield_opening_grant = true
     _loadout.opening_grant_held.connect(_opening.hold_opening_grant)
+    _opening.narration_requested.connect(_narrator.speak.bind(HudNarratorVocab.SOURCE_OPENING))
+    _opening.narration_stopped.connect(_narrator.stop_source.bind(HudNarratorVocab.SOURCE_OPENING))
     # The band/expedition attention producers + orb jump-routing. Constructed AFTER `_bandpanel` (its
     # expedition/pen jumps reuse the panel's own focus paths) and handed the ONE retained helper,
     # `_herd_label_for_id`. It emits its OWN `alert_focus_requested`, relayed onto the HudLayer signal
@@ -1231,6 +1244,7 @@ func update_stance_axes(axes_variant: Variant) -> void:
 
 func update_voice_medium(medium_variant: Variant) -> void:
     _turnorb.update_voice_medium(medium_variant)
+    _narrator.set_voice_medium(_turnorb.current_voice_medium())
 
 ## Is a fork holding the turn? Read by the Inspector-path advance note (the dev toolbar and
 ## autoplay are deliberately NOT gated — see docs/plan_the_telling.md).
@@ -2957,8 +2971,9 @@ func _setup_tooltip() -> void:
     
     add_child(tooltip_panel)
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
     _suppress_tooltip_over_ui()
+    _narrator.process(delta)
 
 ## Hide the hex tooltip whenever the pointer is over an interactive HUD control
 ## (panel, button, minimap, inspector). The map cannot detect this itself: those

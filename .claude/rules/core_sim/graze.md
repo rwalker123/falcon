@@ -292,7 +292,7 @@ oscillates or crashes if built carelessly.
   cloned registry (sim-side only). **`herd_ecology` now returns an owned `EcologyConfig`**
   with the wild curve's `regrowth_rate` swapped for the herd's own (phase bands stay shared); pastoral
   (0.25) / pen (0.90) keep their rung's rate. This is still THE single seam — every consumer reads the
-  folded rate there. Anchors: rabbit/fowl **0.35**, deer/boar **0.10**, migratory **0.04** (was one
+  folded rate there. Anchors: rabbit/fowl **0.35**, deer/boar **0.10**, migratory mammoth **0.04** (reindeer 0.10, horse/steppe_runner/marsh_grazer 0.09, biomass scaled to hold `r·K`) (was one
   global 0.05). **This is the PR #117 fix**: small game bred at a mammoth's rate was the artifact behind
   "a rabbit warren can't provision an expedition."
 - **The convergence gate — `graze.overgraze_escapement_fraction` (0.25).** Grazing (`graze_take`) may

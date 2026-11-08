@@ -544,8 +544,8 @@ func run(harness) -> void:
 
 	# **STATE — THE FOOD LINE WITH A TRANSFER IN IT.** Not a trade readout: the supply network moves
 	# food between neighbouring larders every turn, so any co-networked band carries these two terms.
-	# They are itemized in the BREAKDOWN. The `/turn` headline carries the POOLED one and not the
-	# shipment — see `DetailFormat.band_headline_food_rate`.
+	# They are itemized in the BREAKDOWN. The `/turn` headline carries neither the POOLED one nor the
+	# shipment — the headline is `DetailFormat.band_net_food`, and the `⇄` rows sit below a divider.
 	h._hud._bandpanel.close_verb_form()
 	panel.set_active_tab(BandCityPanel.ZONE_BAND)
 	var transferring := _shipper_band()

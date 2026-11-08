@@ -35,6 +35,10 @@ const BAND_POP: u32 = 30;
 /// A crew big enough that the bench finishes in a small number of turns at the bare-handed rate, so
 /// a test can measure a completion without simulating a season.
 const CREW: u32 = 8;
+/// **One hand at the bench** - too few to finish a hurdle pass in a single turn at the bare-handed
+/// rate, so a test that reads the pile one pass drew sees exactly one pass drawn (a bigger crew now
+/// completes an item inside the turn and draws the next pass off the other pile).
+const ONE_HAND_AT_THE_BENCH: u32 = 1;
 
 const HIDE: &str = "hide";
 const TOUGHNESS: &str = "toughness";
@@ -56,7 +60,10 @@ const FIBRE: &str = "fibre";
 const FINENESS: &str = "fineness";
 const STRENGTH: &str = "strength";
 const SLED: &str = "sled";
-/// **The game's only material-only recipe** — 4 wood + 2 hide, reading hide's `suppleness`.
+/// **One pass of [`SLED`]'s hide**, per `recipes.json` - a pile of exactly one sled, so the bench
+/// finishes one and cannot re-draw.
+const ONE_SLED_PASS_OF_HIDE: f32 = 2.0;
+/// **The game's only material-only recipe** — 4 wood + 0.5 hide, reading hide's `suppleness`.
 const HURDLES: &str = "hurdles";
 /// [`HURDLES`]' other input and its two axes.
 const WOOD: &str = "wood";
@@ -64,7 +71,7 @@ const HARDNESS: &str = "hardness";
 const PLIANCY: &str = "pliancy";
 /// **One pass of [`HURDLES`]' hide**, per `recipes.json` — stocked as a whole pile so *"that pile is
 /// gone"* is the observation, rather than a partial draw off two.
-const ONE_HURDLES_PASS_OF_HIDE: f32 = 2.0;
+const ONE_HURDLES_PASS_OF_HIDE: f32 = 0.5;
 /// Wood enough for several passes; the wood row names no `reads`, so its own spend order is the
 /// fallback and nothing here is about it.
 const WOOD_TO_SPARE: f32 = 40.0;
@@ -354,7 +361,11 @@ fn the_grade_a_draw_selects_does_not_move_when_the_bands_stock_does() {
     // **A ONE-HAND crew, deliberately.** The pass has to still be in flight when the stock changes
     // — a bench that finished and re-drew would be answering a different question.
     bench
-        .stock(HIDE, 6.0, &[(TOUGHNESS, 0.95), (SUPPLENESS, 0.4)])
+        .stock(
+            HIDE,
+            ONE_SLED_PASS_OF_HIDE,
+            &[(TOUGHNESS, 0.95), (SUPPLENESS, 0.4)],
+        )
         .stock("fibre", 4.0, &[("fineness", 0.5), ("strength", 0.5)])
         .give_tool(TANNING_FRAME)
         .start(SLED, 1)
@@ -369,9 +380,11 @@ fn the_grade_a_draw_selects_does_not_move_when_the_bands_stock_does() {
 
     // The excellent hide is gone; only poor hide is left. The pass in flight must not notice.
     bench.stock(HIDE, 40.0, &[(TOUGHNESS, 0.05), (SUPPLENESS, 0.9)]);
+    // The bench now works at 2.0 per worker-turn, so this turn finishes the pass in flight (and
+    // re-draws off the poor pile); the sled it finished must carry the grade its own draw fixed.
     bench.turns(1);
     assert_eq!(
-        bench.head().drawn.as_ref().and_then(|d| d.grade.as_deref()),
+        bench.bench().last_output_grade.as_deref(),
         Some(EXCELLENT),
         "the grade was fixed when the materials left the store - it is not a taper and it does not \
          re-read the pile"
@@ -392,7 +405,11 @@ fn the_bare_handed_ceiling_caps_an_excellent_hide_to_the_anchor_band() {
     let output_grade = |with_tool: bool| {
         let mut bench = Bench::shipped();
         bench
-            .stock(HIDE, 6.0, &[(TOUGHNESS, 0.95), (SUPPLENESS, 0.4)])
+            .stock(
+                HIDE,
+                ONE_SLED_PASS_OF_HIDE,
+                &[(TOUGHNESS, 0.95), (SUPPLENESS, 0.4)],
+            )
             .stock("fibre", 4.0, &[("fineness", 0.5), ("strength", 0.5)]);
         if with_tool {
             bench.give_tool(TANNING_FRAME);
@@ -480,7 +497,7 @@ fn the_lesson_and_the_tools_wear_are_charged_the_same_number_of_times() {
 #[test]
 fn a_short_draw_withdraws_nothing_at_all() {
     let mut bench = Bench::shipped();
-    // The sled wants 6 hide and 2 fibre. Plenty of hide, not enough fibre.
+    // The sled wants 2 hide and 2 fibre. Plenty of hide, not enough fibre.
     bench
         .stock(HIDE, 20.0, &[(TOUGHNESS, 0.6), (SUPPLENESS, 0.5)])
         .stock("fibre", 1.0, &[("fineness", 0.5), ("strength", 0.5)])
@@ -589,7 +606,7 @@ fn the_hurdles_draw_still_spends_hide_by_suppleness_and_not_by_its_first_axis() 
             &[(TOUGHNESS, 0.05), (SUPPLENESS, 0.95)],
         )
         .stock(WOOD, WOOD_TO_SPARE, &[(HARDNESS, 0.5), (PLIANCY, 0.6)])
-        .start(HURDLES, CREW)
+        .start(HURDLES, ONE_HAND_AT_THE_BENCH)
         .turns(1);
 
     assert!(
@@ -889,10 +906,10 @@ fn crafted_build_gear_grades_its_build_work_and_keeps_its_branch() {
     const DENSITY: &str = "density";
     /// Bone's bench tool — its quality ceiling is what lets an excellent bone read as excellent.
     const BONE_AWL: &str = "bone_awl";
-    /// One pass of the crook's and the hoes' own inputs (`recipes.json`: 1 bone + 2 fibre), so the
+    /// One pass of the crook's and the hoes' own inputs (`recipes.json`: 0.2 bone + 1 fibre), so the
     /// bench finishes exactly one item and cannot re-draw.
-    const ONE_PASS_OF_BONE: f32 = 1.0;
-    const ONE_PASS_OF_FIBRE: f32 = 2.0;
+    const ONE_PASS_OF_BONE: f32 = 0.2;
+    const ONE_PASS_OF_FIBRE: f32 = 1.0;
     /// Enough bench turns for [`CREW`] to finish one `work: 5` pass.
     const TURNS_TO_FINISH: u32 = 4;
     /// Readings squarely inside the bottom and top `characteristic_bands` rungs.
@@ -1170,9 +1187,9 @@ fn a_bench_that_had_already_drawn_keeps_its_pile_when_the_crew_goes() {
 /// parked batch across: the item is already made, and only the next one is being cancelled.
 #[test]
 fn a_finished_item_waits_on_the_bench_and_survives_a_job_change() {
-    /// One pass of the sled's own inputs (`recipes.json`: 6 hide + 2 fibre), so the bench finishes
+    /// One pass of the sled's own inputs (`recipes.json`: 2 hide + 2 fibre), so the bench finishes
     /// exactly one and cannot re-draw.
-    const ONE_PASS_OF_HIDE: f32 = 6.0;
+    const ONE_PASS_OF_HIDE: f32 = 2.0;
     const ONE_PASS_OF_FIBRE: f32 = 2.0;
     /// Enough turns for [`CREW`] bare-handed to finish one `work: 8` pass, with room to spare.
     const TURN_LIMIT: u32 = 8;

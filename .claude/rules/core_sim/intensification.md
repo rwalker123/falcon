@@ -1355,16 +1355,24 @@ byte-identical; the two `wild` rungs have no block to put one on.
 ### The knowledge pattern — practise rung N, unlock rung N+1
 
 **The one rule** (`docs/plan_intensification_ladder.md` §4, slice 4): **working a source teaches the
-knowledge its *current rung* declares in `earns_knowledge`.** "Practising rung N" means *working a
-source that stands on rung N* — **not** *"using rung N's verb"*. So the **same hunt** teaches
-**Herding** on a wild herd and **Penning** on a tamed one: *you learn herding by managing wild herds,
-penning by managing tamed ones*.
+knowledge of its *lesson rung*, which is the rung it is RAISING once work is banked on it and the rung
+it HOLDS otherwise** (`RungStanding::lesson_rung`, the one producer; it asks `banked`, never `credit`,
+because `animal:pen` is `on_completion` and its credit is pinned at zero). "Practising rung N" means
+*working a source that stands on rung N* — **not** *"using rung N's verb"* — and a source mid-climb
+has already started practising the rung it is climbing. So the **same hunt** teaches **Herding** on a
+wild herd and **Penning** on a tamed one, **and on a herd mid-`Tame`** (work banked on
+`animal:pastoral`): *you learn herding by managing wild herds, penning by managing tamed ones*. The
+rule is uniform across every branch (a patch mid-`Cultivate` teaches Seed Selection, a working
+mid-climb the next lesson). Nothing is lost by it: a rung can only be raised once its
+`unlock_knowledge` is known, and that is exactly what the held rung teaches. The shedding order's
+*"is this row still teaching"* test and the deposit arm's site gate read the same seam, so no reading
+names a lesson the turn does not credit.
 
 **`RungDef::knowledge_accrual(floor, eligible, knowledge)` is THE earn seam** — the twin of
 `build_accrual`: the rung names the lesson **and how much of it**, the caller credits the ledger. It
 replaced the two hard-coded per-web `Sustain && Thriving → <ID>` branches, so `earns_knowledge` went
 from declarative (slice 2) to live, for **every** rung including the wild ones. Callers resolve the
-rung via `fauna::herd_rung` / `forage::patch_rung`, read once per source in
+rung via `RungStanding::lesson_rung` (off `Herd::standing` / `ForagePatch::standing`), read once per source in
 `advance_labor_allocation`'s Hunt/Forage arms and credited through the one
 `systems::labor::credit_rung_lesson` helper **inside each rung branch** — the amount is only knowable
 once the source's own branch is reached — a Field and a pen answer `eligible` differently from a wild
@@ -1498,10 +1506,12 @@ nothing in this file earns them, and `discovery_id_for` reaches them only by del
 by a config — and, since this slice, is still **priced** by one.
 
 **The pacing consequence — measured** (`fauna_husbandry::the_full_wild_to_pen_climb_is_paced_by_practising_each_rung`,
-Wild Boar, on that fixture's herd): a pen is a **four-leg, ~46-turn climb** — Sustain-hunt wild →
-**Herding** (20) → `Tame` (3) → Sustain-hunt the *pastoral* herd → **Penning** (20) → `Corral` (3).
-The **Penning leg is new** (§4.3): pre-slice-4 Herding gated `Corral` directly. **Intended** — one
-knowledge per transition, and you cannot skip a rung you have not practised.
+Wild Boar, on that fixture's herd): a pen is **Herding** (20) → `Tame` (21, with **Penning learned
+during it**) → `Corral` (17) = **58 turns**. The Penning lesson **overlaps** the Tame instead of
+following it: run serially (Penning only once the Tame is finished) the same fixture is 78 turns, a
+lesson's ~20 turns longer. Penning is still ~20 turns of practice and still gates `Corral`; what
+moved is when its clock starts. **Intended** — one knowledge per transition, and you cannot skip a
+rung you have not practised, but the practice of rung N+1 begins as soon as work is banked on it.
 
 > **The two BUILD legs collapsed from ~32 and ~25 turns once improvements were priced in work**
 > (`docs/plan_unit_costed_work.md` §1.2), and the climb is now emphatically **knowledge-paced**: the

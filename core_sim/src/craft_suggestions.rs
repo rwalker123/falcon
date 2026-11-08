@@ -469,7 +469,7 @@ pub fn take_row_gear(
             let row_kit = if assignment.target.is_standing_pool() {
                 config.no_kit()
             } else {
-                assignment.kit_choice(config)
+                assignment.binding_kit(config)
             };
             let share = budget.share_for_source(&assignment.target, kit, config);
             let coverage = config.coverage_from_units(&row_kit, workers, kit, &share);

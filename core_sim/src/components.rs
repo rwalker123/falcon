@@ -3879,6 +3879,16 @@ pub struct StaffedCrew {
     /// The crew past which the take stops rising - pass 3's ceiling (keepers included), after the
     /// row's Max.
     pub useful_crew: u32,
+    /// **THIS HUNT ROW IS A CAMP KILL** - its herd stood within `band_work_range` of the camp when
+    /// the staffing ran (`work_party::party_begins_past`), so no party posts and the row is held
+    /// to the kit items that bind a kill ([`crate::components::LaborAssignment::binding_kit`]). Stamped by the
+    /// staffing beside the crew it decided, and read only while that stamp is current.
+    pub camp_kill: bool,
+    /// **AN UNARMED HAND ADDS NOTHING ON THIS ROW** - the staffing's `bare_can_work` read false on
+    /// a source row (a hunt whose quarry bare hands cannot wound), so pass 3 adds no bare heads and
+    /// the row's kit ask is its hold crew, not the hands present
+    /// ([`crate::take_claims::wanted_ask_crew`]). Default `false` keeps the hands-present ask.
+    pub bare_idle: bool,
     /// The heads the row's tile could not fit: the crew the row would aim at (hold or reach, after
     /// the Max, before the tile's room) less the crew it aims at once the room caps it. `0` on an
     /// untiled row and on a tile with room for the whole aim; `> 0` means the site is full.
@@ -4022,6 +4032,23 @@ impl LaborAssignment {
     /// Whether this row is a need row ([`LaborTarget::is_need_row`]).
     pub fn is_need_row(&self) -> bool {
         self.target.is_need_row()
+    }
+
+    /// **THE KIT THIS ROW NEEDS, CLAIMS AND ASKS FOR** - [`Self::kit_choice`], narrowed for a camp-kill
+    /// hunt row ([`StaffedCrew::camp_kill`]) to the items that bind a kill
+    /// ([`crate::equipment_config::EquipmentConfig::camp_kill_kit`]). The one seam the staffing's
+    /// kitted heads, the budget's claims and the published `kitToe` all read; a far hunt (a party
+    /// hauls on the sled) and every other row keep the whole kit.
+    pub fn binding_kit(
+        &self,
+        config: &crate::equipment_config::EquipmentConfig,
+    ) -> crate::equipment_config::KitChoice {
+        let kit = self.kit_choice(config);
+        if self.staffing.camp_kill {
+            config.camp_kill_kit(&kit)
+        } else {
+            kit
+        }
     }
 
     /// **The kit this row is priced at** — its own choice, or the job's default when it named none.
@@ -7494,7 +7521,7 @@ impl LaborAllocation {
                 !assignment.target.is_standing_pool() && keep(&assignment.target)
             })
             .map(|(assignment, claim)| crate::equipment_config::KittedRow {
-                kit: assignment.kit_choice(config),
+                kit: assignment.binding_kit(config),
                 claim: *claim,
                 priority: assignment.priority,
                 source: Some(assignment.target.clone()),

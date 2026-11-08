@@ -15463,6 +15463,7 @@ func _pooled_receiver_band_fixture() -> Dictionary:
 	band["food_consumption"] = POOLED_RECEIVER_NEED
 	band["food_shortfall"] = 0.0
 	band["turns_of_food"] = POOLED_RECEIVER_TURNS
+	band["pooling_steady_net"] = POOLED_RECEIVER_POOLED_IN
 	band[DetailFormat.TRANSFER_LOCAL_RECEIVED_TURN_KEY] = POOLED_RECEIVER_POOLED_IN
 	band[HudTradeVocab.CROSSINGS_KEY] = [
 		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_IN,
@@ -15543,7 +15544,7 @@ func _assert_hand_to_mouth_band() -> void:
 	var receiver_chart := _find_chart(receiver_zone) if receiver_zone != null else null
 	_assert_band_panel("precondition: the receiver's own larder is below one meal, and pooling covers it",
 		POOLED_RECEIVER_LARDER < POOLED_RECEIVER_NEED
-			and is_equal_approx(DetailFormat.band_pooled_food_net(receiver), POOLED_RECEIVER_POOLED_IN)
+			and is_equal_approx(DetailFormat.band_pooling_steady_net(receiver), POOLED_RECEIVER_POOLED_IN)
 			and POOLED_RECEIVER_LARDER + POOLED_RECEIVER_POOLED_IN >= POOLED_RECEIVER_NEED)
 	_assert_band_panel("pooled receiver: the chart does NOT mark turn 1 hungry — pooling lands before the meal (got %s)"
 			% (str(receiver_chart.empty_turn()) if receiver_chart != null else "no chart"),

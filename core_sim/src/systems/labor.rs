@@ -315,6 +315,10 @@ pub struct LaborConfigs<'w> {
     /// party's walk a road takes away (`crate::work_party::resolve_walk`). Read here rather than
     /// re-stated so what a road does for a caravan and what it does for pooling are one reading.
     pub supply_network: Res<'w, crate::supply_network_config::SupplyNetworkConfigHandle>,
+    /// **This turn's supply networks** - what the steady pooling term the hunting need clock reads
+    /// is struck over ([`crate::snapshot::pooling_steady_nets`]).
+    /// `Option`: a hand-built test world that never installed it has no networks.
+    pub supply_membership: Option<Res<'w, crate::supply::SupplyNetworkMembership>>,
     /// **Whose feet are on a road** — the treaties and the foreign-road share a party's walk is
     /// read through ([`crate::routes::road_reach_for`]).
     pub rights: crate::routes::RoadRights<'w>,
@@ -3451,7 +3455,7 @@ fn resolve_shed_facts(
                     .patch(*tile)
                     .map_or(SourceShedFacts::default(), |patch| SourceShedFacts {
                         accruing_knowledge: source_is_still_teaching(
-                            crate::forage::patch_rung(patch, ladder),
+                            ladder.rung(patch.standing().lesson_rung()),
                             *floor,
                             faction,
                             discovery,
@@ -3467,7 +3471,7 @@ fn resolve_shed_facts(
                 .find(fauna_id)
                 .map_or(SourceShedFacts::default(), |herd| SourceShedFacts {
                     accruing_knowledge: source_is_still_teaching(
-                        fauna::herd_rung(herd, ladder),
+                        ladder.rung(herd.standing().lesson_rung()),
                         *floor,
                         faction,
                         discovery,
@@ -3485,7 +3489,7 @@ fn resolve_shed_facts(
                     .source(*tile, material)
                     .map_or(SourceShedFacts::default(), |source| SourceShedFacts {
                         accruing_knowledge: source_is_still_teaching(
-                            ladder.rung(source.rung()),
+                            ladder.rung(source.standing().lesson_rung()),
                             // **A deposit crew's floor prices its lesson exactly as a gatherer's
                             // does WHERE THE DIAL PARTICIPATES** (issue #650) — the shared
                             // `intensification::learn_multiplier`, read off this row. On ground that
@@ -5809,15 +5813,15 @@ fn apply_muster(
         .map(|(idx, _)| idx)
         .collect();
     for need_idx in need_rows {
-        let in_camp_range = match (&allocation.assignments[need_idx].target, band_pos) {
-            (LaborTarget::Hunt { fauna_id, .. }, Some(band)) => {
-                herds.find(fauna_id).is_some_and(|herd| {
-                    crate::grid_utils::hex_distance_wrapped(herd.current_pos, band, grid.0, grid.2)
-                        <= crate::work_party::party_begins_past(labor)
-                })
-            }
-            _ => false,
-        };
+        // **ONE DEFINITION OF A CAMP KILL**: the staffing's own predicate, so a mustered need row is
+        // held to the kill-bearing kit exactly as a staffed camp hunt is.
+        let in_camp_range = crate::hunt_by_need::camp_kill_hunt(
+            &allocation.assignments[need_idx].target,
+            herds,
+            band_pos,
+            labor,
+            (grid.0, grid.2),
+        );
         if !in_camp_range {
             allocation.assignments[need_idx].muster_crew = 0;
             continue;
@@ -5861,6 +5865,9 @@ fn apply_muster(
         }
         idle -= plan.from_idle;
         allocation.assignments[need_idx].workers = plan.total();
+        // The crewed row hauls nothing (it is a camp kill by the gate above), so its kit claim,
+        // settlement and wear all narrow to the items that bind a kill (`binding_kit`).
+        allocation.assignments[need_idx].staffing.camp_kill = true;
         applied.crewed.push(need_idx);
     }
     applied
@@ -5884,6 +5891,7 @@ fn restore_muster(
     }
     for row in &applied.crewed {
         allocation.assignments[*row].workers = NO_CREW_ON_THIS_ACTIVITY;
+        allocation.assignments[*row].staffing.camp_kill = false;
     }
 }
 
@@ -6162,6 +6170,18 @@ pub fn advance_labor_allocation(
         .map(|parts| (parts.4.map_or(u64::MAX, |id| id.0), parts.0))
         .collect();
     band_order.sort_unstable();
+    // **EVERY NETWORKED BAND'S STEADY POOLING TERM**, struck once over the whole network before any
+    // band is paid - the need clock's runway reads it, as the published runway does, so a
+    // neighbour's lumpy turn neither fires nor delays a hunt.
+    let no_networks = crate::supply::SupplyNetworkMembership::default();
+    let pooling_steady = crate::snapshot::pooling_steady_nets(
+        cohorts
+            .iter()
+            .map(|parts| (parts.0, parts.1, Some(parts.2))),
+        configs.supply_membership.as_deref().unwrap_or(&no_networks),
+        &demographics_cfg,
+        &supply_cfg,
+    );
     // **THE HANDS THE BANDS STAFFED EARLIER THIS TURN HOLD ON EACH TILE** — what a later band's tile
     // room is cut by.
     let mut tile_load: BTreeMap<crate::staffing::TileKey, u32> = BTreeMap::new();
@@ -7934,7 +7954,7 @@ pub fn advance_labor_allocation(
                     // (below). The rung is resolved *here*, above the branches, because it is a
                     // property of the pre-take patch; the **credit** is applied inside each branch,
                     // once its take is known — see `credit_rung_lesson`.
-                    let lesson_rung = patch_rung(patch, &ladder);
+                    let lesson_rung = ladder.rung(patch.standing().lesson_rung());
                     // **The steady headline** — the forward-projected average food/turn over this turn
                     // and the `realized_horizon − 1` after it, computed from the patch's PRE-take state
                     // (before either branch draws it down). Logistics has **already regrown** that
@@ -8750,7 +8770,7 @@ pub fn advance_labor_allocation(
                     //
                     // The two webs cannot cross-teach (§4.2) for free: a herd resolves to an `animal`
                     // rung, so only an animal knowledge is reachable from here.
-                    let lesson_rung = fauna::herd_rung(herd, &ladder);
+                    let lesson_rung = ladder.rung(herd.standing().lesson_rung());
                     // **Corral (Rung 1c) — the pen is a managed POPULATION, not a flat rate.** A Hunt
                     // assignment on a **corralled** herd is herding/tending it, not hunting, and the
                     // turn has two halves (`docs/plan_corral_managed_population.md` §3.1):
@@ -8964,17 +8984,29 @@ pub fn advance_labor_allocation(
                         //
                         // Each charge is gated on the predicate that chose its own tier, so a keeper
                         // with no sled dragged the carcass by hand and wore nothing out doing it.
+                        //
+                        // **A CAMP KILL HAULS NOTHING AND WEARS NO SLED**: inside the apron the
+                        // wear is charged against the row's kill-bearing items alone
+                        // ([`EquipmentConfig::camp_kill_kit`], the kit `binding_kit` resolves),
+                        // so a local pen's butchering leaves the sled's life untouched. A posted
+                        // pen keeps the whole kit. (Only the wear: the pricing `crew_kit` stays
+                        // whole.)
                         if let Some(kit) = band_equipment.as_mut() {
+                            let wear_kit = if postings.contains_key(&idx) {
+                                crew_kit.clone()
+                            } else {
+                                equipment_cfg.camp_kill_kit(&crew_kit)
+                            };
                             outcome.fight.charge_strike_wear(kit, &equipment_cfg);
                             kit.wear_kit(
                                 &equipment_cfg,
-                                &crew_kit,
+                                &wear_kit,
                                 crate::equipment_config::WearQuantum::BiomassHauled,
                                 biomass_hauled(postings.contains_key(&idx), &take),
                             );
                             kit.wear_kit(
                                 &equipment_cfg,
-                                &crew_kit,
+                                &wear_kit,
                                 crate::equipment_config::WearQuantum::BiomassCollected,
                                 take.killed_biomass(),
                             );
@@ -9548,7 +9580,7 @@ pub fn advance_labor_allocation(
                     // branch's own line, and the reason it is here too is
                     // `docs/plan_pen_standing_yield.md` §3: `steppe_runner` and `marsh_grazer` carry
                     // `husbandry_ceiling: "pastoral"` and can **never** be penned, so a pen-only
-                    // payout would hand the two migratory species nothing at all. The scale folds
+                    // payout would hand the pastoral-only migratory species (steppe_runner, marsh_grazer, reindeer) nothing at all. The scale folds
                     // in the rung share itself ([`fauna::herd_standing_rung_share`]), so a **wild**
                     // herd on this same path resolves an honest zero with no branch here.
                     let standing_scale = fauna::herd_standing_scale(herd, &fauna);
@@ -10789,7 +10821,7 @@ pub fn advance_labor_allocation(
                     // floor and this row's, so a crew asked to leave everything standing is credited
                     // nothing without a second test saying so.
                     credit_rung_lesson(
-                        ladder.rung(standing.held),
+                        ladder.rung(standing.lesson_rung()),
                         // **THE ROW'S OWN FLOOR PRICES THE LESSON WHERE THE DIAL PARTICIPATES**,
                         // through the shared `intensification::learn_multiplier` both food webs go
                         // through: a crew told to leave more of a wood standing learns
@@ -10820,7 +10852,7 @@ pub fn advance_labor_allocation(
                         crew_at_the_source
                             && source_is_workable(outcome.reachable_before)
                             && ground_takes_the_rung_this_lesson_unlocks(
-                                ladder.rung(standing.held),
+                                ladder.rung(standing.lesson_rung()),
                                 &ladder,
                                 ground,
                                 material,
@@ -11847,6 +11879,7 @@ pub fn advance_labor_allocation(
                         false,
                         herd,
                         &fauna,
+                        pooling_steady.get(&band_entity).copied().unwrap_or(0.0),
                     );
                     let kit = row.kit_choice(&equipment_cfg);
                     let other_rows = allocation.rows_excluding_source(
@@ -11893,6 +11926,7 @@ pub fn advance_labor_allocation(
                             floor: *floor,
                             baseline_haul_rate,
                             drives_known,
+                            camp_kill: is_local(&row.target),
                             max_workers: allocation.musterable_pool(
                                 idle_now,
                                 idx,

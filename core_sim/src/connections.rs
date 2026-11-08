@@ -60,6 +60,7 @@ use crate::{
     belief_config::BeliefConfigHandle,
     components::{BandId, BandName, PopulationCohort, ResidentBand, Tile},
     connections_config::{ConnectionsConfig, ConnectionsConfigHandle},
+    faction_names::FactionNames,
     intensification::LadderConfigHandle,
     metrics::SimulationMetrics,
     orders::FactionId,
@@ -68,7 +69,7 @@ use crate::{
         SimulationTick,
     },
     scalar::Scalar,
-    systems::band_label,
+    systems::{band_label, faction_label},
 };
 
 /// **A full tie.** Strength is a `0..=1` fraction by definition, so its ceiling is what the number
@@ -175,6 +176,12 @@ pub struct Connection {
 #[derive(Resource, Default, Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionLedger {
     edges: BTreeMap<ConnectionKey, Connection>,
+    /// **Pairs that have met** - a gathering fired for the (unordered, low-id first) pair and the
+    /// tie has not parked since. A one-way sighting never enters it, so a glimpse cannot swallow
+    /// the real meeting (a two-way tie formed without a gathering - relay, report - also blocks one,
+    /// see `tied_both_ways`); it is pruned when the pair's tie goes non-live, so a later mutual sighting
+    /// gathers again.
+    met: BTreeSet<(BandId, BandId)>,
 }
 
 impl ConnectionLedger {
@@ -286,6 +293,16 @@ impl ConnectionLedger {
                 self.get(key)
                     .is_some_and(|connection| connection.strength > NO_TIE)
             })
+    }
+
+    /// **Are both directed edges between `a` and `b` live?** A two-way tie that no gathering made -
+    /// relayed news or an expedition's report - means the pair has not been apart, so a later
+    /// mutual sighting is no first meeting. A one-way glimpse leaves only one edge live and does
+    /// not count.
+    fn tied_both_ways(&self, a: BandId, b: BandId) -> bool {
+        self.edges_between(a, b)
+            .iter()
+            .all(|edge| edge.is_some_and(|connection| connection.strength > NO_TIE))
     }
 
     /// **The two edges between `a` and `b`, as they stand** — `a → b` then `b → a`, each `None` where
@@ -651,6 +668,7 @@ pub fn advance_connections(
     belief_config: Res<BeliefConfigHandle>,
     mut belief: ResMut<BeliefRegistry>,
     mut gatherings: ResMut<GatheringLedger>,
+    faction_names: Res<FactionNames>,
     mut event_log: ResMut<CommandEventLog>,
     ladder: Res<LadderConfigHandle>,
     mut discovery: ResMut<DiscoveryProgressLedger>,
@@ -658,16 +676,29 @@ pub fn advance_connections(
     let cfg = config.get();
     let turn = tick.0;
 
-    // **A gathering is two bands meeting after having no live tie.** Read before any of this
-    // turn's contacts is folded in, so the first directed edge of a pair to be refreshed cannot make
-    // the pair look tied to the second. Deduplicated per UNORDERED pair: edges are directed.
+    // A tie that has parked ends the meeting: the pair may gather again on a later mutual sighting.
+    let live_pairs: Vec<(BandId, BandId)> = ledger.met.iter().copied().collect();
+    for (low, high) in live_pairs {
+        if !ledger.tie_is_live(low, high) {
+            ledger.met.remove(&(low, high));
+        }
+    }
+
+    // **A gathering is two bands seeing each other since they last met.** Read before any of this
+    // turn's contacts is folded in. A one-way glimpse ties the pair but never marks it met, so it
+    // cannot block the mutual sighting that follows. Deduplicated per UNORDERED pair: edges are
+    // directed.
     let meetings: BTreeSet<(BandId, BandId)> = contacts
         .iter()
         .map(|(key, _)| key)
         .filter(|key| contacts.is_live_sighting(key))
-        .filter(|key| !ledger.tie_is_live(key.observer, key.subject))
+        // **Mutual sight.** A one-way sighting forms the tie but is no meeting: the other band
+        // never saw this one, so nobody gathered.
+        .filter(|key| contacts.is_live_sighting(&ConnectionKey::new(key.subject, key.observer)))
         .map(|key| band_pair(key.observer, key.subject))
+        .filter(|pair| !ledger.met.contains(pair) && !ledger.tied_both_ways(pair.0, pair.1))
         .collect();
+    ledger.met.extend(meetings.iter().copied());
     // Which of those a founding-turn band only sees where it started: read off the same pre-turn
     // ledger, before this turn's contacts are folded in.
     let started_beside: BTreeSet<(BandId, BandId)> = meetings
@@ -744,6 +775,16 @@ pub fn advance_connections(
                     continue;
                 }
                 gatherings.record(own.faction);
+                // A band of another people is named with its people, since band names are
+                // unique only within a people.
+                let other_name = if other.faction == own.faction {
+                    other.name.clone()
+                } else {
+                    let people = faction_names
+                        .name(other.faction)
+                        .map_or_else(|| faction_label(other.faction), str::to_string);
+                    format!("{} of the {}", other.name, people)
+                };
                 event_log.push(
                     CommandEventEntry::new(
                         turn,
@@ -752,7 +793,7 @@ pub fn advance_connections(
                         GATHERING_LABEL,
                         Some(format!(
                             "{} met {} at ({}, {}).",
-                            own.name, other.name, place.position.x, place.position.y
+                            own.name, other_name, place.position.x, place.position.y
                         )),
                     )
                     .with_band(other.band),

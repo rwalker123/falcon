@@ -665,7 +665,7 @@ impl AbundanceConfig {
 /// clamp-floored to 2: the density was inert at the shipped size and `min_herds` silently decided
 /// everything. Measured before/after in `core_sim/tests/fauna_migratory_representation.rs`.
 ///
-/// **Raising this raises migratory BIOMASS steeply** — a migratory herd carries 4,000–12,000 biomass
+/// **Raising this raises migratory BIOMASS steeply** — a migratory herd carries 1,600–12,000 biomass (mammoth 8,000–12,000, the others 1,600–4,000)
 /// against a deer's 600–1,200 — so it is a food-economy dial, not just a variety dial. Playtest dial.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -851,9 +851,9 @@ pub struct HuntConfig {
     pub drive_engage_gain: f32,
     /// **The head count at which a drive is at full strength** (#799): the gain scales linearly with
     /// the herd's head count (`biomass / body_mass`) up to this and is flat above it. The shipped
-    /// `100` sits at the small end of a typical light-bodied migratory herd (4,000-12,000 biomass
-    /// over body masses 20-53 is 75-600 head), so reindeer, horses, steppe runners and marsh
-    /// grazers reach it and a mammoth herd (5-15 head) barely gains. Validated finite and `> 0`.
+    /// `100` sits at the top of a horse-sized migratory herd (1,600-4,000 biomass over body
+    /// masses 20-53 is 34-180 head: reindeer 80-180, horse 45-100, marsh grazer 38-85, steppe
+    /// runner 34-75), so a mammoth herd (5-15 head) barely gains. Validated finite and `> 0`.
     pub drive_full_head_count: f32,
 }
 
@@ -1666,7 +1666,7 @@ pub struct HusbandryConfig {
     /// # ⛔ IT IS LOAD-BEARING, NOT A NICETY
     ///
     /// `steppe_runner` and `marsh_grazer` carry `husbandry_ceiling: "pastoral"` and **can never be
-    /// penned**, so a pen-only gate would hand the two migratory species nothing at all. It is also
+    /// penned**, so a pen-only gate would hand the pastoral-only migratory species (steppe_runner, marsh_grazer, reindeer) nothing at all. It is also
     /// the first thing that makes the mobile rung worth *staying* on rather than a waypoint to the
     /// pen — the steppe economy was milk.
     ///

@@ -1089,7 +1089,7 @@ nothing else; a floor in place of the ceiling fails only the non-dividing remain
 unconditionally fails only the idle bench's absence claim; wiring the ✕ to Make's signal fails
 both halves of the verb pair (`[]` against `[{…recipe_id: "baskets"}]`); and composing the tooltip
 out of the recipe's inputs — the forbidden implementation — fails both tooltip halves at *"20 fibre
-already cut"* against the 5 fibre · 1 hide the store really lost.
+already cut"* against the 2 fibre · 0.2 hide the store really lost.
 
 ### A scroll over the card must not also drive the map
 
@@ -2905,7 +2905,7 @@ what stop the states being four plausible pictures.
 | `supply_food_links` | both kinds as their own rows among `Gathered` / `Hunted` / `Consumed`, and the breakdown is rows ONLY — no sentence, no footer, no radius |
 | `supply_food_route_both_ways` | both directions on one link netted into **ONE** `⇄ Trade route +1.00` row, with BOTH gross figures asserted absent — plus, PNG-less, the consequence of netting: a kind whose arrivals and departures cancel exactly renders no row |
 | `supply_food_party_rows` | (issue #731) `⇄ Trade route` is the SHIPMENT alone; a party's haul reads `Brought home` and its launch larder `Party rations`, beside Hunted — and the three sum to the route arm the wire carries |
-| `supply_food_headline_sums` | (issue #731) a camp that pooled food out and nothing else crossed: the rendered popover rows sum to the rendered `/turn` headline, which is the steady net PLUS the pooled net |
+| `supply_food_headline_sums` | (issue #731) a camp that pooled food out and nothing else crossed: the rendered popover rows above the divider sum to the rendered `/turn` headline, which is the steady net alone; `supply_food_headline_oxenford` stages the playtest's figures (headline -0.02, `⇄ Local exchange +2.74` below the rule) |
 | `supply_fodder_links` | the Fodder popover keeps `Grown` / `Pens` and gains the identical pair at its own one-decimal resolution — held beside `supply_food_links`, which is the consistency proof |
 
 **THE CONSISTENCY CLAIM IS MECHANICAL, not two frames side by side.** `_transfer_phrases` strips both

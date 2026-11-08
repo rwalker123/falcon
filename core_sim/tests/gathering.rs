@@ -16,8 +16,9 @@ use bevy::prelude::{Entity, UVec2, With};
 use core_sim::{
     advance_connections, BandId, BandName, BeliefConfig, BeliefConfigHandle, BeliefRegistry,
     CommandEventEntry, CommandEventKind, CommandEventLog, ConnectionKey, ConnectionLedger,
-    ConnectionsConfig, ContactsThisTurn, FactionId, GatheringLedger, PopulationCohort,
-    ResidentBand, Sighting, SimulationTick, Tile, NO_BELIEF, NO_TIE,
+    ConnectionsConfig, ContactsThisTurn, FactionId, FactionNameCatalog, FactionNames,
+    GatheringLedger, PopulationCohort, ResidentBand, Sighting, SimulationTick, Tile, NO_BELIEF,
+    NO_TIE,
 };
 use faction_support::{two_faction_world, HOME, RIVAL};
 
@@ -134,6 +135,22 @@ fn stage(app: &mut App, turn: u64, a: &Band, b: &Band, live: bool) {
             }
         }
     }
+    app.world.run_system_once(advance_connections);
+}
+
+/// Stage ONLY `seer`'s sighting of `seen` (the reverse edge is not sighted) and run the pass.
+fn glimpse(app: &mut App, turn: u64, seer: &Band, seen: &Band) {
+    set_turn(app, turn);
+    let faction = app
+        .world
+        .get::<PopulationCohort>(seen.entity)
+        .unwrap()
+        .faction;
+    app.world.resource_mut::<ContactsThisTurn>().record(
+        seer.id,
+        seen.id,
+        Sighting::new(seen.tile, turn, "seen", faction),
+    );
     app.world.run_system_once(advance_connections);
 }
 
@@ -328,6 +345,117 @@ fn a_tie_on_size_is_held_at_the_lower_band_id() {
 }
 
 #[test]
+fn a_glimpse_does_not_swallow_the_mutual_meeting_that_follows() {
+    let mut app = two_faction_world();
+    let (a, b) = pair(&mut app, HOME, RIVAL);
+    set_size(&mut app, &a, SMALL);
+    set_size(&mut app, &b, BIG);
+
+    glimpse(&mut app, FIRST_TURN, &a, &b);
+    assert!(
+        gathering_events(&app).is_empty(),
+        "a glimpse gathers no one"
+    );
+
+    meet(&mut app, FIRST_TURN + 1, &a, &b);
+    assert_eq!(belief_at(&app, b.tile), per_gathering(&app));
+    assert_eq!(gathering_events(&app).len(), 2, "each people hears it once");
+    assert_eq!(app.world.resource::<GatheringLedger>().held_by(HOME), 1);
+
+    meet(&mut app, FIRST_TURN + 2, &a, &b);
+    assert_eq!(
+        belief_at(&app, b.tile),
+        per_gathering(&app),
+        "staying in sight is not a second gathering"
+    );
+    assert_eq!(gathering_events(&app).len(), 2);
+    assert_eq!(app.world.resource::<GatheringLedger>().held_by(HOME), 1);
+}
+
+#[test]
+fn a_one_way_sighting_forms_the_tie_but_holds_no_gathering() {
+    let mut app = two_faction_world();
+    let (a, b) = pair(&mut app, HOME, RIVAL);
+    set_size(&mut app, &a, SMALL);
+    set_size(&mut app, &b, BIG);
+
+    glimpse(&mut app, FIRST_TURN, &a, &b);
+
+    let ledger = app.world.resource::<ConnectionLedger>();
+    assert!(ledger.tie_is_live(a.id, b.id), "the sighting still ties");
+    assert!(ledger.get(&ConnectionKey::new(a.id, b.id)).is_some());
+    assert!(ledger.get(&ConnectionKey::new(b.id, a.id)).is_none());
+    assert_eq!(belief_at(&app, b.tile), NO_BELIEF);
+    assert_eq!(belief_at(&app, a.tile), NO_BELIEF);
+    assert!(gathering_events(&app).is_empty());
+    let gatherings = app.world.resource::<GatheringLedger>();
+    assert_eq!(gatherings.held_by(HOME), 0);
+    assert_eq!(gatherings.held_by(RIVAL), 0);
+}
+
+#[test]
+fn a_one_way_sighting_on_the_opening_turn_holds_no_gathering() {
+    let mut app = two_faction_world();
+    let (a, b) = pair(&mut app, HOME, RIVAL);
+    glimpse(&mut app, OPENING_TURN, &a, &b);
+    assert!(gathering_events(&app).is_empty());
+    assert_eq!(belief_at(&app, a.tile), NO_BELIEF);
+    assert_eq!(belief_at(&app, b.tile), NO_BELIEF);
+}
+
+#[test]
+fn a_cross_people_line_names_the_other_people_and_a_same_people_line_does_not() {
+    let mut app = two_faction_world();
+    let (a, b) = pair(&mut app, HOME, RIVAL);
+    set_size(&mut app, &a, SMALL);
+    set_size(&mut app, &b, BIG);
+    // The same band name in two peoples, as the playtest had.
+    let shared = "Goosefen";
+    for band in [&a, &b] {
+        app.world
+            .entity_mut(band.entity)
+            .insert(BandName(shared.to_string()));
+    }
+    let catalog = FactionNameCatalog::builtin();
+    *app.world.resource_mut::<FactionNames>() = FactionNames::mint(&[HOME, RIVAL], 7, &catalog);
+    let home_people = app
+        .world
+        .resource::<FactionNames>()
+        .name(HOME)
+        .unwrap()
+        .to_string();
+    let rival_people = app
+        .world
+        .resource::<FactionNames>()
+        .name(RIVAL)
+        .unwrap()
+        .to_string();
+
+    meet(&mut app, FIRST_TURN, &a, &b);
+
+    let events = gathering_events(&app);
+    let place = format!("({}, {})", b.tile.x, b.tile.y);
+    let line = |faction| {
+        events
+            .iter()
+            .find(|e| e.faction == faction)
+            .and_then(|e| e.detail.clone())
+    };
+    assert_eq!(
+        line(HOME),
+        Some(format!(
+            "{shared} met {shared} of the {rival_people} at {place}."
+        ))
+    );
+    assert_eq!(
+        line(RIVAL),
+        Some(format!(
+            "{shared} met {shared} of the {home_people} at {place}."
+        ))
+    );
+}
+
+#[test]
 fn each_people_is_told_in_its_own_words_with_the_band_it_met_tagged() {
     let mut app = two_faction_world();
     let (a, b) = pair(&mut app, HOME, RIVAL);
@@ -359,13 +487,21 @@ fn each_people_is_told_in_its_own_words_with_the_band_it_met_tagged() {
     assert_eq!(home_line.tick, FIRST_TURN);
     assert_eq!(home_line.label, "A gathering");
     let place = format!("({}, {})", b.tile.x, b.tile.y);
+    let people = |app: &App, faction: FactionId| {
+        app.world
+            .resource::<FactionNames>()
+            .name(faction)
+            .expect("the world minted this people's name")
+            .to_string()
+    };
+    let (home_people, rival_people) = (people(&app, HOME), people(&app, RIVAL));
     assert_eq!(
         home_line.detail.as_deref(),
-        Some(format!("{name_a} met {name_b} at {place}.").as_str())
+        Some(format!("{name_a} met {name_b} of the {rival_people} at {place}.").as_str())
     );
     assert_eq!(
         rival_line.detail.as_deref(),
-        Some(format!("{name_b} met {name_a} at {place}.").as_str())
+        Some(format!("{name_b} met {name_a} of the {home_people} at {place}.").as_str())
     );
 }
 

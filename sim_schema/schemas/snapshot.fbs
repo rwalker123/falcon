@@ -1666,6 +1666,13 @@ table PopulationCohortState {
   foodIntoStore:float = 0;
   foodFromStore:float = 0;
   foodInStoresInReach:float = 0;
+  // THE STEADY POOLING TERM of the food runway (food per turn, signed): what pooling adds to this
+  // band's own net (steady income - demand) once the network has levelled per-capita larders -
+  // share * network_net - own_net, share being the band's balancing weight over the network's,
+  // clamped to the network throughput and cut by friction on an inflow. 0 for a band in no network.
+  // `turnsOfFood` and the FOOD OUTLOOK chart read it instead of this turn's lumpy pooled crossing.
+  // Own bands only: a foreign (redacted) row carries the default.
+  poolingSteadyNet:float = 0;
   // --- BAND ORDERS (appended last, #860) ---
   // One row per order the band's chief keeps or the player took back (stone today). Published only
   // for a band with a leader. Own bands only: a foreign (redacted) row carries the default (empty).
@@ -2675,6 +2682,10 @@ table LaborAssignment {
   // Both 0 on every other row.
   scoutingRange:uint = 0;
   scoutingReach:uint = 0;
+  // An unarmed hand adds nothing on this take row (a quarry bare hands cannot wound): pass 3 adds no
+  // bare heads and the row's kit ask is its hold crew, not the hands present. The sim's
+  // StaffedCrew::bare_idle; a client mirrors take_claims::wanted_ask_crew with it.
+  bareIdle:bool = false;
   // *** WHICH ORDER LISTS THIS ROW (#860). *** orderKind: the band order whose chief works the row
   // ("food", "fodder", or the material a dig row is kept for); empty for a row the player crews and
   // for a row no order covers. chiefOwned: the same fact as a bool (orderKind is not empty).

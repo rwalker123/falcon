@@ -1309,6 +1309,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // `bare_staffed` above are the scouts' split and `workers` the scouts placed.
             let _ = entry.insert("scouting_range", i64::from(assignment.scoutingRange()));
             let _ = entry.insert("scouting_reach", i64::from(assignment.scoutingReach()));
+            // An unarmed hand adds nothing on this take row (the sim's `StaffedCrew::bare_idle`).
+            let _ = entry.insert("bare_idle", assignment.bareIdle());
             // The band order whose chief works this row (#860): "food" | "fodder" | a material id,
             // empty for a player-crewed row; `chief_owned` is the same fact as a bool.
             let _ = entry.insert("order_kind", assignment.orderKind().unwrap_or(""));
@@ -2229,6 +2231,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "food_in_stores_in_reach",
         f64::from(cohort.foodInStoresInReach()),
     );
+    // The steady pooling term of the food runway (food per turn, signed; 0 in no network).
+    let _ = dict.insert("pooling_steady_net", f64::from(cohort.poolingSteadyNet()));
     let _ = dict.insert(
         "long_move_leaves_food",
         f64::from(cohort.longMoveLeavesFood()),

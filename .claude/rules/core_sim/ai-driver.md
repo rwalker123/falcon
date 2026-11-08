@@ -329,12 +329,12 @@ reading's shape, "The land reading" below; nothing when the band has no reading)
 shape's first planned band that holds a patch with `tended_food > 0`, its richest such patch:
 hoes wanted = `Site::tended_keepers_hoed` (the keeping crew alone, hoed — the take crew gathers
 and needs none) + `founding_min_workers` builders (the wire's founding floor stands in for the
-crew the first cultivate would be dealt), one hoe each; materials = `HOE_RECIPE_BONE` (1) bone + `HOE_RECIPE_FIBRE` (2) fibre per hoe
+crew the first cultivate would be dealt), one hoe each; materials = `HOE_RECIPE_BONE` (0.2) bone + `HOE_RECIPE_FIBRE` (1) fibre per hoe, the total rounded up to whole units (`whole_units_for`, past `DEMAND_ROUNDING_TOLERANCE` of float noise)
 (`recipes.json` → `hoes`); and a `Resource::Craft { item: "hoes", start_tick }` for that many,
 where the turn cultivation is expected known is `CULTIVATION_LESSON_COST / (LADDER_LEARN_RATE ×
 the patch sites the shape works)` turns from now (`intensification_ladder.json`:
 `lesson_costs.cultivation` 20, `learn_rate` 1.0 per worked source per turn) and the crafter
-starts `hoes × HOE_RECIPE_WORK (5) / (HOE_CRAFT_CREW (1) × CRAFT_PROGRESS_PER_WORKER_TURN (1.0)
+starts `hoes × HOE_RECIPE_WORK (5) / (HOE_CRAFT_CREW (1) × CRAFT_PROGRESS_PER_WORKER_TURN (2.0)
 × BARE_HAND_CRAFT_RATE (0.5, bone's `hand_working.rate` — the hoes read bone's `density`, so
 bone is the bench material))` turns before that, never before now. All three at
 `DEMAND_PRIORITY_HOES` (0.6 — after the kits that feed today, before `Land`'s scout). The
@@ -345,7 +345,7 @@ JSON by `include_str!` of `recipes.json`, `materials.json`, `intensification_lad
 `equipment.json` (a file include, not a crate link — the `SHIPPED_CONFIG` rule), so a retune of
 any key fails that test rather than silently mis-sizing the estimate. The orchestrator fulfils the bone and fibre it can from the window's material budget
 (the pre-fill fills what they leave, below) and **declines the craft `no crafter yet`**: nothing
-runs a bench for the seat, so the log carries the ask and its timing and nothing crafts. On the eight Standard bench seeds at t1 every band posts `bone 6, fibre 12,
+runs a bench for the seat, so the log carries the ask and its timing and nothing crafts. On the eight Standard bench seeds at t1 every band posts `bone 2, fibre 6,
 craft:hoes ×6` — two hoed keepers on the richest climbable patch plus the founding four.
 **`Land` posts** (`Land::outfit_demands`) `wayfinding` ×
 `ceil(land.scout_range / the kit's published vantage tier)` (the roster's `scout_vantage_range` for `wayfinding`, one tile where it is unlisted) for a band with an open window that is blind (fewer than

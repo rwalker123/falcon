@@ -1577,6 +1577,26 @@ impl RungStanding {
         )
     }
 
+    /// **THE RUNG WHOSE LESSON THIS SOURCE TEACHES WHEN IT IS WORKED** - the one producer of that
+    /// verdict, read by every `earns_knowledge` call site and by the shedding order's *"is this row
+    /// still teaching"* test, so none of them can name a different lesson than the turn credits.
+    ///
+    /// **A source with work banked on the rung it is raising teaches THAT rung's lesson; otherwise it
+    /// teaches the rung it holds.** A herd mid-`Tame` teaches Penning while its crew works it (not
+    /// only once the Tame is finished), a patch mid-`Cultivate` teaches Seed Selection, a working
+    /// mid-climb teaches the next lesson. Nothing is lost by it: a rung can only be raised once its
+    /// `unlock_knowledge` is known, and that is exactly what the held rung teaches.
+    ///
+    /// **It asks [`Self::banked`], never [`Self::credit`]**: `credit` is pinned to
+    /// [`NO_RUNG_CREDIT`] on an `on_completion` rung (`animal:pen`), so it cannot answer *"is there
+    /// work on this rung"* - see [`Self::banked`].
+    pub fn lesson_rung(&self) -> RungId {
+        match self.raising {
+            Some(raising) if self.banked > NO_RUNG_WORK_BANKED => raising,
+            _ => self.held,
+        }
+    }
+
     /// The held rung as a [`RungMark`] - its identity and what it is.
     pub fn held_mark(&self) -> RungMark {
         RungMark {
@@ -2876,7 +2896,7 @@ impl RungDef {
     /// used. That distinction is the whole model: you learn **herding** by managing **wild** herds and
     /// **penning** by managing **tamed** ones, so a hunt teaches Herding on a wild herd and
     /// **Penning** on a pastoral one — same crew, different rung, different lesson. Callers resolve
-    /// the rung with [`crate::fauna::herd_rung`] / [`crate::forage::patch_rung`].
+    /// the rung with [`crate::fauna::herd_rung`] / [`crate::forage::patch_rung_key`].
     ///
     /// # It answers "how much of what", not "is this earned"
     ///
@@ -7091,6 +7111,71 @@ mod tests {
                 branch.as_str()
             );
         }
+    }
+
+    /// **A SOURCE WITH WORK BANKED ON THE RUNG IT IS RAISING TEACHES THAT RUNG'S LESSON; OTHERWISE
+    /// ITS HELD RUNG'S** - on both webs, asked of the shipped ladder. A herd mid-`Tame` teaches
+    /// Penning (not Herding), a patch mid-`Cultivate` teaches Seed Selection (not Cultivation), and
+    /// a source with nothing banked still teaches what it holds. `animal:pen` is `on_completion`, so
+    /// its credit is pinned at zero while work is banked - the lesson must follow `banked`.
+    #[test]
+    fn a_source_teaches_the_lesson_of_the_rung_it_is_raising_once_work_is_banked() {
+        /// One work unit banked on the rung being raised — the least work that changes the lesson.
+        const ONE_UNIT_BANKED: f32 = 1.0;
+        let ladder = LadderConfig::builtin();
+        let price = |rung: &RungDef| rung.build_cost(RUNG_COST_UNSCALED);
+        let tame_cost = price(ladder.rung(shipped::animal_pastoral()))
+            .expect("the shipped pastoral rung has a build");
+        let lesson = |standing: RungStanding| {
+            ladder
+                .rung(standing.lesson_rung())
+                .earns_knowledge
+                .clone()
+                .unwrap_or_default()
+        };
+        for (branch, held_lesson, raising_lesson) in [
+            ("animal", "herding", "penning"),
+            ("plant", "cultivation", "seed_selection"),
+        ] {
+            let at = |position: f32| RungStanding::at(&ladder, branch, position, price);
+            assert_eq!(
+                lesson(at(RUNG_UNSTARTED)),
+                held_lesson,
+                "{branch}: nothing banked"
+            );
+            assert_eq!(
+                lesson(at(ONE_UNIT_BANKED)),
+                raising_lesson,
+                "{branch}: mid-first-build"
+            );
+        }
+        // The pen is `on_completion`: work on it is banked but worth nothing, and still teaches.
+        let pastoral_top = RungStanding::at(&ladder, "animal", f32::MAX, price);
+        assert!(pastoral_top.raising.is_none());
+        let tamed = RungStanding::at(&ladder, "animal", tame_cost + ONE_UNIT_BANKED, price);
+        assert_eq!(
+            tamed.credit, NO_RUNG_CREDIT,
+            "the pen rung is on_completion"
+        );
+        assert!(tamed.banked > NO_RUNG_WORK_BANKED);
+        // The shipped pen earns no knowledge (Foddering retired, #860), so its lesson is its own
+        // declaration rather than a literal.
+        let pen_lesson = ladder
+            .rung(shipped::animal_pen())
+            .earns_knowledge
+            .clone()
+            .unwrap_or_default();
+        assert_eq!(
+            lesson(tamed),
+            pen_lesson,
+            "mid-Corral teaches the pen's lesson"
+        );
+        let tamed_exactly = RungStanding::at(&ladder, "animal", tame_cost, price);
+        assert_eq!(
+            lesson(tamed_exactly),
+            "penning",
+            "tamed, nothing banked on the pen yet"
+        );
     }
 
     /// **`rung_span` ON THE CONFIG'S ORDER IS THE CODED CLIMB'S SPAN, rung for rung** — including a

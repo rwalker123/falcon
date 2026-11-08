@@ -131,7 +131,27 @@ a turn holds with four hunters, where the whole-animal sizing named eleven and s
 stone rows of hands.
 
 A kitted hand holds the whole of its row's live kit items, drawn from one shelf per item shared by
-every row (so two rows cannot arm one spear twice). **Hold crew** is the hands that take the
+every row (so two rows cannot arm one spear twice).
+
+**A camp-kill hunt row is held to the kit items that bind a kill, not the whole kit.** A hunt whose
+herd stands within `band_work_range` of camp (`work_party::party_begins_past`, read at the herd's
+current tile by `staffing::is_camp_kill`) posts no party: it hauls nothing and charges no sled wear.
+Its kit is `EquipmentConfig::camp_kill_kit` - the kit narrowed to `kill_bearing_items`, the items
+declaring `attack`, `dispersion` or `exposure` (`EquipmentStat::bears_on_a_kill`; the same list the
+need crew's cap and shortfall read), never an item id. The staffing stamps the verdict on the row
+(`StaffedCrew::camp_kill`) and **`LaborAssignment::binding_kit` is the one seam** every reader of
+"which items this row needs, claims and asks for" goes through: the staffing's kitted heads
+(`live_kit_items` / `kitted_capacity` / `arm`), the budget's rows (`LaborAllocation::kitted_rows`, so
+`item_budget` / `rows_excluding_source`), the published `kitToe` / `kitWorkersHolding`
+(`craft_suggestions::take_row_gear`) and `hunt_by_need::row_carried_hands`. **The wear follows the same kit**: a local pen's `biomass_collected` / `biomass_hauled` charge is
+struck against `camp_kill_kit(crew_kit)`, so a camp-kill pen leaves the sled's life untouched, and a
+posted pen wears it (`pen_standing_yield::a_local_pen_wears_no_sled_and_a_far_pen_still_does`). So a
+camp kill neither needs, claims nor asks for a sled, and a
+sled the wood row holds is not also reserved for the hunt. **A mustered need row is a camp kill by the same predicate**: `apply_muster` gates on `hunt_by_need::camp_kill_hunt` (the staffing's own) and stamps `StaffedCrew::camp_kill` on the crewed row for the turn (`restore_muster` clears it), and `mustered_take_gear` stamps its clone the same way, so the settlement, the wear and the published `kitToe` all narrow it; a need row past the apron is never mustered, so no need row ever holds a sled claim for a posting (`hunt_by_need::{a_mustered_need_row_claims_no_sled_and_the_wood_row_keeps_its, the_wood_row_cuts_with_its_sleds_on_a_turn_the_need_row_musters}`). A hunt past the apron keeps the whole kit
+(its sled is the haul carry). `take_claims::useful_take_hands` still prices a claim over the
+row's full kit (`kit_choice`), and so do the take's pricing and the crew curves, so no yield, forecast or
+`workersNeeded` figure moves; only which items the budget, the staffing and the published lines
+count does. **Hold crew** is the hands that take the
 regrowth at the floor; **reach crew** is the hands whose take is strictly above the peak regrowth
 between the floor and today's stock (`REACH_STRICTLY_ABOVE_PEAK`), so they draw the stock down
 toward the floor. A hand-crewed seam that never renews takes `ReachTarget::Heads(Max - keepers)`; a material a chief keeps on hand is staffed from its deficit instead ("A chief keeps an ordered material on hand" below). A source
@@ -161,8 +181,12 @@ for), so the band's item budget grants a staffed row its `kitted` units and no m
 keeps the ask beside the granted `claims`. A staffed row's ask is struck at the crew it was DENIED
 (`take_claims::wanted_ask_crew`, mirroring the client's short-crew warning, `HudWorkVocab.crew_shortfall`):
 a row with a Max asks at `min(Max, useful_crew)`; a **player** row with no Max that got nobody asks at
-one head (a row the player made is a row they want worked); any other row asks at the hands present
-(a no-Max `useful_crew` is the take curve's ceiling, never a crew the band would field).
+one head (a row the player made is a row they want worked); a no-Max row where an unarmed hand adds
+nothing (`StaffedCrew::bare_idle`, the staffing's `bare_can_work == false` on a take row: a quarry
+bare hands cannot wound) asks at `max(hands present, hold_crew)`, the crew that holds the source at
+its floor, so the shortage of the kit that crew needs is stated even though pass 3 adds no bare
+heads; any other row asks at the hands present (a no-Max `useful_crew` is the take curve's ceiling,
+never a crew the band would field).
 **A chief's row (one `order_rows` lists, `row_order` non-empty) asks only for the hands it has, plus
 the hands he would have sent had the kit been there**: staffed, it asks at the hands present; staffed
 to nobody, it asks one head only while the band has idle hands the staffing left unused (the published
@@ -1394,7 +1418,12 @@ stands in for:
   class). A class that keeps longer is a reserve. `snapshot::kill_food_terms` /
   `kill_turns_of_food` are `band_food_terms` / `band_turns_of_food` over that subset
   (`FoodMix::retaining`), with `rot_ahead` applied to the subset; **net eating (demand less steady
-  income) is unchanged**, and `turnsOfFood` is untouched.
+  income) is unchanged**, and `turnsOfFood` is untouched. **The pooling term is the band's STEADY
+  one** (`snapshot::pooling_steady_nets`, the published runway's own, `campaign.md` -> "`turnsOfFood`
+  is `larder / net drain`"), struck for the labor pass over every networked band before any band is
+  paid and passed to `need_clock` / `kill_turns_of_food`: a neighbour's lumpy whole-animal turn
+  neither fires nor delays a hunt. The term is a share of the network's net (demand less income),
+  which the larder-class subset does not touch, so it applies to the kill-class larder unchanged.
 - **Both the trigger's runway and the meal's usable larder read it** (`hunt_by_need::need_clock`,
   one call per herd for the turn and the capture). Today only `flesh` counts, so a band arriving with
   no meat has a runway near nothing and the first hunt goes out at once; after a kill the next goes
@@ -1619,8 +1648,8 @@ no party exists yet. `resolve_hunt_engagement`, `engagement_reach`, `hunt_useful
 value; every construction site resolves it for ITS faction (`labor.rs` per band, `advance_expeditions`
 off the home people, `forecast_query` / `seed_source_yield` off the asking band,
 `take_claims::with_world_sources(world, faction, ..)`). The shipped `drive_full_head_count` **100** is
-in heads: a migratory herd is 4,000–12,000 biomass, which at the light roster's body masses
-(reindeer 20 … steppe runner 53) is roughly 75–600 head, while a mammoth herd (5–15 head) gains almost
+in heads: a migratory herd is 1,600–12,000 biomass (mammoth 8,000–12,000, the others 1,600–4,000), which at the light roster's body masses
+(reindeer 20 … steppe runner 53) is roughly 34–180 head, so 100 is the top of a horse-sized herd, while a mammoth herd (5–15 head) gains almost
 nothing.
 
 **The roster carries them as a branch of their own.** `LadderConfig::standalone_knowledges` (required)

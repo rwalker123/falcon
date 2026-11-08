@@ -1966,4 +1966,32 @@ mod tests {
         // And the whole decode path a seat runs, which verifies first.
         decode_frame_flatbuffer(&bytes).expect("the encoded snapshot decodes through the verifier");
     }
+
+    /// `bareIdle` rides the row: a row whose unarmed hands add nothing reads `true` after the
+    /// round trip and its neighbour reads `false`, so the flag is neither dropped nor smeared.
+    #[test]
+    fn a_rows_bare_idle_flag_round_trips() {
+        let snapshot = WorldSnapshot {
+            populations: vec![PopulationCohortState {
+                labor_assignments: vec![
+                    LaborAssignmentState {
+                        kind: "hunt".to_string(),
+                        bare_idle: true,
+                        ..LaborAssignmentState::default()
+                    },
+                    LaborAssignmentState {
+                        kind: "forage".to_string(),
+                        ..LaborAssignmentState::default()
+                    },
+                ],
+                ..PopulationCohortState::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let decoded = decode_snapshot_flatbuffer(&bytes).expect("the snapshot decodes");
+        let rows = &decoded.populations[0].labor_assignments;
+        assert!(rows[0].bare_idle, "the idle row keeps its flag");
+        assert!(!rows[1].bare_idle, "its neighbour does not inherit it");
+    }
 }

@@ -600,8 +600,8 @@ const FIXTURE_PASTORAL_SHARE: f32 = 0.4;
 /// The pen's own share — the pastoral dial at the value that milks a roaming herd like a penned one.
 const PEN_EQUIVALENT_SHARE: f32 = 1.0;
 
-/// **THE PASTORAL SHARE IS A DIAL ON THE ROAMING HERD'S MILK, AND IT IS LOAD-BEARING** — the two
-/// migratory species can never be penned, so a pen-only gate would hand them nothing at all.
+/// **THE PASTORAL SHARE IS A DIAL ON THE ROAMING HERD'S MILK, AND IT IS LOAD-BEARING** — the
+/// pastoral-only migratory species can never be penned, so a pen-only gate would hand them nothing at all.
 #[test]
 fn the_pastoral_rung_pays_its_share_and_the_wild_rung_pays_nothing() {
     const {
@@ -1516,4 +1516,66 @@ fn a_far_pens_milk_and_fleece_are_in_its_caravan_forecast() {
              net {net_home}, spoiled {spoiled_home}, fibre {fibre_home}"
         );
     }
+}
+
+/// ⛔ **A CAMP KILL WEARS NO SLED; A POSTED PEN STILL DOES.** A pen butchered inside the work range
+/// hauls nothing, so its wear is charged against the row's kill-bearing items alone
+/// (`EquipmentConfig::camp_kill_kit`) and the sled's life is untouched across several culling turns.
+/// The same pen five hexes out posts a party, whose sled is its haul carry, and wears it. The local pen really
+/// culled (liveness).
+#[test]
+fn a_local_pen_wears_no_sled_and_a_far_pen_still_does() {
+    /// Turns the pen is culled (and, far out, walks its packs home).
+    const CULLING_TURNS: u32 = 8;
+    /// Beyond `band_work_range`, so the row posts a party.
+    const FAR: u32 = 5;
+    /// Cull hard: a low floor takes the stock down every turn.
+    const CULLING_FLOOR: f32 = 0.05;
+    const SLED: &str = "sled";
+    const NO_WEAR: f32 = 0.0;
+    let wear_after = |distance: u32| -> (f32, f32) {
+        let mut app = core_sim::build_test_app();
+        app.update();
+        let tile = richest_pasture(&app).0;
+        let camp = UVec2::new(tile.x + distance, tile.y);
+        level_footprint_pasture(&mut app, tile, PEN_RADIUS);
+        let id = seat_herd(&mut app, tile, FLEECE_SPECIES, Rung::Penned, 0.0);
+        let keeper = spawn_keeper(&mut app, &id, camp);
+        if let LaborTarget::Hunt { floor, .. } = &mut app
+            .world
+            .get_mut::<LaborAllocation>(keeper)
+            .expect("the keeper's allocation")
+            .assignments[0]
+            .target
+        {
+            *floor = CULLING_FLOOR;
+        }
+        for _ in 0..CULLING_TURNS {
+            publishing_turn(&mut app, keeper);
+        }
+        // Liveness: the pen was really culled this turn (a take was paid).
+        let culled = app
+            .world
+            .get::<LaborAllocation>(keeper)
+            .expect("the keeper's allocation")
+            .last_yields
+            .first()
+            .map_or(NO_WEAR, |yields| yields.actual);
+        let kit = app
+            .world
+            .get::<core_sim::BandEquipment>(keeper)
+            .expect("the keeper holds a ledger");
+        (kit.wear_of(SLED), culled)
+    };
+    let (local_sled, local_culled) = wear_after(0);
+    assert!(
+        local_culled > NO_WEAR,
+        "liveness: the local pen was culled ({local_culled})"
+    );
+    assert_eq!(local_sled, NO_WEAR, "a camp kill wears no sled");
+    let (far_sled, _) = wear_after(FAR);
+    assert!(
+        far_sled > NO_WEAR,
+        "a posted pen still wears its sled ({far_sled})"
+    );
 }

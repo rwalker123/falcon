@@ -339,8 +339,9 @@ position, name and people are one observation, so they never come from two diffe
 
 **A first or revived edge is a gathering's trigger.** `ContactsThisTurn` also remembers which edges
 a live band-to-band sighting found (`record`), as against a contact only an expedition's report
-carried (`record_report`). `advance_connections` reads, before folding the turn in, which of the
-live-sighted pairs held no live tie (no edge, or a parked one) and treats each as a gathering —
+carried (`record_report`). `advance_connections` reads, before folding the turn in, which pairs
+were live-sighted **both ways** and had not already met (not in `ConnectionLedger::met`, not tied in
+both directions) and treats each as a gathering —
 `belief.md` → "The gatherings source". The set is derived and cleared with the sightings, never
 checkpointed; `record_contact` and `connections_formed` are unchanged.
 
@@ -465,9 +466,10 @@ clock. Walks are in `BandId` order, and a relay that forms a missing edge counts
 **It is news, never a sighting.** Relay writes the ledger directly and never goes through
 `ContactsThisTurn::record`, and the gathering's `meetings` set is read before it runs. So a relayed
 write never fires a gathering, and gives no belief and no ritual lesson. It refreshes strength,
-clock 1 and clock 3 exactly as an expedition's report does, which leaves the kin tie **live**: a
-later direct meeting between relayed kin is therefore not a gathering, because a gathering is a
-meeting after no live tie. Kin who stay in touch through news have not been apart
+clock 1 and clock 3 exactly as an expedition's report does, which leaves the kin tie **live both
+ways** when the chain was seen both ways: a later direct meeting between relayed kin is therefore
+not a gathering, because a pair tied in both directions has not been apart (a relay down a one-way
+chain leaves a one-way tie, which — like a glimpse — does not block the meeting). Kin who stay in touch through news have not been apart
 (`tests/kin_relay.rs`).
 
 **Within one people only.** A chain through another people's band relays nothing, and a detached

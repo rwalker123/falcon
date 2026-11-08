@@ -511,6 +511,7 @@ fn create_populations<'a>(
                                 loadHomeIn: assignment.load_home_in,
                                 scoutingRange: assignment.scouting_range,
                                 scoutingReach: assignment.scouting_reach,
+                                bareIdle: assignment.bare_idle,
                                 orderKind: Some(order_kind),
                                 chiefOwned: assignment.chief_owned,
                             },
@@ -1278,6 +1279,7 @@ fn create_populations<'a>(
                     foodIntoStore: cohort.food_into_store,
                     foodFromStore: cohort.food_from_store,
                     foodInStoresInReach: cohort.food_in_stores_in_reach,
+                    poolingSteadyNet: cohort.pooling_steady_net,
                     bandOrders: Some(band_orders),
                 },
             )
@@ -1686,6 +1688,7 @@ fn decode_labor_assignment(
         load_home_in: assignment.loadHomeIn(),
         scouting_range: assignment.scoutingRange(),
         scouting_reach: assignment.scoutingReach(),
+        bare_idle: assignment.bareIdle(),
         order_kind: text(assignment.orderKind()),
         chief_owned: assignment.chiefOwned(),
     })
@@ -2232,6 +2235,7 @@ fn decode_population(
         food_into_store: cohort.foodIntoStore(),
         food_from_store: cohort.foodFromStore(),
         food_in_stores_in_reach: cohort.foodInStoresInReach(),
+        pooling_steady_net: cohort.poolingSteadyNet(),
         band_orders: map_rows(cohort.bandOrders(), |row| BandOrderState {
             kind: text(row.kind()),
             target: row.target(),
