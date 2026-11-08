@@ -1376,6 +1376,7 @@ panel, the AI's Craft specialist (#668) and auto-craft (#779) read one list.
 | a site crew | `LaborAllocation::last_keeping_issued` — each `KeepingIssue` carries `required` beside the `units` issued | `site` / the row kind keeping it (`forage` / `hunt` / `extract`) + target keys |
 | a take row | the row's kit lines from `craft_suggestions::take_row_gear` — the very lines `kitToe` is copied from; a camp-kill hunt row's lines cover only its kill-bearing items and its spear ask is its hold crew when bare hands cannot wound (`work-party.md`) | `take` / the row kind (+ target keys; none on `scout` / `warrior`) |
 | a declared build | `LaborAllocation::last_build_toe` (`BuildToeLine { source, item, required, filled }`) — what the build's own builders claimed beside what the settlement gave them (`buildToe` on the wire) | `build` / the build's kind + target keys |
+| the bench's own lined-up work (a **bench tool**, see "A bench tool that pays for itself") | `craft_suggestions::bench_tool_suggestions` — the bench queue plus the suggestions above it | `bench` / no job; the line's `material` is the material the tool bounds |
 
 `KeepingIssue::required` exists for this: `keeping_issued` used to write only what was **paid**, so a
 claim the settlement reached with nothing had no line at all. It now writes one line per claimed item
@@ -1476,6 +1477,47 @@ those zeros as the zeros they are.
 - **Auto-craft needs nothing here**: it takes the top usable suggestion, so a declared build's tools are
   crafted ahead of the build needing them (`auto_craft::auto_crafts_the_tools_a_queued_build_will_need`).
 
+### A bench tool that pays for itself
+
+No consumer is ever short of a bench tool (it is a multiplier on the bench, not a claim on a worker),
+so the shortage lines never suggest one. `craft_suggestions::bench_tool_suggestions` adds it by a
+different rule, run after the kit and build-material suggestions are merged (the snapshot in
+`snapshot::population` and auto-craft in `auto_craft::band_suggestions_and_offers` both call it, so
+the panel and auto-craft read one list). For each tool `T` bounding a material `M`, **skipped when**
+the band holds a live `T` (`EquipmentConfig::live_bench_tool`) or has `T` queued or parked
+(`queued_units`):
+
+- `W` = the bench work lined up on recipes that **read** `M` (`RecipeDef::bench_material() == M`):
+  the queued orders' remaining work (`remaining() × work − progress`) plus, for every suggestion
+  already on the list whose suggested recipe reads `M`, that recipe's `work` × the passes the count
+  needs (`ceil(count / output per pass)`). The suggested recipe is the one the ledger marks
+  `suggested` for the item (the offers), else the first in book order. The suggestions' work is
+  struck before any tool is added, so one tool's own recipe never makes another look worthwhile.
+- `r_bare` = `M`'s `hand_working.rate`; `r_tool` = `T`'s `craft_speed` at the tier its recipe makes
+  (`ItemDefinition::tier_craft_stat`). A tool no faster than the bare hand is never suggested.
+- Turns saved, crew-free: `S = W × (1/r_bare − 1/r_tool)`. Cost: `C = T's recipe work ÷ output per
+  pass ÷ the rate the bench would work it at` (`systems::bench_tiers` speed for the recipe's own read
+  material: its live tool, else the bare hand). The crew and `progress_per_worker_turn` scale both
+  sides alike and cancel.
+- **Suggest `T` iff `S − C > BENCH_TURNS_TOLERANCE` (1e-3, float noise only).** No config lever: every
+  number is already on `recipes.json`, `equipment.json` and `materials.json`. `count` is `1`.
+- **Placement:** directly ahead of the highest-ranked suggestion whose recipe reads `M`; when none
+  does (the work is all queued) at the end of the list. The list is not re-sorted afterwards.
+- **Knowledge is not filtered** — as for every other suggestion, a gated tool is published (the offer
+  says `Needs Tanning`) and auto-craft passes over an unqueueable one.
+- On the shipped book the tanning frame (hide 0.5 → 2.0, built at fibre's 0.5: 24 turns) pays for
+  itself from three sleds of lined-up work (36 saved), not from two (24, a tie).
+
+The suggestion carries `benchTurnsSaved` (`S`) and `benchBuildTurns` (`C`) and a source line of kind
+`bench` whose `material` is `M`; `workersWithout` and `workPerTurn` are `0`.
+
+Pinned by `craft_suggestions::tests::{a_tool_whose_turns_saved_exceed_its_cost_is_suggested,
+a_tool_that_does_not_pay_for_itself_is_not_suggested,
+suggested_work_on_the_material_counts_beside_the_queue, a_held_or_queued_tool_is_not_suggested_again,
+the_tool_sits_ahead_of_the_first_suggestion_reading_its_material}`, off the encoded frame by
+`crafting_wire::a_bench_tool_that_pays_for_itself_is_published_with_its_turns`, and through auto-craft
+by `auto_craft::a_tool_that_pays_for_itself_is_auto_crafted_and_a_little_work_gets_none`.
+
 ### Coming up - the kit that wears out before a new one could be made (#778)
 
 Design: `docs/plan_crafting_and_materials.md` -> "Coming up". The list is one list: an item that is
@@ -1529,6 +1571,10 @@ only wearing out is a `CraftSuggestion` like any other, with empty `sources`.
   (`SAVE_FORMAT_VERSION` 38). A fission splinter's ledger is built from `BandEquipment::default()`
   plus the units `take_units` moved, so it starts with no window.
 - **Wire**: `CraftSuggestion.upcomingCount` / `expiresInTurns` / `leadTurns`, appended last.
+- **Bench-tool wire**: `CraftSuggestion.benchTurnsSaved` / `benchBuildTurns` (floats, appended after
+  `leadTurns`; native dict keys `bench_turns_saved` / `bench_build_turns`) and
+  `CraftSuggestionSource.kind == "bench"` with `material` set. Unchanged `SAVE_FORMAT_VERSION`:
+  suggestions are derived.
 
 Pinned off the encoded frame by `core_sim/tests/wear_forecast.rs`: forecast equals actual
 (`a_unit_forecast_to_wear_out_within_the_lead_really_does`, with its fresh-unit control), the spare
@@ -1668,6 +1714,9 @@ auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 33)
   suggestion ranks (a kit shortage outranks it). Pinned by
   an auto-bench fixture that queues the hurdles a pen build is short of, and one that skips it and
   stays skipped.
+- **A bench tool that pays for itself is in that list too** ("A bench tool that pays for itself"),
+  so a band with enough blocked or suggested work on a material auto-crafts the tool for it first
+  (if its craft is known); a band with little work does not.
 - **A queued auto order that later runs short WAITS** (the ordinary skip/waiting semantics) and no
   longer holds the bench: the next fill queues what can be made. Only the player's skip parks it.
 - **It never picks the crew.** `BandBench::workers` is untouched by every path.

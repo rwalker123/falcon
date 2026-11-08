@@ -15,8 +15,8 @@ use core_sim::auto_craft::{
 };
 use core_sim::{
     advance_crafting, build_test_app, scalar_from_f32, BandBench, BandEquipment, BuildSource,
-    KeepingIssue, LaborAllocation, MaterialsConfigHandle, PopulationCohort, RecipesConfigHandle,
-    ResidentBand,
+    DiscoveryProgressLedger, KeepingIssue, LaborAllocation, LadderConfigHandle,
+    MaterialsConfigHandle, PopulationCohort, RecipesConfigHandle, ResidentBand,
 };
 use std::collections::BTreeMap;
 
@@ -459,6 +459,67 @@ fn an_unlearned_craft_is_passed_over() {
         vec![HOES.to_string()],
         "the top suggestion needs an unlearned craft, so the next queueable one is queued"
     );
+}
+
+/// Credit the band's people with a craft, past the ladder's completion threshold.
+fn learn(app: &mut App, band: Entity, craft: &str) {
+    let threshold = app
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .knowledge
+        .completion_threshold;
+    let faction = app
+        .world
+        .get::<PopulationCohort>(band)
+        .expect("the band has a cohort")
+        .faction;
+    let id = core_sim::crafting::craft_discovery_id(craft).expect("a shipped craft");
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(faction, id, scalar_from_f32(threshold));
+}
+
+/// **A BENCH TOOL THAT PAYS FOR ITSELF IS AUTO-CRAFTED FIRST, AND A LITTLE WORK DOES NOT GET ONE.**
+/// Sleds queued behind no hide are blocked, so the bench can progress nothing and auto fills it. With
+/// three sleds (24 hide work, 36 turns saved against 24 to build) the frame is queued; with one sled
+/// the list is empty and nothing is. Tanning is known, and the frame's wood, fibre and bone are in
+/// the store.
+#[test]
+fn a_tool_that_pays_for_itself_is_auto_crafted_and_a_little_work_gets_none() {
+    for (sleds, expected) in [(3, vec![TANNING_FRAME.to_string()]), (1, Vec::new())] {
+        let (mut app, band) = world();
+        auto_bench(&mut app, band, STANDING_CREW);
+        short_of(&mut app, band, &[]);
+        learn(&mut app, band, "tanning");
+        bank(
+            &mut app,
+            band,
+            FIBRE,
+            PLENTY,
+            &[("fineness", 0.5), ("strength", 0.5)],
+        );
+        bank_bone(&mut app, band);
+        bank(
+            &mut app,
+            band,
+            "wood",
+            PLENTY,
+            &[("hardness", 0.5), ("pliancy", 0.5)],
+        );
+        app.world
+            .get_mut::<BandBench>(band)
+            .expect("bench")
+            .enqueue("sled", sleds);
+
+        set_auto_craft(&mut app.world, band, true);
+
+        let queued: Vec<String> = queued_items(&app, band)
+            .into_iter()
+            .filter(|item| item != "sled")
+            .collect();
+        assert_eq!(queued, expected, "{sleds} sled(s) of blocked hide work");
+    }
 }
 
 /// **THE BENCH'S AUTO STATE AND AN ORDER'S `auto` TAG SURVIVE A SAVE AND A LOAD.**

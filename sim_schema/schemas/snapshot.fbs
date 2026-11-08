@@ -5372,6 +5372,13 @@ table CraftSuggestion {
   // queued ahead plus one unit, at the bench's crew (one crafter when unstaffed). It is the horizon
   // the forecast looks ahead by. 0 with no forecast for the item.
   leadTurns:uint = 0;
+  // A BENCH TOOL SUGGESTED BECAUSE IT PAYS FOR ITSELF (source kind "bench"): the crew-free bench
+  // turns it saves on the work lined up (queued orders + suggestions) for the material it bounds,
+  // W x (1/bare rate - 1/tool craft_speed). 0 on every other suggestion. Appended last.
+  benchTurnsSaved:float = 0;
+  // The same tool's cost in the same crew-free bench turns: its recipe's work over the rate the
+  // bench would work it at. Always below benchTurnsSaved on a bench-tool suggestion; 0 otherwise.
+  benchBuildTurns:float = 0;
 }
 
 // ONE CONSUMER GOING WITHOUT AN ITEM — a row of CraftSuggestion.sources, keyed so the client can
@@ -5383,6 +5390,8 @@ table CraftSuggestion {
 //                  material), the LaborAssignment spelling.
 //   kind "take"  — a take row's kitToe. Same `job` + target keys as a site; a band-wide role
 //                  ("scout" | "warrior") carries no target.
+//   kind "bench" — the bench's lined-up work on a material: why a bench tool is suggested. `material`
+//                  names the material the tool bounds; `job` and the target keys are empty.
 //   kind "build" — a DECLARED BUILD whose builders are short of these tools (`buildToe` on the
 //                  source row). `job` + target keys name the build's source in the LaborAssignment
 //                  spelling ("forage" + targetX/Y | "hunt" + faunaId | "extract" + targetX/Y +

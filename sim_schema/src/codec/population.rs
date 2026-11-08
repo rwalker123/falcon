@@ -1483,6 +1483,8 @@ fn create_craft_suggestions<'a>(
                     leadTurns: suggestion.lead_turns,
                     displayName: Some(display_name),
                     reason: Some(reason),
+                    benchTurnsSaved: suggestion.bench_turns_saved,
+                    benchBuildTurns: suggestion.bench_build_turns,
                 },
             )
         })
@@ -2093,6 +2095,8 @@ fn decode_population(
                 lead_turns: suggestion.leadTurns(),
                 display_name: text(suggestion.displayName()),
                 reason: text(suggestion.reason()),
+                bench_turns_saved: suggestion.benchTurnsSaved(),
+                bench_build_turns: suggestion.benchBuildTurns(),
             }
         }),
         fertility_ceiling: cohort.fertilityCeiling(),

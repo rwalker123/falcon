@@ -7344,6 +7344,8 @@
       ],
       "craft_suggestions": [
         {
+          "bench_build_turns": 81.720001,
+          "bench_turns_saved": 45.689999,
           "count": 85,
           "display_name": "populations[0].craft_suggestions[0].display_name",
           "expires_in_turns": 84.720001,
@@ -7410,6 +7412,8 @@
           "workers_without": 65.790001
         },
         {
+          "bench_build_turns": 20.559999,
+          "bench_turns_saved": 98.529999,
           "count": 126,
           "display_name": "populations[0].craft_suggestions[1].display_name",
           "expires_in_turns": 94.589996,
@@ -9950,6 +9954,8 @@
       ],
       "craft_suggestions": [
         {
+          "bench_build_turns": 68.209999,
+          "bench_turns_saved": 52.540001,
           "count": 100,
           "display_name": "populations[1].craft_suggestions[0].display_name",
           "expires_in_turns": 38.599998,
@@ -10016,6 +10022,8 @@
           "workers_without": 44.080002
         },
         {
+          "bench_build_turns": 11.38,
+          "bench_turns_saved": 80.599998,
           "count": 131,
           "display_name": "populations[1].craft_suggestions[1].display_name",
           "expires_in_turns": 79.279999,
@@ -12500,6 +12508,8 @@
       ],
       "craft_suggestions": [
         {
+          "bench_build_turns": 79.989998,
+          "bench_turns_saved": 1.51,
           "count": 135,
           "display_name": "populations[2].craft_suggestions[0].display_name",
           "expires_in_turns": 63.07,
@@ -12566,6 +12576,8 @@
           "workers_without": 96.959999
         },
         {
+          "bench_build_turns": 13.92,
+          "bench_turns_saved": 100.18,
           "count": 184,
           "display_name": "populations[2].craft_suggestions[1].display_name",
           "expires_in_turns": 98.82,

@@ -2913,6 +2913,19 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     &claim_sources,
                 ),
             );
+            // **A BENCH TOOL THAT PAYS FOR ITSELF** in bench time on the work lined up (queued
+            // orders plus the suggestions above) - the one function auto-craft calls too.
+            crate::craft_suggestions::bench_tool_suggestions(
+                &mut suggestions,
+                &crate::craft_suggestions::BenchToolInputs {
+                    bench,
+                    wear: &kit,
+                    recipes: craft_inputs.recipes,
+                    equipment: craft_inputs.equipment,
+                    materials: craft_inputs.materials,
+                    offers: Some(&craft_offers),
+                },
+            );
             // **WHAT EACH SUGGESTION IS CALLED**, resolved here so a client never shows a raw id: an
             // item's own name, else the material's title.
             for suggestion in &mut suggestions {

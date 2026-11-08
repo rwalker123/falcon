@@ -27,8 +27,9 @@ use crate::{
         HEAD_ORDER, MIN_ORDER_COUNT,
     },
     craft_suggestions::{
-        band_suggestions, build_material_suggestions_in_world, merge_build_material_suggestions,
-        take_row_gear, CraftSuggestion, ForecastInputs, SuggestionConfigs,
+        band_suggestions, bench_tool_suggestions, build_material_suggestions_in_world,
+        merge_build_material_suggestions, take_row_gear, BenchToolInputs, CraftSuggestion,
+        ForecastInputs, SuggestionConfigs,
     },
     equipment_config::{EquipmentConfig, EquipmentConfigHandle},
     intensification::LadderConfigHandle,
@@ -247,6 +248,19 @@ fn band_suggestions_and_offers(
         )
     });
     merge_build_material_suggestions(&mut suggestions, build_materials);
+    // **A bench tool that pays for itself** is on the list auto-craft works down, ranked where the
+    // snapshot ranks it.
+    bench_tool_suggestions(
+        &mut suggestions,
+        &BenchToolInputs {
+            bench: Some(bench),
+            wear: &wear,
+            recipes: &configs.recipes,
+            equipment: &configs.equipment,
+            materials: &configs.materials,
+            offers: Some(&offers),
+        },
+    );
     Some((suggestions, offers))
 }
 

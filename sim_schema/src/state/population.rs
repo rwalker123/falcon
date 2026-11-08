@@ -2612,13 +2612,20 @@ pub struct CraftSuggestionState {
     /// suggestion; empty for a kit suggestion.
     #[serde(default)]
     pub reason: String,
+    /// Crew-free bench turns a suggested bench tool saves on the work lined up for the material it
+    /// bounds; `0` on every other suggestion.
+    #[serde(default)]
+    pub bench_turns_saved: f32,
+    /// The same tool's cost in the same crew-free bench turns; `0` on every other suggestion.
+    #[serde(default)]
+    pub bench_build_turns: f32,
 }
 
 /// **One consumer going without a suggested item** — a row of [`CraftSuggestionState::sources`].
 /// The `kind` / `job` / target keys are spelled as `snapshot.fbs`'s `CraftSuggestionSource` states.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct CraftSuggestionSourceState {
-    /// `"pool"` | `"site"` | `"take"` | `"build"`.
+    /// `"pool"` | `"site"` | `"take"` | `"build"` | `"bench"`.
     pub kind: String,
     /// The pool token, or the labor row's kind.
     pub job: String,

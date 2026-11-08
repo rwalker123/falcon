@@ -1747,6 +1747,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // Wild Boar"); `reason` is `""` for a kit suggestion, whose reason is its workers.
             let _ = row.insert("display_name", suggestion.displayName().unwrap_or(""));
             let _ = row.insert("reason", suggestion.reason().unwrap_or(""));
+            // A bench tool suggested because it pays for itself (source kind "bench"): the crew-free
+            // bench turns it saves on the work lined up, and what it costs in the same turns. `0`
+            // on every other suggestion.
+            let _ = row.insert("bench_turns_saved", suggestion.benchTurnsSaved() as f64);
+            let _ = row.insert("bench_build_turns", suggestion.benchBuildTurns() as f64);
             let mut sources = VarArray::new();
             if let Some(list) = suggestion.sources() {
                 for source in list.iter() {
