@@ -1675,8 +1675,8 @@ message HuntCrewTakeRow {
   float keep_hands = 7;
   // WHAT THIS CREW'S TAKE LANDS AT HOME, animals a turn: the work-party caravan's rate (walk out,
   // porters, transit rot) over the herd's food per animal. Past the work range it is a fraction of
-  // animals_likely, which is the take AT THE SOURCE; inside the apron it equals animals_likely. 0 on
-  // a `follow` ask.
+  // animals_likely, which is the take AT THE SOURCE; inside the apron it equals animals_likely, and so it
+  // does on a `follow` ask (a camp kill).
   float home_animals_likely = 8;
   // The 1-based turn this crew's first pack lands, from the same forecast. 0 inside the apron or when
   // no pack lands within the forecast horizon.

@@ -2097,8 +2097,8 @@ impl Food {
         }
         let mut sites: Vec<Site> = cluster_sites(view, memory, band, band_tile(band), is_dead)
             .into_iter()
-            .map(|(patch, rate)| {
-                let hands = sustained_hands(patch, rate);
+            .map(|(patch, _row_rate)| {
+                let hands = sustained_hands(patch, Self::equipped_patch_rate(patch));
                 let sustained = regrowth_at(&patch.regrowth_samples, BEST_FLOOR)
                     * patch.provisions_per_biomass
                     * horizon;
@@ -2121,6 +2121,8 @@ impl Food {
         struct HerdSite<'c> {
             kit: String,
             curve: &'c crate::oracle::CrewTakeCurve,
+            /// The share of a kill the band eats before it spoils ([`Food::kept_share`]).
+            keep: f32,
             sustained: f32,
             sustained_crew: u32,
             room: f32,
@@ -2143,11 +2145,12 @@ impl Food {
                     * herd.provisions_per_biomass;
                 // The smallest crew whose take reaches the regrowth, else where the curve stops
                 // rising: past it another hunter takes nothing more of what regrows.
+                let keep = Self::kept_share(band, herd, curve.body_food);
                 let sustained_crew = if sustained > 0.0 {
                     curve
                         .rows
                         .iter()
-                        .find(|row| row.likely >= sustained)
+                        .find(|row| row.likely * keep >= sustained)
                         .map_or_else(|| curve.plateau(), |row| row.crew)
                 } else {
                     0
@@ -2155,6 +2158,7 @@ impl Food {
                 Some(HerdSite {
                     kit,
                     curve,
+                    keep,
                     sustained,
                     sustained_crew,
                     room: (herd.biomass - BEST_FLOOR * herd.carrying_capacity).max(0.0)
@@ -2165,10 +2169,11 @@ impl Food {
             .collect();
         // What the next hunter earns of the sustained take, and of the room above the regrowth.
         let sustained_value = |herd: &HerdSite<'_>, hunters: u32| {
-            herd.curve.likely(hunters).min(herd.sustained) * horizon
+            (herd.curve.likely(hunters) * herd.keep).min(herd.sustained) * horizon
         };
         let room_value = |herd: &HerdSite<'_>, hunters: u32| {
-            ((herd.curve.likely(hunters) - herd.sustained).max(0.0) * horizon).min(herd.room)
+            ((herd.curve.likely(hunters) * herd.keep - herd.sustained).max(0.0) * horizon)
+                .min(herd.room)
         };
         let mut gathering = 0;
         let mut sustained_dealt = 0;
@@ -2255,6 +2260,32 @@ impl Food {
             sustained_hands: sustained_dealt,
             room_hands: room_dealt,
         }
+    }
+
+    /// **What one hand's gather pays with the basket the AI is outfitting it with**: the patch's
+    /// published `per_worker_yield`, which the sim strikes at the roster's equipped reference
+    /// (`equipped_reference(ForageCarry)`, `snapshot/subsistence.rs`) whatever the asking band
+    /// holds. The row-realized rate `cluster_sites` carries is the bare hand's wherever the band
+    /// has gathered unequipped (a splinter's window reads its parent's rows), and the walk is
+    /// buying the baskets, so it prices the patch side on this one accessor.
+    fn equipped_patch_rate(patch: &ForagePatchState) -> f32 {
+        patch.per_worker_yield
+    }
+
+    /// **The share of a herd's kill the band eats before it spoils**: the sim's own hunting meal
+    /// for the herd's keeping class (`PopulationCohortState::hunt_meals`: the food the band can
+    /// eat of one kill within the class's shelf life, `hunt_by_need::hunt_meal`) over the food one
+    /// animal lands (`body_food`), capped at 1. A band whose meal is nothing - its larder already
+    /// holds that class - eats none of the next kill before it rots. `1` where the frame carries
+    /// no meal for the class, which is every herd of a species the keeping table cannot resolve.
+    fn kept_share(band: &PopulationCohortState, herd: &HerdTelemetryState, body_food: f32) -> f32 {
+        if body_food <= 0.0 {
+            return 1.0;
+        }
+        band.hunt_meals
+            .iter()
+            .find(|meal| meal.keeping == herd.keeping)
+            .map_or(1.0, |meal| (meal.food / body_food).clamp(0.0, 1.0))
     }
 
     /// **The kit a band outfitted for `herd` would hunt it under**: the herd's own
@@ -3502,6 +3533,45 @@ mod tests {
         let memory = outfitting_memory(&[(1, 1.0), (2, 2.0), (3, 3.0)]);
         let split = split_of(&view, &memory);
         assert_eq!((split.sustained_hands, split.room_hands), (12, 5));
+    }
+
+    /// **A herd's food is priced net of the share that rots**: the band's hunting meal for the
+    /// herd's keeping class is what it can eat of a kill before it spoils, so a meal of a tenth of
+    /// one animal prices the herd at a tenth of its curve - and the herd that out-paid the baskets
+    /// at full value is dealt nobody. The same band with no meal on the wire keeps every hunter.
+    #[test]
+    fn a_herds_value_is_net_of_the_share_of_its_kill_that_rots() {
+        let mut view = small_game_at_its_window();
+        let memory = outfitting_memory(&[(1, 3.0), (2, 6.0), (3, 9.0), (4, 12.0)]);
+        let fed = split_of(&view, &memory);
+        assert_eq!(fed.hunters, vec![("trapping".to_owned(), 4)]);
+        view.snapshot.populations[0].working_age = 10;
+        let full_value = split_of(&view, &memory);
+        assert_eq!(
+            full_value.gathering, 10,
+            "10 hands are the patches' crews either way"
+        );
+        view.snapshot.populations[0].working_age = 17;
+        view.snapshot.herds[0].keeping = "flesh".to_owned();
+        view.snapshot.populations[0].hunt_meals = vec![sim_runtime::KeepingMealState {
+            keeping: "flesh".to_owned(),
+            food: 0.1 * crate::specialists::food::tests::FIXTURE_BODY_FOOD,
+        }];
+        // With only the patches' sustained crews to fill (10 hands) the discounted herd, below
+        // their per-hand take, is dealt nobody; with hands left over it is still the best use.
+        view.snapshot.populations[0].working_age = 10;
+        let rotting = split_of(&view, &memory);
+        assert!(rotting.hunters.is_empty(), "{:?}", rotting.hunters);
+        assert_eq!(rotting.gathering, 10);
+    }
+
+    /// The patch side is priced at the rate the sim publishes for the equipped basket, never at
+    /// whatever a row of the band realized with bare hands.
+    #[test]
+    fn a_patch_is_priced_at_the_equipped_rate() {
+        let view = a_band_at_its_window(5.0);
+        let patch = &view.snapshot.forage_patches[0];
+        assert_eq!(Food::equipped_patch_rate(patch), patch.per_worker_yield);
     }
 
     // ---- the hoe estimate ----------------------------------------------------------------------

@@ -773,6 +773,10 @@ fn crew_row_to_dict(row: &sim_runtime::HuntCrewTakeRow) -> VarDictionary {
     let _ = dict.insert("next_rung_keep_hands", f64::from(row.next_rung_keep_hands));
     // The hands this crew spends keeping the herd, fractional — the sheet's crew-split marks.
     let _ = dict.insert("keep_hands", f64::from(row.keep_hands));
+    // What this crew LANDS at home, animals a turn (the caravan forecast; equals `animals_likely`
+    // inside the apron), and the turn its first pack lands (`0` inside the apron).
+    let _ = dict.insert("home_animals_likely", f64::from(row.home_animals_likely));
+    let _ = dict.insert("home_first_load_turn", i64::from(row.home_first_load_turn));
     dict
 }
 

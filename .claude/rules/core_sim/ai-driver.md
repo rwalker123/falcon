@@ -311,6 +311,17 @@ belt for a cohort whose tiers are not on the wire). A material grant is carried 
   spare basket is not forfeited budget, an unspent slot is). `outfit_demands` logs the two passes'
   hand counts (`outfit split … sustained_hands … room_hands`).
 
+**Both sides are priced as the band will be OUTFITTED, not as it stands.** A patch's per-hand rate
+is `Food::equipped_patch_rate` - the patch's published `per_worker_yield`, which the sim strikes at
+the roster's equipped reference (`equipped_reference(ForageCarry)`), never the rate a row of the
+band realized with bare hands (the walk is buying the baskets; a splinter's window reads rows its
+parent worked unequipped). A herd's curve is `assume_kit_held` (below), and its home likely is
+scaled by **`Food::kept_share`: the share of a kill the band eats before it spoils** - the cohort's
+`hunt_meals` entry for the herd's `keeping` class (`hunt_by_need::hunt_meal`, the sim's own
+spoilage reading: what the band can eat of one kill within the class's shelf life, via
+`spoilage::band_shelf_life`) over the food one animal lands, capped at 1; `1` where the frame
+carries no meal for the class. Ties stay with the basket and no extra margin lever is added.
+
 **A herd is priced off the sim's own crew-take curve, for the kit it would be hunted with, at the
 rate that lands home** (`SeatMemory::outfit_take`). At the outfitting window the ordinary curve
 (`SeatMemory::crew_take`, the kit held) is the one a held kit prices; `HuntCrewTakeQuery::assume_kit_held`

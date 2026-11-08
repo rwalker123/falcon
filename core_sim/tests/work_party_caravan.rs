@@ -3920,3 +3920,111 @@ fn the_crew_curves_home_rate_is_what_the_row_lands_at_every_distance() {
         previous_home = row.home_animals_likely;
     }
 }
+
+/// A band on [`CAMP`] snaring a herd of `species` seated `distance` hexes along its row, under the
+/// roster's `trapping` kit (the kit a small-game herd is hunted under).
+fn world_snaring_at(species: &str, size_class: SizeClass, distance: u32) -> (App, Entity) {
+    let mut app = build_test_app();
+    app.update();
+    app.world
+        .resource_mut::<FaunaConfigHandle>()
+        .hold_wariness_at_zero();
+    let herd_tile = UVec2::new(CAMP.x + distance, CAMP.y);
+    let herd = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let def = fauna
+            .species_by_display(species)
+            .expect("the fixture names a shipped species");
+        Herd::new(
+            HERD_ID.to_string(),
+            species.to_string(),
+            size_class,
+            vec![herd_tile],
+            STANDING_STOCK,
+            STANDING_STOCK,
+            def.fodder_per_biomass,
+            def.regrowth_rate.unwrap_or(0.1),
+            def.body_mass,
+            shipped::root_standing(shipped::animal()),
+        )
+    };
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        registry.clear();
+        registry.herds.push(herd);
+    }
+    let trapping = EquipmentConfig::builtin()
+        .resolve_kit_for_job(Some(TRAPPING_KIT), core_sim::KitJob::Hunt)
+        .expect("the roster sends the trapping kit on a hunt");
+    let band = spawn_camp_band(&mut app, hunt_target(), Some(trapping));
+    (app, band)
+}
+
+const TRAPPING_KIT: &str = "trapping";
+
+/// **THE CREW CURVE EQUALS THE TAKE FOR SNARED SMALL GAME, NEAR AND FAR** - the curve's home row,
+/// in food, against what the same row lands over 20 live turns, on a Wild Fowl herd under the
+/// trapping kit at 1 (a camp kill), 3 and 5 hexes. The AI read the curve's far small-game rows as
+/// nearly nothing while those rows landed several times as much.
+#[test]
+fn the_crew_curve_equals_the_take_for_snared_small_game_near_and_far() {
+    const TURNS: usize = 20;
+    const TOLERANCE: f32 = 0.2;
+    for distance in [1_u32, 3, 5] {
+        let (mut app, band) = world_snaring_at("Wild Fowl", SizeClass::Small, distance);
+        resolve_a_turn(&mut app);
+        let (food_per_animal, curve) = {
+            let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            let body = fauna
+                .species_by_display("Wild Fowl")
+                .expect("the fixture names a shipped species")
+                .body_mass;
+            let food_per_animal = body * fauna.hunt_yield_for("Wild Fowl").provisions_per_biomass;
+            let reply = core_sim::forecast_query::answer_forecast_query(
+                &mut app.world,
+                &QueryPayload::HuntCrewTake(HuntCrewTakeQuery {
+                    faction_id: FACTION.0,
+                    band_id: BAND,
+                    herd_id: HERD_ID.to_string(),
+                    kit_id: TRAPPING_KIT.to_string(),
+                    floor: FLOOR,
+                    max_workers: CREW,
+                    follow: false,
+                    assume_kit_held: false,
+                }),
+            );
+            let QueryReply::HuntCrewTake(HuntCrewTakeReply { per_crew, .. }) = reply else {
+                panic!("the crew-take query must answer with a curve");
+            };
+            (food_per_animal, per_crew)
+        };
+        let row = curve
+            .iter()
+            .find(|row| row.workers == CREW)
+            .expect("the curve has the staffed crew's row");
+        let mut landed = 0.0_f32;
+        for _ in 0..TURNS {
+            resolve_a_turn(&mut app);
+            landed += app
+                .world
+                .get::<LaborAllocation>(band)
+                .expect("the band keeps its allocation")
+                .last_yields
+                .iter()
+                .map(|row| row.actual)
+                .sum::<f32>();
+        }
+        let landed_per_turn = landed / TURNS as f32;
+        let source = row.animals_likely * food_per_animal;
+        let home = row.home_animals_likely * food_per_animal;
+        println!(
+            "SMALLGAME dist {distance}: at-source {source:.3} home {home:.3} landed/turn {landed_per_turn:.3} first_load {}",
+            row.home_first_load_turn
+        );
+        assert!(landed_per_turn > 0.0, "liveness at {distance} hexes");
+        assert!(
+            (home - landed_per_turn).abs() <= TOLERANCE * landed_per_turn,
+            "distance {distance}: curve home {home:.3} vs landed {landed_per_turn:.3}"
+        );
+    }
+}

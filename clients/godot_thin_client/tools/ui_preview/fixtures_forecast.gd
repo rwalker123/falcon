@@ -114,6 +114,9 @@ static func crew_take_rows(herd: Dictionary, max_workers: int, floor: float) -> 
 			SourceForecastRef.CREW_TAKE_LOW_KEY: brought_down,
 			SourceForecastRef.CREW_TAKE_LIKELY_KEY: brought_down,
 			SourceForecastRef.CREW_TAKE_HIGH_KEY: brought_down,
+			# Inside the apron the sim publishes the landed take equal to the take at the source.
+			SourceForecastRef.CREW_TAKE_HOME_LIKELY_KEY: brought_down,
+			SourceForecastRef.CREW_TAKE_HOME_FIRST_LOAD_KEY: 0,
 		})
 	return rows
 

@@ -2529,6 +2529,32 @@ const CREW_TAKE_WORKERS_KEY := "workers"
 const CREW_TAKE_LOW_KEY := "animals_low"
 const CREW_TAKE_LIKELY_KEY := "animals_likely"
 const CREW_TAKE_HIGH_KEY := "animals_high"
+## **WHAT THIS CREW LANDS AT HOME**, animals a turn, struck through the caravan forecast the committed
+## row's `rate_home` answers through. Past the work apron a party walks out, porters ferry packs and the
+## walk rots flesh, so it is a fraction of `animals_likely` (the take AT THE SOURCE); inside the apron
+## (no party) the sim publishes it equal to `animals_likely`.
+const CREW_TAKE_HOME_LIKELY_KEY := "home_animals_likely"
+## The 1-based turn this crew's first pack lands; `0` inside the apron or past the forecast horizon.
+const CREW_TAKE_HOME_FIRST_LOAD_KEY := "home_first_load_turn"
+
+## **THE ONE READER OF A ROW'S LIKELY TAKE** - what the party LANDS HOME. Every consumer of the crew
+## curve (the stepper's figure, the crew-target searches, the plateau, the sheet's `brought_down`)
+## goes through here so a far herd never reads its at-source take. A row without the home key (a
+## fixture or reply that predates it) reads the at-source take, which is what the sim publishes for
+## the home rate inside the apron anyway.
+static func crew_row_likely(row: Dictionary) -> float:
+    return float(row.get(CREW_TAKE_HOME_LIKELY_KEY, row.get(CREW_TAKE_LIKELY_KEY, 0.0)))
+
+## A row's low or high quantile on the same footing as `crew_row_likely`: the sim publishes the
+## spread at the source, so it is scaled by the home/source ratio of the likely take (the caravan
+## shrinks the take, not the shape of its uncertainty). `quantile_key` is `CREW_TAKE_LOW_KEY` or
+## `CREW_TAKE_HIGH_KEY`.
+static func crew_row_quantile(row: Dictionary, quantile_key: String) -> float:
+    var at_source := float(row.get(quantile_key, 0.0))
+    var likely_at_source := float(row.get(CREW_TAKE_LIKELY_KEY, 0.0))
+    if likely_at_source <= 0.0 or not is_finite(likely_at_source):
+        return at_source
+    return at_source * crew_row_likely(row) / likely_at_source
 
 ## **THIS CREW'S ROW OUT OF THE CURVE**, or `{}` when the answer does not cover it — a reply that has
 ## not landed, a crew past the cap the question was asked with, or a crew of none.
@@ -2597,6 +2623,9 @@ const CREW_TAKE_REACH_TOLERANCE := 0.001
 ## **IS THERE A CURVE TO READ?** — non-empty, and every row a finite take. Asked before any of the
 ## searches below, so a caller gets the pre-curve closed form rather than an answer composed out of
 ## `INF` or out of a half-decoded reply.
+static func crew_row_likely_or_inf(row: Dictionary) -> float:
+    return INF if not row.has(CREW_TAKE_LIKELY_KEY) else crew_row_likely(row)
+
 static func has_crew_take_curve(per_crew: Array) -> bool:
     if per_crew.is_empty():
         return false
@@ -2604,7 +2633,7 @@ static func has_crew_take_curve(per_crew: Array) -> bool:
         if not (row_variant is Dictionary):
             return false
         var row: Dictionary = row_variant
-        if not is_finite(float(row.get(CREW_TAKE_LIKELY_KEY, INF))):
+        if not is_finite(crew_row_likely_or_inf(row)):
             return false
     return true
 
@@ -2612,7 +2641,7 @@ static func has_crew_take_curve(per_crew: Array) -> bool:
 ## curve does not cover it. **Never multiplied by the crew size** — see `hunt_crew_take_row`.
 static func crew_take_likely(per_crew: Array, workers: int) -> float:
     var row := hunt_crew_take_row(per_crew, workers)
-    return CREW_TAKE_NO_ROW if row.is_empty() else float(row[CREW_TAKE_LIKELY_KEY])
+    return CREW_TAKE_NO_ROW if row.is_empty() else crew_row_likely(row)
 
 ## **THAT TAKE IN BIOMASS** — the unit the projection walks and the crew targets compare in, so the
 ## chart's drawdown descends at the rate the sim would actually pay rather than at the rate the crew

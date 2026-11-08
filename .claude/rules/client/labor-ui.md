@@ -1654,6 +1654,13 @@ stepper's crew.
   turns the animals into the herd's own accounts through the body quantum
   (`rescaled_from_biomass(herd, "", animals × body_quantum)`), so `ONCE TAMED` / `ONCE CORRALLED`
   states the row at the sheet's crew in food, hide or both.
+- **The hunt curve reads what the party LANDS HOME.** Each row carries `home_animals_likely` (the
+  caravan forecast's rate over the herd's food per animal; equal to `animals_likely` inside the apron)
+  and `home_first_load_turn`. `SourceForecast.crew_row_likely(row)` is the ONE reader of a row's likely
+  take (`crew_take_likely`, the crew-target searches, the plateau and the sheet's `brought_down` all go
+  through it), so a far herd never shows its at-source take in the stepper; `crew_row_quantile` scales
+  low/high by the same home/source ratio, since the sim publishes the spread at the source only.
+  `hunt.gd`'s `_far_crew_curve_reads_landed` pins it (frame `herd_crew_take_landed`).
 - **The hunt curve's key carries the herd's state** (`_hunt_curve_herd_terms`: rung, domestication,
   biomass), because the rows price the rung above the one the herd stands on. Without it a herd that
   climbed a rung reused the previous rung's answer.

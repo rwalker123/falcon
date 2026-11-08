@@ -1608,6 +1608,9 @@ func run(harness) -> void:
 	# ---- THE TAKE IS THE SIM'S ANSWER, AND THE READOUT SAYS SO ------------------------------------
 	await _crew_take_readout_assertions()
 
+	# ---- …AND PAST THE APRON THE CURVE READS WHAT THE PARTY LANDS HOME, NOT THE SOURCE TAKE -------
+	await _far_crew_curve_reads_landed()
+
 	# ---- …AND SO IS EVERY CREW ANSWER BESIDE IT, DOWN TO A FRACTION OF AN ANIMAL -----------------
 	await _subone_take_assertions()
 
@@ -3816,6 +3819,14 @@ const CREW_TAKE_BELOW_FLOOR_STOCK := 0.6
 ## installed once and the claims are made against re-renders of it.
 var _crew_take_band_is_real := false
 
+## What share of the at-source take this block's stand-in server says a party LANDS HOME
+## (`home_animals_likely / animals_likely`): `1.0` inside the apron, below it for a far herd.
+var _crew_take_home_fraction := 1.0
+
+## A far herd's landed share of its at-source take: a round, distinguishable fraction (the shipped
+## boar at 5 hexes read 1.3 landed against 3.6 at source, about a third).
+const CREW_TAKE_FAR_HOME_FRACTION := 0.4
+
 ## The curve this block answers with: the client's own two stages, then the FIGHT the client cannot
 ## see. Composed from the herd the ask names, so it is a stand-in server rather than a table.
 func _fight_reply(request_id: int, ask: Dictionary) -> Dictionary:
@@ -3830,6 +3841,9 @@ func _fight_reply(request_id: int, ask: Dictionary) -> Dictionary:
 			SourceForecast.CREW_TAKE_LIKELY_KEY: likely,
 			SourceForecast.CREW_TAKE_HIGH_KEY: likely * (CREW_TAKE_HIGH_FRACTION \
 				if _crew_take_band_is_real else 1.0),
+			SourceForecast.CREW_TAKE_HOME_LIKELY_KEY: likely * _crew_take_home_fraction,
+			SourceForecast.CREW_TAKE_HOME_FIRST_LOAD_KEY: 0 if _crew_take_home_fraction >= 1.0 \
+				else FAR_PARTY_FIRST_LOAD,
 		})
 	# **A BARE `assert` WOULD HALT THE WHOLE HARNESS** rather than report (see
 	# `.claude/rules/client/test-harnesses.md`), so the quarry check is a reported claim: this stand-in
@@ -3953,6 +3967,49 @@ func _crew_take_readout_assertions() -> void:
 		Readout.verdict_text(sheet).contains(HudComposeVocab.HUNT_LIMIT_BELOW_FLOOR))
 
 	# Back to the seam every other chapter runs on: an empty seam with the canned answerer installed.
+	h._hud.forecast_query().reset()
+	ForecastFx.install(h._hud)
+	h._hud._compose.reset_hunt_source()
+	h._hud._band_labor._player_band = prior_band
+	h._hud._band_labor._player_bands = prior_bands
+
+## **THE PER-CREW CURVE READS THE LANDED TAKE PAST THE APRON.** Every row carries both figures; a far
+## herd's landed one is the smaller, and the stepper's take, the crew-target searches and the plateau
+## all read it through `SourceForecast.crew_row_likely` - so a far herd never promises its at-source take.
+func _far_crew_curve_reads_landed() -> void:
+	var prior_band = h._hud._band_labor.player_band()
+	var prior_bands: Array = h._hud._band_labor._player_bands
+	var band := _delivered_oracle_band()
+	h._hud._band_labor._player_band = band
+	h._hud._band_labor._player_bands = [band]
+	var query: ForecastQuery = h._hud.forecast_query()
+	_crew_take_band_is_real = false
+	_crew_take_home_fraction = CREW_TAKE_FAR_HOME_FRACTION
+	query.set_sender(func(request_id: int, ask: Dictionary) -> bool:
+		if String(ask.get("kind", "")) != ForecastQuery.KIND_HUNT_CREW_TAKE:
+			query.deliver.call_deferred([ForecastFx.answer(h._hud, request_id, ask)])
+			return true
+		query.deliver.call_deferred([_fight_reply(request_id, ask)])
+		return true)
+	var herd := _quantisation_boar_herd()
+	var reply := _fight_reply(0, {"herd_id": herd["id"], "max_workers": CREW_TAKE_CLAIM_CREW + 1})
+	var rows: Array = reply["per_crew"]
+	var at_source := float(rows[CREW_TAKE_CLAIM_CREW - 1][SourceForecast.CREW_TAKE_LIKELY_KEY])
+	var landed := at_source * CREW_TAKE_FAR_HOME_FRACTION
+	h._assert_hud("the curve accessor reads the landed take (%s), not the source take (%s)"
+			% [_animal_face(landed), _animal_face(at_source)],
+		is_equal_approx(SourceForecast.crew_take_likely(rows, CREW_TAKE_CLAIM_CREW), landed)
+			and landed < at_source)
+	await _open_crew_take_sheet(herd)
+	var sheet: Control = h._hud._drawercompose._compose_sheet
+	var take_line := Readout.verdict_text(sheet)
+	h._assert_hud("the sheet's take sentence states the landed %s, not the source %s - got %s"
+			% [_animal_face(landed), _animal_face(at_source), take_line],
+		take_line.contains(HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % _animal_face(landed))
+			and not take_line.contains(
+				HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % _animal_face(at_source)))
+	await h._save("herd_crew_take_landed")
+	_crew_take_home_fraction = 1.0
 	h._hud.forecast_query().reset()
 	ForecastFx.install(h._hud)
 	h._hud._compose.reset_hunt_source()
@@ -4539,7 +4596,7 @@ func _drag_rows(max_workers: int, floor_value: float) -> Array:
 	for row in ForecastFx.crew_take_rows(_drag_herd(), max_workers, floor_value):
 		var scaled_row: Dictionary = (row as Dictionary).duplicate()
 		for key in [SourceForecast.CREW_TAKE_LOW_KEY, SourceForecast.CREW_TAKE_LIKELY_KEY,
-				SourceForecast.CREW_TAKE_HIGH_KEY]:
+				SourceForecast.CREW_TAKE_HIGH_KEY, SourceForecast.CREW_TAKE_HOME_LIKELY_KEY]:
 			scaled_row[key] = float(scaled_row[key]) * survival
 		scaled.append(scaled_row)
 	return scaled

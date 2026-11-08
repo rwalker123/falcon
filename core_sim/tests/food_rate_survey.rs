@@ -1906,6 +1906,8 @@ fn food_per_worker_table() {
         plants.push((key.clone(), line));
     }
 
+    print_landed_column(&s);
+
     let pairs: [(&str, usize); 7] = [
         ("wild hunt  vs wild gather    ", 0),
         ("tame   0%  vs tended   0%    ", 1),
@@ -1929,6 +1931,161 @@ fn food_per_worker_table() {
             "  {label}  animals {}  |  plants {}",
             column(&animals, index, |r| r.line_net),
             column(&plants, index, |r| r.line_net)
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// FOOD LANDED HOME AND EATEN - the column the per-worker table above does not state
+// ---------------------------------------------------------------------------------------------
+//
+// The rows above are the take AT THE SOURCE. Past the work range a source is a party: it walks out,
+// porters ferry packs home, and flesh rots on the walk; and a kill the band cannot eat within its
+// shelf life rots in the larder. This column strikes both for ONE worker on a wild source with its
+// equipped kit (the stalking / trapping kit a herd is hunted under, the basket for a plant), at a
+// typical far distance, so the per-hand comparison between a hunter and a gatherer is the one the
+// larder sees.
+
+/// A typical far source's hex distance from camp - past the work range (2), so a party posts.
+const FAR_DISTANCE_HEXES: u32 = 5;
+
+/// A typical band's people, whose hunting meal sets what a kill can be eaten of before it spoils.
+const TYPICAL_BAND_PEOPLE: f32 = 30.0;
+
+/// What one worker lands home, and the part of it that is eaten.
+#[derive(Clone, Copy, Default)]
+struct Landed {
+    /// Food per worker-turn arriving home and keeping, net of the walk out, the porters and the
+    /// transit rot (`work_party::forecast_*_caravan`'s `rate_home`).
+    home: f32,
+    /// `home` less the share of each kill the band cannot eat within its keeping class's shelf life
+    /// (a plant keeps, so it is `home`).
+    eaten: f32,
+    /// The food one animal lands and the food a band of [`TYPICAL_BAND_PEOPLE`] eats within the
+    /// class's shelf life; `0` for a plant.
+    kill: f32,
+    meal: f32,
+}
+
+fn far_party(workers: u32, s: &Shipped) -> core_sim::WorkParty {
+    let walk = FAR_DISTANCE_HEXES.saturating_sub(s.labor.band_work_range);
+    let mut party = core_sim::WorkParty::posted(FIXTURE_TILES[0], walk, walk);
+    party.restamp(FIXTURE_TILES[0], workers, walk, walk);
+    party
+}
+
+fn animal_landed(herd: &Herd, def: &SpeciesDef, workers: u32, s: &Shipped) -> Landed {
+    let kit = herd_default_hunt_kit(&s.equipment, s.creatures.person(), def, false);
+    let g = gear(kit, workers, s);
+    let demographics = DemographicsConfig::builtin();
+    let forecast = core_sim::work_party::forecast_hunt_caravan(
+        &far_party(workers, s),
+        herd,
+        &s.now,
+        hunt_carry(&g, s),
+        &hunt_party(&g, herd.body_mass, s),
+        UNIT_OUTPUT_MULTIPLIER,
+        DEFAULT_ESCAPEMENT_FLOOR,
+        0.0,
+        s.labor.yield_average_horizon_turns,
+        &demographics.keeping,
+        &core_sim::MaterialsConfig::builtin(),
+    );
+    let home = forecast.rate_home / workers as f32;
+    let class = s
+        .now
+        .keeping_for(&herd.species)
+        .unwrap_or(&demographics.keeping.kill_fallback_class);
+    let shelf =
+        core_sim::spoilage::base_shelf_life(&demographics.keeping, class).unwrap_or(f32::INFINITY);
+    let kill = herd.body_mass * s.now.hunt_yield_for(&herd.species).provisions_per_biomass;
+    let meal = TYPICAL_BAND_PEOPLE * s.per_capita_draw * shelf;
+    let kept = if kill > 0.0 {
+        (meal / kill).min(1.0)
+    } else {
+        1.0
+    };
+    Landed {
+        home,
+        eaten: home * kept,
+        kill,
+        meal,
+    }
+}
+
+fn plant_landed(species: &str, terrain: TerrainType, s: &Shipped) -> Landed {
+    let composition = vec![FloraShare {
+        species: species.to_string(),
+        share: 1.0,
+    }];
+    let tile_capacity = s.labor.forage.capacity_for(terrain);
+    let mut patch = ForagePatch::new(
+        basket::TILE,
+        tile_capacity,
+        shipped::root_standing(shipped::plant()),
+    );
+    patch.carrying_capacity = patch_carrying_capacity(tile_capacity, &patch, &s.labor.forage);
+    patch.biomass = patch.carrying_capacity * DEFAULT_ESCAPEMENT_FLOOR;
+    patch.biomass_before_regrowth = patch.biomass;
+    let g = gear(s.kit(HARVESTING_KIT), ONE_WORKER, s);
+    let forecast = core_sim::work_party::forecast_forage_caravan(
+        &far_party(ONE_WORKER, s),
+        &patch,
+        &composition,
+        &s.labor.forage,
+        &s.flora,
+        forage_carry(&g, s),
+        FULL_SEASONAL_WEIGHT,
+        UNIT_OUTPUT_MULTIPLIER,
+        DEFAULT_ESCAPEMENT_FLOOR,
+        &TakeSelection::EVERYTHING,
+        0.0,
+        s.labor.yield_average_horizon_turns,
+        &DemographicsConfig::builtin().keeping,
+    );
+    Landed {
+        home: forecast.rate_home,
+        eaten: forecast.rate_home,
+        ..Landed::default()
+    }
+}
+
+fn print_landed_column(s: &Shipped) {
+    println!(
+        "\n== FOOD LANDED HOME AND EATEN, ONE WORKER, WILD, EQUIPPED KIT, {FAR_DISTANCE_HEXES} HEXES OUT ==\n\
+         at source = the row above; home = net of the walk out, the porters and the transit rot; \
+         eaten = home less the share of a kill a band of {TYPICAL_BAND_PEOPLE:.0} cannot eat within \
+         its keeping class's shelf life (kill / meal food)."
+    );
+    println!("  ANIMALS");
+    for (key, def) in sorted_species(s) {
+        let Some(herd) = herd_at_step(key, def, AnimalStep::Wild, s) else {
+            continue;
+        };
+        let source = animal_table_row(&herd, def, false, s).one_raw;
+        let landed = animal_landed(&herd, def, ONE_WORKER, s);
+        println!(
+            "    {key:<14} at source {source:>6.3} | home {:>6.3} | eaten {:>6.3}   (kill {:.2}, meal {:.1})",
+            landed.home, landed.eaten, landed.kill, landed.meal
+        );
+    }
+    println!("  PLANTS (basket)");
+    let mut roster: Vec<(&String, &core_sim::FloraDef)> = s.flora.species.iter().collect();
+    roster.sort_by(|a, b| a.0.cmp(b.0));
+    for (key, def) in roster {
+        if def.yield_.provisions_per_biomass <= 0.0 {
+            continue;
+        }
+        let Some(terrain) = richest_host(def, s) else {
+            continue;
+        };
+        let Some(row) = plant_table_row(key, def, terrain, PlantStep::Wild, s) else {
+            continue;
+        };
+        let landed = plant_landed(key, terrain, s);
+        println!(
+            "    {key:<14} at source {:>6.3} | home {:>6.3} | eaten {:>6.3}",
+            row.one_raw, landed.home, landed.eaten
         );
     }
 }

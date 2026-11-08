@@ -540,7 +540,7 @@ func _hunt_delivered(band: Dictionary, herd: Dictionary, floor: float, workers: 
     var haulable := INF
     if _hunt_is_posted(band, herd):
         haulable = maxf(ceilf(collection / body * (1.0 - ANIMAL_COUNT_EPSILON)), ONE_WHOLE_ANIMAL)
-    var brought_down := float(crew_row[SourceForecast.CREW_TAKE_LIKELY_KEY])
+    var brought_down := SourceForecast.crew_row_likely(crew_row)
     # BODIES PER TURN — the herd's own offer, the crew's haul, and what the party puts on the ground,
     # whichever is least. Fractional below one: a body every `1/killed` turns.
     #
@@ -556,9 +556,9 @@ func _hunt_delivered(band: Dictionary, herd: Dictionary, floor: float, workers: 
         # that survives them is the sim's.
         CREW_TAKE_ANIMALS: killed,
         CREW_TAKE_ANIMALS_LOW: minf(room_and_haul,
-            float(crew_row[SourceForecast.CREW_TAKE_LOW_KEY])),
+            SourceForecast.crew_row_quantile(crew_row, SourceForecast.CREW_TAKE_LOW_KEY)),
         CREW_TAKE_ANIMALS_HIGH: minf(room_and_haul,
-            float(crew_row[SourceForecast.CREW_TAKE_HIGH_KEY])),
+            SourceForecast.crew_row_quantile(crew_row, SourceForecast.CREW_TAKE_HIGH_KEY)),
         # …and the sim's arm UNCLAMPED, which is what the binding-limit line compares the other two
         # against. Clamped, it could never be the smallest and the line could never name the crew.
         CREW_TAKE_BROUGHT_DOWN: brought_down}

@@ -1624,7 +1624,7 @@ pub struct HuntCrewTakeRow {
     /// [`WorkPartyForecastReply::rate_home`] answer through) over the herd's food per animal. Past
     /// `band_work_range` the party walks out, porters ferry packs and the walk rots flesh, so this
     /// is a fraction of [`Self::animals_likely`], which is the take AT THE SOURCE. Inside the apron
-    /// (no party) it is `animals_likely` exactly. `0` on a `follow` ask, which prices a camp kill.
+    /// (no party) it is `animals_likely` exactly, and so it is on a `follow` ask, which prices a camp kill and is never asked past the apron.
     pub home_animals_likely: f32,
     /// **The 1-based turn this crew's first pack lands**, from the same forecast; `0` inside the
     /// apron (nothing walks) or when no pack lands within the forecast horizon.
