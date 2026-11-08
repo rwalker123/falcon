@@ -34,25 +34,22 @@ pub struct LeadershipConfig {
     pub practice_per_herd_hex: f64,
     /// Practice added the first time a band reaches each settlement stage above the first.
     pub practice_per_stage_reached: f64,
-    /// Weight of the shared-origin input in a pair's closeness score (`crate::tribe`).
+    /// Weight of the shared-origin input in a pair's points rate (`crate::tribe`).
     pub tribe_weight_origin: f64,
     /// Weight of the culture-likeness input.
     pub tribe_weight_likeness: f64,
     /// Weight of the knowing-each-other (connection tie) input.
     pub tribe_weight_tie: f64,
-    /// Weight of the shared-history input.
-    pub tribe_weight_history: f64,
     /// Weight of the belief-on-the-shared-urn input.
     pub tribe_weight_belief: f64,
     /// Weight of the acting-as-a-tribe input.
     pub tribe_weight_acting: f64,
     /// Weight of the kept-monument-on-the-shared-urn input.
     pub tribe_weight_monument: f64,
-    /// Turns of being local that build a pair's shared history from 0 to 1.
-    pub tribe_history_build_turns: f64,
-    /// Turns of not being local that fade a pair's shared history from 1 to 0.
-    pub tribe_history_fade_turns: f64,
-    /// The closeness score at which a pair is close.
+    /// Turns apart that empty a full points bank (a bank fades `tribe_score_threshold / this`
+    /// points per turn while its pair is not local).
+    pub tribe_points_fade_turns: f64,
+    /// The banked points at which a pair is close.
     pub tribe_score_threshold: f64,
     /// People a band leader (chief or elders' council) runs well: the cohesion ceiling.
     pub reach_chief_people: f64,
@@ -107,8 +104,7 @@ impl LeadershipConfig {
                 "practice_per_stage_reached",
                 self.practice_per_stage_reached,
             ),
-            ("tribe_history_build_turns", self.tribe_history_build_turns),
-            ("tribe_history_fade_turns", self.tribe_history_fade_turns),
+            ("tribe_points_fade_turns", self.tribe_points_fade_turns),
             ("tribe_score_threshold", self.tribe_score_threshold),
             ("reach_chief_people", self.reach_chief_people),
             ("reach_paramount_bands", self.reach_paramount_bands),
@@ -122,7 +118,6 @@ impl LeadershipConfig {
             ("tribe_weight_origin", self.tribe_weight_origin),
             ("tribe_weight_likeness", self.tribe_weight_likeness),
             ("tribe_weight_tie", self.tribe_weight_tie),
-            ("tribe_weight_history", self.tribe_weight_history),
             ("tribe_weight_belief", self.tribe_weight_belief),
             ("tribe_weight_acting", self.tribe_weight_acting),
             ("tribe_weight_monument", self.tribe_weight_monument),
@@ -238,12 +233,10 @@ mod tests {
             config.tribe_weight_origin,
             config.tribe_weight_likeness,
             config.tribe_weight_tie,
-            config.tribe_weight_history,
             config.tribe_weight_belief,
             config.tribe_weight_acting,
             config.tribe_weight_monument,
-            config.tribe_history_build_turns,
-            config.tribe_history_fade_turns,
+            config.tribe_points_fade_turns,
             config.tribe_score_threshold,
             config.reach_chief_people,
             config.reach_paramount_bands,
@@ -269,8 +262,7 @@ mod tests {
             "practice_per_split",
             "practice_per_herd_hex",
             "practice_per_stage_reached",
-            "tribe_history_build_turns",
-            "tribe_history_fade_turns",
+            "tribe_points_fade_turns",
             "tribe_score_threshold",
             "reach_chief_people",
             "reach_paramount_bands",

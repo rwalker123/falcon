@@ -658,6 +658,8 @@ const TRIBE_ALONE_LINE := "Tribe: no other band of your people"
 const SUPPLY_NETWORK_NONE := 0
 ## A score within this of the threshold counts as reaching it (float noise from summing seven terms).
 const TRIBE_SCORE_EPSILON := 0.001
+## Cells in the tribe bar, however many points the threshold is.
+const TRIBE_BAR_CELLS := 10
 const TRIBE_SUFFIX_FORMING := "forming"
 const TRIBE_SUFFIX_NEEDS_CHIEF := "needs a chief"
 const TRIBE_SUFFIX_TURNS_FORMAT := "%d turns"
@@ -665,7 +667,7 @@ const TRIBE_SUFFIX_ONE_TURN := "1 turn"
 const TRIBE_SUFFIX_MONUMENT := "needs a monument"
 const TRIBE_SUFFIX_BELIEF := "needs more belief"
 const TRIBE_SUFFIX_TIE := "needs a stronger tie"
-const TRIBE_TOOLTIP_RULE := "Bands become a tribe when they pool goods in one supply network and share one sacred ground."
+const TRIBE_TOOLTIP_RULE := "Bands living together earn points toward a tribe each turn once one has a chief. What they share sets how fast."
 const TRIBE_TOOLTIP_FORMING := "Forms next turn"
 const TRIBE_TOOLTIP_NEEDS_CHIEF := "Neither band has a chief: nothing builds until one of them has one."
 const TRIBE_TOOLTIP_TURNS_FORMAT := "Keep sharing the network and the sacred ground %d more turns"
@@ -688,32 +690,30 @@ const TRIBE_LEADER_PARAMOUNT := 1
 const TRIBE_LEADER_COUNCIL := 2
 const TRIBE_NAME_SEPARATOR := ", "
 ## The closeness inputs in the wire's (and the bar's) order, one hue each.
-const TRIBE_INPUT_KEYS := ["origin", "likeness", "tie", "history", "belief", "monument", "acting"]
-const TRIBE_KEY_HISTORY := "history"
+const TRIBE_INPUT_KEYS := ["origin", "likeness", "tie", "belief", "monument", "acting"]
 const TRIBE_KEY_TIE := "tie"
 const TRIBE_KEY_BELIEF := "belief"
 const TRIBE_KEY_MONUMENT := "monument"
 
-static func tribe_input_colors() -> Array:
-    return [HudStyle.HEALTHY, HudStyle.READY, HudStyle.SIGNAL, HudStyle.VOICE_PIGMENT,
-        HudStyle.BELIEF, HudStyle.TRADE, HudStyle.HUNT_DANGER_ACCENT]
-
-## A pair's score: the sum of its contribution (the wire says the score IS that sum).
+## A pair's banked points (the wire's `points`, 0..`tribe_threshold`).
 static func tribe_pair_score(pair: Dictionary) -> float:
+    return float(pair.get("points", 0.0))
+
+## A pair's points earned per turn: the sum of its per-input contribution (accrues only while a band has a leader).
+static func tribe_pair_rate(pair: Dictionary) -> float:
     var total := 0.0
     var contribution: Dictionary = pair.get("contribution", {})
     for key in TRIBE_INPUT_KEYS:
         total += float(contribution.get(key, 0.0))
     return total
 
-## Turns of sharing the network and the sacred ground that fill `needed` points of history, rounded up; 0 when it cannot be said.
-static func _tribe_turns_for(entry: Dictionary, needed: float) -> int:
-    var weights: Dictionary = entry.get("tribe_weights", {})
-    var build_turns := float(entry.get("tribe_history_build_turns", 0.0))
-    var history_weight := float(weights.get(TRIBE_KEY_HISTORY, 0.0))
-    if build_turns <= 0.0 or history_weight <= 0.0:
+## Turns until the bank reaches the threshold at the pair's rate, rounded up; 0 when the rate is 0 or the bank is full.
+static func _tribe_turns_left(entry: Dictionary, pair: Dictionary) -> int:
+    var gap := float(entry.get("tribe_threshold", 0.0)) - tribe_pair_score(pair)
+    var rate := tribe_pair_rate(pair)
+    if gap <= TRIBE_SCORE_EPSILON or rate <= TRIBE_SCORE_EPSILON:
         return 0
-    return int(ceil(needed / (history_weight / build_turns) - TRIBE_SCORE_EPSILON))
+    return int(ceil(gap / rate - TRIBE_SCORE_EPSILON))
 
 ## Points of one input still unfilled for a pair (weight minus contribution).
 static func _tribe_room(entry: Dictionary, pair: Dictionary, key: String) -> float:
@@ -734,29 +734,27 @@ static func _tribe_biggest_missing(entry: Dictionary, pair: Dictionary) -> Array
             best = candidate
     return best
 
-## Whether shared history can build for a pair: this band has a leader, or the partner does. A pair
+## Whether points can bank for a pair: this band has a leader, or the partner does. A pair
 ## with neither stands still, so no turn count is true of it.
 static func tribe_pair_can_build(entry: Dictionary, pair: Dictionary) -> bool:
     return String(entry.get("leader_name", "")).strip_edges() != "" or bool(pair.get("partner_has_leader", false))
 
-## **THE ONE SHORT PHRASE** after the partner: forming / `N turns` when history alone can
-## close the gap at its per-turn rate (weight / build turns) / the biggest missing of monument, belief,
-## tie. `""` when there is nothing to name.
+## **THE ONE SHORT PHRASE** after the partner: forming / `N turns` (points still to bank over the
+## pair's per-turn rate, rounded up) / the biggest missing of monument, belief, tie. `""` when there is nothing to name.
 static func tribe_suffix(entry: Dictionary, pair: Dictionary) -> String:
     if not tribe_pair_can_build(entry, pair):
         return TRIBE_SUFFIX_NEEDS_CHIEF
     var gap := float(entry.get("tribe_threshold", 0.0)) - tribe_pair_score(pair)
     if gap <= TRIBE_SCORE_EPSILON:
         return TRIBE_SUFFIX_FORMING
-    if _tribe_room(entry, pair, TRIBE_KEY_HISTORY) >= gap - TRIBE_SCORE_EPSILON:
-        var turns := _tribe_turns_for(entry, gap)
-        if turns > 0:
-            return TRIBE_SUFFIX_ONE_TURN if turns <= 1 else TRIBE_SUFFIX_TURNS_FORMAT % turns
+    var turns := _tribe_turns_left(entry, pair)
+    if turns > 0:
+        return TRIBE_SUFFIX_ONE_TURN if turns <= 1 else TRIBE_SUFFIX_TURNS_FORMAT % turns
     var missing := _tribe_biggest_missing(entry, pair)
     return String(missing[1]) if not missing.is_empty() else ""
 
 ## What is still missing for a pair, as actions, one per line: `Forms next turn` / `Already one tribe`
-## when close, else the turns of history left, then monument, belief and tie where unfilled. Shared
+## when close, else the turns left, then monument, belief and tie where unfilled. Shared
 ## origin and culture are not listed: the player cannot change them.
 static func tribe_missing_lines(entry: Dictionary, pair: Dictionary) -> Array[String]:
     var lines: Array[String] = []
@@ -767,11 +765,9 @@ static func tribe_missing_lines(entry: Dictionary, pair: Dictionary) -> Array[St
     if gap <= TRIBE_SCORE_EPSILON:
         lines.append(TRIBE_TOOLTIP_FORMING)
         return lines
-    var history_room := _tribe_room(entry, pair, TRIBE_KEY_HISTORY)
-    if history_room > TRIBE_SCORE_EPSILON:
-        var turns := _tribe_turns_for(entry, minf(gap, history_room))
-        if turns > 0:
-            lines.append(TRIBE_TOOLTIP_ONE_TURN if turns <= 1 else TRIBE_TOOLTIP_TURNS_FORMAT % turns)
+    var turns := _tribe_turns_left(entry, pair)
+    if turns > 0:
+        lines.append(TRIBE_TOOLTIP_ONE_TURN if turns <= 1 else TRIBE_TOOLTIP_TURNS_FORMAT % turns)
     if _tribe_room(entry, pair, TRIBE_KEY_MONUMENT) > TRIBE_SCORE_EPSILON:
         lines.append(TRIBE_TOOLTIP_MONUMENT)
     if _tribe_room(entry, pair, TRIBE_KEY_BELIEF) > TRIBE_SCORE_EPSILON:
@@ -780,26 +776,15 @@ static func tribe_missing_lines(entry: Dictionary, pair: Dictionary) -> Array[St
         lines.append(TRIBE_TOOLTIP_TIE_FORMAT % String(pair.get("partner_name", "")))
     return lines
 
-## The split bar for one pair as BBCode: one cell per point of the threshold, each input's cells in its
-## own hue (cells from the rounded running total), zero inputs skipped, the remainder `▱`.
+## The bar for one pair as BBCode: `TRIBE_BAR_CELLS` cells, filled in proportion to points / threshold (rounded once).
 static func tribe_bar_bbcode(entry: Dictionary, pair: Dictionary) -> String:
-    var contribution: Dictionary = pair.get("contribution", {})
-    var colors := tribe_input_colors()
+    var threshold := float(entry.get("tribe_threshold", 0.0))
+    var fraction := clampf(tribe_pair_score(pair) / threshold, 0.0, 1.0) if threshold > 0.0 else 0.0
     var segments: Array = []
-    var running := 0.0
-    var used := 0
-    for i in range(TRIBE_INPUT_KEYS.size()):
-        var points := float(contribution.get(TRIBE_INPUT_KEYS[i], 0.0))
-        if points <= 0.0:
-            continue
-        # Cells come from the ROUNDED RUNNING TOTAL, so the bar's length is the score rounded once and
-        # never a sum of per-input roundings (which read 8.2 of 9 as a full bar).
-        running += points
-        var cells := int(roundf(running)) - used
-        used += cells
-        if cells > 0:
-            segments.append({"key": TRIBE_INPUT_KEYS[i], "points": float(cells), "color": colors[i]})
-    return chief_bar_bbcode({"total": float(entry.get("tribe_threshold", 0.0)), "segments": segments})
+    var cells := int(roundf(fraction * TRIBE_BAR_CELLS))
+    if cells > 0:
+        segments.append({"key": "points", "points": float(cells), "color": HudStyle.SIGNAL})
+    return chief_bar_bbcode({"total": float(TRIBE_BAR_CELLS), "segments": segments})
 
 ## **THE TRIBE READOUT**, or `{}` when there is nothing to say. Otherwise `{line, tooltip, has_partner}`:
 ## `line` the ONE BBCode line, `tooltip` its hover.

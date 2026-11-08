@@ -1180,7 +1180,6 @@ pub(crate) struct HuntCrewLevers<'a> {
 /// per partner band of its people. Built by [`tribe_progress`] off the checkpointed registry.
 pub(crate) struct TribeProgress {
     pub(crate) threshold: f32,
-    pub(crate) history_build_turns: f32,
     pub(crate) weights: sim_schema::TribeClosenessState,
     pub(crate) pairs: Vec<sim_schema::TribePairState>,
 }
@@ -1242,7 +1241,7 @@ pub(crate) fn reach_readout(
 /// `BandId -> people` over every live band, the order a tribe's members are listed in.
 pub(crate) type BandSizeLookup = std::collections::HashMap<BandId, u32>;
 
-/// Every live band that has a leader of its own: shared history builds only while at least one of a
+/// Every live band that has a leader of its own: points bank only while at least one of a
 /// pair is in it, so a pair row states whether its partner is.
 pub(crate) type BandLeaderLookup = std::collections::HashSet<BandId>;
 
@@ -1296,7 +1295,6 @@ fn tribe_contribution(
         origin: (weights.tribe_weight_origin * inputs.origin) as f32,
         likeness: (weights.tribe_weight_likeness * inputs.likeness) as f32,
         tie: (weights.tribe_weight_tie * inputs.tie) as f32,
-        history: (weights.tribe_weight_history * inputs.history) as f32,
         belief: (weights.tribe_weight_belief * inputs.belief) as f32,
         monument: (weights.tribe_weight_monument * inputs.monument) as f32,
         acting: (weights.tribe_weight_acting * inputs.acting) as f32,
@@ -1323,21 +1321,19 @@ pub(crate) fn tribe_progress(
                 .filter(|name| !name.is_empty())
                 .cloned()
                 .unwrap_or_else(|| crate::systems::band_label(partner)),
-            history: score.history as f32,
+            points: registry.points(band, partner) as f32,
             contribution: tribe_contribution(config, score),
             partner_has_leader: leaders.contains(&partner),
         })
         .collect();
     Some(TribeProgress {
         threshold: config.tribe_score_threshold as f32,
-        history_build_turns: config.tribe_history_build_turns as f32,
         weights: tribe_contribution(
             config,
             &crate::tribe::CloseInputs {
                 origin: 1.0,
                 likeness: 1.0,
                 tie: 1.0,
-                history: 1.0,
                 belief: 1.0,
                 monument: 1.0,
                 acting: 1.0,
@@ -3469,7 +3465,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         band_orders,
         band_improvements,
         tribe_threshold: tribe.as_ref().map_or(0.0, |t| t.threshold),
-        tribe_history_build_turns: tribe.as_ref().map_or(0.0, |t| t.history_build_turns),
         tribe_weights: tribe.as_ref().map(|t| t.weights).unwrap_or_default(),
         tribe_pairs: tribe.map(|t| t.pairs).unwrap_or_default(),
         tribe_name: tribe_membership

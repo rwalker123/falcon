@@ -1895,14 +1895,10 @@ pub struct PopulationCohortState {
     /// branch order. Own bands only; a foreign row defaults to empty. Appended last.
     #[serde(default)]
     pub band_improvements: Vec<BandImprovementState>,
-    /// The closeness score at which a pair is close (`tribe_score_threshold`). Appended last.
+    /// The banked points at which a pair is close (`tribe_score_threshold`). Appended last.
     #[serde(default)]
     pub tribe_threshold: f32,
-    /// Turns of being local that fill a pair's shared history (`tribe_history_build_turns`).
-    /// Appended last.
-    #[serde(default)]
-    pub tribe_history_build_turns: f32,
-    /// The seven weights: the most each input can add to a pair's score. Appended last.
+    /// The six weights: the most points per turn each input can add to a pair. Appended last.
     #[serde(default)]
     pub tribe_weights: TribeClosenessState,
     /// One row per partner band of this band's people, partner id ascending. Appended last.
@@ -1997,13 +1993,12 @@ pub const TRIBE_LEADER_PARAMOUNT_CHIEF: u8 = 1;
 /// `PopulationCohortState::tribe_leader_kind`: a member band's elders' council, promoted.
 pub const TRIBE_LEADER_COUNCIL_OF_CHIEFS: u8 = 2;
 
-/// **THE SEVEN INPUTS TO A TRIBE CLOSENESS SCORE** — the weights, or one pair's inputs times them.
+/// **THE SIX INPUTS TO A TRIBE'S POINTS RATE** — the weights, or one pair's inputs times them.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 pub struct TribeClosenessState {
     pub origin: f32,
     pub likeness: f32,
     pub tie: f32,
-    pub history: f32,
     pub belief: f32,
     pub monument: f32,
     pub acting: f32,
@@ -2015,7 +2010,8 @@ pub struct TribeClosenessState {
 pub struct TribePairState {
     pub partner_band: u64,
     pub partner_name: String,
-    pub history: f32,
+    /// Points banked toward a tribe (same scale as `tribe_threshold`).
+    pub points: f32,
     pub contribution: TribeClosenessState,
     /// Whether the partner has a leader of its own. Appended last.
     #[serde(default)]

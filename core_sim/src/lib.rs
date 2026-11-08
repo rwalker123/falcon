@@ -510,7 +510,7 @@ pub use tile_improvement::{
     TILE_KEEPING_LOAD,
 };
 pub use tribe::{
-    advance_tribes, closeness, CloseInputs, Tribe, TribeId, TribeLeader, TribeLeaderKind,
+    advance_tribes, points_per_turn, CloseInputs, Tribe, TribeId, TribeLeader, TribeLeaderKind,
     TribeRegistry, TribeStanding, MIN_TRIBE_BANDS,
 };
 pub use turn_pipeline_config::{

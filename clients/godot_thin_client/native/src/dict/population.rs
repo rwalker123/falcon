@@ -143,7 +143,7 @@ fn cohort_scalars(cohort: fb::PopulationCohortState<'_>) -> CohortScalars {
     }
 }
 
-/// One `TribeClosenessState` as `{origin, likeness, tie, history, belief, monument, acting}` -- the
+/// One `TribeClosenessState` as `{origin, likeness, tie, belief, monument, acting}` -- the
 /// cohort's `tribe_weights` and every pair's `contribution` share this one shape. Absent reads zeros.
 fn tribe_closeness_to_dict(state: Option<fb::TribeClosenessState<'_>>) -> VarDictionary {
     let mut out = VarDictionary::new();
@@ -153,7 +153,6 @@ fn tribe_closeness_to_dict(state: Option<fb::TribeClosenessState<'_>>) -> VarDic
     let _ = out.insert("origin", get(|s| s.origin()));
     let _ = out.insert("likeness", get(|s| s.likeness()));
     let _ = out.insert("tie", get(|s| s.tie()));
-    let _ = out.insert("history", get(|s| s.history()));
     let _ = out.insert("belief", get(|s| s.belief()));
     let _ = out.insert("monument", get(|s| s.monument()));
     let _ = out.insert("acting", get(|s| s.acting()));
@@ -2168,14 +2167,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "leadership_from_stages",
         f64::from(cohort.leadershipFromStages()),
     );
-    // PROGRESS TOWARD A TRIBE (#861), own bands only: `tribe_threshold` (0 until the band has a leader) the score that makes a pair close;
-    // `tribe_history_build_turns` the turns of being local that fill shared history; `tribe_weights`
-    // the most each input can add; `tribe_pairs` one row per band living with this one.
+    // PROGRESS TOWARD A TRIBE (#861), own bands only: `tribe_threshold` the banked points that make
+    // a pair close; `tribe_weights` the most each input can add per turn; `tribe_pairs` one row per
+    // band living with this one, each with its banked `points` and per-turn `contribution`.
     let _ = dict.insert("tribe_threshold", f64::from(cohort.tribeThreshold()));
-    let _ = dict.insert(
-        "tribe_history_build_turns",
-        f64::from(cohort.tribeHistoryBuildTurns()),
-    );
     let _ = dict.insert(
         "tribe_weights",
         &tribe_closeness_to_dict(cohort.tribeWeights()),
@@ -2186,7 +2181,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let mut row = VarDictionary::new();
             let _ = row.insert("partner_band", pair.partnerBand() as i64);
             let _ = row.insert("partner_name", pair.partnerName().unwrap_or(""));
-            let _ = row.insert("history", f64::from(pair.history()));
+            let _ = row.insert("points", f64::from(pair.points()));
             let _ = row.insert("partner_has_leader", pair.partnerHasLeader());
             let _ = row.insert(
                 "contribution",

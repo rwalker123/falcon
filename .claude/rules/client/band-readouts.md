@@ -1867,8 +1867,9 @@ The Band tab's `BandTribeBlock` (`BandPanelController._build_tribe_block`) is th
 the leader block, in the same column: ONE non-wrapping line. It reads `tribe_name`,
 `tribe_member_names` (largest band first), `tribe_leader_name` / `tribe_leader_kind` (0 none, 1
 paramount chief, 2 council of chiefs), and, for a band not yet in a tribe,
-`tribe_threshold`, `tribe_history_build_turns`, `tribe_weights` and `tribe_pairs` (local partners
-only: `partner_name`, `history`, `contribution`), decoded in `dict/population.rs`. The shaping is pure
+`tribe_threshold` (the points a pair banks to become a tribe, 100), `tribe_weights` and `tribe_pairs`
+(local partners only: `partner_name`, `points` the banked total 0..threshold, `partner_has_leader`,
+`contribution` the per-input points earned per turn), decoded in `dict/population.rs`. The shaping is pure
 `HudFormat` statics (`band_tribe_progress`, `tribe_suffix`, `tribe_missing_lines`,
 `tribe_bar_bbcode`), so the harness asserts it without a node. Four cases, in this order:
 
@@ -1881,16 +1882,15 @@ only: `partner_name`, `history`, `contribution`), decoded in `dict/population.rs
   `orders_carried_out` above 0 also gets `<Band> has no chief of its own: N% of each order is carried
   out here.`
 - **Not in a tribe, with a threshold** (the sim publishes `tribe_threshold` above 0 on every own band, chiefless ones included; `BandPanelController` does not gate on a leader):
-  `Tribe <split bar> · <phrase>` for the best-scoring partner (highest summed contribution, ties by
-  name), with no partner name and no numeric score. The bar is one cell per point of the threshold,
-  each input in its own hue in wire order, with cells taken from the rounded RUNNING total so its
-  length is the score rounded once (a per-input rounding read 8.2 of 9 as full). The phrase is one of
-  `forming` (score at the threshold), `N turns` / `1 turn` (history alone can close the gap at weight /
-  build turns, rounded up), else the biggest missing of monument / belief / tie: `needs a monument`,
-  `needs more belief`, `needs a stronger tie`.
+  `Tribe <bar> · <phrase>` for the partner with the most banked `points` (ties by name), with no
+  partner name and no numeric score. The bar is `TRIBE_BAR_CELLS` (10) cells filled to `points /
+  threshold`, rounded once, in one hue. The pair's rate is the sum of its `contribution` values (origin,
+  likeness, tie, belief, monument, acting). The phrase is one of `forming` (points at the threshold),
+  `N turns` / `1 turn` (`ceil((threshold - points) / rate)`), else, when the rate is 0, the biggest
+  missing of monument / belief / tie: `needs a monument`, `needs more belief`, `needs a stronger tie`.
   **A pair "can build"** (`HudFormat.tribe_pair_can_build`) when this band has a leader (`leader_name`)
-  or the pair's `partner_has_leader` is true; shared history builds only then. The partner shown is the
-  best of the pairs that can build (score, then name), else the best score overall. When the chosen
+  or the pair's `partner_has_leader` is true; points accrue only then. The partner shown is the
+  best of the pairs that can build (points, then name), else the most points overall. When the chosen
   pair cannot build the phrase is `needs a chief` (no turn count, no `forming`) and the hover's
   missing lines are the single `Neither band has a chief: nothing builds until one of them has one.`
 - **Not in a tribe, no partner** (`tribe_pairs` empty): a dim line naming the real reason, read off the

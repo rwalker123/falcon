@@ -1256,7 +1256,6 @@ fn create_populations<'a>(
                     leadershipFromStages: cohort.leadership_from_stages,
                     bandImprovements: Some(band_improvements),
                     tribeThreshold: cohort.tribe_threshold,
-                    tribeHistoryBuildTurns: cohort.tribe_history_build_turns,
                     tribeWeights: Some(tribe_weights),
                     tribePairs: Some(tribe_pairs),
                     tribeName: Some(tribe_name),
@@ -2200,7 +2199,6 @@ fn decode_population(
             is_queued: row.isQueued(),
         }),
         tribe_threshold: cohort.tribeThreshold(),
-        tribe_history_build_turns: cohort.tribeHistoryBuildTurns(),
         tribe_weights: cohort
             .tribeWeights()
             .map(decode_tribe_closeness)
@@ -2208,7 +2206,7 @@ fn decode_population(
         tribe_pairs: map_rows(cohort.tribePairs(), |row| TribePairState {
             partner_band: row.partnerBand(),
             partner_name: text(row.partnerName()),
-            history: row.history(),
+            points: row.points(),
             contribution: row
                 .contribution()
                 .map(decode_tribe_closeness)
@@ -2367,7 +2365,6 @@ fn create_tribe_closeness<'a>(
             origin: inputs.origin,
             likeness: inputs.likeness,
             tie: inputs.tie,
-            history: inputs.history,
             belief: inputs.belief,
             monument: inputs.monument,
             acting: inputs.acting,
@@ -2380,7 +2377,6 @@ fn decode_tribe_closeness(table: fb::TribeClosenessState<'_>) -> TribeClosenessS
         origin: table.origin(),
         likeness: table.likeness(),
         tie: table.tie(),
-        history: table.history(),
         belief: table.belief(),
         monument: table.monument(),
         acting: table.acting(),
@@ -2402,7 +2398,7 @@ fn create_tribe_pairs<'a>(
                 &fb::TribePairStateArgs {
                     partnerBand: row.partner_band,
                     partnerName: Some(partner_name),
-                    history: row.history,
+                    points: row.points,
                     contribution: Some(contribution),
                     partnerHasLeader: row.partner_has_leader,
                 },

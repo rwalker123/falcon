@@ -1283,12 +1283,6 @@
           "seat": "1",
           "specialist": "land",
           "note": "each declared build is now dealt its own hands (#872), so the band's runway holds at or near 999 turns and never falls; Land's better_ground needs a falling runway, so it only raised its land_short alarm (or none) and proposed no move"
-        },
-        {
-          "seed": "59",
-          "seat": "1",
-          "specialist": "land",
-          "note": "builders now rank by their site priority group ahead of lower-priority hold crews and a crew rounds its keeping once (#872), so the band's own cluster feeds its need for the whole run: Land raised no land_short alarm and found no better cluster in its horizon, so it proposed no move"
         }
       ]
     }

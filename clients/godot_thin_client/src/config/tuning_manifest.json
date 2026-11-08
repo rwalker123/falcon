@@ -599,13 +599,13 @@
         },
         {
           "pointer": "/tribe_score_threshold",
-          "label": "Closeness for a tribe",
+          "label": "Points for a tribe",
           "type": "float",
-          "min": 1,
-          "max": 30,
-          "step": 0.5,
-          "default": 9.0,
-          "hint": "The closeness score two linked bands sharing an urn must reach to be a tribe (with a chief among them). Below it, they come apart."
+          "min": 10,
+          "max": 500,
+          "step": 5,
+          "default": 100.0,
+          "hint": "The points two linked bands sharing an urn must bank to be a tribe. They bank each turn only once one of them has a chief; the weights above set how fast."
         },
         {
           "pointer": "/reach_chief_people",
@@ -668,34 +668,14 @@
           "hint": "Closeness at a full tie between the two bands; the tie fades when they stop meeting."
         },
         {
-          "pointer": "/tribe_weight_history",
-          "label": "Shared history",
-          "type": "float",
-          "min": 0,
-          "max": 10,
-          "step": 0.5,
-          "default": 5.0,
-          "hint": "Closeness at a full shared history of living local to each other."
-        },
-        {
-          "pointer": "/tribe_history_build_turns",
-          "label": "Turns to build history",
-          "type": "float",
-          "min": 1,
-          "max": 200,
-          "step": 1,
-          "default": 25.0,
-          "hint": "Turns living local to each other for two bands' shared history to fill."
-        },
-        {
-          "pointer": "/tribe_history_fade_turns",
-          "label": "Turns to forget history",
+          "pointer": "/tribe_points_fade_turns",
+          "label": "Turns to forget points",
           "type": "float",
           "min": 1,
           "max": 400,
           "step": 1,
           "default": 100.0,
-          "hint": "Turns apart for a full shared history to be forgotten."
+          "hint": "Turns apart for a full bank of points toward a tribe to empty."
         },
         {
           "pointer": "/tribe_weight_belief",

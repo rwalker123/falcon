@@ -323,28 +323,28 @@ raise it.
 network, and hold the same anchor — and at least one of them has a chief. Being linked is a
 condition, not a score: it is what "local" means.
 
-**The closeness score.** How close two bands are is a score, the way a chief's practice is, but read
-fresh each turn rather than banked. Each input reads 0 to 1 and carries a weight; the pair's score is
-the sum. Every weight is a lever in `leadership_config.json`, tunable in the Workbench; these are
-opening values.
+**The points bank.** How close two bands are is a bank of points, the way a chief's practice is. Each
+input reads 0 to 1 and carries a weight; the pair's **rate** is the sum, and a local pair with a
+chief on at least one side adds the rate to its bank each turn. Every weight is a lever in
+`leadership_config.json`, tunable in the Workbench; these are opening values, in points per turn.
 
 | Input | What it is | Weight |
 |---|---|---|
 | Shared origin | the two descend from the same starting band — split from one another or from a common ancestor | 3 |
 | Culture likeness | how alike their cultures are now; bands in touch drift together (#702), bands apart drift apart | 3 |
 | Knowing each other | the existing tie between them, which fills with contact and is forgotten over about 50 quiet turns | 2 |
-| Shared history | how long they have lived local to each other **with a chief among them**: builds over about 25 turns while the pair is local and at least one of the two has a leader, holds while local with none, fades over about 100 apart — history is not erased, it is forgotten | 5 |
 | Belief on the shared urn | a stronger sacred place pulls harder | 1 |
 | Acting as a tribe | work done at the tribe level — the shared pool (#862), the tribe bench (#864), shared works; only a tribe has it, so a working tribe holds together | 3 |
 | A kept monument at the urn | the plainest case of a place they walk to and work on (#692); 1 while it stands kept, 0 half-raised or decayed | 2 |
 
-- **A tribe forms at 9 and dissolves below it.** A band joins when its score with a member reaches the
-  line, and leaves when it falls under.
-- **What it takes in play** (opening values): a fresh split scores about 8.5 — one people, identical,
-  well known to each other — so it is a tribe after a few turns of shared history, and shared
-  history only starts building once one of the two has a chief: until then nothing counts toward a
-  tribe. Two unrelated bands, even alike, need most of the history. Bands that part keep their
-  history a while, then forget each other and drift apart, and the score falls on its own.
+- **A tribe forms at 100 banked points and dissolves below it.** A band joins when its bank with a
+  member reaches the line, and leaves when it falls under.
+- **What it takes in play** (opening values): a fresh split earns about 8 a turn — one people,
+  identical, well known to each other — so it is a tribe about 13 turns after a chief exists, and the
+  bank only fills while one of the two has a chief: until then nothing counts toward a tribe.
+  Unrelated bands earn less (5 a turn with a full tie, 20 turns; 3 with none, 34) and a kept
+  monument adds 2. Bands that part lose a hundredth of a full bank each turn apart, so a short
+  parting is re-earned quickly and a long one has to be rebuilt.
 - **A band needs no chief of its own to join.** A member without one carries the tribe's orders out
   worse — the lossy shape of "A leader can only run so much well" below.
 - **The tribe's leader is that chief, promoted** — a band's chief becomes the paramount chief, an

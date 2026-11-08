@@ -1589,8 +1589,6 @@ table PopulationCohortState {
   // Own bands only: a foreign (redacted) row carries the defaults.
   // leadership_config tribe_score_threshold: the closeness score at which a pair is close.
   tribeThreshold:float = 0;
-  // leadership_config tribe_history_build_turns: turns of being local to fill shared history.
-  tribeHistoryBuildTurns:float = 0;
   // The seven weights: the most each input can add to a pair's score.
   tribeWeights:TribeClosenessState;
   // One row per partner band of this band's people, partner id ascending.
@@ -7199,14 +7197,13 @@ table BreedingPeopleState {
   fading:bool = false;
 }
 
-// THE SEVEN INPUTS TO A TRIBE CLOSENESS SCORE - `PopulationCohortState.tribeWeights` (the weights) and
-// `TribePairState.contribution` (each input times its weight; the sum is the pair's score). Appended
-// last.
+// THE SIX INPUTS TO A TRIBE'S POINTS RATE - `PopulationCohortState.tribeWeights` (the weights) and
+// `TribePairState.contribution` (each input times its weight: its points per turn; the sum is the
+// pair's rate). Appended last.
 table TribeClosenessState {
   origin:float = 0;
   likeness:float = 0;
   tie:float = 0;
-  history:float = 0;
   belief:float = 0;
   monument:float = 0;
   acting:float = 0;
@@ -7219,11 +7216,12 @@ table TribePairState {
   partnerBand:ulong;
   // The partner's band name (its BandName, else the "Band <id>" label).
   partnerName:string;
-  // Raw shared history, 0..1 (for the turns-remaining estimate).
-  history:float = 0;
-  // Each input times its weight; the sum is the pair's score.
+  // The points banked toward a tribe, on the same 0..tribeThreshold scale. They fill only while a
+  // leader exists on at least one side of the pair.
+  points:float = 0;
+  // Each input times its weight: its points per turn; the sum is the pair's rate.
   contribution:TribeClosenessState;
-  // Whether the partner band has a leader of its own. Shared history builds only while at least one
+  // Whether the partner band has a leader of its own. Points bank only while at least one
   // of the two bands has one, so a chiefless band reads its turns-remaining estimate off this.
   partnerHasLeader:bool = false;
 }

@@ -160,7 +160,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 63 | Materials are ordered stand by stand (#860): a dig row joins `LaborAllocation::order_rows` (key `d:<material>:<x>,<y>`), and a chief-owned material's chief rows are the ones listed there; a version-62 blob read its dig rows as the chief's by ownership alone, so it does not decode |
 /// | 64 | Band orders publish what holds them up (#860): `LaborAllocation` gained `keep_reach` (per order kind, what its chief-available sites can give a turn against its want) and `order_pool` (the hands the sim may staff, as the last managing pass read them); a version-63 blob does not decode |
 /// | 65 | A row's crew targets are capped at its tile's room (#860): `StaffedCrew` gained `tile_short` (the heads the tile could not fit), which rides the row's staffing; a version-64 blob does not decode |
-pub const SAVE_FORMAT_VERSION: u32 = 65;
+/// | 66 | A tribe's closeness is a points bank that fills only while a leader exists (#861): `TribeRegistry::shared_history` is replaced by per-pair `points` (banked points on the `tribe_score_threshold` scale, faded by `tribe_points_fade_turns`); a version-65 blob does not decode |
+pub const SAVE_FORMAT_VERSION: u32 = 66;
 
 /// gzip level for the payload document.
 ///

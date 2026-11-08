@@ -2590,26 +2590,26 @@ func _hay_ledger_states() -> void:
 	# tribe shows its name and band count on every member, chiefless or not; a leader's band not yet in
 	# one shows `Tribe <bar> · <phrase>`, or one dim line with no partner; a chiefless band in no tribe
 	# shows nothing.
-	var tribe_weights := {"origin": 3.0, "likeness": 3.0, "tie": 2.0, "history": 5.0, "belief": 1.0,
+	var tribe_weights := {"origin": 3.0, "likeness": 3.0, "tie": 2.0, "belief": 1.0,
 		"monument": 2.0, "acting": 1.0}
 	var tribe_base := {"leader_name": "Orrin", "leader_kind": 1, "leadership_practice": 10.0,
 		"leadership_threshold": 10.0, "leadership_from_builds": 10.0, "leadership_from_splits": 0.0,
-		"leadership_from_herd": 0.0, "leadership_from_stages": 0.0, "tribe_threshold": 9.0,
-		"tribe_history_build_turns": 20.0, "tribe_weights": tribe_weights}
+		"leadership_from_herd": 0.0, "leadership_from_stages": 0.0, "tribe_threshold": TRIBE_THRESHOLD,
+		"tribe_weights": tribe_weights}
 	var tribe_chiefless_case := {"leader_name": "", "leader_kind": 0, "leadership_practice": 7.0,
 		"leadership_threshold": 10.0, "leadership_from_builds": 7.0, "leadership_from_splits": 0.0,
 		"leadership_from_herd": 0.0, "leadership_from_stages": 0.0, "tribe_threshold": 0.0,
 		"tribe_pairs": []}
 	var tribe_pairs_case := tribe_base.duplicate(true)
 	tribe_pairs_case.merge({"tribe_pairs": [
-		{"partner_band": 7, "partner_name": "Ridgeway", "history": 0.4,
-			"contribution": {"origin": 0.0, "likeness": 2.2, "tie": 1.0, "history": 1.9, "belief": 0.0,
+		{"partner_band": 7, "partner_name": "Ridgeway", "points": 40.0,
+			"contribution": {"origin": 0.0, "likeness": 2.2, "tie": 1.0, "belief": 0.0,
 			"monument": 0.0, "acting": 0.0}},
-		{"partner_band": 8, "partner_name": "Snowreach", "history": 0.12,
-			"contribution": {"origin": 3.0, "likeness": 2.6, "tie": 2.0, "history": 0.6, "belief": 0.0,
+		{"partner_band": 8, "partner_name": "Snowreach", "points": 70.0,
+			"contribution": {"origin": 3.0, "likeness": 3.0, "tie": 2.0, "belief": 0.5,
 			"monument": 0.0, "acting": 0.0}},
-		{"partner_band": 9, "partner_name": "Dunmere", "history": 0.1,
-			"contribution": {"history": 0.5}},
+		{"partner_band": 9, "partner_name": "Dunmere", "points": 10.0,
+			"contribution": {}},
 	]}, true)
 	var tribe_formed := {"tribe_name": "Sandreach tribe", "tribe_member_names": ["Sandreach", "Harehollow", "Woodfen"],
 		"tribe_leader_name": "Wynne", "tribe_leader_kind": 1}
@@ -2665,9 +2665,10 @@ func _hay_ledger_states() -> void:
 				and tribe_line.tooltip_text == HudFormat.TRIBE_TOOLTIP_RULE + "\n" + HudFormat.TRIBE_NO_PLACE_TOOLTIP)
 	# A chiefless band's pull (#870): the Tribe row shows on every band with a threshold.
 	var joiner_base := tribe_chiefless_case.duplicate(true)
-	joiner_base.merge({"tribe_threshold": 9.0, "tribe_history_build_turns": 20.0, "tribe_weights": tribe_weights}, true)
-	var joiner_pair := {"partner_band": 7, "partner_name": "Ridgeway", "history": 0.4,
-		"contribution": {"origin": 3.0, "likeness": 2.2, "tie": 1.0, "history": 1.9, "belief": 0.0,
+	joiner_base.merge({"tribe_threshold": TRIBE_THRESHOLD, "tribe_weights": tribe_weights}, true)
+	# 70 of 100 banked at 3 + 3 + 2 + 0.5 = 8.5 a turn: ceil(30 / 8.5) = 4 turns.
+	var joiner_pair := {"partner_band": 7, "partner_name": "Ridgeway", "points": 70.0,
+		"contribution": {"origin": 3.0, "likeness": 3.0, "tie": 2.0, "belief": 0.5,
 		"monument": 0.0, "acting": 0.0}}
 	var joiner_led := joiner_base.duplicate(true)
 	joiner_led["tribe_pairs"] = [joiner_pair.merged({"partner_has_leader": true})]
@@ -2696,8 +2697,8 @@ func _hay_ledger_states() -> void:
 			and (joiner_text == HudFormat.TRIBE_ALONE_LINE if joiner_suffix == "" else joiner_text.ends_with(joiner_suffix))
 			and joiner_line.tooltip_text.contains(String(joiner_case[3])))
 		if String(joiner_case[0]) == "tribe_joiner_needs_chief":
-			h._assert_hud("tribe_joiner_needs_chief: no turn count anywhere in the hover",
-				not joiner_line.tooltip_text.contains("turn"))
+			h._assert_hud("tribe_joiner_needs_chief: no turn count in the hover",
+				not joiner_line.tooltip_text.contains("more turn"))
 	# The no-partner REASONS (#870), read off the player's own bands: (a) no sacred ground of its own, (b) a
 	# band in its supply network holds a different place (the live Fernhollow / Fenwatch case), (c) no other
 	# band shares its supply network, (d) no other band at all.
@@ -2724,7 +2725,7 @@ func _hay_ledger_states() -> void:
 			["tribe_reason_no_place", reason_no_place, [reason_fen], HudFormat.TRIBE_NO_PLACE_LINE, HudFormat.TRIBE_NO_PLACE_TOOLTIP],
 			["tribe_reason_different_place", reason_here, [reason_fen, reason_night],
 				HudFormat.TRIBE_DIFFERENT_PLACE_LINE,
-				"Bands become a tribe when they pool goods in one supply network and share one sacred ground.\nFernhollow honours different sacred ground from your other bands — see Beliefs."],
+				"" + HudFormat.TRIBE_TOOLTIP_RULE + "\nFernhollow honours different sacred ground from your other bands — see Beliefs."],
 			["tribe_reason_partner_no_place", reason_here, [reason_blank],
 				"Tribe: Blankmere has no sacred ground yet",
 				HudFormat.TRIBE_TOOLTIP_RULE + "\n" + HudFormat.TRIBE_NO_PLACE_TOOLTIP],
@@ -2759,29 +2760,31 @@ func _hay_ledger_states() -> void:
 			and reason_line.get_content_width() <= leader_panel.current_reservation_size())
 	# Each suffix, off the pure statics.
 	var suffix_entry := tribe_base.duplicate(true)
-	var suffix_base := {"partner_name": "Snowreach", "contribution": {"origin": 3.0,
-		"likeness": 2.6, "tie": 2.0, "history": 0.6, "belief": 0.0, "monument": 0.0, "acting": 0.0}}
+	var suffix_base := {"partner_name": "Snowreach", "points": 70.0, "contribution": {"origin": 3.0,
+		"likeness": 3.0, "tie": 2.0, "belief": 0.5, "monument": 0.0, "acting": 0.0}}
 	var suffix_forming := suffix_base.duplicate(true)
-	suffix_forming["contribution"]["history"] = 1.4
+	suffix_forming["points"] = TRIBE_THRESHOLD
 	var suffix_one_turn := suffix_base.duplicate(true)
-	suffix_one_turn["contribution"]["history"] = 1.2
-	var suffix_monument := {"partner_name": "Snowreach", "contribution": {"origin": 0.0,
-		"likeness": 0.0, "tie": 2.0, "history": 1.0, "belief": 0.0, "monument": 0.0}}
-	var small_weights := {"origin": 3.0, "likeness": 3.0, "tie": 2.0, "history": 2.0, "belief": 1.0,
-		"monument": 2.0, "acting": 0.0}
-	var small_entry := tribe_base.duplicate(true)
-	small_entry["tribe_weights"] = small_weights
-	var suffix_belief := {"partner_name": "Snowreach", "contribution": {"likeness": 2.0,
-		"tie": 2.0, "history": 0.5, "belief": 0.0, "monument": 2.0}}
-	var suffix_tie := {"partner_name": "Snowreach", "contribution": {"likeness": 2.0,
-		"tie": 0.0, "history": 0.5, "belief": 1.0, "monument": 2.0}}
+	suffix_one_turn["points"] = 92.0
+	# A pair earning nothing names what is missing: the monument first, then belief, then the tie.
+	var suffix_monument := {"partner_name": "Snowreach", "points": 50.0, "contribution": {}}
+	var belief_only_weights := {"origin": 0.0, "likeness": 0.0, "tie": 0.0, "belief": 1.0,
+		"monument": 0.0, "acting": 0.0}
+	var tie_only_weights := {"origin": 0.0, "likeness": 0.0, "tie": 2.0, "belief": 0.0,
+		"monument": 0.0, "acting": 0.0}
+	var belief_entry := tribe_base.duplicate(true)
+	belief_entry["tribe_weights"] = belief_only_weights
+	var tie_entry := tribe_base.duplicate(true)
+	tie_entry["tribe_weights"] = tie_only_weights
+	var suffix_belief := {"partner_name": "Snowreach", "points": 50.0, "contribution": {}}
+	var suffix_tie := {"partner_name": "Snowreach", "points": 50.0, "contribution": {}}
 	h._assert_hud("tribe suffixes: forming / 4 turns / 1 turn / monument / belief / tie",
 		HudFormat.tribe_suffix(suffix_entry, suffix_forming) == "forming"
 		and HudFormat.tribe_suffix(suffix_entry, suffix_base) == "4 turns"
 		and HudFormat.tribe_suffix(suffix_entry, suffix_one_turn) == "1 turn"
 		and HudFormat.tribe_suffix(suffix_entry, suffix_monument) == "needs a monument"
-		and HudFormat.tribe_suffix(small_entry, suffix_belief) == "needs more belief"
-		and HudFormat.tribe_suffix(small_entry, suffix_tie) == "needs a stronger tie")
+		and HudFormat.tribe_suffix(belief_entry, suffix_belief) == "needs more belief"
+		and HudFormat.tribe_suffix(tie_entry, suffix_tie) == "needs a stronger tie")
 	var council_view := HudFormat.band_tribe_progress({"tribe_name": "Sandreach tribe",
 		"tribe_member_names": ["Sandreach", "Harehollow"], "tribe_leader_name": "Wynne", "tribe_leader_kind": 2})
 	h._assert_hud("a council-led tribe reads `Led by a council of chiefs — Wynne speaks`, with a member count of 2",
@@ -2789,7 +2792,7 @@ func _hay_ledger_states() -> void:
 		and council_view["line"].contains("2 bands"))
 	h._assert_hud("tribe tooltip: close says Forms next turn, a tie names the partner",
 		HudFormat.tribe_missing_lines(suffix_entry, suffix_forming) == ["Forms next turn"]
-		and HudFormat.tribe_missing_lines(small_entry, suffix_tie).has("A stronger tie with Snowreach"))
+		and HudFormat.tribe_missing_lines(tie_entry, suffix_tie).has("A stronger tie with Snowreach"))
 	h._assert_hud("a foreign or chiefless band (no threshold) has no Tribe readout",
 		HudFormat.band_tribe_progress({}).is_empty())
 	var tip: String = HudFormat.band_chief_progress(leader_cases[0][1]).get("tooltip", "")
@@ -3076,6 +3079,8 @@ const EXPEDITION_KIT_SHORTFALL_COVERED := 2
 
 ## The destination the command claim sends the party to; any land tile does, the assertion being about
 ## the TAIL and not the target.
+## The sim's `tribe_threshold`: points a pair banks to become a tribe.
+const TRIBE_THRESHOLD := 100.0
 const EXPEDITION_KIT_TARGET_X := 40
 const EXPEDITION_KIT_TARGET_Y := 22
 
