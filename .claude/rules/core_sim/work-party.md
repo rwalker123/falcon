@@ -1586,6 +1586,21 @@ numbers; kits come through the ordinary claims at the need row's own Priority. A
   competes for gear at its Priority; a client composing a `follow` (need) row sends `follow = true`
   and `max_workers` = the musterable pool (`huntUsefulWorkers` is already priced over it), and the
   "Sends N" figure is then the row's own `musterCrew`.
+- **`HuntCrewTakeQuery.assume_kit_held`** (proto field 8) prices the kit as if the band held it:
+  the band's wear and its competing rows are replaced by `max_workers` fresh units of every item of
+  the asked kit and no other row, so the answer equals the ordinary curve of a band that really
+  holds them (`forecast_query::an_assumed_kit_prices_the_curve_a_band_holding_it_reads`). It is the
+  AI's outfitting window's question (`ai-driver.md` → "The demand board"); the sheets send `false`.
+
+- **`HuntCrewTakeRow.home_animals_likely` / `home_first_load_turn`** (proto 8 / 9) are what each crew
+  LANDS at home: `forecast_query::answer_hunt_crew_take` asks `work_party_forecast` (the function
+  behind `WorkPartyForecastReply::rate_home`, so the turn, the seed and the query agree) once per crew
+  size and divides the food rate by the herd's food per animal. `animals_likely` stays the take AT THE
+  SOURCE and is the same at every distance; the home row falls with the walk, the porters and the rot
+  and equals it inside the apron (no party), and on a `follow` ask (a camp kill). With
+  `assume_kit_held` the per-crew forecast is struck for the same hypothetical ledger. Pinned by
+  `work_party_caravan::the_crew_curves_home_rate_is_what_the_row_lands_at_every_distance` (1, 3 and 5
+  hexes, the curve's home row against the live landed take over 20 turns).
 
 **The wire** (`LaborAssignment`, appended after `moveWithHerd`; `PopulationCohortState`):
 

@@ -1112,6 +1112,11 @@ pub struct HuntCrewTakeQuery {
     /// (`hunt_by_need::MusterPricing`), and `max_workers` is the sheet's musterable pool. `false` is
     /// an ordinary hunt row, priced over the units no row claims.
     pub follow: bool,
+    /// **Price the kit as if the band held it** - `max_workers` fresh units of every item the kit
+    /// carries, no other row competing for them - instead of what the band holds now. The
+    /// outfitting window's question: a band that has not yet been outfitted holds nothing, so the
+    /// ordinary curve reads nothing for every herd.
+    pub assume_kit_held: bool,
 }
 
 /// **The server → client answer frame**, written back on the command socket as its own
@@ -1614,6 +1619,16 @@ pub struct HuntCrewTakeRow {
     pub next_rung_animals_likely: f32,
     /// **The hands this crew would spend keeping the finished rung**, fractional.
     pub next_rung_keep_hands: f32,
+    /// **What this crew's take LANDS at home, in animals a turn** - the work-party caravan's rate
+    /// (`work_party::forecast_hunt_caravan`, the function the turn, the seed and
+    /// [`WorkPartyForecastReply::rate_home`] answer through) over the herd's food per animal. Past
+    /// `band_work_range` the party walks out, porters ferry packs and the walk rots flesh, so this
+    /// is a fraction of [`Self::animals_likely`], which is the take AT THE SOURCE. Inside the apron
+    /// (no party) it is `animals_likely` exactly. `0` on a `follow` ask, which prices a camp kill.
+    pub home_animals_likely: f32,
+    /// **The 1-based turn this crew's first pack lands**, from the same forecast; `0` inside the
+    /// apron (nothing walks) or when no pack lands within the forecast horizon.
+    pub home_first_load_turn: u32,
 }
 
 /// **The hunt take curve** — what each crew size actually brings down, so a pre-commit panel can
@@ -2659,6 +2674,7 @@ impl CommandEnvelope {
                                 floor: ask.floor,
                                 max_workers: ask.max_workers,
                                 follow: ask.follow,
+                                assume_kit_held: ask.assume_kit_held,
                             })
                         }
                         QueryPayload::ListSaves => {
@@ -3306,6 +3322,7 @@ impl CommandEnvelope {
                             floor: ask.floor,
                             max_workers: ask.max_workers,
                             follow: ask.follow,
+                            assume_kit_held: ask.assume_kit_held,
                         })
                     }
                     pb::query_command::Query::WorkPartyForecast(ask) => {
@@ -3504,6 +3521,8 @@ impl QueryReplyEnvelope {
                             keep_hands: row.keep_hands,
                             next_rung_animals_likely: row.next_rung_animals_likely,
                             next_rung_keep_hands: row.next_rung_keep_hands,
+                            home_animals_likely: row.home_animals_likely,
+                            home_first_load_turn: row.home_first_load_turn,
                         })
                         .collect(),
                     armed_crew: answer.armed_crew,
@@ -3664,6 +3683,8 @@ impl QueryReplyEnvelope {
                             keep_hands: row.keep_hands,
                             next_rung_animals_likely: row.next_rung_animals_likely,
                             next_rung_keep_hands: row.next_rung_keep_hands,
+                            home_animals_likely: row.home_animals_likely,
+                            home_first_load_turn: row.home_first_load_turn,
                         })
                         .collect(),
                     armed_crew: answer.armed_crew,
@@ -4405,6 +4426,7 @@ mod tests {
                 floor: 0.375,
                 max_workers: 12,
                 follow: true,
+                assume_kit_held: true,
             }),
         };
         let envelope = CommandEnvelope {
@@ -4429,6 +4451,8 @@ mod tests {
                         next_rung_animals_likely: workers as f32 * 0.4,
                         next_rung_keep_hands: 1.5,
                         keep_hands: 0.75,
+                        home_animals_likely: workers as f32 * 0.3,
+                        home_first_load_turn: 4,
                     })
                     .collect(),
                 // **Short of the crew asked about, and named** — the shape the sheet's

@@ -24258,6 +24258,7 @@ mod tests {
                 floor: SUSTAIN_FLOOR,
                 max_workers: SHORTFALL_ROW_CREW,
                 follow: false,
+                assume_kit_held: false,
             }),
         );
         match reply {
@@ -31936,6 +31937,7 @@ mod tests {
                     floor: 0.25,
                     max_workers: 4,
                     follow: false,
+                    assume_kit_held: false,
                 }),
             ),
             (

@@ -1257,6 +1257,7 @@ fn sizing(app: &mut App, band: Entity, quarry: Quarry) -> Sizing {
                 max_workers: pool,
                 // The sheet's ask for a need row: priced over the gear the muster brings.
                 follow: true,
+                assume_kit_held: false,
             },
         ),
     );
@@ -1926,6 +1927,7 @@ fn sheet_curve_asking(
                 floor: FLOOR,
                 max_workers: pool,
                 follow,
+                assume_kit_held: false,
             },
         ),
     );

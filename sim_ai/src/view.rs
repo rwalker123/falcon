@@ -32,7 +32,7 @@ use crate::orchestrator::Alarm;
 use crate::profile::NO_MEMORY_DECAY;
 use crate::specialists::food::ledger::BEST_FLOOR;
 use crate::specialists::food::{
-    herd_kit_id, honest_ceiling, kit_units_held, ROLE_FORAGE, ROLE_HUNT,
+    herd_kit_id, honest_ceiling, kit_units_held, Food, ROLE_FORAGE, ROLE_HUNT,
 };
 use crate::specialists::Memo;
 
@@ -167,6 +167,13 @@ const WORKED_ONCE: u32 = 1;
 /// a round trip to the server, answered on its main loop; the herds still waiting are asked next
 /// tick, nearest first, so the decide budget is never spent on questions.
 pub const CREW_TAKE_ASKS_PER_TICK: u32 = 8;
+
+/// **How many hypothetical-kit crew-take questions an outfitting window may ask**
+/// ([`SeatMemory::refresh_outfit_takes`]). The window is one frame, so the herds cannot wait for
+/// next tick the way [`CREW_TAKE_ASKS_PER_TICK`]'s do: a band asks about every herd in reach a
+/// roster kit clears, nearest first, and this bounds the frame's round trips (a fresh band has
+/// about thirteen herds in reach).
+pub const OUTFIT_CREW_TAKE_ASKS: u32 = 32;
 
 /// **How many turns a cached crew-take curve stands** before it is asked again with the same key:
 /// the sim's answer moves with the herd's wounds and the band's wear, which the key does not
@@ -375,6 +382,10 @@ pub struct SeatMemory {
     /// on ([`Self::crew_take`]), asked through the oracle and refreshed by key and cadence
     /// ([`Self::refresh_crew_takes`]).
     crew_takes: BTreeMap<(u64, String), CrewTakeEntry>,
+    /// **The hypothetical-kit curves of an open outfitting window**, per `(band, herd)`
+    /// ([`Self::refresh_outfit_takes`]). Apart from `crew_takes` so a curve priced for a kit not
+    /// yet held never stands in for the held-kit curve a herd is ranked on as a source.
+    outfit_takes: BTreeMap<(u64, String), CrewTakeCurve>,
 }
 
 impl SeatMemory {
@@ -485,8 +496,9 @@ impl SeatMemory {
     }
 
     /// **What `row` was forecast to take this turn, and the window that forecast is trusted
-    /// for.** A hunt row: the cached curve's `likely` at the row's crew, and the turns one kill
-    /// takes at that rate (`ceil(body_food / likely)`); `(0, 0)` with no curve or a crew the curve
+    /// for.** A hunt row: the cached curve's `likely` (the rate that lands HOME) at the row's crew, and
+    /// the turns until its first pack lands plus the turns one kill takes at that rate
+    /// (`first_load + ceil(body_food / likely)`); `(0, 0)` with no curve or a crew the curve
     /// says takes nothing. A patch row: the hands the sim counted × `per_worker_yield` off the
     /// frame, capped by what the ground can give this turn, over the profile's
     /// `food.dead_row_turns`. Any other row (a pool, a scout) forecasts nothing.
@@ -505,7 +517,18 @@ impl SeatMemory {
                 if likely <= 0.0 {
                     return (0.0, 0);
                 }
-                (likely, (curve.body_food / likely).ceil().max(1.0) as u32)
+                // **The turns until the first pack lands, then the turns one kill takes at the rate
+                // that lands home.** A herd past the work range is a party: it walks out and a pack
+                // has to fill and walk back before anything is credited, so a row is not judged
+                // before then (it read dead on the at-source kill window alone, its hands were
+                // moved and the walk restarted).
+                let first_load = curve
+                    .row(row.workers)
+                    .map_or(0, |at_crew| at_crew.first_load);
+                (
+                    likely,
+                    first_load + (curve.body_food / likely).ceil().max(1.0) as u32,
+                )
             }
             ROLE_FORAGE => {
                 let Some(patch) = view.patch_at(Tile::new(row.target_x, row.target_y)) else {
@@ -591,6 +614,7 @@ impl SeatMemory {
                         floor: CREW_TAKE_FLOOR,
                         max_workers: band.working_age,
                         food_per_animal: herd.food_per_animal,
+                        assume_kit_held: false,
                     },
                 ));
             }
@@ -633,6 +657,87 @@ impl SeatMemory {
             );
         }
         asks
+    }
+
+    /// **Ask the oracle what each herd a roster kit clears would give an outfitted band**, for
+    /// every own band whose loadout window is open: the `HuntCrewTake` priced with
+    /// `assume_kit_held`, under the kit the herd is hunted under (else the best clearing kit),
+    /// for the whole working-age pool. Nearest herds first, at most [`OUTFIT_CREW_TAKE_ASKS`]
+    /// across the seat; a band's earlier answers are dropped first, since a window is one frame
+    /// and the curve is read only inside it. Returns the questions asked.
+    pub fn refresh_outfit_takes(
+        &mut self,
+        view: &SeatView,
+        faction: u32,
+        oracle: &mut dyn CrewTakeOracle,
+    ) -> u32 {
+        let grid = view.grid();
+        self.outfit_takes.clear();
+        let mut due: Vec<(u32, String, u64, CrewTakeAsk)> = Vec::new();
+        for band in view.own_bands(faction) {
+            let open = band
+                .loadout_window
+                .as_ref()
+                .is_some_and(|window| window.open);
+            if !open || band.working_age == 0 {
+                continue;
+            }
+            for herd in view
+                .snapshot
+                .herds
+                .iter()
+                .filter(|herd| herd.huntable && herd.food_per_animal > 0.0)
+            {
+                let distance = grid.distance(band_tile(band), Tile::new(herd.x, herd.y));
+                if distance > self.hunt_reach(band) {
+                    continue;
+                }
+                let Some(kit_id) = Food::outfit_kit_for(view, herd) else {
+                    continue;
+                };
+                due.push((
+                    distance,
+                    herd.id.clone(),
+                    band.band_id,
+                    CrewTakeAsk {
+                        faction,
+                        band_id: band.band_id,
+                        herd_id: herd.id.clone(),
+                        kit_id,
+                        floor: CREW_TAKE_FLOOR,
+                        max_workers: band.working_age,
+                        food_per_animal: herd.food_per_animal,
+                        assume_kit_held: true,
+                    },
+                ));
+            }
+        }
+        due.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.2.cmp(&b.2))
+        });
+        let mut asked = 0;
+        for (_, herd_id, band_id, ask) in due.into_iter().take(OUTFIT_CREW_TAKE_ASKS as usize) {
+            asked += 1;
+            if let Some(curve) = oracle.crew_take(&ask) {
+                self.outfit_takes.insert((band_id, herd_id), curve);
+            }
+        }
+        asked
+    }
+
+    /// The hypothetical-kit curve for `herd_id` as `band_id` would hunt it outfitted, when its
+    /// window was open this tick and the oracle answered.
+    pub fn outfit_take(&self, band_id: u64, herd_id: &str) -> Option<&CrewTakeCurve> {
+        self.outfit_takes.get(&(band_id, herd_id.to_owned()))
+    }
+
+    /// Put a hypothetical-kit curve in the cache directly — the tests' short cut around the ask.
+    #[cfg(test)]
+    pub fn remember_outfit_take(&mut self, band_id: u64, herd_id: &str, curve: CrewTakeCurve) {
+        self.outfit_takes
+            .insert((band_id, herd_id.to_owned()), curve);
     }
 
     /// The cached crew-take curve for `herd_id` as `band_id` would hunt it, if the oracle has
@@ -912,6 +1017,7 @@ impl SeatMemory {
         self.realized_by_kind.clear();
         // The curves were answers about a world that is gone; the next tick asks afresh.
         self.crew_takes.clear();
+        self.outfit_takes.clear();
         for list in self.pending_splits.values_mut() {
             list.retain(|pending| pending.tick <= tick);
         }
@@ -1881,6 +1987,47 @@ mod tests {
         }];
     }
 
+    /// **A far row is judged only once its first pack could have landed**: its window is the
+    /// turns until that pack (`first_load`: the walk out and the pack filling) plus the turns one
+    /// kill takes at the rate that lands home. The same row read dead after the kill window alone
+    /// and its hands were moved before anything could have been credited.
+    #[test]
+    fn a_far_hunt_row_is_not_judged_before_its_first_pack_lands() {
+        const FACTION: u32 = 1;
+        const BAND: u64 = 7;
+        const CREW: u32 = 5;
+        const LIKELY: f32 = 0.3;
+        const BODY_FOOD: f32 = 0.8;
+        const FIRST_LOAD: u32 = 4;
+        const KILL_WINDOW: u32 = 3;
+        const FRACTION: f32 = 0.25;
+        let herd = row_key(BAND, "hunt", 0, 0, "herd_9");
+        let mut curve = crate::oracle::curve_of(&[(1, 0.1), (5, LIKELY)], BODY_FOOD);
+        for row in &mut curve.rows {
+            row.first_load = FIRST_LOAD;
+        }
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
+        memory.remember_crew_take(BAND, "herd_9", curve);
+        let mut view = a_view_at(10);
+        view.snapshot.populations.push(PopulationCohortState {
+            faction: FACTION,
+            band_id: BAND,
+            ..Default::default()
+        });
+        a_hunt_of(&mut view, CREW, 0.0);
+        for turn in 1..=(FIRST_LOAD + KILL_WINDOW) {
+            memory.observe(&view, FACTION);
+            let record = memory.realized(&herd).unwrap();
+            assert_eq!(record.window, FIRST_LOAD + KILL_WINDOW);
+            assert_eq!(record.worked_turns, turn);
+            assert_eq!(
+                record.dead_under(FRACTION),
+                turn >= FIRST_LOAD + KILL_WINDOW,
+                "turn {turn}: nothing has landed, and the row is dead only once the window ran"
+            );
+        }
+    }
+
     /// ⛔ **A HUNT IS JUDGED OVER THE TURNS ONE KILL TAKES, NOT PER TURN.** Five hunters the sim
     /// says likely bring home 0.3 a turn off a herd whose animals are 0.8 food each are due a
     /// kill every third turn (`ceil(0.8 / 0.3)`): two turns of nothing are not yet a verdict,
@@ -1948,6 +2095,77 @@ mod tests {
         let restaffed = memory.realized(&herd).unwrap();
         assert_eq!((restaffed.crew, restaffed.worked_turns), (CREW + 1, 1));
         assert_eq!(restaffed.realized_sum, 0.0);
+    }
+
+    /// **An open outfitting window asks the hypothetical-kit curve of every herd a roster kit
+    /// clears**, nearest first, within [`OUTFIT_CREW_TAKE_ASKS`] and with `assume_kit_held`; a
+    /// band whose window is shut asks nothing; the answers sit apart from the held-kit curves.
+    #[test]
+    fn an_open_window_asks_the_hypothetical_curve_of_every_herd_a_kit_clears() {
+        use crate::oracle::{curve_of, Canned};
+        use sim_runtime::{HerdTelemetryState, KitOptionState};
+        const FACTION: u32 = 1;
+        const BAND: u64 = 7;
+        let mut view = a_view_at(10);
+        view.snapshot.kits.push(KitOptionState {
+            id: "big_game".into(),
+            jobs: vec!["hunt".into()],
+            attack: 20.0,
+            ..Default::default()
+        });
+        view.snapshot.populations.push(PopulationCohortState {
+            faction: FACTION,
+            band_id: BAND,
+            current_x: 4,
+            current_y: 4,
+            working_age: 12,
+            loadout_window: Some(sim_runtime::BandLoadoutWindowState {
+                open: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let herd = |id: &str, x: u32, defense: f32| HerdTelemetryState {
+            id: id.into(),
+            x,
+            y: 4,
+            huntable: true,
+            food_per_animal: 0.24,
+            biomass: 50.0,
+            carrying_capacity: 100.0,
+            default_kit_id: "big_game".into(),
+            defense,
+            ..Default::default()
+        };
+        // Two in reach, one beyond it, one no kit clears.
+        view.snapshot.herds = vec![
+            herd("near", 4, 0.0),
+            herd("next", 5, 0.0),
+            herd("far", 20, 0.0),
+            herd("armoured", 6, 99.0),
+        ];
+        let mut oracle = Canned::new()
+            .with("near", curve_of(&[(1, 0.3)], 0.24))
+            .with("next", curve_of(&[(1, 0.4)], 0.24));
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
+        let asked = memory.refresh_outfit_takes(&view, FACTION, &mut oracle);
+        assert_eq!(asked, 2);
+        assert!(oracle.asked.iter().all(|ask| ask.assume_kit_held));
+        assert_eq!(oracle.asked[0].herd_id, "near");
+        assert_eq!(oracle.asked[0].max_workers, 12);
+        assert_eq!(
+            memory.outfit_take(BAND, "near").map(|c| c.likely(1)),
+            Some(0.3)
+        );
+        assert!(memory.outfit_take(BAND, "armoured").is_none());
+        // Apart from the held-kit cache.
+        assert!(memory.crew_take(BAND, "near").is_none());
+        // A shut window asks nothing and drops the answers.
+        view.snapshot.populations[0].loadout_window = None;
+        let mut oracle = Canned::new();
+        assert_eq!(memory.refresh_outfit_takes(&view, FACTION, &mut oracle), 0);
+        assert!(oracle.asked.is_empty());
+        assert!(memory.outfit_take(BAND, "near").is_none());
     }
 
     /// The oracle is asked once per herd in reach per band, nearest first, within the tick's

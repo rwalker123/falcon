@@ -281,6 +281,7 @@ fn crew_take_reply(app: &mut App, kit_id: String) -> HuntCrewTakeReply {
             floor: FLOOR,
             max_workers: POOL,
             follow: false,
+            assume_kit_held: false,
         }),
     );
     match reply {

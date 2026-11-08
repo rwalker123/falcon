@@ -39,6 +39,9 @@ pub struct CrewTakeAsk {
     /// One whole animal's food (`HerdTelemetryState::food_per_animal`): the reply counts animals,
     /// the brain counts provisions.
     pub food_per_animal: f32,
+    /// Price the kit as if the band held it (`HuntCrewTakeQuery::assume_kit_held`): the
+    /// outfitting window's question, asked before the band holds anything.
+    pub assume_kit_held: bool,
 }
 
 /// One row of the curve: what a crew of `crew` brings home per turn, in food.
@@ -51,6 +54,9 @@ pub struct CrewTakeRow {
     pub likely: f32,
     /// The optimistic bound.
     pub high: f32,
+    /// The 1-based turn this crew's first pack lands home (`0` inside the apron, where nothing
+    /// walks): the walk-out and the pack filling that a row is not judged before.
+    pub first_load: u32,
 }
 
 /// **The sim's crew-take curve, in food per turn**: one row per crew size ascending from `1`,
@@ -68,17 +74,28 @@ pub struct CrewTakeCurve {
 }
 
 impl CrewTakeCurve {
-    /// The reply converted to food: every animal count times `food_per_animal`.
+    /// The reply converted to food: every animal count times `food_per_animal`, **at the rate that
+    /// lands HOME** (`HuntCrewTakeRow::home_animals_likely`): a herd past the work range is a
+    /// caravan, and the at-source take overstates what the larder gets by the walk, the porters
+    /// and the rot. `low` / `high` keep their spread, scaled by the same home-to-source ratio.
     pub fn from_reply(reply: &HuntCrewTakeReply, food_per_animal: f32) -> Self {
         Self {
             rows: reply
                 .per_crew
                 .iter()
-                .map(|row| CrewTakeRow {
-                    crew: row.workers,
-                    low: row.animals_low * food_per_animal,
-                    likely: row.animals_likely * food_per_animal,
-                    high: row.animals_high * food_per_animal,
+                .map(|row| {
+                    let home_share = if row.animals_likely > 0.0 {
+                        row.home_animals_likely / row.animals_likely
+                    } else {
+                        1.0
+                    };
+                    CrewTakeRow {
+                        crew: row.workers,
+                        low: row.animals_low * food_per_animal * home_share,
+                        likely: row.home_animals_likely * food_per_animal,
+                        high: row.animals_high * food_per_animal * home_share,
+                        first_load: row.home_first_load_turn,
+                    }
                 })
                 .collect(),
             armed_crew: reply.armed_crew,
@@ -174,6 +191,7 @@ impl CrewTakeOracle for LinkOracle<'_> {
             max_workers: ask.max_workers,
             // The AI prices ordinary hunt rows: a need row is a migration-mode box it does not set.
             follow: false,
+            assume_kit_held: ask.assume_kit_held,
         });
         match self.link.ask(query, self.timeout) {
             Ok(QueryReply::HuntCrewTake(reply)) => {
@@ -254,6 +272,7 @@ pub fn curve_of(points: &[(u32, f32)], body_food: f32) -> CrewTakeCurve {
                 low: *likely,
                 likely: *likely,
                 high: *likely,
+                first_load: 0,
             })
             .collect(),
         armed_crew: points.last().map_or(0, |(crew, _)| *crew),
@@ -278,6 +297,8 @@ mod tests {
                     next_rung_animals_likely: 0.0,
                     next_rung_keep_hands: 0.0,
                     keep_hands: 0.0,
+                    home_animals_likely: (workers.min(3)) as f32 * 0.25,
+                    home_first_load_turn: workers,
                 })
                 .collect(),
             armed_crew: 3,
@@ -287,11 +308,14 @@ mod tests {
         assert_eq!(curve.body_food, 0.25);
         assert_eq!(curve.armed_crew, 3);
         assert_eq!(curve.likely(0), 0.0);
-        assert_eq!(curve.likely(1), 0.125);
-        assert_eq!(curve.likely(3), 0.375);
-        assert_eq!(curve.likely(4), 0.375);
-        assert_eq!(curve.likely(40), 0.375, "past the end, the last row");
-        assert_eq!(curve.row(2).unwrap().high, 0.5);
+        // Half of what the source takes lands home (the rows' `home_animals_likely`), in food.
+        assert_eq!(curve.likely(1), 0.0625);
+        assert_eq!(curve.likely(3), 0.1875);
+        assert_eq!(curve.likely(4), 0.1875);
+        assert_eq!(curve.likely(40), 0.1875, "past the end, the last row");
+        // The spread keeps its shape, scaled by the same home-to-source share.
+        assert_eq!(curve.row(2).unwrap().high, 0.25);
+        assert_eq!(curve.row(2).unwrap().first_load, 2);
         assert_eq!(curve.plateau(), 3);
     }
 
@@ -320,6 +344,7 @@ mod tests {
             floor: 0.5,
             max_workers: 17,
             food_per_animal: 0.24,
+            assume_kit_held: false,
         };
         assert_eq!(Unasked.crew_take(&ask), None);
         let mut canned = Canned::new().with("herd_9", curve_of(&[(1, 0.3)], 0.8));

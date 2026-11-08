@@ -1430,6 +1430,10 @@ message HuntCrewTakeQuery {
   // `max_workers` should be the sheet's musterable pool. False is an ordinary hunt row, priced over
   // the units no row claims.
   bool follow = 7;
+  // Price the kit as if the band held it: `max_workers` fresh units of every item the kit carries,
+  // no other row competing. The outfitting window's question - a band not yet outfitted holds
+  // nothing, so the ordinary curve reads nothing for every herd.
+  bool assume_kit_held = 8;
 }
 
 // The reply frame, written back on the command socket. A TOP-LEVEL message rather than a member of
@@ -1669,6 +1673,14 @@ message HuntCrewTakeRow {
   // THE HANDS THIS CREW SPENDS KEEPING THE HERD, fractional - the split every quantile on this row
   // is struck on. 0 on a herd that owes no keeping.
   float keep_hands = 7;
+  // WHAT THIS CREW'S TAKE LANDS AT HOME, animals a turn: the work-party caravan's rate (walk out,
+  // porters, transit rot) over the herd's food per animal. Past the work range it is a fraction of
+  // animals_likely, which is the take AT THE SOURCE; inside the apron it equals animals_likely. 0 on
+  // a `follow` ask.
+  float home_animals_likely = 8;
+  // The 1-based turn this crew's first pack lands, from the same forecast. 0 inside the apron or when
+  // no pack lands within the forecast horizon.
+  uint32 home_first_load_turn = 9;
 }
 
 // THE HUNT TAKE CURVE - what each crew size actually brings down, so a pre-commit panel can move its

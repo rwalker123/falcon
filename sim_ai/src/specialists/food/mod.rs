@@ -685,6 +685,11 @@ pub(crate) mod tests {
                 &herd.id,
                 crate::oracle::curve_of(&points, FIXTURE_BODY_FOOD),
             );
+            memory.remember_outfit_take(
+                BAND,
+                &herd.id,
+                crate::oracle::curve_of(&points, FIXTURE_BODY_FOOD),
+            );
         }
         memory
     }

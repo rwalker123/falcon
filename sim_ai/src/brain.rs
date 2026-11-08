@@ -312,6 +312,10 @@ impl Brain for Composite {
                 "crew take asked"
             );
         }
+        let outfit_asks = self.memory.refresh_outfit_takes(view, self.faction, oracle);
+        if outfit_asks > 0 {
+            info!(tick, asked = outfit_asks, "outfit crew take asked");
+        }
         self.ground = read_all(
             view,
             &self.memory,

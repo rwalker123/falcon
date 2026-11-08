@@ -256,6 +256,7 @@ pub(crate) fn dispatch(
             floor: dict_f32(ask, "floor"),
             max_workers: dict_u32(ask, "max_workers"),
             follow: dict_bool(ask, "follow"),
+            assume_kit_held: false,
         }),
         QUERY_KIND_DEPOSIT_CREW_TAKE => QueryPayload::DepositCrewTake(DepositCrewTakeQuery {
             faction_id: dict_u32(ask, "faction_id"),
@@ -955,6 +956,7 @@ mod tests {
                 floor: 0.0,
                 max_workers: 0,
                 follow: false,
+                assume_kit_held: false,
             }),
             QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
                 faction_id: 0,

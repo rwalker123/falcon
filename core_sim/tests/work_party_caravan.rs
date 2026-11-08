@@ -20,7 +20,8 @@ use core_sim::{
     SourcePriority, TileRegistry, FOOD,
 };
 use sim_runtime::commands::{
-    QueryPayload, QueryReply, WorkPartyForecastQuery, WorkPartyForecastReply, WorkPartySource,
+    HuntCrewTakeQuery, HuntCrewTakeReply, QueryPayload, QueryReply, WorkPartyForecastQuery,
+    WorkPartyForecastReply, WorkPartySource,
 };
 
 /// A shipped quarry whose take a small party can actually make.
@@ -3815,4 +3816,107 @@ fn idle_hands_deal_one_asking_head_each_to_the_unstaffed_chief_rows() {
         vec![0, 1],
         "exactly the first {IDLE} rows in staffing order ask one head"
     );
+}
+
+/// **THE CREW CURVE'S HOME RATE IS WHAT A ROW LANDS** (`HuntCrewTakeRow::home_animals_likely`).
+/// The at-source take is the same at every distance; what the larder gets falls with the walk, the
+/// porters and the rot. The curve's home row, in food, must match the live landed take over a run
+/// at 1 hex (a camp kill: no party, the home rate IS the at-source take), 3 and 5 (a party posted).
+/// Each distance also asserts the at-source figure stays put and the far ones fall below it - the
+/// liveness half, since a home rate equal to the source rate would pass the tolerance at distance 1.
+#[test]
+fn the_crew_curves_home_rate_is_what_the_row_lands_at_every_distance() {
+    /// Turns the live run is averaged over: short of the stock being drawn to its floor, where the
+    /// take falls to the regrowth and no steady rate describes it.
+    const TURNS: usize = 20;
+    /// How close the curve's home rate sits to the live landed mean: the take lands in whole packs,
+    /// so a window of this many turns is a few packs, not an exact multiple.
+    const TOLERANCE: f32 = 0.15;
+    let mut at_source = None;
+    let mut previous_home = f32::MAX;
+    for distance in [1_u32, 3, 5] {
+        let (mut app, band) = world_hunting_at(distance);
+        resolve_a_turn(&mut app);
+        let (food_per_animal, curve) = {
+            let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            let body = fauna
+                .species_by_display(BOAR)
+                .expect("the fixture names a shipped species")
+                .body_mass;
+            let food_per_animal = body * fauna.hunt_yield_for(BOAR).provisions_per_biomass;
+            let reply = core_sim::forecast_query::answer_forecast_query(
+                &mut app.world,
+                &QueryPayload::HuntCrewTake(HuntCrewTakeQuery {
+                    faction_id: FACTION.0,
+                    band_id: BAND,
+                    herd_id: HERD_ID.to_string(),
+                    kit_id: default_hunt_kit(),
+                    floor: FLOOR,
+                    max_workers: CREW,
+                    follow: false,
+                    assume_kit_held: false,
+                }),
+            );
+            let QueryReply::HuntCrewTake(HuntCrewTakeReply { per_crew, .. }) = reply else {
+                panic!("the crew-take query must answer with a curve");
+            };
+            (food_per_animal, per_crew)
+        };
+        let row = curve
+            .iter()
+            .find(|row| row.workers == CREW)
+            .expect("the curve has the staffed crew's row");
+        let mut landed = 0.0_f32;
+        for _ in 0..TURNS {
+            resolve_a_turn(&mut app);
+            landed += app
+                .world
+                .get::<LaborAllocation>(band)
+                .expect("the band keeps its allocation")
+                .last_yields
+                .iter()
+                .map(|row| row.actual)
+                .sum::<f32>();
+        }
+        let landed_per_turn = landed / TURNS as f32;
+        let home = row.home_animals_likely * food_per_animal;
+        assert!(
+            landed_per_turn > 0.0,
+            "liveness: the row lands food at {distance} hexes"
+        );
+        assert!(
+            (home - landed_per_turn).abs() <= TOLERANCE * landed_per_turn,
+            "distance {distance}: the curve's home rate {home:.3} must be the landed take \
+             {landed_per_turn:.3} within {TOLERANCE}"
+        );
+        // The at-source take is one number for every distance.
+        let source = row.animals_likely;
+        match at_source {
+            None => at_source = Some(source),
+            Some(first) => assert_eq!(first, source, "the take at the source does not move"),
+        }
+        if distance == 1 {
+            assert_eq!(
+                row.home_animals_likely, row.animals_likely,
+                "inside the apron nothing walks: the home rate is the take at the source"
+            );
+            assert_eq!(row.home_first_load_turn, 0);
+        } else {
+            assert!(
+                row.home_animals_likely < row.animals_likely,
+                "past the apron the walk costs: home {} < source {}",
+                row.home_animals_likely,
+                row.animals_likely
+            );
+            assert!(
+                row.home_first_load_turn > 0,
+                "a party's first pack lands later"
+            );
+        }
+        assert!(
+            row.home_animals_likely < previous_home,
+            "a farther herd lands less"
+        );
+        previous_home = row.home_animals_likely;
+    }
 }
