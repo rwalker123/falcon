@@ -991,13 +991,11 @@ fn a_knowledge_refusal_names_the_craft_and_an_ungated_recipe_beside_it_does_not(
     );
     assert_eq!(tool.severity, "danger");
     assert!(
-        tool.reason.contains("Needs Weaving") && tool.reason.contains("Needs Bone-working"),
-        "a tool is gated on the crafts of what it is MADE FROM, and both are named — got {:?}",
-        tool.reason
-    );
-    assert!(
-        tool.reason.contains(" · "),
-        "two reasons at once are joined with ' · ' — got {:?}",
+        tool.reason.contains("Needs Tanning")
+            && !tool.reason.contains("Needs Weaving")
+            && !tool.reason.contains("Needs Bone-working"),
+        "a tool is gated on the craft of what it WORKS (the frame bounds hide) and on nothing it is \
+         made from - got {:?}",
         tool.reason
     );
     assert_eq!(
@@ -1028,6 +1026,28 @@ fn a_short_offer_is_queueable_and_an_unlearned_one_is_not() {
     assert!(
         !tool.queueable,
         "a tool gated on unlearned crafts cannot be queued"
+    );
+}
+
+/// **The loom (bounds fibre) is refused naming Weaving until Weaving is known**, and queueable the
+/// moment it is - the offer's gate is `requires_knowledge`, which is the craft of what it works.
+/// Hide's craft (Tanning), which the loom is made from, does not gate it.
+#[test]
+fn the_loom_offer_names_weaving_until_it_is_known_then_queues() {
+    let (mut app, band) = world();
+    let before = publish(&mut app, band);
+    let loom = offer(&before, "loom");
+    assert!(!loom.queueable);
+    assert!(
+        loom.reason.contains("Needs Weaving") && !loom.reason.contains("Needs Tanning"),
+        "got {:?}",
+        loom.reason
+    );
+    learn(&mut app, band, "weaving");
+    let after = publish(&mut app, band);
+    assert!(
+        offer(&after, "loom").queueable,
+        "knowing Weaving alone makes the loom queueable"
     );
 }
 
@@ -2357,10 +2377,9 @@ fn a_first_tools_invitation_names_the_band_its_own_quality_ceiling_reaches() {
             }
         }
     });
-    // The frame is gated on Weaving and Bone-working and needs its pile — an invitation is only ever
+    // The frame is gated on Tanning (it works hide) and needs its pile — an invitation is only ever
     // published on a buildable row.
-    learn(&mut app, band, "weaving");
-    learn(&mut app, band, "bone_working");
+    learn(&mut app, band, "tanning");
     deposit(
         &mut app,
         band,

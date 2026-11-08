@@ -19,9 +19,9 @@
 //!    bands would be a second authority to drift from.
 //! 3. **The grade is fixed at draw time and never moves.** It is not a taper.
 //! 4. **Knowledge gates a recipe only when the recipe says so** ([`RecipeDef::requires_knowledge`]),
-//!    and only the **tool** recipes say so — gated on the crafts of what the tool is MADE FROM,
-//!    never on the craft it unlocks. Otherwise nothing could start: you would need the loom to learn
-//!    the weaving that lets you build the loom.
+//!    and only the **tool** recipes say so — gated on exactly the craft of the material the tool
+//!    BOUNDS (the loom needs weaving). That material must be hand-workable, so the craft is learned
+//!    bare-handed before the tool exists and nothing deadlocks.
 //!
 //! Loader mirrors [`crate::materials_config`]: baked-in builtin + `RECIPES_CONFIG_PATH` override +
 //! [`RecipesConfig::validate`] inside `from_json_str`, plus the cross-config
@@ -225,12 +225,10 @@ pub struct RecipeDef {
     /// **The crafts a faction must already know to put this on a bench.** Empty on an ordinary kit
     /// recipe — you can craft a sled by hand from day one, and doing it is what teaches Tanning.
     ///
-    /// Every **tool** recipe carries one entry per material it is made from, and `validate` enforces
-    /// exactly that: a named craft must be the craft of one of this recipe's own **input**
-    /// materials. Since a tool may never be made from the material it bounds (also validated), the
-    /// craft a tool *unlocks* can never appear here — which is what makes the deadlock
-    /// (*metal needs a crucible, the crucible needs metalworking*) unrepresentable rather than
-    /// merely avoided.
+    /// Every **tool** recipe carries exactly `[craft(bounded material)]` and `validate_against`
+    /// enforces it, together with the bounded material declaring `hand_working` (so the craft is
+    /// learnable by hand before the tool exists and the gate cannot deadlock). A non-tool recipe's
+    /// entries must each be the craft of one of its own input materials.
     #[serde(default)]
     pub requires_knowledge: Vec<String>,
     pub inputs: Vec<RecipeInput>,
@@ -933,10 +931,54 @@ impl RecipesConfig {
                     ),
                 });
             }
-            // **A tool is gated on the crafts of what it is MADE FROM, never on the craft it
-            // unlocks** — enforced as *"every required craft is the craft of one of this recipe's
-            // own inputs"*. Paired with the never-made-from-what-it-bounds rule above, that makes
-            // the deadlock unrepresentable rather than merely avoided.
+            // **A bench tool is gated on the craft of the material it BOUNDS (works), and on
+            // nothing else.** `requires_knowledge` is exactly `[craft(bounded)]`. Its inputs' crafts
+            // are not required. The bounded material must be hand-workable: that is what keeps the
+            // gate from deadlocking, because the craft is learnable bare-handed before the tool
+            // exists (`metal`, with no `hand_working`, would be refused).
+            let bounded_by_output = recipe
+                .outputs
+                .iter()
+                .filter_map(|output| output.equipment_id())
+                .find_map(|item| equipment.item(item).and_then(|def| def.bounds_material()));
+            if let Some(bounded) = bounded_by_output {
+                let Some(bounded_def) = materials.material(bounded) else {
+                    return Err(RecipesConfigError::UnknownMaterial {
+                        recipe: id.clone(),
+                        material: bounded.to_string(),
+                    });
+                };
+                if bounded_def.hand_working.is_none() {
+                    return Err(RecipesConfigError::InvalidBook {
+                        reason: format!(
+                            "recipe '{id}' makes a tool for '{bounded}', which declares no \
+                             hand_working - its craft could not be learned before the tool \
+                             exists, so the gate would deadlock"
+                        ),
+                    });
+                }
+                let Some(bounded_craft) = bounded_def.craft.as_deref() else {
+                    return Err(RecipesConfigError::InvalidBook {
+                        reason: format!(
+                            "recipe '{id}' makes a tool for '{bounded}', which names no craft to \
+                             gate the tool on"
+                        ),
+                    });
+                };
+                if recipe.requires_knowledge.len() != 1
+                    || recipe.requires_knowledge[0] != bounded_craft
+                {
+                    return Err(RecipesConfigError::InvalidBook {
+                        reason: format!(
+                            "recipe '{id}' makes a tool for '{bounded}' and must require exactly \
+                             [\"{bounded_craft}\"], the craft of what it works - got {:?}",
+                            recipe.requires_knowledge
+                        ),
+                    });
+                }
+                continue;
+            }
+            // **A non-tool recipe is gated on the crafts of what it is MADE FROM.**
             for craft in &recipe.requires_knowledge {
                 if !crafts.contains(&craft.as_str()) {
                     return Err(RecipesConfigError::InvalidBook {
@@ -954,8 +996,7 @@ impl RecipesConfig {
                     return Err(RecipesConfigError::InvalidBook {
                         reason: format!(
                             "recipe '{id}' requires the craft '{craft}', which none of its own \
-                             input materials is worked by - a recipe is gated on the crafts of what \
-                             it is MADE FROM, never on the craft it unlocks"
+                             input materials is worked by"
                         ),
                     });
                 }
@@ -1697,68 +1738,26 @@ mod tests {
         );
     }
 
-    /// **A required craft that none of the recipe's own inputs is worked by is rejected**, which is
-    /// what makes *"gated on what it is MADE FROM"* structural. Broken here by demanding the very
-    /// craft the tool unlocks — the deadlock the rule exists to forbid.
-    ///
-    /// The subject is the **loom**: it bounds `fibre`, so `weaving` is the craft it unlocks, and no
-    /// material it is made of is worked by that craft. See
-    /// [`a_craft_two_materials_share_is_requirable_by_a_tool_that_bounds_one_of_them`] for the
-    /// roster property that keeps the second clause true — it is not enforced anywhere.
-    #[test]
-    fn validate_against_rejects_a_tool_gated_on_the_craft_it_unlocks() {
+    /// Validates the builtin book after `edit` rewrites its JSON.
+    fn tool_book_error(edit: &dyn Fn(&mut serde_json::Value)) -> Option<RecipesConfigError> {
         let mut json: serde_json::Value =
             serde_json::from_str(BUILTIN_RECIPES_CONFIG).expect("builtin parses as json");
-        json["recipes"]["loom"]["requires_knowledge"] = serde_json::json!(["weaving"]);
-        let config =
-            RecipesConfig::from_json_str(&json.to_string()).expect("still self-consistent");
-        let err = config
+        edit(&mut json);
+        RecipesConfig::from_json_str(&json.to_string())
+            .expect("still self-consistent")
             .validate_against(&MaterialsConfig::builtin(), &EquipmentConfig::builtin())
-            .expect_err("a loom gated on weaving can never be built");
-        assert!(
-            matches!(&err, RecipesConfigError::InvalidBook { reason } if reason.contains("MADE FROM")),
-            "got {err}"
-        );
+            .err()
     }
 
-    /// **THE DEADLOCK CHAIN RESTS ON A ROSTER PROPERTY NOTHING ENFORCES: one material per craft.**
-    ///
-    /// `tool bounds M ⇒ M is not an input ⇒ craft(M) is not requirable` is true step by step
-    /// whatever the roster looks like; what makes it true *end to end* is that `craft(M)` names
-    /// exactly one material. **`wood` and `fibre` both declare `weaving`**, so a tool bounding
-    /// `fibre` that took **wood** as an input could name Weaving and pass every rule in the book —
-    /// gated on the craft it unlocks, by way of a different material that happens to share it.
-    ///
-    /// **No shipped tool reaches it**, so in this book the guarantee holds by construction and the
-    /// hole is latent. Three assertions, and each fails on its own: the premise (exactly two
-    /// materials weave), the shipped book's distance from the hole, and a fixture that walks into
-    /// it. Asserting only the last would pass on a book that had quietly grown the shape.
-    ///
-    /// It is a guard rather than a new `validate` rule because **it is not a deadlock**: the trap
-    /// only closes where the bounded material cannot be worked bare-handed at all, and `fibre`
-    /// declares `hand_working` — a band twists cordage by hand, learns Weaving, and builds the loom.
-    /// The material it would bite is `metal`, which will declare no `hand_working` and whose craft no
-    /// second material declares.
+    /// **A bench tool is gated on the craft of the material it bounds, and nothing else.** The four
+    /// shipped tools are the positive case: each requires exactly `[craft(bounded)]`.
     #[test]
-    fn a_craft_two_materials_share_is_requirable_by_a_tool_that_bounds_one_of_them() {
+    fn a_tool_gated_on_the_craft_of_the_material_it_bounds_validates() {
         let materials = MaterialsConfig::builtin();
         let equipment = EquipmentConfig::builtin();
-        let weavers: Vec<&str> = materials
-            .materials()
-            .filter(|(_, def)| def.craft.as_deref() == Some(crate::crafting::WEAVING_CRAFT))
-            .map(|(id, _)| id)
-            .collect();
-        assert_eq!(
-            weavers,
-            vec!["fibre", "wood"],
-            "the premise: exactly two shipped materials declare `weaving`, which is what makes the \
-             hole below reachable at all"
-        );
-
-        // **THE SHIPPED BOOK DOES NOT REACH IT.** For every tool recipe, no input material is
-        // worked by the craft of the material that tool bounds — which is the whole of *"holds by
-        // construction"*, asserted rather than asserted-about.
         let book = builtin();
+        book.validate_against(&materials, &equipment)
+            .expect("the shipped book validates");
         let mut tools_checked = 0;
         for (id, recipe) in book.recipes() {
             let Some(bounded) = recipe
@@ -1769,46 +1768,74 @@ mod tests {
                 continue;
             };
             tools_checked += 1;
-            let unlocked = materials
+            let craft = materials
                 .material(bounded)
-                .and_then(|def| def.craft.as_deref())
+                .and_then(|def| def.craft.clone())
                 .expect("a bounded material declares a craft");
-            for input in &recipe.inputs {
-                let worked_by = materials
-                    .material(&input.material)
-                    .and_then(|def| def.craft.as_deref());
-                assert_ne!(
-                    worked_by,
-                    Some(unlocked),
-                    "tool recipe '{id}' bounds '{bounded}' (craft '{unlocked}') and takes '{}', \
-                     which that same craft works - the chain holds only because no shipped tool \
-                     does this, so the book has walked into the latent hole",
-                    input.material
-                );
-            }
+            assert_eq!(
+                recipe.requires_knowledge,
+                vec![craft],
+                "tool recipe '{id}' must require exactly the craft of '{bounded}'"
+            );
         }
         assert_eq!(
             tools_checked, 4,
-            "LIVENESS: the sweep must actually have found the four bench tools"
+            "LIVENESS: the four bench tools were swept"
         );
+    }
 
-        // **AND A FIXTURE THAT DOES REACH IT VALIDATES**, which is why the sweep above is a guard
-        // and not a restatement of something `validate` already refuses.
-        let mut json: serde_json::Value =
-            serde_json::from_str(BUILTIN_RECIPES_CONFIG).expect("builtin parses as json");
-        json["recipes"]["loom"]["inputs"]
-            .as_array_mut()
-            .expect("the loom has inputs")
-            .push(serde_json::json!({ "material": "wood", "amount": 1.0 }));
-        json["recipes"]["loom"]["requires_knowledge"] = serde_json::json!(["weaving"]);
-        RecipesConfig::from_json_str(&json.to_string())
-            .expect("still self-consistent")
-            .validate_against(&materials, &equipment)
-            .expect(
-                "a loom carrying wood is gated on `weaving` legally - wood is worked by weaving, so \
-                 the gate names a craft it really is MADE FROM, while also being the craft the tool \
-                 unlocks",
+    /// **The old shape - gated on an input's craft - is rejected.** The loom (bounds fibre) reading
+    /// "Needs Tanning" because it takes hide is the backwards gate this rule replaced.
+    #[test]
+    fn validate_against_rejects_a_tool_gated_on_an_input_craft() {
+        let err = tool_book_error(&|json| {
+            json["recipes"]["loom"]["requires_knowledge"] =
+                serde_json::json!(["bone_working", "tanning"]);
+        })
+        .expect("a loom gated on its inputs' crafts is refused");
+        assert!(
+            matches!(&err, RecipesConfigError::InvalidBook { reason } if reason.contains("must require exactly")),
+            "got {err}"
+        );
+    }
+
+    /// **A tool with no gate, or one extra craft beside the right one, is rejected.**
+    #[test]
+    fn validate_against_rejects_a_tool_missing_its_gate() {
+        for gate in [
+            serde_json::json!([]),
+            serde_json::json!(["weaving", "tanning"]),
+        ] {
+            let err = tool_book_error(&|json| {
+                json["recipes"]["loom"]["requires_knowledge"] = gate.clone();
+            })
+            .expect("a loom whose gate is not exactly weaving is refused");
+            assert!(
+                matches!(&err, RecipesConfigError::InvalidBook { reason } if reason.contains("must require exactly")),
+                "got {err}"
             );
+        }
+    }
+
+    /// **A tool bounding a material nothing can hand-work is rejected**: its craft could not be
+    /// learned before the tool exists, so the gate would deadlock (`metal`'s shape).
+    #[test]
+    fn validate_against_rejects_a_tool_bounding_a_material_with_no_hand_working() {
+        let mut materials_json: serde_json::Value =
+            serde_json::from_str(include_str!("data/materials.json")).expect("materials parse");
+        materials_json["materials"]["fibre"]
+            .as_object_mut()
+            .expect("fibre is an object")
+            .remove("hand_working");
+        let materials = MaterialsConfig::from_json_str(&materials_json.to_string())
+            .expect("a material without hand_working is legal");
+        let err = builtin()
+            .validate_against(&materials, &EquipmentConfig::builtin())
+            .expect_err("the loom bounds a material that cannot be worked by hand");
+        assert!(
+            matches!(&err, RecipesConfigError::InvalidBook { reason } if reason.contains("hand_working")),
+            "got {err}"
+        );
     }
 
     /// **A recipe naming a tier its output item does not declare is rejected** — the `UnknownItem`

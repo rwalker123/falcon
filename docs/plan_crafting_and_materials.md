@@ -236,10 +236,13 @@ the band back to the rate the game already ships at rather than into a spiral.
   still makes a `good` basket — the bare hand's ceiling is what the band is capped at.
 - **A material's tool is never made from that material.** The bone awl costs fibre and hide, never
   bone, or you would need the scarce material to make the thing that stretches it.
-- **A tool is gated on the crafts of what it is MADE FROM, never on the craft it unlocks.** Otherwise
-  metal needs a crucible, the crucible needs metalworking, and nothing can start. The ladder then
-  falls out with nothing added: work clay → learn Clay-working → make a crucible → copper and bronze
-  become workable → learn Smithing → build a furnace → iron and steel come into reach.
+- **A tool is gated on the craft of the material it BOUNDS, and on nothing else.** The loom needs
+  Weaving, the tanning frame Tanning, the bone awl Bone-working, the billet Knapping; the crafts of
+  what the tool is made from are not required. It cannot deadlock because the bounded material must be
+  hand-workable (`hand_working`, enforced at load): the craft is learned by working the material bare-handed
+  before the tool exists. Metal, which a bare hand cannot work, is the material this rule refuses to
+  gate a tool on until that changes. The ladder then falls out with nothing added: work clay → learn
+  Clay-working → ... each tool arrives after the hand-learnable craft it serves.
 
 ### Organic degrades; mineral is gated
 
