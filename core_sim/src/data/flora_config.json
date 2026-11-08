@@ -81,7 +81,7 @@
         "RollingHills": 0.25
       },
       "yield": {
-        "provisions_per_biomass": 0.08,
+        "provisions_per_biomass": 0.05,
         "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
@@ -458,7 +458,7 @@
         "AlluvialPlain": 0.15
       },
       "yield": {
-        "provisions_per_biomass": 0.07,
+        "provisions_per_biomass": 0.05,
         "fodder_per_biomass": 0.0,
         "materials": [
           { "material": "fibre", "per_biomass": 0.015, "characteristics": { "fineness": 0.3, "strength": 0.38 } }

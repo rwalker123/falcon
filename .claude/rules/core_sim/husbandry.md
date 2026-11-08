@@ -482,7 +482,7 @@ bands (`extinction_floor < collapse_fraction < stressed_fraction < 1`) in all th
 — `head count / animals_per_herder` (`fauna::herd_keeper_loads`). Since one worker-turn is
 `PER_WORKER_OUTPUT`, `upkeep_crew_needed = ceil(load × R)` at the rung's own rate: a pen asks for the
 `ceil((biomass/body_mass)/animals_per_herder)` the retired helper computed, and a tamed herd asks for
-`0.6` of that (a Wild Boar herd's pastoral bill is ~0.94 work, one keeper, where it was 1.56 and two).
+`0.6` of that (a Wild Boar herd's pastoral bill is ~0.52 work at `animals_per_herder` 72, one keeper; it was ~0.94 at 40 and 1.56 and two before the pastoral rate was cut).
 The pastoral `0.6` is a chosen playtest dial: at `1.0` a tamed herd's keeping cost more hands than
 taming bought back, so three hunters on a tamed Wild Boar paid less than on the wild herd
 (1.26 against 1.48 food a turn with spears, before the boar's `pastoral_resistance` override). `LadderConfig::validate` only asks that a higher rung
@@ -1454,6 +1454,27 @@ land, a hay field, or a shipment — not a menu conversion.
 > `docs/plan_contact_and_logistics.md` had said the cargo was "food, fodder and materials" all
 > along, and the shipping slice built two thirds of it. Nothing about the currency split ever
 > implied it.
+
+## The small game and the boar are tuned so a lone worker climbs the ladder
+
+One worker's food a turn, net of the keepers the herd's bill asks for, rises at every step - wild, tame
+50% and 100%, pen 50% and 100% - for the boar, fowl, rabbit and snow hare
+(`food_rate_survey::a_lone_workers_net_climbs_every_animal_step`), and small game's wild level sits with the
+berry stand's (about 0.46). The levers, all per species in `fauna_config.json`:
+
+| species | wild level | `engage_rate` | `combat.durability` | `animals_per_herder` | `pen_engage_gain` |
+|---|---|---|---|---|---|
+| fowl | 0.078 → 0.46 | 10 → 60 | 2 → 0.33 | 1000 → 1600 | 44.0 → 7.3333 |
+| rabbit | 0.162 → 0.45 | 10 → 28 | 2 → 0.70 | 500 → 6000 | 12.5 → 4.4643 |
+| snow hare | 0.240 → 0.47 | 10 → 13 | 3 → 1.5 | 250 → 320 | 9.4 → 7.2308 |
+| boar | - | unchanged | unchanged | 40 → 72 | unchanged |
+
+A wild small-game hunter is held by two bounds at once - reach (`engage_rate × stay`) and the fight
+(`attack ÷ durability`) - and both were 10 animals a turn, so raising only one moved nothing; both move
+together, with the fight left the larger so reach stays the binding bound. `pen_engage_gain` is re-expressed
+(`engage_rate × pen_engage_gain` held at 440 / 125 / 94 animals per keeper) so the pen does not move. The
+`animals_per_herder` rise lowers the keeper load of the whole herd at every rung; a pen that jumps to a much
+larger herd at the fence would otherwise bill more than a lone keeper's extra take.
 
 ## The `Tame` verb (Intensification rung 2) — the grammar fix
 

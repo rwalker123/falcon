@@ -477,12 +477,12 @@ fn the_baseline_injury_tracks_the_engagement_and_never_dominates_a_real_fight() 
 /// giving the same quarry a hair of ferocity — which forces the general path — and comparing.
 #[test]
 fn the_fast_path_agrees_with_the_full_resolver() {
-    /// Deliberately **too small to clear the engagement** — `2 × 20 / durability 2 = 20` of the 40
-    /// standing. A crew that could kill everything it engaged would make this fixture agree with a
-    /// "the fast path just returns `stayed`" mutant, which is the exact second-model error §4.5
+    /// Deliberately **too small to clear the engagement** — `2 × 20 / durability 0.7` is about 57 of
+    /// the 100 standing. A crew that could kill everything it engaged would make this fixture agree
+    /// with a "the fast path just returns `stayed`" mutant, which is the exact second-model error §4.5
     /// forbids.
     const CREW: f32 = 2.0;
-    const STAYED: f32 = 40.0;
+    const STAYED: f32 = 100.0;
     let fauna = deterministic_fauna();
     let party = HuntingParty::builtin_equipped();
     let harmless = fauna.quarry_fight_for(RABBIT);

@@ -3974,12 +3974,12 @@ mod tests {
     const FOWL_BODY: f32 = 0.13;
     /// The widest crew the partly-armed sweep fields: past the one trap, every extra hand is bare.
     const PARTLY_ARMED_SWEEP: u32 = 8;
-    /// A room-bound herd: a full herd held to a floor at 99.5% of its capacity leaves ~36 animals of
+    /// A room-bound herd: a full herd held to a floor at 96.7% of its capacity leaves ~250 animals of
     /// room, so from the fourth hunter on the escapement room - not the reach - binds, and the
     /// quietest-first fill of that room is what is under test.
     const FOWL_ROOM_BOUND_BIOMASS: f32 = 940.0;
     const FOWL_ROOM_BOUND_CAPACITY: f32 = 940.0;
-    const FOWL_ROOM_BOUND_FLOOR: f32 = 0.995;
+    const FOWL_ROOM_BOUND_FLOOR: f32 = 0.967;
     /// The floor the unbound fixtures hunt at.
     const FOWL_DEFAULT_FLOOR: f32 = 0.5;
     /// A fat fowl herd whose room never binds at the sweep's crews.

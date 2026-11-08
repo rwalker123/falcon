@@ -39,7 +39,7 @@ const QUOTE_MULTIPLIER: f32 = 1.0;
 ///
 /// **The value is §4.14's to own from here**, and the epsilon below is deliberately unchanged: a
 /// model change moves the number, it does not loosen the band that guards it.
-const FIELD_YIELD_BEFORE: f32 = 12.482;
+const FIELD_YIELD_BEFORE: f32 = 7.801;
 /// **What rung 2 paid when this pin was recorded**, at the neutral `tended_regrowth_gain` of
 /// [`TENDED_YIELD_RECORDED_AT_GAIN`] — quoted so the ordering claim is checkable.
 ///
@@ -47,7 +47,7 @@ const FIELD_YIELD_BEFORE: f32 = 12.482;
 /// is this figure scaled by the shipped gain over the recorded one (see [`tended_yield_expected`]).
 /// That keeps the check this test exists for — **no Field gain may leak onto the tended rung** — at
 /// its tight band while the tended rung's own regrowth lever (1.5, the kept-herd reading) moves.
-const TENDED_YIELD_BEFORE: f32 = 1.328;
+const TENDED_YIELD_BEFORE: f32 = 0.9166;
 /// The `cultivation.tended_regrowth_gain` [`TENDED_YIELD_BEFORE`] was measured at.
 const TENDED_YIELD_RECORDED_AT_GAIN: f32 = 1.0;
 
@@ -57,8 +57,10 @@ fn tended_yield_expected() -> f32 {
     TENDED_YIELD_BEFORE * labor.forage.cultivation.tended_regrowth_gain
         / TENDED_YIELD_RECORDED_AT_GAIN
 }
-/// **What the same ground pays left wild**, likewise unchanged.
-const WILD_YIELD_BEFORE: f32 = 0.703;
+/// **What the same ground pays left wild.** All three pins were re-recorded when the wild grains
+/// (`wild_emmer`, `wild_rice`) went from `0.08` / `0.07` to `0.05` provisions per biomass, which
+/// lowers this basket at every rung by the share the two hold; the shape of the ladder is unchanged.
+const WILD_YIELD_BEFORE: f32 = 0.5357;
 
 /// How far the Field may land from its pinned figure. A **5%** band, and it has not moved: the slack
 /// is there for the arithmetic reaching the number by a different route (capacity × regrowth through

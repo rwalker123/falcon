@@ -1932,3 +1932,137 @@ fn food_per_worker_table() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// The ladder's orderings, asserted on the same rows the table prints.
+// ---------------------------------------------------------------------------------------------
+
+/// Small game that pens, and the boar: the animals whose one-worker net must climb every step.
+const PENNED_SMALL_GAME_AND_BOAR: [&str; 4] = ["boar", "fowl", "rabbit", "snow_hare"];
+
+/// The berry stand every wild level is read against.
+const BERRY_STAND: &str = "berry_scrub";
+
+/// How far a small game's wild one-worker net may sit from the berry stand's, as a share of it.
+const BERRY_BAND: f32 = 0.10;
+
+/// The wild grains, which sit below the berry stand and below small game.
+const WILD_GRAINS: [&str; 2] = ["wild_emmer", "wild_rice"];
+
+fn animal_rows(key: &str, s: &Shipped) -> Vec<(AnimalStep, TableRow)> {
+    let def = s.now.species.get(key).expect("a shipped species");
+    let steps = std::iter::once(AnimalStep::Wild)
+        .chain(BUILD_SHARES.iter().map(|f| AnimalStep::Tame(*f)))
+        .chain(BUILD_SHARES.iter().map(|f| AnimalStep::Pen(*f)));
+    steps
+        .filter_map(|step| {
+            let corralled = matches!(step, AnimalStep::Pen(f) if f >= 1.0);
+            herd_at_step(key, def, step, s)
+                .map(|herd| (step, animal_table_row(&herd, def, corralled, s)))
+        })
+        .collect()
+}
+
+fn plant_row_at(key: &str, step: PlantStep, s: &Shipped) -> Option<TableRow> {
+    let def = s.flora.species.get(key).expect("a shipped plant");
+    let terrain = richest_host(def, s)?;
+    plant_table_row(key, def, terrain, step, s)
+}
+
+/// **A lone worker never loses by finishing the Tame or the pen.** Net of keepers, one worker earns
+/// no less at each step than the one before: wild, tame 50%, tame 100%, pen 50%, pen 100% - for the
+/// boar and every small game that pens.
+#[test]
+fn a_lone_workers_net_climbs_every_animal_step() {
+    let s = Shipped::load();
+    for key in PENNED_SMALL_GAME_AND_BOAR {
+        let nets: Vec<(String, f32)> = animal_rows(key, &s)
+            .into_iter()
+            .filter(
+                |(step, _)| !matches!(step, AnimalStep::Tame(f) | AnimalStep::Pen(f) if *f == 0.0),
+            )
+            .map(|(step, row)| (step.label(), row.one_net))
+            .collect();
+        assert_eq!(nets.len(), 5, "{key}: wild, tame 50/100, pen 50/100");
+        for pair in nets.windows(2) {
+            assert!(
+                pair[0].1 <= pair[1].1,
+                "{key}: {} nets {} but {} nets {}",
+                pair[0].0,
+                pair[0].1,
+                pair[1].0,
+                pair[1].1
+            );
+        }
+    }
+}
+
+/// **Tending and sowing break even for one worker.** For every plant with those rungs, one worker's
+/// net of keepers at tended 50%, tended 100%, field 50% and field 100% is at least the wild gather,
+/// and the line crew's net never falls from wild to tended to field.
+#[test]
+fn tending_and_sowing_pay_a_lone_worker_at_least_the_wild_gather() {
+    let s = Shipped::load();
+    let mut checked_fields = 0;
+    for key in s.flora.species.keys() {
+        let Some(wild) = plant_row_at(key, PlantStep::Wild, &s) else {
+            continue;
+        };
+        let Some(tended) = plant_row_at(key, PlantStep::Tended(1.0), &s) else {
+            continue;
+        };
+        for step in [PlantStep::Tended(0.5), PlantStep::Tended(1.0)] {
+            let row = plant_row_at(key, step, &s).expect("a tendable plant");
+            assert!(
+                row.one_net >= wild.one_net,
+                "{key} {}: nets {} below its wild {}",
+                step.label(),
+                row.one_net,
+                wild.one_net
+            );
+        }
+        assert!(tended.line_net >= wild.line_net, "{key}: tended line crew");
+        if let Some(field) = plant_row_at(key, PlantStep::Field(1.0), &s) {
+            checked_fields += 1;
+            for step in [PlantStep::Field(0.5), PlantStep::Field(1.0)] {
+                let row = plant_row_at(key, step, &s).expect("a sowable plant");
+                assert!(
+                    row.one_net >= wild.one_net,
+                    "{key} {}: nets {} below its wild {}",
+                    step.label(),
+                    row.one_net,
+                    wild.one_net
+                );
+            }
+            assert!(field.line_net >= tended.line_net, "{key}: field line crew");
+        }
+    }
+    assert!(checked_fields > 0, "liveness: some plant reaches a field");
+}
+
+/// **Small game stands level with the berries, and the wild grains sit below both.**
+#[test]
+fn small_game_is_level_with_berries_and_wild_grain_is_below() {
+    let s = Shipped::load();
+    let berries = plant_row_at(BERRY_STAND, PlantStep::Wild, &s)
+        .expect("berries are shipped")
+        .one_net;
+    let mut lowest_small_game = f32::MAX;
+    for key in ["fowl", "rabbit", "snow_hare"] {
+        let wild = animal_rows(key, &s)[0].1.one_net;
+        lowest_small_game = lowest_small_game.min(wild);
+        assert!(
+            (wild - berries).abs() <= berries * BERRY_BAND,
+            "{key}: wild nets {wild} against berries {berries}"
+        );
+    }
+    for key in WILD_GRAINS {
+        let wild = plant_row_at(key, PlantStep::Wild, &s)
+            .expect("a shipped grain")
+            .one_net;
+        assert!(
+            wild < berries && wild < lowest_small_game,
+            "{key}: wild grain nets {wild}, berries {berries}, lowest small game {lowest_small_game}"
+        );
+    }
+}

@@ -1268,9 +1268,11 @@ fn the_map_wide_wild_income_is_unmoved_and_the_basket_is_alive() {
     );
 }
 
-/// **The map-wide food bar**: ±5%. The basket is an average of the very plants that always summed to
-/// the tile's capacity, so a larger move would mean the averages are wrong, not that the balance is.
-const MAP_WIDE_FOOD_TOLERANCE: f64 = 0.05;
+/// **The map-wide food bar**: ±10%. The basket is an average of the very plants that always summed
+/// to the tile's capacity, so a larger move would mean the averages are wrong, not that the balance
+/// is. It was ±5% until the wild grains (`wild_emmer`, `wild_rice`) were set to `0.05` provisions per
+/// biomass, below the berries, which deliberately takes about 8% off the map-wide wild gather.
+const MAP_WIDE_FOOD_TOLERANCE: f64 = 0.10;
 
 /// **The per-tile deviation that counts a tile as ALIVE** — 1%. Below it a tile is indistinguishable
 /// from the flat fallback, which is exactly the dead-feature reading the liveness assertion exists to

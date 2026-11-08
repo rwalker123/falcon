@@ -272,6 +272,26 @@ const NOBODY_GATHERING: u32 = 0;
 /// staffing and the meter rather than on a gate.
 const THE_GATE_IS_OPEN: bool = true;
 
+/// **The plant keeping rates this file's arms were written against.** The shipped bill was retuned
+/// under a hand per tender-load (2.0 -> 0.7) so a lone worker breaks even; these arms stage the keeping
+/// in whole hands, so they state the whole-hand rate outright.
+const WHOLE_HAND_TENDED_RATE: f64 = 2.0;
+const WHOLE_HAND_FIELD_RATE: f64 = 4.0;
+
+fn whole_hand_keeping_ladder() -> core_sim::LadderConfig {
+    let mut json: serde_json::Value =
+        serde_json::from_str(core_sim::BUILTIN_INTENSIFICATION_LADDER).expect("the builtin parses");
+    for rung in json["rungs"].as_array_mut().expect("rungs") {
+        let rate = match (rung["branch"].as_str(), rung["id"].as_str()) {
+            (Some("plant"), Some("tended")) => WHOLE_HAND_TENDED_RATE,
+            (Some("plant"), Some("farm")) => WHOLE_HAND_FIELD_RATE,
+            _ => continue,
+        };
+        rung["upkeep"]["work_per_turn"] = serde_json::json!(rate);
+    }
+    core_sim::LadderConfig::from_json_str(&json.to_string()).expect("the fixture ladder is valid")
+}
+
 /// [`world_with_a_patch`] with the rung's own knowledge gate stated, because a **refused gate** is
 /// the one state that genuinely has no answer however much work is banked and however many hands are
 /// on it.
@@ -282,6 +302,9 @@ fn world_with_a_patch_knowing(
     gatherers: u32,
 ) -> (App, UVec2) {
     let mut app = build_test_app();
+    app.world
+        .resource_mut::<LadderConfigHandle>()
+        .replace(std::sync::Arc::new(whole_hand_keeping_ladder()));
     // One `update()` runs the Startup worldgen chain, which seeds the tile registry and the patches.
     app.update();
     let source = a_cultivable_site(&mut app);

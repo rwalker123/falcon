@@ -19131,6 +19131,7 @@ mod tests {
     /// is nowhere lapses its row off the wire before any assertion can see it.
     fn sowable_ground_with_a_resident_band(faction: FactionId) -> (bevy::prelude::App, UVec2) {
         let mut app = build_world_app();
+        use_whole_hand_plant_keeping(&mut app);
         let coord = find_sowable_tile(&app);
         seed_thriving_patch(&mut app, coord);
         let band = spawn_resident_working_band(
@@ -23436,12 +23437,38 @@ mod tests {
     /// The crop the lapsed Field is committed to — a staple in the harness tile's basket.
     const LAPSED_FIELD_CROP: &str = "sunflower";
 
+    /// **The plant keeping rates these scenes were written against.** The shipped bills were retuned
+    /// under a hand per tender-load (tended 2.0 -> 0.7, field 4.0 -> 0.85) so a lone worker breaks even;
+    /// these scenes stage keeping in whole hands, so they state the whole-hand rates outright.
+    const WHOLE_HAND_TENDED_RATE: f64 = 2.0;
+    const WHOLE_HAND_FIELD_RATE: f64 = 4.0;
+
+    fn use_whole_hand_plant_keeping(app: &mut bevy::prelude::App) {
+        let mut json: serde_json::Value =
+            serde_json::from_str(core_sim::BUILTIN_INTENSIFICATION_LADDER)
+                .expect("the builtin parses");
+        for rung in json["rungs"].as_array_mut().expect("rungs") {
+            let rate = match (rung["branch"].as_str(), rung["id"].as_str()) {
+                (Some("plant"), Some("tended")) => WHOLE_HAND_TENDED_RATE,
+                (Some("plant"), Some("farm")) => WHOLE_HAND_FIELD_RATE,
+                _ => continue,
+            };
+            rung["upkeep"]["work_per_turn"] = serde_json::json!(rate);
+        }
+        let ladder = core_sim::LadderConfig::from_json_str(&json.to_string())
+            .expect("the fixture ladder is valid");
+        app.world
+            .resource_mut::<LadderConfigHandle>()
+            .replace(std::sync::Arc::new(ladder));
+    }
+
     /// **A TENDED PATCH CARRYING A FIELD LEG AT `fraction`, NO DECLARED BUILD, WORKED BY A BAND WITH ONE
     /// HOE** — the Rushford scene: the Field was sown and went feral, so its meter stands part-built
     /// with nothing queued, and the keeping bills the interpolated Field rate. The patch stands at its
     /// capacity so the take is labor-bound and regrowth moves nothing across the turn.
     fn lapsed_field_scene(fraction: f32) -> (bevy::prelude::App, Entity, UVec2) {
         let mut app = build_test_app();
+        use_whole_hand_plant_keeping(&mut app);
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
@@ -24406,9 +24433,15 @@ mod tests {
         let short = raid_reading(NO_COMPETING_ROW, ONE_ROWS_SHARE_OF_HALF);
         let stocked = raid_reading(NO_COMPETING_ROW, SHORTFALL_ROW_CREW);
         let surplus = raid_reading(NO_COMPETING_ROW, OUTFITS_FOR_THE_WHOLE_BAND);
+        // **Kills per turn, not kills in total**: a raid that kills slower takes longer to collapse the
+        // warren, and the warren breeds back meanwhile, so the short raid's total can exceed the full
+        // one's while its pace is what the sheet is promising less of.
+        let pace = |row: &sim_runtime::commands::DenialRow| {
+            row.animals_killed as f32 / row.turns_to_collapse.max(1) as f32
+        };
         assert!(
-            short.animals_killed < stocked.animals_killed,
-            "liveness: a band short of outfits must be promised FEWER kills ({short:?} against \
+            pace(&short) < pace(&stocked),
+            "liveness: a band short of outfits must be promised a SLOWER raid ({short:?} against \
              {stocked:?})"
         );
         assert_eq!(

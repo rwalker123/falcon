@@ -943,9 +943,9 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   the rung's own `upkeep_crew_needed`) rather than recomputing a `ceil`, so there is exactly one
 >   definition of what a herd wants.
 > - **Heads, not tonnes.** The denominator is per-**animal** (`SpeciesDef::animals_per_herder`,
->   per-species, UNASSISTED — pre-dog, pre-horse, which are future herding gear: fowl 1000, rabbit
->   500, snow_hare 250, reindeer 150, crag_goat/wild_sheep 100, steppe_runner/marsh_grazer/wild_horse
->   50, aurochs/boar 40; deer/mammoth are `wild`-ceiling and omit it). A shepherd minds ~300 sheep, a
+>   per-species, UNASSISTED — pre-dog, pre-horse, which are future herding gear: fowl 1600, rabbit
+>   6000, snow_hare 320, reindeer 150, crag_goat/wild_sheep 100, boar 72, steppe_runner/marsh_grazer/wild_horse
+>   50, aurochs 40; deer/mammoth are `wild`-ceiling and omit it). A shepherd minds ~300 sheep, a
 >   cowherd ~80 cattle — you watch individuals, and a heavier beast is not proportionally more work.
 >   **Small stock is kept as a place**: a coop or hutch is one job (feed, shut in, collect), so its
 >   keeper minds far more heads; snow hare sits below rabbit because a never-domesticated, solitary,
@@ -964,7 +964,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   | term | unit | rate |
 >   |---|---|---|
 >   | `herd_herders_needed` | **heads** minded | `animals_per_herder` (one herder minds 40 aurochs) |
->   | `fauna::hunt_engage_workers` | **animals brought down** | `engage_rate × stay` (one hunter reaches 10 fowl, 0.05 mammoths — and keeps only what stands) |
+>   | `fauna::hunt_engage_workers` | **animals brought down** | `engage_rate × stay` (one hunter reaches 60 fowl, 0.05 mammoths — and keeps only what stands) |
 >   | `fauna::hunt_haul_workers` | **biomass** carried | `per_worker_biomass_capacity` (one hauler carries 40) |
 >
 >   A shepherd minds ~300 sheep and could not carry three. So

@@ -1473,6 +1473,10 @@ const THRIVING_STOCK_FRACTION: f32 = 0.8;
 /// The crew the play report carried. Its size is not what makes the floor unreachable — the tiny
 /// per-worker rate is — but it is deliberately not `1`, so the test is about a *crew* falling short.
 const OUTMATCHED_CREW: u32 = 4;
+/// The hunt arm's crew. A camp kill is bounded by the party's reach and not by its haul, and the
+/// fixture's warren is reached by a hunter at about 28 animals a turn, so four hunters out-take its
+/// regrowth where the same four once did not; two do not.
+const OUTMATCHED_HUNT_CREW: u32 = 2;
 /// Staffed past every bound the source can put on it, so the floor is what binds and the descent is
 /// the crew's to make.
 const OVERWHELMING_CREW: u32 = 5_000;
@@ -1612,8 +1616,8 @@ fn a_floor_this_crew_cannot_reach_is_not_an_overdraw() {
     let band = spawn_band(
         &mut app,
         tile,
-        OUTMATCHED_CREW,
-        hunt_alloc(&id, OUTMATCHED_CREW, UNREACHABLE_FLOOR),
+        OUTMATCHED_HUNT_CREW,
+        hunt_alloc(&id, OUTMATCHED_HUNT_CREW, UNREACHABLE_FLOOR),
     );
 
     for turn in 0..SETTLING_TURNS {

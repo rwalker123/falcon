@@ -2555,6 +2555,10 @@ fn a_fractional_pen_handling_rate_collects_whole_animals() {
     }
 }
 
+/// The heads one keeper minds in the fractional-handling fixture, which is the head count the shipped
+/// warren kept before small-game pens became one job.
+const FIXTURE_ANIMALS_PER_HERDER: f32 = 500.0;
+
 /// Author [`FIXTURE_SPECIES`] a pen handling rate of `animals_per_keeper` — through the species'
 /// `engage_rate`, so `husbandry.pen_engage_gain` (validated `>= 1.0`) keeps the value it ships with
 /// and the fixture changes only how hard *this* animal is to handle.
@@ -2573,6 +2577,11 @@ fn author_pen_handling_rate(app: &mut App, animals_per_keeper: f32) {
         .find(|def| def.display_name == FIXTURE_SPECIES)
         .expect("the fixture species is in the roster");
     species.engage_rate = animals_per_keeper / gain;
+    // **The keepers' bill is pinned at the head count one keeper minds in this fixture's regime.**
+    // The shipped warren keeper minds far more heads (a small-game pen is one job), which leaves a lone
+    // keeper nearly all of its hands to handle with and staffs the row past the one keeper this test
+    // reads; the arithmetic under test is the handling rate, not the bill.
+    species.animals_per_herder = FIXTURE_ANIMALS_PER_HERDER;
     handle.replace(std::sync::Arc::new(config));
 }
 

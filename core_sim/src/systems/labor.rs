@@ -16662,7 +16662,7 @@ mod labor_yield_tests {
         }
 
         let with_upkeep = tended_upkeep(serde_json::json!({
-            "work_per_turn": 1.0,
+            "work_per_turn": 0.5,
             "scaled_by": "source_load",
             "grace_turns": 0,
         }));

@@ -130,10 +130,9 @@ fn naming_nothing_takes_the_whole_basket_and_moves_no_number() {
 
     let take = before.biomass - patch_at(&app, coord).biomass;
     assert!(take > 0.0, "the fixture gather must draw the stand down");
-    assert_eq!(
-        band_food(&app, band),
-        take * rate,
-        "an unnamed selection banks exactly what the whole-basket rate composes over its take"
+    assert!(
+        (band_food(&app, band) - take * rate).abs() <= FIXED_POINT_FOOD_SLACK,
+        "an unnamed selection banks what the whole-basket rate composes over its take"
     );
     for row in core_sim::material_yield_totals(&material_rows, take, 1.0) {
         assert!(row.amount > 0.0, "a published rate is a rate that pays");
@@ -1270,3 +1269,7 @@ fn build_rows(patch: UVec2, workers: u32, take_species: TakeSelection) -> Vec<La
     }];
     rows
 }
+
+/// The store holds food in fixed-point micro-units, so a banked amount is the composed one rounded to
+/// the nearest micro-unit.
+const FIXED_POINT_FOOD_SLACK: f32 = 1e-6;

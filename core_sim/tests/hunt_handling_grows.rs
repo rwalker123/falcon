@@ -254,12 +254,24 @@ fn the_forecast_equals_the_take_on_a_half_built_tame_and_a_half_built_pen() {
     }
 }
 
-/// Large game, where the keepers' bill is a real share of a lone worker's pay.
-const PEN_SPECIES: [&str; 3] = ["Wild Aurochs", "Wild Boar", "Wild Sheep"];
-/// The Tame check leaves the boar out: its pastoral keeping (two keeper-loads at the species' own
-/// herd size) outgrows a lone worker's take at every stage of the Tame, wild included, which is the
-/// roster's own tuning rather than the bill's timing.
-const TAME_SPECIES: [&str; 3] = ["Wild Aurochs", "Wild Sheep", "Crag Goats"];
+/// Large game and the penned small game, where the keepers' bill is a real share of a lone
+/// worker's pay.
+const PEN_SPECIES: [&str; 6] = [
+    "Wild Aurochs",
+    "Wild Boar",
+    "Wild Sheep",
+    "Wild Fowl",
+    "Rabbit Warren",
+    "Snow Hare Warren",
+];
+const TAME_SPECIES: [&str; 6] = [
+    "Wild Aurochs",
+    "Wild Boar",
+    "Wild Sheep",
+    "Crag Goats",
+    "Wild Fowl",
+    "Rabbit Warren",
+];
 
 /// The species' own full-group biomass: a herd of the size the species actually keeps, so the
 /// keepers' bill is the one a player meets rather than a fixture's oversize flock.

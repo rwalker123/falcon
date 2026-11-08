@@ -6804,8 +6804,8 @@ mod tests {
     /// them.** Named rather than read back off the ladder deliberately: reading the ladder would make
     /// [`the_reference_tile_owes_exactly_what_it_owed`] a tautology, and what it pins is that these
     /// two *numbers* survived the move from a flat rate to a per-tender-load one.
-    const TENDED_RATE_BEFORE_THE_MEASURE: f32 = 2.0;
-    const FIELD_RATE_BEFORE_THE_MEASURE: f32 = 4.0;
+    const TENDED_RATE_BEFORE_THE_MEASURE: f32 = 0.7;
+    const FIELD_RATE_BEFORE_THE_MEASURE: f32 = 0.85;
 
     /// **⛔ THE RUNG-ORDERING BUG IS UNREPRESENTABLE.** Ray built a Field on a tended patch and got
     /// *Field above 0% while Cultivation read 99%*; with two independent meters that state could be
