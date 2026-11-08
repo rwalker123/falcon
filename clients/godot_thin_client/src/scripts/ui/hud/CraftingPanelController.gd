@@ -82,6 +82,8 @@ var _materials: Array = []
 var _band_legend: Array = []
 var _recipes: Array = []
 var _craft_knowledge: Array = []
+## The parsed `equipmentConfigJson`, kept for the bench tools' craft stats (`CraftingPanel._tool_benefit`).
+var _equipment_config: Dictionary = {}
 
 func setup(host: Node, band_labor: HudBandLaborState, room_bounds: Control = null) -> void:
 	_host = host
@@ -102,6 +104,16 @@ func set_catalogues(materials: Variant, band_legend: Variant, recipes: Variant,
 		_recipes = recipes
 	if craft_knowledge is Array:
 		_craft_knowledge = craft_knowledge
+	if is_open():
+		render()
+
+## The whole effective equipment config as JSON. Only a bench tool's craft stats are read from it here;
+## an empty blob leaves the last value standing (a delta carries it only when it changed).
+func set_equipment_config(json: Variant) -> void:
+	if not (json is String) or String(json).is_empty():
+		return
+	var parsed: Variant = JSON.parse_string(String(json))
+	_equipment_config = parsed if parsed is Dictionary else {}
 	if is_open():
 		render()
 
@@ -161,6 +173,7 @@ func render() -> void:
 		CraftingPanel.PAYLOAD_MATERIALS: _materials,
 		CraftingPanel.PAYLOAD_BAND_LEGEND: _band_legend,
 		CraftingPanel.PAYLOAD_RECIPES: _recipes,
+		CraftingPanel.PAYLOAD_EQUIPMENT_CONFIG: _equipment_config,
 		# The player's own tracks, and this is the ONE place they are filtered — so the rail cannot end
 		# up quoting another people's Tanning. **The wire now carries the VIEWER's alone**
 		# (`.claude/rules/core_sim/factions.md` → "Which frame sections are viewer-scoped"), so the

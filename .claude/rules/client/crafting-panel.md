@@ -848,6 +848,35 @@ build's own name with no position** (`HudWorkVocab.build_site_subject(job, x, y,
 `Tame (12, 4)`): a declared build is named by the site it is raised on, not by a place in a line. Any
 non-build source (take, site, other pool) keeps its ordinary wording, being the more urgent fact.
 
+### A bench tool row states what it buys; a bench-tool suggestion states why it pays
+
+**The tool row's second line** is `Fibre crafts 4× faster · 15% less fibre · up to excellent`
+(`CraftingPanel._tool_benefit`, copy in `HudCraftingVocab.ROLE_TOOL_*`), and its hover is one sentence
+comparing to bare hands (`With a loom, fibre work goes 4× as fast as by hand, uses 15% less fibre, and
+can reach excellent quality (bare hands top out at good).`). Every number is joined off the wire:
+
+- **speed** = the tool's `craft_speed` over the material's `hand_working_rate`, rounded to 0.1, whole
+  multiples print with no decimal (4×, 3.2×);
+- **saving** = `1 − craft_material_efficiency` as a whole percent; the clause is absent when it rounds to 0;
+- **quality** = the band name the tool's `craft_quality_ceiling` falls in, looked up in the published
+  `characteristic_bands` legend (`_band_name_at`) - no band table of the panel's own; the bare-hand tail
+  reads the material's `hand_working_quality_ceiling` the same way, and drops when the material is not
+  hand-workable.
+
+The tool's three craft stats are on no typed field: they ride `SubsistenceSection.equipmentConfigJson`
+(`items[id].tiers[0].effects[{stat, equipped}]`, else the item's own effects). `Hud.update_equipment_config`
+forwards the blob to `CraftingPanelController.set_equipment_config`, which parses it into the payload's
+`equipment_config`. **Nothing is guessed**: with no config, no hand rate, or a missing stat the row falls
+back to `Bench tool — fibre` (`ROLE_TOOL_FORMAT`).
+
+**A bench-tool suggestion** carries `bench_turns_saved` / `bench_build_turns` and one source of kind
+`bench` (`SOURCE_KIND_BENCH`) whose `material` is the one the tool bounds. Its reason line is
+`Saves about 36 bench turns on hide work (takes 24 to make)` (whole turns, singular at one), shown on the
+row in the quiet ink (nobody is short, so no amber) and as the row's hover. A bench source never reaches
+`N workers without` or the per-source `missing, without` tooltip line (`_bench_source`, checked first in
+`_suggestion_consequence` and `_suggestion_tooltip`).
+Previewed by `crafting_bench.gd`'s `_bench_tool_state` (`crafting_bench_tool.png`).
+
 ## A WHOLE KIT IS ONE BENCH ORDER (issue #780)
 
 `.claude/rules/core_sim/crafting.md` → kit orders is the sim half. The panel's half is three surfaces

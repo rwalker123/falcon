@@ -3050,6 +3050,106 @@ func _batch_row(item_id: String, tier_id: String, grade: String, count: int, rem
 		"life": life, "life_severity": life_severity,
 	}
 
+# ---- bench tools: what a tool buys, and why one is suggested ------------------------------------
+
+## Shipped bench-tool numbers (`equipment.json`), in the parsed `equipmentConfigJson` shape. The hand
+## rate and ceiling are `materials.json`'s `hand_working` (0.5 / 0.60 on every organic).
+const TOOL_HAND_RATE := 0.5
+const TOOL_HAND_CEILING := 0.60
+const TANNING_FRAME_ID := "tanning_frame"
+const BENCH_TOOL_TURNS_SAVED := 36.0
+const BENCH_TOOL_BUILD_TURNS := 24.0
+const TOOL_LINE_LOOM := "Fibre crafts 4× faster · 15% less fibre · up to excellent"
+const TOOL_LINE_FRAME := "Hide crafts 4× faster · 20% less hide · up to excellent"
+const TOOL_LINE_AWL := "Bone crafts 3.2× faster · 30% less bone · up to excellent"
+const TOOL_TIP_LOOM := "With a loom, fibre work goes 4× as fast as by hand, uses 15% less fibre, and can reach excellent quality (bare hands top out at good)."
+const BENCH_REASON := "Saves about 36 bench turns on hide work (takes 24 to make)"
+
+func _tool_item(speed: float, ceiling: float, efficiency: float) -> Dictionary:
+	return {"tiers": [{"id": "plain", "effects": [
+		{"stat": "craft_speed", "equipped": speed},
+		{"stat": "craft_quality_ceiling", "equipped": ceiling},
+		{"stat": "craft_material_efficiency", "equipped": efficiency}]}]}
+
+func _bench_tool_equipment_config() -> String:
+	return JSON.stringify({"items": {
+		"loom": _tool_item(2.0, 0.95, 0.85),
+		TANNING_FRAME_ID: _tool_item(2.0, 0.90, 0.80),
+		"bone_awl": _tool_item(1.6, 0.85, 0.70),
+	}})
+
+## The reference materials with the bare-hand half published and the tanning frame bounding hide.
+func _bench_tool_materials() -> Array:
+	var materials := _materials()
+	for material in materials:
+		var m: Dictionary = material
+		if ["fibre", "hide", "bone"].has(String(m["id"])):
+			m["hand_working_rate"] = TOOL_HAND_RATE
+			m["hand_working_quality_ceiling"] = TOOL_HAND_CEILING
+		if String(m["id"]) == "hide":
+			m["tool_item_id"] = TANNING_FRAME_ID
+	return materials
+
+func _bench_tool_band() -> Dictionary:
+	var band := _crafting_band()
+	var offers: Array = band["craft_offers"]
+	offers.append(_offer(TANNING_FRAME_ID, "Tanning frame", HudCraftingVocab.GROUP_TOOL, TANNING_FRAME_ID,
+		true, "Unlocks excellent hide work", HudCraftingVocab.SEVERITY_GOOD))
+	var batches: Array = band["equipment_batches"]
+	batches.append(_batch_row(TANNING_FRAME_ID, "", "", 0, 0.0, "Never made",
+		HudCraftingVocab.LIFE_SEVERITY_WARN))
+	var suggestion := _suggestion(TANNING_FRAME_ID, 1, 0.0, 0.0, [
+		_source(HudCraftingVocab.SOURCE_KIND_BENCH, "", 0, 0, "", "hide", 0.0, 0.0, 0.0)])
+	suggestion["bench_turns_saved"] = BENCH_TOOL_TURNS_SAVED
+	suggestion["bench_build_turns"] = BENCH_TOOL_BUILD_TURNS
+	band["craft_suggestions"] = [suggestion]
+	return band
+
+## **A TOOL ROW STATES WHAT THE TOOL BUYS; A BENCH-TOOL SUGGESTION STATES WHY IT PAYS.** Both are
+## equalities over the whole line - `contains` would pass on a half-sentence - and each is half of a
+## pair: the benefit line is gone again once the equipment config is, and the suggestion's reason never
+## reads as a worker going without.
+func _bench_tool_state() -> void:
+	var recipes := _recipes()
+	recipes.append(_tool_recipe(TANNING_FRAME_ID, "Tanning frame", "tanning",
+		[["fibre", 3.0, ""], ["wood", 2.0, ""]]))
+	h._hud.update_crafting_catalogues(_bench_tool_materials(), _characteristic_bands(), recipes,
+		_craft_knowledge())
+	h._hud.update_equipment_config(_bench_tool_equipment_config())
+	var band := _bench_tool_band()
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting/bench tool - the panel opens", false)
+		return
+	var texts: Array = _label_texts(panel)
+	h._assert_hud("crafting/bench tool - the loom row states its three benefits",
+		texts.has(TOOL_LINE_LOOM))
+	h._assert_hud("crafting/bench tool - the tanning frame row states its three benefits",
+		texts.has(TOOL_LINE_FRAME))
+	h._assert_hud("crafting/bench tool - the awl row reads 3.2x and 30%", texts.has(TOOL_LINE_AWL))
+	h._assert_hud("crafting/bench tool - the hover compares to bare hands",
+		_tooltips_contain(panel, TOOL_TIP_LOOM))
+	h._assert_hud("crafting/bench tool - the suggestion reason is the turns saved, never `without`",
+		texts.has(BENCH_REASON) and not " | ".join(texts).contains("without"))
+	await h._save("crafting_bench_tool")
+
+	# The control: with no equipment config the rows fall back to naming the material they bound.
+	h._hud.update_equipment_config(JSON.stringify({}))
+	h._hud.crafting_panel().render()
+	await h._settle()
+	panel = h._hud.crafting_panel().panel()
+	h._assert_hud("crafting/bench tool - without the config the loom row only names its material",
+		panel != null and _label_texts(panel).has(TOOL_ROLE_LINE)
+			and not _label_texts(panel).has(TOOL_LINE_LOOM))
+
+	h._hud.update_crafting_catalogues(_materials(), _characteristic_bands(), _recipes(), _craft_knowledge())
+	h._hud.update_band_alerts([_crafting_band()])
+	h._hud.close_crafting_panel()
+	await h._settle()
+
 # ---- the last state: A SCROLL OVER THE CARD MUST NOT ALSO DRIVE THE MAP -------------------------
 
 ## **THE GUI PASS STOPS A PRESS FOR US AND STOPS A SCROLL FOR NOBODY.** Reported from play: scrolling
@@ -3563,6 +3663,7 @@ func _recipe_states() -> void:
 	await _assert_a_single_recipe_bench_names_no_recipe()
 	await _assert_one_row_per_material_made()
 	await _material_suggestion_state()
+	await _bench_tool_state()
 	h._hud.close_crafting_panel()
 	await h._settle()
 

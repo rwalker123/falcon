@@ -1462,6 +1462,8 @@ func update_opening_loadout(state: Variant) -> void:
 ## the sim publishing a second copy of a list it already sends.
 func update_equipment_config(config_json: Variant) -> void:
     _loadout.set_equipment_config(config_json)
+    # ...and the Materials & Crafting panel reads a bench tool's craft stats off the same blob.
+    _crafting.set_equipment_config(config_json)
     # The item NAMES ride to the Band panel, whose kit and tool lines name the short items.
     _bandpanel.set_item_display_names(_loadout.item_display_names())
 
