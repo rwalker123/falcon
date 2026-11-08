@@ -314,9 +314,13 @@ domestication *reduce* capacity). **Playtest dials.**
 
   > **⛔ A PEN HAS NO FIGHT — YOU SLAUGHTER IT.** Everything the keepers reach and that does not
   > break off goes down: no attack-vs-defense gate, no durability grind, no wound ledger, no
-  > casualties. `fauna::herd_fight_stage` answers `None` at `animal:pen` and `fauna::resolve_hunt_kill`
-  > routes that to `fauna::slaughter`; `SourceYieldForecast::slaughters` carries the same fact into the
-  > preview so forecast and take run one kill arm.
+  > casualties. `fauna::herd_fight_stage` answers `None` at `animal:pen` (the hands, casualties and wear
+  > read it), but the kill itself banks through `fauna::herd_kill_stage`: a closed pen is a quarry with
+  > `fenced = 1`, so `resolve_hunt_fight` slaughters everything that stayed through
+  > `DamageLedger::bank_units` on the herd's wound ledger. A part body therefore carries between turns
+  > (one keeper handling 0.71 of an aurochs a turn slaughters one about every other turn, never zero),
+  > and the live take, the crew curve, the seeded row (`SourceYieldForecast::slaughters`) and every
+  > projection (`KillCarry`) bank on that one ledger.
   >
   > **WHAT DID NOT GO: THE ENGAGEMENT BOUND AND THE ESCAPEMENT CLAMP.** The pen is still capped by
   > the keepers' handling rate (`pen_engage_gain` × the species' `engage_rate`) and by the room above
@@ -394,21 +398,24 @@ domestication *reduce* capacity). **Playtest dials.**
   > crew curve, the seed, the projections and the published per-hunter rates read the interpolated
   > terms (`forecast == take`, `hunt_handling_grows.rs`).
   >
-  > **Keepers are not affected**: the bill (`herd_upkeep_demand`) interpolates on `credit` as before, so
-  > the pen's keeper bill still arrives with the fence while its handling has been arriving since the
-  > first panel. That is why a 1-worker *net* rate (counting keepers) at 50% of the pen can exceed the
-  > closed pen's.
+  > **The keepers' bill follows the work built too**: `herd_upkeep_demand` and
+  > `herd_upkeep_material_demand` interpolate on `RungStanding::built` (`intensification::interpolate_built`),
+  > the plant rungs' rule (for a continuous rung `built == credit`, so plants are unchanged). The pen's
+  > keepers are owed from the first panel, so a 1-worker *net* rate (counting keepers) never falls as the
+  > Tame or the pen is finished (`hunt_handling_grows.rs`).
 - **AND SO DOES THE BILL** (`docs/plan_standing_upkeep.md` §2.8). The retired `herd_keeping_meter`
   billed the **pen** rung's upkeep from the first fencing work banked, while every benefit above waited
   for the fence — a herd paying to keep a pen that did not exist. That is the asymmetry §2.8 forbids and
-  it was in the shipped game.
+  it was in the shipped game. (The bill now follows the work built, `interpolate_built`, so it climbs
+  with the fence the way handling does.)
   > **§4.11 CLOSED THE SECOND HALF OF THE SAME ASYMMETRY, on the rung below.** Fixing the pen left
   > `pastoral` still stepping: `owner` is set by the **first** `Tame` accrual, so a herd owed the whole
   > pastoral rate from turn one while `is_domesticated()` — a completion predicate — withheld every
   > payout until the last. `herd_upkeep_demand` now interpolates on the position like everything else,
   > so a herd a tenth of the way up owes a tenth. **The pen's step survives on its own merits**, through
-  > `partial_credit: on_completion` rather than through a hand-written predicate: cost and benefit still
-  > move together, and at the fence they both move at once.
+  > `partial_credit: on_completion` rather than through a hand-written predicate. The pen's *payouts*
+  > (`K`, hay, fixed movement, unbounded carry) still step at the fence; its bill and its handling
+  > climb with the work built.
 - **The pastoral rung is worked, so it cannot be double-paid** (slice 3b). It *used* to pay its owner
   passively, and `advance_husbandry` had to **skip** that payment for any herd a labor assignment
   worked last turn (a `Herd::worked_this_turn` flag) — because without the skip a Red Deer under
@@ -677,11 +684,11 @@ is here.
 
 - **THE RATE READS THE HERD, exactly as the work rate does** — `scaled_by: source_load`, so a pen
   holding twice the herd mends twice the fence. `fauna::herd_upkeep_material_demand` interpolates it
-  on the position through the same `interpolate` the work demand goes through.
-- **AND THE BILL STEPS AT THE FENCE, for free.** `animal:pen` is `partial_credit: on_completion`, so a
-  herd raising a fence interpolates its bill between wild and *pastoral* — which names no material —
-  and owes its first hurdle only when the fence closes (handling, by contrast, grows with the build). **Half a fence is no fence**, and nothing here tests for
-  the pen rung to make that true.
+  on the work built through the same `interpolate_built` the work demand goes through.
+- **AND THE BILL CLIMBS WITH THE FENCE.** A herd raising the pen interpolates its bill between
+  `animal:pastoral` and `animal:pen` on `RungStanding::built`, so it owes a part of its hurdles from the
+  first panel and the whole rate when the fence closes - the plant rungs' rule, with nothing testing for
+  the pen rung to make it so.
 - **AND AN EXTENSION RING EATS THE SAME PILE, off the same rung record.** Widening a pen *is* a pen
   build — the same `build_cost`, the same builders, the same keepers' tools — so it is the same
   6 hurdles. It bids in the **same** `settle_material_upkeep` pass at its own row's `SourcePriority`,

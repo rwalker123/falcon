@@ -32,10 +32,10 @@ use crate::{
     },
     hashing::FnvHasher,
     intensification::{
-        interpolate, CostScale, LadderConfig, LadderConfigHandle, RungDef, RungId, RungMovement,
-        RungStanding, RungTrait, RungTraits, SizeTier, SourceKind, NEGLECT_NONE, NO_BUILD_GEAR,
-        NO_CREW_ON_THIS_ACTIVITY, NO_NEGLECT_GRACE, NO_RUNG_BUILT, NO_RUNG_WORK_BANKED,
-        NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+        interpolate, interpolate_built, CostScale, LadderConfig, LadderConfigHandle, RungDef,
+        RungId, RungMovement, RungStanding, RungTrait, RungTraits, SizeTier, SourceKind,
+        NEGLECT_NONE, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_NEGLECT_GRACE, NO_RUNG_BUILT,
+        NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
     mapgen::WorldGenSeed,
     orders::FactionId,
@@ -5865,7 +5865,7 @@ pub fn herd_meter_rot(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -
 /// before it has banked anything* — is [`herd_claims_keeping`].
 pub fn herd_upkeep_demand(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
     let load = herd_work_keeper_load(herd, fauna, ladder);
-    interpolate(&herd.standing(), |mark| {
+    interpolate_built(&herd.standing(), |mark| {
         ladder.rung(mark.id).upkeep_demand(load)
     })
 }
@@ -5911,7 +5911,7 @@ pub fn herd_upkeep_material_demand(
     material: &str,
 ) -> f32 {
     let load = herd_keeper_load(herd, fauna);
-    interpolate(&herd.standing(), |mark| {
+    interpolate_built(&herd.standing(), |mark| {
         ladder.rung(mark.id).upkeep_material_demand(material, load)
     })
 }
@@ -7476,11 +7476,19 @@ pub(crate) fn forecast_take_outcomes(
                     // forecast that fought a pen the turn does not would be exactly the
                     // forecast-vs-actual split `yield-forecast.md` forbids. Whole bodies, off the
                     // herd's own wounds: this is next turn's take, not a rate.
+                    let kill_stage = QuarryFight {
+                        fenced: if forecast.slaughters {
+                            WHOLE_HERD_FENCED
+                        } else {
+                            quarry.fenced
+                        },
+                        ..*quarry
+                    };
                     let kills = OutcomeKills::resolve(
                         &outcomes,
                         workers,
                         party,
-                        (!forecast.slaughters).then_some(quarry),
+                        Some(&kill_stage),
                         quarry.wounds,
                         draw,
                     );
@@ -8731,12 +8739,11 @@ impl<'a> OutcomeKills<'a> {
     /// - **A fight** reads [`Self::rate`] — the blow the standing bodies absorbed, before the
     ///   whole-animal floor. That is exactly what the live take banks: the fight's [`DamageLedger`]
     ///   keeps every remainder, so bodies come down at the absorbed rate over any run of turns.
-    /// - **A slaughter** reads [`Self::whole`] at [`EngagementQuantum::WholeAnimals`], because a
-    ///   slaughter carries **no** remainder between turns: what is floored away on one turn is lost
-    ///   to that turn, so the floored count *is* the live expectation. At
-    ///   [`EngagementQuantum::Rate`] it reads [`Self::rate`], for the reason the crew curve is a rate
-    ///   at all: its engagement is un-floored too, and the herd's own biomass carries a sub-body room
-    ///   between turns, so flooring it reports a cadence as a never.
+    /// - **A pen's slaughter** is a quarry with every animal fenced ([`herd_kill_stage`]), so it
+    ///   banks on the wound ledger exactly as a fight does and reads [`Self::rate`] too.
+    /// - **No quarry at all** (a caller that names none) reads [`Self::whole`] at
+    ///   [`EngagementQuantum::WholeAnimals`] - a floor with no carry - and [`Self::rate`] at
+    ///   [`EngagementQuantum::Rate`].
     pub fn projected(&self, stayed: f32, quantum: EngagementQuantum) -> f32 {
         match (self.blow, quantum) {
             (None, EngagementQuantum::WholeAnimals) => self.whole(stayed),
@@ -8849,50 +8856,39 @@ fn normal_cdf(x: f32) -> f32 {
     (0.5 * (1.0 + signed_erf)) as f32
 }
 
-/// **A PROJECTION'S WHOLE BODIES, OUT OF AN EXPECTED RATE** — the carry that turns
+/// **A PROJECTION'S WHOLE BODIES, OUT OF AN EXPECTED RATE** - the carry that turns
 /// [`expected_kill_over_retreat`]'s fractional bodies-a-turn into the whole animals a projected turn
 /// lands, keeping the remainder for the next turn.
 ///
-/// **On a fight it is the quarry's own [`DamageLedger`]**, banked through
-/// [`DamageLedger::bank_units`] — the live take's carry, so a projection that starts from a herd
-/// already wounded finishes its first body when the live take would. **On a slaughter it is a plain
-/// fraction of a body**: the live take has no carry there (each turn floors its own draw), but its
-/// *expectation* is fractional, and a projection that floored the expectation every turn would
-/// report `1.6` bodies a turn as `1`. A fractional flow becomes an event only on a whole-unit
-/// crossing.
+/// **It is the herd's own [`DamageLedger`] at every rung**, banked through
+/// [`DamageLedger::bank_units`] - the live take's carry, so a projection that starts from a herd
+/// already wounded finishes its first body when the live take would. A closed pen banks on it too
+/// ([`herd_kill_stage`]): a part body slaughtered one turn is the next turn's, exactly as a fought
+/// one is, and a projection that floored the expectation every turn would report `1.6` bodies a
+/// turn as `1`. A fractional flow becomes an event only on a whole-unit crossing.
 pub struct KillCarry {
-    quarry_fight: Option<QuarryFight>,
-    slaughter_remainder: f32,
+    quarry_fight: QuarryFight,
 }
 
 impl KillCarry {
-    /// Start from the herd's own kill arm — its wounds on a fight, nothing banked on a slaughter.
+    /// Start from the herd's own kill stage and the wounds it already carries.
     pub fn new(herd: &Herd, fauna: &FaunaConfig) -> Self {
         Self {
-            quarry_fight: herd_fight_stage(herd, fauna),
-            slaughter_remainder: 0.0,
+            quarry_fight: herd_kill_stage(herd, fauna),
         }
     }
 
-    /// The kill arm this carry projects — `None` at a pen.
+    /// The kill stage this carry projects.
     pub fn quarry(&self) -> Option<&QuarryFight> {
-        self.quarry_fight.as_ref()
+        Some(&self.quarry_fight)
     }
 
     /// Bank this turn's expected bodies and hand back the whole ones that go down.
     pub fn land(&mut self, expected_bodies: f32) -> f32 {
-        match self.quarry_fight.as_mut() {
-            Some(fight) => {
-                let profile = fight.profile;
-                fight.wounds.bank_units(expected_bodies, &profile)
-            }
-            None => {
-                self.slaughter_remainder += expected_bodies.max(0.0);
-                let down = whole_units(self.slaughter_remainder);
-                self.slaughter_remainder = (self.slaughter_remainder - down).max(0.0);
-                down
-            }
-        }
+        let profile = self.quarry_fight.profile;
+        self.quarry_fight
+            .wounds
+            .bank_units(expected_bodies, &profile)
     }
 }
 
@@ -11190,6 +11186,23 @@ pub fn herd_fight_stage(herd: &Herd, fauna: &FaunaConfig) -> Option<QuarryFight>
     (!herd.is_corralled()).then(|| herd_quarry_fight(herd, fauna))
 }
 
+/// **THE QUARRY THE KILL ARM BANKS ON, AT EVERY RUNG** - [`herd_quarry_fight`] with the fenced share
+/// of the herd's own rung ([`herd_fenced_share`]): none on the range, `f` of a part-built fence, all
+/// of a closed pen.
+///
+/// [`herd_fight_stage`] answers *"is anything fought"* - the hands, the casualties, the wear - and
+/// is `None` at a closed pen. This answers *"what does the take bank on"*, and a pen banks too: the
+/// slaughtered share goes onto the herd's wound ledger as whole bodies and a remainder
+/// ([`resolve_hunt_fight`]), so a keeper crew handling `0.7` of an animal a turn slaughters one about
+/// every other turn instead of none ever. **One seam for the live take, the crew curve, the seeded
+/// row and every projection.**
+pub fn herd_kill_stage(herd: &Herd, fauna: &FaunaConfig) -> QuarryFight {
+    QuarryFight {
+        fenced: herd_fenced_share(herd),
+        ..herd_quarry_fight(herd, fauna)
+    }
+}
+
 /// **THE KILL ARM — a FIGHT where there is one, a SLAUGHTER where there is not.** The one dispatch
 /// every take path on the animal web runs, so the pen's exemption cannot be present on one path and
 /// missing on another (which is exactly how it went missing the first time).
@@ -11327,7 +11340,7 @@ pub fn resolve_hunt_engagement(
         stayed,
         workers,
         party,
-        herd_fight_stage(herd, fauna).as_ref(),
+        Some(&herd_kill_stage(herd, fauna)),
         herd.wounds,
         draw,
     );
@@ -11714,7 +11727,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
     // the number moved with the band's kit on a take that does not read one.
     // The retreat and the kill arm at this herd's rung — quarry facts, the same on every row.
     let wariness = herd_wariness(&quarry, inputs.fauna);
-    let quarry_fight = herd_fight_stage(&quarry, inputs.fauna);
+    let quarry_fight = Some(herd_kill_stage(&quarry, inputs.fauna));
     let useful = curve_useful_take_hands(inputs, &quarry);
     let keepers_haul_it_home = quarry.is_corralled()
         && !herd_collection(&quarry, inputs.fauna, ONE_WORKER, inputs.baseline_haul_rate)

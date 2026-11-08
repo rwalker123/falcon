@@ -20310,12 +20310,12 @@ mod labor_yield_tests {
         );
     }
 
-    /// **THE RATE INTERPOLATES ON THE POSITION** — the second axis §2.7 gives the material term, and
-    /// on the shipped ladder `animal:pen`'s `partial_credit: on_completion` is what shapes it: half a
-    /// fence is no fence, so a part-raised pen owes the rung **below**'s rate (which names no
-    /// material) and the whole of it only once the fence closes.
+    /// **THE RATE INTERPOLATES ON THE WORK BUILT** — the second axis §2.7 gives the material term.
+    /// The keepers' bill follows the job built (`interpolate_built`) on every rung, `animal:pen`'s
+    /// `partial_credit: on_completion` included: a part-raised pen owes a part of the hurdles from
+    /// the first panel up, and the whole of them once the fence closes.
     #[test]
-    fn a_part_raised_pen_owes_no_hurdles_and_a_closed_one_owes_them_all() {
+    fn a_part_raised_pen_owes_part_of_its_hurdles_and_a_closed_one_owes_them_all() {
         let ladder = crate::intensification::LadderConfig::builtin();
         let fauna = crate::fauna_config::FaunaConfig::builtin();
         let (_, width) = pen_pile_and_width();
@@ -20336,11 +20336,9 @@ mod labor_yield_tests {
             );
             fauna::herd_upkeep_material_demand(&herd, &fauna, &ladder, PEN_MATERIAL)
         };
-        assert_eq!(
-            part_raised,
-            crate::intensification::NO_UPKEEP_DEMAND,
-            "**HALF A FENCE IS NO FENCE** — an `on_completion` rung is worth the rung below it, and \
-             `animal:pastoral` names no material"
+        assert!(
+            part_raised > crate::intensification::NO_UPKEEP_DEMAND,
+            "the bill follows the work built, so a fence with panels in it owes some hurdles"
         );
 
         // …and the same herd with the fence closed owes the whole rate. Asserted against the rung's
@@ -20543,21 +20541,22 @@ mod labor_yield_tests {
             "fixture: a CLOSED fence owes hurdles, or the stamp and the live reading cannot differ \
              (live {live})"
         );
-        assert_eq!(
-            herd.upkeep_materials_demanded
-                .get(PEN_MATERIAL)
-                .copied()
-                .unwrap_or(crate::intensification::NO_UPKEEP_DEMAND),
-            crate::intensification::NO_UPKEEP_DEMAND,
-            "**THE BILL WAS STRUCK BEFORE THE ACCRUAL** — half a fence is no fence, so the keepers \
-             were handed nothing to pay for this turn"
+        let stamped = herd
+            .upkeep_materials_demanded
+            .get(PEN_MATERIAL)
+            .copied()
+            .unwrap_or(crate::intensification::NO_UPKEEP_DEMAND);
+        assert!(
+            stamped < live,
+            "**THE BILL WAS STRUCK BEFORE THE ACCRUAL** — the keepers were handed the part-built \
+             fence's bill ({stamped}), not the closed fence's {live}"
         );
         assert_eq!(
             fauna::herd_material_keeping_basis(&herd, &fauna_cfg, &ladder)
                 .get(PEN_MATERIAL)
                 .copied()
                 .unwrap_or(crate::intensification::NO_UPKEEP_DEMAND),
-            crate::intensification::NO_UPKEEP_DEMAND,
+            stamped,
             "…and the basis the decay pass judges against is that STAMP, not the live {live} the \
              fence now owes — a live read makes a correctly-kept pen permanently short"
         );

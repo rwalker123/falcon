@@ -1236,9 +1236,10 @@ already read `self.build.as_ref()` and every other reader was already borrowing.
   ever.
 - **THE RATE READS THE SAME `scaled_by` THE WORK TERM READS** (`RungDef::upkeep_material_demand`) —
   one rule, two currencies: a pen holding twice the herd mends twice the fence, exactly as it takes
-  twice the hands. It interpolates on the position like every other rung quantity, so on the shipped
-  ladder `animal:pen`'s `partial_credit: on_completion` means a **part-raised fence owes no hurdles at
-  all** and the whole rate the instant it closes.
+  twice the hands. The keepers' bill interpolates on the work **built**
+  (`intensification::interpolate_built`, `RungStanding::built`) on every rung, so a part-raised fence
+  owes a part of its hurdles from the first panel and the whole rate the instant it closes, exactly
+  as a plant rung's bill climbs with its Cultivate or Sow.
 - **A SHORT STORE STALLS THE BUILD PROPORTIONALLY AND NEVER REFUSES IT.** `s = min(1, min over the
   declared goods of settled / wanted)` scales **both** the work banked and the pile drawn; the
   unbanked `(1 − s)` of the crew's output is **wasted**, which is §2.5's stated rule for an

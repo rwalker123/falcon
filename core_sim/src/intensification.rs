@@ -1818,16 +1818,11 @@ pub fn keeping_is_short(
 /// `credit × rate` and an id named by only the *held* rung is owed `(1 − credit) × rate`. A walk over
 /// one endpoint silently drops half the bill.
 ///
-/// **On the shipped ladder it is the HELD endpoint that carries the only declarer.** `animal:pen` is
-/// `partial_credit: on_completion`, and [`RungStanding::at`] pins `credit` to [`NO_RUNG_CREDIT`] for
-/// such a rung — so a herd part-way up the fence interpolates to `animal:pastoral`'s value, which
-/// names nothing, and owes **no hurdles at all** until the fence closes. That is the model, not an
-/// accident: building the pen spends hurdles from the **build pile**, and mid-climb there is no fence
-/// to mend, while the tamed herd's own *work* upkeep runs throughout
-/// (`.claude/rules/core_sim/husbandry.md` → *"AND IT STEPS AT THE FENCE, for free"*). Once
-/// `animal:pen` is **held**, its hurdles are the held endpoint's and a raising-only walk would drop
-/// them; a `Continuous` rung that declared a material would be owed on the raising endpoint from its
-/// first banked work, and a held-only walk would drop that. Hence the union.
+/// **On the shipped ladder `animal:pen` is the only declarer**, and the keepers' bill is interpolated
+/// on the work built ([`interpolate_built`]), so a herd part-way up the fence owes the RAISING
+/// endpoint's hurdles in proportion from its first panel. Once `animal:pen` is **held**, its hurdles
+/// are the held endpoint's and a raising-only walk would drop them; a held-only walk would drop the
+/// raising endpoint's share. Hence the union.
 ///
 /// It is the id list only; what each is owed comes from [`RungDef::upkeep_material_demand`] through
 /// [`interpolate`], so there is one arithmetic and this is one enumeration.
@@ -1852,6 +1847,24 @@ pub fn interpolate<F: Fn(RungMark) -> f32>(standing: &RungStanding, value_at: F)
     let held = value_at(standing.held_mark());
     match standing.raising_mark() {
         Some(raising) => held + standing.credit * (value_at(raising) - held),
+        None => held,
+    }
+}
+
+/// **[`interpolate`] BY THE JOB BUILT RATHER THAN THE CREDIT EARNED - the seam a standing COST rides.**
+///
+/// A rung's payout waits for [`RungStanding::credit`], which an `on_completion` rung pins to zero
+/// until it is whole. A keeper's bill does not wait for it: the hands are working the job from the
+/// first work banked, and the plant rungs (continuous, so `built == credit`) have always billed that
+/// way. Reading the bill off [`RungStanding::built`] gives every rung that same rule - `held +
+/// built x (raising - held)` - and for a continuous rung it is [`interpolate`] to the bit. The
+/// animal ladder's pen is the only rung where the two differ, and there it is what stops a
+/// half-built fence paying the benefit of handling it better while billing the cost of not having
+/// started.
+pub fn interpolate_built<F: Fn(RungMark) -> f32>(standing: &RungStanding, value_at: F) -> f32 {
+    let held = value_at(standing.held_mark());
+    match standing.raising_mark() {
+        Some(raising) => held + standing.built * (value_at(raising) - held),
         None => held,
     }
 }

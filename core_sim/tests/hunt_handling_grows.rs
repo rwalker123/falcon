@@ -13,9 +13,9 @@
 use bevy::math::UVec2;
 use core_sim::shipped;
 use core_sim::{
-    herd_engage_rate, herd_resistance, herd_wariness, hunt_take, project_realized_hunt,
-    regrow_biomass, retreat_seed, FactionId, FaunaConfig, Herd, HuntDraw, HuntingParty,
-    LadderConfig, ProjectionStart,
+    build_work_per_worker_turn, herd_engage_rate, herd_resistance, herd_upkeep_demand,
+    herd_wariness, hunt_take, project_realized_hunt, regrow_biomass, retreat_seed, FactionId,
+    FaunaConfig, Herd, HuntDraw, HuntingParty, LadderConfig, ProjectionStart, NO_BUILD_GEAR,
 };
 
 const SPECIES: &str = "Wild Sheep";
@@ -44,16 +44,26 @@ enum Step {
 }
 
 fn herd_at(step: Step, fauna: &FaunaConfig, ladder: &LadderConfig) -> Herd {
+    herd_of(SPECIES, CAPACITY, step, fauna, ladder)
+}
+
+fn herd_of(
+    species: &str,
+    capacity: f32,
+    step: Step,
+    fauna: &FaunaConfig,
+    ladder: &LadderConfig,
+) -> Herd {
     let def = fauna
-        .species_by_display(SPECIES)
+        .species_by_display(species)
         .expect("a shipped species");
     let mut herd = Herd::new(
         HERD_ID.to_string(),
-        SPECIES.to_string(),
+        species.to_string(),
         def.size_class,
         vec![UVec2::ZERO],
-        CAPACITY * OPENING_STOCK_SHARE,
-        CAPACITY,
+        capacity * OPENING_STOCK_SHARE,
+        capacity,
         def.fodder_per_biomass,
         def.regrowth_rate.expect("a wild species carries its own r"),
         def.body_mass,
@@ -234,7 +244,7 @@ fn forecast_against_take(step: Step) -> (f32, f32, f32) {
 /// live take's mean at three standard errors, so the interpolated terms reach every path.
 #[test]
 fn the_forecast_equals_the_take_on_a_half_built_tame_and_a_half_built_pen() {
-    for step in [Step::Tame(HALF), Step::Pen(HALF)] {
+    for step in [Step::Tame(HALF), Step::Pen(HALF), Step::Pen(WHOLE)] {
         let (live, forecast, tolerance) = forecast_against_take(step);
         assert!(live > 0.0, "liveness: {step:?} pays something");
         assert!(
@@ -242,4 +252,106 @@ fn the_forecast_equals_the_take_on_a_half_built_tame_and_a_half_built_pen() {
             "{step:?}: forecast {forecast} against the take's mean {live} (tolerance {tolerance})"
         );
     }
+}
+
+/// Large game, where the keepers' bill is a real share of a lone worker's pay.
+const PEN_SPECIES: [&str; 3] = ["Wild Aurochs", "Wild Boar", "Wild Sheep"];
+/// The Tame check leaves the boar out: its pastoral keeping (two keeper-loads at the species' own
+/// herd size) outgrows a lone worker's take at every stage of the Tame, wild included, which is the
+/// roster's own tuning rather than the bill's timing.
+const TAME_SPECIES: [&str; 3] = ["Wild Aurochs", "Wild Sheep", "Crag Goats"];
+
+/// The species' own full-group biomass: a herd of the size the species actually keeps, so the
+/// keepers' bill is the one a player meets rather than a fixture's oversize flock.
+fn wild_capacity(species: &str, fauna: &FaunaConfig) -> f32 {
+    fauna
+        .species_by_display(species)
+        .expect("a shipped species")
+        .biomass[1]
+}
+
+/// One worker's food a turn, net of the keepers the herd's bill asks for - the same figure
+/// `food_rate_survey` prints in its `1w` column.
+fn one_worker_net(species: &str, step: Step, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
+    let mut herd = herd_of(species, wild_capacity(species, fauna), step, fauna, ladder);
+    regrow_biomass(&mut herd, fauna);
+    let gross = project_realized_hunt(
+        &herd,
+        fauna,
+        UNBOUNDED_CARRY,
+        &HuntingParty::builtin_equipped(),
+        NEUTRAL_OUTPUT,
+        1.0,
+        FLOOR,
+        REALIZED_HORIZON,
+        ProjectionStart::AfterRegrowth,
+    )
+    .provisions;
+    let keepers =
+        herd_upkeep_demand(&herd, fauna, ladder) / build_work_per_worker_turn(NO_BUILD_GEAR);
+    gross / (1.0 + keepers)
+}
+
+/// **Finishing a rung never pays a lone worker less than the half-built one did** - the keepers'
+/// bill follows the work banked (a pen's too, not only at the fence), so half a fence is not a better
+/// deal than a whole one.
+#[test]
+fn a_lone_workers_net_food_never_falls_as_the_tame_or_the_pen_is_finished() {
+    let fauna = FaunaConfig::builtin();
+    let ladder = LadderConfig::builtin();
+    let net = |species: &str, step| one_worker_net(species, step, &fauna, &ladder);
+    for species in TAME_SPECIES {
+        let (half, whole) = (
+            net(species, Step::Tame(HALF)),
+            net(species, Step::Tame(WHOLE)),
+        );
+        assert!(
+            half <= whole,
+            "{species}: tame 50% nets {half}, 100% nets {whole}"
+        );
+    }
+    for species in PEN_SPECIES {
+        let (half, whole) = (
+            net(species, Step::Pen(HALF)),
+            net(species, Step::Pen(WHOLE)),
+        );
+        assert!(
+            half <= whole,
+            "{species}: pen 50% nets {half}, 100% nets {whole}"
+        );
+    }
+}
+
+/// **A closed pen carries a part body between turns.** One keeper handles a fraction of an aurochs a
+/// turn; the slaughter used to floor that to nothing every turn, so the pen paid nothing for ever.
+#[test]
+fn one_keeper_on_a_penned_aurochs_slaughters_over_a_long_run() {
+    const AUROCHS: &str = "Wild Aurochs";
+    const TURNS: u64 = 200;
+    let fauna = FaunaConfig::builtin();
+    let ladder = LadderConfig::builtin();
+    let mut herd = herd_of(
+        AUROCHS,
+        wild_capacity(AUROCHS, &fauna),
+        Step::Pen(WHOLE),
+        &fauna,
+        &ladder,
+    );
+    let party = HuntingParty::builtin_equipped();
+    let mut killed = 0.0;
+    for tick in 0..TURNS {
+        regrow_biomass(&mut herd, &fauna);
+        let outcome = hunt_take(
+            &mut herd,
+            1.0,
+            FLOOR,
+            UNBOUNDED_CARRY,
+            &party,
+            &fauna,
+            f32::INFINITY,
+            HuntDraw::Seeded(retreat_seed(MAP_SEED, tick, HERD_ID, 1)),
+        );
+        killed += outcome.take.killed_biomass();
+    }
+    assert!(killed > 0.0, "a lone keeper took nothing in {TURNS} turns");
 }
