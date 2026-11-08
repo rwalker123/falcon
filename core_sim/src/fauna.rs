@@ -34,8 +34,8 @@ use crate::{
     intensification::{
         interpolate, CostScale, LadderConfig, LadderConfigHandle, RungDef, RungId, RungMovement,
         RungStanding, RungTrait, RungTraits, SizeTier, SourceKind, NEGLECT_NONE, NO_BUILD_GEAR,
-        NO_CREW_ON_THIS_ACTIVITY, NO_NEGLECT_GRACE, NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY,
-        NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+        NO_CREW_ON_THIS_ACTIVITY, NO_NEGLECT_GRACE, NO_RUNG_BUILT, NO_RUNG_WORK_BANKED,
+        NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
     mapgen::WorldGenSeed,
     orders::FactionId,
@@ -8001,8 +8001,8 @@ pub fn herd_take_room(herd: &Herd, floor: f32, fauna: &FaunaConfig) -> f32 {
 ///
 /// [`crate::fauna_config::PEN_STANDING_RUNG_SHARE`] behind a fence, `husbandry.pastoral_standing_fraction`
 /// on a halter, and [`crate::fauna_config::NO_STANDING_RUNG_SHARE`] wild — you do not milk an animal
-/// that runs from you. Stepped at the fence exactly as [`herd_engage_rate`] and [`herd_wariness`]
-/// are, and resolved **live** off the config so a retune reaches herds already on the map.
+/// that runs from you. It steps at the fence - milk is a payout, not handling, and only handling
+/// grows with the build ([`herd_engage_rate`]) - and is resolved **live** off the config so a retune reaches herds already on the map.
 pub fn herd_standing_rung_share(herd: &Herd, fauna: &FaunaConfig) -> f32 {
     if herd.is_corralled() {
         crate::fauna_config::PEN_STANDING_RUNG_SHARE
@@ -8674,12 +8674,21 @@ impl<'a> OutcomeKills<'a> {
         wounds: DamageLedger,
         draw: HuntDraw,
     ) -> Self {
+        // The fight alone: the damage a party deals does not depend on how many animals stand, and
+        // the fenced share is set aside per outcome in `rate`.
         let blow = quarry.map(|fight| {
             let most = outcomes
                 .iter()
                 .map(|outcome| outcome.stayed)
                 .fold(NO_STAYERS, f32::max);
-            resolve_hunt_fight(most, workers, party, fight, draw).expected_brought_down
+            resolve_hunt_fight(
+                most * (WHOLE_HERD_FENCED - fight.fenced),
+                workers,
+                party,
+                &fight.unfenced(),
+                draw,
+            )
+            .expected_brought_down
         });
         Self {
             workers,
@@ -8692,9 +8701,15 @@ impl<'a> OutcomeKills<'a> {
 
     /// **Bodies a turn at `stayed`, un-floored** — [`HuntFight::expected_brought_down`].
     pub fn rate(&self, stayed: f32) -> f32 {
-        match self.blow {
-            Some(blow) => blow.min(stayed),
-            None => self.slaughter(stayed).expected_brought_down,
+        match (self.blow, self.quarry) {
+            (Some(blow), Some(fight)) => {
+                // The penned share goes down outright; the rest is the fight's, capped at the bodies
+                // it is still fought over.
+                let penned = stayed * fight.fenced;
+                blow.min(stayed - penned) + penned
+            }
+            (Some(blow), None) => blow.min(stayed),
+            (None, _) => self.slaughter(stayed).expected_brought_down,
         }
     }
 
@@ -8965,9 +8980,26 @@ pub struct QuarryFight {
     /// take path fills it from the herd with [`herd_quarry_fight`] and stores
     /// [`HuntFight::wounds`] back afterwards.
     pub wounds: DamageLedger,
+    /// **THE SHARE OF WHAT STAYS THAT IS SLAUGHTERED RATHER THAN FOUGHT**, `0.0..=1.0` - the fenced
+    /// share of a herd whose pen is part built ([`herd_fenced_share`]). `0` is every wild and every
+    /// pastoral herd (all of it fought, exactly as before); a closed pen is not a `QuarryFight` at all
+    /// ([`herd_fight_stage`] answers `None`), so `1` is never stored here.
+    pub fenced: f32,
 }
 
+/// **NO PART OF THE HERD IS FENCED** - [`QuarryFight::fenced`] on the range and at a halter.
+pub const NOTHING_FENCED: f32 = 0.0;
+
 impl QuarryFight {
+    /// The same quarry with its fenced share set aside - the fight a [`resolve_hunt_fight`] runs on
+    /// the animals that are still fought.
+    fn unfenced(&self) -> Self {
+        Self {
+            fenced: NOTHING_FENCED,
+            ..*self
+        }
+    }
+
     /// The same quarry, carrying the wounds a herd has already taken — the one seam between
     /// [`Herd::wounds`] and the fight.
     pub fn with_wounds(self, wounds: DamageLedger) -> Self {
@@ -9729,6 +9761,20 @@ pub fn resolve_hunt_fight(
             // is simply empty.
             strike_charges: Vec::new(),
         };
+    }
+    // **A PART-BUILT PEN SLAUGHTERS ITS FENCED SHARE AND FIGHTS THE REST.** The animals that stayed
+    // are split by the share of the fence that is up: that share goes down outright (no gate, no
+    // grind, no wounds taken by the keepers), banked onto the same wound ledger as whole bodies so a
+    // part body carries between turns exactly as a fought one does; the rest is the ordinary fight,
+    // with every hunter still on it. At `fenced == 0` this is the fight untouched.
+    if quarry.fenced > NOTHING_FENCED {
+        let penned = stayed * quarry.fenced;
+        let mut fought =
+            resolve_hunt_fight(stayed - penned, hunters, party, &quarry.unfenced(), draw);
+        let slaughtered = fought.wounds.bank_units(penned, &quarry.profile);
+        fought.brought_down += slaughtered;
+        fought.expected_brought_down += penned;
+        return fought;
     }
     // **What the activity costs whoever shows up** (§4.6) — resolved before the quarry is even asked
     // whether it fights back, because it does not depend on the answer.
@@ -10584,11 +10630,14 @@ impl FightRate {
             return FightRate::CannotWound;
         };
         let tuning = &party.tuning;
+        // The fight is only on the animals still fought: a part-fenced herd presents `1 - fenced` of
+        // what stays to the weapons, so a hunter's bodies per head reached are that much higher.
         let bodies_per_hunter =
             crate::combat::strike_damage(crew.hunter.attack, quarry.profile.defense)
                 * tuning.lethality
                 * tuning.hit_chance
-                / quarry.profile.durability;
+                / quarry.profile.durability
+                / (WHOLE_HERD_FENCED - quarry.fenced).max(f32::EPSILON);
         if bodies_per_hunter.is_finite() && bodies_per_hunter > NO_HANDS {
             FightRate::BodiesPerHunter(bodies_per_hunter)
         } else {
@@ -10835,41 +10884,93 @@ pub fn herd_hunt_yield(herd: &Herd, fauna: &FaunaConfig) -> HuntYield {
 /// turn than a hunter, because they are standing still rather than running away; that is a
 /// **multiplier** (`husbandry.pen_engage_gain`), not the absence of a number.
 ///
-/// **It STEPS at the fence**, like everything else penning buys: `is_corralled()` is a stored fact
-/// set at completion, and half a fence is no fence — the animals are still roaming and nothing about
-/// handling them has changed. That is the deliberate difference from the plant web's Field, where a
-/// half-sown field genuinely has half a crop in the ground.
+/// **It GROWS with the build** ([`handling_at`]): a halter's gain is paid in proportion to the share
+/// of the Tame banked, and a fence's in proportion to the share of the pen banked - the same way a
+/// tended patch pays in proportion to the Cultivate. Untouched is the wild reach and finished is the
+/// rung's, exactly. Only *handling* grows: the pen's `K`, hay, fixed movement and unbounded carry
+/// still wait for the fence to close.
 pub fn herd_engage_rate(herd: &Herd, fauna: &FaunaConfig, drives_known: bool) -> f32 {
     let wild = fauna.engage_rate_for(&herd.species);
-    if herd.is_corralled() {
-        // **THROUGH THE PER-SPECIES SEAM** ([`FaunaConfig::pen_engage_gain_for`]) — this animal's own
-        // handling gain where the roster states one, the global where it does not. One keeper handles
-        // far more chickens in a day than cattle, and a flat gain across the roster says otherwise.
-        wild * fauna.pen_engage_gain_for(&herd.species)
-    } else if herd.is_domesticated() {
-        // **A HALTER BUYS REACH TOO** (`husbandry.pastoral_engage_gain`). It did not, and that was
-        // the hole: rung 2 raised the breeding rate and the retreat and nothing that *bound*, on a
-        // web where no shipped source is limited by its herd running out. See the field's own doc.
-        //
-        // **THROUGH THE PER-SPECIES SEAM** ([`FaunaConfig::pastoral_engage_gain_for`]) — this animal's
-        // own gain where the roster states one, the global where it does not. Reach binds the
-        // heavy-bodied half of the roster and is inert on the small-bodied half, so a single global
-        // number could not describe both.
-        wild * fauna.pastoral_engage_gain_for(&herd.species)
-    } else {
-        // **A DRIVE (#799, the `drives` roaming skill)** — the wild arm's reach grows with the herd
-        // when the hunting faction has learned to drive: `1 + drive_engage_gain × min(head_count /
-        // drive_full_head_count, 1)`. It is the wild arm alone because a pen and a halter already
-        // have their own reach gains and nobody drives a fenced animal. The identity (`× 1`) when
-        // the skill is not known, so every faction without it reads the species' own rate.
-        wild * crate::roaming_skills::drive_engage_multiplier(
+    // **A DRIVE (#799, the `drives` roaming skill)** — the wild arm's reach grows with the herd
+    // when the hunting faction has learned to drive: `1 + drive_engage_gain × min(head_count /
+    // drive_full_head_count, 1)`. It is the wild arm alone because a pen and a halter already have
+    // their own reach gains and nobody drives a fenced animal. The identity (`× 1`) when the skill
+    // is not known, so every faction without it reads the species' own rate.
+    let range = wild
+        * crate::roaming_skills::drive_engage_multiplier(
             drives_known,
             herd_head_count(herd.biomass, herd.body_mass),
             fauna.hunt.drive_engage_gain,
             fauna.hunt.drive_full_head_count,
-        )
+        );
+    // **A HALTER BUYS REACH TOO** (`husbandry.pastoral_engage_gain`), through the per-species seam
+    // ([`FaunaConfig::pastoral_engage_gain_for`]): reach binds the heavy-bodied half of the roster
+    // and is inert on the small-bodied half, so a single global number could not describe both.
+    let pastoral = wild * fauna.pastoral_engage_gain_for(&herd.species);
+    // **A FENCE BUYS MORE** ([`FaunaConfig::pen_engage_gain_for`]) - this animal's own handling gain.
+    // One keeper handles far more chickens in a day than cattle.
+    let pen = wild * fauna.pen_engage_gain_for(&herd.species);
+    handling_at(herd, range, pastoral, pen)
+}
+
+/// **A HERD'S HANDLING TERM AT THE POINT OF ITS BUILD** - the one seam the reach, the retreat and the
+/// fight's softness all read, so a half-built rung pays in proportion to the work banked, as
+/// cultivation does.
+///
+/// ```text
+/// wild herd, Tame t built      wild    + t * (pastoral - wild)
+/// tamed herd, pen f built      pastoral + f * (pen - pastoral)
+/// penned herd                  pen
+/// ```
+///
+/// `t` and `f` are [`RungStanding::built`] - the share of the raising rung's job banked, which for the
+/// pen is read **past** its `on_completion` mode: the fence's payouts (`K`, hay, fixed movement, an
+/// unbounded carry) wait for it to close, but the animals the keepers are already handling are
+/// handled better as it goes up. Untouched is the wild value and finished is the rung's value,
+/// both exactly.
+fn handling_at(herd: &Herd, wild: f32, pastoral: f32, pen: f32) -> f32 {
+    let built = herd.standing().built;
+    if herd.is_corralled() {
+        pen
+    } else if herd.is_domesticated() {
+        lerp_handling(pastoral, pen, built)
+    } else {
+        lerp_handling(wild, pastoral, built)
     }
 }
+
+/// `from + t * (to - from)`, with both ends exact: nothing built is `from` and all built is `to`.
+/// The ends are branches rather than arithmetic because a term can be infinite (the plant web's
+/// engagement sentinel), and `0 * (inf - inf)` is a NaN.
+fn lerp_handling(from: f32, to: f32, built: f32) -> f32 {
+    if built <= NO_RUNG_BUILT {
+        from
+    } else if built >= WHOLE_RUNG_JOB_BUILT {
+        to
+    } else {
+        from + built * (to - from)
+    }
+}
+
+/// The whole of a rung's job is built.
+const WHOLE_RUNG_JOB_BUILT: f32 = 1.0;
+
+/// **THE SHARE OF A HERD THAT IS FENCED FOR HANDLING** - what the pen build has banked, `0` before a
+/// fence is begun and for every herd that is not tamed. The penned share of what stays is slaughtered
+/// ([`resolve_hunt_fight`]); the rest is still fought. A closed pen is `1` here but never reaches the
+/// fight ([`herd_fight_stage`] answers `None`).
+pub fn herd_fenced_share(herd: &Herd) -> f32 {
+    if herd.is_corralled() {
+        WHOLE_HERD_FENCED
+    } else if herd.is_domesticated() {
+        herd.standing().built
+    } else {
+        NOTHING_FENCED
+    }
+}
+
+/// The whole herd is behind the fence.
+const WHOLE_HERD_FENCED: f32 = 1.0;
 
 /// **HOW READILY THIS HERD BREAKS OFF AT CONTACT, at the rung it actually stands on** — the retreat
 /// stage's term, and the wariness twin of [`herd_engage_rate`].
@@ -10888,8 +10989,7 @@ pub fn herd_engage_rate(herd: &Herd, fauna: &FaunaConfig, drives_known: bool) ->
 /// ([`herd_fight_stage`]) — both separate from the retreat, which is what this function answers.
 /// Keeping them apart is what lets a haltered animal be *calmer* and *softer* by different amounts.
 ///
-/// **It STEPS at the fence**, exactly as [`herd_engage_rate`] does: `is_corralled()` /
-/// `is_domesticated()` are stored facts set at completion, and half a fence is no fence.
+/// **It GROWS with the build**, exactly as [`herd_engage_rate`] does ([`handling_at`]).
 ///
 /// # It is the same shape as [`herd_engage_rate`], and that used to be an asymmetry
 ///
@@ -10899,13 +10999,12 @@ pub fn herd_engage_rate(herd: &Herd, fauna: &FaunaConfig, drives_known: bool) ->
 /// closes it, and the two seams now step at both rungs in step.
 pub fn herd_wariness(herd: &Herd, fauna: &FaunaConfig) -> f32 {
     let wild = fauna.wariness_for(&herd.species);
-    if herd.is_corralled() {
-        wild * fauna.husbandry.pen_wariness
-    } else if herd.is_domesticated() {
-        wild * fauna.husbandry.pastoral_wariness
-    } else {
-        wild
-    }
+    handling_at(
+        herd,
+        wild,
+        wild * fauna.husbandry.pastoral_wariness,
+        wild * fauna.husbandry.pen_wariness,
+    )
 }
 
 /// **THE seam between the herd's damage ledger and the fight**, and the sugar every path holding a
@@ -10933,6 +11032,14 @@ pub fn herd_quarry_fight(herd: &Herd, fauna: &FaunaConfig) -> QuarryFight {
             durability: species.profile.durability * resistance,
             ..species.profile
         },
+        // A closed pen is slaughtered by the kill arm (`herd_fight_stage` answers `None`); the
+        // quarry a forecast holds for it keeps the fight's own terms, which is what its retreat
+        // reads. Only a fence going up splits the herd.
+        fenced: if herd.is_corralled() {
+            NOTHING_FENCED
+        } else {
+            herd_fenced_share(herd)
+        },
         ..species
     }
     .with_wounds(herd.wounds)
@@ -10952,12 +11059,17 @@ pub fn herd_quarry_fight(herd: &Herd, fauna: &FaunaConfig) -> QuarryFight {
 /// `pastoral_wariness` (the retreat) — and unlike those two it moves a term that actually **bounds**
 /// the take on the shipped roster.
 pub fn herd_resistance(herd: &Herd, fauna: &FaunaConfig) -> f32 {
-    if herd.is_domesticated() && !herd.is_corralled() {
-        // **This animal's own, or the global** ([`FaunaConfig::pastoral_resistance_for`]) — the arm
-        // that reaches the *fight-bound* half of the roster, where reach is inert.
-        fauna.pastoral_resistance_for(&herd.species)
-    } else {
+    // **This animal's own, or the global** ([`FaunaConfig::pastoral_resistance_for`]) — the arm that
+    // reaches the *fight-bound* half of the roster, where reach is inert. A half-tamed herd is that
+    // far from the identity; a herd with a fence going up keeps the halter's softness for the
+    // animals that are still fought, and a closed pen has no fight to soften.
+    let pastoral = fauna.pastoral_resistance_for(&herd.species);
+    if herd.is_corralled() {
         NO_RESISTANCE_CHANGE
+    } else if herd.is_domesticated() {
+        pastoral
+    } else {
+        lerp_handling(NO_RESISTANCE_CHANGE, pastoral, herd.standing().built)
     }
 }
 

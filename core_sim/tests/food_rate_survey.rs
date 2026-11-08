@@ -1571,3 +1571,364 @@ fn print_band_land_test(s: &Shipped, every_cell: &mut Vec<f32>) {
         }
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// THE PER-WORKER FOOD TABLE — one table, every source, every step of both ladders
+// ---------------------------------------------------------------------------------------------
+//
+//   cargo test -p core_sim --test food_rate_survey food_per_worker_table -- --ignored --nocapture
+//
+// Food per worker per turn on the shipped path (the settled projection the survey uses, with the
+// stocked kit), at ONE worker and at the crew that takes the source's sustained yield ("line crew").
+// "net" divides by the keepers the rung owes as well as the takers. A plant is read as a stand of
+// that one species on its richest host biome (the whole tile as that plant), so plant rows are a
+// species' own capability, not a tile's mixed basket.
+
+/// The shares of a build the table prices a rung at.
+const BUILD_SHARES: [f32; 3] = [0.0, 0.5, 1.0];
+
+/// Where an animal source stands on its ladder.
+#[derive(Clone, Copy)]
+enum AnimalStep {
+    Wild,
+    /// A `Tame` this share built.
+    Tame(f32),
+    /// A pen this share built (the herd is fully tamed).
+    Pen(f32),
+}
+
+impl AnimalStep {
+    fn label(self) -> String {
+        match self {
+            AnimalStep::Wild => "wild".to_string(),
+            AnimalStep::Tame(f) => format!("tame {:>3.0}%", f * PERCENT),
+            AnimalStep::Pen(f) => format!("pen  {:>3.0}%", f * PERCENT),
+        }
+    }
+}
+
+/// A herd standing at `step` on the animal ladder, seated at `floor · K` like every survey herd.
+fn herd_at_step(key: &str, def: &SpeciesDef, step: AnimalStep, s: &Shipped) -> Option<Herd> {
+    let fauna: &FaunaConfig = &s.now;
+    let ceiling = def.husbandry_ceiling;
+    match step {
+        AnimalStep::Wild => {}
+        AnimalStep::Tame(_) if ceiling == Some(shipped::animal_wild()) => return None,
+        AnimalStep::Pen(_) if ceiling != Some(shipped::animal_pen()) => return None,
+        _ => {}
+    }
+    let range_capacity = def.biomass[1];
+    let mut herd = Herd::new(
+        format!("table_{key}"),
+        def.display_name.clone(),
+        def.size_class,
+        FIXTURE_TILES.to_vec(),
+        range_capacity,
+        range_capacity,
+        def.fodder_per_biomass,
+        def.regrowth_rate.unwrap_or(fauna.ecology.regrowth_rate),
+        def.body_mass,
+        shipped::root_standing(shipped::animal()),
+    );
+    herd.husbandry_ceiling = def.husbandry_ceiling;
+    herd.taming_cost_multiplier = fauna.taming_cost_multiplier_for(&herd.species);
+    let tame_width = herd.rung_cost(shipped::animal_pastoral(), &s.ladder);
+    let pen_width = herd.rung_cost(shipped::animal_pen(), &s.ladder);
+    match step {
+        AnimalStep::Wild => {}
+        AnimalStep::Tame(share) => {
+            assert!(herd.tame_outright(SURVEY_FACTION, &s.ladder));
+            herd.set_ladder_position(share * tame_width, &s.ladder);
+        }
+        AnimalStep::Pen(share) => {
+            assert!(herd.tame_outright(SURVEY_FACTION, &s.ladder));
+            if share >= 1.0 {
+                assert!(herd.corral_at(FIXTURE_TILES[0], &s.ladder));
+            } else {
+                herd.set_ladder_position(tame_width + share * pen_width, &s.ladder);
+            }
+        }
+    }
+    herd.carrying_capacity =
+        (range_capacity * herd_density_gain(&herd.standing(), &herd, fauna)).min(
+            herd_space_capacity(footprint_tiles(&herd, def), herd.body_mass, fauna),
+        );
+    herd.biomass = herd.carrying_capacity * DEFAULT_ESCAPEMENT_FLOOR;
+    herd.biomass_before_regrowth = herd.biomass;
+    herd.upkeep_supplied = herd_upkeep_demand(&herd, fauna, &s.ladder);
+    herd.refresh_ecology_phase(fauna);
+    Some(herd)
+}
+
+/// One table cell group.
+#[derive(Clone, Copy, Default)]
+struct TableRow {
+    one_raw: f32,
+    one_net: f32,
+    line_crew: u32,
+    line_raw: f32,
+    line_net: f32,
+    line: f32,
+    keepers: f32,
+}
+
+impl TableRow {
+    fn print(&self, label: &str) {
+        println!(
+            "    {label:<10} 1w {:>6.3} (net {:>6.3}) | line {:>6.3}/turn crew {:>3} -> {:>6.3} (net {:>6.3}) | keepers {:.2}",
+            self.one_raw,
+            self.one_net,
+            self.line,
+            self.line_crew,
+            self.line_raw,
+            self.line_net,
+            self.keepers
+        );
+    }
+}
+
+fn animal_table_row(herd: &Herd, def: &SpeciesDef, corralled: bool, s: &Shipped) -> TableRow {
+    let kit = herd_default_hunt_kit(&s.equipment, s.creatures.person(), def, corralled);
+    let keepers = keepers_owed(herd_upkeep_demand(herd, &s.now, &s.ladder));
+    let one_raw = hunt_with(herd, &kit, ONE_WORKER, &s.now, s).food_per_worker;
+    let line = herd_line(herd, &s.now);
+    let (crew, total) = crew_at_line(line, |crew| {
+        hunt_with(herd, &kit, crew, &s.now, s).food_per_worker * crew as f32
+    });
+    let line_raw = if crew == 0 { 0.0 } else { total / crew as f32 };
+    TableRow {
+        one_raw,
+        one_net: with_keepers(one_raw, ONE_WORKER, keepers),
+        line_crew: crew,
+        line_raw,
+        line_net: if crew == 0 {
+            0.0
+        } else {
+            with_keepers(line_raw, crew, keepers)
+        },
+        line,
+        keepers,
+    }
+}
+
+/// The best host biome of a plant: the one with the most forage capacity (ties by name).
+fn richest_host(def: &core_sim::FloraDef, s: &Shipped) -> Option<TerrainType> {
+    let mut hosts: Vec<(TerrainType, f32)> = def
+        .host_biomes
+        .keys()
+        .map(|terrain| (*terrain, s.labor.forage.capacity_for(*terrain)))
+        .filter(|(_, capacity)| *capacity > 0.0)
+        .collect();
+    hosts.sort_by(|a, b| {
+        b.1.total_cmp(&a.1)
+            .then_with(|| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)))
+    });
+    hosts.first().map(|(terrain, _)| *terrain)
+}
+
+#[derive(Clone, Copy)]
+enum PlantStep {
+    Wild,
+    Tended(f32),
+    Field(f32),
+}
+
+impl PlantStep {
+    fn label(self) -> String {
+        match self {
+            PlantStep::Wild => "wild".to_string(),
+            PlantStep::Tended(f) => format!("tend {:>3.0}%", f * PERCENT),
+            PlantStep::Field(f) => format!("field{:>3.0}%", f * PERCENT),
+        }
+    }
+}
+
+fn plant_table_row(
+    species: &str,
+    def: &core_sim::FloraDef,
+    terrain: TerrainType,
+    step: PlantStep,
+    s: &Shipped,
+) -> Option<TableRow> {
+    match step {
+        PlantStep::Tended(_) if def.cultivation_ceiling == Some(shipped::plant_wild()) => {
+            return None
+        }
+        PlantStep::Field(_) if def.cultivation_ceiling != Some(shipped::plant_farm()) => {
+            return None
+        }
+        _ => {}
+    }
+    let composition = vec![FloraShare {
+        species: species.to_string(),
+        share: 1.0,
+    }];
+    let tile_capacity = s.labor.forage.capacity_for(terrain);
+    let mut patch = ForagePatch::new(
+        basket::TILE,
+        tile_capacity,
+        shipped::root_standing(shipped::plant()),
+    );
+    if !matches!(step, PlantStep::Wild) {
+        patch.owner = Some(SURVEY_FACTION);
+        patch.species = Some(species.to_string());
+        let tended_width = core_sim::patch_rung_span(&patch, shipped::plant_tended(), &s.ladder).1;
+        let field_width = core_sim::patch_rung_span(&patch, shipped::plant_farm(), &s.ladder).1;
+        let position = match step {
+            PlantStep::Wild => 0.0,
+            PlantStep::Tended(share) => share * tended_width,
+            PlantStep::Field(share) => tended_width + share * field_width,
+        };
+        patch.set_ladder_position(position, &s.ladder);
+    }
+    patch.carrying_capacity = patch_carrying_capacity(tile_capacity, &patch, &s.labor.forage);
+    patch.biomass = patch.carrying_capacity * DEFAULT_ESCAPEMENT_FLOOR;
+    patch.biomass_before_regrowth = patch.biomass;
+    let keepers = keepers_owed(patch_upkeep_demand(
+        &patch,
+        &s.ladder,
+        tile_capacity,
+        &s.labor.forage,
+    ));
+    let basket_kit = s.kit(HARVESTING_KIT);
+    let carry_at = |workers: u32| forage_carry(&gear(basket_kit.clone(), workers, s), s);
+    let one_raw = settle_forage(&patch, &composition, ONE_WORKER, carry_at(ONE_WORKER), s);
+    let line = patch_line(&patch, &composition, s);
+    let (crew, total) = crew_at_line(line, |crew| {
+        settle_forage(&patch, &composition, crew, carry_at(crew), s) * crew as f32
+    });
+    let line_raw = if crew == 0 { 0.0 } else { total / crew as f32 };
+    Some(TableRow {
+        one_raw,
+        one_net: with_keepers(one_raw, ONE_WORKER, keepers),
+        line_crew: crew,
+        line_raw,
+        line_net: if crew == 0 {
+            0.0
+        } else {
+            with_keepers(line_raw, crew, keepers)
+        },
+        line,
+        keepers,
+    })
+}
+
+fn median(values: &mut [f32]) -> f32 {
+    values.sort_by(|a, b| a.total_cmp(b));
+    if values.is_empty() {
+        0.0
+    } else {
+        values[values.len() / 2]
+    }
+}
+
+type Rows = Vec<(String, Vec<Option<TableRow>>)>;
+
+/// `min / median / max` of one pick over the roster at one step.
+fn column(rows: &Rows, index: usize, pick: fn(&TableRow) -> f32) -> String {
+    let mut values: Vec<f32> = rows
+        .iter()
+        .filter_map(|(_, line)| line.get(index).copied().flatten())
+        .map(|row| pick(&row))
+        .collect();
+    if values.is_empty() {
+        return "n/a".to_string();
+    }
+    let min = values.iter().copied().fold(f32::INFINITY, f32::min);
+    let max = values.iter().copied().fold(0.0_f32, f32::max);
+    format!("{min:.3} / {:.3} / {max:.3}", median(&mut values))
+}
+
+#[test]
+#[ignore = "a printing probe: run with --ignored --nocapture"]
+fn food_per_worker_table() {
+    let s = Shipped::load();
+    println!(
+        "\nFOOD PER WORKER PER TURN — one table. 1w = a single worker; line = the stock's sustained \
+         yield, crew = fewest workers reaching {:.0}% of it; net = per worker counting the keepers the \
+         rung owes. Stocked band, floor {:.2}, settled turns {WARMUP_TURNS}..{}.",
+        LINE_SHARE * PERCENT,
+        DEFAULT_ESCAPEMENT_FLOOR,
+        WARMUP_TURNS + MEASURED_TURNS
+    );
+
+    let animal_steps: Vec<AnimalStep> = std::iter::once(AnimalStep::Wild)
+        .chain(BUILD_SHARES.iter().map(|f| AnimalStep::Tame(*f)))
+        .chain(BUILD_SHARES.iter().map(|f| AnimalStep::Pen(*f)))
+        .collect();
+    let mut animals: Rows = Vec::new();
+    println!("\n== ANIMALS (hunt, a stocked band; tame/pen rows owe keepers) ==");
+    for (key, def) in sorted_species(&s) {
+        let mut line = Vec::new();
+        let mut any = false;
+        println!("  {key} ({})", def.display_name);
+        for step in &animal_steps {
+            let corralled = matches!(step, AnimalStep::Pen(f) if *f >= 1.0);
+            let row = herd_at_step(key, def, *step, &s)
+                .map(|herd| animal_table_row(&herd, def, corralled, &s));
+            if let Some(row) = &row {
+                row.print(&step.label());
+                any = true;
+            }
+            line.push(row);
+        }
+        if any {
+            animals.push((key.clone(), line));
+        }
+    }
+
+    let plant_steps: Vec<PlantStep> = std::iter::once(PlantStep::Wild)
+        .chain(BUILD_SHARES.iter().map(|f| PlantStep::Tended(*f)))
+        .chain(BUILD_SHARES.iter().map(|f| PlantStep::Field(*f)))
+        .collect();
+    let mut plants: Rows = Vec::new();
+    println!(
+        "\n== PLANTS (gather; a stand of that species on its richest host biome; farm == field) =="
+    );
+    let mut roster: Vec<(&String, &core_sim::FloraDef)> = s.flora.species.iter().collect();
+    roster.sort_by(|a, b| a.0.cmp(b.0));
+    for (key, def) in roster {
+        if def.yield_.provisions_per_biomass <= 0.0 {
+            continue;
+        }
+        let Some(terrain) = richest_host(def, &s) else {
+            continue;
+        };
+        println!("  {key} on {terrain:?}");
+        let mut line = Vec::new();
+        for step in &plant_steps {
+            let row = plant_table_row(key, def, terrain, *step, &s);
+            if let Some(row) = &row {
+                row.print(&step.label());
+            }
+            line.push(row);
+        }
+        plants.push((key.clone(), line));
+    }
+
+    let pairs: [(&str, usize); 7] = [
+        ("wild hunt  vs wild gather    ", 0),
+        ("tame   0%  vs tended   0%    ", 1),
+        ("tame  50%  vs tended  50%    ", 2),
+        ("tame 100%  vs tended 100%    ", 3),
+        ("pen    0%  vs field    0%    ", 4),
+        ("pen   50%  vs field   50%    ", 5),
+        ("pen  100%  vs field 100%/farm", 6),
+    ];
+    println!("\n== STEP PAIRS — 1-worker NET food/turn (min / median / max over the roster) ==");
+    for (label, index) in pairs {
+        println!(
+            "  {label}  animals {}  |  plants {}",
+            column(&animals, index, |r| r.one_net),
+            column(&plants, index, |r| r.one_net)
+        );
+    }
+    println!("\n== STEP PAIRS — LINE-CREW NET food/turn per worker ==");
+    for (label, index) in pairs {
+        println!(
+            "  {label}  animals {}  |  plants {}",
+            column(&animals, index, |r| r.line_net),
+            column(&plants, index, |r| r.line_net)
+        );
+    }
+}

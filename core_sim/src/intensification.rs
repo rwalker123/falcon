@@ -1455,6 +1455,20 @@ pub struct RungStanding {
     /// arm written to keep *"a pen with work on it governs"* was unreachable. Anything asking what a
     /// rung is *worth* still reads `credit`; [`interpolate`] is its only consumer.
     pub banked: f32,
+    /// **HOW MUCH OF THE RAISING RUNG'S JOB IS BUILT**, `0.0..=1.0` — `banked ÷ the rung's width`,
+    /// whatever the rung's partial-credit mode says it is *worth*.
+    ///
+    /// # ⛔ IT IS NOT [`Self::credit`] EITHER, AND THE DIFFERENCE IS AGAIN AN `on_completion` RUNG
+    ///
+    /// `credit` is what a part-raised rung is worth to the payouts that wait for completion — the
+    /// pen's `K`, hay, fixed movement and unbounded carry — and is pinned to [`NO_RUNG_CREDIT`] for
+    /// such a rung. `built` is the fraction of the job done, which is positive from the first work
+    /// banked. A herd's handling terms (reach, retreat, the share of the take that is slaughtered
+    /// rather than fought) grow with it on both animal rungs, so a half-built fence has half the herd
+    /// penned for handling and the payouts that need a closed fence still wait. For a `continuous`
+    /// rung it equals `credit`. Held in the standing, with its job's width, because the handling
+    /// readers hold no ladder.
+    pub built: f32,
 }
 
 /// **A RUNG BEING RAISED THAT CARRIES NO WORK YET** — [`RungStanding::banked`]'s neutral, and what a
@@ -1462,10 +1476,21 @@ pub struct RungStanding {
 /// *"has any work been banked here"* is exactly the comparison against it.
 pub const NO_RUNG_WORK_BANKED: f32 = 0.0;
 
+/// **NOTHING OF THE RAISING RUNG IS BUILT** — [`RungStanding::built`]'s neutral.
+pub const NO_RUNG_BUILT: f32 = 0.0;
+/// **THE RAISING RUNG'S JOB IS ALL BUILT** — the ceiling of [`RungStanding::built`].
+const WHOLE_RUNG_BUILT: f32 = 1.0;
+
 impl RungStanding {
     /// **STAMP A STANDING FROM THE RECORDS IT NAMES** — the one place the held rung's id, order and
     /// traits are copied out of the config, so the three can never come from different rungs.
-    fn stamped(held: &RungDef, raising: Option<&RungDef>, credit: f32, banked: f32) -> Self {
+    fn stamped(
+        held: &RungDef,
+        raising: Option<&RungDef>,
+        credit: f32,
+        banked: f32,
+        built: f32,
+    ) -> Self {
         Self {
             held: held.rung_id(),
             held_order: u8::try_from(held.order)
@@ -1475,6 +1500,7 @@ impl RungStanding {
             raising_traits: raising.map_or(RungTraits::NONE, RungDef::trait_set),
             credit,
             banked,
+            built,
         }
     }
 
@@ -1525,14 +1551,21 @@ impl RungStanding {
             };
             // **What has been PUT INTO the rung**, whatever the partial-credit mode says it is
             // worth — see [`Self::banked`].
-            return Self::stamped(
-                held,
-                Some(next),
-                credit,
-                (position - base).max(NO_RUNG_WORK_BANKED),
-            );
+            let banked = (position - base).max(NO_RUNG_WORK_BANKED);
+            let built = if width <= NO_RUNG_WIDTH {
+                NO_RUNG_BUILT
+            } else {
+                (banked / width).clamp(NO_RUNG_BUILT, WHOLE_RUNG_BUILT)
+            };
+            return Self::stamped(held, Some(next), credit, banked, built);
         }
-        Self::stamped(held, None, NO_RUNG_CREDIT, NO_RUNG_WORK_BANKED)
+        Self::stamped(
+            held,
+            None,
+            NO_RUNG_CREDIT,
+            NO_RUNG_WORK_BANKED,
+            NO_RUNG_BUILT,
+        )
     }
 
     /// **A SOURCE NOBODY HAS WORKED, resolved against the config** — the standing of a position of
@@ -1553,6 +1586,7 @@ impl RungStanding {
             ladder.above_rung(root),
             NO_RUNG_CREDIT,
             NO_RUNG_WORK_BANKED,
+            NO_RUNG_BUILT,
         )
     }
 
@@ -1574,6 +1608,7 @@ impl RungStanding {
             ladder.above_rung(held),
             NO_RUNG_CREDIT,
             NO_RUNG_WORK_BANKED,
+            NO_RUNG_BUILT,
         )
     }
 
@@ -6423,6 +6458,7 @@ mod tests {
             raising_traits: RungTraits::NONE,
             credit,
             banked: 1.0,
+            built: credit,
         }
     }
 
@@ -6538,6 +6574,7 @@ mod tests {
             raising_traits: RungTraits::NONE,
             credit: 0.5,
             banked: NO_RUNG_WORK_BANKED,
+            built: NO_RUNG_BUILT,
         });
         assert_eq!(topped_out.as_ref(), held.as_slice());
     }

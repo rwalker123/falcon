@@ -1620,12 +1620,19 @@ Field at 40% is a whole Tended patch plus 40% of the Field's own extra.
   fraction runs pen `0.10` below pastoral `0.25`), and a runtime clamp would break those silently.
 > #### `animal:pen` IS `on_completion` ON PURPOSE, AND IT IS NOT AN INCONSISTENCY
 >
-> Everything penning buys — the regrowth gain, the density gain on `K`, the escape fraction, the
-> handling gain — and **the pen's own keeping bill** all read `is_corralled()`, a stored fact set when
-> the fence closes. **Half a fence is not half a pen**: the animals are still roaming and nothing
-> about them has changed. A half-sown Field genuinely has half a crop in the ground, so
-> `plant:farm` is `continuous`. Two different facts, one grammar. `husbandry.md` → the rung-3 notes
-> own the animal half.
+> The payouts that need a closed fence — the regrowth gain, the density gain on `K`, the escape
+> fraction, hay, fixed movement, the unbounded carry — and **the pen's own keeping bill** all read
+> `is_corralled()`, a stored fact set when the fence closes, so `credit` is pinned to zero until then.
+> A half-sown Field genuinely has half a crop in the ground, so `plant:farm` is `continuous`. Two
+> different facts, one grammar.
+>
+> **Handling is the exception, and it reads `RungStanding::built`, not `credit`.** `built` is the share
+> of the raising rung's job banked whatever the rung's mode (`banked ÷ width`, stamped in
+> `RungStanding::at`, `SAVE_FORMAT_VERSION` 67), and a herd's reach, retreat, the fight's softness and
+> the share of what stays that is slaughtered all grow with it on both animal rungs - the Tame and the
+> pen. A flag that switched `partial_credit` would also have interpolated `K`, hay and movement, so the
+> handling terms read the banked work directly. `husbandry.md` → "HANDLING GROWS WITH THE BUILD" owns
+> the animal half.
 
 - **BOTH WEBS ARE ON IT.** `ForagePatch` and `Herd` each carry one `ladder_position` and a stamped
   `standing` (below); the retired per-rung meters — `cultivation_progress` / `field_progress` on the

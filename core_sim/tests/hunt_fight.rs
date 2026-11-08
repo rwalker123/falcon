@@ -982,6 +982,7 @@ fn the_passive_device_beats_spears_on_every_small_game_row_and_takes_no_large_ga
             profile: def.combat,
             ferocity: def.ferocity,
             wounds: DamageLedger::default(),
+            fenced: 0.0,
         };
         let reached = animals_engaged(HUNTERS as f32, def.engage_rate);
         let stayed = party.stayers(
@@ -1229,6 +1230,7 @@ fn the_strike_charge_is_the_share_of_the_blow_the_bodies_could_absorb() {
         // between them would be a second wear model.
         ferocity: 0.0,
         wounds: DamageLedger::default(),
+        fenced: 0.0,
     };
 
     for ferocity in [0.0, 0.5] {
