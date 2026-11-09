@@ -2175,6 +2175,8 @@ impl Food {
             curve: &'c crate::oracle::CrewTakeCurve,
             /// What the band eats of this herd's stream a turn ([`super::sources::net_eat_rate`]).
             eat_cap: f32,
+            /// The measured share of the forecast ([`SeatMemory::herd_realization`]).
+            realization: f32,
             sustained: f32,
             sustained_crew: u32,
             room: f32,
@@ -2198,13 +2200,16 @@ impl Food {
                 // The smallest crew whose take reaches the regrowth, else where the curve stops
                 // rising: past it another hunter takes nothing more of what regrows.
                 let eat_cap = super::sources::net_eat_rate(band, Some(&herd.id));
+                let realization = memory
+                    .herd_realization(band.band_id, &herd.id)
+                    .unwrap_or(super::sources::NO_RECORD_YET);
                 // The crew that lands the regrowth, or all the band eats of it if that is less.
                 let sustained_crew = if sustained > 0.0 {
                     curve
                         .rows
                         .iter()
                         .find(|row| {
-                            super::sources::kept_stream(row.likely, eat_cap)
+                            super::sources::kept_stream(row.likely * realization, eat_cap)
                                 >= sustained.min(eat_cap)
                         })
                         .map_or_else(|| curve.plateau(), |row| row.crew)
@@ -2215,6 +2220,7 @@ impl Food {
                     kit,
                     curve,
                     eat_cap,
+                    realization,
                     sustained,
                     sustained_crew,
                     room: (herd.biomass - BEST_FLOOR * herd.carrying_capacity).max(0.0)
@@ -2225,13 +2231,15 @@ impl Food {
             .collect();
         // What the next hunter earns of the sustained take, and of the room above the regrowth.
         let sustained_value = |herd: &HerdSite<'_>, hunters: u32| {
-            super::sources::kept_stream(herd.curve.likely(hunters), herd.eat_cap)
+            super::sources::kept_stream(herd.curve.likely(hunters) * herd.realization, herd.eat_cap)
                 .min(herd.sustained)
                 * horizon
         };
         let room_value = |herd: &HerdSite<'_>, hunters: u32| {
-            ((super::sources::kept_stream(herd.curve.likely(hunters), herd.eat_cap)
-                - herd.sustained)
+            ((super::sources::kept_stream(
+                herd.curve.likely(hunters) * herd.realization,
+                herd.eat_cap,
+            ) - herd.sustained)
                 .max(0.0)
                 * horizon)
                 .min(herd.room)
@@ -5214,6 +5222,68 @@ mod tests {
             "{}",
             proposal.reason
         );
+    }
+
+    /// **A herd is priced at what this seat has measured it landing, once it has a record**: the
+    /// hunt row's `realized_sum / expected_sum` over a completed window scales the herd's curve, so
+    /// a herd the sim forecast at 6 that landed half of it over its window is worth 3; before the
+    /// window has run there is no record and the forecast stands; and a window in which nothing
+    /// landed reads `0`.
+    #[test]
+    fn a_herd_is_priced_at_what_this_seat_has_measured_it_landing() {
+        use crate::view::{row_key, Realized};
+        const CREW: u32 = 4;
+        const WINDOW: u32 = 4;
+        let view = a_view();
+        let band = own_band(&view);
+        let key = row_key(band.band_id, ROLE_HUNT, 0, 0, HERD_ID);
+        let record = |worked_turns: u32, realized_sum: f32| Realized {
+            per_worker: None,
+            worked_turns,
+            crew: CREW,
+            expected_sum: 8.0,
+            realized_sum,
+            window: WINDOW,
+        };
+        let expected_at = |memory: &SeatMemory| {
+            food()
+                .reachable_sources(&view, memory, band)
+                .into_iter()
+                .find(|source| matches!(source.key, SourceKey::Herd(_)))
+                .map(|source| source.expected(CREW))
+        };
+        let mut memory = memory_forecasting(&view);
+        let forecast = expected_at(&memory).expect("the herd is a source");
+        assert!(forecast > 0.0);
+        // Mid-window: no record yet, the forecast stands.
+        memory.remember_realized(&key, record(WINDOW - 1, 0.0));
+        assert_eq!(memory.herd_realization(band.band_id, HERD_ID), None);
+        assert_eq!(expected_at(&memory), Some(forecast));
+        // A completed window that landed half of what was forecast scales the herd by half.
+        memory.remember_realized(&key, record(WINDOW, 4.0));
+        assert_eq!(memory.herd_realization(band.band_id, HERD_ID), Some(0.5));
+        let scaled = expected_at(&memory).expect("still a source");
+        assert!(
+            (scaled - 0.5 * forecast).abs() < 1e-5,
+            "{scaled} vs {forecast}"
+        );
+        // A lucky window never raises the forecast.
+        memory.remember_realized(&key, record(WINDOW, 80.0));
+        assert_eq!(memory.herd_realization(band.band_id, HERD_ID), Some(1.0));
+        assert_eq!(expected_at(&memory), Some(forecast));
+        // The outfit walk reads the same scale: a window that landed nothing deals the herd nobody.
+        let mut view = small_game_at_its_window();
+        view.snapshot.populations[0].food_need = NEED_UNREAD;
+        let mut memory = outfitting_memory(&[(1, 3.0), (2, 6.0), (3, 9.0), (4, 12.0)]);
+        assert_eq!(
+            split_of(&view, &memory).hunters,
+            vec![("trapping".to_owned(), 4)]
+        );
+        memory.remember_realized(
+            &row_key(BAND, ROLE_HUNT, 0, 0, HERD_ID),
+            record(WINDOW, 0.0),
+        );
+        assert!(split_of(&view, &memory).hunters.is_empty());
     }
 
     /// **A far hunt row whose packs are all lost on the walk is the row to empty first**: the

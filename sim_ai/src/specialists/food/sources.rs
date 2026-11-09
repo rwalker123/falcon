@@ -477,6 +477,8 @@ pub(crate) struct HerdStream<'v> {
     /// own tile, where the curve was struck).
     at_source: bool,
     eat_cap: f32,
+    /// The measured share of the forecast ([`SeatMemory::herd_realization`]).
+    realization: f32,
 }
 
 impl HerdStream<'_> {
@@ -488,7 +490,7 @@ impl HerdStream<'_> {
         } else {
             self.curve.likely(crew)
         };
-        kept_stream(likely, self.eat_cap)
+        kept_stream(likely * self.realization, self.eat_cap)
     }
 }
 
@@ -549,6 +551,15 @@ pub(crate) fn herd_streams<'v>(
                 return None;
             }
             let curve = memory.crew_take(band.band_id, &herd.id)?;
+            // What this seat has measured the herd landing scales it, and a herd whose completed
+            // window landed nothing is dead: it counts for nothing while the record is remembered
+            // (`Land` passes no dead-row judgement of its own, so the record is read here).
+            let realization = memory
+                .herd_realization(band.band_id, &herd.id)
+                .unwrap_or(NO_RECORD_YET);
+            if realization <= 0.0 {
+                return None;
+            }
             let kit = herd_kit_id(view, herd);
             let units = kit_units_held(view, band, kit)
                 .map(|units| units.saturating_sub(committed_elsewhere(view, band, herd, kit)));
@@ -558,7 +569,7 @@ pub(crate) fn herd_streams<'v>(
             let plateau = curve.plateau();
             let cap = units.map_or(plateau, |units| units.min(plateau));
             let eat_cap = net_eat_rate(band, Some(&herd.id));
-            let kept = |likely: f32| kept_stream(likely, eat_cap);
+            let kept = |likely: f32| kept_stream(likely * realization, eat_cap);
             let sustained = regrowth_at(&herd.regrowth_samples, BEST_FLOOR).max(0.0)
                 * herd.provisions_per_biomass;
             let read = |crew: u32| {
@@ -583,6 +594,7 @@ pub(crate) fn herd_streams<'v>(
                 curve,
                 at_source,
                 eat_cap,
+                realization,
             })
         })
         .collect()
@@ -796,6 +808,9 @@ pub(crate) fn crew_take(hands: u32, per_worker_yield: f32, ceiling: f32) -> f32 
     (hands as f32 * per_worker_yield).min(ceiling)
 }
 
+/// [`Source::realization`] for a herd with no completed window on record: the forecast stands.
+pub(crate) const NO_RECORD_YET: f32 = 1.0;
+
 /// [`Source::eat_cap`] on a source nothing caps: a patch (a plant keeps), and a herd for a band whose
 /// need the frame does not carry yet.
 pub(crate) const NO_EAT_CAP: f32 = f32::INFINITY;
@@ -909,6 +924,9 @@ pub(super) struct Source {
     /// **The most food a turn the band eats of this source's take** ([`net_eat_rate`]) - a herd's
     /// curve is struck by it ([`stream_keep`]); [`NO_EAT_CAP`] on a patch.
     pub eat_cap: f32,
+    /// **The share of the forecast this seat has measured this herd landing**
+    /// ([`SeatMemory::herd_realization`]); `1` with no record yet and on a patch.
+    pub realization: f32,
 }
 
 impl Source {
@@ -917,7 +935,7 @@ impl Source {
     pub fn expected(&self, hands: u32) -> f32 {
         let hands = self.crew_cap.map_or(hands, |cap| hands.min(cap));
         match &self.curve {
-            Some(curve) => kept_stream(curve.likely(hands), self.eat_cap),
+            Some(curve) => kept_stream(curve.likely(hands) * self.realization, self.eat_cap),
             None => crew_take(hands, self.per_worker_yield, self.ceiling),
         }
     }

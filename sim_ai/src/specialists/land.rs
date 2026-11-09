@@ -761,8 +761,26 @@ mod tests {
             armed_crew: at_source.len() as u32,
             body_food: FOOD_PER_ANIMAL,
         };
-        let mut priced = falling(&view);
-        priced.remember_crew_take(BAND, HERD_ID, curve);
+        // The memory with the sim's curve cached and, optionally, the row's record of what the herd
+        // has landed over a completed window.
+        let priced_with = |record: Option<crate::view::Realized>| {
+            let mut memory = falling(&view);
+            memory.remember_crew_take(BAND, HERD_ID, curve.clone());
+            if let Some(record) = record {
+                memory
+                    .remember_realized(&crate::view::row_key(BAND, "hunt", 0, 0, HERD_ID), record);
+            }
+            memory
+        };
+        let landed = |realized_sum: f32| crate::view::Realized {
+            per_worker: None,
+            worked_turns: 4,
+            crew: 3,
+            expected_sum: 9.0,
+            realized_sum,
+            window: 4,
+        };
+        let priced = priced_with(None);
         let proposal = specialist
             .better_ground(&view, &priced, own_band(&view), None)
             .expect("the herd's ground out-takes the poor patches");
@@ -787,6 +805,25 @@ mod tests {
         assert!(specialist
             .better_ground(&view, &falling(&view), own_band(&view), None)
             .is_none());
+        // A herd whose completed window landed nothing is dead while the record is remembered:
+        // `Land` passes no dead-row judgement of its own, so the move reading drops it.
+        let dead = priced_with(Some(landed(0.0)));
+        assert!(specialist
+            .better_ground(&view, &dead, own_band(&view), None)
+            .is_none());
+        // And a herd that landed half of what was forecast still draws the camp, but is worth
+        // half: the same ground reads a smaller take.
+        let half = priced_with(Some(landed(4.5)));
+        let full = specialist
+            .better_ground(&view, &priced, own_band(&view), None)
+            .expect("priced at the forecast");
+        let halved = specialist
+            .better_ground(&view, &half, own_band(&view), None)
+            .expect("still better ground at half the forecast");
+        assert_ne!(
+            full.reason, halved.reason,
+            "the take read is the measured one"
+        );
     }
 
     /// ⛔ **Better ground must out-take the band's own by the profile's margin, and is never the

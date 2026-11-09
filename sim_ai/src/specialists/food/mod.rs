@@ -250,6 +250,7 @@ impl Food {
                 crew_cap: None,
                 curve: None,
                 eat_cap: sources::NO_EAT_CAP,
+                realization: sources::NO_RECORD_YET,
             })
             .filter(|source| !self.is_dead(view, memory, band, &source.key))
             .collect();
@@ -296,6 +297,9 @@ impl Food {
                         crew_cap: Some(units.map_or(plateau, |units| units.min(plateau))),
                         curve: Some(curve),
                         eat_cap: sources::net_eat_rate(band, Some(&herd.id)),
+                        realization: memory
+                            .herd_realization(band.band_id, &herd.id)
+                            .unwrap_or(sources::NO_RECORD_YET),
                     })
                 })
                 .filter(|source| !self.is_dead(view, memory, band, &source.key)),

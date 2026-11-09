@@ -748,6 +748,13 @@ impl SeatMemory {
             .and_then(|entry| entry.curve.as_ref())
     }
 
+    /// Put a row's accounting in the memory directly, as if the row had been worked - the tests'
+    /// short cut around the turns.
+    #[cfg(test)]
+    pub fn remember_realized(&mut self, key: &str, record: Realized) {
+        self.realized.insert(key.to_owned(), record);
+    }
+
     /// Put a curve in the cache directly, as if the oracle had answered it this tick — the
     /// tests' short cut around the ask.
     #[cfg(test)]
@@ -954,6 +961,18 @@ impl SeatMemory {
     /// What the row under `key` has realized, if it has ever been worked.
     pub fn realized(&self, key: &str) -> Option<Realized> {
         self.realized.get(key).copied()
+    }
+
+    /// **WHAT THIS SEAT HAS MEASURED A HERD LANDING, AS A SHARE OF WHAT IT WAS FORECAST** - the hunt
+    /// row's `realized_sum / expected_sum` once a window has run (`worked_turns >= window`, the
+    /// first-load wait plus the turns one kill takes), `0` to `1`: a forecast is never raised by a
+    /// lucky window, only cut by an unlucky one. `None` before the row has a completed window (no
+    /// record yet: the forecast stands) and where the forecast was nothing. `Some(0.0)` is a window
+    /// in which nothing landed - the dead row.
+    pub fn herd_realization(&self, band_id: u64, herd_id: &str) -> Option<f32> {
+        let record = self.realized(&row_key(band_id, "hunt", 0, 0, herd_id))?;
+        (record.window > 0 && record.worked_turns >= record.window && record.expected_sum > 0.0)
+            .then(|| (record.realized_sum / record.expected_sum).clamp(0.0, 1.0))
     }
 
     /// The mean per-worker take this seat has realized across every **measured** row of `kind`, if

@@ -1267,10 +1267,21 @@ accounting since it was last staffed at its current crew — `crew`, `worked_tur
 `expected_sum`, `realized_sum`, `window` (`Realized`; "The projection ledger" item 2 above) —
 kept when the row is emptied so a dead source is judged on its record; and per `(band, herd)`
 the sim's crew-take curve (`crew_takes`, "A herd is forecast by the sim's crew take" above).
-**A herd is never re-rated by what it realized**: its rank is the curve's `likely`, and the
-realized figure is recorded for the viewer and the dead test only — a zero turn before the kill
-is due is not a rate. A patch keeps today's realized-rate memory (`Food::rate`): its forecast is
-exact, and the memory exists for the crew-over-plateau case.
+**A herd is priced at what this seat has measured it landing, once it has a record**
+(`SeatMemory::herd_realization`): the hunt row's `realized_sum / expected_sum` over a completed
+window (`worked_turns >= window`: the first-load wait plus the turns one kill takes, as above),
+clamped to `0..=1` - a forecast is cut by an unlucky window and never raised by a lucky one - scales
+that herd's home likely **wherever the herd is priced**: the stream keep's input, `Source::expected`
+/ `marginal`, `outfit_split`, and the move reading (`herd_streams`). With no completed window there
+is no record and the forecast stands, so a zero turn before the kill is due is never a rate. A
+completed window in which nothing landed (`Some(0.0)`) is a dead row: `Food` already reads it as
+dead, and `herd_streams` drops the herd (`Land` passes no dead-row judgement of its own) while the
+record is remembered. Why: the sim's forecast runs 1.3-2x ahead of what a shared or drifting herd
+lands, and with the stream cap clipping a herd to `need - other rows` an overstated forecast
+under-staffs the hunt (seed 18: band 2 staffed 6 hunters where it had 10 and the stock ran out at
+t46), while a camp moved toward a herd that lands nothing keeps three hunters on it for 28 turns
+(seed 9). A patch keeps its own realized-rate memory (`Food::rate`); its forecast is exact, and the
+memory exists for the crew-over-plateau case.
 
 **What to remember is stated by the proposal, not parsed from its commands.** `Proposal.memo:
 Option<Memo>` — `Memo::Move { band, target, from }` (any specialist's `move_band`; `from` is the
