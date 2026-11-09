@@ -57,6 +57,10 @@ pub struct CrewTakeRow {
     /// The 1-based turn this crew's first pack lands home (`0` inside the apron, where nothing
     /// walks): the walk-out and the pack filling that a row is not judged before.
     pub first_load: u32,
+    /// **What the crew takes AT THE SOURCE**, in food (`HuntCrewTakeRow::animals_likely`): the same
+    /// at every distance, and what a crew camped within the work range of the herd lands home. The
+    /// camp-move reading prices a herd from a tile it has not asked about on it.
+    pub source_likely: f32,
 }
 
 /// **The sim's crew-take curve, in food per turn**: one row per crew size ascending from `1`,
@@ -95,6 +99,7 @@ impl CrewTakeCurve {
                         likely: row.home_animals_likely * food_per_animal,
                         high: row.animals_high * food_per_animal * home_share,
                         first_load: row.home_first_load_turn,
+                        source_likely: row.animals_likely * food_per_animal,
                     }
                 })
                 .collect(),
@@ -119,6 +124,12 @@ impl CrewTakeCurve {
     /// What a crew of `crew` likely brings home per turn; `0` for a crew of nobody.
     pub fn likely(&self, crew: u32) -> f32 {
         self.row(crew).map_or(0.0, |row| row.likely)
+    }
+
+    /// What a crew of `crew` likely takes at the source per turn ([`CrewTakeRow::source_likely`]);
+    /// `0` for a crew of nobody.
+    pub fn source_likely(&self, crew: u32) -> f32 {
+        self.row(crew).map_or(0.0, |row| row.source_likely)
     }
 
     /// **The plateau**: the smallest crew whose likely take is the curve's greatest — the crew
@@ -273,6 +284,7 @@ pub fn curve_of(points: &[(u32, f32)], body_food: f32) -> CrewTakeCurve {
                 likely: *likely,
                 high: *likely,
                 first_load: 0,
+                source_likely: *likely,
             })
             .collect(),
         armed_crew: points.last().map_or(0, |(crew, _)| *crew),

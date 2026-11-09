@@ -1989,6 +1989,9 @@ fn animal_landed(herd: &Herd, def: &SpeciesDef, workers: u32, s: &Shipped) -> La
         0.0,
         s.labor.yield_average_horizon_turns,
         &demographics.keeping,
+        // What the typical band eats a turn: a pack that lands aged by its walk keeps only the
+        // meals it has left at that rate.
+        TYPICAL_BAND_PEOPLE * s.per_capita_draw,
         &core_sim::MaterialsConfig::builtin(),
     );
     let home = forecast.rate_home / workers as f32;

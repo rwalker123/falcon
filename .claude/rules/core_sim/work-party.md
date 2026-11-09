@@ -720,7 +720,19 @@ drying — is what extends it.
 - **The forecast strikes the same rot on every landing pack, so `netRateHome` is what arrives AND
   keeps.** `forecast_caravan` takes a `TransitRot` — the row's cargo shares by class (a herd's one
   class; a basket's `forage::patch_food_mix` shares) plus the keeping table — and each projected pack
-  loses `TransitRot::rotten_share(walk)` of its cargo. `rate_home`, the arrival schedule and
+  keeps `TransitRot::kept_of_pack(walk, cargo)` of its cargo: a class whose shelf life is no longer
+  than the walk is lost whole, and **a pack that lands aged by its walk keeps only the meals it has
+  left** - `shelf - walk` meals at `TransitRot::meals_per_turn`, what the home band eats of that
+  cargo a turn (`snapshot::net_eat_without`: the band's `food_need` less the steady income of its
+  other rows; the turn, the query and the seed in `bin/server.rs` all pass it into
+  `forecast_hunt_caravan`; a basket and a bare projection pass `NOTHING_CAPS_THE_MEAL`). A flesh pack
+  of walk 3 has one meal left, so a band eating 0.9 a turn keeps 0.9 of it however big the pack; a
+  walk of none lands fresh and is capped by nothing here - how much of a standing stream the band eats
+  is the seat's stream keep (`ai-driver.md`). The crew curve's `home_animals_likely` reads this one
+  seam. Pinned by `work_party::tests::an_aged_pack_keeps_only_the_meals_it_has_left` and
+  `work_party_caravan::the_forecast_keeps_only_the_meals_left_after_the_walk` (walks 1 to 4, a band
+  that eats the packs in time and one that cannot, against the food the larder actually eats over 20
+  live turns). `rate_home`, the arrival schedule and
   `realized` are therefore the larder's real gain, and the loss rides `spoiled_rate_home`; the
   shortest shelf life that rots on the walk is `transit_keeps_turns` (`0` when nothing does). The
   deposit web passes no rot (`NO_TRANSIT_ROT`). The turn, the seed and the query all step this one

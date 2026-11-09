@@ -328,7 +328,16 @@ pub struct WorkParty {
 pub struct TransitRot<'a> {
     pub keeping: &'a crate::demographics_config::KeepingConfig,
     pub shares: CargoClasses,
+    /// **What the home band eats of this cargo each turn**, in food - the most a pack that lands
+    /// already aged by its walk can be eaten at before it expires ([`TransitRot::kept_of_pack`]).
+    /// [`NOTHING_CAPS_THE_MEAL`] where the caller names no band (the deposit web, a plant basket,
+    /// a bare projection).
+    pub meals_per_turn: f32,
 }
+
+/// [`TransitRot::meals_per_turn`] when nothing caps what the band eats: an aged pack is then lost
+/// only where its walk outlasts its class's shelf life.
+pub const NOTHING_CAPS_THE_MEAL: f32 = f32::INFINITY;
 
 /// No transit rot — the deposit web's cargo is a material, and a material keeps.
 pub const NO_TRANSIT_ROT: Option<&TransitRot<'static>> = None;
@@ -342,7 +351,40 @@ impl TransitRot<'_> {
         TransitRot {
             keeping,
             shares: std::iter::once((class.to_string(), WHOLE_CARGO)).collect(),
+            meals_per_turn: NOTHING_CAPS_THE_MEAL,
         }
+    }
+
+    /// The same cargo for a band that eats `meals_per_turn` of it a turn.
+    pub fn eaten_at(mut self, meals_per_turn: f32) -> Self {
+        self.meals_per_turn = meals_per_turn;
+        self
+    }
+
+    /// **THE PART OF A LANDING PACK THE LARDER KEEPS** - the pack is aged by its walk when it lands
+    /// (`systems::labor::land_food_home`), so a class with `shelf` turns of life has `shelf - walk`
+    /// meals left to be eaten at, and what the band cannot eat at `meals_per_turn` in them rots
+    /// with it. A class whose shelf life is no longer than the walk is lost whole
+    /// ([`crate::spoilage::rots_in_transit`], the rule the landing applies); a walk of no length
+    /// lands fresh and is capped by nothing here - how much of a standing stream the band eats is
+    /// the caller's stream reading, not a pack's. A class the table does not carry never ages.
+    pub fn kept_of_pack(&self, walk_turns: u32, cargo: f32) -> f32 {
+        self.shares
+            .iter()
+            .map(|(class, share)| {
+                let carried = cargo * share;
+                if crate::spoilage::rots_in_transit(class, walk_turns, self.keeping) {
+                    return NOTHING_CARRIED;
+                }
+                match crate::spoilage::base_shelf_life(self.keeping, class) {
+                    Some(shelf) if walk_turns > NO_WALK => {
+                        carried.min(self.meals_per_turn * (shelf - walk_turns as f32))
+                    }
+                    _ => carried,
+                }
+            })
+            .sum::<f32>()
+            .min(cargo)
     }
 
     /// The share of a pack's cargo that rots on a walk of `walk_turns` —
@@ -1263,7 +1305,7 @@ pub fn forecast_caravan_carrying(
         let lost: f32 = rot.map_or(NOTHING_CARRIED, |rot| {
             open.packs
                 .iter()
-                .map(|pack| pack.cargo * rot.rotten_share(pack.walk_turns))
+                .map(|pack| pack.cargo - rot.kept_of_pack(pack.walk_turns, pack.cargo))
                 .sum()
         });
         let home = open.delivered + landed_now;
@@ -1303,6 +1345,18 @@ pub fn forecast_caravan_carrying(
     forecast
 }
 
+/// **WHAT THE BAND EATS A TURN BEYOND ITS OTHER ROWS**, for the row on `source` - the figure a hunt
+/// caravan's aged packs are capped at ([`TransitRot::meals_per_turn`]); the seed in `bin/server.rs`
+/// reads it here, the turn and the query through `snapshot::net_eat_without`.
+pub fn band_net_eat_without(
+    cohort: &crate::components::PopulationCohort,
+    allocation: &crate::components::LaborAllocation,
+    demographics: &crate::demographics_config::DemographicsConfig,
+    source: Option<&crate::components::LaborTarget>,
+) -> f32 {
+    crate::snapshot::net_eat_without(cohort, allocation, demographics, source)
+}
+
 /// **A HUNT CARAVAN'S FORECAST** — [`forecast_caravan`] over [`HuntProjection`], the step
 /// `fauna::project_realized_hunt` loops over, so the caravan forecast runs the hunt's own projected
 /// take at whatever crew is present each turn.
@@ -1324,6 +1378,8 @@ pub fn forecast_hunt_caravan(
     horizon: u32,
     // **How food keeps** (#706) — a herd's take is its species' one class.
     keeping: &crate::demographics_config::KeepingConfig,
+    // **What the home band eats of this herd's meat a turn** ([`TransitRot::meals_per_turn`]).
+    meals_per_turn: f32,
     // **What a material weighs** — the bulk a pen's fleece fills a pack with ([`standing_stream`]).
     materials: &crate::materials_config::MaterialsConfig,
 ) -> CaravanForecast {
@@ -1332,7 +1388,7 @@ pub fn forecast_hunt_caravan(
     let class = fauna
         .keeping_for(&herd.species)
         .unwrap_or(&keeping.kill_fallback_class);
-    let rot = TransitRot::single(keeping, class);
+    let rot = TransitRot::single(keeping, class).eaten_at(meals_per_turn);
     // ⛔ **WHAT THE CARCASS AND THE STANDING HERD SEND HOME, EVERY STEPPED TURN** (#706). The cull's
     // meat and the standing food (milk, eggs — `HuntProjection::step` counts both in the turn's
     // provisions, so `rate_home` carries the milk net of the walk's rot, by the herd's one keeping
@@ -1578,6 +1634,7 @@ pub fn forecast_forage_caravan(
         .iter()
         .map(|(class, share)| (class.to_string(), share.to_f32()))
         .collect(),
+        meals_per_turn: NOTHING_CAPS_THE_MEAL,
     };
     let mut forecast = forecast_caravan(party, horizon, carry_per_worker, Some(&rot), |present| {
         let gatherers = take_hands_present(present, keep_hands);
@@ -2211,6 +2268,47 @@ mod tests {
             back_on,
             Some(2 * walk + 1),
             "absent for the whole round trip"
+        );
+    }
+
+    /// **A PACK LANDS AGED BY ITS WALK, SO THE LARDER KEEPS ONLY THE MEALS LEFT IT**
+    /// ([`TransitRot::kept_of_pack`]): flesh keeps 4 turns, a walk-3 pack has one meal left, so a
+    /// band eating `E` a turn keeps at most `E` of it; a band that eats it all in the meals left keeps
+    /// it whole, a walk-4 pack is lost whole, and a walk of none is capped by nothing.
+    #[test]
+    fn an_aged_pack_keeps_only_the_meals_it_has_left() {
+        const PACK: f32 = 6.0;
+        const SLOW_EATER: f32 = 1.5;
+        const FAST_EATER: f32 = 100.0;
+        let keeping = crate::demographics_config::DemographicsConfig::builtin()
+            .keeping
+            .clone();
+        let flesh_shelf = crate::spoilage::base_shelf_life(&keeping, "flesh").expect("flesh keeps");
+        let slow = TransitRot::single(&keeping, "flesh").eaten_at(SLOW_EATER);
+        let fast = TransitRot::single(&keeping, "flesh").eaten_at(FAST_EATER);
+        let last_walk = flesh_shelf as u32 - 1;
+        // The slow band eats SLOW_EATER in each meal the pack has left.
+        for walk in 1..=last_walk {
+            let meals = flesh_shelf - walk as f32;
+            assert_eq!(
+                slow.kept_of_pack(walk, PACK),
+                (SLOW_EATER * meals).min(PACK)
+            );
+            assert_eq!(
+                fast.kept_of_pack(walk, PACK),
+                PACK,
+                "a fast band eats it whole"
+            );
+        }
+        assert!(
+            slow.kept_of_pack(last_walk, PACK) < PACK,
+            "liveness: the walk-{last_walk} pack is cut for the slow band"
+        );
+        assert_eq!(slow.kept_of_pack(last_walk + 1, PACK), NOTHING_CARRIED);
+        assert_eq!(
+            slow.kept_of_pack(NO_WALK, PACK),
+            PACK,
+            "a fresh kill is capped by nothing"
         );
     }
 

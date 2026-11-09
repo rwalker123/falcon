@@ -4013,6 +4013,19 @@ fn seed_source_yield(
                         .resource::<core_sim::DemographicsConfigHandle>()
                         .get()
                         .keeping,
+                    app.world.get::<LaborAllocation>(band).map_or(
+                        core_sim::work_party::NOTHING_CAPS_THE_MEAL,
+                        |allocation| {
+                            core_sim::work_party::band_net_eat_without(
+                                cohort,
+                                allocation,
+                                &app.world
+                                    .resource::<core_sim::DemographicsConfigHandle>()
+                                    .get(),
+                                Some(target),
+                            )
+                        },
+                    ),
                     &app.world
                         .resource::<core_sim::MaterialsConfigHandle>()
                         .get(),

@@ -315,12 +315,32 @@ belt for a cohort whose tiers are not on the wire). A material grant is carried 
 is `Food::equipped_patch_rate` - the patch's published `per_worker_yield`, which the sim strikes at
 the roster's equipped reference (`equipped_reference(ForageCarry)`), never the rate a row of the
 band realized with bare hands (the walk is buying the baskets; a splinter's window reads rows its
-parent worked unequipped). A herd's curve is `assume_kit_held` (below), and its home likely is
-scaled by **`Food::kept_share`: the share of a kill the band eats before it spoils** - the cohort's
-`hunt_meals` entry for the herd's `keeping` class (`hunt_by_need::hunt_meal`, the sim's own
-spoilage reading: what the band can eat of one kill within the class's shelf life, via
-`spoilage::band_shelf_life`) over the food one animal lands, capped at 1; `1` where the frame
-carries no meal for the class. Ties stay with the basket and no extra margin lever is added.
+parent worked unequipped). A herd's curve is `assume_kit_held` (below), struck by **the stream
+keep** (below).
+
+#### The stream keep: a herd is worth what the band EATS of its landing stream
+
+Flesh keeps four turns (`demographics_config.json`), so a crew that lands more than the band eats
+inside them feeds the larder's rot, not the band. The AI therefore prices a herd at
+`kept_stream(likely, net_eat) = likely x stream_keep`, with `stream_keep = min(1, net_eat / likely)`
+(`specialists/food/sources.rs`) and `net_eat = net_eat_rate(band, herd)` = the band's `food_need`
+less the steady income (`realized_yield`) of every row but the hunt row on that herd, `0`-floored;
+`NO_EAT_CAP` (infinity) while the frame carries no `food_need` (a splinter's first frame). The shape
+is the **stream**, not one kill against one meal: a 7.2 aurochs against a 19-food meal never
+discounts, while a band eating 0.9 a turn off a crew landing 1.2 keeps 0.75 of it (seed 18's
+splinter lost 5.4 of one kill). It is applied at both places the AI prices a herd, so they cannot
+disagree: `outfit_split` (the sustained crew is the smallest whose kept take reaches
+`min(regrowth, net_eat)`, and every pass-1 and pass-2 value is the kept stream) and `Source::expected`
+/ `marginal` (the herd source's `eat_cap`, which every per-turn rule reads). A patch is capped by
+nothing (a plant keeps). Ties stay with the basket and no lever was added. This replaced
+`kept_share`, which compared one animal to the `hunt_meals` entry and capped at 1 on every shipped
+bench seed, so it moved no decision.
+
+**A far hunt row whose every pack is lost is the row to empty first** (`Food::packs_all_lost`, in
+`row_to_empty` beside *no useful crew* and *dead row*): the herd stands past `work_range` and the
+sim's crew curve - struck at the walk's rot, a walk of four turns or more losing flesh whole -
+lands nothing at any crew. The reason reads `every pack lost on the walk to hunt herd_9 (6 hexes
+out)`. It needs no gain guard, like the other troubled rows.
 
 **A herd is priced off the sim's own crew-take curve, for the kit it would be hunted with, at the
 rate that lands home** (`SeatMemory::outfit_take`). At the outfitting window the ordinary curve
@@ -941,6 +961,23 @@ the published per-worker rate alone.** Three facts of the frame forced this:
    also be in `snapshot.food_modules`.
 
 ### `Land`
+
+**`Land` and `Food` rank ground by one reading, and it counts herds** (`cluster_take`,
+`herd_streams` in `specialists/food/sources.rs`): beside the workable patches, every huntable
+herd a camp on the candidate tile could hunt is dealt hands up to its **sustained crew** (the
+smallest crew whose kept take reaches the herd's regrowth at Best, within the kit units held and
+less the units the band's other hunt rows hold) at the sim's crew-take curve, struck by the stream
+keep above. **A herd counts only where the sim has priced it for that tile, never by a guess**: from
+the band's own tile the curve is the one it asked (the take that lands home, herds within
+`hunt_reach`); from another tile within `work_range` of the herd the take is a camp kill's, the
+curve's **at-source** take (`CrewTakeRow::source_likely`, `animals_likely x food_per_animal`, the
+same number at every distance and exactly what the sim lands home inside the apron); from any other
+tile, or for a herd with no curve, it counts for nothing. So *better ground* and *move everyone*
+move a band whose patches are poor toward a rich herd, with the margin and departure-memory guards
+below unchanged, and a band with no herd in reach stays. The two readings that deal hands onto
+patch rows alone - `Food`'s free-hand deal and the bench's `ground.*` sustained measure - stay
+patches-only (`PATCHES_ONLY`): a herd is hunted through its own rules, never dealt a tile. Pinned by
+`land::tests::a_band_with_poor_patches_moves_its_camp_toward_a_rich_herd`.
 
 Owns `patches_owned`; alarms `land_short` when what the band's crew would take per turn from the
 cluster it stands in (`cluster_take(here, working_age).total`, the `Food` section's shared

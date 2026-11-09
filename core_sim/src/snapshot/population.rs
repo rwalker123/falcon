@@ -763,6 +763,35 @@ pub(crate) fn kill_food_terms(
     )
 }
 
+/// **WHAT THE BAND EATS EACH TURN BEYOND ITS OTHER ROWS** - `max(0, demand - Σ realized)` over every
+/// standing row but the one for `source` (`None` leaves none out: a source the band does not work
+/// yet). The same demand and steady income `food_terms_over` reads, so the figure a caravan forecast
+/// caps an aged pack at ([`crate::work_party::TransitRot::meals_per_turn`]) and the one the wire lets
+/// a seat compute (`food_need` less the other rows' `realized_yield`) are one number.
+pub(crate) fn net_eat_without(
+    cohort: &PopulationCohort,
+    allocation: &LaborAllocation,
+    demographics: &DemographicsConfig,
+    source: Option<&crate::components::LaborTarget>,
+) -> f32 {
+    let demand = food_demand(
+        cohort.children,
+        cohort.working + cohort.fed_party_workers,
+        cohort.elders,
+        &demographics.consumption,
+    )
+    .to_f32();
+    let others: f32 = allocation
+        .assignments
+        .iter()
+        .zip(&allocation.last_yields)
+        .filter(|(row, _)| !row.is_need_row())
+        .filter(|(row, _)| !source.is_some_and(|target| row.target.same_source(target)))
+        .map(|(_, yields)| yields.realized)
+        .sum();
+    (demand - others).max(0.0)
+}
+
 /// **THE ROWS' YIELDS THAT ARE STANDING INCOME** - every row's retained yield but a need row's.
 ///
 /// A need row holds no hands: on a hunt turn the labor pass lends it a one-turn crew and projects

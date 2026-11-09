@@ -1791,6 +1791,12 @@ fn work_party_forecast(
                 keep_hands,
                 horizon,
                 &demographics.keeping,
+                crate::snapshot::net_eat_without(
+                    &cohort,
+                    &allocation,
+                    &demographics,
+                    Some(&target),
+                ),
                 &world
                     .resource::<crate::materials_config::MaterialsConfigHandle>()
                     .get(),

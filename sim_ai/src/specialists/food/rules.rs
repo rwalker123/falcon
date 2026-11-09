@@ -85,6 +85,9 @@ const HOLD_MIN_HANDS: u32 = 1;
 const WHY_OVERUSED: &str = "overused";
 const WHY_NO_USEFUL_CREW: &str = "no useful crew on";
 const WHY_DEAD_ROW: &str = "dead row";
+/// A far hunt row whose every pack is lost on the walk home (the crew curve lands nothing at its
+/// distance): the hands spend the walk and the herd feeds nobody.
+const WHY_PACKS_LOST: &str = "every pack lost on the walk to";
 const WHY_LOWEST_ROW: &str = "lowest row";
 
 /// **How far a band walks in a turn**, restated from `core_sim/src/data/labor_config.json` →
@@ -582,6 +585,8 @@ impl Food {
                 WHY_OVERUSED
             } else if row.kind == ROLE_HUNT && row.hunt_useful_workers == 0 {
                 WHY_NO_USEFUL_CREW
+            } else if Self::packs_all_lost(view, memory, band, row) {
+                WHY_PACKS_LOST
             } else if self.is_dead(view, memory, band, key) {
                 WHY_DEAD_ROW
             } else {
@@ -595,6 +600,42 @@ impl Food {
                 Self::row_rate(memory, band, a).total_cmp(&Self::row_rate(memory, band, b))
             })
             .map(|(row, key)| (row, key, false, WHY_LOWEST_ROW))
+    }
+
+    /// **Whether a far hunt row lands nothing home**: its herd stands past the band's work range
+    /// (a work party, whose packs walk) and the sim's crew curve - struck at the walk's rot - has no
+    /// crew size that lands anything. Flesh keeps four turns, so a walk of four turns or more loses
+    /// every pack whole (`spoilage::rots_in_transit`); the hands on such a row are spent on the
+    /// road for food that never reaches the larder, and the curve already says so.
+    fn packs_all_lost(
+        view: &SeatView,
+        memory: &SeatMemory,
+        band: &PopulationCohortState,
+        row: &LaborAssignmentState,
+    ) -> bool {
+        if row.kind != ROLE_HUNT {
+            return false;
+        }
+        let Some(herd) = view
+            .snapshot
+            .herds
+            .iter()
+            .find(|herd| herd.id == row.fauna_id)
+        else {
+            return false;
+        };
+        if view
+            .grid()
+            .distance(band_tile(band), Tile::new(herd.x, herd.y))
+            <= band.work_range
+        {
+            return false;
+        }
+        memory
+            .crew_take(band.band_id, &row.fauna_id)
+            .is_some_and(|curve| {
+                !curve.rows.is_empty() && curve.rows.iter().all(|r| r.likely <= 0.0)
+            })
     }
 
     /// **Distinctness is not improvement, on the free-hand path too.** Free hands move onto a
@@ -819,6 +860,17 @@ impl Food {
                 low_key.describe(),
                 Self::accounting(memory, band, &low_key)
             )
+        } else if why == WHY_PACKS_LOST {
+            let hexes = view
+                .snapshot
+                .herds
+                .iter()
+                .find(|herd| herd.id == row.fauna_id)
+                .map_or(0, |herd| {
+                    view.grid()
+                        .distance(band_tile(band), Tile::new(herd.x, herd.y))
+                });
+            format!("{why} {} ({hexes} hexes out)", low_key.describe())
         } else {
             format!("{why} {}", low_key.describe())
         };
@@ -2121,8 +2173,8 @@ impl Food {
         struct HerdSite<'c> {
             kit: String,
             curve: &'c crate::oracle::CrewTakeCurve,
-            /// The share of a kill the band eats before it spoils ([`Food::kept_share`]).
-            keep: f32,
+            /// What the band eats of this herd's stream a turn ([`super::sources::net_eat_rate`]).
+            eat_cap: f32,
             sustained: f32,
             sustained_crew: u32,
             room: f32,
@@ -2145,12 +2197,16 @@ impl Food {
                     * herd.provisions_per_biomass;
                 // The smallest crew whose take reaches the regrowth, else where the curve stops
                 // rising: past it another hunter takes nothing more of what regrows.
-                let keep = Self::kept_share(band, herd, curve.body_food);
+                let eat_cap = super::sources::net_eat_rate(band, Some(&herd.id));
+                // The crew that lands the regrowth, or all the band eats of it if that is less.
                 let sustained_crew = if sustained > 0.0 {
                     curve
                         .rows
                         .iter()
-                        .find(|row| row.likely * keep >= sustained)
+                        .find(|row| {
+                            super::sources::kept_stream(row.likely, eat_cap)
+                                >= sustained.min(eat_cap)
+                        })
                         .map_or_else(|| curve.plateau(), |row| row.crew)
                 } else {
                     0
@@ -2158,7 +2214,7 @@ impl Food {
                 Some(HerdSite {
                     kit,
                     curve,
-                    keep,
+                    eat_cap,
                     sustained,
                     sustained_crew,
                     room: (herd.biomass - BEST_FLOOR * herd.carrying_capacity).max(0.0)
@@ -2169,10 +2225,15 @@ impl Food {
             .collect();
         // What the next hunter earns of the sustained take, and of the room above the regrowth.
         let sustained_value = |herd: &HerdSite<'_>, hunters: u32| {
-            (herd.curve.likely(hunters) * herd.keep).min(herd.sustained) * horizon
+            super::sources::kept_stream(herd.curve.likely(hunters), herd.eat_cap)
+                .min(herd.sustained)
+                * horizon
         };
         let room_value = |herd: &HerdSite<'_>, hunters: u32| {
-            ((herd.curve.likely(hunters) * herd.keep - herd.sustained).max(0.0) * horizon)
+            ((super::sources::kept_stream(herd.curve.likely(hunters), herd.eat_cap)
+                - herd.sustained)
+                .max(0.0)
+                * horizon)
                 .min(herd.room)
         };
         let mut gathering = 0;
@@ -2270,22 +2331,6 @@ impl Food {
     /// buying the baskets, so it prices the patch side on this one accessor.
     fn equipped_patch_rate(patch: &ForagePatchState) -> f32 {
         patch.per_worker_yield
-    }
-
-    /// **The share of a herd's kill the band eats before it spoils**: the sim's own hunting meal
-    /// for the herd's keeping class (`PopulationCohortState::hunt_meals`: the food the band can
-    /// eat of one kill within the class's shelf life, `hunt_by_need::hunt_meal`) over the food one
-    /// animal lands (`body_food`), capped at 1. A band whose meal is nothing - its larder already
-    /// holds that class - eats none of the next kill before it rots. `1` where the frame carries
-    /// no meal for the class, which is every herd of a species the keeping table cannot resolve.
-    fn kept_share(band: &PopulationCohortState, herd: &HerdTelemetryState, body_food: f32) -> f32 {
-        if body_food <= 0.0 {
-            return 1.0;
-        }
-        band.hunt_meals
-            .iter()
-            .find(|meal| meal.keeping == herd.keeping)
-            .map_or(1.0, |meal| (meal.food / body_food).clamp(0.0, 1.0))
     }
 
     /// **The kit a band outfitted for `herd` would hunt it under**: the herd's own
@@ -3141,6 +3186,7 @@ mod tests {
                     [(RICH_PATCH.y * 8 + RICH_PATCH.x) as usize] = 0;
                 view.snapshot.herds[0].biomass = 100.0;
                 view.snapshot.populations[0].equipment_batches[0].count = count;
+                view.snapshot.populations[0].food_need = NEED_UNREAD;
             })
         };
         let plan = plan_with_food_share(1.0);
@@ -3380,6 +3426,10 @@ mod tests {
     /// The fixture's herd made small game the snares clear: a roster `trapping` kit bounded to
     /// small animals, the herd hunted under it, and a standing stock of `K` whose room above the
     /// floor holds more than the walk can ask of it.
+    /// A band whose frame carries no `food_need`: the herd's stream is capped by nothing
+    /// ([`super::super::sources::NO_EAT_CAP`]), so a test ranking herds on their curves alone says so.
+    const NEED_UNREAD: f32 = 0.0;
+
     fn small_game_at_its_window() -> SeatView {
         let mut view = a_band_at_its_window(0.0);
         view.snapshot.kits.push(sim_runtime::KitOptionState {
@@ -3396,6 +3446,7 @@ mod tests {
         herd.biomass = 1000.0;
         herd.carrying_capacity = 1000.0;
         herd.provisions_per_biomass = 1.0;
+        view.snapshot.populations[0].food_need = NEED_UNREAD;
         view
     }
 
@@ -3535,34 +3586,55 @@ mod tests {
         assert_eq!((split.sustained_hands, split.room_hands), (12, 5));
     }
 
-    /// **A herd's food is priced net of the share that rots**: the band's hunting meal for the
-    /// herd's keeping class is what it can eat of a kill before it spoils, so a meal of a tenth of
-    /// one animal prices the herd at a tenth of its curve - and the herd that out-paid the baskets
-    /// at full value is dealt nobody. The same band with no meal on the wire keeps every hunter.
+    /// **THE STREAM KEEP**: a crew landing `likely` a turn feeds a band that eats `net_eat` a turn of
+    /// it, and the rest rots in the larder. Seed 18's splinter, band 4: it eats 0.9 a turn and a crew
+    /// lands 1.2, so it keeps 0.75 of the stream; a band that eats more than lands keeps all of it,
+    /// and a crew that lands nothing keeps (and loses) nothing.
     #[test]
-    fn a_herds_value_is_net_of_the_share_of_its_kill_that_rots() {
+    fn the_stream_keep_is_the_share_of_the_landing_the_band_eats() {
+        use super::super::sources::{kept_stream, stream_keep};
+        const NEED: f32 = 0.9;
+        const LANDING: f32 = 1.2;
+        assert!((stream_keep(NEED, LANDING) - 0.75).abs() < 1e-6);
+        assert!((kept_stream(LANDING, NEED) - NEED).abs() < 1e-6);
+        assert_eq!(
+            stream_keep(NEED, 0.5),
+            1.0,
+            "a band that eats more than lands keeps it all"
+        );
+        assert_eq!(stream_keep(NEED, 0.0), 1.0);
+        assert_eq!(
+            stream_keep(0.0, LANDING),
+            0.0,
+            "a band whose other rows feed it keeps none"
+        );
+    }
+
+    /// **A herd is priced by what the band eats of its stream**, net of the other rows' income:
+    /// small game that out-paid the baskets at 3 food a hunter is dealt four snares by a band that
+    /// eats nothing it has not got on the wire, two by a band whose table has room for 4.5 a turn
+    /// (the third hunter would land what rots), and one by a band that eats 0.9 a turn.
+    #[test]
+    fn a_herds_value_is_what_the_band_eats_of_its_stream() {
         let mut view = small_game_at_its_window();
         let memory = outfitting_memory(&[(1, 3.0), (2, 6.0), (3, 9.0), (4, 12.0)]);
-        let fed = split_of(&view, &memory);
-        assert_eq!(fed.hunters, vec![("trapping".to_owned(), 4)]);
-        view.snapshot.populations[0].working_age = 10;
-        let full_value = split_of(&view, &memory);
         assert_eq!(
-            full_value.gathering, 10,
-            "10 hands are the patches' crews either way"
+            split_of(&view, &memory).hunters,
+            vec![("trapping".to_owned(), 4)],
+            "no need on the wire: nothing caps the stream"
         );
-        view.snapshot.populations[0].working_age = 17;
-        view.snapshot.herds[0].keeping = "flesh".to_owned();
-        view.snapshot.populations[0].hunt_meals = vec![sim_runtime::KeepingMealState {
-            keeping: "flesh".to_owned(),
-            food: 0.1 * crate::specialists::food::tests::FIXTURE_BODY_FOOD,
-        }];
-        // With only the patches' sustained crews to fill (10 hands) the discounted herd, below
-        // their per-hand take, is dealt nobody; with hands left over it is still the best use.
-        view.snapshot.populations[0].working_age = 10;
-        let rotting = split_of(&view, &memory);
-        assert!(rotting.hunters.is_empty(), "{:?}", rotting.hunters);
-        assert_eq!(rotting.gathering, 10);
+        view.snapshot.populations[0].food_need = 4.5;
+        assert_eq!(
+            split_of(&view, &memory).hunters,
+            vec![("trapping".to_owned(), 2)],
+            "a third hunter lands what the band cannot eat"
+        );
+        view.snapshot.populations[0].food_need = 0.9;
+        assert_eq!(
+            split_of(&view, &memory).hunters,
+            vec![("trapping".to_owned(), 1)],
+            "one snare lands all that band can eat of the herd"
+        );
     }
 
     /// The patch side is priced at the rate the sim publishes for the equipped basket, never at
@@ -4779,6 +4851,7 @@ mod tests {
     #[test]
     fn sources_are_ranked_by_what_the_crew_takes_not_the_per_worker_rate() {
         let mut view = a_view();
+        view.snapshot.populations[0].food_need = NEED_UNREAD;
         view.snapshot.visibility_raster.samples[(RICH_PATCH.y * 8 + RICH_PATCH.x) as usize] = 0;
         let proposal = food()
             .negative_income(
@@ -5143,6 +5216,54 @@ mod tests {
         );
     }
 
+    /// **A far hunt row whose packs are all lost on the walk is the row to empty first**: the
+    /// sim's crew curve lands nothing from that distance (flesh keeps four turns), so its hands
+    /// go to the next source, and the reason says why. A near herd with the same zero curve is
+    /// not a walk's loss and is left to the other rules.
+    #[test]
+    fn a_far_hunt_row_whose_packs_are_all_lost_is_emptied_first() {
+        // Past the work range on the fixture's 8-wide wrapped grid, as far as it goes.
+        const FAR: u32 = 4;
+        let mut view = a_view();
+        view.snapshot.populations[0].idle_workers = 0;
+        view.snapshot.populations[0].labor_assignments = vec![LaborAssignmentState {
+            sustainable_yield: 0.02,
+            ..hunt_row(12, 0.0, 4)
+        }];
+        view.snapshot.herds[0].x = HERE.x + FAR;
+        view.snapshot.herds[0].y = HERE.y;
+        let mut memory = memory();
+        memory.remember_crew_take(
+            BAND,
+            HERD_ID,
+            crate::oracle::curve_of(&[(1, 0.0), (2, 0.0)], FIXTURE_BODY_FOOD),
+        );
+        let proposal = food()
+            .negative_income(&view, &plan_with_food_share(1.0), &memory, own_band(&view))
+            .expect("the lost-pack row is emptied onto the stand");
+        assert!(
+            proposal.reason.contains(WHY_PACKS_LOST),
+            "{}",
+            proposal.reason
+        );
+        assert!(proposal.reason.contains("hexes out"), "{}", proposal.reason);
+        // The same row with a curve that lands something is left alone by this rule.
+        memory.remember_crew_take(
+            BAND,
+            HERD_ID,
+            crate::oracle::curve_of(&[(1, 0.5), (2, 1.0)], FIXTURE_BODY_FOOD),
+        );
+        if let Some(proposal) =
+            food().negative_income(&view, &plan_with_food_share(1.0), &memory, own_band(&view))
+        {
+            assert!(
+                !proposal.reason.contains(WHY_PACKS_LOST),
+                "{}",
+                proposal.reason
+            );
+        }
+    }
+
     /// ⛔ **One failed hunt does not condemn every herd in reach.** A row the sim marks
     /// `hunt_useful_workers == 0` is not a measurement, so it never reaches the web's mean; the
     /// sibling herd the band has never worked is still rated off the frame's forecast, and is
@@ -5151,6 +5272,7 @@ mod tests {
     #[test]
     fn a_hunt_nobody_was_useful_on_does_not_condemn_a_sibling_herd() {
         let mut view = a_view();
+        view.snapshot.populations[0].food_need = NEED_UNREAD;
         // Only herds in reach, so the answer is about hunting and nothing else.
         view.snapshot.forage_patches.clear();
         view.snapshot.populations[0].idle_workers = 5;

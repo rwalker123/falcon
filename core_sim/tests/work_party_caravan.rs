@@ -185,6 +185,20 @@ fn spawn_band_camped_at(
         .id()
 }
 
+/// Hands in the pool of a band that eats every pack in the meals it has left: the forecast caps a pack
+/// that lands aged by its walk at what the band eats a turn (`TransitRot::meals_per_turn`), and these
+/// tests compare it with the GROSS landing - the harness runs the labor pass alone, with no meal - so
+/// the band they use eats whatever lands.
+const BAND_THAT_EATS_EVERY_PACK: f32 = 600.0;
+
+/// Make `band` one that eats every pack ([`BAND_THAT_EATS_EVERY_PACK`]).
+fn eats_every_pack(app: &mut App, band: Entity) {
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band")
+        .working = scalar_from_f32(BAND_THAT_EATS_EVERY_PACK);
+}
+
 fn hunt_target() -> LaborTarget {
     LaborTarget::Hunt {
         fauna_id: HERD_ID.to_string(),
@@ -426,6 +440,7 @@ fn a_far_kept_herds_caravan_forecast_is_what_its_party_lands_after_keeping() {
     /// Far enough to post a party.
     const FAR: u32 = 5;
     let (mut app, band) = world_hunting_at(FAR);
+    eats_every_pack(&mut app, band);
     let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
     app.world.resource_mut::<HerdRegistry>().herds[0].tame_outright(FACTION, &ladder);
     let bill = {
@@ -610,7 +625,8 @@ fn flesh_keeps(app: &App) -> f32 {
 #[test]
 fn a_far_hunt_publishes_and_quotes_the_take_its_walk_spoils() {
     for (distance, rots) in [(8, true), (5, false)] {
-        let (mut app, _) = world_hunting_at(distance);
+        let (mut app, band) = world_hunting_at(distance);
+        eats_every_pack(&mut app, band);
         let keeps = flesh_keeps(&app);
         let mut saw_the_road = false;
         for _ in 0..TURNS_TO_SEE_A_PORTER {
@@ -3836,6 +3852,7 @@ fn the_crew_curves_home_rate_is_what_the_row_lands_at_every_distance() {
     let mut previous_home = f32::MAX;
     for distance in [1_u32, 3, 5] {
         let (mut app, band) = world_hunting_at(distance);
+        eats_every_pack(&mut app, band);
         resolve_a_turn(&mut app);
         let (food_per_animal, curve) = {
             let fauna = app.world.resource::<FaunaConfigHandle>().get();
@@ -3972,6 +3989,7 @@ fn the_crew_curve_equals_the_take_for_snared_small_game_near_and_far() {
     const TOLERANCE: f32 = 0.2;
     for distance in [1_u32, 3, 5] {
         let (mut app, band) = world_snaring_at("Wild Fowl", SizeClass::Small, distance);
+        eats_every_pack(&mut app, band);
         resolve_a_turn(&mut app);
         let (food_per_animal, curve) = {
             let fauna = app.world.resource::<FaunaConfigHandle>().get();
@@ -4025,6 +4043,115 @@ fn the_crew_curve_equals_the_take_for_snared_small_game_near_and_far() {
         assert!(
             (home - landed_per_turn).abs() <= TOLERANCE * landed_per_turn,
             "distance {distance}: curve home {home:.3} vs landed {landed_per_turn:.3}"
+        );
+    }
+}
+
+/// **THE FORECAST COUNTS THE MEALS A PACK CAN STILL BE EATEN FOR AFTER ITS WALK**
+/// (`TransitRot::kept_of_pack`). A pack lands aged by its walk, so a walk of `w` turns leaves a
+/// flesh pack `4 - w` meals; what the band cannot eat at its own rate in them rots with it, and the
+/// crew curve's home rate must say so. Driven live: each turn the band eats its ration through the
+/// larder's own order, then the larder rots, then the labor pass lands the packs - the order the
+/// sim runs - and the food the larder keeps (eaten) over 20 turns is read against the curve's home
+/// rate at walks 1 to 4 (hexes 3 to 6), for a band that eats the pack in time and one that cannot.
+#[test]
+fn the_forecast_keeps_only_the_meals_left_after_the_walk() {
+    const TURNS: usize = 20;
+    const TOLERANCE: f32 = 0.25;
+    /// Hands in the band's pool beyond the crew: a band this big eats every pack in its few turns.
+    const BIG_BAND: f32 = 600.0;
+    let keeping = core_sim::DemographicsConfig::builtin().keeping.clone();
+    for distance in [3_u32, 4, 5, 6] {
+        let mut kept_by_pool = Vec::new();
+        for pool in [CREW as f32, BIG_BAND] {
+            let (mut app, band) = world_hunting_at(distance);
+            app.world
+                .get_mut::<PopulationCohort>(band)
+                .expect("the band")
+                .working = scalar_from_f32(pool);
+            resolve_a_turn(&mut app);
+            let (food_per_animal, curve) = {
+                let fauna = app.world.resource::<FaunaConfigHandle>().get();
+                let body = fauna
+                    .species_by_display(BOAR)
+                    .expect("the fixture names a shipped species")
+                    .body_mass;
+                let food_per_animal = body * fauna.hunt_yield_for(BOAR).provisions_per_biomass;
+                let reply = core_sim::forecast_query::answer_forecast_query(
+                    &mut app.world,
+                    &QueryPayload::HuntCrewTake(HuntCrewTakeQuery {
+                        faction_id: FACTION.0,
+                        band_id: BAND,
+                        herd_id: HERD_ID.to_string(),
+                        kit_id: default_hunt_kit(),
+                        floor: FLOOR,
+                        max_workers: CREW,
+                        follow: false,
+                        assume_kit_held: false,
+                    }),
+                );
+                let QueryReply::HuntCrewTake(HuntCrewTakeReply { per_crew, .. }) = reply else {
+                    panic!("the crew-take query must answer with a curve");
+                };
+                (food_per_animal, per_crew)
+            };
+            let home = curve
+                .iter()
+                .find(|row| row.workers == CREW)
+                .expect("the curve has the staffed crew's row")
+                .home_animals_likely
+                * food_per_animal;
+            let ration = {
+                let cohort = app.world.get::<PopulationCohort>(band).expect("the band");
+                let allocation = app.world.get::<LaborAllocation>(band).expect("allocation");
+                core_sim::work_party::band_net_eat_without(
+                    cohort,
+                    allocation,
+                    &core_sim::DemographicsConfig::builtin(),
+                    Some(&hunt_target()),
+                )
+            };
+            let held = core_sim::spoilage::HeldPreservation::none();
+            let mut kept = 0.0_f32;
+            for _ in 0..TURNS {
+                {
+                    let mut cohort = app.world.get_mut::<PopulationCohort>(band).expect("band");
+                    let (eaten, _) = core_sim::spoilage::eat_least_time_left(
+                        &mut cohort.stores,
+                        scalar_from_f32(ration),
+                        &keeping,
+                        &held,
+                        0,
+                    );
+                    kept += eaten.to_f32();
+                    cohort
+                        .stores
+                        .age_food(|class| core_sim::spoilage::base_shelf_life(&keeping, class));
+                }
+                resolve_a_turn(&mut app);
+            }
+            let kept_per_turn = kept / TURNS as f32;
+            // A walk the class outlasts is lost whole on arrival (walk 4 at the shipped flesh shelf
+            // life of 4): the curve says nothing lands and the larder keeps nothing.
+            let whole_loss = distance >= 6;
+            assert!(
+                whole_loss || kept_per_turn > 0.0,
+                "liveness: the band keeps something at {distance} hexes, pool {pool}"
+            );
+            // The curve is the landing stream net of the packs' aged loss; a band eats no more than
+            // its ration of it, which the seat strikes (the stream keep), so the larder keeps the
+            // lesser of the two.
+            let expected = home.min(ration);
+            assert!(
+                (expected - kept_per_turn).abs() <= TOLERANCE * kept_per_turn.max(expected) + 1e-3,
+                "distance {distance} pool {pool}: the curve's home rate {home:.3} (ration {ration:.2}) \
+                 must be what the larder keeps {kept_per_turn:.3} within {TOLERANCE}"
+            );
+            kept_by_pool.push(kept_per_turn);
+        }
+        assert!(
+            kept_by_pool[0] <= kept_by_pool[1] + 1e-3,
+            "distance {distance}: a band that cannot eat the packs in time keeps no more than one that can"
         );
     }
 }

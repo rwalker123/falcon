@@ -9107,6 +9107,12 @@ pub fn advance_labor_allocation(
                                 keep_hands,
                                 realized_horizon,
                                 food_keeping,
+                                crate::snapshot::net_eat_without(
+                                    &cohort,
+                                    &allocation,
+                                    &demographics_cfg,
+                                    Some(&assignment.target),
+                                ),
                                 &materials_cfg,
                             ));
                         }
@@ -10014,6 +10020,12 @@ pub fn advance_labor_allocation(
                             keep_hands,
                             realized_horizon,
                             food_keeping,
+                            crate::snapshot::net_eat_without(
+                                &cohort,
+                                &allocation,
+                                &demographics_cfg,
+                                Some(&assignment.target),
+                            ),
                             &materials_cfg,
                         ));
                     }
