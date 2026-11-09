@@ -1675,6 +1675,13 @@ the food refill ahead of another order's kitted refill then holds seed 50's runw
 (`Land` decides there). The file's `declined` rows are seeds 20, 22, 37, 50 and 54. A refused hand command on a chief's row no longer happens: the seat
 releases the row first ("A chief's rows", above), so `commands_failed_total` is 0 on all eight seeds.
 
+**Kitting by what lands home, and moving toward herds (#860), moved it again.** The turn-one
+outfit deals hands by sustained take at the home rate, a herd is priced at what the band eats of
+its stream and at what the seat has measured it landing, and `Land` reads herds when it ranks
+ground. `Land` now moves on all eight seeds, so the file's `declined` list is empty. On the
+20-seed paired sweep (seeds 1–20) against the build before: working 16.65 → 22.35, hunger deaths
+6.95 → 3.00 (11 better, 4 worse), food stock 41.5 → 36.8. Seeds 2, 13 and 18 end worse.
+
 ⛔ **The start kinds above are what the seeds read NOW, not what they were chosen for.** The
 eight were picked to span `stay` / `split_local` / `split_far` / `short`; the sim changes since
 (the work party, site crews, spoilage) moved the tick-2 ground reading, and the set now covers
