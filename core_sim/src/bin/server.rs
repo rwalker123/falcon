@@ -6333,6 +6333,7 @@ fn handle_send_scout(
     expedition_cohort.last_belief_relay_hops = core_sim::belief_relay::DIRECT_HOPS as u8;
     // A party is no band of its own people: it takes no cohesion term and no cohesion reading.
     expedition_cohort.last_cohesion = core_sim::CohesionReading::default();
+    expedition_cohort.last_leadership = Default::default();
     expedition_cohort.last_morale_contributions.cohesion = Scalar::from_i64(0);
     expedition_cohort.sync_size();
 
@@ -15369,6 +15370,7 @@ mod tests {
                     last_belief_relay_hops: 0,
                     predators_kept_off: 0,
                     last_cohesion: Default::default(),
+                    last_leadership: Default::default(),
                 },
                 LaborAllocation {
                     assignments: vec![core_sim::LaborAssignment {

@@ -1917,6 +1917,10 @@ pub struct PopulationCohort {
     /// [`CohesionReading`]). Recomputed each turn beside `last_morale_contributions` and published as
     /// `PopulationCohortState.cohesionHeadcount` / `cohesionCeiling`.
     pub last_cohesion: CohesionReading,
+    /// **What the band's leader was judged on this turn** (see [`LeadershipReading`]). Recomputed each
+    /// turn beside `last_morale_contributions`; read by the delivery-drift system and the Telling's
+    /// `leadership.*` signals, so nothing recounts the orders after the turn changed them.
+    pub last_leadership: LeadershipReading,
     /// The three named fertility factors behind this turn's births — `hunger` (did we eat) ×
     /// `reserve` (is there a cushion) × `trend` (is the cushion growing or shrinking), the
     /// `birth_rate` multiplier from `docs/plan_population_growth_model.md`. The birth path's
@@ -1982,7 +1986,7 @@ pub struct PopulationCohort {
 /// Starvation is deliberately excluded — it is surfaced through the days-of-food path, not morale.
 ///
 /// Snapshot wire encoding (see [`MoraleCause::as_u8`]): `0 = None, 1 = Terrain, 2 = Cold,
-/// 3 = Unrest, 4 = Culture, 5 = Cohesion`.
+/// 3 = Unrest, 4 = Culture, 5 = Cohesion, 6 = Leadership`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum MoraleCause {
     /// Morale rose or held this turn — no dominant negative driver.
@@ -2001,6 +2005,9 @@ pub enum MoraleCause {
     /// The cohesion term dominated: the band itself is over its
     /// cohesion ceiling.
     Cohesion,
+    /// The leadership term dominated: the band's leader is failing to deliver (falling orders, or the
+    /// people going short at the meal).
+    Leadership,
 }
 
 /// Which mortality term did most of the killing in one age bracket on one turn.
@@ -2117,7 +2124,7 @@ impl DemographicFlowAccumulator {
 
 impl MoraleCause {
     /// Encode for the snapshot's `moraleCause:ubyte` field: `0=None, 1=Terrain, 2=Cold, 3=Unrest,
-    /// 4=Culture, 5=Cohesion`.
+    /// 4=Culture, 5=Cohesion, 6=Leadership`.
     pub fn as_u8(self) -> u8 {
         match self {
             MoraleCause::None => 0,
@@ -2126,6 +2133,7 @@ impl MoraleCause {
             MoraleCause::Unrest => 3,
             MoraleCause::Culture => 4,
             MoraleCause::Cohesion => 5,
+            MoraleCause::Leadership => 6,
         }
     }
 }
@@ -2150,6 +2158,8 @@ pub enum MoraleFactor {
     /// The band is too big to hold together: its own size over its cohesion ceiling
     /// (≤ 0).
     Cohesion,
+    /// The band's leader delivers (`+`) or fails to (`−`) — signed.
+    Leadership,
     /// The band stands on fresh-watered ground (`>= 0`; never a cause, causes are negative).
     FreshWater,
 }
@@ -2176,6 +2186,10 @@ pub struct MoraleContributions {
     /// cohesion: `−drag × max(0, size − ceiling) / ceiling` for the band's own size
     /// (≤ 0; `wellbeing_config.json` → `cohesion`). Another band on the same tile does not count.
     pub cohesion: Scalar,
+    /// leadership: the band judges its leader by what he delivers — `+popularity` per met order,
+    /// `−strain × patience` per falling order and for going short at the meal; `0` with no leader
+    /// (signed; `wellbeing_config.json` → `leadership`, `.claude/rules/core_sim/leadership.md`).
+    pub leadership: Scalar,
     /// fresh water: `+fresh_water_morale_bonus` while the band's current tile is fresh-watered
     /// (`forage::tile_is_fresh_watered`), else `0` (>= 0; `turn_pipeline_config.json` -> `population`).
     pub fresh_water: Scalar,
@@ -2193,6 +2207,20 @@ pub struct CohesionReading {
     pub headcount: u32,
     /// The band's cohesion ceiling, in whole people.
     pub ceiling: u32,
+}
+
+/// **What a band's leader was judged on this turn** (`.claude/rules/core_sim/leadership.md` → "The
+/// band judges its leader by what he delivers"): how many of the band's orders were met and how many
+/// were falling, and whether its people went short at the meal. All zero / false for a band with no
+/// leader.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeadershipReading {
+    /// Orders whose stock stood at or above their target.
+    pub met_orders: u32,
+    /// Orders below their target whose take was below their draw.
+    pub falling_orders: u32,
+    /// The people went short at this turn's meal (the starvation deficit was above zero).
+    pub hungry: bool,
 }
 
 /// The three named fertility factors behind a cohort's births this turn — the `birth_rate`
@@ -2243,15 +2271,16 @@ impl FertilityFactors {
 impl MoraleContributions {
     /// The active contributions as `(factor, signed value)` pairs — the itemized breakdown the
     /// client can render and the single source both `total` and cause attribution iterate. Ordered
-    /// by the tie-break priority (Terrain ≥ Climate ≥ Unrest ≥ Culture ≥ Cohesion) so the dominant-cause scan
+    /// by the tie-break priority (Terrain ≥ Climate ≥ Unrest ≥ Culture ≥ Cohesion ≥ Leadership) so the dominant-cause scan
     /// is a stable first-max.
-    pub fn contributions(&self) -> [(MoraleFactor, Scalar); 7] {
+    pub fn contributions(&self) -> [(MoraleFactor, Scalar); 8] {
         [
             (MoraleFactor::Terrain, self.terrain),
             (MoraleFactor::Climate, self.climate),
             (MoraleFactor::Unrest, self.unrest),
             (MoraleFactor::Culture, self.culture),
             (MoraleFactor::Cohesion, self.cohesion),
+            (MoraleFactor::Leadership, self.leadership),
             (MoraleFactor::FreshWater, self.fresh_water),
             (MoraleFactor::Settling, self.settling),
         ]
@@ -2266,7 +2295,7 @@ impl MoraleContributions {
 
     /// The dominant *negative* contributor as a [`MoraleCause`] (the "why morale fell" label). The
     /// most-negative labeled contribution wins; `Settling` is base growth (never a negative cause),
-    /// and ties resolve by `contributions()` order (Terrain ≥ Climate ≥ Unrest ≥ Culture ≥ Cohesion).
+    /// and ties resolve by `contributions()` order (Terrain ≥ Climate ≥ Unrest ≥ Culture ≥ Cohesion ≥ Leadership).
     pub fn dominant_negative_cause(&self) -> MoraleCause {
         let mut best: Option<(MoraleFactor, Scalar)> = None;
         for (factor, value) in self.contributions() {
@@ -2283,6 +2312,7 @@ impl MoraleContributions {
             Some((MoraleFactor::Unrest, _)) => MoraleCause::Unrest,
             Some((MoraleFactor::Culture, _)) => MoraleCause::Culture,
             Some((MoraleFactor::Cohesion, _)) => MoraleCause::Cohesion,
+            Some((MoraleFactor::Leadership, _)) => MoraleCause::Leadership,
             _ => MoraleCause::None,
         }
     }

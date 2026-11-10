@@ -425,6 +425,72 @@
           "default": 0.2,
           "unit": "morale",
           "hint": "Morale a band loses per turn for being twice its ceiling, less in proportion when nearer. 0: an oversized band never minds. High: it frays within a few turns."
+        },
+        {
+          "pointer": "/leadership/popularity_per_met_order",
+          "label": "Popularity per met order",
+          "type": "float",
+          "min": 0,
+          "max": 0.05,
+          "step": 0.001,
+          "default": 0.002,
+          "unit": "morale",
+          "hint": "Morale per turn a band with a leader gains for each order whose stock is at its target. 0: delivering earns nothing. High: a leader who keeps his orders is loved fast."
+        },
+        {
+          "pointer": "/leadership/strain_per_falling_order",
+          "label": "Strain per falling order",
+          "type": "float",
+          "min": 0,
+          "max": 0.1,
+          "step": 0.001,
+          "default": 0.004,
+          "unit": "morale",
+          "hint": "Morale per turn a band loses for each order below its target and still falling. 0: a failing order is forgiven. High: a leader who lets stock slide is soon resented."
+        },
+        {
+          "pointer": "/leadership/starvation_strain",
+          "label": "Hunger strain",
+          "type": "float",
+          "min": 0,
+          "max": 0.5,
+          "step": 0.005,
+          "default": 0.03,
+          "unit": "morale",
+          "hint": "Morale per turn a band loses under its leader when its people go short at the meal. The big one. 0: hunger is never held against the leader. High: one lean meal sours the band on him."
+        },
+        {
+          "pointer": "/leadership/starvation_full_at",
+          "label": "Hunger at full strain",
+          "type": "float",
+          "min": 0.01,
+          "max": 1,
+          "step": 0.01,
+          "default": 0.1,
+          "unit": "of need",
+          "hint": "How much of the meal the band must go without for the hunger strain to bite in full; less costs in proportion. Low: a small shortfall already counts in full. High: only real famine does."
+        },
+        {
+          "pointer": "/leadership/egalitarian_sensitivity",
+          "label": "Egalitarian impatience",
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "step": 0.05,
+          "default": 0.5,
+          "unit": "",
+          "hint": "How much sooner an egalitarian band turns on a failing leader than a hierarchical one bears it. 0: all bands are equally patient. High: a hierarchical band bears nearly anything, an egalitarian one almost nothing."
+        },
+        {
+          "pointer": "/leadership/drift_per_met_order",
+          "label": "Delivery drift",
+          "type": "float",
+          "min": 0,
+          "max": 0.01,
+          "step": 0.0001,
+          "default": 0.0005,
+          "unit": "trait",
+          "hint": "How far each met order pushes the band's culture toward hierarchical each turn. 0: delivering changes nobody's mind. High: a successful chief makes his band defer to him within a few seasons."
         }
       ]
     },

@@ -116,6 +116,7 @@ struct CohortScalars {
     morale_culture: f64,
     morale_cohesion: f64,
     morale_fresh_water: f64,
+    morale_leadership: f64,
     fertility_hunger: f64,
     fertility_reserve: f64,
     fertility_trend: f64,
@@ -136,6 +137,7 @@ fn cohort_scalars(cohort: fb::PopulationCohortState<'_>) -> CohortScalars {
         morale_culture: fixed64_to_f64(cohort.moraleCulture()),
         morale_cohesion: fixed64_to_f64(cohort.moraleCohesion()),
         morale_fresh_water: fixed64_to_f64(cohort.moraleFreshWater()),
+        morale_leadership: fixed64_to_f64(cohort.moraleLeadership()),
         fertility_hunger: fixed64_to_f64(cohort.fertilityHunger()),
         fertility_reserve: fixed64_to_f64(cohort.fertilityReserve()),
         fertility_trend: fixed64_to_f64(cohort.fertilityTrend()),
@@ -266,7 +268,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let scalars = cohort_scalars(cohort);
     let _ = dict.insert("morale", scalars.morale);
     // Signed per-turn morale trend + the dominant negative driver when falling
-    // (0=None, 1=Terrain, 2=Cold, 3=Unrest, 4=Culture, 5=Cohesion). A rehydrated save reports 0/None for
+    // (0=None, 1=Terrain, 2=Cold, 3=Unrest, 4=Culture, 5=Cohesion, 6=Leadership). A rehydrated save reports 0/None for
     // one turn (the sim doesn't persist them) — the HUD handles that gracefully.
     let _ = dict.insert("morale_delta", scalars.morale_delta);
     let _ = dict.insert("morale_cause", i64::from(cohort.moraleCause()));
@@ -286,6 +288,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("morale_culture", scalars.morale_culture);
     let _ = dict.insert("morale_cohesion", scalars.morale_cohesion);
     let _ = dict.insert("morale_fresh_water", scalars.morale_fresh_water);
+    // The leadership term: the band judging its leader by what he delivers (signed; 0 with no leader).
+    let _ = dict.insert("morale_leadership", scalars.morale_leadership);
     // The band's opening head-count and cohesion ceiling the cohesion term was priced from (whole people).
     let _ = dict.insert("cohesion_headcount", i64::from(cohort.cohesionHeadcount()));
     let _ = dict.insert("cohesion_ceiling", i64::from(cohort.cohesionCeiling()));
@@ -2554,7 +2558,8 @@ mod cohort_decode_tests {
             + scalars.morale_unrest
             + scalars.morale_culture
             + scalars.morale_cohesion
-            + scalars.morale_fresh_water;
+            + scalars.morale_fresh_water
+            + scalars.morale_leadership;
         assert!(
             (contributions - scalars.morale_delta).abs() < 1e-9,
             "contributions {contributions} != morale_delta {}",
@@ -2595,6 +2600,7 @@ mod cohort_decode_tests {
             ("morale_culture", scalars.morale_culture),
             ("morale_cohesion", scalars.morale_cohesion),
             ("morale_fresh_water", scalars.morale_fresh_water),
+            ("morale_leadership", scalars.morale_leadership),
             ("fertility_hunger", scalars.fertility_hunger),
             ("fertility_reserve", scalars.fertility_reserve),
             ("fertility_trend", scalars.fertility_trend),

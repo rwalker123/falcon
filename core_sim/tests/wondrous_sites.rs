@@ -111,6 +111,7 @@ fn spawn_cohort(app: &mut App, faction: FactionId, size: u32) {
         last_belief_relay_hops: 0,
         predators_kept_off: 0,
         last_cohesion: Default::default(),
+        last_leadership: Default::default(),
     });
 }
 

@@ -283,6 +283,12 @@ const MORALE_CONTRIB_LABEL_FRESH_WATER := "fresh water"
 # The cohesion row names its numbers on the row itself:
 # `too many to hold together (182 in the band, holds 150)` -- the band's opening head-count and the
 # ceiling it is held against. Past the ceiling some of them leave for another band.
+## The leadership row's wording. `%s` is who leads: a chief's name, or `the elders` for a council.
+const MORALE_CONTRIB_LEADERSHIP_MET_FORMAT := "%s orders are being met"
+const MORALE_CONTRIB_LEADERSHIP_FAILING_FORMAT := "%s orders are falling short"
+const MORALE_LEADER_COUNCIL_NAME := "the elders'"
+const MORALE_LEADER_POSSESSIVE_SUFFIX := "'s"
+const MORALE_LEADER_FALLBACK_NAME := "the leader's"
 const MORALE_CONTRIB_COHESION_FORMAT := "%s (%d in the band, holds %d)"
 # A positive `morale_culture` (within walking reach of the remembered belief place) reads as "close to
 # its sacred ground"; a negative one reads `DetailFormat.MORALE_CAUSE_LABEL_CULTURE` ("far from its
@@ -1363,6 +1369,15 @@ func _cohesion_label(unit_data: Dictionary) -> String:
     return MORALE_CONTRIB_COHESION_FORMAT % [DetailFormat.MORALE_CAUSE_LABEL_COHESION, headcount,
         int(unit_data.get("cohesion_ceiling", 0))]
 
+## The leadership row's label, naming who leads (`Orrin's orders are being met` / `the elders' orders
+## are falling short`); a band that publishes no leader name reads `the leader's`.
+func _leadership_label(unit_data: Dictionary, positive: bool) -> String:
+    var whose := MORALE_LEADER_FALLBACK_NAME
+    if HudOrdersVocab.has_leader(unit_data):
+        whose = MORALE_LEADER_COUNCIL_NAME if HudOrdersVocab.is_council(unit_data) \
+            else String(unit_data.get("leader_name", "")).strip_edges() + MORALE_LEADER_POSSESSIVE_SUFFIX
+    return (MORALE_CONTRIB_LEADERSHIP_MET_FORMAT if positive else MORALE_CONTRIB_LEADERSHIP_FAILING_FORMAT) % whose
+
 ## The band's kin-relay hop count, or `BELIEF_RELAY_DIRECT` when it is not tied in through kin — no
 ## anchor, direct, or unreached (255) all answer 0, which is what keeps their wording plain.
 func _belief_relay_hops(unit_data: Dictionary) -> int:
@@ -1389,7 +1404,8 @@ func _morale_breakdown_lines(unit_data: Dictionary, terrain_label: String, terra
         terrain_row_label = "%s (%s)" % [terrain_word, terrain_label]
     var unrest_value := float(unit_data.get("morale_unrest", 0.0))
     var culture_value := float(unit_data.get("morale_culture", 0.0))
-    # (value, label) in display order: settling, terrain, climate, unrest, culture, fresh water, cohesion.
+    var leadership_value := float(unit_data.get("morale_leadership", 0.0))
+    # (value, label) in display order: settling, terrain, climate, unrest, culture, fresh water, cohesion, leadership.
     var contributions := [
         [float(unit_data.get("morale_settling", 0.0)), MORALE_CONTRIB_LABEL_SETTLING],
         [float(unit_data.get("morale_terrain", 0.0)), terrain_row_label],
@@ -1398,6 +1414,7 @@ func _morale_breakdown_lines(unit_data: Dictionary, terrain_label: String, terra
         [culture_value, _ancestors_near_label(unit_data) if culture_value > 0.0 else _ancestors_far_label(unit_data)],
         [float(unit_data.get("morale_fresh_water", 0.0)), MORALE_CONTRIB_LABEL_FRESH_WATER],
         [float(unit_data.get("morale_cohesion", 0.0)), _cohesion_label(unit_data)],
+        [leadership_value, _leadership_label(unit_data, leadership_value > 0.0)],
     ]
     var epsilon := BandFoodStatus.morale_breakdown_epsilon()
     for entry in contributions:

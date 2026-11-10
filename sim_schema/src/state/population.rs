@@ -1003,7 +1003,7 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub morale_delta: i64,
     /// Dominant negative morale driver this turn: `0 = None, 1 = Terrain, 2 = Cold, 3 = Unrest,
-    /// 4 = Culture, 5 = Cohesion`.
+    /// 4 = Culture, 5 = Cohesion, 6 = Leadership`.
     /// Names *why* morale is falling. Recomputed each turn alongside [`Self::morale_delta`].
     #[serde(default)]
     pub morale_cause: u8,
@@ -1984,6 +1984,10 @@ pub struct PopulationCohortState {
     /// deposit of or holds a nonzero target for. Own bands only. Appended last.
     #[serde(default)]
     pub band_orders: Vec<BandOrderState>,
+    /// The leadership morale contribution (`snapshot.fbs` -> `moraleLeadership`, signed), part of the
+    /// `morale_*` breakdown whose signed sum IS `morale_delta`. Fixed-point raw. Appended last.
+    #[serde(default)]
+    pub morale_leadership: i64,
 }
 
 /// `PopulationCohortState::tribe_leader_kind`: the band is in no tribe.

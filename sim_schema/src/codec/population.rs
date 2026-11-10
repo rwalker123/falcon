@@ -1280,6 +1280,7 @@ fn create_populations<'a>(
                     foodInStoresInReach: cohort.food_in_stores_in_reach,
                     poolingSteadyNet: cohort.pooling_steady_net,
                     bandOrders: Some(band_orders),
+                    moraleLeadership: cohort.morale_leadership,
                 },
             )
         })
@@ -2234,6 +2235,7 @@ fn decode_population(
         cohesion_headcount: cohort.cohesionHeadcount(),
         cohesion_ceiling: cohort.cohesionCeiling(),
         morale_fresh_water: cohort.moraleFreshWater(),
+        morale_leadership: cohort.moraleLeadership(),
         food_into_store: cohort.foodIntoStore(),
         food_from_store: cohort.foodFromStore(),
         food_in_stores_in_reach: cohort.foodInStoresInReach(),

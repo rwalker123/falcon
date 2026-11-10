@@ -16,8 +16,11 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    components::{BandId, PopulationCohort, ResidentBand},
+    components::{
+        BandId, LaborAllocation, LeadershipReading, PopulationCohort, ResidentBand, FODDER, FOOD,
+    },
     culture::{CultureManager, CultureOwner, CultureTraitAxis},
+    food_orders::{OrderReadings, OrderVerdict},
     intensification::RungDef,
     leader_names::LeaderNameCatalogHandle,
     leadership_config::{LeadershipConfig, LeadershipConfigHandle},
@@ -25,9 +28,11 @@ use crate::{
     resources::{
         CommandEventEntry, CommandEventKind, CommandEventLog, SimulationConfig, SimulationTick,
     },
+    scalar::{scalar_from_f32, Scalar},
     settlement_stage_config::{
         resolve_settlement_stage, SettlementStageConfigHandle, SettlementStageInputs,
     },
+    wellbeing_config::{LeadershipMoraleConfig, WellbeingConfigHandle},
 };
 
 /// The axis value below which a band's leader is a chief. A named constant because the cut is the
@@ -260,6 +265,100 @@ pub fn tribe_orders_carried_out_for_member(
     }
 }
 
+/// **What the band's judgement of its leader came to this turn**: the signed morale term and what it
+/// was priced from.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LeaderJudgement {
+    /// The `MoraleContributions::leadership` term.
+    pub term: Scalar,
+    /// The counts the drift and the Telling read.
+    pub reading: LeadershipReading,
+}
+
+/// **THE BAND JUDGES ITS LEADER BY WHAT HE DELIVERS** (`.claude/rules/core_sim/leadership.md`): the
+/// morale term of a band that has a leader. The leader is credited and blamed for the band's overall
+/// results, whoever crews the rows - a player-crewed order counts exactly like a chief-owned one.
+///
+/// - **Every order the band holds** is read through [`crate::food_orders::OrderReadings::figures`]
+///   (the band-orders wire's own figures) and judged: met adds `popularity_per_met_order`, falling
+///   (below target and the take below the draw) subtracts `strain_per_falling_order x patience`,
+///   below target but filling reads `0`. A fodder order with no consumers is not judged.
+/// - **Going short at the meal** subtracts `starvation_strain x hunger_share x patience`, where
+///   `deficit_fraction` is the band's real starvation deficit this turn - never income against
+///   consumption.
+/// - **Patience** scales only the negative parts: `axis_over_span` is the band's
+///   Hierarchical<->Egalitarian value over the culture span (`None` with no culture layer reads
+///   patience 1).
+///
+/// The order readings are one turn old: the labor pass resolves after `simulate_population`, so they
+/// show what the last turn's take and larder were - accepted, and the same lag the fertility
+/// food-flow reading has.
+pub fn judge_leader(
+    config: &LeadershipMoraleConfig,
+    allocation: Option<&LaborAllocation>,
+    cohort: &PopulationCohort,
+    axis_over_span: Option<f32>,
+    deficit_fraction: f32,
+) -> LeaderJudgement {
+    let patience = config.patience(axis_over_span.unwrap_or(NEUTRAL_AXIS));
+    let mut reading = LeadershipReading::default();
+    if let Some(allocation) = allocation {
+        let readings = OrderReadings {
+            food_stock: cohort.stores.get(FOOD).to_f32(),
+            food_need: cohort.last_food_need,
+            fodder_stock: cohort.stores.get(FODDER).to_f32(),
+        };
+        let material_on_hand = |kind: &str| cohort.stores.material_total(kind).to_f32();
+        for (kind, order) in &allocation.orders {
+            let figures = readings.figures(kind, order, allocation, &material_on_hand);
+            match figures.verdict() {
+                Some(OrderVerdict::Met) => reading.met_orders += 1,
+                Some(OrderVerdict::Falling) => reading.falling_orders += 1,
+                Some(OrderVerdict::Rising) | None => {}
+            }
+        }
+    }
+    reading.hungry = deficit_fraction > 0.0;
+    let popularity = reading.met_orders as f32 * config.popularity_per_met_order;
+    let strain = reading.falling_orders as f32 * config.strain_per_falling_order * patience;
+    let hunger = config.starvation_strain * config.hunger_share(deficit_fraction) * patience;
+    LeaderJudgement {
+        term: scalar_from_f32(popularity - strain - hunger),
+        reading,
+    }
+}
+
+/// The axis reading of a band with no culture layer: neutral, so patience is `1`.
+const NEUTRAL_AXIS: f32 = 0.0;
+
+/// **DELIVERY DRIFTS THE BAND TOWARD HIERARCHICAL**: each met order moves the band's culture MODIFIER
+/// on the Hierarchical<->Egalitarian axis `drift_per_met_order` toward hierarchical (the modifier,
+/// never the resolved value - the baseline relaxes back to the province, only the modifier persists).
+/// Failing orders do not drift the band the other way, and the leader's kind stays what it was at
+/// emergence. Reads `last_leadership`, which `simulate_population` parked this turn; called at the
+/// foot of [`advance_leadership`], the one leadership system that already holds the culture manager.
+fn apply_delivery_drift(
+    per_met_order: f32,
+    culture: &mut CultureManager,
+    bands: &Query<LeadershipBandItems, With<ResidentBand>>,
+) {
+    if per_met_order <= 0.0 {
+        return;
+    }
+    let mut delivering: Vec<_> = bands
+        .iter()
+        .filter(|(_, cohort, _, _, _)| cohort.last_leadership.met_orders > 0)
+        .map(|(band, cohort, _, _, _)| (*band, cohort.last_leadership.met_orders))
+        .collect();
+    delivering.sort_by_key(|(band, _)| *band);
+    for (band, met) in delivering {
+        culture.drift_band_toward_hierarchical(
+            CultureOwner::from_band(band),
+            scalar_from_f32(per_met_order * met as f32),
+        );
+    }
+}
+
 /// What the leadership pass reads of a resident band: its identity, cohort, leadership, name and
 /// allocation (the last two only to tell a chief's takeover).
 type LeadershipBandItems = (
@@ -287,7 +386,8 @@ pub fn advance_leadership(
     names: Res<LeaderNameCatalogHandle>,
     sim_config: Res<SimulationConfig>,
     stage_config: Res<SettlementStageConfigHandle>,
-    culture: Res<CultureManager>,
+    mut culture: ResMut<CultureManager>,
+    wellbeing: Res<WellbeingConfigHandle>,
     follow_steps: Option<Res<HerdFollowSteps>>,
     mut event_log: ResMut<CommandEventLog>,
     mut bands: Query<LeadershipBandItems, With<ResidentBand>>,
@@ -325,6 +425,11 @@ pub fn advance_leadership(
         }
     }
     drop(open);
+    apply_delivery_drift(
+        wellbeing.get().leadership.drift_per_met_order,
+        &mut culture,
+        &bands,
+    );
     announce_chief_takeover(tick.0, &mut event_log, &mut bands);
 }
 

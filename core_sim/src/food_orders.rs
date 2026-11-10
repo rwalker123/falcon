@@ -42,7 +42,7 @@
 use bevy::math::UVec2;
 
 use crate::components::{
-    BuildSource, KeepShare, LaborAllocation, LaborTarget, SourcePriority, TakeSelection,
+    BandOrder, BuildSource, KeepShare, LaborAllocation, LaborTarget, SourcePriority, TakeSelection,
     DEFAULT_ESCAPEMENT_FLOOR,
 };
 use crate::fauna::Herd;
@@ -105,6 +105,76 @@ impl OrderReadings {
 }
 
 const NOTHING: f32 = 0.0;
+
+/// **ONE ORDER'S FIGURES** - the four numbers the band-orders wire publishes for an order
+/// (`BandOrderState`'s `on_hand`, `target`, `take`, `draw`) and whether the order has anyone to feed.
+/// [`OrderReadings::figures`] is the ONE place they are read, so the wire and the leadership morale
+/// term (`simulate_population`) judge an order on the same figures.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OrderFigures {
+    /// What the band holds of the kind: turns of cover for food and fodder, units for a material.
+    pub on_hand: f32,
+    /// The stock the order wants kept, in the same unit as `on_hand`.
+    pub target: f32,
+    /// What the order's rows brought in last turn, in the order's per-turn units.
+    pub take: f32,
+    /// What the band draws of the kind each turn.
+    pub draw: f32,
+    /// Whether anything draws on the kind: always for food and materials, and for fodder only while
+    /// the band pens a herd that eats hay.
+    pub has_consumers: bool,
+}
+
+/// How a band's order stands: the verdict its people judge the leader on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderVerdict {
+    /// The stock is at or above the target.
+    Met,
+    /// Below the target and what comes in is below what is drawn: the stock is running down.
+    Falling,
+    /// Below the target but filling.
+    Rising,
+}
+
+impl OrderFigures {
+    /// The order's standing, `None` for an order with no consumers (it is not being judged).
+    pub fn verdict(&self) -> Option<OrderVerdict> {
+        if !self.has_consumers {
+            return None;
+        }
+        Some(if self.on_hand >= self.target {
+            OrderVerdict::Met
+        } else if self.take < self.draw {
+            OrderVerdict::Falling
+        } else {
+            OrderVerdict::Rising
+        })
+    }
+}
+
+impl OrderReadings {
+    /// The figures of the order `order` for `kind`. `material_on_hand` is the band's store total of a
+    /// material kind, in units.
+    pub fn figures(
+        &self,
+        kind: &str,
+        order: &BandOrder,
+        allocation: &LaborAllocation,
+        material_on_hand: &dyn Fn(&str) -> f32,
+    ) -> OrderFigures {
+        OrderFigures {
+            on_hand: if is_row_kind(kind) {
+                self.turns(kind, allocation)
+            } else {
+                material_on_hand(kind)
+            },
+            target: order.target as f32,
+            take: allocation.order_take(kind),
+            draw: self.draw(kind, allocation),
+            has_consumers: kind != FODDER_KIND || allocation.last_fodder_need > NOTHING,
+        }
+    }
+}
 
 /// A listed source takes at least one head, however small its share.
 const MIN_HEADS_PER_SOURCE: u32 = 1;

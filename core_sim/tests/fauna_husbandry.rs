@@ -1111,6 +1111,7 @@ fn spawn_crew_of(
                 last_belief_relay_hops: 0,
                 predators_kept_off: 0,
                 last_cohesion: Default::default(),
+                last_leadership: Default::default(),
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),
@@ -5360,6 +5361,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
                 last_belief_relay_hops: 0,
                 predators_kept_off: 0,
                 last_cohesion: Default::default(),
+                last_leadership: Default::default(),
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),

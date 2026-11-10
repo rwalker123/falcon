@@ -1469,6 +1469,56 @@ func _fresh_water_states() -> void:
 	h._assert_hud("a band with zero fresh water term draws no fresh water row",
 		_kit_breakdown_line(_popover_text(), FRESH_WATER_LABEL) == "")
 	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	await _leadership_states()
+
+## ---- THE LEADERSHIP MORALE TERM (#710) -- `morale_leadership`, signed: a leader whose orders are met
+## earns trust, one whose orders fall short (or whose people go hungry) loses it. Zero for a leaderless band.
+const LEADERSHIP_GAIN := 0.008
+const LEADERSHIP_LOSS := -0.012
+const LEADERSHIP_LEADER_NAME := "Orrin"
+const LEADER_KIND_CHIEF := 1
+const LEADER_KIND_COUNCIL := 2
+
+func _leadership_states() -> void:
+	var led := _low_morale_band_fixture()
+	led["entity"] = COHESION_BAND_ENTITY
+	led["morale_cohesion"] = 0.0
+	led["morale_leadership"] = LEADERSHIP_LOSS
+	led["morale_cause"] = DetailFormat.MORALE_CAUSE_LEADERSHIP
+	led["leader_name"] = LEADERSHIP_LEADER_NAME
+	led["leader_kind"] = LEADER_KIND_CHIEF
+	h._hud.show_unit_selection(led)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	await h._settle()
+	await h._save("band_morale_leadership")
+	var text := _popover_text()
+	h._assert_hud("a failing chief is named on the leadership row",
+		_kit_breakdown_line(text, "Orrin's orders are falling short").contains(
+			DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH))
+	h._assert_hud("the recovery line says to meet the band's orders",
+		text.contains(DetailFormat.RECOVERY_GUIDANCE_ORDERS))
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	var met := led.duplicate(true)
+	met["morale_leadership"] = LEADERSHIP_GAIN
+	met["leader_kind"] = LEADER_KIND_COUNCIL
+	h._hud.show_unit_selection(met)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	await h._settle()
+	h._assert_hud("a council's met orders read `the elders' orders are being met`",
+		_kit_breakdown_line(_popover_text(), "the elders' orders are being met").contains(
+			DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH))
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	var leaderless := led.duplicate(true)
+	leaderless["morale_leadership"] = 0.0
+	h._hud.show_unit_selection(leaderless)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
+	await h._settle()
+	h._assert_hud("a band with zero leadership term draws no leadership row",
+		_kit_breakdown_line(_popover_text(), "orders are") == "")
+	_click_disclosure(BAND_DISCLOSURE_MORALE_COHESION)
 
 ## ---- THE MORALE WORDING FOLLOWS THE BAND'S TILE RATING (`TileHabitability`), and the recovery line
 ## follows the dominant cause. The sim drains a little morale on almost every terrain, so "harsh" is

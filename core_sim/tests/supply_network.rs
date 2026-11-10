@@ -154,6 +154,7 @@ fn spawn_band_of(app: &mut App, x: u32, y: u32, food: i64, faction: FactionId) -
                 last_belief_relay_hops: 0,
                 predators_kept_off: 0,
                 last_cohesion: Default::default(),
+                last_leadership: Default::default(),
             },
             // Real bands carry `ResidentBand`; the supply network filters `With<ResidentBand>`.
             ResidentBand,

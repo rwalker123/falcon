@@ -319,6 +319,7 @@ fn spawn_the_farming_band(
             last_belief_relay_hops: 0,
             predators_kept_off: 0,
             last_cohesion: Default::default(),
+            last_leadership: Default::default(),
         },
         StartingUnit {
             kind: "BandForager".to_string(),
@@ -764,6 +765,7 @@ fn spawn_the_herding_band(
             last_belief_relay_hops: 0,
             predators_kept_off: 0,
             last_cohesion: Default::default(),
+            last_leadership: Default::default(),
         },
         StartingUnit {
             kind: "BandHunter".to_string(),

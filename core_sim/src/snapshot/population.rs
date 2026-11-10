@@ -1801,7 +1801,8 @@ pub(crate) fn band_order_rows(
         .iter()
         .map(|(kind, order)| {
             let site = allocation.last_keep_site.get(kind).copied();
-            let by_turns = crate::keep_on_hand::is_row_kind(kind);
+            // The five figures the leadership morale term judges the order on, read in one place.
+            let figures = readings.figures(kind, order, allocation, on_hand);
             let (hold_heads, hold_wanted, refill_heads, listed_refill_wanted) =
                 allocation.order_crew(kind);
             // The sources the chief left off for want of hands still count toward the crew the order
@@ -1817,12 +1818,11 @@ pub(crate) fn band_order_rows(
                 hold_wanted,
                 refill_heads,
                 refill_wanted,
-                take: allocation.order_take(kind),
+                take: figures.take,
                 // Food and fodder read in TURNS (`target`, `on_hand`) over a per-turn draw in units;
                 // a material reads in units throughout.
-                draw: readings.draw(kind, allocation),
-                has_consumers: kind != crate::keep_on_hand::FODDER_KIND
-                    || allocation.last_fodder_need > 0.0,
+                draw: figures.draw,
+                has_consumers: figures.has_consumers,
                 target: order.target,
                 priority: match order.priority {
                     SourcePriority::High => sim_schema::state::SourcePriorityState::High,
@@ -1830,11 +1830,7 @@ pub(crate) fn band_order_rows(
                     SourcePriority::Low => sim_schema::state::SourcePriorityState::Low,
                 },
                 chief_owned: order.owner == crate::components::OrderOwner::Chief,
-                on_hand: if by_turns {
-                    readings.turns(kind, allocation)
-                } else {
-                    on_hand(kind)
-                },
+                on_hand: figures.on_hand,
                 has_site: site.is_some(),
                 site_x: site.map_or(0, |tile| tile.x),
                 site_y: site.map_or(0, |tile| tile.y),
@@ -3107,6 +3103,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         cohesion_headcount: cohort.last_cohesion.headcount,
         cohesion_ceiling: cohort.last_cohesion.ceiling,
         morale_fresh_water: cohort.last_morale_contributions.fresh_water.raw(),
+        morale_leadership: cohort.last_morale_contributions.leadership.raw(),
         // **The ancestors' place and the ground near it** — `0,0` and empty with no anchor.
         has_belief_anchor: cohort.belief_anchor.is_some(),
         belief_anchor_x: cohort.belief_anchor.map_or(0, |anchor| anchor.x),
@@ -4029,6 +4026,7 @@ mod tests {
             last_belief_relay_hops: 0,
             predators_kept_off: 0,
             last_cohesion: Default::default(),
+            last_leadership: Default::default(),
         }
     }
 

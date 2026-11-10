@@ -646,6 +646,13 @@ which is a property of the tier and not of the merge.
     anchor tile), so the row wraps to at most one extra line in the popover. A band publishing no
     head-count (`cohesion_headcount` 0) gets the bare `too many to hold together`; a band at zero cohesion
     term draws no row, under the same epsilon.
+    **The leadership row** (`morale_leadership`, signed, #710; `morale_cause` code 6 =
+    `DetailFormat.MORALE_CAUSE_LEADERSHIP`, label `the leader is failing`): positive reads
+    `Orrin's orders are being met`, negative `Orrin's orders are falling short`
+    (`BandDetailLines._leadership_label`; a council reads `the elders' orders…`, a band that publishes no
+    leader name `the leader's`). A leaderless band's term is always 0, so it draws no row under the same
+    epsilon. Recovery line for the cause: `↑ Recover: meet the band's orders: feed the band first`
+    (`RECOVERY_GUIDANCE_ORDERS`). ui_preview: `_leadership_states` (`band_morale_leadership`).
   - **Recovery guidance** (`DetailFormat.recovery_guidance_text(cause, terrain_rating)`): a dim line
     beginning with `RECOVERY_GUIDANCE_GLYPH` (`↑`), appended under the breakdown **only when morale is
     concerning**. It names the lever that REMOVES the dominant `morale_cause`, and only it: Cohesion →

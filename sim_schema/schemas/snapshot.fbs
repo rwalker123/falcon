@@ -537,7 +537,7 @@ table PopulationCohortState {
   // This turn's signed morale delta (fixed-point, FIXED_POINT_SCALE = 1e6) — trend arrow source.
   moraleDelta:long = 0;
   // Dominant negative morale driver when falling: 0=None, 1=Terrain, 2=Cold, 3=Unrest, 4=Culture,
-  // 5=Cohesion.
+  // 5=Cohesion, 6=Leadership.
   moraleCause:ubyte = 0;
   // Civilization Wellbeing (docs/plan_civ_wellbeing.md). All fixed-point (FIXED_POINT_SCALE = 1e6)
   // except the two head-counts. Derived per-turn unless noted.
@@ -1675,6 +1675,12 @@ table PopulationCohortState {
   // One row per order the band's chief keeps or the player took back (stone today). Published only
   // for a band with a leader. Own bands only: a foreign (redacted) row carries the default (empty).
   bandOrders:[BandOrderState];
+  // --- THE BAND JUDGES ITS LEADER (appended last, #710) ---
+  // The leadership morale contributor: + popularity per order the leader has met, - strain (x the band's
+  // patience) per falling order and for the people going short at the meal; 0 for a band with no leader.
+  // Signed, fixed-point (FIXED_POINT_SCALE = 1e6), part of the morale breakdown whose signed sum IS
+  // moraleDelta. moraleCause 6 names it. Own bands only: a foreign (redacted) row carries the default.
+  moraleLeadership:long = 0;
 }
 
 // ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH - a row of `PopulationCohortState.bandImprovements`,
