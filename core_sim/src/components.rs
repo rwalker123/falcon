@@ -6528,6 +6528,11 @@ pub struct LaborAllocation {
     /// a whole-kind claim, drained by `food_orders::manage_food_orders` (which lists every forage and
     /// hunt row the band holds under the order its product belongs to). Saved.
     pub adopt_pending: std::collections::BTreeSet<String>,
+    /// **ROWS THE PLAYER HANDED TO THE CHIEF ONE AT A TIME** (`keep_on_hand::claim_row`): a subset of
+    /// `order_rows`' keys. The managing passes never retire such a row; outside the chief's chosen set
+    /// it stays listed under the order at zero hands ("in reserve"). A row the chief listed himself is
+    /// not here and is retired when he drops it. Cleared by `release_row`. Intent: inside equality, saved.
+    pub handed_rows: std::collections::BTreeSet<String>,
     /// **EACH CHIEF ROW'S SHARE OF ITS ORDER**, per `(kind, site)` - see [`KeepShare`]. A row with no
     /// entry is staffed to nobody. Derived by `keep_on_hand::manage_dig_rows` each pass; outside equality.
     pub keep_shares: Vec<(String, KeepShare)>,
@@ -6720,6 +6725,7 @@ impl PartialEq for LaborAllocation {
         self.assignments == other.assignments
             && self.orders == other.orders
             && self.order_rows == other.order_rows
+            && self.handed_rows == other.handed_rows
             && self.upkeep_fund_mode == other.upkeep_fund_mode
             && self.builds == other.builds
     }

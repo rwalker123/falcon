@@ -499,11 +499,18 @@ pub fn manage_food_orders(
             };
             let in_set = set.iter().any(|candidate| candidate.key == key);
             let improvement = row_is_improvement(sources, &target);
-            if !in_set && !improvement && !source_pinned(allocation, &target) {
+            if !in_set
+                && !improvement
+                && !allocation.handed_rows.contains(&key)
+                && !source_pinned(allocation, &target)
+            {
                 allocation.drop_source_row(&target);
                 allocation.order_rows.remove(&key);
             }
         }
+        allocation
+            .handed_rows
+            .retain(|key| allocation.order_rows.contains_key(key));
         // A row for each set site that lacks one.
         for candidate in &set {
             let held = allocation

@@ -877,3 +877,62 @@ fn a_want_past_what_the_land_gives_publishes_land_capped_at_the_pool() {
     );
     assert!(reach.want > gives, "the want is past what the land gives");
 }
+
+/// **A ROW THE PLAYER HANDS TO THE CHIEF IS NEVER DELETED BY HIS MANAGING PASS** (#904): a hunt row
+/// whose herd is no candidate (the apron is shrunk to nothing, so every herd off the camp tile is
+/// past it) stays listed under the order for several passes, then a release returns it.
+#[test]
+fn a_hunt_row_handed_over_that_is_no_candidate_stays_listed_in_reserve() {
+    let (mut app, band) = world();
+    set_target(&mut app, band, FOOD, 1000);
+    set_larder(&mut app, band, NEED);
+    let (key, ..) = chief_rows(&app, band, FOOD)
+        .into_iter()
+        .find(|row| row.0.starts_with("h:"))
+        .expect("**LIVENESS**: the chief hunts");
+    {
+        let mut allocation = app.world.get_mut::<LaborAllocation>(band).unwrap();
+        release_row(&mut allocation, &key);
+        assert!(!allocation.handed_rows.contains(&key));
+    }
+    {
+        let mut handle = app.world.resource_mut::<LaborConfigHandle>();
+        let mut config = (*handle.0).clone();
+        config.band_work_range = 0;
+        handle.0 = std::sync::Arc::new(config);
+    }
+    {
+        let mut allocation = app.world.get_mut::<LaborAllocation>(band).unwrap();
+        core_sim::keep_on_hand::claim_row(&mut allocation, &key, FOOD);
+    }
+    for _ in 0..3 {
+        core_sim::staffing::restaff_band(&mut app.world, band);
+        let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+        assert!(
+            allocation
+                .assignments
+                .iter()
+                .any(|row| source_key(&row.target).as_deref() == Some(key.as_str())),
+            "the handed row survives the chief's pass"
+        );
+        assert_eq!(
+            allocation.order_rows.get(&key).map(String::as_str),
+            Some(FOOD),
+            "and stays listed under the order"
+        );
+        assert!(allocation.handed_rows.contains(&key));
+    }
+    let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+    let row = allocation
+        .assignments
+        .iter()
+        .find(|row| source_key(&row.target).as_deref() == Some(key.as_str()))
+        .unwrap();
+    assert_eq!(row.staffing.total(), 0, "in reserve: nobody is sent");
+    {
+        let mut allocation = app.world.get_mut::<LaborAllocation>(band).unwrap();
+        release_row(&mut allocation, &key);
+        assert!(!allocation.handed_rows.contains(&key));
+        assert!(!allocation.order_rows.contains_key(&key));
+    }
+}

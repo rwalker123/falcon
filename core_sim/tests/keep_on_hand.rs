@@ -1272,6 +1272,51 @@ fn releasing_one_stand_leaves_the_order_the_chiefs_and_claiming_it_back_clears_t
     assert_eq!(wood_max(&app, band, listed[0]), None, "the Max is cleared");
 }
 
+/// **A STAND THE PLAYER HANDS OVER THAT RANKS BELOW THE CHIEF'S SET IS NEVER DELETED** (#904): with a
+/// want one stand covers, the handed stand stays listed under the order at zero hands for several
+/// passes, and a release returns it to the player.
+#[test]
+fn a_stand_handed_over_below_the_chiefs_set_stays_listed_in_reserve() {
+    use core_sim::keep_on_hand::{claim_row, dig_key, release_row};
+    let (mut app, band, stands) = timber_world();
+    let each = one_stands_cap(&mut app, band);
+    keep_wood(&mut app, band, (each * 0.5).ceil() as u32);
+    assert_eq!(
+        listed_wood(&app, band).len(),
+        1,
+        "**LIVENESS**: the want is covered by one stand, so the set is only the best"
+    );
+    let handed = *stands.last().unwrap();
+    assert!(!listed_wood(&app, band).contains(&handed));
+    hand_wood(&mut app, band, handed, 2);
+    let key = dig_key(WOOD, handed.x, handed.y);
+    claim_row(
+        &mut app.world.get_mut::<LaborAllocation>(band).unwrap(),
+        &key,
+        WOOD,
+    );
+    for _ in 0..4 {
+        core_sim::staffing::restaff_band(&mut app.world, band);
+        assert!(
+            listed_wood(&app, band).contains(&handed),
+            "the handed stand survives and stays listed"
+        );
+        let crew = wood_rows(&app, band)
+            .into_iter()
+            .find(|row| row.0 == handed)
+            .expect("the handed row exists")
+            .2;
+        assert_eq!(crew, 0, "in reserve at zero hands");
+    }
+    release_row(
+        &mut app.world.get_mut::<LaborAllocation>(band).unwrap(),
+        &key,
+    );
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    assert!(!listed_wood(&app, band).contains(&handed));
+    assert!(wood_max(&app, band, handed).is_some_and(|max| max >= 1));
+}
+
 /// **A LISTED STAND REFUSES A HAND COMMAND; A PLAYER STAND TAKES ONE** (the keeper sentence is the
 /// refusal on the listed row only).
 #[test]

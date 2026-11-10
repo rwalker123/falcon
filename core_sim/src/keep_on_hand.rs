@@ -235,6 +235,7 @@ pub fn release_order(allocation: &mut LaborAllocation, kind: &str) {
 /// [`LaborAllocation::order_rows`], its Max is the crew it was staffed with (at least one), and its
 /// floor and selection stay. A no-op for a row the chief does not list.
 pub fn release_row(allocation: &mut LaborAllocation, key: &str) {
+    allocation.handed_rows.remove(key);
     if allocation.order_rows.remove(key).is_none() {
         return;
     }
@@ -256,6 +257,7 @@ pub fn claim_row(allocation: &mut LaborAllocation, key: &str, kind: &str) {
         allocation
             .order_rows
             .insert(key.to_string(), kind.to_string());
+        allocation.handed_rows.insert(key.to_string());
     }
 }
 
@@ -538,6 +540,9 @@ pub fn manage_dig_rows(
         for key in stale {
             allocation.order_rows.remove(&key);
         }
+        allocation
+            .handed_rows
+            .retain(|key| allocation.order_rows.contains_key(key));
         let is_listed = |allocation: &LaborAllocation, target: &LaborTarget| {
             allocation.row_order(target) == Some(material.as_str())
         };
@@ -656,7 +661,9 @@ pub fn manage_dig_rows(
         for (tile, target) in listed_rows {
             if set.iter().any(|site| site.tile == tile) && !held_sites.contains(&tile) {
                 held_sites.push(tile);
-            } else if !row_is_pinned(allocation, &target) {
+            } else if !row_is_pinned(allocation, &target)
+                && !source_key(&target).is_some_and(|key| allocation.handed_rows.contains(&key))
+            {
                 if let Some(key) = source_key(&target) {
                     allocation.order_rows.remove(&key);
                 }

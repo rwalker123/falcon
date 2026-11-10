@@ -304,7 +304,11 @@ order).
   <kind> row there for the chief to hand over / take back."*) when the order is not the chief's, the band
   has no row at that address, or the row is already on the asked side. A herd id is no stand of a
   material. `set_order` on a kind with no order starts it as the chief's and adopts the existing rows,
-  as arrival does.
+  as arrival does. **A row the player hands over one at a time is never retired by the chief's pass**
+  (`LaborAllocation::handed_rows`, set by `claim_row`, cleared by `release_row`, saved, inside equality):
+  outside his chosen set (a stand ranked below it, a source past `band_work_range` or assigned to the other
+  order) it stays listed at zero hands, in reserve, and a row he listed himself is still retired when he
+  drops it.
 - **Wire for the client**: a player stand under a chief-owned material reads `orderKind` "" and
   `chiefOwned` false, a listed stand `orderKind` = the material and `chiefOwned` true; the order's own
   `BandOrderState` is unchanged.
