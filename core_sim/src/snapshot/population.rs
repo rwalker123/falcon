@@ -365,7 +365,7 @@ fn with_hunt_curve<R>(
         need_idx,
         idle: gear.idle,
         is_local: gear.is_local,
-        bench: gear.bench,
+        bench: gear.bench.clone(),
         claims: gear.claims,
     });
     Some(read(&crate::fauna::HuntCrewCurveInputs {
@@ -2427,7 +2427,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     need_idx,
                     idle: idle_workers,
                     is_local: &donor_is_local,
-                    bench: donor_bench,
+                    bench: donor_bench.clone(),
                     claims: &claims.claims,
                 }
                 .plan_at(crew, &hunt_kit, kit_levers.config, &kit)
@@ -2447,7 +2447,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             a.assignments[need_idx].muster_crew,
             idle_workers,
             &donor_is_local,
-            donor_bench,
+            donor_bench.clone(),
             &claim_sources,
             &kit,
             kit_levers.config,
@@ -2490,7 +2490,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     // **A NEED ROW'S POOL IS THE MUSTERABLE ONE** — it holds no hands of its own and
                     // its crew is made of idle hands plus what its donors lend.
                     let crew_pool = if assignment.is_need_row() {
-                        a.musterable_pool(idle_workers, i, &donor_is_local, donor_bench)
+                        a.musterable_pool(idle_workers, i, &donor_is_local, donor_bench.as_ref())
                     } else {
                         assignment.workers.saturating_add(idle_workers)
                     };
@@ -2501,7 +2501,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         claims: &claims.claims,
                         idle: idle_workers,
                         is_local: &donor_is_local,
-                        bench: donor_bench,
+                        bench: donor_bench.clone(),
                     };
                     let hunt_useful_workers = assigned_hunt_useful_crew(
                         &assignment.target,
@@ -2868,7 +2868,18 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // structures four times. See `snapshot::crafting`: the refusal is turned into words *here*, not
     // on the client.
     // The bench's share of next turn's muster: the hands its quoted rate must leave out.
-    let bench_lent = muster_plan.as_ref().map_or(0, |plan| plan.from_bench);
+    let bench_lent_orders: Vec<u32> = {
+        let mut lent = vec![0; bench.map_or(0, |bench| bench.orders.len())];
+        for (order, hands) in muster_plan
+            .as_ref()
+            .map_or(&[][..], |plan| plan.from_bench_orders.as_slice())
+        {
+            if let Some(slot) = lent.get_mut(*order) {
+                *slot = *hands;
+            }
+        }
+        lent
+    };
     let crate::snapshot::crafting::BandCraftState {
         material_batches,
         bench: mut bench_state,
@@ -2879,13 +2890,16 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     } = crate::snapshot::crafting::band_craft_state(
         &cohort.stores,
         bench,
-        bench_lent,
+        &bench_lent_orders,
         &kit,
         craft_inputs,
     );
     // **THE HANDS THE BENCH LENDS TO NEXT TURN'S HUNT** - the bench's share of the one muster plan
     // above (the same `muster_donors` call that fills each donor row's `lentToHunt`).
-    bench_state.lent_to_hunt = bench_lent;
+    for (order, hands) in bench_state.orders.iter_mut().zip(&bench_lent_orders) {
+        order.lent_to_hunt = *hands;
+    }
+    bench_state.lent_to_hunt = bench_lent_orders.iter().sum();
     // **WHAT TO MAKE NEXT** (`docs/plan_crafting_and_materials.md` §7 "Suggestions") — scored off the
     // same settled lines the wire publishes: the pools' and site crews' off the allocation, the take
     // rows' off `row_gear`, which is what each row's `kitToe` is copied from. **A detached party
@@ -2897,7 +2911,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             alloc,
             idle_workers,
             &donor_is_local,
-            donor_bench,
+            donor_bench.clone(),
             &claim_sources,
             &kit,
             kit_levers.config,

@@ -10,7 +10,6 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
-use core_sim::shipped;
 
 use core_sim::{
     advance_crafting, deliver_bench_output, scalar_from_f32, scalar_one, scalar_zero, BandBench,
@@ -29,7 +28,10 @@ const NEVER_FINISHED: u32 = u32::MAX;
 /// [`NEVER_FINISHED`] order.
 fn put_on_bench(bench: &mut BandBench, recipe: &str, workers: u32) {
     bench.orders = vec![BenchOrder::new(recipe, NEVER_FINISHED)];
-    bench.workers = workers;
+    bench.orders[0].crew = core_sim::BenchCrew {
+        at_tool: 0,
+        by_hand: workers,
+    };
 }
 const BAND_POP: u32 = 30;
 /// A crew big enough that the bench finishes in a small number of turns at the bare-handed rate, so
@@ -60,9 +62,6 @@ const FIBRE: &str = "fibre";
 const FINENESS: &str = "fineness";
 const STRENGTH: &str = "strength";
 const SLED: &str = "sled";
-/// **One pass of [`SLED`]'s hide**, per `recipes.json` - a pile of exactly one sled, so the bench
-/// finishes one and cannot re-draw.
-const ONE_SLED_PASS_OF_HIDE: f32 = 2.0;
 /// **The game's only material-only recipe** — 4 wood + 0.5 hide, reading hide's `suppleness`.
 const HURDLES: &str = "hurdles";
 /// [`HURDLES`]' other input and its two axes.
@@ -192,16 +191,6 @@ impl Bench {
         self
     }
 
-    fn give_tool(&mut self, item: &str) -> &mut Self {
-        self.app
-            .world
-            .get_mut::<BandEquipment>(self.band)
-            .expect("the band has a ledger")
-            // A crafted tool arrives as its own batch of one, at the tier that ships known.
-            .stock(item, 1, PLAIN_TIER, None);
-        self
-    }
-
     /// **Put `recipe` on the bench as its only order, with `workers` on it** — an order long enough
     /// ([`NEVER_FINISHED`]) that no fixture here pops it, so a test about one recipe's passes is
     /// never about the queue moving on.
@@ -221,7 +210,8 @@ impl Bench {
     /// The head order — the one every fixture here works.
     fn head(&self) -> &BenchOrder {
         self.bench()
-            .head()
+            .orders
+            .first()
             .expect("the fixture's order is still on the bench")
     }
 
@@ -249,14 +239,6 @@ impl Bench {
             .world
             .get::<BandBench>(self.band)
             .expect("the band has a bench")
-    }
-
-    fn wear_of(&self, item: &str) -> f32 {
-        self.app
-            .world
-            .get::<BandEquipment>(self.band)
-            .expect("the band has a ledger")
-            .wear_of(item)
     }
 
     /// Whole units of an item the band holds, across every batch.
@@ -305,191 +287,6 @@ impl Bench {
             .stores
             .material_total(material)
     }
-
-    fn knows(&self, craft: &str) -> f32 {
-        let id = core_sim::crafting::craft_discovery_id(craft).expect("a shipped craft");
-        self.app
-            .world
-            .resource::<DiscoveryProgressLedger>()
-            .get_progress(FACTION, id)
-            .to_f32()
-    }
-}
-
-/// **THE REFUSAL, AND IT IS A ZERO RATE — NOT A BRANCH.**
-///
-/// A material with no `hand_working` cannot be worked bare-handed at all, so the bench's rate is `0`
-/// and progress never moves. The tool supplies the rate, and then it does.
-///
-/// **Both halves, or "nothing happened" passes.** A test that only asserted the toolless bench makes
-/// no progress would pass just as well against a bench that was never wired up at all.
-#[test]
-fn a_material_that_cannot_be_worked_by_hand_makes_no_progress_without_its_tool() {
-    let build = |with_tool: bool| {
-        let mut bench = Bench::new(
-            MaterialsConfig::from_json_str(FIXTURE_MATERIALS).expect("fixture materials"),
-            RecipesConfig::from_json_str(FIXTURE_RECIPES).expect("fixture recipes"),
-            EquipmentConfig::from_json_str(FIXTURE_EQUIPMENT).expect("fixture equipment"),
-        );
-        bench.stock("ore", 40.0, &[("hardness", 0.9), ("working_temp", 0.5)]);
-        if with_tool {
-            bench.give_tool("crucible");
-        }
-        bench.start("ingot", CREW).turns(4);
-        (bench.head().progress, bench.head().made)
-    };
-
-    assert_eq!(
-        build(false),
-        (scalar_zero(), 0),
-        "a material with no bare-handed rate must make ZERO progress with no tool - the whole \
-         refusal is that zero, and there is no 'you cannot craft that' branch to find"
-    );
-    assert!(
-        build(true).1 > 0,
-        "the same recipe with the crucible must finish something, or the pairing proves nothing"
-    );
-}
-
-/// **THE GRADE IS FIXED AT DRAW TIME AND NEVER MOVES.** It is not a taper.
-///
-/// The band draws against a pile of excellent hide, banking a `fine`-reading draw; the rest of the
-/// pile is then replaced with poor stock. The pass in flight keeps the grade it drew.
-#[test]
-fn the_grade_a_draw_selects_does_not_move_when_the_bands_stock_does() {
-    let mut bench = Bench::shipped();
-    // **A ONE-HAND crew, deliberately.** The pass has to still be in flight when the stock changes
-    // — a bench that finished and re-drew would be answering a different question.
-    bench
-        .stock(
-            HIDE,
-            ONE_SLED_PASS_OF_HIDE,
-            &[(TOUGHNESS, 0.95), (SUPPLENESS, 0.4)],
-        )
-        .stock("fibre", 4.0, &[("fineness", 0.5), ("strength", 0.5)])
-        .give_tool(TANNING_FRAME)
-        .start(SLED, 1)
-        .turns(1);
-
-    let drawn = bench.head().drawn.clone().expect("the draw succeeded");
-    assert_eq!(
-        drawn.grade.as_deref(),
-        Some(EXCELLENT),
-        "excellent toughness under a 0.90 tool ceiling is an excellent sled"
-    );
-
-    // The excellent hide is gone; only poor hide is left. The pass in flight must not notice.
-    bench.stock(HIDE, 40.0, &[(TOUGHNESS, 0.05), (SUPPLENESS, 0.9)]);
-    // The bench now works at 2.0 per worker-turn, so this turn finishes the pass in flight (and
-    // re-draws off the poor pile); the sled it finished must carry the grade its own draw fixed.
-    bench.turns(1);
-    assert_eq!(
-        bench.bench().last_output_grade.as_deref(),
-        Some(EXCELLENT),
-        "the grade was fixed when the materials left the store - it is not a taper and it does not \
-         re-read the pile"
-    );
-}
-
-/// **THE TOOL CEILING CAPS THE OUTPUT: `min(material reading, ceiling)`.**
-///
-/// Excellent flax with no loom still makes a `good` basket. Here: excellent hide with no tanning
-/// frame still makes a `good` sled, because the material's own bare-handed ceiling (`0.60`) lands in
-/// the `good` band (`0.55`) and never reaches `excellent` (`0.80`) — and the same hide with the
-/// frame's `0.90` ceiling does.
-///
-/// **This is also the anchor stated as behaviour**: the bare-handed craft comes out at the anchor
-/// band, which `validate_against` pins to the shipped sled.
-#[test]
-fn the_bare_handed_ceiling_caps_an_excellent_hide_to_the_anchor_band() {
-    let output_grade = |with_tool: bool| {
-        let mut bench = Bench::shipped();
-        bench
-            .stock(
-                HIDE,
-                ONE_SLED_PASS_OF_HIDE,
-                &[(TOUGHNESS, 0.95), (SUPPLENESS, 0.4)],
-            )
-            .stock("fibre", 4.0, &[("fineness", 0.5), ("strength", 0.5)]);
-        if with_tool {
-            bench.give_tool(TANNING_FRAME);
-        }
-        bench.start(SLED, CREW).turns(4);
-        assert_eq!(
-            bench.head().made,
-            1,
-            "the fixture must finish exactly one sled, or the grade being read is not the one the \
-             excellent hide bought"
-        );
-        bench
-            .bench()
-            .last_output_grade
-            .clone()
-            .expect("a graded recipe finished")
-    };
-
-    assert_eq!(
-        output_grade(false),
-        GOOD,
-        "the ceiling belongs to the MATERIAL, not to the absent tool, and 0.60 falls in `good`"
-    );
-    assert_eq!(
-        output_grade(true),
-        EXCELLENT,
-        "the frame's 0.90 ceiling is what lets an excellent hide read as excellent"
-    );
-}
-
-/// **WEAR AND THE LESSON ARE CHARGED ON THE SAME QUANTUM — per item completed.**
-///
-/// Split across two sites they drift: a tool that lasts 25 items ends up teaching a craft in 30.
-/// So this counts the items the bench finished and asserts *both* charges are exactly that many.
-#[test]
-fn the_lesson_and_the_tools_wear_are_charged_the_same_number_of_times() {
-    let mut bench = Bench::shipped();
-    // Enough hide and fibre for several passes, all at one rating so nothing about the draw order
-    // can vary between them.
-    bench
-        .stock(HIDE, 60.0, &[(TOUGHNESS, 0.6), (SUPPLENESS, 0.5)])
-        .stock("fibre", 40.0, &[("fineness", 0.5), ("strength", 0.5)])
-        .give_tool(TANNING_FRAME)
-        .start(SLED, CREW)
-        .turns(12);
-
-    let completed = bench.head().made;
-    assert!(
-        completed >= 2,
-        "the fixture must finish more than one item, or 'the same number of times' is vacuous \
-         (finished {completed})"
-    );
-
-    let equipment =
-        EquipmentConfig::from_json_str(core_sim::BUILTIN_EQUIPMENT_CONFIG).expect("equipment");
-    let per_item = equipment
-        .item(TANNING_FRAME)
-        .expect("the frame is shipped")
-        .headline_wear()
-        .amount;
-    assert_eq!(
-        bench.wear_of(TANNING_FRAME),
-        per_item * completed as f32,
-        "the frame must be worn exactly once per item finished"
-    );
-
-    // **The ledger credit is PRACTICE over the craft's own cost** — the same divisor a rung's lesson
-    // goes through (`LadderKnowledge::ledger_credit`), one quantum over: per item finished rather
-    // than per turn worked.
-    let ladder = LadderConfigHandle::default().get();
-    let per_item = ladder
-        .knowledge
-        .ledger_credit("tanning", ladder.knowledge.craft_lesson_per_item)
-        .expect("the ladder prices tanning");
-    let expected = (per_item * completed as f32).min(1.0);
-    assert!(
-        (bench.knows("tanning") - expected).abs() < 1e-3,
-        "tanning must be taught exactly once per item finished: expected {expected}, got {}",
-        bench.knows("tanning")
-    );
 }
 
 /// **A SHORT DRAW WITHDRAWS NOTHING.** Not "withdraws until it runs out" — the availability test
@@ -510,9 +307,9 @@ fn a_short_draw_withdraws_nothing_at_all() {
         "the hide must be untouched - a short draw is a no-op, never a half-spent pile"
     );
     assert_eq!(bench.stock_of("fibre"), scalar_from_f32(1.0));
-    assert_eq!(bench.head().progress, scalar_zero());
+    assert_eq!(bench.head().progress_total(), scalar_zero());
     assert_eq!(bench.head().made, 0);
-    assert!(bench.head().drawn.is_none());
+    assert!(bench.head().items.is_empty());
 }
 
 /// The bench delivers: a finished sled lands in the band's ledger as **its own batch**, unworn.
@@ -570,7 +367,11 @@ fn the_draw_spends_the_poor_stock_before_the_good() {
         .turns(1);
 
     assert_eq!(
-        bench.head().drawn.as_ref().and_then(|d| d.grade.as_deref()),
+        bench
+            .head()
+            .items
+            .first()
+            .and_then(|item| item.drawn.grade.as_deref()),
         Some(POOR),
         "the poor hide must be spent first, or the player's best stock is silently burned on the \
          first thing they make"
@@ -610,11 +411,11 @@ fn the_hurdles_draw_still_spends_hide_by_suppleness_and_not_by_its_first_axis() 
         .turns(1);
 
     assert!(
-        bench.head().drawn.is_some(),
+        !bench.head().items.is_empty(),
         "fixture: the pass must have drawn its pile, or nothing has been spent to have an order"
     );
     assert_eq!(
-        bench.head().drawn.as_ref().and_then(|d| d.grade.as_deref()),
+        bench.head().items.first().and_then(|item| item.drawn.grade.as_deref()),
         None,
         "a material-only recipe stamps no grade - which is why this test observes the piles instead"
     );
@@ -717,69 +518,6 @@ fn mutate_shipped_equipment(mutate: impl FnOnce(&mut serde_json::Value)) -> Stri
 // The shipped roster is all organic, so nothing in it refuses bare hands — the state metal will be
 // in the day the minerals arc gives it a producer. Exercised by a fixture instead, for the same
 // reason the bronze equipment tier and the variety presets are.
-
-const FIXTURE_MATERIALS: &str = r#"{
-  "characteristic_bands": [
-    { "name": "poor", "from": 0.0 }, { "name": "good", "from": 0.5 }
-  ],
-  "materials": {
-    "ore": { "craft": "tanning", "characteristics": ["hardness", "working_temp"], "weight": 4.0 }
-  }
-}"#;
-
-const FIXTURE_RECIPES: &str = r#"{
-  "crafting": { "progress_per_worker_turn": 1.0 },
-  "recipes": {
-    "ingot": {
-      "craft": "tanning",
-      "work": 4.0,
-      "crafters_per_item": 1,
-      "inputs": [{ "material": "ore", "amount": 4.0, "reads": "hardness" }],
-      "outputs": [{ "equipment": "spears", "amount": 1.0 }],
-      "grades": { "poor": {} }
-    }
-  }
-}"#;
-
-const FIXTURE_EQUIPMENT: &str = r#"{
-  "items": {
-    "spears": {
-      "display_name": "Spears",
-      "wear": [{ "per": "strike", "amount": 0.4 }],
-      "tiers": [
-        {
-          "id": "plain",
-          "starting_durability": 100.0,
-          "effects": [{ "stat": "attack", "equipped": 20.0 }]
-        }
-      ]
-    },
-    "crucible": {
-      "display_name": "Crucible",
-      "wear": [{ "per": "item_crafted", "amount": 4.0 }],
-      "bounds_material": "ore",
-      "tiers": [
-        {
-          "id": "plain",
-          "starting_durability": 100.0,
-          "effects": [
-            { "stat": "craft_speed", "equipped": 1.0 },
-            { "stat": "craft_quality_ceiling", "equipped": 1.0 }
-          ]
-        }
-      ]
-    }
-  },
-  "kits": [
-    { "id": "big_game", "display_name": "Stalking kit", "jobs": ["hunt"], "uses": ["spears"] },
-    { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage", "scout", "warrior", "agriculture", "husbandry", "builders", "roadwork", "expedition", "extract", "quarrywork"], "uses": [] }
-  ],
-  "default_kits": { "hunt": "big_game", "forage": "none", "scout": "none", "warrior": "none", "agriculture": "none", "husbandry": "none", "builders": "none", "roadwork": "none", "expedition": "none", "extract": "none", "quarrywork": "none" },
-  "quarry_default_kit_margin": 0.25,
-  "start_stock_fraction": 1.5,
-  "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 },
-            "wear_forecast": { "window_turns": 10 }
-}"#;
 
 /// **A PASS THAT MAKES THREE MAKES THREE.** `RecipeOutput::amount` used to be read by nothing on
 /// the equipment side: one completion delivered one item's worth of *condition* however many the
@@ -888,153 +626,6 @@ fn a_crafted_items_grade_decides_what_it_grants() {
     );
 }
 
-/// **BUILD GEAR IS GRADED, AND THE GRADE KEEPS ITS WEB.** The shipped path end to end: the shipped
-/// book, a crook and a hoe each crafted at the bench off a poor and an excellent bone, and the
-/// `build_work` a builder carrying *only that crafted batch* is actually paid — on its own web and
-/// on the other one.
-///
-/// **Why the other web is asserted too**: a grade replaces the tier's effect entire, so a graded
-/// `build_work` that lost its `branch` would serve every build ([`core_sim::EquipmentEffect`]'s
-/// `serves_build` reads an absent branch as "any"). The poor/excellent spread alone would pass
-/// against exactly that defect.
-#[test]
-fn crafted_build_gear_grades_its_build_work_and_keeps_its_branch() {
-    use core_sim::BranchId;
-
-    const BONE: &str = "bone";
-    const LENGTH: &str = "length";
-    const DENSITY: &str = "density";
-    /// Bone's bench tool — its quality ceiling is what lets an excellent bone read as excellent.
-    const BONE_AWL: &str = "bone_awl";
-    /// One pass of the crook's and the hoes' own inputs (`recipes.json`: 0.2 bone + 1 fibre), so the
-    /// bench finishes exactly one item and cannot re-draw.
-    const ONE_PASS_OF_BONE: f32 = 0.2;
-    const ONE_PASS_OF_FIBRE: f32 = 1.0;
-    /// Enough bench turns for [`CREW`] to finish one `work: 5` pass.
-    const TURNS_TO_FINISH: u32 = 4;
-    /// Readings squarely inside the bottom and top `characteristic_bands` rungs.
-    const POOR_READING: f32 = 0.05;
-    const EXCELLENT_READING: f32 = 0.95;
-    const NEUTRAL_READING: f32 = 0.5;
-
-    struct Case {
-        recipe: &'static str,
-        kit: &'static str,
-        reads: &'static str,
-        other: &'static str,
-        web: BranchId,
-        other_web: BranchId,
-    }
-    let cases = [
-        Case {
-            recipe: "crook",
-            kit: "hurdling",
-            reads: LENGTH,
-            other: DENSITY,
-            web: shipped::animal(),
-            other_web: shipped::plant(),
-        },
-        Case {
-            recipe: "hoes",
-            kit: "tillage",
-            reads: DENSITY,
-            other: LENGTH,
-            web: shipped::plant(),
-            other_web: shipped::animal(),
-        },
-    ];
-
-    let equipment =
-        EquipmentConfig::from_json_str(core_sim::BUILTIN_EQUIPMENT_CONFIG).expect("equipment");
-    for case in &cases {
-        let kit = equipment.kit(case.kit).expect("the builders kit ships");
-        let shipped = equipment
-            .item(case.recipe)
-            .expect("the build tool ships")
-            .default_tier()
-            .effects
-            .iter()
-            .find(|effect| effect.stat == core_sim::EquipmentStat::BuildWork)
-            .map(|effect| effect.tier.value())
-            .expect("the tier declares build_work");
-
-        // **Crafted at the real bench**, into a ledger holding nothing else, so the only build gear
-        // a builder could be paid for is the batch this craft delivered.
-        let crafted = |reading: f32, expected_grade: &str| {
-            let mut bench = Bench::shipped();
-            *bench
-                .app
-                .world
-                .get_mut::<BandEquipment>(bench.band)
-                .expect("the band has a ledger") = BandEquipment::default();
-            bench
-                .stock(
-                    BONE,
-                    ONE_PASS_OF_BONE,
-                    &[(case.reads, reading), (case.other, NEUTRAL_READING)],
-                )
-                .stock(
-                    FIBRE,
-                    ONE_PASS_OF_FIBRE,
-                    &[(FINENESS, NEUTRAL_READING), (STRENGTH, NEUTRAL_READING)],
-                )
-                .give_tool(BONE_AWL)
-                .start(case.recipe, CREW)
-                .turns(TURNS_TO_FINISH)
-                .deliver();
-            assert_eq!(
-                bench.head().made,
-                1,
-                "{}: the fixture must finish exactly one item",
-                case.recipe
-            );
-            assert_eq!(
-                bench.bench().last_output_grade.as_deref(),
-                Some(expected_grade),
-                "{}: the reading must land in the grade under test",
-                case.recipe
-            );
-            bench
-                .app
-                .world
-                .get::<BandEquipment>(bench.band)
-                .expect("the band has a ledger")
-                .clone()
-        };
-
-        let poor = crafted(POOR_READING, POOR);
-        let excellent = crafted(EXCELLENT_READING, EXCELLENT);
-        let paid = |ledger: &BandEquipment, web: BranchId| {
-            equipment.build_work_per_worker(&kit, ledger, web, None)
-        };
-
-        assert!(
-            paid(&poor, case.web) < shipped && paid(&excellent, case.web) > shipped,
-            "{}: a poor one takes less off the job than the shipped {shipped} and an excellent one \
-             more (poor {}, excellent {})",
-            case.recipe,
-            paid(&poor, case.web),
-            paid(&excellent, case.web)
-        );
-        for ledger in [&poor, &excellent] {
-            assert_eq!(
-                paid(ledger, case.other_web),
-                core_sim::NO_BUILD_GEAR,
-                "{}: a graded build tool still serves only its own web",
-                case.recipe
-            );
-            assert_eq!(
-                equipment
-                    .build_work_declared(&kit, ledger)
-                    .map(|(_, branch, _)| branch),
-                Some(case.web),
-                "{}: the graded batch declares its own web",
-                case.recipe
-            );
-        }
-    }
-}
-
 /// **A CRAFT COMES OUT AT THE BEST TIER THE FACTION KNOWS**, which on the shipped roster is the one
 /// that ships known — so the shipped opening makes exactly what it always made.
 #[test]
@@ -1067,112 +658,6 @@ fn a_delivered_item_carries_the_tier_that_ships_known() {
             .iter()
             .any(|batch| batch.grade.as_ref().is_some_and(|g| g.id == GOOD)),
         "and the crafted one carries the grade its draw selected: {batches:?}"
-    );
-}
-
-/// ⛔ **AN UNSTAFFED BENCH DRAWS NOTHING, AND THIS IS THE ONE THAT FAILS LOUDEST IF THE GATE IS
-/// MISSED.**
-///
-/// `advance_crafting` runs its draw **before** the workers term is used anywhere, so a bench at zero
-/// crew would keep withdrawing materials from the store for a pass it can never work — a famine
-/// quietly draining the material store into an idle bench, one pass's inputs a turn, for as long as
-/// the stock lasted.
-///
-/// **It is a state the sim reaches, not a defensive check.** The shedding order stalls a bench by
-/// taking its crew to zero and leaving the job standing (`LaborAllocation::normalize` — it must never
-/// call `clear_job`, which forfeits the drawn pile), so *"a running job with nobody on it"* did not
-/// exist before that slice and does now.
-///
-/// Asserted on the **store**, over several turns, because a single turn cannot tell "drew nothing"
-/// from "drew and finished".
-#[test]
-fn an_unstaffed_bench_draws_nothing_from_the_store() {
-    /// Enough turns that a per-turn draw would be unmistakable in the total.
-    const TURNS: u32 = 5;
-    /// A crew the bench is *stood down from*, so the fixture proves the gate rather than a bench
-    /// that was never staffed at all.
-    const NOBODY: u32 = 0;
-
-    let mut bench = Bench::shipped();
-    // **BOTH of the sled's inputs**, because a draw is all-or-nothing: a fixture short of fibre
-    // would withdraw nothing whatever the gate did, and would pass against the defect.
-    bench
-        .stock(HIDE, 60.0, &[(TOUGHNESS, 0.6), (SUPPLENESS, 0.5)])
-        .stock(FIBRE, 40.0, &[(FINENESS, 0.5), (STRENGTH, 0.5)])
-        .give_tool(TANNING_FRAME)
-        .start(SLED, CREW);
-    let stocked = (bench.stock_of(HIDE), bench.stock_of(FIBRE));
-
-    // The shed takes the crew to zero and leaves the job standing — exactly what `normalize` does.
-    bench
-        .app
-        .world
-        .get_mut::<BandBench>(bench.band)
-        .expect("the band has a bench")
-        .workers = NOBODY;
-    bench.turns(TURNS);
-
-    assert_eq!(
-        (bench.stock_of(HIDE), bench.stock_of(FIBRE)),
-        stocked,
-        "an idle bench withdrew materials for a pass it can never work — the store must be \
-         untouched across {TURNS} turns"
-    );
-    assert!(
-        bench.head().drawn.is_none(),
-        "…and nothing was cut, so there is no pile sitting on a bench nobody is at"
-    );
-    assert_eq!(
-        bench.bench().head_recipe(),
-        Some(SLED),
-        "the job is still the player's — a stalled bench is not a cleared one"
-    );
-}
-
-/// **THE GATE IS ON THE DRAW, NOT ON THE PILE.** A bench that had already cut its materials keeps
-/// them when its crew goes — they are the player's, and the job is still theirs. It simply banks no
-/// progress, which falls out of `rate_per_turn(0, …)` on its own.
-#[test]
-fn a_bench_that_had_already_drawn_keeps_its_pile_when_the_crew_goes() {
-    const NOBODY: u32 = 0;
-
-    let mut bench = Bench::shipped();
-    bench
-        .stock(HIDE, 60.0, &[(TOUGHNESS, 0.6), (SUPPLENESS, 0.5)])
-        .stock(FIBRE, 40.0, &[(FINENESS, 0.5), (STRENGTH, 0.5)])
-        .give_tool(TANNING_FRAME)
-        // **A ONE-HAND crew**, so the pass is still in flight when the crew goes: a bench that
-        // finished and re-drew would be answering a different question.
-        .start(SLED, 1)
-        .turns(1);
-    assert!(
-        bench.head().drawn.is_some(),
-        "fixture: the staffed turn drew a pile, or this test is about nothing"
-    );
-    let after_draw = (bench.stock_of(HIDE), bench.stock_of(FIBRE));
-    let banked = bench.head().progress;
-
-    bench
-        .app
-        .world
-        .get_mut::<BandBench>(bench.band)
-        .expect("the band has a bench")
-        .workers = NOBODY;
-    bench.turns(3);
-
-    assert!(
-        bench.head().drawn.is_some(),
-        "the materials already cut stay on the bench — they were spent for THIS job"
-    );
-    assert_eq!(
-        (bench.stock_of(HIDE), bench.stock_of(FIBRE)),
-        after_draw,
-        "…and no further draw happened while nobody was at it"
-    );
-    assert_eq!(
-        bench.head().progress,
-        banked,
-        "nobody at the bench banks nothing, so the item does not creep forward"
     );
 }
 

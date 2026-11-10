@@ -2511,7 +2511,7 @@ inspection.
 `pressed.emit()` being unable to see a covered, disabled, zero-size or IGNORE-filtered control. The
 command is asserted on the LINE through `MAIN_SCRIPT.format_bench_priority`, the work board's own
 idiom, for **all three** levels: a commit hard-wired to `normal` satisfies any single-level claim.
-Beside each, what did NOT go out — a mis-wired rung emitting `bench_crew` or `bench_remove` satisfies
+Beside each, what did NOT go out — a mis-wired rung emitting `bench_remove` satisfies
 a bare *something was emitted*.
 
 **The LIT test is the SAME one `band_panel_preview._assert_work_priority_picker_lit` makes** — the
@@ -3697,9 +3697,8 @@ reference bench grew ~26px and that state's ledger, which fits its room with und
 began scrolling. Measured by the run (`FAIL — precondition: the collapsed BOTTOM-dock ledger fits
 inside its room`), not estimated.
 
-**`_crew_button_disabled` skips the queue's own steppers** (`ORDER_DECREMENT_META` /
-`ORDER_INCREMENT_META`): they wear the crew stepper's `−` / `+` glyphs, so a face search would read a
-live COUNT `+` as a live crew `+` and pass the benchable-ceiling claim on the wrong control.
+**The bench-wide crew stepper and its harness helpers are gone** (#873): the order rows' count steppers are
+reached by `ORDER_DECREMENT_META` / `ORDER_INCREMENT_META` valued the order index, never by face.
 
 **THE SHORT-HEAD FOLLOW-UP added one frame and nine claims** — `crafting_queue_short_head`
 (`_short_head_state`, after the queue state): the well follows `BenchState.worked`, the skipped head

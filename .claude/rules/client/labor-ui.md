@@ -4279,7 +4279,7 @@ with `effective_idle` written in terms of it. A declared build is staffed from t
 alone and the working breakdown has no Build part.
 
 **What the miscount cost was every ceiling built on top of it** — the role cards' steppers, the
-pen-extend crew, `benchable_workers` and so the crafting bench's own — each offering a crew the sim
+pen-extend crew and (until #873 retired the bench's player-set crew) the crafting bench's own — each offering a crew the sim
 then refused. The consumers that read the sum are `HudBandLaborState.working_breakdown`,
 `FactionRollup._build_people_block` (the same chart at faction scale, whose `Roles` segment counts the
 keeping roles too, so a faction keeping anything does not lose those hands off a chart that partitions
@@ -8077,8 +8077,7 @@ player-set one. `HudBandLaborState.orderable_hands(band)` = `effective_idle` + �
 rows (`staffed_crews_total`: `STAFFED_KINDS`, a `move_with_herd` hunt row excluded) is the ONE sum behind
 every such ceiling. A band reading "0 idle of 18" with every hand on staffed rows still has 18 orderable.
 
-- **Routed through it:** the bench crafters ceiling (`benchable_workers` = `orderable_hands` plus the bench's
-  own crew, counted once) and the Scout and Warrior role cards
+- **Routed through it:** the Scout and Warrior role cards
   (`BandPanelController._build_workforce_block`), **and the party verbs**: the
   verb gates (`_verb_blocked_reasons`, the bar faces), the compose sheet's party ceiling
   (`_build_compose_sheet`'s `idle` argument, which also feeds the Deny short-handed test and its
@@ -8094,8 +8093,7 @@ every such ceiling. A band reading "0 idle of 18" with every hand on staffed row
 - **No local double count:** staffed rows' `workers` are the wire's; a player-set edit's pending crew is
   already inside `effective_idle`'s subtraction, so raising a stepper lowers `orderable_hands` by exactly
   that and the staffed rows shrink on the next snapshot.
-- Fixtures: `crafting_bench.gd` `_staffed_hands_state` (all hands on two hunt rows: crafters `+` enabled and
-  sends `bench_crew`); `band_panel_preview.gd` all-hands-committed state (idle 0: Scout `+` enabled).
+- Fixtures: `band_panel_preview.gd` all-hands-committed state (idle 0: Scout `+` enabled).
 
 ## THE SCOUT CARD STATES A RANGE, NOT A HEADCOUNT (#875)
 

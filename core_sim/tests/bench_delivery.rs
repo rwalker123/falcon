@@ -30,8 +30,26 @@ trait PutOnBench {
 impl PutOnBench for BandBench {
     fn put_on(&mut self, recipe: &str, workers: u32) {
         self.orders = vec![core_sim::BenchOrder::new(recipe, NEVER_FINISHED)];
-        self.workers = workers;
+        self.orders[0].crew = core_sim::BenchCrew {
+            at_tool: 0,
+            by_hand: workers,
+        };
     }
+}
+
+/// **TURNS UNTIL THE SET IS MADE** - the sim staffs the order now, so how many turns the crew it
+/// deals takes to finish an item is not the fixture's to state: run turns until the bench has parked
+/// the finished set (or counted it), the turn the claims below are about.
+fn until_the_set_is_made(app: &mut App, band: Entity) {
+    const MOST_TURNS: u32 = 40;
+    for _ in 0..MOST_TURNS {
+        app.update();
+        let bench = bench(app, band);
+        if !bench.finished.is_empty() || bench.orders.first().is_none_or(|order| order.made >= 1) {
+            return;
+        }
+    }
+    panic!("the fixture's bench never finished the set");
 }
 
 /// The `route:dirt_road` rung's tool, and the bench recipe that makes it.
@@ -115,13 +133,15 @@ fn a_band_making_its_own_earthmoving_gear() -> (App, Entity) {
 fn a_tool_finished_this_turn_is_stocked_and_issued_on_the_next() {
     let (mut app, band) = a_band_making_its_own_earthmoving_gear();
 
-    app.update();
-    assert_eq!(
-        bench(&app, band)
-            .head()
-            .expect("the fixture's order is on the bench")
-            .made,
-        1,
+    until_the_set_is_made(&mut app, band);
+    // **The sim staffs several items at once now**, so the turn may finish more than one set.
+    let sets = bench(&app, band)
+        .orders
+        .first()
+        .expect("the fixture's order is on the bench")
+        .made;
+    assert!(
+        sets >= 1,
         "fixture: the bench must finish the set on this turn"
     );
     assert_eq!(
@@ -138,12 +158,11 @@ fn a_tool_finished_this_turn_is_stocked_and_issued_on_the_next() {
     app.update();
     assert_eq!(
         held(&app, band),
-        ONE_SET,
-        "the top of the next turn stocks the finished set"
+        sets,
+        "the top of the next turn stocks every finished set"
     );
-    assert_eq!(
-        issued(&app),
-        ONE_SET as f32,
+    assert!(
+        issued(&app) >= ONE_SET as f32,
         "…and that turn's settlement issues it to the road's keepers"
     );
 }
@@ -170,7 +189,11 @@ fn a_job_change_between_turns_still_delivers_the_finished_tool() {
     ];
     for (label, change) in changes {
         let (mut app, band) = a_band_making_its_own_earthmoving_gear();
-        app.update();
+        until_the_set_is_made(&mut app, band);
+        let sets = bench(&app, band)
+            .orders
+            .first()
+            .map_or(0, |order| order.made);
         assert_eq!(
             held(&app, band),
             0,
@@ -186,12 +209,11 @@ fn a_job_change_between_turns_still_delivers_the_finished_tool() {
         app.update();
         assert_eq!(
             held(&app, band),
-            ONE_SET,
+            sets,
             "{label}: the finished set reaches the store all the same"
         );
-        assert_eq!(
-            issued(&app),
-            ONE_SET as f32,
+        assert!(
+            issued(&app) >= ONE_SET as f32,
             "{label}: …and is issued that turn"
         );
     }

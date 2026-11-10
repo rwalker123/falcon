@@ -373,22 +373,17 @@ pub enum CommandPayload {
         /// holds — that would charge the player a rung's work for no change.
         fraction: f32,
     },
-    /// **Add an order — `recipe × count` — to the back of a band's bench queue.** The crew is the
-    /// player's to name — see [`BENCH_CREW_UNSPECIFIED`].
+    /// **Add an order — `recipe × count` — to the back of a band's bench queue.** The sim staffs it.
     ///
     /// *The bench is the assignment* (`docs/plan_crafting_and_materials.md` §7): there is no Crafter
-    /// role and no labor target, because crafting always has a subject and is therefore staffed like
-    /// a worked source rather than like a standing role. **One bench, one queue**: the bench works
-    /// the head, and onto an empty bench this order is the head at once.
+    /// role and no labor target. **Every workable order is worked at once**, each with its own
+    /// priority and a crew the sim deals in the same passes as the work rows (#873).
     BenchEnqueue {
         faction_id: u32,
         band_id: u64,
         recipe_id: String,
         /// Items to make. Every order has a count; a `0` is refused by the sim with a reason.
         count: u32,
-        /// [`BENCH_CREW_UNSPECIFIED`] leaves the crew exactly as it is — which is the shape the
-        /// client always sends, so a staged order starts unstaffed and the player names the number.
-        workers: u32,
     },
     /// **Set one queued order's count.** `order` indexes the bench's queue (`0` = the head).
     BenchOrderCount {
@@ -436,12 +431,6 @@ pub enum CommandPayload {
         band_id: u64,
         kit_order: u32,
     },
-    /// Change the crew on a band's bench, leaving the queue and every order's progress alone.
-    BenchCrew {
-        faction_id: u32,
-        band_id: u64,
-        workers: u32,
-    },
     /// **MARK ONE BAND'S CRAFTING BENCH WITH THE PLAYER'S OWN RANK** — `high` | `normal` | `low`,
     /// the same [`CommandPayload::WorkPriority`] sets on a worked row.
     ///
@@ -452,6 +441,8 @@ pub enum CommandPayload {
     BenchPriority {
         faction_id: u32,
         band_id: u64,
+        /// The queue index of the order ranked (a kit part ranks its whole kit).
+        order: u32,
         /// The level token: `"high"`, `"normal"` or `"low"`.
         level: String,
     },
@@ -1842,20 +1833,6 @@ pub enum SecurityPolicyKind {
 /// connection.
 pub const MAX_PROTO_FRAME: usize = 64 * 1024;
 
-/// **A `bench_enqueue` that names no crew: DO NOT CHANGE THE CREW.**
-///
-/// Not *"the sim decides"* — the sim never decides this. Labor is the scarce currency and dividing
-/// the band is the game's turn-to-turn decision, so how many hands stop hunting to stand at a bench
-/// is the player's call and only theirs. An idle bench therefore stages the order with **nobody**
-/// on it and waits for the stepper; a bench that already has a crew **keeps it standing there**,
-/// because an absent number is not an order to send anyone home.
-///
-/// The value is `0` because `workers` rides a proto3 scalar, which cannot distinguish an absent
-/// field from an explicit zero. No intent is lost by that reading: `bench_crew <n>` is how a player
-/// sets an explicit crew — zero included, which is how a bench is stood down without taking an order
-/// off it.
-pub const BENCH_CREW_UNSPECIFIED: u32 = 0;
-
 /// Error returned when encoding a command envelope fails.
 #[derive(Debug, Error)]
 pub enum CommandEncodeError {
@@ -2291,13 +2268,11 @@ impl CommandEnvelope {
                 band_id,
                 recipe_id,
                 count,
-                workers,
             } => pb::command_envelope::Command::BenchEnqueue(pb::BenchEnqueueCommand {
                 faction_id: *faction_id,
                 band_id: *band_id,
                 recipe_id: recipe_id.clone(),
                 count: *count,
-                workers: *workers,
             }),
             CommandPayload::BenchOrderCount {
                 faction_id,
@@ -2359,22 +2334,15 @@ impl CommandEnvelope {
                 band_id: *band_id,
                 kit_order: *kit_order,
             }),
-            CommandPayload::BenchCrew {
-                faction_id,
-                band_id,
-                workers,
-            } => pb::command_envelope::Command::BenchCrew(pb::BenchCrewCommand {
-                faction_id: *faction_id,
-                band_id: *band_id,
-                workers: *workers,
-            }),
             CommandPayload::BenchPriority {
                 faction_id,
                 band_id,
+                order,
                 level,
             } => pb::command_envelope::Command::BenchPriority(pb::BenchPriorityCommand {
                 faction_id: *faction_id,
                 band_id: *band_id,
+                order: *order,
                 level: level.clone(),
             }),
             CommandPayload::BenchAuto {
@@ -3094,7 +3062,6 @@ impl CommandEnvelope {
                 band_id: cmd.band_id,
                 recipe_id: cmd.recipe_id,
                 count: cmd.count,
-                workers: cmd.workers,
             },
             pb::command_envelope::Command::BenchOrderCount(cmd) => {
                 CommandPayload::BenchOrderCount {
@@ -3133,14 +3100,10 @@ impl CommandEnvelope {
                 band_id: cmd.band_id,
                 kit_order: cmd.kit_order,
             },
-            pb::command_envelope::Command::BenchCrew(cmd) => CommandPayload::BenchCrew {
-                faction_id: cmd.faction_id,
-                band_id: cmd.band_id,
-                workers: cmd.workers,
-            },
             pb::command_envelope::Command::BenchPriority(cmd) => CommandPayload::BenchPriority {
                 faction_id: cmd.faction_id,
                 band_id: cmd.band_id,
+                order: cmd.order,
                 level: cmd.level,
             },
             pb::command_envelope::Command::BenchAuto(cmd) => CommandPayload::BenchAuto {

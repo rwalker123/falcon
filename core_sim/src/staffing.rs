@@ -141,6 +141,12 @@ pub struct StaffRowInput<'a> {
     /// it can take (zero when it cannot progress), its `keepers` and takes are nothing, and a bare
     /// hand always contributes.
     pub is_build: bool,
+    /// **This input is a crafting-bench ORDER** (#873): it joins the passes like a build - dealt with
+    /// its group's builds ahead of the group's sources - but has no hold crew (never pass 1) and
+    /// opens pass 2 with one crafter on every workable order. Its `max` is the order's crew cap, its
+    /// kit is the bench tool (one unit arms one crafter) and a bare hand works only where the
+    /// material has a `hand_working` rate.
+    pub is_bench: bool,
     /// A build whose rung asks for no tool: every builder counts as kitted.
     pub kitless: bool,
     /// The tile the row's or build's hands stand on, when it is tile-bound; its room is shared with
@@ -377,6 +383,7 @@ fn scout_arming_input(plan: &ScoutPlan) -> StaffRowInput<'static> {
         bare_can_work: false,
         distance: NOBODY,
         is_build: false,
+        is_bench: false,
         kitless: false,
         tile: None,
         food_keep_up: false,
@@ -442,7 +449,11 @@ fn staff_passes_scouting(
     // Each priority group split into its builds and its sources: a group deals its builds first.
     let split: Vec<(Vec<usize>, Vec<usize>)> = groups
         .iter()
-        .map(|group| group.iter().partition(|&&i| rows[i].is_build))
+        .map(|group| {
+            group
+                .iter()
+                .partition(|&&i| rows[i].is_build || rows[i].is_bench)
+        })
         .collect();
 
     // ## The scouts come off the top - before every keeper, builder and crew. The scouting range is
@@ -486,7 +497,7 @@ fn staff_passes_scouting(
     // beats a High build, and a Low build still beats the Low hold crews.
     for (builds, sources) in &split {
         if passes == Passes::All {
-            for &i in builds {
+            for &i in builds.iter().filter(|&&i| !rows[i].is_bench) {
                 let row = &rows[i];
                 let kitted = kitted_capacity(row, NOBODY, shelf) >= 1;
                 if ledger.deal_head(
@@ -526,6 +537,23 @@ fn staff_passes_scouting(
                 *needed[i].get_or_insert_with(|| hold_heads(row, kitted).saturating_sub(kept[i]));
             ledger.deal_head(i, kitted + ledger.out[i].bare < hold, HeadKind::Bare)
         });
+    }
+
+    // ## Pass 2 opens with ONE crafter on every workable bench order, at any priority (High to Low,
+    // then queue order), before any group's pass-2 dealing: kitted (holding the tool) when the shelf
+    // can arm one, else bare where a bare hand works. A Low order still gets its first crafter, and
+    // the tool goes to the higher priority because that order is dealt first.
+    if passes == Passes::All {
+        for &i in order.iter().filter(|&&i| rows[i].is_bench) {
+            let row = &rows[i];
+            if kitted_capacity(row, NOBODY, shelf) >= 1 {
+                if ledger.deal_head(i, true, HeadKind::Kitted) {
+                    arm(row, NOBODY, 1, shelf);
+                }
+            } else if row.bare_can_work {
+                ledger.deal_head(i, true, HeadKind::Bare);
+            }
+        }
     }
 
     // ## Pass 2 — kitted heads up to the reach crew, from whatever units and heads remain. A group's
@@ -571,7 +599,9 @@ fn staff_passes_scouting(
     // builds first: a bare-handed builder always contributes.
     for (builds, sources) in &split {
         deal_kitted(rows, builds, &mut ledger, shelf, |_, row, _| cap_of(row));
-        deal_round_robin(builds, |i| ledger.deal_head(i, true, HeadKind::Bare));
+        deal_round_robin(builds, |i| {
+            ledger.deal_head(i, rows[i].bare_can_work, HeadKind::Bare)
+        });
         deal_kitted(rows, sources, &mut ledger, shelf, |i, row, kmax| {
             useful_heads(row, kmax).saturating_sub(kept[i])
         });
@@ -725,6 +755,9 @@ pub struct StaffingWorld<'a> {
     /// **WHAT THE BAND'S STORE HOLDS OF A MATERIAL** - the "on hand" a keep-on-hand target is
     /// judged against (`LocalStore::material_total`: the store only, not loads at the site).
     pub on_hand: &'a dyn Fn(&str) -> f32,
+    /// **THE BENCH'S ORDERS** as the passes need them ([`crate::systems::bench_plan`]): which are
+    /// workable, their crew caps and their tool.
+    pub bench: &'a crate::systems::BenchPlan,
 }
 
 /// **A TILE AS A MAP KEY** — `(y, x)`, row-major like every registry keyed by tile (`UVec2` is not
@@ -787,10 +820,10 @@ impl CampSite {
     }
 }
 
-/// **THE HANDS THE SIM MAY STAFF** — the working people less the bench, the hands still walking home
+/// **THE HANDS THE SIM MAY STAFF** — the working people less the hands still walking home
 /// and every crew the player set by hand (Warrior, Builders and a need row's muster). The Scout
 /// row is the sim's: it is dealt from this pool FIRST (`deal_scouts`, before pass 1a), off the top, ahead of the hold crews.
-pub fn staffable_pool(allocation: &LaborAllocation, available: u32, bench_workers: u32) -> u32 {
+pub fn staffable_pool(allocation: &LaborAllocation, available: u32) -> u32 {
     let player_set: u32 = allocation
         .assignments
         .iter()
@@ -798,7 +831,6 @@ pub fn staffable_pool(allocation: &LaborAllocation, available: u32, bench_worker
         .map(|row| row.workers)
         .sum();
     available
-        .saturating_sub(bench_workers)
         .saturating_sub(allocation.walking_home())
         .saturating_sub(player_set)
 }
@@ -941,6 +973,8 @@ struct StaffInputs<'a> {
     tile_room: BTreeMap<TileKey, u32>,
     /// The band's scouting range (`range` 0 when it has no Scout row).
     scouts: ScoutPlan,
+    /// The queue index of each bench order input, in the order they follow the builds in `rows`.
+    bench_orders: Vec<usize>,
 }
 
 /// What a build input carries beyond the passes' view of it.
@@ -960,9 +994,41 @@ pub struct StaffedBand {
     /// row). Kept apart from `rows` so the settle trim, which takes hands off source rows and
     /// builds, can never leave `reach` describing scouts it removed.
     pub scout: ScoutCrew,
+    /// **Every bench order's staffing**, one per queue index: workable orders carry what the passes
+    /// dealt, the rest nothing and a cap of zero.
+    pub bench: Vec<BenchStaffed>,
+}
+
+/// **WHAT THE PASSES DECIDED FOR ONE BENCH ORDER.**
+#[derive(Debug, Clone, Copy)]
+pub struct BenchStaffed {
+    /// The order's queue index.
+    pub order: usize,
+    /// Who the passes seated on it: the crafters holding the tool and the ones working by hand.
+    pub crew: crate::components::BenchCrew,
+    /// The cap the passes used.
+    pub cap: u32,
+    /// The order's rank.
+    pub priority: SourcePriority,
 }
 
 impl StaffedBand {
+    /// **Every crafter the staffing seated on the bench.**
+    pub fn bench_total(&self) -> u32 {
+        self.bench.iter().map(|order| order.crew.total()).sum()
+    }
+
+    /// **WRITE THE BENCH'S CREWS ONTO THE BENCH** - each order's crew and cap, restamped every
+    /// staffing. The turn, the command restaff and the preview's copy all go through it.
+    pub fn apply_bench(&self, bench: &mut crate::components::BandBench) {
+        for staffed in &self.bench {
+            if let Some(order) = bench.orders.get_mut(staffed.order) {
+                order.crew = staffed.crew;
+                order.crew_cap = staffed.cap;
+            }
+        }
+    }
+
     /// **WRITE THE WHOLE STAFFING ONTO AN ALLOCATION** - the staffed rows, the Scout row's crew and
     /// reach, and the builds' crews. The one place the turn, the command restaff and the preview's
     /// copy all apply a staffing, so they cannot differ.
@@ -1037,10 +1103,33 @@ pub fn staff_rows<'a>(
             )
         })
         .collect();
+    let build_end = source_rows + inputs.builds.len();
+    let mut bench: Vec<BenchStaffed> = (0..world.bench.orders.len())
+        .map(|order| BenchStaffed {
+            order,
+            crew: crate::components::BenchCrew::default(),
+            cap: 0,
+            priority: world.bench.orders[order].priority,
+        })
+        .collect();
+    for (offset, &order) in inputs.bench_orders.iter().enumerate() {
+        let crew = &staffed[build_end + offset];
+        bench[order].crew = crate::components::BenchCrew {
+            at_tool: crew.kitted,
+            by_hand: crew.bare,
+        };
+        bench[order].cap = world.bench.orders[order].crew_cap;
+    }
     StaffedBand {
-        rows: inputs.targets.into_iter().zip(staffed).collect(),
+        rows: inputs
+            .targets
+            .into_iter()
+            .zip(staffed)
+            .take(source_rows)
+            .collect(),
         builds,
         scout,
+        bench,
     }
 }
 
@@ -1060,14 +1149,13 @@ pub fn staff_rows_settled<'a>(
     band_kit: &'a BandEquipment,
     pool: u32,
     available: u32,
-    bench_workers: u32,
     lost_people: u32,
 ) -> StaffedBand {
     let mut staffed = staff_rows(world, allocation, band_kit, pool, available);
     loop {
         let mut after = allocation.clone();
         staffed.clone().apply_to(&mut after, lost_people);
-        let committed = after.assigned_total() + bench_workers + after.walking_home();
+        let committed = after.assigned_total() + staffed.bench_total() + after.walking_home();
         if committed <= available {
             return staffed;
         }
@@ -1130,15 +1218,43 @@ fn trim_one_hand(allocation: &LaborAllocation, staffed: &mut StaffedBand) -> boo
         .filter(|(_, (_, crew))| crew.total() > NOBODY)
         .map(|(index, (source, _))| (build_priority_of(source), std::cmp::Reverse(index), index))
         .min();
-    match (row_pick, build_pick) {
+    // **A bench order's heads trim exactly as a build's of the same priority** (later index first).
+    let bench_pick = staffed
+        .bench
+        .iter()
+        .enumerate()
+        .filter(|(_, order)| order.crew.total() > NOBODY)
+        .map(|(index, order)| (order.priority, std::cmp::Reverse(index), index))
+        .min();
+    // The build-like candidate: the lower priority of a build and a bench order; a tie takes the bench.
+    let buildish = match (build_pick, bench_pick) {
+        (None, None) => None,
+        (Some((priority, _, at)), None) => Some((priority, false, at)),
+        (None, Some((priority, _, at))) => Some((priority, true, at)),
+        (Some((build_priority, _, build_at)), Some((bench_priority, _, bench_at))) => {
+            if bench_priority <= build_priority {
+                Some((bench_priority, true, bench_at))
+            } else {
+                Some((build_priority, false, build_at))
+            }
+        }
+    };
+    let take_buildish = |staffed: &mut StaffedBand, at: usize, is_bench: bool| {
+        if is_bench {
+            take_one_bench_hand(&mut staffed.bench[at].crew);
+        } else {
+            take_one_builder(&mut staffed.builds[at].1);
+        }
+    };
+    match (row_pick, buildish) {
         (None, None) => return false,
         (Some((_, _, _, at)), None) => take_one_row_hand(&mut staffed.rows[at].1),
-        (None, Some((_, _, at))) => take_one_builder(&mut staffed.builds[at].1),
+        (None, Some((_, is_bench, at))) => take_buildish(staffed, at, is_bench),
         (Some(row), Some(build)) => {
             if row.1 <= build.0 {
                 take_one_row_hand(&mut staffed.rows[row.3].1);
             } else {
-                take_one_builder(&mut staffed.builds[build.2].1);
+                take_buildish(staffed, build.2, build.1);
             }
         }
     }
@@ -1167,6 +1283,15 @@ fn take_one_row_hand(crew: &mut StaffedCrew) {
         crew.kitted -= 1;
     } else {
         crew.keepers -= 1;
+    }
+}
+
+/// Take one crafter off a bench order's crew: bare first, then the tool-holders.
+fn take_one_bench_hand(crew: &mut crate::components::BenchCrew) {
+    if crew.by_hand > NOBODY {
+        crew.by_hand -= 1;
+    } else {
+        crew.at_tool = crew.at_tool.saturating_sub(1);
     }
 }
 
@@ -1387,6 +1512,7 @@ fn build_staff_inputs<'a>(
             bare_can_work: false,
             distance: NOBODY,
             is_build: false,
+            is_bench: false,
             kitless: false,
             tile: crate::systems::party_source_position(&target, sources.herds),
             food_keep_up: allocation.keeps_food_up(&target),
@@ -1466,6 +1592,7 @@ fn build_staff_inputs<'a>(
         staffed_camp_kills.push(camp_kills[idx]);
     }
     let builds = build_inputs(world, allocation, band_kit, &mut rows);
+    let bench_orders = bench_inputs(world, &mut rows);
     // The room each referenced tile has for this band: the cap less what the other bands hold.
     let tile_cap = sources.labor.tile_worker_cap;
     let mut tile_room: BTreeMap<TileKey, u32> = BTreeMap::new();
@@ -1499,8 +1626,48 @@ fn build_staff_inputs<'a>(
         builds,
         tile_room,
         scouts: scout_plan(world, allocation, band_kit),
+        bench_orders,
     }
 }
+
+/// **THE BENCH'S WORKABLE ORDERS AS PASS INPUTS** (#873), in rank order (priority High to Low, then
+/// queue order). Each carries its own priority, a Max of its crew cap, the bench tool as a one-person
+/// kit and distance 0 (the bench stands at camp). Returns each input's queue index.
+fn bench_inputs<'a>(world: &StaffingWorld<'a>, rows: &mut Vec<StaffRowInput<'a>>) -> Vec<usize> {
+    let mut queue_indices = Vec::new();
+    for &index in &world.bench.rank {
+        let plan = &world.bench.orders[index];
+        if !plan.workable {
+            continue;
+        }
+        rows.push(StaffRowInput {
+            priority: plan.priority,
+            max: Some(plan.crew_cap),
+            keep_hands: NO_HANDS,
+            hold_take: NO_TAKE_WANTED,
+            useful_take: NO_TAKE_WANTED,
+            reach: ReachTarget::Nothing,
+            kit_items: plan
+                .tool_item
+                .iter()
+                .map(|item| (Arc::clone(item), ONE_CRAFTER_PER_TOOL))
+                .collect(),
+            hands: Box::new(|_, _| Some(0.0)),
+            bare_can_work: plan.bare_can_work,
+            distance: NOBODY,
+            is_build: false,
+            is_bench: true,
+            kitless: false,
+            tile: None,
+            food_keep_up: false,
+        });
+        queue_indices.push(index);
+    }
+    queue_indices
+}
+
+/// **ONE BENCH TOOL ARMS ONE CRAFTER** - a tool is held by one hand at a time.
+const ONE_CRAFTER_PER_TOOL: u32 = 1;
 
 /// **THE BAND'S SCOUTING RANGE, RESOLVED** (#875) - the Scout row's range, what a kitted and a bare
 /// scout each add (the equipped and the bare vantage tier, both through
@@ -1584,6 +1751,7 @@ fn build_inputs<'a>(
             bare_can_work: true,
             distance,
             is_build: true,
+            is_bench: false,
             kitless: toe.tools().is_empty(),
             tile,
             food_keep_up: false,
@@ -1912,6 +2080,7 @@ pub(crate) fn probe_source(
     let elsewhere: BTreeMap<TileKey, u32> = BTreeMap::new();
     let can_progress = |_: &crate::components::BuildDeclaration| false;
     let on_hand = |_: &str| 0.0_f32;
+    let no_bench = crate::systems::BenchPlan::default();
     let world = StaffingWorld {
         sources,
         tile_improvements: &tile_improvements,
@@ -1921,6 +2090,7 @@ pub(crate) fn probe_source(
         tile_hands_elsewhere: &elsewhere,
         build_can_progress: &can_progress,
         on_hand: &on_hand,
+        bench: &no_bench,
     };
     let kit = sources.equipment.default_kit(target.kit_job());
     let kit_items = live_kit_items(&kit, band_kit, &world);
@@ -1936,6 +2106,7 @@ pub(crate) fn probe_source(
         bare_can_work: false,
         distance: NOBODY,
         is_build: false,
+        is_bench: false,
         kitless: false,
         tile: None,
         food_keep_up: false,
@@ -2065,12 +2236,9 @@ pub(crate) fn with_band_staffing_over<R>(
     let cohort = world.get::<crate::components::PopulationCohort>(band)?;
     let faction = cohort.faction;
     let available = crate::components::available_workers(cohort.working);
-    let bench_workers = world
-        .get::<crate::components::BandBench>(band)
-        .map_or(NOBODY, |bench| bench.workers);
     let band_id = world.get::<BandId>(band).copied();
     let camp = camp_of(world, band);
-    let pool = staffable_pool(&allocation, available, bench_workers);
+    let pool = staffable_pool(&allocation, available);
     let equipment = world
         .get_resource::<crate::EquipmentConfigHandle>()
         .map_or_else(
@@ -2148,6 +2316,25 @@ pub(crate) fn with_band_staffing_over<R>(
                 )
             };
             let on_hand = |material: &str| stores.material_total(material).to_f32();
+            let recipes = world
+                .get_resource::<crate::recipes_config::RecipesConfigHandle>()
+                .map_or_else(
+                    crate::recipes_config::RecipesConfig::builtin,
+                    crate::recipes_config::RecipesConfigHandle::get,
+                );
+            let bench_plan = world
+                .get::<crate::components::BandBench>(band)
+                .map(|bench| {
+                    crate::systems::bench_plan(
+                        bench,
+                        stores,
+                        &recipes,
+                        sources.materials,
+                        sources.equipment,
+                        &band_kit,
+                    )
+                })
+                .unwrap_or_default();
             let staffing_world = StaffingWorld {
                 sources,
                 tile_improvements,
@@ -2157,6 +2344,7 @@ pub(crate) fn with_band_staffing_over<R>(
                 tile_hands_elsewhere: &elsewhere,
                 build_can_progress: &can_progress,
                 on_hand: &on_hand,
+                bench: &bench_plan,
             };
             body(&staffing_world, &allocation, &band_kit, pool, available)
         },
@@ -2181,9 +2369,6 @@ fn managed_dig_allocation(
             crate::EquipmentConfigHandle::get,
         );
     let available = crate::components::available_workers(cohort.working);
-    let bench_workers = world
-        .get::<crate::components::BandBench>(band)
-        .map_or(NOBODY, |bench| bench.workers);
     let band_kit = world
         .get::<BandEquipment>(band)
         .cloned()
@@ -2221,7 +2406,7 @@ fn managed_dig_allocation(
             band_kit: &band_kit,
             camp: camp.as_ref(),
         };
-        let pool = staffable_pool(&allocation, available, bench_workers);
+        let pool = staffable_pool(&allocation, available);
         let cohort_stores = &cohort.stores;
         let on_hand = |material: &str| cohort_stores.material_total(material).to_f32();
         crate::keep_on_hand::manage_dig_rows(
@@ -2269,23 +2454,12 @@ pub fn staff_allocation_copy(
     band: bevy::prelude::Entity,
     allocation: LaborAllocation,
 ) -> Option<LaborAllocation> {
-    let bench_workers = world
-        .get::<crate::components::BandBench>(band)
-        .map_or(NOBODY, |bench| bench.workers);
     let staffed = with_band_staffing_over(
         world,
         band,
         allocation.clone(),
         |staffing_world, allocation, kit, pool, available| {
-            staff_rows_settled(
-                staffing_world,
-                allocation,
-                kit,
-                pool,
-                available,
-                bench_workers,
-                NOBODY,
-            )
+            staff_rows_settled(staffing_world, allocation, kit, pool, available, NOBODY)
         },
     )?;
     let mut staffed_allocation = allocation;
@@ -2316,7 +2490,7 @@ pub fn staffed_hands_lost(world: &bevy::prelude::World, band: bevy::prelude::Ent
     };
     let bench_workers = world
         .get::<crate::components::BandBench>(band)
-        .map_or(NOBODY, |bench| bench.workers);
+        .map_or(NOBODY, crate::components::BandBench::crew_total);
     let committed = allocation.assigned_total() + bench_workers + allocation.walking_home();
     let staffed_hands: u32 = allocation
         .assignments
@@ -2339,9 +2513,6 @@ pub fn restaff_band_after_loss(
     band: bevy::prelude::Entity,
     lost_people: u32,
 ) {
-    let bench_workers = world
-        .get::<crate::components::BandBench>(band)
-        .map_or(NOBODY, |bench| bench.workers);
     if let Some(managed) = managed_dig_allocation(world, band) {
         if let Some(mut allocation) = world.get_mut::<LaborAllocation>(band) {
             *allocation = managed;
@@ -2357,13 +2528,15 @@ pub fn restaff_band_after_loss(
                 kit,
                 pool,
                 available,
-                bench_workers,
                 lost_people,
             )
         },
     ) else {
         return;
     };
+    if let Some(mut bench) = world.get_mut::<crate::components::BandBench>(band) {
+        staffed.apply_bench(&mut bench);
+    }
     if let Some(mut allocation) = world.get_mut::<LaborAllocation>(band) {
         staffed.apply_to(&mut allocation, lost_people);
     }
@@ -2509,6 +2682,7 @@ mod tests {
             bare_can_work: bare_rate > 0.0,
             distance: 0,
             is_build: false,
+            is_bench: false,
             kitless: false,
             tile: None,
             food_keep_up: false,
@@ -2801,10 +2975,68 @@ mod tests {
             bare_can_work: true,
             distance: 0,
             is_build: true,
+            is_bench: false,
             kitless: true,
             tile,
             food_keep_up: false,
         }
+    }
+
+    /// A bench order as a pass input: its own priority, a Max of its crew cap, the bench tool as a
+    /// one-person kit and distance 0.
+    fn a_bench_order<'a>(
+        priority: SourcePriority,
+        cap: u32,
+        tool: Option<&str>,
+    ) -> StaffRowInput<'a> {
+        let mut row = a_build(priority, cap, None);
+        row.is_build = false;
+        row.is_bench = true;
+        row.kitless = false;
+        row.kit_items = tool
+            .into_iter()
+            .map(|item| (Arc::<str>::from(item), 1))
+            .collect();
+        row
+    }
+
+    /// **THE BENCH IS NEVER IN PASS 1**: a band whose pool only covers a row's hold crew gives the
+    /// bench nobody; one more hand and the bench opens with its one crafter.
+    #[test]
+    fn the_bench_never_joins_pass_one() {
+        let rows = vec![
+            holding(SourcePriority::Normal, 8.0, 0.0),
+            a_bench_order(SourcePriority::High, 3, None),
+        ];
+        let out = staff_band(&rows, 2, &mut shelf(5));
+        assert_eq!(out[0].total(), 2, "the hold crew took both hands");
+        assert_eq!(
+            out[1].total(),
+            0,
+            "even a High bench order waits behind a hold crew"
+        );
+        let out = staff_band(&rows, 3, &mut shelf(5));
+        assert_eq!(
+            out[1].total(),
+            1,
+            "liveness: with a hand to spare the bench opens"
+        );
+    }
+
+    /// **A High bench order takes the kitted crafter ahead of a Normal source's reach crew**, and its
+    /// second crafter too while a Normal source's pass-2 heads wait.
+    #[test]
+    fn a_high_bench_order_takes_the_tool_ahead_of_a_normal_sources_reach_crew() {
+        let tool: Vec<(Arc<str>, u32)> = vec![(Arc::from("loom"), 1)];
+        let mut source = holding(SourcePriority::Normal, 0.0, 0.0);
+        source.reach = ReachTarget::Take(16.0);
+        source.kit_items = tool;
+        let rows = vec![source, a_bench_order(SourcePriority::High, 2, Some("loom"))];
+        let mut units: BTreeMap<Arc<str>, u32> = BTreeMap::new();
+        units.insert(Arc::from("loom"), 2);
+        let out = staff_band(&rows, 6, &mut units);
+        assert_eq!(out[1].kitted, 2, "the High order holds both tools");
+        assert_eq!(out[0].kitted, 0, "the Normal source's reach crew gets none");
     }
 
     /// **EVERY BUILD GETS ITS ONE BUILDER BEFORE ANY BUILD GETS A SECOND**, whatever its priority:
@@ -2998,6 +3230,7 @@ mod tests {
             ..StaffedCrew::default()
         };
         let mut staffed = StaffedBand {
+            bench: Vec::new(),
             rows: vec![
                 (LaborTarget::Roadwork, StaffedCrew::default()),
                 (forage_target, crew),

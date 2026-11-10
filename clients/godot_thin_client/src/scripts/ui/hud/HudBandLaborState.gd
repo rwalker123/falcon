@@ -1791,9 +1791,9 @@ func _effort_on(key: String, bands: Array = []) -> Dictionary:
 ##
 ## **IT IS STILL COMPUTED AND NOT READ OFF THE WIRE.** `idle_workers` is last snapshot's answer; the
 ## `+` steppers gate on an OPTIMISTIC idle so a just-issued assignment counts before the turn
-## resolves, which is exactly what `effective_worker_map`'s pending overlay supplies. A bench crew
-## carries no such overlay (a `bench_crew` edit shows on the next snapshot), so the published crew is
-## the right term to subtract.
+## resolves, which is exactly what `effective_worker_map`'s pending overlay supplies. The bench
+## crew is the sim's own staffing and carries no such overlay, so the published crew is the right
+## term to subtract.
 ##
 ## **NOR ARE HANDS WALKING HOME FROM A STOOD-DOWN PARTY** (#706, `homeward_workers`): on no row and at
 ## no bench, but not with the band either — the sim's `BandWorkforce::idle()` nets them out until their
@@ -1915,8 +1915,7 @@ func homeward_workers(band: Dictionary) -> int:
 
 ## The crew standing at the band's crafting bench (`PopulationCohortState.bench.workers`) — spent
 ## labor that carries no `LaborAssignment`, hence its own reader. Beside `effective_idle` because it
-## is that function's third term, and public because the crew stepper's ceiling is a DIFFERENT
-## question: see `benchable_workers`.
+## is that function's third term.
 func bench_workers(band: Dictionary) -> int:
 	var bench_variant: Variant = band.get(HudCraftingVocab.BAND_BENCH_KEY, {})
 	if not (bench_variant is Dictionary):
@@ -1924,16 +1923,8 @@ func bench_workers(band: Dictionary) -> int:
 	var bench: Dictionary = bench_variant
 	return max(0, int(bench.get(HudCraftingVocab.BENCH_WORKERS_KEY, 0)))
 
-## **THE CEILING A BENCH CREW STEPPER CLAMPS AGAINST — "how many COULD be at the bench", which is not
-## "how many are idle".** The crew already at the bench stays put while its job is swapped, so it is
-## not spent from the player's point of view when re-crewing; the sim draws the same distinction
-## between `BandWorkforce::idle()` and `benchable()`, and capping the stepper at `effective_idle`
-## would pin it to the crew already on it.
-func benchable_workers(band: Dictionary) -> int:
-	return orderable_hands(band) + bench_workers(band)
-
 ## **THE HANDS THE PLAYER CAN STILL ORDER ONTO A PLAYER-SET CREW — the ONE sum every such ceiling
-## reads** (bench crafters, Scout, Warrior, Builders, a party's crew). Sim-staffed crews are what is
+## reads** (Scout, Warrior, Builders, a party's crew). Sim-staffed crews are what is
 ## left AFTER the player's own orders, so they never block one: the ceiling is `effective_idle` plus the
 ## crews standing on the staffed rows (`STAFFED_KINDS`, a hunting-by-need row excluded as its count is
 ## the player's), which the sim re-staffs from whatever remains. With every hand on a staffed row

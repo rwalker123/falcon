@@ -5752,9 +5752,6 @@ struct AppliedMuster {
     lent: Vec<(usize, u32)>,
     /// The need rows that were crewed this turn — their `workers` go back to zero.
     crewed: Vec<usize>,
-    /// The hands the crafting bench lent (taken off `BandBench::workers`, handed back by
-    /// [`restore_muster`]; the turn's craft pass reads them as `BandBench::lent_to_hunt`).
-    bench_lent: u32,
 }
 
 impl AppliedMuster {
@@ -5802,8 +5799,14 @@ fn apply_muster(
     // **A bench that lent hands last turn has been cleared by `advance_crafting`; this clears a
     // stale mark where that system did not run** (a band without a ledger), so a lent count never
     // outlives the pass that wrote it.
-    if let Some(bench) = bench.as_deref_mut().filter(|bench| bench.lent_to_hunt != 0) {
-        bench.lent_to_hunt = 0;
+    if let Some(bench) = bench.as_deref_mut() {
+        for order in bench
+            .orders
+            .iter_mut()
+            .filter(|order| order.lent_to_hunt != 0)
+        {
+            order.lent_to_hunt = 0;
+        }
     }
     let need_rows: Vec<usize> = allocation
         .assignments
@@ -5856,11 +5859,11 @@ fn apply_muster(
         // non-destructive path; `remove_order` would forfeit the pile). The cut is recorded on the
         // bench so this turn's craft pass, which runs after the crew is handed back, still works
         // the smaller crew.
-        if plan.from_bench > 0 {
-            if let Some(bench) = bench.as_deref_mut() {
-                bench.workers -= plan.from_bench;
-                bench.lent_to_hunt += plan.from_bench;
-                applied.bench_lent += plan.from_bench;
+        if let Some(bench) = bench.as_deref_mut() {
+            for (order, hands) in &plan.from_bench_orders {
+                if let Some(order) = bench.orders.get_mut(*order) {
+                    order.lent_to_hunt += hands;
+                }
             }
         }
         idle -= plan.from_idle;
@@ -5876,18 +5879,9 @@ fn apply_muster(
 /// **GIVE THE BORROWED HANDS BACK** — every donor row's crew restored, every crewed need row back
 /// to the zero workers it holds between hunts. Row indices are the ones [`apply_muster`] saw, so it
 /// runs before anything removes a row.
-fn restore_muster(
-    allocation: &mut LaborAllocation,
-    applied: &AppliedMuster,
-    bench: Option<&mut BandBench>,
-) {
+fn restore_muster(allocation: &mut LaborAllocation, applied: &AppliedMuster) {
     for (row, hands) in &applied.lent {
         allocation.assignments[*row].workers += hands;
-    }
-    if applied.bench_lent > 0 {
-        if let Some(bench) = bench {
-            bench.workers += applied.bench_lent;
-        }
     }
     for row in &applied.crewed {
         allocation.assignments[*row].workers = NO_CREW_ON_THIS_ACTIVITY;
@@ -6398,7 +6392,7 @@ pub fn advance_labor_allocation(
         let bench_hands = |bench: &Option<Mut<BandBench>>| {
             bench
                 .as_deref()
-                .map_or(NO_CREW_ON_THIS_ACTIVITY, |bench| bench.workers)
+                .map_or(NO_CREW_ON_THIS_ACTIVITY, BandBench::crew_total)
         };
         // **THE PEOPLE THE BAND NO LONGER HAS** (#871): what it holds committed - every row, the bench
         // and the walkers - past its working-age head count. The shed below takes its share off the
@@ -6413,13 +6407,20 @@ pub fn advance_labor_allocation(
         {
             row.workers = NO_CREW_ON_THIS_ACTIVITY;
         }
+        // The bench is the sim's to staff too: zeroed before the shed, refilled after it.
+        if let Some(bench) = bench.as_deref_mut() {
+            for order in &mut bench.orders {
+                order.crew = crate::components::BenchCrew::default();
+            }
+        }
         // The builders are the sim's to place too: they stand at zero for the shed and are restaffed
         // below with the rows.
         allocation.build_crews.clear();
         let hand_set_before =
             allocation.assigned_total() + bench_hands(&bench) + allocation.walking_home();
-        for shed in allocation.normalize(bench.as_deref_mut(), available, shed_facts) {
-            if let crate::ShedSubject::Row(target) = &shed.subject {
+        for shed in allocation.normalize(available, shed_facts) {
+            let crate::ShedSubject::Row(target) = &shed.subject;
+            {
                 if !shed.row_survived() {
                     if let Some((held, party)) = parties_before_shed
                         .iter()
@@ -6517,8 +6518,7 @@ pub fn advance_labor_allocation(
                     &|material: &str| cohort.stores.material_total(material).to_f32(),
                 );
                 let fog = sim_config.fog_enabled;
-                let pool =
-                    crate::staffing::staffable_pool(&allocation, available, bench_hands(&bench));
+                let pool = crate::staffing::staffable_pool(&allocation, available);
                 crate::food_orders::manage_food_orders(
                     &mut allocation,
                     &crate::food_orders::FoodInputs {
@@ -6562,6 +6562,16 @@ pub fn advance_labor_allocation(
                 declared_build_can_progress(&progress_context, &allocation, declaration)
             };
             let on_hand = |material: &str| cohort.stores.material_total(material).to_f32();
+            let bench_plan = bench.as_deref().map_or_else(Default::default, |bench| {
+                crate::systems::bench_plan(
+                    bench,
+                    &cohort.stores,
+                    &recipes_cfg,
+                    &materials_cfg,
+                    &equipment_cfg,
+                    &band_kit,
+                )
+            });
             let staffing_world = crate::staffing::StaffingWorld {
                 sources: &staff_sources,
                 tile_improvements: &tile_improvements,
@@ -6575,14 +6585,9 @@ pub fn advance_labor_allocation(
                 }),
                 tile_hands_elsewhere: &tile_load,
                 build_can_progress: &can_progress,
+                bench: &bench_plan,
             };
-            let pool = crate::staffing::staffable_pool(
-                &allocation,
-                available,
-                bench
-                    .as_deref()
-                    .map_or(NO_CREW_ON_THIS_ACTIVITY, |bench| bench.workers),
-            );
+            let pool = crate::staffing::staffable_pool(&allocation, available);
             let hand_set_after =
                 allocation.assigned_total() + bench_hands(&bench) + allocation.walking_home();
             let shed_from_hand_set = hand_set_before.saturating_sub(hand_set_after);
@@ -6595,9 +6600,11 @@ pub fn advance_labor_allocation(
                 &band_kit,
                 pool,
                 available,
-                bench_hands(&bench),
                 lost_to_staffed,
             );
+            if let Some(bench) = bench.as_deref_mut() {
+                staffed.apply_bench(bench);
+            }
             staffed.apply_to(&mut allocation, lost_to_staffed);
             site_crews.restate(&hands_before, &staffed_hands_by_source(&allocation));
         }
@@ -11221,7 +11228,7 @@ pub fn advance_labor_allocation(
         }
         // **THE MUSTERED HANDS GO BACK** — every donor's crew restored and the need row to zero, so
         // nothing past the row walk (the lapse sweep, the wire, next turn) sees a borrowed hand.
-        restore_muster(&mut allocation, &muster, bench.as_deref_mut());
+        restore_muster(&mut allocation, &muster);
         // **WHICH HERDS A CREW WORKED THIS TURN**, by id — the rows' indices shift when the lapse
         // sweep below removes one, and the decision at the foot of the pass reads this after it.
         let herds_crewed_this_turn: Vec<String> = muster
@@ -11297,7 +11304,13 @@ pub fn advance_labor_allocation(
         let band_material_income =
             allocation.material_income(&crate::systems::bench_material_rate(
                 bench.as_deref(),
-                bench.as_deref().map_or(0, |bench| bench.lent_to_hunt),
+                &bench.as_deref().map_or_else(Vec::new, |bench| {
+                    bench
+                        .orders
+                        .iter()
+                        .map(|order| order.lent_to_hunt)
+                        .collect()
+                }),
                 &cohort.stores,
                 &recipes_cfg,
                 &materials_cfg,
@@ -11943,7 +11956,7 @@ pub fn advance_labor_allocation(
                                 idle_now,
                                 idx,
                                 &is_local,
-                                pricing.bench,
+                                pricing.bench.as_ref(),
                             ),
                             keeping: fauna::herd_crew_keeping_next_turn(
                                 herd, &fauna, &ladder, None,
@@ -12874,10 +12887,7 @@ fn announce_shed_crew(
     // A band-wide role (Scout/Warrior) has no source to name and no verb channel of its own; it is
     // reported on the label alone, through the role's own kind where one exists.
     //
-    // **The bench is not a `LaborTarget` and is reported as itself** — one band, one bench, so it
-    // needs no id — through the crafting verb's own kind.
     let Some(target) = shed.subject.row() else {
-        announce_shed_bench(event_log, tick, faction, band, shed);
         return;
     };
     let (kind, source_label, source_detail) = match target {
@@ -12948,62 +12958,6 @@ fn announce_shed_crew(
         Some(band_detail_token(
             format!(
                 "status={status} reason=too_few_workers {source_detail} workers={workers} lost={}",
-                shed.lost,
-            ),
-            band,
-        )),
-    ));
-}
-
-/// **SAY THE BENCH LOST HANDS** — the crafting arm of [`announce_shed_crew`], split out because its
-/// two readings are not the row's two readings.
-///
-/// # ⛔ `status=stalled` IS A THIRD TOKEN, AND NEITHER EXISTING ONE WOULD HAVE BEEN TRUE
-///
-/// The client ranks a shed line on this token, so it has to be the fact:
-///
-/// - **`trimmed`** means *the crew is smaller than you set and the source is still worked*. A bench
-///   at zero is not being worked at all, so on the last hand that is false.
-/// - **`lapsed`** means *the row is GONE and its investment with it* — and it is ranked ALERT for
-///   exactly that reason. The bench keeps its recipe, its progress, its finished count **and the
-///   materials it had already drawn**; re-staffing resumes rather than restarts. Nothing is
-///   destroyed, so `lapsed` would be false *and* would shout.
-///
-/// A bench that still has hands on it **is** a trim, in the token's own terms, and reuses it — the
-/// third token exists only for the state neither describes.
-///
-/// **`stalled` ranks with `trimmed` (NOTABLE), not with `lapsed` (ALERT)**: it is recoverable by one
-/// command and costs the player nothing they cannot get back. A client that has not learned the token
-/// yet renders it at the quietest rung, which is the wrong direction — so the token is reported to
-/// the client half rather than assumed.
-fn announce_shed_bench(
-    event_log: &mut CommandEventLog,
-    tick: u64,
-    faction: FactionId,
-    band: Option<BandId>,
-    shed: &ShedCrew,
-) {
-    let (label, status, workers) = if shed.row_survived() {
-        (
-            format!("crafters cut to {} — too few workers", shed.remaining),
-            "trimmed",
-            shed.remaining,
-        )
-    } else {
-        (
-            "the bench stalled — too few workers".to_string(),
-            "stalled",
-            shed.lost,
-        )
-    };
-    event_log.push(CommandEventEntry::new(
-        tick,
-        CommandEventKind::Craft,
-        faction,
-        label,
-        Some(band_detail_token(
-            format!(
-                "status={status} reason=too_few_workers kind=bench workers={workers} lost={}",
                 shed.lost,
             ),
             band,

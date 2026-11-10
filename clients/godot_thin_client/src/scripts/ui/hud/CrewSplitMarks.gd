@@ -29,6 +29,9 @@ var _keepers := 0
 var _kitted := 0
 var _bare := 0
 var _builders := 0
+## **ROOM** (the bench's order rows): hollow marks after the crew, one per seat the order could still
+## staff. Not workers, so `crew()` never counts them; they only widen the run of marks.
+var _room := 0
 var _mark_size := HudWorkVocab.CREW_SPLIT_MARK_SIZE
 var _gap := HudWorkVocab.CREW_SPLIT_MARK_GAP
 var _radius := HudWorkVocab.CREW_SPLIT_MARK_RADIUS
@@ -40,13 +43,14 @@ var _focus_card: PanelContainer = null
 ## wire's hands-to-hold figure (`0` = none). `sheet` takes the compose sheet's larger squares; a Work-tab
 ## row uses the smaller ones.
 static func build(keepers: int, kitted: int, bare: int, kit_names: String, hold_crew: int,
-        sheet: bool, builders: int = 0) -> CrewSplitMarks:
+        sheet: bool, builders: int = 0, room: int = 0) -> CrewSplitMarks:
     var marks := CrewSplitMarks.new()
-    marks.setup(keepers, kitted, bare, kit_names, hold_crew, sheet, builders)
+    marks.setup(keepers, kitted, bare, kit_names, hold_crew, sheet, builders, room)
     return marks
 
 func setup(keepers: int, kitted: int, bare: int, kit_names: String, hold_crew: int,
-        sheet: bool, builders: int = 0) -> void:
+        sheet: bool, builders: int = 0, room: int = 0) -> void:
+    _room = maxi(room, 0)
     _keepers = maxi(keepers, 0)
     _builders = maxi(builders, 0)
     _kitted = maxi(kitted, 0)
@@ -55,12 +59,12 @@ func setup(keepers: int, kitted: int, bare: int, kit_names: String, hold_crew: i
         _mark_size = HudWorkVocab.CREW_SPLIT_SHEET_MARK_SIZE
         _gap = HudWorkVocab.CREW_SPLIT_SHEET_MARK_GAP
         _radius = HudWorkVocab.CREW_SPLIT_SHEET_MARK_RADIUS
-    _words = HudWorkVocab.crew_bar_words(_keepers, _kitted, _bare, kit_names, hold_crew, _builders)
+    _words = HudWorkVocab.crew_bar_words(_keepers, _kitted, _bare, kit_names, hold_crew, _builders, _room)
     tooltip_text = _words
     if "accessibility_description" in self:
         set("accessibility_description", _words)
     set_meta(HudWorkVocab.CREW_SPLIT_META,
-        {"keepers": _keepers, "builders": _builders, "kitted": _kitted, "bare": _bare})
+        {"keepers": _keepers, "builders": _builders, "kitted": _kitted, "bare": _bare, "room": _room})
     # PASS, so the row's own click still reaches the row and the tooltip still shows.
     mouse_filter = Control.MOUSE_FILTER_PASS
     focus_mode = Control.FOCUS_ALL
@@ -83,6 +87,14 @@ func crew() -> int:
 func keepers() -> int:
     return _keepers
 
+## The hollow room marks.
+func room() -> int:
+    return _room
+
+## Marks the bar lays out: every worker plus the room.
+func _mark_total() -> int:
+    return crew() + _room
+
 func builders() -> int:
     return _builders
 
@@ -95,7 +107,7 @@ func bare() -> int:
 ## **THE LAYOUT IT WOULD DRAW AT `width`** — `{size, gap, drawn, overflow}`. Pure, so a harness can
 ## ask the overflow question of the same arithmetic the draw uses.
 func layout_for(width: float) -> Dictionary:
-    var n := crew()
+    var n := _mark_total()
     var mark := _mark_size
     var gap := _gap
     if n <= 0:
@@ -127,8 +139,8 @@ func _overflow_width(count: int) -> float:
 
 ## The legibility floor: the whole crew where it is small, else one floor-sized mark and its count.
 func _min_width() -> float:
-    var full := _row_width(crew(), _mark_size, _gap)
-    var floored := HudWorkVocab.CREW_SPLIT_MARK_SIZE_FLOOR + _gap + _overflow_width(crew())
+    var full := _row_width(_mark_total(), _mark_size, _gap)
+    var floored := HudWorkVocab.CREW_SPLIT_MARK_SIZE_FLOOR + _gap + _overflow_width(_mark_total())
     return minf(full, floored)
 
 func _draw() -> void:
@@ -171,23 +183,23 @@ func _draw() -> void:
 ## draw only keepers and builders and hide the hands holding a kit and the bare ones), the remainder going
 ## to the segments in proportion to their size.
 func drawn_segments(drawn: int) -> Array[int]:
-    var counts: Array[int] = [_keepers, _kitted, _bare, _builders]
+    var counts: Array[int] = [_keepers, _kitted, _bare, _builders, _room]
     var out: Array[int] = []
-    if drawn >= crew():
-        for i in crew():
+    if drawn >= _mark_total():
+        for i in _mark_total():
             out.append(_segment_of(i))
         return out
-    var shown: Array[int] = [0, 0, 0, 0]
+    var shown: Array[int] = [0, 0, 0, 0, 0]
     var spare := drawn
-    for seg in 4:
+    for seg in SEGMENT_COUNT:
         if counts[seg] > 0 and spare > 0:
             shown[seg] = 1
             spare -= 1
     var extra_total := 0
-    for seg in 4:
+    for seg in SEGMENT_COUNT:
         extra_total += counts[seg] - shown[seg]
     var budget := spare
-    for seg in 4:
+    for seg in SEGMENT_COUNT:
         if extra_total <= 0:
             break
         var share := mini(counts[seg] - shown[seg], budget * (counts[seg] - shown[seg]) / extra_total)
@@ -196,14 +208,14 @@ func drawn_segments(drawn: int) -> Array[int]:
     # What proportional rounding left over goes to whichever segment still has unshown workers, largest first.
     while spare > 0:
         var best := -1
-        for seg in 4:
+        for seg in SEGMENT_COUNT:
             if counts[seg] - shown[seg] > 0 and (best < 0 or counts[seg] - shown[seg] > counts[best] - shown[best]):
                 best = seg
         if best < 0:
             break
         shown[best] += 1
         spare -= 1
-    for seg in [SEGMENT_KEEPER, SEGMENT_BUILDER, SEGMENT_KITTED, SEGMENT_BARE]:
+    for seg in [SEGMENT_KEEPER, SEGMENT_BUILDER, SEGMENT_KITTED, SEGMENT_BARE, SEGMENT_ROOM]:
         for _k in shown[seg]:
             out.append(seg)
     return out
@@ -215,12 +227,16 @@ func _segment_of(i: int) -> int:
         return SEGMENT_BUILDER
     if i < _keepers + _builders + _kitted:
         return SEGMENT_KITTED
-    return SEGMENT_BARE
+    if i < _keepers + _builders + _kitted + _bare:
+        return SEGMENT_BARE
+    return SEGMENT_ROOM
 
 const SEGMENT_KEEPER := 0
 const SEGMENT_KITTED := 1
 const SEGMENT_BARE := 2
 const SEGMENT_BUILDER := 3
+const SEGMENT_ROOM := 4
+const SEGMENT_COUNT := 5
 
 ## One mark, filled and outlined in its segment's colours.
 func _draw_mark(rect: Rect2, segment: int) -> void:
@@ -236,8 +252,10 @@ func _draw_mark(rect: Rect2, segment: int) -> void:
     elif segment == SEGMENT_BARE:
         fill = HudStyle.CREW_BARE
         line = HudStyle.CREW_BARE_LINE
+    elif segment == SEGMENT_ROOM:
+        line = HudStyle.LINE
     var base := StyleBoxFlat.new()
-    base.bg_color = fill
+    base.bg_color = fill if segment != SEGMENT_ROOM else Color(0.0, 0.0, 0.0, 0.0)
     base.set_corner_radius_all(radius)
     base.draw(get_canvas_item(), rect)
     var edge := StyleBoxFlat.new()

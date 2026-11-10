@@ -507,13 +507,12 @@ fn seed_snapshot() -> WorldSnapshot {
             })
             .collect();
         cohort.bench = BenchState {
-            shortfalls: rows_of(MaterialShortfallState::default()),
-            // The pile already cut for the job in flight — a repeated field inside a repeated field
-            // like the shortfalls above it, so it needs elements or the guard never decodes a row.
-            drawn_inputs: rows_of(DrawnInputState::default()),
-            // The queue, head first — a repeated field inside the bench, seeded for the same reason.
+            // What the bench has set aside - a repeated field, seeded so the guard decodes a row.
+            set_aside: rows_of(DrawnInputState::default()),
+            // The queue - a repeated field inside the bench, whose rows carry two of their own.
             orders: rows_of(BenchOrderState {
                 short_to_finish: rows_of(MaterialShortfallState::default()),
+                drawn_inputs: rows_of(DrawnInputState::default()),
                 ..Default::default()
             }),
             // The skipped item ids — a repeated string field, seeded so the guard decodes one.
@@ -1406,7 +1405,7 @@ fn apply_structural_fixups(s: &mut WorldSnapshot) {
         cohort.entity = 100 + i as u64;
         cohort.current_x = row_x(i);
         cohort.current_y = row_y(i);
-        // **THE BENCH'S RANK IS AN ENUM, SO SATURATION LEAVES IT AT ITS DEFAULT** — the same gap the
+        // **AN ORDER'S RANK IS AN ENUM, SO SATURATION LEAVES IT AT ITS DEFAULT** — the same gap the
         // labor rows' `EVERY_SOURCE_PRIORITY` closes (see that const). A cohort carries exactly ONE
         // bench, so with two cohorts the fixture can reach two of the three arms, and these are the
         // two it must reach: a decoder maps this enum with a `_ =>` catch-all on the DEFAULT (the
@@ -1414,7 +1413,9 @@ fn apply_structural_fixups(s: &mut WorldSnapshot) {
         // unreachable by construction while a wrong `High` or `Low` decodes silently as `normal`.
         // The `Normal` arm is covered end-to-end at the codec level by
         // `core_sim/tests/crafting_wire.rs`, which asserts it off the encoded envelope.
-        cohort.bench.priority = BENCHED_SOURCE_PRIORITIES[i % BENCHED_SOURCE_PRIORITIES.len()];
+        for (k, order) in cohort.bench.orders.iter_mut().enumerate() {
+            order.priority = BENCHED_SOURCE_PRIORITIES[(i + k) % BENCHED_SOURCE_PRIORITIES.len()];
+        }
     }
     for (i, herd) in s.herds.iter_mut().enumerate() {
         herd.x = row_x(i);

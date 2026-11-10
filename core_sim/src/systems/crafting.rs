@@ -1,36 +1,29 @@
-//! **The bench** — one queue per band, worked one order at a time (`docs/plan_crafting_and_materials.md`
-//! §5, §7 "The queue"). Every step below is the **worked order**'s ([`worked_order`]: the first, in
-//! queue order, that holds a pile or can draw one); the rest of the queue is at rest.
+//! **The bench** — one queue per band, **every workable order worked at once**, staffed by the sim
+//! (`docs/plan_labor_at_scale.md` "The bench: several orders at once"). The staffing
+//! ([`crate::staffing`]) decides each order's crew; this module decides what the crew does with it.
 //!
-//! Five steps, in this order and for these reasons:
+//! Per order, in rank order (priority High to Low, then queue order), per turn:
 //!
-//! 1. **No order ⇒ nothing.** An idle bench is not a state that costs anything.
-//! 2. **Nothing drawn ⇒ draw.** Withdraw each input's `amount × craft_material_efficiency`
-//!    worst-first ([`LocalStore::take_material`]), record the exact reading on the recipe's `reads`
-//!    axis **and what each row actually cost the store**, and **fix the grade there**. A short draw
-//!    withdraws **nothing** — the turn is a no-op, not a half-spent pile.
-//! 3. **Accrue** `workers × progress_per_worker_turn × craft_speed`, where `craft_speed` is the
-//!    bounding tool's equipped value if the band has one, else the **material's** own
-//!    `hand_working.rate`. **That is `0` for a material with no `hand_working`, which is how metal
-//!    will refuse itself with no branch** — exactly as `max(0, attack − defense)` refuses a hunt.
-//! 4. **On `progress >= work`**: emit the outputs, charge **one**
-//!    [`crate::equipment_config::WearQuantum::ItemCrafted`] on the
-//!    bounding tool and **one** lesson of the recipe's craft. Same quantum, same count, one place —
-//!    so the thing that consumes the tool and the thing that teaches the craft cannot drift.
-//! 5. **Count, reset and re-draw.** The item counts against the worked order's `made`; when that
-//!    meets its `count` the order leaves the queue. Whichever order is now worked draws its own
-//!    inputs, and the next pass's grade is fixed from the stock the band has *now*.
+//! 1. **Seat the hands on items** - in-flight items first, oldest first, each up to the recipe's
+//!    `crafters_per_item`, tool-holders first; then, while hands remain, **start one more item**:
+//!    its inputs are set aside whole or not at all ([`draw_pass`]) and the grade is fixed there.
+//! 2. **Accrue** per item `Σ hands × progress_per_worker_turn × craft_speed`, where a tool-holder's
+//!    speed is the bounding tool's and a bare hand's is the **material's** own `hand_working.rate`
+//!    (`0` for a material with no `hand_working`, which is how metal refuses itself with no branch).
+//! 3. **On `progress >= work`** emit the outputs, charge one wear to the bench tool **if the item was
+//!    set aside at the tool**, charge one lesson and count the item against the order.
+//! 4. An order that has made everything it asked for leaves the queue.
 //!
-//! **There is no "you cannot craft that" branch anywhere in here.** Every refusal the design names
-//! is a zero: a zero rate (no tool, no bare-handed rate), a zero draw (short of material), a zero
-//! crew. The *client* renders the reasoned refusal; the sim just does not move.
+//! **There is no "you cannot craft that" branch anywhere in here.** Every refusal is a zero: a zero
+//! rate, a zero draw (short of material), a zero crew. An unstaffed order draws nothing and its
+//! in-flight items keep pile and progress. The *client* renders the reasoned refusal.
 
 use bevy::prelude::*;
 
 use crate::{
     components::{
-        BandBench, BandEquipment, BatchGrade, DrawnInputs, DrawnMaterial, FinishedBatch,
-        LocalStore, PopulationCohort,
+        BandBench, BandEquipment, BatchGrade, BenchCrew, DrawnInputs, DrawnMaterial, FinishedBatch,
+        ItemInFlight, LocalStore, PopulationCohort, SourcePriority,
     },
     crafting::{craft_discovery_id, HAND_WORKING_MATERIAL_EFFICIENCY},
     equipment_config::{EquipmentConfigHandle, EquipmentStat},
@@ -74,6 +67,18 @@ pub fn bench_tiers(
     equipment: &crate::equipment_config::EquipmentConfig,
     wear: &BandEquipment,
 ) -> BenchTiers {
+    bench_tiers_with(material, materials, equipment, wear, true)
+}
+
+/// [`bench_tiers`], optionally ignoring the bench tool: `with_tool == false` is the **bare hand's**
+/// tiers, which a crafter with no tool in hand works at.
+pub fn bench_tiers_with(
+    material: &str,
+    materials: &MaterialsConfig,
+    equipment: &crate::equipment_config::EquipmentConfig,
+    wear: &BandEquipment,
+    with_tool: bool,
+) -> BenchTiers {
     let hand = materials
         .material(material)
         .and_then(|def| def.hand_working);
@@ -83,7 +88,10 @@ pub fn bench_tiers(
         material_efficiency: HAND_WORKING_MATERIAL_EFFICIENCY,
         tooled: false,
     };
-    let Some(tool) = equipment.live_bench_tool(material, wear) else {
+    let Some(tool) = equipment
+        .live_bench_tool(material, wear)
+        .filter(|_| with_tool)
+    else {
         return bare;
     };
     // **Present effects apply; absent ones do not** — the same "only declared values participate"
@@ -132,20 +140,23 @@ fn draw_pass(
     }
     let mut reading = None;
     let mut withdrawn = Vec::with_capacity(recipe.inputs.len());
+    let at_tool = tiers.tooled;
     for input in &recipe.inputs {
         let axis = spend_axis(input, materials);
         let draws = store.take_material(&input.material, axis, required(input.amount, efficiency));
         if let Some(read) = input.reads.as_deref() {
             reading = weighted_reading(&draws, read);
         }
+        let amount = draws
+            .iter()
+            .map(|draw| draw.amount)
+            .fold(scalar_zero(), |total, amount| total + amount);
         withdrawn.push(DrawnMaterial {
             material: input.material.clone(),
             // **Summed over the batches the draw touched**, because worst-first spends a row across
             // as many piles as it needs to fill it.
-            amount: draws
-                .iter()
-                .map(|draw| draw.amount)
-                .fold(scalar_zero(), |total, amount| total + amount),
+            amount,
+            batches: draws,
         });
     }
     Some(fix_grade(
@@ -153,6 +164,7 @@ fn draw_pass(
         reading,
         withdrawn,
         tiers.quality_ceiling,
+        at_tool,
         materials,
     ))
 }
@@ -275,16 +287,16 @@ pub fn queue_material_shortfalls(
     let Some(bench) = bench else {
         return forecast;
     };
-    for order in &bench.orders {
+    forecast.orders = vec![Vec::new(); bench.orders.len()];
+    for index in bench.ranked() {
+        let order = &bench.orders[index];
         let rows = match recipes
             .recipe(&order.recipe_id)
             .and_then(|recipe| Some((recipe, recipe.bench_material()?)))
         {
             Some((recipe, material)) => {
                 let tiers = bench_tiers(material, materials, equipment, wear);
-                let passes = order
-                    .remaining()
-                    .saturating_sub(u32::from(order.drawn.is_some()));
+                let passes = order.remaining().saturating_sub(order.items.len() as u32);
                 let left = &mut forecast.left;
                 run_needs(recipe, passes, &tiers, |id, need| {
                     let slot = left
@@ -297,7 +309,7 @@ pub fn queue_material_shortfalls(
             }
             None => Vec::new(),
         };
-        forecast.orders.push(rows);
+        forecast.orders[index] = rows;
     }
     forecast
 }
@@ -336,33 +348,48 @@ fn pass_is_affordable(store: &LocalStore, recipe: &RecipeDef, tiers: &BenchTiers
     })
 }
 
-/// **WHAT THE BENCH WILL BANK, PER TURN, PER MATERIAL** — the forward half of a band's
+/// **THE HANDS AN ORDER WORKS WITH THIS TURN** - its staffed crew less what a hunting-by-need muster
+/// has borrowed (`lent`), the loan coming off the hand-workers first and then the tool-holders.
+pub fn hands_after_loan(crew: BenchCrew, lent: u32) -> BenchCrew {
+    let from_hand = lent.min(crew.by_hand);
+    let from_tool = (lent - from_hand).min(crew.at_tool);
+    BenchCrew {
+        at_tool: crew.at_tool - from_tool,
+        by_hand: crew.by_hand - from_hand,
+    }
+}
+
+/// **WHAT ONE ORDER ACCRUES IN A TURN**, over every item it works - `Σ hands × progress per worker
+/// turn × craft speed`. The one authority the wire's `ratePerTurn` and the bench's material income
+/// read, and the sum the turn's accrual is made of ([`rate_per_turn`]).
+pub fn order_rate(
+    crew: BenchCrew,
+    lent: u32,
+    material: &str,
+    crafting: &crate::recipes_config::CraftingTuning,
+    materials: &MaterialsConfig,
+    equipment: &crate::equipment_config::EquipmentConfig,
+    wear: &BandEquipment,
+) -> f32 {
+    let hands = hands_after_loan(crew, lent);
+    let tool = bench_tiers(material, materials, equipment, wear).speed;
+    let hand = bench_tiers_with(material, materials, equipment, wear, false).speed;
+    rate_per_turn(hands.at_tool, hands.by_hand, crafting, tool, hand)
+}
+
+/// **WHAT THE BENCH WILL BANK, PER TURN, PER MATERIAL** - the forward half of a band's
 /// `material_upkeep_income` (`docs/plan_standing_upkeep.md` §2.7), and the **one producer** of it:
 /// the wire's `material_upkeep_income` row and [`crate::systems::labor`]'s material-shortfall Alert
-/// both read this, because a row and an event that summed the inflow apart would be free to
-/// disagree about whether a band is running out.
+/// both read this.
 ///
-/// A bench finishes one item when its meter crosses the recipe's `work`, so its per-turn output is
-/// `rate_per_turn / work × the output's amount` — struck through the same
-/// [`rate_per_turn`] [`advance_crafting`] accrues with, so the projection and the accrual cannot
-/// describe different benches. `passes` is deliberately fractional: a bench two turns from an item
-/// is making half of one a turn, which is exactly what a *rate* means.
-///
-/// **Only MATERIAL outputs count** — a bench making a sled adds nothing to a material ledger.
-///
-/// # ⛔ EMPTY UNLESS THE BENCH WOULD ACTUALLY BANK THIS TURN
-///
-/// [`advance_crafting`] banks nothing for a bench that has drawn no pile and cannot draw one, so a
-/// rate published for it is income that never arrives. That is not a corner: on the shipped roster
-/// `hurdles` have **no producer but a bench**, and a band with `hurdles` queued and no `wood` banks
-/// zero for ever while the ledger read ~0.29/turn — which drove `material_upkeep_income` above
-/// `material_upkeep_need`, printed a runway of `∞` and left the caret untinted in exactly the state
-/// the standing bill exists to announce. The three gates, in the order [`advance_crafting`] applies
-/// them: a recipe the book still carries, a crew (`rate_per_turn > 0`), and **a pile drawn or
-/// affordable**.
+/// Every staffed order contributes `rate / work x the output's amount` through [`order_rate`], the
+/// accrual [`advance_crafting`] runs with. **Only MATERIAL outputs count**, and an order with nobody
+/// working it (or no workable item) banks nothing: the staffing gave a crew only to orders that can
+/// start or continue an item, so `crew > 0` is the "would actually bank" gate. `lent` is the hands
+/// each order lends to a hunt this turn (index-aligned with the queue).
 pub fn bench_material_rate(
     bench: Option<&BandBench>,
-    lent_to_hunt: u32,
+    lent: &[u32],
     store: &LocalStore,
     recipes: &crate::recipes_config::RecipesConfig,
     materials: &MaterialsConfig,
@@ -373,44 +400,44 @@ pub fn bench_material_rate(
     let Some(bench) = bench else {
         return rates;
     };
-    // **The worked order is the only one that banks** — and `worked_order` has already refused an
-    // order whose recipe the book no longer carries, or that holds no pile and cannot draw one.
-    let Some(head) = worked_order(bench, store, recipes, materials, equipment, wear)
-        .and_then(|index| bench.orders.get(index))
-    else {
-        return rates;
-    };
-    let Some(recipe) = recipes.recipe(&head.recipe_id) else {
-        return rates;
-    };
-    let Some(material) = recipe.bench_material() else {
-        return rates;
-    };
-    let tiers = bench_tiers(material, materials, equipment, wear);
-    // The crew the turn actually works: the bench's hands less those out with a hunting crew.
-    let rate = rate_per_turn(
-        bench.workers.saturating_sub(lent_to_hunt),
-        &recipes.crafting,
-        tiers.speed,
-    );
-    if recipe.work <= 0.0 || rate <= 0.0 {
-        return rates;
-    }
-    // **A pile already cut keeps the bench running** even if the store could not fund a *second*
-    // pass — `advance_crafting` gates the draw, not the progress.
-    if head.drawn.is_none() && !pass_is_affordable(store, recipe, &tiers) {
-        return rates;
-    }
-    let passes = rate / recipe.work;
-    for output in &recipe.outputs {
-        if let Some(material) = output.material_id() {
-            *rates.entry(material.to_string()).or_insert(0.0) += output.amount * passes;
+    // **EMPTY UNLESS THE ORDER WOULD ACTUALLY BANK**: an order with no item in flight that cannot
+    // start one (short of an input) takes nobody and banks nothing, whatever crew is stamped on it.
+    let plan = bench_plan(bench, store, recipes, materials, equipment, wear);
+    for index in bench.ranked() {
+        let order = &bench.orders[index];
+        if !plan.orders[index].workable {
+            continue;
+        }
+        let Some(recipe) = recipes.recipe(&order.recipe_id) else {
+            continue;
+        };
+        let Some(material) = recipe.bench_material() else {
+            continue;
+        };
+        let rate = order_rate(
+            order.crew,
+            lent.get(index).copied().unwrap_or(0),
+            material,
+            &recipes.crafting,
+            materials,
+            equipment,
+            wear,
+        );
+        if recipe.work <= 0.0 || rate <= 0.0 {
+            continue;
+        }
+        let passes = rate / recipe.work;
+        for output in &recipe.outputs {
+            if let Some(material) = output.material_id() {
+                *rates.entry(material.to_string()).or_insert(0.0) += output.amount * passes;
+            }
         }
     }
     rates
 }
 
-/// **What a bench accrues in one turn** — `workers × progress_per_worker_turn × craft_speed`.
+/// **What a set of hands accrues in one turn** - `Σ hands × progress_per_worker_turn × craft_speed`,
+/// a tool-holder at the tool's speed and a bare hand at the material's own.
 ///
 /// **One authority**, because the sim applies it and the wire publishes it: a readout that recomputed
 /// the product beside this one would be free to drop the `craft_speed` term, and that term is exactly
@@ -419,11 +446,13 @@ pub fn bench_material_rate(
 ///
 /// `0` is the whole refusal: no crew, or a material with no tool and no bare-handed rate.
 pub fn rate_per_turn(
-    workers: u32,
+    at_tool: u32,
+    by_hand: u32,
     crafting: &crate::recipes_config::CraftingTuning,
-    speed: f32,
+    tool_speed: f32,
+    hand_speed: f32,
 ) -> f32 {
-    workers as f32 * crafting.progress_per_worker_turn * speed
+    (at_tool as f32 * tool_speed + by_hand as f32 * hand_speed) * crafting.progress_per_worker_turn
 }
 
 /// **Which axis a row is SPENT worst-first on** — the read axis where the row names one, and the
@@ -508,13 +537,127 @@ fn spend_axis_for<'a>(material: &str, materials: &'a MaterialsConfig) -> Option<
         .map(String::as_str)
 }
 
-/// The bench lent nobody to a hunt this turn.
-const NO_HANDS_LENT: u32 = 0;
+/// **CAN THE STORE PAY FOR ONE ITEM OF `recipe_id` RIGHT NOW** - the recipe is in the book, has a
+/// bench material, and the inputs for one item (at the band's current tiers) are on hand. The
+/// question auto-craft asks of a suggestion before it queues it.
+pub fn recipe_is_drawable(
+    recipe_id: &str,
+    store: &LocalStore,
+    recipes: &crate::recipes_config::RecipesConfig,
+    materials: &MaterialsConfig,
+    equipment: &crate::equipment_config::EquipmentConfig,
+    wear: &BandEquipment,
+) -> bool {
+    let Some(recipe) = recipes.recipe(recipe_id) else {
+        return false;
+    };
+    let Some(material) = recipe.bench_material() else {
+        return false;
+    };
+    pass_is_affordable(
+        store,
+        recipe,
+        &bench_tiers(material, materials, equipment, wear),
+    )
+}
 
-/// **The bench, once per band per turn.**
+/// **ONE ORDER AS THE STAFFING SEES IT** - [`bench_plan`]'s row for a queue index.
+#[derive(Debug, Clone, Default)]
+pub struct BenchOrderPlan {
+    /// Whether the order can take a crafter: it has an item in flight or can start one now, its
+    /// recipe is in the book, and its material can be worked (a tool is live, or a bare hand has a
+    /// rate). An order short of an input with nothing in flight is not workable and takes nobody.
+    pub workable: bool,
+    /// The order's rank.
+    pub priority: SourcePriority,
+    /// `crafters_per_item x (items in flight + items it could start now)`.
+    pub crew_cap: u32,
+    /// The recipe's `crafters_per_item`.
+    pub per_item: u32,
+    /// The bench tool item the recipe's material uses, when it has one (a kit of one unit: one tool is
+    /// held by one crafter).
+    pub tool_item: Option<std::sync::Arc<str>>,
+    /// Whether a bare hand adds anything on this order's material.
+    pub bare_can_work: bool,
+}
+
+/// **THE BENCH'S ORDERS AS THE STAFFING PASSES NEED THEM** - one row per queue index, aligned with
+/// [`BandBench::orders`], plus the rank order.
+#[derive(Debug, Clone, Default)]
+pub struct BenchPlan {
+    pub orders: Vec<BenchOrderPlan>,
+    /// Queue indices, priority High to Low and then queue order.
+    pub rank: Vec<usize>,
+}
+
+/// **WHAT EACH ORDER CAN TAKE** - workable, its cap, its tool.
+///
+/// **The cap is struck sequentially in rank order against a clone of the band's store**: each
+/// higher-ranked order's startable items deduct their inputs first, so two orders cannot both be
+/// credited with the same hide. An item that cannot be supplied takes nobody, and the cap is never
+/// larger than `crafters_per_item x items still to make`. **Approximation, documented:** the
+/// startable count is struck at hand-working amounts (a tool's efficiency only lowers a cost).
+pub fn bench_plan(
+    bench: &BandBench,
+    store: &LocalStore,
+    recipes: &crate::recipes_config::RecipesConfig,
+    materials: &MaterialsConfig,
+    equipment: &crate::equipment_config::EquipmentConfig,
+    wear: &BandEquipment,
+) -> BenchPlan {
+    let mut plan = BenchPlan {
+        orders: vec![BenchOrderPlan::default(); bench.orders.len()],
+        rank: bench.ranked(),
+    };
+    if bench.orders.is_empty() {
+        return plan;
+    }
+    let mut left = store.clone();
+    for &index in &plan.rank {
+        let order = &bench.orders[index];
+        let Some((recipe, material)) = recipes
+            .recipe(&order.recipe_id)
+            .and_then(|recipe| Some((recipe, recipe.bench_material()?)))
+        else {
+            continue;
+        };
+        let tool_live = equipment.live_bench_tool(material, wear).is_some();
+        let bare = bench_tiers_with(material, materials, equipment, wear, false);
+        let bare_can_work = bare.speed > 0.0;
+        let can_be_worked = bare_can_work || tool_live;
+        let in_flight = order.items.len() as u32;
+        let to_start = order.remaining().saturating_sub(in_flight);
+        let mut startable = 0u32;
+        while can_be_worked && startable < to_start && pass_is_affordable(&left, recipe, &bare) {
+            for input in &recipe.inputs {
+                left.take_material(
+                    &input.material,
+                    spend_axis(input, materials),
+                    required(input.amount, bare.material_efficiency),
+                );
+            }
+            startable += 1;
+        }
+        let items = in_flight + startable;
+        let per_item = recipe.crafters_per_item.max(1);
+        plan.orders[index] = BenchOrderPlan {
+            workable: can_be_worked && items > 0,
+            priority: order.priority,
+            crew_cap: if can_be_worked { per_item * items } else { 0 },
+            per_item,
+            tool_item: equipment
+                .bench_tool_for(material)
+                .map(|(id, _)| std::sync::Arc::from(id)),
+            bare_can_work,
+        };
+    }
+    plan
+}
+
+/// **The bench, once per band per turn** - see the module doc.
 ///
 /// Scheduled after `advance_labor_allocation` so it draws on the materials **this turn's** take
-/// delivered, and after the labor pass that owns the worker pool the bench's crew came out of.
+/// delivered, and after the staffing that wrote every order's crew.
 #[allow(clippy::too_many_arguments)]
 pub fn advance_crafting(
     mut bands: Query<(
@@ -537,204 +680,141 @@ pub fn advance_crafting(
     let knowledge_threshold = ladder.knowledge.completion_threshold;
 
     for (mut cohort, mut bench, mut wear, _) in bands.iter_mut() {
-        // **THE HANDS THE BENCH LENT TO THIS TURN'S HUNT ARE NOT AT THE BENCH.** The labor pass cut
-        // them for its own row walk and handed the crew back before this system runs, so the bench's
-        // recorded loan is what keeps them out of this pass. Read and cleared before any early exit,
-        // so a loan never outlives the turn it was made in.
-        let lent = if bench.lent_to_hunt == NO_HANDS_LENT {
-            NO_HANDS_LENT
-        } else {
-            std::mem::take(&mut bench.lent_to_hunt)
-        };
-        // **ONLY THE WORKED ORDER IS WORKED** — the first, in queue order, that holds a pile or can
-        // draw one now. A short order keeps its place and is skipped, so one order missing its
-        // inputs no longer stalls the queue behind it; every order not worked is at rest.
-        let Some(worked) = worked_order(
-            &bench,
-            &cohort.stores,
-            &recipes,
-            &materials,
-            &equipment,
-            &wear,
-        ) else {
+        // Read-only probe first, so an idle bench does not trip change detection every turn.
+        if bench.orders.is_empty() {
             continue;
-        };
-        let recipe_id = bench.orders[worked].recipe_id.clone();
-        // `worked_order` resolved both already; a recipe gone from the book or one with no bench
-        // material is never the worked order.
-        let Some(recipe) = recipes.recipe(&recipe_id) else {
-            continue;
-        };
-        let Some(material) = recipe.bench_material() else {
-            continue;
-        };
-        let tiers = bench_tiers(material, &materials, &equipment, &wear);
+        }
+        // **THE HANDS THE BENCH LENT TO THIS TURN'S HUNT ARE NOT AT THE BENCH.** Read and cleared
+        // before any early exit, so a loan never outlives the turn it was made in.
+        let lent: Vec<u32> = bench
+            .orders
+            .iter_mut()
+            .map(|order| std::mem::take(&mut order.lent_to_hunt))
+            .collect();
         let faction = cohort.faction;
-        let workers = bench.workers.saturating_sub(lent);
-
-        let drawn_grade = {
-            let head = &mut bench.orders[worked];
-            // ⛔ **AN UNSTAFFED BENCH DRAWS NOTHING.** The draw runs *before* the workers term is
-            // used, so a bench at zero crew would keep withdrawing materials for a pass it can never
-            // work — a famine quietly draining the material store into an idle bench. The crew can
-            // reach zero without the order ending (`LaborAllocation::normalize` stalls a bench
-            // rather than clearing it), so this is a state the sim reaches and not a defensive check.
-            //
-            // **It gates the DRAW, not the pile.** An order that had already drawn keeps what it cut —
-            // the materials are the player's and the order is still theirs — and simply banks no
-            // progress, which falls out of `rate_per_turn(0, …)` on its own.
-            if head.drawn.is_none() && workers > AN_IDLE_BENCH {
-                head.drawn = draw_pass(&mut cohort.stores, recipe, &tiers, &materials);
-            }
-            // Nothing drawn ⇒ nothing to work on. Not a branch on "can this be crafted": the pile
-            // is simply not there yet.
-            if head.drawn.is_none() {
+        for index in bench.ranked() {
+            let recipe_id = bench.orders[index].recipe_id.clone();
+            let Some(recipe) = recipes.recipe(&recipe_id) else {
+                continue;
+            };
+            let Some(material) = recipe.bench_material() else {
+                continue;
+            };
+            let tool_tiers = bench_tiers(material, &materials, &equipment, &wear);
+            let hand_tiers = bench_tiers_with(material, &materials, &equipment, &wear, false);
+            let hands = hands_after_loan(bench.orders[index].crew, lent[index]);
+            // **AN UNSTAFFED ORDER DRAWS NOTHING**: its in-flight items keep their pile and their
+            // progress and resume when it is staffed again.
+            if hands.total() == 0 {
                 continue;
             }
-
-            let accrued = scalar_from_f32(rate_per_turn(workers, &recipes.crafting, tiers.speed));
-            head.progress += accrued;
-            if head.progress < scalar_from_f32(recipe.work) {
-                continue;
+            let per_item = recipe.crafters_per_item.max(1);
+            let order = &mut bench.orders[index];
+            // ## Seat the hands: in-flight items first, oldest first, tool-holders first.
+            let mut tool_left = hands.at_tool;
+            let mut hand_left = hands.by_hand;
+            let mut seats: Vec<(u32, u32)> = Vec::new();
+            for _ in 0..order.items.len() {
+                let at_tool = tool_left.min(per_item);
+                tool_left -= at_tool;
+                seats.push((at_tool, 0));
             }
-            head.drawn.as_ref().and_then(|drawn| drawn.grade.clone())
-        };
-
-        // **The faction's known crafts, for the single-tier fallback below** — resolved off the same
-        // ledger and the same completion threshold `bench_enqueue` gates a recipe on, so one reading
-        // of "does this people know that craft" serves both.
-        let known = |craft: &str| {
-            craft_discovery_id(craft)
-                .is_some_and(|id| knows(&discovery, faction, id, knowledge_threshold))
-        };
-        emit_outputs(
-            recipe,
-            drawn_grade.as_deref(),
-            &mut cohort.stores,
-            &mut bench.finished,
-            &materials,
-            &equipment,
-            &known,
-        );
-        // **THE SAME QUANTUM, CHARGED ONCE, SIDE BY SIDE.** Splitting these across two sites is how
-        // a tool that lasts 25 items ends up teaching a craft in 30.
-        if tiers.tooled {
-            if let Some((tool_id, _)) = equipment.bench_tool_for(material) {
-                let tool_id = tool_id.to_string();
-                wear.wear_item(
+            for seat in &mut seats {
+                let by_hand = hand_left.min(per_item - seat.0);
+                hand_left -= by_hand;
+                seat.1 = by_hand;
+            }
+            // ## Then start more items while hands remain: all-or-nothing set-aside per item.
+            while tool_left + hand_left > 0 && order.made + (order.items.len() as u32) < order.count
+            {
+                let with_tool = tool_left > 0 && tool_tiers.tooled;
+                let tiers = if with_tool { &tool_tiers } else { &hand_tiers };
+                let Some(drawn) = draw_pass(&mut cohort.stores, recipe, tiers, &materials) else {
+                    break;
+                };
+                order.items.push(ItemInFlight {
+                    progress: scalar_zero(),
+                    drawn,
+                });
+                let at_tool = if with_tool {
+                    tool_left.min(per_item)
+                } else {
+                    0
+                };
+                tool_left -= at_tool;
+                let by_hand = hand_left.min(per_item - at_tool);
+                hand_left -= by_hand;
+                seats.push((at_tool, by_hand));
+            }
+            // ## Accrue per item, and note which finished.
+            let work = scalar_from_f32(recipe.work);
+            let mut finished: Vec<usize> = Vec::new();
+            for (item_index, (at_tool, by_hand)) in seats.iter().enumerate() {
+                let gain = scalar_from_f32(rate_per_turn(
+                    *at_tool,
+                    *by_hand,
+                    &recipes.crafting,
+                    tool_tiers.speed,
+                    hand_tiers.speed,
+                ));
+                let item = &mut order.items[item_index];
+                item.progress += gain;
+                if item.progress >= work {
+                    finished.push(item_index);
+                }
+            }
+            // ## Complete, oldest first for the outputs, removed from the back.
+            let done: Vec<(Option<String>, bool)> = finished
+                .iter()
+                .map(|&item_index| {
+                    let drawn = &order.items[item_index].drawn;
+                    (drawn.grade.clone(), drawn.at_tool)
+                })
+                .collect();
+            for (grade, at_tool) in done {
+                // **The faction's known crafts, for the single-tier fallback** - resolved off the
+                // same ledger and completion threshold `bench_enqueue` gates a recipe on.
+                let known = |craft: &str| {
+                    craft_discovery_id(craft)
+                        .is_some_and(|id| knows(&discovery, faction, id, knowledge_threshold))
+                };
+                emit_outputs(
+                    recipe,
+                    grade.as_deref(),
+                    &mut cohort.stores,
+                    &mut bench.finished,
+                    &materials,
                     &equipment,
-                    &tool_id,
-                    crate::equipment_config::WearQuantum::ItemCrafted,
-                    ONE_ITEM,
+                    &known,
                 );
+                // **THE SAME QUANTUM, CHARGED ONCE, SIDE BY SIDE** - and only for an item set aside
+                // at the tool.
+                if at_tool {
+                    if let Some((tool_id, _)) = equipment.bench_tool_for(material) {
+                        let tool_id = tool_id.to_string();
+                        wear.wear_item(
+                            &equipment,
+                            &tool_id,
+                            crate::equipment_config::WearQuantum::ItemCrafted,
+                            ONE_ITEM,
+                        );
+                    }
+                }
+                credit_craft_lesson(
+                    &recipe.craft,
+                    practice_per_item * ONE_ITEM,
+                    &ladder.knowledge,
+                    faction,
+                    &mut discovery,
+                );
+                bench.last_output_grade = grade;
+            }
+            for &item_index in finished.iter().rev() {
+                bench.finish_item(index, item_index);
             }
         }
-        credit_craft_lesson(
-            &recipe.craft,
-            practice_per_item * ONE_ITEM,
-            &ladder.knowledge,
-            faction,
-            &mut discovery,
-        );
-
-        // **The grade the batch just delivered carries** — the same string every batch of that
-        // craft is stamped with.
-        bench.last_output_grade = drawn_grade;
-        // **Count the item against the worked order, and pop it when its count is met.** The
-        // overflow past `work` is not carried: progress past a completion was done on an item whose
-        // materials have not been drawn yet, so there is nothing for it to have been spent on — the
-        // same shape as the ladder's `crew_scale`, where over-crewing buys nothing.
-        bench.complete_item(worked);
-        // **THE NEXT PASS DRAWS ON THE SAME RULE** — whichever order is now the worked one (this
-        // order again, the next after it popped, or one ahead of it whose inputs this pass's own
-        // output just supplied), against its own recipe's tiers resolved off the ledger as it now
-        // stands. The next pass's grade is fixed from the stock the band has now.
-        draw_for_worked_order(
-            &mut bench,
-            &mut cohort.stores,
-            &recipes,
-            &materials,
-            &equipment,
-            &wear,
-        );
+        bench.retire_done_orders();
     }
-}
-
-/// **WHICH ORDER THE BENCH WORKS THIS TURN** — the first, in queue order, that holds a pile or can
-/// draw one now ([`order_is_workable`]). `None` when no order can be worked: an empty queue, or every
-/// order short of its inputs (or naming a recipe the book no longer carries).
-///
-/// **One authority**, read by [`advance_crafting`], [`bench_material_rate`] and the bench's wire row,
-/// so the order the sim works and the order the panel says it works cannot differ. It is
-/// crew-blind: the crew gates the DRAW, not which order is next.
-pub fn worked_order(
-    bench: &BandBench,
-    store: &LocalStore,
-    recipes: &crate::recipes_config::RecipesConfig,
-    materials: &MaterialsConfig,
-    equipment: &crate::equipment_config::EquipmentConfig,
-    wear: &BandEquipment,
-) -> Option<usize> {
-    bench
-        .orders
-        .iter()
-        .position(|order| order_is_workable(order, store, recipes, materials, equipment, wear))
-}
-
-/// **CAN THIS ORDER BE WORKED NOW** — it holds a pile already cut, or its recipe is in the book, has
-/// a bench material, and the store can pay one pass at the band's current tiers
-/// ([`pass_is_affordable`], the same question the draw asks).
-pub fn order_is_workable(
-    order: &crate::components::BenchOrder,
-    store: &LocalStore,
-    recipes: &crate::recipes_config::RecipesConfig,
-    materials: &MaterialsConfig,
-    equipment: &crate::equipment_config::EquipmentConfig,
-    wear: &BandEquipment,
-) -> bool {
-    let Some(recipe) = recipes.recipe(&order.recipe_id) else {
-        return false;
-    };
-    let Some(material) = recipe.bench_material() else {
-        return false;
-    };
-    order.drawn.is_some()
-        || pass_is_affordable(
-            store,
-            recipe,
-            &bench_tiers(material, materials, equipment, wear),
-        )
-}
-
-/// **THE WORKED ORDER DRAWS ITS PILE** — after a completion, whichever order [`worked_order`] now
-/// names. Gated exactly as the turn's own draw is: a crew, and an order that has not already cut a
-/// pile (an order overtaken mid-item keeps the one it cut).
-fn draw_for_worked_order(
-    bench: &mut BandBench,
-    store: &mut LocalStore,
-    recipes: &crate::recipes_config::RecipesConfig,
-    materials: &MaterialsConfig,
-    equipment: &crate::equipment_config::EquipmentConfig,
-    wear: &BandEquipment,
-) {
-    if bench.workers == AN_IDLE_BENCH {
-        return;
-    }
-    let Some(index) = worked_order(bench, store, recipes, materials, equipment, wear) else {
-        return;
-    };
-    let order = &mut bench.orders[index];
-    if order.drawn.is_some() {
-        return;
-    }
-    let Some(recipe) = recipes.recipe(&order.recipe_id) else {
-        return;
-    };
-    let Some(material) = recipe.bench_material() else {
-        return;
-    };
-    let tiers = bench_tiers(material, materials, equipment, wear);
-    order.drawn = draw_pass(store, recipe, &tiers, materials);
 }
 
 /// **WHAT THE BENCHES FINISHED LAST TURN REACHES THE STORE — at the top of this one.**
@@ -766,10 +846,6 @@ pub fn open_wear_slots(
     }
 }
 
-/// **NOBODY AT THE BENCH** — the crew below which it may not draw. Named rather than a bare `0`
-/// because the test is *"is anyone working this job"* and not a comparison with a magnitude.
-const AN_IDLE_BENCH: u32 = 0;
-
 /// **The grade, fixed here and never again.** The `characteristic_bands` rung `min(drawn reading,
 /// tool ceiling)` falls in — excellent flax with no loom still makes a `good` basket, because the
 /// bare hand's ceiling is what the band is capped at.
@@ -778,6 +854,7 @@ fn fix_grade(
     reading: Option<f32>,
     withdrawn: Vec<DrawnMaterial>,
     ceiling: f32,
+    at_tool: bool,
     materials: &MaterialsConfig,
 ) -> DrawnInputs {
     let grade = reading
@@ -788,6 +865,7 @@ fn fix_grade(
         reading,
         grade,
         withdrawn,
+        at_tool,
     }
 }
 
@@ -998,10 +1076,14 @@ mod forecast_tests {
     fn a_drawn_pass_is_excluded() {
         let fixture = fixture(FIBRE_FOR_ONE_PASS);
         let mut order = BenchOrder::new(SLED, SIX);
-        order.drawn = Some(DrawnInputs {
-            reading: None,
-            grade: None,
-            withdrawn: Vec::new(),
+        order.items.push(crate::components::ItemInFlight {
+            progress: scalar_zero(),
+            drawn: DrawnInputs {
+                reading: None,
+                grade: None,
+                withdrawn: Vec::new(),
+                at_tool: false,
+            },
         });
         let result = forecast(&fixture, &bench_of(vec![order]));
         assert_eq!(

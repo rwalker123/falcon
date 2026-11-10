@@ -711,33 +711,7 @@ fn create_populations<'a>(
                 builder.create_vector(&rows)
             };
             let bench = {
-                let recipe_id = builder.create_string(&cohort.bench.recipe_id);
-                let display_name = builder.create_string(&cohort.bench.display_name);
-                let teaches = builder.create_string(&cohort.bench.teaches);
-                let blocked_reason = builder.create_string(&cohort.bench.blocked_reason);
-                // **Whether that reason is a fault or a prompt**, resolved sim-side beside it — a
-                // crewless bench is the normal state after a Make and must not render as an alarm.
-                let blocked_severity = builder.create_string(&cohort.bench.blocked_severity);
-                let output_grade = builder.create_string(&cohort.bench.output_grade);
-                let shortfalls = create_shortfalls(builder, &cohort.bench.shortfalls);
-                // **The pile already withdrawn**, in the recipe's own input order — what a clear or
-                // a swap will destroy, which the client cannot name from `drawn: bool` alone.
-                let drawn_inputs: Vec<_> = cohort
-                    .bench
-                    .drawn_inputs
-                    .iter()
-                    .map(|input| {
-                        let material_id = builder.create_string(&input.material_id);
-                        fb::DrawnInput::create(
-                            builder,
-                            &fb::DrawnInputArgs {
-                                materialId: Some(material_id),
-                                amount: input.amount,
-                            },
-                        )
-                    })
-                    .collect();
-                let drawn_inputs = builder.create_vector(&drawn_inputs);
+                let set_aside = create_drawn_inputs(builder, &cohort.bench.set_aside);
                 let orders = create_bench_orders(builder, &cohort.bench.orders);
                 let kit_orders = create_bench_kit_orders(builder, &cohort.bench.kit_orders);
                 let auto_skipped: Vec<_> = cohort
@@ -750,39 +724,13 @@ fn create_populations<'a>(
                 fb::BenchState::create(
                     builder,
                     &fb::BenchStateArgs {
-                        recipeId: Some(recipe_id),
-                        displayName: Some(display_name),
                         workers: cohort.bench.workers,
-                        progress: cohort.bench.progress,
-                        work: cohort.bench.work,
-                        teaches: Some(teaches),
-                        blockedReason: Some(blocked_reason),
-                        shortfalls: Some(shortfalls),
-                        drawn: cohort.bench.drawn,
-                        outputGrade: Some(output_grade),
-                        ratePerTurn: cohort.bench.rate_per_turn,
-                        drawnInputs: Some(drawn_inputs),
-                        blockedSeverity: Some(blocked_severity),
-                        // **THE PLAYER'S OWN RANK ON THE BENCH** — the same mapping the labor row's
-                        // takes, and mapped rather than cast for the same reason: the wire puts the
-                        // DEFAULT at `0` while the shedding order runs Low → Normal → High.
-                        // Appended last.
-                        priority: match cohort.bench.priority {
-                            SourcePriorityState::Normal => fb::SourcePriority::Normal,
-                            SourcePriorityState::High => fb::SourcePriority::High,
-                            SourcePriorityState::Low => fb::SourcePriority::Low,
-                        },
-                        // **THE QUEUE, head first** — appended last.
                         orders: Some(orders),
-                        // The index the scalars above describe — appended last.
-                        worked: cohort.bench.worked,
-                        // **AUTO-CRAFT** — appended last.
                         auto: cohort.bench.auto,
                         autoSkipped: Some(auto_skipped),
-                        // **THE HANDS LENT TO NEXT TURN'S HUNT** — appended last.
                         lentToHunt: cohort.bench.lent_to_hunt,
-                        // **THE LIVE WHOLE-KIT ORDERS** — appended last (#780).
                         kitOrders: Some(kit_orders),
+                        setAside: Some(set_aside),
                     },
                 )
             };
@@ -1287,7 +1235,28 @@ fn create_populations<'a>(
     builder.create_vector(&offsets)
 }
 
-/// `BenchState.orders` — the bench's queue, head first.
+/// A list of set-aside material amounts - `BenchOrder.drawnInputs` and `BenchState.setAside`.
+fn create_drawn_inputs<'a>(
+    builder: &mut FbBuilder<'a>,
+    inputs: &[DrawnInputState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::DrawnInput<'a>>>> {
+    let rows: Vec<_> = inputs
+        .iter()
+        .map(|input| {
+            let material_id = builder.create_string(&input.material_id);
+            fb::DrawnInput::create(
+                builder,
+                &fb::DrawnInputArgs {
+                    materialId: Some(material_id),
+                    amount: input.amount,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&rows)
+}
+
+/// `BenchState.orders` - the bench's queue, in queue order.
 fn create_bench_orders<'a>(
     builder: &mut FbBuilder<'a>,
     orders: &[BenchOrderState],
@@ -1299,6 +1268,11 @@ fn create_bench_orders<'a>(
             let blocked_reason = builder.create_string(&order.blocked_reason);
             let blocked_severity = builder.create_string(&order.blocked_severity);
             let short_to_finish = create_shortfalls(builder, &order.short_to_finish);
+            let display_name = builder.create_string(&order.display_name);
+            let teaches = builder.create_string(&order.teaches);
+            let output_grade = builder.create_string(&order.output_grade);
+            let bench_tool = builder.create_string(&order.bench_tool);
+            let drawn_inputs = create_drawn_inputs(builder, &order.drawn_inputs);
             fb::BenchOrder::create(
                 builder,
                 &fb::BenchOrderArgs {
@@ -1312,6 +1286,26 @@ fn create_bench_orders<'a>(
                     shortToFinish: Some(short_to_finish),
                     auto: order.auto,
                     kitOrder: order.kit_order,
+                    // Mapped rather than cast: the wire puts the DEFAULT at `0` while the shedding
+                    // order runs Low -> Normal -> High.
+                    priority: match order.priority {
+                        SourcePriorityState::Normal => fb::SourcePriority::Normal,
+                        SourcePriorityState::High => fb::SourcePriority::High,
+                        SourcePriorityState::Low => fb::SourcePriority::Low,
+                    },
+                    crewAtTool: order.crew_at_tool,
+                    crewByHand: order.crew_by_hand,
+                    crewCap: order.crew_cap,
+                    crewPerItem: order.crew_per_item,
+                    itemsInFlight: order.items_in_flight,
+                    displayName: Some(display_name),
+                    teaches: Some(teaches),
+                    work: order.work,
+                    ratePerTurn: order.rate_per_turn,
+                    outputGrade: Some(output_grade),
+                    benchTool: Some(bench_tool),
+                    drawnInputs: Some(drawn_inputs),
+                    lentToHunt: order.lent_to_hunt,
                 },
             )
         })
@@ -1743,38 +1737,54 @@ fn decode_loadout_window(
     })
 }
 
+fn decode_drawn_inputs(
+    rows: Option<flatbuffers::Vector<'_, ForwardsUOffset<fb::DrawnInput<'_>>>>,
+) -> Vec<DrawnInputState> {
+    map_rows(rows, |input| DrawnInputState {
+        material_id: text(input.materialId()),
+        amount: input.amount(),
+    })
+}
+
 fn decode_bench(bench: fb::BenchState<'_>) -> Result<BenchState, DecodeError> {
     Ok(BenchState {
-        recipe_id: text(bench.recipeId()),
-        display_name: text(bench.displayName()),
         workers: bench.workers(),
-        progress: bench.progress(),
-        work: bench.work(),
-        teaches: text(bench.teaches()),
-        blocked_reason: text(bench.blockedReason()),
-        shortfalls: decode_shortfalls(bench.shortfalls()),
-        drawn: bench.drawn(),
-        output_grade: text(bench.outputGrade()),
-        rate_per_turn: bench.ratePerTurn(),
-        drawn_inputs: map_rows(bench.drawnInputs(), |input| DrawnInputState {
-            material_id: text(input.materialId()),
-            amount: input.amount(),
-        }),
-        blocked_severity: text(bench.blockedSeverity()),
-        priority: to_state_source_priority(bench.priority())?,
-        orders: map_rows(bench.orders(), |order| BenchOrderState {
-            recipe_id: text(order.recipeId()),
-            count: order.count(),
-            made: order.made(),
-            progress: order.progress(),
-            drawn: order.drawn(),
-            blocked_reason: text(order.blockedReason()),
-            blocked_severity: text(order.blockedSeverity()),
-            short_to_finish: decode_shortfalls(order.shortToFinish()),
-            auto: order.auto(),
-            kit_order: order.kitOrder(),
-        }),
-        worked: bench.worked(),
+        orders: bench
+            .orders()
+            .map(|rows| {
+                rows.iter()
+                    .map(|order| {
+                        Ok(BenchOrderState {
+                            recipe_id: text(order.recipeId()),
+                            count: order.count(),
+                            made: order.made(),
+                            progress: order.progress(),
+                            drawn: order.drawn(),
+                            blocked_reason: text(order.blockedReason()),
+                            blocked_severity: text(order.blockedSeverity()),
+                            short_to_finish: decode_shortfalls(order.shortToFinish()),
+                            auto: order.auto(),
+                            kit_order: order.kitOrder(),
+                            priority: to_state_source_priority(order.priority())?,
+                            crew_at_tool: order.crewAtTool(),
+                            crew_by_hand: order.crewByHand(),
+                            crew_cap: order.crewCap(),
+                            crew_per_item: order.crewPerItem(),
+                            items_in_flight: order.itemsInFlight(),
+                            display_name: text(order.displayName()),
+                            teaches: text(order.teaches()),
+                            work: order.work(),
+                            rate_per_turn: order.ratePerTurn(),
+                            output_grade: text(order.outputGrade()),
+                            bench_tool: text(order.benchTool()),
+                            drawn_inputs: decode_drawn_inputs(order.drawnInputs()),
+                            lent_to_hunt: order.lentToHunt(),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, DecodeError>>()
+            })
+            .transpose()?
+            .unwrap_or_default(),
         auto: bench.auto(),
         auto_skipped: decode_strings(bench.autoSkipped()),
         lent_to_hunt: bench.lentToHunt(),
@@ -1784,6 +1794,7 @@ fn decode_bench(bench: fb::BenchState<'_>) -> Result<BenchState, DecodeError> {
             kits: kit.kits(),
             done: kit.done(),
         }),
+        set_aside: decode_drawn_inputs(bench.setAside()),
     })
 }
 

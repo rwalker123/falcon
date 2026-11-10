@@ -42,18 +42,17 @@ class_name CraftingPanel
 ## group) rather than a step-down. Owning units reads **one line per GRADE**, because a band may hold one item at two and
 ## `×5 · excellent` would be a lie.
 ##
-## **MAKE QUEUES AN ORDER; THE PLAYER STAFFS THE BENCH.** Pressing Make emits `enqueue_requested` with a
-## count of one (→ `bench_enqueue`) and recruits nobody, so *"No one at the bench"* is the ordinary
-## state one click later and the crew `− n +` stepper (`crew_changed` → `bench_crew`) is the only thing
-## that picks the number — live on an idle bench too, the crew staying with the bench across orders.
-## **The bench works ONE order at a time — the first in queue order that holds a pile or can draw
-## (`BenchState.worked`)**: the well describes that WORKED order, and the queue rows under it list every
-## other order with its own `made/count` stepper (`order_count_changed` → `bench_order_count`), a `↑`
-## (`order_raise_requested` → `bench_raise`, never on index 0) and a `✕` (`order_remove_requested` →
-## `bench_remove`). The well's own ✕ and stepper address `order <worked>`. **SUGGESTIONS open the main
-## column** — the sim's ranked list of what the band's workers are going without, each with a Queue
-## that enqueues its whole count. There is no Crafter role card on the Band panel: crafting always has
-## a subject, so it is staffed at the bench like a worked source rather than through a standing role.
+## **MAKE QUEUES AN ORDER; THE SIM STAFFS THE BENCH** (#873). Pressing Make emits `enqueue_requested` with a
+## count of one (→ `bench_enqueue`) and recruits nobody: the sim works SEVERAL orders at once, staffing
+## each from the band's idle hands, highest priority first, so the panel never proposes a crew and has no
+## stepper for one. The bench well says how it stands (`R of M orders running · C crafters · S spare`)
+## and every order is its own row: its name, a `Priority: …` link (`bench_priority_requested` →
+## `bench_priority … order <i>`), its own `made/count` stepper (`order_count_changed` →
+## `bench_order_count`), a `↑` (`order_raise_requested` → `bench_raise`, never on index 0) and a `✕`
+## (`order_remove_requested` → `bench_remove`), the work strip's crew bar (at the tool · by hand · room),
+## a progress bar and one sub line. **SUGGESTIONS open the main column** — the sim's ranked list of what the
+## band's workers are going without, each with a Queue that enqueues its whole count. There is no Crafter
+## role card on the Band panel.
 ##
 ## **THIS IS THE FREE-FLOATING CASE, hence `AutoSizingPanel`** (`.claude/rules/client/panel-framework.md`):
 ## the card is measured against the ROOM — the viewport MINUS every reserved edge strip, which is the
@@ -82,8 +81,6 @@ signal cycle_requested(delta: int)
 ## Make (count 1) or a suggestion's Queue (its whole count) was pressed —
 ## `bench_enqueue <faction> <band> recipe <id> count <n>`.
 signal enqueue_requested(recipe_id: String, count: int)
-## The bench's crew stepper moved — `bench_crew <faction> <band> workers <n>`.
-signal crew_changed(workers: int)
 ## A queued order's `− n +` moved — `bench_order_count <faction> <band> order <i> count <n>`. `order`
 ## is the order's index in the published `bench.orders`, 0 the head of the queue.
 signal order_count_changed(order: int, count: int)
@@ -92,13 +89,9 @@ signal order_count_changed(order: int, count: int)
 signal order_remove_requested(order: int)
 ## An order's ↑ was pressed — `bench_raise <faction> <band> order <i>`, never index 0.
 signal order_raise_requested(order: int)
-## A rung of the bench's rank picker was pressed — `bench_priority <faction> <band> high|normal|low`
-## (`docs/plan_standing_upkeep.md` §4.9 item 9b). `level` is one of `HudWorkVocab`'s three tokens,
-## already normalized, so nothing between here and the socket re-spells it.
-##
-## **A SIBLING VERB, NOT A `work_priority` TOKEN**: `work_priority`'s grammar reads a lone trailing
-## token as a herd id, so `work_priority … bench low` would be ambiguous with a herd named `bench`.
-signal bench_priority_requested(level: String)
+## A rung of ONE ORDER's rank picker was pressed — `bench_priority <faction> <band> order <i>
+## high|normal|low`; `order` is the order's index in `bench.orders`.
+signal bench_priority_requested(order: int, level: String)
 ## The Auto switch was flipped - `bench_auto <faction> <band> on|off`. `on` is the state it is asking for.
 signal bench_auto_requested(on: bool)
 ## The Skip link under a waiting auto order was pressed - `bench_auto_skip <faction> <band>`.
@@ -129,9 +122,8 @@ const PAYLOAD_RECIPES := "recipes"
 ## The parsed `equipmentConfigJson` — the only place a bench tool's craft stats ride. `{}` until it arrives.
 const PAYLOAD_EQUIPMENT_CONFIG := "equipment_config"
 const PAYLOAD_CRAFT_KNOWLEDGE := "craft_knowledge"
-## The ceiling the crew stepper may raise the bench to — the band's idle workers **plus the crew
-## already at the bench** (`HudBandLaborState.benchable_workers`), which is a different question from
-## "how many are idle" and is why the key's name outlives its meaning. See `_build_crew_stepper`.
+## The band's spare hands — `HudBandLaborState.people_idle`, the idle figure the labor UI already tells the
+## player — for the bench header's `S spare`.
 const PAYLOAD_IDLE_WORKERS := "idle_workers"
 
 var _card: PanelContainer = null
@@ -192,17 +184,10 @@ var _picker_choice: String = ""
 var _picker_count: int = HudCraftingVocab.MAKE_ORDER_COUNT
 var _picker_in_suggestions: bool = false
 
-## **IS THE BENCH'S RANK PICKER SHOWING?** VIEW state with exactly the standing of `_folded` above and
-## of the scroll offset: it is not on the wire, it survives the per-snapshot rebuild, and `render` is
-## still the whole of this panel's data input.
-##
-## A plain `bool`, and the work inspector's three-valued `_work_picker_open` — which this used to be
-## contrasted against — is retired outright (`docs/plan_standing_upkeep.md` §4.9 item 12d): that state
-## existed only to keep the floor picker and the rank picker from both reserving height in one
-## fixed-size zone, and the inspector is a viewport-measured card that draws both at once now. This
-## well keeps its `bool` because it has no second expansion to be exclusive WITH, which was always the
-## real reason.
-var _priority_open: bool = false
+## **WHICH ORDER'S RANK PICKER IS SHOWING** (`HudCraftingVocab.NO_ORDER` = none). VIEW state with exactly the
+## standing of `_folded` above and of the scroll offset: it is not on the wire, it survives the
+## per-snapshot rebuild, and `render` is still the whole of this panel's data input. One picker at a time.
+var _priority_order: int = HudCraftingVocab.NO_ORDER
 
 ## **THE KIT PICKER'S VIEW STATE (#780)** — which kit's picker is open (`NO_ROW` = none), how many kits
 ## the order is for (the player's own number, opening at one kit) and the recipe chosen per item. Exactly the standing of `_picker_row` / `_picker_choice`: it survives the
@@ -339,7 +324,7 @@ func dismiss() -> void:
 	# …and the rank picker is an EXPANSION rather than a preference, so it closes with the card. It is
 	# deliberately unlike `_folded`, which survives a dismissal because a reader who has stopped looking
 	# at a ledger group means it.
-	_priority_open = false
+	_priority_order = HudCraftingVocab.NO_ORDER
 	# …and so are an item's popup and its picker: both are transient readings of one ledger.
 	_reset_picker()
 	_reset_kit_picker()
@@ -489,6 +474,25 @@ func _build_rail(payload: Dictionary) -> void:
 		empty.add_theme_font_size_override("font_size", HudCraftingVocab.CRAFT_TRACK_FONT_SIZE)
 		empty.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 		_rail.add_child(empty)
+	var set_aside := _build_set_aside_line(band.get(HudCraftingVocab.BAND_BENCH_KEY, {}))
+	if set_aside != null:
+		_rail.add_child(set_aside)
+
+## **`N set aside for the bench`** — what the bench's items in flight hold out of the piles above, one line
+## among the rail rows; the per-material split rides its tooltip. Absent when nothing is set aside.
+func _build_set_aside_line(bench: Dictionary) -> Control:
+	var rows: Array = bench.get(HudCraftingVocab.BENCH_SET_ASIDE_KEY, [])
+	var total := _drawn_total(rows)
+	if total <= 0.0:
+		return null
+	var line := Label.new()
+	line.text = HudCraftingVocab.RAIL_SET_ASIDE_FORMAT % _amount_text(total)
+	line.add_theme_font_size_override("font_size", HudCraftingVocab.CRAFT_TRACK_FONT_SIZE)
+	line.add_theme_color_override("font_color", HudStyle.INK_DIM)
+	line.mouse_filter = Control.MOUSE_FILTER_STOP
+	line.tooltip_text = _drawn_clauses(rows)
+	line.set_meta(HudCraftingVocab.RAIL_SET_ASIDE_META, total)
+	return line
 
 func _build_material_group(material: Dictionary, batches: Array, payload: Dictionary) -> Control:
 	var group := VBoxContainer.new()
@@ -599,351 +603,170 @@ func _band_name_color(band_name: String, payload: Dictionary) -> Color:
 
 # ---- the bench --------------------------------------------------------------
 
-## **WHAT IS BEING MADE, HOW FAR ALONG IT IS, WHY IT IS STOPPED, WHO IS ON IT AND WHAT IT TEACHES.**
-## Each of those is its own line, so none of them can cost the panel another. An idle bench says
-## so in as many words — `""` for `recipe_id` is IDLE, which is a different statement from a bench
-## that has a recipe and a `blocked_reason`.
+## **THE BENCH IS A QUEUE OF ORDERS THE SIM WORKS AT ONCE** (#873, `docs/plan_labor_at_scale.md` →
+## "The bench: several orders at once"). The sim staffs every order each turn from the band's idle
+## hands, highest priority first, so this panel never proposes a crew and has no stepper for one. The
+## well says only how the bench stands (`R of M orders running · C crafters · S spare`); each order is
+## its own row below it (`_build_queue`). An empty queue says so in as many words.
 func _build_bench(payload: Dictionary) -> void:
 	var band: Dictionary = payload.get(PAYLOAD_BAND, {})
 	var bench: Dictionary = band.get(HudCraftingVocab.BAND_BENCH_KEY, {})
+	var orders: Array = bench.get(HudCraftingVocab.BENCH_ORDERS_KEY, [])
+	var auto_on := bool(bench.get(HudCraftingVocab.BENCH_AUTO_KEY, false))
 	var section := VBoxContainer.new()
 	section.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
 	section.add_child(_zone_head(HudCraftingVocab.BENCH_HEAD))
 
 	var well := PanelContainer.new()
 	well.add_theme_stylebox_override("panel", HudStyle.readout_stylebox())
-	var inner := VBoxContainer.new()
-	inner.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
-	well.add_child(inner)
-
-	var recipe_id := String(bench.get(HudCraftingVocab.BENCH_RECIPE_ID_KEY, ""))
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", HudCraftingVocab.HEADER_SEPARATION)
 	var words := VBoxContainer.new()
 	words.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	words.add_theme_constant_override("separation", 0)
-
 	var title := Label.new()
 	title.add_theme_font_size_override("font_size", HudCraftingVocab.BENCH_TITLE_FONT_SIZE)
 	title.add_theme_color_override("font_color", HudStyle.INK)
-	var sub := Label.new()
-	sub.add_theme_font_size_override("font_size", HudCraftingVocab.BENCH_SUB_FONT_SIZE)
-	sub.add_theme_color_override("font_color", HudStyle.INK_DIM)
-	var blocked := ""
-	var blocked_severity := ""
-	var auto_on := bool(bench.get(HudCraftingVocab.BENCH_AUTO_KEY, false))
-	var bench_orders: Array = bench.get(HudCraftingVocab.BENCH_ORDERS_KEY, [])
-	if recipe_id == "":
+	words.add_child(title)
+	if orders.is_empty():
 		title.text = HudCraftingVocab.BENCH_IDLE_TITLE
-		# An idle bench with Auto on has nothing it will make; the "No one at the bench" crew prompt is
-		# the sim's own blocked line and is untouched.
+		var sub := Label.new()
+		sub.add_theme_font_size_override("font_size", HudCraftingVocab.BENCH_SUB_FONT_SIZE)
+		sub.add_theme_color_override("font_color", HudStyle.INK_DIM)
+		sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		sub.custom_minimum_size = Vector2.ZERO
+		# An idle bench with Auto on has nothing it will make.
 		sub.text = HudCraftingVocab.AUTO_IDLE_SUB if auto_on else HudCraftingVocab.BENCH_IDLE_SUB
+		words.add_child(sub)
 	else:
-		var recipe := _recipe_of(recipe_id, payload)
-		var craft_name := _craft_display_name(String(recipe.get(HudCraftingVocab.MATERIAL_CRAFT_KEY, "")), payload)
-		var made := String(bench.get(HudCraftingVocab.BENCH_DISPLAY_NAME_KEY, recipe_id))
-		# **THE THING, THEN THE CRAFT** — and the craft only when the sim published one, so an
-		# unresolved track prints `Hurdles` rather than a title opening on a separator.
-		title.text = made if craft_name == "" \
-			else HudCraftingVocab.BENCH_TITLE_FORMAT % [made, craft_name]
-		sub.text = _bench_sub_line(bench)
-		blocked = String(bench.get(HudCraftingVocab.BENCH_BLOCKED_REASON_KEY, ""))
-		blocked_severity = String(bench.get(HudCraftingVocab.BENCH_BLOCKED_SEVERITY_KEY, ""))
-	var well_index := _worked_index(bench)
-	# **`· for <Kit>` WHEN THE WORKED ORDER IS A PART OF A KIT ORDER** (#780) — the well says what the work
-	# is for, so a player looking at one sled sees it is the Stalking kit's.
-	var for_kit := ""
-	var well_kit_order := _kit_order_of(bench_orders, well_index) if recipe_id != "" \
-		else HudCraftingVocab.NO_KIT_ORDER
-	if well_kit_order != HudCraftingVocab.NO_KIT_ORDER:
-		for_kit = HudCraftingVocab.BENCH_FOR_KIT_FORMAT % _kit_order_name(
-			_kit_order_in(bench, well_kit_order), band)
-	var well_is_auto := recipe_id != "" and _order_is_auto(bench_orders, well_index)
-	if well_is_auto or for_kit != "":
-		var title_row := HBoxContainer.new()
-		title_row.add_theme_constant_override("separation", HudCraftingVocab.AUTO_TAG_SEPARATION)
-		title_row.add_child(title)
-		if for_kit != "":
-			var suffix := Label.new()
-			suffix.text = for_kit
-			suffix.add_theme_font_size_override("font_size", HudCraftingVocab.BENCH_SUB_FONT_SIZE)
-			suffix.add_theme_color_override("font_color", HudStyle.SIGNAL)
-			suffix.set_meta(HudCraftingVocab.BENCH_FOR_KIT_META, well_kit_order)
-			title_row.add_child(suffix)
-		if well_is_auto:
-			title_row.add_child(_build_auto_tag(HudCraftingVocab.AUTO_TAG_WELL_INDEX))
-		words.add_child(title_row)
-	else:
-		words.add_child(title)
-	# **THE RANK LEADS LINE TWO, exactly as a worked row's does** (`docs/plan_standing_upkeep.md` §4.9
-	# item 9b) — `High priority · ` / `Low priority · ` in the tier's ink, and a Normal bench prints
-	# NOTHING, its line two staying byte-identical to what it printed before the mark existed.
-	#
-	# **A SEPARATE `Label`, not a splice into the sub line's string.** The sub line is composed by
-	# `_bench_sub_line` out of the job's own clauses, and a prefix spliced in would sit inside a string
-	# that producer measures and joins; its own node keeps the two apart, which is `BandPanelController`'s
-	# rule for the same mark one panel over. **The prefix carries its own separator**, so the row's
-	# separation is zero and line two's spacing is stated in one place rather than half in a string.
-	#
-	# It renders on an IDLE bench too — the rank is a standing statement about the BENCH rather than
-	# about the job on it, which is exactly when a player says *"the axes go first"*.
-	var priority := HudWorkVocab.work_priority_of(
-		bench.get(HudCraftingVocab.BENCH_PRIORITY_KEY, HudWorkVocab.WORK_PRIORITY_NORMAL))
-	var line_two := HBoxContainer.new()
-	# ZERO, and for `WORK_ROW_PRIORITY_SEPARATION`'s reason: the prefix carries its own ` · ` inside
-	# its text, so line two's spacing is stated in one place instead of half in a string and half in a
-	# container constant. The gap before the link is the EXPANDING sub line, not a separation.
-	line_two.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_PRIORITY_SEPARATION)
-	var prefix_text := HudWorkVocab.work_row_priority_prefix(priority)
-	if prefix_text != "":
-		var prefix := Label.new()
-		prefix.text = prefix_text
-		prefix.add_theme_font_size_override("font_size", HudCraftingVocab.BENCH_SUB_FONT_SIZE)
-		prefix.add_theme_color_override("font_color", HudWorkVocab.work_priority_ink(priority))
-		# Found by IDENTITY and valued the LEVEL — the face is a `HudWorkVocab` string this panel does
-		# not compose, so an assertion matching on its wording would be matching the other module's
-		# spelling.
-		prefix.set_meta(HudCraftingVocab.BENCH_PRIORITY_META, priority)
-		line_two.add_child(prefix)
-	sub.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# The sub line wraps before it can touch the control row: its minimum width collapses and a fixed gap
-	# sits between it and the Priority link.
-	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	sub.custom_minimum_size = Vector2.ZERO
-	line_two.add_child(sub)
-	var link_gap := Control.new()
-	link_gap.custom_minimum_size = Vector2(HudCraftingVocab.BENCH_LINK_GAP, 0.0)
-	link_gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	line_two.add_child(link_gap)
-	# **AND THE CONTROL RIDES THE SAME LINE, WHICH IS WHAT MAKES IT FREE.** A row of its own cost the
-	# well ~24px on EVERY bench, forever, and the collapsed-band-dock state had less headroom than
-	# that: `crafting_panel_band_dock_collapsed`'s ledger fitted its 1072px room with under one row to
-	# spare, and a fourth line in this well pushed it into an internal scroll it is asserted not to
-	# need. Line two always exists, so hanging the link off its trailing edge spends nothing — and the
-	# rank is line two's subject anyway, the mark leading the very same line.
-	line_two.add_child(_build_priority_link())
-	words.add_child(line_two)
-	# **HOW FAR ALONG AND WHY STOPPED ARE TWO FACTS, AND NEITHER MAY EAT THE OTHER.** The refusal is
-	# the OFFER vocabulary plus the crew's own, resolved sim-side and rendered VERBATIM — a bench with
-	# a full pile and nobody on it is stopped too. It gets its own line UNDER the progress line rather
-	# than replacing it: the banked work is what says whether clearing the block recovers a
-	# nearly-finished item or a barely-started one, which is the question a stopped bench raises. A
-	# bench that is running adds no label at all, so nothing about its card moves.
-	#
-	# **AND WHICH REFUSALS ARE SERIOUS IS THE SIM'S ANSWER, NOT THIS PANEL'S.** A bench waiting for
-	# its crew is the NORMAL state one click after Make — the player staffs the bench — so it arrives
-	# `neutral` and reads in the quiet ink, while a shortage or an unknown craft arrives `danger` and
-	# keeps the alarm. Resolved through the SAME `REASON_COLORS` table the ledger's offer rows use, the
-	# published `blocked_severity` being that same vocabulary; tinting every reason alike is what made
-	# the expected state read as a fault.
-	if blocked != "":
-		var reason := Label.new()
-		reason.text = blocked
-		reason.add_theme_font_size_override("font_size", HudCraftingVocab.BENCH_BLOCKED_FONT_SIZE)
-		reason.add_theme_color_override("font_color", HudCraftingVocab.REASON_COLORS.get(
-			blocked_severity, HudCraftingVocab.REASON_COLOR_QUIET))
-		# Found by IDENTITY rather than by its face — the reason is a sim string this panel cannot
-		# predict, so a claim about the blocked line can only be scoped to the node that carries it.
-		reason.set_meta(HudCraftingVocab.BENCH_BLOCKED_META, true)
-		words.add_child(reason)
-		# **SKIP LIVES ON A WAITING AUTO HEAD** - Auto is on, nothing is workable, and the order the
-		# bench is stuck on (the head) is one Auto queued. The player's say-so is the only thing that
-		# moves Auto down the list.
-		#
-		# **GATED ON THE HEAD ORDER'S OWN `blocked_reason`, never the bench row's**: the bench's line also
-		# carries the crew prompt ("No one at the bench"), which the server's skip check ignores, so a
-		# crewless bench with its materials in stock would show a link the server refuses.
-		if auto_on and well_index == HudCraftingVocab.ORDER_HEAD_INDEX \
-				and _order_is_auto(bench_orders, HudCraftingVocab.ORDER_HEAD_INDEX) \
-				and String((bench_orders[HudCraftingVocab.ORDER_HEAD_INDEX] as Dictionary).get(
-					HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, "")) != "":
-			words.add_child(_build_auto_skip_link())
-	elif recipe_id != "":
-		var well_orders: Array = bench.get(HudCraftingVocab.BENCH_ORDERS_KEY, [])
-		var well_worked := _worked_index(bench)
-		if well_worked < well_orders.size() and well_orders[well_worked] is Dictionary:
-			var well_forecast := _shortfall_text((well_orders[well_worked] as Dictionary).get(
-				HudCraftingVocab.ORDER_SHORT_TO_FINISH_KEY, []))
-			if well_forecast != "":
-				var well_label := _forecast_label(well_forecast, HudCraftingVocab.BENCH_BLOCKED_FONT_SIZE)
-				well_label.set_meta(HudCraftingVocab.BENCH_SHORT_TO_FINISH_META, true)
-				words.add_child(well_label)
+		title.text = _bench_header_line(orders, bench, payload)
+		title.set_meta(HudCraftingVocab.BENCH_HEADER_META, true)
 	top.add_child(words)
-	# **NOTHING TO REMOVE ON AN IDLE BENCH**, so the control is absent rather than dead — and it is
-	# built BEFORE the stepper, which insets it from the card's right edge and keeps it away from the
-	# header's own ✕. See `_build_clear_button`.
-	#
-	var orders: Array = bench_orders
-	var worked := well_index
-	# **THE AUTO SWITCH rides after the Priority link (line two's trailing edge) and before the Made
-	# stepper**, on an idle bench too: it is a standing statement about the bench.
+	# **THE AUTO SWITCH rides the header's trailing edge**, on an idle bench too: it is a standing
+	# statement about the bench.
 	top.add_child(_build_auto_switch(auto_on))
-	if recipe_id != "" and worked < orders.size() and orders[worked] is Dictionary:
-		top.add_child(_build_head_count_stepper(worked, orders[worked]))
-	if recipe_id != "":
-		top.add_child(_build_clear_button(bench))
-	# **THE CREW STEPPER IS LIVE ON AN IDLE BENCH TOO** — the crew stays with the bench across orders,
-	# so a player may staff an empty bench ahead of the order that will use it.
-	top.add_child(_build_crew_stepper(bench, payload))
-	inner.add_child(top)
-
-	var work := float(bench.get(HudCraftingVocab.BENCH_WORK_KEY, 0.0))
-	var progress := float(bench.get(HudCraftingVocab.BENCH_PROGRESS_KEY, 0.0))
-	var fraction := clampf(progress / work, 0.0, 1.0) if work > 0.0 else 0.0
-	inner.add_child(_bar(fraction, HudStyle.SIGNAL, HudCraftingVocab.BENCH_BAR_HEIGHT))
-
-	# A bench on a band with a hunting-by-need row is a donor like a worked source row: say how many of
-	# its hands are out hunting, in the donor rows' words and warn ink. Nothing at 0.
-	var lent := int(bench.get(HudCraftingVocab.BENCH_LENT_TO_HUNT_KEY, 0))
-	if lent > 0:
-		var lent_line := Label.new()
-		lent_line.text = HudWorkVocab.WORK_ROW_LENT_LINE_FORMAT % lent
-		lent_line.set_meta(HudCraftingVocab.BENCH_LENT_LINE_META, lent_line.text)
-		lent_line.add_theme_font_size_override("font_size", HudCraftingVocab.BENCH_TEACH_FONT_SIZE)
-		lent_line.add_theme_color_override("font_color", HudStyle.WARN)
-		inner.add_child(lent_line)
-
-	var teaches := String(bench.get(HudCraftingVocab.BENCH_TEACHES_KEY, ""))
-	if recipe_id != "" and teaches != "":
-		var teach := Label.new()
-		# **CRAFTING IS THE FOURTH TEACHER** — the lesson is charged per ITEM COMPLETED, so this is
-		# what the bench is buying besides the thing itself.
-		teach.text = HudCraftingVocab.BENCH_TEACH_FORMAT % _craft_display_name(teaches, payload)
-		teach.add_theme_font_size_override("font_size", HudCraftingVocab.BENCH_TEACH_FONT_SIZE)
-		teach.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-		inner.add_child(teach)
-
-	if _priority_open:
-		# **REUSED, NEVER FORKED.** `build_work_priority_picker` takes the pick as a `Callable` and the
-		# lit rung as the level itself, so it needs nothing of the work board's — and one builder is what
-		# keeps the bench's rank and a worked row's rank from growing two faces for one property.
-		inner.add_child(HudWidgets.build_work_priority_picker(func(level: String) -> void:
-			_commit_priority(level), priority))
-
+	well.add_child(top)
 	section.add_child(well)
-	# **THE REST OF THE QUEUE, under the well that IS its worked order.** A bench with one order — or
-	# none — draws nothing here.
-	if orders.size() > 1 or _has_kit_part(orders):
+	if not orders.is_empty():
 		section.add_child(_build_queue(orders, bench, payload))
 	_main.add_child(section)
 
-## The bench's second line, in the units the sim keeps the job in: the recipe's own `work` accrued
-## against the pass's cost, then what a turn adds and when that finishes it, then the grade the pile in
-## flight fixed. **How many the order has delivered is not here**: it is the well's own `made/count`
-## stepper face, the one home that fact has.
+## **`R of M orders running · C crafters · S spare`.** R counts the orders with anybody on them (at the
+## tool or by hand), M every order, C is the sim's own crew total (`bench.workers`) and S the band's idle
+## count the labor UI already shows (`PAYLOAD_IDLE_WORKERS`) — none of the four is derived from a rule of
+## the panel's own.
+func _bench_header_line(orders: Array, bench: Dictionary, payload: Dictionary) -> String:
+	var running := 0
+	for order_variant in orders:
+		if order_variant is Dictionary and _order_crew(order_variant) > 0:
+			running += 1
+	var crafters := int(bench.get(HudCraftingVocab.BENCH_WORKERS_KEY, 0))
+	var spare := int(payload.get(PAYLOAD_IDLE_WORKERS, 0))
+	return HudCraftingVocab.BENCH_HEADER_FORMAT % [
+		running, orders.size(),
+		HudCraftingVocab.BENCH_ORDER_NOUN_ONE if orders.size() == 1 else HudCraftingVocab.BENCH_ORDER_NOUN_MANY,
+		crafters,
+		HudCraftingVocab.BENCH_CRAFTER_NOUN_ONE if crafters == 1 else HudCraftingVocab.BENCH_CRAFTER_NOUN_MANY,
+		spare]
+
+## Everybody the sim staffed on an order — at the tool plus by hand, before any muster loan.
+func _order_crew(order: Dictionary) -> int:
+	return int(order.get(HudCraftingVocab.ORDER_CREW_AT_TOOL_KEY, 0)) \
+		+ int(order.get(HudCraftingVocab.ORDER_CREW_BY_HAND_KEY, 0))
+
+## **THE ORDER'S SUB LINE, ONE LINE** — the sim's refusal VERBATIM when the order is blocked, else
+## `<grade> · done in ≈T turns · <n> set aside`; a loan to the hunt rides either as a trailing clause.
 ##
-## **THE UNIT IS `work`, AND THAT RENAME IS THE POINT OF THE OTHER TWO CLAUSES.** It read
-## `worker-turns`, and a player with two crafters divided 6 by 2, expected three turns and measured
-## six: a worker-turn is not what a worker does in a turn, because bare-handed `craft_speed` is 0.5.
-## So the rate is stated rather than left to be inferred — **VERBATIM from `rate_per_turn`, never
-## re-derived**, that product being the tool-or-bare-hand join the sim owns — and the turns it implies
-## are stated beside it.
-##
-## **BOTH NEW CLAUSES ARE GATED ON A RATE ABOVE ZERO *AND* AN EMPTY REFUSAL, WHICH ARE TWO DIFFERENT
-## QUESTIONS.** The rate is a property of the crew and the tool: a bench short of material publishes
-## its real, non-zero rate — the crew and the tool are fine, it simply has not drawn — while
-## `blocked_reason` is what says whether the bench is actually moving. Quoting *"done in 3 turns"*
-## beside *"Short 0.6 fibre"* would promise progress that is not happening. A bench with no crew or no
-## craft speed publishes `0` instead, and then there is nothing to compute either.
-func _bench_sub_line(bench: Dictionary) -> String:
-	var work := float(bench.get(HudCraftingVocab.BENCH_WORK_KEY, 0.0))
-	var progress := float(bench.get(HudCraftingVocab.BENCH_PROGRESS_KEY, 0.0))
-	var parts: Array[String] = [HudCraftingVocab.BENCH_PROGRESS_FORMAT % [progress, work]]
-	var rate := float(bench.get(HudCraftingVocab.BENCH_RATE_PER_TURN_KEY, 0.0))
-	var blocked := String(bench.get(HudCraftingVocab.BENCH_BLOCKED_REASON_KEY, ""))
-	if rate > 0.0 and blocked == "":
-		parts.append(HudCraftingVocab.BENCH_RATE_FORMAT % rate)
-		parts.append(_bench_estimate_clause(work - progress, rate))
-	var grade := String(bench.get(HudCraftingVocab.BENCH_OUTPUT_GRADE_KEY, ""))
-	if grade != "":
-		parts.append(HudCraftingVocab.BENCH_GRADE_FORMAT % grade)
+## **T IS `ceil(remaining work / rate_per_turn)`, FLOORED AT ONE TURN**, over `rate_per_turn` — the sim's
+## one rate authority, tool join and muster loan already in it — and over the work of every item in
+## flight. It is omitted at a rate of zero (nobody on it). **A blocked order quotes no estimate**: a
+## "done in 3 turns" beside "Short 0.6 fibre" would promise progress that is not happening.
+func _order_sub_text(order: Dictionary) -> String:
+	var parts: Array[String] = []
+	var blocked := String(order.get(HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, ""))
+	if blocked != "":
+		parts.append(blocked)
+	else:
+		var grade := String(order.get(HudCraftingVocab.ORDER_OUTPUT_GRADE_KEY, ""))
+		if grade != "":
+			parts.append(grade)
+		var rate := float(order.get(HudCraftingVocab.ORDER_RATE_PER_TURN_KEY, 0.0))
+		if rate > 0.0:
+			var remaining := _order_work_total(order) - float(order.get(HudCraftingVocab.ORDER_PROGRESS_KEY, 0.0))
+			parts.append(_order_estimate_clause(remaining, rate))
+		var aside := _drawn_total(order.get(HudCraftingVocab.ORDER_DRAWN_INPUTS_KEY, []))
+		if aside > 0.0:
+			parts.append(HudCraftingVocab.ORDER_SET_ASIDE_FORMAT % _amount_text(aside))
+	var lent := int(order.get(HudCraftingVocab.ORDER_LENT_TO_HUNT_KEY, 0))
+	if lent > 0:
+		parts.append(HudCraftingVocab.ORDER_LENT_FORMAT % lent)
 	return HudCraftingVocab.BENCH_SUB_SEPARATOR.join(parts)
 
-## **`ceil(remaining / rate)`, FLOORED AT ONE TURN.** The arithmetic is the client's deliberately —
-## it is exact over three numbers the wire already carries, which is where the sim's forecast rule
-## puts the split, and a turns-remaining field beside the rate would be a second home for one fact. A
-## bench whose pass is already covered still needs a turn to finish it, so the floor states the next
-## turn rather than a completion that has not happened.
-func _bench_estimate_clause(remaining: float, rate: float) -> String:
+## The work the order's items in flight cost in all: one item's `work` times how many are in flight (at
+## least one, so an order with nothing drawn yet still has a denominator).
+func _order_work_total(order: Dictionary) -> float:
+	var in_flight := maxi(int(order.get(HudCraftingVocab.ORDER_ITEMS_IN_FLIGHT_KEY, 0)),
+		HudCraftingVocab.ORDER_MIN_ITEMS_IN_FLIGHT)
+	return float(order.get(HudCraftingVocab.ORDER_WORK_KEY, 0.0)) * float(in_flight)
+
+func _order_estimate_clause(remaining: float, rate: float) -> String:
 	var turns := maxi(int(ceilf(remaining / rate)), HudCraftingVocab.BENCH_ESTIMATE_MIN_TURNS)
 	if turns == HudCraftingVocab.BENCH_ESTIMATE_MIN_TURNS:
-		return HudCraftingVocab.BENCH_ESTIMATE_NEXT_TURN
-	return HudCraftingVocab.BENCH_ESTIMATE_FORMAT % turns
+		return HudCraftingVocab.ORDER_ESTIMATE_ONE
+	return HudCraftingVocab.ORDER_ESTIMATE_FORMAT % turns
 
-## **THE WORKED ORDER'S WAY OFF THE BENCH** — `bench_remove … order <worked>`, the retired
-## `clear_bench`'s control. The bench then works the next order it can, if any.
-##
-## **THE TOOLTIP NAMES WHAT IT DESTROYS, off the published `drawn_inputs`** — the amounts the store
-## really lost, never the recipe's inputs, which differ from the withdrawal the moment a bench tool's
-## material efficiency applies. A bench that has drawn nothing says so instead of listing nothing.
-## There is no confirmation dialog: the cost is stated in text, the loss is small and recoverable, and
-## saying consequences rather than popping a modal is this panel's idiom throughout.
-##
-## **IT IS THE `armed` VARIANT AND IT SITS LEFT OF THE STEPPER, both to keep it apart from the card
-## header's ✕**, which wears the same glyph for a completely different act. Inside the well's own
-## bordered box, inset from the card's right edge by the stepper's width, and drawn in the
-## destructive treatment rather than the header's quiet ghost.
-func _build_clear_button(bench: Dictionary) -> Control:
-	var button := Button.new()
-	button.text = HudCraftingVocab.CLEAR_BENCH_GLYPH
-	button.tooltip_text = _clear_bench_tooltip(bench)
-	button.focus_mode = Control.FOCUS_NONE
-	button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	button.custom_minimum_size = Vector2(HudCraftingVocab.ICON_BUTTON_SIZE,
-		HudCraftingVocab.ICON_BUTTON_SIZE)
-	button.add_theme_font_size_override("font_size", HudCraftingVocab.CHIP_FONT_SIZE)
-	HudStyle.apply_button(button, "armed")
-	# Found by identity rather than by face — the header's close button is the same glyph.
-	button.set_meta(HudCraftingVocab.CLEAR_BENCH_META, true)
-	var worked := _worked_index(bench)
-	button.pressed.connect(func() -> void: order_remove_requested.emit(worked))
-	return button
+## Σ of a `{material_id, amount}` list.
+func _drawn_total(rows: Variant) -> float:
+	var total := 0.0
+	if rows is Array:
+		for row in rows:
+			if row is Dictionary:
+				total += float((row as Dictionary).get(HudCraftingVocab.DRAWN_INPUT_AMOUNT_KEY, 0.0))
+	return total
 
-## The pile a clear would spend, in the cost cell's own clause shape. Empty `drawn_inputs` is an
-## undrawn bench, which is a statement rather than a missing list.
-func _clear_bench_tooltip(bench: Dictionary) -> String:
+## `fibre 3.2 · hide 1.0` — a `{material_id, amount}` list in words, for a tooltip.
+func _drawn_clauses(rows: Variant) -> String:
 	var clauses: Array[String] = []
-	for input_variant in bench.get(HudCraftingVocab.BENCH_DRAWN_INPUTS_KEY, []):
-		if not (input_variant is Dictionary):
-			continue
-		var input: Dictionary = input_variant
-		clauses.append(HudCraftingVocab.CLEAR_BENCH_CLAUSE_FORMAT % [
-			_amount_text(float(input.get(HudCraftingVocab.DRAWN_INPUT_AMOUNT_KEY, 0.0))),
-			String(input.get(HudCraftingVocab.DRAWN_INPUT_MATERIAL_ID_KEY, ""))])
-	if clauses.is_empty():
-		return HudCraftingVocab.CLEAR_BENCH_TOOLTIP_NOTHING
-	return HudCraftingVocab.CLEAR_BENCH_TOOLTIP_FORMAT % HudCraftingVocab.CLEAR_BENCH_SEPARATOR.join(clauses)
+	if rows is Array:
+		for row in rows:
+			if not (row is Dictionary):
+				continue
+			var input: Dictionary = row
+			clauses.append(HudCraftingVocab.ASIDE_CLAUSE_FORMAT % [
+				String(input.get(HudCraftingVocab.DRAWN_INPUT_MATERIAL_ID_KEY, "")),
+				_amount_text(float(input.get(HudCraftingVocab.DRAWN_INPUT_AMOUNT_KEY, 0.0)))])
+	return HudCraftingVocab.ASIDE_SEPARATOR.join(clauses)
 
-## **THE `Priority` LINK — the work inspector's own word, its own builder, one panel over.** It wears
-## `HudWorkVocab.WORK_INSPECT_PRIORITY` rather than a spelling of its own: the two links open the SAME
-## `build_work_priority_picker` over the same three levels, and a second word for one control kind is
-## free to drift. Reached by meta, since a face search would find a control in two panels.
-func _build_priority_link() -> Button:
-	var link := HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_PRIORITY, HudStyle.INK,
-		func() -> void: _toggle_priority_picker())
-	link.set_meta(HudCraftingVocab.BENCH_PRIORITY_LINK_META, true)
+## **THE ORDER'S OWN `Priority: Normal` LINK** — the work inspector's word and the SAME
+## `build_work_priority_picker` the bench-wide link used, now one per order. Reached by meta, since a
+## face search would find a control in two panels.
+func _build_order_priority_link(index: int, order: Dictionary) -> Button:
+	var level := HudWorkVocab.work_priority_of(
+		order.get(HudCraftingVocab.ORDER_PRIORITY_KEY, HudWorkVocab.WORK_PRIORITY_NORMAL))
+	var ink := HudStyle.INK if level == HudWorkVocab.WORK_PRIORITY_NORMAL else HudWorkVocab.work_priority_ink(level)
+	var link := HudWidgets.build_inline_link(
+		HudCraftingVocab.ORDER_PRIORITY_FORMAT % String(HudWorkVocab.WORK_PRIORITY_FACES[level]), ink,
+		func() -> void: _toggle_priority_picker(index))
+	link.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	link.set_meta(HudCraftingVocab.ORDER_PRIORITY_LINK_META, index)
+	link.set_meta(HudCraftingVocab.ORDER_PRIORITY_META, level)
 	return link
 
-## Show or hide the rank picker, and re-render against the payload already held — the `_toggle_fold`
-## idiom, for its reason: this card is rebuilt on every snapshot anyway, so a hidden subtree waiting to
-## be shown would be a second representation of one bit.
-func _toggle_priority_picker() -> void:
-	_priority_open = not _priority_open
+## Show or hide ONE order's rank picker, and re-render against the payload already held — the
+## `_toggle_fold` idiom, for its reason: this card is rebuilt on every snapshot anyway.
+func _toggle_priority_picker(index: int) -> void:
+	_priority_order = HudCraftingVocab.NO_ORDER if _priority_order == index else index
 	if not _payload.is_empty():
 		render(_payload)
 
-## **THE RANK COMMAND** — `bench_priority <faction> <band> high|normal|low`.
+## **THE RANK COMMAND** — `bench_priority <faction> <band> order <i> high|normal|low`.
 ##
-## ⛔ **NO OPTIMISTIC OVERLAY AND THEREFORE NO ROLLBACK HANDLE**, which is `work_priority`'s rule one
-## surface over: `BenchState.priority` is captured LIVE off the bench the command mutates and the
-## server re-captures after every command, so the new mark arrives on THIS command's own recapture. A
-## client-side pending copy would be a second statement of one value.
-##
-## The picker CLOSES on the pick, exactly as the work inspector's does: the well has said its piece,
-## and a picker left open over a value that has not landed yet invites a second press at one button.
-func _commit_priority(level: String) -> void:
-	_priority_open = false
-	bench_priority_requested.emit(HudWorkVocab.work_priority_of(level))
+## ⛔ **NO OPTIMISTIC OVERLAY AND THEREFORE NO ROLLBACK HANDLE**: the order's `priority` is captured LIVE
+## and the server re-captures after every command, so the new mark arrives on THIS command's own
+## recapture. The picker CLOSES on the pick, exactly as the work inspector's does.
+func _commit_priority(index: int, level: String) -> void:
+	_priority_order = HudCraftingVocab.NO_ORDER
+	bench_priority_requested.emit(index, HudWorkVocab.work_priority_of(level))
 	if not _payload.is_empty():
 		render(_payload)
 
@@ -1043,54 +866,6 @@ func _auto_skipped_note(ledger_row: Dictionary) -> String:
 	if materials.is_empty():
 		return HudCraftingVocab.AUTO_SKIPPED_FREE
 	return HudCraftingVocab.AUTO_SKIPPED_FORMAT % HudCraftingVocab.AUTO_SKIPPED_MATERIAL_SEPARATOR.join(materials)
-
-## The `− n +` crew stepper. **It spends the same pool `assign_labor` does** — a crew at the bench is
-## not gathering — so `+` greys out at the ceiling rather than sending a command the sim will clamp.
-##
-## **THE IDLE COUNT NETS THE BENCH OUT, SO THE CREW IS ADDED BACK TO REACH THIS CEILING.**
-## `PopulationCohortState.idleWorkers` is `working_age − assigned − bench.workers` (the sim's
-## `BandWorkforce::idle()`, the same seam `assign_labor` clamps against), and `effective_idle`
-## subtracts the crew for the same reason — a worker at the bench is assigned labor. But re-crewing
-## does not have to free those hands first: the crew already standing at the bench stays put while
-## the job is swapped, which is `BandWorkforce::benchable()`. The payload therefore carries
-## `idle + bench.workers`, and capping the stepper at idle alone would pin it to the crew on it.
-func _build_crew_stepper(bench: Dictionary, payload: Dictionary) -> Control:
-	var column := VBoxContainer.new()
-	column.alignment = BoxContainer.ALIGNMENT_CENTER
-	column.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
-
-	var workers := int(bench.get(HudCraftingVocab.BENCH_WORKERS_KEY, 0))
-	var ceiling := maxi(int(payload.get(PAYLOAD_IDLE_WORKERS, 0)), workers)
-	var stepper := HBoxContainer.new()
-	stepper.alignment = BoxContainer.ALIGNMENT_CENTER
-	stepper.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
-
-	var minus := _crew_button(HudCraftingVocab.BENCH_CREW_DECREMENT)
-	minus.disabled = workers <= 0
-	minus.pressed.connect(func() -> void: crew_changed.emit(workers - 1))
-	stepper.add_child(minus)
-
-	var count := Label.new()
-	count.text = str(workers)
-	count.add_theme_font_size_override("font_size", HudCraftingVocab.CREW_COUNT_FONT_SIZE)
-	count.add_theme_color_override("font_color", HudStyle.INK)
-	count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	count.custom_minimum_size = Vector2(HudCraftingVocab.CREW_BUTTON_SIZE, 0.0)
-	stepper.add_child(count)
-
-	var plus := _crew_button(HudCraftingVocab.BENCH_CREW_INCREMENT)
-	plus.disabled = workers >= ceiling
-	plus.pressed.connect(func() -> void: crew_changed.emit(workers + 1))
-	stepper.add_child(plus)
-	column.add_child(stepper)
-
-	var caption := Label.new()
-	caption.text = HudCraftingVocab.BENCH_CREW_CAPTION.to_upper()
-	caption.add_theme_font_size_override("font_size", HudCraftingVocab.CREW_CAPTION_FONT_SIZE)
-	caption.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	column.add_child(caption)
-	return column
 
 # ---- the ledger -------------------------------------------------------------
 
@@ -2840,15 +2615,13 @@ func _kit_order_name(record: Dictionary, band: Dictionary) -> String:
 	var kit_id := String(record.get(HudCraftingVocab.KIT_ORDER_KIT_ID_KEY, ""))
 	return _kit_name(_kit_need_in(band, kit_id), kit_id)
 
-## **A PART'S STATUS WORD** — WAITING when the bench is skipping it, WORKING when it is the worked order,
-## PAUSED when it holds a cut pile it is not working, else QUEUED. `[text, ink, tooltip]`.
-func _kit_part_status(order: Dictionary, index: int, worked: int) -> Array:
-	if String(order.get(HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, "")) != "":
-		return [HudCraftingVocab.ORDER_STATUS_WAITING, HudStyle.DANGER, ""]
-	if index == worked:
+## **A PART'S STATUS WORD** — WORKING when the sim has staffed it, WAITING when a shortage (`danger`)
+## stops it, else QUEUED. `[text, ink, tooltip]`.
+func _kit_part_status(order: Dictionary) -> Array:
+	if _order_crew(order) > 0:
 		return [HudCraftingVocab.ORDER_STATUS_WORKING, HudStyle.HEALTHY, ""]
-	if bool(order.get(HudCraftingVocab.ORDER_DRAWN_KEY, false)):
-		return [HudCraftingVocab.ORDER_STATUS_PAUSED, HudStyle.WARN, HudCraftingVocab.ORDER_STATUS_PAUSED_TOOLTIP]
+	if String(order.get(HudCraftingVocab.ORDER_BLOCKED_SEVERITY_KEY, "")) == HudCraftingVocab.SEVERITY_DANGER:
+		return [HudCraftingVocab.ORDER_STATUS_WAITING, HudStyle.DANGER, ""]
 	return [HudCraftingVocab.ORDER_STATUS_QUEUED, HudStyle.INK_DIM, ""]
 
 ## An invisible, dead stand-in for a control a row does not carry, so the columns line up down the queue
@@ -2872,7 +2645,6 @@ func _kit_slot(width: float) -> Control:
 func _build_kit_order_box(kit_order: int, orders: Array, bench: Dictionary, payload: Dictionary) -> Control:
 	var band: Dictionary = payload.get(PAYLOAD_BAND, {})
 	var record := _kit_order_in(bench, kit_order)
-	var worked := _worked_index(bench)
 	var made := int(record.get(HudCraftingVocab.KIT_ORDER_DONE_KEY, 0))
 	var pending := 0
 	var working := false
@@ -2888,10 +2660,10 @@ func _build_kit_order_box(kit_order: int, orders: Array, bench: Dictionary, payl
 		part_indices.append(index)
 		made += part_made
 		pending += maxi(count - part_made, 0)
-		var blocked := String(order.get(HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, "")) != ""
-		if index == worked and not blocked:
+		var waiting := String(order.get(HudCraftingVocab.ORDER_BLOCKED_SEVERITY_KEY, "")) == HudCraftingVocab.SEVERITY_DANGER
+		if _order_crew(order) > 0:
 			working = true
-		if not blocked:
+		if not waiting:
 			all_waiting = false
 		var recipe := _recipe_of(String(order.get(HudCraftingVocab.ORDER_RECIPE_ID_KEY, "")), payload)
 		var item_name := String(recipe.get(HudCraftingVocab.RECIPE_DISPLAY_NAME_KEY, ""))
@@ -3009,7 +2781,7 @@ func _build_kit_order_box(kit_order: int, orders: Array, bench: Dictionary, payl
 	if unfolded:
 		for index in part_indices:
 			inner.add_child(_rule(HudStyle.LINE_SOFT))
-			inner.add_child(_build_kit_part_row(index, orders[index], worked, payload))
+			inner.add_child(_build_kit_part_row(index, orders[index], payload))
 	return host
 
 func _toggle_kit_order_fold(kit_order: int) -> void:
@@ -3019,8 +2791,8 @@ func _toggle_kit_order_fold(kit_order: int) -> void:
 
 ## **ONE PART OF A KIT ORDER** — its name and status word, its reason or forecast beneath, and a
 ## `− made/count +` that addresses the part by its own order index. No ↑ and no ✕: the kit moves and goes
-## as one, and the well's ✕ still takes the worked part off on its own.
-func _build_kit_part_row(index: int, order: Dictionary, worked: int, payload: Dictionary) -> Control:
+## as one.
+func _build_kit_part_row(index: int, order: Dictionary, payload: Dictionary) -> Control:
 	var count := int(order.get(HudCraftingVocab.ORDER_COUNT_KEY, 0))
 	var made := int(order.get(HudCraftingVocab.ORDER_MADE_KEY, 0))
 	var row := HBoxContainer.new()
@@ -3038,7 +2810,7 @@ func _build_kit_part_row(index: int, order: Dictionary, worked: int, payload: Di
 	name_label.add_theme_font_size_override("font_size", HudCraftingVocab.QUEUE_ROW_FONT_SIZE)
 	name_label.add_theme_color_override("font_color", HudStyle.INK_DIM)
 	name_row.add_child(name_label)
-	var state := _kit_part_status(order, index, worked)
+	var state := _kit_part_status(order)
 	var status := Label.new()
 	status.text = String(state[0]).to_upper()
 	status.add_theme_font_size_override("font_size", HudCraftingVocab.ORDER_STATUS_FONT_SIZE)
@@ -3428,67 +3200,27 @@ func _suggestion_in(payload: Dictionary, item_id: String) -> Dictionary:
 
 # ---- the queue: one bench works its orders in turn --------------------------
 
-## **THE WELL IS THE WORKED ORDER'S ROW; THESE ARE EVERY OTHER ORDER, UNCAPPED** (§7 → "The queue").
-## The well already says everything about `orders[worked]` — its name, its progress, its refusal, its
-## crew, its `made/count` stepper and its ✕ (`bench_remove … order <worked>`). A second row repeating
-## it would state its name twice and carry a second ✕ for the same act, and measured it cost ~26px on
-## EVERY running bench, which pushed `crafting_panel_band_dock_collapsed` into an internal scroll its
-## state asserts it does not need. So one row per OTHER order — a skipped head included, above the
-## rest — each keeping its published index, which is the `order` the queue verbs address.
+## **EVERY ORDER IS A ROW, UNCAPPED** (§7 → "The queue", #873). Each keeps its published index, which is
+## the `order` the queue verbs address (`bench_order_count`, `bench_remove`, `bench_raise`,
+## `bench_priority`). **A kit order's parts are ONE box, drawn where its first part sits** — the box is
+## the kit's whole progress.
 func _build_queue(orders: Array, bench: Dictionary, payload: Dictionary) -> Control:
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 0)
-	var worked := _worked_index(bench)
+	# A picker left open on an order that has since left the queue closes with it.
+	if _priority_order >= orders.size():
+		_priority_order = HudCraftingVocab.NO_ORDER
 	var boxed := {}
 	for index in range(orders.size()):
 		if not (orders[index] is Dictionary):
 			continue
-		# **A KIT ORDER'S PARTS ARE ONE BOX, drawn where its first part sits** — and the worked part is in
-		# it too, whatever the well also says: the box is the kit's whole progress, so it cannot lose the
-		# part that is moving.
 		var kit_order := _kit_order_of(orders, index)
 		if kit_order != HudCraftingVocab.NO_KIT_ORDER:
 			if not boxed.has(kit_order):
 				boxed[kit_order] = true
 				column.add_child(_build_kit_order_box(kit_order, orders, bench, payload))
-		elif index != worked:
-			column.add_child(_build_queue_row(index, orders[index], bench, payload))
-	return column
-
-## **THE WORKED ORDER'S `made/count` STEPPER**, in the crew stepper's own shape and metrics so the well
-## reads as two captioned steppers — how many to make, and who is making them. `−` is dead at
-## `made + 1` for the server's reason (a count at or below `made` would finish the order; stopping it
-## is the ✕ beside it).
-func _build_head_count_stepper(index: int, order: Dictionary) -> Control:
-	var count := int(order.get(HudCraftingVocab.ORDER_COUNT_KEY, 0))
-	var made := int(order.get(HudCraftingVocab.ORDER_MADE_KEY, 0))
-	var column := VBoxContainer.new()
-	column.alignment = BoxContainer.ALIGNMENT_CENTER
-	column.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
-	var stepper := HBoxContainer.new()
-	stepper.alignment = BoxContainer.ALIGNMENT_CENTER
-	stepper.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
-	var minus := _crew_button(HudCraftingVocab.ORDER_COUNT_DECREMENT)
-	_wire_count_decrement(minus, index, count, made)
-	stepper.add_child(minus)
-	var face := Label.new()
-	face.text = HudCraftingVocab.ORDER_MADE_OF_COUNT_FORMAT % [made, count]
-	face.add_theme_font_size_override("font_size", HudCraftingVocab.CREW_COUNT_FONT_SIZE)
-	face.add_theme_color_override("font_color", HudStyle.INK)
-	face.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	face.custom_minimum_size = Vector2(HudCraftingVocab.HEAD_COUNT_FACE_WIDTH, 0.0)
-	HudWidgets.set_label_tooltip(face, HudCraftingVocab.ORDER_COUNT_TOOLTIP)
-	stepper.add_child(face)
-	var plus := _crew_button(HudCraftingVocab.ORDER_COUNT_INCREMENT)
-	_wire_count_increment(plus, index, count)
-	stepper.add_child(plus)
-	column.add_child(stepper)
-	var caption := Label.new()
-	caption.text = HudCraftingVocab.HEAD_COUNT_CAPTION.to_upper()
-	caption.add_theme_font_size_override("font_size", HudCraftingVocab.CREW_CAPTION_FONT_SIZE)
-	caption.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	column.add_child(caption)
+		else:
+			column.add_child(_build_order_row(index, orders[index], bench, payload))
 	return column
 
 ## The `−` of any order's count, wherever it is drawn: dead at `made + 1`, valued the order index.
@@ -3504,69 +3236,44 @@ func _wire_count_increment(plus: Button, index: int, count: int) -> void:
 	plus.set_meta(HudCraftingVocab.ORDER_INCREMENT_META, index)
 	plus.pressed.connect(func() -> void: order_count_changed.emit(index, count + 1))
 
-## **ONE ORDER THE WELL DOES NOT DESCRIBE**: WAITING (skipped, its reason beneath), PAUSED or QUEUED;
-## what it makes; `made/count` inside its own `− n +`; `↑` (not on index 0); `✕`.
+## **ONE ORDER** — three stacked pieces, the panel's two-line copy limit holding for the words:
+##   1. the name line: what it makes (+ the AUTO tag), its `Priority: …` link, `made/count` inside its
+##      own `− n +`, `↑` (not on index 0) and `✕`;
+##   2. the meters: the crew bar (`CrewSplitMarks`, the work strip's own bar) beside the progress bar;
+##   3. the sub line (`_order_sub_text`), one muted line.
 ##
-## **PAUSED IS `drawn` ON AN ORDER THE BENCH IS NOT WORKING** — it was raised over while holding a cut
-## pile, and keeps the pile and its progress until it is worked again. The worked order is never
-## "paused": one that is not moving is BLOCKED, and the well's refusal line is where that is said.
-func _build_queue_row(index: int, order: Dictionary, bench: Dictionary, payload: Dictionary) -> Control:
+## **THE CREW BAR IS THE SIM'S STAFFING, DRAWN.** At the tool (`crew_at_tool`, the bright green), by hand
+## (`crew_by_hand`) and the room left under the cap (`crew_cap` less both, floored at zero) as hollow
+## seats; an order whose recipe has no bench tool simply has no at-tool segment. The words on its hover
+## are `HudWorkVocab.crew_bar_words`. **The progress bar's figures — work, rate, what it teaches — ride
+## its tooltip, not its face.**
+func _build_order_row(index: int, order: Dictionary, bench: Dictionary, payload: Dictionary) -> Control:
 	var drawn := bool(order.get(HudCraftingVocab.ORDER_DRAWN_KEY, false))
 	var count := int(order.get(HudCraftingVocab.ORDER_COUNT_KEY, 0))
 	var made := int(order.get(HudCraftingVocab.ORDER_MADE_KEY, 0))
+	var wrap := VBoxContainer.new()
+	wrap.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
+	wrap.set_meta(HudCraftingVocab.QUEUE_ROW_META, index)
+	var pad := MarginContainer.new()
+	pad.add_theme_constant_override("margin_top", HudCraftingVocab.ORDER_ROW_PADDING_V)
+	pad.add_theme_constant_override("margin_bottom", HudCraftingVocab.ORDER_ROW_PADDING_V)
+	pad.add_child(wrap)
+
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", HudCraftingVocab.QUEUE_ROW_SEPARATION)
-	row.set_meta(HudCraftingVocab.QUEUE_ROW_META, index)
-
-	var status := Label.new()
-	status.custom_minimum_size = Vector2(HudCraftingVocab.ORDER_STATUS_WIDTH, 0.0)
-	status.add_theme_font_size_override("font_size", HudCraftingVocab.ORDER_STATUS_FONT_SIZE)
-	status.set_meta(HudCraftingVocab.ORDER_STATUS_META, index)
-	var blocked := String(order.get(HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, ""))
-	if blocked != "":
-		status.text = HudCraftingVocab.ORDER_STATUS_WAITING.to_upper()
-		status.add_theme_color_override("font_color", HudStyle.DANGER)
-	elif drawn:
-		status.text = HudCraftingVocab.ORDER_STATUS_PAUSED.to_upper()
-		status.add_theme_color_override("font_color", HudStyle.WARN)
-		HudWidgets.set_label_tooltip(status, HudCraftingVocab.ORDER_STATUS_PAUSED_TOOLTIP)
-	else:
-		status.text = HudCraftingVocab.ORDER_STATUS_QUEUED.to_upper()
-		status.add_theme_color_override("font_color", HudStyle.INK_DIM)
-	row.add_child(status)
-
-	# The name, and ONE muted second line: the sim's blocked reason VERBATIM when the bench is SKIPPING
-	# the order, else the `short_to_finish` forecast. The colour rides the STATUS word above, so the
-	# line is the quiet ink whatever it says. Two lines at most, the panel's copy limit.
-	var words := VBoxContainer.new()
-	words.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	words.add_theme_constant_override("separation", 0)
+	var name_row := HBoxContainer.new()
+	name_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_row.add_theme_constant_override("separation", HudCraftingVocab.AUTO_TAG_SEPARATION)
 	var name_label := Label.new()
-	name_label.text = _order_name(order, payload)
+	name_label.text = _order_display_name(order, payload)
 	name_label.add_theme_font_size_override("font_size", HudCraftingVocab.QUEUE_ROW_FONT_SIZE)
-	name_label.add_theme_color_override("font_color", HudStyle.INK_DIM)
+	name_label.add_theme_color_override("font_color", HudStyle.INK)
+	name_label.set_meta(HudCraftingVocab.ORDER_NAME_META, index)
+	name_row.add_child(name_label)
 	if bool(order.get(HudCraftingVocab.ORDER_AUTO_KEY, false)):
-		var name_row := HBoxContainer.new()
-		name_row.add_theme_constant_override("separation", HudCraftingVocab.AUTO_TAG_SEPARATION)
-		name_row.add_child(name_label)
 		name_row.add_child(_build_auto_tag(index))
-		words.add_child(name_row)
-	else:
-		words.add_child(name_label)
-	if blocked != "":
-		var reason := Label.new()
-		reason.text = blocked
-		reason.add_theme_font_size_override("font_size", HudCraftingVocab.ORDER_REASON_FONT_SIZE)
-		reason.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-		reason.set_meta(HudCraftingVocab.ORDER_REASON_META, index)
-		words.add_child(reason)
-	else:
-		var forecast := _shortfall_text(order.get(HudCraftingVocab.ORDER_SHORT_TO_FINISH_KEY, []))
-		if forecast != "":
-			var forecast_label := _forecast_label(forecast, HudCraftingVocab.ORDER_REASON_FONT_SIZE)
-			forecast_label.set_meta(HudCraftingVocab.ORDER_SHORT_TO_FINISH_META, index)
-			words.add_child(forecast_label)
-	row.add_child(words)
+	row.add_child(name_row)
+	row.add_child(_build_order_priority_link(index, order))
 
 	var minus := _queue_button(HudCraftingVocab.ORDER_COUNT_DECREMENT, "")
 	_wire_count_decrement(minus, index, count, made)
@@ -3583,7 +3290,7 @@ func _build_queue_row(index: int, order: Dictionary, bench: Dictionary, payload:
 	_wire_count_increment(plus, index, count)
 	row.add_child(plus)
 
-	var raise := _queue_button(HudCraftingVocab.ORDER_RAISE_GLYPH, _raise_tooltip(index, order, bench))
+	var raise := _queue_button(HudCraftingVocab.ORDER_RAISE_GLYPH, HudCraftingVocab.ORDER_RAISE_TOOLTIP)
 	if index == HudCraftingVocab.ORDER_HEAD_INDEX:
 		# The head has nowhere to go up to (the server refuses it). The button stays as an INVISIBLE,
 		# dead placeholder so the ✕ column lines up down the queue — a bare gap of the nominal size does
@@ -3602,12 +3309,121 @@ func _build_queue_row(index: int, order: Dictionary, bench: Dictionary, payload:
 	remove.set_meta(HudCraftingVocab.ORDER_REMOVE_META, index)
 	remove.pressed.connect(func() -> void: order_remove_requested.emit(index))
 	row.add_child(remove)
-	return row
+	wrap.add_child(row)
 
-## **AN ORDER THE WELL DOES NOT DESCRIBE PUBLISHES NO NAME** (the worked one's is the well's title,
-## `BenchState.displayName`), so
-## it is the recipe book's `display_name` plus its `label` in the sim's own `full_name` shape — the two
-## cannot read differently for one recipe. An unknown recipe names itself by id.
+	# The meters: the crew bar, then the progress bar filling the rest of the line.
+	var meters := HBoxContainer.new()
+	meters.add_theme_constant_override("separation", HudCraftingVocab.QUEUE_ROW_SEPARATION)
+	meters.add_child(_build_order_crew_bar(index, order, payload))
+	var work_total := _order_work_total(order)
+	var fraction := clampf(float(order.get(HudCraftingVocab.ORDER_PROGRESS_KEY, 0.0)) / work_total, 0.0, 1.0) \
+		if work_total > 0.0 else 0.0
+	var bar := _bar(fraction, HudStyle.SIGNAL, HudCraftingVocab.BENCH_BAR_HEIGHT)
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	bar.mouse_filter = Control.MOUSE_FILTER_STOP
+	bar.tooltip_text = _order_progress_tooltip(order, work_total, payload)
+	bar.set_meta(HudCraftingVocab.ORDER_PROGRESS_META, index)
+	meters.add_child(bar)
+	wrap.add_child(meters)
+
+	var sub := Label.new()
+	sub.text = _order_sub_text(order)
+	sub.add_theme_font_size_override("font_size", HudCraftingVocab.ORDER_REASON_FONT_SIZE)
+	sub.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sub.custom_minimum_size = Vector2.ZERO
+	sub.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	sub.set_meta(HudCraftingVocab.ORDER_SUB_META, index)
+	var blocked := String(order.get(HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, ""))
+	var severity := String(order.get(HudCraftingVocab.ORDER_BLOCKED_SEVERITY_KEY, ""))
+	# **WHICH REFUSALS ARE SERIOUS IS THE SIM'S ANSWER**: `danger` keeps the alarm and `neutral` (no spare
+	# hands this turn, the ordinary state one click after Make) reads quiet, both through the SAME
+	# `REASON_COLORS` table the ledger's offer rows use.
+	if blocked != "":
+		sub.add_theme_color_override("font_color",
+			HudCraftingVocab.REASON_COLORS.get(severity, HudCraftingVocab.REASON_COLOR_QUIET))
+		sub.set_meta(HudCraftingVocab.ORDER_REASON_META, index)
+	else:
+		sub.add_theme_color_override("font_color", HudStyle.INK_DIM)
+	# Longer than a line goes in the tooltip, with the forecast of what the stock cannot cover.
+	var forecast := _shortfall_text(order.get(HudCraftingVocab.ORDER_SHORT_TO_FINISH_KEY, []))
+	var sub_tip := sub.text
+	if forecast != "":
+		sub_tip = forecast if sub_tip == "" else HudCraftingVocab.ORDER_TOOLTIP_LINE_JOIN.join(
+			PackedStringArray([sub_tip, forecast]))
+	if sub_tip != "":
+		sub.tooltip_text = sub_tip
+		sub.mouse_filter = Control.MOUSE_FILTER_STOP
+	if sub.text != "":
+		wrap.add_child(sub)
+
+	# **SKIP LIVES ON A WAITING AUTO HEAD** — Auto is on, the order the bench is stuck on (the head) is one
+	# Auto queued, and what stops it is a shortage (`danger`): the crew prompt ("No spare hands") is
+	# ignored by the server's skip check, so a link on it would be refused.
+	if bool((bench as Dictionary).get(HudCraftingVocab.BENCH_AUTO_KEY, false)) \
+			and index == HudCraftingVocab.ORDER_HEAD_INDEX \
+			and bool(order.get(HudCraftingVocab.ORDER_AUTO_KEY, false)) \
+			and blocked != "" and severity == HudCraftingVocab.SEVERITY_DANGER:
+		wrap.add_child(_build_auto_skip_link())
+
+	if _priority_order == index:
+		# **REUSED, NEVER FORKED.** One builder keeps the bench's rank and a worked row's rank from growing
+		# two faces for one property.
+		wrap.add_child(HudWidgets.build_work_priority_picker(func(level: String) -> void:
+			_commit_priority(index, level), HudWorkVocab.work_priority_of(
+				order.get(HudCraftingVocab.ORDER_PRIORITY_KEY, HudWorkVocab.WORK_PRIORITY_NORMAL))))
+	return pad
+
+## The order's crew as the work strip's own bar: at the tool, by hand, and the room left under the cap.
+func _build_order_crew_bar(index: int, order: Dictionary, payload: Dictionary) -> Control:
+	var at_tool := int(order.get(HudCraftingVocab.ORDER_CREW_AT_TOOL_KEY, 0))
+	var by_hand := int(order.get(HudCraftingVocab.ORDER_CREW_BY_HAND_KEY, 0))
+	var cap := int(order.get(HudCraftingVocab.ORDER_CREW_CAP_KEY, 0))
+	var room := maxi(cap - at_tool - by_hand, 0)
+	var tool_id := String(order.get(HudCraftingVocab.ORDER_BENCH_TOOL_KEY, ""))
+	var bar := CrewSplitMarks.build(0, at_tool, by_hand, _bench_tool_name(tool_id, payload), 0, false, 0, room)
+	bar.custom_minimum_size.x = maxf(bar.custom_minimum_size.x, HudCraftingVocab.ORDER_CREW_BAR_WIDTH)
+	bar.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	bar.set_meta(HudCraftingVocab.ORDER_CREW_BAR_META, index)
+	return bar
+
+## The bench tool's on-screen name — the recipe book's `display_name` of the recipe that makes it, lower-
+## cased as the work strip words a kit (`3 with knapping kit`), else the id itself.
+func _bench_tool_name(tool_id: String, payload: Dictionary) -> String:
+	if tool_id == "":
+		return ""
+	for recipe_variant in payload.get(PAYLOAD_RECIPES, []):
+		if not (recipe_variant is Dictionary):
+			continue
+		for output_variant in (recipe_variant as Dictionary).get(HudCraftingVocab.RECIPE_OUTPUTS_KEY, []):
+			if output_variant is Dictionary and String((output_variant as Dictionary).get(
+					HudCraftingVocab.RECIPE_OUTPUT_EQUIPMENT_ID_KEY, "")) == tool_id:
+				var name := String((recipe_variant as Dictionary).get(HudCraftingVocab.RECIPE_DISPLAY_NAME_KEY, ""))
+				if name != "":
+					return name.to_lower()
+	return tool_id
+
+## `1.5 of 6 work · +1.0/turn · Teaching Weaving — every one finished teaches it.` — the figures the
+## progress bar's face does not carry.
+func _order_progress_tooltip(order: Dictionary, work_total: float, payload: Dictionary) -> String:
+	var parts: Array[String] = [HudCraftingVocab.BENCH_PROGRESS_FORMAT % [
+		float(order.get(HudCraftingVocab.ORDER_PROGRESS_KEY, 0.0)), work_total]]
+	var rate := float(order.get(HudCraftingVocab.ORDER_RATE_PER_TURN_KEY, 0.0))
+	if rate > 0.0:
+		parts.append(HudCraftingVocab.BENCH_RATE_FORMAT % rate)
+	var teaches := String(order.get(HudCraftingVocab.ORDER_TEACHES_KEY, ""))
+	if teaches != "":
+		parts.append(HudCraftingVocab.BENCH_TEACH_FORMAT % _craft_display_name(teaches, payload))
+	return HudCraftingVocab.BENCH_SUB_SEPARATOR.join(parts)
+
+## **THE NAME THE SIM PUBLISHED** (`display_name`), else the recipe book's `display_name` plus its `label`
+## in the sim's own `full_name` shape, else the id.
+func _order_display_name(order: Dictionary, payload: Dictionary) -> String:
+	var published := String(order.get(HudCraftingVocab.ORDER_DISPLAY_NAME_KEY, ""))
+	return published if published != "" else _order_name(order, payload)
+
+## **A NAME BUILT FROM THE RECIPE BOOK** — `display_name` plus its `label` in the sim's own `full_name`
+## shape, so the two cannot read differently for one recipe. An unknown recipe names itself by id.
 func _order_name(order: Dictionary, payload: Dictionary) -> String:
 	var recipe_id := String(order.get(HudCraftingVocab.ORDER_RECIPE_ID_KEY, ""))
 	var recipe := _recipe_of(recipe_id, payload)
@@ -3616,22 +3432,6 @@ func _order_name(order: Dictionary, payload: Dictionary) -> String:
 		return recipe_id
 	var label := String(recipe.get(HudCraftingVocab.RECIPE_LABEL_KEY, ""))
 	return name if label == "" else HudCraftingVocab.ORDER_NAME_WITH_LABEL_FORMAT % [name, label]
-
-## Raising the order straight under the WORKED order, when that one has CUT ITS PILE, pauses it — say
-## so before. **Only if the raised order could itself be worked**: one carrying a `blocked_reason` is
-## still skipped once it is above, so raising it changes nothing about what the bench works.
-func _raise_tooltip(index: int, order: Dictionary, bench: Dictionary) -> String:
-	if index - 1 == _worked_index(bench) and bool(bench.get(HudCraftingVocab.BENCH_DRAWN_KEY, false)) \
-			and String(order.get(HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, "")) == "":
-		return HudCraftingVocab.ORDER_RAISE_PAUSES_TOOLTIP
-	return HudCraftingVocab.ORDER_RAISE_TOOLTIP
-
-## **THE ORDER THE WELL DESCRIBES** — `BenchState.worked`, the first order in queue order that holds a
-## pile or can draw. `0` (the head) when nothing can be worked, so a fully stuck bench reads as its
-## blocked head exactly as before.
-func _worked_index(bench: Dictionary) -> int:
-	return maxi(int(bench.get(HudCraftingVocab.BENCH_WORKED_KEY, HudCraftingVocab.ORDER_HEAD_INDEX)),
-		HudCraftingVocab.ORDER_HEAD_INDEX)
 
 func _queue_button(glyph: String, tooltip: String) -> Button:
 	var button := Button.new()

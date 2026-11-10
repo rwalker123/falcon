@@ -4,7 +4,7 @@ paths:
   - "core_sim/src/systems/crafting.rs"
   - "core_sim/src/snapshot/crafting.rs"
   - "core_sim/src/data/{materials,recipes}.json"
-  - "core_sim/tests/{materials,crafting,crafting_wire,bench_delivery,bench_queue,auto_craft}.rs"
+  - "core_sim/tests/{materials,crafting,crafting_wire,bench_delivery,bench_parallel_orders,auto_craft}.rs"
 ---
 
 # Materials and the bench — the stuff a craftable thing is made of, and how it gets made
@@ -518,245 +518,114 @@ there in slice 4.
 
 # The bench
 
-`BandBench` is a component on a band: `{ orders, workers, last_output_grade, priority, last_started,
-finished, auto, auto_skipped, kit_orders, next_kit_order }`. **One bench, one queue**: `orders` is an ordered list of `BenchOrder { recipe_id, count, auto,
-made, progress, drawn, kit_order }` and the bench works **one order a turn — the worked order** (below).
-Orders may be grouped into whole-kit orders — see "Kit orders".
-Everything else on the
-bench — the crew, the rank, the band's recipe habits, the parked output — belongs to the bench and
-survives every queue edit.
+`BandBench` is a component on a band: `{ orders, last_output_grade, last_started, finished, auto,
+auto_skipped, kit_orders, next_kit_order }`. `orders` is the queue, in queue order, of
+`BenchOrder { recipe_id, count, made, items, priority, crew, crew_cap, lent_to_hunt, auto, kit_order }`.
+**Every workable order is worked at once** (#873): each order has its own priority, the **sim**
+staffs it in the labor passes, an item's inputs are set aside the turn a crafter starts it, and a
+tool is held by one crafter. Design: `docs/plan_labor_at_scale.md` -> "The bench: several orders at
+once". There is no worked order, no player crew (`bench_crew`, `BandBench::workers`, `benchable()`
+are gone) and no bench-wide priority; `BandBench::crew_total()` (the sum of the orders' crews) is the
+one reading of "how many hands are at the bench".
 
-## The queue — one bench works its orders in turn
+## The queue
 
-Design: `docs/plan_crafting_and_materials.md` §7, "The queue".
-
-- **Every order has a count** (`MIN_ORDER_COUNT` = 1, refused below at the command boundary). The
-  repeat-until-cleared job is retired; `set_bench` (52) and `clear_bench` (53) are reserved in
-  `command.proto`. *"Keep making cordage"* is an order with a number on it, which is also what lets the
-  craft suggestions net out what is already coming.
-- **THE WORKED ORDER is the first, in queue order, that holds a pile or can draw one now**
-  (`systems::crafting::worked_order` over `order_is_workable`, which asks `pass_is_affordable` — the
-  draw's own question). Only it is worked, one order a turn. An order short of its inputs, naming a
-  recipe the book no longer carries, or whose recipe has no bench material is **skipped and keeps
-  its place**; when it can draw again it takes priority back. The rule is **one authority**, read by
-  `advance_crafting`, `bench_material_rate` and the wire's bench row. It is crew-blind — the crew
-  gates the draw, not which order is next. Before it, a short head stalled the whole queue behind it.
-- **On each finished item the worked order's `made` rises by one**; when `made` reaches `count`
-  (`BandBench::complete_item`) the order leaves. Either way **whichever order is now worked draws its
-  own inputs the same turn** (`draw_for_worked_order`), on its recipe's tiers resolved fresh off the
-  ledger — this order again, the next one, or one ahead of it whose inputs this pass just supplied.
-- **The pass in flight lives on the ORDER, not the bench** — `progress` and `drawn` are
-  `BenchOrder` fields, so an order overtaken mid-item — raised over, or passed by an earlier order
-  whose stock arrived — **pauses** with its pile and progress intact and resumes when it is worked
-  again. A bench-level pile would have forced the overtake to destroy what the player cut. So a
-  non-worked order can hold a pile, and the wire says so (`BenchOrder.drawn` / `progress`).
-- **The crew stays with the bench.** A new order is not an order to send anyone home, and an empty
-  queue leaves the crew standing at an idle bench — which is why `bench_crew` applies to an idle
-  bench (it is the only way to stand those hands down). The shed thins an idle bench's crew like any
-  other. **An idle bench publishes that crew** (`BenchState.workers` is stamped on the idle row, with
-  `blockedReason` left empty — an idle bench has no job to be blocked), so a client's
-  `working_age − rows − bench` agrees with the published `idleWorkers`; pinned on the encoded frame by
-  `server::tests::an_idle_bench_publishes_its_crew_and_the_hands_add_up`.
-- **Removing an order spends its drawn pile**, exactly as clearing the bench always did — the
-  materials were cut for the thing the player stopped making, and a `LocalStore` has no
-  representation for a half-worked pile (`DrawnMaterial` carries an amount, not the batch readings
-  it was cut from, so there is nothing to return it as). The event detail carries `pile_spent=`.
-- **One bench, one queue.** Parallel crafting comes from more benches, never from splitting one
-  bench's crew across orders (#595).
-- **The queue rides `BandRecord::bench`** with the rest of the bench (`SAVE_FORMAT_VERSION` 22), so a
-  save or a rollback keeps every order, its `made` and its pile in flight.
+- **Every order has a count** (`MIN_ORDER_COUNT` = 1, refused below at the command boundary). `set_bench`
+  (52) and `clear_bench` (53) are reserved in `command.proto`.
+- **An order is workable** when it has an item in flight, or can start one now (every input for one
+  item on hand at the tiers resolved for it), its recipe is in the book and its material can be worked
+  (a tool is live, or the material's `hand_working` rate is above zero). An order short of an input
+  with nothing in flight is not workable and **takes nobody**.
+- **Rank order** - every per-order walk (staffing inputs, set-aside, shortfall forecast, material
+  income, muster) goes priority High to Low, then queue order (`BandBench::ranked`). `bench_raise`
+  still reorders the queue; it is the tie-break within a priority.
+- **An order carries its items in flight** (`BenchOrder::items`, oldest first): each is an
+  `ItemInFlight { progress, drawn }`, `drawn` being what was set aside for that item with the grade
+  fixed there (`DrawnInputs::at_tool` says whether the bench tool was in hand, and gates the wear
+  charge). `DrawnMaterial` carries the batches actually withdrawn so they can go back exactly.
+- **Cancelling returns what the order holds.** `remove_order` / `remove_kit` hand the order(s) back and
+  the handler calls `BenchOrder::return_set_aside` - every item's batches go back through
+  `LocalStore::deposit_material` at their exact readings (two equal readings blend to themselves, so
+  the store is what it was, to the bit). The event detail carries `pile_returned=`.
+- **A finished item** (`BandBench::finish_item`) counts against `made`; `retire_done_orders` removes an
+  order whose `made` met its `count` (with the kit-order bookkeeping), once per turn after every item.
+- **The queue rides `BandRecord::bench`** (`SAVE_FORMAT_VERSION` 68): the orders, their items, priorities,
+  crews and caps. `lent_to_hunt` is `serde(skip)` and `0` at every turn boundary.
 
 | verb | does | refused when |
 |---|---|---|
-| `bench_enqueue <f> <b> recipe <id> count <n> [workers <n>]` | appends an order; onto an empty bench it is the head at once; writes `last_started` | unknown recipe, unlearned craft, `count` 0 |
-| `bench_order_count <f> <b> order <i> count <n>` | sets one order's count | no order `i`, `count` 0, `count <= made` (that would finish it — `bench_remove` is how an order stops) |
-| `bench_remove <f> <b> order <i>` | takes one order off, spending its pile | no order `i` |
-| `bench_raise <f> <b> order <i>` | swaps the order with the one above it; above a kit order it jumps the whole kit | no order `i`, `i` is the head, `i` is a kit part |
-| `bench_crew <f> <b> workers <n>` | sets the bench's crew, idle bench included | — (clamped to `benchable()`) |
+| `bench_enqueue <f> <b> recipe <id> count <n>` | appends an order (Normal priority); restaffs the band | unknown recipe, unlearned craft, `count` 0 |
+| `bench_order_count <f> <b> order <i> count <n>` | sets one order's count | no order `i`, `count` 0, `count <= made` |
+| `bench_remove <f> <b> order <i>` | takes one order off, returning its set-aside | no order `i` |
+| `bench_raise <f> <b> order <i>` | swaps the order with the one above it | no order `i`, `i` is the head, `i` is a kit part |
+| `bench_priority <f> <b> order <i> high\|normal\|low` | ranks one order (a kit part ranks its whole kit block) | no order `i`, unknown level |
 
-The four queue verbs are `CommandEventKind::Craft` and are band-addressed with a **required** handle
-in `xtask`'s command guard. Pinned through the encoded frame by
-`bench_queue::a_finished_order_leaves_the_queue_and_the_next_draws_its_own_inputs` and
-`::the_last_order_popping_leaves_an_idle_bench_that_makes_nothing_more` (the liveness half: a
-repeating job would keep drawing), the worked-order rule by
-`::a_short_head_is_skipped_and_the_next_makeable_order_is_worked` (the sled behind a short head is
-made while the head keeps index 0 with its reason; the then fully stuck queue publishes `worked` 0
-and the head's reason) and `::the_head_resumes_priority_when_its_stock_arrives` (the overtaken order
-keeps its pile), and through the handlers by
-`server::tests::removing_the_head_spends_its_pile_and_raising_over_it_keeps_it` and
-`::queue_edits_that_cannot_apply_are_refused_by_name`.
+Every bench command restaffs the band so the snapshot shows the new crews at once. They are
+`CommandEventKind::Craft` and band-addressed with a **required** handle in `xtask`'s command guard.
 
-## Staffing
+## Staffing - orders join the passes like builds
 
-**THE BENCH IS THE ASSIGNMENT.** `bench_enqueue` puts the recipe up; there is no Crafter role card and
-**no `LaborTarget` variant**. Scout and Warrior are standing roles with nothing to point at, and
-crafting always has a subject, so it is staffed like a worked source. A `LaborTarget::Craft` would
-also put a fictitious row on every per-source yield readout in the game.
+Design: `.claude/rules/core_sim/work-party.md` (the #871 passes). Each **workable** order becomes a
+`StaffRowInput` (`is_bench`) built by `staffing::bench_inputs` from `systems::bench_plan`:
 
-**THE PLAYER STAFFS THE BENCH; THE SIM NEVER DOES.** `bench_enqueue` chooses the *order*, never the
-crew.
-The crew comes out of the same pool `assign_labor` spends — a crafter is a hunter who is not hunting
-— and dividing the band is this game's core turn-to-turn decision (`docs/plan_early_game_labor.md`),
-so this is the one place the sim must not take a labor decision off the player. There is no correct
-number for it to pick either: **all idle** wastes hands, because `advance_crafting` finishes one item
-per pass and zeroes the meter rather than carrying the overflow, so everything accrued above `work`
-in the crossing turn is dropped; **any other number** is the sim guessing at intent.
-
-**So a `workers` of zero means "do not change the crew".** `workers` rides a proto3 scalar, which
-cannot tell an absent field from an explicit `0`, and the client sends neither number — pressing
-**Make** stages the job and nothing else. `sim_runtime`'s `BENCH_CREW_UNSPECIFIED` is the shared
-spelling of that `0`, read by the text parser and the handler alike, and it resolves two ways:
-
-| bench state | `bench_enqueue` with no crew named |
+| field | value |
 |---|---|
-| no crew standing | the order is staged with **crew 0**; the player sets it on the stepper |
-| a crew already standing (queue empty or not) | the order is queued and the **crew already there stays put** |
+| `priority` | the order's |
+| `max` | `crew_cap` = `crafters_per_item x (items in flight + items it could start now)`, bounded by `count - made` |
+| `kit_items` | the recipe material's bench tool item, one person per unit (one tool arms one crafter); empty when the material has none |
+| `bare_can_work` | the material's `hand_working` rate > 0 |
+| `distance` | 0 (the bench stands at camp) |
+| keep / hold / reach / useful take | nothing |
 
-The second row is not the sim choosing a crew, it is the sim declining to *un*-choose one: applying
-the proto's `0` as a crew would dismiss hands the player had placed — the exact case
-`BandWorkforce::benchable()` (pool − assigned, deliberately *not* netting the bench) exists to
-preserve. **`bench_crew <n>` is the verb that names a crew, zero included**, so it is
-how a bench is stood down without taking an order off it, and no reachable intent is lost.
+**"Could start now" is computed sequentially in rank order against a clone of the band's store**, so two
+orders cannot both be credited with the same hide (an item that cannot be supplied takes nobody).
+Approximation: the startable count is struck at hand-working amounts (a tool's efficiency only lowers a
+cost).
 
-Pinned as a pairing by `server::tests::a_bench_enqueue_with_no_crew_named_recruits_nobody` (an idle
-bench stages at 0 and the band's idle count is untouched; a crew *named* is applied to the head — the
-second half is what stops "leave the crew alone" from becoming "ignore the crew") and
-`::the_crew_stays_with_the_bench_across_queue_edits`.
+- **Never pass 1.** The bench has no hold crew; keepers, builders and hold crews run without it.
+- **Pass 2 opens with ONE crafter on every workable order, at any priority** (High to Low, then queue
+  order), before any group's pass-2 dealing: kitted when the shelf can arm one, else bare where a bare hand
+  works. A Low order still gets its first crafter, and the tool goes to the higher priority.
+- **Then, per priority group, the group's bench orders are dealt with the group's builds** (one
+  round-robin set at distance 0, ahead of the group's sources): pass 2 kitted heads up to the cap, pass 3
+  kitted then bare up to the cap.
+- **The settle trim** (`trim_one_hand`) takes a bench order's heads as it takes a build's of the same
+  priority; `StaffedBand::bench` (one `BenchStaffed` per queue index) is written by
+  `StaffedBand::apply_bench`, which the turn, `restaff_band` and the preview all call.
+- **The pool no longer nets the bench** (`staffable_pool(allocation, available)`); `BandWorkforce::benched`
+  is `crew_total()` and `idle()` still means what pass 3 left over. The bench is zeroed before the
+  starvation shed and refilled after it, so the shed never takes a bench hand (`ShedSubject::Bench`,
+  `ShedStep::StallBench` and `BandBench::shed_one_worker` are gone).
 
-**A bench awaiting its crew is a PROMPT, not a fault**, and the wire says so:
-`BenchState.blockedSeverity` carries the same `danger` / `neutral` / `good` vocabulary as
-`CraftOffer.severity`, `""` when nothing blocks. *"No one at the bench"* is the normal state one click
-after Make, so it publishes at `neutral`; a shortage, an unlearned craft and a zero craft rate are
-problems and publish at `danger`, as does any joined reason with one of them in it. Without the field
-a client renders every `blockedReason` in one alarm colour and the expected state reads as an error.
-**The client must not re-derive it** — the same rule `reason`/`severity` already follow. Pinned as a
-pairing by `crafting_wire::a_crewless_bench_is_a_prompt_and_a_short_bench_is_a_fault`: one severity
-stamped everywhere passes neither half.
+## `advance_crafting` - per order, per item
 
-**The crew comes out of the same pool `assign_labor` spends**, and **`BandWorkforce`
-(`components.rs`) is the ONE place that says so.** A band's people are spent on exactly two things —
-the `LaborAllocation` and the bench — so it resolves `{ pool, assigned, benched }` off the three
-components and answers the three questions anyone asks:
+For each order in rank order (so higher-ranked orders set aside first):
 
-| reading | value | who reads it |
-|---|---|---|
-| `idle()` | `pool − assigned − benched` | **the published `PopulationCohortState.idleWorkers`**, and every "n idle of m" readout downstream of it |
-| `assignable()` | `pool − benched` | `handle_assign_labor`, as the ceiling `LaborAllocation::set_assignment` clamps against (that helper nets out the other assignments itself) |
-| `benchable()` | `pool − (assigned − sim_staffed) − walking_home` | `bench_enqueue` / `bench_crew` — the bench crew is not netted (it stays put through every queue edit), and the sim-staffed source rows count as available: they are what is left after the player's orders, so they never block one and give the hands up at once (both commands restaff the band) |
+1. Hands = crew less this order's muster loan (the loan comes off the bare hands first).
+2. **Seat the hands on items**: in-flight items oldest first, each up to `crafters_per_item` hands,
+   tool-holders first; then, while hands remain and `made + items < count`, **start one more item** - tiers
+   resolved with the tool if an unseated tool-holder remains (else by hand), every input checked, exactly one
+   item's inputs set aside (all or nothing, `draw_pass`). If it cannot be supplied, stop starting.
+3. **Accrue** per item `Σ hands x progress_per_worker_turn x craft_speed` through
+   `systems::rate_per_turn(at_tool, by_hand, ..)` - the one authority the wire's `ratePerTurn` reads: a
+   tool-holder at the tool's speed, a bare hand at the material's `hand_working.rate` (`0` for a material with
+   no `hand_working`, which is the whole refusal - there is no "cannot craft" branch).
+4. **Complete**: an item reaching `work` emits its outputs (equipment parked on `BandBench::finished`, materials
+   into the store), charges one wear to the bench tool **only if the item was set aside at the tool**, charges
+   one lesson and counts against `made`. Overflow past `work` is dropped.
+5. **An unstaffed order draws nothing**: its items keep pile and progress and resume when staffed again.
 
-**The bench is netted out exactly once, and that is the point.** It was subtracted at each command
-site and *not* at the publish site, so a band with four hands at the bench published them as idle:
-the Band panel's workforce zone, the compose sheet's available-worker count and the turn orb's
-attention model all over-reported, in the *reassuring* direction — the player was told they had hands
-free that were already busy, and a compose sheet sized against it could not be staffed. Two
-authorities over one number is how they drift, so a second subtraction must not be added beside this
-one. Pinned by the liveness pair `server::tests::a_bench_crew_is_missing_from_the_published_idle_count`
-(fewer published idle with a crew at the bench, restored when `bench_crew 0` stands it down) and
-`::the_published_idle_count_is_what_assign_labor_will_staff` (the published number is exactly what the
-command path staffs — without it, a sim that stopped publishing idle at all would pass the first).
+`bench_material_rate` (the wire's material income and the labor pass's shortfall Alert) is
+`order_rate / work x output amount` summed over the workable, staffed orders - empty for an order that
+cannot start an item whatever crew is stamped on it.
 
-### A hunting-by-need muster can lend the bench's crew for one turn
+## A hunting-by-need muster lends per order
 
-The bench is a muster donor beside the worked rows (`work-party.md` → "Hunting by need"): ranked by
-`BandBench::priority`, ahead of its tier's rows. The loan is non-destructive — queue, progress, made
-count and drawn pile all stay — and is recorded in `BandBench::lent_to_hunt`, which `advance_crafting`
-reads as `workers − lent_to_hunt` and clears, because the crew is handed back before the bench works.
-A fully lent bench banks nothing and draws nothing that turn. The hands next turn's muster takes are
-on the wire as `BenchState.lentToHunt`.
-
-**The quoted output is priced at the crew the turn will work.** `BenchState.ratePerTurn` and
-`bench_material_rate` (the wire's material income and the labor pass's shortfall Alert) take the
-lent hands as an argument and use `workers − lent`: the capture passes the bench's share of the
-plan that fills `lentToHunt` (`MusterPlan::from_bench`), the labor pass passes this turn's
-`BandBench::lent_to_hunt`. A fully lent bench quotes `0` and banks `0`. The client's turns-to-finish
-is `ceil((work − progress) / ratePerTurn)`, so it follows. `BenchState.workers` and the "No one at
-the bench" reason stay on the player's crew, and the craft suggestions' wear-forecast lead time
-(a multi-turn estimate) keeps its own crew quote. Pinned by
-`hunt_by_need::the_quoted_rate_is_the_progress_the_turn_banks_with_hands_lent`.
-
-### The shed can take the bench's crew, so a running job with nobody on it now exists
-
-The bench spends the band's people, so when a band cannot field what it is holding the **shedding
-order** takes hands off it like anything else — `LaborAllocation::normalize` ranks it in step 5 beside
-the worked rows and stalls it at step 5b (`yield-forecast.md` → "The crafting bench is a candidate in
-the walk" has the ordering and why the bench is not a learner). Three consequences land here:
-
-- ⛔ **The shed must never call `remove_order`.** It **forfeits the order's drawn pile** — the materials are dropped rather than returned to the store, and the grade the draw
-  fixed is re-fixable against different stock. `BandBench::shed_one_worker` takes one hand and leaves
-  the queue — every order's progress, `made` and drawn pile — and the last grade alone, so
-  re-crewing **resumes**. That matches this system's own rule for a pass it cannot advance: *the
-  player chose this job, and silently emptying their bench is a worse answer than a job that makes no
-  progress.*
-- ⛔ **An unstaffed bench draws nothing** (`AN_IDLE_BENCH`). `advance_crafting` runs `draw_pass`
-  **before** the workers term is used anywhere, so a bench at zero crew would withdraw a pass's
-  inputs every turn for work it can never do — a famine quietly draining the material store into a
-  bench nobody is at. The gate is on the **draw**, not the pile: a bench that had already cut its
-  materials keeps them (they are the player's, and the job is still theirs) and simply banks no
-  progress, which `rate_per_turn(0, …)` gives for free. Pinned by
-  `crafting::an_unstaffed_bench_draws_nothing_from_the_store` — and that fixture stocks **both** of
-  the sled's inputs, because a draw is all-or-nothing and a fixture short of one of them withdraws
-  nothing whatever the code does.
-- **`BandBench::priority` is the bench's own mark**, set by `bench_priority <faction> <band>
-  high|normal|low`. Its own verb rather than a `work_priority` token: every other bench command is
-  addressed `<faction> <band>` with no source, and `work_priority`'s grammar reads a lone token as a
-  **herd id**, so `work_priority <f> <b> bench low` would be ambiguous with a herd named `bench`. It
-  rides `BandRecord::bench` with the rest of the bench, because a checkpoint that forgot it would
-  silently re-rank the band's work on rollback, and it is **on the wire** as
-  `BenchState.priority` — the *same* `SourcePriority` enum a worked row carries, reused rather than
-  duplicated, because it is one property of one kind. Captured **live** off the bench (as
-  `LaborAssignment.priority` is), so an edit lands on the command's own recapture and the client needs
-  no optimistic overlay. **It is published on an IDLE bench too**: a rank is a standing statement
-  about the bench rather than about the job on it, `bench_priority` is settable with nothing on it —
-  the moment a player is most likely to state it — and a capture that dropped the mark there would
-  make the control look like it had done nothing. `crafting_wire::the_benchs_rank_reaches_the_client_running_or_idle`
-  pins all three arms off the encoded envelope.
-
-**An unmarked bench is the first thing a short band thins**, because a craft pays into no food, fodder
-or material account — a statement about the accounts, not a judgement about crafting. That is the
-right default in a famine and is exactly what the mark exists to override.
-
-## `advance_crafting`, and why every refusal is a zero
-
-Scheduled in the Population chain immediately after `advance_labor_allocation` — two reasons that
-both have to hold: it draws on the materials **this turn's** take just delivered, and its crew came
-out of the pool that pass spends.
-
-1. No recipe ⇒ nothing.
-2. Nothing drawn ⇒ **draw**. The availability test runs over *every* input before a single unit
-   moves, which is what makes **"a short draw withdraws nothing"** true rather than "withdraws until
-   it runs out". Each row is taken **worst-first** — on the read axis where the row names one, on the
-   material's first declared axis otherwise (that fallback decides only *which pile*, never how much,
-   and has to be deterministic rather than right).
-3. **Accrue `workers × progress_per_worker_turn × craft_speed`**, through `systems::rate_per_turn` —
-   **the one authority**, because the wire publishes the same product as `BenchState::ratePerTurn`
-   and a second copy of it would be free to drop the `craft_speed` term. `craft_speed` is the bounding
-   tool's equipped value if the band has a live one, else the **material's** `hand_working.rate` —
-   which is `0` for a material that cannot be worked bare-handed. **That zero is the entire refusal
-   mechanism.** There is no *"you cannot craft that"* branch anywhere in the sim, exactly as
-   `max(0, attack − defense)` refuses a hunt; the client renders the reasoned refusal.
-4. On `progress >= work`: emit the outputs (equipment **parked** on the bench, materials into the
-   store — see "What a completed craft delivers"), charge one wear, charge one lesson, reset,
-   re-draw.
-
-**The grade is fixed at draw time and never moves** (`DrawnInputs`), which is what makes it *not* a
-taper: a tool that runs dry mid-craft does not retroactively coarsen the thing on the bench, and a
-pile that gets worse while the pass is in flight does not re-grade it.
-
-**`DrawnInputs` also carries `withdrawn`** — one `DrawnMaterial` per input row, in the recipe's own
-order, holding **what the store actually lost**. That is not the recipe's stated `amount`: the bench
-tool's `craft_material_efficiency` sits between them, so a tanning frame cuts 4.8 hide for a sled the
-book prices at 6. It is a *record of the withdrawal*, taken by summing the draws `take_material`
-returned, because worst-first spends one row across as many piles as it needs.
-
-**The overflow past `work` is dropped, not carried.** Progress beyond a completion was done on an
-item whose materials have not been drawn yet, so there is nothing for it to have been spent on. The
-consequence is the ladder's own `crew_scale` shape: over-crewing a bench buys less than
-proportionally, and a `work: 8` recipe wants about four hands rather than sixteen.
-
-**Removing an order spends the pile it drew** (see "The queue — one bench works its orders in
-turn"). What is lost is nameable rather than merely warned about: for the order the bench row
-describes (the worked order) it is `BenchState::drawnInputs`, straight off `DrawnInputs::withdrawn`,
-and every order's `BenchOrder.drawn` says whether it holds a pile at all.
+Each staffed order is its own muster donor (`MusterBench::orders`: index, priority, crew), ranked by its own
+priority and, within a tier, lending **before that tier's rows** (a bench pays into no account; later order
+first). The loan is recorded on `BenchOrder::lent_to_hunt` (`MusterPlan::from_bench_orders`; `from_bench` is
+the sum), read by `advance_crafting` as `crew - lent` and cleared. It never removes an order or touches an
+item. On the wire it is `BenchOrder.lentToHunt` and `BenchState.lentToHunt` (the sum).
 
 ## What a completed craft delivers
 
@@ -996,7 +865,7 @@ number, a grade or a step-down.**
 | Field | Answers |
 |---|---|
 | `materialBatches:[MaterialBatchState]` | *what have I got* — one row per (material, band key) batch: `amount`, plus a `CharacteristicReading` per axis carrying **both** the exact value and its band name, in the material's **declared** axis order |
-| `bench:BenchState` | *what am I making* — every scalar describes `orders[worked]`, the **worked** order (the **head** when no order can be worked, so a fully stuck bench reads as its blocked head; `worked` is `0` then and on an idle bench): `recipeId` (`""` = idle), crew, `progress` against `work`, `teaches` (the recipe's craft), whether the pile is `drawn` and the grade it fixed, `blockedReason` with its `blockedSeverity`, the `ratePerTurn` a turn adds, the `drawnInputs` a removal would destroy — plus `orders:[BenchOrder]`, the whole queue head first (`recipeId`, `count`, `made`, `progress`, `drawn`, and `blockedReason` / `blockedSeverity` — why the bench is skipping that order, in the craft-offer vocabulary, `""` for an order that holds a pile or can draw, resolved by `snapshot::crafting::order_skip_reason` through the bench's own `refusal_reasons`; the crew's refusal stays on the bench row), whose index is the `order` the queue verbs address; the head's finished count is `orders[0].made` alone — the bench-level `itemsCompleted` twin was deleted |
+| `bench:BenchState` | *what is on the bench* — `workers` (**the sim's** crew, `BandBench::crew_total`), `orders:[BenchOrder]` (queue order), `auto` / `autoSkipped`, `lentToHunt` (the sum of the orders' loans), `kitOrders` and `setAside:[DrawnInput]` (per material, summed over every order's items in flight). **Everything about an order is on its `BenchOrder` row**: `recipeId`, `count`, `made`, `progress` (summed over items in flight), `drawn` (at least one item in flight), `priority`, `crewAtTool` / `crewByHand` / `crewCap` / `crewPerItem`, `itemsInFlight`, `displayName`, `teaches`, `work`, `ratePerTurn`, `outputGrade` (the oldest item's), `benchTool`, `drawnInputs`, `lentToHunt`, `blockedReason` / `blockedSeverity` (`No spare hands this turn` / `neutral` for a workable order with no crafter; the offer's `Short n material` / `danger` for an order short of an input with nothing in flight) and `shortToFinish`. The retired worked-order scalars (`recipeId`, `progress`, `work`, `teaches`, `blockedReason`, `shortfalls`, `drawn`, `outputGrade`, `ratePerTurn`, `drawnInputs`, `blockedSeverity`, `priority`, `worked`) are deleted from `BenchState`. |
 | `craftOffers:[CraftOffer]` | *what could I make* — **one entry per recipe, always**, which the ledger folds into one row per thing made; with `available`, a resolved `reason` + `severity`, the `shortfalls`, the `outputGrade` a draw would select, `group`, `outputItemId`, `onBench`, and the one-row-per-item fields (`recipeLabel` / `makes` / `lasts` / `suggested` / `ownedAtTier`) |
 | `equipmentBatches:[EquipmentBatchState]` | *what have I got, and how long will it last* — one row per **batch**, plus one `count: 0` row per config item the band owns none of, so the ledger is never missing a row |
 | `craftSuggestions:[CraftSuggestion]` | *what should I make next* — appended last on the cohort; see "Craft suggestions — what to make next, ranked by who is going without" |
@@ -1032,7 +901,7 @@ both places (`snapshot::crafting::NOTHING_SHORT_STOPS_A_DRAWN_PILE`).
 Two things can stop a job whose pile is already cut, and both survive:
 
 - **`No one at the bench`** (`workers == 0`) — as true of a drawn job as of any other, and the one
-  blocked reason that publishes at `neutral`: the player staffs the bench, so it is an instruction.
+  blocked reason that publishes at `neutral`: the sim staffs the bench, so it is a prompt about spare hands.
 - **A zero craft rate** — the bounding tool wore out mid-craft on a material that cannot be worked
   bare-handed, so progress genuinely cannot accrue. This is the real *"a running job is stopped"*
   case, and it names the tool (`No tanning frame`) rather than saying *"cannot craft"*.
@@ -1051,6 +920,13 @@ that is the state the field exists for. Pinned as a *pairing* by
 silent while drawn with the offer row still saying `Short …`, blocked once the pile goes back on the
 shelf — a one-sided assertion passes on a bench that never reports anything), with
 `::a_drawn_job_whose_tool_ran_dry_still_publishes_its_refusal` holding the surviving case.
+
+> **The per-order rows below carry what the next three subsections say of `BenchState`.** Where they
+> name `BenchState::ratePerTurn`, `::drawnInputs`, `::shortfalls` or `blockedReason`, read the same field
+> on the order's `BenchOrder` row (#873): the rate is `systems::order_rate` (tool-holders at the tool's speed,
+> bare hands at the material's `hand_working.rate`, net of the order's loan), `drawnInputs` is the sum of the
+> order's items' `DrawnInputs::withdrawn`, and an order with an item in flight is workable, so a shortage never
+> blocks it.
 
 ### A WORKER-TURN IS NOT A WORKER'S TURN, so the bench publishes the rate itself
 
@@ -1180,11 +1056,11 @@ hand-written `Default` — because a defaulted `0` would read as *"owns none at 
 takes no default for it**: a serialized `CraftOfferState` missing the field fails like any other
 missing field, rather than decoding silently as *unattributed*.
 
-### The suggested recipe: the worked order's, else last started if it can be made, else the first that can
+### The suggested recipe: the first workable order's, else last started if it can be made, else the first that can
 
 *(This is which **recipe** a ledger row offers — distinct from the craft suggestions, which say which
 **item** to make next.)* `onBench` is true on the offer whose recipe is the order the bench row
-describes — the **worked** order, else the head.
+describes — the first workable order in rank order, else the head.
 
 `mark_suggested` runs after a band's offers are built and picks, **per row**:
 
@@ -1586,7 +1462,7 @@ trip and the splinter.
 Pinned by `craft_suggestions::tests` (ranking and ties, work only where gear adds work, queue netting
 to zero, fractional shortfalls, the build/non-build order and the
 merge) and, off the encoded frame, by
-`bench_queue::suggestions_rank_by_workers_without_and_net_out_the_queue`,
+`bench_parallel_orders`,
 `::a_suggestion_does_not_rise_on_the_turn_its_item_is_made` and
 `::a_detached_party_publishes_no_suggestions` (paired with its home band carrying the same lines).
 
@@ -1600,7 +1476,7 @@ kits at once.
 for its items, appended contiguously and each tagged `BenchOrder::kit_order` (the id; `0` =
 `NOT_A_KIT_PART`), plus one `KitOrder { id, kit_id, kits, done }` on `BandBench::kit_orders`
 (`next_kit_order` counts ids ever issued, so ids start at 1 and are never reused). Everything the bench
-already does — the worked order, per-order pile and progress, the forecast — is untouched; a part is
+already does — the per-order items and the forecast — is untouched; a part is
 worked like any order.
 
 **The invariant is that a kit order's parts stay contiguous**, kept by the editors:
@@ -1611,7 +1487,7 @@ worked like any order.
 - `raise_kit(id)` moves the whole block above the unit directly ahead (a single order, or another
   kit's whole block); refused at the head.
 - `remove_kit(id)` removes every part; drawn piles are lost exactly as a single `remove_order` loses
-  them (the command's event says `piles_spent`). A single part may still be removed or have its count
+  them (the command's event says `piles_returned`). A single part may still be removed or have its count
   edited (the well's ✕ and the part stepper) — the block stays contiguous either way.
 - **One helper drops a `KitOrder`**: `prune_kit_orders` retains only the kit orders some order still
   carries, and `remove_order`, `remove_kit` and `complete_item` all call it. A kit order is therefore
@@ -1651,7 +1527,7 @@ order; `craft_suggestions::band_kit_needs` + `snapshot::crafting::kit_need_state
 | `claimed` (per item) | `Σ required` over the settled lines **on this kit** (`SupplySource::is_on_kit`): a take row is on the kit it CHOSE (`SupplySource::Take.kit`, so the sled shared by `big_game` and `trapping` is counted once, on the row's own), a pool by its job, a site by its keeping job, a declared build on the kit carrying the item whose jobs include `builders`. A kit nobody's row chose reads 0. Of the standing and the hunt-turn pass, the one with the larger shortfall (Make Next's rule) |
 | `short` (per item) | `whole_shortfall(Σ (required - filled).max(0))` over those same lines - `ceil(missing - WHOLE_UNIT_TOLERANCE)`, the one formula Make Next starts its count from, **before** the bench's `queued` nets it. The reader nets `queued`. Pinned by `craft_suggestions::tests` |
 | `queued` | `craft_suggestions::queued_units` — the very figure the suggestions net by (queue + parked) |
-| `finished` (per item) | `craft_suggestions::parked_units` — whole units of the item on `BandBench::finished` (made this turn, stocked at the top of the next). A pure readout: `queued` already includes them (`queued_units` adds the same `parked_units` sum), so `queued − finished` is what the queue still owes. On the turn an item completes with its order popped `queued == finished == 1`; next turn both are `0` and the unit is in the equipment ledger. Pinned off the encoded frame by `bench_queue::a_finished_item_is_queued_and_finished_until_the_next_turn_stocks_it` |
+| `finished` (per item) | `craft_suggestions::parked_units` — whole units of the item on `BandBench::finished` (made this turn, stocked at the top of the next). A pure readout: `queued` already includes them (`queued_units` adds the same `parked_units` sum), so `queued − finished` is what the queue still owes. On the turn an item completes with its order popped `queued == finished == 1`; next turn both are `0` and the unit is in the equipment ledger. Pinned off the encoded frame by `bench_parallel_orders` |
 | `recipes` | one per recipe whose output is the item, book order: `outputPerPass`, and `inputs` — each amount **per pass with the bench's material efficiency applied** (`systems::required`, the call the bench draws with) |
 | `materialsFree` | `QueueForecast::left_of` — the stock left after every queued order's claims, the term `suggestion_shortfalls` strikes a suggestion against — one row per material the band holds or any recipe reads |
 
@@ -1676,7 +1552,7 @@ order; `craft_suggestions::band_kit_needs` + `snapshot::crafting::kit_need_state
   listed), `server::tests::a_kit_order_queues_every_item_as_one_group_and_refuses_whole`, the command
   text and proto round trip in `command_text::tests`, `sim_schema`'s
   `whole_kit_orders_and_kit_needs_ride_the_wire`, and, off the encoded frame,
-  `bench_queue::a_kit_order_and_the_pickers_terms_reach_the_wire`.
+  `bench_parallel_orders`.
 
 ## Auto-craft — the bench works down the suggestion list on its own (#779)
 
@@ -1686,19 +1562,16 @@ behaviour; `BandBench::auto` is the per-band toggle (`bench_auto <f> <b> on|off`
 auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 33) and the wire
 (`BenchState.auto` / `autoSkipped`, `BenchOrder.auto`).
 
-- **It fills the bench whenever NO order can progress** (an empty queue is the special case).
-  `auto_craft_fill` asks `systems::worked_order` - the bench's own question - and acts only when it
-  answers `None`; a blocked order (short of an input) holds nothing, keeps its place and resumes by
-  itself when its input arrives, exactly as the bench already skips it. It then queues the first
-  usable suggestion at its whole netted `count` as one `auto` order. **It never queues a suggestion
-  that is itself short of an input** (the suggested recipe must be drawable for ONE pass,
-  `order_is_workable`), so the makeable suggestion behind a short one is the one queued, and **never a
-  suggestion whose row already has an order on the bench**, blocked or not (no duplicate hurdles).
-  One order is queued per fill; the next fill comes the turn nothing can progress again. The
-  live bug: 16 crafters idled at turn 209 behind a blocked hurdles and sled order because the fill
-  required an empty queue. Pinned by `auto_craft::{a_bench_whose_only_order_is_blocked_gets_the_makeable_suggestions,
-  a_blocked_order_resumes_once_its_hide_arrives, a_suggestion_already_queued_is_not_queued_twice,
-  a_short_suggestion_is_never_queued_and_the_makeable_one_behind_it_is_made}`.
+- **It adds ONE order only when crafters are free** (`auto_craft::crafters_are_free`): the band has idle
+  hands after the latest staffing (`BandWorkforce::idle() > 0`) **and** every workable order is already at
+  its `crew_cap` (or none is workable). `auto_craft_fill` then queues the first usable suggestion at its
+  whole netted `count` as one `auto` order and **restaffs the band**, so the new order takes the idle hands
+  this turn. **It never queues a suggestion that is itself short of an input** (the suggested recipe must
+  be drawable for ONE item, `systems::recipe_is_drawable`), so the makeable suggestion behind a short one is
+  the one queued, and **never a suggestion whose row already has an order on the bench**, blocked or not.
+  One order is queued per fill call; both schedule slots (before and after `advance_crafting`) stay.
+  Pinned by `bench_parallel_orders::{auto_craft_adds_exactly_one_order_when_crafters_are_free,
+  auto_craft_adds_nothing_while_crafters_are_not_free}`.
 - **The suggestions are the snapshot's own.** `craft_suggestions::take_row_gear` settles the rows'
   gear and `band_suggestions` ranks it — the two functions `snapshot::population` calls — fed by
   `take_claims::with_world_sources` (between-turns, regrow-first, exactly the capture's reading).
@@ -1719,14 +1592,14 @@ auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 33)
   (if its craft is known); a band with little work does not.
 - **A queued auto order that later runs short WAITS** (the ordinary skip/waiting semantics) and no
   longer holds the bench: the next fill queues what can be made. Only the player's skip parks it.
-- **It never picks the crew.** `BandBench::workers` is untouched by every path.
-- **Skip** (`bench_auto_skip <f> <b>`, field 83) is valid only when `worked_order` is `None` **and** the
+- **It never picks a crew.** The sim staffs every order in the labor passes (`BandBench::crew_total`).
+- **Skip** (`bench_auto_skip <f> <b>`, field 83) is valid only when no order is workable (`bench_plan`) **and** the
   head is `auto`; otherwise it is refused by name. It parks the head's row key (its recipe's
   `RecipeDef::row_key`: the equipment id, else the material id, so hurdles can be skipped) in
   `auto_skipped`, removes the head (a drawn order is workable, so a waiting
   head holds no pile and nothing is forfeited) and refills.
 - **A skipped item returns only at the next fill** (when no order can progress). At each fill an item whose suggested
-  recipe can draw ONE item from stock (`order_is_workable` on a count-1 order) leaves `auto_skipped`,
+  recipe can draw ONE item from stock (`recipe_is_drawable`) leaves `auto_skipped`,
   and so does an item that is no longer in the suggestion list (nobody is going without it, so a
   stale skip must not survive); it never preempts a running order. Turning auto off clears the set and leaves every order alone.
 - **When it runs:** the turn systems `advance_auto_craft` (before `advance_crafting`) and
@@ -1766,7 +1639,7 @@ nothing until it stalled. `systems::queue_material_shortfalls` looks at the whol
   remaining run, queue-order claims), via `snapshot::crafting::queue_aware_shortfalls`; non-material
   parts (`Needs X`, `No loom`) are unchanged. The per-pass shortfall only decides WHETHER material
   blocks (workability is untouched). The ledger's `CraftOffer.reason` stays per-pass: it describes
-  one pass, not an order. Pinned by `bench_queue::a_skipped_orders_reason_quotes_its_forecast_not_one_pass`.
+  one pass, not an order. Pinned by `bench_parallel_orders`.
 - **`BenchOrder.shortToFinish`** is that order's rows (empty when covered). A **forecast, not a
   block** — `blockedReason` stays the only "why it is skipped" field.
 - **`CraftSuggestion.shortfalls`** is the whole suggested count (`ceil(count / the recipe's per-pass
@@ -1780,7 +1653,7 @@ nothing until it stalled. `systems::queue_material_shortfalls` looks at the whol
   from equality, like `material_shortfall_warned`). Detail: `status=bench_short material= short=
   held=` plus `band=`.
 
-Pinned off the encoded frame by `bench_queue::short_to_finish_forecasts_…` and
+Pinned off the encoded frame by `bench_parallel_orders` and
 `::a_suggestions_shortfalls_are_struck_…`, the edge gate by `::the_bench_short_notice_is_edge_gated_…`,
 the arithmetic by `systems::crafting::forecast_tests`.
 

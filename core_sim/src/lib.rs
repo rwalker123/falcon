@@ -166,11 +166,11 @@ pub use combat_config::{
 };
 pub use components::{
     available_workers, floor_is_valid, floor_overdraws, take_overdraws, BandBench, BandEquipment,
-    BandId, BandName, BandOrder, BandTravel, BandWorkforce, BatchGrade, BenchOrder,
+    BandId, BandName, BandOrder, BandTravel, BandWorkforce, BatchGrade, BenchCrew, BenchOrder,
     BenchQueueError, BuildDeclaration, BuildJob, BuildSource, BuildToeLine, CohesionReading,
     DeathCause, DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind,
     EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase, FinishedBatch, FoodBatch,
-    FoodMix, KeepShare, KeepingIssue, KeepingToolLine, KitOrder, KnowledgeFragment,
+    FoodMix, ItemInFlight, KeepShare, KeepingIssue, KeepingToolLine, KitOrder, KnowledgeFragment,
     LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw,
     MoraleCause, MusterBench, MusterKit, MusterPlan, OrderOwner, PoolToeLine, PopulationCohort,
     PowerNode, ResidentBand, ScoutPack, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject,
@@ -575,15 +575,15 @@ pub use systems::{
     advance_band_independence, advance_band_movement, advance_crafting, advance_culture_pressure,
     advance_culture_splits, advance_expeditions, advance_labor_allocation, advance_party_defection,
     advance_population_migration, advance_predator_raids, advance_tick,
-    announce_bench_material_short, band_label, bench_material_rate, bench_tiers,
+    announce_bench_material_short, band_label, bench_material_rate, bench_plan, bench_tiers,
     bill_and_stock_roads, break_off_breeding_excess, bring_the_dropped_party_home,
     culture_strength, deliver_bench_output, denial_forecast, expedition_returned_event,
     fold_party_into_band, follow_hunted_herds, grow_faction_roster, hunt_per_worker_provisions,
     hunt_report_event, hunt_take, joining_pressure, output_multiplier, party_owes_a_report,
     prospective_keep_hands, publish_turn_transfers, settle_bands_roadwork, settle_scarce_tools,
     shed_breeding_excess, simulate_population, simulate_power, source_has_a_meter_at_risk,
-    split_band_from_parent, split_band_from_parent_with, split_refusals, BenchTiers, BreakOffAsk,
-    BreedingBreakOffs, CulturePressureLedger, CulturePressureReading, DenialForecast,
+    split_band_from_parent, split_band_from_parent_with, split_refusals, BenchPlan, BenchTiers,
+    BreakOffAsk, BreedingBreakOffs, CulturePressureLedger, CulturePressureReading, DenialForecast,
     DenialOutcome, HeartLedger, HeartReading, HuntOutcome, JoiningPhase, LineDivision, PartyGear,
     PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals,
     ToolClaimStage, TradeDiffusionEvent, POST_RECALLED,
@@ -1953,7 +1953,7 @@ pub fn seat_builders(world: &mut World, band: Entity, idle: u32) {
         })
         + world
             .get::<crate::components::BandBench>(band)
-            .map_or(0, |bench| bench.workers);
+            .map_or(0, crate::components::BandBench::crew_total);
     let mut cohort = world
         .get_mut::<PopulationCohort>(band)
         .expect("the fixture band has a cohort");

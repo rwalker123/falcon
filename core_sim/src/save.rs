@@ -162,7 +162,7 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 65 | A row's crew targets are capped at its tile's room (#860): `StaffedCrew` gained `tile_short` (the heads the tile could not fit), which rides the row's staffing; a version-64 blob does not decode |
 /// | 66 | A tribe's closeness is a points bank that fills only while a leader exists (#861): `TribeRegistry::shared_history` is replaced by per-pair `points` (banked points on the `tribe_score_threshold` scale, faded by `tribe_points_fade_turns`); a version-65 blob does not decode |
 /// | 67 | The animal ladder pays as it is built: `RungStanding` (stamped on every `ForagePatch`, `Herd`, `Road` and `DepositSource`) gained `built`, the fraction of the raising rung's job banked whatever its partial-credit mode, which a herd's handling terms read. A version-66 blob lacks it |
-pub const SAVE_FORMAT_VERSION: u32 = 67;
+pub const SAVE_FORMAT_VERSION: u32 = 68;
 
 /// gzip level for the payload document.
 ///
