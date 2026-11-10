@@ -2446,14 +2446,15 @@ fn managed_dig_allocation(
 /// **STAFF A COPY OF A BAND'S ALLOCATION THE WAY THE COMMAND PATH DOES** — `restaff_band`'s staffing
 /// (`staff_rows_settled` with the band's bench and nobody lost, then `apply_staffing` and
 /// `apply_build_crews`) run on `allocation` instead of the one the band holds, and returned rather
-/// than written. Nothing in the world changes. `None` where the band has no cohort.
+/// than written, with the crew the same passes gave each bench order. Nothing in the world changes.
+/// `None` where the band has no cohort.
 ///
 /// The one staffing the compose sheet's dry run (`staffing_preview`) and the command path share.
 pub fn staff_allocation_copy(
     world: &bevy::prelude::World,
     band: bevy::prelude::Entity,
     allocation: LaborAllocation,
-) -> Option<LaborAllocation> {
+) -> Option<(LaborAllocation, Vec<BenchStaffed>)> {
     let staffed = with_band_staffing_over(
         world,
         band,
@@ -2462,9 +2463,10 @@ pub fn staff_allocation_copy(
             staff_rows_settled(staffing_world, allocation, kit, pool, available, NOBODY)
         },
     )?;
+    let bench = staffed.bench.clone();
     let mut staffed_allocation = allocation;
     staffed.apply_to(&mut staffed_allocation, NOBODY);
-    Some(staffed_allocation)
+    Some((staffed_allocation, bench))
 }
 
 /// **RESTAFF ONE BAND OUTSIDE THE TURN** — what a command handler calls after it changed an input

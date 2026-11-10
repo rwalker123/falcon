@@ -1162,7 +1162,7 @@ message StaffingPreviewQuery {
 // for a declared build's builders (the source's own kind token after `build:`). The identity fields
 // are the ones the kind uses and are otherwise empty/zero: `x`,`y` for forage, extract, tile, and
 // a patch / deposit / tile build; `herd_id` for hunt; `material` for extract; `branch` for a
-// tile or band row.
+// tile or band row. A bench order's crafters are kind `bench`, named by `order_name`.
 message StaffingPreviewLoss {
   string kind = 1;
   uint32 x = 2;
@@ -1173,6 +1173,8 @@ message StaffingPreviewLoss {
   // The row's crew staffed WITHOUT the previewed row, and WITH it.
   uint32 before = 7;
   uint32 after = 8;
+  // A `bench` row's order, named as the Crafting panel names it (the made item's row name).
+  string order_name = 9;
 }
 
 // The answer to `StaffingPreviewQuery`.

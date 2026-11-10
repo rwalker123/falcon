@@ -590,16 +590,20 @@ default `assign_labor` resolves for that row), `floor`, `priority` (`high` | `no
 normal) and `max_workers` (`0` = no Max). **The reply**: `workers` with its `keepers` / `kitted` /
 `bare` split, `idle_before` / `idle_after` (the published `idleWorkers` meaning: hands pass 3 left
 unused, without and with the row) and `losses`: one `{ kind, x, y, herd_id, material, branch, before,
-after }` per row whose crew falls, High priority first then row order, declared builds last
-(`kind` is `build:<kind>` for their builders).
+after, order_name }` per row whose crew falls, High priority first then row order, declared builds
+next (`kind` is `build:<kind>` for their builders), bench orders last (`kind` is `bench`,
+`STAFFING_LOSS_KIND_BENCH`, ranked High first then queue order). A bench row is named by
+`order_name`, the made item's row name (`RecipeDef::row_name`), the name the Crafting panel gives the
+order; the field is empty on every other kind. The bench is staffed in the same passes as the rows
+(`crafting.md`), so a previewed row can take a crafter off an order.
 
 **One staffing, two callers.** The row is built by the helpers `assign_labor` shares
 (`staffing_preview::{default_kit_for_target, working_as_it_stands,
 never_renewing_dig_without_a_count}`) and written onto a COPY of the band's allocation with
 `set_staffed_row` and `set_source_priority`; an existing row on that source is overwritten in place.
 The copy is staffed by `staffing::staff_allocation_copy` (`with_band_staffing_over` →
-`staff_rows_settled` with the band's bench and nobody lost → `apply_staffing` +
-`apply_build_crews`), the staffing `restaff_band` runs, and the UNMODIFIED allocation is staffed the
+`staff_rows_settled` with nobody lost → `apply_staffing` + `apply_build_crews`, returning the bench
+orders' crews beside the rows), the staffing `restaff_band` runs, and the UNMODIFIED allocation is staffed the
 same way for the "before" figures, so a loss compares like with like and never against stale
 stored crews. The reply therefore equals the crew the row gets after the matching `assign_labor`.
 The take selection is passed as sent (the command's prune-to-the-current-basket repair is not
@@ -614,7 +618,8 @@ field.
 
 Pinned by `tests/staffing_preview.rs` (a new Normal row takes from the Low row and equals the
 command's restaff; a Low row leaves the Normal row alone; idle hands first with no losses; the
-allocation unchanged after the query; the refusal tokens), the cross-seat refusal over the socket
+allocation unchanged after the query; the refusal tokens; a High row taking crafters off a Low bench
+order names that order and equals the command's restaff), the cross-seat refusal over the socket
 in `query_seat_gate.rs`, and `sim_runtime`'s `the_staffing_preview_round_trips`.
 
 ## Config files

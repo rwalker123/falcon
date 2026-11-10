@@ -785,8 +785,9 @@ pub struct StaffingPreviewQuery {
 /// One row whose crew falls under the previewed row — see [`StaffingPreviewReply::losses`].
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StaffingPreviewLoss {
-    /// The labor kind token (`forage`, `hunt`, `extract`, `tile`, `band`, `roadwork`), or
-    /// `build:<kind>` for a declared build's builders.
+    /// The labor kind token (`forage`, `hunt`, `extract`, `tile`, `band`, `roadwork`),
+    /// `build:<kind>` for a declared build's builders, or [`STAFFING_LOSS_KIND_BENCH`] for a bench
+    /// order's crafters.
     pub kind: String,
     pub x: u32,
     pub y: u32,
@@ -796,7 +797,13 @@ pub struct StaffingPreviewLoss {
     /// The crew staffed without the previewed row, and with it.
     pub before: u32,
     pub after: u32,
+    /// A bench row's order, named as the Crafting panel names it; empty for every other kind.
+    pub order_name: String,
 }
+
+/// **The loss kind of a bench order's crafters** — the bench is staffed in the same passes as the
+/// take rows and builds, so a previewed row can take hands from it.
+pub const STAFFING_LOSS_KIND_BENCH: &str = "bench";
 
 /// The answer to [`StaffingPreviewQuery`].
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -3541,6 +3548,7 @@ impl QueryReplyEnvelope {
                             branch: loss.branch.clone(),
                             before: loss.before,
                             after: loss.after,
+                            order_name: loss.order_name.clone(),
                         })
                         .collect(),
                 })
@@ -3698,6 +3706,7 @@ impl QueryReplyEnvelope {
                             branch: loss.branch,
                             before: loss.before,
                             after: loss.after,
+                            order_name: loss.order_name,
                         })
                         .collect(),
                 })
@@ -4238,16 +4247,26 @@ mod tests {
                 bare: 1,
                 idle_before: 7,
                 idle_after: 2,
-                losses: vec![StaffingPreviewLoss {
-                    kind: "extract".to_string(),
-                    x: 11,
-                    y: 12,
-                    herd_id: String::new(),
-                    material: "stone".to_string(),
-                    branch: String::new(),
-                    before: 4,
-                    after: 1,
-                }],
+                losses: vec![
+                    StaffingPreviewLoss {
+                        kind: "extract".to_string(),
+                        x: 11,
+                        y: 12,
+                        herd_id: String::new(),
+                        material: "stone".to_string(),
+                        branch: String::new(),
+                        before: 4,
+                        after: 1,
+                        order_name: String::new(),
+                    },
+                    StaffingPreviewLoss {
+                        kind: STAFFING_LOSS_KIND_BENCH.to_string(),
+                        before: 3,
+                        after: 2,
+                        order_name: "Baskets".to_string(),
+                        ..StaffingPreviewLoss::default()
+                    },
+                ],
             }),
         };
         let bytes = reply.encode_to_vec().expect("encode");
