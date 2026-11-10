@@ -197,7 +197,13 @@ fn publish(app: &mut App, band: Entity) -> Vec<Published> {
     cohort
         .craftSuggestions()
         .map(|rows| {
+            // A bench tool that pays for itself (source kind `bench`) is a different question from
+            // the shortage and wear ranking these tests pin, and is not a row of it.
             rows.iter()
+                .filter(|row| {
+                    row.sources()
+                        .is_none_or(|sources| sources.iter().all(|s| s.kind() != Some("bench")))
+                })
                 .map(|row| Published {
                     item: row.itemId().unwrap_or_default().to_string(),
                     count: row.count(),

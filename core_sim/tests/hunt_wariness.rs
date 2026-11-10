@@ -673,6 +673,11 @@ fn ledger_tolerance(magnitude: f32) -> f32 {
     magnitude.abs().max(1.0) * f32::EPSILON * HUNTED_TURNS as f32 * 4.0
 }
 
+/// The crew of the retreat ledger. A warren is reached at about 28 animals a hunter, so seven hunters
+/// reach what twenty once did and the reach, not the room, stays what binds over the run - which is
+/// what lets the wary and unwary twins engage the same animals.
+const LEDGER_CREW: u32 = 7;
+
 /// Turns each of the two runs below is driven for — long enough that the retreat's cost accumulates
 /// into a difference no single draw could produce.
 const HUNTED_TURNS: u64 = 30;
@@ -710,13 +715,13 @@ fn a_wary_herd_costs_hunter_turns_and_never_herd_biomass() {
         for tick in 1..=turns {
             let outcome = hunt_take(
                 &mut herd,
-                CREW as f32,
+                LEDGER_CREW as f32,
                 FOOD_PEAK,
                 equipped_haul_rate(),
                 &party_at(&combat),
                 &fauna,
                 NO_CARRY_LIMIT,
-                HuntDraw::Seeded(retreat_seed(map_seed, tick, &herd_id, CREW)),
+                HuntDraw::Seeded(retreat_seed(map_seed, tick, &herd_id, LEDGER_CREW)),
             );
             engaged += outcome.engaged;
             fled += outcome.fled;

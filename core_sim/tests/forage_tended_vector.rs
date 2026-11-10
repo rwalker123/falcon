@@ -19,6 +19,29 @@
 /// **The shipped EQUIPPED gather rate** — what a kitted crew carries, off the baskets' own tier.
 /// `labor_config`'s `forage.per_worker_biomass_capacity` is the *bare-handed* baseline since quality
 /// tiers landed, so a fixture that wants "an ordinary band" asks the item table.
+/// **The plant keeping rates this file's fixtures were written against.** The shipped bills were
+/// retuned under a hand per tender-load (tended 2.0 -> 0.7, field 4.0 -> 0.85) so a lone worker breaks
+/// even; these fixtures stage keepers in whole hands, so they state the whole-hand rates outright.
+const WHOLE_HAND_TENDED_RATE: f64 = 2.0;
+const WHOLE_HAND_FIELD_RATE: f64 = 4.0;
+
+fn whole_hand_keeping_ladder() -> LadderConfigHandle {
+    let mut json: serde_json::Value =
+        serde_json::from_str(core_sim::BUILTIN_INTENSIFICATION_LADDER).expect("the builtin parses");
+    for rung in json["rungs"].as_array_mut().expect("rungs") {
+        let rate = match (rung["branch"].as_str(), rung["id"].as_str()) {
+            (Some("plant"), Some("tended")) => WHOLE_HAND_TENDED_RATE,
+            (Some("plant"), Some("farm")) => WHOLE_HAND_FIELD_RATE,
+            _ => continue,
+        };
+        rung["upkeep"]["work_per_turn"] = serde_json::json!(rate);
+    }
+    LadderConfigHandle::new(std::sync::Arc::new(
+        core_sim::LadderConfig::from_json_str(&json.to_string())
+            .expect("the fixture ladder is valid"),
+    ))
+}
+
 fn equipped_gather_rate() -> f32 {
     core_sim::EquipmentConfig::builtin().equipped_reference(
         core_sim::EquipmentStat::ForageCarry,
@@ -125,7 +148,7 @@ fn spawn_world() -> App {
         .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
-    app.world.insert_resource(LadderConfigHandle::default());
+    app.world.insert_resource(whole_hand_keeping_ladder());
     // **The road ledger `advance_labor_allocation` counts spare road keepers against.** Empty
     // is the shipped turn-1 state — no traffic has worn anything in yet — so this harness's
     // keeping numbers are the roadless reading they have always been.
@@ -598,12 +621,12 @@ fn a_tended_cash_crop_under_sustain_credits_materials_and_costs_food() {
 /// zero — the volunteers are still standing — which is the difference from the retired concentration
 /// model, where a commitment replaced the whole stand.
 ///
-/// **A commitment to a FODDER-BEARING species is ungated on Foddering**: committing a patch to
+/// **A commitment to a FODDER-BEARING species is credited like any other**: committing a patch to
 /// `hay_grass` *is* the bid, and this fixture's faction knows nothing at all — so the credit landing
 /// here *is* the ungated ruling. It is the **species** that lifts the gate and not the commitment as
 /// such: a patch committed to a grain reads the capability like a wild one, because a wheat field is
 /// a bid for wheat whatever else the ground carries (`forage_basket_reweight.rs`'s
-/// `fodder_is_gated_on_foddering_unless_the_patch_is_committed_to_a_fodder_crop`).
+/// `fodder_is_credited_on_every_harvest_that_yields_it`).
 #[test]
 fn a_tended_hay_patch_credits_fodder_from_its_take() {
     let mut app = spawn_world();

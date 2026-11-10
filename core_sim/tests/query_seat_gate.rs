@@ -297,6 +297,7 @@ fn crew_take_about(faction_id: u32) -> QueryPayload {
         floor: ANY_FLOOR,
         max_workers: ANY_CREW_CAP,
         follow: false,
+        assume_kit_held: false,
     })
 }
 

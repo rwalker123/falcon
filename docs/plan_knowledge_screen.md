@@ -38,7 +38,7 @@ they gain nodes. **Never draw an empty domain column.**
 | Domain | Nodes today | Source |
 |---|---|---|
 | **Land** | `cultivation`, `seed_selection` | `intensification_knowledge` (per-faction `{track: 0..1}`) |
-| **Herds** | `herding`, `penning`, `foddering` | same |
+| **Herds** | `herding`, `penning`, `selective_breeding` | same |
 | **Craft** | `tanning`, `weaving`, `bone_working` | `craft_knowledge` (`CraftingPanel.PAYLOAD_CRAFT_KNOWLEDGE`) |
 | Routes / War / Telling | none | not built — the columns appear when the branches do |
 
@@ -89,7 +89,7 @@ different slice.
 │ LAND            ladder   │ HERDS           ladder   │ CRAFT fan │  <detail pane>     │
 │ │● Cultivation    known  │ │● Herding        known  │ ● Tanning │                    │
 │ │◐ Seed Selection   62%  │ │● Penning        known  │ ◐ Bone 40%│                    │
-│                          │ │◐ Foddering        71%  │ ○ Weaving │                    │
+│                          │ │◐ Sel. Breeding    71%  │ ○ Weaving │                    │
 └──────────────────────────┴──────────────────────────┴───────────┴────────────────────┘
 ```
 

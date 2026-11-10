@@ -2779,12 +2779,23 @@ fn a_band_that_is_not_short_takes_exactly_what_each_row_would_take_alone() {
     let first_alone = run(&[(FIRST_HERD, TRAPPING_KIT)], TRAPS_FOR_THE_WHOLE_BAND);
     let second_alone = run(&[(SECOND_HERD_ID, TRAPPING_KIT)], TRAPS_FOR_THE_WHOLE_BAND);
 
+    // **`workers_needed` is the one field this comparison leaves out.** It counts the hands that
+    // would reach the room, walked over the units the row was settled plus the units still on the
+    // shelf (`reach_coverage_for_source`), so a row beside another sees fewer spare units than the
+    // same row alone by construction. Once one armed hand takes more than a warren's room per turn
+    // the two readings can differ without the TAKE differing, which is the claim under test.
+    let without_the_hands_wanted = |mut row: core_sim::SourceYield| {
+        row.workers_needed = 0;
+        row
+    };
     assert_eq!(
-        stocked[0], first_alone[0],
+        without_the_hands_wanted(stocked[0].clone()),
+        without_the_hands_wanted(first_alone[0].clone()),
         "an unshort band's first row resolves bit-for-bit what it resolved as the only claimant"
     );
     assert_eq!(
-        stocked[1], second_alone[0],
+        without_the_hands_wanted(stocked[1].clone()),
+        without_the_hands_wanted(second_alone[0].clone()),
         "…and so does the row beside it"
     );
 

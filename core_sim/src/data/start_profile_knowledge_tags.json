@@ -15,10 +15,6 @@
     "discovery_id": 2006,
     "observability": 1.0
   },
-  "foddering": {
-    "discovery_id": 2007,
-    "observability": 0.4
-  },
   "worked_land": {
     "discovery_id": 2022,
     "observability": 0.2

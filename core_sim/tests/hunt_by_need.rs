@@ -1257,6 +1257,7 @@ fn sizing(app: &mut App, band: Entity, quarry: Quarry) -> Sizing {
                 max_workers: pool,
                 // The sheet's ask for a need row: priced over the gear the muster brings.
                 follow: true,
+                assume_kit_held: false,
             },
         ),
     );
@@ -1926,6 +1927,7 @@ fn sheet_curve_asking(
                 floor: FLOOR,
                 max_workers: pool,
                 follow,
+                assume_kit_held: false,
             },
         ),
     );
@@ -3017,9 +3019,17 @@ fn oxenford(herd_at: UVec2) -> KitScene {
             .iter()
             .map(|line| (line.item_id.clone(), line.required, line.filled))
             .collect(),
+        // The shortage suggestions: a bench tool that pays for itself (source kind `bench`) is a
+        // different question and is ranked ahead of the work it speeds.
         suggestions: cohort
             .craft_suggestions
             .iter()
+            .filter(|suggestion| {
+                suggestion
+                    .sources
+                    .iter()
+                    .all(|source| source.kind != "bench")
+            })
             .map(|suggestion| suggestion.item_id.clone())
             .collect(),
     }

@@ -417,6 +417,9 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         CommandPayload::WorkPriority { band_id, .. } => Some(*band_id),
         // **A staffed row's end names its band too** (#871) - the row it removes is that band's.
         CommandPayload::StopLabor { band_id, .. } => Some(*band_id),
+        // **A band order is a band's** (#860): the stock it holds and the dig row the sim
+        // places for it are that band's own.
+        CommandPayload::BandOrder { band_id, .. } => Some(*band_id),
         // …and so does a queued build's BUILD MARK: the settlement it ranks is that band's own tools
         // and stores (`docs/plan_site_crews.md` §2.4), so its handle is required for the same reason.
         // …and the BENCH's rank names a band too, and requires it: a bench belongs to exactly one

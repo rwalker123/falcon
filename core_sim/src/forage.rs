@@ -4352,7 +4352,7 @@ const NO_UNCOMMITTED_YIELD_RATE: f32 = 0.0;
 /// tended grain patch credits no hay with no `role` branch.
 ///
 /// **The wild credit's KNOWLEDGE gate is not here.** Whether a band may bank hay it did not commit to
-/// is a question about the *faction* (Foddering), and it lives at the credit site in `systems/labor.rs`
+/// is a question about the *faction*, and it lives at the credit site in `systems/labor.rs`
 /// so this seam stays free of knowledge lookups and commodity-generic.
 pub(crate) fn patch_fodder_per_biomass(
     patch: &ForagePatch,
@@ -6804,8 +6804,8 @@ mod tests {
     /// them.** Named rather than read back off the ladder deliberately: reading the ladder would make
     /// [`the_reference_tile_owes_exactly_what_it_owed`] a tautology, and what it pins is that these
     /// two *numbers* survived the move from a flat rate to a per-tender-load one.
-    const TENDED_RATE_BEFORE_THE_MEASURE: f32 = 2.0;
-    const FIELD_RATE_BEFORE_THE_MEASURE: f32 = 4.0;
+    const TENDED_RATE_BEFORE_THE_MEASURE: f32 = 0.7;
+    const FIELD_RATE_BEFORE_THE_MEASURE: f32 = 0.85;
 
     /// **⛔ THE RUNG-ORDERING BUG IS UNREPRESENTABLE.** Ray built a Field on a tended patch and got
     /// *Field above 0% while Cultivation read 99%*; with two independent meters that state could be

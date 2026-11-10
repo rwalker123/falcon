@@ -306,8 +306,16 @@ pub(crate) fn cluster_take_over(
         is_dead,
         existing,
         Ceiling::Standing,
+        WITH_HERDS,
     )
 }
+
+/// [`cluster_take_by`]'s `with_herds` for the reading `Land` ranks ground on: the herds a camp on
+/// `standing` could hunt count beside the patches.
+const WITH_HERDS: bool = true;
+/// ... and for the readings that deal hands onto patch rows alone (`Food`'s free-hand deal, the
+/// bench's sustained ground measure): a herd is hunted through its own rules, never dealt a tile.
+const PATCHES_ONLY: bool = false;
 
 /// **What a site's take is capped at** when a cluster is dealt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -357,10 +365,12 @@ fn cluster_take_by(
     is_dead: &IsDead<'_>,
     existing: &dyn Fn(Tile) -> Option<u32>,
     ceiling: Ceiling,
+    with_herds: bool,
 ) -> ClusterTake {
     let grid = view.grid();
-    // Per site: tile, rate, ceiling, the hands already counted against the plateau, the plateau.
-    let mut sites: Vec<(Tile, f32, f32, u32, u32)> = view
+    // Per site: tile, rate, ceiling, the hands already counted against the plateau, the plateau,
+    // and for a herd the stream its curve lands.
+    let mut sites: Vec<(Tile, f32, f32, u32, u32, Option<HerdStream<'_>>)> = view
         .snapshot
         .forage_patches
         .iter()
@@ -405,20 +415,33 @@ fn cluster_take_by(
                             (room, above, hands_for(room))
                         }
                     };
-                    (tile, rate, ceiling, already, plateau)
+                    (tile, rate, ceiling, already, plateau, None)
                 })
             })
         })
-        .filter(|(_, rate, _, _, _)| *rate > 0.0)
+        .filter(|(_, rate, _, _, _, _)| *rate > 0.0)
         .collect();
-    sites.sort_by(|(a_tile, a_rate, _, _, _), (b_tile, b_rate, _, _, _)| {
-        b_rate
-            .total_cmp(a_rate)
-            .then_with(|| (a_tile.y, a_tile.x).cmp(&(b_tile.y, b_tile.x)))
-    });
+    if with_herds && ceiling == Ceiling::Standing {
+        for stream in herd_streams(view, memory, band, standing, is_dead) {
+            if let Some(already) = existing(stream.tile) {
+                let rate = stream.take(1);
+                let plateau = stream.crew;
+                if rate > 0.0 {
+                    sites.push((stream.tile, rate, 0.0, already, plateau, Some(stream)));
+                }
+            }
+        }
+    }
+    sites.sort_by(
+        |(a_tile, a_rate, _, _, _, _), (b_tile, b_rate, _, _, _, _)| {
+            b_rate
+                .total_cmp(a_rate)
+                .then_with(|| (a_tile.y, a_tile.x).cmp(&(b_tile.y, b_tile.x)))
+        },
+    );
     let mut left = hands;
     let mut dealt = Vec::new();
-    for (tile, rate, ceiling, already, plateau) in sites {
+    for (tile, rate, ceiling, already, plateau, herd) in sites {
         if left == 0 {
             break;
         }
@@ -426,7 +449,11 @@ fn cluster_take_by(
         if room == 0 {
             continue;
         }
-        let take = crew_take(already + room, rate, ceiling) - crew_take(already, rate, ceiling);
+        let taking = |crew: u32| match &herd {
+            Some(stream) => stream.take(crew),
+            None => crew_take(crew, rate, ceiling),
+        };
+        let take = taking(already + room) - taking(already);
         dealt.push((tile, room, take));
         left -= room;
     }
@@ -435,6 +462,142 @@ fn cluster_take_by(
         total: dealt.iter().fold(0.0, |total, (_, _, take)| total + take),
         sites: dealt,
     }
+}
+
+/// **A herd a camp on `standing` could hunt, as the cluster reads it**: its tile, the most hands it
+/// is dealt (the crew that carries its regrowth, within the kit units held), and the curve the take
+/// is read off with the band's stream cap.
+pub(crate) struct HerdStream<'v> {
+    pub tile: Tile,
+    /// The sustained crew: the smallest crew whose kept take reaches the herd's regrowth at Best,
+    /// else where the curve stops rising - bounded by the kit units held.
+    pub crew: u32,
+    curve: &'v CrewTakeCurve,
+    /// Read the curve's take at the source (a camp inside the apron) rather than home (the band's
+    /// own tile, where the curve was struck).
+    at_source: bool,
+    eat_cap: f32,
+    /// The measured share of the forecast ([`SeatMemory::herd_realization`]).
+    realization: f32,
+}
+
+impl HerdStream<'_> {
+    /// What a crew of `crew` lands that the band eats ([`kept_stream`]).
+    pub fn take(&self, crew: u32) -> f32 {
+        let crew = crew.min(self.crew);
+        let likely = if self.at_source {
+            self.curve.source_likely(crew)
+        } else {
+            self.curve.likely(crew)
+        };
+        kept_stream(likely * self.realization, self.eat_cap)
+    }
+}
+
+/// How many of the kit's units the band's other hunt rows leave this herd: the units are the
+/// band's, so one spear arms one hunter on one herd, not one on each ([`Food::reachable_sources`]).
+pub(crate) fn committed_elsewhere(
+    view: &SeatView,
+    band: &PopulationCohortState,
+    herd: &HerdTelemetryState,
+    kit: &str,
+) -> u32 {
+    band.labor_assignments
+        .iter()
+        .filter(|row| row.kind == ROLE_HUNT && row.fauna_id != herd.id)
+        .filter(|row| {
+            view.snapshot
+                .herds
+                .iter()
+                .find(|other| other.id == row.fauna_id)
+                .map(|other| herd_kit_id(view, other))
+                == Some(kit)
+        })
+        .map(|row| row.workers.min(row.hunt_useful_workers))
+        .sum()
+}
+
+/// **THE HERDS A CAMP ON `standing` COULD HUNT** - the one accessor `Land` (through [`cluster_take`])
+/// ranks ground by, priced the way `Food` prices a herd source ([`Food::reachable_sources`]): the
+/// sim's crew-take curve, the kit units held, the sustained crew, and the band's stream cap
+/// ([`net_eat_rate`]). **A herd contributes only where the sim has priced it for that tile**, never
+/// by a guess: from the band's own tile the curve is the one it asked (the take that lands home),
+/// and from a tile within `work_range` of the herd the take is a camp kill's - the curve's
+/// at-source take, which is the same at every distance and the very number the sim lands home
+/// inside the apron. From any other tile the curve says nothing about the walk, so the herd counts
+/// for nothing there. A herd with no curve counts for nothing anywhere.
+pub(crate) fn herd_streams<'v>(
+    view: &'v SeatView,
+    memory: &'v SeatMemory,
+    band: &PopulationCohortState,
+    standing: Tile,
+    is_dead: &IsDead<'_>,
+) -> Vec<HerdStream<'v>> {
+    let grid = view.grid();
+    let here = band_tile(band);
+    view.snapshot
+        .herds
+        .iter()
+        .filter(|herd| herd.huntable && herd.per_worker_yield > 0.0)
+        .filter_map(|herd| {
+            let tile = Tile::new(herd.x, herd.y);
+            let at_source = standing != here;
+            let in_reach = if at_source {
+                grid.distance(standing, tile) <= band.work_range
+            } else {
+                grid.distance(here, tile) <= memory.hunt_reach(band)
+            };
+            if !in_reach || is_dead(&SourceKey::Herd(herd.id.clone())) {
+                return None;
+            }
+            let curve = memory.crew_take(band.band_id, &herd.id)?;
+            // What this seat has measured the herd landing scales it, and a herd whose completed
+            // window landed nothing is dead: it counts for nothing while the record is remembered
+            // (`Land` passes no dead-row judgement of its own, so the record is read here).
+            let realization = memory
+                .herd_realization(band.band_id, &herd.id)
+                .unwrap_or(NO_RECORD_YET);
+            if realization <= 0.0 {
+                return None;
+            }
+            let kit = herd_kit_id(view, herd);
+            let units = kit_units_held(view, band, kit)
+                .map(|units| units.saturating_sub(committed_elsewhere(view, band, herd, kit)));
+            if units == Some(0) {
+                return None;
+            }
+            let plateau = curve.plateau();
+            let cap = units.map_or(plateau, |units| units.min(plateau));
+            let eat_cap = net_eat_rate(band, Some(&herd.id));
+            let kept = |likely: f32| kept_stream(likely * realization, eat_cap);
+            let sustained = regrowth_at(&herd.regrowth_samples, BEST_FLOOR).max(0.0)
+                * herd.provisions_per_biomass;
+            let read = |crew: u32| {
+                if at_source {
+                    curve.source_likely(crew)
+                } else {
+                    curve.likely(crew)
+                }
+            };
+            let crew = if sustained > 0.0 {
+                curve
+                    .rows
+                    .iter()
+                    .find(|row| kept(read(row.crew)) >= sustained.min(eat_cap))
+                    .map_or(cap, |row| row.crew.min(cap))
+            } else {
+                0
+            };
+            (crew > 0).then_some(HerdStream {
+                tile,
+                crew,
+                curve,
+                at_source,
+                eat_cap,
+                realization,
+            })
+        })
+        .collect()
 }
 
 /// One site dealt free hands by [`deal_free_hands`]: the hands up to its sustained crew, the
@@ -488,6 +651,7 @@ pub(crate) fn deal_free_hands(
         is_dead,
         existing,
         Ceiling::Sustained,
+        PATCHES_ONLY,
     );
     let mut dealt: Vec<DealtSite> = sustained
         .sites
@@ -523,6 +687,7 @@ pub(crate) fn deal_free_hands(
         is_dead,
         &standing_now,
         Ceiling::Surplus,
+        PATCHES_ONLY,
     );
     for (tile, hands, take) in surplus.sites {
         if !improves(tile, hands, take) {
@@ -610,6 +775,7 @@ pub(crate) fn cluster_take_sustained(
         &|_| false,
         &|_| Some(0),
         Ceiling::Sustained,
+        PATCHES_ONLY,
     )
 }
 
@@ -640,6 +806,48 @@ pub(crate) fn best_sustained_cluster_within(
 /// module docs). A per-turn quantity on both sides, so it may be compared with a per-turn demand.
 pub(crate) fn crew_take(hands: u32, per_worker_yield: f32, ceiling: f32) -> f32 {
     (hands as f32 * per_worker_yield).min(ceiling)
+}
+
+/// [`Source::realization`] for a herd with no completed window on record: the forecast stands.
+pub(crate) const NO_RECORD_YET: f32 = 1.0;
+
+/// [`Source::eat_cap`] on a source nothing caps: a patch (a plant keeps), and a herd for a band whose
+/// need the frame does not carry yet.
+pub(crate) const NO_EAT_CAP: f32 = f32::INFINITY;
+
+/// **WHAT THE BAND EATS EACH TURN BEYOND ITS OTHER ROWS** - `food_need` less the steady income
+/// (`realized_yield`) of every row but the hunt row on `except_herd`: the most meat a new crew on
+/// that herd can add to the band's table, because a kill the band cannot eat inside the flesh's
+/// shelf life rots (`.claude/rules/core_sim/ai-driver.md` -> "The stream keep"). [`NO_EAT_CAP`] for a
+/// band whose frame carries no `food_need` yet (a splinter's first frame, before any meal).
+pub(crate) fn net_eat_rate(band: &PopulationCohortState, except_herd: Option<&str>) -> f32 {
+    if band.food_need <= 0.0 {
+        return NO_EAT_CAP;
+    }
+    let others: f32 = band
+        .labor_assignments
+        .iter()
+        .filter(|row| {
+            !(row.kind == ROLE_HUNT && except_herd.is_some_and(|herd| row.fauna_id == herd))
+        })
+        .map(|row| row.realized_yield)
+        .sum();
+    (band.food_need - others).max(0.0)
+}
+
+/// **THE SHARE OF A LANDING STREAM THE BAND EATS BEFORE IT SPOILS** - `min(1, net_eat / likely)`:
+/// a crew landing `likely` a turn feeds a band that eats `net_eat` a turn of it, and the rest
+/// expires in the larder. `1` for a stream that lands nothing.
+pub(crate) fn stream_keep(net_eat: f32, likely: f32) -> f32 {
+    if likely <= 0.0 {
+        return 1.0;
+    }
+    (net_eat / likely).clamp(0.0, 1.0)
+}
+
+/// What a stream of `likely` a turn lands that the band eats: `likely x` [`stream_keep`].
+pub(crate) fn kept_stream(likely: f32, net_eat: f32) -> f32 {
+    likely * stream_keep(net_eat, likely)
 }
 
 /// A source a band can be assigned to.
@@ -713,6 +921,12 @@ pub(super) struct Source {
     /// **The sim's crew-take curve**, in food per turn — a herd's forecast
     /// (`SeatMemory::crew_take`); `None` on a patch, whose take is `min(hands × rate, ceiling)`.
     pub curve: Option<CrewTakeCurve>,
+    /// **The most food a turn the band eats of this source's take** ([`net_eat_rate`]) - a herd's
+    /// curve is struck by it ([`stream_keep`]); [`NO_EAT_CAP`] on a patch.
+    pub eat_cap: f32,
+    /// **The share of the forecast this seat has measured this herd landing**
+    /// ([`SeatMemory::herd_realization`]); `1` with no record yet and on a patch.
+    pub realization: f32,
 }
 
 impl Source {
@@ -721,7 +935,7 @@ impl Source {
     pub fn expected(&self, hands: u32) -> f32 {
         let hands = self.crew_cap.map_or(hands, |cap| hands.min(cap));
         match &self.curve {
-            Some(curve) => curve.likely(hands),
+            Some(curve) => kept_stream(curve.likely(hands) * self.realization, self.eat_cap),
             None => crew_take(hands, self.per_worker_yield, self.ceiling),
         }
     }

@@ -57,12 +57,18 @@ gets one — once, permanently.
 - **Feed**: a `CommandEventKind::LeaderEmerged` entry `.with_band(band)`, detail
   `kind=chief|elder_council name=<name>`, label "Orrin is chief" / "The elders' council forms; Orrin
   speaks for it".
+- **Arrival takeover** (#860): the first managing pass over a band with a leader gives it an order for
+  every kind in `labor_config.json` -> `band_orders.ordered_kinds` (owner Chief, `starting_target`),
+  and `advance_leadership` ends by draining `LaborAllocation::unannounced_takeover` into one
+  `Extraction`-kind feed line per band, `.with_band(band)`: "Orrin is chief of Bitterbrook — he takes
+  over the band's work: he keeps 20 turns of food, 30 stone and 30 wood on hand." / "Bitterbrook's elders take over the band's work: they keep …". Mechanism:
+  `work-party.md` -> "A chief keeps an ordered material on hand".
 
 ## Config
 
 | File | Purpose |
 |---|---|
-| `src/data/leadership_config.json` (env `LEADERSHIP_CONFIG_PATH`; `leadership_config.rs`) | `practice_threshold` (10.0), `practice_per_directed_build` (3.0), `practice_per_split` (3.0), `practice_per_herd_hex` (1.0), `practice_per_stage_reached` (5.0); and the tribe levers `tribe_weight_origin` (3.0), `tribe_weight_likeness` (3.0), `tribe_weight_tie` (2.0), `tribe_weight_history` (5.0), `tribe_weight_belief` (1.0), `tribe_weight_acting` (3.0), `tribe_weight_monument` (2.0), `tribe_history_build_turns` (25.0), `tribe_history_fade_turns` (100.0), `tribe_score_threshold` (9.0); and the reach levers `reach_chief_people` (150.0), `reach_paramount_bands` (4.0), `over_reach_efficiency` (0.5). Strict: every key required, unknown keys rejected; the practice levers, the two history turns and the threshold and the two reaches finite and `> 0`, the seven weights finite and `>= 0`, `over_reach_efficiency` finite and in `(0, 1]`. All are Workbench levers (`ConfigOverrideKind::Leadership`, proto 11) |
+| `src/data/leadership_config.json` (env `LEADERSHIP_CONFIG_PATH`; `leadership_config.rs`) | `practice_threshold` (10.0), `practice_per_directed_build` (3.0), `practice_per_split` (3.0), `practice_per_herd_hex` (1.0), `practice_per_stage_reached` (5.0); and the tribe levers `tribe_weight_origin` (3.0), `tribe_weight_likeness` (3.0), `tribe_weight_tie` (2.0), `tribe_weight_belief` (1.0), `tribe_weight_acting` (3.0), `tribe_weight_monument` (2.0), `tribe_points_fade_turns` (100.0), `tribe_score_threshold` (100.0); and the reach levers `reach_chief_people` (150.0), `reach_paramount_bands` (4.0), `over_reach_efficiency` (0.5). Strict: every key required, unknown keys rejected; the practice levers, the fade turns, the threshold and the two reaches finite and `> 0`, the six weights finite and `>= 0`, `over_reach_efficiency` finite and in `(0, 1]`. All are Workbench levers (`ConfigOverrideKind::Leadership`, proto 11) |
 | `src/data/leader_names.json` (env `LEADER_NAMES_PATH`; `leader_names.rs`) | The leader-name pool — content, not tuning. A duplicate or empty pool is refused at load |
 | `intensification_ladder.json` → `rungs[].directed_work` | `true` on `cultivate`, `sow`, `tame` and `corral` |
 
@@ -113,48 +119,51 @@ progress toward one is on the wire ("On the wire" below).
 map; `belief.md`). A fission child inherits its parent's anchor and joins its network at once, so
 locality alone is not a tribe: it has to be earned.
 
-**The closeness score.** Each turn every local pair gets `closeness` (`tribe.rs`, a pure function of
-`CloseInputs` and the config): the sum over seven inputs, each in `[0, 1]`, of `weight x input`. A pair
-is *close* at `tribe_score_threshold` (9.0). Only local pairs are scored, since only a local pair can
-share a tribe-candidate group.
+**The points bank.** Every local pair has a bank of points (`TribeRegistry::points`, per pair,
+checkpoint state). Each turn a pair is local and at least one of its two bands has a leader
+(`BandLeadership.leader.is_some()`), the bank gains the pair's **rate** (`points_per_turn`, a pure
+function of `CloseInputs` and the config): the sum over six inputs, each in `[0, 1]`, of
+`weight x input`. The bank is clamped at `tribe_score_threshold` (100.0) and a pair is *close* when
+it holds that much. A local pair with no leader on either side holds its bank, so a pair that never
+had a chief stays at 0; nothing counts toward a tribe until a chief exists.
 
-| Input | Reads | Lever (opening) |
+| Input (points per turn at 1) | Reads | Lever (opening) |
 |---|---|---|
 | Shared origin | 1 if the two bands' `PopulationCohort::founding_lines` share any `LineId::origin_band` (both descend from one starting band: a split from one another or from a common ancestor), else 0 | `tribe_weight_origin` 3.0 |
 | Culture likeness | `likeness(a, b) = clamp(1 - gap / (2 * CULTURE_TRAIT_SPAN), 0, 1)` with `gap = culture::max_axis_gap` of the two bands' own culture layers: the one existing culture-distance metric, normalised by the full axis range. 0 if either band has no layer | `tribe_weight_likeness` 3.0 |
 | Knowing each other | `ConnectionLedger::edges_between(a, b)`: the larger of the two directions' `Connection::strength` (`FULL_TIE` = 1) | `tribe_weight_tie` 2.0 |
-| Shared history | `TribeRegistry::shared_history`: a per-pair stock in `(0, 1]`, `+ 1 / tribe_history_build_turns` each turn the pair is local and at least one of the two bands has a leader (`BandLeadership.leader.is_some()`), unchanged on a local turn where neither has one, `- 1 / tribe_history_fade_turns` each turn it is not local, clamped. **Never reset on parting.** An entry is pruned at 0 or when either band no longer exists. Checkpoint state | `tribe_weight_history` 5.0; `tribe_history_build_turns` 25.0; `tribe_history_fade_turns` 100.0 |
 | Belief on the shared urn | `CultureConfig::anchor_weight(BeliefRegistry::get(anchor))`, the weight belief already uses (`belief / (belief + belief_half_saturation)`), at the pair's shared anchor | `tribe_weight_belief` 1.0 |
 | A kept monument on the shared urn | `kept_monument`: 1 while the anchor tile's `TileImprovementRegistry` entry HOLDS a rung `belief_config.json` -> `improvement_belief` lists (the shipped list is `belief:monument`, `belief.md`), else 0. The engine names no rung: the list that says which rungs add belief also says which make a monument. Held, not built: a half-raised monument (`partial_credit: on_completion`) reads 0, and an unkept one reads 0 the turn it decays to `gathering_ground` | `tribe_weight_monument` 2.0 |
 | Acting as a tribe | `acting_as_a_tribe(same_tribe)`: 0 for now, and 0 for any pair outside one tribe. The tribe-level orders (#862, #864) and shared works are what will feed it | `tribe_weight_acting` 3.0 |
 
-The opening numbers: a fresh split (kin 3 + identical culture 3 + full tie 2 = 8, plus a little
-belief) is under 9 on the split turn, and closes after about five turns of shared history; bands
-with different origins and a full tie need about 0.8 of the history (20 turns); different origins
-with no tie can never close (3 + 5 = 8) unless a kept monument stands on their urn (+ 2: they close
-at 0.8 of the history, 20 turns); a half-alike kin pair needs half the history. A kept monument
-also closes a fresh split on the split turn (8 + 2). With no chief on either side a local pair
-builds no history at all, so nothing counts toward a tribe until a chief exists. A pair that parts
-keeps its history minus 1% a turn, so a short parting re-closes at once on return and a long one has
-to rebuild it.
+**Fading.** A pair that is not local loses `tribe_score_threshold / tribe_points_fade_turns` points
+a turn (opening: 1 a turn, a full bank empties in 100 turns apart), clamped at 0. **Never reset on
+parting.** An entry is pruned at 0 or when either band no longer exists.
+
+The opening numbers: a pair from one origin band, alike and fully tied, earns 3 + 3 + 2 = 8 a turn
+(a little more with belief), so it forms a tribe 13 turns after the first chief (`ceil(100 / 8)`).
+Different origins with a full tie earn 5 (20 turns); different origins with no tie earn 3 (34
+turns); a half-alike kin pair earns 6.5 (16 turns). A kept monument adds 2 to any of them. A pair
+that parts keeps its bank minus 1% of a full one a turn, so a short parting is re-earned in a turn
+or two and a long one has to be rebuilt.
 
 **Who forms one.** Within each (people, network, anchor) set of local bands, take the connected
 components of the close pairs. A component is a tribe-candidate iff it has `MIN_TRIBE_BANDS` (2,
 "several" by definition, not a lever) or more bands AND at least one member has a `BandLeader` of its
 own. Two close bands with no chief never form, however high the score; they form the turn one is
 crowned. A tribe whose group loses its last chiefed band dissolves, as does one whose members are no
-longer close or no longer local to one another (a band that parts leaves the same turn; its history
+longer close or no longer local to one another (a band that parts leaves the same turn; its bank
 fades rather than resets).
 
 **Identity across turns** (`resolve_matches`, pure and unit-pinned) runs on those candidate groups.
 The `TribeRegistry` resource holds tribes (`TribeId`, people, member `BandId`s, name, leader),
-`next_id`, the shared histories and a per-people cumulative `formed` count. Each tribe, in ascending
+`next_id`, the points banks and a per-people cumulative `formed` count. Each tribe, in ascending
 id order, picks the group of its own people that holds the most of its previous members (ties: the
 group whose lowest `BandId` is lowest). Where several tribes picked one group, the one with more
 previous members in it keeps it (ties: the lower `TribeId`); a loser does not try a second group and
 dissolves. So a network split keeps the tribe on the majority side and the other side (2+ close bands,
 one chiefed) forms a new tribe; two tribes that come to share a network and anchor stay two until
-their cross pairs have built the history to be close, then the one holding more survives and the other
+their cross pairs have banked the points to be close, then the one holding more survives and the other
 dissolves, its bands reading as joining. Membership becomes the group's current bands and is diffed
 for join/leave. A tribe with no group of its people dissolves.
 
@@ -192,13 +201,13 @@ refreshes the anchors), `advance_leadership` (so a band crowned this turn counts
 migration, defection, independence and the culture splits.
 
 **On the wire.** Every own band's progress toward a tribe (a chiefless band can join one) rides
-`PopulationCohortState`, appended last: `tribeThreshold` (`tribe_score_threshold`),
-`tribeHistoryBuildTurns` (`tribe_history_build_turns`), `tribeWeights` (a `TribeClosenessState`: the
-seven weights, the most each input can add) and `tribePairs` (one `TribePairState` per local partner
-band of the band's people, partner id ascending: `partnerBand`, `partnerName`, raw
-`history`, `contribution`, each input times its weight, summing to the pair's score, and
-`partnerHasLeader`, whether the partner has a leader of its own: shared history builds only while at
-least one of a pair does, so a chiefless band reads its turns-remaining estimate off it). Parted
+`PopulationCohortState`, appended last: `tribeThreshold` (`tribe_score_threshold`), `tribeWeights` (a `TribeClosenessState`: the
+six weights, the most points per turn each input can add) and `tribePairs` (one `TribePairState` per local partner
+band of the band's people, partner id ascending: `partnerBand`, `partnerName`, `points`
+(the banked points, on the `tribeThreshold` scale), `contribution`, each input times its weight: its
+points per turn, summing to the pair's rate, and `partnerHasLeader`, whether the partner has a
+leader of its own: points bank only while at least one of a pair does, so a chiefless band reads its
+turns-remaining estimate off it). Parted
 pairs are not published. Membership in a *formed* tribe is separate and is published to every member
 band, chiefless ones included, as `tribeName`, `tribeMemberNames` (every member's name, largest
 band first, ties by band id), `tribeLeaderName` and `tribeLeaderKind`
@@ -222,6 +231,6 @@ checkpoint state, so a snapshot published right after a load still shows progres
 reads it through `snapshot::population::tribe_progress`, which takes the set of live bands with a
 leader (`BandLeaderLookup`) for `partnerHasLeader`.
 
-**Checkpoint.** `SimState::tribes` (`TribeRegistry`: tribes, shared histories, `next_id`, `formed`,
+**Checkpoint.** `SimState::tribes` (`TribeRegistry`: tribes, per-pair `points`, `next_id`, `formed`,
 this turn's `scores` and `standing`;
-`SIM_STATE_RESOURCES`); `SAVE_FORMAT_VERSION` 56.
+`SIM_STATE_RESOURCES`); `SAVE_FORMAT_VERSION` 66.

@@ -530,10 +530,12 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   is why 25 turns is still the reference reading.
 - **Config.** The plant rung-2 **build dials moved to `intensification_ladder.json`**'s `plant:tended`
   rung (`build`: **`work_cost` 50** work units → 25 turns to prepare **at the rung's crew of 2, at the
-  food peak, with no gear**, `upkeep.work_per_turn` **2.0** what holding the rung costs per turn
-  **per tender-load**, kept by the patch's own crew — a whole number on the reference tile
-  and only there, since the load scales it with the ground (2.0 on `AlluvialPlain`, 0.718 on
-  `PrairieSteppe`, 2.154 on `RiverDelta`) —
+  food peak, with no gear**, `upkeep.work_per_turn` **0.7** (was 2.0) what holding the rung costs per turn
+  **per tender-load**, kept by the patch's own crew - the load scales it with the ground (0.7 on
+  `AlluvialPlain`, 0.25 on `PrairieSteppe`, 0.75 on `RiverDelta`). **It is sized so tending breaks
+  even for one worker**: a tended patch gathers twice the wild rate at one worker, so a bill under one
+  keeper-equivalent leaves the lone worker no worse off than the wild gather at tended 50% and 100%
+  (`food_rate_survey::tending_and_sowing_pay_a_lone_worker_at_least_the_wild_gather`) -
   `upkeep.meter_decay` **`{ per_turn 0.5 }`**, what an *unkept* patch loses per turn (its
   `retain_fraction` companion is **deleted** — see "A COMPLETED RUNG *IS* LOST ON THE FIRST BLEEDING
   TURN AGAIN"),
@@ -841,8 +843,8 @@ herd has one appetite).
 - **Feral if abandoned — one rule for the whole plant web, and rung 3 goes FIRST.**
   `advance_cultivation` bleeds **one** meter per untended turn, the highest rung that still has
   progress on it, each at its own rung's `upkeep.meter_decay.per_turn` and past its own
-  `upkeep.grace_turns` (`plant:farm`: `work_cost` **75**, upkeep demand **4.0**/turn per
-  **tender-load**, rot
+  `upkeep.grace_turns` (`plant:farm`: `work_cost` **75**, upkeep demand **0.85**/turn per
+  **tender-load** (was 4.0; just above the tended rung's 0.7, the validated per-rung rule, and under one keeper-equivalent so a Field breaks even for one worker too), rot
   **0.75**/turn held to **0.75** of its cost, grace **1** — a standing crop is the most perishable
   thing on the ladder and wants hands every turn; the 75-unit cost is 25 turns at three hands, sowing
   *placing* a source rather than tidying one).

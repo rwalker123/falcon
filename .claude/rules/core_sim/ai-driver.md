@@ -34,7 +34,7 @@ link-backed and unasked answerers), `view.rs` (`SeatView`,
 (`AiProfile`, `Difficulty`, the file), `orchestrator/` (`Plan`, `ConstantStance`), `specialists/`
 (the trait, `Food`, `Land`, `Dealings`, `Scripted`), `arbiter.rs` (the six steps), `brain.rs` (`Brain`,
 `PassBrain`, and the `Composite` the scripted and utility brains are configurations of),
-`board.rs` (the demand board), `instruments/` (`scoreboard.rs`, `decisions.rs`,
+`board.rs` (the demand board), `orders.rs` (the release of a chief-run row before a hand command), `instruments/` (`scoreboard.rs`, `decisions.rs`,
 `observations.rs`, the `Instruments` writer trio), `bench/` (`mod.rs` the harness,
 `measures.rs` the logs → measures, `ratchet.rs` report ·
 compare · check · baselines), `viewer/` (`mod.rs` the join and the page writer, `page.html` the
@@ -105,7 +105,8 @@ memory's rows, then the crew-take questions of the tick, then the land reading),
 recapture arrives with the same tick and is never acted on twice. `decide` runs on the main thread
 under `DECIDE_BUDGET` (30 s, well under the server's 120 s `seat_turn_timeout_seconds`); an overrun
 is a warning and `ready` is submitted regardless. The questions are outside that budget and
-bounded on their own: at most `CREW_TAKE_ASKS_PER_TICK` (8) per tick, each waited for up to
+bounded on their own: at most `CREW_TAKE_ASKS_PER_TICK` (8) per tick (plus, on a tick a band's
+outfitting window is open, up to `OUTFIT_CREW_TAKE_ASKS` (32) hypothetical-kit asks), each waited for up to
 `QUERY_REPLY_TIMEOUT` (5 s, the claim's allowance) on the link's reply channel — `Link::ask`
 never reads the socket itself, since the reply reader owns it; what arrives meanwhile (a
 recapture) is deferred and handed out by `next_event` afterwards. On the Standard bench a
@@ -231,6 +232,23 @@ the bids are then selected with those claims taken. A hold is a bill the seat ow
 priced as the rung lost it still lost 51,9 on seed 23 to a same-band assignment through `conflict`
 the turn the rung completed, and the patch unwound.
 
+## A chief's rows (`orders.rs`)
+
+A band with a leader has a chief who works the rows its band orders list (`.claude/rules/core_sim/leadership.md`;
+the wire carries `chiefOwned` / `orderKind` on each `LaborAssignmentState`), and the sim refuses
+`assign_labor`, `stop_labor` and `work_priority` on such a row ("<Leader> keeps food on hand - choose Crew
+it yourself"). The seat plays by the player's rule: `orders::release_chief_rows` runs over the turn's
+commands in `Composite::decide`, **after** the arbiter, and puts `band_order <faction> <band> <orderKind>
+release <x> <y>` (a patch or a dig stand) or `release <herd id>` (a hunt row) directly in front of the first
+hand command on each row the frame shows `chiefOwned`; the command itself follows in the same turn. A
+row two commands name is released once. It is per ROW: the seat never releases a whole kind and never
+claims a row back, and a row that is not `chiefOwned` (a new patch, a row already released) gets no
+release. The release is derived from the commands, not proposed, so no specialist bids on it and
+`Cost::claimed` claims a one-row `band_order` under the same `row_key` the labor commands on that
+row claim. The scripted brain goes through the same `Composite::decide`. The release is not in
+`decisions.jsonl` `commands_text` (that is the arbiter's accepted proposal); it is in the commands sent
+and the server's run record.
+
 ## The demand board (`board.rs`)
 
 `docs/plan_ai_driver.md` §4 (*"The demand board — specialists never talk to each other"*, *"The
@@ -271,41 +289,98 @@ because a gathering kit grants no attack and a stalking kit no baskets — **or*
 belt for a cohort whose tiers are not on the wire). A material grant is carried when
 `material_batches` sum to at least the granted units.
 
-**`Food` posts** (`Food::outfit_demands`) for every own band with an open window, **sized by
-value** (`Food::outfit_split`): the band's hands are walked one at a time, each going to a basket
-while the cluster's best marginal take over `food.projection_horizon_turns` is at least the best
-herd's marginal take at the Best floor, and to the hunting kit otherwise; ties go to the basket.
-A site's `k`-th hand earns its share of the site's sustained regrowth at Best
-(`regrowth_at(BEST_FLOOR) × provisions_per_biomass × horizon / sustained_hands`,
-`sustained_hands` = `ceil(that regrowth / rate)`) while `k ≤ sustained_hands`, plus what it
-carries of the room above the floor that the hands before it cannot (`min(per_worker_biomass ×
-horizon, room left) × provisions_per_biomass`) — the fresh plateau first, the sustained after. A
-herd's `j`-th hunter
-earns its share of the herd's sustained take at Best while `j ≤ ceil(that biomass /
-per_worker_biomass)` (at least one) and nothing past it: at the Best floor the take is the
-regrowth whatever the crew. **The herd is priced off the wire, unworked**:
-`HerdTelemetryState::regrowth_samples` — *"This herd's own per-turn regrowth, in biomass,
-sampled at evenly spaced fractions of `K` … Sample `i` of `n` is the delta at `B = i/(n−1) ×
-K`"* — and `per_worker_biomass` — *"What ONE hunter moves this turn, in BIOMASS … It is what
-turns a ceiling into a crew count"*; a worked hunt row's `sustainable_yield` is *"the herd's net
-regrowth"*, the
-same quantity. Why value and not a plateau: on the bench's ground `gathering 17` fed seed 23 to
-t60 (21 working, no death) where sizing the baskets at the sustained plateau alone (`gathering 2,
-big_game 15`, the reading Ray's *"those 4 areas at 50% floor needed 8 workers"* suggested) starved
-it (4 working, 19 dead) — a deer herd's regrowth is one hunter's work, so the walk sends one spear
-and the rest of the band gathers. The baskets go at `DEMAND_PRIORITY_GATHERING` (1.0 — forage
-pays first, and a hand without a basket gathers nothing better than bare hands do); a hunting
-kit × the hands left over, at `DEMAND_PRIORITY_HUNTING`
-(0.8 — hunting is what opens penning, second to the sites), when a huntable herd within
-`SeatMemory::hunt_reach` can be brought down with it (`Food::hunting_kit_for`: among the roster's hunt-job
-kits, never `none`, the greatest fresh `attack` whose mass window admits the biggest herd in
-reach and clears its `defense` — the gate is `max(0, attack − defense)`; herds are tried biggest
-first). The mass window reads `HerdTelemetryState::body_mass` — *"Biomass of one animal of this
-species … `0` if unknown"* — against `KitOptionState::attack_min/max_body_mass` (*"`0` on either
-end means unbounded"*); a herd whose mass reads unknown is trusted only to a kit with no upper
-bound. When
-no herd in reach clears any kit, the hands left over ask for baskets too: a spare basket is not
-forfeited budget, an unspent slot is.
+**`Food` posts** (`Food::outfit_demands`) for every own band with an open window, sized by an
+**outfit walk in two passes** (`Food::outfit_split`), symmetric between patches and herds:
+
+- **Pass 1, the sustained crews.** Each hand goes to the site - patch OR herd - whose next hand earns
+  the most of its **sustained take at Best** over `food.projection_horizon_turns`, ties to the
+  basket, until every site's sustained crew is filled or the band is out of hands. A patch's `k`-th
+  hand earns `regrowth_at(BEST_FLOOR) × provisions_per_biomass × horizon / sustained_hands` while
+  `k ≤ sustained_hands` (`ceil(that regrowth / rate)`). A herd's `j`-th hunter earns
+  `min(likely(j), regrowth) − min(likely(j − 1), regrowth)` over the horizon, where `regrowth` is
+  `regrowth_at(BEST_FLOOR) × provisions_per_biomass` and `likely` is the sim's curve at the rate that
+  lands HOME, while `j` is within the crew that carries the regrowth (the smallest crew whose `likely`
+  reaches it, else the curve's plateau). **No room term is in this pass on either side**: the stock
+  above the floor is one-time, and a crew sized on it is idle once it is spent.
+- **Pass 2, the one-time room.** The hands left over after every sustained crew in reach is filled -
+  the hands *split to feed* exists for - each go to the site with the most room above its floor left,
+  the room counted once on each side. A patch's hand beyond its sustained crew carries
+  `per_worker_biomass × horizon` of the room above `BEST_FLOOR × K` (`× provisions_per_biomass`); a
+  herd's hunter beyond its sustained crew takes `(likely(j) − regrowth) × horizon`, bounded by the
+  room above the herd's floor. Ties go to the basket, and a hand no room pays goes to a basket (a
+  spare basket is not forfeited budget, an unspent slot is). `outfit_demands` logs the two passes'
+  hand counts (`outfit split … sustained_hands … room_hands`).
+
+**Both sides are priced as the band will be OUTFITTED, not as it stands.** A patch's per-hand rate
+is `Food::equipped_patch_rate` - the patch's published `per_worker_yield`, which the sim strikes at
+the roster's equipped reference (`equipped_reference(ForageCarry)`), never the rate a row of the
+band realized with bare hands (the walk is buying the baskets; a splinter's window reads rows its
+parent worked unequipped). A herd's curve is `assume_kit_held` (below), struck by **the stream
+keep** (below).
+
+#### The stream keep: a herd is worth what the band EATS of its landing stream
+
+Flesh keeps four turns (`demographics_config.json`), so a crew that lands more than the band eats
+inside them feeds the larder's rot, not the band. The AI therefore prices a herd at
+`kept_stream(likely, net_eat) = likely x stream_keep`, with `stream_keep = min(1, net_eat / likely)`
+(`specialists/food/sources.rs`) and `net_eat = net_eat_rate(band, herd)` = the band's `food_need`
+less the steady income (`realized_yield`) of every row but the hunt row on that herd, `0`-floored;
+`NO_EAT_CAP` (infinity) while the frame carries no `food_need` (a splinter's first frame). The shape
+is the **stream**, not one kill against one meal: a 7.2 aurochs against a 19-food meal never
+discounts, while a band eating 0.9 a turn off a crew landing 1.2 keeps 0.75 of it (seed 18's
+splinter lost 5.4 of one kill). It is applied at both places the AI prices a herd, so they cannot
+disagree: `outfit_split` (the sustained crew is the smallest whose kept take reaches
+`min(regrowth, net_eat)`, and every pass-1 and pass-2 value is the kept stream) and `Source::expected`
+/ `marginal` (the herd source's `eat_cap`, which every per-turn rule reads). A patch is capped by
+nothing (a plant keeps). Ties stay with the basket and no lever was added. This replaced
+`kept_share`, which compared one animal to the `hunt_meals` entry and capped at 1 on every shipped
+bench seed, so it moved no decision.
+
+**A far hunt row whose every pack is lost is the row to empty first** (`Food::packs_all_lost`, in
+`row_to_empty` beside *no useful crew* and *dead row*): the herd stands past `work_range` and the
+sim's crew curve - struck at the walk's rot, a walk of four turns or more losing flesh whole -
+lands nothing at any crew. The reason reads `every pack lost on the walk to hunt herd_9 (6 hexes
+out)`. It needs no gain guard, like the other troubled rows.
+
+**A herd is priced off the sim's own crew-take curve, for the kit it would be hunted with, at the
+rate that lands home** (`SeatMemory::outfit_take`). At the outfitting window the ordinary curve
+(`SeatMemory::crew_take`, the kit held) is the one a held kit prices; `HuntCrewTakeQuery::assume_kit_held`
+(proto 8) asks the same question with the band priced as if it held `max_workers` fresh units of
+every item of the kit and no other row competing for them (`answer_hunt_crew_take`; equal, row for
+row, to the ordinary curve of a band that really holds them). `SeatMemory::refresh_outfit_takes`,
+run in `Composite::observe` after the held-kit curves, asks it for every own band whose loadout
+window is open and every huntable herd within `hunt_reach` that a roster kit clears - under the
+herd's own `herd_kit_id` when that kit clears it (mass window and `attack > defense`), else the
+roster's best clearing kit (`Food::outfit_kit_for`) - nearest first, at most `OUTFIT_CREW_TAKE_ASKS`
+(32) a window, since a window is one frame and cannot wait for next tick. The answers are a cache of
+their own, dropped at the next ask. A herd with no curve gets no hunter.
+
+⛔ **THE CURVE THE AI READS IS WHAT LANDS HOME, NOT THE TAKE AT THE SOURCE.** `HuntCrewTakeRow`'s
+`animals_likely` is a resident band's take at the source and does not move with distance. Past
+`band_work_range` a herd is a work party (`work-party.md`): it walks out, porters ferry packs home and
+flesh rots on the walk, so on a boar herd at 5 hexes a crew of 6 takes 3.6 a turn at the source and
+lands 1.3. Each row therefore also carries `home_animals_likely` (the caravan forecast's `rate_home`
+over the herd's food per animal, through the same `forecast_hunt_caravan` the turn and the compose
+sheet's `rate_home` answer through; equal to `animals_likely` inside the apron) and
+`home_first_load_turn` (when the first pack lands; `0` inside the apron). `CrewTakeCurve::from_reply`
+reads the home rate: `likely` is the home rate in food, `low` / `high` keep their spread scaled by
+the same home-to-source ratio, and `first_load` rides each row. Every reader of the curve -
+`expected` / `marginal` / `per_worker_yield` / `best_crew`, the reasons' quoted take, the outfit walk -
+therefore reads what lands. Before this the AI priced every far herd at the source rate and sent the
+band's hunters to herds that landed a third of the forecast (seeds 54, 18, 4, 16 of the sweep:
+realized ÷ likely 0.4–0.55).
+
+The demands: the baskets at `DEMAND_PRIORITY_GATHERING` (1.0 — forage pays first, and a hand
+without a basket gathers nothing better than bare hands do), and **one `Resource::Kit` per kit id**
+at `DEMAND_PRIORITY_HUNTING` (0.8 — hunting is what opens penning, second to the sites), summed over
+the hunters dealt to the herds hunted under it. A band for whom no herd in reach clears a kit, or
+whom the sim priced nothing for, ends the walk with every hand on a basket: a spare basket is not
+forfeited budget, an unspent slot is. The mass window reads `HerdTelemetryState::body_mass` —
+*"Biomass of one animal of this species … `0` if unknown"* — against
+`KitOptionState::attack_min/max_body_mass` (*"`0` on either end means unbounded"*); a herd whose
+mass reads unknown is trusted only to a kit with no upper bound. Why value and not a plateau: on
+the bench's ground `gathering 17` fed seed 23 to t60 (21 working, no death) where sizing the
+baskets at the sustained plateau alone (`gathering 2, big_game 15`) starved it (4 working, 19 dead).
 
 **Beside the kits, the hoe estimate — posted, not crafted** (`Food::hoe_estimate`, off the land
 reading's shape, "The land reading" below; nothing when the band has no reading). From the
@@ -848,7 +923,9 @@ the published per-worker rate alone.** Three facts of the frame forced this:
    `expected_sum` and `realized_sum` since the row was last staffed at its current crew (a crew
    change restarts them) and `worked_turns` at that crew; a row's **window** is the turns one
    kill takes at that crew — `ceil(body_food / likely)`, the herd's `food_per_animal` over the
-   curve's likely at the crew — on a hunt row, and the profile's `food.dead_row_turns` on a patch
+   curve's likely (the rate that lands home) at the crew, **after the turns until the first pack lands**
+   (`first_load`: the walk out and the pack filling, so a far row is not judged before anything could
+   have been credited and its hands moved, which restarted the walk) — on a hunt row, and the profile's `food.dead_row_turns` on a patch
    (judged over one turn, a patch that paid nothing once was dead for good: 141 working and 30
    hunger deaths over the eight bench seeds against 157 and 13 before). A hunt row's expected is
    the curve's likely at its crew; a patch row's is **the hands the sim counted**
@@ -884,6 +961,23 @@ the published per-worker rate alone.** Three facts of the frame forced this:
    also be in `snapshot.food_modules`.
 
 ### `Land`
+
+**`Land` and `Food` rank ground by one reading, and it counts herds** (`cluster_take`,
+`herd_streams` in `specialists/food/sources.rs`): beside the workable patches, every huntable
+herd a camp on the candidate tile could hunt is dealt hands up to its **sustained crew** (the
+smallest crew whose kept take reaches the herd's regrowth at Best, within the kit units held and
+less the units the band's other hunt rows hold) at the sim's crew-take curve, struck by the stream
+keep above. **A herd counts only where the sim has priced it for that tile, never by a guess**: from
+the band's own tile the curve is the one it asked (the take that lands home, herds within
+`hunt_reach`); from another tile within `work_range` of the herd the take is a camp kill's, the
+curve's **at-source** take (`CrewTakeRow::source_likely`, `animals_likely x food_per_animal`, the
+same number at every distance and exactly what the sim lands home inside the apron); from any other
+tile, or for a herd with no curve, it counts for nothing. So *better ground* and *move everyone*
+move a band whose patches are poor toward a rich herd, with the margin and departure-memory guards
+below unchanged, and a band with no herd in reach stays. The two readings that deal hands onto
+patch rows alone - `Food`'s free-hand deal and the bench's `ground.*` sustained measure - stay
+patches-only (`PATCHES_ONLY`): a herd is hunted through its own rules, never dealt a tile. Pinned by
+`land::tests::a_band_with_poor_patches_moves_its_camp_toward_a_rich_herd`.
 
 Owns `patches_owned`; alarms `land_short` when what the band's crew would take per turn from the
 cluster it stands in (`cluster_take(here, working_age).total`, the `Food` section's shared
@@ -1173,10 +1267,21 @@ accounting since it was last staffed at its current crew — `crew`, `worked_tur
 `expected_sum`, `realized_sum`, `window` (`Realized`; "The projection ledger" item 2 above) —
 kept when the row is emptied so a dead source is judged on its record; and per `(band, herd)`
 the sim's crew-take curve (`crew_takes`, "A herd is forecast by the sim's crew take" above).
-**A herd is never re-rated by what it realized**: its rank is the curve's `likely`, and the
-realized figure is recorded for the viewer and the dead test only — a zero turn before the kill
-is due is not a rate. A patch keeps today's realized-rate memory (`Food::rate`): its forecast is
-exact, and the memory exists for the crew-over-plateau case.
+**A herd is priced at what this seat has measured it landing, once it has a record**
+(`SeatMemory::herd_realization`): the hunt row's `realized_sum / expected_sum` over a completed
+window (`worked_turns >= window`: the first-load wait plus the turns one kill takes, as above),
+clamped to `0..=1` - a forecast is cut by an unlucky window and never raised by a lucky one - scales
+that herd's home likely **wherever the herd is priced**: the stream keep's input, `Source::expected`
+/ `marginal`, `outfit_split`, and the move reading (`herd_streams`). With no completed window there
+is no record and the forecast stands, so a zero turn before the kill is due is never a rate. A
+completed window in which nothing landed (`Some(0.0)`) is a dead row: `Food` already reads it as
+dead, and `herd_streams` drops the herd (`Land` passes no dead-row judgement of its own) while the
+record is remembered. Why: the sim's forecast runs 1.3-2x ahead of what a shared or drifting herd
+lands, and with the stream cap clipping a herd to `need - other rows` an overstated forecast
+under-staffs the hunt (seed 18: band 2 staffed 6 hunters where it had 10 and the stock ran out at
+t46), while a camp moved toward a herd that lands nothing keeps three hunters on it for 28 turns
+(seed 9). A patch keeps its own realized-rate memory (`Food::rate`); its forecast is exact, and the
+memory exists for the crew-over-plateau case.
 
 **What to remember is stated by the proposal, not parsed from its commands.** `Proposal.memo:
 Option<Memo>` — `Memo::Move { band, target, from }` (any specialist's `move_band`; `from` is the
@@ -1561,6 +1666,21 @@ better, 4 worse), `patches_improved` 0.10 → 0.75 (10 better, none worse), chil
 working 19.0 → 18.9, hunger deaths 0.05 → 0.10 (one death on one seed). The band's own cluster now
 feeds it for the whole run on seeds 22, 37 and 59 — `Land` raises no `land_short` and proposes
 nothing — so all three joined 20, 50 and 54 as `declined` rows with a note.
+
+**The chief's food keep-up (#860) moved it once more.** `Land` wins one `move_band` on seeds 50
+(tick 57) and 59 (tick 43), because the band's runway falls there again, so the `declined` rows for
+those two seeds were withdrawn. Asking a stand or patch for its stock above the floor and dealing
+the food refill ahead of another order's kitted refill then holds seed 50's runway near 27 turns, so
+`Land` proposes nothing there again and seed 50's `declined` row is back; seed 59 stays withdrawn
+(`Land` decides there). The file's `declined` rows are seeds 20, 22, 37, 50 and 54. A refused hand command on a chief's row no longer happens: the seat
+releases the row first ("A chief's rows", above), so `commands_failed_total` is 0 on all eight seeds.
+
+**Kitting by what lands home, and moving toward herds (#860), moved it again.** The turn-one
+outfit deals hands by sustained take at the home rate, a herd is priced at what the band eats of
+its stream and at what the seat has measured it landing, and `Land` reads herds when it ranks
+ground. `Land` now moves on all eight seeds, so the file's `declined` list is empty. On the
+20-seed paired sweep (seeds 1–20) against the build before: working 16.65 → 22.35, hunger deaths
+6.95 → 3.00 (11 better, 4 worse), food stock 41.5 → 36.8. Seeds 2, 13 and 18 end worse.
 
 ⛔ **The start kinds above are what the seeds read NOW, not what they were chosen for.** The
 eight were picked to span `stay` / `split_local` / `split_far` / `short`; the sim changes since

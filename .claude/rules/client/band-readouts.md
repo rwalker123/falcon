@@ -301,7 +301,11 @@ which is a property of the tier and not of the merge.
     ▼ -6.0  Pens
   ```
 
-  the STOCK (`fodder_store`) and the RUNWAY (`turns_of_fodder`) on the row; the two RATES
+  the STOCK (`fodder_store`) and the RUNWAY (`turns_of_fodder`) on the row; **when the runway is
+  unlimited over a bill of nothing (`fodder_need` under `FODDER_FLOW_MIN`) the runway reads
+  `no herds eat it`** (`BandDetailLines.BAND_FODDER_NO_HERDS_TEXT`) instead of `(∞)` -- a store no
+  tamed or penned herd draws on. An unlimited runway under a bill (Fields that out-grow the herds)
+  keeps its figure; the bill includes tamed herds. The two RATES
   (`fodder_income` / `fodder_need`) behind the caret — the fodder twins of `food_income` /
   `food_consumption` / `turns_of_food`, all in FODDER units.
 
@@ -386,23 +390,19 @@ which is a property of the tier and not of the merge.
   - **NO CARET, AND NOTHING REGISTERED.** `fodder_breakdown_lines` produces no rows for a band with
     neither flow, so the dormant branch registers no disclosure at all and `_key_cell` draws a plain
     dim key. An empty pull-down is worse than no pull-down.
-  - **AND IT CARRIES A ROW-SCOPED HOVER.** The row once registered two sentences (a Foddering lock in
+  - **AND IT CARRIES A ROW-SCOPED HOVER.** The row once registered two sentences (a lock in
     the forage panel's words, and a calm *no fodder yet*); while a detail block had one block-wide
     tooltip they surfaced under a cursor on **Growth**, **Morale** or **Food** (reported from play).
     Hovers are per-row now (`Context.row_tooltips`, worn by `DetailFormat.hover_wrap` /
     `wire_row_hovers`), so the row states what it is under its own cursor alone: the faction page
-    files `FODDER_DORMANT_HOVER_FACTION` (`Hay for penned animals. None of your bands holds or uses
-    any yet.`) and a band's page files `FODDER_DORMANT_HOVER_BAND` (`This band holds no hay and
-    feeds no pen with it.`), each under `HudDisclosureVocab.DETAIL_ROW_FODDER` by the CALLER
+    files `FODDER_DORMANT_HOVER_FACTION` (`Fodder for tamed and penned herds. None of your bands holds or uses
+    any yet.`) and a band's page files `FODDER_DORMANT_HOVER_BAND` (`This band holds no fodder and
+    keeps no herd that eats it.`), each under `HudDisclosureVocab.DETAIL_ROW_FODDER` by the CALLER
     (`FactionRollup` after the page's lines are built, `BandDetailLines`' dormant branch). The hover
     is a fixed sentence: it registers no disclosure and does not tint the dash.
-  - **AND THE KNOWLEDGE READ WENT WITH BOTH SENTENCES.** The live Foddering percent was the only
-    thing either scale needed that a band dict does not carry, so `BandDetailLines` holds no
-    `FactionReadouts` cluster now and `FactionRollup.build_band_zone` takes no `knowledge` row: the
-    whole thread from `Hud._ready` and `BandPanelController` down to the row is gone rather than
-    passed and ignored. The forage panel's `GATE_REASON_WILD_FODDER_FORMAT` — and the shared
-    `FODDERING_NOT_LEARNED_CLAUSE` it is spelled from — are UNTOUCHED: that sentence is about a patch
-    the player is looking at, on a surface that can say so.
+  - **AND THE ROW READS NO KNOWLEDGE.** `BandDetailLines` holds no `FactionReadouts` cluster and
+    `FactionRollup.build_band_zone` takes no `knowledge` row: the whole thread from `Hud._ready` and
+    `BandPanelController` down to the row is gone.
   - **THE `compact` (SHORT) TIER STAYS GATED.** That tier trades the row for a stock clause on the
     Food line, and a dim `— fodder` clause states nothing the row it rides on does not — so a
     dormant larder puts no clause there, and the tier's measured worst case is unmoved.
@@ -520,8 +520,8 @@ which is a property of the tier and not of the merge.
     took the vocabulary off `BandDetailLines` when this landed: a const lives where every one of its
     readers can reach it, and a static rollup must not reach into a stateful producer. One builder is
     also what stops the band's dim dash and the faction's coming to mean different things.
-  - **AND IT TAKES NOTHING — NOT EVEN THE FACTION'S FODDERING.** The builder's one argument was the
-    Foddering percent its old hover stated; the hover is a fixed sentence now (see "THE DORMANT ROW"
+  - **AND IT TAKES NOTHING.** The builder's one argument was a knowledge percent its old hover stated;
+    the hover is a fixed sentence now (see "THE DORMANT ROW"
     above). So `build_band_zone` takes no `knowledge` row,
     this page reads no `{track: progress}` row through `RungGates` at all, and a caller that
     re-threads one is restoring a parameter nothing downstream reads.
@@ -926,30 +926,13 @@ behaviourally here: comparing each track's prior reading against the new one was
 turn ticked*, over BOTH knowledge webs at once and off the roster the screen itself draws. See
 `knowledge-panel.md`.
 
-## The knowledge strip's FIFTH track is a capability, not a rung transition
+## Foddering is retired: fodder needs no knowledge
 
-`foddering` rides the wire's knowledge list beside the ladder's rung-transition tracks and is a
-different kind of thing: **no rung waits on it** — which the roster states outright as `is_step:
-false`, derived from the ladder rather than declared client-side. The other four are one per transition
-(`wild --cultivation--> tended --seed_selection--> field`,
-`wild --herding--> pastoral --penning--> pen`), so the list reads as the ladder itself; Foddering is
-what the **pen rung teaches** (the corral rung's `earns_knowledge`), and what it buys is every fodder
-seam a faction has — the pen's hay draw, the pen's `K` fodder term, and the **wild** forage patch's
-fodder credit.
-
-- **It renders LAST**, after `penning`, so it reads as the animal ladder's continuation rather than
-  as a sixth rung of anything. `KNOWLEDGE_TRACK_LABELS` is both the label table and the render order,
-  and `_ingest_intensification` rebuilds each faction's row from that table alone — so adding a track
-  is a label entry plus a decoder field, never an edit to the ingest.
-- **The strip needed no layout work**, and that was verified in a rendered frame rather than assumed:
-  it already wrapped at `KNOWLEDGE_STRIP_TRACKS_PER_LINE` (2), so the fifth track opens a third row
-  (`forage_fodder_known`, where every track is non-zero at once).
-- **Its unlock note names no new VERB**, because this discovery unlocks none. The other four notes say
-  which policy became available; this one says what the capability BOUGHT — *"Hay you gather now goes
-  into the fodder store and feeds your pens."*
-- The gate reason it produces is the compose sheet's, not the strip's:
-  `RungGates.wild_fodder_reason`, in `labor-ui.md` → "The FODDER account can be real and unbankable at
-  once".
+There is no Foddering track. The wire publishes no `knowledges["foddering"]` and no roster entry for it,
+and `KNOWLEDGE_TRACK_LABELS` carries four rung-transition tracks. Fodder is credited from the start on
+every patch that yields it, a pen draws it, and a tamed herd draws it under the pen's rule, so nothing
+in the client gates a fodder readout on what the faction knows. The compose sheet's fodder row is
+`labor-ui.md` -> "Fodder is credited from the start".
 
 ## The band's KIT — three consumables, a clock each, and a cliff (`docs/plan_hunt_through_combat.md` §4.8)
 
@@ -1512,7 +1495,7 @@ this account.
 ### NO DORMANT FORM — the one place it parts company with Fodder
 
 A band with no fodder economy still draws a dim `Fodder  —` because there is a *"you could have this"*
-story to tell: the Foddering craft is a thing to go and learn. **A band holding nothing that eats a good
+story to tell: fodder is an account a herd can start to draw on. **A band holding nothing that eats a good
 has no such story.** A standing bill is a CONSEQUENCE of what you have built, so a row promising one
 before anything is built would be a readout for an economy the player has not chosen to have. It draws
 **no row at all** and registers **no caret**, and the faction row is absent for the same reason when
@@ -1884,8 +1867,9 @@ The Band tab's `BandTribeBlock` (`BandPanelController._build_tribe_block`) is th
 the leader block, in the same column: ONE non-wrapping line. It reads `tribe_name`,
 `tribe_member_names` (largest band first), `tribe_leader_name` / `tribe_leader_kind` (0 none, 1
 paramount chief, 2 council of chiefs), and, for a band not yet in a tribe,
-`tribe_threshold`, `tribe_history_build_turns`, `tribe_weights` and `tribe_pairs` (local partners
-only: `partner_name`, `history`, `contribution`), decoded in `dict/population.rs`. The shaping is pure
+`tribe_threshold` (the points a pair banks to become a tribe, 100), `tribe_weights` and `tribe_pairs`
+(local partners only: `partner_name`, `points` the banked total 0..threshold, `partner_has_leader`,
+`contribution` the per-input points earned per turn), decoded in `dict/population.rs`. The shaping is pure
 `HudFormat` statics (`band_tribe_progress`, `tribe_suffix`, `tribe_missing_lines`,
 `tribe_bar_bbcode`), so the harness asserts it without a node. Four cases, in this order:
 
@@ -1898,16 +1882,15 @@ only: `partner_name`, `history`, `contribution`), decoded in `dict/population.rs
   `orders_carried_out` above 0 also gets `<Band> has no chief of its own: N% of each order is carried
   out here.`
 - **Not in a tribe, with a threshold** (the sim publishes `tribe_threshold` above 0 on every own band, chiefless ones included; `BandPanelController` does not gate on a leader):
-  `Tribe <split bar> · <phrase>` for the best-scoring partner (highest summed contribution, ties by
-  name), with no partner name and no numeric score. The bar is one cell per point of the threshold,
-  each input in its own hue in wire order, with cells taken from the rounded RUNNING total so its
-  length is the score rounded once (a per-input rounding read 8.2 of 9 as full). The phrase is one of
-  `forming` (score at the threshold), `N turns` / `1 turn` (history alone can close the gap at weight /
-  build turns, rounded up), else the biggest missing of monument / belief / tie: `needs a monument`,
-  `needs more belief`, `needs a stronger tie`.
+  `Tribe <bar> · <phrase>` for the partner with the most banked `points` (ties by name), with no
+  partner name and no numeric score. The bar is `TRIBE_BAR_CELLS` (10) cells filled to `points /
+  threshold`, rounded once, in one hue. The pair's rate is the sum of its `contribution` values (origin,
+  likeness, tie, belief, monument, acting). The phrase is one of `forming` (points at the threshold),
+  `N turns` / `1 turn` (`ceil((threshold - points) / rate)`), else, when the rate is 0, the biggest
+  missing of monument / belief / tie: `needs a monument`, `needs more belief`, `needs a stronger tie`.
   **A pair "can build"** (`HudFormat.tribe_pair_can_build`) when this band has a leader (`leader_name`)
-  or the pair's `partner_has_leader` is true; shared history builds only then. The partner shown is the
-  best of the pairs that can build (score, then name), else the best score overall. When the chosen
+  or the pair's `partner_has_leader` is true; points accrue only then. The partner shown is the
+  best of the pairs that can build (points, then name), else the most points overall. When the chosen
   pair cannot build the phrase is `needs a chief` (no turn count, no `forming`) and the hover's
   missing lines are the single `Neither band has a chief: nothing builds until one of them has one.`
 - **Not in a tribe, no partner** (`tribe_pairs` empty): a dim line naming the real reason, read off the

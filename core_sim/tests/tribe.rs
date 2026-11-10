@@ -2,13 +2,13 @@
 //!
 //! Each fixture builds its bands directly (a clone of the world's first band, given an id, a size,
 //! a belief anchor, a supply network, a culture layer, and where it matters a chief, a shared
-//! origin and a tie) and runs `advance_tribes` on its own, one call per turn, so the score is
-//! driven by exactly the inputs the rule reads. The score arithmetic is unit-pinned beside
-//! `closeness`, and the identity arithmetic beside `resolve_matches`.
+//! origin and a tie) and runs `advance_tribes` on its own, one call per turn, so the points are
+//! driven by exactly the inputs the rule reads. The rate arithmetic is unit-pinned beside
+//! `points_per_turn`, and the identity arithmetic beside `resolve_matches`.
 //!
 //! With the shipped weights a pair of kin (origin 3) with identical culture (3) and a full tie (2)
-//! scores 8 before any history; the threshold is 9, so it takes 5 turns of shared history (one
-//! fifth, at 1/25 a turn) to close the gap.
+//! earns 8 points a turn once one of them has a leader; the threshold is 100, so the bank is full
+//! on the thirteenth such turn.
 
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
@@ -19,7 +19,7 @@ use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
-    advance_tribes, closeness, publish_baseline_snapshot, reconcile_band_culture_layers,
+    advance_tribes, points_per_turn, publish_baseline_snapshot, reconcile_band_culture_layers,
     tile_rung_span, BandId, BandLeader, BandLeadership, BandName, BandSupplyMembership,
     BeliefRegistry, BranchId, CommandEventEntry, CommandEventKind, CommandEventLog, ConnectionKey,
     ConnectionLedger, CultureManager, CultureOwner, FactionId, FoundingLines, LadderConfigHandle,
@@ -39,11 +39,13 @@ const PLACE_B: UVec2 = UVec2::new(8, 8);
 /// Two distinct supply networks.
 const NET_1: u32 = 1;
 const NET_2: u32 = 2;
-/// A kin pair scores 8 with no history and needs a fifth of it: five local turns is not yet
-/// enough under floating-point accumulation's guarantees, six always is.
-const TURNS_TO_CLOSE_A_KIN_PAIR: usize = 6;
-/// Enough local turns to fill any pair's history (25 at the shipped build rate).
-const TURNS_TO_FILL_HISTORY: usize = 26;
+/// A chiefed kin pair earns 8 a turn toward the shipped 100: twelve turns bank 96, the thirteenth
+/// fills the bank.
+const TURNS_TO_CLOSE_A_KIN_PAIR: usize = 13;
+/// Enough local turns for a chiefed kin pair (or a third band joining it) to bank full.
+const TURNS_TO_FILL_BANK: usize = 40;
+/// The most turns any rate-measured fixture runs before giving up.
+const TURN_LIMIT: usize = 400;
 /// A belief stock so large its anchor weight is as near 1 as makes no difference.
 const GREAT_URN: f32 = 1.0e9;
 
@@ -188,16 +190,43 @@ fn turns(app: &mut App, n: usize) {
     }
 }
 
-/// Run turns until a tribe exists (at most `TURNS_TO_FILL_HISTORY`), leaving the tick on the turn
+/// Run turns until a tribe exists (at most `TURNS_TO_FILL_BANK`), leaving the tick on the turn
 /// it formed so that turn's events can be read.
 fn until_formed(app: &mut App) {
-    for _ in 0..TURNS_TO_FILL_HISTORY {
+    for _ in 0..TURNS_TO_FILL_BANK {
         turn(app);
         if !registry(app).is_empty() {
             return;
         }
     }
     panic!("no tribe formed");
+}
+
+/// Run turns until a tribe exists, returning how many ran.
+fn turns_until_tribe(app: &mut App) -> usize {
+    for ran in 1..=TURN_LIMIT {
+        turn(app);
+        if !registry(app).is_empty() {
+            return ran;
+        }
+    }
+    panic!("no tribe formed");
+}
+
+/// The pair (1, 2)'s points per turn, read off the inputs the last turn stored.
+fn rate_of_pair(app: &App) -> f64 {
+    let config = app.world.resource::<LeadershipConfigHandle>().get();
+    let (_, inputs) = registry(app)
+        .pairs_of(id(1))
+        .next()
+        .expect("the pair was scored");
+    points_per_turn(&config, inputs)
+}
+
+/// How many turns a pair earning `rate` takes to fill the shipped threshold.
+fn turns_to_fill(app: &App, rate: f64) -> usize {
+    let config = app.world.resource::<LeadershipConfigHandle>().get();
+    (config.tribe_score_threshold / rate).ceil() as usize
 }
 
 /// Events of `kind` filed on the current turn.
@@ -225,20 +254,22 @@ fn kin_pair() -> (App, Entity, Entity) {
 }
 
 #[test]
-fn a_fresh_split_is_no_tribe_on_the_split_turn_even_with_a_chief() {
+fn a_fresh_split_is_no_tribe_for_twelve_turns_after_its_chief() {
     let (mut app, _, _) = kin_pair();
-    turn(&mut app);
-    assert!(registry(&app).is_empty(), "8 + a day of history < 9");
+    turns(&mut app, TURNS_TO_CLOSE_A_KIN_PAIR - 1);
+    assert!(registry(&app).is_empty(), "12 turns bank 96 of 100");
+    assert_eq!(registry(&app).points(id(1), id(2)), 96.0);
     assert!(events(&app, CommandEventKind::TribeFormed).is_empty());
-    turns(&mut app, 2);
-    assert!(registry(&app).is_empty());
 }
 
 #[test]
-fn a_fresh_split_becomes_a_tribe_after_a_few_turns_of_shared_history() {
+fn a_fresh_split_becomes_a_tribe_when_its_bank_fills() {
     let (mut app, _, _) = kin_pair();
-    turns(&mut app, TURNS_TO_CLOSE_A_KIN_PAIR);
-    let tribe = registry(&app).tribe_of(id(1)).expect("history closed it");
+    let ran = turns_until_tribe(&mut app);
+    assert_eq!(rate_of_pair(&app), 8.0);
+    assert_eq!(ran, turns_to_fill(&app, 8.0));
+    assert_eq!(ran, TURNS_TO_CLOSE_A_KIN_PAIR);
+    let tribe = registry(&app).tribe_of(id(1)).expect("the bank closed it");
     assert_eq!(tribe.members.len(), 2);
     assert_eq!(tribe.name, "Test2 tribe", "named for the largest band");
 }
@@ -293,77 +324,83 @@ fn equal_sized_chiefed_bands_promote_the_lowest_band_id() {
 }
 
 #[test]
-fn no_chief_no_history_no_tribe_and_it_forms_once_one_is_crowned_and_history_builds() {
+fn no_chief_no_points_and_the_tribe_forms_threshold_over_rate_turns_after_a_chief_is_crowned() {
     let mut app = spawn_world();
     band(&mut app, 1, 50, Some(PLACE_A), NET_1);
     let two = band(&mut app, 2, 50, Some(PLACE_A), NET_1);
-    // Make them kin and tied so the score is high.
+    // Make them kin and tied: the rate is as high as it gets.
     app.world
         .get_mut::<PopulationCohort>(two)
         .unwrap()
         .founding_lines = FoundingLines::founded(id(1), 2);
     tie_all(&mut app, &[1, 2]);
-    turns(&mut app, TURNS_TO_FILL_HISTORY + 10);
+    turns(&mut app, 3 * TURNS_TO_FILL_BANK);
+    assert_eq!(rate_of_pair(&app), 8.0, "the pair would earn 8 a turn");
     assert_eq!(
-        registry(&app).shared_history(id(1), id(2)),
+        registry(&app).points(id(1), id(2)),
         0.0,
-        "nothing builds with nobody to follow"
+        "nothing banks with nobody to follow"
     );
     assert!(registry(&app).is_empty());
 
     crown(&mut app, two, "Hale", LeaderKind::Chief);
-    until_formed(&mut app);
+    let ran = turns_until_tribe(&mut app);
+    assert_eq!(
+        ran,
+        turns_to_fill(&app, 8.0),
+        "ceil(threshold / rate) turns after the crown, not one or two"
+    );
     assert_eq!(registry(&app).tribe_of(id(1)).unwrap().leader.name, "Hale");
     assert_eq!(events(&app, CommandEventKind::TribeFormed).len(), 1);
 }
 
 #[test]
-fn unrelated_but_alike_bands_need_most_of_the_history() {
+fn unrelated_but_alike_bands_earn_five_a_turn_and_take_twenty() {
     let mut app = spawn_world();
-    // Distinct origins: 3 (likeness) + 2 (tie) + 5 x history; 9 needs 0.8 of it.
+    // Distinct origins: likeness 3 + tie 2 = 5 a turn.
     member(&mut app, 1, 50, Some(PLACE_A), NET_1, 1);
     member(&mut app, 2, 50, Some(PLACE_A), NET_1, 2);
     tie_all(&mut app, &[1, 2]);
-    turns(&mut app, 15);
-    assert!(registry(&app).is_empty(), "15 turns is 0.6 of the history");
-    turns(&mut app, 8);
-    assert!(
-        registry(&app).tribe_of(id(1)).is_some(),
-        "23 turns is past 0.8"
-    );
+    let ran = turns_until_tribe(&mut app);
+    assert_eq!(rate_of_pair(&app), 5.0);
+    assert_eq!(ran, turns_to_fill(&app, 5.0));
+    assert_eq!(ran, 20);
+    assert!(ran > TURNS_TO_CLOSE_A_KIN_PAIR);
 }
 
 #[test]
-fn unrelated_bands_with_no_tie_never_close() {
+fn unrelated_bands_with_no_tie_earn_only_likeness_and_take_longest() {
     let mut app = spawn_world();
     member(&mut app, 1, 50, Some(PLACE_A), NET_1, 1);
     member(&mut app, 2, 50, Some(PLACE_A), NET_1, 2);
-    turns(&mut app, TURNS_TO_FILL_HISTORY * 3);
-    assert!(registry(&app).is_empty(), "3 + 5 = 8 at the very most");
+    let ran = turns_until_tribe(&mut app);
+    assert_eq!(rate_of_pair(&app), 3.0);
+    assert_eq!(ran, turns_to_fill(&app, 3.0));
+    assert_eq!(ran, 34);
 }
 
 #[test]
 fn a_less_alike_pair_takes_longer_to_close() {
     let (mut app, _, _) = kin_pair();
-    // One axis a half range apart: likeness 0.5, so 3 + 1.5 + 2 = 6.5 and history must give 2.5.
+    // One axis a half range apart: likeness 0.5, so 3 + 1.5 + 2 = 6.5 a turn.
     set_axis(&mut app, id(2), 0, CULTURE_TRAIT_SPAN);
-    turns(&mut app, 10);
-    assert!(registry(&app).is_empty(), "0.4 of the history is not 0.5");
-    turns(&mut app, 5);
-    assert!(registry(&app).tribe_of(id(1)).is_some(), "0.6 is");
+    let ran = turns_until_tribe(&mut app);
+    assert_eq!(rate_of_pair(&app), 6.5);
+    assert_eq!(ran, turns_to_fill(&app, 6.5));
+    assert!(ran > TURNS_TO_CLOSE_A_KIN_PAIR);
 }
 
 #[test]
-fn belief_on_the_shared_urn_closes_the_gap_sooner() {
+fn belief_on_the_shared_urn_raises_the_rate() {
     let (mut app, _, _) = kin_pair();
     app.world
         .resource_mut::<BeliefRegistry>()
         .add(PLACE_A, GREAT_URN);
-    turn(&mut app);
-    assert!(
-        registry(&app).tribe_of(id(1)).is_some(),
-        "8 + 0.2 history + ~1 belief clears 9 on the first turn"
-    );
+    let ran = turns_until_tribe(&mut app);
+    let rate = rate_of_pair(&app);
+    assert!(rate > 8.0 && rate <= 9.0, "8 + about 1 of belief: {rate}");
+    assert_eq!(ran, turns_to_fill(&app, rate));
+    assert!(ran < TURNS_TO_CLOSE_A_KIN_PAIR);
 }
 
 /// Raise the monument on `tile` to `fraction` of its own span (1.0 = held).
@@ -378,14 +415,14 @@ fn raise_monument(app: &mut App, tile: UVec2, fraction: f32) {
 }
 
 #[test]
-fn a_kept_monument_on_the_shared_urn_closes_a_fresh_split_at_once() {
+fn a_kept_monument_on_the_shared_urn_raises_the_rate() {
     let (mut app, _, _) = kin_pair();
     raise_monument(&mut app, PLACE_A, 1.0);
-    turn(&mut app);
-    assert!(
-        registry(&app).tribe_of(id(1)).is_some(),
-        "8 + 0.2 history + monument 2 clears 9 on the first turn"
-    );
+    let ran = turns_until_tribe(&mut app);
+    assert_eq!(rate_of_pair(&app), 10.0, "8 + the monument's 2");
+    assert_eq!(ran, turns_to_fill(&app, 10.0));
+    assert_eq!(ran, 10);
+    assert!(ran < TURNS_TO_CLOSE_A_KIN_PAIR);
 }
 
 #[test]
@@ -394,46 +431,50 @@ fn a_half_raised_monument_or_one_elsewhere_adds_nothing() {
     raise_monument(&mut app, PLACE_A, 0.5);
     raise_monument(&mut app, PLACE_B, 1.0);
     turn(&mut app);
-    assert!(
-        registry(&app).is_empty(),
+    assert_eq!(
+        rate_of_pair(&app),
+        8.0,
         "a half-raised monument is not held, and one off the urn is not theirs"
     );
 }
 
 #[test]
-fn parting_fades_history_rather_than_resetting_it() {
+fn parting_fades_points_rather_than_resetting_them_and_a_return_rebuilds_from_what_is_left() {
     let (mut app, _, two) = kin_pair();
-    turns(&mut app, TURNS_TO_FILL_HISTORY);
+    turns(&mut app, TURNS_TO_FILL_BANK);
     let first = registry(&app).tribe_of(id(1)).unwrap().id;
+    assert_eq!(registry(&app).points(id(1), id(2)), 100.0, "a full bank");
 
-    // Apart ten turns: the tribe is gone at once, the history is most of what it was.
+    // Apart ten turns: the tribe is gone at once, the bank lost a hundredth of itself a turn.
     set_anchor(&mut app, two, Some(PLACE_B));
     turn(&mut app);
     assert!(registry(&app).is_empty());
     assert_eq!(events(&app, CommandEventKind::TribeDissolved).len(), 1);
     turns(&mut app, 9);
-    let kept = registry(&app).shared_history(id(1), id(2));
-    assert!((0.85..0.95).contains(&kept), "faded, not reset: {kept}");
+    let kept = registry(&app).points(id(1), id(2));
+    assert!((kept - 90.0).abs() < 1e-9, "faded, not reset: {kept}");
 
-    // Back together, the pair is close again on the first turn: a new tribe, a new id.
+    // Back together it earns 8 on top of the 90: not yet full, then full.
     set_anchor(&mut app, two, Some(PLACE_A));
     turn(&mut app);
-    let again = registry(&app).tribe_of(id(1)).expect("still close");
+    assert!(registry(&app).is_empty(), "98 of 100");
+    turn(&mut app);
+    let again = registry(&app).tribe_of(id(1)).expect("full again");
     assert_ne!(again.id, first);
 }
 
 #[test]
-fn apart_long_enough_the_history_is_gone_and_must_be_rebuilt() {
+fn apart_long_enough_the_points_are_nearly_gone_and_must_be_rebuilt() {
     let (mut app, _, two) = kin_pair();
-    turns(&mut app, TURNS_TO_FILL_HISTORY);
+    turns(&mut app, TURNS_TO_FILL_BANK);
     set_anchor(&mut app, two, Some(PLACE_B));
     turns(&mut app, 90);
-    assert!(registry(&app).shared_history(id(1), id(2)) < 0.15);
+    assert!((registry(&app).points(id(1), id(2)) - 10.0).abs() < 1e-9);
 
     set_anchor(&mut app, two, Some(PLACE_A));
+    turns(&mut app, 11);
+    assert!(registry(&app).is_empty(), "10 + 88 = 98 is under the line");
     turn(&mut app);
-    assert!(registry(&app).is_empty(), "8.7 is under the line");
-    turns(&mut app, 5);
     assert!(registry(&app).tribe_of(id(1)).is_some());
 }
 
@@ -446,7 +487,7 @@ fn nothing_forms_without_a_shared_place_a_network_or_an_anchor() {
     member(&mut app, 4, 50, None, NET_1, 1); // no anchor
     member(&mut app, 5, 50, Some(PLACE_A), NET_2, 1); // another network
     tie_all(&mut app, &[1, 2, 3, 4, 5]);
-    turns(&mut app, TURNS_TO_FILL_HISTORY * 2);
+    turns(&mut app, TURNS_TO_FILL_BANK * 2);
     assert!(registry(&app).is_empty());
 }
 
@@ -455,7 +496,7 @@ fn a_third_band_joins_when_its_pairs_close_and_a_broken_link_leaves() {
     let (mut app, _, _) = kin_pair();
     let third = member(&mut app, 3, 50, Some(PLACE_A), NET_2, 1);
     tie_all(&mut app, &[1, 2, 3]);
-    turns(&mut app, TURNS_TO_FILL_HISTORY);
+    turns(&mut app, TURNS_TO_FILL_BANK);
     let tribe = registry(&app).tribe_of(id(1)).unwrap().id;
     assert!(registry(&app).tribe_of(id(3)).is_none());
 
@@ -463,7 +504,7 @@ fn a_third_band_joins_when_its_pairs_close_and_a_broken_link_leaves() {
     turns(&mut app, 2);
     assert!(
         registry(&app).tribe_of(id(3)).is_none(),
-        "history not yet built"
+        "points not yet banked"
     );
     turns(&mut app, TURNS_TO_CLOSE_A_KIN_PAIR);
     assert_eq!(registry(&app).tribe_of(id(3)).unwrap().id, tribe);
@@ -490,7 +531,7 @@ fn a_joining_band_is_announced_by_its_durable_id() {
     let (mut app, _, _) = kin_pair();
     let third = member(&mut app, 3, 50, Some(PLACE_A), NET_2, 1);
     tie_all(&mut app, &[1, 2, 3]);
-    turns(&mut app, TURNS_TO_FILL_HISTORY);
+    turns(&mut app, TURNS_TO_FILL_BANK);
     link(&mut app, third, NET_1);
     let mut joined = Vec::new();
     for _ in 0..TURNS_TO_CLOSE_A_KIN_PAIR + 2 {
@@ -529,7 +570,7 @@ fn the_leader_is_re_promoted_quietly_when_its_band_leaves() {
         .map(|n| member(&mut app, n, sizes[n as usize - 1], Some(PLACE_A), NET_1, 1))
         .collect();
     tie_all(&mut app, &[1, 2, 3]);
-    turns(&mut app, TURNS_TO_FILL_HISTORY);
+    turns(&mut app, TURNS_TO_FILL_BANK);
     let tribe = registry(&app).tribe_of(id(1)).unwrap().clone();
     assert_eq!(tribe.leader.name, "Chief2");
 
@@ -554,7 +595,7 @@ fn a_network_split_keeps_the_tribe_on_the_majority_side_and_the_other_side_forms
         .map(|n| member(&mut app, n, 50, Some(PLACE_A), NET_1, 1))
         .collect();
     tie_all(&mut app, &[1, 2, 3, 4, 5]);
-    turns(&mut app, TURNS_TO_FILL_HISTORY);
+    turns(&mut app, TURNS_TO_FILL_BANK);
     let original = registry(&app).tribe_of(id(1)).unwrap().id;
     assert_eq!(registry(&app).tribe_of(id(1)).unwrap().members.len(), 5);
 
@@ -566,7 +607,7 @@ fn a_network_split_keeps_the_tribe_on_the_majority_side_and_the_other_side_forms
     assert_eq!(registry(&app).tribe_of(id(1)).unwrap().members.len(), 3);
     let other = registry(&app).tribe_of(id(4)).unwrap();
     assert_ne!(other.id, original);
-    assert_eq!(other.members.len(), 2, "its pair kept its history");
+    assert_eq!(other.members.len(), 2, "its pair kept its bank");
     assert_eq!(events(&app, CommandEventKind::TribeFormed).len(), 1);
     assert_eq!(events(&app, CommandEventKind::TribeBandLeft).len(), 2);
 }
@@ -581,7 +622,7 @@ fn two_tribes_sharing_a_place_merge_into_the_one_holding_more_once_their_pairs_c
         .map(|n| member(&mut app, n, 50, Some(PLACE_A), NET_2, 1))
         .collect();
     tie_all(&mut app, &[1, 2, 3, 4, 5]);
-    turns(&mut app, TURNS_TO_FILL_HISTORY);
+    turns(&mut app, TURNS_TO_FILL_BANK);
     let small = registry(&app).tribe_of(id(1)).unwrap().id;
     let big = registry(&app).tribe_of(id(3)).unwrap().id;
     assert_eq!(registry(&app).len(), 2);
@@ -590,7 +631,7 @@ fn two_tribes_sharing_a_place_merge_into_the_one_holding_more_once_their_pairs_c
         link(&mut app, *entity, NET_1);
     }
     turn(&mut app);
-    assert_eq!(registry(&app).len(), 2, "cross pairs have no history yet");
+    assert_eq!(registry(&app).len(), 2, "cross pairs have no points yet");
     let mut merged_turn_joins = 0;
     for _ in 0..TURNS_TO_CLOSE_A_KIN_PAIR + 2 {
         turn(&mut app);
@@ -611,7 +652,7 @@ fn two_tribes_sharing_a_place_merge_into_the_one_holding_more_once_their_pairs_c
 }
 
 #[test]
-fn the_registry_and_its_histories_round_trip_through_a_checkpoint() {
+fn the_registry_and_its_banks_round_trip_through_a_checkpoint() {
     let (mut app, _, _) = kin_pair();
     turns(&mut app, TURNS_TO_CLOSE_A_KIN_PAIR);
     let third = member(&mut app, 3, 50, Some(PLACE_A), NET_1, 1);
@@ -620,10 +661,7 @@ fn the_registry_and_its_histories_round_trip_through_a_checkpoint() {
     turns(&mut app, 3);
     let before = registry(&app).clone();
     assert_eq!(before.len(), 1);
-    assert!(
-        before.shared_history(id(1), id(3)) > 0.0,
-        "a history in progress"
-    );
+    assert!(before.points(id(1), id(3)) > 0.0, "a bank in progress");
 
     let checkpoint = capture_sim_state(&app.world);
     turns(&mut app, 5);
@@ -693,7 +731,7 @@ fn with_row<T>(app: &mut App, n: u64, read: impl FnOnce(fb::PopulationCohortStat
 }
 
 #[test]
-fn a_local_pair_publishes_each_input_times_its_weight_and_they_sum_to_the_score() {
+fn a_local_pair_publishes_its_banked_points_and_each_inputs_points_per_turn() {
     let (mut app, _, _) = kin_pair();
     turns(&mut app, 3);
     let config = app.world.resource::<LeadershipConfigHandle>().get();
@@ -703,19 +741,14 @@ fn a_local_pair_publishes_each_input_times_its_weight_and_they_sum_to_the_score(
         .collect::<Vec<_>>();
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].0, id(2));
-    let expected = closeness(&config, &stored[0].1);
+    let expected = points_per_turn(&config, &stored[0].1);
 
     with_row(&mut app, 1, |row| {
         assert_eq!(row.tribeThreshold(), config.tribe_score_threshold as f32);
-        assert_eq!(
-            row.tribeHistoryBuildTurns(),
-            config.tribe_history_build_turns as f32
-        );
         let w = row.tribeWeights().expect("weights are published");
         assert_eq!(w.origin(), config.tribe_weight_origin as f32);
         assert_eq!(w.likeness(), config.tribe_weight_likeness as f32);
         assert_eq!(w.tie(), config.tribe_weight_tie as f32);
-        assert_eq!(w.history(), config.tribe_weight_history as f32);
         assert_eq!(w.belief(), config.tribe_weight_belief as f32);
         assert_eq!(w.monument(), config.tribe_weight_monument as f32);
         assert_eq!(w.acting(), config.tribe_weight_acting as f32);
@@ -727,15 +760,12 @@ fn a_local_pair_publishes_each_input_times_its_weight_and_they_sum_to_the_score(
         let c = pair.contribution().expect("contribution");
         assert_eq!(c.origin(), w.origin(), "kin: origin input is 1");
         assert!((c.tie() - w.tie()).abs() < 1e-6, "full tie");
-        assert!(c.history() > 0.0 && c.history() < w.history());
-        assert!((pair.history() * w.history() - c.history()).abs() < 1e-4);
-        let sum = c.origin()
-            + c.likeness()
-            + c.tie()
-            + c.history()
-            + c.belief()
-            + c.monument()
-            + c.acting();
+        assert!(
+            (f64::from(pair.points()) - 3.0 * expected).abs() < 1e-3,
+            "three turns of the pair's rate are banked: {}",
+            pair.points()
+        );
+        let sum = c.origin() + c.likeness() + c.tie() + c.belief() + c.monument() + c.acting();
         assert!(
             (f64::from(sum) - expected).abs() < 1e-4,
             "{sum} vs {expected}"
@@ -779,7 +809,7 @@ fn set_origin(app: &mut App, n: u64, origin: u64) {
 
 #[test]
 fn every_member_of_a_formed_tribe_publishes_it_chiefless_ones_included() {
-    // Only band 1 is chiefed; 2 and 3 are chiefless kin, each close to 1 through its history.
+    // Only band 1 is chiefed; 2 and 3 are chiefless kin, each close to 1 through its bank.
     let mut app = spawn_world();
     member(&mut app, 1, 40, Some(PLACE_A), NET_1, 1);
     band(&mut app, 2, 90, Some(PLACE_A), NET_1);
@@ -787,7 +817,7 @@ fn every_member_of_a_formed_tribe_publishes_it_chiefless_ones_included() {
     set_origin(&mut app, 2, 1);
     set_origin(&mut app, 3, 1);
     tie_all(&mut app, &[1, 2, 3]);
-    turns(&mut app, TURNS_TO_FILL_HISTORY);
+    turns(&mut app, TURNS_TO_FILL_BANK);
     assert_eq!(registry(&app).len(), 1, "one tribe of three");
     let expected = (
         "Test2 tribe".to_string(),
@@ -827,7 +857,7 @@ fn a_chain_of_close_pairs_is_one_tribe_of_three() {
     }
     set_axis(&mut app, id(1), 0, -CULTURE_TRAIT_SPAN);
     set_axis(&mut app, id(3), 0, CULTURE_TRAIT_SPAN);
-    turns(&mut app, TURNS_TO_FILL_HISTORY);
+    turns(&mut app, TURNS_TO_FILL_BANK);
     assert_eq!(registry(&app).len(), 1);
     let tribe = registry(&app).tribe_of(id(1)).unwrap();
     assert_eq!(tribe.members.len(), 3, "a chain is one tribe, not a pair");
@@ -847,7 +877,7 @@ fn a_band_in_no_tribe_and_a_foreign_band_publish_no_tribe() {
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.fog_enabled = false;
     app.world.insert_resource(config);
-    turns(&mut app, TURNS_TO_FILL_HISTORY);
+    turns(&mut app, TURNS_TO_FILL_BANK);
     assert!(registry(&app).tribe_of(id(1)).is_some());
     for n in [3, 4] {
         assert_eq!(
@@ -893,11 +923,7 @@ fn chiefless_pair() -> (App, Entity, Entity) {
 fn nothing_builds_toward_a_tribe_until_a_chief_exists() {
     let (mut app, one, _) = chiefless_pair();
     turns(&mut app, 8);
-    assert_eq!(
-        registry(&app).shared_history(id(1), id(2)),
-        0.0,
-        "held, not built"
-    );
+    assert_eq!(registry(&app).points(id(1), id(2)), 0.0, "held, not banked");
     // Two chiefless local bands each publish the pair, and neither partner has a leader.
     for (n, partner) in [(1, 2), (2, 1)] {
         with_row(&mut app, n, |row| {
@@ -906,51 +932,57 @@ fn nothing_builds_toward_a_tribe_until_a_chief_exists() {
             assert_eq!(pairs.len(), 1);
             assert_eq!(pairs.get(0).partnerBand(), id(partner).0);
             assert!(!pairs.get(0).partnerHasLeader(), "band {n}");
-            assert_eq!(pairs.get(0).history(), 0.0);
+            assert_eq!(pairs.get(0).points(), 0.0);
         });
     }
 
-    // One band is crowned: history builds from that turn, and both rows show it.
+    // One band is crowned: points bank from that turn, and both rows show it. These bands have
+    // distinct origins, so the pair earns likeness 3 + tie 2 a turn.
     crown(&mut app, one, "Chief1", LeaderKind::Chief);
     turns(&mut app, 3);
-    let built = registry(&app).shared_history(id(1), id(2));
-    assert!(built > 0.1 && built < 0.2, "three steps of 1/25: {built}");
+    let built = registry(&app).points(id(1), id(2));
+    let config = app.world.resource::<LeadershipConfigHandle>().get();
+    let rate = config.tribe_weight_likeness + config.tribe_weight_tie;
+    assert!(
+        (built - 3.0 * rate).abs() < 1e-9,
+        "three turns banked: {built}"
+    );
     with_row(&mut app, 1, |row| {
         assert!(row.tribeThreshold() > 0.0);
         let pairs = row.tribePairs().expect("pairs");
         assert_eq!(pairs.len(), 1);
         assert_eq!(pairs.get(0).partnerBand(), id(2).0);
-        assert!((pairs.get(0).history() - built as f32).abs() < 1e-6);
+        assert!((pairs.get(0).points() - built as f32).abs() < 1e-6);
         assert!(!pairs.get(0).partnerHasLeader(), "band 2 has no chief");
     });
-    // The chiefless band publishes its pair with the chiefed partner, history and all.
+    // The chiefless band publishes its pair with the chiefed partner, points and all.
     with_row(&mut app, 2, |row| {
         assert!(row.tribeThreshold() > 0.0);
         assert!(row.tribeWeights().is_some_and(|w| w.origin() > 0.0));
         let pairs = row.tribePairs().expect("pairs");
         assert_eq!(pairs.len(), 1);
         assert_eq!(pairs.get(0).partnerBand(), id(1).0);
-        assert!((pairs.get(0).history() - built as f32).abs() < 1e-6);
+        assert!((pairs.get(0).points() - built as f32).abs() < 1e-6);
         assert!(pairs.get(0).partnerHasLeader(), "band 1 has a chief");
     });
 }
 
 #[test]
-fn a_local_pair_with_no_leader_left_holds_its_history_and_a_parted_one_fades() {
+fn a_local_pair_with_no_leader_left_holds_its_points_and_a_parted_one_fades() {
     let (mut app, one, two) = kin_pair();
     turns(&mut app, 5);
-    let built = registry(&app).shared_history(id(1), id(2));
-    // Both leaders go: the history holds while the pair stays local.
+    let built = registry(&app).points(id(1), id(2));
+    // Both leaders go: the bank holds while the pair stays local.
     for e in [one, two] {
         app.world.get_mut::<BandLeadership>(e).unwrap().leader = None;
     }
     turns(&mut app, 10);
-    assert_eq!(registry(&app).shared_history(id(1), id(2)), built);
+    assert_eq!(registry(&app).points(id(1), id(2)), built);
     // Parted, it fades; and the parted pair is no row on the wire.
     crown(&mut app, one, "Chief1", LeaderKind::Chief);
     set_anchor(&mut app, two, Some(PLACE_B));
     turns(&mut app, 10);
-    assert!(registry(&app).shared_history(id(1), id(2)) < built);
+    assert!(registry(&app).points(id(1), id(2)) < built);
     with_row(&mut app, 1, |row| {
         assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
     });
@@ -970,7 +1002,6 @@ fn a_foreign_band_publishes_the_defaults() {
     turns(&mut app, 3);
     with_row(&mut app, 3, |row| {
         assert_eq!(row.tribeThreshold(), 0.0);
-        assert_eq!(row.tribeHistoryBuildTurns(), 0.0);
         assert_eq!(row.tribePairs().map_or(0, |p| p.len()), 0);
         assert_eq!(row.tribeWeights().map_or(0.0, |w| w.origin()), 0.0);
     });
@@ -1015,7 +1046,7 @@ fn reach_is_published_for_a_chiefed_band_a_tribe_member_and_a_chiefless_member()
     // A chiefless band in no tribe.
     band(&mut app, 5, 30, None, 0);
     tie_all(&mut app, &[1, 2, 3]);
-    turns(&mut app, TURNS_TO_FILL_HISTORY);
+    turns(&mut app, TURNS_TO_FILL_BANK);
     assert_eq!(registry(&app).tribe_of(id(1)).unwrap().members.len(), 3);
     let config = app.world.resource::<LeadershipConfigHandle>().get();
     let read = |row: fb::PopulationCohortState<'_>| {

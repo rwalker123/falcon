@@ -143,7 +143,7 @@ fn cohort_scalars(cohort: fb::PopulationCohortState<'_>) -> CohortScalars {
     }
 }
 
-/// One `TribeClosenessState` as `{origin, likeness, tie, history, belief, monument, acting}` -- the
+/// One `TribeClosenessState` as `{origin, likeness, tie, belief, monument, acting}` -- the
 /// cohort's `tribe_weights` and every pair's `contribution` share this one shape. Absent reads zeros.
 fn tribe_closeness_to_dict(state: Option<fb::TribeClosenessState<'_>>) -> VarDictionary {
     let mut out = VarDictionary::new();
@@ -153,7 +153,6 @@ fn tribe_closeness_to_dict(state: Option<fb::TribeClosenessState<'_>>) -> VarDic
     let _ = out.insert("origin", get(|s| s.origin()));
     let _ = out.insert("likeness", get(|s| s.likeness()));
     let _ = out.insert("tie", get(|s| s.tie()));
-    let _ = out.insert("history", get(|s| s.history()));
     let _ = out.insert("belief", get(|s| s.belief()));
     let _ = out.insert("monument", get(|s| s.monument()));
     let _ = out.insert("acting", get(|s| s.acting()));
@@ -385,7 +384,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // larder distinct from the food larder above. Copied verbatim from `cohort.fodderStore()` — the
     // FODDER `LocalStore` value in fodder/grass units (`fodder_per_biomass × biomass` scale, ~25× the
     // food scale, no conversion), consistent with `fodder_draw`, which is the per-pen draw OUT of this
-    // store and is in the same fodder units. A pen that knows Foddering draws from this each turn
+    // store and is in the same fodder units. A pen or tamed herd draws from this each turn
     // (`HerdTelemetryState.fodderDraw`) to cover feed its own footprint's pasture could not.
     // 0 for a forager band with no fodder economy.
     let _ = dict.insert("fodder_store", cohort.fodderStore() as f64);
@@ -398,13 +397,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     //                       `pen_fodder_shortfall`, that same gap less the hay actually drawn, so this
     //                       total is NOT a sum of anything on the herd rows). THE GAP, not the gross
     //                       demand — pasture is free, hay is farmed. 0 for a band keeping no pens and
-    //                       for pens their footprints cover, and NOT gated on Foddering.
+    //                       for herds their range covers.
     //                       **THE SIM SUMS IT AND THE CLIENT MUST NOT**: herd rows are fog-filtered, so
     //                       a pen out of sight would drop out of a client-side total the band still
     //                       owes — the same mistake the retired `pen_feed_upkeep` was minted to avoid.
     //   `fodder_income`   = what this band's fodder Fields actually HARVESTED this turn. The RAW
-    //                       harvest, not a Foddering-gated share: what was grown is a fact about the
-    //                       Fields, where what a pen may draw is a fact about what the faction learned.
+    //                       harvest of the Fields.
     //                       Rendered against `fodder_need` as "need 6.0/turn · growing 5.0/turn".
     //   `turns_of_fodder` = turns until `fodder_store` empties at `fodder_need − fodder_income`. THE
     //                       SAME IDIOM AS `turns_of_food`, off the same sim function, **INCLUDING ITS
@@ -449,6 +447,51 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "material_store",
         &crate::dict::subsistence::material_payoffs_to_array(cohort.materialStore()),
     );
+    // **THE BAND'S KEEP-ON-HAND ORDERS, ONE PER MINED MATERIAL** (#874). A mined material (stone) is
+    // not crewed by hand: the band holds a target stock and the sim picks the site and staffs the
+    // dig to it. `{ material, target, priority, draw, has_site, site_x, site_y }` -- `target` `0` is
+    // "None" (no order), `priority` the LOWERCASE WORD (never the wire ordinal, see `bench_priority`
+    // below), `draw` the per-turn upkeep + road + build draw the sheet quotes. ON HAND is not here:
+    // it is this dict's `material_store`. The dig row itself rides `labor_assignments` as an
+    // ordinary `extract` row. Listed for every mined material the faction has found rock of or holds
+    // a nonzero target for; the key is always present.
+    let mut band_orders = VarArray::new();
+    if let Some(rows) = cohort.bandOrders() {
+        for row in rows.iter() {
+            let mut entry = VarDictionary::new();
+            let _ = entry.insert("kind", row.kind().unwrap_or(""));
+            let _ = entry.insert("target", i64::from(row.target()));
+            let _ = entry.insert(
+                "priority",
+                match row.priority() {
+                    fb::SourcePriority::High => "high",
+                    fb::SourcePriority::Low => "low",
+                    _ => "normal",
+                },
+            );
+            let _ = entry.insert("chief_owned", row.chiefOwned());
+            let _ = entry.insert("draw", f64::from(row.draw()));
+            let _ = entry.insert("on_hand", f64::from(row.onHand()));
+            let _ = entry.insert("has_site", row.hasSite());
+            let _ = entry.insert("site_x", i64::from(row.siteX()));
+            let _ = entry.insert("site_y", i64::from(row.siteY()));
+            let _ = entry.insert("has_consumers", row.hasConsumers());
+            let _ = entry.insert("hold_heads", i64::from(row.holdHeads()));
+            let _ = entry.insert("hold_wanted", i64::from(row.holdWanted()));
+            let _ = entry.insert("refill_heads", i64::from(row.refillHeads()));
+            let _ = entry.insert("refill_wanted", i64::from(row.refillWanted()));
+            let _ = entry.insert("take", f64::from(row.take()));
+            let _ = entry.insert("sustainable", f64::from(row.sustainable()));
+            // What holds the refill up: "" / "land" / "kit" / "hands" (`BandOrderState.limit`).
+            let _ = entry.insert("limit", row.limit().unwrap_or_default());
+            let _ = entry.insert("limit_item", row.limitItem().unwrap_or_default());
+            let _ = entry.insert("land_gives", f64::from(row.landGives()));
+            // Units of `limit_item` missing across the order's rows when `limit` is "kit".
+            let _ = entry.insert("limit_count", i64::from(row.limitCount()));
+            band_orders.push(&entry.to_variant());
+        }
+    }
+    let _ = dict.insert("band_orders", &band_orders);
     // Predators Phase 3 (raid legibility pair, appended after fodderStore in the schema):
     //   raid_radius  — echo of `fauna.predators.raid_radius`: how close (odd-r hex distance) an
     //                  aggressive carnivore herd must be to raid this band's larder. The band panel
@@ -1267,6 +1310,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = entry.insert("scouting_reach", i64::from(assignment.scoutingReach()));
             // An unarmed hand adds nothing on this take row (the sim's `StaffedCrew::bare_idle`).
             let _ = entry.insert("bare_idle", assignment.bareIdle());
+            // The band order whose chief works this row (#860): "food" | "fodder" | a material id,
+            // empty for a player-crewed row; `chief_owned` is the same fact as a bool.
+            let _ = entry.insert("order_kind", assignment.orderKind().unwrap_or(""));
+            let _ = entry.insert("chief_owned", assignment.chiefOwned());
             array.push(&entry.to_variant());
         }
     }
@@ -1700,6 +1747,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // Wild Boar"); `reason` is `""` for a kit suggestion, whose reason is its workers.
             let _ = row.insert("display_name", suggestion.displayName().unwrap_or(""));
             let _ = row.insert("reason", suggestion.reason().unwrap_or(""));
+            // A bench tool suggested because it pays for itself (source kind "bench"): the crew-free
+            // bench turns it saves on the work lined up, and what it costs in the same turns. `0`
+            // on every other suggestion.
+            let _ = row.insert("bench_turns_saved", suggestion.benchTurnsSaved() as f64);
+            let _ = row.insert("bench_build_turns", suggestion.benchBuildTurns() as f64);
             let mut sources = VarArray::new();
             if let Some(list) = suggestion.sources() {
                 for source in list.iter() {
@@ -2120,14 +2172,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "leadership_from_stages",
         f64::from(cohort.leadershipFromStages()),
     );
-    // PROGRESS TOWARD A TRIBE (#861), own bands only: `tribe_threshold` (0 until the band has a leader) the score that makes a pair close;
-    // `tribe_history_build_turns` the turns of being local that fill shared history; `tribe_weights`
-    // the most each input can add; `tribe_pairs` one row per band living with this one.
+    // PROGRESS TOWARD A TRIBE (#861), own bands only: `tribe_threshold` the banked points that make
+    // a pair close; `tribe_weights` the most each input can add per turn; `tribe_pairs` one row per
+    // band living with this one, each with its banked `points` and per-turn `contribution`.
     let _ = dict.insert("tribe_threshold", f64::from(cohort.tribeThreshold()));
-    let _ = dict.insert(
-        "tribe_history_build_turns",
-        f64::from(cohort.tribeHistoryBuildTurns()),
-    );
     let _ = dict.insert(
         "tribe_weights",
         &tribe_closeness_to_dict(cohort.tribeWeights()),
@@ -2138,7 +2186,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let mut row = VarDictionary::new();
             let _ = row.insert("partner_band", pair.partnerBand() as i64);
             let _ = row.insert("partner_name", pair.partnerName().unwrap_or(""));
-            let _ = row.insert("history", f64::from(pair.history()));
+            let _ = row.insert("points", f64::from(pair.points()));
             let _ = row.insert("partner_has_leader", pair.partnerHasLeader());
             let _ = row.insert(
                 "contribution",

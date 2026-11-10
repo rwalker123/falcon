@@ -2747,11 +2747,13 @@ impl FaunaConfig {
                 profile: CombatStats::default(),
                 ferocity: 0.0,
                 wounds: crate::combat::DamageLedger::default(),
+                fenced: crate::fauna::NOTHING_FENCED,
             },
             |def| crate::fauna::QuarryFight {
                 profile: def.combat,
                 ferocity: def.ferocity,
                 wounds: crate::combat::DamageLedger::default(),
+                fenced: crate::fauna::NOTHING_FENCED,
             },
         )
     }

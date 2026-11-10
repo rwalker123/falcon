@@ -254,7 +254,7 @@ pub const FOOD: &str = "provisions";
 /// Commodity key for a band's **fodder** larder — the storable hay a fodder crop grows (Flora Roster
 /// F3, `docs/plan_flora_roster.md` §5). A second key on the *same* [`LocalStore`] as [`FOOD`], so it
 /// round-trips through the snapshot for free and the supply network can already balance it. Hay is
-/// animal feed, not human food: a fodder Field credits this key, a pen that knows Foddering draws it,
+/// animal feed, not human food: a fodder Field credits this key, every pen and tamed herd the band keeps draws it,
 /// and the two stores **never convert** — feeding a pen bread ([`FOOD`]) stays as lossy as ever.
 pub const FODDER: &str = "fodder";
 
@@ -3889,6 +3889,10 @@ pub struct StaffedCrew {
     /// the row's kit ask is its hold crew, not the hands present
     /// ([`crate::take_claims::wanted_ask_crew`]). Default `false` keeps the hands-present ask.
     pub bare_idle: bool,
+    /// The heads the row's tile could not fit: the crew the row would aim at (hold or reach, after
+    /// the Max, before the tile's room) less the crew it aims at once the room caps it. `0` on an
+    /// untiled row and on a tile with room for the whole aim; `> 0` means the site is full.
+    pub tile_short: u32,
 }
 
 impl StaffedCrew {
@@ -4537,7 +4541,7 @@ pub struct SourceYield {
     /// and *literally* the `min(production, collection)` the band's
     /// `FODDER` [`LocalStore`] was credited with on this turn's resolution (issue #449). Reported,
     /// never recomputed: a readout that re-derived its own number would drift from what the band was
-    /// actually paid, and the knowledge gate on the wild credit (`FODDERING_DISCOVERY_ID`) is part of
+    /// actually paid, and the credit is part of
     /// what it was paid.
     ///
     /// **Plant-only, and that is structural rather than a gap**: no animal pays fodder
@@ -6161,6 +6165,168 @@ pub enum ExcessRejoining {
     Discard,
 }
 
+/// **WHO WORKS AN ORDERED KIND** (`docs/plan_labor_at_scale.md` -> "Band orders - the chief"): the
+/// band's leader, who places the rows and staffs them to keep the target, or the player, who crews
+/// the kind by hand exactly as a leaderless band does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum OrderOwner {
+    #[default]
+    Chief,
+    Player,
+}
+
+/// **A BAND'S ORDER FOR ONE KIND** (#860): the stock it wants kept and the priority its work ranks
+/// at. There is no "none" - a target of zero is refused - so who works the kind is [`Self::owner`].
+/// `target` is in units for a material and in turns for food and fodder.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct BandOrder {
+    pub target: u32,
+    pub priority: SourcePriority,
+    pub owner: OrderOwner,
+}
+
+/// **WHAT AN ORDER'S SITES CAN GIVE, AGAINST WHAT IT WANTS** (per turn, in the order's units): `gives`
+/// is the sum of every site the chief may work, each at its cap (regrowth at the floor plus its stock
+/// above the floor over the refill turns), `None` when a deposit that never renews is among them (it
+/// gives without bound); `want` is the order's want net of what the player's own rows bring in.
+/// `gives < want` means even every hand could not cover the order from the land near camp.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct KeepReach {
+    pub gives: Option<f32>,
+    pub want: f32,
+}
+
+/// **ONE SITE'S SHARE OF A CHIEF'S ORDER** (#860): what the managing pass
+/// (`keep_on_hand::manage_dig_rows`) set aside for the row on `tile` this turn - `take` is the per-turn
+/// take the row is staffed for (its part of the want, at most what the site gives at the order's floor
+/// without drawing it down) and `hold` the part of the band's draw it keeps up with. Derived by that pass
+/// before every staffing; outside equality.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeepShare {
+    /// The site's tile for a deposit or a patch; a hunt row's herd stands elsewhere every turn, so
+    /// it is named by [`Self::herd`] instead and this reads the tile it stood on when ranked.
+    pub tile: UVec2,
+    /// The herd's id for a hunt row, empty for every tile-bound source.
+    pub herd: String,
+    /// The part of the draw the row keeps up with, in the **row's own take unit**: material units for
+    /// a deposit, biomass for a patch or a herd.
+    pub hold: f32,
+    /// The per-turn take the row is staffed for, in the same unit.
+    pub take: f32,
+}
+
+impl LaborAllocation {
+    /// The share the chief set aside for the row on `tile` of `kind`, `None` where the row is not on
+    /// a site of the order's set (a pinned row left standing for its cargo).
+    pub fn keep_share(&self, kind: &str, tile: UVec2) -> Option<KeepShare> {
+        self.keep_shares
+            .iter()
+            .find(|(held, share)| held == kind && share.herd.is_empty() && share.tile == tile)
+            .map(|(_, share)| share.clone())
+    }
+
+    /// The share the chief set aside for the hunt row on herd `id`, under whichever order lists it.
+    pub fn keep_share_of_herd(&self, id: &str) -> Option<KeepShare> {
+        self.keep_shares
+            .iter()
+            .find(|(_, share)| share.herd == id)
+            .map(|(_, share)| share.clone())
+    }
+
+    /// **THE ORDER THAT LISTS A ROW**: the order `order_rows` names for a forage, hunt or dig row, a
+    /// player-crewed row under none.
+    pub fn order_of_row(&self, target: &LaborTarget) -> Option<String> {
+        self.row_order(target).map(str::to_string)
+    }
+
+    /// **A ROW THE CHIEF'S FOOD ORDER KEEPS UP**: a forage or hunt row the `food` order lists while
+    /// the chief owns it. Its keep-up (hold) crew is dealt bare hands ahead of every row's kitted
+    /// reach heads (`staffing`, pass 1c) and is the last thing the settle trim takes.
+    pub fn keeps_food_up(&self, target: &LaborTarget) -> bool {
+        matches!(
+            target,
+            LaborTarget::Forage { .. } | LaborTarget::Hunt { .. }
+        ) && self.chief_owns(crate::keep_on_hand::FOOD_KIND)
+            && self.row_order(target) == Some(crate::keep_on_hand::FOOD_KIND)
+    }
+
+    /// **THE ORDER'S CREW THIS TURN, from the staffing's own numbers**: `(hold heads, hold wanted,
+    /// refill heads, refill wanted)` summed over the order's rows. A row's `hold_crew` / `reach_crew`
+    /// are the heads the passes aimed at (pass 1 and pass 2, keepers included); the heads staffed fill
+    /// pass 1 first, then pass 2.
+    pub fn order_crew(&self, kind: &str) -> (u32, u32, u32, u32) {
+        let mut crew = (0, 0, 0, 0);
+        for row in &self.assignments {
+            if self.order_of_row(&row.target).as_deref() != Some(kind) {
+                continue;
+            }
+            let staffed = row.staffing.total();
+            let hold_wanted = row.staffing.hold_crew;
+            let refill_wanted = row.staffing.reach_crew.saturating_sub(hold_wanted);
+            let hold_heads = staffed.min(hold_wanted);
+            let refill_heads = (staffed - hold_heads).min(refill_wanted);
+            crew.0 += hold_heads;
+            crew.1 += hold_wanted;
+            crew.2 += refill_heads;
+            crew.3 += refill_wanted;
+        }
+        crew
+    }
+
+    /// **WHAT THE ORDER'S ROWS BROUGHT IN LAST TURN**, in the order's units: food provisions, hay or
+    /// the material (`last_yields`, the same one-turn lag as [`Self::material_draw`]).
+    pub fn order_take(&self, kind: &str) -> f32 {
+        self.assignments
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| self.order_of_row(&row.target).as_deref() == Some(kind))
+            .filter_map(|(index, _)| self.last_yields.get(index))
+            .map(|yields| match kind {
+                crate::keep_on_hand::FOOD_KIND => yields.actual,
+                crate::keep_on_hand::FODDER_KIND => yields.fodder,
+                material => yields
+                    .materials
+                    .iter()
+                    .filter(|payoff| payoff.material == material)
+                    .map(|payoff| payoff.amount)
+                    .sum(),
+            })
+            .sum()
+    }
+
+    /// The order a forage, hunt or dig row is listed under, `None` for a player-owned row.
+    pub fn row_order(&self, target: &LaborTarget) -> Option<&str> {
+        let key = crate::keep_on_hand::source_key(target)?;
+        self.order_rows.get(&key).map(String::as_str)
+    }
+
+    /// The order this band holds for `kind`, whoever owns it.
+    pub fn order_for(&self, kind: &str) -> Option<&BandOrder> {
+        self.orders.get(kind)
+    }
+
+    /// Whether the leader works `kind`: the band holds an order for it and the chief owns it.
+    pub fn chief_owns(&self, kind: &str) -> bool {
+        self.orders
+            .get(kind)
+            .is_some_and(|order| order.owner == OrderOwner::Chief)
+    }
+
+    /// **THE BAND'S PER-TURN DRAW ON `material`** - the sum of the three seams that spend it: the
+    /// standing upkeep need of its holdings, the road keeping it is billed and its builds' draw. Last
+    /// turn's figures (a one-turn lag).
+    pub fn material_draw(&self, material: &str) -> f32 {
+        [
+            &self.last_material_need,
+            &self.last_road_material_bill,
+            &self.last_build_material_draw,
+        ]
+        .iter()
+        .map(|seam| seam.get(material).copied().unwrap_or_default())
+        .sum()
+    }
+}
+
 /// A band's partition of its working-age pool across labor demands. Replaces the retired
 /// single-task model (`HarvestAssignment`/`ScoutAssignment`/`FaunaPursuit`): a band now draws from
 /// many sources at once, with the invariant `Σ assignments.workers ≤ available_workers(working)`.
@@ -6296,8 +6462,7 @@ pub struct LaborAllocation {
     /// minted under. A client cannot sum pen rows anyway: a herd row is fog-filtered, so a pen out of
     /// sight would silently drop out of a total the band certainly still owes.
     ///
-    /// **Ungated by Foddering**, unlike [`Self::last_fodder_inflow`]'s use downstream: a band that
-    /// cannot draw hay still keeps a herd that is starving for exactly this much.
+    /// A band with no hay still keeps herds that are short for exactly this much.
     ///
     /// Reset then re-summed every turn, and **excluded from equality** below, like the rest of the
     /// per-turn telemetry.
@@ -6307,22 +6472,18 @@ pub struct LaborAllocation {
     /// from). Exported as `PopulationCohortState.fodder_income`, the fodder twin of
     /// `food_income`, and the income term of the fodder runway.
     ///
-    /// **The RAW harvest, deliberately** — not the Foddering-gated per-pen rate stamped onto
-    /// `Herd::fodder_delivery_rate`. What was grown is a fact about the Fields; what a pen may draw
-    /// is a fact about what the faction has learned, and a readout that conflated them would tell a
-    /// band its hay had failed when it had merely not yet learned to feed it out.
+    /// **The RAW harvest, deliberately** — not the per-herd rate stamped onto
+    /// `Herd::fodder_delivery_rate`. What was grown is a fact about the Fields, and a readout that conflated the two would tell a
+    /// band its hay had failed when its herds had merely not yet drawn it.
     ///
     /// Reset then re-summed every turn, and **excluded from equality** below.
     pub last_fodder_inflow: f32,
-    /// **THE HAY THIS BAND'S PENS WILL ACTUALLY DRAW, PER TURN** — [`Self::last_fodder_need`] behind
-    /// the **Foddering gate**, summed over the same pens, in fodder units. A band that has not
-    /// learned to hay a herd draws `0` however short its pens are, because `settle_pen_hay` zeroes
-    /// every bid without the knowledge.
+    /// **THE HAY THIS BAND'S PENS WILL ACTUALLY DRAW, PER TURN** — [`Self::last_fodder_need`] as
+    /// asked of the store, summed over the same pens and tamed herds, in fodder units.
     ///
     /// **It is the rate the fodder runway counts down** (`PopulationCohortState::turns_of_fodder`),
     /// and it is a second number rather than a use of the need beside it because the two answer
-    /// different questions: the need is what the pens are *missing* — the alarm, and ungated on
-    /// purpose — while this is what leaves the `FODDER` store. A runway taken on the need would count
+    /// different questions: the need is what the pens are *missing* — the alarm — while this is what leaves the `FODDER` store. A runway taken on the need would count
     /// a store nothing draws down to empty and then go on reading full, which is the defect this
     /// field exists to close.
     ///
@@ -6342,6 +6503,60 @@ pub struct LaborAllocation {
     /// Reset then re-summed every turn, and **excluded from equality** below, like the rest of the
     /// per-turn telemetry.
     pub last_material_need: std::collections::BTreeMap<String, f32>,
+    /// **WHAT THE ROADS THIS BAND KEEPS WERE BILLED IN MATERIAL THIS TURN**, per material id - the
+    /// road twin of [`Self::last_material_need`], written by `bill_and_stock_roads`. One of the three
+    /// seams [`Self::material_draw`] sums. Last turn's figure is what staffing reads (a one-turn lag).
+    pub last_road_material_bill: std::collections::BTreeMap<String, f32>,
+    /// **WHAT THE BAND'S FUNDED BUILDS DREW IN MATERIAL THIS TURN**, per material id - the third seam
+    /// of [`Self::material_draw`], written by `advance_labor_allocation` from the builds' wants.
+    pub last_build_material_draw: std::collections::BTreeMap<String, f32>,
+    /// **THE BAND'S ORDERS** (#860), per kind id (`"food"`, `"fodder"` or a material id): the target,
+    /// the priority and who works the kind. Intent: inside equality, saved. A kind absent here has
+    /// no order and is crewed by hand.
+    pub orders: std::collections::BTreeMap<String, BandOrder>,
+    /// **THE KINDS THE CHIEF TOOK OVER THAT THE EVENT FEED HAS NOT SAID YET**: written by
+    /// `keep_on_hand::manage_dig_rows` when the leader's arrival creates orders, drained by
+    /// `leadership::announce_chief_takeover` into one line per band. Saved: the announcement can
+    /// span a command.
+    pub unannounced_takeover: Vec<String>,
+    /// **WHICH ORDER LISTS EACH FORAGE OR HUNT ROW** (#860): source key (`keep_on_hand::source_key`)
+    /// -> the order kind (`"food"` or `"fodder"`) whose chief works the row. A row absent here is the
+    /// player's, whoever owns the kind: the chief never touches it, hand commands on it work, and the
+    /// order counts what it brings in. Intent: inside equality, saved.
+    pub order_rows: std::collections::BTreeMap<String, String>,
+    /// **KINDS WHOSE EXISTING ROWS THE CHIEF MUST ADOPT ON THE NEXT PASS**: set by his arrival and by
+    /// a whole-kind claim, drained by `food_orders::manage_food_orders` (which lists every forage and
+    /// hunt row the band holds under the order its product belongs to). Saved.
+    pub adopt_pending: std::collections::BTreeSet<String>,
+    /// **ROWS THE PLAYER HANDED TO THE CHIEF ONE AT A TIME** (`keep_on_hand::claim_row`): a subset of
+    /// `order_rows`' keys. The managing passes never retire such a row; outside the chief's chosen set
+    /// it stays listed under the order at zero hands ("in reserve"). A row the chief listed himself is
+    /// not here and is retired when he drops it. Cleared by `release_row`. Intent: inside equality, saved.
+    pub handed_rows: std::collections::BTreeSet<String>,
+    /// **EACH CHIEF ROW'S SHARE OF ITS ORDER**, per `(kind, site)` - see [`KeepShare`]. A row with no
+    /// entry is staffed to nobody. Derived by `keep_on_hand::manage_dig_rows` each pass; outside equality.
+    pub keep_shares: Vec<(String, KeepShare)>,
+    /// **WHAT THE ORDER'S CANDIDATE SITES GIVE A TURN AT ITS FLOOR**, per kind: the total of every
+    /// candidate site's take without drawing any down. For a material that never regrows it is the
+    /// larger of the order's want and the band's draw, so it never reads short. Published beside the
+    /// order; derived, outside equality.
+    pub keep_sustainable: std::collections::BTreeMap<String, f32>,
+    /// **THE HEADS THE ORDER'S WANT STILL ASKS FOR PAST THE ROWS THE CHIEF LISTED**, per kind: the
+    /// chief lists sources only while the hands he can deal last
+    /// (`food_orders::manage_food_orders`), and the sources he left off would have taken this many
+    /// more. The order line adds it to the wanted refill crew so "N hands short" reads the whole
+    /// want. Published beside the order; derived, outside equality.
+    pub keep_unlisted_heads: std::collections::BTreeMap<String, u32>,
+    /// **WHAT THE ORDER'S CHIEF-AVAILABLE SITES CAN GIVE A TURN AGAINST WHAT IT WANTS**, per kind - see
+    /// [`KeepReach`]. Published beside the order as its `limit`; derived, outside equality.
+    pub keep_reach: std::collections::BTreeMap<String, KeepReach>,
+    /// **THE HANDS THE SIM MAY STAFF** (`staffing::staffable_pool`) as the last managing pass read
+    /// them - the ceiling on any one order's hands wanted. Derived, outside equality.
+    pub order_pool: u32,
+    /// **WHERE THE GAME PICKED TO DIG**, per mined material - the best-ranked site this turn's
+    /// management found, whether or not a row stands on it. Published beside the order; derived
+    /// telemetry outside equality.
+    pub last_keep_site: std::collections::BTreeMap<String, UVec2>,
     /// **THE MATERIALS THIS BAND'S OWN SOURCES CREDITED THIS TURN**, per material id — the take
     /// side of the same ledger, and the twin of [`Self::last_fodder_inflow`].
     ///
@@ -6508,6 +6723,9 @@ pub struct LaborAllocation {
 impl PartialEq for LaborAllocation {
     fn eq(&self, other: &Self) -> bool {
         self.assignments == other.assignments
+            && self.orders == other.orders
+            && self.order_rows == other.order_rows
+            && self.handed_rows == other.handed_rows
             && self.upkeep_fund_mode == other.upkeep_fund_mode
             && self.builds == other.builds
     }

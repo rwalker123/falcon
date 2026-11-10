@@ -427,53 +427,35 @@ its order with the player's crew and does not read it.
 
 ## Knowledge gates a recipe only when the recipe says so
 
-`requires_knowledge` is a **list** (`["weaving", "bone_working"]`) and is absent on every ordinary
-kit recipe. You can make a sled by hand on turn one; doing it is what teaches Tanning.
+`requires_knowledge` is a **list** and is absent on every ordinary kit recipe. You can make a sled by
+hand on turn one; doing it is what teaches Tanning.
 
-> **It is a list because a tool has two parents.** The spec sketched a single string, which cannot
-> express its own table: a tanning frame is made of fibre *and* bone, so it is gated on Weaving *and*
-> Bone-working.
-
-Every **tool** recipe carries one entry per material it is made from, and `validate_against` enforces
-exactly that — **a required craft must be the craft of one of this recipe's own input materials**.
-Paired with the rule that a tool is never made from the material it bounds (also validated), that
-makes the deadlock *unrepresentable* rather than merely avoided:
+**A bench tool is gated on the craft of the material it BOUNDS (works), and on nothing else.**
+`validate_against` requires a recipe whose output is a bench tool (an item with `bounds_material`)
+to carry `requires_knowledge` exactly `[craft(bounded material)]`: the tanning frame (bounds `hide`)
+requires `["tanning"]`, the loom (`fibre`) `["weaving"]`, the bone awl (`bone`) `["bone_working"]`,
+the billet (`stone`) `["knapping"]`. The crafts of the tool's *inputs* are not required, so the
+player reads "Loom: Needs Weaving", the craft the loom serves. The list type stays for a
+non-tool recipe, which is validated as before (each entry must be the craft of one of its own input
+materials; none ships one).
 
 ```text
-tool bounds M  ⇒  M is not an input  ⇒  craft(M) is not a required craft
+tool bounds M  ⇒  M declares hand_working  ⇒  craft(M) is learnable by hand before the tool exists
 ```
 
-So "metal needs a crucible, the crucible needs metalworking, nothing can start" cannot be written
-down. **Tools are earned, never a prerequisite**, and there is no opening move where everyone builds
-tools first.
+That is why the gate cannot deadlock, and it is enforced rather than assumed: `validate_against`
+rejects a tool whose bounded material declares no `hand_working` (`metal`, which a bare hand cannot
+work, could not carry a tool until that changes). Paired with the rule that a tool is never made from
+the material it bounds (also validated), a band works the material by hand, learns the craft by
+making things from it, and then builds the tool. **Tools are earned, never a prerequisite**, and
+there is no opening move where everyone builds tools first.
 
-> ### ⛔ THE CHAIN RESTS ON A ROSTER PROPERTY NOTHING ENFORCES: **one material per craft**
->
-> Read the chain again as three steps and it is true step by step whatever the roster looks like.
-> What makes it true **end to end** is that `craft(M)` names exactly one material — and nothing
-> checks that. `wood` and `fibre` both declare `weaving`, so a tool bounding `fibre` that took
-> **wood** as an input could name Weaving and pass every rule in the book: the craft it is gated on
-> really is the craft of one of its own inputs, and really is the craft it unlocks.
->
-> **No shipped tool recipe does.** Each of the four takes only materials whose craft it does not
-> serve — the tanning frame (wood, fibre, bone) bounds `hide`, the loom (bone, hide) bounds `fibre`,
-> the bone awl (hide, fibre) bounds `bone`, the billet (bone, wood) bounds `stone` — so in this book
-> the guarantee holds by construction and
-> `recipes_config::validate_against_rejects_a_tool_gated_on_the_craft_it_unlocks` still has the
-> **loom** as its subject, as it always did.
->
-> **The hole is LATENT, and it is pinned rather than left to be rediscovered.**
-> `recipes_config::a_craft_two_materials_share_is_requirable_by_a_tool_that_bounds_one_of_them`
-> asserts all three halves: that exactly two shipped materials weave, that **no shipped tool reaches
-> the hole**, and that a fixture which does reach it validates. So a roster that mints a second
-> material for some craft, or a book that walks a tool into the shape, fails a test instead of
-> quietly retiring the claim above.
->
-> **It would not be a deadlock even then**, which is why the answer is a guard and not a new
-> validate rule: the trap only closes where the bounded material **cannot be worked bare-handed at
-> all**, and `fibre` declares `hand_working` — a band twists cordage by hand, learns Weaving, and
-> builds the loom. Where it *would* bite is `metal`, which will declare no `hand_working` and whose
-> craft no second material declares. The rule is still structural for the case it was written for.
+The offer's refusal follows with no extra code: `CraftOffer.queueable` and the `Needs Weaving`
+reason read `requires_knowledge` through `crafting::first_unknown_craft`. Pinned by
+`recipes_config::{a_tool_gated_on_the_craft_of_the_material_it_bounds_validates,
+validate_against_rejects_a_tool_gated_on_an_input_craft, validate_against_rejects_a_tool_missing_its_gate,
+validate_against_rejects_a_tool_bounding_a_material_with_no_hand_working}` and
+`crafting_wire::the_loom_offer_names_weaving_until_it_is_known_then_queues`.
 
 ---
 
@@ -500,7 +482,7 @@ can see them. **None ships known**, the same rule every ladder knowledge follows
 > a renumber.
 
 **Crafting is the fourth teacher.** Hunting teaches Herding and Penning, foraging teaches Cultivation
-and Seed Selection, keeping a pen teaches Foddering — and crafting teaches its own crafts. **The
+and Seed Selection, keeping tamed herds teaches Penning — and crafting teaches its own crafts. **The
 lesson is the RECIPE's craft**, so what is being made decides what is learned, and a band that cannot
 reach bone never advances Bone-working.
 
@@ -861,7 +843,7 @@ so *"tools are earned"* survives the flip by construction rather than by the old
 |---|---|
 | `src/data/materials.json` | **The materials table** (loader `materials_config.rs`, env override `MATERIALS_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Two blocks. **`characteristic_bands`** — the shared rating vocabulary, `[{ name, from }]` ascending: `poor 0.0 · fair 0.30 · good 0.55 · excellent 0.80`. Retuning these re-partitions every batch on the map. **`materials`** — id → `{ craft, characteristics[], hand_working?, varieties?, weight }`. **`weight`** is required on every material — biomass-equivalent mass per unit, what one unit weighs on a porter's back — and is what a far deposit's work party divides the hunt's haul carry by (`work-party.md`); every shipped value is PROVISIONAL (`_comment_weight`: wood 2.4, stone 3.0, hurdles 10.1 derived from its 4 wood + 0.5 hide). Shipped: **`hide`** (tanning; `toughness`/`suppleness`), **`fibre`** (weaving; `fineness`/`strength`), **`bone`** (bone_working; `density`/`length`), **`stone`** (knapping; `hardness`/`workability`, `hand_working { 0.5, 0.60 }` — crafted since issue #736, see "A RECIPE NAMES THE TIER IT MAKES"), each `hand_working { rate 0.5, quality_ceiling 0.60 }` — plus the three **uncrafted** luxury crops **`tobacco`** / **`tea`** / **`grape`**, which name **no `craft`, no `hand_working` and no `varieties`** and carry the provisional axes `potency`/`keeping` (arc #527; see "A material with NO CRAFT is one nothing works"), and the two the material half of build-and-upkeep added (`docs/plan_standing_upkeep.md` §4.9 item 12): **`wood`** (weaving; `hardness`/`pliancy`, `hand_working { 0.5, 0.60 }`) and **`hurdles`** (**no `craft` and no `hand_working`**, axes `stoutness`/`span`), which is a woven fence panel a pen spends on its build pile and its upkeep rate. **Clay and metal still have no producer** until the minerals arc, and an unreachable material is dead content the catalogue publishes — but the roster holds **two** kinds of thing that are not that: the luxury crops are *uncrafted* (a producer, no bench) and `hurdles` are *crafted but never an input* (a bench, no recipe takes them). **`wood` and `stone` are ordinary crafted materials now** — the forestry and extraction branches produce them (`extraction.md`), a bench works both, and the opening loadout is a head start rather than the only way in. ⛔ **Nothing reads `hurdles`' axes**, which is deliberate: a quality axis on a fence panel invites *a better fence contains better*, the containment-scaling item 12 defers. **`hand_working` absent means the material cannot be worked bare-handed at all** (rate `0`, which is how metal will refuse itself with no branch), and the bare-handed ceiling belongs to the **material**, not to the absent tool. **`varieties` are parsed, validated, and none ships** — named presets over the material's own axes (`copper`, `bronze`), exercised by a test fixture for the same reason the bronze equipment tier is. **`validate` rejects**: an empty material table; a band list that is empty, does not open at `0.0`, does not strictly ascend, or carries a seam outside `0..=1`; a material stating a **blank** craft (omit the key to say nothing works it — an empty string would put an unnameable craft in `crafts_declared_by`) or no characteristics; a duplicate characteristic on one material; a non-finite or negative `hand_working.rate`; a `weight` that is not finite and positive; a `quality_ceiling` outside `0..=1`; a variety that omits an axis the material declares or names one it does not, or states a reading off the range. **No material declares a start stock and there is no key for one** — the block and its whole mechanism are deleted, so every material is produced or picked (see "NOTHING IS STOCKED AT SPAWN" below); `exact_axes_fault` survives as the recipe output's material arm. **The root is open (`_comment*` keys) and `MaterialDef` is CLOSED** — a mistyped `hand_workng` would silently make a material unworkable, while a stray key at the root can only be prose. |
 
-| `src/data/recipes.json` | **The recipe book** (loader `recipes_config.rs`, env override `RECIPES_CONFIG_PATH`, `validate` inside `from_json_str`, cross-config `validate_against(&materials, &equipment)` at the `build_headless_app` seam). Two blocks. **`crafting`** — `progress_per_worker_turn` (**2.0**). **`recipes`** — id → `{ label?, craft, work, crafters_per_item, requires_knowledge[]?, inputs[], outputs[], grades? }`, where `crafters_per_item` is the hands one item takes at once (1 or 2 on the shipped book; see "A recipe caps how many crafters work one item"), where `label` is the word that tells a recipe from its siblings (`Bone` / `Flint`, `Fibre` / `Withy`, `Hide` / `Framed`, `Bone` / `Wood`, `Bone` / `Stone` on the clubs) — **required** on a recipe whose output another recipe also makes and **rejected** on a sole one (see "AN ITEM OWNS ITS NAME"); the name itself is the item's (`equipment.json`). `grades` is keyed by `characteristic_bands` NAME and carries only `effects` (there is no `when`), an input is `{ material, amount, variety?, reads? }` and an output is exactly one of `{ equipment }` or `{ material, characteristics }`. Twenty-three ship: **twenty-two make EQUIPMENT and one makes a MATERIAL** — `hurdles` is the material (4 wood + 0.5 hide / work 3.5, reading hide's `suppleness`, so its bench is `tanning`; see "`hurdles` ARE A MATERIAL"). The **bone/hide/fibre kit** is (`sled` 2 hide + 2 fibre / work 8; `crook` 0.2 bone + 1 fibre / 5, the animal web's build tool, reading bone's `length`; `hoes` 0.2 bone + 1 fibre / 5, the plant web's build tool — the crook, the hoes and `hoes_flint` all grade `build_work` on the standard spread; `baskets` 2 fibre + 0.2 hide / 6; `traps` 3 fibre + 0.05 bone / 6; `spears` 0.1 bone + 1 fibre + 0.2 hide / 6; `clubs` 0.3 bone + 0.2 hide / 4; `wayfinding` 0.1 bone + 0.2 hide + 1 fibre / 4), the two **road tools** (`earthmoving` 1 wood + 1 stone / 8, reading wood's `hardness`; `stone_dressing` 1 wood + 1 stone / 8, reading wood's `pliancy`), and the four **bench tools** (`tanning_frame` 2 wood + 3 fibre + 0.1 bone / 12; `loom` 0.3 bone + 1 hide / 14; `bone_awl` 0.6 hide + 2 fibre / 10; `billet` 0.2 bone + 0.25 wood / 9 — an antler billet, stone's tool, and the one made of the material stone is supposed to be replacing). Issue #736 added **three KNAPPED rows** making the `flint` tier — `spears_flint` 0.1 stone + 0.5 wood + 1 fibre / 7 and `clubs_flint` 0.2 stone + 0.5 wood / 5 reading stone's `hardness`, `hoes_flint` 0.2 stone + 0.5 wood + 1 fibre / 6 reading its `workability` — and **five SUBSTITUTES** that make the same item at the same tier with the same grades off a different pile (`crook_wood` 0.5 wood + 1 fibre / 5; `traps_wood` 3 fibre + 0.25 wood / 6; `baskets_withy` 1 wood + 2 fibre / 6; `sled_framed` 1 hide + 1.5 wood + 2 fibre / 8; `wayfinding_wood` 0.25 wood + 0.2 hide + 1 fibre / 4). **Bone and hide amounts are sized to the object against what an animal yields, fibre against what a bare gatherer earns, and the bench runs at 2.0 because a spawn owns no kit** — see the file's `_comment_work_and_costs` for the measured income figures. **Bone is a byproduct you cannot scale and wood and stone are labour you can** (bone ~0.09/turn for the whole shipped band against ~0.4 stone and ~0.3 wood per *worker*-turn on a deposit), so nothing costs more than 0.3 bone while a knapped spear spends 0.1 stone and 0.5 wood without apology. **`validate` rejects**: a non-positive `progress_per_worker_turn`; an empty book; a non-positive `work` or `amount`; a `crafters_per_item` of 0; a recipe with no inputs or no outputs; the same material twice in one recipe's inputs; **more than one input carrying `reads`**; an output naming both or neither of `equipment`/`material`; an equipment output stating characteristics, or a material output stating none; a duplicate output; grades on a recipe that reads nothing or outputs only materials; a duplicate stat in one grade's effects; **a sibling recipe with no `label`, and a `label` on the only recipe making its output**. **`validate_against` additionally rejects**: an unknown material, item, variety or axis; a `craft` that is not the craft of the material the recipe reads; a `requires_knowledge` naming a craft no material declares **or one that none of the recipe's own inputs is worked by**; a tool recipe whose inputs include the material it bounds; **a fractional `amount` on an equipment output** (a batch's `count` cannot bank half a spear); **a grade key that is not a declared `characteristic_bands` name, and a lowest declared grade that is not the FIRST band**; **a grade effect that names a stat the recipe's OUTPUT TIER does not declare, drops that effect's mass bounds or changes its `branch`/`rung`, or — at the DERIVED anchor band — disagrees with that tier** (see "ONE QUALITY LADDER"); and, for the output tier itself, **a `tier` the output item does not declare, a `tier` on a material output, and an ABSENT `tier` on an item that declares more than one** (see "A RECIPE NAMES THE TIER IT MAKES"). |
+| `src/data/recipes.json` | **The recipe book** (loader `recipes_config.rs`, env override `RECIPES_CONFIG_PATH`, `validate` inside `from_json_str`, cross-config `validate_against(&materials, &equipment)` at the `build_headless_app` seam). Two blocks. **`crafting`** — `progress_per_worker_turn` (**2.0**). **`recipes`** — id → `{ label?, craft, work, crafters_per_item, requires_knowledge[]?, inputs[], outputs[], grades? }`, where `crafters_per_item` is the hands one item takes at once (1 or 2 on the shipped book; see "A recipe caps how many crafters work one item"), where `label` is the word that tells a recipe from its siblings (`Bone` / `Flint`, `Fibre` / `Withy`, `Hide` / `Framed`, `Bone` / `Wood`, `Bone` / `Stone` on the clubs) — **required** on a recipe whose output another recipe also makes and **rejected** on a sole one (see "AN ITEM OWNS ITS NAME"); the name itself is the item's (`equipment.json`). `grades` is keyed by `characteristic_bands` NAME and carries only `effects` (there is no `when`), an input is `{ material, amount, variety?, reads? }` and an output is exactly one of `{ equipment }` or `{ material, characteristics }`. Twenty-three ship: **twenty-two make EQUIPMENT and one makes a MATERIAL** — `hurdles` is the material (4 wood + 0.5 hide / work 3.5, reading hide's `suppleness`, so its bench is `tanning`; see "`hurdles` ARE A MATERIAL"). The **bone/hide/fibre kit** is (`sled` 2 hide + 2 fibre / work 8; `crook` 0.2 bone + 1 fibre / 5, the animal web's build tool, reading bone's `length`; `hoes` 0.2 bone + 1 fibre / 5, the plant web's build tool — the crook, the hoes and `hoes_flint` all grade `build_work` on the standard spread; `baskets` 2 fibre + 0.2 hide / 6; `traps` 3 fibre + 0.05 bone / 6; `spears` 0.1 bone + 1 fibre + 0.2 hide / 6; `clubs` 0.3 bone + 0.2 hide / 4; `wayfinding` 0.1 bone + 0.2 hide + 1 fibre / 4), the two **road tools** (`earthmoving` 1 wood + 1 stone / 8, reading wood's `hardness`; `stone_dressing` 1 wood + 1 stone / 8, reading wood's `pliancy`), and the four **bench tools** (`tanning_frame` 2 wood + 3 fibre + 0.1 bone / 12; `loom` 0.3 bone + 1 hide / 14; `bone_awl` 0.6 hide + 2 fibre / 10; `billet` 0.2 bone + 0.25 wood / 9 — an antler billet, stone's tool, and the one made of the material stone is supposed to be replacing). Issue #736 added **three KNAPPED rows** making the `flint` tier — `spears_flint` 0.1 stone + 0.5 wood + 1 fibre / 7 and `clubs_flint` 0.2 stone + 0.5 wood / 5 reading stone's `hardness`, `hoes_flint` 0.2 stone + 0.5 wood + 1 fibre / 6 reading its `workability` — and **five SUBSTITUTES** that make the same item at the same tier with the same grades off a different pile (`crook_wood` 0.5 wood + 1 fibre / 5; `traps_wood` 3 fibre + 0.25 wood / 6; `baskets_withy` 1 wood + 2 fibre / 6; `sled_framed` 1 hide + 1.5 wood + 2 fibre / 8; `wayfinding_wood` 0.25 wood + 0.2 hide + 1 fibre / 4). **Bone and hide amounts are sized to the object against what an animal yields, fibre against what a bare gatherer earns, and the bench runs at 2.0 because a spawn owns no kit** — see the file's `_comment_work_and_costs` for the measured income figures. **Bone is a byproduct you cannot scale and wood and stone are labour you can** (bone ~0.09/turn for the whole shipped band against ~0.4 stone and ~0.3 wood per *worker*-turn on a deposit), so nothing costs more than 0.3 bone while a knapped spear spends 0.1 stone and 0.5 wood without apology. **`validate` rejects**: a non-positive `progress_per_worker_turn`; an empty book; a non-positive `work` or `amount`; a `crafters_per_item` of 0; a recipe with no inputs or no outputs; the same material twice in one recipe's inputs; **more than one input carrying `reads`**; an output naming both or neither of `equipment`/`material`; an equipment output stating characteristics, or a material output stating none; a duplicate output; grades on a recipe that reads nothing or outputs only materials; a duplicate stat in one grade's effects; **a sibling recipe with no `label`, and a `label` on the only recipe making its output**. **`validate_against` additionally rejects**: an unknown material, item, variety or axis; a `craft` that is not the craft of the material the recipe reads; a non-tool `requires_knowledge` naming a craft no material declares or one that none of the recipe's own inputs is worked by; a tool recipe whose `requires_knowledge` is not exactly `[craft(bounded material)]`, whose bounded material declares no `hand_working`, or whose inputs include the material it bounds; **a fractional `amount` on an equipment output** (a batch's `count` cannot bank half a spear); **a grade key that is not a declared `characteristic_bands` name, and a lowest declared grade that is not the FIRST band**; **a grade effect that names a stat the recipe's OUTPUT TIER does not declare, drops that effect's mass bounds or changes its `branch`/`rung`, or — at the DERIVED anchor band — disagrees with that tier** (see "ONE QUALITY LADDER"); and, for the output tier itself, **a `tier` the output item does not declare, a `tier` on a material output, and an ABSENT `tier` on an item that declares more than one** (see "A RECIPE NAMES THE TIER IT MAKES"). |
 
 The two **yield edges** are rows on the rosters that own them — `fauna_config.json`'s
 `hunt_yield.materials` (`fauna.md`) and `flora_config.json`'s `yield.materials` (`flora.md`) — and
@@ -1394,6 +1376,7 @@ panel, the AI's Craft specialist (#668) and auto-craft (#779) read one list.
 | a site crew | `LaborAllocation::last_keeping_issued` — each `KeepingIssue` carries `required` beside the `units` issued | `site` / the row kind keeping it (`forage` / `hunt` / `extract`) + target keys |
 | a take row | the row's kit lines from `craft_suggestions::take_row_gear` — the very lines `kitToe` is copied from; a camp-kill hunt row's lines cover only its kill-bearing items and its spear ask is its hold crew when bare hands cannot wound (`work-party.md`) | `take` / the row kind (+ target keys; none on `scout` / `warrior`) |
 | a declared build | `LaborAllocation::last_build_toe` (`BuildToeLine { source, item, required, filled }`) — what the build's own builders claimed beside what the settlement gave them (`buildToe` on the wire) | `build` / the build's kind + target keys |
+| the bench's own lined-up work (a **bench tool**, see "A bench tool that pays for itself") | `craft_suggestions::bench_tool_suggestions` — the bench queue plus the suggestions above it | `bench` / no job; the line's `material` is the material the tool bounds |
 
 `KeepingIssue::required` exists for this: `keeping_issued` used to write only what was **paid**, so a
 claim the settlement reached with nothing had no line at all. It now writes one line per claimed item
@@ -1494,6 +1477,47 @@ those zeros as the zeros they are.
 - **Auto-craft needs nothing here**: it takes the top usable suggestion, so a declared build's tools are
   crafted ahead of the build needing them (`auto_craft::auto_crafts_the_tools_a_queued_build_will_need`).
 
+### A bench tool that pays for itself
+
+No consumer is ever short of a bench tool (it is a multiplier on the bench, not a claim on a worker),
+so the shortage lines never suggest one. `craft_suggestions::bench_tool_suggestions` adds it by a
+different rule, run after the kit and build-material suggestions are merged (the snapshot in
+`snapshot::population` and auto-craft in `auto_craft::band_suggestions_and_offers` both call it, so
+the panel and auto-craft read one list). For each tool `T` bounding a material `M`, **skipped when**
+the band holds a live `T` (`EquipmentConfig::live_bench_tool`) or has `T` queued or parked
+(`queued_units`):
+
+- `W` = the bench work lined up on recipes that **read** `M` (`RecipeDef::bench_material() == M`):
+  the queued orders' remaining work (`remaining() × work − progress`) plus, for every suggestion
+  already on the list whose suggested recipe reads `M`, that recipe's `work` × the passes the count
+  needs (`ceil(count / output per pass)`). The suggested recipe is the one the ledger marks
+  `suggested` for the item (the offers), else the first in book order. The suggestions' work is
+  struck before any tool is added, so one tool's own recipe never makes another look worthwhile.
+- `r_bare` = `M`'s `hand_working.rate`; `r_tool` = `T`'s `craft_speed` at the tier its recipe makes
+  (`ItemDefinition::tier_craft_stat`). A tool no faster than the bare hand is never suggested.
+- Turns saved, crew-free: `S = W × (1/r_bare − 1/r_tool)`. Cost: `C = T's recipe work ÷ output per
+  pass ÷ the rate the bench would work it at` (`systems::bench_tiers` speed for the recipe's own read
+  material: its live tool, else the bare hand). The crew and `progress_per_worker_turn` scale both
+  sides alike and cancel.
+- **Suggest `T` iff `S − C > BENCH_TURNS_TOLERANCE` (1e-3, float noise only).** No config lever: every
+  number is already on `recipes.json`, `equipment.json` and `materials.json`. `count` is `1`.
+- **Placement:** directly ahead of the highest-ranked suggestion whose recipe reads `M`; when none
+  does (the work is all queued) at the end of the list. The list is not re-sorted afterwards.
+- **Knowledge is not filtered** — as for every other suggestion, a gated tool is published (the offer
+  says `Needs Tanning`) and auto-craft passes over an unqueueable one.
+- On the shipped book the tanning frame (hide 0.5 → 2.0, built at fibre's 0.5: 24 turns) pays for
+  itself from three sleds of lined-up work (36 saved), not from two (24, a tie).
+
+The suggestion carries `benchTurnsSaved` (`S`) and `benchBuildTurns` (`C`) and a source line of kind
+`bench` whose `material` is `M`; `workersWithout` and `workPerTurn` are `0`.
+
+Pinned by `craft_suggestions::tests::{a_tool_whose_turns_saved_exceed_its_cost_is_suggested,
+a_tool_that_does_not_pay_for_itself_is_not_suggested,
+suggested_work_on_the_material_counts_beside_the_queue, a_held_or_queued_tool_is_not_suggested_again,
+the_tool_sits_ahead_of_the_first_suggestion_reading_its_material}`, off the encoded frame by
+`crafting_wire::a_bench_tool_that_pays_for_itself_is_published_with_its_turns`, and through auto-craft
+by `auto_craft::a_tool_that_pays_for_itself_is_auto_crafted_and_a_little_work_gets_none`.
+
 ### Coming up - the kit that wears out before a new one could be made (#778)
 
 Design: `docs/plan_crafting_and_materials.md` -> "Coming up". The list is one list: an item that is
@@ -1547,6 +1571,10 @@ only wearing out is a `CraftSuggestion` like any other, with empty `sources`.
   (`SAVE_FORMAT_VERSION` 38). A fission splinter's ledger is built from `BandEquipment::default()`
   plus the units `take_units` moved, so it starts with no window.
 - **Wire**: `CraftSuggestion.upcomingCount` / `expiresInTurns` / `leadTurns`, appended last.
+- **Bench-tool wire**: `CraftSuggestion.benchTurnsSaved` / `benchBuildTurns` (floats, appended after
+  `leadTurns`; native dict keys `bench_turns_saved` / `bench_build_turns`) and
+  `CraftSuggestionSource.kind == "bench"` with `material` set. Unchanged `SAVE_FORMAT_VERSION`:
+  suggestions are derived.
 
 Pinned off the encoded frame by `core_sim/tests/wear_forecast.rs`: forecast equals actual
 (`a_unit_forecast_to_wear_out_within_the_lead_really_does`, with its fresh-unit control), the spare
@@ -1686,6 +1714,9 @@ auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 33)
   suggestion ranks (a kit shortage outranks it). Pinned by
   an auto-bench fixture that queues the hurdles a pen build is short of, and one that skips it and
   stays skipped.
+- **A bench tool that pays for itself is in that list too** ("A bench tool that pays for itself"),
+  so a band with enough blocked or suggested work on a material auto-crafts the tool for it first
+  (if its craft is known); a band with little work does not.
 - **A queued auto order that later runs short WAITS** (the ordinary skip/waiting semantics) and no
   longer holds the bench: the next fill queues what can be made. Only the player's skip parks it.
 - **It never picks the crew.** `BandBench::workers` is untouched by every path.

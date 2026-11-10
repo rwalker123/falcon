@@ -613,19 +613,16 @@ mod tests {
     ///
     /// Two claims, and they are different failures. The ROSTER carries what there is to learn and
     /// **no faction**, so a faction with no ledger row still has a screen to look at; the PROGRESS
-    /// carries a faction's `0..1` per knowledge, joined back on `knowledgeId`. `foddering` is the
-    /// subject of both halves because it is the shipped `isStep: false` — a capability the pen rung
-    /// teaches rather than a gate on reaching a rung — and because the wild forage fodder credit is
-    /// gated on it (`core_sim/src/systems/labor.rs`), so a client that could not read it composes a
-    /// hay account the sim will refuse. Encode → decode through the generated reader, because a
+    /// carries a faction's `0..1` per knowledge, joined back on `knowledgeId`. `storage` is the
+    /// subject of both halves because it is the shipped `isStep: false` — a capability no rung waits on. Encode → decode through the generated reader, because a
     /// struct field that never reached the codec would still pass an in-process assertion.
     #[test]
     fn the_ladder_knowledges_cross_the_wire_as_a_roster_and_a_progress_list() {
-        /// Partway to Foddering — a learning meter, so a bool would lose the reading.
-        const FODDERING_PROGRESS: f32 = 0.75;
+        /// Partway to Storage — a learning meter, so a bool would lose the reading.
+        const STORAGE_PROGRESS: f32 = 0.75;
         /// A known rung-gate beside it, so one row cannot be read off a neighbour's value.
         const PENNING_PROGRESS: f32 = 1.0;
-        /// The `animal:pen` rung's order — the position Foddering takes in the Herds column.
+        /// An order in the Herds column for the capability row.
         const PEN_RUNG_ORDER: u32 = 3;
         /// The subject areas' display order — a three-entry STAND-IN for the shipped six
         /// (`food`, `making`, `works`, `reach`, `lore`, `war`): the heading `animal` sits under
@@ -644,8 +641,8 @@ mod tests {
                     area: "food".to_string(),
                 },
                 LadderKnowledgeState {
-                    knowledge_id: "foddering".to_string(),
-                    display_name: "Foddering".to_string(),
+                    knowledge_id: "storage".to_string(),
+                    display_name: "Storage".to_string(),
                     branch: "animal".to_string(),
                     order: PEN_RUNG_ORDER,
                     is_step: false,
@@ -661,8 +658,8 @@ mod tests {
                         progress: PENNING_PROGRESS,
                     },
                     LadderKnowledgeProgress {
-                        knowledge_id: "foddering".to_string(),
-                        progress: FODDERING_PROGRESS,
+                        knowledge_id: "storage".to_string(),
+                        progress: STORAGE_PROGRESS,
                     },
                 ],
             }],
@@ -679,13 +676,13 @@ mod tests {
 
         let roster = subsistence.ladderKnowledge().expect("roster present");
         let fodder_row = roster.get(1);
-        assert_eq!(fodder_row.knowledgeId(), Some("foddering"));
-        assert_eq!(fodder_row.displayName(), Some("Foddering"));
+        assert_eq!(fodder_row.knowledgeId(), Some("storage"));
+        assert_eq!(fodder_row.displayName(), Some("Storage"));
         assert_eq!(fodder_row.branch(), Some("animal"));
         assert_eq!(fodder_row.order(), PEN_RUNG_ORDER);
         assert!(
             !fodder_row.isStep(),
-            "no rung waits on Foddering, so it is a capability rather than a step"
+            "no rung waits on Storage, so it is a capability rather than a step"
         );
         assert!(
             roster.get(0).isStep(),
@@ -711,9 +708,9 @@ mod tests {
         let progress = knowledge.knowledges().expect("progress list present");
         assert_eq!(progress.get(0).knowledgeId(), Some("penning"));
         assert!((progress.get(0).progress() - PENNING_PROGRESS).abs() < 1e-6);
-        assert_eq!(progress.get(1).knowledgeId(), Some("foddering"));
+        assert_eq!(progress.get(1).knowledgeId(), Some("storage"));
         assert!(
-            (progress.get(1).progress() - FODDERING_PROGRESS).abs() < 1e-6,
+            (progress.get(1).progress() - STORAGE_PROGRESS).abs() < 1e-6,
             "the fodder capability must cross verbatim: {}",
             progress.get(1).progress()
         );
@@ -846,7 +843,7 @@ mod tests {
     ///
     /// A forecast has no event seed, so `actualYield` is the take's **expectation** and the band is
     /// what the invariant now claims contains it. Asserted on the **decoded** FlatBuffers rather than
-    /// the in-process struct, for the reason `IntensificationKnowledgeState::foddering` already
+    /// the in-process struct, for the reason `IntensificationKnowledgeState::storage` already
     /// records: a field that never reached the codec still passes an in-process assertion.
     ///
     /// The **degenerate** row is pinned beside the widened one, because it is the shipped case —
@@ -922,7 +919,7 @@ mod tests {
     /// without which a sown hay Field publishes its whole product as `+0.00`.
     ///
     /// Asserted on the **decoded** FlatBuffers rather than the in-process struct, for the reason
-    /// `IntensificationKnowledgeState::foddering` already records: a field that never reached the
+    /// `IntensificationKnowledgeState::storage` already records: a field that never reached the
     /// codec still passes an in-process assertion. Pinned **beside** the food account it must not be
     /// confused with — a codec that read fodder off the food slot would pass a single-field check —
     /// and against a **hunt** row, whose `0.0` is structural (no animal pays fodder).

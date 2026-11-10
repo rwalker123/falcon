@@ -234,7 +234,7 @@ ferocity alone — frail, still costs you people"*. `fauna::hunt_injuries` adds 
 - **The durability roster** (`fauna_config.json`, playtest dials, `docs/plan_hunt_through_combat.md`
   §4.2): mammoth **500**, aurochs **150**, steppe runner / marsh grazer / wild elk **60**, wild horse
   **35**, reindeer / deer **25**, boar / wolf **20**, ibex **15**, seal / crag goat / wild sheep
-  **12**, gazelle **8**, grouse / snow hare **3**, catfish / rabbit / fowl **2**; `person` is **20**
+  **12**, gazelle **8**, grouse **3**, snow hare **1.56**, catfish **2**, rabbit **0.7**, fowl **0.34**; `person` is **20**
   (`creatures.json` — the boar/wolf tier, a body with neither bulk nor armour). **The decoupling from
   mass is real where it matters:** boar and seal are the same body mass and boar is nearly twice as
   durable; wolf is lighter than a wild sheep and tougher; ibex outlasts a seal at less than half the

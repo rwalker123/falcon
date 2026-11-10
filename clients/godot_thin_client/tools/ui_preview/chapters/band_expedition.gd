@@ -2590,26 +2590,26 @@ func _hay_ledger_states() -> void:
 	# tribe shows its name and band count on every member, chiefless or not; a leader's band not yet in
 	# one shows `Tribe <bar> · <phrase>`, or one dim line with no partner; a chiefless band in no tribe
 	# shows nothing.
-	var tribe_weights := {"origin": 3.0, "likeness": 3.0, "tie": 2.0, "history": 5.0, "belief": 1.0,
+	var tribe_weights := {"origin": 3.0, "likeness": 3.0, "tie": 2.0, "belief": 1.0,
 		"monument": 2.0, "acting": 1.0}
 	var tribe_base := {"leader_name": "Orrin", "leader_kind": 1, "leadership_practice": 10.0,
 		"leadership_threshold": 10.0, "leadership_from_builds": 10.0, "leadership_from_splits": 0.0,
-		"leadership_from_herd": 0.0, "leadership_from_stages": 0.0, "tribe_threshold": 9.0,
-		"tribe_history_build_turns": 20.0, "tribe_weights": tribe_weights}
+		"leadership_from_herd": 0.0, "leadership_from_stages": 0.0, "tribe_threshold": TRIBE_THRESHOLD,
+		"tribe_weights": tribe_weights}
 	var tribe_chiefless_case := {"leader_name": "", "leader_kind": 0, "leadership_practice": 7.0,
 		"leadership_threshold": 10.0, "leadership_from_builds": 7.0, "leadership_from_splits": 0.0,
 		"leadership_from_herd": 0.0, "leadership_from_stages": 0.0, "tribe_threshold": 0.0,
 		"tribe_pairs": []}
 	var tribe_pairs_case := tribe_base.duplicate(true)
 	tribe_pairs_case.merge({"tribe_pairs": [
-		{"partner_band": 7, "partner_name": "Ridgeway", "history": 0.4,
-			"contribution": {"origin": 0.0, "likeness": 2.2, "tie": 1.0, "history": 1.9, "belief": 0.0,
+		{"partner_band": 7, "partner_name": "Ridgeway", "points": 40.0,
+			"contribution": {"origin": 0.0, "likeness": 2.2, "tie": 1.0, "belief": 0.0,
 			"monument": 0.0, "acting": 0.0}},
-		{"partner_band": 8, "partner_name": "Snowreach", "history": 0.12,
-			"contribution": {"origin": 3.0, "likeness": 2.6, "tie": 2.0, "history": 0.6, "belief": 0.0,
+		{"partner_band": 8, "partner_name": "Snowreach", "points": 70.0,
+			"contribution": {"origin": 3.0, "likeness": 3.0, "tie": 2.0, "belief": 0.5,
 			"monument": 0.0, "acting": 0.0}},
-		{"partner_band": 9, "partner_name": "Dunmere", "history": 0.1,
-			"contribution": {"history": 0.5}},
+		{"partner_band": 9, "partner_name": "Dunmere", "points": 10.0,
+			"contribution": {}},
 	]}, true)
 	var tribe_formed := {"tribe_name": "Sandreach tribe", "tribe_member_names": ["Sandreach", "Harehollow", "Woodfen"],
 		"tribe_leader_name": "Wynne", "tribe_leader_kind": 1}
@@ -2665,9 +2665,10 @@ func _hay_ledger_states() -> void:
 				and tribe_line.tooltip_text == HudFormat.TRIBE_TOOLTIP_RULE + "\n" + HudFormat.TRIBE_NO_PLACE_TOOLTIP)
 	# A chiefless band's pull (#870): the Tribe row shows on every band with a threshold.
 	var joiner_base := tribe_chiefless_case.duplicate(true)
-	joiner_base.merge({"tribe_threshold": 9.0, "tribe_history_build_turns": 20.0, "tribe_weights": tribe_weights}, true)
-	var joiner_pair := {"partner_band": 7, "partner_name": "Ridgeway", "history": 0.4,
-		"contribution": {"origin": 3.0, "likeness": 2.2, "tie": 1.0, "history": 1.9, "belief": 0.0,
+	joiner_base.merge({"tribe_threshold": TRIBE_THRESHOLD, "tribe_weights": tribe_weights}, true)
+	# 70 of 100 banked at 3 + 3 + 2 + 0.5 = 8.5 a turn: ceil(30 / 8.5) = 4 turns.
+	var joiner_pair := {"partner_band": 7, "partner_name": "Ridgeway", "points": 70.0,
+		"contribution": {"origin": 3.0, "likeness": 3.0, "tie": 2.0, "belief": 0.5,
 		"monument": 0.0, "acting": 0.0}}
 	var joiner_led := joiner_base.duplicate(true)
 	joiner_led["tribe_pairs"] = [joiner_pair.merged({"partner_has_leader": true})]
@@ -2696,8 +2697,8 @@ func _hay_ledger_states() -> void:
 			and (joiner_text == HudFormat.TRIBE_ALONE_LINE if joiner_suffix == "" else joiner_text.ends_with(joiner_suffix))
 			and joiner_line.tooltip_text.contains(String(joiner_case[3])))
 		if String(joiner_case[0]) == "tribe_joiner_needs_chief":
-			h._assert_hud("tribe_joiner_needs_chief: no turn count anywhere in the hover",
-				not joiner_line.tooltip_text.contains("turn"))
+			h._assert_hud("tribe_joiner_needs_chief: no turn count in the hover",
+				not joiner_line.tooltip_text.contains("more turn"))
 	# The no-partner REASONS (#870), read off the player's own bands: (a) no sacred ground of its own, (b) a
 	# band in its supply network holds a different place (the live Fernhollow / Fenwatch case), (c) no other
 	# band shares its supply network, (d) no other band at all.
@@ -2724,7 +2725,7 @@ func _hay_ledger_states() -> void:
 			["tribe_reason_no_place", reason_no_place, [reason_fen], HudFormat.TRIBE_NO_PLACE_LINE, HudFormat.TRIBE_NO_PLACE_TOOLTIP],
 			["tribe_reason_different_place", reason_here, [reason_fen, reason_night],
 				HudFormat.TRIBE_DIFFERENT_PLACE_LINE,
-				"Bands become a tribe when they pool goods in one supply network and share one sacred ground.\nFernhollow honours different sacred ground from your other bands — see Beliefs."],
+				"" + HudFormat.TRIBE_TOOLTIP_RULE + "\nFernhollow honours different sacred ground from your other bands — see Beliefs."],
 			["tribe_reason_partner_no_place", reason_here, [reason_blank],
 				"Tribe: Blankmere has no sacred ground yet",
 				HudFormat.TRIBE_TOOLTIP_RULE + "\n" + HudFormat.TRIBE_NO_PLACE_TOOLTIP],
@@ -2759,29 +2760,31 @@ func _hay_ledger_states() -> void:
 			and reason_line.get_content_width() <= leader_panel.current_reservation_size())
 	# Each suffix, off the pure statics.
 	var suffix_entry := tribe_base.duplicate(true)
-	var suffix_base := {"partner_name": "Snowreach", "contribution": {"origin": 3.0,
-		"likeness": 2.6, "tie": 2.0, "history": 0.6, "belief": 0.0, "monument": 0.0, "acting": 0.0}}
+	var suffix_base := {"partner_name": "Snowreach", "points": 70.0, "contribution": {"origin": 3.0,
+		"likeness": 3.0, "tie": 2.0, "belief": 0.5, "monument": 0.0, "acting": 0.0}}
 	var suffix_forming := suffix_base.duplicate(true)
-	suffix_forming["contribution"]["history"] = 1.4
+	suffix_forming["points"] = TRIBE_THRESHOLD
 	var suffix_one_turn := suffix_base.duplicate(true)
-	suffix_one_turn["contribution"]["history"] = 1.2
-	var suffix_monument := {"partner_name": "Snowreach", "contribution": {"origin": 0.0,
-		"likeness": 0.0, "tie": 2.0, "history": 1.0, "belief": 0.0, "monument": 0.0}}
-	var small_weights := {"origin": 3.0, "likeness": 3.0, "tie": 2.0, "history": 2.0, "belief": 1.0,
-		"monument": 2.0, "acting": 0.0}
-	var small_entry := tribe_base.duplicate(true)
-	small_entry["tribe_weights"] = small_weights
-	var suffix_belief := {"partner_name": "Snowreach", "contribution": {"likeness": 2.0,
-		"tie": 2.0, "history": 0.5, "belief": 0.0, "monument": 2.0}}
-	var suffix_tie := {"partner_name": "Snowreach", "contribution": {"likeness": 2.0,
-		"tie": 0.0, "history": 0.5, "belief": 1.0, "monument": 2.0}}
+	suffix_one_turn["points"] = 92.0
+	# A pair earning nothing names what is missing: the monument first, then belief, then the tie.
+	var suffix_monument := {"partner_name": "Snowreach", "points": 50.0, "contribution": {}}
+	var belief_only_weights := {"origin": 0.0, "likeness": 0.0, "tie": 0.0, "belief": 1.0,
+		"monument": 0.0, "acting": 0.0}
+	var tie_only_weights := {"origin": 0.0, "likeness": 0.0, "tie": 2.0, "belief": 0.0,
+		"monument": 0.0, "acting": 0.0}
+	var belief_entry := tribe_base.duplicate(true)
+	belief_entry["tribe_weights"] = belief_only_weights
+	var tie_entry := tribe_base.duplicate(true)
+	tie_entry["tribe_weights"] = tie_only_weights
+	var suffix_belief := {"partner_name": "Snowreach", "points": 50.0, "contribution": {}}
+	var suffix_tie := {"partner_name": "Snowreach", "points": 50.0, "contribution": {}}
 	h._assert_hud("tribe suffixes: forming / 4 turns / 1 turn / monument / belief / tie",
 		HudFormat.tribe_suffix(suffix_entry, suffix_forming) == "forming"
 		and HudFormat.tribe_suffix(suffix_entry, suffix_base) == "4 turns"
 		and HudFormat.tribe_suffix(suffix_entry, suffix_one_turn) == "1 turn"
 		and HudFormat.tribe_suffix(suffix_entry, suffix_monument) == "needs a monument"
-		and HudFormat.tribe_suffix(small_entry, suffix_belief) == "needs more belief"
-		and HudFormat.tribe_suffix(small_entry, suffix_tie) == "needs a stronger tie")
+		and HudFormat.tribe_suffix(belief_entry, suffix_belief) == "needs more belief"
+		and HudFormat.tribe_suffix(tie_entry, suffix_tie) == "needs a stronger tie")
 	var council_view := HudFormat.band_tribe_progress({"tribe_name": "Sandreach tribe",
 		"tribe_member_names": ["Sandreach", "Harehollow"], "tribe_leader_name": "Wynne", "tribe_leader_kind": 2})
 	h._assert_hud("a council-led tribe reads `Led by a council of chiefs — Wynne speaks`, with a member count of 2",
@@ -2789,7 +2792,7 @@ func _hay_ledger_states() -> void:
 		and council_view["line"].contains("2 bands"))
 	h._assert_hud("tribe tooltip: close says Forms next turn, a tie names the partner",
 		HudFormat.tribe_missing_lines(suffix_entry, suffix_forming) == ["Forms next turn"]
-		and HudFormat.tribe_missing_lines(small_entry, suffix_tie).has("A stronger tie with Snowreach"))
+		and HudFormat.tribe_missing_lines(tie_entry, suffix_tie).has("A stronger tie with Snowreach"))
 	h._assert_hud("a foreign or chiefless band (no threshold) has no Tribe readout",
 		HudFormat.band_tribe_progress({}).is_empty())
 	var tip: String = HudFormat.band_chief_progress(leader_cases[0][1]).get("tooltip", "")
@@ -2830,17 +2833,9 @@ func _hay_ledger_states() -> void:
 	await h._settle()
 
 	await _fodder_dormant_states()
+	await _fodder_no_herds_state()
 
 # ---- THE DORMANT FODDER ROW — the state the old gate rendered as nothing at all ------------------
-
-## The two values this block stages the faction's Foddering at: part-learned (the craft is missing)
-## and learned (the craft is there and the band still keeps no pen). The row is DIM at both, which is
-## the claim they exist as a pair to make. The track's own KEY is read from the vocabulary the gate
-## reason reads (`HudFloraVocab.KNOWLEDGE_TRACK_FODDERING`), so a renamed track cannot leave this
-## pushing a key nothing consults and quietly staging neither half.
-const FODDER_KNOWLEDGE_PART := 0.35
-
-const FODDER_KNOWLEDGE_LEARNED := 1.0
 
 ## **THE WORDS A FODDER SENTENCE CANNOT AVOID.** The dormant row registers NO hover. When a hover
 ## answered for the whole block the two sentences it used to register popped out from under a cursor
@@ -2873,14 +2868,11 @@ const FODDER_DORMANT_ZERO_NEEDLE := HudDisclosureVocab.DETAIL_ROW_FODDER + ": 0.
 func _forager_band_fixture() -> Dictionary:
 	return BandFx.band_fixture()
 
-## The player faction's Foddering, pushed the way the snapshot pushes it. Every OTHER track goes in
-## at zero with it — `_ingest_intensification` replaces the faction's whole row — which is also what
-## the restore at the end of this block relies on.
-func _push_foddering(progress: float) -> void:
-	h._hud.update_intensification([{
-		"faction": HudConst.PLAYER_FACTION_ID,
-		"knowledges": {HudFloraVocab.KNOWLEDGE_TRACK_FODDERING: progress},
-	}])
+## The player faction's knowledge row at its untouched zeros, pushed the way the snapshot pushes it.
+## `_ingest_intensification` replaces the faction's whole row, so this is also what the restore at the
+## end of the dormant block relies on.
+func _push_knowledge_zero() -> void:
+	h._hud.update_intensification([{"faction": HudConst.PLAYER_FACTION_ID, "knowledges": {}}])
 
 ## Is `text` free of EVERY word in `words`, case-insensitively? The negative the dormant fodder row's
 ## no-hover claim is made with.
@@ -2917,13 +2909,8 @@ func _panel_vitals_label(node: Node) -> RichTextLabel:
 ## side of it instead of a herd. `show_unit_selection` renders both hosts, then `render_band` puts a
 ## different subject back into the dock alone.
 ##
-## **AND THE TWO REASONS A ROW CAN BE DORMANT ARE DIFFERENT NEWS.** A faction without Foddering
-## CANNOT bank hay at any price — the craft is a whole rung away — while one that simply keeps no pen
-## is not blocked by anything. Both sentences are asserted, over the same fixture with the faction's
-## knowledge moved between them, because a single tooltip claim passes on a build that states one
-## sentence in both states.
 func _fodder_dormant_states() -> void:
-	_push_foddering(FODDER_KNOWLEDGE_PART)
+	_push_knowledge_zero()
 	var panel: BandCityPanel = h.BAND_CITY_PANEL_SCENE.instantiate()
 	h.add_child(panel)
 	await h.get_tree().process_frame
@@ -2998,7 +2985,7 @@ func _fodder_dormant_states() -> void:
 				_forager_band_fixture())) == null)
 
 	# **AND THE DIM DASH IS THE WHOLE STATE — NO HOVER, ON EITHER HOST.** The row registered two
-	# sentences here, a Foddering lock and a calm *no fodder yet*, and a row's hover on this surface
+	# sentences here, a lock and a calm *no fodder yet*, and a row's hover on this surface
 	# is the BLOCK's: one `RichTextLabel`, one `tooltip_text`. So a paragraph about hay reached a
 	# cursor resting on Growth, Morale or Food — rows a fodder lock bears on not at all. Claimed on
 	# BOTH hosts, which attach the block hover separately, and on the DORMANT band in each: the frame
@@ -3016,23 +3003,34 @@ func _fodder_dormant_states() -> void:
 		dormant_vitals != null
 			and _mentions_none_of(dormant_vitals.tooltip_text, RETIRED_FODDER_HOVER_WORDS))
 
-	# **AND KNOWING THE CRAFT DOES NOT HAND THE BAND A LARDER.** Learn Foddering and the same band's
-	# row is still dormant — it keeps no pen and grows no fodder crop — which is what catches a row
-	# reading the knowledge track instead of the band's own two flows.
-	_push_foddering(FODDER_KNOWLEDGE_LEARNED)
-	h._hud.show_unit_selection(_forager_band_fixture())
-	await h._settle()
-	h._assert_hud("…and the row is dim either way — the craft is not a fodder economy",
-		_lines_any_contain(_band_lines(_forager_band_fixture()), dormant_needle))
-
 	# Release the dock and put the faction's knowledge back to the untouched zeros every chapter after
 	# this one inherits — a stranded reserved edge moves later frames, and a stranded knowledge row
 	# would silently unlock gates in chapters that stage their own.
 	h._hud.set_band_city_panel(null)
 	panel.queue_free()
-	_push_foddering(0.0)
+	_push_knowledge_zero()
 	h._hud._band_labor._player_bands = []
 	h._hud._band_labor._player_band = BandFx.band_fixture()
+	h._hud.clear_selection()
+	await h._settle()
+
+## **A STORE NO HERD DRAWS ON READS `no herds eat it`, NOT `∞`.** A band holding fodder with no tamed or
+## penned herd eating it has an unlimited runway over a bill of nothing; the row says so in words. The
+## covered band beside it (a bill the Fields out-grow) keeps its figure. Asked of the produced lines
+## AND rendered, as a PAIR.
+func _fodder_no_herds_state() -> void:
+	var idle_store := _hay_band_fixture(HAY_STORE_SHORT, 0.0, 0.0, BandFoodStatus.UNLIMITED_TURNS)
+	h._hud.show_unit_selection(idle_store)
+	await h._settle()
+	await h._save("band_fodder_no_herds")
+	var idle_lines := _band_lines(idle_store)
+	h._assert_hud("a fodder store no herd eats reads `no herds eat it`",
+		_lines_any_contain(idle_lines, BandDetailLines.BAND_FODDER_NO_HERDS_TEXT))
+	h._assert_hud("…and never the meaningless `(∞)` beside it",
+		not _lines_any_contain(idle_lines, "(" + DetailFormat.FOOD_UNLIMITED_GLYPH + ")"))
+	h._assert_hud("…while a covered band whose herds DO eat keeps its own figure",
+		not _lines_any_contain(_band_lines(_hay_covered_band_fixture()),
+			BandDetailLines.BAND_FODDER_NO_HERDS_TEXT))
 	h._hud.clear_selection()
 	await h._settle()
 
@@ -3081,6 +3079,8 @@ const EXPEDITION_KIT_SHORTFALL_COVERED := 2
 
 ## The destination the command claim sends the party to; any land tile does, the assertion being about
 ## the TAIL and not the target.
+## The sim's `tribe_threshold`: points a pair banks to become a tribe.
+const TRIBE_THRESHOLD := 100.0
 const EXPEDITION_KIT_TARGET_X := 40
 const EXPEDITION_KIT_TARGET_Y := 22
 

@@ -15,7 +15,7 @@ on `I` until its tabs have somewhere to go (`.claude/rules/client/inspector-pane
 standing decision to retire it). Design spec: `docs/plan_config_tuning_panel.md`.
 
 **Opening either dev surface closes the other**, and that is enforced rather than assumed. Both
-reserve `SIDE_LEFT` at the same priority, so a pair left open reserves the sum (380 + 560) while only
+reserve `SIDE_LEFT` at the same priority, so a pair left open reserves the sum (the band panel's `PANEL_WIDTH` 440 + 560) while only
 the higher CanvasLayer draws — a strip of empty background beside the map, and an Inspector that is
 invisible yet still holding its reservation. It goes away with the Inspector.
 

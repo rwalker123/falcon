@@ -111,7 +111,7 @@ const KNOWLEDGE_METER_CELLS := FactionReadouts.KNOWLEDGE_METER_CELLS
 ## **RE-MEASURE BEFORE ADDING ANOTHER BLOCK** — `band_panel_preview`'s `_report_zone_content_extent`
 ## prints this zone's extent against its box.
 ## **IT TAKES NO `knowledge` ROW.** It was threaded in for ONE reader — the dormant `Fodder:` row's
-## hover, which stated how far along Foddering is — and that row carries no hover now
+## hover, which stated a knowledge reading — and that row carries no hover now
 ## (`DetailFormat.fodder_dormant_row`), so nothing on this page reads a knowledge track.
 ##
 ## **OPEN BORDERS SITS ABOVE DISCOVERIES**, the one thing on this page the player can DO, so it is the

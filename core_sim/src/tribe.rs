@@ -1,10 +1,12 @@
 //! **A tribe is earned.** Every pair of bands that are *local* to one another (one people, one
-//! supply network that is not 0, one belief-anchor tile) gets a **closeness score** each turn: the
-//! weighted sum of seven inputs in `[0, 1]` ([`CloseInputs`], [`closeness`]) -- shared origin,
-//! culture likeness, the connection tie, a shared history built by being local and faded by being
-//! apart, belief on the shared urn, a kept monument on it, and acting as a tribe. A pair is *close* at
-//! `leadership_config.json -> tribe_score_threshold`. A tribe-candidate is a connected component
-//! of close pairs within one (people, network, anchor) set, of [`MIN_TRIBE_BANDS`] or more bands,
+//! supply network that is not 0, one belief-anchor tile) has a **points bank**. While the pair is
+//! local and at least one of the two bands has a leader, the bank fills each turn by the pair's
+//! **rate**: the weighted sum of six inputs in `[0, 1]` ([`CloseInputs`], [`points_per_turn`]) --
+//! shared origin, culture likeness, the connection tie, belief on the shared urn, a kept monument on
+//! it, and acting as a tribe. With no leader on either side the bank holds, so nothing counts toward
+//! a tribe before a leader exists. A bank fades while the pair is not local. A pair is *close* when
+//! its bank reaches `leadership_config.json -> tribe_score_threshold`. A tribe-candidate is a
+//! connected component of close pairs within one (people, network, anchor) set, of [`MIN_TRIBE_BANDS`] or more bands,
 //! at least one of which has a chief of its own.
 //!
 //! The [`TribeRegistry`] keeps a tribe's identity across turns (see [`resolve_matches`]), promotes
@@ -105,7 +107,7 @@ pub struct Tribe {
     pub since_turn: u64,
 }
 
-/// An unordered pair of bands, lower id first: the key a shared history is kept under.
+/// An unordered pair of bands, lower id first: the key a points bank is kept under.
 pub type BandPair = (BandId, BandId);
 
 fn band_pair(a: BandId, b: BandId) -> BandPair {
@@ -125,16 +127,16 @@ pub enum TribeStanding {
     Alone,
 }
 
-/// **Every tribe, every pair's shared history, and how many tribes each people has formed.**
-/// Checkpoint state: identity, the leader and the histories persist across turns and nothing
+/// **Every tribe, every pair's points bank, and how many tribes each people has formed.**
+/// Checkpoint state: identity, the leader and the banks persist across turns and nothing
 /// rebuilds them. Keyed by [`BandId`], never `Entity`.
 #[derive(Resource, Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TribeRegistry {
     tribes: BTreeMap<TribeId, Tribe>,
-    /// Each pair's shared history in `(0, 1]`: built while the pair is local and at least one of
-    /// the two has a leader, held while it is local with none, faded while it is not local, never
-    /// reset. A pair absent has none.
-    history: BTreeMap<BandPair, f64>,
+    /// Each pair's banked points in `(0, tribe_score_threshold]`: filled by the pair's rate while
+    /// it is local and at least one of the two has a leader, held while it is local with none,
+    /// faded while it is not local, never reset. A pair absent has none.
+    points: BTreeMap<BandPair, f64>,
     next_id: u64,
     /// Cumulative formations per people, the total the Telling diffs into
     /// `tribes.formed_this_turn`.
@@ -192,9 +194,9 @@ impl TribeRegistry {
         self.tribes.values().find(|t| t.members.contains(&band))
     }
 
-    /// The shared history of a pair of bands (`0.0` with none).
-    pub fn shared_history(&self, a: BandId, b: BandId) -> f64 {
-        self.history.get(&band_pair(a, b)).copied().unwrap_or(0.0)
+    /// The banked points of a pair of bands (`0.0` with none).
+    pub fn points(&self, a: BandId, b: BandId) -> f64 {
+        self.points.get(&band_pair(a, b)).copied().unwrap_or(0.0)
     }
 
     /// Every tribe `faction` has formed, cumulative.
@@ -342,7 +344,7 @@ pub fn likeness(a: &CultureLayer, b: &CultureLayer) -> f64 {
     f64::from((1.0 - gap / CULTURE_AXIS_RANGE).clamp(0.0, 1.0))
 }
 
-/// The seven inputs to a pair's closeness score, each in `[0, 1]`.
+/// The six inputs to a pair's points rate, each in `[0, 1]`.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct CloseInputs {
     /// 1 when the two bands' founding lines share an origin band, else 0.
@@ -351,8 +353,6 @@ pub struct CloseInputs {
     pub likeness: f64,
     /// The stronger direction of the connection tie between them (`FULL_TIE` = 1).
     pub tie: f64,
-    /// Their shared history ([`TribeRegistry::shared_history`]).
-    pub history: f64,
     /// The anchor weight of the belief standing on their shared urn; 0 when not local.
     pub belief: f64,
     /// 1 while a monument stands kept on their shared urn ([`kept_monument`]), else 0.
@@ -361,13 +361,12 @@ pub struct CloseInputs {
     pub acting: f64,
 }
 
-/// **A pair's closeness score**: the weighted sum of its inputs. The one pure place the weights are
+/// **A pair's points per turn**: the weighted sum of its inputs. The one pure place the weights are
 /// applied, so the opening numbers can be pinned without a world.
-pub fn closeness(config: &LeadershipConfig, inputs: &CloseInputs) -> f64 {
+pub fn points_per_turn(config: &LeadershipConfig, inputs: &CloseInputs) -> f64 {
     config.tribe_weight_origin * inputs.origin
         + config.tribe_weight_likeness * inputs.likeness
         + config.tribe_weight_tie * inputs.tie
-        + config.tribe_weight_history * inputs.history
         + config.tribe_weight_belief * inputs.belief
         + config.tribe_weight_monument * inputs.monument
         + config.tribe_weight_acting * inputs.acting
@@ -458,12 +457,11 @@ fn tribe_entry(
     CommandEventEntry::new(tick, kind, tribe.faction, label, Some(detail)).with_band(band)
 }
 
-/// The inputs of a pair that need no shared urn: origin, likeness, tie and history.
+/// The inputs of a pair that need no shared urn: origin, likeness and tie.
 fn pair_inputs(
     facts: &BTreeMap<BandId, BandFacts>,
     culture: &CultureManager,
     ledger: &ConnectionLedger,
-    registry: &TribeRegistry,
     a: BandId,
     b: BandId,
 ) -> CloseInputs {
@@ -487,7 +485,6 @@ fn pair_inputs(
             _ => 0.0,
         },
         tie,
-        history: registry.shared_history(a, b),
         ..CloseInputs::default()
     }
 }
@@ -602,29 +599,15 @@ pub fn advance_tribes(
         ));
     }
 
-    // 1. Shared history: built a step by being local with a chief on at least one side, held while
-    //    local with none, faded a step by not being local; never reset. An exhausted entry or one
-    //    naming a band that is gone is pruned.
+    // 1. Score every local pair's inputs, then bank points: a local pair with a leader on at least
+    //    one side adds its rate (clamped at the threshold), a local pair with none holds, a pair
+    //    that is not local fades; never reset. An exhausted bank or one naming a band that is gone
+    //    is pruned.
     let buckets = local_buckets(rows);
     let local = local_pairs(&buckets);
-    let build = 1.0 / config.tribe_history_build_turns;
-    let fade = 1.0 / config.tribe_history_fade_turns;
+    let threshold = config.tribe_score_threshold;
+    let fade = threshold / config.tribe_points_fade_turns;
     let has_leader = |band: &BandId| facts.get(band).is_some_and(|f| f.leader.is_some());
-    for pair in &local {
-        if has_leader(&pair.0) || has_leader(&pair.1) {
-            let entry = registry.history.entry(*pair).or_insert(0.0);
-            *entry = (*entry + build).min(1.0);
-        }
-    }
-    registry.history.retain(|pair, value| {
-        if !local.contains(pair) {
-            *value = (*value - fade).max(0.0);
-        }
-        *value > 0.0 && facts.contains_key(&pair.0) && facts.contains_key(&pair.1)
-    });
-
-    // 2. Closeness of every local pair, then the candidate groups: close components with a chief.
-    let mut close_pairs: BTreeSet<BandPair> = BTreeSet::new();
     let mut scores: BTreeMap<BandPair, CloseInputs> = BTreeMap::new();
     for bucket in &buckets {
         let anchor = bucket_anchor(bucket, &facts);
@@ -636,17 +619,35 @@ pub fn advance_tribes(
                 let same_tribe = registry
                     .tribe_of(*a)
                     .is_some_and(|tribe| tribe.members.contains(b));
-                let mut inputs = pair_inputs(&facts, &culture, &ledger, &registry, *a, *b);
+                let mut inputs = pair_inputs(&facts, &culture, &ledger, *a, *b);
                 inputs.belief = urn_belief;
                 inputs.monument = monument;
                 inputs.acting = acting_as_a_tribe(same_tribe);
                 scores.insert((*a, *b), inputs);
-                if closeness(&config, &inputs) >= config.tribe_score_threshold {
-                    close_pairs.insert((*a, *b));
-                }
             }
         }
     }
+    for pair in &local {
+        if has_leader(&pair.0) || has_leader(&pair.1) {
+            let rate = points_per_turn(&config, &scores[pair]);
+            let entry = registry.points.entry(*pair).or_insert(0.0);
+            *entry = (*entry + rate).min(threshold);
+        }
+    }
+    registry.points.retain(|pair, value| {
+        if !local.contains(pair) {
+            *value = (*value - fade).max(0.0);
+        }
+        *value > 0.0 && facts.contains_key(&pair.0) && facts.contains_key(&pair.1)
+    });
+
+    // 2. The close pairs (a full bank), then the candidate groups: close components with a chief.
+    let close_pairs: BTreeSet<BandPair> = registry
+        .points
+        .iter()
+        .filter(|(pair, value)| local.contains(pair) && **value >= threshold)
+        .map(|(pair, _)| *pair)
+        .collect();
     let local_bands: BTreeSet<BandId> = buckets
         .iter()
         .flat_map(|bucket| bucket.members.iter().copied())
@@ -890,12 +891,11 @@ mod tests {
         LeadershipConfig::default()
     }
 
-    fn inputs(origin: f64, likeness: f64, tie: f64, history: f64, belief: f64) -> CloseInputs {
+    fn inputs(origin: f64, likeness: f64, tie: f64, belief: f64) -> CloseInputs {
         CloseInputs {
             origin,
             likeness,
             tie,
-            history,
             belief,
             monument: 0.0,
             acting: 0.0,
@@ -903,54 +903,45 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_split_scores_under_the_line_and_history_carries_it_over() {
+    fn a_kin_alike_tied_pair_earns_eight_points_a_turn() {
         let config = shipped();
-        // Shared origin 3 + identical culture 3 + full tie 2, no history yet.
-        assert_eq!(closeness(&config, &inputs(1.0, 1.0, 1.0, 0.0, 0.0)), 8.0);
-        // A little belief on the urn still leaves it short.
-        assert!(
-            closeness(&config, &inputs(1.0, 1.0, 1.0, 0.0, 0.5)) < config.tribe_score_threshold
-        );
-        // A fifth of the history (5 local turns) closes the gap exactly.
-        assert_eq!(closeness(&config, &inputs(1.0, 1.0, 1.0, 0.2, 0.0)), 9.0);
+        // Shared origin 3 + identical culture 3 + full tie 2.
+        assert_eq!(points_per_turn(&config, &inputs(1.0, 1.0, 1.0, 0.0)), 8.0);
+        // A little belief on the urn adds a little.
+        let with_belief = points_per_turn(&config, &inputs(1.0, 1.0, 1.0, 0.5));
+        assert!(with_belief > 8.0 && with_belief < 9.0);
     }
 
     #[test]
-    fn likeness_and_tie_each_move_the_score_by_their_weight() {
+    fn likeness_tie_and_origin_each_move_the_rate_by_their_weight() {
         let config = shipped();
-        let base = closeness(&config, &inputs(1.0, 1.0, 1.0, 0.0, 0.0));
+        let base = points_per_turn(&config, &inputs(1.0, 1.0, 1.0, 0.0));
         assert_eq!(
-            closeness(&config, &inputs(1.0, 0.5, 1.0, 0.0, 0.0)),
+            points_per_turn(&config, &inputs(1.0, 0.5, 1.0, 0.0)),
             base - 1.5
         );
         assert_eq!(
-            closeness(&config, &inputs(1.0, 1.0, 0.5, 0.0, 0.0)),
+            points_per_turn(&config, &inputs(1.0, 1.0, 0.5, 0.0)),
             base - 1.0
         );
         assert_eq!(
-            closeness(&config, &inputs(0.0, 1.0, 1.0, 0.0, 0.0)),
+            points_per_turn(&config, &inputs(0.0, 1.0, 1.0, 0.0)),
             base - 3.0
         );
-        assert_eq!(closeness(&config, &inputs(1.0, 1.0, 1.0, 1.0, 1.0)), 14.0);
     }
 
     #[test]
-    fn a_kept_monument_closes_a_fresh_split_on_its_own() {
+    fn a_kept_monument_raises_the_rate_by_its_weight() {
         let config = shipped();
-        let fresh = inputs(1.0, 1.0, 1.0, 0.0, 0.0);
+        let fresh = inputs(1.0, 1.0, 1.0, 0.0);
         let with_monument = CloseInputs {
             monument: 1.0,
             ..fresh
         };
-        // 8 + monument 2 = 10: over the line with no history and no belief.
-        assert_eq!(closeness(&config, &with_monument), 10.0);
-        assert!(closeness(&config, &with_monument) >= config.tribe_score_threshold);
-        // Unrelated, alike, no tie: 3 + full history 5 = 8 never closes; a monument makes it 10.
-        let strangers = CloseInputs {
-            monument: 1.0,
-            ..inputs(0.0, 1.0, 0.0, 1.0, 0.0)
-        };
-        assert_eq!(closeness(&config, &strangers), 10.0);
+        assert_eq!(
+            points_per_turn(&config, &with_monument),
+            points_per_turn(&config, &fresh) + config.tribe_weight_monument
+        );
     }
 
     #[test]

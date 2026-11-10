@@ -256,6 +256,7 @@ func _ready() -> void:
 	await _drive_send_denial_raid()
 	await _drive_assign_labor_kits()
 	await _drive_work_priority()
+	_drive_band_order()
 	await _drive_stop_labor()
 	await _drive_unqueue()
 	_assert_retired_kit_verbs()
@@ -656,6 +657,41 @@ func _drive_assign_labor_kits() -> void:
 ## **`work_priority` — A SITE CREW'S MARK**, in its three forms: the patch, the herd and the working.
 ## ⛔ **NO ROAD FORM**: a road has no crew to rank and the server refuses it by name, so the client
 ## must build NO line for one — asserted, beside the three that must parse.
+## **`band_order` - THE CHIEF'S ORDERS** (#860). `BandOrdersController` is the one emitter behind every
+## button on the Work tab and the sheets, so it is driven through its own sends and each payload is run
+## through `Main.format_band_order`: the text must be the grammar `sim_runtime::command_text` parses.
+func _drive_band_order() -> void:
+	var controller := BandOrdersController.new(_hud._band_labor)
+	var seen: Array = []
+	controller.band_order_requested.connect(func(payload: Dictionary) -> void:
+		seen.append(payload)
+		_record("band_order", payload, MAIN_SCRIPT.format_band_order(payload)))
+	var band := {"faction": HudConst.PLAYER_FACTION_ID, "band_id": BAND_ID, "entity": 1}
+	controller.send_set(band, "stone", 30, "high")
+	controller.send_set(band, "food", 21, "low")
+	controller.send_release(band, "stone")
+	controller.send_claim(band, "stone")
+	controller.send_release(band, "food", {"x": 71, "y": 18})
+	controller.send_claim(band, "food", {"herd_id": NEAR_HERD_ID})
+	var want := [
+		"band_order %d %d stone set 30 high" % [HudConst.PLAYER_FACTION_ID, BAND_ID],
+		"band_order %d %d food set 21 low" % [HudConst.PLAYER_FACTION_ID, BAND_ID],
+		"band_order %d %d stone release" % [HudConst.PLAYER_FACTION_ID, BAND_ID],
+		"band_order %d %d stone claim" % [HudConst.PLAYER_FACTION_ID, BAND_ID],
+		"band_order %d %d food release 71 18" % [HudConst.PLAYER_FACTION_ID, BAND_ID],
+		"band_order %d %d food claim %s" % [HudConst.PLAYER_FACTION_ID, BAND_ID, NEAR_HERD_ID],
+	]
+	if seen.size() != want.size():
+		_fail("band_order: %d payloads for %d sends" % [seen.size(), want.size()])
+		return
+	for i in range(want.size()):
+		var line := String(MAIN_SCRIPT.format_band_order(seen[i]).get("line", ""))
+		if line != want[i]:
+			_fail("band_order: send %d rendered `%s`, wanted `%s`" % [i, line, want[i]])
+	if not MAIN_SCRIPT.format_band_order({"band_id": BAND_ID, "kind": "stone", "action": "set",
+			"target": 5, "priority": "none"}).is_empty():
+		_fail("band_order: a priority outside High/Normal/Low built a line")
+
 func _drive_work_priority() -> void:
 	var band: Dictionary = _hud._band_labor.panel_band()
 	for model in [

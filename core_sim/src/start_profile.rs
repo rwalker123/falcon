@@ -1049,20 +1049,17 @@ pub fn snapshot_profiles(handle: &StartProfilesHandle) -> Vec<CampaignProfileSna
 mod tests {
     use super::*;
     use crate::{
-        fauna::{FODDERING_DISCOVERY_ID, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID},
+        fauna::{HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID},
         forage::{CULTIVATION_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID},
     };
     use serde_json::Value;
 
     /// Every knowledge the intensification ladder gates on (or earns), and the id it must map to.
-    /// `foddering` (F3) is earned by running a pen but gates no rung of its own — still it must be
-    /// mappable and, like every ladder knowledge, never start-granted.
-    const LADDER_KNOWLEDGE: [(&str, u32); 7] = [
+    const LADDER_KNOWLEDGE: [(&str, u32); 6] = [
         ("cultivation", CULTIVATION_DISCOVERY_ID),
         ("herding", HERDING_DISCOVERY_ID),
         ("seed_selection", SEED_SELECTION_DISCOVERY_ID),
         ("penning", PENNING_DISCOVERY_ID),
-        ("foddering", FODDERING_DISCOVERY_ID),
         ("worked_land", crate::forage::WORKED_LAND_DISCOVERY_ID),
         (
             "selective_breeding",

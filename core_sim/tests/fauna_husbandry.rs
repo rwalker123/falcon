@@ -22,8 +22,7 @@ use core_sim::{
     PopulationCohort, ResidentBand, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, VerbId, WellbeingConfigHandle,
-    FODDER, FODDERING_DISCOVERY_ID, FOOD, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION,
-    PENNING_DISCOVERY_ID,
+    FODDER, FOOD, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -1389,13 +1388,10 @@ fn stock_larder(app: &mut App, band: bevy::prelude::Entity, amount: f32) {
 // pen is a barren footprint with no hay behind it: see `feed_the_pens` for the other end of the same
 // lever.
 
-/// **Fill the band's hay store and grant it Foddering**, which is the whole of *"the keeper feeds its
+/// **Fill the band's hay store**, which is the whole of *"the keeper feeds its
 /// pen"*. `run_turns_with_hunt` never runs `advance_herd_grazing`, so a fixture pen's footprint grows
 /// nothing and hay is its only feed — which makes this an exact on/off switch for the feed.
 fn feed_the_pens(app: &mut App, band: bevy::prelude::Entity, hay: f32) {
-    app.world
-        .resource_mut::<DiscoveryProgressLedger>()
-        .add_progress(FactionId(0), FODDERING_DISCOVERY_ID, scalar_one());
     let mut cohort = app
         .world
         .get_mut::<PopulationCohort>(band)
@@ -2559,6 +2555,10 @@ fn a_fractional_pen_handling_rate_collects_whole_animals() {
     }
 }
 
+/// The heads one keeper minds in the fractional-handling fixture, which is the head count the shipped
+/// warren kept before small-game pens became one job.
+const FIXTURE_ANIMALS_PER_HERDER: f32 = 500.0;
+
 /// Author [`FIXTURE_SPECIES`] a pen handling rate of `animals_per_keeper` — through the species'
 /// `engage_rate`, so `husbandry.pen_engage_gain` (validated `>= 1.0`) keeps the value it ships with
 /// and the fixture changes only how hard *this* animal is to handle.
@@ -2577,6 +2577,11 @@ fn author_pen_handling_rate(app: &mut App, animals_per_keeper: f32) {
         .find(|def| def.display_name == FIXTURE_SPECIES)
         .expect("the fixture species is in the roster");
     species.engage_rate = animals_per_keeper / gain;
+    // **The keepers' bill is pinned at the head count one keeper minds in this fixture's regime.**
+    // The shipped warren keeper minds far more heads (a small-game pen is one job), which leaves a lone
+    // keeper nearly all of its hands to handle with and staffs the row past the one keeper this test
+    // reads; the arithmetic under test is the handling rate, not the bill.
+    species.animals_per_herder = FIXTURE_ANIMALS_PER_HERDER;
     handle.replace(std::sync::Arc::new(config));
 }
 

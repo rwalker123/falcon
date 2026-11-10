@@ -696,6 +696,14 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
         ))
     });
     let equipment = world.resource::<EquipmentConfigHandle>().get();
+    // **A HYPOTHETICAL KIT**: the band is priced as if it held `max_workers` fresh units of every
+    // item the kit carries and no other row competed for them - the question an outfitting window
+    // asks before any kit is held. The live wear and the competing rows are replaced, not blended.
+    let (wear, other_rows) = if ask.assume_kit_held {
+        (held_ledger(&equipment, &kit, ask.max_workers), Vec::new())
+    } else {
+        (wear, other_rows)
+    };
     let fauna = world.resource::<FaunaConfigHandle>().get();
     let combat = world.resource::<CombatConfigHandle>().get();
     let intrinsic = world.resource::<CreaturesConfigHandle>().get().person();
@@ -782,7 +790,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
         .attack_item_id(&kit, &wear)
         .unwrap_or_default()
         .to_string();
-    let per_crew = curve
+    let mut per_crew: Vec<HuntCrewTakeRow> = curve
         .into_iter()
         .enumerate()
         .map(|(index, row)| {
@@ -810,9 +818,45 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
                 ),
                 next_rung_animals_likely,
                 next_rung_keep_hands,
+                // Filled below, once the world's borrows are released.
+                home_animals_likely: row.likely,
+                home_first_load_turn: NO_LOAD_WITHIN_THE_HORIZON,
             }
         })
         .collect();
+    // **WHAT EACH CREW LANDS AT HOME** - the work-party caravan's rate through the same
+    // `work_party_forecast` the compose sheet's `rate_home`, the seed and the turn answer through,
+    // asked once per crew size. Inside the apron nothing walks and the home rate IS the take at
+    // the source; past it the row is the rate that lands after the walk out, the porters and the
+    // rot. A `follow` ask prices a camp kill, which is local by construction.
+    if !ask.follow {
+        let food_per_animal = crate::fauna::herd_food_per_animal(&herd, &fauna);
+        let held_units = ask.assume_kit_held.then_some(ask.max_workers);
+        for row in &mut per_crew {
+            let party_ask = WorkPartyForecastQuery {
+                faction_id: ask.faction_id,
+                band_id: ask.band_id,
+                source: WorkPartySource::Hunt {
+                    herd_id: ask.herd_id.clone(),
+                },
+                kit_id: ask.kit_id.clone(),
+                workers: row.workers,
+                floor: ask.floor,
+            };
+            if let QueryReply::WorkPartyForecast(landed) = work_party_forecast(
+                world,
+                &party_ask,
+                RungAsked::AsItStands,
+                &mut TakeAccounts::default(),
+                held_units,
+            ) {
+                if landed.posts_a_party && food_per_animal > 0.0 {
+                    row.home_animals_likely = landed.rate_home / food_per_animal;
+                    row.home_first_load_turn = landed.first_load_turn;
+                }
+            }
+        }
+    }
     QueryReply::HuntCrewTake(HuntCrewTakeReply {
         per_crew,
         armed_crew,
@@ -1138,7 +1182,7 @@ enum RungAsked<'a> {
 /// **WHAT THE ASKED CREW'S NEXT-TURN TAKE PAYS BESIDES FOOD** — the fodder and the per-material
 /// vector of the same take, filled by [`answer_work_party_forecast`] on a forage ask and read by the
 /// crew curve's next-rung half. Fodder is the **credited** figure: `0` where the sim would refuse
-/// it (no Foddering and no fodder-bearing commitment), exactly as the labor arm's gate does.
+/// it, exactly as the labor arm's credit does.
 #[derive(Debug, Clone, Default, PartialEq)]
 struct TakeAccounts {
     fodder: f32,
@@ -1177,6 +1221,46 @@ fn answer_work_party_forecast(
     ask: &WorkPartyForecastQuery,
     rung_asked: RungAsked<'_>,
     accounts: &mut TakeAccounts,
+) -> QueryReply {
+    work_party_forecast(
+        world,
+        ask,
+        rung_asked,
+        accounts,
+        ASKED_OF_THE_BAND_AS_IT_STANDS,
+    )
+}
+
+/// **`max_workers` fresh units of every item of `kit`, and nothing else** - the ledger a band that
+/// held the kit would show ([`HuntCrewTakeQuery::assume_kit_held`]).
+fn held_ledger(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    kit: &crate::equipment_config::KitChoice,
+    units: u32,
+) -> BandEquipment {
+    let mut held = BandEquipment::default();
+    for item_id in kit.uses() {
+        if let Some(item) = equipment.item(item_id) {
+            held.stock(item_id, units, &item.default_tier().id, None);
+        }
+    }
+    held
+}
+
+/// `assumed_units`: `None` prices the band as it stands (its live wear and its rows); `Some(n)`
+/// prices it as if it held `n` fresh units of the asked kit and worked no other row - the
+/// outfitting window's question, and the hunt crew curve's `assume_kit_held`.
+const ASKED_OF_THE_BAND_AS_IT_STANDS: Option<u32> = None;
+
+/// One turn of nothing landing: a row whose first pack does not land inside the horizon.
+const NO_LOAD_WITHIN_THE_HORIZON: u32 = 0;
+
+fn work_party_forecast(
+    world: &mut World,
+    ask: &WorkPartyForecastQuery,
+    rung_asked: RungAsked<'_>,
+    accounts: &mut TakeAccounts,
+    assumed_units: Option<u32>,
 ) -> QueryReply {
     if !floor_is_valid(ask.floor) {
         return query_failure(query_error::INVALID_FLOOR);
@@ -1421,6 +1505,14 @@ fn answer_work_party_forecast(
             return query_failure(query_error::KIT_WRONG_JOB)
         }
     };
+    // **A band priced as if it held the kit**: the fresh units and no other row competing for them.
+    let (wear, allocation) = match assumed_units {
+        Some(units) => (
+            held_ledger(&equipment, &kit, units),
+            crate::components::LaborAllocation::default(),
+        ),
+        None => (wear, allocation),
+    };
     // **The asked crew's planned split and every committed row's claim**, struck the way the turn
     // strikes them ([`crate::take_claims`]).
     let (split, claims) = crate::take_claims::with_world_sources(world, faction, |sources| {
@@ -1627,20 +1719,15 @@ fn answer_work_party_forecast(
             take,
         )
         .map_or(NOTHING_TAKEN_ONCE_RAISED, |turn| turn.biomass);
-        let fodder_credited = forage_fodder_credited(world, patch, &flora, faction, &ladder);
-        accounts.fodder = if fodder_credited {
-            crate::forage::tended_take_fodder(
-                taken,
-                patch,
-                &composition,
-                &flora,
-                &labor.forage,
-                output_multiplier,
-                take,
-            )
-        } else {
-            NOTHING_TAKEN_ONCE_RAISED
-        };
+        accounts.fodder = crate::forage::tended_take_fodder(
+            taken,
+            patch,
+            &composition,
+            &flora,
+            &labor.forage,
+            output_multiplier,
+            take,
+        );
         let mut by_material: std::collections::BTreeMap<String, f32> = Default::default();
         for row in crate::forage::patch_material_yields_taking(
             patch,
@@ -1704,6 +1791,12 @@ fn answer_work_party_forecast(
                 keep_hands,
                 horizon,
                 &demographics.keeping,
+                crate::snapshot::net_eat_without(
+                    &cohort,
+                    &allocation,
+                    &demographics,
+                    Some(&target),
+                ),
                 &world
                     .resource::<crate::materials_config::MaterialsConfigHandle>()
                     .get(),
@@ -1725,7 +1818,6 @@ fn answer_work_party_forecast(
                 keep_hands,
                 horizon,
                 &demographics.keeping,
-                forage_fodder_credited(world, patch, &flora, faction, &ladder),
             )
         }
         Asked::Extract {
@@ -1771,24 +1863,6 @@ fn answer_work_party_forecast(
         take_next_turn,
         keep_hands,
     })
-}
-
-/// **Does this faction bank a patch's fodder?** — the labor arm's credit gate: a commitment to a
-/// fodder-bearing crop, or knowing Foddering.
-pub fn forage_fodder_credited(
-    world: &World,
-    patch: &crate::forage::ForagePatch,
-    flora: &crate::flora_config::FloraConfig,
-    faction: FactionId,
-    ladder: &crate::intensification::LadderConfig,
-) -> bool {
-    crate::systems::committed_to_a_fodder_crop(patch.species.as_deref(), flora)
-        || crate::intensification::knows(
-            world.resource::<crate::DiscoveryProgressLedger>(),
-            faction,
-            crate::FODDERING_DISCOVERY_ID,
-            ladder.knowledge.completion_threshold,
-        )
 }
 
 /// One turn of projection — the next turn's take ([`WorkPartyForecastReply::take_next_turn`]).
@@ -2312,6 +2386,7 @@ mod tests {
             floor,
             max_workers,
             follow: false,
+            assume_kit_held: false,
         }
     }
 
@@ -3469,6 +3544,56 @@ mod tests {
         }
     }
 
+    /// **`assume_kit_held` prices the kit as if the band held it.** A band holding nothing reads a
+    /// curve of zero for an aurochs the roster's spears clear; asked with `assume_kit_held` the
+    /// same band reads what a band holding `max_workers` fresh units of the kit reads for the
+    /// ordinary ask - the two curves are equal, row for row - so the outfitting window prices the
+    /// outfit it is about to send out.
+    #[test]
+    fn an_assumed_kit_prices_the_curve_a_band_holding_it_reads() {
+        let mut bare_world = world_hunting_bare_handed(AUROCHS, AUROCHS_BODY);
+        let ordinary = crew_curve(&mut bare_world, &crew_ask(SWEEP_CREW, STRIP_IT_BARE));
+        assert!(
+            ordinary.iter().all(|row| row.animals_likely == 0.0),
+            "the precondition: a band holding nothing takes nothing"
+        );
+        let mut assumed_ask = crew_ask(SWEEP_CREW, STRIP_IT_BARE);
+        assumed_ask.assume_kit_held = true;
+        let assumed = crew_curve(&mut bare_world, &assumed_ask);
+        assert!(
+            assumed.iter().any(|row| row.animals_likely > 0.0),
+            "the hypothetical kit must clear the aurochs"
+        );
+
+        // The same herd for a band that really holds `SWEEP_CREW` fresh units of the kit.
+        let mut held_world = world_hunting_bare_handed(AUROCHS, AUROCHS_BODY);
+        let equipment = held_world.resource::<EquipmentConfigHandle>().get();
+        let kit = equipment
+            .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
+            .expect("the shipped default hunt kit resolves");
+        let mut held = BandEquipment::default();
+        for item_id in kit.uses() {
+            let tier = equipment
+                .item(item_id)
+                .expect("a kit names items the roster carries")
+                .default_tier()
+                .id
+                .clone();
+            held.stock(item_id, SWEEP_CREW, &tier, None);
+        }
+        let band = {
+            let mut query = held_world.query::<(bevy::prelude::Entity, &BandId)>();
+            query
+                .iter(&held_world)
+                .find(|(_, id)| id.0 == BAND)
+                .map(|(entity, _)| entity)
+                .expect("the fixture band")
+        };
+        held_world.entity_mut(band).insert(held);
+        let real = crew_curve(&mut held_world, &crew_ask(SWEEP_CREW, STRIP_IT_BARE));
+        assert_eq!(assumed, real);
+    }
+
     /// The curve refuses on the same tokens the two older verbs do — it resolves the band, the herd
     /// and the kit through the one shared seam, and a floor outside `0..=1` is rejected rather than
     /// clamped.
@@ -3998,12 +4123,12 @@ mod tests {
     const FOWL_BODY: f32 = 0.13;
     /// The widest crew the partly-armed sweep fields: past the one trap, every extra hand is bare.
     const PARTLY_ARMED_SWEEP: u32 = 8;
-    /// A room-bound herd: a full herd held to a floor at 99.5% of its capacity leaves ~36 animals of
+    /// A room-bound herd: a full herd held to a floor at 96.7% of its capacity leaves ~250 animals of
     /// room, so from the fourth hunter on the escapement room - not the reach - binds, and the
     /// quietest-first fill of that room is what is under test.
     const FOWL_ROOM_BOUND_BIOMASS: f32 = 940.0;
     const FOWL_ROOM_BOUND_CAPACITY: f32 = 940.0;
-    const FOWL_ROOM_BOUND_FLOOR: f32 = 0.995;
+    const FOWL_ROOM_BOUND_FLOOR: f32 = 0.967;
     /// The floor the unbound fixtures hunt at.
     const FOWL_DEFAULT_FLOOR: f32 = 0.5;
     /// A fat fowl herd whose room never binds at the sweep's crews.

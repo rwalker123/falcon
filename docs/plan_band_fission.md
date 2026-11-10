@@ -489,7 +489,7 @@ threshold. Judging band by band would turn one far cluster into two peoples on t
 - **Knowledge:** the new people's discovery progress is seeded from the old people's ledger in full,
   and from the bands' own `knowledge`, each discovery at the best either holds — they keep everything
   they knew. The ledger half is what carries the lessons a people earns by practice (Cultivation,
-  Herding, Foddering), which never reach a band's own `knowledge`. Defection's proportional share
+  Herding, Penning), which never reach a band's own `knowledge`. Defection's proportional share
   does not apply: nobody left them, and the old people forgets nothing.
 - **The map they remember** is the old people's `Discovered` tiles, copied — they lived there. This
   hands the new AI the old people's explored map, and that is correct.

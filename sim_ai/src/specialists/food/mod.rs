@@ -249,6 +249,8 @@ impl Food {
                 ceiling: honest_ceiling(patch),
                 crew_cap: None,
                 curve: None,
+                eat_cap: sources::NO_EAT_CAP,
+                realization: sources::NO_RECORD_YET,
             })
             .filter(|source| !self.is_dead(view, memory, band, &source.key))
             .collect();
@@ -266,20 +268,8 @@ impl Food {
         // it five hunters read 4.0 a turn off a boar that paid 0.24 (seed 54). No curve, no
         // source, this turn.
         let kits_held = hunting_kits_held(view, band);
-        let kit_of_row = |row: &LaborAssignmentState| {
-            view.snapshot
-                .herds
-                .iter()
-                .find(|herd| herd.id == row.fauna_id)
-                .map(|herd| herd_kit_id(view, herd))
-        };
         let committed_elsewhere = |herd: &HerdTelemetryState, kit: &str| -> u32 {
-            band.labor_assignments
-                .iter()
-                .filter(|row| row.kind == ROLE_HUNT && row.fauna_id != herd.id)
-                .filter(|row| kit_of_row(row) == Some(kit))
-                .map(|row| row.workers.min(row.hunt_useful_workers))
-                .sum()
+            sources::committed_elsewhere(view, band, herd, kit)
         };
         sources.extend(
             view.snapshot
@@ -306,6 +296,10 @@ impl Food {
                         ceiling: herd.biomass * herd.provisions_per_biomass,
                         crew_cap: Some(units.map_or(plateau, |units| units.min(plateau))),
                         curve: Some(curve),
+                        eat_cap: sources::net_eat_rate(band, Some(&herd.id)),
+                        realization: memory
+                            .herd_realization(band.band_id, &herd.id)
+                            .unwrap_or(sources::NO_RECORD_YET),
                     })
                 })
                 .filter(|source| !self.is_dead(view, memory, band, &source.key)),
@@ -681,6 +675,11 @@ pub(crate) mod tests {
                 .map(|n| (n, (n as f32 * herd.per_worker_yield).min(ceiling)))
                 .collect();
             memory.remember_crew_take(
+                BAND,
+                &herd.id,
+                crate::oracle::curve_of(&points, FIXTURE_BODY_FOOD),
+            );
+            memory.remember_outfit_take(
                 BAND,
                 &herd.id,
                 crate::oracle::curve_of(&points, FIXTURE_BODY_FOOD),

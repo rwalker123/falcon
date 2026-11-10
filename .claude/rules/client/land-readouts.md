@@ -491,8 +491,7 @@ paths:
     appears.** `Hud.update_intensification` (dispatched from `Main.gd`) INGESTS **every track the row
     carries**, off the wire's own `knowledges` map rather than a client-side list of names
     (`intensification_knowledge[]`, decoded in `native/src/dict/subsistence.rs`
-    `intensification_knowledge_to_array`) — which today is — `cultivation` / `seed_selection` / `herding` / `penning` /
-    `foddering` — and `FactionRollup._build_knowledge_block` renders one row each, in
+    `intensification_knowledge_to_array`) — which today is — `cultivation` / `seed_selection` / `herding` / `penning` — and `FactionRollup._build_knowledge_block` renders one row each, in
     `KNOWLEDGE_TRACK_LABELS` order (each web's ladder, bottom rung first, so the block reads as two
     ladders climbing). A track is hidden until the faction begins it (the row is sparse), reads
     `known` once complete, else a **5-cell** bar + the live percent.

@@ -20,7 +20,8 @@ use core_sim::{
     SourcePriority, TileRegistry, FOOD,
 };
 use sim_runtime::commands::{
-    QueryPayload, QueryReply, WorkPartyForecastQuery, WorkPartyForecastReply, WorkPartySource,
+    HuntCrewTakeQuery, HuntCrewTakeReply, QueryPayload, QueryReply, WorkPartyForecastQuery,
+    WorkPartyForecastReply, WorkPartySource,
 };
 
 /// A shipped quarry whose take a small party can actually make.
@@ -182,6 +183,20 @@ fn spawn_band_camped_at(
             },
         ))
         .id()
+}
+
+/// Hands in the pool of a band that eats every pack in the meals it has left: the forecast caps a pack
+/// that lands aged by its walk at what the band eats a turn (`TransitRot::meals_per_turn`), and these
+/// tests compare it with the GROSS landing - the harness runs the labor pass alone, with no meal - so
+/// the band they use eats whatever lands.
+const BAND_THAT_EATS_EVERY_PACK: f32 = 600.0;
+
+/// Make `band` one that eats every pack ([`BAND_THAT_EATS_EVERY_PACK`]).
+fn eats_every_pack(app: &mut App, band: Entity) {
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band")
+        .working = scalar_from_f32(BAND_THAT_EATS_EVERY_PACK);
 }
 
 fn hunt_target() -> LaborTarget {
@@ -425,6 +440,7 @@ fn a_far_kept_herds_caravan_forecast_is_what_its_party_lands_after_keeping() {
     /// Far enough to post a party.
     const FAR: u32 = 5;
     let (mut app, band) = world_hunting_at(FAR);
+    eats_every_pack(&mut app, band);
     let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
     app.world.resource_mut::<HerdRegistry>().herds[0].tame_outright(FACTION, &ladder);
     let bill = {
@@ -609,7 +625,8 @@ fn flesh_keeps(app: &App) -> f32 {
 #[test]
 fn a_far_hunt_publishes_and_quotes_the_take_its_walk_spoils() {
     for (distance, rots) in [(8, true), (5, false)] {
-        let (mut app, _) = world_hunting_at(distance);
+        let (mut app, band) = world_hunting_at(distance);
+        eats_every_pack(&mut app, band);
         let keeps = flesh_keeps(&app);
         let mut saw_the_road = false;
         for _ in 0..TURNS_TO_SEE_A_PORTER {
@@ -2240,9 +2257,6 @@ fn a_far_hay_row_publishes_smoothed_fodder_and_materials_rates_home() {
             sites.set_sites(entries);
         }
     }
-    app.world
-        .resource_mut::<core_sim::DiscoveryProgressLedger>()
-        .add_progress(FACTION, core_sim::FODDERING_DISCOVERY_ID, scalar_one());
     spawn_band_camped_at(
         &mut app,
         camp,
@@ -3508,10 +3522,21 @@ fn published_wood_row_at(app: &App, distance: u32) -> (u32, u32, Vec<(String, f3
 
 /// A pool of `pool` hands, gear for everybody, and wood rows (`(distance, priority, max)`).
 fn wood_rows_world(pool: u32, rows: &[(u32, SourcePriority, Option<u32>)]) -> App {
+    wood_rows_world_with(pool, rows, pool * 2, false)
+}
+
+/// [`wood_rows_world`] with `sleds` sleds on the shelf (and as many axes), and, when `chief`, every
+/// row listed under a wood order - the chief's rows rather than the player's.
+fn wood_rows_world_with(
+    pool: u32,
+    rows: &[(u32, SourcePriority, Option<u32>)],
+    sleds: u32,
+    chief: bool,
+) -> App {
     let (mut app, band) = world_extracting_at(rows[0].0, Some(WOODCUTTING_KIT));
     let mut gear = BandEquipment::default();
-    gear.stock("sled", pool * 2, "plain", None);
-    gear.stock("axe", pool * 2, "plain", None);
+    gear.stock("sled", sleds, "plain", None);
+    gear.stock("axe", sleds, "plain", None);
     app.world.entity_mut(band).insert(gear);
     app.world
         .get_mut::<PopulationCohort>(band)
@@ -3550,6 +3575,16 @@ fn wood_rows_world(pool: u32, rows: &[(u32, SourcePriority, Option<u32>)]) -> Ap
             });
         }
         allocation.last_yields = vec![core_sim::SourceYield::ZERO; allocation.assignments.len()];
+        if chief {
+            let keys: Vec<String> = allocation
+                .assignments
+                .iter()
+                .filter_map(|row| core_sim::keep_on_hand::source_key(&row.target))
+                .collect();
+            for key in keys {
+                allocation.order_rows.insert(key, WOOD.to_string());
+            }
+        }
     }
     core_sim::staffing::restaff_band(&mut app.world, band);
     resolve_a_turn(&mut app);
@@ -3636,4 +3671,487 @@ fn a_row_starved_of_hands_in_a_band_with_no_sleds_is_kit_short() {
         sled.1 > 0.0 && sled.2.abs() < 1e-4,
         "required, none filled, got {sled:?}"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// A CHIEF'S RESERVE SITE HE CANNOT STAFF ASKS FOR NO KIT
+// ---------------------------------------------------------------------------------------------
+
+/// Rows a chief lists, of which the few hands staff only some.
+const LISTED_ROWS: u32 = 5;
+
+/// Every wood row's `(distance, workers, sled required)` and the sleds the craft suggestions ask
+/// for, read off the ENCODED frame.
+fn encoded_wood_view(app: &App) -> (Vec<(u32, u32, f32)>, u32) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == BAND)
+        .expect("the band is on the wire");
+    let rows = cohort
+        .laborAssignments()
+        .into_iter()
+        .flatten()
+        .map(|row| {
+            let sled = row
+                .kitToe()
+                .into_iter()
+                .flatten()
+                .filter(|line| line.itemId() == Some("sled"))
+                .map(|line| line.required())
+                .sum();
+            (row.targetX() - CAMP.x, row.workers(), sled)
+        })
+        .collect();
+    let suggested = cohort
+        .craftSuggestions()
+        .into_iter()
+        .flatten()
+        .filter(|row| row.itemId() == Some("sled"))
+        .map(|row| row.count())
+        .sum();
+    (rows, suggested)
+}
+
+fn five_wood_rows() -> Vec<(u32, SourcePriority, Option<u32>)> {
+    (1..=LISTED_ROWS)
+        .map(|distance| (distance, SourcePriority::Normal, None))
+        .collect()
+}
+
+/// A chief's unstaffed rows, with no idle hand, ask for nothing: the band's sled requirement is
+/// the staffed hands alone, and no sled is suggested beyond them. The same rows the PLAYER made
+/// each ask for one head.
+#[test]
+fn a_chiefs_unstaffed_reserve_rows_with_no_idle_hand_ask_for_no_kit() {
+    let no_sleds = 0;
+    let chief = wood_rows_world_with(POOL_OF_FEW, &five_wood_rows(), no_sleds, true);
+    let (rows, suggested) = encoded_wood_view(&chief);
+    let staffed: u32 = rows.iter().map(|(_, workers, _)| workers).sum();
+    let unstaffed: Vec<_> = rows
+        .iter()
+        .filter(|(_, workers, _)| *workers == 0)
+        .collect();
+    assert!(
+        staffed > 0 && !unstaffed.is_empty(),
+        "liveness: some rows are staffed and some are not: {rows:?}"
+    );
+    assert!(
+        unstaffed.iter().all(|(_, _, sled)| *sled < 1e-4),
+        "an unstaffed chief row asks for no sled with no idle hand: {rows:?}"
+    );
+    let required: f32 = rows.iter().map(|(_, _, sled)| sled).sum();
+    assert!(
+        required <= staffed as f32 + 1e-4,
+        "the sleds required ({required}) are the staffed hands' ({staffed}): {rows:?}"
+    );
+    assert!(
+        suggested as f32 <= staffed as f32 + 1e-4,
+        "no sled is suggested beyond the staffed hands: {suggested} vs {staffed}"
+    );
+
+    // Control: the same rows are the player's, and each unstaffed one asks for one head.
+    let player = wood_rows_world_with(POOL_OF_FEW, &five_wood_rows(), no_sleds, false);
+    let (rows, _) = encoded_wood_view(&player);
+    let unstaffed_asks: Vec<f32> = rows
+        .iter()
+        .filter(|(_, workers, _)| *workers == 0)
+        .map(|(_, _, sled)| *sled)
+        .collect();
+    assert!(
+        !unstaffed_asks.is_empty() && unstaffed_asks.iter().all(|sled| (sled - 1.0).abs() < 1e-4),
+        "a player row nobody staffed still asks for one head's sled: {rows:?}"
+    );
+}
+
+/// Idle hands the staffing left deal one head each to the unstaffed chief rows, in row order -
+/// exactly that many ask; the rest ask nothing.
+#[test]
+fn idle_hands_deal_one_asking_head_each_to_the_unstaffed_chief_rows() {
+    const IDLE: u32 = 2;
+    let mut app = wood_rows_world_with(0, &five_wood_rows(), 0, true);
+    let band = app
+        .world
+        .query::<(Entity, &BandId)>()
+        .iter(&app.world)
+        .find(|(_, id)| id.0 == BAND)
+        .map(|(entity, _)| entity)
+        .expect("the fixture band");
+    // Nobody is staffed (a pool of nothing), every row has a crew that would be useful, and the
+    // band then holds `IDLE` hands the staffing left unused.
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the allocation");
+        for row in allocation.assignments.iter_mut() {
+            row.staffing.useful_crew = ONE_HEAD;
+        }
+    }
+    let asks = |idle: u32| -> Vec<f32> {
+        let allocation = app
+            .world
+            .get::<LaborAllocation>(band)
+            .expect("the allocation")
+            .clone();
+        core_sim::take_claims::with_world_sources(&app.world, FACTION, |sources| {
+            core_sim::take_claims::row_claims_with_idle(
+                sources,
+                &allocation,
+                &BandEquipment::default(),
+                idle,
+            )
+            .asks
+        })
+    };
+    assert!(
+        asks(0).iter().all(|ask| *ask < 1e-4),
+        "no idle hand: no chief row asks: {:?}",
+        asks(0)
+    );
+    let asking: Vec<usize> = asks(IDLE)
+        .iter()
+        .enumerate()
+        .filter(|(_, ask)| **ask > 1e-4)
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(
+        asking,
+        vec![0, 1],
+        "exactly the first {IDLE} rows in staffing order ask one head"
+    );
+}
+
+/// **THE CREW CURVE'S HOME RATE IS WHAT A ROW LANDS** (`HuntCrewTakeRow::home_animals_likely`).
+/// The at-source take is the same at every distance; what the larder gets falls with the walk, the
+/// porters and the rot. The curve's home row, in food, must match the live landed take over a run
+/// at 1 hex (a camp kill: no party, the home rate IS the at-source take), 3 and 5 (a party posted).
+/// Each distance also asserts the at-source figure stays put and the far ones fall below it - the
+/// liveness half, since a home rate equal to the source rate would pass the tolerance at distance 1.
+#[test]
+fn the_crew_curves_home_rate_is_what_the_row_lands_at_every_distance() {
+    /// Turns the live run is averaged over: short of the stock being drawn to its floor, where the
+    /// take falls to the regrowth and no steady rate describes it.
+    const TURNS: usize = 20;
+    /// How close the curve's home rate sits to the live landed mean: the take lands in whole packs,
+    /// so a window of this many turns is a few packs, not an exact multiple.
+    const TOLERANCE: f32 = 0.15;
+    let mut at_source = None;
+    let mut previous_home = f32::MAX;
+    for distance in [1_u32, 3, 5] {
+        let (mut app, band) = world_hunting_at(distance);
+        eats_every_pack(&mut app, band);
+        resolve_a_turn(&mut app);
+        let (food_per_animal, curve) = {
+            let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            let body = fauna
+                .species_by_display(BOAR)
+                .expect("the fixture names a shipped species")
+                .body_mass;
+            let food_per_animal = body * fauna.hunt_yield_for(BOAR).provisions_per_biomass;
+            let reply = core_sim::forecast_query::answer_forecast_query(
+                &mut app.world,
+                &QueryPayload::HuntCrewTake(HuntCrewTakeQuery {
+                    faction_id: FACTION.0,
+                    band_id: BAND,
+                    herd_id: HERD_ID.to_string(),
+                    kit_id: default_hunt_kit(),
+                    floor: FLOOR,
+                    max_workers: CREW,
+                    follow: false,
+                    assume_kit_held: false,
+                }),
+            );
+            let QueryReply::HuntCrewTake(HuntCrewTakeReply { per_crew, .. }) = reply else {
+                panic!("the crew-take query must answer with a curve");
+            };
+            (food_per_animal, per_crew)
+        };
+        let row = curve
+            .iter()
+            .find(|row| row.workers == CREW)
+            .expect("the curve has the staffed crew's row");
+        let mut landed = 0.0_f32;
+        for _ in 0..TURNS {
+            resolve_a_turn(&mut app);
+            landed += app
+                .world
+                .get::<LaborAllocation>(band)
+                .expect("the band keeps its allocation")
+                .last_yields
+                .iter()
+                .map(|row| row.actual)
+                .sum::<f32>();
+        }
+        let landed_per_turn = landed / TURNS as f32;
+        let home = row.home_animals_likely * food_per_animal;
+        assert!(
+            landed_per_turn > 0.0,
+            "liveness: the row lands food at {distance} hexes"
+        );
+        assert!(
+            (home - landed_per_turn).abs() <= TOLERANCE * landed_per_turn,
+            "distance {distance}: the curve's home rate {home:.3} must be the landed take \
+             {landed_per_turn:.3} within {TOLERANCE}"
+        );
+        // The at-source take is one number for every distance.
+        let source = row.animals_likely;
+        match at_source {
+            None => at_source = Some(source),
+            Some(first) => assert_eq!(first, source, "the take at the source does not move"),
+        }
+        if distance == 1 {
+            assert_eq!(
+                row.home_animals_likely, row.animals_likely,
+                "inside the apron nothing walks: the home rate is the take at the source"
+            );
+            assert_eq!(row.home_first_load_turn, 0);
+        } else {
+            assert!(
+                row.home_animals_likely < row.animals_likely,
+                "past the apron the walk costs: home {} < source {}",
+                row.home_animals_likely,
+                row.animals_likely
+            );
+            assert!(
+                row.home_first_load_turn > 0,
+                "a party's first pack lands later"
+            );
+        }
+        assert!(
+            row.home_animals_likely < previous_home,
+            "a farther herd lands less"
+        );
+        previous_home = row.home_animals_likely;
+    }
+}
+
+/// A band on [`CAMP`] snaring a herd of `species` seated `distance` hexes along its row, under the
+/// roster's `trapping` kit (the kit a small-game herd is hunted under).
+fn world_snaring_at(species: &str, size_class: SizeClass, distance: u32) -> (App, Entity) {
+    let mut app = build_test_app();
+    app.update();
+    app.world
+        .resource_mut::<FaunaConfigHandle>()
+        .hold_wariness_at_zero();
+    let herd_tile = UVec2::new(CAMP.x + distance, CAMP.y);
+    let herd = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let def = fauna
+            .species_by_display(species)
+            .expect("the fixture names a shipped species");
+        Herd::new(
+            HERD_ID.to_string(),
+            species.to_string(),
+            size_class,
+            vec![herd_tile],
+            STANDING_STOCK,
+            STANDING_STOCK,
+            def.fodder_per_biomass,
+            def.regrowth_rate.unwrap_or(0.1),
+            def.body_mass,
+            shipped::root_standing(shipped::animal()),
+        )
+    };
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        registry.clear();
+        registry.herds.push(herd);
+    }
+    let trapping = EquipmentConfig::builtin()
+        .resolve_kit_for_job(Some(TRAPPING_KIT), core_sim::KitJob::Hunt)
+        .expect("the roster sends the trapping kit on a hunt");
+    let band = spawn_camp_band(&mut app, hunt_target(), Some(trapping));
+    (app, band)
+}
+
+const TRAPPING_KIT: &str = "trapping";
+
+/// **THE CREW CURVE EQUALS THE TAKE FOR SNARED SMALL GAME, NEAR AND FAR** - the curve's home row,
+/// in food, against what the same row lands over 20 live turns, on a Wild Fowl herd under the
+/// trapping kit at 1 (a camp kill), 3 and 5 hexes. The AI read the curve's far small-game rows as
+/// nearly nothing while those rows landed several times as much.
+#[test]
+fn the_crew_curve_equals_the_take_for_snared_small_game_near_and_far() {
+    const TURNS: usize = 20;
+    const TOLERANCE: f32 = 0.2;
+    for distance in [1_u32, 3, 5] {
+        let (mut app, band) = world_snaring_at("Wild Fowl", SizeClass::Small, distance);
+        eats_every_pack(&mut app, band);
+        resolve_a_turn(&mut app);
+        let (food_per_animal, curve) = {
+            let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            let body = fauna
+                .species_by_display("Wild Fowl")
+                .expect("the fixture names a shipped species")
+                .body_mass;
+            let food_per_animal = body * fauna.hunt_yield_for("Wild Fowl").provisions_per_biomass;
+            let reply = core_sim::forecast_query::answer_forecast_query(
+                &mut app.world,
+                &QueryPayload::HuntCrewTake(HuntCrewTakeQuery {
+                    faction_id: FACTION.0,
+                    band_id: BAND,
+                    herd_id: HERD_ID.to_string(),
+                    kit_id: TRAPPING_KIT.to_string(),
+                    floor: FLOOR,
+                    max_workers: CREW,
+                    follow: false,
+                    assume_kit_held: false,
+                }),
+            );
+            let QueryReply::HuntCrewTake(HuntCrewTakeReply { per_crew, .. }) = reply else {
+                panic!("the crew-take query must answer with a curve");
+            };
+            (food_per_animal, per_crew)
+        };
+        let row = curve
+            .iter()
+            .find(|row| row.workers == CREW)
+            .expect("the curve has the staffed crew's row");
+        let mut landed = 0.0_f32;
+        for _ in 0..TURNS {
+            resolve_a_turn(&mut app);
+            landed += app
+                .world
+                .get::<LaborAllocation>(band)
+                .expect("the band keeps its allocation")
+                .last_yields
+                .iter()
+                .map(|row| row.actual)
+                .sum::<f32>();
+        }
+        let landed_per_turn = landed / TURNS as f32;
+        let source = row.animals_likely * food_per_animal;
+        let home = row.home_animals_likely * food_per_animal;
+        println!(
+            "SMALLGAME dist {distance}: at-source {source:.3} home {home:.3} landed/turn {landed_per_turn:.3} first_load {}",
+            row.home_first_load_turn
+        );
+        assert!(landed_per_turn > 0.0, "liveness at {distance} hexes");
+        assert!(
+            (home - landed_per_turn).abs() <= TOLERANCE * landed_per_turn,
+            "distance {distance}: curve home {home:.3} vs landed {landed_per_turn:.3}"
+        );
+    }
+}
+
+/// **THE FORECAST COUNTS THE MEALS A PACK CAN STILL BE EATEN FOR AFTER ITS WALK**
+/// (`TransitRot::kept_of_pack`). A pack lands aged by its walk, so a walk of `w` turns leaves a
+/// flesh pack `4 - w` meals; what the band cannot eat at its own rate in them rots with it, and the
+/// crew curve's home rate must say so. Driven live: each turn the band eats its ration through the
+/// larder's own order, then the larder rots, then the labor pass lands the packs - the order the
+/// sim runs - and the food the larder keeps (eaten) over 20 turns is read against the curve's home
+/// rate at walks 1 to 4 (hexes 3 to 6), for a band that eats the pack in time and one that cannot.
+#[test]
+fn the_forecast_keeps_only_the_meals_left_after_the_walk() {
+    const TURNS: usize = 20;
+    const TOLERANCE: f32 = 0.25;
+    /// Hands in the band's pool beyond the crew: a band this big eats every pack in its few turns.
+    const BIG_BAND: f32 = 600.0;
+    let keeping = core_sim::DemographicsConfig::builtin().keeping.clone();
+    for distance in [3_u32, 4, 5, 6] {
+        let mut kept_by_pool = Vec::new();
+        for pool in [CREW as f32, BIG_BAND] {
+            let (mut app, band) = world_hunting_at(distance);
+            app.world
+                .get_mut::<PopulationCohort>(band)
+                .expect("the band")
+                .working = scalar_from_f32(pool);
+            resolve_a_turn(&mut app);
+            let (food_per_animal, curve) = {
+                let fauna = app.world.resource::<FaunaConfigHandle>().get();
+                let body = fauna
+                    .species_by_display(BOAR)
+                    .expect("the fixture names a shipped species")
+                    .body_mass;
+                let food_per_animal = body * fauna.hunt_yield_for(BOAR).provisions_per_biomass;
+                let reply = core_sim::forecast_query::answer_forecast_query(
+                    &mut app.world,
+                    &QueryPayload::HuntCrewTake(HuntCrewTakeQuery {
+                        faction_id: FACTION.0,
+                        band_id: BAND,
+                        herd_id: HERD_ID.to_string(),
+                        kit_id: default_hunt_kit(),
+                        floor: FLOOR,
+                        max_workers: CREW,
+                        follow: false,
+                        assume_kit_held: false,
+                    }),
+                );
+                let QueryReply::HuntCrewTake(HuntCrewTakeReply { per_crew, .. }) = reply else {
+                    panic!("the crew-take query must answer with a curve");
+                };
+                (food_per_animal, per_crew)
+            };
+            let home = curve
+                .iter()
+                .find(|row| row.workers == CREW)
+                .expect("the curve has the staffed crew's row")
+                .home_animals_likely
+                * food_per_animal;
+            let ration = {
+                let cohort = app.world.get::<PopulationCohort>(band).expect("the band");
+                let allocation = app.world.get::<LaborAllocation>(band).expect("allocation");
+                core_sim::work_party::band_net_eat_without(
+                    cohort,
+                    allocation,
+                    &core_sim::DemographicsConfig::builtin(),
+                    Some(&hunt_target()),
+                )
+            };
+            let held = core_sim::spoilage::HeldPreservation::none();
+            let mut kept = 0.0_f32;
+            for _ in 0..TURNS {
+                {
+                    let mut cohort = app.world.get_mut::<PopulationCohort>(band).expect("band");
+                    let (eaten, _) = core_sim::spoilage::eat_least_time_left(
+                        &mut cohort.stores,
+                        scalar_from_f32(ration),
+                        &keeping,
+                        &held,
+                        0,
+                    );
+                    kept += eaten.to_f32();
+                    cohort
+                        .stores
+                        .age_food(|class| core_sim::spoilage::base_shelf_life(&keeping, class));
+                }
+                resolve_a_turn(&mut app);
+            }
+            let kept_per_turn = kept / TURNS as f32;
+            // A walk the class outlasts is lost whole on arrival (walk 4 at the shipped flesh shelf
+            // life of 4): the curve says nothing lands and the larder keeps nothing.
+            let whole_loss = distance >= 6;
+            assert!(
+                whole_loss || kept_per_turn > 0.0,
+                "liveness: the band keeps something at {distance} hexes, pool {pool}"
+            );
+            // The curve is the landing stream net of the packs' aged loss; a band eats no more than
+            // its ration of it, which the seat strikes (the stream keep), so the larder keeps the
+            // lesser of the two.
+            let expected = home.min(ration);
+            assert!(
+                (expected - kept_per_turn).abs() <= TOLERANCE * kept_per_turn.max(expected) + 1e-3,
+                "distance {distance} pool {pool}: the curve's home rate {home:.3} (ration {ration:.2}) \
+                 must be what the larder keeps {kept_per_turn:.3} within {TOLERANCE}"
+            );
+            kept_by_pool.push(kept_per_turn);
+        }
+        assert!(
+            kept_by_pool[0] <= kept_by_pool[1] + 1e-3,
+            "distance {distance}: a band that cannot eat the packs in time keeps no more than one that can"
+        );
+    }
 }

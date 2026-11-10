@@ -111,6 +111,61 @@
           "hint": "Most hands one tile holds across every band: keepers, builders and harvesters together."
         },
         {
+          "pointer": "/keep_on_hand_refill_turns",
+          "label": "Order refill (turns)",
+          "type": "int",
+          "min": 1,
+          "max": 40,
+          "step": 1,
+          "default": 10,
+          "unit": "turns",
+          "hint": "Turns a keep-on-hand deficit is spread over: a band digging a mined material to its target works at its draw plus deficit / this."
+        },
+        {
+          "pointer": "/band_orders/starting_target/stone",
+          "label": "Stone order at start",
+          "type": "int",
+          "min": 1,
+          "max": 500,
+          "step": 1,
+          "default": 30,
+          "unit": "units",
+          "hint": "Stone the chief keeps on hand when he arrives, and a claim without an earlier order starts at."
+        },
+        {
+          "pointer": "/band_orders/starting_target/wood",
+          "label": "Wood order at start",
+          "type": "int",
+          "min": 1,
+          "max": 500,
+          "step": 1,
+          "default": 30,
+          "unit": "units",
+          "hint": "Wood the chief keeps on hand when he arrives, once wood is an ordered kind."
+        },
+        {
+          "pointer": "/band_orders/starting_target/food",
+          "label": "Food order at start (turns)",
+          "type": "int",
+          "min": 1,
+          "max": 100,
+          "step": 1,
+          "default": 20,
+          "unit": "turns",
+          "hint": "Turns of food the chief keeps in hand when he arrives, once food is an ordered kind."
+        },
+        {
+          "pointer": "/band_orders/starting_target/fodder",
+          "label": "Fodder order at start (turns)",
+          "type": "int",
+          "min": 1,
+          "max": 100,
+          "step": 1,
+          "default": 10,
+          "unit": "turns",
+          "hint": "Turns of fodder the chief keeps in hand when he arrives, once fodder is an ordered kind."
+        },
+        {
           "pointer": "/forage/per_worker_biomass_capacity",
           "label": "Forage throughput",
           "type": "float",
@@ -504,7 +559,7 @@
         },
         {
           "pointer": "/practice_per_directed_build",
-          "label": "Cultivate, Farm, Tame or Corral finished",
+          "label": "Points per finished build",
           "type": "float",
           "min": 0.5,
           "max": 10,
@@ -544,13 +599,13 @@
         },
         {
           "pointer": "/tribe_score_threshold",
-          "label": "Closeness for a tribe",
+          "label": "Points for a tribe",
           "type": "float",
-          "min": 1,
-          "max": 30,
-          "step": 0.5,
-          "default": 9.0,
-          "hint": "The closeness score two linked bands sharing an urn must reach to be a tribe (with a chief among them). Below it, they come apart."
+          "min": 10,
+          "max": 500,
+          "step": 5,
+          "default": 100.0,
+          "hint": "The points two linked bands sharing an urn must bank to be a tribe. They bank each turn only once one of them has a chief; the weights above set how fast."
         },
         {
           "pointer": "/reach_chief_people",
@@ -564,7 +619,7 @@
         },
         {
           "pointer": "/reach_paramount_bands",
-          "label": "Bands a paramount chief runs well",
+          "label": "Bands per paramount chief",
           "type": "float",
           "min": 1,
           "max": 12,
@@ -613,34 +668,14 @@
           "hint": "Closeness at a full tie between the two bands; the tie fades when they stop meeting."
         },
         {
-          "pointer": "/tribe_weight_history",
-          "label": "Shared history",
-          "type": "float",
-          "min": 0,
-          "max": 10,
-          "step": 0.5,
-          "default": 5.0,
-          "hint": "Closeness at a full shared history of living local to each other."
-        },
-        {
-          "pointer": "/tribe_history_build_turns",
-          "label": "Turns to build history",
-          "type": "float",
-          "min": 1,
-          "max": 200,
-          "step": 1,
-          "default": 25.0,
-          "hint": "Turns living local to each other for two bands' shared history to fill."
-        },
-        {
-          "pointer": "/tribe_history_fade_turns",
-          "label": "Turns to forget history",
+          "pointer": "/tribe_points_fade_turns",
+          "label": "Turns to forget points",
           "type": "float",
           "min": 1,
           "max": 400,
           "step": 1,
           "default": 100.0,
-          "hint": "Turns apart for a full shared history to be forgotten."
+          "hint": "Turns apart for a full bank of points toward a tribe to empty."
         },
         {
           "pointer": "/tribe_weight_belief",

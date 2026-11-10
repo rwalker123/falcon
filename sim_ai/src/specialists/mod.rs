@@ -17,7 +17,7 @@ pub mod scripted;
 
 use std::fmt::Display;
 
-use sim_runtime::CommandPayload;
+use sim_runtime::{BandOrderAction, BandOrderRow, CommandPayload};
 
 use crate::board::Demand;
 use crate::geometry::Tile;
@@ -28,7 +28,12 @@ use crate::view::{row_key, SeatMemory, SeatView};
 /// The `assign_labor` role of the Roadwork pool, which a `stop_labor roadwork` ends.
 const ROLE_ROADWORK: &str = "roadwork";
 /// The `assign_labor` role of a deposit working, which a `stop_labor <x> <y> <material>` ends.
-const ROLE_EXTRACT: &str = "extract";
+pub const ROLE_EXTRACT: &str = "extract";
+
+/// The `band_order` kinds whose rows are forage patches and herds; any other kind is a material
+/// whose rows are dig stands (`core_sim::keep_on_hand::is_row_kind`, restated).
+const ORDER_KIND_FOOD: &str = "food";
+const ORDER_KIND_FODDER: &str = "fodder";
 
 /// A specialist's name, as the plan's budgets and the decision log key it.
 pub type SpecialistId = &'static str;
@@ -151,6 +156,26 @@ impl Cost {
                     };
                     rows.push(row_key(*on, kind, x, y, fauna));
                 }
+                // **A one-row `band_order` release / claim moves the row it names**, so it claims
+                // that row under the key the labor commands on it claim. A whole-kind or `set`
+                // order names no row and claims none.
+                CommandPayload::BandOrder {
+                    band_id: on,
+                    kind,
+                    action: BandOrderAction::Release | BandOrderAction::Claim,
+                    row: Some(row),
+                    ..
+                } => rows.push(match row {
+                    BandOrderRow::Herd { id } => row_key(*on, food::ROLE_HUNT, 0, 0, id),
+                    BandOrderRow::Tile { x, y } => {
+                        let role = if kind == ORDER_KIND_FOOD || kind == ORDER_KIND_FODDER {
+                            food::ROLE_FORAGE
+                        } else {
+                            ROLE_EXTRACT
+                        };
+                        row_key(*on, role, *x, *y, "")
+                    }
+                }),
                 // A `build` on a bare tile declares on the patch the band forages there.
                 CommandPayload::BuildRung {
                     target_x: Some(target_x),

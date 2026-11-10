@@ -712,6 +712,120 @@ mod tests {
             .is_none());
     }
 
+    /// **A band moves its camp toward a herd** (`herd_streams`, the herds `cluster_take` counts
+    /// beside the patches): poor patches under the band and a rich herd four hexes out - past the
+    /// work range, so hunting it from here is a walk - make the tile a camp kill reaches the better
+    /// ground. With no herd, or a herd the sim has priced nothing for, the band stays: a herd with no
+    /// curve contributes nothing, never a guess.
+    #[test]
+    fn a_band_with_poor_patches_moves_its_camp_toward_a_rich_herd() {
+        use crate::specialists::food::tests::HERD_ID;
+        const HERD_AT: Tile = Tile::new(7, 2);
+        // A regrowth curve whose Best-floor reading is 5 food a turn: the herd's sustained take.
+        const REGROWTH: [f32; 5] = [0.0, 4.0, 5.0, 4.0, 0.0];
+        const FOOD_PER_ANIMAL: f32 = 1.0;
+        let mut view = bare();
+        add_site(&mut view, HERE, 0.2, 2.0);
+        {
+            let herd = &mut view.snapshot.herds[0];
+            herd.x = HERD_AT.x;
+            herd.y = HERD_AT.y;
+            herd.biomass = 500.0;
+            herd.carrying_capacity = 1000.0;
+            herd.provisions_per_biomass = 1.0;
+            herd.regrowth_samples = REGROWTH.to_vec();
+        }
+        let grid = view.grid();
+        assert!(
+            grid.distance(HERE, HERD_AT) > WORK_RANGE,
+            "fixture: the herd is a walk away from the camp"
+        );
+        let specialist = land("forager");
+        // The sim's curve for this band: a crew of n takes 1.5 n a turn at the source, and from
+        // here, four hexes out, lands a fifth of that home (the walk, the porters and the rot).
+        const HOME_SHARE: f32 = 0.2;
+        let at_source = [1.5, 3.0, 4.5, 6.0, 6.0];
+        let curve = crate::oracle::CrewTakeCurve {
+            rows: at_source
+                .iter()
+                .enumerate()
+                .map(|(index, take)| crate::oracle::CrewTakeRow {
+                    crew: index as u32 + 1,
+                    low: take * HOME_SHARE,
+                    likely: take * HOME_SHARE,
+                    high: take * HOME_SHARE,
+                    first_load: 3,
+                    source_likely: *take,
+                })
+                .collect(),
+            armed_crew: at_source.len() as u32,
+            body_food: FOOD_PER_ANIMAL,
+        };
+        // The memory with the sim's curve cached and, optionally, the row's record of what the herd
+        // has landed over a completed window.
+        let priced_with = |record: Option<crate::view::Realized>| {
+            let mut memory = falling(&view);
+            memory.remember_crew_take(BAND, HERD_ID, curve.clone());
+            if let Some(record) = record {
+                memory
+                    .remember_realized(&crate::view::row_key(BAND, "hunt", 0, 0, HERD_ID), record);
+            }
+            memory
+        };
+        let landed = |realized_sum: f32| crate::view::Realized {
+            per_worker: None,
+            worked_turns: 4,
+            crew: 3,
+            expected_sum: 9.0,
+            realized_sum,
+            window: 4,
+        };
+        let priced = priced_with(None);
+        let proposal = specialist
+            .better_ground(&view, &priced, own_band(&view), None)
+            .expect("the herd's ground out-takes the poor patches");
+        let target = move_target(&proposal);
+        assert!(
+            grid.distance(target, HERD_AT) <= WORK_RANGE,
+            "a tile whose camp kills the herd: {target:?} ({})",
+            proposal.reason
+        );
+        assert!(
+            grid.distance(target, HERD_AT) < grid.distance(HERE, HERD_AT),
+            "toward it: {}",
+            proposal.reason
+        );
+        // No herd in view: nothing out-takes the poor patches, and the band stays.
+        let mut no_herd = view.clone_view();
+        no_herd.snapshot.herds.clear();
+        assert!(specialist
+            .better_ground(&no_herd, &falling(&no_herd), own_band(&no_herd), None)
+            .is_none());
+        // A herd the sim has not priced contributes nothing.
+        assert!(specialist
+            .better_ground(&view, &falling(&view), own_band(&view), None)
+            .is_none());
+        // A herd whose completed window landed nothing is dead while the record is remembered:
+        // `Land` passes no dead-row judgement of its own, so the move reading drops it.
+        let dead = priced_with(Some(landed(0.0)));
+        assert!(specialist
+            .better_ground(&view, &dead, own_band(&view), None)
+            .is_none());
+        // And a herd that landed half of what was forecast still draws the camp, but is worth
+        // half: the same ground reads a smaller take.
+        let half = priced_with(Some(landed(4.5)));
+        let full = specialist
+            .better_ground(&view, &priced, own_band(&view), None)
+            .expect("priced at the forecast");
+        let halved = specialist
+            .better_ground(&view, &half, own_band(&view), None)
+            .expect("still better ground at half the forecast");
+        assert_ne!(
+            full.reason, halved.reason,
+            "the take read is the measured one"
+        );
+    }
+
     /// ⛔ **Better ground must out-take the band's own by the profile's margin, and is never the
     /// tile the band just left.** On bench seed 11 the band walked 20,8 ↔ 18,8 four times in
     /// eight turns, dropping its rows on every arrival: the ground it stood on was rated on what

@@ -316,8 +316,8 @@ pub struct HerdTelemetryState {
     pub herded_fraction: f32,
     // **RETIRED: `pastoral_trade`** (arc #527), and off the wire.
     /// The hay this pen drew from its keeper band's FODDER store last turn (Flora Roster F3), in
-    /// fodder units. `0` for an unpenned herd, a keeper that has not learned Foddering, or a pen its
-    /// own footprint already fed. With [`Self::pen_pasture_fraction`] it is the whole feed split —
+    /// fodder units. `0` for a wild herd, a store holding no hay, or a herd its
+    /// own range already fed. With [`Self::pen_pasture_fraction`] it is the whole feed split —
     /// "fed by pasture NN% · hay X.X" — both in fodder units against one demand. Appended last
     /// (append-only).
     #[serde(default)]
@@ -337,8 +337,7 @@ pub struct HerdTelemetryState {
     /// which is what makes it impossible for the difference to describe a different turn from its
     /// terms.
     ///
-    /// **Not gated on Foddering**, unlike [`Self::fodder_draw`]: a band that cannot draw hay draws
-    /// nothing, so its shortfall is its *whole* need — the case the readout is most for.
+    /// With an empty hay store [`Self::fodder_draw`] is nothing, so the shortfall is the *whole* need — the case the readout is most for.
     ///
     /// **Clamped at zero**; `0` for an unpenned herd and for a pen its own land feeds. Appended last
     /// (append-only).
@@ -2216,8 +2215,8 @@ pub struct LadderKnowledgeState {
     /// …and that rung's `order`: the position within the column, bottom step first.
     pub order: u32,
     /// **Does any rung's `unlock_knowledge` name this?** A *step* in the chain when it does; a
-    /// *capability* hanging off the bottom of its column when it does not. `foddering` is the
-    /// shipped `false` — it changes what a pen may draw on rather than opening a further rung.
+    /// *capability* hanging off the bottom of its column when it does not. A knowledge that opens no
+    /// rung is the shipped `false`.
     #[serde(default)]
     pub is_step: bool,
     /// **The subject area of the branch that teaches it** (`"food"` | `"making"` | `"works"`): which

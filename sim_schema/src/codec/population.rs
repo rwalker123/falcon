@@ -12,15 +12,15 @@ use crate::state::campaign::{OpeningKitDefaultState, OpeningMaterialDefaultState
 use crate::state::population::{
     AccessibleStockpileEntryState, AccessibleStockpileState, BandImprovementState,
     BandKitCrewState, BandKitTiersState, BandLoadoutSupplyRowState, BandLoadoutWindowState,
-    BenchKitOrderState, BenchOrderState, BenchState, BreedingMemberState, BreedingPeopleState,
-    CharacteristicReadingState, CohortStoreState, CraftOfferState, CraftSuggestionSourceState,
-    CraftSuggestionState, CulturePressureState, DrawnInputState, EquipmentBatchState,
-    GenerationState, HarvestTaskState, KeepingMealState, KitItemConditionState, KitNeedItemState,
-    KitNeedRecipeState, KitNeedState, KitToeLineState, LaborAssignmentState, MaterialAmountState,
-    MaterialBatchState, MaterialShortfallState, PoolCrewLineState, PoolToeLineState,
-    PoolingLinkState, PopulationCohortState, PopulationDemographicsState, ScoutTaskState,
-    SettlementStageViewState, SourcePriorityState, TransferCrossingState, TribeClosenessState,
-    TribePairState, WorkKitWantState,
+    BandOrderState, BenchKitOrderState, BenchOrderState, BenchState, BreedingMemberState,
+    BreedingPeopleState, CharacteristicReadingState, CohortStoreState, CraftOfferState,
+    CraftSuggestionSourceState, CraftSuggestionState, CulturePressureState, DrawnInputState,
+    EquipmentBatchState, GenerationState, HarvestTaskState, KeepingMealState,
+    KitItemConditionState, KitNeedItemState, KitNeedRecipeState, KitNeedState, KitToeLineState,
+    LaborAssignmentState, MaterialAmountState, MaterialBatchState, MaterialShortfallState,
+    PoolCrewLineState, PoolToeLineState, PoolingLinkState, PopulationCohortState,
+    PopulationDemographicsState, ScoutTaskState, SettlementStageViewState, SourcePriorityState,
+    TransferCrossingState, TribeClosenessState, TribePairState, WorkKitWantState,
 };
 use crate::state::subsistence::BuildLegState;
 use crate::world::{WorldDelta, WorldSnapshot};
@@ -340,6 +340,7 @@ fn create_populations<'a>(
                         // The deposit this crew is on — `None` on every row that is not
                         // `extract`, the `fauna_id` convention: an absent string is "no selection".
                         let branch = builder.create_string(&assignment.branch);
+                        let order_kind = builder.create_string(&assignment.order_kind);
                         let material = if assignment.material.is_empty() {
                             None
                         } else {
@@ -511,6 +512,8 @@ fn create_populations<'a>(
                                 scoutingRange: assignment.scouting_range,
                                 scoutingReach: assignment.scouting_reach,
                                 bareIdle: assignment.bare_idle,
+                                orderKind: Some(order_kind),
+                                chiefOwned: assignment.chief_owned,
                             },
                         )
                     })
@@ -940,6 +943,7 @@ fn create_populations<'a>(
             let kit_needs = create_kit_needs(builder, &cohort.kit_needs);
             let materials_free = create_material_amounts(builder, &cohort.materials_free);
             let culture_pressures = create_culture_pressures(builder, &cohort.culture_pressures);
+            let band_orders = create_band_orders(builder, &cohort.band_orders);
             let envoy_terms = crate::codec::treaties::create_terms(builder, &cohort.envoy_terms);
             let leader_name = builder.create_string(&cohort.leader_name);
             let band_improvements = create_band_improvements(builder, &cohort.band_improvements);
@@ -1252,7 +1256,6 @@ fn create_populations<'a>(
                     leadershipFromStages: cohort.leadership_from_stages,
                     bandImprovements: Some(band_improvements),
                     tribeThreshold: cohort.tribe_threshold,
-                    tribeHistoryBuildTurns: cohort.tribe_history_build_turns,
                     tribeWeights: Some(tribe_weights),
                     tribePairs: Some(tribe_pairs),
                     tribeName: Some(tribe_name),
@@ -1276,6 +1279,7 @@ fn create_populations<'a>(
                     foodFromStore: cohort.food_from_store,
                     foodInStoresInReach: cohort.food_in_stores_in_reach,
                     poolingSteadyNet: cohort.pooling_steady_net,
+                    bandOrders: Some(band_orders),
                 },
             )
         })
@@ -1479,6 +1483,8 @@ fn create_craft_suggestions<'a>(
                     leadTurns: suggestion.lead_turns,
                     displayName: Some(display_name),
                     reason: Some(reason),
+                    benchTurnsSaved: suggestion.bench_turns_saved,
+                    benchBuildTurns: suggestion.bench_build_turns,
                 },
             )
         })
@@ -1684,6 +1690,8 @@ fn decode_labor_assignment(
         scouting_range: assignment.scoutingRange(),
         scouting_reach: assignment.scoutingReach(),
         bare_idle: assignment.bareIdle(),
+        order_kind: text(assignment.orderKind()),
+        chief_owned: assignment.chiefOwned(),
     })
 }
 
@@ -2087,6 +2095,8 @@ fn decode_population(
                 lead_turns: suggestion.leadTurns(),
                 display_name: text(suggestion.displayName()),
                 reason: text(suggestion.reason()),
+                bench_turns_saved: suggestion.benchTurnsSaved(),
+                bench_build_turns: suggestion.benchBuildTurns(),
             }
         }),
         fertility_ceiling: cohort.fertilityCeiling(),
@@ -2193,7 +2203,6 @@ fn decode_population(
             is_queued: row.isQueued(),
         }),
         tribe_threshold: cohort.tribeThreshold(),
-        tribe_history_build_turns: cohort.tribeHistoryBuildTurns(),
         tribe_weights: cohort
             .tribeWeights()
             .map(decode_tribe_closeness)
@@ -2201,7 +2210,7 @@ fn decode_population(
         tribe_pairs: map_rows(cohort.tribePairs(), |row| TribePairState {
             partner_band: row.partnerBand(),
             partner_name: text(row.partnerName()),
-            history: row.history(),
+            points: row.points(),
             contribution: row
                 .contribution()
                 .map(decode_tribe_closeness)
@@ -2229,6 +2238,32 @@ fn decode_population(
         food_from_store: cohort.foodFromStore(),
         food_in_stores_in_reach: cohort.foodInStoresInReach(),
         pooling_steady_net: cohort.poolingSteadyNet(),
+        band_orders: map_rows(cohort.bandOrders(), |row| BandOrderState {
+            kind: text(row.kind()),
+            target: row.target(),
+            priority: match row.priority() {
+                fb::SourcePriority::High => SourcePriorityState::High,
+                fb::SourcePriority::Low => SourcePriorityState::Low,
+                _ => SourcePriorityState::Normal,
+            },
+            chief_owned: row.chiefOwned(),
+            draw: row.draw(),
+            on_hand: row.onHand(),
+            has_site: row.hasSite(),
+            site_x: row.siteX(),
+            site_y: row.siteY(),
+            has_consumers: row.hasConsumers(),
+            hold_heads: row.holdHeads(),
+            hold_wanted: row.holdWanted(),
+            refill_heads: row.refillHeads(),
+            refill_wanted: row.refillWanted(),
+            take: row.take(),
+            sustainable: row.sustainable(),
+            limit: text(row.limit()),
+            limit_item: text(row.limitItem()),
+            land_gives: row.landGives(),
+            limit_count: row.limitCount(),
+        }),
     })
 }
 
@@ -2334,7 +2369,6 @@ fn create_tribe_closeness<'a>(
             origin: inputs.origin,
             likeness: inputs.likeness,
             tie: inputs.tie,
-            history: inputs.history,
             belief: inputs.belief,
             monument: inputs.monument,
             acting: inputs.acting,
@@ -2347,7 +2381,6 @@ fn decode_tribe_closeness(table: fb::TribeClosenessState<'_>) -> TribeClosenessS
         origin: table.origin(),
         likeness: table.likeness(),
         tie: table.tie(),
-        history: table.history(),
         belief: table.belief(),
         monument: table.monument(),
         acting: table.acting(),
@@ -2369,7 +2402,7 @@ fn create_tribe_pairs<'a>(
                 &fb::TribePairStateArgs {
                     partnerBand: row.partner_band,
                     partnerName: Some(partner_name),
-                    history: row.history,
+                    points: row.points,
                     contribution: Some(contribution),
                     partnerHasLeader: row.partner_has_leader,
                 },
@@ -2456,6 +2489,51 @@ fn create_culture_pressures<'a>(
                     phase: row.phase,
                     close: row.close,
                     turnsToNext: row.turns_to_next,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+/// `PopulationCohortState.bandOrders`.
+fn create_band_orders<'a>(
+    builder: &mut FbBuilder<'a>,
+    rows: &[BandOrderState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::BandOrderState<'a>>>> {
+    let offsets: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            let kind = builder.create_string(&row.kind);
+            let limit = builder.create_string(&row.limit);
+            let limit_item = builder.create_string(&row.limit_item);
+            fb::BandOrderState::create(
+                builder,
+                &fb::BandOrderStateArgs {
+                    kind: Some(kind),
+                    target: row.target,
+                    priority: match row.priority {
+                        SourcePriorityState::Normal => fb::SourcePriority::Normal,
+                        SourcePriorityState::High => fb::SourcePriority::High,
+                        SourcePriorityState::Low => fb::SourcePriority::Low,
+                    },
+                    chiefOwned: row.chief_owned,
+                    draw: row.draw,
+                    onHand: row.on_hand,
+                    hasSite: row.has_site,
+                    siteX: row.site_x,
+                    siteY: row.site_y,
+                    hasConsumers: row.has_consumers,
+                    holdHeads: row.hold_heads,
+                    holdWanted: row.hold_wanted,
+                    refillHeads: row.refill_heads,
+                    refillWanted: row.refill_wanted,
+                    take: row.take,
+                    sustainable: row.sustainable,
+                    limit: Some(limit),
+                    limitItem: Some(limit_item),
+                    landGives: row.land_gives,
+                    limitCount: row.limit_count,
                 },
             )
         })

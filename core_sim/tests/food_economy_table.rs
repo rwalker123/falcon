@@ -3418,7 +3418,7 @@ fn print_bill(bare: &Shipped, stocked: &Shipped) -> [RungBill; 3] {
             DEFAULT_ESCAPEMENT_FLOOR,
         ),
         (
-            "(pen then teaches) Foddering",
+            "(the pen teaches nothing)",
             "keeping a PENNED herd (animal:pen)",
             shipped::animal_pen(),
             DEFAULT_ESCAPEMENT_FLOOR,

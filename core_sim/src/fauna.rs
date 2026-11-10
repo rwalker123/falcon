@@ -32,10 +32,10 @@ use crate::{
     },
     hashing::FnvHasher,
     intensification::{
-        interpolate, CostScale, LadderConfig, LadderConfigHandle, RungDef, RungId, RungMovement,
-        RungStanding, RungTrait, RungTraits, SizeTier, SourceKind, NEGLECT_NONE, NO_BUILD_GEAR,
-        NO_CREW_ON_THIS_ACTIVITY, NO_NEGLECT_GRACE, NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY,
-        NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+        interpolate, interpolate_built, CostScale, LadderConfig, LadderConfigHandle, RungDef,
+        RungId, RungMovement, RungStanding, RungTrait, RungTraits, SizeTier, SourceKind,
+        NEGLECT_NONE, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_NEGLECT_GRACE, NO_RUNG_BUILT,
+        NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
     mapgen::WorldGenSeed,
     orders::FactionId,
@@ -148,24 +148,8 @@ pub const HERDING_DISCOVERY_ID: u32 = 2004;
 /// never be fenced. Next free id after `seed_selection` (2005).
 pub const PENNING_DISCOVERY_ID: u32 = 2006;
 
-/// Discovery id for the faction-level **Foddering** knowledge — the pen's *fodder-draw* unlock (Flora
-/// Roster F3, `docs/plan_flora_roster.md` §5.2). It is **NOT a new ladder rung**: a pen already
-/// exists, and Foddering only unlocks a penned herd's ability to draw the band's `FODDER` store as
-/// delivered graze-flow (the feed term, `advance_labor_allocation`, and the `K_pen` fodder term,
-/// `ecological_carrying_capacity`). Until a faction knows it a pen is byte-identical to its pre-F3
-/// footprint-only self.
-///
-/// **Earned by running a pen**: the `animal:pen` rung's `earns_knowledge` (`null` pre-F3) is now
-/// `foddering`, so working a *penned* herd under a stewardship policy teaches it via the existing
-/// `RungDef::knowledge_earned` seam — *you learn to hay a herd by keeping one*. Declared as a
-/// start-profile knowledge tag (`foddering` → this id in `data/start_profile_knowledge_tags.json`)
-/// purely so it is mappable, and deliberately **not** listed in any start profile's
-/// `starting_knowledge_tags` — nothing on the ladder is start-granted. Next free id after `penning`
-/// (2006).
-pub const FODDERING_DISCOVERY_ID: u32 = 2007;
-
-/// **The discovery id of `selective_breeding`** (`start_profile_knowledge_tags.json`) - taught by
-/// keeping a Ranch-sized pen (the `animal:pen` rung's `size_tiers` entry), and the key of the pen's
+/// **The discovery id of `selective_breeding`** (`start_profile_knowledge_tags.json`) - taught only
+/// by keeping a Ranch-sized pen (the `animal:pen` rung's `size_tiers` entry), and the key of the pen's
 /// `knowledge_gains`: holding it lifts the regrowth of every penned herd of the people that knows it.
 pub const SELECTIVE_BREEDING_DISCOVERY_ID: u32 = 2023;
 
@@ -303,7 +287,7 @@ pub struct Herd {
     pub carrying_capacity: f32,
     /// Per-species **fodder demand per unit biomass** (Grazing Phase 2b-i), cached from the
     /// `SpeciesDef` at spawn exactly as `carrying_capacity` is. Each turn a mobile herd draws
-    /// `fodder_per_biomass × biomass` graze from the tiles in its range (`advance_herd_grazing`).
+    /// `fodder_per_biomass × biomass ÷ density gain` graze from the tiles in its range (`advance_herd_grazing`).
     /// `0.0` for a non-grazing species. **Inert on carrying capacity this slice** — the eating only
     /// draws the graze layer down (visible on the pasture overlay); `K` is still the species constant.
     pub fodder_per_biomass: f32,
@@ -588,23 +572,24 @@ pub struct Herd {
     /// a tie. `None` when nothing preyed on the herd this turn.
     pub predator_eaten_by: Option<String>,
     /// Transient per-turn scratch: the graze biomass this herd actually drew from its footprint this
-    /// turn (`advance_herd_grazing`, Logistics), read the same turn by the pen feed settlement in
+    /// turn (`advance_herd_grazing`, Logistics), read the same turn by the hay settlement in
     /// `advance_labor_allocation` (Population). For a penned herd it is what the fenced footprint fed
-    /// the pen; hay is asked for the remainder and a shortfall starves the herd — **the keeper's
-    /// larder is not asked**, because human food is not animal feed. Recomputed each turn; sim-side
-    /// only — not on the client wire.
+    /// the pen; for a tamed herd it is what its roam range fed it. Hay is asked for the remainder
+    /// ([`herd_eats_hay`]); a pen's shortfall starves the herd — **the keeper's larder is not asked**,
+    /// because human food is not animal feed. Recomputed each turn; sim-side only — not on the client
+    /// wire.
     pub footprint_intake: f32,
     /// Transient per-turn scratch: the share of a penned herd's feed its footprint covered last FEED
-    /// (`footprint_intake / (fodder_per_biomass × biomass)`, clamped `[0, 1]`; Grazing 2d §2.3). `1.0`
+    /// (`footprint_intake / (fodder_per_biomass × biomass ÷ density gain)`, clamped `[0, 1]`; Grazing 2d §2.3). `1.0`
     /// = the pasture feeds the pen for free; `0.0` = a barren footprint must be fed entirely on hay,
     /// and starves for whatever the hay does not cover. Exported as `penPastureFraction`, and it is
     /// the LAND half of the feed split — hay is the rest ([`Self::fodder_draw`]), in the same fodder
-    /// units, against the same `fodder_per_biomass × biomass` demand. `0.0` for an unpenned herd.
+    /// units, against the same `fodder_per_biomass × biomass ÷ density gain` demand. `0.0` for a wild herd; a tamed herd's
+    /// range plays the footprint's part.
     pub pen_pasture_fraction: f32,
-    /// Transient per-turn scratch: the hay this pen drew from its keeper band's `FODDER` store last
-    /// FEED (Flora Roster F3, §5.2), in fodder units. Written by the corral-tend branch of
-    /// `advance_labor_allocation` (Population); `0.0` for an unpenned herd, a keeper who does not know
-    /// Foddering, or a pen whose footprint already fed it. Exported as `fodderDraw` — with
+    /// Transient per-turn scratch: the hay this pen or tamed herd drew from its keeper band's `FODDER`
+    /// store last FEED (Flora Roster F3, §5.2), in fodder units. Written by `advance_labor_allocation`
+    /// (Population); `0.0` for a wild herd, a store holding no hay, or a herd whose grass already fed it. Exported as `fodderDraw` — with
     /// [`Self::pen_pasture_fraction`] it is the whole of the feed split ("fed by pasture NN% · hay
     /// X.X"), both in fodder units against one demand. Recomputed each turn — it records what was
     /// drawn, while the hay itself lives in the keeper's `LocalStore`.
@@ -619,7 +604,7 @@ pub struct Herd {
     // `penHayNeed` is off the wire.
     /// Transient per-turn scratch: **how much more fodder this pen needs per turn** —
     /// `max(0, hay_need − fodder_draw)`, in fodder units, where `hay_need` is the gap the pen's own
-    /// fenced footprint leaves (`max(0, fodder_per_biomass × biomass − footprint_intake)`). Written
+    /// fenced footprint leaves (`max(0, fodder_per_biomass × biomass ÷ density gain − footprint_intake)`). Written
     /// by the corral-tend branch of `advance_labor_allocation` (Population) on the **same pass** as
     /// both its terms, so the difference can never describe a different turn from them. Exported as
     /// `penFodderShortfall`.
@@ -634,9 +619,9 @@ pub struct Herd {
     /// surfaces in advance: a pen's carrying capacity is fixed and its herd is not, so a pen that
     /// feeds itself today becomes hay-dependent long before any animal dies of it.
     ///
-    /// **Ungated by Foddering**, unlike [`Self::fodder_draw`]: a band that cannot draw hay draws
-    /// nothing, so its shortfall is its *whole* need — the case where the herd is dying and the
-    /// remedy is knowledge rather than hay, which is precisely the case this field exists for.
+    /// With an empty `FODDER` store the draw is nothing and the shortfall is the herd's *whole* need —
+    /// the case where the herd is dying and the remedy is hay, which is precisely the case this field
+    /// exists for.
     ///
     /// **Clamped at zero.** `settle_pen_hay` never settles a pen more hay than its own gap, so the
     /// difference is non-negative by construction; the clamp is against the
@@ -649,16 +634,18 @@ pub struct Herd {
     // Both existed only to price a pen's feed in the units the PEOPLE eat in: the larder bill was the
     // human food a keeper handed its livestock, and `pen_hay_food` was hay converted into the food it
     // *displaced* from that bill. A pen is fed grass and hay and nothing else now, so the feed split
-    // is `footprint_intake + fodder_draw` against `fodder_per_biomass × biomass` — one quantity in one
+    // is `footprint_intake + fodder_draw` against `fodder_per_biomass × biomass ÷ density gain` — one quantity in one
     // unit, and [`Self::pen_pasture_fraction`] is the whole of the land/hay share the client needs.
-    /// Transient per-turn scratch: the **sustained fodder inflow** in range of this pen's keeper band
+    /// Transient per-turn scratch: the **sustained fodder inflow** in range of this pen's (or tamed
+    /// herd's) keeper band
     /// — the per-turn hay output of the band's fodder Fields (Flora Roster F3, §5.3). Written *after*
     /// the assignment loop in `advance_labor_allocation` (Population) and read the **next** turn by
     /// `ecological_carrying_capacity` (Logistics) as the `K_pen` fodder-flow term. It is the **flow**,
     /// deliberately NOT the store's **stock**: raising `K` off a built-up buffer would spike K → the
     /// herd grows → the store empties → K collapses → starvation, an oscillation. The flow is what the
-    /// farming sustainably delivers, so the loop settles. `0.0` for an unpenned herd or one no hay
+    /// farming sustainably delivers, so the loop settles. `0.0` for a wild herd or one no hay
     /// reaches; sim-side only — not on the client wire (the *draw* it produces rides `fodderDraw`).
+    /// Split evenly across the pens and tamed herds a band keeps.
     pub fodder_delivery_rate: f32,
     /// Transient per-turn flag: a Hunt assignment tended this corralled herd this turn (set in
     /// `advance_labor_allocation`, Population). `advance_husbandry` (Logistics, the *next* turn —
@@ -672,7 +659,7 @@ pub struct Herd {
     /// rebuild).
     pub corralled_tended_this_turn: bool,
     /// Transient per-turn flag: the fraction of the pen's **feed** demand its grass and hay covered
-    /// last turn — `(footprint_intake + fodder_draw) / (fodder_per_biomass × biomass)`, clamped
+    /// last turn — `(footprint_intake + fodder_draw) / (fodder_per_biomass × biomass ÷ density gain)`, clamped
     /// `[0, 1]`; `1.0` = fully fed, and the value when nothing was demanded. **One quantity in one
     /// unit**: it used to add a fodder-unit land share to a food-unit larder payment, which is how
     /// human food came to be animal feed at all.
@@ -1813,6 +1800,26 @@ pub fn herd_density_gain(standing: &RungStanding, herd: &Herd, fauna: &FaunaConf
     })
 }
 
+/// **WHAT A HERD EATS: `fodder_per_biomass × biomass ÷ density gain`** — the one expression for a herd's
+/// feed demand, read by the grazing draw ([`advance_herd_grazing`]) and by the pen / tamed-herd hay
+/// settlement (`systems::labor::settle_pen_hay`). Domestication lets the land hold `density_gain ×` more
+/// animals ([`herd_density_gain`], applied at the K seam), and it does so by lowering each animal's
+/// appetite by the same factor, so a herd standing at its `K` is fed by the land that sets that `K` and
+/// hay covers only what poorer ground or a herd above `K` leaves. The gain is the herd's **live**
+/// standing (`Herd::standing`), the one `CapacityStanding::live` hands the K seam. A wild herd's gain
+/// is [`DEFAULT_HUSBANDRY_DENSITY`] (`1.0`), so its demand is the plain `fodder_per_biomass × biomass`.
+pub fn herd_feed_demand(herd: &Herd, fauna: &FaunaConfig) -> f32 {
+    let gain = herd_density_gain(&herd.standing(), herd, fauna);
+    // Validation requires every density `>= 1.0`; a non-positive gain is unreachable, but a divide by
+    // it would poison the demand, so it reads as the neutral gain.
+    let gain = if gain > 0.0 {
+        gain
+    } else {
+        DEFAULT_HUSBANDRY_DENSITY
+    };
+    (herd.fodder_per_biomass * herd.biomass / gain).max(0.0)
+}
+
 /// **THE DENSITY GAIN A RUNG BUYS**, asked about a rung the herd may not stand on — the animal twin
 /// of `forage::rung_capacity_gain`, and the per-rung seam [`herd_density_gain`] interpolates over.
 fn rung_density_gain(rung: HerdPayoff, herd: &Herd, fauna: &FaunaConfig) -> f32 {
@@ -1825,7 +1832,7 @@ fn rung_density_gain(rung: HerdPayoff, herd: &Herd, fauna: &FaunaConfig) -> f32 
 
 // **RETIRED: `pen_upkeep`** — `upkeep_per_biomass × biomass`, the food a pen drew from its keeper's
 // larder, answered for every herd (a projection when unpenned) and exported as `penUpkeep`. **Human
-// food is not animal feed.** A pen eats what a herd always ate — `fodder_per_biomass × biomass` of
+// food is not animal feed.** A pen eats what a herd always ate — `fodder_per_biomass × biomass ÷ density gain` of
 // grass, off its fenced footprint and out of the hay store — so there is no food-unit running cost
 // left to quote, and nothing to subtract from `corral_yield` in a pre-commit preview. What a pen can
 // still cost its keeper is *work* (`herders_needed`, the `animal:pen` rung's standing upkeep) and the
@@ -3792,13 +3799,14 @@ fn ecological_carrying_capacity(
         // point graze does, because hay *is* feed. `fodder_delivery_rate` is the SUSTAINED inflow of
         // the keeper band's hay Fields (written by `advance_labor_allocation`), NOT the store's stock
         // — reading a built-up buffer would spike K and oscillate the coupled loop. It is `0.0`
-        // unless the keeper knows Foddering AND the herd is penned, so a wild/unfoddered herd's `K` is
+        // unless a keeper band stamps it on a pen or a tamed herd, so a wild herd's `K` is
         // footprint-only. Added once per point: the mean of a constant is itself, so it enters `K`
         // exactly as it did over a single footprint, and a barren footprint (`flow = 0`) is carried
         // entirely by delivered hay.
         flow += herd.fodder_delivery_rate.max(0.0);
         // **The per-species husbandry DENSITY gain** (the density ladder): domestication makes the
-        // land hold *more* animals per unit of feed, so it scales the feed side ONLY, above the
+        // land hold *more* animals — each eats `1 / density_gain` as much ([`herd_feed_demand`]), so a
+        // herd at this `K` is fed by the land that sets it. It scales the feed side ONLY, above the
         // `min` — it does not enlarge the ground. A wild herd's `×1.0` leaves this untouched;
         // recomputed fresh each turn from `flow`, so it never compounds.
         total += (flow / herd.fodder_per_biomass * density_gain).min(space);
@@ -3983,7 +3991,7 @@ pub fn carnivore_k_at(
 /// instead (`advance_pen_grazing`), on a different draw, so it is skipped here.
 ///
 /// Per herd: enumerate its **range** = [`hex_range_tiles`]`(current_pos, graze_range_radius)`, demand
-/// `fodder_per_biomass × biomass` fodder, and draw it from the range's patches ([`graze_take`]),
+/// `fodder_per_biomass × biomass ÷ density gain` fodder, and draw it from the range's patches ([`graze_take`]),
 /// **proportional to each tile's available graze** and floored at the **overgrazing escapement floor**
 /// (never below `overgraze_escapement_fraction × capacity` — 2b-ii's convergence discipline; a barren
 /// tile with no patch contributes nothing).
@@ -4024,7 +4032,8 @@ pub fn advance_herd_grazing(
         // it draws (`footprint_intake`) is the pasture share of its feed this turn (§2.3, read in
         // `advance_labor_allocation`); hay covers what it leaves, and a shortfall starves the herd. `herd_footprint` picks the fenced footprint for a penned herd,
         // the roam range for a mobile one.
-        let demand = (herd.fodder_per_biomass * herd.biomass).max(0.0);
+        // The herd's appetite: `fodder_per_biomass × biomass ÷ density gain` ([`herd_feed_demand`]).
+        let demand = herd_feed_demand(herd, &fauna);
         if demand <= 0.0 {
             herd.footprint_intake = 0.0;
             continue;
@@ -4881,6 +4890,14 @@ fn owner_camp_tiles(
 /// `RungDef::knowledge_earned`, slice 4). The plant twin is `forage::patch_rung_key`.
 pub(crate) fn herd_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> &'a RungDef {
     ladder.rung(herd_rung_key(herd))
+}
+
+/// **DOES THIS HERD EAT THE KEEPER BAND'S HAY?** — the one predicate the hay settlement and the
+/// corral/tame arms share. A **penned** herd always does (it is confined and fed grass and hay). A
+/// **tamed** (pastoral, unfenced) herd does when the asking faction owns it: it grazes its roam range
+/// and the hay covers the gap, under the pen's own rule. A **wild** herd never does.
+pub fn herd_eats_hay(herd: &Herd, faction: FactionId) -> bool {
+    herd.is_corralled() || (herd.is_domesticated() && herd.owner == Some(faction))
 }
 
 /// **[`herd_rung`] without the ladder** — the same reading answered as the key, for the callers that
@@ -5848,7 +5865,7 @@ pub fn herd_meter_rot(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -
 /// before it has banked anything* — is [`herd_claims_keeping`].
 pub fn herd_upkeep_demand(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
     let load = herd_work_keeper_load(herd, fauna, ladder);
-    interpolate(&herd.standing(), |mark| {
+    interpolate_built(&herd.standing(), |mark| {
         ladder.rung(mark.id).upkeep_demand(load)
     })
 }
@@ -5894,7 +5911,7 @@ pub fn herd_upkeep_material_demand(
     material: &str,
 ) -> f32 {
     let load = herd_keeper_load(herd, fauna);
-    interpolate(&herd.standing(), |mark| {
+    interpolate_built(&herd.standing(), |mark| {
         ladder.rung(mark.id).upkeep_material_demand(material, load)
     })
 }
@@ -7459,11 +7476,19 @@ pub(crate) fn forecast_take_outcomes(
                     // forecast that fought a pen the turn does not would be exactly the
                     // forecast-vs-actual split `yield-forecast.md` forbids. Whole bodies, off the
                     // herd's own wounds: this is next turn's take, not a rate.
+                    let kill_stage = QuarryFight {
+                        fenced: if forecast.slaughters {
+                            WHOLE_HERD_FENCED
+                        } else {
+                            quarry.fenced
+                        },
+                        ..*quarry
+                    };
                     let kills = OutcomeKills::resolve(
                         &outcomes,
                         workers,
                         party,
-                        (!forecast.slaughters).then_some(quarry),
+                        Some(&kill_stage),
                         quarry.wounds,
                         draw,
                     );
@@ -7984,8 +8009,8 @@ pub fn herd_take_room(herd: &Herd, floor: f32, fauna: &FaunaConfig) -> f32 {
 ///
 /// [`crate::fauna_config::PEN_STANDING_RUNG_SHARE`] behind a fence, `husbandry.pastoral_standing_fraction`
 /// on a halter, and [`crate::fauna_config::NO_STANDING_RUNG_SHARE`] wild — you do not milk an animal
-/// that runs from you. Stepped at the fence exactly as [`herd_engage_rate`] and [`herd_wariness`]
-/// are, and resolved **live** off the config so a retune reaches herds already on the map.
+/// that runs from you. It steps at the fence - milk is a payout, not handling, and only handling
+/// grows with the build ([`herd_engage_rate`]) - and is resolved **live** off the config so a retune reaches herds already on the map.
 pub fn herd_standing_rung_share(herd: &Herd, fauna: &FaunaConfig) -> f32 {
     if herd.is_corralled() {
         crate::fauna_config::PEN_STANDING_RUNG_SHARE
@@ -8657,12 +8682,21 @@ impl<'a> OutcomeKills<'a> {
         wounds: DamageLedger,
         draw: HuntDraw,
     ) -> Self {
+        // The fight alone: the damage a party deals does not depend on how many animals stand, and
+        // the fenced share is set aside per outcome in `rate`.
         let blow = quarry.map(|fight| {
             let most = outcomes
                 .iter()
                 .map(|outcome| outcome.stayed)
                 .fold(NO_STAYERS, f32::max);
-            resolve_hunt_fight(most, workers, party, fight, draw).expected_brought_down
+            resolve_hunt_fight(
+                most * (WHOLE_HERD_FENCED - fight.fenced),
+                workers,
+                party,
+                &fight.unfenced(),
+                draw,
+            )
+            .expected_brought_down
         });
         Self {
             workers,
@@ -8675,9 +8709,15 @@ impl<'a> OutcomeKills<'a> {
 
     /// **Bodies a turn at `stayed`, un-floored** — [`HuntFight::expected_brought_down`].
     pub fn rate(&self, stayed: f32) -> f32 {
-        match self.blow {
-            Some(blow) => blow.min(stayed),
-            None => self.slaughter(stayed).expected_brought_down,
+        match (self.blow, self.quarry) {
+            (Some(blow), Some(fight)) => {
+                // The penned share goes down outright; the rest is the fight's, capped at the bodies
+                // it is still fought over.
+                let penned = stayed * fight.fenced;
+                blow.min(stayed - penned) + penned
+            }
+            (Some(blow), None) => blow.min(stayed),
+            (None, _) => self.slaughter(stayed).expected_brought_down,
         }
     }
 
@@ -8699,12 +8739,11 @@ impl<'a> OutcomeKills<'a> {
     /// - **A fight** reads [`Self::rate`] — the blow the standing bodies absorbed, before the
     ///   whole-animal floor. That is exactly what the live take banks: the fight's [`DamageLedger`]
     ///   keeps every remainder, so bodies come down at the absorbed rate over any run of turns.
-    /// - **A slaughter** reads [`Self::whole`] at [`EngagementQuantum::WholeAnimals`], because a
-    ///   slaughter carries **no** remainder between turns: what is floored away on one turn is lost
-    ///   to that turn, so the floored count *is* the live expectation. At
-    ///   [`EngagementQuantum::Rate`] it reads [`Self::rate`], for the reason the crew curve is a rate
-    ///   at all: its engagement is un-floored too, and the herd's own biomass carries a sub-body room
-    ///   between turns, so flooring it reports a cadence as a never.
+    /// - **A pen's slaughter** is a quarry with every animal fenced ([`herd_kill_stage`]), so it
+    ///   banks on the wound ledger exactly as a fight does and reads [`Self::rate`] too.
+    /// - **No quarry at all** (a caller that names none) reads [`Self::whole`] at
+    ///   [`EngagementQuantum::WholeAnimals`] - a floor with no carry - and [`Self::rate`] at
+    ///   [`EngagementQuantum::Rate`].
     pub fn projected(&self, stayed: f32, quantum: EngagementQuantum) -> f32 {
         match (self.blow, quantum) {
             (None, EngagementQuantum::WholeAnimals) => self.whole(stayed),
@@ -8817,50 +8856,39 @@ fn normal_cdf(x: f32) -> f32 {
     (0.5 * (1.0 + signed_erf)) as f32
 }
 
-/// **A PROJECTION'S WHOLE BODIES, OUT OF AN EXPECTED RATE** — the carry that turns
+/// **A PROJECTION'S WHOLE BODIES, OUT OF AN EXPECTED RATE** - the carry that turns
 /// [`expected_kill_over_retreat`]'s fractional bodies-a-turn into the whole animals a projected turn
 /// lands, keeping the remainder for the next turn.
 ///
-/// **On a fight it is the quarry's own [`DamageLedger`]**, banked through
-/// [`DamageLedger::bank_units`] — the live take's carry, so a projection that starts from a herd
-/// already wounded finishes its first body when the live take would. **On a slaughter it is a plain
-/// fraction of a body**: the live take has no carry there (each turn floors its own draw), but its
-/// *expectation* is fractional, and a projection that floored the expectation every turn would
-/// report `1.6` bodies a turn as `1`. A fractional flow becomes an event only on a whole-unit
-/// crossing.
+/// **It is the herd's own [`DamageLedger`] at every rung**, banked through
+/// [`DamageLedger::bank_units`] - the live take's carry, so a projection that starts from a herd
+/// already wounded finishes its first body when the live take would. A closed pen banks on it too
+/// ([`herd_kill_stage`]): a part body slaughtered one turn is the next turn's, exactly as a fought
+/// one is, and a projection that floored the expectation every turn would report `1.6` bodies a
+/// turn as `1`. A fractional flow becomes an event only on a whole-unit crossing.
 pub struct KillCarry {
-    quarry_fight: Option<QuarryFight>,
-    slaughter_remainder: f32,
+    quarry_fight: QuarryFight,
 }
 
 impl KillCarry {
-    /// Start from the herd's own kill arm — its wounds on a fight, nothing banked on a slaughter.
+    /// Start from the herd's own kill stage and the wounds it already carries.
     pub fn new(herd: &Herd, fauna: &FaunaConfig) -> Self {
         Self {
-            quarry_fight: herd_fight_stage(herd, fauna),
-            slaughter_remainder: 0.0,
+            quarry_fight: herd_kill_stage(herd, fauna),
         }
     }
 
-    /// The kill arm this carry projects — `None` at a pen.
+    /// The kill stage this carry projects.
     pub fn quarry(&self) -> Option<&QuarryFight> {
-        self.quarry_fight.as_ref()
+        Some(&self.quarry_fight)
     }
 
     /// Bank this turn's expected bodies and hand back the whole ones that go down.
     pub fn land(&mut self, expected_bodies: f32) -> f32 {
-        match self.quarry_fight.as_mut() {
-            Some(fight) => {
-                let profile = fight.profile;
-                fight.wounds.bank_units(expected_bodies, &profile)
-            }
-            None => {
-                self.slaughter_remainder += expected_bodies.max(0.0);
-                let down = whole_units(self.slaughter_remainder);
-                self.slaughter_remainder = (self.slaughter_remainder - down).max(0.0);
-                down
-            }
-        }
+        let profile = self.quarry_fight.profile;
+        self.quarry_fight
+            .wounds
+            .bank_units(expected_bodies, &profile)
     }
 }
 
@@ -8948,9 +8976,26 @@ pub struct QuarryFight {
     /// take path fills it from the herd with [`herd_quarry_fight`] and stores
     /// [`HuntFight::wounds`] back afterwards.
     pub wounds: DamageLedger,
+    /// **THE SHARE OF WHAT STAYS THAT IS SLAUGHTERED RATHER THAN FOUGHT**, `0.0..=1.0` - the fenced
+    /// share of a herd whose pen is part built ([`herd_fenced_share`]). `0` is every wild and every
+    /// pastoral herd (all of it fought, exactly as before); a closed pen is not a `QuarryFight` at all
+    /// ([`herd_fight_stage`] answers `None`), so `1` is never stored here.
+    pub fenced: f32,
 }
 
+/// **NO PART OF THE HERD IS FENCED** - [`QuarryFight::fenced`] on the range and at a halter.
+pub const NOTHING_FENCED: f32 = 0.0;
+
 impl QuarryFight {
+    /// The same quarry with its fenced share set aside - the fight a [`resolve_hunt_fight`] runs on
+    /// the animals that are still fought.
+    fn unfenced(&self) -> Self {
+        Self {
+            fenced: NOTHING_FENCED,
+            ..*self
+        }
+    }
+
     /// The same quarry, carrying the wounds a herd has already taken — the one seam between
     /// [`Herd::wounds`] and the fight.
     pub fn with_wounds(self, wounds: DamageLedger) -> Self {
@@ -9712,6 +9757,20 @@ pub fn resolve_hunt_fight(
             // is simply empty.
             strike_charges: Vec::new(),
         };
+    }
+    // **A PART-BUILT PEN SLAUGHTERS ITS FENCED SHARE AND FIGHTS THE REST.** The animals that stayed
+    // are split by the share of the fence that is up: that share goes down outright (no gate, no
+    // grind, no wounds taken by the keepers), banked onto the same wound ledger as whole bodies so a
+    // part body carries between turns exactly as a fought one does; the rest is the ordinary fight,
+    // with every hunter still on it. At `fenced == 0` this is the fight untouched.
+    if quarry.fenced > NOTHING_FENCED {
+        let penned = stayed * quarry.fenced;
+        let mut fought =
+            resolve_hunt_fight(stayed - penned, hunters, party, &quarry.unfenced(), draw);
+        let slaughtered = fought.wounds.bank_units(penned, &quarry.profile);
+        fought.brought_down += slaughtered;
+        fought.expected_brought_down += penned;
+        return fought;
     }
     // **What the activity costs whoever shows up** (§4.6) — resolved before the quarry is even asked
     // whether it fights back, because it does not depend on the answer.
@@ -10567,11 +10626,14 @@ impl FightRate {
             return FightRate::CannotWound;
         };
         let tuning = &party.tuning;
+        // The fight is only on the animals still fought: a part-fenced herd presents `1 - fenced` of
+        // what stays to the weapons, so a hunter's bodies per head reached are that much higher.
         let bodies_per_hunter =
             crate::combat::strike_damage(crew.hunter.attack, quarry.profile.defense)
                 * tuning.lethality
                 * tuning.hit_chance
-                / quarry.profile.durability;
+                / quarry.profile.durability
+                / (WHOLE_HERD_FENCED - quarry.fenced).max(f32::EPSILON);
         if bodies_per_hunter.is_finite() && bodies_per_hunter > NO_HANDS {
             FightRate::BodiesPerHunter(bodies_per_hunter)
         } else {
@@ -10818,41 +10880,93 @@ pub fn herd_hunt_yield(herd: &Herd, fauna: &FaunaConfig) -> HuntYield {
 /// turn than a hunter, because they are standing still rather than running away; that is a
 /// **multiplier** (`husbandry.pen_engage_gain`), not the absence of a number.
 ///
-/// **It STEPS at the fence**, like everything else penning buys: `is_corralled()` is a stored fact
-/// set at completion, and half a fence is no fence — the animals are still roaming and nothing about
-/// handling them has changed. That is the deliberate difference from the plant web's Field, where a
-/// half-sown field genuinely has half a crop in the ground.
+/// **It GROWS with the build** ([`handling_at`]): a halter's gain is paid in proportion to the share
+/// of the Tame banked, and a fence's in proportion to the share of the pen banked - the same way a
+/// tended patch pays in proportion to the Cultivate. Untouched is the wild reach and finished is the
+/// rung's, exactly. Only *handling* grows: the pen's `K`, hay, fixed movement and unbounded carry
+/// still wait for the fence to close.
 pub fn herd_engage_rate(herd: &Herd, fauna: &FaunaConfig, drives_known: bool) -> f32 {
     let wild = fauna.engage_rate_for(&herd.species);
-    if herd.is_corralled() {
-        // **THROUGH THE PER-SPECIES SEAM** ([`FaunaConfig::pen_engage_gain_for`]) — this animal's own
-        // handling gain where the roster states one, the global where it does not. One keeper handles
-        // far more chickens in a day than cattle, and a flat gain across the roster says otherwise.
-        wild * fauna.pen_engage_gain_for(&herd.species)
-    } else if herd.is_domesticated() {
-        // **A HALTER BUYS REACH TOO** (`husbandry.pastoral_engage_gain`). It did not, and that was
-        // the hole: rung 2 raised the breeding rate and the retreat and nothing that *bound*, on a
-        // web where no shipped source is limited by its herd running out. See the field's own doc.
-        //
-        // **THROUGH THE PER-SPECIES SEAM** ([`FaunaConfig::pastoral_engage_gain_for`]) — this animal's
-        // own gain where the roster states one, the global where it does not. Reach binds the
-        // heavy-bodied half of the roster and is inert on the small-bodied half, so a single global
-        // number could not describe both.
-        wild * fauna.pastoral_engage_gain_for(&herd.species)
-    } else {
-        // **A DRIVE (#799, the `drives` roaming skill)** — the wild arm's reach grows with the herd
-        // when the hunting faction has learned to drive: `1 + drive_engage_gain × min(head_count /
-        // drive_full_head_count, 1)`. It is the wild arm alone because a pen and a halter already
-        // have their own reach gains and nobody drives a fenced animal. The identity (`× 1`) when
-        // the skill is not known, so every faction without it reads the species' own rate.
-        wild * crate::roaming_skills::drive_engage_multiplier(
+    // **A DRIVE (#799, the `drives` roaming skill)** — the wild arm's reach grows with the herd
+    // when the hunting faction has learned to drive: `1 + drive_engage_gain × min(head_count /
+    // drive_full_head_count, 1)`. It is the wild arm alone because a pen and a halter already have
+    // their own reach gains and nobody drives a fenced animal. The identity (`× 1`) when the skill
+    // is not known, so every faction without it reads the species' own rate.
+    let range = wild
+        * crate::roaming_skills::drive_engage_multiplier(
             drives_known,
             herd_head_count(herd.biomass, herd.body_mass),
             fauna.hunt.drive_engage_gain,
             fauna.hunt.drive_full_head_count,
-        )
+        );
+    // **A HALTER BUYS REACH TOO** (`husbandry.pastoral_engage_gain`), through the per-species seam
+    // ([`FaunaConfig::pastoral_engage_gain_for`]): reach binds the heavy-bodied half of the roster
+    // and is inert on the small-bodied half, so a single global number could not describe both.
+    let pastoral = wild * fauna.pastoral_engage_gain_for(&herd.species);
+    // **A FENCE BUYS MORE** ([`FaunaConfig::pen_engage_gain_for`]) - this animal's own handling gain.
+    // One keeper handles far more chickens in a day than cattle.
+    let pen = wild * fauna.pen_engage_gain_for(&herd.species);
+    handling_at(herd, range, pastoral, pen)
+}
+
+/// **A HERD'S HANDLING TERM AT THE POINT OF ITS BUILD** - the one seam the reach, the retreat and the
+/// fight's softness all read, so a half-built rung pays in proportion to the work banked, as
+/// cultivation does.
+///
+/// ```text
+/// wild herd, Tame t built      wild    + t * (pastoral - wild)
+/// tamed herd, pen f built      pastoral + f * (pen - pastoral)
+/// penned herd                  pen
+/// ```
+///
+/// `t` and `f` are [`RungStanding::built`] - the share of the raising rung's job banked, which for the
+/// pen is read **past** its `on_completion` mode: the fence's payouts (`K`, hay, fixed movement, an
+/// unbounded carry) wait for it to close, but the animals the keepers are already handling are
+/// handled better as it goes up. Untouched is the wild value and finished is the rung's value,
+/// both exactly.
+fn handling_at(herd: &Herd, wild: f32, pastoral: f32, pen: f32) -> f32 {
+    let built = herd.standing().built;
+    if herd.is_corralled() {
+        pen
+    } else if herd.is_domesticated() {
+        lerp_handling(pastoral, pen, built)
+    } else {
+        lerp_handling(wild, pastoral, built)
     }
 }
+
+/// `from + t * (to - from)`, with both ends exact: nothing built is `from` and all built is `to`.
+/// The ends are branches rather than arithmetic because a term can be infinite (the plant web's
+/// engagement sentinel), and `0 * (inf - inf)` is a NaN.
+fn lerp_handling(from: f32, to: f32, built: f32) -> f32 {
+    if built <= NO_RUNG_BUILT {
+        from
+    } else if built >= WHOLE_RUNG_JOB_BUILT {
+        to
+    } else {
+        from + built * (to - from)
+    }
+}
+
+/// The whole of a rung's job is built.
+const WHOLE_RUNG_JOB_BUILT: f32 = 1.0;
+
+/// **THE SHARE OF A HERD THAT IS FENCED FOR HANDLING** - what the pen build has banked, `0` before a
+/// fence is begun and for every herd that is not tamed. The penned share of what stays is slaughtered
+/// ([`resolve_hunt_fight`]); the rest is still fought. A closed pen is `1` here but never reaches the
+/// fight ([`herd_fight_stage`] answers `None`).
+pub fn herd_fenced_share(herd: &Herd) -> f32 {
+    if herd.is_corralled() {
+        WHOLE_HERD_FENCED
+    } else if herd.is_domesticated() {
+        herd.standing().built
+    } else {
+        NOTHING_FENCED
+    }
+}
+
+/// The whole herd is behind the fence.
+const WHOLE_HERD_FENCED: f32 = 1.0;
 
 /// **HOW READILY THIS HERD BREAKS OFF AT CONTACT, at the rung it actually stands on** — the retreat
 /// stage's term, and the wariness twin of [`herd_engage_rate`].
@@ -10871,8 +10985,7 @@ pub fn herd_engage_rate(herd: &Herd, fauna: &FaunaConfig, drives_known: bool) ->
 /// ([`herd_fight_stage`]) — both separate from the retreat, which is what this function answers.
 /// Keeping them apart is what lets a haltered animal be *calmer* and *softer* by different amounts.
 ///
-/// **It STEPS at the fence**, exactly as [`herd_engage_rate`] does: `is_corralled()` /
-/// `is_domesticated()` are stored facts set at completion, and half a fence is no fence.
+/// **It GROWS with the build**, exactly as [`herd_engage_rate`] does ([`handling_at`]).
 ///
 /// # It is the same shape as [`herd_engage_rate`], and that used to be an asymmetry
 ///
@@ -10882,13 +10995,12 @@ pub fn herd_engage_rate(herd: &Herd, fauna: &FaunaConfig, drives_known: bool) ->
 /// closes it, and the two seams now step at both rungs in step.
 pub fn herd_wariness(herd: &Herd, fauna: &FaunaConfig) -> f32 {
     let wild = fauna.wariness_for(&herd.species);
-    if herd.is_corralled() {
-        wild * fauna.husbandry.pen_wariness
-    } else if herd.is_domesticated() {
-        wild * fauna.husbandry.pastoral_wariness
-    } else {
-        wild
-    }
+    handling_at(
+        herd,
+        wild,
+        wild * fauna.husbandry.pastoral_wariness,
+        wild * fauna.husbandry.pen_wariness,
+    )
 }
 
 /// **THE seam between the herd's damage ledger and the fight**, and the sugar every path holding a
@@ -10916,6 +11028,14 @@ pub fn herd_quarry_fight(herd: &Herd, fauna: &FaunaConfig) -> QuarryFight {
             durability: species.profile.durability * resistance,
             ..species.profile
         },
+        // A closed pen is slaughtered by the kill arm (`herd_fight_stage` answers `None`); the
+        // quarry a forecast holds for it keeps the fight's own terms, which is what its retreat
+        // reads. Only a fence going up splits the herd.
+        fenced: if herd.is_corralled() {
+            NOTHING_FENCED
+        } else {
+            herd_fenced_share(herd)
+        },
         ..species
     }
     .with_wounds(herd.wounds)
@@ -10935,12 +11055,17 @@ pub fn herd_quarry_fight(herd: &Herd, fauna: &FaunaConfig) -> QuarryFight {
 /// `pastoral_wariness` (the retreat) — and unlike those two it moves a term that actually **bounds**
 /// the take on the shipped roster.
 pub fn herd_resistance(herd: &Herd, fauna: &FaunaConfig) -> f32 {
-    if herd.is_domesticated() && !herd.is_corralled() {
-        // **This animal's own, or the global** ([`FaunaConfig::pastoral_resistance_for`]) — the arm
-        // that reaches the *fight-bound* half of the roster, where reach is inert.
-        fauna.pastoral_resistance_for(&herd.species)
-    } else {
+    // **This animal's own, or the global** ([`FaunaConfig::pastoral_resistance_for`]) — the arm that
+    // reaches the *fight-bound* half of the roster, where reach is inert. A half-tamed herd is that
+    // far from the identity; a herd with a fence going up keeps the halter's softness for the
+    // animals that are still fought, and a closed pen has no fight to soften.
+    let pastoral = fauna.pastoral_resistance_for(&herd.species);
+    if herd.is_corralled() {
         NO_RESISTANCE_CHANGE
+    } else if herd.is_domesticated() {
+        pastoral
+    } else {
+        lerp_handling(NO_RESISTANCE_CHANGE, pastoral, herd.standing().built)
     }
 }
 
@@ -11059,6 +11184,23 @@ const NO_RESISTANCE_CHANGE: f32 = 1.0;
 /// quarry from scalars and never asks this seam.
 pub fn herd_fight_stage(herd: &Herd, fauna: &FaunaConfig) -> Option<QuarryFight> {
     (!herd.is_corralled()).then(|| herd_quarry_fight(herd, fauna))
+}
+
+/// **THE QUARRY THE KILL ARM BANKS ON, AT EVERY RUNG** - [`herd_quarry_fight`] with the fenced share
+/// of the herd's own rung ([`herd_fenced_share`]): none on the range, `f` of a part-built fence, all
+/// of a closed pen.
+///
+/// [`herd_fight_stage`] answers *"is anything fought"* - the hands, the casualties, the wear - and
+/// is `None` at a closed pen. This answers *"what does the take bank on"*, and a pen banks too: the
+/// slaughtered share goes onto the herd's wound ledger as whole bodies and a remainder
+/// ([`resolve_hunt_fight`]), so a keeper crew handling `0.7` of an animal a turn slaughters one about
+/// every other turn instead of none ever. **One seam for the live take, the crew curve, the seeded
+/// row and every projection.**
+pub fn herd_kill_stage(herd: &Herd, fauna: &FaunaConfig) -> QuarryFight {
+    QuarryFight {
+        fenced: herd_fenced_share(herd),
+        ..herd_quarry_fight(herd, fauna)
+    }
 }
 
 /// **THE KILL ARM — a FIGHT where there is one, a SLAUGHTER where there is not.** The one dispatch
@@ -11198,7 +11340,7 @@ pub fn resolve_hunt_engagement(
         stayed,
         workers,
         party,
-        herd_fight_stage(herd, fauna).as_ref(),
+        Some(&herd_kill_stage(herd, fauna)),
         herd.wounds,
         draw,
     );
@@ -11585,7 +11727,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
     // the number moved with the band's kit on a take that does not read one.
     // The retreat and the kill arm at this herd's rung — quarry facts, the same on every row.
     let wariness = herd_wariness(&quarry, inputs.fauna);
-    let quarry_fight = herd_fight_stage(&quarry, inputs.fauna);
+    let quarry_fight = Some(herd_kill_stage(&quarry, inputs.fauna));
     let useful = curve_useful_take_hands(inputs, &quarry);
     let keepers_haul_it_home = quarry.is_corralled()
         && !herd_collection(&quarry, inputs.fauna, ONE_WORKER, inputs.baseline_haul_rate)

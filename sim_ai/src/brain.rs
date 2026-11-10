@@ -29,6 +29,7 @@ use crate::instruments::scoreboard::{COMMAND_FAILED_LABEL_SUFFIX, EVENT_TICK_LAG
 use crate::oracle::{CrewTakeOracle, Unasked};
 use crate::orchestrator::constant::ConstantStance;
 use crate::orchestrator::{Alarm, Orchestrator, Plan, INTENT_OUTFIT, ORCHESTRATOR_ID};
+use crate::orders::release_chief_rows;
 use crate::profile::{AiProfile, AiProfiles, Difficulty, ProfileError, Tuning};
 use crate::specialists::dealings::Dealings;
 use crate::specialists::food::Food;
@@ -311,6 +312,10 @@ impl Brain for Composite {
                 "crew take asked"
             );
         }
+        let outfit_asks = self.memory.refresh_outfit_takes(view, self.faction, oracle);
+        if outfit_asks > 0 {
+            info!(tick, asked = outfit_asks, "outfit crew take asked");
+        }
         self.ground = read_all(
             view,
             &self.memory,
@@ -398,7 +403,8 @@ impl Brain for Composite {
             .chain(accepted.into_iter().flat_map(|accepted| accepted.commands))
             .collect();
         self.memory.remember_runways(view, self.faction);
-        commands
+        // A row the chief works is crewed by hand only after the seat releases it (`orders.rs`).
+        release_chief_rows(view, self.faction, commands)
     }
 
     fn lens(&self) -> BrainLens<'_> {

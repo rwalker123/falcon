@@ -503,7 +503,7 @@ func _envoy_row_states(panel: BandCityPanel) -> void:
 		row_button != null and HudFormat.expedition_mission_mark("envoy") == "envoy"
 			and HudFormat.expedition_mission_glyph("envoy") == HudFormat.PANEL_EXPEDITION_ENVOY_GLYPH)
 	# ---- the five tabs fit the strip, with EVERY badge showing at its widest -----------------------------
-	# The Dealings tab once made six; at the old padding the bar overran the 380px strip and the card
+	# The Dealings tab once made six; at the old padding the bar overran the side dock's strip and the card
 	# widened past its reserved edge (the dock's border then ran through the tab bar and the rows).
 	var interior := BandCityPanel.PANEL_WIDTH - BandCityPanel.PANEL_CHROME_H
 	h._assert_hud("tabs: the five-tab bar fits the strip's interior as the badges stand (%.0f of %.0f)" % [

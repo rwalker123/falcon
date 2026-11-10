@@ -114,6 +114,9 @@ static func crew_take_rows(herd: Dictionary, max_workers: int, floor: float) -> 
 			SourceForecastRef.CREW_TAKE_LOW_KEY: brought_down,
 			SourceForecastRef.CREW_TAKE_LIKELY_KEY: brought_down,
 			SourceForecastRef.CREW_TAKE_HIGH_KEY: brought_down,
+			# Inside the apron the sim publishes the landed take equal to the take at the source.
+			SourceForecastRef.CREW_TAKE_HOME_LIKELY_KEY: brought_down,
+			SourceForecastRef.CREW_TAKE_HOME_FIRST_LOAD_KEY: 0,
 		})
 	return rows
 
@@ -343,8 +346,6 @@ static func _forage_next_rung_quote(hud: Node, tile: Dictionary, basket: Array[D
 		out["fodder"] = compose._flora_entry_fodder_payoff(entry, rung)
 		out["materials"] = compose._flora_entry_material_payoff(entry, rung)
 		break
-	if RungGatesRef.fodder_payoff_is_refused(committed, basket, compose._player_knowledge()):
-		out["fodder"] = 0.0
 	out["food"] = float(out["food"]) * output
 	out["fodder"] = float(out["fodder"]) * output
 	out["materials"] = SourceForecastRef.scaled_material_rows(out["materials"], output)

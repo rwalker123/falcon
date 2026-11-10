@@ -48,11 +48,12 @@ RUNG'S METER IS A **PUBLICATION** OF THE STANDING" owns the mechanism and the me
 - **`Herd::upkeep_demanded` is the stamped BILL**, the animal twin of `ForagePatch::upkeep_demanded` and
   present for the identical reason: an interpolated demand moves *within* the turn, so a fully-staffed
   keeping would otherwise read permanently short. `herd_keeping_basis` is its one reader.
-- **THE PEN STILL STEPS, and it does so for free.** `animal:pen` declares `partial_credit:
-  on_completion`, and `RungStanding::at` already zeroes `credit` for such a rung — so a herd raising a
-  fence interpolates between wild and *pastoral* and reaches the pen's rate only when the fence closes.
-  No call site tests for the pen. Half a fence is no fence; that is the deliberate difference from the
-  Field, where half a sown field genuinely has half a crop in the ground.
+- **THE PEN'S PAYOUTS STEP AT THE FENCE; ITS HANDLING GROWS WITH IT.** `animal:pen` declares
+  `partial_credit: on_completion`, and `RungStanding::at` zeroes `credit` for such a rung — so a herd
+  raising a fence interpolates its `K`, regrowth, hay, fixed movement and unbounded carry between wild
+  and *pastoral* and reaches the pen's only when the fence closes. **Handling reads a different field,
+  `RungStanding::built`** (the share of the raising rung's job banked, whatever its mode) — see "HANDLING
+  GROWS WITH THE BUILD" below.
 - **⛔ A PEN'S CREW CURVE IS THE STALKING CURVE, AND SINCE THE LARDER THERE IS NO `.min()` LEFT ON
   IT.** `pen_is_a_larder` ships **on**, so `fauna::herd_collection` answers an unbounded collection at
   a pen and `hunt_crew_take_curve`'s `keepers_haul_it_home` — `is_corralled() && !herd_collection(..)
@@ -253,7 +254,7 @@ domestication *reduce* capacity). **Playtest dials.**
   `pen_capacity` are **deleted** (a penned herd's `K` is just `herd.carrying_capacity`, so
   `herd_capacity` collapses to that field for every herd). A penned herd **grazes its footprint**
   (escapement-floored, like a wild herd) and the grass it eats is **the first of the two things that
-  feed it**: `pasture_fraction = clamp(footprint_intake / (fodder_per_biomass × biomass), 0, 1)`, and
+  feed it**: `pasture_fraction = clamp(footprint_intake / demand_grass, 0, 1)`, and
   **hay** covers what is left. A pen on lush steppe feeds itself for free (`pasture_fraction → 1`); a
   **wholly-barren** footprint keeps the herd's frozen `K` and lives entirely on hay — and, with none,
   goes unfed and shrinks. See "Phase 2d".
@@ -307,15 +308,19 @@ domestication *reduce* capacity). **Playtest dials.**
 
   | stage | what the rung buys | seam |
   |---|---|---|
-  | **engage** | `husbandry.pastoral_engage_gain` / `pen_engage_gain` × the species' `engage_rate` | `fauna::herd_engage_rate` |
+  | **engage** | `husbandry.pastoral_engage_gain` / `pen_engage_gain` × the species' `engage_rate`, in proportion to the build | `fauna::herd_engage_rate` |
   | **retreat** | `husbandry.pastoral_wariness` / `pen_wariness` × the species' `combat.wariness` | `fauna::herd_wariness` |
   | **fight** | pastoral: `husbandry.pastoral_resistance` × `defense` **and** `durability`. **Pen: there is no fight** | `fauna::herd_resistance` / `fauna::herd_fight_stage` |
 
   > **⛔ A PEN HAS NO FIGHT — YOU SLAUGHTER IT.** Everything the keepers reach and that does not
   > break off goes down: no attack-vs-defense gate, no durability grind, no wound ledger, no
-  > casualties. `fauna::herd_fight_stage` answers `None` at `animal:pen` and `fauna::resolve_hunt_kill`
-  > routes that to `fauna::slaughter`; `SourceYieldForecast::slaughters` carries the same fact into the
-  > preview so forecast and take run one kill arm.
+  > casualties. `fauna::herd_fight_stage` answers `None` at `animal:pen` (the hands, casualties and wear
+  > read it), but the kill itself banks through `fauna::herd_kill_stage`: a closed pen is a quarry with
+  > `fenced = 1`, so `resolve_hunt_fight` slaughters everything that stayed through
+  > `DamageLedger::bank_units` on the herd's wound ledger. A part body therefore carries between turns
+  > (one keeper handling 0.71 of an aurochs a turn slaughters one about every other turn, never zero),
+  > and the live take, the crew curve, the seeded row (`SourceYieldForecast::slaughters`) and every
+  > projection (`KillCarry`) bank on that one ledger.
   >
   > **WHAT DID NOT GO: THE ENGAGEMENT BOUND AND THE ESCAPEMENT CLAMP.** The pen is still capped by
   > the keepers' handling rate (`pen_engage_gain` × the species' `engage_rate`) and by the room above
@@ -362,24 +367,55 @@ domestication *reduce* capacity). **Playtest dials.**
   > have made the ladder a **mode switch** — taming and penning would buy nothing at the kill, and a
   > fenced animal would be collected by a formula the range never uses.
 
-- **EVERYTHING PENNING BUYS STEPS AT THE FENCE**, and that is the deliberate difference from the
-  plant web. The pen's regrowth gain, its density multiplier on `K`, its escape fraction and its
-  handling gain all read `is_corralled()` — a **stored fact set at completion** — so `animal:pen`
-  keeps `partial_credit: on_completion`. **Half a fence is not half a pen**: the animals are still
-  roaming and nothing about them has changed. A half-sown Field genuinely has half a crop in the
-  ground, which is why `plant:farm` is `continuous`; the two are different facts, not an
-  inconsistency.
+- **ONLY HANDLING GROWS WITH THE BUILD; EVERYTHING ELSE PENNING BUYS STEPS AT THE FENCE.** The pen's
+  regrowth gain, its density multiplier on `K`, its escape fraction, its hay feeding, its fixed
+  movement and its unbounded carry (`pen_is_a_larder`) read `is_corralled()` — a **stored fact set at
+  completion** — so `animal:pen` keeps `partial_credit: on_completion`: the fence has to close before
+  the land holds more animals or the carcass stays standing in the pen. A half-sown Field has half a
+  crop in the ground, which is why `plant:farm` is `continuous`.
+
+  > ### HANDLING GROWS WITH THE BUILD — reach, retreat, the fight's softness and the slaughtered share
+  >
+  > The animals a crew is already handling are handled better as the work goes in, the way a tended
+  > patch pays in proportion to the Cultivate. `fauna::handling_at` is the one seam, reading
+  > `RungStanding::built` (`banked ÷ the raising rung's width`, positive from the first work banked
+  > even on an `on_completion` rung, where `credit` is pinned to zero):
+  >
+  > | herd | `herd_engage_rate` | `herd_wariness` | `herd_resistance` | slaughtered share |
+  > |---|---|---|---|---|
+  > | wild, Tame `t` built | `wild + t·(pastoral − wild)` | same shape on `pastoral_wariness` | `1 + t·(pastoral − 1)` | 0 |
+  > | tamed, pen `f` built | `pastoral + f·(pen − pastoral)` | same shape on `pen_wariness` | the halter's, unchanged | `f` |
+  > | penned | the pen's | the pen's | 1 (no fight) | all |
+  >
+  > Untouched is the rung below **exactly** and finished is the rung **exactly** (`0 · x = 0`).
+  > **The pen's fenced share `f = RungStanding::built`.** `herd_fight_stage` still answers `None` only
+  > for a closed pen; for a part-built one it returns the halter's `QuarryFight` carrying
+  > `QuarryFight::fenced = f`. `resolve_hunt_fight` then splits what stays: `f` of it goes down outright
+  > (banked onto the same `DamageLedger` as whole bodies via `bank_units`, so a part body carries between
+  > turns as a fought one does) and the other `1 − f` is the ordinary fight with every hunter still on
+  > it. Everything that previews the take splits the same way - `OutcomeKills::rate` is
+  > `min(blow, (1−f)·stayed) + f·stayed`, `FightRate::of` divides a hunter's bodies by `1 − f` - so the
+  > crew curve, the seed, the projections and the published per-hunter rates read the interpolated
+  > terms (`forecast == take`, `hunt_handling_grows.rs`).
+  >
+  > **The keepers' bill follows the work built too**: `herd_upkeep_demand` and
+  > `herd_upkeep_material_demand` interpolate on `RungStanding::built` (`intensification::interpolate_built`),
+  > the plant rungs' rule (for a continuous rung `built == credit`, so plants are unchanged). The pen's
+  > keepers are owed from the first panel, so a 1-worker *net* rate (counting keepers) never falls as the
+  > Tame or the pen is finished (`hunt_handling_grows.rs`).
 - **AND SO DOES THE BILL** (`docs/plan_standing_upkeep.md` §2.8). The retired `herd_keeping_meter`
   billed the **pen** rung's upkeep from the first fencing work banked, while every benefit above waited
   for the fence — a herd paying to keep a pen that did not exist. That is the asymmetry §2.8 forbids and
-  it was in the shipped game.
+  it was in the shipped game. (The bill now follows the work built, `interpolate_built`, so it climbs
+  with the fence the way handling does.)
   > **§4.11 CLOSED THE SECOND HALF OF THE SAME ASYMMETRY, on the rung below.** Fixing the pen left
   > `pastoral` still stepping: `owner` is set by the **first** `Tame` accrual, so a herd owed the whole
   > pastoral rate from turn one while `is_domesticated()` — a completion predicate — withheld every
   > payout until the last. `herd_upkeep_demand` now interpolates on the position like everything else,
   > so a herd a tenth of the way up owes a tenth. **The pen's step survives on its own merits**, through
-  > `partial_credit: on_completion` rather than through a hand-written predicate: cost and benefit still
-  > move together, and at the fence they both move at once.
+  > `partial_credit: on_completion` rather than through a hand-written predicate. The pen's *payouts*
+  > (`K`, hay, fixed movement, unbounded carry) still step at the fence; its bill and its handling
+  > climb with the work built.
 - **The pastoral rung is worked, so it cannot be double-paid** (slice 3b). It *used* to pay its owner
   passively, and `advance_husbandry` had to **skip** that payment for any herd a labor assignment
   worked last turn (a `Herd::worked_this_turn` flag) — because without the skip a Red Deer under
@@ -446,7 +482,7 @@ bands (`extinction_floor < collapse_fraction < stressed_fraction < 1`) in all th
 — `head count / animals_per_herder` (`fauna::herd_keeper_loads`). Since one worker-turn is
 `PER_WORKER_OUTPUT`, `upkeep_crew_needed = ceil(load × R)` at the rung's own rate: a pen asks for the
 `ceil((biomass/body_mass)/animals_per_herder)` the retired helper computed, and a tamed herd asks for
-`0.6` of that (a Wild Boar herd's pastoral bill is ~0.94 work, one keeper, where it was 1.56 and two).
+`0.6` of that (a Wild Boar herd's pastoral bill is ~0.52 work at `animals_per_herder` 72, one keeper; it was ~0.94 at 40 and 1.56 and two before the pastoral rate was cut).
 The pastoral `0.6` is a chosen playtest dial: at `1.0` a tamed herd's keeping cost more hands than
 taming bought back, so three hunters on a tamed Wild Boar paid less than on the wild herd
 (1.26 against 1.48 food a turn with spears, before the boar's `pastoral_resistance` override). `LadderConfig::validate` only asks that a higher rung
@@ -648,11 +684,11 @@ is here.
 
 - **THE RATE READS THE HERD, exactly as the work rate does** — `scaled_by: source_load`, so a pen
   holding twice the herd mends twice the fence. `fauna::herd_upkeep_material_demand` interpolates it
-  on the position through the same `interpolate` the work demand goes through.
-- **AND IT STEPS AT THE FENCE, for free.** `animal:pen` is `partial_credit: on_completion`, so a herd
-  raising a fence interpolates between wild and *pastoral* — which names no material — and owes its
-  first hurdle only when the fence closes. **Half a fence is no fence**, and nothing here tests for
-  the pen rung to make that true.
+  on the work built through the same `interpolate_built` the work demand goes through.
+- **AND THE BILL CLIMBS WITH THE FENCE.** A herd raising the pen interpolates its bill between
+  `animal:pastoral` and `animal:pen` on `RungStanding::built`, so it owes a part of its hurdles from the
+  first panel and the whole rate when the fence closes - the plant rungs' rule, with nothing testing for
+  the pen rung to make it so.
 - **AND AN EXTENSION RING EATS THE SAME PILE, off the same rung record.** Widening a pen *is* a pen
   build — the same `build_cost`, the same builders, the same keepers' tools — so it is the same
   6 hurdles. It bids in the **same** `settle_material_upkeep` pass at its own row's `SourcePriority`,
@@ -704,11 +740,14 @@ is here.
 
 The `upkeep` block is the **work** half of holding a rung — hands, in work units. What a pen *eats* is
 a separate account in a separate currency: **fodder**. Its demand is the herd's own
-`fodder_per_biomass × biomass`, met by the fenced footprint's grass (`penPastureFraction`) and then by
+`fodder_per_biomass × biomass ÷ density gain` (`fauna::herd_feed_demand`: taming lowers per-animal
+appetite by the factor it raises `K`, so a herd at its `K` is fed by the land that sets `K` and hay
+covers only what poorer ground or a herd above `K` leaves), met by the fenced footprint's grass
+(`penPastureFraction`) and then by
 hay off the band's `FODDER` store (`fodderDraw`); `pen_fed_fraction` records how much of the demand the
 two covered between them, and `husbandry.pen.starve_shrink_rate` is what an underfed pen loses. **What
 the footprint leaves for the keeper to grow is published as the band's `fodderNeed`** — the gap,
-ungated by Foddering, with its income and its (gated) runway beside it — and what that gap still
+with its income and its runway beside it — and what that gap still
 leaves *after* the draw is `penFodderShortfall`, the per-pen figure the row actually asks the player
 for; the reasoning for both is in `graze.md` → "The hay bill is published as the GAP". A
 keeper who is present but has **no grass and no hay** starves the herd; a keeper who is **absent** lets
@@ -1416,6 +1455,27 @@ land, a hay field, or a shipment — not a menu conversion.
 > along, and the shipping slice built two thirds of it. Nothing about the currency split ever
 > implied it.
 
+## The small game and the boar are tuned so a lone worker climbs the ladder
+
+One worker's food a turn, net of the keepers the herd's bill asks for, rises at every step - wild, tame
+50% and 100%, pen 50% and 100% - for the boar, fowl, rabbit and snow hare
+(`food_rate_survey::a_lone_workers_net_climbs_every_animal_step`), and small game's wild level sits with the
+berry stand's (about 0.46). The levers, all per species in `fauna_config.json`:
+
+| species | wild level | `engage_rate` | `combat.durability` | `animals_per_herder` | `pen_engage_gain` |
+|---|---|---|---|---|---|
+| fowl | 0.078 → 0.46 | 10 → 60 | 2 → 0.33 | 1000 → 1600 | 44.0 → 7.3333 |
+| rabbit | 0.162 → 0.45 | 10 → 28 | 2 → 0.70 | 500 → 6000 | 12.5 → 4.4643 |
+| snow hare | 0.240 → 0.47 | 10 → 13 | 3 → 1.5 | 250 → 320 | 9.4 → 7.2308 |
+| boar | - | unchanged | unchanged | 40 → 72 | unchanged |
+
+A wild small-game hunter is held by two bounds at once - reach (`engage_rate × stay`) and the fight
+(`attack ÷ durability`) - and both were 10 animals a turn, so raising only one moved nothing; both move
+together, with the fight left the larger so reach stays the binding bound. `pen_engage_gain` is re-expressed
+(`engage_rate × pen_engage_gain` held at 440 / 125 / 94 animals per keeper) so the pen does not move. The
+`animals_per_herder` rise lowers the keeper load of the whole herd at every rung; a pen that jumps to a much
+larger herd at the fence would otherwise bill more than a lone keeper's extra take.
+
 ## The `Tame` verb (Intensification rung 2) — the grammar fix
 
 **The animal twin of `Cultivate`**, and the correction the plant side already made
@@ -1717,7 +1777,8 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
     the turn has two halves (the tend branch of `advance_labor_allocation`'s Hunt arm, which `continue`s
     before `hunt_take` — a corralled herd is never both hunt-drawn AND paid):
     1. **FEED (grass then hay, one unit — Grazing 2d §2.3, Flora Roster F3 §5.2).** The pen demands
-       `demand_grass = fodder_per_biomass × biomass` of **fodder**. Its fenced footprint covers what it
+       `demand_grass = fodder_per_biomass × biomass ÷ density gain` (`fauna::herd_feed_demand`) of
+       **fodder**. Its fenced footprint covers what it
        can (`advance_herd_grazing` → `footprint_intake`, `pasture_fraction =
        clamp(footprint_intake / demand_grass, 0, 1)`) and **hay** off the band's `FODDER` store covers
        the rest, priority-ranked across every pen the band keeps (`settle_pen_hay`). Then
@@ -1861,7 +1922,7 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
     > (already penned, a gate refuses, no crew, or a stalled build). `intensification.md` → "The build
     > on the wire" owns the seam, the gates it carries and which `*WorkCost` it belongs beside.
   - **`penFedFraction`** = last turn's fed fraction, `(footprint_intake + fodderDraw) ÷
-    (fodder_per_biomass × biomass)` (`1.0` = fully fed, `< 1` = **starving** — the herd and its yield
+    demand_grass` (`1.0` = fully fed, `< 1` = **starving** — the herd and its yield
     are shrinking, and it recovers when fed again). **One expression in one unit**: it used to add a
     fodder-unit land share to the paid share of a food-unit larder bill, which is how the two units
     came to be mixed at all.

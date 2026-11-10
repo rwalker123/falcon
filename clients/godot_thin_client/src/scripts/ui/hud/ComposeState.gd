@@ -33,6 +33,8 @@ const KIND_DEPOSIT := "deposit"
 ## …and the tile-sourced branches' crew sheet (belief's monument, food stores' pit, ...). One kind for
 ## every tile branch: what a sheet composes is a band and a crew on an improvement, keyed `x,y:branch`.
 const KIND_TILE := "tile"
+## A band order's own sheet (Food / Fodder, #860); its subject is the order kind.
+const KIND_ORDER := "order"
 
 ## "No band" for every band-ENTITY slot here — the picked actor and the band a composition was last
 ## seeded for. Distinct from `HudConst.NO_BAND_ID`, which is the WIRE's band id; these hold the

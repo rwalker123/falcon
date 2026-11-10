@@ -443,7 +443,7 @@ fn push_lost_touch_event(
 /// any source has on it.
 ///
 /// The old people's ledger is the half that matters most: the lessons a people earns by practice
-/// (the intensification ladder's — Cultivation, Herding, Foddering…) are credited to the faction
+/// (the intensification ladder's — Cultivation, Herding, Penning…) are credited to the faction
 /// and never to a band's `knowledge`, so seeding from the bands alone would leave a break-away
 /// unable to work what it worked the turn before. Knowledge is not conserved: the old people does
 /// not forget it, two sources knowing one thing do not know it twice, and nobody left them, so

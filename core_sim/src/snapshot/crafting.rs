@@ -925,6 +925,9 @@ const SUGGESTION_SOURCE_SITE: &str = "site";
 const SUGGESTION_SOURCE_TAKE: &str = "take";
 /// See [`SUGGESTION_SOURCE_POOL`]. A declared build's tools.
 const SUGGESTION_SOURCE_BUILD: &str = "build";
+/// See [`SUGGESTION_SOURCE_POOL`]. The bench's lined-up work on a material: the reason a bench tool
+/// is suggested (the line's `material` names the material the tool bounds).
+const SUGGESTION_SOURCE_BENCH: &str = "bench";
 
 /// **THE CRAFT SUGGESTIONS ON THE WIRE** — numbers and join keys only; the client owns the words, as
 /// it does for the craft offers.
@@ -945,6 +948,8 @@ pub(crate) fn craft_suggestion_states(
             lead_turns: suggestion.lead_turns,
             display_name: suggestion.display_name,
             reason: suggestion.reason,
+            bench_turns_saved: suggestion.bench_turns_saved,
+            bench_build_turns: suggestion.bench_build_turns,
             sources: suggestion
                 .sources
                 .into_iter()
@@ -975,6 +980,11 @@ pub(crate) fn craft_suggestion_states(
                             state.kind = SUGGESTION_SOURCE_BUILD.to_string();
                             state.job = source.kind().to_string();
                             Some(source)
+                        }
+                        SupplySource::Bench { material } => {
+                            state.kind = SUGGESTION_SOURCE_BENCH.to_string();
+                            state.material = material.clone();
+                            None
                         }
                     };
                     match target {

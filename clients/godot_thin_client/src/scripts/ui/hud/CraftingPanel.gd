@@ -126,6 +126,8 @@ const PAYLOAD_MATERIALS := "materials"
 ## read as a strength and which as a weakness.
 const PAYLOAD_BAND_LEGEND := "band_legend"
 const PAYLOAD_RECIPES := "recipes"
+## The parsed `equipmentConfigJson` — the only place a bench tool's craft stats ride. `{}` until it arrives.
+const PAYLOAD_EQUIPMENT_CONFIG := "equipment_config"
 const PAYLOAD_CRAFT_KNOWLEDGE := "craft_knowledge"
 ## The ceiling the crew stepper may raise the bench to — the band's idle workers **plus the crew
 ## already at the bench** (`HudBandLaborState.benchable_workers`), which is a different question from
@@ -1450,6 +1452,7 @@ func _build_item_cell(ledger_row: Dictionary, payload: Dictionary, shrug: bool) 
 		role_label.text = role
 		role_label.add_theme_font_size_override("font_size", HudCraftingVocab.ITEM_ROLE_FONT_SIZE)
 		role_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+		HudWidgets.set_label_tooltip(role_label, String(_tool_benefit(offer, payload).get("tooltip", "")))
 		if shrug:
 			_dim_shrug(role_label)
 		column.add_child(role_label)
@@ -1468,14 +1471,13 @@ func _role_line(offer: Dictionary, payload: Dictionary) -> String:
 	var group := String(offer.get(HudCraftingVocab.OFFER_GROUP_KEY, ""))
 	var recipe := _recipe_of(String(offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, "")), payload)
 	if group == HudCraftingVocab.GROUP_TOOL:
-		var item_id := String(offer.get(HudCraftingVocab.OFFER_OUTPUT_ITEM_ID_KEY, ""))
-		for material_variant in payload.get(PAYLOAD_MATERIALS, []):
-			if not (material_variant is Dictionary):
-				continue
-			var material: Dictionary = material_variant
-			if String(material.get("tool_item_id", "")) == item_id and item_id != "":
-				return HudCraftingVocab.ROLE_TOOL_FORMAT % String(material.get(
-					HudCraftingVocab.MATERIAL_ID_KEY, ""))
+		var benefit := _tool_benefit(offer, payload)
+		if not benefit.is_empty():
+			return String(benefit["line"])
+		var material := _tool_material(String(offer.get(HudCraftingVocab.OFFER_OUTPUT_ITEM_ID_KEY, "")), payload)
+		if not material.is_empty():
+			return HudCraftingVocab.ROLE_TOOL_FORMAT % String(material.get(
+				HudCraftingVocab.MATERIAL_ID_KEY, ""))
 	var craft_name := _craft_display_name(
 		String(recipe.get(HudCraftingVocab.MATERIAL_CRAFT_KEY, "")), payload)
 	if group == HudCraftingVocab.GROUP_STOCK:
@@ -1495,6 +1497,94 @@ func _role_line(offer: Dictionary, payload: Dictionary) -> String:
 				return HudCraftingVocab.ROLE_STOCK_NO_CRAFT_FORMAT % axis
 			return HudCraftingVocab.ROLE_STOCK_FORMAT % [craft_name, axis]
 	return craft_name
+
+## The material a bench tool bounds, `{}` when none names it.
+func _tool_material(item_id: String, payload: Dictionary) -> Dictionary:
+	if item_id == "":
+		return {}
+	for material_variant in payload.get(PAYLOAD_MATERIALS, []):
+		if material_variant is Dictionary and String((material_variant as Dictionary).get(
+				HudCraftingVocab.MATERIAL_TOOL_ITEM_ID_KEY, "")) == item_id:
+			return material_variant
+	return {}
+
+## A tool's declared craft stat off the parsed equipment config - the first tier's value, else the
+## item's own; `NAN` when the config does not carry it (never a guessed number).
+static func _tool_stat(config: Dictionary, item_id: String, stat: String) -> float:
+	var items: Variant = config.get(HudCraftingVocab.EQUIPMENT_ITEMS_KEY, {})
+	if not (items is Dictionary) or not (items as Dictionary).has(item_id):
+		return NAN
+	var item: Dictionary = (items as Dictionary)[item_id]
+	var layers: Array = []
+	var tiers: Variant = item.get(HudCraftingVocab.EQUIPMENT_TIERS_KEY, [])
+	if tiers is Array and not (tiers as Array).is_empty():
+		layers.append((tiers as Array)[0])
+	layers.append(item)
+	for layer in layers:
+		if not (layer is Dictionary):
+			continue
+		for effect in (layer as Dictionary).get(HudCraftingVocab.EQUIPMENT_EFFECTS_KEY, []):
+			if effect is Dictionary and String((effect as Dictionary).get(
+					HudCraftingVocab.EQUIPMENT_STAT_KEY, "")) == stat:
+				return float((effect as Dictionary).get(HudCraftingVocab.EQUIPMENT_EQUIPPED_KEY, NAN))
+	return NAN
+
+## The band name a 0..1 reading falls in, off the published legend (never a table typed here).
+func _band_name_at(value: float, payload: Dictionary) -> String:
+	var band_name := ""
+	for band_variant in payload.get(PAYLOAD_BAND_LEGEND, []):
+		if not (band_variant is Dictionary):
+			continue
+		var band: Dictionary = band_variant
+		if value >= float(band.get(HudCraftingVocab.BAND_LEGEND_FROM_KEY, 0.0)):
+			band_name = String(band.get(HudCraftingVocab.BAND_LEGEND_NAME_KEY, ""))
+	return band_name
+
+static func _speed_text(multiple: float) -> String:
+	var rounded := snappedf(multiple, HudCraftingVocab.ROLE_TOOL_SPEED_STEP)
+	if is_equal_approx(rounded, roundf(rounded)):
+		return str(int(roundf(rounded)))
+	return "%.1f" % rounded
+
+## **WHAT A BENCH TOOL BUYS AGAINST BARE HANDS** - `{line, tooltip}`, or `{}` when any number the
+## claim stands on is not on the wire (the caller then states only the material it bounds).
+func _tool_benefit(offer: Dictionary, payload: Dictionary) -> Dictionary:
+	if String(offer.get(HudCraftingVocab.OFFER_GROUP_KEY, "")) != HudCraftingVocab.GROUP_TOOL:
+		return {}
+	var item_id := String(offer.get(HudCraftingVocab.OFFER_OUTPUT_ITEM_ID_KEY, ""))
+	var material := _tool_material(item_id, payload)
+	var config: Dictionary = payload.get(PAYLOAD_EQUIPMENT_CONFIG, {})
+	if material.is_empty() or config.is_empty():
+		return {}
+	var tool_speed := _tool_stat(config, item_id, HudCraftingVocab.STAT_CRAFT_SPEED)
+	var ceiling := _tool_stat(config, item_id, HudCraftingVocab.STAT_CRAFT_QUALITY_CEILING)
+	var hand_rate := float(material.get(HudCraftingVocab.MATERIAL_HAND_RATE_KEY, 0.0))
+	if is_nan(tool_speed) or is_nan(ceiling) or hand_rate <= 0.0:
+		return {}
+	var band := _band_name_at(ceiling, payload)
+	if band == "":
+		return {}
+	var material_id := String(material.get(HudCraftingVocab.MATERIAL_ID_KEY, ""))
+	var speed := _speed_text(tool_speed / hand_rate)
+	var parts: Array[String] = [HudCraftingVocab.ROLE_TOOL_SPEED_FORMAT % [material_id.capitalize(), speed]]
+	var efficiency := _tool_stat(config, item_id, HudCraftingVocab.STAT_CRAFT_MATERIAL_EFFICIENCY)
+	var saved_percent := 0 if is_nan(efficiency) else int(roundf((1.0 - efficiency) * 100.0))
+	var saving_clause := ""
+	if saved_percent > 0:
+		parts.append(HudCraftingVocab.ROLE_TOOL_SAVING_FORMAT % [saved_percent, material_id])
+		saving_clause = HudCraftingVocab.ROLE_TOOL_TOOLTIP_SAVING_FORMAT % [saved_percent, material_id]
+	parts.append(HudCraftingVocab.ROLE_TOOL_QUALITY_FORMAT % band)
+	var hand_clause := ""
+	if bool(material.get(HudCraftingVocab.MATERIAL_HAND_WORKABLE_KEY, false)):
+		var hand_band := _band_name_at(float(material.get(HudCraftingVocab.MATERIAL_HAND_CEILING_KEY, 0.0)), payload)
+		if hand_band != "":
+			hand_clause = HudCraftingVocab.ROLE_TOOL_TOOLTIP_HAND_FORMAT % hand_band
+	var tool_name := String(offer.get(HudCraftingVocab.OFFER_DISPLAY_NAME_KEY, item_id)).to_lower()
+	return {
+		"line": HudCraftingVocab.ROLE_TOOL_SEPARATOR.join(parts),
+		"tooltip": HudCraftingVocab.ROLE_TOOL_TOOLTIP_FORMAT % [tool_name, material_id, speed,
+			saving_clause, band, hand_clause],
+	}
 
 ## **WHAT THE BAND HAS, AND HOW GOOD IT IS.** Three cases, and only one of them is a count:
 ##
@@ -3079,8 +3169,10 @@ func _build_suggestion_row(suggestion: Dictionary, payload: Dictionary) -> Contr
 		var upcoming := int(suggestion.get(HudCraftingVocab.SUGGESTION_UPCOMING_COUNT_KEY, 0))
 		if upcoming > 0:
 			consequence.text += HudCraftingVocab.SUGGESTION_WEARING_OUT_NOTE_FORMAT % upcoming
-		# AMBER: people are working short right now — a warning beside the number it explains.
-		consequence.add_theme_color_override("font_color", HudStyle.WARN)
+		# AMBER: people are working short right now — a warning beside the number it explains. A bench
+		# tool is an opportunity and nobody is short, so its reason is quiet.
+		var bench_tool := not _bench_source(suggestion).is_empty()
+		consequence.add_theme_color_override("font_color", HudStyle.INK_DIM if bench_tool else HudStyle.WARN)
 	words.add_child(consequence)
 	var short_text := _shortfall_text(suggestion.get(HudCraftingVocab.SUGGESTION_SHORTFALLS_KEY, []),
 		HudCraftingVocab.SUGGESTION_SHORTFALL_TAIL_FORMAT, count)
@@ -3161,6 +3253,9 @@ func _suggestion_item_name(item_id: String, ledger_row: Dictionary) -> String:
 	return HudCraftingVocab.SUGGESTION_ITEM_FALLBACK_FORMAT % item_id
 
 func _suggestion_consequence(suggestion: Dictionary, payload: Dictionary = {}) -> String:
+	var bench := _bench_source(suggestion)
+	if not bench.is_empty():
+		return _bench_reason(suggestion, bench)
 	var ledger_row := _row_in(payload, String(suggestion.get(HudCraftingVocab.SUGGESTION_ITEM_ID_KEY, "")))
 	if _is_material_row(ledger_row):
 		return _material_suggestion_consequence(suggestion, payload, ledger_row)
@@ -3209,6 +3304,26 @@ func _first_build_source(suggestion: Dictionary) -> Dictionary:
 			best = source
 	return best
 
+## The bench source of a bench-tool suggestion, `{}` for any other. A bench source is no worker going
+## without, so it never reaches the `N without` wording.
+func _bench_source(suggestion: Dictionary) -> Dictionary:
+	for source_variant in suggestion.get(HudCraftingVocab.SUGGESTION_SOURCES_KEY, []):
+		if source_variant is Dictionary and String((source_variant as Dictionary).get(
+				HudCraftingVocab.SOURCE_KIND_KEY, "")) == HudCraftingVocab.SOURCE_KIND_BENCH:
+			return source_variant
+	return {}
+
+## `Saves about 36 bench turns on hide work (takes 24 to make)` - whole turns off the two published floats.
+func _bench_reason(suggestion: Dictionary, source: Dictionary) -> String:
+	var saved := roundi(float(suggestion.get(HudCraftingVocab.SUGGESTION_BENCH_TURNS_SAVED_KEY, 0.0)))
+	var build := roundi(float(suggestion.get(HudCraftingVocab.SUGGESTION_BENCH_BUILD_TURNS_KEY, 0.0)))
+	var material := String(source.get(HudCraftingVocab.SOURCE_MATERIAL_KEY, ""))
+	if saved == 1:
+		return HudCraftingVocab.SUGGESTION_BENCH_SAVED_ONE_FORMAT % [material, build]
+	if build == 1:
+		return HudCraftingVocab.SUGGESTION_BENCH_BUILD_ONE_FORMAT % [saved, material]
+	return HudCraftingVocab.SUGGESTION_BENCH_FORMAT % [saved, material, build]
+
 ## The build's own name - its job and target, with no position: a declared build is named by the site
 ## it is raised on (`Tame (12, 4)`), not by a place in a line.
 func _build_label(source: Dictionary) -> String:
@@ -3244,7 +3359,10 @@ static func _job_crew_noun(job: String) -> String:
 func _suggestion_tooltip(suggestion: Dictionary, is_material: bool = false) -> String:
 	var lines: Array[String] = []
 	for source_variant in suggestion.get(HudCraftingVocab.SUGGESTION_SOURCES_KEY, []):
-		if source_variant is Dictionary:
+		if source_variant is Dictionary and String((source_variant as Dictionary).get(
+				HudCraftingVocab.SOURCE_KIND_KEY, "")) == HudCraftingVocab.SOURCE_KIND_BENCH:
+			lines.append(_bench_reason(suggestion, source_variant))
+		elif source_variant is Dictionary:
 			lines.append(_suggestion_source_line(source_variant, is_material))
 	return HudCraftingVocab.SUGGESTION_TOOLTIP_SEPARATOR.join(lines)
 

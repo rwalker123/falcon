@@ -260,6 +260,16 @@ pub fn tribe_orders_carried_out_for_member(
     }
 }
 
+/// What the leadership pass reads of a resident band: its identity, cohort, leadership, name and
+/// allocation (the last two only to tell a chief's takeover).
+type LeadershipBandItems = (
+    &'static BandId,
+    &'static PopulationCohort,
+    &'static mut BandLeadership,
+    Option<&'static crate::components::BandName>,
+    Option<&'static mut crate::components::LaborAllocation>,
+);
+
 /// **Bank this turn's passive practice, then give every ready band its leader.** Runs right after
 /// `advance_labor_allocation` in the same turn, so a build finished this turn counts this turn.
 ///
@@ -280,16 +290,16 @@ pub fn advance_leadership(
     culture: Res<CultureManager>,
     follow_steps: Option<Res<HerdFollowSteps>>,
     mut event_log: ResMut<CommandEventLog>,
-    mut bands: Query<(&BandId, &PopulationCohort, &mut BandLeadership), With<ResidentBand>>,
+    mut bands: Query<LeadershipBandItems, With<ResidentBand>>,
 ) {
     let config = config.get();
     let stages = stage_config.get();
     let mut open: Vec<_> = bands
         .iter_mut()
-        .filter(|(_, _, leadership)| leadership.leader.is_none())
+        .filter(|(_, _, leadership, _, _)| leadership.leader.is_none())
         .collect();
-    open.sort_by_key(|(band, _, _)| **band);
-    for (band, cohort, leadership) in open.iter_mut() {
+    open.sort_by_key(|(band, _, _, _, _)| **band);
+    for (band, cohort, leadership, _, _) in open.iter_mut() {
         if let Some(steps) = follow_steps.as_deref() {
             leadership.credit_herd_hexes(&config, steps.hexes_of(**band));
         }
@@ -313,6 +323,75 @@ pub fn advance_leadership(
         if let Some(leader) = emerged {
             event_log.push(emergence_entry(tick.0, cohort.faction, **band, &leader));
         }
+    }
+    drop(open);
+    announce_chief_takeover(tick.0, &mut event_log, &mut bands);
+}
+
+/// **ONE FEED LINE PER BAND WHEN A CHIEF TAKES OVER** (#860): the managing pass
+/// (`keep_on_hand::manage_dig_rows`) queues the kinds an arrival created orders for on
+/// [`crate::components::LaborAllocation::unannounced_takeover`]; this drains the queue into one
+/// `Extraction`-kind line per band (`"Orrin is chief of Bitterbrook - he takes over the stone
+/// digging and keeps 30 on hand."`), filed under the band like the emergence line. It is not a
+/// `LeaderEmerged` row: the turn orb reads that kind's `kind=`/`name=` detail as a new leader. Called
+/// at the foot of [`advance_leadership`], which follows the labor pass that fills the queue, so it
+/// shares that system's ordering.
+fn announce_chief_takeover(
+    tick: u64,
+    event_log: &mut CommandEventLog,
+    bands: &mut Query<LeadershipBandItems, With<ResidentBand>>,
+) {
+    let mut announcing: Vec<_> = bands
+        .iter_mut()
+        .filter(|(_, _, _, _, allocation)| {
+            allocation
+                .as_ref()
+                .is_some_and(|allocation| !allocation.unannounced_takeover.is_empty())
+        })
+        .collect();
+    announcing.sort_by_key(|(band, _, _, _, _)| **band);
+    for (band, cohort, leadership, name, allocation) in announcing.iter_mut() {
+        let Some(allocation) = allocation.as_mut() else {
+            continue;
+        };
+        let kinds = std::mem::take(&mut allocation.unannounced_takeover);
+        let band_name = name
+            .as_ref()
+            .map_or_else(|| format!("Band {}", band.0), |name| name.0.clone());
+        let Some(keeper) = crate::keep_on_hand::Keeper::of(Some(&**leadership), &band_name) else {
+            continue;
+        };
+        // Fodder is left out of the line while the band pens no herd that eats hay.
+        let pens_hay = allocation.last_fodder_need > 0.0;
+        let taken: Vec<(String, u32)> = kinds
+            .into_iter()
+            .filter(|kind| pens_hay || kind != crate::keep_on_hand::FODDER_KIND)
+            .filter_map(|kind| {
+                let target = allocation.order_for(&kind)?.target;
+                Some((kind, target))
+            })
+            .collect();
+        if taken.is_empty() {
+            continue;
+        }
+        let label = crate::keep_on_hand::takeover_line(&keeper, &band_name, &taken);
+        event_log.push(
+            CommandEventEntry::new(
+                tick,
+                CommandEventKind::Extraction,
+                cohort.faction,
+                label,
+                Some(format!(
+                    "status=applied action=band_order order=takeover kinds={}",
+                    taken
+                        .iter()
+                        .map(|(kind, _)| kind.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )),
+            )
+            .with_band(**band),
+        );
     }
 }
 

@@ -610,6 +610,17 @@ from a new camp.
 risk *from*, so what the row protects is the position itself. A working still on its free floor is a
 wild stand and its row goes.
 
+## A chief keeps an ordered material on hand (#860, #874)
+
+A deposit material is crewed by hand like any deposit until the band has a leader. Which kinds a chief
+takes an order for is `labor_config.json` -> `band_orders.ordered_kinds` (stone and wood; the engine
+classifies by that list, and `extraction.json` carries no mined-branch key). When a chief arrives he
+takes over every ordered kind (`band_order <faction> <band> <kind> set|release|claim`): the sim places
+the band's one dig row on the best site, takes over the band's hand-made rows of that material, and
+refuses `assign_labor extract`, `stop_labor` and `work_priority` on it until the player chooses *Crew it
+yourself*. The floor, Max and per-site grammar above apply to every hand-crewed row. The rule, the
+ranking and the cargo guarantee are in `work-party.md` -> "A chief keeps an ordered material on hand".
+
 ## The three verbs — `fell`, `coppice`, `quarry`
 
 `build fell <faction> <x> <y> <material>`, and the same shape for the other two (`build coppice`,

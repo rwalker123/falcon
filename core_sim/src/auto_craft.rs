@@ -27,8 +27,9 @@ use crate::{
         HEAD_ORDER, MIN_ORDER_COUNT,
     },
     craft_suggestions::{
-        band_suggestions, build_material_suggestions_in_world, merge_build_material_suggestions,
-        take_row_gear, CraftSuggestion, ForecastInputs, SuggestionConfigs,
+        band_suggestions, bench_tool_suggestions, build_material_suggestions_in_world,
+        merge_build_material_suggestions, take_row_gear, BenchToolInputs, CraftSuggestion,
+        ForecastInputs, SuggestionConfigs,
     },
     equipment_config::{EquipmentConfig, EquipmentConfigHandle},
     intensification::LadderConfigHandle,
@@ -39,7 +40,7 @@ use crate::{
         band_craft_state, known_crafts, plan_craft_offers, BandCraftInputs, EquippedElsewhere,
     },
     systems::{order_is_workable, worked_order},
-    take_claims::{row_claims, with_world_sources},
+    take_claims::{row_claims_with_idle, with_world_sources},
 };
 use sim_schema::CraftOfferState;
 
@@ -175,8 +176,12 @@ fn band_suggestions_and_offers(
     let cohort = world.get::<PopulationCohort>(band)?;
     let allocation = world.get::<LaborAllocation>(band)?;
     let wear = band_wear(world, band, &configs.equipment);
+    // The asks follow the band's idle hands, as the snapshot reads them.
+    let idle =
+        crate::components::BandWorkforce::resolve(Some(cohort), Some(allocation), Some(bench))
+            .idle();
     let claims = with_world_sources(world, cohort.faction, |sources| {
-        row_claims(sources, allocation, &wear)
+        row_claims_with_idle(sources, allocation, &wear, idle)
     });
     let gear = take_row_gear(&configs.equipment, allocation, &claims, &wear);
     let take_rows = gear.iter().enumerate().flat_map(|(row, gear)| {
@@ -243,6 +248,19 @@ fn band_suggestions_and_offers(
         )
     });
     merge_build_material_suggestions(&mut suggestions, build_materials);
+    // **A bench tool that pays for itself** is on the list auto-craft works down, ranked where the
+    // snapshot ranks it.
+    bench_tool_suggestions(
+        &mut suggestions,
+        &BenchToolInputs {
+            bench: Some(bench),
+            wear: &wear,
+            recipes: &configs.recipes,
+            equipment: &configs.equipment,
+            materials: &configs.materials,
+            offers: Some(&offers),
+        },
+    );
     Some((suggestions, offers))
 }
 

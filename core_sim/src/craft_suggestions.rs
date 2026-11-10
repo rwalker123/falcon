@@ -83,6 +83,9 @@ pub enum SupplySource {
     },
     /// **A declared build**, by its source: its builders' tool claim this turn.
     Build { source: BuildSource },
+    /// **The bench's own lined-up work on a material** - the reason a bench tool is suggested: making
+    /// it pays for itself in bench time on the work queued or suggested against `material`.
+    Bench { material: String },
 }
 
 impl SupplySource {
@@ -106,7 +109,7 @@ impl SupplySource {
     fn adds_work(&self) -> bool {
         match self {
             SupplySource::Pool(_) | SupplySource::Site(_) | SupplySource::Build { .. } => true,
-            SupplySource::Take { .. } => false,
+            SupplySource::Take { .. } | SupplySource::Bench { .. } => false,
         }
     }
 }
@@ -167,6 +170,13 @@ pub struct CraftSuggestion {
     /// suggestion states the job it feeds (`for Corral Wild Boar`). Empty for a kit suggestion, whose
     /// reason is its sources' `workers_without`.
     pub reason: String,
+    /// **Bench turns a bench tool saves on the work lined up for the material it bounds**
+    /// ([`bench_tool_suggestions`]), crew-free: `W x (1/r_bare - 1/r_tool)`. `0` on every other
+    /// suggestion.
+    pub bench_turns_saved: f32,
+    /// **What the same tool costs to make, in the same crew-free bench turns**: its recipe's work over
+    /// the rate the bench would work it at. `0` on every other suggestion.
+    pub bench_build_turns: f32,
 }
 
 /// **A LINE THAT IS NOT SHORT** — the boundary at and below which a consumer went without nothing.
@@ -184,6 +194,13 @@ const ONE_WORKER_PER_UNIT: u32 = 1;
 /// `f32` lines carry rounding, and `ceil(1.000001)` would ask for a second tool nobody is short of.
 /// A thousandth of a unit is far below any requirement a hand can generate.
 const WHOLE_UNIT_TOLERANCE: f32 = 1e-3;
+
+/// **THE BENCH-TURN FIELDS OF A SUGGESTION THAT IS NOT A BENCH TOOL.**
+const NO_BENCH_TURNS: f32 = 0.0;
+
+/// **HOW FAR TURNS SAVED MUST EXCEED THE TOOL'S COST** to suggest it - `f32` noise must not flip a
+/// tie, so equal turns saved and spent suggest nothing.
+const BENCH_TURNS_TOLERANCE: f32 = 1e-3;
 
 /// **NOTHING LEFT TO SUGGEST** — a netted count at or below this drops the suggestion.
 const NOTHING_TO_MAKE: f32 = 0.0;
@@ -262,7 +279,7 @@ impl SupplySource {
             SupplySource::Site(source) => site_keeping_jobs(source)
                 .iter()
                 .any(|job| jobs.contains(job)),
-            SupplySource::Build { .. } => false,
+            SupplySource::Build { .. } | SupplySource::Bench { .. } => false,
         }
     }
 }
@@ -701,6 +718,8 @@ fn suggestions_from(
                 lead_turns: forecast.map_or(NO_FORECAST_LEAD, |f| f.lead_turns),
                 display_name: String::new(),
                 reason: String::new(),
+                bench_turns_saved: NO_BENCH_TURNS,
+                bench_build_turns: NO_BENCH_TURNS,
             })
         })
         .collect();
@@ -904,6 +923,8 @@ pub fn build_material_suggestions(
                 expires_in_turns: NO_FORECAST_TURNS,
                 lead_turns: NO_FORECAST_LEAD,
                 display_name: String::new(),
+                bench_turns_saved: NO_BENCH_TURNS,
+                bench_build_turns: NO_BENCH_TURNS,
             })
         })
         .collect()
@@ -999,6 +1020,197 @@ pub fn merge_build_material_suggestions(
             .partial_cmp(&rank_of(b))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
+}
+
+/// **WHAT THE BENCH-TOOL RULE READS BEYOND THE LIST** - the band's bench and ledger, the three
+/// configs, and the offers (the recipe each item's row marks `suggested`; `None` falls back to the
+/// first recipe in book order making the item).
+#[derive(Clone, Copy)]
+pub struct BenchToolInputs<'a> {
+    pub bench: Option<&'a BandBench>,
+    pub wear: &'a BandEquipment,
+    pub recipes: &'a RecipesConfig,
+    pub equipment: &'a EquipmentConfig,
+    pub materials: &'a MaterialsConfig,
+    pub offers: Option<&'a [CraftOfferState]>,
+}
+
+/// **THE RECIPE A SUGGESTED ITEM (OR MATERIAL) IS MADE BY** - the one its ledger row marks
+/// `suggested`, else the first in book order.
+fn suggested_recipe<'a>(item: &str, inputs: &BenchToolInputs<'a>) -> Option<&'a RecipeDef> {
+    inputs
+        .offers
+        .and_then(|offers| {
+            offers.iter().find(|offer| {
+                offer.suggested
+                    && (offer.output_item_id == item || offer.output_material_id == item)
+            })
+        })
+        .and_then(|offer| inputs.recipes.recipe(&offer.recipe_id))
+        .or_else(|| {
+            inputs
+                .recipes
+                .recipes()
+                .find(|(_, recipe)| recipe.row_key() == Some(item))
+                .map(|(_, recipe)| recipe)
+        })
+}
+
+/// **BENCH TOOLS THAT PAY FOR THEMSELVES, SUGGESTED** - added to `suggestions` in place.
+///
+/// For each bench tool `T` bounding a material `M` that the band holds no live unit of and has not
+/// queued (or parked): `W` is the bench work lined up on recipes that READ `M` - the remaining work
+/// of the queued orders plus, for every suggestion already in the list whose suggested recipe reads
+/// `M`, that recipe's work times the passes the count needs. With `r_bare` the material's
+/// `hand_working.rate` and `r_tool` the tool's `craft_speed` at the tier its recipe makes, the tool
+/// saves `S = W x (1/r_bare - 1/r_tool)` bench turns (crew-free: the crew and
+/// `progress_per_worker_turn` scale both sides alike) and costs `C = work / rate` to make, the rate
+/// being the one the bench would work `T`'s own recipe at (its read material's live tool, else that
+/// material's bare hand). `T` is suggested iff `S > C`, once, with a `bench` source naming `M`.
+///
+/// **Placement:** directly ahead of the highest-ranked suggestion whose recipe reads `M`; when none
+/// does (the work is all queued), at the end of the list. The list is not re-sorted.
+///
+/// **Knowledge is not filtered here**, as it is not for any other suggestion: a gated tool is
+/// published and the offer says `Needs X`; auto-craft passes over an unqueueable one.
+pub fn bench_tool_suggestions(
+    suggestions: &mut Vec<CraftSuggestion>,
+    inputs: &BenchToolInputs<'_>,
+) {
+    let BenchToolInputs {
+        bench,
+        wear,
+        recipes,
+        equipment,
+        materials,
+        ..
+    } = *inputs;
+    // The work each suggestion lines up, fixed before any tool is added so one tool's own recipe
+    // cannot make another look worthwhile.
+    let lined_up: Vec<(String, f32)> = suggestions
+        .iter()
+        .filter_map(|suggestion| {
+            let recipe = suggested_recipe(&suggestion.item, inputs)?;
+            let material = recipe.bench_material()?;
+            let per_pass: f32 = recipe
+                .outputs
+                .iter()
+                .filter(|output| {
+                    output.equipment_id() == Some(suggestion.item.as_str())
+                        || output.material_id() == Some(suggestion.item.as_str())
+                })
+                .map(|output| output.amount)
+                .sum();
+            if per_pass <= NOTHING_TO_MAKE {
+                return None;
+            }
+            let passes = ((suggestion.count as f32 - WHOLE_UNIT_TOLERANCE) / per_pass)
+                .ceil()
+                .max(NOTHING_TO_MAKE);
+            Some((material.to_string(), recipe.work * passes))
+        })
+        .collect();
+    let tools: Vec<(&str, &ItemDefinition, &str)> = equipment
+        .items()
+        .filter_map(|(id, def)| def.bounds_material().map(|material| (id, def, material)))
+        .collect();
+    for (tool_id, tool_def, material) in tools {
+        if equipment.live_bench_tool(material, wear).is_some()
+            || queued_units(bench, recipes, tool_id) > NOTHING_TO_MAKE
+        {
+            continue;
+        }
+        let Some(tool_recipe) = suggested_recipe(tool_id, inputs) else {
+            continue;
+        };
+        let Some(bare) = materials
+            .material(material)
+            .and_then(|def| def.hand_working)
+            .map(|hand| hand.rate)
+            .filter(|rate| *rate > 0.0)
+        else {
+            continue;
+        };
+        let tier = tool_recipe.output_tier_id().map_or_else(
+            || tool_def.default_tier(),
+            |id| tool_def.tier_or_default(id),
+        );
+        let Some(with_tool) = tool_def
+            .tier_craft_stat(tier, EquipmentStat::CraftSpeed)
+            .filter(|speed| *speed > bare)
+        else {
+            continue;
+        };
+        let Some(tool_material) = tool_recipe.bench_material() else {
+            continue;
+        };
+        let tool_rate = bench_tiers(tool_material, materials, equipment, wear).speed;
+        let per_pass: f32 = tool_recipe
+            .outputs
+            .iter()
+            .filter(|output| output.equipment_id() == Some(tool_id))
+            .map(|output| output.amount)
+            .sum();
+        if tool_rate <= 0.0 || per_pass <= NOTHING_TO_MAKE {
+            continue;
+        }
+        let queued_work: f32 = bench.map_or(NOTHING_TO_MAKE, |bench| {
+            bench
+                .orders
+                .iter()
+                .filter_map(|order| {
+                    let recipe = recipes.recipe(&order.recipe_id)?;
+                    (recipe.bench_material() == Some(material)).then(|| {
+                        (order.remaining() as f32 * recipe.work - order.progress.to_f32())
+                            .max(NOTHING_TO_MAKE)
+                    })
+                })
+                .sum()
+        });
+        let suggested_work: f32 = lined_up
+            .iter()
+            .filter(|(read, _)| read == material)
+            .map(|(_, work)| work)
+            .sum();
+        let saved = (queued_work + suggested_work) * (1.0 / bare - 1.0 / with_tool);
+        let cost = tool_recipe.work / per_pass / tool_rate;
+        if saved - cost <= BENCH_TURNS_TOLERANCE {
+            continue;
+        }
+        let ahead_of = suggestions.iter().position(|suggestion| {
+            !suggestion
+                .sources
+                .iter()
+                .any(|line| matches!(line.source, SupplySource::Bench { .. }))
+                && suggested_recipe(&suggestion.item, inputs).and_then(RecipeDef::bench_material)
+                    == Some(material)
+        });
+        let suggestion = CraftSuggestion {
+            item: tool_id.to_string(),
+            count: 1,
+            workers_without: NOTHING_MISSING,
+            work_per_turn: NO_WORK_RECOVERED,
+            sources: vec![SuggestionSourceLine {
+                source: SupplySource::Bench {
+                    material: material.to_string(),
+                },
+                missing_units: 1.0,
+                workers_without: NOTHING_MISSING,
+                work_per_turn: NO_WORK_RECOVERED,
+            }],
+            upcoming_count: 0,
+            expires_in_turns: NO_FORECAST_TURNS,
+            lead_turns: NO_FORECAST_LEAD,
+            display_name: String::new(),
+            reason: String::new(),
+            bench_turns_saved: saved,
+            bench_build_turns: cost,
+        };
+        match ahead_of {
+            Some(index) => suggestions.insert(index, suggestion),
+            None => suggestions.push(suggestion),
+        }
+    }
 }
 
 /// **THE TWO CONFIGS A SUGGESTION LIST IS RANKED AND NETTED WITH.**
@@ -1684,6 +1896,147 @@ mod tests {
         assert!(
             needs.iter().all(|need| need.kit_id != "none"),
             "a kit that carries nothing is not orderable"
+        );
+    }
+
+    // ----- bench tools that pay for themselves -----
+
+    const FRAME: &str = "tanning_frame";
+    const FRAME_RECIPE: &str = "tanning_frame";
+
+    /// Run the bench-tool rule over `suggestions` for a band with `bench` and `wear`.
+    fn with_bench_tools(
+        mut suggestions: Vec<CraftSuggestion>,
+        bench: &BandBench,
+        wear: &BandEquipment,
+    ) -> Vec<CraftSuggestion> {
+        let (recipes, equipment) = configs();
+        let materials = MaterialsConfig::builtin();
+        bench_tool_suggestions(
+            &mut suggestions,
+            &BenchToolInputs {
+                bench: Some(bench),
+                wear,
+                recipes: &recipes,
+                equipment: &equipment,
+                materials: &materials,
+                offers: None,
+            },
+        );
+        suggestions
+    }
+
+    fn frame_of(suggestions: &[CraftSuggestion]) -> Option<&CraftSuggestion> {
+        suggestions.iter().find(|s| s.item == FRAME)
+    }
+
+    fn sleds_queued(count: u32) -> BandBench {
+        let mut bench = BandBench::default();
+        bench.enqueue(SLED_RECIPE, count);
+        bench
+    }
+
+    /// **S > C suggests**, and carries both numbers and the `bench` source naming the material. The
+    /// frame bounds hide (bare 0.5, frame 2.0) and is itself made at the fibre bare rate: three sleds
+    /// are 24 work, `24 x (2 - 0.5) = 36` turns saved against `12 / 0.5 = 24` to build.
+    #[test]
+    fn a_tool_whose_turns_saved_exceed_its_cost_is_suggested() {
+        let out = with_bench_tools(vec![], &sleds_queued(3), &BandEquipment::default());
+        let frame = frame_of(&out).expect("the frame pays for itself on three sleds");
+        assert_eq!(frame.count, 1);
+        assert!((frame.bench_turns_saved - 36.0).abs() < 1e-3, "{frame:?}");
+        assert!((frame.bench_build_turns - 24.0).abs() < 1e-3, "{frame:?}");
+        assert!(matches!(
+            &frame.sources[..],
+            [SuggestionSourceLine { source: SupplySource::Bench { material }, .. }] if material == "hide"
+        ));
+    }
+
+    /// **S <= C does not**, including the exact tie: one sled saves 12, two save exactly the 24 the
+    /// frame costs.
+    #[test]
+    fn a_tool_that_does_not_pay_for_itself_is_not_suggested() {
+        for sleds in [1, 2] {
+            let out = with_bench_tools(vec![], &sleds_queued(sleds), &BandEquipment::default());
+            assert!(frame_of(&out).is_none(), "{sleds} sled(s): {out:?}");
+        }
+        let out = with_bench_tools(vec![], &BandBench::default(), &BandEquipment::default());
+        assert!(out.is_empty(), "no work lined up, no tool");
+    }
+
+    /// **Suggested work counts like queued work**: one queued sled plus a suggested sled-and-a-bit
+    /// crosses the line that the queue alone does not.
+    #[test]
+    fn suggested_work_on_the_material_counts_beside_the_queue() {
+        let (recipes, equipment) = configs();
+        let lines = [line(take("deer"), "sled", 3.0, 0.0)];
+        let suggestions = craft_suggestions(&lines, None, &recipes, &equipment);
+        assert_eq!(suggestions[0].count, 3);
+        let out = with_bench_tools(
+            suggestions,
+            &BandBench::default(),
+            &BandEquipment::default(),
+        );
+        assert!(
+            frame_of(&out).is_some(),
+            "three suggested sleds are three sleds' work"
+        );
+        let one = craft_suggestions(
+            &[line(take("deer"), "sled", 1.0, 0.0)],
+            None,
+            &recipes,
+            &equipment,
+        );
+        let out = with_bench_tools(one, &BandBench::default(), &BandEquipment::default());
+        assert!(frame_of(&out).is_none(), "control: one sled does not");
+    }
+
+    /// **A band holding a live tool gets none**, and one that has the tool queued (or parked) gets
+    /// none either - paired with the plain case that does suggest.
+    #[test]
+    fn a_held_or_queued_tool_is_not_suggested_again() {
+        let (_, equipment) = configs();
+        let held = holding(&equipment, &[(FRAME, 1)]);
+        let out = with_bench_tools(vec![], &sleds_queued(3), &held);
+        assert!(frame_of(&out).is_none(), "a live frame: nothing to buy");
+
+        let mut queued = sleds_queued(3);
+        queued.enqueue(FRAME_RECIPE, 1);
+        let out = with_bench_tools(vec![], &queued, &BandEquipment::default());
+        assert!(frame_of(&out).is_none(), "already on the queue");
+
+        let out = with_bench_tools(vec![], &sleds_queued(3), &BandEquipment::default());
+        assert!(frame_of(&out).is_some(), "control: neither held nor queued");
+    }
+
+    /// **Placement: directly ahead of the highest-ranked suggestion reading the material** (the sled
+    /// reads hide), behind one that reads another material (spears read bone) - and at the end when
+    /// the work is all queued.
+    #[test]
+    fn the_tool_sits_ahead_of_the_first_suggestion_reading_its_material() {
+        let (recipes, equipment) = configs();
+        let lines = [
+            line(take("deer"), SPEARS, 3.0, 0.0),
+            line(take("deer"), "sled", 1.0, 0.0),
+        ];
+        let suggestions = craft_suggestions(&lines, None, &recipes, &equipment);
+        let order: Vec<&str> = suggestions.iter().map(|s| s.item.as_str()).collect();
+        assert_eq!(
+            order,
+            vec![SPEARS, "sled"],
+            "premise: spears outrank the sled"
+        );
+        let out = with_bench_tools(suggestions, &sleds_queued(2), &BandEquipment::default());
+        // The bone awl (bone is what spears read) pays for itself on the same list and sits ahead
+        // of the spears, which is the same rule applied to its own material.
+        let order: Vec<&str> = out.iter().map(|s| s.item.as_str()).collect();
+        assert_eq!(order, vec!["bone_awl", SPEARS, FRAME, "sled"]);
+
+        let queue_only = with_bench_tools(vec![], &sleds_queued(3), &BandEquipment::default());
+        assert_eq!(
+            queue_only.len(),
+            1,
+            "queue-only work: the tool ends the list"
         );
     }
 }

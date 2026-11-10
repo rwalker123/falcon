@@ -1111,7 +1111,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // -level roll-up of the gross gap is `PopulationCohortState::fodder_need`.
                 //
                 // Stamped by the corral arm on the same pass as both its terms, so it cannot
-                // describe a different turn from them; **ungated by Foddering** unlike the draw, so a
+                // describe a different turn from them; **the gap the range leaves** (not what the store paid), so a
                 // band that cannot hay at all publishes its whole need as its shortfall. `0.0` for an
                 // unpenned/absent herd and for a pen its own land feeds.
                 pen_fodder_shortfall: herd.map(|herd| herd.pen_fodder_shortfall).unwrap_or(0.0),

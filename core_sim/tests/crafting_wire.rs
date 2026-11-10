@@ -991,13 +991,11 @@ fn a_knowledge_refusal_names_the_craft_and_an_ungated_recipe_beside_it_does_not(
     );
     assert_eq!(tool.severity, "danger");
     assert!(
-        tool.reason.contains("Needs Weaving") && tool.reason.contains("Needs Bone-working"),
-        "a tool is gated on the crafts of what it is MADE FROM, and both are named — got {:?}",
-        tool.reason
-    );
-    assert!(
-        tool.reason.contains(" · "),
-        "two reasons at once are joined with ' · ' — got {:?}",
+        tool.reason.contains("Needs Tanning")
+            && !tool.reason.contains("Needs Weaving")
+            && !tool.reason.contains("Needs Bone-working"),
+        "a tool is gated on the craft of what it WORKS (the frame bounds hide) and on nothing it is \
+         made from - got {:?}",
         tool.reason
     );
     assert_eq!(
@@ -1028,6 +1026,104 @@ fn a_short_offer_is_queueable_and_an_unlearned_one_is_not() {
     assert!(
         !tool.queueable,
         "a tool gated on unlearned crafts cannot be queued"
+    );
+}
+
+/// **The loom (bounds fibre) is refused naming Weaving until Weaving is known**, and queueable the
+/// moment it is - the offer's gate is `requires_knowledge`, which is the craft of what it works.
+/// Hide's craft (Tanning), which the loom is made from, does not gate it.
+#[test]
+fn the_loom_offer_names_weaving_until_it_is_known_then_queues() {
+    let (mut app, band) = world();
+    let before = publish(&mut app, band);
+    let loom = offer(&before, "loom");
+    assert!(!loom.queueable);
+    assert!(
+        loom.reason.contains("Needs Weaving") && !loom.reason.contains("Needs Tanning"),
+        "got {:?}",
+        loom.reason
+    );
+    learn(&mut app, band, "weaving");
+    let after = publish(&mut app, band);
+    assert!(
+        offer(&after, "loom").queueable,
+        "knowing Weaving alone makes the loom queueable"
+    );
+}
+
+/// What the encoded frame says about one craft suggestion: `(benchTurnsSaved, benchBuildTurns,
+/// first source kind, first source material)`; `None` when the item is not suggested.
+fn published_suggestion(
+    app: &mut App,
+    band: Entity,
+    item: &str,
+) -> Option<(f32, f32, String, String)> {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let payload = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot");
+    let cohort = payload
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire");
+    let suggestion = cohort
+        .craftSuggestions()?
+        .iter()
+        .find(|suggestion| suggestion.itemId() == Some(item))?;
+    let source = suggestion.sources()?.get(0);
+    Some((
+        suggestion.benchTurnsSaved(),
+        suggestion.benchBuildTurns(),
+        source.kind().unwrap_or("").to_string(),
+        source.material().unwrap_or("").to_string(),
+    ))
+}
+
+/// **A BENCH TOOL THAT PAYS FOR ITSELF IS ON THE PUBLISHED SUGGESTION LIST**, with the turns it saves
+/// and costs and a `bench` source naming the material - and a little work does not suggest it.
+/// Three queued sleds are 24 hide work: `24 x (1/0.5 - 1/2.0) = 36` turns saved against the frame's
+/// `12 / 0.5 = 24`; one sled saves 12.
+#[test]
+fn a_bench_tool_that_pays_for_itself_is_published_with_its_turns() {
+    let (mut app, band) = world();
+    {
+        let mut bench = app.world.get_mut::<BandBench>(band).expect("bench");
+        bench.orders.clear();
+        bench.enqueue("sled", 3);
+    }
+    *app.world.get_mut::<BandEquipment>(band).expect("ledger") = BandEquipment::default();
+    let (saved, cost, kind, material) = published_suggestion(&mut app, band, TANNING_FRAME_ITEM)
+        .expect("three sleds of hide work pay for the frame");
+    assert!((saved - 36.0).abs() < 1e-3, "saved {saved}");
+    assert!((cost - 24.0).abs() < 1e-3, "cost {cost}");
+    assert_eq!((kind.as_str(), material.as_str()), ("bench", "hide"));
+
+    app.world
+        .get_mut::<BandBench>(band)
+        .expect("bench")
+        .orders
+        .clear();
+    app.world
+        .get_mut::<BandBench>(band)
+        .expect("bench")
+        .enqueue("sled", 1);
+    assert!(
+        published_suggestion(&mut app, band, TANNING_FRAME_ITEM).is_none(),
+        "control: one sled saves less than the frame costs"
     );
 }
 
@@ -2357,10 +2453,9 @@ fn a_first_tools_invitation_names_the_band_its_own_quality_ceiling_reaches() {
             }
         }
     });
-    // The frame is gated on Weaving and Bone-working and needs its pile — an invitation is only ever
+    // The frame is gated on Tanning (it works hide) and needs its pile — an invitation is only ever
     // published on a buildable row.
-    learn(&mut app, band, "weaving");
-    learn(&mut app, band, "bone_working");
+    learn(&mut app, band, "tanning");
     deposit(
         &mut app,
         band,

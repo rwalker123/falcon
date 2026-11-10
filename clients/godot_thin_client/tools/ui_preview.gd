@@ -67,6 +67,7 @@ const CHAPTERS := [
 	"res://tools/ui_preview/chapters/work_strip.gd",
 	"res://tools/ui_preview/chapters/staffing_preview.gd",
 	"res://tools/ui_preview/chapters/tile_branches.gd",
+	"res://tools/ui_preview/chapters/band_orders.gd",
 ]
 
 ## The one method a chapter owes the harness (see the chapter contract in

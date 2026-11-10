@@ -23,18 +23,18 @@ existing row, rung button, rung card and sheets.
 
 | Level | File | Artboard | Issues |
 |---|---|---|---|
-| Band | `Main.dc.html` | Band panel — Work tab, staffed by the game (People bar, Scouting range, rows with the work strip, Dig stone's keep-on-hand chip) | #871 #872 #874 #875 #877 #878 |
+| Band | `Main.dc.html` | Band panel — Work tab, staffed by the game (People bar, Scouting range, rows with the work strip; stone dug per site, its Max the crew) | #871 #872 #874 #875 #877 #878 |
 | Band | `HarvestWorking.dc.html` | Clicking a work row — the source's sheet, already working | #871 #877 |
 | Band | `AssignHarvesters.dc.html` | Assign harvesters | #871 #877 |
 | Band | `AssignHunters.dc.html` | Assign hunters | #871 #877 |
 | Band | `Farm.dc.html` | A farm — keeping it up, and sowing it | #872 #877 |
-| Band | `Stone.dc.html` | Stone — keep on hand | #874 |
 | Band | `Crafting.dc.html` | Materials & Crafting — several orders at once, each with a crafter limit (and its "The tribe" mode) | #873 #864 |
 | Band | `Faction.dc.html` | Faction page — one People bar, idle across bands | #878 |
-| Band (chief) | `BandOrders.dc.html` | Band orders — the chief turns your goals (food turns, keep-on-hand, improve the land) into each row's settings; a Floor set by hand pins | #860 #859 |
 | Tribe | `Tribe.dc.html` | Tribe panel — the tribe replaces its bands; drill into one | #862 #863 |
 | Tribe | `SharedWork.dc.html` | Starting a shared work — the tribe on the Band: picker | #863 |
 | City | `City.dc.html` | City panel — quarters, trades (Auto), great works, rations | #865 #866 #867 #868 |
 | Nation | `Nation.dc.html` | Nation page — tax (Auto, ceiling), aid between members, national works, the leader's reach | #869 #853 #870 |
 
 `canvas.json` is the canvas layout (board positions and titles).
+
+A band with a chief — the band orders (#860) — has its own prototypes in `docs/prototypes/band_orders/`.

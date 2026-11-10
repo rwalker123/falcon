@@ -198,6 +198,13 @@ const SOURCE_KIND_KEY := "kind"
 const SOURCE_KIND_POOL := "pool"
 const SOURCE_KIND_SITE := "site"
 const SOURCE_KIND_TAKE := "take"
+## A bench tool suggested because it pays for itself: not a worker going without anything. Its
+## `material` is the material the tool bounds.
+const SOURCE_KIND_BENCH := "bench"
+## The bench-tool suggestion's two numbers (floats, `0` on every other suggestion): the crew-free bench
+## turns the tool saves on the work lined up, and what making it costs in the same turns.
+const SUGGESTION_BENCH_TURNS_SAVED_KEY := "bench_turns_saved"
+const SUGGESTION_BENCH_BUILD_TURNS_KEY := "bench_build_turns"
 ## A DECLARED BUILD whose builders are short of the item (`buildToe` on the source row).
 const SOURCE_KIND_BUILD := "build"
 ## `N builders, for <the build's site>` - a suggestion whose only shortage is a declared build.
@@ -303,6 +310,24 @@ const MATERIAL_ID_KEY := "id"
 const MATERIAL_CRAFT_KEY := "craft"
 const MATERIAL_AXES_KEY := "axes"
 const BAND_LEGEND_NAME_KEY := "name"
+## Where a band opens on the 0..1 reading scale — a tool's `craft_quality_ceiling` falls in the last band whose `from` it reaches.
+const BAND_LEGEND_FROM_KEY := "from"
+## The bare-handed half of a material: whether it can be worked without a tool, the rate it is worked at
+## and the quality ceiling it tops out at (`MaterialDefState.hand_working_*`).
+const MATERIAL_HAND_WORKABLE_KEY := "hand_workable"
+const MATERIAL_HAND_RATE_KEY := "hand_working_rate"
+const MATERIAL_HAND_CEILING_KEY := "hand_working_quality_ceiling"
+const MATERIAL_TOOL_ITEM_ID_KEY := "tool_item_id"
+## The parsed `equipmentConfigJson` shape a bench tool's craft stats ride in: `items[id].tiers[0].effects[]`
+## (`{stat, equipped}`); an item may also declare an effect on itself.
+const EQUIPMENT_ITEMS_KEY := "items"
+const EQUIPMENT_TIERS_KEY := "tiers"
+const EQUIPMENT_EFFECTS_KEY := "effects"
+const EQUIPMENT_STAT_KEY := "stat"
+const EQUIPMENT_EQUIPPED_KEY := "equipped"
+const STAT_CRAFT_SPEED := "craft_speed"
+const STAT_CRAFT_QUALITY_CEILING := "craft_quality_ceiling"
+const STAT_CRAFT_MATERIAL_EFFICIENCY := "craft_material_efficiency"
 const RECIPE_ID_KEY := "id"
 const RECIPE_DISPLAY_NAME_KEY := "display_name"
 ## **THE CRAFT THIS RECIPE NEEDS** (`RecipeDefState.craft`) — the join from a craft KNOWLEDGE track to
@@ -630,6 +655,11 @@ const SUGGESTION_SOURCE_MATERIAL_FORMAT := "%s · %s"
 ## A site source is a crew's KEEPING claim, which a take row's kit is not — the tooltip says which.
 const SUGGESTION_SOURCE_KEEPING_FORMAT := "%s (keeping)"
 const SUGGESTION_TOOLTIP_SEPARATOR := "\n"
+## A bench tool's reason, on the row and as its hover: turns saved on the material's work against the
+## turns the tool takes to make, whole turns, singular at one.
+const SUGGESTION_BENCH_FORMAT := "Saves about %d bench turns on %s work (takes %d to make)"
+const SUGGESTION_BENCH_SAVED_ONE_FORMAT := "Saves about 1 bench turn on %s work (takes %d to make)"
+const SUGGESTION_BENCH_BUILD_ONE_FORMAT := "Saves about %d bench turns on %s work (takes 1 to make)"
 ## An item with no offer on this band (the catalogues not yet ingested) still names itself.
 const SUGGESTION_ITEM_FALLBACK_FORMAT := "%s"
 ## How a suggestion row and its button are found by IDENTITY, valued the ITEM ID.
@@ -935,6 +965,23 @@ const PICKER_MARGIN_BOTTOM := 12
 ## one that makes `outputItemId` empty. A second test against `outputGrade == ""` would be BROADER
 ## than the fact wanted, that field also emptying on a recipe that reads no characteristic at all.
 const ROLE_TOOL_FORMAT := "Bench tool — %s"
+## **WHAT A BENCH TOOL BUYS, against bare hands, for crafts of its material** — the row's second line,
+## `Fibre crafts 4× faster · 15% less fibre · up to excellent`. Speed is the tool's `craft_speed` over the
+## material's bare-hand rate; the saving is `1 − craft_material_efficiency` as a whole percent (the
+## clause drops when it rounds to 0); the quality is the band name the tool's `craft_quality_ceiling`
+## falls in, read off the published band legend. `ROLE_TOOL_FORMAT` stays as the line when the equipment
+## config has not arrived.
+const ROLE_TOOL_SPEED_FORMAT := "%s crafts %s× faster"
+const ROLE_TOOL_SAVING_FORMAT := "%d%% less %s"
+const ROLE_TOOL_QUALITY_FORMAT := "up to %s"
+const ROLE_TOOL_SEPARATOR := " · "
+## The same three benefits as one sentence for the hover; `%s` slots are tool, material, speed, the
+## optional saving clause, the best band, and the optional bare-hand clause.
+const ROLE_TOOL_TOOLTIP_FORMAT := "With a %s, %s work goes %s× as fast as by hand,%s and can reach %s quality%s."
+const ROLE_TOOL_TOOLTIP_SAVING_FORMAT := " uses %d%% less %s,"
+const ROLE_TOOL_TOOLTIP_HAND_FORMAT := " (bare hands top out at %s)"
+## The speed multiple is rounded to this step before printing; whole multiples drop the decimal.
+const ROLE_TOOL_SPEED_STEP := 0.1
 const ROLE_STOCK_FORMAT := "%s · worst %s spent first"
 ## The same line on a recipe whose craft the sim has not published — the axis clause alone,
 ## capitalized, rather than a leading separator with nothing before it.

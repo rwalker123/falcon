@@ -35,6 +35,29 @@ use core_sim::{
 /// Grant faction-level **Cultivation** knowledge (Rung 1b) directly via the ledger — the gate the
 /// `Cultivate` policy checks. Tests of the *investment* mechanic seed it; the earned-knowledge ladder
 /// itself has its own test below.
+/// **The plant keeping rates this file's fixtures were written against.** The shipped bills were
+/// retuned under a hand per tender-load (tended 2.0 -> 0.7, field 4.0 -> 0.85) so a lone worker breaks
+/// even; these fixtures stage keepers in whole hands, so they state the whole-hand rates outright.
+const WHOLE_HAND_TENDED_RATE: f64 = 2.0;
+const WHOLE_HAND_FIELD_RATE: f64 = 4.0;
+
+fn whole_hand_keeping_ladder() -> LadderConfigHandle {
+    let mut json: serde_json::Value =
+        serde_json::from_str(core_sim::BUILTIN_INTENSIFICATION_LADDER).expect("the builtin parses");
+    for rung in json["rungs"].as_array_mut().expect("rungs") {
+        let rate = match (rung["branch"].as_str(), rung["id"].as_str()) {
+            (Some("plant"), Some("tended")) => WHOLE_HAND_TENDED_RATE,
+            (Some("plant"), Some("farm")) => WHOLE_HAND_FIELD_RATE,
+            _ => continue,
+        };
+        rung["upkeep"]["work_per_turn"] = serde_json::json!(rate);
+    }
+    LadderConfigHandle::new(std::sync::Arc::new(
+        core_sim::LadderConfig::from_json_str(&json.to_string())
+            .expect("the fixture ladder is valid"),
+    ))
+}
+
 fn grant_cultivation_knowledge(app: &mut App, faction: FactionId) {
     app.world
         .resource_mut::<DiscoveryProgressLedger>()
@@ -104,7 +127,7 @@ fn spawn_world() -> App {
         .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
-    app.world.insert_resource(LadderConfigHandle::default());
+    app.world.insert_resource(whole_hand_keeping_ladder());
     // **The road ledger `advance_labor_allocation` counts spare road keepers against.** Empty
     // is the shipped turn-1 state — no traffic has worn anything in yet — so this harness's
     // keeping numbers are the roadless reading they have always been.
@@ -687,7 +710,8 @@ fn published_count(turns: Option<core_sim::BuildTurns>) -> Option<u32> {
 /// lone builder banks a whole worker-turn on this rung. What the number still is, exactly, is the
 /// keeping's own `workers_needed`.
 fn tended_keeping_crew() -> u32 {
-    core_sim::LadderConfig::builtin()
+    whole_hand_keeping_ladder()
+        .get()
         .rung(shipped::plant_tended())
         .upkeep_crew_needed(fixture_tender_loads())
 }
@@ -4920,9 +4944,6 @@ fn a_far_hay_row_lands_its_fodder_and_fibre_only_when_a_pack_lands() {
         patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
     }
     declare_gathering_site(&mut app, coord);
-    app.world
-        .resource_mut::<DiscoveryProgressLedger>()
-        .add_progress(FactionId(0), core_sim::FODDERING_DISCOVERY_ID, scalar_one());
     let band = spawn_forager_of(&mut app, camp, coord, None, CREW);
     {
         let mut allocation = app

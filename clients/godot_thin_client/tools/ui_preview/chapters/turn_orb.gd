@@ -117,7 +117,7 @@ const KNOWLEDGE_TURN_NEXT := 611
 
 # **FOUR LADDER TRACKS THAT UNLOCK SOMETHING TO STAND ON**, taught in one turn, so the producer has
 # to emit four rows — and so all four are left UNSPENT, which is what makes the absence claim below a
-# real one. `foddering` is deliberately absent: the ROSTER marks it a capability rather than a step
+# real one. `selective_breeding` is deliberately absent: the ROSTER marks it a capability rather than a step
 # (no rung's `unlock_knowledge` names it), so it can never be unspent and would weaken that claim.
 # The route branch's two are left out for a different reason — a fifth and sixth row would only make
 # the exact-count claim below harder to read.

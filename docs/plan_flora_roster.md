@@ -350,15 +350,11 @@ drawn-down rung. Rung 3 keeps its no-markup rule: a Field is never drawn down an
 `trade_goods_per_biomass` 0.005, so a staple-only basket's wild `Deplete` sale is numerically
 unchanged; only baskets holding a cash crop move.
 
-**Fodder at rung 1 is gated at the consumer.** The invariant reaches fodder too — a wild tile
-realizing `hay_grass` pays hay on any harvest — but crediting it to a band with nowhere to put it
-would hand out animal feed nobody bid for. So the **uncommitted** patch's fodder credit is gated on
-the faction knowing **Foddering**, the same gate the pen's draw already reads, at the credit site
-rather than in the rate seam. A **committed** patch is ungated — and the predicate is the
-**commitment** (`patch.species`), not the rung, so the gate lifts on the first turn of a
-`Cultivate`/`Sow` build, while the patch still stands at rung 1 and still converts at the wild
-basket's rate: committing a patch to `hay_grass` *is* the bid, and the bid is placed when the crew
-starts, not when the meter fills.
+**Fodder is credited at every rung, ungated.** The invariant reaches fodder too — a wild tile
+realizing `hay_grass` pays hay on any harvest — and so does a committed patch, at the basket's
+share-weighted rate. There is no Foddering knowledge to wait on: every pen and every tamed herd eats
+hay from the first turn there is any (§5.2), so banking it needs no capability. A basket with no
+fodder crop in it banks `0` by arithmetic.
 
 **Where Tended and Field coincide, they are allowed to.** On a tile whose favored crop is already
 dominant, weeding reaches 1.0 and the two rungs' compositions become identical. What still separates
@@ -380,7 +376,7 @@ the §5 formula said fodder raised the pen's *ceiling*, while properties 2–3 d
 > **Fodder is delivered graze-flow.** Hay is grass you grew and stored; it enters the pen economy at
 > **exactly the point graze does**, so it raises `K_pen` **and** pays down the lossy larder bill in
 > one term — because it *is* feed. And **the whole loop ships in one slice** (F3): the fodder crop,
-> the store, the `Foddering` capability, and the pen's draw, measured together against the pen
+> the store, and the pen's draw, measured together against the pen
 > economy's existing invariants.
 
 ### 5.1 The plant half — grow the hay
@@ -399,43 +395,37 @@ same build, same feral-if-abandoned. It just pays in hay. So **your best croplan
 grain (calories) *or* hay (herd ceiling) from the same scarce sowable tile — the §4.3 land-use
 tension, extended to the animal web.
 
-### 5.2 The animal half — `Foddering`, and one augmented flow
+### 5.2 The animal half — one augmented flow, eaten by pens and tamed herds
 
-**`Foddering`** is a faction **capability knowledge** (discovery id **2007**, next free), earned by
-**running a pen** — the `animal:pen` rung's `earns_knowledge` (`null` today) becomes `foddering`, so
-*you learn to hay a herd by keeping one*. It is **not** a new ladder rung with a verb or a build
-meter (a pen already exists; foddering only unlocks the store-draw), and it is never start-granted.
-Once known, a pen automatically draws hay when a fodder store is in reach.
+There is **no Foddering knowledge** (discovery id 2007 is retired and unused): nothing about hay is
+learned, taught or gated. The `animal:pen` rung teaches nothing; Selective breeding is taught by the
+Ranch size tier. A penned herd and a **tamed (pastoral) herd the band keeps** both draw hay under one
+rule, and a wild herd never does.
 
-**The model — fodder is a flow that supplements the footprint, drawn before the larder.** Today
-(`fauna::advance_herd_grazing` + the corral feed branch):
+**The model — fodder is a flow that supplements the range, drawn from the band's `FODDER` store.**
+(`fauna::advance_herd_grazing` + the labor arm's pen and tamed-herd branches):
 
 ```
 demand          = fodder_per_biomass × biomass
-footprint_intake= graze the fenced footprint yields           (from GrazeRegistry)
+footprint_intake= graze the herd's land yields   (the pen's fenced footprint; a tamed herd's roam range)
 pasture_fraction= clamp(footprint_intake / demand, 0, 1)
-larder_upkeep   = upkeep_per_biomass × biomass × (1 − pasture_fraction)   ← the LOSSY human-food bill
-```
-
-F3 inserts hay **between** the footprint and the larder:
-
-```
 shortfall       = max(0, demand − footprint_intake)
-fodder_draw     = min(shortfall, band FODDER store, [faction knows Foddering])   ← hay covers the gap
-fed_by_land+hay = footprint_intake + fodder_draw
-larder_upkeep   = upkeep_per_biomass × biomass × (1 − fed_by_land+hay / demand)  ← same bill, smaller
+fodder_draw     = min(shortfall, band FODDER store)        ← hay covers the gap, priority-ranked
+fed_by_land+hay = footprint_intake + fodder_draw           ← a pen starves for what this leaves short
 ```
+
+The human larder is not on the table: human food is not animal feed. A penned herd that grass and hay
+leave short shrinks; a tamed herd is never starved by the gap — its shortfall shows as a lower `K`.
 
 and the **ceiling** reads the same augmented flow (`ecological_carrying_capacity`, the one `K` seam):
 
 ```
-K_pen = (footprint_graze_flow + fodder_delivery_rate) / fodder_per_biomass
+K = (footprint_graze_flow + fodder_delivery_rate) / fodder_per_biomass
 ```
 
-where `fodder_delivery_rate` is the hay the store can sustain per turn (store-limited; in steady
-state = your fodder Fields' output rate, since inflow = outflow). So **one term does both jobs**: hay
-raises `K` (the herd grows) *and* it is subtracted from the larder bill before the lossy path (the
-pen stops draining bread) — because delivered hay and grazed grass are the same quantity, `fodder`.
+where `fodder_delivery_rate` is the sustained hay output of the keeper band's Fields, split evenly
+across the pens and tamed herds the band keeps. So **one term does both jobs**: hay raises `K` and is
+eaten as feed, because delivered hay and grazed grass are the same quantity, `fodder`.
 
 ### 5.3 The four properties, re-checked against the resolved model
 
@@ -529,8 +519,7 @@ Stating the blast radius, because the roster looks bigger than it is:
   the abundance cap).
 - **No change to `FoodModule` or `seasonal_weight`.**
 - **No worldgen change.** Composition is derived from biome; nothing new is stamped on the map.
-- **One new discovery id (2007, `Foddering`)**, needing a `start_profile_knowledge_tags.json` mapping
-  and appearing in **no** start profile's `starting_knowledge_tags` — nothing is start-granted.
+- **No new discovery id**: fodder is ungated, so id 2007 (once reserved for `Foddering`) is unused.
 
 ---
 
@@ -557,7 +546,7 @@ block carries its weight, then mass-fill.**
 - **F2 — The rungs get a subject.** `Cultivate`/`Sow` select a species; the yield vector drives the
   harvest; the displaced basket is the cost of committing. *This is the first slice that moves
   balance* — measure it in a live campaign.
-- **F3 — Fodder, both halves.** Fodder store, the fodder Field, `Foddering` (2007), the `K_pen`
+- **F3 — Fodder, both halves.** Fodder store, the fodder Field, the `K_pen`
   term. Measure: a pen on thin pasture must be *survivable but expensive*, never free.
 - **F4 — Cash crops. LANDED.** Trade-dominant vectors, the land-use tension, per-species trade rate
   replacing the flat one — the exact twin of F3's fodder work. `field_trade_goods` routes the vector's
