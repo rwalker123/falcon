@@ -613,6 +613,7 @@ func _build_bench(payload: Dictionary) -> void:
 	var bench: Dictionary = band.get(HudCraftingVocab.BAND_BENCH_KEY, {})
 	var orders: Array = bench.get(HudCraftingVocab.BENCH_ORDERS_KEY, [])
 	var auto_on := bool(bench.get(HudCraftingVocab.BENCH_AUTO_KEY, false))
+	var wait_reason := String(bench.get(HudCraftingVocab.BENCH_AUTO_WAIT_REASON_KEY, ""))
 	var section := VBoxContainer.new()
 	section.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
 	section.add_child(_zone_head(HudCraftingVocab.BENCH_HEAD))
@@ -636,7 +637,11 @@ func _build_bench(payload: Dictionary) -> void:
 		sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		sub.custom_minimum_size = Vector2.ZERO
 		# An idle bench with Auto on has nothing it will make.
-		sub.text = HudCraftingVocab.AUTO_IDLE_SUB if auto_on else HudCraftingVocab.BENCH_IDLE_SUB
+		if auto_on:
+			sub.text = HudCraftingVocab.AUTO_WAIT_FORMAT % wait_reason if wait_reason != "" \
+				else HudCraftingVocab.AUTO_IDLE_SUB
+		else:
+			sub.text = HudCraftingVocab.BENCH_IDLE_SUB
 		words.add_child(sub)
 	else:
 		title.text = _bench_header_line(orders, bench, payload)
@@ -647,6 +652,15 @@ func _build_bench(payload: Dictionary) -> void:
 	top.add_child(_build_auto_switch(auto_on))
 	well.add_child(top)
 	section.add_child(well)
+	if not orders.is_empty() and auto_on and wait_reason != "":
+		var note := Label.new()
+		note.text = HudCraftingVocab.AUTO_WAIT_FORMAT % wait_reason
+		note.add_theme_font_size_override("font_size", HudCraftingVocab.BENCH_SUB_FONT_SIZE)
+		note.add_theme_color_override("font_color", HudStyle.INK_DIM)
+		note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		note.custom_minimum_size = Vector2.ZERO
+		note.set_meta(HudCraftingVocab.AUTO_WAIT_NOTE_META, true)
+		section.add_child(note)
 	if not orders.is_empty():
 		section.add_child(_build_queue(orders, bench, payload))
 	_main.add_child(section)
@@ -3334,6 +3348,10 @@ func _build_order_row(index: int, order: Dictionary, bench: Dictionary, payload:
 	sub.custom_minimum_size = Vector2.ZERO
 	sub.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	sub.set_meta(HudCraftingVocab.ORDER_SUB_META, index)
+	# A long refusal ("Every hand is needed first: 4 holding rows, 2 scouting") ellipsizes on one line;
+	# the tooltip carries the whole sentence.
+	sub.tooltip_text = sub.text
+	sub.mouse_filter = Control.MOUSE_FILTER_PASS
 	var blocked := String(order.get(HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, ""))
 	var severity := String(order.get(HudCraftingVocab.ORDER_BLOCKED_SEVERITY_KEY, ""))
 	# **WHICH REFUSALS ARE SERIOUS IS THE SIM'S ANSWER**: `danger` keeps the alarm and `neutral` (no spare

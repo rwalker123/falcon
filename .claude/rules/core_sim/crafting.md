@@ -865,7 +865,7 @@ number, a grade or a step-down.**
 | Field | Answers |
 |---|---|
 | `materialBatches:[MaterialBatchState]` | *what have I got* — one row per (material, band key) batch: `amount`, plus a `CharacteristicReading` per axis carrying **both** the exact value and its band name, in the material's **declared** axis order |
-| `bench:BenchState` | *what is on the bench* — `workers` (**the sim's** crew, `BandBench::crew_total`), `orders:[BenchOrder]` (queue order), `auto` / `autoSkipped`, `lentToHunt` (the sum of the orders' loans), `kitOrders` and `setAside:[DrawnInput]` (per material, summed over every order's items in flight). **Everything about an order is on its `BenchOrder` row**: `recipeId`, `count`, `made`, `progress` (summed over items in flight), `drawn` (at least one item in flight), `priority`, `crewAtTool` / `crewByHand` / `crewCap` / `crewPerItem`, `itemsInFlight`, `displayName`, `teaches`, `work`, `ratePerTurn`, `outputGrade` (the oldest item's), `benchTool`, `drawnInputs`, `lentToHunt`, `blockedReason` / `blockedSeverity` (`No spare hands this turn` / `neutral` for a workable order with no crafter; the offer's `Short n material` / `danger` for an order short of an input with nothing in flight) and `shortToFinish`. The retired worked-order scalars (`recipeId`, `progress`, `work`, `teaches`, `blockedReason`, `shortfalls`, `drawn`, `outputGrade`, `ratePerTurn`, `drawnInputs`, `blockedSeverity`, `priority`, `worked`) are deleted from `BenchState`. |
+| `bench:BenchState` | *what is on the bench* — `workers` (**the sim's** crew, `BandBench::crew_total`), `orders:[BenchOrder]` (queue order), `auto` / `autoSkipped`, `autoWaitReason` (why auto has not started the top suggestion), `lentToHunt` (the sum of the orders' loans), `kitOrders` and `setAside:[DrawnInput]` (per material, summed over every order's items in flight). **Everything about an order is on its `BenchOrder` row**: `recipeId`, `count`, `made`, `progress` (summed over items in flight), `drawn` (at least one item in flight), `priority`, `crewAtTool` / `crewByHand` / `crewCap` / `crewPerItem`, `itemsInFlight`, `displayName`, `teaches`, `work`, `ratePerTurn`, `outputGrade` (the oldest item's), `benchTool`, `drawnInputs`, `lentToHunt`, `blockedReason` / `blockedSeverity` (`Every hand is needed first: 4 holding rows, 2 scouting` / `neutral` for a workable order with no crafter when pass 1 and the scouts took every hand, else `No spare hands this turn`; the offer's `Short n material` / `danger` for an order short of an input with nothing in flight) and `shortToFinish`. The retired worked-order scalars (`recipeId`, `progress`, `work`, `teaches`, `blockedReason`, `shortfalls`, `drawn`, `outputGrade`, `ratePerTurn`, `drawnInputs`, `blockedSeverity`, `priority`, `worked`) are deleted from `BenchState`. |
 | `craftOffers:[CraftOffer]` | *what could I make* — **one entry per recipe, always**, which the ledger folds into one row per thing made; with `available`, a resolved `reason` + `severity`, the `shortfalls`, the `outputGrade` a draw would select, `group`, `outputItemId`, `onBench`, and the one-row-per-item fields (`recipeLabel` / `makes` / `lasts` / `suggested` / `ownedAtTier`) |
 | `equipmentBatches:[EquipmentBatchState]` | *what have I got, and how long will it last* — one row per **batch**, plus one `count: 0` row per config item the band owns none of, so the ledger is never missing a row |
 | `craftSuggestions:[CraftSuggestion]` | *what should I make next* — appended last on the cohort; see "Craft suggestions — what to make next, ranked by who is going without" |
@@ -1562,16 +1562,20 @@ behaviour; `BandBench::auto` is the per-band toggle (`bench_auto <f> <b> on|off`
 auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 33) and the wire
 (`BenchState.auto` / `autoSkipped`, `BenchOrder.auto`).
 
-- **It adds ONE order only when crafters are free** (`auto_craft::crafters_are_free`): the band has idle
-  hands after the latest staffing (`BandWorkforce::idle() > 0`) **and** every workable order is already at
-  its `crew_cap` (or none is workable). `auto_craft_fill` then queues the first usable suggestion at its
-  whole netted `count` as one `auto` order and **restaffs the band**, so the new order takes the idle hands
-  this turn. **It never queues a suggestion that is itself short of an input** (the suggested recipe must
+- **It adds ONE order only when the bench has room** (`auto_craft::bench_has_room`): every workable order
+  is already at its `crew_cap` (or none is workable). **No idle hand is needed**: `auto_craft_fill` queues
+  the first usable suggestion at its whole netted `count` as one `auto` order and **restaffs the band**, and
+  the labor passes decide whether it gets a crafter (pass 2 opens with one on every workable order, after
+  pass 1). An auto order that got no crafter is workable and below its cap, so the bench has no room and
+  nothing more is queued until it is crewed or done (the anti-flood guard). **It never queues a suggestion
+  that is itself short of an input** (the suggested recipe must
   be drawable for ONE item, `systems::recipe_is_drawable`), so the makeable suggestion behind a short one is
   the one queued, and **never a suggestion whose row already has an order on the bench**, blocked or not.
   One order is queued per fill call; both schedule slots (before and after `advance_crafting`) stay.
   Pinned by `bench_parallel_orders::{auto_craft_adds_exactly_one_order_when_crafters_are_free,
-  auto_craft_adds_nothing_while_crafters_are_not_free}`.
+  auto_craft_adds_nothing_while_an_order_is_below_its_cap,
+  auto_queues_with_no_hand_to_spare_and_the_order_names_what_took_the_hands,
+  auto_with_hands_to_spare_queues_a_crewed_order, an_uncrewed_auto_order_blocks_another}`.
 - **The suggestions are the snapshot's own.** `craft_suggestions::take_row_gear` settles the rows'
   gear and `band_suggestions` ranks it — the two functions `snapshot::population` calls — fed by
   `take_claims::with_world_sources` (between-turns, regrow-first, exactly the capture's reading).
@@ -1590,6 +1594,26 @@ auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 33)
 - **A bench tool that pays for itself is in that list too** ("A bench tool that pays for itself"),
   so a band with enough blocked or suggested work on a material auto-crafts the tool for it first
   (if its craft is known); a band with little work does not.
+- **`BenchState.autoWaitReason` says why auto has not started anything**, computed at the capture by
+  `auto_craft::auto_wait_reason` off the same `auto_pick` the fill calls (on a clone of the bench, with
+  the un-skip applied first; the capture never mutates). It reads `{Name}: {offer reason}` when the bench
+  has room and no suggestion is usable (the first one passed over, with its own offer's `reason` -
+  `Spears: Short 0.4 bone`, `Bone awl: Needs Bone-working`), and `""` otherwise (auto off, a workable
+  order below its cap, a usable pick the next fill queues, or nothing to make). Derived: no save change.
+  Pinned off the encoded frame by
+  `bench_parallel_orders::{auto_blocked_on_a_short_suggestion_publishes_the_offers_own_reason,
+  auto_off_publishes_no_wait_reason}`.
+- **A crewless order names what took the hands first.** `BandBench::first_call` (`FirstCall { scouting,
+  keeping, building, holding, pool }`) is stamped by every staffing (`StaffedBand::apply_bench`) with where
+  the staffable pool went before pass 2 opened - scouts off the top, pass 1a keepers, pass 1b builders,
+  and the hold crews of passes 1b/1c - and **rides the save** with the bench (`SAVE_FORMAT_VERSION` 68), so
+  a restored world publishes the same reason. A workable order with no crafter publishes
+  `Every hand is needed first: 4 holding rows, 2 scouting` (`neutral`; only the nonzero kinds, largest
+  first, ties in the order holding, keeping, building, scouting; words `holding rows`, `keeping ground`,
+  `building`, `scouting`) when those hands account for the whole pool, and `No spare hands this turn`
+  otherwise (hands were left but the order got none: trimmed, or no bare work and no tool). Pinned by
+  `snapshot::crafting::first_call_reason_tests` and
+  `bench_parallel_orders::auto_queues_with_no_hand_to_spare_and_the_order_names_what_took_the_hands`.
 - **A queued auto order that later runs short WAITS** (the ordinary skip/waiting semantics) and no
   longer holds the bench: the next fill queues what can be made. Only the player's skip parks it.
 - **It never picks a crew.** The sim staffs every order in the labor passes (`BandBench::crew_total`).

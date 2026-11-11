@@ -517,6 +517,8 @@ fn seed_snapshot() -> WorldSnapshot {
             }),
             // The skipped item ids — a repeated string field, seeded so the guard decodes one.
             auto_skipped: vec!["spears".to_string(), "hoes".to_string()],
+            // Why auto has not started the top suggestion - a string, seeded non-empty.
+            auto_wait_reason: "No idle hands to start Spears".to_string(),
             // The live whole-kit orders (#780) — a repeated field, seeded for the same reason.
             kit_orders: rows_of(BenchKitOrderState::default()),
             ..Default::default()

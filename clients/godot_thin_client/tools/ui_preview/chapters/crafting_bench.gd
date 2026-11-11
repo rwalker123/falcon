@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 287
+const EXPECTED_CHECKPOINTS := 293
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -133,6 +133,8 @@ const SPEARS_PROGRESS := 1.0
 const SPEARS_DRAWN_WOOD := 1.0
 const BENCH_ITEMS_IN_FLIGHT := 2
 const BENCH_TOOL := "loom"
+const AUTO_WAIT_REASON := "Spears: Short 0.4 bone"
+const EVERY_HAND_REASON := "Every hand is needed first: 4 holding rows, 2 scouting"
 const SPARE_HANDS_REASON := "No spare hands this turn"
 
 ## The workforce of the bench-bound band: all but one worker is at the bench, which is the only shape
@@ -1167,6 +1169,57 @@ func _auto_craft_states() -> void:
 		panel != null and _label_with_text(panel, HudCraftingVocab.AUTO_IDLE_SUB) != null
 			and _label_with_text(panel, HudCraftingVocab.BENCH_IDLE_SUB) == null)
 	await h._save("crafting_auto_idle")
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+	# (c2) an idle bench, Auto on, the top suggestion cannot be queued: the sim's reason is the sub line.
+	var waiting_idle := _auto_idle_band()
+	(waiting_idle["bench"] as Dictionary)["auto_wait_reason"] = AUTO_WAIT_REASON
+	panel = await _auto_show(waiting_idle)
+	var wait_line := HudCraftingVocab.AUTO_WAIT_FORMAT % AUTO_WAIT_REASON
+	h._assert_hud("crafting/auto — an idle bench with Auto waiting reads `%s`" % wait_line,
+		panel != null and _label_with_text(panel, wait_line) != null
+			and _label_with_text(panel, HudCraftingVocab.AUTO_IDLE_SUB) == null)
+	await h._save("crafting_auto_wait_idle")
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+	# (c3) the same empty reason falls back to `nothing to make`.
+	var empty_idle := _auto_idle_band()
+	(empty_idle["bench"] as Dictionary)["auto_wait_reason"] = ""
+	panel = await _auto_show(empty_idle)
+	h._assert_hud("crafting/auto — an idle bench with Auto and no reason reads `%s`" % HudCraftingVocab.AUTO_IDLE_SUB,
+		panel != null and _label_with_text(panel, HudCraftingVocab.AUTO_IDLE_SUB) != null)
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+	# (c4) a bench WITH orders and a waiting auto: the dim note under the header; none without a reason.
+	var noted := _auto_working_band()
+	(noted["bench"] as Dictionary)["auto_wait_reason"] = AUTO_WAIT_REASON
+	panel = await _auto_show(noted)
+	var wait_note := _auto_meta_node(panel, HudCraftingVocab.AUTO_WAIT_NOTE_META)
+	h._assert_hud("crafting/auto — a bench with orders and a waiting auto carries the note `%s`" % wait_line,
+		wait_note is Label and (wait_note as Label).text == wait_line)
+	await h._save("crafting_auto_wait_note")
+	h._hud.close_crafting_panel()
+	await h._settle()
+	panel = await _auto_show(_auto_working_band())
+	h._assert_hud("crafting/auto — no reason, no note",
+		_auto_meta_node(panel, HudCraftingVocab.AUTO_WAIT_NOTE_META) == null)
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+	# (c5) an order the sim could not crew prints the long neutral refusal in full on its row.
+	var no_crew := _auto_waiting_band()
+	var no_crew_head: Dictionary = ((no_crew["bench"] as Dictionary)["orders"] as Array)[0]
+	no_crew_head["blocked_reason"] = EVERY_HAND_REASON
+	no_crew_head["blocked_severity"] = HudCraftingVocab.SEVERITY_NEUTRAL
+	panel = await _auto_show(no_crew)
+	var sub_node := _by_meta(panel, HudCraftingVocab.ORDER_SUB_META, ORDER_HEAD)
+	h._assert_hud("crafting/bench — an order with no crew reads `%s` (tooltip carries it whole)" % EVERY_HAND_REASON,
+		sub_node is Label and (sub_node as Label).text.begins_with(EVERY_HAND_REASON)
+			and (sub_node as Label).tooltip_text.begins_with(EVERY_HAND_REASON))
+	await h._save("crafting_every_hand")
 	h._hud.close_crafting_panel()
 	await h._settle()
 

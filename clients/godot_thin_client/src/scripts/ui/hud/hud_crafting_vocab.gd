@@ -64,6 +64,12 @@ const BENCH_AUTO_TOOLTIP := "Keep the bench working down Make next"
 const AUTO_TAG_TEXT := "Auto"
 const AUTO_SKIP_LINK := "Skip to the next suggestion"
 const AUTO_IDLE_SUB := "Auto: nothing to make."
+## `bench.auto_wait_reason` — why auto has queued nothing though the bench has room (the top suggestion's
+## refusal, sim-resolved); `""` when nothing waits.
+const BENCH_AUTO_WAIT_REASON_KEY := "auto_wait_reason"
+const AUTO_WAIT_FORMAT := "Auto: %s."
+## Handle for the harness: the dim note under the header when the bench has orders AND auto waits.
+const AUTO_WAIT_NOTE_META := "crafting_auto_wait_note"
 const AUTO_SKIPPED_FORMAT := "Auto skipped \u2014 back when %s is in"
 const AUTO_SKIPPED_FREE := "Auto takes it back when the bench is free"
 const AUTO_SKIPPED_MATERIAL_SEPARATOR := ", "

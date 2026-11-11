@@ -354,10 +354,11 @@ fn an_order_with_no_crew_keeps_its_items_and_resumes() {
     assert!(bench(&app, band).orders[0].progress_total() > progress);
 }
 
-/// **10. Auto-craft adds no order while a workable order is below its cap or no hand is idle.**
+/// **10. Auto-craft adds no order while a workable order is below its cap; with room it adds one
+/// even when no hand is idle** (the labor passes decide who crews it).
 #[test]
-fn auto_craft_adds_nothing_while_crafters_are_not_free() {
-    // One hand, an order that could take six: it is below its cap and nobody is idle.
+fn auto_craft_adds_nothing_while_an_order_is_below_its_cap() {
+    // One hand, an order that could take six: it is below its cap, so the bench has no room.
     let (mut app, band) = world(1);
     bank(&mut app, band, HIDE, PLENTY, &HIDE_AXES);
     bank(&mut app, band, FIBRE, PLENTY, &FIBRE_AXES);
@@ -366,8 +367,7 @@ fn auto_craft_adds_nothing_while_crafters_are_not_free() {
     staff(&mut app, band);
     assert!(!auto_craft_fill(&mut app.world, band));
     assert_eq!(bench(&app, band).orders.len(), 1);
-    // Idle hands but the order is below its cap (a crew cap of 6 with only the cap's worth staffed
-    // is at cap; make the cap bigger than the staffed crew by hand-clearing the crew).
+    // Plenty of hands but the order's crew cleared by hand: still below its cap, still no room.
     let (mut app, band) = world(20);
     bank(&mut app, band, HIDE, PLENTY, &HIDE_AXES);
     bank(&mut app, band, FIBRE, PLENTY, &FIBRE_AXES);
@@ -375,11 +375,11 @@ fn auto_craft_adds_nothing_while_crafters_are_not_free() {
     app.world.get_mut::<BandBench>(band).unwrap().auto = true;
     staff(&mut app, band);
     app.world.get_mut::<BandBench>(band).unwrap().orders[0].crew = Default::default();
-    // Hands are idle only after a staffing: restamp what the staffing saw, with the order below cap.
     assert!(
-        !auto_craft_fill(&mut app.world, band) || bench(&app, band).orders.len() == 1,
-        "an order below its cap means the idle hands are idle for want of room, not of an order"
+        !auto_craft_fill(&mut app.world, band),
+        "an order below its cap means the bench has no room for another"
     );
+    assert_eq!(bench(&app, band).orders.len(), 1);
 }
 
 /// **12. The encoded frame carries each order's priority, crew, cap, per-item crew, items in flight,
@@ -483,4 +483,315 @@ fn auto_craft_adds_exactly_one_order_when_crafters_are_free() {
     // The one order is at its cap and the item is already queued: nothing more is added.
     assert!(!auto_craft_fill(&mut app.world, band));
     assert_eq!(bench(&app, band).orders.len(), 1);
+}
+
+// ---------------------------------------------------------------------------------------------
+// WHY AUTO-CRAFT HAS NOT STARTED THE TOP SUGGESTION (`BenchState.autoWaitReason`)
+// ---------------------------------------------------------------------------------------------
+
+const HOES: &str = "hoes";
+/// The lead of the reason a crewless order publishes when every staffable hand was dealt first.
+const EVERY_HAND_NEEDED_FIRST: &str = "Every hand is needed first";
+/// The scouting range the fixture states: more tiles than the band has hands, so every staffable
+/// hand scouts.
+const SCOUTING_RANGE_WANTING_EVERY_HAND: u32 = 9;
+/// A scouting range the band's hands more than cover.
+const SCOUTING_RANGE_LEAVING_HANDS: u32 = 2;
+/// The keeping line the fixture leaves short, which makes `hoes` the top suggestion.
+const HOES_REQUIRED: f32 = 3.0;
+
+/// What the encoded frame says about one band's auto bench.
+struct WaitFrame {
+    reason: String,
+    idle_workers: u32,
+    /// `(itemId, displayName)` of the published suggestions, in rank order.
+    suggestions: Vec<(String, String)>,
+    /// `(outputItemId, suggested, reason)` of every published offer.
+    offers: Vec<(String, bool, String)>,
+    orders: usize,
+    /// `(blockedReason, crewAtTool + crewByHand)` of each published order.
+    order_rows: Vec<(String, u32)>,
+}
+
+fn read_wait_frame(app: &mut App, band: Entity) -> WaitFrame {
+    recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let band_id = app.world.get::<core_sim::BandId>(band).unwrap().0;
+    let cohort = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == band_id)
+        .expect("the band is published");
+    let bench = cohort.bench().expect("the bench row");
+    WaitFrame {
+        reason: bench.autoWaitReason().unwrap_or_default().to_string(),
+        idle_workers: cohort.idleWorkers(),
+        suggestions: cohort
+            .craftSuggestions()
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| {
+                        (
+                            row.itemId().unwrap_or_default().to_string(),
+                            row.displayName().unwrap_or_default().to_string(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        offers: cohort
+            .craftOffers()
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| {
+                        (
+                            row.outputItemId().unwrap_or_default().to_string(),
+                            row.suggested(),
+                            row.reason().unwrap_or_default().to_string(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        orders: bench.orders().map_or(0, |rows| rows.len()),
+        order_rows: bench
+            .orders()
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| {
+                        (
+                            row.blockedReason().unwrap_or_default().to_string(),
+                            row.crewAtTool() + row.crewByHand(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+/// An auto band whose top suggestion is `hoes` (a short keeping line), `hands` working-age people,
+/// and a scouting range of `scouting_range` tiles (0 = none), which the staffing deals first.
+fn auto_band(hands: u32, scouting_range: u32, stocked: bool) -> (App, Entity) {
+    let (mut app, band) = world(hands);
+    if stocked {
+        bank(&mut app, band, BONE, PLENTY, &BONE_AXES);
+        bank(&mut app, band, FIBRE, PLENTY, &FIBRE_AXES);
+    }
+    {
+        let mut allocation = app.world.get_mut::<LaborAllocation>(band).unwrap();
+        allocation.last_pool_toe.clear();
+        allocation.last_keeping_issued = vec![KeepingIssue {
+            source: BuildSource::Patch(bevy::prelude::UVec2::new(2, 3)),
+            item: HOES.to_string(),
+            units: 0.0,
+            required: HOES_REQUIRED,
+        }];
+        allocation.set_scouting_range(scouting_range, None);
+    }
+    app.world.get_mut::<BandBench>(band).unwrap().auto = true;
+    staff(&mut app, band);
+    (app, band)
+}
+
+/// **Ray's case: every hand is taken before the bench is dealt any.** Auto still queues the top
+/// suggestion; the order has no crafter and its `blockedReason` names what took the hands.
+#[test]
+fn auto_queues_with_no_hand_to_spare_and_the_order_names_what_took_the_hands() {
+    let (mut app, band) = auto_band(6, SCOUTING_RANGE_WANTING_EVERY_HAND, true);
+    assert!(
+        auto_craft_fill(&mut app.world, band),
+        "no idle hand is not a reason to hold the order back"
+    );
+    let frame = read_wait_frame(&mut app, band);
+    assert_eq!(frame.idle_workers, 0, "liveness: every hand is spoken for");
+    assert_eq!(frame.orders, 1, "the auto order is on the bench");
+    let (reason, crew) = frame.order_rows[0].clone();
+    assert_eq!(crew, 0, "it got no crafter");
+    let scouts = app
+        .world
+        .get::<BandBench>(band)
+        .unwrap()
+        .first_call
+        .scouting;
+    assert!(scouts > 0, "liveness: the scouts took hands");
+    assert_eq!(
+        reason,
+        format!("{EVERY_HAND_NEEDED_FIRST}: {scouts} scouting")
+    );
+    assert_eq!(frame.reason, "", "auto is not blocked on a suggestion");
+}
+
+/// **Control: with hands to spare the same auto order is queued and crewed**, and says nothing.
+#[test]
+fn auto_with_hands_to_spare_queues_a_crewed_order() {
+    let (mut app, band) = auto_band(6, SCOUTING_RANGE_LEAVING_HANDS, true);
+    assert!(auto_craft_fill(&mut app.world, band));
+    let frame = read_wait_frame(&mut app, band);
+    assert_eq!(frame.orders, 1);
+    let (reason, crew) = frame.order_rows[0].clone();
+    assert!(crew > 0, "the order took a crafter");
+    assert_eq!(reason, "");
+}
+
+/// **Anti-flood: an auto order that got no crafter blocks a second one.**
+#[test]
+fn an_uncrewed_auto_order_blocks_another() {
+    let (mut app, band) = auto_band(6, SCOUTING_RANGE_WANTING_EVERY_HAND, true);
+    assert!(auto_craft_fill(&mut app.world, band));
+    assert!(
+        !auto_craft_fill(&mut app.world, band),
+        "the uncrewed order is below its cap: the bench has no room"
+    );
+    assert_eq!(bench(&app, band).orders.len(), 1);
+}
+
+/// **A top suggestion short of a material reads `<Name>: <that offer's own reason>`.**
+#[test]
+fn auto_blocked_on_a_short_suggestion_publishes_the_offers_own_reason() {
+    let (mut app, band) = auto_band(6, 0, false);
+    assert!(
+        !auto_craft_fill(&mut app.world, band),
+        "nothing drawable: no order"
+    );
+    let frame = read_wait_frame(&mut app, band);
+    let (item, name) = frame
+        .suggestions
+        .first()
+        .cloned()
+        .expect("liveness: a suggestion is published");
+    let offer_reason = frame
+        .offers
+        .iter()
+        .find(|(output, suggested, _)| output == &item && *suggested)
+        .map(|(_, _, reason)| reason.clone())
+        .expect("the suggested offer of the item");
+    assert!(
+        offer_reason.starts_with("Short") || offer_reason.starts_with("Needs"),
+        "liveness: the top suggestion's offer is refused, got {offer_reason:?}"
+    );
+    assert_eq!(frame.reason, format!("{name}: {offer_reason}"));
+}
+
+/// **With auto off the reason is empty, whatever the band is short of.**
+#[test]
+fn auto_off_publishes_no_wait_reason() {
+    let (mut app, band) = auto_band(6, SCOUTING_RANGE_WANTING_EVERY_HAND, true);
+    app.world.get_mut::<BandBench>(band).unwrap().auto = false;
+    let frame = read_wait_frame(&mut app, band);
+    assert!(
+        !frame.suggestions.is_empty(),
+        "liveness: the same band has a suggestion"
+    );
+    assert_eq!(frame.reason, "");
+}
+
+/// The forage kit item: kitted hold heads are dealt in pass 1b, ahead of the bench's first crafter.
+const BASKETS_ITEM: &str = "baskets";
+/// More baskets than any fixture band has hands, so the shelf never limits a kitted head.
+const BASKETS_ON_THE_SHELF: u32 = 40;
+/// Extra hands past a hold crew in the control band.
+const HANDS_BEYOND_THE_HOLD_CREW: u32 = 4;
+
+/// An auto band (top suggestion `hoes`) with `hands` people, a shelf of baskets and ONE forage row on
+/// the nearest patch, staffed. Returns the row's hold crew (the heads pass 1b deals it).
+fn auto_band_with_a_kitted_forage_row(hands: u32) -> (App, Entity, u32) {
+    let (mut app, band) = auto_band(hands, 0, true);
+    let band_tile = app
+        .world
+        .get::<PopulationCohort>(band)
+        .unwrap()
+        .current_tile;
+    let band_pos = app.world.get::<core_sim::Tile>(band_tile).unwrap().position;
+    let patch = app
+        .world
+        .resource::<core_sim::ForageRegistry>()
+        .patches
+        .keys()
+        .copied()
+        .min_by_key(|tile| {
+            (
+                tile.x.abs_diff(band_pos.x) + tile.y.abs_diff(band_pos.y),
+                tile.x,
+                tile.y,
+            )
+        })
+        .expect("the world has forage patches");
+    app.world.get_mut::<BandEquipment>(band).unwrap().stock(
+        BASKETS_ITEM,
+        BASKETS_ON_THE_SHELF,
+        PLAIN_TIER,
+        None,
+    );
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .unwrap()
+        .set_assignment(
+            core_sim::LaborTarget::Forage {
+                tile: patch,
+                floor: 0.5,
+                species: None,
+                take_species: core_sim::TakeSelection::EVERYTHING,
+            },
+            hands,
+            hands,
+            None,
+        );
+    staff(&mut app, band);
+    let hold = app
+        .world
+        .get::<LaborAllocation>(band)
+        .unwrap()
+        .assignments
+        .iter()
+        .map(|row| row.staffing.hold_crew)
+        .sum();
+    (app, band, hold)
+}
+
+/// **Ray's case: kitted hold crews take every staffable hand.** Auto still queues the top suggestion;
+/// the order has no crafter and its `blockedReason` names the hold crews, counted off the staffing.
+#[test]
+fn a_hold_crew_that_takes_every_hand_is_named_on_the_uncrewed_auto_order() {
+    // Learn the row's hold crew on a roomy band, then give a band exactly that many hands.
+    let (_, _, hold) = auto_band_with_a_kitted_forage_row(HANDS_BEYOND_THE_HOLD_CREW * 4);
+    assert!(hold > 0, "liveness: a kitted row holds a crew");
+    let (mut app, band, same_hold) = auto_band_with_a_kitted_forage_row(hold);
+    assert_eq!(
+        same_hold, hold,
+        "the hold crew does not depend on the pool here"
+    );
+    assert!(auto_craft_fill(&mut app.world, band), "auto queues anyway");
+    let frame = read_wait_frame(&mut app, band);
+    assert_eq!(frame.idle_workers, 0, "liveness: no hand is idle");
+    assert_eq!(frame.orders, 1, "the auto order is on the bench");
+    let (reason, crew) = frame.order_rows[0].clone();
+    assert_eq!(crew, 0, "the hold crew took every hand before the bench");
+    assert_eq!(
+        reason,
+        format!("{EVERY_HAND_NEEDED_FIRST}: {hold} holding rows")
+    );
+}
+
+/// **Control: the same row with hands to spare leaves the order a crafter**, and nothing is blocked.
+#[test]
+fn a_hold_crew_that_leaves_a_hand_leaves_the_auto_order_a_crafter() {
+    let (_, _, hold) = auto_band_with_a_kitted_forage_row(HANDS_BEYOND_THE_HOLD_CREW * 4);
+    let (mut app, band, _) = auto_band_with_a_kitted_forage_row(hold + HANDS_BEYOND_THE_HOLD_CREW);
+    assert!(auto_craft_fill(&mut app.world, band));
+    let frame = read_wait_frame(&mut app, band);
+    assert_eq!(frame.orders, 1);
+    let (reason, crew) = frame.order_rows[0].clone();
+    assert!(crew > 0, "the order took a crafter");
+    assert_eq!(reason, "");
 }

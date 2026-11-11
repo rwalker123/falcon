@@ -721,6 +721,7 @@ fn create_populations<'a>(
                     .map(|item| builder.create_string(item))
                     .collect();
                 let auto_skipped = builder.create_vector(&auto_skipped);
+                let auto_wait_reason = builder.create_string(&cohort.bench.auto_wait_reason);
                 fb::BenchState::create(
                     builder,
                     &fb::BenchStateArgs {
@@ -731,6 +732,7 @@ fn create_populations<'a>(
                         lentToHunt: cohort.bench.lent_to_hunt,
                         kitOrders: Some(kit_orders),
                         setAside: Some(set_aside),
+                        autoWaitReason: Some(auto_wait_reason),
                     },
                 )
             };
@@ -1795,6 +1797,7 @@ fn decode_bench(bench: fb::BenchState<'_>) -> Result<BenchState, DecodeError> {
             done: kit.done(),
         }),
         set_aside: decode_drawn_inputs(bench.setAside()),
+        auto_wait_reason: text(bench.autoWaitReason()),
     })
 }
 

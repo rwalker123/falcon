@@ -37,7 +37,7 @@ S spare` — and every order is its own row under it.
   sim's crew total; **S** = `HudBandLaborState.people_idle`, the idle figure the labor UI already tells
   the player (handed in as `PAYLOAD_IDLE_WORKERS`). None is derived by a rule of the panel's own.
 - An empty queue replaces the line with `Nothing on the bench` and its sub line (`Auto` has its own).
-- Bench-level wire keys are only `workers`, `orders`, `auto`, `auto_skipped`, `lent_to_hunt`,
+- Bench-level wire keys are only `workers`, `orders`, `auto`, `auto_skipped`, `auto_wait_reason`, `lent_to_hunt`,
   `kit_orders` and `set_aside`. **Everything else is per order** — a bench-level read of `recipe_id`,
   `progress`, `worked`, `blocked_reason` is a read of a field that no longer exists
   (`KnowledgePanelController._bench_recipes` was one and now walks the orders).
@@ -643,6 +643,14 @@ over until it can be drawn. Switching off clears the skips and touches neither o
 on|off` and `bench_auto_skip <f> <band>`, relayed panel → `CraftingPanelController` → `HudLayer` →
 `Main.format_bench_auto` / `format_bench_auto_skip` exactly as `bench_priority` is.
 
+- **Why Auto queued nothing** is `bench.auto_wait_reason` (sim-resolved; `""` unless Auto is on, the bench
+  has room and the top suggestion cannot be queued, e.g. `Spears: Short 0.4 bone`). On an IDLE bench it is
+  the well's sub line, `Auto: <reason>.` (`AUTO_WAIT_FORMAT`), falling back to `Auto: nothing to make.`
+  when empty. On a bench WITH orders it is a dim autowrapped note under the header well (meta
+  `AUTO_WAIT_NOTE_META`), absent when the reason is empty. Auto queues whenever the bench has room; it
+  needs no idle hand.
+- **An order row's sub line** is one ellipsized line; the whole refusal rides its tooltip (a neutral
+  `Every hand is needed first: 4 holding rows, 2 scouting` is longer than `No spare hands this turn`).
 - **The switch** is a pill (30x15 track, 11px knob, both `AUTO_SWITCH_*`) over an `AUTO` caption in the
   Made/Crafters caption size. On, track/knob/caption take `HudStyle.WARN`; off, `INK_FAINT`. It is a
   trailing control of the bench header line, and renders on an IDLE bench too. A click asks for the OPPOSITE state; no optimistic overlay.

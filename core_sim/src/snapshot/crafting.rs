@@ -85,6 +85,43 @@ const REASON_NOT_NEEDED: &str = "Not needed yet";
 /// so this reads at [`SEVERITY_NEUTRAL`] while every other bench refusal is a problem.
 const REASON_NO_SPARE_HANDS: &str = "No spare hands this turn";
 
+/// **Every staffable hand was dealt before the bench was** - the lead of the reason a crewless order
+/// publishes, followed by what took them (`"4 holding rows, 2 scouting"`).
+const REASON_EVERY_HAND_NEEDED_FIRST: &str = "Every hand is needed first: ";
+/// The words for the four things a hand can be dealt to before pass 2, in the order a tie between
+/// two of them is broken.
+const FIRST_CALL_HOLDING: &str = "holding rows";
+const FIRST_CALL_KEEPING: &str = "keeping ground";
+const FIRST_CALL_BUILDING: &str = "building";
+const FIRST_CALL_SCOUTING: &str = "scouting";
+/// Between two named kinds in the reason.
+const FIRST_CALL_SEPARATOR: &str = ", ";
+
+/// **WHAT TOOK THE HANDS BEFORE PASS 2**, `None` when hands were left over (the order then simply got
+/// none: trimmed, or no bare work and no tool) - only the nonzero kinds, largest first.
+fn every_hand_needed_first(first: &crate::components::FirstCall) -> Option<String> {
+    if first.dealt() == 0 || first.dealt() < first.pool {
+        return None;
+    }
+    let mut kinds = [
+        (first.holding, FIRST_CALL_HOLDING),
+        (first.keeping, FIRST_CALL_KEEPING),
+        (first.building, FIRST_CALL_BUILDING),
+        (first.scouting, FIRST_CALL_SCOUTING),
+    ];
+    // `sort_by_key` is stable, so equal counts keep the order above.
+    kinds.sort_by_key(|(count, _)| std::cmp::Reverse(*count));
+    let named: Vec<String> = kinds
+        .iter()
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, word)| format!("{count} {word}"))
+        .collect();
+    Some(format!(
+        "{REASON_EVERY_HAND_NEEDED_FIRST}{}",
+        named.join(FIRST_CALL_SEPARATOR)
+    ))
+}
+
 /// **Nothing is blocking**, so there is no severity to state either. Spelled once so the empty
 /// `blocked_reason` and the empty `blocked_severity` cannot drift apart.
 const SEVERITY_NONE: &str = "";
@@ -494,6 +531,8 @@ fn bench_state(
         lent_to_hunt: 0,
         kit_orders: published_kit_orders(bench),
         set_aside,
+        // Stamped by the capture (`snapshot::population`), which holds the suggestions.
+        auto_wait_reason: String::new(),
     }
 }
 
@@ -529,6 +568,7 @@ fn bench_orders(
                 inputs,
                 tiers_by_material,
                 forecast.orders.get(index),
+                &bench.first_call,
             );
             let rate = recipe_plan
                 .and_then(|plan| plan.bench_material)
@@ -818,6 +858,7 @@ fn order_block_reason(
     inputs: &BandCraftInputs<'_>,
     tiers_by_material: &BTreeMap<&str, BenchTiers>,
     forecast_rows: Option<&Vec<crate::systems::MaterialNeed>>,
+    first_call: &crate::components::FirstCall,
 ) -> (String, &'static str) {
     let Some(plan) = inputs.plans.iter().find(|plan| plan.id == order.recipe_id) else {
         return (
@@ -828,7 +869,11 @@ fn order_block_reason(
     if plan_row.is_some_and(|row| row.workable) {
         // A workable order that got no crafter is waiting on spare hands - a prompt, not a fault.
         return if order.crew.total() == 0 {
-            (REASON_NO_SPARE_HANDS.to_string(), SEVERITY_NEUTRAL)
+            (
+                every_hand_needed_first(first_call)
+                    .unwrap_or_else(|| REASON_NO_SPARE_HANDS.to_string()),
+                SEVERITY_NEUTRAL,
+            )
         } else {
             (String::new(), SEVERITY_NONE)
         };
@@ -1922,5 +1967,56 @@ mod tests {
             ONE_UNIT_IS_ITS_OWN_NOUN,
             "so its published `quantaLeft` is a raw biomass count, unconverted"
         );
+    }
+}
+
+#[cfg(test)]
+mod first_call_reason_tests {
+    use super::{every_hand_needed_first, REASON_EVERY_HAND_NEEDED_FIRST};
+    use crate::components::FirstCall;
+
+    /// **Only the nonzero kinds, largest first, ties in the order holding, keeping, building,
+    /// scouting.**
+    #[test]
+    fn the_reason_names_what_took_the_hands_largest_first() {
+        let first = FirstCall {
+            scouting: 2,
+            keeping: 0,
+            building: 0,
+            holding: 4,
+            pool: 6,
+        };
+        assert_eq!(
+            every_hand_needed_first(&first).as_deref(),
+            Some(format!("{REASON_EVERY_HAND_NEEDED_FIRST}4 holding rows, 2 scouting").as_str())
+        );
+        let tied = FirstCall {
+            scouting: 2,
+            keeping: 2,
+            building: 2,
+            holding: 2,
+            pool: 8,
+        };
+        assert_eq!(
+            every_hand_needed_first(&tied).as_deref(),
+            Some(
+                format!(
+                    "{REASON_EVERY_HAND_NEEDED_FIRST}2 holding rows, 2 keeping ground, 2 building, 2 scouting"
+                )
+                .as_str()
+            )
+        );
+    }
+
+    /// **Hands left over, or none to deal, is not "needed first"** - the order keeps the plain wording.
+    #[test]
+    fn hands_left_over_keep_the_plain_wording() {
+        let left = FirstCall {
+            holding: 3,
+            pool: 6,
+            ..Default::default()
+        };
+        assert_eq!(every_hand_needed_first(&left), None);
+        assert_eq!(every_hand_needed_first(&FirstCall::default()), None);
     }
 }

@@ -3729,6 +3729,8 @@ Three frames and thirteen claims, appended LAST in the chapter (`_auto_craft_sta
 - `crafting_auto_waiting` -- an auto head short of bone: the `AUTO` tag on the well title, the Skip link under the red blocked line, the switch ON. PNG-less beside it: a REAL press on the switch sends `bench_auto <f> <band> off` and on Skip `bench_auto_skip <f> <band>` (asserted on the command LINE through `Main.format_bench_auto*`), and the negatives that make the pair mean something -- a waiting head the PLAYER queued gets no Skip/tag, and Auto OFF hides Skip even on an auto-tagged head while the switch reads OFF.
 - `crafting_auto_working` -- an auto order being worked, the clubs suggestion in `auto_skipped`: its note by equality (`Auto skipped — back when bone is in`), no red shortfall line, Queue live, no Skip. PNG-less: the same item with nothing short reads the free-bench line, and a queued auto order on a queue ROW wears the tag.
 - `crafting_auto_idle` -- Auto on over an idle bench reads `Auto: nothing to make.` and not the Make-a-row prompt.
+- `crafting_auto_wait_idle` / `crafting_auto_wait_note` -- `auto_wait_reason` as the idle sub line (`Auto: <reason>.`) and as the dim note under a bench with orders; an empty reason falls back / draws no note.
+- `crafting_every_hand` -- an uncrewed order's long neutral `blocked_reason` renders on its row, whole on the tooltip.
 
 - `crafting_build_queue_suggestion` (`_build_queue_suggestion_states`, after the auto frames) -- a declared-build suggestion reading `2 builders, for (12, 7)` (`1 builder, for (12, 7)` at one), the label being the build's own site name with no position (`HudWorkVocab.build_site_subject`). PNG-less beside it: a Sled short for a take AND a declared build keeps `3 hunters without`.
 

@@ -1636,6 +1636,15 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         .map(crate::dict::strings_to_variant_array)
         .unwrap_or_default();
     let _ = bench_dict.insert("auto_skipped", &auto_skipped);
+    // `auto_wait_reason` is why auto-craft has queued nothing despite room on the bench (the top
+    // suggestion's sim-resolved refusal); `""` when nothing waits.
+    let _ = bench_dict.insert(
+        "auto_wait_reason",
+        cohort
+            .bench()
+            .and_then(|b| b.autoWaitReason())
+            .unwrap_or(""),
+    );
     // **THE HANDS THE BENCH LENDS TO A HUNT NEXT TURN** — the bench as a donor, from the same muster
     // plan that fills each donor row's `lent_to_hunt`. `rate_per_turn` already subtracts them.
     let _ = bench_dict.insert(

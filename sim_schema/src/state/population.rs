@@ -2466,6 +2466,11 @@ pub struct BenchState {
     /// **What the bench has set aside, per material** - the sum over every order's items in flight.
     #[serde(default)]
     pub set_aside: Vec<DrawnInputState>,
+    /// **Why auto-craft has not started the top suggestion**, resolved sim-side by the pick the fill
+    /// uses (`"No idle hands to start Spears"`, `"Spears: Short 0.4 bone"`). Empty when not waiting,
+    /// auto is off, or there is nothing to make.
+    #[serde(default)]
+    pub auto_wait_reason: String,
 }
 
 /// **One order on a bench's queue** - `recipe x count` and everything the sim decided about it, a

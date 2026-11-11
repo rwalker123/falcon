@@ -5200,6 +5200,10 @@ table BenchState {
   // WHAT THE BENCH HAS SET ASIDE, PER MATERIAL - the sum over every order's items in flight. The
   // pile rail's "N set aside for the bench".
   setAside:[DrawnInput];
+  // WHY AUTO-CRAFT HAS NOT STARTED THE TOP SUGGESTION, resolved sim-side by the same pick the fill
+  // uses ("No idle hands to start Spears" / "Spears: Short 0.4 bone"). "" = not waiting, auto off,
+  // or nothing to make.
+  autoWaitReason:string;
 }
 
 // ONE ORDER ON A BENCH'S QUEUE - `recipe x count`, with everything the sim decided about it. Every

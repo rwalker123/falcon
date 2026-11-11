@@ -53,6 +53,7 @@ mod tests {
                 bench: BenchState {
                     auto: true,
                     auto_skipped: vec!["clubs".to_string(), "hoes".to_string()],
+                    auto_wait_reason: "No idle hands to start Spears".to_string(),
                     orders: vec![
                         BenchOrderState {
                             recipe_id: "baskets".to_string(),
@@ -78,6 +79,10 @@ mod tests {
         let bench = &decoded.populations[0].bench;
         assert!(bench.auto, "the toggle");
         assert_eq!(bench.auto_skipped, vec!["clubs", "hoes"], "the skipped ids");
+        assert_eq!(
+            bench.auto_wait_reason, "No idle hands to start Spears",
+            "why auto is waiting"
+        );
         assert_eq!(
             bench
                 .orders

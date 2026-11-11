@@ -6978,6 +6978,7 @@
           "spears",
           "hoes"
         ],
+        "auto_wait_reason": "No idle hands to start Spears",
         "kit_orders": [
           {
             "done": 52,
@@ -9637,6 +9638,7 @@
           "spears",
           "hoes"
         ],
+        "auto_wait_reason": "No idle hands to start Spears",
         "kit_orders": [
           {
             "done": 65,
@@ -12240,6 +12242,7 @@
           "spears",
           "hoes"
         ],
+        "auto_wait_reason": "No idle hands to start Spears",
         "kit_orders": [
           {
             "done": 118,

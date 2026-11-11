@@ -411,6 +411,19 @@ fn staff_passes_scouting(
     tile_room: &BTreeMap<TileKey, u32>,
     scouts: &ScoutPlan,
 ) -> (Vec<RowStaffing>, ScoutCrew) {
+    let (out, scout, _) = staff_passes_counted(rows, pool, shelf, passes, tile_room, scouts);
+    (out, scout)
+}
+
+/// [`staff_passes_scouting`] that also reports where the hands went before pass 2 opened.
+fn staff_passes_counted(
+    rows: &[StaffRowInput<'_>],
+    pool: u32,
+    shelf: &mut BTreeMap<Arc<str>, u32>,
+    passes: Passes,
+    tile_room: &BTreeMap<TileKey, u32>,
+    scouts: &ScoutPlan,
+) -> (Vec<RowStaffing>, ScoutCrew, crate::components::FirstCall) {
     let mut order: Vec<usize> = (0..rows.len()).collect();
     order.sort_by_key(|&i| (std::cmp::Reverse(rows[i].priority), i));
 
@@ -460,6 +473,12 @@ fn staff_passes_scouting(
     // an explicit order of its own (one row per band, not a priority group), so it is dealt first
     // out of the whole pool and shelf and every pass below staffs from what is left.
     let scout_crew = deal_scouts(scouts, &mut ledger.pool_left, shelf);
+    let mut first_call = crate::components::FirstCall {
+        scouting: pool - ledger.pool_left,
+        pool,
+        ..Default::default()
+    };
+    let after_scouts = ledger.pool_left;
 
     // ## Pass 1a — the keepers on every row at every priority, High to Low: the ground the band
     // already has never rots to pay for anything else (a hold crew is a food take, not rot
@@ -487,6 +506,8 @@ fn staff_passes_scouting(
             }
         }
     }
+    first_call.keeping = after_scouts - ledger.pool_left;
+    let after_keepers = ledger.pool_left;
     // The keeper-typed heads each row holds from here on; every later want is the row's crew less
     // these.
     let kept: Vec<u32> = ledger.out.iter().map(|crew| crew.keepers).collect();
@@ -538,6 +559,13 @@ fn staff_passes_scouting(
             ledger.deal_head(i, kitted + ledger.out[i].bare < hold, HeadKind::Bare)
         });
     }
+
+    // What passes 1b and 1c dealt is the builds' first builders and the rows' hold crews.
+    first_call.building = (0..rows.len())
+        .filter(|&i| rows[i].is_build && !rows[i].is_bench)
+        .map(|i| ledger.out[i].total())
+        .sum();
+    first_call.holding = (after_keepers - ledger.pool_left).saturating_sub(first_call.building);
 
     // ## Pass 2 opens with ONE crafter on every workable bench order, at any priority (High to Low,
     // then queue order), before any group's pass-2 dealing: kitted (holding the tool) when the shelf
@@ -591,7 +619,7 @@ fn staff_passes_scouting(
     }
 
     if passes == Passes::Steady {
-        return (ledger.out, scout_crew);
+        return (ledger.out, scout_crew, first_call);
     }
 
     // ## Pass 3 — every row up to its USEFUL crew: the kit's units still unspent first (a kit never
@@ -617,7 +645,7 @@ fn staff_passes_scouting(
             ledger.deal_head(i, kitted + ledger.out[i].bare < useful, HeadKind::Bare)
         });
     }
-    (ledger.out, scout_crew)
+    (ledger.out, scout_crew, first_call)
 }
 
 /// Which segment of a row's crew a head joins.
@@ -997,6 +1025,8 @@ pub struct StaffedBand {
     /// **Every bench order's staffing**, one per queue index: workable orders carry what the passes
     /// dealt, the rest nothing and a cap of zero.
     pub bench: Vec<BenchStaffed>,
+    /// Where the hands went before pass 2 opened (what a crewless bench order waited behind).
+    pub first_call: crate::components::FirstCall,
 }
 
 /// **WHAT THE PASSES DECIDED FOR ONE BENCH ORDER.**
@@ -1021,6 +1051,7 @@ impl StaffedBand {
     /// **WRITE THE BENCH'S CREWS ONTO THE BENCH** - each order's crew and cap, restamped every
     /// staffing. The turn, the command restaff and the preview's copy all go through it.
     pub fn apply_bench(&self, bench: &mut crate::components::BandBench) {
+        bench.first_call = self.first_call;
         for staffed in &self.bench {
             if let Some(order) = bench.orders.get_mut(staffed.order) {
                 order.crew = staffed.crew;
@@ -1064,7 +1095,7 @@ pub fn staff_rows<'a>(
             .entry(Arc::clone(item))
             .or_insert_with(|| band_kit.live_units(item, equipment));
     }
-    let (staffed, scout) = staff_passes_scouting(
+    let (staffed, scout, first_call) = staff_passes_counted(
         &inputs.rows,
         pool,
         &mut shelf,
@@ -1130,6 +1161,7 @@ pub fn staff_rows<'a>(
         builds,
         scout,
         bench,
+        first_call,
     }
 }
 
@@ -3233,6 +3265,7 @@ mod tests {
         };
         let mut staffed = StaffedBand {
             bench: Vec::new(),
+            first_call: Default::default(),
             rows: vec![
                 (LaborTarget::Roadwork, StaffedCrew::default()),
                 (forage_target, crew),

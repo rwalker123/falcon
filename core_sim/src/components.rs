@@ -5525,6 +5525,32 @@ pub struct BenchCrew {
     pub by_hand: u32,
 }
 
+/// **WHERE THE STAFFABLE HANDS WENT BEFORE PASS 2 OPENED** - the bench is never staffed before
+/// pass 2, so this is what a crewless workable order was waiting behind. Restamped by every
+/// staffing ([`crate::staffing::StaffedBand::apply_bench`]); persisted with the bench so a restored
+/// world publishes the reason an uninterrupted one would.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FirstCall {
+    /// Scouts placed off the top of the pool.
+    pub scouting: u32,
+    /// Hands keeping ground the band already has (pass 1a).
+    pub keeping: u32,
+    /// Declared builds' first builders (pass 1b).
+    pub building: u32,
+    /// Hold crews of the take rows (pass 1b kitted, pass 1c bare): the hands that keep taking what
+    /// regrows at the row's floor.
+    pub holding: u32,
+    /// The staffable pool the passes dealt from.
+    pub pool: u32,
+}
+
+impl FirstCall {
+    /// Every hand dealt before pass 2.
+    pub fn dealt(&self) -> u32 {
+        self.scouting + self.keeping + self.building + self.holding
+    }
+}
+
 impl BenchCrew {
     /// Every crafter on the order.
     pub fn total(&self) -> u32 {
@@ -5798,6 +5824,9 @@ pub struct BandBench {
     /// **HOW MANY KIT ORDERS THIS BENCH HAS EVER ISSUED** — the next id is this plus one, so ids
     /// start at `1` and are never reused. **Persisted.**
     pub next_kit_order: u32,
+    /// **WHERE THE HANDS WENT BEFORE THE BENCH WAS DEALT ANY** ([`FirstCall`]) - what the published
+    /// `blockedReason` of a crewless workable order names. Restamped by every staffing. **Persisted.**
+    pub first_call: FirstCall,
 }
 
 impl BandBench {

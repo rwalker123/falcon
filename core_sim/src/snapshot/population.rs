@@ -2980,6 +2980,30 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     None => crate::crafting::title_from_id(&suggestion.item),
                 };
             }
+            // **WHY AUTO-CRAFT HAS NOT STARTED THE TOP SUGGESTION** - the pick the fill makes, read
+            // here off the same list and offers (`auto_craft::auto_wait_reason`).
+            if let Some(bench) = bench {
+                let plan = crate::systems::bench_plan(
+                    bench,
+                    &cohort.stores,
+                    craft_inputs.recipes,
+                    craft_inputs.materials,
+                    craft_inputs.equipment,
+                    &kit,
+                );
+                bench_state.auto_wait_reason =
+                    crate::auto_craft::auto_wait_reason(&crate::auto_craft::AutoWaitInputs {
+                        bench,
+                        plan: &plan,
+                        suggestions: &suggestions,
+                        offers: &craft_offers,
+                        store: &cohort.stores,
+                        wear: &kit,
+                        recipes: craft_inputs.recipes,
+                        materials: craft_inputs.materials,
+                        equipment: craft_inputs.equipment,
+                    });
+            }
             let mut states = crate::snapshot::crafting::craft_suggestion_states(suggestions);
             // **What the whole count needs that the stock cannot cover**, off the same forecast the
             // bench's orders publish — a suggestion lands at the queue's end.
