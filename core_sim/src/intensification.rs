@@ -7050,6 +7050,9 @@ mod tests {
         grafted["unlock_knowledge"] = Value::Null;
         grafted["earns_knowledge"] = Value::Null;
         grafted["site_requirement"] = Value::Null;
+        // The cloned Tended rung carries a `worked_land` relaxation; a rung with no site rule has
+        // nothing for a lesson to loosen.
+        grafted["site_relaxations"] = serde_json::json!([]);
         grafted["requires_crop"] = Value::Bool(false);
         grafted["traits"] = serde_json::json!(["managed"]);
         grafted["label"] = Value::String("Grafted orchard".to_string());

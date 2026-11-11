@@ -992,8 +992,8 @@ See Also: "Cultivation (Intensification Phase 1a)" (the rung below), "Corral (In
 ## Worked Land - the Farm off the gathering sites
 
 The Farm (`plant:farm`, formerly `plant:field`) is sown only on a gathering site until the faction learns
-**Worked Land** (earned by working a Farm); the lesson swaps in the Farm's `site_relaxations` rule (fertile,
-watered ground, no gathering site). Mechanism, the F lever and the counts: `intensification.md` -> "Site
+**Worked Land** (earned by working a Farm); the lesson swaps in the `site_relaxations` rule (fertile,
+watered ground, no gathering site) on both the Farm and Tended, since an off-site Farm climbs through Tended. Mechanism, the F lever and the counts: `intensification.md` -> "Site
 relaxations".
 
 ## Which band is building it — `builder_band`

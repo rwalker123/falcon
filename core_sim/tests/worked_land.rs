@@ -416,3 +416,66 @@ fn working_a_farm_earns_worked_land() {
         "working a Farm teaches Worked Land"
     );
 }
+
+/// **TENDED IS THE LEG EVERY OFF-SITE FARM CLIMBS THROUGH, SO THE WIRE MUST NOT REFUSE IT WHERE THE
+/// FARM IS ADMITTED.** Paired held / unheld lesson on the encoded envelope, so the assertion cannot
+/// pass on a rule that never fires.
+#[test]
+fn the_tended_quote_admits_off_site_ground_under_worked_land() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let mut app = spawn_world();
+    let faction = {
+        let mut query = app.world.query::<&PopulationCohort>();
+        query.iter(&app.world).next().expect("a band").faction
+    };
+    app.world.insert_resource(ViewerFaction(faction));
+    let floor = worked_land_floor(&app);
+    let target = *patch_ground(&app)
+        .iter()
+        .find(|g| !g.on_site && g.watered && g.capacity >= floor)
+        .expect("off-site fertile watered ground");
+
+    let tended_refusal = |app: &App| -> String {
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+        let patch = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot")
+            .subsistence()
+            .expect("a subsistence section")
+            .foragePatches()
+            .expect("the forage patches")
+            .iter()
+            .find(|p| p.x() == target.position.x && p.y() == target.position.y)
+            .expect("the patch is on the wire");
+        sim_schema::wire_rung_quote(patch.rungQuotes(), "plant:tended")
+            .expect("the Tended rung is quoted")
+            .siteRefusal()
+            .unwrap_or_default()
+            .to_string()
+    };
+
+    app.update();
+    assert_eq!(
+        tended_refusal(&app),
+        "needs_lesson",
+        "without Worked Land the off-site Tended quote is refused"
+    );
+
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(faction, WORKED_LAND_DISCOVERY_ID, core_sim::scalar_one());
+    app.update();
+    assert_eq!(
+        tended_refusal(&app),
+        "",
+        "with Worked Land the Tended quote admits the ground the Farm admits"
+    );
+}

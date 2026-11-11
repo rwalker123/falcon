@@ -131,6 +131,17 @@
         "min_forage_capacity": 0.0,
         "requires_fresh_water": false
       },
+      "_comment_site_relaxations": "Tended is the leg every off-site Farm climbs through, so it admits the ground Farm admits: the same `worked_land` relaxation as `plant:farm`, copied whole. Without it the wire refuses a rung the build is crossing (Tended shown locked while the climb is 8% through it).",
+      "site_relaxations": [
+        {
+          "knowledge": "worked_land",
+          "site_requirement": {
+            "requires_gathering_site": false,
+            "min_forage_capacity": 80.0,
+            "requires_fresh_water": true
+          }
+        }
+      ],
       "_comment_build": "work_cost 50 = FIFTY WORKER-TURNS, which was today's 25 turns at the crew of 2 this rung used to declare — the pacing-neutral cost (see _comment_costs at the top of this file). At 1 builder it is 50 turns; at 4 it is 13, and there is no cap beyond the band's own pool. There is no dip here any more: the player states the build's crew on the verb, so a crew preparing this patch costs exactly the hands it names (see the top-of-file note on the retired yield_fraction_while_building). grace_turns is NULL because THIS RUNG COUNTS NO UNWORKED-BUILD TURNS AT ALL: its neglect trigger is the UPKEEP SHORTFALL below, so its grace lives there and a second number here would be a dial nothing reads.",
       "build": {
         "work_cost": 50.0,

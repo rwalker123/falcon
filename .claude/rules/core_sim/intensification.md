@@ -2646,9 +2646,14 @@ A client therefore reads the roaming branch exactly as it reads any other column
 
 A rung may declare `site_relaxations: [{ knowledge, site_requirement }]` beside its own
 `site_requirement`. The rule that applies is the LAST relaxation whose lesson the faction holds
-(`RungDef::effective_site_requirement`), else the rung's own. The shipped Farm (`plant:farm`) carries one:
+(`RungDef::effective_site_requirement`), else the rung's own. The shipped Farm (`plant:farm`) carries one,
+and so does Tended (`plant:tended`), the same entry copied whole:
 `worked_land` (discovery **2022**, cost 20, earned by working a Farm) drops `requires_gathering_site` and
-asks `min_forage_capacity` **80** and `requires_fresh_water`. The Farm's own rule asks a gathering site and nothing
+asks `min_forage_capacity` **80** and `requires_fresh_water`. Tended carries it because it is the leg every
+off-site Farm climbs through (the labor arm site-checks only `places_source` rungs), so the wire's per-rung
+site refusal (`rung_site_refusal` over every site-gated rung) must admit on Tended what it admits on the Farm.
+A consequence: a Worked-Land faction with a crew on off-site ground may also declare a bare `cultivate`
+there. The Farm's own rule asks a gathering site and nothing
 else (`requires_fresh_water` false, `min_forage_capacity` 0): sites are already the rich ground, so water matters
 only for new ground. **A lesson only loosens** - `rung_site_refusal` admits whatever the rung's own rule admits
 before it consults a relaxation, so a dry gathering site never loses the Farm to the stricter relaxed rule. A
