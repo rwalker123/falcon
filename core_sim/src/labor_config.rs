@@ -574,6 +574,11 @@ pub struct LaborConfig {
     /// stock returns to the target in about this many turns. Validated `>= 1`: a zero would divide
     /// the deficit by nothing. A playtest dial (opening value 10).
     pub keep_on_hand_refill_turns: u32,
+    /// **HOW FAR AHEAD THE STAFFING LOOKS FOR A MEAL THE BAND WOULD COME UP SHORT OF**, in turns. After
+    /// the normal builds-first deal the band's larder is walked forward this many turns at the crews
+    /// just dealt; if any meal in the window comes up short, the band is re-staffed with every source
+    /// row dealt before any build. `0` switches the look-ahead off. A playtest dial (opening value 5).
+    pub food_first_window_turns: u32,
     /// **THE BAND ORDERS** (#860): which kinds take an order and the chief's opening target for each.
     pub band_orders: BandOrdersConfig,
     /// **The forward-projection horizon for a source's steady `realized` yield**, in turns. Each

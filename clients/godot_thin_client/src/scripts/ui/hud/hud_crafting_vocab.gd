@@ -1032,6 +1032,16 @@ const KIT_ITEM_CLAIMED_KEY := "claimed"
 const KIT_ITEM_SHORT_KEY := "short"
 ## A claim under this is none (float noise in the sim's sums).
 const KIT_CLAIMED_MIN := 0.005
+
+## **THE PEOPLE COUNT READS THE WAGE ROWS** — `labor_assignments[]`: its head count (`workers`), the kit it
+## runs (`kit_id`) and its table of equipment (`kit_toe` lines `{item_id, required, filled}`).
+const BAND_LABOR_ASSIGNMENTS_KEY := "labor_assignments"
+const ASSIGNMENT_WORKERS_KEY := "workers"
+const ASSIGNMENT_KIT_ID_KEY := "kit_id"
+const ASSIGNMENT_KIT_TOE_KEY := "kit_toe"
+const TOE_ITEM_ID_KEY := "item_id"
+const TOE_REQUIRED_KEY := "required"
+const TOE_FILLED_KEY := "filled"
 const KIT_ITEM_RECIPES_KEY := "recipes"
 ## One recipe of a kit item: what a PASS yields and what a pass costs, the bench's material efficiency
 ## already applied — the terms the picker's shortage arithmetic is exact over.

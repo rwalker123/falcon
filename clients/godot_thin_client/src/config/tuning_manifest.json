@@ -111,6 +111,17 @@
           "hint": "Most hands one tile holds across every band: keepers, builders and harvesters together."
         },
         {
+          "pointer": "/food_first_window_turns",
+          "label": "Food-first look-ahead (turns)",
+          "type": "int",
+          "min": 0,
+          "max": 20,
+          "step": 1,
+          "default": 5,
+          "unit": "turns",
+          "hint": "How many turns ahead the band checks whether it would miss a meal with its builders working; if so the builders wait and everyone feeds the band first. 0 turns the check off."
+        },
+        {
           "pointer": "/keep_on_hand_refill_turns",
           "label": "Order refill (turns)",
           "type": "int",

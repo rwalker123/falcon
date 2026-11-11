@@ -6575,6 +6575,12 @@ pub fn advance_labor_allocation(
                 }),
                 tile_hands_elsewhere: &tile_load,
                 build_can_progress: &can_progress,
+                food: crate::staffing::food_ledger_of(
+                    &cohort,
+                    &allocation,
+                    &demographics_cfg,
+                    pooling_steady.get(&band_entity).copied().unwrap_or(0.0),
+                ),
             };
             let pool = crate::staffing::staffable_pool(
                 &allocation,
@@ -12288,7 +12294,17 @@ fn publish_build_chain(
             .unwrap_or_default()
             .total();
         let mut legs: Vec<crate::intensification::PublishedBuildLeg> = Vec::new();
+        let fed_first = builders == NO_CREW_ON_THIS_ACTIVITY
+            && allocation
+                .build_crew(&entry.source)
+                .is_some_and(|crew| crew.fed_first);
         let (published, reason) = match quote.as_ref().and_then(|quote| quote.turns(builders)) {
+            // **A BUILD THE BAND IS NOT STAFFING SO IT CAN EAT** says so, ahead of any date a quote
+            // at zero builders could state.
+            _ if fed_first => (
+                Some(crate::intensification::BuildTurns::Blocked),
+                crate::intensification::BuildGate::FeedingFirst,
+            ),
             Some(crate::intensification::BuildTurns::Turns(turns)) => {
                 // **THE LEGS ARE DATED ON THE SAME RUNNING SUM** — each leg's own span in climb
                 // order — so the last leg's number is exactly the build's, by construction rather
@@ -20066,6 +20082,13 @@ mod labor_yield_tests {
 
     fn world_with_a_sow_queued_behind_a_pen() -> (World, Entity) {
         let (mut world, band) = world_with_a_pen_build();
+        // **A FED BAND**: the staffing feeds a band that would miss a meal before it builds
+        // (`labor_config.food_first_window_turns`), which is not what this fixture measures.
+        world
+            .get_mut::<crate::components::PopulationCohort>(band)
+            .expect("the fixture band has a cohort")
+            .stores
+            .reset_food("dry", crate::scalar::Scalar::from_f32(10_000.0));
         grant_knowledge(&mut world, SEED_SELECTION_DISCOVERY_ID);
         // The Farm asks only a gathering site, so the water tag below is not needed for the gate;
         // it is kept so the fixture's source tile is the same watered tile it always was.

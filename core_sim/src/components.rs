@@ -7135,6 +7135,10 @@ pub struct BuildCrew {
     /// **The most builders the build could take this turn** — the rung's own cap, cut by the room
     /// the tile left. What the wire states beside the crew.
     pub cap: u32,
+    /// **THE BUILD HOLDS NO BUILDERS BECAUSE THE BAND IS FEEDING ITSELF FIRST** - the staffing's
+    /// food-first look-ahead found a meal short with the builders working and dealt every source row
+    /// before any build. The published reason is [`crate::intensification::BuildGate::FeedingFirst`].
+    pub fed_first: bool,
 }
 
 impl BuildCrew {

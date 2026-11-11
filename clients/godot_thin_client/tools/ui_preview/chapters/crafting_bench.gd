@@ -4560,6 +4560,37 @@ func _finished_kit_state(base_band: Dictionary) -> void:
 		(_by_meta(panel, HudCraftingVocab.KIT_REASON_META, FINISHED_KIT) as Label).get_theme_color(
 			"font_color") == HudStyle.INK_DIM)
 	await h._save("crafting_kit_finished")
+	await _held_at_zero_kit_state(base_band)
+
+## **A ROW HELD AT 0 WORKERS IS NOT A HARVESTER** (Goosefen: `2 of 2 equipped` / `All 2 harvesters equipped` with one
+## forager). The held row still asks one head, so the kit's `claimed` is 2.0 against 5 baskets held; the people
+## count reads the rows' own `workers` and the `kit_toe` line, so it says 1 of 1 and the singular noun.
+const ZERO_ROW_BASKETS := 5
+
+func _held_at_zero_kit_state(base_band: Dictionary) -> void:
+	var band := base_band.duplicate(true)
+	var basket_recipe := _need_recipe(BASKETS_REED_RECIPE, 1.0, [["fibre", 2.0], ["hide", 0.2]])
+	band["kit_needs"] = [
+		_need(KIT_HARVESTING, "Harvesting kit", ["forage"], 1, [
+			_need_item("baskets", 1, ZERO_ROW_BASKETS, 0, 2.0, 0, [basket_recipe])])]
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 1, "kit_id": KIT_HARVESTING, "kitted_staffed": 1,
+			"kit_toe": [{"item_id": "baskets", "required": 1.0, "filled": 1.0}]},
+		{"kind": "forage", "workers": 0, "kit_id": KIT_HARVESTING, "kitted_staffed": 0,
+			"kit_toe": [{"item_id": "baskets", "required": 1.0, "filled": 1.0}]}]
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting/kits — the held-at-0 band's panel opens", false)
+		return
+	var owned := _owned_of(panel, KIT_HARVESTING)
+	var why := _text_of(_by_meta(panel, HudCraftingVocab.KIT_REASON_META, KIT_HARVESTING))
+	h._assert_hud("crafting/kits — a row held at 0 is not a harvester: `1 of 1 equipped`, `All 1 harvester equipped` (%s / %s)"
+			% [owned, why],
+		owned == "1 of 1 equipped" and why == "All 1 harvester equipped")
+	await h._save("crafting_kit_held_at_zero")
 
 func _kit_needs() -> Array:
 	return [

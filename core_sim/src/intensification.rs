@@ -762,6 +762,12 @@ pub enum BuildGate {
     /// or a trade. Naming the *good* is the whole point — *"raise this band's Builders role"* is
     /// wrong advice the moment the missing thing is stone.
     Materials,
+    /// **THE BAND IS FEEDING ITSELF FIRST** - the staffing's food-first look-ahead
+    /// (`labor_config.food_first_window_turns`) found a meal short within the window with the
+    /// builders working, so every source row was dealt before any build and this one got no hands.
+    /// Not a conjunct of any rung's `eligible`: it is minted by the staffing, and it clears the turn
+    /// the larder no longer needs the hands.
+    FeedingFirst,
 }
 
 impl BuildGate {
@@ -789,6 +795,7 @@ impl BuildGate {
             BuildGate::RingIdle => "ring_idle",
             BuildGate::Unworked => "unworked",
             BuildGate::Materials => "materials",
+            BuildGate::FeedingFirst => "feeding_first",
         }
     }
 

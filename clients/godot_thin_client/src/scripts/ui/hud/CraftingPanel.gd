@@ -2265,16 +2265,52 @@ func _kit_workers_per_unit(item: Dictionary) -> int:
 ## **WHAT A KIT ITEM IS CLAIMED FOR, IN PEOPLE, AND HOW MANY OF THOSE ARE EQUIPPED** (`claimed` is the
 ## sim's: units actually claimed by rows, pools, sites and queued builds on this kit). The headcount on
 ## the kit's jobs is NOT the need — a job counts everyone on it against every kit it could use, which
-## read `6 hunters without traps` while no row used traps. Need is `ceil(claimed) × workers_per_unit`,
-## equipped is what is held against it. `{}` for an item nothing claims.
-func _kit_item_claim(item: Dictionary) -> Dictionary:
+## read `6 hunters without traps` while no row used traps. `{}` for an item nothing claims.
+##
+## **TWO READINGS, DELIBERATELY APART.** `need` / `equipped` are the CLAIM against what is held
+## (`ceil(claimed) x workers_per_unit`) and drive the shortage logic: a row held at 0 workers still asks
+## one head, so the claim is right to count it. `people` / `people_equipped` are the HEADS on the kit's
+## work, for the `N of M` cell and the `All N ...` line: a take row counts its `workers` and the heads its
+## `kit_toe` line says it holds, and a row nobody works counts nothing. A claim no take row accounts for
+## (pools, builds, upkeep - the wire states their units, not their heads) keeps the claim reading.
+func _kit_item_claim(item: Dictionary, band: Dictionary, kit_id: String) -> Dictionary:
 	var claimed := float(item.get(HudCraftingVocab.KIT_ITEM_CLAIMED_KEY, 0.0))
 	if claimed < HudCraftingVocab.KIT_CLAIMED_MIN:
 		return {}
 	var per_unit := _kit_workers_per_unit(item)
 	var need := ceili(claimed - HudCraftingVocab.KIT_CLAIMED_MIN) * per_unit
 	var held := int(item.get(HudCraftingVocab.KIT_ITEM_HAVE_KEY, 0)) * per_unit
-	return {"need": need, "equipped": mini(held, need)}
+
+	var item_id := String(item.get(HudCraftingVocab.KIT_ITEM_ID_KEY, ""))
+	var row_heads := 0
+	var row_held := 0
+	var row_units := 0.0
+	for row_variant in band.get(HudCraftingVocab.BAND_LABOR_ASSIGNMENTS_KEY, []):
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		var row_kit := String(row.get(HudCraftingVocab.ASSIGNMENT_KIT_ID_KEY, ""))
+		if row_kit != "" and row_kit != kit_id:
+			continue
+		for line_variant in row.get(HudCraftingVocab.ASSIGNMENT_KIT_TOE_KEY, []):
+			if not (line_variant is Dictionary):
+				continue
+			var line: Dictionary = line_variant
+			if String(line.get(HudCraftingVocab.TOE_ITEM_ID_KEY, "")) != item_id:
+				continue
+			row_units += float(line.get(HudCraftingVocab.TOE_REQUIRED_KEY, 0.0))
+			var crew := maxi(int(row.get(HudCraftingVocab.ASSIGNMENT_WORKERS_KEY, 0)), 0)
+			var filled_heads := ceili(float(line.get(HudCraftingVocab.TOE_FILLED_KEY, 0.0)) * per_unit
+				- HudCraftingVocab.KIT_CLAIMED_MIN)
+			row_heads += crew
+			row_held += mini(crew, filled_heads)
+	var other_units := maxf(claimed - row_units, 0.0)
+	var other_need := 0
+	if other_units >= HudCraftingVocab.KIT_CLAIMED_MIN:
+		other_need = ceili(other_units - HudCraftingVocab.KIT_CLAIMED_MIN) * per_unit
+	var other_held := mini(maxi(held - row_held, 0), other_need)
+	return {"need": need, "equipped": mini(held, need),
+		"people": row_heads + other_need, "people_equipped": row_held + other_held}
 
 ## The ledger rows by row key (an equipment item's key IS its item id).
 func _rows_by_key(band: Dictionary, payload: Dictionary) -> Dictionary:
@@ -2470,14 +2506,14 @@ func _add_kits_section(table: VBoxContainer, band: Dictionary, payload: Dictiona
 	var free := _materials_free_of(band)
 	var owned_by_item := _equipment_by_item(band)
 	for need in needs:
-		table.add_child(_build_kit_row(need, rows))
+		table.add_child(_build_kit_row(need, rows, band))
 		if String((need as Dictionary).get(HudCraftingVocab.KIT_NEED_KIT_ID_KEY, "")) == _kit_picker:
 			table.add_child(_build_kit_picker(need, rows, free, owned_by_item))
 		table.add_child(_rule(HudStyle.LINE_SOFT))
 
 ## **ONE KIT, ONE ROW** — its name and the items it needs, what is equipped, one kit's rebuild cost and
 ## the one thing the player should do about it.
-func _build_kit_row(need: Dictionary, rows: Dictionary) -> Control:
+func _build_kit_row(need: Dictionary, rows: Dictionary, band: Dictionary) -> Control:
 	var kit_id := String(need.get(HudCraftingVocab.KIT_NEED_KIT_ID_KEY, ""))
 	var words := _kit_job_words(need)
 	var noun := String(words[HudCraftingVocab.KIT_JOB_NOUN_KEY])
@@ -2490,6 +2526,9 @@ func _build_kit_row(need: Dictionary, rows: Dictionary) -> Control:
 	var in_use := false
 	var need_total := 0
 	var equipped := 0
+	# The HEADS on the weakest item's work - what the cell and the `All N` line print (see `_kit_item_claim`).
+	var people_total := 0
+	var people_equipped := 0
 	var worst_deficit := -1
 	var short_parts: Array[String] = []
 	var any_uncovered := false
@@ -2498,7 +2537,7 @@ func _build_kit_row(need: Dictionary, rows: Dictionary) -> Control:
 		var item_id := String(item.get(HudCraftingVocab.KIT_ITEM_ID_KEY, ""))
 		var item_name := _suggestion_item_name(item_id, rows.get(item_id, {}))
 		names.append(item_name)
-		var claim := _kit_item_claim(item)
+		var claim := _kit_item_claim(item, band, kit_id)
 		if claim.is_empty():
 			continue
 		in_use = true
@@ -2509,6 +2548,8 @@ func _build_kit_row(need: Dictionary, rows: Dictionary) -> Control:
 			worst_deficit = deficit
 			need_total = claim_need
 			equipped = claim_equipped
+			people_total = int(claim["people"])
+			people_equipped = int(claim["people_equipped"])
 		var short := int(item.get(HudCraftingVocab.KIT_ITEM_SHORT_KEY, 0))
 		if short > 0:
 			var queued := int(item.get(HudCraftingVocab.KIT_ITEM_QUEUED_KEY, 0))
@@ -2534,8 +2575,12 @@ func _build_kit_row(need: Dictionary, rows: Dictionary) -> Control:
 	elif not short_parts.is_empty():
 		reason = HudCraftingVocab.KIT_REASON_SHORT_SEPARATOR.join(short_parts)
 		reason_ink = HudStyle.DANGER if any_uncovered else HudStyle.INK_DIM
+	elif people_total <= 0:
+		# Claimed, covered, and nobody on it (a row held at 0 asks a head it never sends).
+		reason = HudCraftingVocab.KIT_REASON_NOT_IN_USE
 	else:
-		reason = HudCraftingVocab.KIT_REASON_ALL_FORMAT % [need_total, noun]
+		var all_noun := String(words[HudCraftingVocab.KIT_JOB_ONE_KEY]) if people_total == 1 else noun
+		reason = HudCraftingVocab.KIT_REASON_ALL_FORMAT % [people_total, all_noun]
 
 	# --- the item cell
 	var item_cell := VBoxContainer.new()
@@ -2556,15 +2601,15 @@ func _build_kit_row(need: Dictionary, rows: Dictionary) -> Control:
 	var owned := HBoxContainer.new()
 	owned.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
 	owned.set_meta(HudCraftingVocab.KIT_OWNED_META, kit_id)
-	if equipped > 0:
+	if people_equipped > 0:
 		var count_label := Label.new()
-		count_label.text = HudCraftingVocab.KIT_OWNED_FORMAT % [equipped, need_total]
+		count_label.text = HudCraftingVocab.KIT_OWNED_FORMAT % [people_equipped, people_total]
 		count_label.add_theme_font_size_override("font_size", HudCraftingVocab.OWNED_COUNT_FONT_SIZE)
 		count_label.add_theme_color_override("font_color", HudStyle.INK)
 		owned.add_child(count_label)
 		owned.add_child(_chip(HudCraftingVocab.KIT_OWNED_CHIP, HudCraftingVocab.OWNED_GRADE_MID_COLOR,
 			HudCraftingVocab.OWNED_CHIP_FONT_SIZE))
-	elif in_use:
+	elif in_use and people_total > 0:
 		owned.add_child(_chip(HudCraftingVocab.KIT_NONE_EQUIPPED, HudStyle.DANGER,
 			HudCraftingVocab.OWNED_CHIP_FONT_SIZE))
 	else:
