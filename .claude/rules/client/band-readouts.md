@@ -1895,30 +1895,36 @@ paramount chief, 2 council of chiefs), and, for a band not yet in a tribe,
   missing lines are the single `Neither band has a chief: nothing builds until one of them has one.`
 - **Not in a tribe, no partner** (`tribe_pairs` empty): a dim line naming the real reason, read off the
   player's OWN bands (`BandPanelController._build_tribe_block` passes the other own, non-expedition
-  bands to `HudFormat.band_tribe_progress(entry, other_bands)`; the client works out the reason from the cohort fields
-  (`has_belief_anchor`, `belief_anchor_x/y`, `supply_network_id`). Tested in order, one line each: (a) `has_belief_anchor` false: `Tribe: no sacred ground
-  yet`; (b) another band in the same non-zero `supply_network_id` with a DIFFERENT sacred ground
+  bands and the published connection rows to `HudFormat.band_tribe_progress(entry, other_bands, ties)`;
+  the client works out the reason from the cohort fields (`has_belief_anchor`, `belief_anchor_x/y`,
+  `band_id`) and the `connections` rows (`observer_band_id`, `subject_band_id`, `strength`). The supply
+  network plays no part: tribe locality is one people, one belief anchor and a live tie in both
+  directions. Tested in order, one line each: (a) `has_belief_anchor` false: `Tribe: no sacred ground
+  yet`; (b) another own band with a DIFFERENT sacred ground
   (`belief_anchor_x/y`): `Tribe: different sacred ground`, a fixed phrase so
   no name can overflow it; the hover is exactly two lines and names no partner and no coordinates: the
   rule, then `<band> honours different sacred ground from your other bands — see Beliefs.`;
-  (b2) when every blocking same-network band has NO sacred ground: `Tribe: <name> has no sacred ground yet`
+  (b2) when every blocking band has NO sacred ground: `Tribe: <name> has no sacred ground yet`
   (several: `Tribe: N bands have no sacred ground yet` — the docked strip clips a longer line — with a
   third hover line `Without sacred ground: A, B`), the hover the rule then `Sacred ground forms where a
   band buries its people.`; a band with a different ground wins over (b2);
-  (c) other bands exist but none shares the network (or this band's is 0): `Tribe: no shared supply network`; (d) no other band:
+  (c) another band shares this band's sacred ground but a live tie (`strength` above zero) does not run
+  from each band to the other: `Tribe: out of touch with <band>` (several: `Tribe: out of touch with N
+  bands`, the hover adding `Out of touch with: A, B`), the hover the rule then `Bands stay one tribe only
+  while they keep in touch both ways. Meet them, or send an expedition, to renew the tie.`; (d) no other band:
   `Tribe: no other band of your people`. The visible lines are kept short because the line is one
   non-wrapping `RichTextLabel` whose minimum width widens the docked card.
 - **No threshold and no tribe** (a foreign cohort): no block.
 
-The hover of the progress line is the rule (`Bands become a tribe when they pool goods in one supply
-network and share one sacred ground.`), then only what is still missing as actions, one per line
-(`Keep sharing the network and the sacred ground 4 more turns`, `Raise a monument at the sacred
+The hover of the progress line is the rule (`Bands living together earn points toward a tribe each turn
+once one has a chief. What they share sets how fast.`), then only what is still missing as actions, one per line
+(`Keep in touch and share the sacred ground 4 more turns`, `Raise a monument at the sacred
 ground`, `A stronger sacred ground`, `A stronger tie with <name>`; `Forms next turn` when close), then a blank line and `With: A, B` naming
 EVERY local partner, which is where the names the line dropped are kept. Shared origin and culture are
 never listed: the player cannot change them. With no partner the line after the rule is the
 reason's hover from the list above (none for case (d)). 
 
 **Frames:** `tribe_chiefless` (no block), `tribe_pairs`, `tribe_no_partner`, `tribe_formed_chiefless`,
-`tribe_formed_led`, `tribe_joiner_*` and `tribe_reason_{no_place,different_place,partner_no_place,partners_no_place,different_beats_none,no_network,alone}` in `band_expedition` (docked right, Band tab); the harness asserts one line, the
+`tribe_formed_led`, `tribe_joiner_*` and `tribe_reason_{no_place,different_place,partner_no_place,partners_no_place,different_beats_none,out_of_touch,out_of_touch_one_way,out_of_touch_two,alone}` in `band_expedition` (docked right, Band tab); the harness asserts one line, the
 card's minimum width within the strip, the verbatim tooltips, a council-led tribe, and every suffix off
 the statics.
