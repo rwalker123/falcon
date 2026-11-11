@@ -491,6 +491,7 @@ fn spawn_party(app: &mut App, home: Entity, at: Entity) -> (Entity, BandId) {
                 goodwill_news: Default::default(),
                 exchange_return: Default::default(),
                 unpaid_return: Default::default(),
+                launch_tile: None,
                 scout_pack: Default::default(),
                 aim: None,
             },

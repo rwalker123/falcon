@@ -372,6 +372,14 @@ parent's.
 
 The player's `split_band` verb runs `split_band_from_parent`, which credits `practice_per_split` toward a leader to BOTH the parent and the new band (`leadership.md`); the breeding break-off and the independence break-away run `split_band_from_parent_with` directly and credit nothing.
 
+## A commanded split's new band is on its founding walk
+
+`split_band_from_parent` also inserts `components::FoundingWalk` on the new band (the breeding
+break-off and the independence break-away, which call `split_band_from_parent_with`, get none). While
+it holds, the tiles its march crosses bank a full trail instead of `work_per_worker_tile`; it clears
+when the band completes its first move order. Mechanism, persistence (`BandRecord::founding_walk`) and
+tests: `routes.md` -> "A commanded split's founding walk lays a full trail".
+
 ## Config files
 
 | File | Purpose |

@@ -655,6 +655,11 @@ pub fn balance_supply_networks(
     // an allocation reports zero for every one of them.
     mut cohorts: SupplyBands,
     mut membership: ResMut<SupplyNetworkMembership>,
+    // **Which peoples know messengers** (`docs/plan_far_kin.md` §3): a pair of such a people links
+    // out to `reach_tiles_with_messengers` instead of `reach_tiles`. This link test is the ONLY
+    // reader - `WalkReach`, the work party's local range and the road bonus keep `reach_tiles`.
+    // `None` (a hand-rolled world with no ledger) reads as nobody knows it.
+    discovery: Option<Res<crate::resources::DiscoveryProgressLedger>>,
 ) {
     // Recomputed from scratch every turn; a 0/1-band map (early return below) leaves it empty.
     membership.clear();
@@ -734,7 +739,24 @@ pub fn balance_supply_networks(
     let mut parent: Vec<usize> = (0..count).collect();
 
     let widest_route_reach = crate::routes::max_route_reach_tiles(&ladder);
-    let cell_size = cfg.reach_tiles.max(widest_route_reach).max(1);
+    // The bins must cover the widest free reach any people holds, messengers' included.
+    let cell_size = cfg
+        .reach_tiles
+        .max(cfg.reach_tiles_with_messengers)
+        .max(widest_route_reach)
+        .max(1);
+    let messengers: BTreeSet<FactionId> = discovery
+        .as_deref()
+        .map(|ledger| {
+            nodes
+                .iter()
+                .map(|node| node.faction)
+                .filter(|faction| {
+                    crate::messengers::knows_messengers(ledger, *faction, &ladder.knowledge)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let num_cells_x = width.div_ceil(cell_size).max(1) as i32;
     let cell_of =
         |pos: UVec2| -> (i32, i32) { ((pos.x / cell_size) as i32, (pos.y / cell_size) as i32) };
@@ -779,7 +801,8 @@ pub fn balance_supply_networks(
                             &rights.access(nodes[i].faction, foreign),
                             nodes[i].pos,
                             nodes[j].pos,
-                            cfg.reach_tiles,
+                            // Both nodes are one people here (`pools_freely` short-circuits).
+                            cfg.pooling_reach(messengers.contains(&nodes[i].faction)),
                             widest_route_reach,
                             width,
                             height,

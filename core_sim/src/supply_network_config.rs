@@ -34,6 +34,17 @@ pub struct SupplyNetworkConfig {
     /// Whether a link's two ends then pool for free is a separate, same-faction policy —
     /// [`crate::supply::balance_supply_networks`].
     pub reach_tiles: u32,
+    /// **The free pooling reach of a people that knows `messengers`** (`docs/plan_far_kin.md` §3),
+    /// in hex steps - the VALUE the stat takes once the people knows the lesson, not a multiplier.
+    /// Read ONLY by [`crate::supply::balance_supply_networks`]' link test for a pair of that people
+    /// (links are same-people gated already). [`crate::supply::WalkReach`], the work party's local
+    /// range and the road bonus (`free_pooling_reach_tiles - reach_tiles`) all keep `reach_tiles`,
+    /// so learning messengers never shrinks what a road does for a walker. Validated
+    /// `reach_tiles <= this` ([`SupplyNetworkConfig::validate`]) and `this <` the trail rung's
+    /// `holds_link_to_tiles` ([`SupplyNetworkConfig::validate_against_trail`], checked at boot where
+    /// the ladder is in scope): at or past a trail's reach messengers would link every far pair for
+    /// free and the founding-walk trail would add nothing.
+    pub reach_tiles_with_messengers: u32,
     /// Max quantity of a single commodity a node may send or receive per turn (how *fast* a
     /// network equalizes; reach and the tie decide *who* is linked).
     pub throughput_per_turn: f32,
@@ -73,6 +84,7 @@ impl Default for SupplyNetworkConfig {
     fn default() -> Self {
         Self {
             reach_tiles: 3,
+            reach_tiles_with_messengers: 4,
             throughput_per_turn: 50.0,
             friction: 0.05,
             min_transfer_fraction: 0.0025,
@@ -98,7 +110,47 @@ impl SupplyNetworkConfig {
                 path: path.to_path_buf(),
                 source,
             })?;
-        Ok(SupplyNetworkConfig::from_json_str(&contents)?)
+        let config = SupplyNetworkConfig::from_json_str(&contents)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// **The free pooling reach for a pair of a people that does (or does not) know `messengers`** -
+    /// the value the stat takes, per the field docs above.
+    pub fn pooling_reach(&self, knows_messengers: bool) -> u32 {
+        if knows_messengers {
+            self.reach_tiles_with_messengers
+        } else {
+            self.reach_tiles
+        }
+    }
+
+    /// Messengers only ever reaches further: `reach_tiles <= reach_tiles_with_messengers`.
+    pub fn validate(&self) -> Result<(), SupplyNetworkConfigError> {
+        if self.reach_tiles_with_messengers < self.reach_tiles {
+            return Err(SupplyNetworkConfigError::Invalid(format!(
+                "reach_tiles_with_messengers ({}) must be >= reach_tiles ({}): a lesson that \
+                 shrank the free reach would be a penalty",
+                self.reach_tiles_with_messengers, self.reach_tiles
+            )));
+        }
+        Ok(())
+    }
+
+    /// **Messengers' reach stays below a trail's**: `reach_tiles_with_messengers <
+    /// trail_reach` (the free floor's top rung's `holds_link_to_tiles`,
+    /// [`crate::routes::trail_reach_tiles`]). The cross-config half, run at boot where both configs
+    /// are in scope (`lib.rs`) - a supply config holds no ladder.
+    pub fn validate_against_trail(&self, trail_reach: u32) -> Result<(), SupplyNetworkConfigError> {
+        if self.reach_tiles_with_messengers >= trail_reach {
+            return Err(SupplyNetworkConfigError::Invalid(format!(
+                "reach_tiles_with_messengers ({}) must be < the trail's holds_link_to_tiles ({}): \
+                 otherwise messengers links every far pair for free and the founding-walk trail \
+                 adds nothing",
+                self.reach_tiles_with_messengers, trail_reach
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -112,6 +164,8 @@ pub enum SupplyNetworkConfigError {
     },
     #[error("failed to parse supply network config: {0}")]
     Parse(#[from] serde_json::Error),
+    #[error("invalid supply network config: {0}")]
+    Invalid(String),
 }
 
 impl ConfigLoadError for SupplyNetworkConfigError {
@@ -189,6 +243,12 @@ mod tests {
             "reach must connect at least neighbors"
         );
         assert!(config.throughput_per_turn > 0.0);
+        config.validate().expect("the shipped reaches are ordered");
+        assert_eq!(config.pooling_reach(false), config.reach_tiles);
+        assert_eq!(
+            config.pooling_reach(true),
+            config.reach_tiles_with_messengers
+        );
         assert!(
             (0.0..=1.0).contains(&config.friction),
             "friction is a fraction in [0, 1]"
@@ -197,5 +257,30 @@ mod tests {
             (0.0..=1.0).contains(&config.min_transfer_fraction),
             "the dead-band is a fraction of the node's own fair share, not a quantity"
         );
+    }
+
+    #[test]
+    fn messengers_reach_may_not_be_below_the_free_reach() {
+        let mut config = SupplyNetworkConfig::default();
+        config.reach_tiles_with_messengers = config.reach_tiles - 1;
+        assert!(config.validate().is_err());
+        config.reach_tiles_with_messengers = config.reach_tiles;
+        assert!(config.validate().is_ok(), "equal is allowed: it is a no-op");
+    }
+
+    /// The two shipped files are never loaded together by a single loader, so the cross-file rule is
+    /// pinned on the shipped data (and enforced at boot in `lib.rs`).
+    #[test]
+    fn the_shipped_messengers_reach_is_below_the_shipped_trails() {
+        let config = SupplyNetworkConfig::builtin();
+        let ladder = crate::intensification::LadderConfig::builtin();
+        let trail = crate::routes::trail_reach_tiles(&ladder);
+        config
+            .validate_against_trail(trail)
+            .expect("messengers reach stays below the trail's");
+        assert!(config.reach_tiles_with_messengers < trail);
+        assert!(config
+            .validate_against_trail(config.reach_tiles_with_messengers)
+            .is_err());
     }
 }

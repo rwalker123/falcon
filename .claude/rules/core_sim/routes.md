@@ -200,6 +200,7 @@ the one that survives: **one lever per kind of thing that moves**, never one per
 | a **pooling link** — two camps sharing a larder | `work_per_link_tile_per_turn`, **per link per turn** | `RouteTrafficLog::walked`, from `supply::balance_supply_networks` |
 | a **march** — anything travelling | `work_per_worker_tile`, **per worker** | `RouteTrafficLog::marched`, from `systems::advance_band_movement` |
 | a **migrating herd** — a `RoamState::Migrate` step | `work_per_herd_tile`, **per herd** | `RouteTrafficLog::herd_passed`, from `fauna::advance_herds` |
+| a **founding walk** — a commanded split's new band, on its first move order | `traffic_ceiling` per tile (a full trail), **not a lever** | `RouteTrafficLog::founding_march`, from `systems::advance_band_movement` (a `March`-source journey) |
 
 **A link is not a headcount**: two camps pooling a larder are a *standing fact*, not a party of a
 countable size — so its rate is per link per turn. **A march is people**, so its rate is per worker.
@@ -236,6 +237,27 @@ rather than three logs and a fourth kind of traffic forgetting one of them.
 >
 > **A herd step is banked the SAME turn**: `advance_herds` runs in `TurnStage::Logistics` ahead of
 > `balance_supply_networks`, which runs ahead of `advance_roads`.
+
+### A commanded split's founding walk lays a full trail (`docs/plan_far_kin.md` §2)
+
+A band founded by the player's `split_band` verb carries the marker component
+`components::FoundingWalk` (inserted by `systems::split_band_from_parent`, the wrapper the verb
+runs; the breeding break-off and the independence break-away call `split_band_from_parent_with` and
+get none). While it holds the marker, `advance_band_movement` records each step through
+`RouteTrafficLog::founding_march` instead of `marched`: the journey's `work_per_tile` is
+`traffic_ceiling(ladder)`, the top of the free floor, so every tile the march crosses is banked to a
+full trail at once (the usual cap at the ceiling applies). It is ordinary `TrafficSource::March`
+traffic after that: it resets `Road::idle_turns`, so a trail kept in use by pooling never reaches
+disuse, and a trail nobody walks is lost to disuse as any free road is. No upkeep rule is involved: a
+trail is free to hold.
+
+The marker clears on the band's first completed move order (`BandTravel` removed on arrival, a
+zero-length order included); the last step of that order still banks as a founding march. It is in
+the ground, not on the band: a band that later moves off the trail loses the link by the weakest-tile
+rule. Persisted as `BandRecord::founding_walk` (`SAVE_FORMAT_VERSION` 68). Pinned by
+`core_sim/tests/far_kin.rs`: every tile of a commanded split's walk reads a full trail, a second move
+after arrival banks `work_per_worker_tile`, a breeding break-off banks none, the marker survives a
+checkpoint.
 
 ### Game trails — what a migrating herd wears in (#215)
 
@@ -427,7 +449,13 @@ tense — and it is what makes the top rungs a **capability** rather than a disc
 > of `reach_tiles` (`3`) breaks it — and it breaks as **some long roads just don't work**, with
 > nothing erroring anywhere. So `cell_size = max(cfg.reach_tiles, max_route_reach_tiles(ladder))`.
 >
-> **Nobody reads the rung records for that number directly**, the same discipline `road_keeping_range`
+> > The cell is also at least `reach_tiles_with_messengers`, the free reach a people that knows
+> `messengers` pools out to (`supply_network_config.json`; see `campaign.md` → Supply Network). That
+> value feeds the link test's free reach for a pair of that people and nothing else: the road bonus a
+> walker reads stays measured above `reach_tiles`, and `trail_reach_tiles` stays above it by a load
+> check.
+
+**Nobody reads the rung records for that number directly**, the same discipline `road_keeping_range`
 > exists for: the day a rung is added or its reach retuned, the binning follows with no call site
 > moving.
 >

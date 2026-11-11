@@ -295,11 +295,12 @@ impl ConnectionLedger {
             })
     }
 
-    /// **Are both directed edges between `a` and `b` live?** A two-way tie that no gathering made -
+    /// **Are both directed edges between `a` and `b` live?** The tribe's locality test
+    /// (`tribe.rs`). A two-way tie that no gathering made -
     /// relayed news or an expedition's report - means the pair has not been apart, so a later
     /// mutual sighting is no first meeting. A one-way glimpse leaves only one edge live and does
     /// not count.
-    fn tied_both_ways(&self, a: BandId, b: BandId) -> bool {
+    pub fn tied_both_ways(&self, a: BandId, b: BandId) -> bool {
         self.edges_between(a, b)
             .iter()
             .all(|edge| edge.is_some_and(|connection| connection.strength > NO_TIE))
@@ -401,10 +402,29 @@ impl ConnectionLedger {
     /// `last_seen_position` / `last_seen_turn` / `subject_name` / `subject_faction` are deliberately **not** touched:
     /// clock 1 is exactly the memory of where they were.
     pub fn decay_all(&mut self, turn: u64, cfg: &ConnectionsConfig) -> usize {
-        let drain = Scalar::from_f32(cfg.strength.decay_per_turn);
+        self.decay_all_with(turn, cfg, |_| false)
+    }
+
+    /// [`Self::decay_all`] with the drain read per OBSERVER band: an edge whose observer's people
+    /// knows `messengers` (`observer_knows`) bleeds at `strength.decay_per_turn_with_messengers`
+    /// instead of `decay_per_turn` (`docs/plan_far_kin.md` §3). The edge itself carries no faction;
+    /// the caller resolves it off the observer band.
+    pub fn decay_all_with(
+        &mut self,
+        turn: u64,
+        cfg: &ConnectionsConfig,
+        observer_knows_messengers: impl Fn(BandId) -> bool,
+    ) -> usize {
+        let drain_without = Scalar::from_f32(cfg.strength.decay(false));
+        let drain_with = Scalar::from_f32(cfg.strength.decay(true));
         let before = self.edges.len();
-        self.edges.retain(|_, connection| {
+        self.edges.retain(|key, connection| {
             if connection.last_contact_turn != turn {
+                let drain = if observer_knows_messengers(key.observer) {
+                    drain_with
+                } else {
+                    drain_without
+                };
                 connection.strength = (connection.strength - drain).max(NO_TIE);
             }
             // Clock 3 — the fact of them. Measured from the last CONTACT, not from the strength:
@@ -504,6 +524,7 @@ impl ContactsThisTurn {
 /// relayed write never fires a gathering. It does leave the kin tie live, though, so a later direct
 /// meeting between relayed kin is not a gathering either: a gathering is a meeting after no live
 /// tie, and kin who stay in touch through news have not been apart.
+#[allow(clippy::too_many_arguments)] // the ledger, this turn's graph, the world reads and the config
 fn relay_among_kin(
     ledger: &mut ConnectionLedger,
     direct: &BTreeSet<ConnectionKey>,
@@ -511,10 +532,13 @@ fn relay_among_kin(
     tiles: &Query<&Tile>,
     turn: u64,
     cfg: &ConnectionsConfig,
+    messengers: &BTreeSet<FactionId>,
     formed: &mut u32,
 ) {
-    let max_hops = cfg.kin_relay.max_hops;
-    if max_hops < MIN_RELAY_HOPS {
+    // **The depth is read per people** (`kin_relay.max_hops_with_messengers` once it knows
+    // messengers): the walk from band `a` uses the depth of `a`'s own people.
+    let deepest = cfg.kin_relay.depth(false).max(cfg.kin_relay.depth(true));
+    if deepest < MIN_RELAY_HOPS {
         return;
     }
     // Bands by id (sorted), so every walk below is deterministic.
@@ -544,6 +568,7 @@ fn relay_among_kin(
     }
     let mut relays: Vec<(ConnectionKey, Sighting)> = Vec::new();
     for a in bands.keys() {
+        let max_hops = cfg.kin_relay.depth(messengers.contains(&bands[a].0));
         let mut reached: BTreeSet<BandId> = BTreeSet::from([*a]);
         let mut frontier = vec![*a];
         for hops in 1..=max_hops {
@@ -720,6 +745,16 @@ pub fn advance_connections(
             formed += 1;
         }
     }
+    // **Who knows messengers**, read once off the discovery ledger: the peoples whose relay runs
+    // deeper, and (through each observer band's people) whose ties bleed slower.
+    let ladder_cfg = ladder.get();
+    let messengers: BTreeSet<FactionId> = residents
+        .iter()
+        .map(|(_, cohort, _)| cohort.faction)
+        .filter(|faction| {
+            crate::messengers::knows_messengers(&discovery, *faction, &ladder_cfg.knowledge)
+        })
+        .collect();
     relay_among_kin(
         &mut ledger,
         &direct,
@@ -727,9 +762,18 @@ pub fn advance_connections(
         &tiles,
         turn,
         &cfg,
+        &messengers,
         &mut formed,
     );
-    let reaped = ledger.decay_all(turn, &cfg);
+    let band_people: BTreeMap<BandId, FactionId> = residents
+        .iter()
+        .map(|(id, cohort, _)| (*id, cohort.faction))
+        .collect();
+    let reaped = ledger.decay_all_with(turn, &cfg, |observer| {
+        band_people
+            .get(&observer)
+            .is_some_and(|faction| messengers.contains(faction))
+    });
     contacts.clear();
 
     if !meetings.is_empty() {
@@ -965,6 +1009,25 @@ mod tests {
             connection.subject_faction, SUBJECT_FACTION,
             "decay never touches the remembered people"
         );
+    }
+
+    #[test]
+    fn an_observer_that_knows_messengers_drains_at_the_slower_rate() {
+        let cfg = config();
+        let (knowing, other) = (
+            ConnectionKey::new(BandId(1), SUBJECT),
+            ConnectionKey::new(BandId(3), SUBJECT),
+        );
+        let mut ledger = ConnectionLedger::default();
+        for key in [knowing, other] {
+            ledger.insert_full_tie(key, &seen(UVec2::new(1, 1), 1), 1);
+        }
+        ledger.decay_all_with(2, &cfg, |observer| observer == BandId(1));
+        let strength = |key: &ConnectionKey| ledger.get(key).unwrap().strength.to_f32();
+        assert!(
+            (strength(&knowing) - (1.0 - cfg.strength.decay_per_turn_with_messengers)).abs() < 1e-4
+        );
+        assert!((strength(&other) - (1.0 - cfg.strength.decay_per_turn)).abs() < 1e-4);
     }
 
     #[test]

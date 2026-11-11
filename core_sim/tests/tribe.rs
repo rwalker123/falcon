@@ -1,7 +1,7 @@
 //! **A tribe is earned** (#861, `.claude/rules/core_sim/leadership.md`).
 //!
 //! Each fixture builds its bands directly (a clone of the world's first band, given an id, a size,
-//! a belief anchor, a supply network, a culture layer, and where it matters a chief, a shared
+//! a belief anchor, a culture layer, and where it matters a chief, a shared
 //! origin and a tie) and runs `advance_tribes` on its own, one call per turn, so the points are
 //! driven by exactly the inputs the rule reads. The rate arithmetic is unit-pinned beside
 //! `points_per_turn`, and the identity arithmetic beside `resolve_matches`.
@@ -20,13 +20,12 @@ use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
     advance_tribes, points_per_turn, publish_baseline_snapshot, reconcile_band_culture_layers,
-    tile_rung_span, BandId, BandLeader, BandLeadership, BandName, BandSupplyMembership,
-    BeliefRegistry, BranchId, CommandEventEntry, CommandEventKind, CommandEventLog, ConnectionKey,
-    ConnectionLedger, CultureManager, CultureOwner, FactionId, FoundingLines, LadderConfigHandle,
-    LeaderKind, LeadershipConfigHandle, PopulationCohort, ResidentBand, RungId, Sighting,
-    SimulationConfig, SimulationTick, SnapshotHistory, SupplyNetworkMembership,
-    TileImprovementRegistry, TribeLeaderKind, TribeRegistry, TribeStanding, CULTURE_TRAIT_AXES,
-    CULTURE_TRAIT_SPAN,
+    tile_rung_span, BandId, BandLeader, BandLeadership, BandName, BeliefRegistry, BranchId,
+    CommandEventEntry, CommandEventKind, CommandEventLog, ConnectionKey, ConnectionLedger,
+    ConnectionsConfigHandle, CultureManager, CultureOwner, FactionId, FoundingLines,
+    LadderConfigHandle, LeaderKind, LeadershipConfigHandle, PopulationCohort, ResidentBand, RungId,
+    Sighting, SimulationConfig, SimulationTick, SnapshotHistory, Tile, TileImprovementRegistry,
+    TribeLeaderKind, TribeRegistry, TribeStanding, CULTURE_TRAIT_AXES, CULTURE_TRAIT_SPAN,
 };
 
 /// Test bands' ids start well clear of any worldgen band.
@@ -36,9 +35,6 @@ const FIXTURE_TURN: u64 = 20;
 /// Two distinct belief anchors.
 const PLACE_A: UVec2 = UVec2::new(3, 3);
 const PLACE_B: UVec2 = UVec2::new(8, 8);
-/// Two distinct supply networks.
-const NET_1: u32 = 1;
-const NET_2: u32 = 2;
 /// A chiefed kin pair earns 8 a turn toward the shipped 100: twelve turns bank 96, the thirteenth
 /// fills the bank.
 const TURNS_TO_CLOSE_A_KIN_PAIR: usize = 13;
@@ -64,10 +60,10 @@ fn id(n: u64) -> BandId {
     BandId(TEST_BAND_BASE + n)
 }
 
-/// Spawn test band number `n`: sized `size`, anchored at `anchor`, in network `net`, with its own
+/// Spawn test band number `n`: sized `size`, anchored at `anchor`, with its own
 /// distinct origin and a culture layer flattened to zero (so test bands are identical unless a
 /// test says otherwise).
-fn band(app: &mut App, n: u64, size: u32, anchor: Option<UVec2>, net: u32) -> Entity {
+fn band(app: &mut App, n: u64, size: u32, anchor: Option<UVec2>) -> Entity {
     let template = {
         let mut query = app
             .world
@@ -90,7 +86,6 @@ fn band(app: &mut App, n: u64, size: u32, anchor: Option<UVec2>, net: u32) -> En
             BandLeadership::default(),
         ))
         .id();
-    link(app, entity, net);
     app.world.run_system_once(reconcile_band_culture_layers);
     let mut culture = app.world.resource_mut::<CultureManager>();
     let layer = culture
@@ -105,15 +100,8 @@ fn band(app: &mut App, n: u64, size: u32, anchor: Option<UVec2>, net: u32) -> En
 }
 
 /// A chiefed band descended from starting band `origin`.
-fn member(
-    app: &mut App,
-    n: u64,
-    size: u32,
-    anchor: Option<UVec2>,
-    net: u32,
-    origin: u64,
-) -> Entity {
-    let entity = band(app, n, size, anchor, net);
+fn member(app: &mut App, n: u64, size: u32, anchor: Option<UVec2>, origin: u64) -> Entity {
+    let entity = band(app, n, size, anchor);
     app.world
         .get_mut::<PopulationCohort>(entity)
         .unwrap()
@@ -133,12 +121,12 @@ fn set_axis(app: &mut App, band: BandId, axis: usize, value: f32) {
         .update_value(axis, core_sim::scalar_from_f32(value));
 }
 
-/// Give every pair among `ns` a full tie.
+/// Give every pair among `ns` a full tie, in both directions (locality needs a live tie both ways).
 fn tie_all(app: &mut App, ns: &[u64]) {
     let mut ledger = app.world.resource_mut::<ConnectionLedger>();
     for a in ns {
         for b in ns {
-            if a < b {
+            if a != b {
                 ledger.insert_full_tie(
                     ConnectionKey::new(id(*a), id(*b)),
                     &Sighting::new(UVec2::ZERO, 1, "", FactionId(0)),
@@ -149,16 +137,15 @@ fn tie_all(app: &mut App, ns: &[u64]) {
     }
 }
 
-fn link(app: &mut App, band: Entity, net: u32) {
-    app.world
-        .resource_mut::<SupplyNetworkMembership>()
-        .restore_band(
-            band,
-            &BandSupplyMembership {
-                network_id: net,
-                ..BandSupplyMembership::default()
-            },
-        );
+/// Let every tie in the ledger bleed to nothing (a parked edge is still there, but not live), as
+/// the quiet turns of the schedule would. Re-tie whoever should still be in touch afterwards.
+fn lapse_all_ties(app: &mut App) {
+    let cfg = app.world.resource::<ConnectionsConfigHandle>().get();
+    let quiet_turns = (1.0 / cfg.strength.decay_per_turn).ceil() as u64 + 1;
+    let mut ledger = app.world.resource_mut::<ConnectionLedger>();
+    for _ in 0..quiet_turns {
+        ledger.decay_all(FIXTURE_TURN, &cfg);
+    }
 }
 
 fn set_anchor(app: &mut App, band: Entity, anchor: Option<UVec2>) {
@@ -247,8 +234,8 @@ fn registry(app: &App) -> &TribeRegistry {
 /// Two kin, chiefed, tied, identical bands (sizes 40 and 90) in one network at one place.
 fn kin_pair() -> (App, Entity, Entity) {
     let mut app = spawn_world();
-    let one = member(&mut app, 1, 40, Some(PLACE_A), NET_1, 1);
-    let two = member(&mut app, 2, 90, Some(PLACE_A), NET_1, 1);
+    let one = member(&mut app, 1, 40, Some(PLACE_A), 1);
+    let two = member(&mut app, 2, 90, Some(PLACE_A), 1);
     tie_all(&mut app, &[1, 2]);
     (app, one, two)
 }
@@ -326,8 +313,8 @@ fn equal_sized_chiefed_bands_promote_the_lowest_band_id() {
 #[test]
 fn no_chief_no_points_and_the_tribe_forms_threshold_over_rate_turns_after_a_chief_is_crowned() {
     let mut app = spawn_world();
-    band(&mut app, 1, 50, Some(PLACE_A), NET_1);
-    let two = band(&mut app, 2, 50, Some(PLACE_A), NET_1);
+    band(&mut app, 1, 50, Some(PLACE_A));
+    let two = band(&mut app, 2, 50, Some(PLACE_A));
     // Make them kin and tied: the rate is as high as it gets.
     app.world
         .get_mut::<PopulationCohort>(two)
@@ -358,8 +345,8 @@ fn no_chief_no_points_and_the_tribe_forms_threshold_over_rate_turns_after_a_chie
 fn unrelated_but_alike_bands_earn_five_a_turn_and_take_twenty() {
     let mut app = spawn_world();
     // Distinct origins: likeness 3 + tie 2 = 5 a turn.
-    member(&mut app, 1, 50, Some(PLACE_A), NET_1, 1);
-    member(&mut app, 2, 50, Some(PLACE_A), NET_1, 2);
+    member(&mut app, 1, 50, Some(PLACE_A), 1);
+    member(&mut app, 2, 50, Some(PLACE_A), 2);
     tie_all(&mut app, &[1, 2]);
     let ran = turns_until_tribe(&mut app);
     assert_eq!(rate_of_pair(&app), 5.0);
@@ -369,14 +356,104 @@ fn unrelated_but_alike_bands_earn_five_a_turn_and_take_twenty() {
 }
 
 #[test]
-fn unrelated_bands_with_no_tie_earn_only_likeness_and_take_longest() {
+fn unrelated_bands_with_no_tie_are_not_local_and_earn_nothing() {
     let mut app = spawn_world();
-    member(&mut app, 1, 50, Some(PLACE_A), NET_1, 1);
-    member(&mut app, 2, 50, Some(PLACE_A), NET_1, 2);
+    // Same people, same urn, a chief each -- and no tie in either direction.
+    member(&mut app, 1, 50, Some(PLACE_A), 1);
+    member(&mut app, 2, 50, Some(PLACE_A), 2);
+    turns(&mut app, TURNS_TO_FILL_BANK * 2);
+    assert_eq!(registry(&app).points(id(1), id(2)), 0.0);
+    assert!(registry(&app).is_empty());
+    assert_eq!(
+        registry(&app).standing_of(id(1)),
+        Some(TribeStanding::OutOfTouch)
+    );
+}
+
+#[test]
+fn a_one_way_tie_is_not_local() {
+    let mut app = spawn_world();
+    member(&mut app, 1, 50, Some(PLACE_A), 1);
+    member(&mut app, 2, 50, Some(PLACE_A), 1);
+    app.world
+        .resource_mut::<ConnectionLedger>()
+        .insert_full_tie(
+            ConnectionKey::new(id(1), id(2)),
+            &Sighting::new(UVec2::ZERO, 1, "", FactionId(0)),
+            1,
+        );
+    turns(&mut app, TURNS_TO_FILL_BANK);
+    assert_eq!(registry(&app).points(id(1), id(2)), 0.0);
+    assert!(registry(&app).is_empty());
+}
+
+/// Put band `n` on the tile at `at`, so a fixture can stand its bands as far apart as it likes.
+fn stand_at(app: &mut App, n: u64, at: UVec2) {
+    let tile = {
+        let mut tiles = app.world.query::<(Entity, &Tile)>();
+        tiles
+            .iter(&app.world)
+            .find(|(_, tile)| tile.position == at)
+            .map(|(entity, _)| entity)
+            .expect("the map has the tile")
+    };
+    let band = {
+        let mut bands = app
+            .world
+            .query_filtered::<(Entity, &BandId), With<ResidentBand>>();
+        bands
+            .iter(&app.world)
+            .find(|(_, band)| **band == id(n))
+            .map(|(entity, _)| entity)
+            .expect("the band exists")
+    };
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .unwrap()
+        .current_tile = tile;
+}
+
+/// Far kin: two tiles this far apart are well past the supply network's free pooling reach.
+const FAR_KIN_TILES: u32 = 8;
+
+#[test]
+fn far_kin_in_touch_earn_points_and_form_a_tribe_and_a_lapsed_tie_fades_them() {
+    let (mut app, _, _) = kin_pair();
+    let (home, far) = (UVec2::new(2, 2), UVec2::new(2 + FAR_KIN_TILES, 2));
+    stand_at(&mut app, 1, home);
+    stand_at(&mut app, 2, far);
+    let reach = app
+        .world
+        .resource::<core_sim::SupplyNetworkConfigHandle>()
+        .get()
+        .reach_tiles;
+    let width = app.world.resource::<core_sim::TileRegistry>().width;
+    assert!(
+        core_sim::grid_utils::hex_distance_wrapped(home, far, width, false) > reach,
+        "the pair stands beyond the pooling reach: no supply network could join them"
+    );
     let ran = turns_until_tribe(&mut app);
-    assert_eq!(rate_of_pair(&app), 3.0);
-    assert_eq!(ran, turns_to_fill(&app, 3.0));
-    assert_eq!(ran, 34);
+    assert_eq!(
+        ran, TURNS_TO_CLOSE_A_KIN_PAIR,
+        "a live tie is all locality asks"
+    );
+    assert_eq!(
+        registry(&app).standing_of(id(1)),
+        Some(TribeStanding::Local)
+    );
+
+    // The tie lapses: the pair is no longer local, the tribe goes and the bank fades each turn.
+    lapse_all_ties(&mut app);
+    turn(&mut app);
+    assert!(registry(&app).is_empty(), "out of touch, no tribe");
+    assert_eq!(
+        registry(&app).standing_of(id(1)),
+        Some(TribeStanding::OutOfTouch)
+    );
+    let after_one = registry(&app).points(id(1), id(2));
+    assert!(after_one < 100.0, "the bank fades while out of touch");
+    turns(&mut app, 5);
+    assert!(registry(&app).points(id(1), id(2)) < after_one);
 }
 
 #[test]
@@ -479,28 +556,31 @@ fn apart_long_enough_the_points_are_nearly_gone_and_must_be_rebuilt() {
 }
 
 #[test]
-fn nothing_forms_without_a_shared_place_a_network_or_an_anchor() {
+fn nothing_forms_without_a_shared_place_a_tie_a_people_or_an_anchor() {
     let mut app = spawn_world();
-    member(&mut app, 1, 50, Some(PLACE_A), NET_1, 1);
-    member(&mut app, 2, 50, Some(PLACE_B), NET_1, 1); // another place
-    member(&mut app, 3, 50, Some(PLACE_A), 0, 1); // no network
-    member(&mut app, 4, 50, None, NET_1, 1); // no anchor
-    member(&mut app, 5, 50, Some(PLACE_A), NET_2, 1); // another network
-    tie_all(&mut app, &[1, 2, 3, 4, 5]);
+    member(&mut app, 1, 50, Some(PLACE_A), 1);
+    member(&mut app, 2, 50, Some(PLACE_B), 1); // another place
+    member(&mut app, 3, 50, Some(PLACE_A), 1); // same place, but tied to nobody
+    member(&mut app, 4, 50, None, 1); // no anchor
+    let other_people = member(&mut app, 5, 50, Some(PLACE_A), 1);
+    app.world
+        .get_mut::<PopulationCohort>(other_people)
+        .unwrap()
+        .faction = FactionId(1); // another people
+    tie_all(&mut app, &[1, 2, 4, 5]);
     turns(&mut app, TURNS_TO_FILL_BANK * 2);
     assert!(registry(&app).is_empty());
 }
 
 #[test]
-fn a_third_band_joins_when_its_pairs_close_and_a_broken_link_leaves() {
+fn a_third_band_joins_when_its_pairs_close_and_a_lapsed_tie_leaves() {
     let (mut app, _, _) = kin_pair();
-    let third = member(&mut app, 3, 50, Some(PLACE_A), NET_2, 1);
-    tie_all(&mut app, &[1, 2, 3]);
+    member(&mut app, 3, 50, Some(PLACE_A), 1);
     turns(&mut app, TURNS_TO_FILL_BANK);
     let tribe = registry(&app).tribe_of(id(1)).unwrap().id;
-    assert!(registry(&app).tribe_of(id(3)).is_none());
+    assert!(registry(&app).tribe_of(id(3)).is_none(), "tied to nobody");
 
-    link(&mut app, third, NET_1);
+    tie_all(&mut app, &[1, 2, 3]);
     turns(&mut app, 2);
     assert!(
         registry(&app).tribe_of(id(3)).is_none(),
@@ -509,7 +589,8 @@ fn a_third_band_joins_when_its_pairs_close_and_a_broken_link_leaves() {
     turns(&mut app, TURNS_TO_CLOSE_A_KIN_PAIR);
     assert_eq!(registry(&app).tribe_of(id(3)).unwrap().id, tribe);
 
-    link(&mut app, third, NET_2);
+    lapse_all_ties(&mut app);
+    tie_all(&mut app, &[1, 2]);
     turn(&mut app);
     assert!(registry(&app).tribe_of(id(3)).is_none());
     assert_eq!(registry(&app).tribe_of(id(1)).unwrap().id, tribe);
@@ -529,10 +610,9 @@ fn a_third_band_joins_when_its_pairs_close_and_a_broken_link_leaves() {
 #[test]
 fn a_joining_band_is_announced_by_its_durable_id() {
     let (mut app, _, _) = kin_pair();
-    let third = member(&mut app, 3, 50, Some(PLACE_A), NET_2, 1);
-    tie_all(&mut app, &[1, 2, 3]);
+    member(&mut app, 3, 50, Some(PLACE_A), 1);
     turns(&mut app, TURNS_TO_FILL_BANK);
-    link(&mut app, third, NET_1);
+    tie_all(&mut app, &[1, 2, 3]);
     let mut joined = Vec::new();
     for _ in 0..TURNS_TO_CLOSE_A_KIN_PAIR + 2 {
         turn(&mut app);
@@ -567,7 +647,7 @@ fn the_leader_is_re_promoted_quietly_when_its_band_leaves() {
     let mut app = spawn_world();
     let sizes = [40, 90, 70];
     let entities: Vec<Entity> = (1..=3)
-        .map(|n| member(&mut app, n, sizes[n as usize - 1], Some(PLACE_A), NET_1, 1))
+        .map(|n| member(&mut app, n, sizes[n as usize - 1], Some(PLACE_A), 1))
         .collect();
     tie_all(&mut app, &[1, 2, 3]);
     turns(&mut app, TURNS_TO_FILL_BANK);
@@ -589,18 +669,19 @@ fn the_leader_is_re_promoted_quietly_when_its_band_leaves() {
 }
 
 #[test]
-fn a_network_split_keeps_the_tribe_on_the_majority_side_and_the_other_side_forms_its_own() {
+fn a_tie_graph_split_keeps_the_tribe_on_the_majority_side_and_the_other_side_forms_its_own() {
     let mut app = spawn_world();
-    let entities: Vec<Entity> = (1..=5)
-        .map(|n| member(&mut app, n, 50, Some(PLACE_A), NET_1, 1))
-        .collect();
+    for n in 1..=5 {
+        member(&mut app, n, 50, Some(PLACE_A), 1);
+    }
     tie_all(&mut app, &[1, 2, 3, 4, 5]);
     turns(&mut app, TURNS_TO_FILL_BANK);
     let original = registry(&app).tribe_of(id(1)).unwrap().id;
     assert_eq!(registry(&app).tribe_of(id(1)).unwrap().members.len(), 5);
 
-    link(&mut app, entities[3], NET_2);
-    link(&mut app, entities[4], NET_2);
+    lapse_all_ties(&mut app);
+    tie_all(&mut app, &[1, 2, 3]);
+    tie_all(&mut app, &[4, 5]);
     turn(&mut app);
     assert_eq!(registry(&app).len(), 2);
     assert_eq!(registry(&app).tribe_of(id(1)).unwrap().id, original);
@@ -615,21 +696,17 @@ fn a_network_split_keeps_the_tribe_on_the_majority_side_and_the_other_side_forms
 #[test]
 fn two_tribes_sharing_a_place_merge_into_the_one_holding_more_once_their_pairs_close() {
     let mut app = spawn_world();
-    for n in 1..=2 {
-        member(&mut app, n, 50, Some(PLACE_A), NET_1, 1);
+    for n in 1..=5 {
+        member(&mut app, n, 50, Some(PLACE_A), 1);
     }
-    let late: Vec<Entity> = (3..=5)
-        .map(|n| member(&mut app, n, 50, Some(PLACE_A), NET_2, 1))
-        .collect();
-    tie_all(&mut app, &[1, 2, 3, 4, 5]);
+    tie_all(&mut app, &[1, 2]);
+    tie_all(&mut app, &[3, 4, 5]);
     turns(&mut app, TURNS_TO_FILL_BANK);
     let small = registry(&app).tribe_of(id(1)).unwrap().id;
     let big = registry(&app).tribe_of(id(3)).unwrap().id;
     assert_eq!(registry(&app).len(), 2);
 
-    for entity in &late {
-        link(&mut app, *entity, NET_1);
-    }
+    tie_all(&mut app, &[1, 2, 3, 4, 5]);
     turn(&mut app);
     assert_eq!(registry(&app).len(), 2, "cross pairs have no points yet");
     let mut merged_turn_joins = 0;
@@ -655,7 +732,7 @@ fn two_tribes_sharing_a_place_merge_into_the_one_holding_more_once_their_pairs_c
 fn the_registry_and_its_banks_round_trip_through_a_checkpoint() {
     let (mut app, _, _) = kin_pair();
     turns(&mut app, TURNS_TO_CLOSE_A_KIN_PAIR);
-    let third = member(&mut app, 3, 50, Some(PLACE_A), NET_1, 1);
+    let third = member(&mut app, 3, 50, Some(PLACE_A), 1);
     let _ = third;
     tie_all(&mut app, &[1, 2, 3]);
     turns(&mut app, 3);
@@ -811,9 +888,9 @@ fn set_origin(app: &mut App, n: u64, origin: u64) {
 fn every_member_of_a_formed_tribe_publishes_it_chiefless_ones_included() {
     // Only band 1 is chiefed; 2 and 3 are chiefless kin, each close to 1 through its bank.
     let mut app = spawn_world();
-    member(&mut app, 1, 40, Some(PLACE_A), NET_1, 1);
-    band(&mut app, 2, 90, Some(PLACE_A), NET_1);
-    band(&mut app, 3, 60, Some(PLACE_A), NET_1);
+    member(&mut app, 1, 40, Some(PLACE_A), 1);
+    band(&mut app, 2, 90, Some(PLACE_A));
+    band(&mut app, 3, 60, Some(PLACE_A));
     set_origin(&mut app, 2, 1);
     set_origin(&mut app, 3, 1);
     tie_all(&mut app, &[1, 2, 3]);
@@ -841,13 +918,13 @@ fn a_chain_of_close_pairs_is_one_tribe_of_three() {
     // 1 and 3 are chiefed, 2 is not. Culture on one axis runs -span, 0, +span, so 1-2 and 2-3 are
     // close (3 + 1.5 + 2 + 5) and 1-3 is not (3 + 0 + 0 + 5 = 8).
     let mut app = spawn_world();
-    member(&mut app, 1, 40, Some(PLACE_A), NET_1, 1);
-    band(&mut app, 2, 90, Some(PLACE_A), NET_1);
-    member(&mut app, 3, 60, Some(PLACE_A), NET_1, 1);
+    member(&mut app, 1, 40, Some(PLACE_A), 1);
+    band(&mut app, 2, 90, Some(PLACE_A));
+    member(&mut app, 3, 60, Some(PLACE_A), 1);
     set_origin(&mut app, 2, 1);
     {
         let mut ledger = app.world.resource_mut::<ConnectionLedger>();
-        for (a, b) in [(1, 2), (2, 3)] {
+        for (a, b) in [(1, 2), (2, 1), (2, 3), (3, 2)] {
             ledger.insert_full_tie(
                 ConnectionKey::new(id(a), id(b)),
                 &Sighting::new(UVec2::ZERO, 1, "", FactionId(0)),
@@ -866,8 +943,8 @@ fn a_chain_of_close_pairs_is_one_tribe_of_three() {
 #[test]
 fn a_band_in_no_tribe_and_a_foreign_band_publish_no_tribe() {
     let (mut app, _, _) = kin_pair();
-    let loner = band(&mut app, 3, 50, Some(PLACE_B), NET_2);
-    let foreign = band(&mut app, 4, 50, Some(PLACE_A), NET_1);
+    let loner = band(&mut app, 3, 50, Some(PLACE_B));
+    let foreign = band(&mut app, 4, 50, Some(PLACE_A));
     app.world
         .get_mut::<PopulationCohort>(foreign)
         .unwrap()
@@ -891,17 +968,17 @@ fn a_band_in_no_tribe_and_a_foreign_band_publish_no_tribe() {
 #[test]
 fn standing_says_why_a_band_is_not_in_reach() {
     let mut app = spawn_world();
-    member(&mut app, 1, 50, Some(PLACE_A), NET_1, 1); // alone at its place
-    member(&mut app, 2, 50, Some(PLACE_B), NET_2, 1); // alone too
-    member(&mut app, 3, 50, None, NET_1, 1); // no urn
-    member(&mut app, 4, 50, Some(PLACE_A), 0, 1); // no network
-    member(&mut app, 5, 50, None, 0, 1); // neither: no urn is named first
+    member(&mut app, 1, 50, Some(PLACE_A), 1); // shares the urn with 4, but no tie either way
+    member(&mut app, 2, 50, Some(PLACE_B), 1); // alone at its place
+    member(&mut app, 3, 50, None, 1); // no urn
+    member(&mut app, 4, 50, Some(PLACE_A), 1); // the other end of that untied pair
+    member(&mut app, 5, 50, None, 1); // no urn
     turn(&mut app);
     let r = registry(&app);
-    assert_eq!(r.standing_of(id(1)), Some(TribeStanding::Alone));
+    assert_eq!(r.standing_of(id(1)), Some(TribeStanding::OutOfTouch));
     assert_eq!(r.standing_of(id(2)), Some(TribeStanding::Alone));
     assert_eq!(r.standing_of(id(3)), Some(TribeStanding::NoUrn));
-    assert_eq!(r.standing_of(id(4)), Some(TribeStanding::NoNetwork));
+    assert_eq!(r.standing_of(id(4)), Some(TribeStanding::OutOfTouch));
     assert_eq!(r.standing_of(id(5)), Some(TribeStanding::NoUrn));
     for n in [1, 3, 4, 5] {
         with_row(&mut app, n, |row| {
@@ -913,8 +990,8 @@ fn standing_says_why_a_band_is_not_in_reach() {
 /// Two local bands, neither with a leader.
 fn chiefless_pair() -> (App, Entity, Entity) {
     let mut app = spawn_world();
-    let one = band(&mut app, 1, 40, Some(PLACE_A), NET_1);
-    let two = band(&mut app, 2, 90, Some(PLACE_A), NET_1);
+    let one = band(&mut app, 1, 40, Some(PLACE_A));
+    let two = band(&mut app, 2, 90, Some(PLACE_A));
     tie_all(&mut app, &[1, 2]);
     (app, one, two)
 }
@@ -991,7 +1068,7 @@ fn a_local_pair_with_no_leader_left_holds_its_points_and_a_parted_one_fades() {
 #[test]
 fn a_foreign_band_publishes_the_defaults() {
     let (mut app, _, _) = kin_pair();
-    let foreign = band(&mut app, 3, 50, Some(PLACE_A), NET_1);
+    let foreign = band(&mut app, 3, 50, Some(PLACE_A));
     app.world
         .get_mut::<PopulationCohort>(foreign)
         .unwrap()
@@ -1037,14 +1114,14 @@ fn reach_is_published_for_a_chiefed_band_a_tribe_member_and_a_chiefless_member()
     // Band 1 (chiefed, 200 people: over its own reach) and 2 (chiefed, 300: the largest, so its chief is
     // promoted to lead the tribe) form a tribe with chiefless kin band 3.
     let mut app = spawn_world();
-    member(&mut app, 1, 200, Some(PLACE_A), NET_1, 1);
-    member(&mut app, 2, 300, Some(PLACE_A), NET_1, 1);
-    band(&mut app, 3, 60, Some(PLACE_A), NET_1);
+    member(&mut app, 1, 200, Some(PLACE_A), 1);
+    member(&mut app, 2, 300, Some(PLACE_A), 1);
+    band(&mut app, 3, 60, Some(PLACE_A));
     set_origin(&mut app, 3, 1);
     // A chiefed band in no tribe, over its reach.
-    member(&mut app, 4, 200, Some(PLACE_B), NET_2, 4);
+    member(&mut app, 4, 200, Some(PLACE_B), 4);
     // A chiefless band in no tribe.
-    band(&mut app, 5, 30, None, 0);
+    band(&mut app, 5, 30, None);
     tie_all(&mut app, &[1, 2, 3]);
     turns(&mut app, TURNS_TO_FILL_BANK);
     assert_eq!(registry(&app).tribe_of(id(1)).unwrap().members.len(), 3);

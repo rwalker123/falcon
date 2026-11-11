@@ -74,7 +74,7 @@ gets one — once, permanently.
 
 ## Save, wire and the Telling
 
-- **Save**: `BandRecord::leadership` (capture and restore); `SAVE_FORMAT_VERSION` 48. No `Entity` in it.
+- **Save**: `BandRecord::leadership` (capture and restore); no `Entity` in it.
   `BandLeadership` is `SIM_STATE_COMPONENTS` in `tests/sim_state_coverage.rs`; the two handles are config.
 - **Wire**: appended to `PopulationCohortState` — `leaderName`, `leaderKind` (0 none, 1 chief, 2
   elders' council), `leadershipPractice` (the sum), `leadershipThreshold` (the config threshold,
@@ -114,10 +114,15 @@ Design: `docs/plan_labor_at_scale.md` ("Leaders: four levels of orders", level 2
 `core_sim/src/tribe.rs`, `tests/tribe.rs`. The tribe itself is sim state; each own band's
 progress toward one is on the wire ("On the wire" below).
 
-**Local.** Two bands are *local* on a turn when they are one people, in the same supply network
-(id not 0), holding the same belief anchor tile (`PopulationCohort::belief_anchor`, the urn on the
-map; `belief.md`). A fission child inherits its parent's anchor and joins its network at once, so
-locality alone is not a tribe: it has to be earned.
+**Local.** Two bands are *local* on a turn when they are one people, holding the same belief anchor
+tile (`PopulationCohort::belief_anchor`, the urn on the map; `belief.md`), with a **live tie in BOTH
+directions** in the `ConnectionLedger` (each direction's strength above `NO_TIE`:
+`ConnectionLedger::tied_both_ways`). The supply network plays no part, so far kin that stay in touch
+are local however far apart they stand. A tie stays live through sight, kin relay and scout / station
+reports, and lapses about 50 quiet turns after the last contact (`strength.decay_per_turn` 0.02, half
+that once the people knows `messengers`, `connections.md`); that clock decides how long far kin stay
+local. A fission child inherits its parent's anchor and is tied to it at full strength, so locality
+alone is not a tribe: it has to be earned.
 
 **The points bank.** Every local pair has a bank of points (`TribeRegistry::points`, per pair,
 checkpoint state). Each turn a pair is local and at least one of its two bands has a leader
@@ -136,9 +141,9 @@ had a chief stays at 0; nothing counts toward a tribe until a chief exists.
 | A kept monument on the shared urn | `kept_monument`: 1 while the anchor tile's `TileImprovementRegistry` entry HOLDS a rung `belief_config.json` -> `improvement_belief` lists (the shipped list is `belief:monument`, `belief.md`), else 0. The engine names no rung: the list that says which rungs add belief also says which make a monument. Held, not built: a half-raised monument (`partial_credit: on_completion`) reads 0, and an unkept one reads 0 the turn it decays to `gathering_ground` | `tribe_weight_monument` 2.0 |
 | Acting as a tribe | `acting_as_a_tribe(same_tribe)`: 0 for now, and 0 for any pair outside one tribe. The tribe-level orders (#862, #864) and shared works are what will feed it | `tribe_weight_acting` 3.0 |
 
-**Fading.** A pair that is not local loses `tribe_score_threshold / tribe_points_fade_turns` points
-a turn (opening: 1 a turn, a full bank empties in 100 turns apart), clamped at 0. **Never reset on
-parting.** An entry is pruned at 0 or when either band no longer exists.
+**Fading.** A pair that is not local (another urn, another people, or a lapsed or one-way tie) loses
+`tribe_score_threshold / tribe_points_fade_turns` points a turn (opening: 1 a turn, a full bank
+empties in 100 turns apart), clamped at 0. **Never reset on parting.** An entry is pruned at 0 or when either band no longer exists.
 
 The opening numbers: a pair from one origin band, alike and fully tied, earns 3 + 3 + 2 = 8 a turn
 (a little more with belief), so it forms a tribe 13 turns after the first chief (`ceil(100 / 8)`).
@@ -147,13 +152,13 @@ turns); a half-alike kin pair earns 6.5 (16 turns). A kept monument adds 2 to an
 that parts keeps its bank minus 1% of a full one a turn, so a short parting is re-earned in a turn
 or two and a long one has to be rebuilt.
 
-**Who forms one.** Within each (people, network, anchor) set of local bands, take the connected
-components of the close pairs. A component is a tribe-candidate iff it has `MIN_TRIBE_BANDS` (2,
-"several" by definition, not a lever) or more bands AND at least one member has a `BandLeader` of its
-own. Two close bands with no chief never form, however high the score; they form the turn one is
+**Who forms one.** Within each (people, anchor) set of bands, take the connected components of the
+close pairs (a close pair is a full bank and still local). A component is a tribe-candidate iff it
+has `MIN_TRIBE_BANDS` (2, "several" by definition, not a lever) or more bands AND at least one
+member has a `BandLeader` of its own. Two close bands with no chief never form, however high the score; they form the turn one is
 crowned. A tribe whose group loses its last chiefed band dissolves, as does one whose members are no
-longer close or no longer local to one another (a band that parts leaves the same turn; its bank
-fades rather than resets).
+longer close or no longer local to one another (a band whose ties to the rest have lapsed leaves the
+same turn; its bank fades rather than resets).
 
 **Identity across turns** (`resolve_matches`, pure and unit-pinned) runs on those candidate groups.
 The `TribeRegistry` resource holds tribes (`TribeId`, people, member `BandId`s, name, leader),
@@ -161,8 +166,8 @@ The `TribeRegistry` resource holds tribes (`TribeId`, people, member `BandId`s, 
 id order, picks the group of its own people that holds the most of its previous members (ties: the
 group whose lowest `BandId` is lowest). Where several tribes picked one group, the one with more
 previous members in it keeps it (ties: the lower `TribeId`); a loser does not try a second group and
-dissolves. So a network split keeps the tribe on the majority side and the other side (2+ close bands,
-one chiefed) forms a new tribe; two tribes that come to share a network and anchor stay two until
+dissolves. So a split of the tie graph keeps the tribe on the majority side and the other side (2+ close bands,
+one chiefed) forms a new tribe; two tribes that come to share a tie-connected anchor stay two until
 their cross pairs have banked the points to be close, then the one holding more survives and the other
 dissolves, its bands reading as joining. Membership becomes the group's current bands and is diffed
 for join/leave. A tribe with no group of its people dissolves.
@@ -225,7 +230,9 @@ band and an expedition party carry the defaults; the capture builds them in
 `snapshot::population::reach_readout`. A foreign band and an expedition party carry the defaults of
 the progress fields (threshold 0, which a client reads as nothing to show) and of the tribe fields
 too; an own band the registry has not scored yet carries the progress defaults. The scoring lives in
-`TribeRegistry` (`scores`, the inputs of this turn's local pairs, and `standing`), rebuilt from
+`TribeRegistry` (`scores`, the inputs of this turn's local pairs, and `standing`: `Local`, `NoUrn`,
+`OutOfTouch` (an urn and same-people bands on it, but no live two-way tie to any) or `Alone`; the
+standing is not on the wire), rebuilt from
 scratch each turn by `advance_tribes`, rather than in a derived resource: the registry is
 checkpoint state, so a snapshot published right after a load still shows progress. The capture
 reads it through `snapshot::population::tribe_progress`, which takes the set of live bands with a
@@ -233,4 +240,4 @@ leader (`BandLeaderLookup`) for `partnerHasLeader`.
 
 **Checkpoint.** `SimState::tribes` (`TribeRegistry`: tribes, per-pair `points`, `next_id`, `formed`,
 this turn's `scores` and `standing`;
-`SIM_STATE_RESOURCES`); `SAVE_FORMAT_VERSION` 66.
+`SIM_STATE_RESOURCES`); `SAVE_FORMAT_VERSION` 68.

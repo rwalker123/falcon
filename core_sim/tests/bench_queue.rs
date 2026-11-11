@@ -377,6 +377,7 @@ fn a_detached_party_publishes_no_suggestions() {
                 goodwill_news: Default::default(),
                 exchange_return: Default::default(),
                 unpaid_return: Default::default(),
+                launch_tile: None,
                 scout_pack: Default::default(),
                 aim: None,
             },
