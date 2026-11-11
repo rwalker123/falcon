@@ -78,5 +78,9 @@
   "ritual": {
     "discovery_id": 2024,
     "observability": 0.8
+  },
+  "messengers": {
+    "discovery_id": 2025,
+    "observability": 0.5
   }
 }

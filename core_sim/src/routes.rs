@@ -633,6 +633,16 @@ impl RouteTrafficLog {
         );
     }
 
+    /// **Record a FOUNDING WALK crossing between two tiles** (`docs/plan_far_kin.md` §2) - a
+    /// commanded split's new band on its first move order. Each tile it crosses banks
+    /// [`traffic_ceiling`], the top of the free floor, so the walk lays a full trail at once instead
+    /// of `work_per_worker_tile` a worker. It is ordinary march traffic from there on
+    /// ([`TrafficSource::March`]): capped at the ceiling like every journey, and it resets the idle
+    /// count, so disuse and the road lessons treat it as they treat any march.
+    pub fn founding_march(&mut self, from: UVec2, to: UVec2, ladder: &LadderConfig) {
+        self.record(from, to, traffic_ceiling(ladder), TrafficSource::March);
+    }
+
     /// **Record a migratory HERD stepping along a `Migrate` leg** — `work_per_herd_tile` on each tile
     /// it crossed, the third source of route traffic and the oldest: the first roads were the traces
     /// mass herds wore walking the same corridor between their grounds year after year.

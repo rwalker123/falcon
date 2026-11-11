@@ -893,6 +893,15 @@ label entry, so the row reads **Rites** under **LORE** off the capitalized fallb
 in those two tables draws with empty "What it lets you do" and "How it is learned" columns, which is how
 this one first shipped.
 
+`messengers` (far kin, `docs/plan_far_kin.md`) has the same shape: branch `rites`, area `lore`, order 2,
+a step row beside Rites. Its copy is `KNOWLEDGE_UNLOCK_NOTES["messengers"]` (`Bands share food up to 4
+tiles apart instead of 3, news passes through one more band, and kin stay in touch about twice as
+long.`) and `PRACTISE_NOTES["messengers"]` (`Learned by keeping in touch with kin who live far away, and
+by trade trips and envoys between your own bands.`). The numbers are written into the copy, as for the
+other entries. The `knowledge_panel_messengers` frame pushes
+`KnowledgeFx.ladder_roster_with_messengers()` for that one state, because the area and size assertions
+count the shipped roster.
+
 ## Worked Land and Selective breeding (issue #175)
 
 Both lessons are roster rows. Where the hand-written `KNOWLEDGE_UNLOCK_NOTES` has no sentence the node

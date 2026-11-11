@@ -3046,6 +3046,12 @@ pub struct Expedition {
     /// (`docs/plan_early_diplomacy.md` §1). Inert (the default) for every party that carries no
     /// pack order. Rides the checkpoint with the rest of the `Expedition`.
     pub scout_pack: ScoutPack,
+    /// **The tile the party left from** - its home band's standing tile at launch, `None` for a
+    /// hand-built party that was never launched. A delivery between kin reads it: the messengers
+    /// lesson is paid per tile walked, launch tile to arrival tile
+    /// ([`crate::messengers::credit_trip_lesson`]). Rides the checkpoint with the rest of the
+    /// `Expedition`.
+    pub launch_tile: Option<UVec2>,
 }
 
 /// **The standing order a scouting party holds for the first stranger it sights** — `keep` (the
@@ -8901,6 +8907,16 @@ impl LaborAllocation {
         freed
     }
 }
+
+/// **A commanded split's new band is on its founding walk** (`docs/plan_far_kin.md` §2): while it
+/// holds this marker, every tile its march crosses is banked straight to a full trail
+/// ([`crate::routes::RouteTrafficLog::founding_march`]) instead of at `work_per_worker_tile`.
+/// Inserted by `systems::split_band_from_parent` (the wrapper the player's `split_band` verb runs -
+/// never the breeding break-off or the independence break-away) and removed by
+/// `systems::advance_band_movement` when the band completes its first move order. Persisted on
+/// `BandRecord::founding_walk`.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FoundingWalk;
 
 /// A pending `move_band` order: the band advances toward `target` at
 /// `band_move_tiles_per_turn`/turn, updating `current_tile`/`home` until it arrives, then the

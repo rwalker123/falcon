@@ -2656,7 +2656,7 @@ func _hay_ledger_states() -> void:
 				and not tribe_text.contains("Ridgeway"))
 			h._assert_hud("tribe_pairs: the tooltip is the rule, what is missing, and every partner (%s)" % tribe_line.tooltip_text.replace("\n", " | "),
 				tribe_line.tooltip_text == "\n".join([HudFormat.TRIBE_TOOLTIP_RULE,
-				"Keep sharing the network and the sacred ground 4 more turns",
+				"Keep in touch and share the sacred ground 4 more turns",
 				"Raise a monument at the sacred ground",
 				"A stronger sacred ground", "", "With: Snowreach, Ridgeway, Dunmere"]))
 		else:
@@ -2677,7 +2677,7 @@ func _hay_ledger_states() -> void:
 	var joiner_alone := joiner_base.duplicate(true)
 	joiner_alone["tribe_pairs"] = []
 	joiner_alone["has_belief_anchor"] = true
-	for joiner_case in [["tribe_joiner_partner_led", joiner_led, " · 4 turns", "Keep sharing the network and the sacred ground 4 more turns"],
+	for joiner_case in [["tribe_joiner_partner_led", joiner_led, " · 4 turns", "Keep in touch and share the sacred ground 4 more turns"],
 			["tribe_joiner_needs_chief", joiner_unled, " · needs a chief", HudFormat.TRIBE_TOOLTIP_NEEDS_CHIEF],
 			["tribe_joiner_no_partner", joiner_alone, "", HudFormat.TRIBE_TOOLTIP_RULE]]:
 		var joiner_band := BandFx.band_fixture()
@@ -2700,27 +2700,31 @@ func _hay_ledger_states() -> void:
 			h._assert_hud("tribe_joiner_needs_chief: no turn count in the hover",
 				not joiner_line.tooltip_text.contains("more turn"))
 	# The no-partner REASONS (#870), read off the player's own bands: (a) no sacred ground of its own, (b) a
-	# band in its supply network holds a different place (the live Fernhollow / Fenwatch case), (c) no other
-	# band shares its supply network, (d) no other band at all.
+	# other own band holds a different place (the live Fernhollow / Fenwatch case), (c) a band shares the
+	# place but the two do not hold a live tie both ways (out of touch; one-way and two-band variants), (d) no
+	# other band at all.
 	var reason_here := joiner_base.duplicate(true)
-	reason_here.merge({"name": "Fernhollow", "band_id": 61, "entity": 961, "supply_network_id": 1,
+	reason_here.merge({"name": "Fernhollow", "band_id": 61, "entity": 961,
 		"has_belief_anchor": true, "belief_anchor_x": 38, "belief_anchor_y": 38, "tribe_pairs": []}, true)
 	var reason_fen := BandFx.band_fixture()
-	reason_fen.merge({"name": "Fenwatch", "band_id": 62, "entity": 962, "size": 90, "supply_network_id": 1,
+	reason_fen.merge({"name": "Fenwatch", "band_id": 62, "entity": 962, "size": 90,
 		"has_belief_anchor": true, "belief_anchor_x": 40, "belief_anchor_y": 37, "tribe_name": "Fenwatch tribe"}, true)
 	var reason_night := BandFx.band_fixture()
-	reason_night.merge({"name": "Nightbrook", "band_id": 63, "entity": 963, "size": 120, "supply_network_id": 1,
+	reason_night.merge({"name": "Nightbrook", "band_id": 63, "entity": 963, "size": 120,
 		"has_belief_anchor": true, "belief_anchor_x": 40, "belief_anchor_y": 37}, true)
-	var reason_far := reason_fen.duplicate(true)
-	reason_far["supply_network_id"] = 2
+	var reason_far := BandFx.band_fixture()
+	reason_far.merge({"name": "Farwatch", "band_id": 66, "entity": 966, "size": 80,
+		"has_belief_anchor": true, "belief_anchor_x": 38, "belief_anchor_y": 38}, true)
+	var reason_far_two := reason_far.duplicate(true)
+	reason_far_two.merge({"name": "Farmere", "band_id": 67, "entity": 967}, true)
+	var tie_out := {"observer_band_id": 61, "subject_band_id": 66, "strength": 0.6}
+	var tie_back := {"observer_band_id": 66, "subject_band_id": 61, "strength": 0.0}
 	var reason_blank := reason_night.duplicate(true)
 	reason_blank.merge({"name": "Blankmere", "band_id": 64, "entity": 964, "has_belief_anchor": false}, true)
 	var reason_blank_two := reason_blank.duplicate(true)
 	reason_blank_two.merge({"name": "Blankfen", "band_id": 65, "entity": 965}, true)
 	var reason_no_place := reason_here.duplicate(true)
 	reason_no_place["has_belief_anchor"] = false
-	var reason_no_network := reason_here.duplicate(true)
-	reason_no_network["supply_network_id"] = 0
 	for reason_case in [
 			["tribe_reason_no_place", reason_no_place, [reason_fen], HudFormat.TRIBE_NO_PLACE_LINE, HudFormat.TRIBE_NO_PLACE_TOOLTIP],
 			["tribe_reason_different_place", reason_here, [reason_fen, reason_night],
@@ -2734,10 +2738,18 @@ func _hay_ledger_states() -> void:
 				HudFormat.TRIBE_TOOLTIP_RULE + "\n" + HudFormat.TRIBE_NO_PLACE_TOOLTIP + "\nWithout sacred ground: Blankmere, Blankfen"],
 			["tribe_reason_different_beats_none", reason_here, [reason_blank, reason_fen],
 				HudFormat.TRIBE_DIFFERENT_PLACE_LINE, HudFormat.TRIBE_TOOLTIP_RULE],
-			["tribe_reason_no_network", reason_no_network, [reason_far], HudFormat.TRIBE_NO_NETWORK_LINE, HudFormat.TRIBE_NO_NETWORK_TOOLTIP],
+			["tribe_reason_out_of_touch", reason_here, [reason_far], "Tribe: out of touch with Farwatch",
+				HudFormat.TRIBE_OUT_OF_TOUCH_TOOLTIP, []],
+			# One direction live is still out of touch: the tie must run both ways.
+			["tribe_reason_out_of_touch_one_way", reason_here, [reason_far], "Tribe: out of touch with Farwatch",
+				HudFormat.TRIBE_OUT_OF_TOUCH_TOOLTIP, [tie_out, tie_back]],
+			["tribe_reason_out_of_touch_two", reason_here, [reason_far, reason_far_two], "Tribe: out of touch with 2 bands",
+				HudFormat.TRIBE_OUT_OF_TOUCH_TOOLTIP + "
+Out of touch with: Farwatch, Farmere", []],
 			["tribe_reason_alone", reason_here, [], HudFormat.TRIBE_ALONE_LINE, HudFormat.TRIBE_TOOLTIP_RULE]]:
 		var reason_band := BandFx.band_fixture()
 		reason_band.merge(reason_case[1], true)
+		h._hud.update_connections(reason_case[5] if reason_case.size() > 5 else [])
 		var reason_roster: Array = [reason_band]
 		reason_roster.append_array(reason_case[2])
 		h._hud.update_band_alerts(reason_roster)
@@ -2758,6 +2770,7 @@ func _hay_ledger_states() -> void:
 					and reason_line.tooltip_text.split("\n").size() == 2
 					and not reason_line.tooltip_text.contains("(")))
 			and reason_line.get_content_width() <= leader_panel.current_reservation_size())
+	h._hud.update_connections([])
 	# Each suffix, off the pure statics.
 	var suffix_entry := tribe_base.duplicate(true)
 	var suffix_base := {"partner_name": "Snowreach", "points": 70.0, "contribution": {"origin": 3.0,

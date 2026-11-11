@@ -17,6 +17,8 @@ paths:
   - "core_sim/src/visibility_config.rs"
   - "core_sim/src/data/visibility_config.json"
   - "core_sim/tests/large_group_detection.rs"
+  - "core_sim/src/messengers.rs"
+  - "core_sim/tests/far_kin.rs"
 ---
 
 # Contact & connections — the tie two groups leave behind
@@ -29,7 +31,7 @@ directed, persisting, decaying tie. Logistics, culture, knowledge and cargo are 
 
 | File | Purpose |
 |------|---------|
-| `src/data/connections_config.json` | `strength.gain_per_contact` (0.25 — four turns of contact reach a full tie), `strength.decay_per_turn` (0.02 — a full tie bleeds to nothing over fifty quiet turns), `forget_turns` (200 — how long after the last contact the edge itself is reaped). `kin_relay.max_hops` (2 — longest chain of this turn's direct contacts, within one people, a tie is relayed across; below 2 turns relay off; unsigned, so a negative or fractional value is a boot panic). The `1.0` ceiling is **not** here: strength is a `0..=1` fraction by definition, so its top is the named constant `connections::FULL_TIE`, and tuning it would change the unit rather than the balance. No hot-reload kind. |
+| `src/data/connections_config.json` | `strength.gain_per_contact` (0.25 — four turns of contact reach a full tie), `strength.decay_per_turn` (0.02 — a full tie bleeds to nothing over fifty quiet turns), `forget_turns` (200 — how long after the last contact the edge itself is reaped). `kin_relay.max_hops` (2 — longest chain of this turn's direct contacts, within one people, a tie is relayed across; below 2 turns relay off; unsigned, so a negative or fractional value is a boot panic). **Messengers values** (`docs/plan_far_kin.md` §3; the value the stat takes once the observing band's people knows `messengers`, never a multiplier): `kin_relay.max_hops_with_messengers` (**3**, validated `>= max_hops`) and `strength.decay_per_turn_with_messengers` (**0.01**, a full tie bleeds out over about 100 quiet turns; validated finite and `0 <= this <= decay_per_turn`). A file that breaks either is a boot panic (`ConnectionsConfig::validate`, run by `from_file`). The `1.0` ceiling is **not** here: strength is a `0..=1` fraction by definition, so its top is the named constant `connections::FULL_TIE`, and tuning it would change the unit rather than the balance. No hot-reload kind. |
 | `src/data/knowledge_contact_config.json` | **The knowledge rider's channel rates**, in practice units per turn (the unit `learn_rate` 1.0 is paid in): `channel_rates.watching` (**0.1**), `.trade` (**0.4**), `.road` (**0.6**). All three required, validated finite and `>= 0` (`0` switches a channel off); no global multiplier on top. Loader `knowledge_contact_config.rs` on the shared boot seam, env override `KNOWLEDGE_CONTACT_CONFIG_PATH`. No hot-reload kind. **Never `connections_config.json`**, which has no rider vocabulary |
 | `src/data/start_profile_knowledge_tags.json` | Each knowledge tag's `discovery_id`, its start-profile seed `progress`, and **`observability`** (`0..=1`, required, no default — how much being around the discovery teaches: a pen `1.0`, seed selection `0.2`). `deny_unknown_fields`, so the retired `fidelity` key fails to parse. Every tag must also have an `intensification_ladder.json` `knowledge.lesson_costs` entry — a boot panic otherwise |
 
@@ -597,6 +599,45 @@ one a subject people completed this turn is already on it — the credit the nex
 Pinned: the rule's arithmetic and every edge case by `knowledge_contact`'s unit tests; the
 scheduled system and the encoded readout by `core_sim/tests/knowledge_contact.rs`, which asserts
 the exact ledger rise off a real turn's tie and reads the row through `root_as_envelope`.
+
+## Messengers — far kin in touch teach it, and it keeps them in touch
+
+Design: `docs/plan_far_kin.md` §3. Code: `messengers.rs`. A knowledge (`messengers`, discovery id
+**2025**, `lesson_costs.messengers` **20**, `start_profile_knowledge_tags.json` observability **0.5**)
+filed beside `ritual` on the knowledge screen (standalone branch `rites`, area `lore`). Both
+credits go through `LadderKnowledge::ledger_credit`, **once per people**, never scaled by hands, and
+both levers sit in `intensification_ladder.json` -> `knowledge`:
+
+| Practice | Credit | Seam |
+|---|---|---|
+| Each turn a people has ANY resident band holding a live two-way tie (`ConnectionLedger::tied_both_ways`) with a same-people resident band standing farther (hex distance) than the shipped `supply_network_config.reach_tiles` | `messengers_lesson_per_turn` (**0.25**), once per people per turn, not per pair | `messengers::credit_far_kin_contact`, Visibility stage after `learn_over_connections` (`peoples_in_far_touch` is the pure rule) |
+| A `Trade` shipment or envoy arrives at a band of the SAME people as its home band | `messengers_lesson_per_tile` (**0.5**) x hex distance from the party's `Expedition::launch_tile` to the arrival tile | the `TargetStep::Arrived` arm of `advance_expeditions`, before the cargo is settled |
+
+`Expedition::launch_tile` is stamped by the server's two party spawns (`launch_tile_of`: the home
+band's tile at launch) and rides the checkpoint with the `Expedition` (`SAVE_FORMAT_VERSION` 68); a
+hand-built party with `None` earns no trip credit. Both levers validate finite and `>= 0` (`0`
+switches the source off).
+
+**What it unlocks**, each a value the stat takes, read through `messengers::knows_messengers`:
+
+- **Kin relay depth**: `relay_among_kin` walks from band `a` to depth
+  `KinRelayConfig::depth(people of a knows messengers)` (`max_hops_with_messengers`, 3, else
+  `max_hops`, 2).
+- **Tie decay**: `ConnectionLedger::decay_all_with` drains an edge at
+  `decay_per_turn_with_messengers` when the edge's OBSERVER band's people knows it (the edge carries
+  no faction; `advance_connections` resolves the observer off the resident bands, an observer that is
+  gone drains at the shipped rate). `decay_all` is the same with nobody knowing it.
+- **Free pooling reach** (`supply_network_config.json` -> `reach_tiles_with_messengers`, **4**), read
+  ONLY by `balance_supply_networks`' link test for a pair of that people: `campaign.md` -> Supply
+  Network. Validated at load `reach_tiles <= reach_tiles_with_messengers` and, at boot where the
+  ladder is in scope (`lib.rs`), `reach_tiles_with_messengers < routes::trail_reach_tiles(ladder)`
+  (the trail rung's `holds_link_to_tiles`, 6), so messengers never gives every far pair a trail's
+  link for free.
+
+None of these configs is a Workbench / tuning-manifest kind, so the new levers are edited in the
+files and not exposed on the tuning panel. Tests: `core_sim/tests/far_kin.rs` (both credits, the
+three-hop relay, the slower drain), `tests/route_traffic.rs`
+(`a_pair_just_past_the_free_reach_pools_only_with_messengers`), the config modules' unit tests.
 
 ## Metrics
 

@@ -55,15 +55,34 @@ pub struct KinRelayConfig {
     /// (`0` or `1`) relay is off and a tie refreshes only from the band's own sighting. An unsigned
     /// integer, so a negative or fractional value fails to parse and is a boot panic.
     pub max_hops: u32,
+    /// **The relay depth of a people that knows `messengers`** (`docs/plan_far_kin.md` §3) - the
+    /// VALUE the stat takes once the people knows the lesson, read per people by the relay. Validated
+    /// `>= max_hops`.
+    pub max_hops_with_messengers: u32,
+}
+
+impl KinRelayConfig {
+    /// The relay depth for a band of a people that does (or does not) know `messengers`.
+    pub fn depth(&self, knows_messengers: bool) -> u32 {
+        if knows_messengers {
+            self.max_hops_with_messengers
+        } else {
+            self.max_hops
+        }
+    }
 }
 
 /// Shipped relay depth: a band hears of kin two ties away, which spans a three-band chain.
 pub const DEFAULT_KIN_RELAY_MAX_HOPS: u32 = 2;
 
+/// Shipped relay depth once messengers is known: one band further.
+pub const DEFAULT_KIN_RELAY_MAX_HOPS_WITH_MESSENGERS: u32 = 3;
+
 impl Default for KinRelayConfig {
     fn default() -> Self {
         Self {
             max_hops: DEFAULT_KIN_RELAY_MAX_HOPS,
+            max_hops_with_messengers: DEFAULT_KIN_RELAY_MAX_HOPS_WITH_MESSENGERS,
         }
     }
 }
@@ -78,6 +97,22 @@ pub struct ConnectionStrengthConfig {
     /// Subtracted on every turn the subject is **not** seen, down to zero. Zero parks the edge; it
     /// does not delete it (that is `forget_turns` above).
     pub decay_per_turn: f32,
+    /// **The drain per quiet turn on a tie whose OBSERVER band's people knows `messengers`**
+    /// (`docs/plan_far_kin.md` §3) - the value the stat takes, not a multiplier. Validated
+    /// `0 <= this <= decay_per_turn`: messengers only ever slows the drain.
+    pub decay_per_turn_with_messengers: f32,
+}
+
+impl ConnectionStrengthConfig {
+    /// The drain per quiet turn for an observer of a people that does (or does not) know
+    /// `messengers`.
+    pub fn decay(&self, knows_messengers: bool) -> f32 {
+        if knows_messengers {
+            self.decay_per_turn_with_messengers
+        } else {
+            self.decay_per_turn
+        }
+    }
 }
 
 impl Default for ConnectionsConfig {
@@ -95,6 +130,7 @@ impl Default for ConnectionStrengthConfig {
         Self {
             gain_per_contact: 0.25,
             decay_per_turn: 0.02,
+            decay_per_turn_with_messengers: 0.01,
         }
     }
 }
@@ -116,7 +152,29 @@ impl ConnectionsConfig {
             path: path.to_path_buf(),
             source,
         })?;
-        Ok(ConnectionsConfig::from_json_str(&contents)?)
+        let config = ConnectionsConfig::from_json_str(&contents)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// The messengers values only ever help: relay depth `max_hops_with_messengers >= max_hops` and
+    /// a slower drain `0 <= decay_per_turn_with_messengers <= decay_per_turn` (finite).
+    pub fn validate(&self) -> Result<(), ConnectionsConfigError> {
+        if self.kin_relay.max_hops_with_messengers < self.kin_relay.max_hops {
+            return Err(ConnectionsConfigError::Invalid(format!(
+                "kin_relay.max_hops_with_messengers ({}) must be >= max_hops ({})",
+                self.kin_relay.max_hops_with_messengers, self.kin_relay.max_hops
+            )));
+        }
+        let with = self.strength.decay_per_turn_with_messengers;
+        if !with.is_finite() || with < 0.0 || with > self.strength.decay_per_turn {
+            return Err(ConnectionsConfigError::Invalid(format!(
+                "strength.decay_per_turn_with_messengers ({with}) must be finite and in \
+                 0..=decay_per_turn ({})",
+                self.strength.decay_per_turn
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -130,6 +188,8 @@ pub enum ConnectionsConfigError {
     },
     #[error("failed to parse connections config: {0}")]
     Parse(#[from] serde_json::Error),
+    #[error("invalid connections config: {0}")]
+    Invalid(String),
 }
 
 impl ConfigLoadError for ConnectionsConfigError {
@@ -212,6 +272,34 @@ mod tests {
             "forgetting on the turn of contact would delete every edge as it formed"
         );
         assert_eq!(config.kin_relay.max_hops, DEFAULT_KIN_RELAY_MAX_HOPS);
+        config
+            .validate()
+            .expect("the shipped messengers values only help");
+        assert_eq!(
+            config.kin_relay.max_hops_with_messengers,
+            DEFAULT_KIN_RELAY_MAX_HOPS_WITH_MESSENGERS
+        );
+        assert_eq!(config.kin_relay.depth(false), config.kin_relay.max_hops);
+        assert_eq!(
+            config.strength.decay(true),
+            config.strength.decay_per_turn_with_messengers
+        );
+    }
+
+    #[test]
+    fn messengers_may_not_shorten_the_relay_or_speed_the_drain() {
+        let ok = ConnectionsConfig::default();
+        let mut shorter = ok.clone();
+        shorter.kin_relay.max_hops_with_messengers = ok.kin_relay.max_hops - 1;
+        assert!(shorter.validate().is_err());
+        for bad in [-0.01, ok.strength.decay_per_turn + 0.01, f32::NAN] {
+            let mut config = ok.clone();
+            config.strength.decay_per_turn_with_messengers = bad;
+            assert!(config.validate().is_err(), "{bad}");
+        }
+        let mut off = ok.clone();
+        off.strength.decay_per_turn_with_messengers = 0.0;
+        assert!(off.validate().is_ok(), "zero decay is allowed");
     }
 
     #[test]

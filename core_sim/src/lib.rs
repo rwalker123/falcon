@@ -81,6 +81,7 @@ pub mod log_stream;
 mod map_preset;
 mod mapgen;
 mod materials_config;
+pub mod messengers;
 pub mod metrics;
 mod mobility;
 mod mobility_config;
@@ -170,7 +171,7 @@ pub use components::{
     BenchQueueError, BuildDeclaration, BuildJob, BuildSource, BuildToeLine, CohesionReading,
     DeathCause, DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind,
     EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase, FinishedBatch, FoodBatch,
-    FoodMix, KeepShare, KeepingIssue, KeepingToolLine, KitOrder, KnowledgeFragment,
+    FoodMix, FoundingWalk, KeepShare, KeepingIssue, KeepingToolLine, KitOrder, KnowledgeFragment,
     LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw,
     MoraleCause, MusterBench, MusterKit, MusterPlan, OrderOwner, PoolToeLine, PopulationCohort,
     PowerNode, ResidentBand, ScoutPack, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject,
@@ -359,6 +360,10 @@ pub use lineage::{
     breeding_ceiling, effective_breeding_ceiling, shared_breeding_ceiling, tie_joined_groups,
     BreedingMember, BreedingPeople, BreedingReading, FoundingLines, FreeBreedingPeoples, LineId,
     TieJoinedGroup, MIN_BAND_LINES, NO_INBREEDING_CEILING,
+};
+pub use messengers::{
+    credit_far_kin_contact, credit_messengers_practice, credit_trip_lesson, knows_messengers,
+    peoples_in_far_touch, MESSENGERS_DISCOVERY_ID, MESSENGERS_KNOWLEDGE,
 };
 pub use personalities::{
     load_personalities_from_env, PersonalitiesError, Personality, PersonalityCatalog,
@@ -959,6 +964,13 @@ pub fn build_headless_app() -> App {
         demographics_config::DemographicsConfigHandle::new(demographics_config);
     let (supply_network_config, supply_network_metadata) =
         supply_network_config::load_supply_network_config_from_env();
+    // **Messengers' pooling reach stays below a trail's** (`docs/plan_far_kin.md` §3): the
+    // cross-config half of the supply config's own check, run where the ladder is in scope.
+    if let Err(err) = supply_network_config
+        .validate_against_trail(routes::trail_reach_tiles(&ladder_for_reconcile))
+    {
+        panic!("supply network config does not reconcile with the intensification ladder: {err}");
+    }
     let supply_network_handle =
         supply_network_config::SupplyNetworkConfigHandle::new(supply_network_config);
     let (wellbeing_config, wellbeing_metadata) = wellbeing_config::load_wellbeing_config_from_env();
@@ -1707,6 +1719,12 @@ pub fn build_headless_app() -> App {
                 // site sweep touches nothing the rider reads. See
                 // `knowledge_contact::learn_over_connections`.
                 knowledge_contact::learn_over_connections.after(sites::discover_sites),
+                // **Far kin in touch teach messengers** (`messengers.rs`): reads the ties this
+                // turn's sight and relay just refreshed, and credits the same discovery ledger
+                // the knowledge rider writes, so it is ordered behind it.
+                messengers::credit_far_kin_contact
+                    .after(sites::discover_sites)
+                    .after(knowledge_contact::learn_over_connections),
                 // **A standing link raises each people's opinion of the other, and word of it
                 // travels along the road** — read at this stage because the roads' keeping has been
                 // judged by now (the moment `light_kept_routes` reads it). It takes

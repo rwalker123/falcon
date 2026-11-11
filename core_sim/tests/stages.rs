@@ -418,6 +418,7 @@ fn launch_agreed(scene: &mut Scene, agreement: &Agreement, dealing: DealingId) -
                 goodwill_news: Default::default(),
                 exchange_return: Default::default(),
                 unpaid_return: Default::default(),
+                launch_tile: None,
                 scout_pack: Default::default(),
                 aim: Some(destination_pos),
             },
@@ -1198,6 +1199,7 @@ fn launch_scout(scene: &mut Scene, order: StrangersOrder, pack: f32) -> Entity {
                 goodwill_news: Default::default(),
                 exchange_return: Default::default(),
                 unpaid_return: Default::default(),
+                launch_tile: None,
                 scout_pack: ScoutPack {
                     order,
                     ..Default::default()

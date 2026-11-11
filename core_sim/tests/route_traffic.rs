@@ -1341,6 +1341,66 @@ fn a_pair_inside_the_free_reach_pools_with_no_roads_at_all() {
     );
 }
 
+/// Give the fixture's people the messengers lesson outright.
+fn teach_messengers(app: &mut App) {
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(
+            TEST_FACTION,
+            core_sim::MESSENGERS_DISCOVERY_ID,
+            Scalar::from_f32(1.0),
+        );
+}
+
+/// The shipped supply levers.
+fn shipped_supply() -> core_sim::SupplyNetworkConfig {
+    (*SupplyNetworkConfigHandle::default().get()).clone()
+}
+
+/// **MESSENGERS WIDENS POOLING AND ONLY POOLING** (`docs/plan_far_kin.md` §3): a pair one tile past
+/// the shipped free reach pools only once its people knows messengers, and the same pair one tile
+/// past the messengers reach does not pool even then. The liveness half is the same pair, the same
+/// distance, with the lesson learned.
+#[test]
+fn a_pair_just_past_the_free_reach_pools_only_with_messengers() {
+    const STARTING_FOOD: i64 = 200;
+
+    let shipped = shipped_supply();
+    let mut without = spawn_world();
+    let (a, b) = two_camps_apart(&mut without, shipped.reach_tiles + 1);
+    set_food(&mut without, a, STARTING_FOOD);
+    set_food(&mut without, b, 0);
+    resolve_turn(&mut without);
+    assert_eq!(
+        food_of(&without, b),
+        0.0,
+        "one tile past the free reach pools nothing without messengers"
+    );
+
+    let mut with = spawn_world();
+    let (a, b) = two_camps_apart(&mut with, shipped.reach_tiles + 1);
+    teach_messengers(&mut with);
+    set_food(&mut with, a, STARTING_FOOD);
+    set_food(&mut with, b, 0);
+    resolve_turn(&mut with);
+    assert!(
+        food_of(&with, b) > 0.0,
+        "the same pair pools once its people knows messengers"
+    );
+
+    let mut too_far = spawn_world();
+    let (a, b) = two_camps_apart(&mut too_far, shipped.reach_tiles_with_messengers + 1);
+    teach_messengers(&mut too_far);
+    set_food(&mut too_far, a, STARTING_FOOD);
+    set_food(&mut too_far, b, 0);
+    resolve_turn(&mut too_far);
+    assert_eq!(
+        food_of(&too_far, b),
+        0.0,
+        "messengers' reach is a value, not unlimited: past it nothing pools without a road"
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // THE KNOWLEDGE CHAIN — a connection that stands teaches roadbuilding
 // ---------------------------------------------------------------------------------------------

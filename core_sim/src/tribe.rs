@@ -1,13 +1,14 @@
 //! **A tribe is earned.** Every pair of bands that are *local* to one another (one people, one
-//! supply network that is not 0, one belief-anchor tile) has a **points bank**. While the pair is
+//! belief-anchor tile, and a live connection tie in BOTH directions -- far kin in touch are local,
+//! the supply network plays no part) has a **points bank**. While the pair is
 //! local and at least one of the two bands has a leader, the bank fills each turn by the pair's
 //! **rate**: the weighted sum of six inputs in `[0, 1]` ([`CloseInputs`], [`points_per_turn`]) --
 //! shared origin, culture likeness, the connection tie, belief on the shared urn, a kept monument on
 //! it, and acting as a tribe. With no leader on either side the bank holds, so nothing counts toward
 //! a tribe before a leader exists. A bank fades while the pair is not local. A pair is *close* when
 //! its bank reaches `leadership_config.json -> tribe_score_threshold`. A tribe-candidate is a
-//! connected component of close pairs within one (people, network, anchor) set, of [`MIN_TRIBE_BANDS`] or more bands,
-//! at least one of which has a chief of its own.
+//! connected component of close pairs within one (people, anchor) set, of [`MIN_TRIBE_BANDS`] or more
+//! bands, at least one of which has a chief of its own.
 //!
 //! The [`TribeRegistry`] keeps a tribe's identity across turns (see [`resolve_matches`]), promotes
 //! the largest chiefed member's own [`BandLeader`] to the tribe's leader, and tells the player when
@@ -28,7 +29,6 @@ use crate::{
     leadership_config::{LeadershipConfig, LeadershipConfigHandle},
     orders::FactionId,
     resources::{CommandEventEntry, CommandEventKind, CommandEventLog, SimulationTick},
-    supply::SupplyNetworkMembership,
     systems::band_label,
     tile_improvement::TileImprovementRegistry,
     wellbeing_config::WellbeingConfigHandle,
@@ -121,9 +121,14 @@ fn band_pair(a: BandId, b: BandId) -> BandPair {
 /// Why a band is or is not in reach of a tribe this turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TribeStanding {
+    /// In at least one local pair: same people, same anchor, a live two-way tie.
     Local,
+    /// No belief anchor to share.
     NoUrn,
-    NoNetwork,
+    /// Has an anchor and kin of its people on the same anchor, but holds no live two-way tie to
+    /// any of them: the tie lapsed, or never formed.
+    OutOfTouch,
+    /// Has an anchor and no other band of its people on it.
     Alone,
 }
 
@@ -263,37 +268,38 @@ pub fn resolve_matches(
         .collect()
 }
 
-/// The sets of bands that are local to one another: same people, same network (not 0), same
-/// belief-anchor tile. Only sets of [`MIN_TRIBE_BANDS`] or more are returned.
+/// The sets of bands that could be local to one another: same people, same belief-anchor tile. Only
+/// sets of [`MIN_TRIBE_BANDS`] or more are returned. Whether two of a set are actually local also
+/// takes a live two-way tie ([`local_pairs`]).
 pub fn local_buckets(
-    rows: impl IntoIterator<Item = (BandId, FactionId, u32, Option<UVec2>)>,
+    rows: impl IntoIterator<Item = (BandId, FactionId, Option<UVec2>)>,
 ) -> Vec<BandGroup> {
-    let mut keyed: BTreeMap<(FactionId, u32, (u32, u32)), BTreeSet<BandId>> = BTreeMap::new();
-    for (band, faction, network, anchor) in rows {
+    let mut keyed: BTreeMap<(FactionId, (u32, u32)), BTreeSet<BandId>> = BTreeMap::new();
+    for (band, faction, anchor) in rows {
         let Some(anchor) = anchor else { continue };
-        if network == 0 {
-            continue;
-        }
         keyed
-            .entry((faction, network, (anchor.x, anchor.y)))
+            .entry((faction, (anchor.x, anchor.y)))
             .or_default()
             .insert(band);
     }
     keyed
         .into_iter()
         .filter(|(_, members)| members.len() >= MIN_TRIBE_BANDS)
-        .map(|((faction, _, _), members)| BandGroup { faction, members })
+        .map(|((faction, _), members)| BandGroup { faction, members })
         .collect()
 }
 
-/// Every unordered pair inside the buckets: the pairs that are local this turn.
-fn local_pairs(buckets: &[BandGroup]) -> BTreeSet<BandPair> {
+/// Every unordered pair inside the buckets that `tied` holds a live two-way tie for: the pairs that
+/// are local this turn.
+fn local_pairs(buckets: &[BandGroup], tied: impl Fn(BandId, BandId) -> bool) -> BTreeSet<BandPair> {
     let mut pairs = BTreeSet::new();
     for bucket in buckets {
         let members: Vec<BandId> = bucket.members.iter().copied().collect();
         for (i, a) in members.iter().enumerate() {
             for b in &members[i + 1..] {
-                pairs.insert((*a, *b));
+                if tied(*a, *b) {
+                    pairs.insert((*a, *b));
+                }
             }
         }
     }
@@ -561,7 +567,6 @@ pub fn advance_tribes(
     belief_config: Res<BeliefConfigHandle>,
     improvements: Res<TileImprovementRegistry>,
     wellbeing: Res<WellbeingConfigHandle>,
-    supply: Res<SupplyNetworkMembership>,
     mut registry: ResMut<TribeRegistry>,
     mut event_log: ResMut<CommandEventLog>,
     bands: Query<TribeBandParts, With<ResidentBand>>,
@@ -572,9 +577,7 @@ pub fn advance_tribes(
     let belief_config = belief_config.get();
     let mut facts: BTreeMap<BandId, BandFacts> = BTreeMap::new();
     let mut rows = Vec::new();
-    let mut networks: BTreeMap<BandId, u32> = BTreeMap::new();
-    for (entity, band, cohort, name, leadership) in bands.iter() {
-        networks.insert(*band, supply.network_of(entity));
+    for (_entity, band, cohort, name, leadership) in bands.iter() {
         facts.insert(
             *band,
             BandFacts {
@@ -591,12 +594,7 @@ pub fn advance_tribes(
                 leader: leadership.and_then(|l| l.leader.clone()),
             },
         );
-        rows.push((
-            *band,
-            cohort.faction,
-            supply.network_of(entity),
-            cohort.belief_anchor,
-        ));
+        rows.push((*band, cohort.faction, cohort.belief_anchor));
     }
 
     // 1. Score every local pair's inputs, then bank points: a local pair with a leader on at least
@@ -604,7 +602,7 @@ pub fn advance_tribes(
     //    that is not local fades; never reset. An exhausted bank or one naming a band that is gone
     //    is pruned.
     let buckets = local_buckets(rows);
-    let local = local_pairs(&buckets);
+    let local = local_pairs(&buckets, |a, b| ledger.tied_both_ways(a, b));
     let threshold = config.tribe_score_threshold;
     let fade = threshold / config.tribe_points_fade_turns;
     let has_leader = |band: &BandId| facts.get(band).is_some_and(|f| f.leader.is_some());
@@ -616,6 +614,9 @@ pub fn advance_tribes(
         let members: Vec<BandId> = bucket.members.iter().copied().collect();
         for (i, a) in members.iter().enumerate() {
             for b in &members[i + 1..] {
+                if !local.contains(&(*a, *b)) {
+                    continue;
+                }
                 let same_tribe = registry
                     .tribe_of(*a)
                     .is_some_and(|tribe| tribe.members.contains(b));
@@ -648,7 +649,8 @@ pub fn advance_tribes(
         .filter(|(pair, value)| local.contains(pair) && **value >= threshold)
         .map(|(pair, _)| *pair)
         .collect();
-    let local_bands: BTreeSet<BandId> = buckets
+    let local_bands: BTreeSet<BandId> = local.iter().flat_map(|pair| [pair.0, pair.1]).collect();
+    let in_a_bucket: BTreeSet<BandId> = buckets
         .iter()
         .flat_map(|bucket| bucket.members.iter().copied())
         .collect();
@@ -659,8 +661,8 @@ pub fn advance_tribes(
                 TribeStanding::Local
             } else if f.anchor.is_none() {
                 TribeStanding::NoUrn
-            } else if networks.get(band).copied().unwrap_or(0) == 0 {
-                TribeStanding::NoNetwork
+            } else if in_a_bucket.contains(band) {
+                TribeStanding::OutOfTouch
             } else {
                 TribeStanding::Alone
             };
@@ -851,17 +853,28 @@ mod tests {
     }
 
     #[test]
-    fn buckets_skip_network_zero_a_missing_anchor_and_a_lone_band() {
+    fn buckets_skip_a_missing_anchor_another_anchor_another_people_and_a_lone_band() {
         let at = |x, y| Some(UVec2::new(x, y));
         let f = FactionId(0);
         let buckets = local_buckets([
-            (band(1), f, 1, at(2, 2)),
-            (band(2), f, 1, at(2, 2)),
-            (band(3), f, 1, at(5, 5)),
-            (band(4), f, 0, at(2, 2)),
-            (band(5), f, 1, None),
+            (band(1), f, at(2, 2)),
+            (band(2), f, at(2, 2)),
+            (band(3), f, at(5, 5)),
+            (band(4), FactionId(1), at(2, 2)),
+            (band(5), f, None),
         ]);
         assert_eq!(buckets, vec![group(&[1, 2])]);
+    }
+
+    #[test]
+    fn a_bucket_pair_is_local_only_with_a_live_two_way_tie() {
+        let buckets = [group(&[1, 2, 3])];
+        let tied = |a: BandId, b: BandId| matches!(band_pair(a, b), (BandId(1), BandId(2)));
+        assert_eq!(
+            local_pairs(&buckets, tied),
+            BTreeSet::from([(band(1), band(2))]),
+            "band 3 holds no tie, so it pairs with nobody however near its anchor"
+        );
     }
 
     #[test]
