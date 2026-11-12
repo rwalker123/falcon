@@ -582,10 +582,19 @@ orders cannot both be credited with the same hide (an item that cannot be suppli
 Approximation: the startable count is struck at hand-working amounts (a tool's efficiency only lowers a
 cost).
 
-- **Never pass 1.** The bench has no hold crew; keepers, builders and hold crews run without it.
-- **Pass 2 opens with ONE crafter on every workable order, at any priority** (High to Low, then queue
-  order), before any group's pass-2 dealing: kitted when the shelf can arm one, else bare where a bare hand
-  works. A Low order still gets its first crafter, and the tool goes to the higher priority.
+- **A High order's FIRST crafter is dealt in pass 1**, after the High group's keepers and builders'
+  first heads and ahead of every hold crew (1b kitted, 1c chief food): the player's way to say "work this
+  one" is the order's Priority = High. One crafter per High order, queue order, by the same picking code as
+  pass 2's opener (`staffing::deal_bench_opener`: kitted when the shelf can arm one, else bare where a bare
+  hand works). A High order not workable takes nobody. A take row whose hold crew came up short for it
+  publishes `LaborAssignment.handsToBench` (`1 to the Spears order, 1 to the Baskets order`, bench order):
+  the sim reruns pass 1 with one opener fewer at a time (only when an opener took a pass-1 hand) and
+  attributes the per-row difference to that order; `BandBench::hold_losses` carries it (rides the save,
+  `SAVE_FORMAT_VERSION` 68) and the capture resolves the order's `displayName`. Normal and Low orders have
+  no pass-1 head.
+- **Pass 2 opens with ONE crafter on every workable order that has none, at any priority** (High to Low,
+  then queue order), before any group's pass-2 dealing: kitted when the shelf can arm one, else bare where
+  a bare hand works. A Low order still gets its first crafter, and the tool goes to the higher priority.
 - **Then, per priority group, the group's bench orders are dealt with the group's builds** (one
   round-robin set at distance 0, ahead of the group's sources): pass 2 kitted heads up to the cap, pass 3
   kitted then bare up to the cap.
@@ -1604,13 +1613,13 @@ auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 33)
   `bench_parallel_orders::{auto_blocked_on_a_short_suggestion_publishes_the_offers_own_reason,
   auto_off_publishes_no_wait_reason}`.
 - **A crewless order names what took the hands first.** `BandBench::first_call` (`FirstCall { scouting,
-  keeping, building, holding, pool }`) is stamped by every staffing (`StaffedBand::apply_bench`) with where
+  keeping, building, holding, crafting, pool }`) is stamped by every staffing (`StaffedBand::apply_bench`) with where
   the staffable pool went before pass 2 opened - scouts off the top, pass 1a keepers, pass 1b builders,
-  and the hold crews of passes 1b/1c - and **rides the save** with the bench (`SAVE_FORMAT_VERSION` 68), so
+  the High orders' first crafters (`crafting`), and the hold crews of passes 1b/1c - and **rides the save** with the bench (`SAVE_FORMAT_VERSION` 68), so
   a restored world publishes the same reason. A workable order with no crafter publishes
   `Every hand is needed first: 4 holding rows, 2 scouting` (`neutral`; only the nonzero kinds, largest
-  first, ties in the order holding, keeping, building, scouting; words `holding rows`, `keeping ground`,
-  `building`, `scouting`) when those hands account for the whole pool, and `No spare hands this turn`
+  first, ties in the order holding, keeping, building, scouting, High crafting; words `holding rows`,
+  `keeping ground`, `building`, `scouting`, `High crafting`) when those hands account for the whole pool, and `No spare hands this turn`
   otherwise (hands were left but the order got none: trimmed, or no bare work and no tool). Pinned by
   `snapshot::crafting::first_call_reason_tests` and
   `bench_parallel_orders::auto_queues_with_no_hand_to_spare_and_the_order_names_what_took_the_hands`.

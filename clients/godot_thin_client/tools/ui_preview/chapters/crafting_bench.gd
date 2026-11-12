@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 293
+const EXPECTED_CHECKPOINTS := 295
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -1875,6 +1875,13 @@ func _assert_the_bench_reads(panel: CraftingPanel) -> void:
 		priorities.append((link as Button).text if link is Button else "")
 	h._assert_hud("crafting/bench — every row carries its own Priority link (%s)" % str(priorities),
 		priorities == ["Priority: High", "Priority: Normal", "Priority: Normal"])
+	var high_link := _by_meta(panel, HudCraftingVocab.ORDER_PRIORITY_LINK_META, 0)
+	var normal_link := _by_meta(panel, HudCraftingVocab.ORDER_PRIORITY_LINK_META, 1)
+	h._assert_hud("crafting/bench — a High order's Priority hover says what High does, beside the general hint",
+		high_link is Button and (high_link as Button).tooltip_text.contains(HudCraftingVocab.ORDER_PRIORITY_HIGH_TIP)
+			and (high_link as Button).tooltip_text.contains(HudWorkVocab.WORK_PRIORITY_HINT))
+	h._assert_hud("crafting/bench — a Normal order's Priority hover does not claim the High effect",
+		normal_link is Button and not (normal_link as Button).tooltip_text.contains(HudCraftingVocab.ORDER_PRIORITY_HIGH_TIP))
 	# The sub line: the grade, the finish estimate over the order's whole work, what it set aside.
 	h._assert_hud("crafting/bench — the baskets' sub line is `good · done in ≈3 turns · 2.2 set aside`",
 		_sub_text(panel, 0) == "good · done in ≈3 turns · 2.2 set aside")

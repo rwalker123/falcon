@@ -423,6 +423,9 @@ const BENCH_CRAFTER_NOUN_ONE := "crafter"
 const BENCH_CRAFTER_NOUN_MANY := "crafters"
 ## `Priority: Normal` — the order's own rank link, over the work inspector's three faces.
 const ORDER_PRIORITY_FORMAT := "Priority: %s"
+## What High does for a WORKABLE bench order: the sim gives it one crafter ahead of the food rows' hold crews.
+## Appended to the link's hover (after `HudWorkVocab.WORK_PRIORITY_HINT`) when the order is High.
+const ORDER_PRIORITY_HIGH_TIP := "High: takes a crafter ahead of the food rows' hold crews."
 ## `3.2 set aside` and `2 lent to the hunt`, the sub line's trailing clauses.
 const ORDER_SET_ASIDE_FORMAT := "%s set aside"
 const ORDER_LENT_FORMAT := "%d lent to the hunt"

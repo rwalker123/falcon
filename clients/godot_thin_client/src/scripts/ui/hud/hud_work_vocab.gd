@@ -3557,6 +3557,11 @@ const WORK_STRIP_CHIP_PADDING_H := 5
 const WORK_STRIP_CHIP_PADDING_V := 1
 ## The bar's room in a row; the squares fit themselves into it (`CrewSplitMarks.layout_for`).
 const WORK_STRIP_CREW_WIDTH := 48.0
+## **THE HANDS A TAKE ROW'S HOLD CREW GAVE A BENCH ORDER** (`LaborAssignment.handsToBench`): the sim's finished
+## sentence (`1 to the Spears order, 1 to the Baskets order`), "" = none. `WorkStrip.build_hands_line` draws it verbatim,
+## amber, on its own line under the strip, right-aligned; the full sentence rides the hover.
+const ROW_HANDS_TO_BENCH_KEY := "hands_to_bench"
+const WORK_STRIP_HANDS_META := &"work_strip_hands_to_bench"
 ## How opaque the progress fill lies over the chip's chrome.
 const WORK_STRIP_FILL_ALPHA := 0.6
 

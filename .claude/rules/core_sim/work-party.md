@@ -51,8 +51,7 @@ player's count; **the Scout row is the sim's too, from a range rather than a Max
 **The pool** is `staffable_pool`: the working people less the hands still walking home and every crew
 the player set by hand (the rows that are not sim-staffed: Warrior and a need row's muster). **The crafting
 bench is inside the staffing, not netted out of it** (#873): each workable bench order is a pass input
-(`StaffRowInput::is_bench`) dealt with its group's builds, never in pass 1, with one crafter on every
-workable order opening pass 2 (`crafting.md` -> "Staffing - orders join the passes like builds").
+(`StaffRowInput::is_bench`) dealt with its group's builds; only a High order's first crafter is a pass-1 head, and pass 2 opens with one crafter on every workable order that has none (`crafting.md` -> "Staffing - orders join the passes like builds").
 Rows are grouped by
 `SourcePriority`, High to Low.
 
@@ -102,7 +101,7 @@ Pinned by `server::tests::a_band_improvements_crew_is_the_keepers_the_sim_staffs
 |---|---|
 | 0 | the band's **scouts** (below), off the top of the pool and shelf, before any row |
 | 1a | the site's **keepers** on every row at every priority, High to Low: `floor(keep_hands)` whole-keeper heads round-robin, then, for a row with a fraction of a hand of keeping left, one head that carries it (a kitted gatherer if the shelf can arm one, else a bare one where a bare hand works, else a keeper; a row with no hold take gives it a keeper's head so the improvement is kept) |
-| 1b | per priority group High to Low: the group's **builds'** first builder (kitted if the shelf can arm one, else bare), then the group's **kitted** hands up to the row's **hold crew** |
+| 1b | per priority group High to Low: the group's **builds'** first builder (kitted if the shelf can arm one, else bare), then - in the High group only - each **High bench order's first crafter** (queue order; ahead of every hold crew, since the High group is dealt first), then the group's **kitted** hands up to the row's **hold crew** |
 | 1c | a **chief's FOOD order** only (`LaborAllocation::keeps_food_up`: a forage or hunt row `order_rows` lists under `food` while the chief owns the kind): per priority group High to Low, round-robin nearest first, **bare** hands up to the row's hold crew under its Max, only where a bare hand takes something. After every group's pass 1b, before any row's pass 2 |
 | 2 | per priority group High to Low: first a chief's FOOD order's rows (same `keeps_food_up` rows) get **bare** hands up to their **reach crew** (hold + refill), round-robin nearest first, only where a bare hand takes something; then the group's **kitted** hands up to the row's **reach crew**. A High stone refill therefore goes before a Normal food refill, and a Normal food refill before a Normal stone refill; player rows, a released food row, fodder and the materials keep kitted-first |
 | 3 | every row up to its **useful crew** (the room above the floor, clear-it-now; the crew past which the take stops rising): the kit's units still unspent first, then **bare** hands, only on a web where a bare hand takes something (never on a hunt that needs a weapon) |
@@ -503,7 +502,7 @@ a_band_order_needs_a_leader_and_the_chief_owns_the_material_until_it_is_released
 an_elders_council_is_named_in_the_refusal, a_never_renewing_dig_with_no_count_is_refused_and_a_count_is_not}`.
 
 **Wire** (`LaborAssignment`, appended): `maxWorkers` (`0` = no Max), `holdCrew`, `reachCrew`,
-`usefulCrew` (pass 3's ceiling, keepers included, after the Max), `keepersStaffed`, `kittedStaffed`, `bareStaffed` (the last three sum to `workers` on a staffed row).
+`usefulCrew` (pass 3's ceiling, keepers included, after the Max), `keepersStaffed`, `kittedStaffed`, `bareStaffed` (the last three sum to `workers` on a staffed row), `handsToBench` (string, appended last: the hands the row's hold crew gave up to High bench orders, `1 to the Spears order, 1 to the Baskets order`, `""` = none).
 `SAVE_FORMAT_VERSION` 52 (the staffing), 53 (the dig load).
 
 **Approximations to know.** The command-time restaff reads the world before the coming turn's

@@ -5525,8 +5525,8 @@ pub struct BenchCrew {
     pub by_hand: u32,
 }
 
-/// **WHERE THE STAFFABLE HANDS WENT BEFORE PASS 2 OPENED** - the bench is never staffed before
-/// pass 2, so this is what a crewless workable order was waiting behind. Restamped by every
+/// **WHERE THE STAFFABLE HANDS WENT BEFORE PASS 2 OPENED** - only a High order's first crafter is
+/// staffed before pass 2, so this is what a crewless workable order was waiting behind. Restamped by every
 /// staffing ([`crate::staffing::StaffedBand::apply_bench`]); persisted with the bench so a restored
 /// world publishes the reason an uninterrupted one would.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -5540,6 +5540,8 @@ pub struct FirstCall {
     /// Hold crews of the take rows (pass 1b kitted, pass 1c bare): the hands that keep taking what
     /// regrows at the row's floor.
     pub holding: u32,
+    /// High bench orders' first crafters (dealt after the builders, before any hold crew).
+    pub crafting: u32,
     /// The staffable pool the passes dealt from.
     pub pool: u32,
 }
@@ -5547,8 +5549,21 @@ pub struct FirstCall {
 impl FirstCall {
     /// Every hand dealt before pass 2.
     pub fn dealt(&self) -> u32 {
-        self.scouting + self.keeping + self.building + self.holding
+        self.scouting + self.keeping + self.building + self.holding + self.crafting
     }
+}
+
+/// **HANDS A TAKE ROW'S HOLD CREW GAVE UP TO ONE HIGH BENCH ORDER** - the row's pass-1 hold heads
+/// without that order's first crafter less the row's with it. Restamped by every staffing
+/// ([`crate::staffing::StaffedBand::apply_bench`]); the snapshot resolves the order's name.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HoldLoss {
+    /// The row whose hold crew came up short.
+    pub target: LaborTarget,
+    /// The bench order (queue index) that took the hands.
+    pub order: usize,
+    /// How many hands.
+    pub hands: u32,
 }
 
 impl BenchCrew {
@@ -5827,6 +5842,9 @@ pub struct BandBench {
     /// **WHERE THE HANDS WENT BEFORE THE BENCH WAS DEALT ANY** ([`FirstCall`]) - what the published
     /// `blockedReason` of a crewless workable order names. Restamped by every staffing. **Persisted.**
     pub first_call: FirstCall,
+    /// **WHICH HIGH BENCH ORDER TOOK A ROW'S HOLD-CREW HANDS** ([`HoldLoss`]), in bench order.
+    /// Restamped by every staffing. **Persisted.**
+    pub hold_losses: Vec<HoldLoss>,
 }
 
 impl BandBench {

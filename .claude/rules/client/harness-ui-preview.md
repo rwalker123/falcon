@@ -546,7 +546,10 @@ rendered before it is trusted — an empty conflict list proves nothing here.
 Appended LAST in `CHAPTERS`. Four frames: `work_strip_forage_sheet` (an unworked patch, the strip with the
 next rung on offer), `work_strip_forage_sheet_rung_card` (the chip pressed, the rung card open),
 `work_strip_hunt_sheet`, and `work_strip_worked_sheet` (a worked patch, the chip filling and the footer's
-`Show on map`).
+`Show on map`). Two more frames, `work_strip_hands_to_bench_one` / `_two`, put the sim's `hands_to_bench`
+sentence on its own line under the worked row's strip (the two-order string reads in full at the sheet's width); an empty sentence is asserted to
+draw no label. `crafting_bench` asserts the High order's Priority hover carries the High line and a Normal's
+does not.
 
 The claims a frame cannot make: the card is a visible `Window` over the sheet's `CanvasLayer` (read off
 `RungCardController.card()`), it dismisses, and an UNWORKED source's footer carries no `Show on map`

@@ -88,12 +88,13 @@ const REASON_NO_SPARE_HANDS: &str = "No spare hands this turn";
 /// **Every staffable hand was dealt before the bench was** - the lead of the reason a crewless order
 /// publishes, followed by what took them (`"4 holding rows, 2 scouting"`).
 const REASON_EVERY_HAND_NEEDED_FIRST: &str = "Every hand is needed first: ";
-/// The words for the four things a hand can be dealt to before pass 2, in the order a tie between
+/// The words for the five things a hand can be dealt to before pass 2, in the order a tie between
 /// two of them is broken.
 const FIRST_CALL_HOLDING: &str = "holding rows";
 const FIRST_CALL_KEEPING: &str = "keeping ground";
 const FIRST_CALL_BUILDING: &str = "building";
 const FIRST_CALL_SCOUTING: &str = "scouting";
+const FIRST_CALL_CRAFTING: &str = "High crafting";
 /// Between two named kinds in the reason.
 const FIRST_CALL_SEPARATOR: &str = ", ";
 
@@ -108,6 +109,7 @@ fn every_hand_needed_first(first: &crate::components::FirstCall) -> Option<Strin
         (first.keeping, FIRST_CALL_KEEPING),
         (first.building, FIRST_CALL_BUILDING),
         (first.scouting, FIRST_CALL_SCOUTING),
+        (first.crafting, FIRST_CALL_CRAFTING),
     ];
     // `sort_by_key` is stable, so equal counts keep the order above.
     kinds.sort_by_key(|(count, _)| std::cmp::Reverse(*count));
@@ -1984,6 +1986,7 @@ mod first_call_reason_tests {
             keeping: 0,
             building: 0,
             holding: 4,
+            crafting: 0,
             pool: 6,
         };
         assert_eq!(
@@ -1995,13 +1998,14 @@ mod first_call_reason_tests {
             keeping: 2,
             building: 2,
             holding: 2,
-            pool: 8,
+            crafting: 2,
+            pool: 10,
         };
         assert_eq!(
             every_hand_needed_first(&tied).as_deref(),
             Some(
                 format!(
-                    "{REASON_EVERY_HAND_NEEDED_FIRST}2 holding rows, 2 keeping ground, 2 building, 2 scouting"
+                    "{REASON_EVERY_HAND_NEEDED_FIRST}2 holding rows, 2 keeping ground, 2 building, 2 scouting, 2 High crafting"
                 )
                 .as_str()
             )

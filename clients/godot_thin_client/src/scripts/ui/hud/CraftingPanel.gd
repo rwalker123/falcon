@@ -762,6 +762,10 @@ func _build_order_priority_link(index: int, order: Dictionary) -> Button:
 		HudCraftingVocab.ORDER_PRIORITY_FORMAT % String(HudWorkVocab.WORK_PRIORITY_FACES[level]), ink,
 		func() -> void: _toggle_priority_picker(index))
 	link.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var tip_lines: Array = [HudWorkVocab.WORK_PRIORITY_HINT]
+	if level == HudWorkVocab.WORK_PRIORITY_HIGH:
+		tip_lines.append(HudCraftingVocab.ORDER_PRIORITY_HIGH_TIP)
+	link.tooltip_text = HudFormat.join_tooltip_lines(tip_lines)
 	link.set_meta(HudCraftingVocab.ORDER_PRIORITY_LINK_META, index)
 	link.set_meta(HudCraftingVocab.ORDER_PRIORITY_META, level)
 	return link

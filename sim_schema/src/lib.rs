@@ -94,6 +94,28 @@ mod tests {
         );
     }
 
+    /// **A row's hands given up to High bench orders ride the wire** (`LaborAssignment.handsToBench`).
+    #[test]
+    fn a_rows_hands_to_bench_ride_the_wire() {
+        let snapshot = WorldSnapshot {
+            populations: vec![PopulationCohortState {
+                entity: 7,
+                labor_assignments: vec![LaborAssignmentState {
+                    hands_to_bench: "1 to the Spears order".to_string(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let decoded = decode_snapshot_flatbuffer(&bytes).expect("the snapshot decodes");
+        assert_eq!(
+            decoded.populations[0].labor_assignments[0].hands_to_bench,
+            "1 to the Spears order"
+        );
+    }
+
     /// **Whole-kit orders ride the wire** (#780): `BenchOrder.kitOrder`, `BenchState.kitOrders`,
     /// `PopulationCohortState.kitNeeds` (four levels deep) and `materialsFree`. Decoded rows are
     /// compared, so a field that never reached the codec fails here.

@@ -607,6 +607,8 @@ fn seed_snapshot() -> WorldSnapshot {
             // other way round would show a client author an ordering the schema promises cannot
             // happen — and invite exactly the re-sort it forbids.
             assignment.take_species = vec!["flax".to_string(), "wild_emmer".to_string()];
+            // **HANDS GIVEN UP TO HIGH BENCH ORDERS** - a string, seeded non-empty.
+            assignment.hands_to_bench = "1 to the Spears order".to_string();
             // **WHICH KIT ITEMS ARE SHORT, BY NAME** — a nested repeated field, seeded for
             // `material_yield`'s reason. Spelled out rather than `rows()` on `pool_toe`'s rule: the
             // list is keyed by item, and a duplicate item on one row is not something the server

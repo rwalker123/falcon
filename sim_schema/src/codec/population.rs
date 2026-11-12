@@ -341,6 +341,7 @@ fn create_populations<'a>(
                         // `extract`, the `fauna_id` convention: an absent string is "no selection".
                         let branch = builder.create_string(&assignment.branch);
                         let order_kind = builder.create_string(&assignment.order_kind);
+                        let hands_to_bench = builder.create_string(&assignment.hands_to_bench);
                         let material = if assignment.material.is_empty() {
                             None
                         } else {
@@ -514,6 +515,7 @@ fn create_populations<'a>(
                                 bareIdle: assignment.bare_idle,
                                 orderKind: Some(order_kind),
                                 chiefOwned: assignment.chief_owned,
+                                handsToBench: Some(hands_to_bench),
                             },
                         )
                     })
@@ -1688,6 +1690,7 @@ fn decode_labor_assignment(
         bare_idle: assignment.bareIdle(),
         order_kind: text(assignment.orderKind()),
         chief_owned: assignment.chiefOwned(),
+        hands_to_bench: text(assignment.handsToBench()),
     })
 }
 

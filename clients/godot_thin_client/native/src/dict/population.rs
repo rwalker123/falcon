@@ -1314,6 +1314,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // empty for a player-crewed row; `chief_owned` is the same fact as a bool.
             let _ = entry.insert("order_kind", assignment.orderKind().unwrap_or(""));
             let _ = entry.insert("chief_owned", assignment.chiefOwned());
+            // A take row whose hold crew gave hands to a bench order (the sim's finished sentence,
+            // e.g. "1 to the Spears order"); empty = none. Rendered verbatim, never re-derived.
+            let _ = entry.insert("hands_to_bench", assignment.handsToBench().unwrap_or(""));
             array.push(&entry.to_variant());
         }
     }

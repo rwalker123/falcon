@@ -6,6 +6,32 @@ use crate::components::LocalStore;
 
 use super::*;
 
+/// Between two orders in a row's `handsToBench`.
+const HANDS_TO_BENCH_SEPARATOR: &str = ", ";
+
+/// **THE ORDERS THAT TOOK A ROW'S HOLD-CREW HANDS, NAMED** - `"1 to the Spears order, 1 to the
+/// Baskets order"`, in bench order; empty when none did. The name is the order's published
+/// `displayName`.
+fn hands_to_bench_text(
+    bench: &crate::components::BandBench,
+    target: &LaborTarget,
+    published: &sim_schema::BenchState,
+) -> String {
+    bench
+        .hold_losses
+        .iter()
+        .filter(|loss| loss.target.same_source(target))
+        .filter_map(|loss| {
+            let order = published.orders.get(loss.order)?;
+            Some(format!(
+                "{} to the {} order",
+                loss.hands, order.display_name
+            ))
+        })
+        .collect::<Vec<_>>()
+        .join(HANDS_TO_BENCH_SEPARATOR)
+}
+
 /// Serialize one labor assignment for the client readout. The `yields` carry this turn's
 /// actual/sustainable food income for the source (per-source breakdown; defaulted to `0` when the
 /// telemetry row is absent, e.g. an assignment no `advance_labor_allocation` has resolved yet).
@@ -2469,7 +2495,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // Zip each assignment with its retained per-source yield telemetry (same index order). An
     // assignment with no telemetry row yet → default 0 yields rather than a panic.
     const NO_YIELD: SourceYield = SourceYield::ZERO;
-    let labor_assignments: Vec<sim_schema::LaborAssignmentState> = allocation
+    let mut labor_assignments: Vec<sim_schema::LaborAssignmentState> = allocation
         .map(|a| {
             a.assignments
                 .iter()
@@ -2900,6 +2926,13 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         order.lent_to_hunt = *hands;
     }
     bench_state.lent_to_hunt = bench_lent_orders.iter().sum();
+    // **WHICH HIGH BENCH ORDER TOOK A ROW'S HOLD-CREW HANDS** - resolved here, where the order's
+    // published name is, onto the row the staffing recorded the loss against.
+    if let (Some(bench), Some(a)) = (bench, allocation) {
+        for (row, assignment) in labor_assignments.iter_mut().zip(&a.assignments) {
+            row.hands_to_bench = hands_to_bench_text(bench, &assignment.target, &bench_state);
+        }
+    }
     // **WHAT TO MAKE NEXT** (`docs/plan_crafting_and_materials.md` §7 "Suggestions") — scored off the
     // same settled lines the wire publishes: the pools' and site crews' off the allocation, the take
     // rows' off `row_gear`, which is what each row's `kitToe` is copied from. **A detached party

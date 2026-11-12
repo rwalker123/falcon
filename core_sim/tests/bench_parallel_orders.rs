@@ -795,3 +795,185 @@ fn a_hold_crew_that_leaves_a_hand_leaves_the_auto_order_a_crafter() {
     assert!(crew > 0, "the order took a crafter");
     assert_eq!(reason, "");
 }
+
+// ---------------------------------------------------------------------------------------------
+// A High bench order takes its FIRST crafter ahead of the hold crews, and the row that paid says so.
+// ---------------------------------------------------------------------------------------------
+
+/// The recipes the High-order fixtures queue; both draw only bone, fibre and hide, which the band banks.
+const FIRST_ORDER_RECIPE: &str = "hoes";
+const SECOND_ORDER_RECIPE: &str = "traps";
+/// Items per fixture order: enough that no order's cap is one crafter.
+const ITEMS_PER_ORDER: u32 = 3;
+/// The kind the encoded forage row publishes.
+const FORAGE_KIND: &str = "forage";
+/// The reason's name for a High opener's hands.
+const HIGH_CRAFTING_WORD: &str = "High crafting";
+
+/// What the encoded frame says about the forage row and the bench orders.
+struct FirstFrame {
+    /// `(workers, handsToBench)` of the forage row.
+    forage: (u32, String),
+    /// `handsToBench` of every published row.
+    every_hands_to_bench: Vec<String>,
+    /// `(displayName, crew, blockedReason)` per order, queue order.
+    orders: Vec<(String, u32, String)>,
+}
+
+fn read_first_frame(app: &mut App, band: Entity) -> FirstFrame {
+    recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let band_id = app.world.get::<core_sim::BandId>(band).unwrap().0;
+    let cohort = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == band_id)
+        .expect("the band is published");
+    let rows = cohort.laborAssignments().expect("the labor rows");
+    let forage = rows
+        .iter()
+        .find(|row| row.kind() == Some(FORAGE_KIND))
+        .map(|row| {
+            (
+                row.workers(),
+                row.handsToBench().unwrap_or_default().to_string(),
+            )
+        })
+        .expect("the forage row is published");
+    let bench = cohort.bench().expect("the bench row");
+    FirstFrame {
+        forage,
+        every_hands_to_bench: rows
+            .iter()
+            .map(|row| row.handsToBench().unwrap_or_default().to_string())
+            .collect(),
+        orders: bench
+            .orders()
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| {
+                        (
+                            row.displayName().unwrap_or_default().to_string(),
+                            row.crewAtTool() + row.crewByHand(),
+                            row.blockedReason().unwrap_or_default().to_string(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+/// A hold-crew band (exactly `hold` hands plus `spare`) with the given orders queued and staffed.
+fn hold_band_with_orders(spare: u32, orders: &[(&str, SourcePriority)]) -> (App, Entity, u32) {
+    let (_, _, hold) = auto_band_with_a_kitted_forage_row(HANDS_BEYOND_THE_HOLD_CREW * 4);
+    assert!(hold > 0, "liveness: a kitted row holds a crew");
+    let (mut app, band, _) = auto_band_with_a_kitted_forage_row(hold + spare);
+    app.world.get_mut::<BandBench>(band).unwrap().auto = false;
+    bank(&mut app, band, HIDE, PLENTY, &HIDE_AXES);
+    for (recipe, priority) in orders {
+        queue(&mut app, band, recipe, ITEMS_PER_ORDER, *priority);
+    }
+    staff(&mut app, band);
+    (app, band, hold)
+}
+
+/// **1. A High order takes one crafter off the hold crew, and the row names the order.**
+#[test]
+fn a_high_order_takes_a_hand_from_the_hold_crew_and_the_row_names_it() {
+    let (mut app, band, hold) =
+        hold_band_with_orders(0, &[(FIRST_ORDER_RECIPE, SourcePriority::High)]);
+    let frame = read_first_frame(&mut app, band);
+    let (name, crew, reason) = frame.orders[0].clone();
+    assert_eq!(crew, 1, "the High order has its first crafter");
+    assert_eq!(reason, "");
+    assert_eq!(frame.forage.0, hold - 1, "the hold crew gave up one hand");
+    assert_eq!(frame.forage.1, format!("1 to the {name} order"));
+}
+
+/// **2. Control: the same band with the order at Normal gives it nobody.**
+#[test]
+fn a_normal_order_takes_no_hand_from_the_hold_crew() {
+    let (mut app, band, hold) =
+        hold_band_with_orders(0, &[(FIRST_ORDER_RECIPE, SourcePriority::Normal)]);
+    let frame = read_first_frame(&mut app, band);
+    let (_, crew, reason) = frame.orders[0].clone();
+    assert_eq!(crew, 0, "a Normal order waits behind the hold crew");
+    assert!(
+        reason.starts_with(EVERY_HAND_NEEDED_FIRST),
+        "got {reason:?}"
+    );
+    assert_eq!(frame.forage.0, hold);
+    assert_eq!(frame.forage.1, "");
+}
+
+/// **3. Two High orders each take one hand, and the row names both in bench order.**
+#[test]
+fn two_high_orders_each_take_one_hand_and_the_row_names_both() {
+    let (mut app, band, hold) = hold_band_with_orders(
+        0,
+        &[
+            (FIRST_ORDER_RECIPE, SourcePriority::High),
+            (SECOND_ORDER_RECIPE, SourcePriority::High),
+        ],
+    );
+    let frame = read_first_frame(&mut app, band);
+    assert_eq!(frame.orders[0].1, 1, "the first order has one crafter");
+    assert_eq!(frame.orders[1].1, 1, "the second order has one crafter");
+    assert_eq!(frame.forage.0, hold - 2);
+    assert_eq!(
+        frame.forage.1,
+        format!(
+            "1 to the {} order, 1 to the {} order",
+            frame.orders[0].0, frame.orders[1].0
+        )
+    );
+}
+
+/// **4. A High order with hands to spare is crewed and no row paid for it.**
+#[test]
+fn a_high_order_with_hands_to_spare_costs_no_row_anything() {
+    let (mut app, band, hold) = hold_band_with_orders(
+        HANDS_BEYOND_THE_HOLD_CREW,
+        &[(FIRST_ORDER_RECIPE, SourcePriority::High)],
+    );
+    let frame = read_first_frame(&mut app, band);
+    assert!(frame.orders[0].1 >= 1, "the High order is crewed");
+    assert!(frame.forage.0 >= hold, "the hold crew is whole");
+    assert!(
+        frame.every_hands_to_bench.iter().all(String::is_empty),
+        "no row gave a hand up: {:?}",
+        frame.every_hands_to_bench
+    );
+}
+
+/// **5. A crewless Normal order behind a High opener names the opener in its reason.**
+#[test]
+fn a_crewless_normal_order_names_the_high_crafting_ahead_of_it() {
+    let (mut app, band, _) = hold_band_with_orders(
+        0,
+        &[
+            (FIRST_ORDER_RECIPE, SourcePriority::High),
+            (SECOND_ORDER_RECIPE, SourcePriority::Normal),
+        ],
+    );
+    let frame = read_first_frame(&mut app, band);
+    assert_eq!(frame.orders[1].1, 0, "the Normal order has no crafter");
+    let first_call = app.world.get::<BandBench>(band).unwrap().first_call;
+    assert_eq!(first_call.crafting, 1, "one High opener dealt");
+    assert!(
+        frame.orders[1].2.ends_with(HIGH_CRAFTING_WORD),
+        "got {:?}",
+        frame.orders[1].2
+    );
+}

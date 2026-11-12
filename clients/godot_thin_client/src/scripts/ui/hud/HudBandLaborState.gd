@@ -1511,6 +1511,8 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 			# not copied here does not exist as far as the work board is concerned. (That is exactly
 			# how the good-shortfall pair below came out empty on a row whose wire carried it.)
 			"kit_id": String(a.get("kit_id", "")),
+			# The sim's sentence for the hands this take row's hold crew gave a bench order ("" = none).
+			HudWorkVocab.ROW_HANDS_TO_BENCH_KEY: String(a.get(HudWorkVocab.ROW_HANDS_TO_BENCH_KEY, "")),
 			# MIGRATION MODE (`docs/plan_roaming_bands.md`): the band's camp moves with this hunt's
 			# migratory herd. A bool the decoder always writes; absent reads as off.
 			"move_with_herd": bool(a.get("move_with_herd", false)),

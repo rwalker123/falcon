@@ -401,6 +401,10 @@ fn staff_passes(
     staff_passes_scouting(rows, pool, shelf, passes, tile_room, &ScoutPlan::default()).0
 }
 
+/// **NO LIMIT ON HIGH BENCH OPENERS** - the real staffing deals every High order its first crafter;
+/// the counterfactual that names who took a hold crew's hand runs with fewer.
+const EVERY_HIGH_OPENER: usize = usize::MAX;
+
 /// [`staff_passes`] with the band's scouting range: the scouts are placed **first**, before pass 1a's
 /// keepers, out of the whole pool and shelf; every pass then staffs from what the scouts left.
 fn staff_passes_scouting(
@@ -411,11 +415,56 @@ fn staff_passes_scouting(
     tile_room: &BTreeMap<TileKey, u32>,
     scouts: &ScoutPlan,
 ) -> (Vec<RowStaffing>, ScoutCrew) {
-    let (out, scout, _) = staff_passes_counted(rows, pool, shelf, passes, tile_room, scouts);
-    (out, scout)
+    let dealt = staff_passes_counted(
+        rows,
+        pool,
+        shelf,
+        passes,
+        tile_room,
+        scouts,
+        EVERY_HIGH_OPENER,
+    );
+    (dealt.out, dealt.scout)
+}
+
+/// **WHAT THE PASSES DEALT**, with the readings the bench's publishing needs.
+struct Dealt {
+    out: Vec<RowStaffing>,
+    scout: ScoutCrew,
+    /// Where the hands went before pass 2 opened.
+    first_call: crate::components::FirstCall,
+    /// Every input's crew total as pass 1 left it (before pass 2 opened).
+    pass_one: Vec<u32>,
+    /// The High bench orders (input indices) that took a first crafter in pass 1, in bench order.
+    openers: Vec<usize>,
+}
+
+/// One crafter on bench order `i`: kitted (holding the tool) when the shelf can arm one, else bare
+/// where a bare hand works. Whether a head was seated. The ONE opener, used by the High order's
+/// pass-1 crafter and by pass 2's opener on every other workable order.
+fn deal_bench_opener(
+    rows: &[StaffRowInput<'_>],
+    ledger: &mut Ledger,
+    shelf: &mut BTreeMap<Arc<str>, u32>,
+    i: usize,
+) -> bool {
+    let row = &rows[i];
+    if kitted_capacity(row, NOBODY, shelf) >= 1 {
+        let dealt = ledger.deal_head(i, true, HeadKind::Kitted);
+        if dealt {
+            arm(row, NOBODY, 1, shelf);
+        }
+        dealt
+    } else if row.bare_can_work {
+        ledger.deal_head(i, true, HeadKind::Bare)
+    } else {
+        false
+    }
 }
 
 /// [`staff_passes_scouting`] that also reports where the hands went before pass 2 opened.
+/// `opener_limit` caps how many High bench orders take their first crafter in pass 1
+/// ([`EVERY_HIGH_OPENER`] for the real staffing).
 fn staff_passes_counted(
     rows: &[StaffRowInput<'_>],
     pool: u32,
@@ -423,7 +472,8 @@ fn staff_passes_counted(
     passes: Passes,
     tile_room: &BTreeMap<TileKey, u32>,
     scouts: &ScoutPlan,
-) -> (Vec<RowStaffing>, ScoutCrew, crate::components::FirstCall) {
+    opener_limit: usize,
+) -> Dealt {
     let mut order: Vec<usize> = (0..rows.len()).collect();
     order.sort_by_key(|&i| (std::cmp::Reverse(rows[i].priority), i));
 
@@ -516,7 +566,8 @@ fn staff_passes_counted(
     // started the build, so the game tries to staff it; kitted if the shelf can arm one, else bare),
     // THEN the group's kitted heads up to the hold crew. A Normal row's hold crew therefore never
     // beats a High build, and a Low build still beats the Low hold crews.
-    for (builds, sources) in &split {
+    let mut openers: Vec<usize> = Vec::new();
+    for (group, (builds, sources)) in groups.iter().zip(&split) {
         if passes == Passes::All {
             for &i in builds.iter().filter(|&&i| !rows[i].is_bench) {
                 let row = &rows[i];
@@ -532,6 +583,24 @@ fn staff_passes_counted(
                 ) && kitted
                 {
                     arm(row, NOBODY, 1, shelf);
+                }
+            }
+            // **A High bench order's FIRST crafter**, after the group's builders and ahead of EVERY
+            // hold crew (the High group is dealt first, so no group's hold crew precedes it): the
+            // player's way to say "work this one". Queue order, one each.
+            if rows[group[0]].priority == SourcePriority::High {
+                let mut high: Vec<usize> = builds
+                    .iter()
+                    .copied()
+                    .filter(|&i| rows[i].is_bench)
+                    .collect();
+                high.sort_unstable();
+                for i in high {
+                    if openers.len() < opener_limit
+                        && deal_bench_opener(rows, &mut ledger, shelf, i)
+                    {
+                        openers.push(i);
+                    }
                 }
             }
         }
@@ -565,21 +634,20 @@ fn staff_passes_counted(
         .filter(|&i| rows[i].is_build && !rows[i].is_bench)
         .map(|i| ledger.out[i].total())
         .sum();
-    first_call.holding = (after_keepers - ledger.pool_left).saturating_sub(first_call.building);
+    first_call.crafting = openers.len() as u32;
+    first_call.holding = (after_keepers - ledger.pool_left)
+        .saturating_sub(first_call.building)
+        .saturating_sub(first_call.crafting);
+    let pass_one: Vec<u32> = ledger.out.iter().map(StaffedCrew::total).collect();
 
-    // ## Pass 2 opens with ONE crafter on every workable bench order, at any priority (High to Low,
-    // then queue order), before any group's pass-2 dealing: kitted (holding the tool) when the shelf
-    // can arm one, else bare where a bare hand works. A Low order still gets its first crafter, and
-    // the tool goes to the higher priority because that order is dealt first.
+    // ## Pass 2 opens with ONE crafter on every workable bench order that has none (a High order's
+    // was dealt in pass 1), at any priority (High to Low, then queue order), before any group's
+    // pass-2 dealing. A Low order still gets its first crafter, and the tool goes to the higher
+    // priority because that order is dealt first.
     if passes == Passes::All {
         for &i in order.iter().filter(|&&i| rows[i].is_bench) {
-            let row = &rows[i];
-            if kitted_capacity(row, NOBODY, shelf) >= 1 {
-                if ledger.deal_head(i, true, HeadKind::Kitted) {
-                    arm(row, NOBODY, 1, shelf);
-                }
-            } else if row.bare_can_work {
-                ledger.deal_head(i, true, HeadKind::Bare);
+            if ledger.out[i].total() == NOBODY {
+                deal_bench_opener(rows, &mut ledger, shelf, i);
             }
         }
     }
@@ -619,7 +687,13 @@ fn staff_passes_counted(
     }
 
     if passes == Passes::Steady {
-        return (ledger.out, scout_crew, first_call);
+        return Dealt {
+            out: ledger.out,
+            scout: scout_crew,
+            first_call,
+            pass_one,
+            openers,
+        };
     }
 
     // ## Pass 3 — every row up to its USEFUL crew: the kit's units still unspent first (a kit never
@@ -645,7 +719,13 @@ fn staff_passes_counted(
             ledger.deal_head(i, kitted + ledger.out[i].bare < useful, HeadKind::Bare)
         });
     }
-    (ledger.out, scout_crew, first_call)
+    Dealt {
+        out: ledger.out,
+        scout: scout_crew,
+        first_call,
+        pass_one,
+        openers,
+    }
 }
 
 /// Which segment of a row's crew a head joins.
@@ -1027,6 +1107,8 @@ pub struct StaffedBand {
     pub bench: Vec<BenchStaffed>,
     /// Where the hands went before pass 2 opened (what a crewless bench order waited behind).
     pub first_call: crate::components::FirstCall,
+    /// Which High bench order took a take row's hold-crew hands (empty when none did).
+    pub hold_losses: Vec<crate::components::HoldLoss>,
 }
 
 /// **WHAT THE PASSES DECIDED FOR ONE BENCH ORDER.**
@@ -1052,6 +1134,7 @@ impl StaffedBand {
     /// staffing. The turn, the command restaff and the preview's copy all go through it.
     pub fn apply_bench(&self, bench: &mut crate::components::BandBench) {
         bench.first_call = self.first_call;
+        bench.hold_losses = self.hold_losses.clone();
         for staffed in &self.bench {
             if let Some(order) = bench.orders.get_mut(staffed.order) {
                 order.crew = staffed.crew;
@@ -1095,15 +1178,54 @@ pub fn staff_rows<'a>(
             .entry(Arc::clone(item))
             .or_insert_with(|| band_kit.live_units(item, equipment));
     }
-    let (staffed, scout, first_call) = staff_passes_counted(
+    let opening_shelf = shelf.clone();
+    let Dealt {
+        out: staffed,
+        scout,
+        first_call,
+        pass_one,
+        openers,
+    } = staff_passes_counted(
         &inputs.rows,
         pool,
         &mut shelf,
         Passes::All,
         &inputs.tile_room,
         &inputs.scouts,
+        EVERY_HIGH_OPENER,
     );
     let source_rows = inputs.targets.len();
+    let build_end = source_rows + inputs.builds.len();
+    // **WHICH HIGH ORDER TOOK A HOLD CREW'S HANDS**: only when an opener took a pass-1 hand, rerun
+    // pass 1 with one opener fewer at a time; a row's loss to opener `j` is what its pass-1 crew
+    // gained when that opener was withheld.
+    let mut hold_losses: Vec<crate::components::HoldLoss> = Vec::new();
+    let mut with_openers = pass_one;
+    for (taken, &opener) in openers.iter().enumerate().rev() {
+        let without = staff_passes_counted(
+            &inputs.rows,
+            pool,
+            &mut opening_shelf.clone(),
+            Passes::All,
+            &inputs.tile_room,
+            &inputs.scouts,
+            taken,
+        )
+        .pass_one;
+        for (row, target) in inputs.targets.iter().enumerate() {
+            let lost = without[row].saturating_sub(with_openers[row]);
+            if lost > NOBODY {
+                hold_losses.push(crate::components::HoldLoss {
+                    target: target.clone(),
+                    order: inputs.bench_orders[opener - build_end],
+                    hands: lost,
+                });
+            }
+        }
+        with_openers = without;
+    }
+    // Bench order, then row order: the counterfactual walked the openers last to first.
+    hold_losses.sort_by_key(|loss| loss.order);
     let mut staffed = staffed;
     for ((crew, camp_kill), (row, target)) in staffed
         .iter_mut()
@@ -1134,7 +1256,6 @@ pub fn staff_rows<'a>(
             )
         })
         .collect();
-    let build_end = source_rows + inputs.builds.len();
     let mut bench: Vec<BenchStaffed> = (0..world.bench.orders.len())
         .map(|order| BenchStaffed {
             order,
@@ -1162,6 +1283,7 @@ pub fn staff_rows<'a>(
         scout,
         bench,
         first_call,
+        hold_losses,
     }
 }
 
@@ -3034,27 +3156,26 @@ mod tests {
         row
     }
 
-    /// **THE BENCH IS NEVER IN PASS 1**: a band whose pool only covers a row's hold crew gives the
-    /// bench nobody; one more hand and the bench opens with its one crafter.
+    /// **ONLY A HIGH ORDER'S FIRST CRAFTER JOINS PASS ONE**: it goes ahead of the hold crews, so a
+    /// band whose pool only covers a hold crew still crews it with one; Normal and Low wait.
     #[test]
-    fn the_bench_never_joins_pass_one() {
+    fn only_a_high_bench_orders_first_crafter_joins_pass_one() {
         let rows = vec![
             holding(SourcePriority::Normal, 8.0, 0.0),
             a_bench_order(SourcePriority::High, 3, None),
         ];
         let out = staff_band(&rows, 2, &mut shelf(5));
+        assert_eq!(out[1].total(), 1, "the High order's opener beats the hold");
+        assert_eq!(out[0].total(), 1, "the hold crew gives up that hand");
+        let rows = vec![
+            holding(SourcePriority::Normal, 8.0, 0.0),
+            a_bench_order(SourcePriority::Normal, 3, None),
+        ];
+        let out = staff_band(&rows, 2, &mut shelf(5));
         assert_eq!(out[0].total(), 2, "the hold crew took both hands");
-        assert_eq!(
-            out[1].total(),
-            0,
-            "even a High bench order waits behind a hold crew"
-        );
+        assert_eq!(out[1].total(), 0, "a Normal order waits behind a hold crew");
         let out = staff_band(&rows, 3, &mut shelf(5));
-        assert_eq!(
-            out[1].total(),
-            1,
-            "liveness: with a hand to spare the bench opens"
-        );
+        assert_eq!(out[1].total(), 1, "liveness: a spare hand opens it");
     }
 
     /// **A High bench order takes the kitted crafter ahead of a Normal source's reach crew**, and its
@@ -3266,6 +3387,7 @@ mod tests {
         let mut staffed = StaffedBand {
             bench: Vec::new(),
             first_call: Default::default(),
+            hold_losses: Vec::new(),
             rows: vec![
                 (LaborTarget::Roadwork, StaffedCrew::default()),
                 (forage_target, crew),

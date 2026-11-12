@@ -2861,6 +2861,7 @@ func _put_staffed_fields(model: Dictionary, merged: Dictionary, assignment: Dict
         "", int(merged.get("bare_idle", 0)) != 0, int(merged.get("hold_crew", 0)))
     model["warn_lines"] = warn_lines
     model["hold_crew"] = int(merged.get("hold_crew", 0))
+    model[HudWorkVocab.ROW_HANDS_TO_BENCH_KEY] = String(merged.get(HudWorkVocab.ROW_HANDS_TO_BENCH_KEY, ""))
     model["keepers_staffed"] = int(merged.get("keepers_staffed", 0))
     model["kitted_staffed"] = int(merged.get("kitted_staffed", 0))
     model["bare_staffed"] = int(merged.get("bare_staffed", 0))
@@ -3365,7 +3366,16 @@ func _build_row_strip(band: Dictionary, row: Dictionary, deposit: Dictionary = {
     var strip := WorkStrip.build(
         WorkStrip.model_from_row(row), strip_handlers(band, row, deposit))
     strip.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-    return strip
+    var hands_line := WorkStrip.build_hands_line(WorkStrip.model_from_row(row))
+    if hands_line == null:
+        return strip
+    # The sentence rides its own line under the strip; only a row that has one is wrapped.
+    var column := VBoxContainer.new()
+    column.add_theme_constant_override("separation", 0)
+    column.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+    column.add_child(strip)
+    column.add_child(hands_line)
+    return column
 
 ## What the strip's two buttons do: both open the SAME rung card, from a row or from a sheet.
 func strip_handlers(band: Dictionary, row: Dictionary, deposit: Dictionary = {},
@@ -5200,6 +5210,7 @@ func _work_source_model(band: Dictionary, key: Variant, m: Dictionary, kind: Str
         # crew bar from these; the Max is the player's, the only crew control a staffed row has.
         "max_workers": int(m.get("max_workers", 0)),
         "hold_crew": int(m.get("hold_crew", 0)),
+        HudWorkVocab.ROW_HANDS_TO_BENCH_KEY: String(m.get(HudWorkVocab.ROW_HANDS_TO_BENCH_KEY, "")),
         "keepers_staffed": int(m.get("keepers_staffed", 0)),
         "kitted_staffed": int(m.get("kitted_staffed", 0)),
         "bare_staffed": int(m.get("bare_staffed", 0)),

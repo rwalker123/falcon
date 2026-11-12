@@ -2689,6 +2689,9 @@ table LaborAssignment {
   // for a row no order covers. chiefOwned: the same fact as a bool (orderKind is not empty).
   orderKind:string;
   chiefOwned:bool = false;
+  // HANDS THIS ROW'S HOLD CREW GAVE UP TO HIGH BENCH ORDERS THIS TURN, resolved sim-side:
+  // "1 to the Spears order, 1 to the Baskets order" (bench order). "" = none.
+  handsToBench:string;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

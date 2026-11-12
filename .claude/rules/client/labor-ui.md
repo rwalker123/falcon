@@ -350,6 +350,15 @@ read the Max stepper and the sim's crew instead. Specifically, these are retired
 The two halves: the Work tab is `band-city-panel.md` → "STAFFED WORK ROWS"; the sheets are "STAFFED SOURCES
 ON THE COMPOSE SHEETS" at the end of this file.
 
+
+**A take row whose hold crew gave hands to a bench order says so** (`LaborAssignment.handsToBench`, native key
+`hands_to_bench`, `HudWorkVocab.ROW_HANDS_TO_BENCH_KEY`): the sim's finished sentence (`1 to the Spears order, 1 to
+the Baskets order`), `""` = none. `WorkStrip.build_hands_line` draws it verbatim — amber (`HudStyle.WARN`), right-aligned under the crew figure it
+explains, on its own line directly under the strip at the strip's full width (ellipsis + full-text hover only past
+that width). The caller mounts it after the strip (`DrawerComposeController` on the sheets; `_build_row_strip` wraps
+a board row in a column only when there is a sentence). Nothing at all for `""` (no node, no gap). It rides `HudBandLaborState`'s hand-listed row map (a string, so
+not in `STAFFED_KEYS`' int copy) and the row models' `hands_to_bench`; the client never re-derives it.
+
 ## Key scripts
 
 | Script | Purpose |

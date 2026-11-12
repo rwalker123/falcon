@@ -75,6 +75,9 @@ copy limit is two lines a row besides the bars, so anything longer rides a toolt
   skip check ignores the crew prompt, so a link on `No spare hands` would be refused.
 - A kit order's parts are ONE box drawn where its first part sits; a part's status word is WORKING when the
   sim staffed it, WAITING on a `danger` refusal, else QUEUED.
+  The `Priority: <level>` link carries a hover: `HudWorkVocab.WORK_PRIORITY_HINT`, plus
+  `HudCraftingVocab.ORDER_PRIORITY_HIGH_TIP` (`High: takes a crafter ahead of the food rows' hold crews.`) when
+  the order is High — the sim gives a workable High order one crafter ahead of those hold crews.
 
 ### The rail's `N set aside for the bench` line
 

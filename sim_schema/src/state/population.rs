@@ -551,6 +551,10 @@ pub struct LaborAssignmentState {
     /// An unarmed hand adds nothing on this take row (`StaffedCrew::bare_idle`). Appended last.
     #[serde(default)]
     pub bare_idle: bool,
+    /// Hands this row's hold crew gave up to High bench orders this turn, named by the sim
+    /// (`"1 to the Spears order, 1 to the Baskets order"`). Empty = none. Appended last.
+    #[serde(default)]
+    pub hands_to_bench: String,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].
