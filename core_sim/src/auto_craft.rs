@@ -92,6 +92,9 @@ pub enum AutoPick {
         recipe_id: String,
         count: u32,
     },
+    /// The first usable suggestion's row already has an **auto** order on the bench (not a kit part):
+    /// raise that order's `count` by the suggestion's netted `count`. The order keeps its own recipe.
+    TopUp { order: usize, count: u32 },
     /// Nothing is usable; `item` is the first suggestion passed over for want of something, with its
     /// offer's own `reason` (the CraftOffer vocabulary: `Short 0.4 bone`, `Needs Bone-working`).
     Blocked { item: String, reason: String },
@@ -130,7 +133,7 @@ fn unskip(bench: &mut BandBench, suggestions: &[CraftSuggestion], drawable: impl
 }
 
 /// **THE PICK**: walk the suggestions in rank order, passing over a skipped item and one whose row
-/// already has an order on the bench. The first whose suggested offer is `queueable` and drawable
+/// already has a player's or kit-part order on the bench (an auto order on the row is topped up). The first whose suggested offer is `queueable` and drawable
 /// for ONE item is queued (never a suggestion itself short of an input - it could not progress
 /// either, and the next makeable one is worth more to idle crafters). With none, the first one
 /// passed over for want of a craft or a material is reported as `Blocked`.
@@ -141,8 +144,10 @@ fn auto_pick(
     recipes: &RecipesConfig,
     drawable: impl Fn(&str) -> bool,
 ) -> AutoPick {
-    let already_queued = |item: &str| {
-        bench.orders.iter().any(|order| {
+    // The first order on the row, if any: an auto order that is no kit part can be topped up, any
+    // other (the player's, a kit part) keeps the row off-limits to auto-craft.
+    let order_on_row = |item: &str| {
+        bench.orders.iter().position(|order| {
             recipes
                 .recipe(&order.recipe_id)
                 .and_then(|recipe| recipe.row_key())
@@ -151,13 +156,26 @@ fn auto_pick(
     };
     let mut blocked: Option<AutoPick> = None;
     for suggestion in suggestions {
-        if bench.auto_skipped.contains(&suggestion.item) || already_queued(&suggestion.item) {
+        if bench.auto_skipped.contains(&suggestion.item) {
             continue;
+        }
+        let on_row = order_on_row(&suggestion.item);
+        if let Some(index) = on_row {
+            let order = &bench.orders[index];
+            if !order.auto || order.kit_order != crate::components::NOT_A_KIT_PART {
+                continue;
+            }
         }
         let Some(offer) = suggested_offer(offers, &suggestion.item) else {
             continue;
         };
         if offer.queueable && drawable(&suggestion.item) {
+            if let Some(order) = on_row {
+                return AutoPick::TopUp {
+                    order,
+                    count: suggestion.count,
+                };
+            }
             return AutoPick::Queue {
                 item: suggestion.item.clone(),
                 recipe_id: offer.recipe_id.clone(),
@@ -201,14 +219,19 @@ fn fill_idle_bench(
         )
     };
     unskip(bench, suggestions, drawable);
-    let AutoPick::Queue {
-        recipe_id, count, ..
-    } = auto_pick(bench, suggestions, offers, &configs.recipes, drawable)
-    else {
-        return false;
-    };
-    bench.enqueue_auto(&recipe_id, count);
-    true
+    match auto_pick(bench, suggestions, offers, &configs.recipes, drawable) {
+        AutoPick::Queue {
+            recipe_id, count, ..
+        } => {
+            bench.enqueue_auto(&recipe_id, count);
+            true
+        }
+        AutoPick::TopUp { order, count } => {
+            bench.orders[order].count += count;
+            true
+        }
+        AutoPick::Blocked { .. } | AutoPick::Nothing => false,
+    }
 }
 
 /// **IS EVERY WORKABLE ORDER AT ITS CREW CAP?** (Vacuously true with none workable.) When one is
@@ -307,7 +330,7 @@ pub fn auto_wait_reason(inputs: &AutoWaitInputs) -> String {
         AutoPick::Blocked { item, reason } => {
             format!("{}{BLOCKED_REASON_SEPARATOR}{reason}", name_of(&item))
         }
-        AutoPick::Queue { .. } | AutoPick::Nothing => String::new(),
+        AutoPick::Queue { .. } | AutoPick::TopUp { .. } | AutoPick::Nothing => String::new(),
     }
 }
 

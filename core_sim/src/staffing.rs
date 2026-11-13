@@ -2669,9 +2669,36 @@ pub fn restaff_band_after_loss(
     band: bevy::prelude::Entity,
     lost_people: u32,
 ) {
-    if let Some(managed) = managed_dig_allocation(world, band) {
-        if let Some(mut allocation) = world.get_mut::<LaborAllocation>(band) {
-            *allocation = managed;
+    restaff_band_inner(world, band, lost_people, ManagingPasses::Run);
+}
+
+/// **RESTAFF ONE BAND AT THE END OF THE TURN, AFTER A STEP FREED ITS HANDS** - the same staffing
+/// [`restaff_band`] runs, minus the managing passes (`manage_dig_rows`, `manage_food_orders`). Those
+/// passes may drop a managed row, and a row dropped now would take the turn's published yield with
+/// it; the next turn's labour pass runs them at its head, so only the staffing is repeated here.
+/// Called by `systems::restaff_freed_hands`.
+pub fn restaff_band_end_of_turn(world: &mut bevy::prelude::World, band: bevy::prelude::Entity) {
+    restaff_band_inner(world, band, NOBODY, ManagingPasses::Skip);
+}
+
+/// Whether a restaff re-runs the chief's managing passes before staffing.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ManagingPasses {
+    Run,
+    Skip,
+}
+
+fn restaff_band_inner(
+    world: &mut bevy::prelude::World,
+    band: bevy::prelude::Entity,
+    lost_people: u32,
+    managing: ManagingPasses,
+) {
+    if managing == ManagingPasses::Run {
+        if let Some(managed) = managed_dig_allocation(world, band) {
+            if let Some(mut allocation) = world.get_mut::<LaborAllocation>(band) {
+                *allocation = managed;
+            }
         }
     }
     let Some(staffed) = with_band_staffing(

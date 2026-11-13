@@ -177,8 +177,8 @@ pub use components::{
     ShipmentTerms, SourcePriority, SourceShedFacts, SourceYield, StaffedCrew, StartingUnit,
     StationReport, StrangersOrder, TakeSelection, Tile, TownCenter, TransferCause,
     TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
-    YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT,
-    NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+    YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MATERIAL_DUST_UNITS,
+    MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -1746,6 +1746,9 @@ pub fn build_headless_app() -> App {
         .add_systems(
             Update,
             (
+                // **Hands a build or a retired bench order freed this turn are dealt before the
+                // frame is cut.** Every crew-freeing step is in an earlier stage.
+                systems::restaff_freed_hands.run_if(population_stage_enabled()),
                 metrics::collect_metrics,
                 systems::advance_tick,
                 // **Before the capture, and only on the turn path.** The transfer counters are the

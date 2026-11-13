@@ -11255,7 +11255,14 @@ pub fn advance_labor_allocation(
         // republish last turn's figures forever for pens it no longer keeps.
         //
         // **The inflow is the RAW harvest** — what the Fields grew this turn.
-        allocation.last_fodder_need = band_fodder_need;
+        // **A NEED UNDER THE DUST TOLERANCE IS NO NEED** - a band whose pens are fed by pasture sums
+        // float dust here, and every reader (the order's `has_consumers`, its draw, its turns of cover)
+        // would otherwise divide the hay store by it and publish millions of turns.
+        allocation.last_fodder_need = if band_fodder_need < crate::components::MATERIAL_DUST_UNITS {
+            NO_FODDER_LEDGER
+        } else {
+            band_fodder_need
+        };
         allocation.last_fodder_inflow = band_fodder_inflow;
         // **THE STANDING MATERIAL BILL, SUMMED BY THE SIM** (`docs/plan_standing_upkeep.md` §2.7) —
         // the need off the settlement's own per-source bills, the income off what the rows credited.

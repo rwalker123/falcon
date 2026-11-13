@@ -1579,7 +1579,10 @@ auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 33)
   nothing more is queued until it is crewed or done (the anti-flood guard). **It never queues a suggestion
   that is itself short of an input** (the suggested recipe must
   be drawable for ONE item, `systems::recipe_is_drawable`), so the makeable suggestion behind a short one is
-  the one queued, and **never a suggestion whose row already has an order on the bench**, blocked or not.
+  the one queued, and **a suggestion whose row already has an order on the bench** is never queued twice: where that order is
+  auto (and no kit part) the fill raises its `count` by the suggestion's netted count (the order keeps its
+  recipe; the band is restaffed so the new cap is dealt), where it is the player's or a kit part the row is
+  skipped, blocked or not - auto never edits a player's order. A pick that would top up reads `autoWaitReason ""`.
   One order is queued per fill call; both schedule slots (before and after `advance_crafting`) stay.
   Pinned by `bench_parallel_orders::{auto_craft_adds_exactly_one_order_when_crafters_are_free,
   auto_craft_adds_nothing_while_an_order_is_below_its_cap,

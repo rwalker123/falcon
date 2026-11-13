@@ -41,6 +41,17 @@ Design: `docs/plan_labor_at_scale.md` ("Decided"). Engine: `core_sim/src/staffin
 head of each band's labor pass in `systems/labor.rs`, restated by the command path through
 `staffing::restaff_band`.
 
+**A band whose hands come free during the turn is restaffed at the end of it.** A build that
+completes or a bench order retired with its crew (`advance_crafting`) frees hands after the labor
+pass staffed them, so `systems::restaff_freed_hands` runs first in the `Snapshot` stage, ahead of
+the capture, and restaffs every resident band whose published idle (`BandWorkforce::idle`) is above
+zero through the command path's staffing (`staffing::restaff_band_end_of_turn`). A band with no idle
+hand cannot have had one freed and is skipped. The published `idleWorkers` is therefore what the
+passes leave over the hands the band ends the turn with. The end-of-turn restaff skips the managing
+passes (`manage_dig_rows`, `manage_food_orders`): they may drop a managed row, which would take the
+turn's published yield with it, and the next turn's labor pass runs them at its head. It writes only
+rows' crews, build crews and bench crews, so the turn's takes, yields and crafting do not move.
+
 **A forage, hunt (not a need row), extraction, tile-improvement, band-improvement or Roadwork row's
 `workers` is the sim's answer**, not the player's. The player states a **Max** (`LaborAssignment::max_workers`;
 `None` = no Max) and the **floor** the row already carries; each turn the sim zeroes those rows'

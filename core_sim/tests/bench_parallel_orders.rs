@@ -977,3 +977,189 @@ fn a_crewless_normal_order_names_the_high_crafting_ahead_of_it() {
         frame.orders[1].2
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// THE END-OF-TURN RESTAFF (`systems::restaff_freed_hands`)
+// ---------------------------------------------------------------------------------------------
+
+/// The forage row's Max when it has room for a freed hand: the whole band.
+const ROW_MAX_WITH_ROOM: u32 = 6;
+/// The band's hands: one crafter on the order, the rest on the row.
+const END_OF_TURN_HANDS: u32 = 6;
+/// Turns the fixture may run before the one order must have finished (`spears` work 6 at 1 a turn).
+const TURNS_TO_FINISH_ORDER: u32 = 20;
+/// The forage row's escapement floor.
+const END_OF_TURN_FLOOR: f32 = 0.5;
+
+/// What the turn's own published frame says about the band: idle hands and the forage row's crew.
+fn published_idle_and_row(app: &App, band: Entity) -> (u32, u32) {
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let band_id = app.world.get::<core_sim::BandId>(band).unwrap().0;
+    let cohort = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section")
+        .iter()
+        .find(|cohort| cohort.bandId() == band_id)
+        .expect("the band is published");
+    let row_workers = cohort
+        .laborAssignments()
+        .into_iter()
+        .flatten()
+        .map(|row| row.workers())
+        .sum();
+    (cohort.idleWorkers(), row_workers)
+}
+
+/// The band's forage row on the nearest patch with a Max of `row_max`: a bare hand works it, and it
+/// has room for a freed hand exactly when `row_max` exceeds the hands it holds.
+fn add_a_forage_row(app: &mut App, band: Entity, row_max: u32) {
+    let band_tile = app
+        .world
+        .get::<PopulationCohort>(band)
+        .unwrap()
+        .current_tile;
+    let band_pos = app.world.get::<core_sim::Tile>(band_tile).unwrap().position;
+    let patch = app
+        .world
+        .resource::<core_sim::ForageRegistry>()
+        .patches
+        .keys()
+        .copied()
+        .min_by_key(|tile| {
+            (
+                tile.x.abs_diff(band_pos.x) + tile.y.abs_diff(band_pos.y),
+                tile.x,
+                tile.y,
+            )
+        })
+        .expect("the world has forage patches");
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .unwrap()
+        .set_assignment(
+            core_sim::LaborTarget::Forage {
+                tile: patch,
+                floor: END_OF_TURN_FLOOR,
+                species: None,
+                take_species: core_sim::TakeSelection::EVERYTHING,
+            },
+            row_max,
+            END_OF_TURN_HANDS,
+            None,
+        );
+}
+
+/// A band holding one Spears order and one forage row of `row_max`, run turn by turn until the order
+/// is retired. Returns `(frame before the retiring turn, frame after it)` as `(idle, row workers)`.
+fn run_until_the_order_retires(row_max: u32) -> ((u32, u32), (u32, u32)) {
+    let (mut app, band) = world(END_OF_TURN_HANDS);
+    bank(&mut app, band, BONE, PLENTY, &BONE_AXES);
+    bank(&mut app, band, FIBRE, PLENTY, &FIBRE_AXES);
+    bank(&mut app, band, HIDE, PLENTY, &HIDE_AXES);
+    add_a_forage_row(&mut app, band, row_max);
+    queue(&mut app, band, SPEARS, 1, SourcePriority::Normal);
+    staff(&mut app, band);
+    // The first frame predates the fixture; the turn after it is the first one the staffing shapes.
+    app.update();
+    let mut before = published_idle_and_row(&app, band);
+    for _ in 0..TURNS_TO_FINISH_ORDER {
+        app.update();
+        if bench(&app, band).orders.is_empty() {
+            return (before, published_idle_and_row(&app, band));
+        }
+        before = published_idle_and_row(&app, band);
+    }
+    panic!("liveness: the order never finished");
+}
+
+/// **A bench order that finishes and is retired this turn frees its crafter; the band is restaffed at
+/// the end of the turn, so the frame shows the hand on the row with room and `idleWorkers` 0.**
+/// Control: a row already at its Max has no room, so the freed hand stays idle (idle 1) - the
+/// restaff does not conjure work.
+#[test]
+fn a_hand_freed_by_a_retired_order_is_dealt_before_the_frame_is_cut() {
+    let ((idle_before, row_before), (idle_after, row_after)) =
+        run_until_the_order_retires(ROW_MAX_WITH_ROOM);
+    assert_eq!(idle_before, 0, "liveness: the crafter was working");
+    assert_eq!(idle_after, 0, "the freed hand was dealt in the same turn");
+    assert_eq!(row_after, row_before + 1, "it went onto the row with room");
+
+    // Control: the row's Max is the crew it already holds, so it has no room for the freed hand.
+    let (_, (idle_full, row_full)) = run_until_the_order_retires(row_before);
+    assert_eq!(
+        (idle_full, row_full),
+        (1, row_before),
+        "control: no row has room, so the hand stays idle"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// AUTO-CRAFT TOPS UP ITS OWN ORDER INSTEAD OF SKIPPING THE ROW
+// ---------------------------------------------------------------------------------------------
+
+/// The keeping line's new requirement after the first order is queued: more hoes wanted than the
+/// order makes, so the row is still suggested.
+const HOES_REQUIRED_AFTER: f32 = 9.0;
+
+/// Queue the hoes order through one fill (tagged `auto` or not), raise what the keeping line wants,
+/// restaff, and return the app with `(count, crew_cap, idle)` of the order before the second fill.
+fn hoes_order_then_a_larger_need(auto: bool) -> (App, Entity, (u32, u32, u32)) {
+    let (mut app, band) = auto_band(20, 0, true);
+    assert!(
+        auto_craft_fill(&mut app.world, band),
+        "the first fill queues"
+    );
+    app.world.get_mut::<BandBench>(band).unwrap().orders[0].auto = auto;
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .unwrap()
+        .last_keeping_issued[0]
+        .required = HOES_REQUIRED_AFTER;
+    staff(&mut app, band);
+    let frame = read_wait_frame(&mut app, band);
+    assert!(
+        frame.suggestions.iter().any(|(item, _)| item == HOES),
+        "liveness: hoes are still suggested"
+    );
+    let order = &bench(&app, band).orders[0];
+    let before = (order.count, order.crew_cap, frame.idle_workers);
+    (app, band, before)
+}
+
+/// **An auto order at its cap whose row is still suggested is raised by the suggestion's count**, its
+/// crew cap rises and the extra hands are dealt; the same order placed by the player is not raised.
+#[test]
+fn auto_tops_up_its_own_order_when_the_row_is_still_suggested() {
+    let (mut app, band, (count, cap, idle)) = hoes_order_then_a_larger_need(true);
+    assert!(idle > 0, "liveness: hands are idle before the top-up");
+    assert_eq!(
+        read_wait_frame(&mut app, band).reason,
+        "",
+        "a pick that would top up reads no wait reason"
+    );
+    assert!(auto_craft_fill(&mut app.world, band), "the fill tops up");
+    let bench = bench(&app, band);
+    assert_eq!(bench.orders.len(), 1, "no second order");
+    assert!(bench.orders[0].count > count, "the count was raised");
+    assert!(bench.orders[0].crew_cap > cap, "the cap rose with it");
+    let after = read_wait_frame(&mut app, band);
+    assert!(after.idle_workers < idle, "the extra hands were dealt");
+}
+
+/// **Control: the player's order on the row is never edited by auto-craft.**
+#[test]
+fn auto_never_raises_a_players_order() {
+    let (mut app, band, (count, _, _)) = hoes_order_then_a_larger_need(false);
+    assert!(!auto_craft_fill(&mut app.world, band));
+    assert_eq!(bench(&app, band).orders.len(), 1);
+    assert_eq!(bench(&app, band).orders[0].count, count);
+}

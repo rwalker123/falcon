@@ -981,6 +981,33 @@ fn credit_craft_lesson(
     discovery.add_progress(faction, id, scalar_from_f32(amount));
 }
 
+/// **RESTAFF A BAND WHOSE HANDS CAME FREE DURING THE TURN** - a build that completed or a bench order
+/// retired with its crew (`advance_crafting`) frees hands after the labour pass staffed them, so the
+/// frame would publish them idle beside rows with room until the next turn's pass. A band whose
+/// published idle ([`crate::components::BandWorkforce::idle`]) is above zero is restaffed through the one staffing the
+/// commands use ([`crate::staffing::restaff_band_end_of_turn`]); a band with no idle hand cannot
+/// have had one freed and is skipped. Changes next turn's crews and the frame only: the turn's
+/// takes, yields and crafting are already settled.
+pub fn restaff_freed_hands(world: &mut World) {
+    let bands: Vec<Entity> = world
+        .query::<(
+            Entity,
+            &PopulationCohort,
+            &crate::components::LaborAllocation,
+            Option<&BandBench>,
+        )>()
+        .iter(world)
+        .filter(|(_, cohort, allocation, bench)| {
+            crate::components::BandWorkforce::resolve(Some(cohort), Some(allocation), *bench).idle()
+                > 0
+        })
+        .map(|(entity, ..)| entity)
+        .collect();
+    for band in bands {
+        crate::staffing::restaff_band_end_of_turn(world, band);
+    }
+}
+
 #[cfg(test)]
 mod forecast_tests {
     use super::*;
