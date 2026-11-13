@@ -2,6 +2,7 @@
 paths:
   - "clients/godot_thin_client/src/scripts/ui/{BandCityPanel,BandFoodStatus,PenStatus}.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/BandPanelController.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/hud_storage_vocab.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/{WorkStrip,RungCardController}.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/WorkInspectorDialog.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/DisclosureTriangle.gd"
@@ -6127,6 +6128,24 @@ priority list. A staffed row's `workers` is the SIM's answer, so the Work tab dr
   branch=<id>` (`Main.site_address` spells a payload with a branch and no tile that way; the server's
   `parse_band_improvement_source` reads it). Harness: `band_panel_work_tile_crews`; `command_guard` drives
   the line.
+- **THE STORE ROWS (drying rack, storage pit) NAME WHAT IS BUILT AND SAY ITS STATE.** The title is the
+  rung's catalog name (`Drying rack`; `Storage pit · in camp` on the band's own tile, else the tile row's
+  place wording after the `·`) and the subline is one of `not built` / `building` / `building, N%` /
+  `<class> keeps N turns` / `built` (`HudStorageVocab.state_line`). **Which branches are stores is read off
+  the wire, not a client map**: a branch is a store when the cohort's `storage_saves` (unheld rungs) or
+  `held_stores` (held rungs, `{rung, keeping, shelf_life_turns}`) names a `<branch>:<key>` rung for it
+  (`rung_id_of`). The rack's state: a `held_stores` row = held, a `storage_saves` entry = `declared` ?
+  building : not built; its percent is `band_improvements[branch].build_fraction`. The pit's state comes from
+  its tile-improvement row (`current_rung`, `is_queued`, `build_fraction`). A held row's subline is the
+  keeping class in the band panel's food words (`HudStorageVocab.KEEPING_WORDS`: `meat`, `greens`, `grain`)
+  and `shelf_life_turns`; `held_stores` is scoped to the tile the band keeps, so only the camp-tile pit row
+  reads it and a pit elsewhere reads plain `built`.
+- **THE RACK'S ROW EXISTS BEFORE ANY CREW** (`_band_improvement_models` adds a `placeholder` model while
+  a `storage_saves` entry says `lesson_known` and `tile_kept` is false). With no build declared it carries
+  a `Build` button (`BUILD_BUTTON_META`) whose press is `_emit_assign_labor` at zero hands on the `band`
+  kind with the branch (`assign_labor <f> <b> band camp_stores 0`); a declared build shows `building` and no
+  button. Once a crew row exists the row is the ordinary band-improvement row. Harness:
+  `band_panel_storage_rows_{not_built,building,built}`.
 - **The retired stepper machinery.** `SourceForecast.crew_cap_state` / `source_worker_cap_state`, the row's
   `can_add` / `add_blocked_reason`, the cap note on the hover, `STEPPER_WORKING_FULL_REASON_FORMAT` and the
   `+` ceiling that read the sim's useful crew are gone: no control clamps a crew any more. The keepers' own

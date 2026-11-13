@@ -1556,6 +1556,17 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
                 "message": "Assign %d worker%s to the %s at (%d, %d)." % [
                     workers, "" if workers == 1 else "s", tbranch, tx, ty],
             }
+        "band":
+            # **A BAND IMPROVEMENT'S CREW** (a drying rack) -- `assign_labor <f> <b> band <branch> <n>`, the
+            # tile row's twin with no tile; the BRANCH rides the `species` token and is not optional.
+            var bbranch := String(payload.get("species", "")).strip_edges().to_lower()
+            if bbranch == "":
+                return {}
+            return {
+                "line": "assign_labor %d %d band %s %d" % [faction, band_id, bbranch, workers],
+                "message": "Assign %d worker%s to the %s." % [
+                    workers, "" if workers == 1 else "s", bbranch],
+            }
         "scout", "warrior", "roadwork":
             # **A BAND-WIDE ROLE CARRIES THE KIT TOKEN TOO, and it is the only optional token these
             # rows take.** They have no tile, no herd, no floor and no species — the sim ignores

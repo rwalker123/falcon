@@ -1681,6 +1681,21 @@ table PopulationCohortState {
   // Signed, fixed-point (FIXED_POINT_SCALE = 1e6), part of the morale breakdown whose signed sum IS
   // moraleDelta. moraleCause 6 names it. Own bands only: a foreign (redacted) row carries the default.
   moraleLeadership:long = 0;
+  // --- THE BAND'S SPOILAGE (appended last) ---
+  // The food a turn spoils in the band's larder and stores, per keeping class (keeping table order,
+  // non-zero classes only): the band's steady income by class walked forward over the yield horizon
+  // through the meal and the rot at the band's held preservation, averaged per turn. Own bands only.
+  spoilAhead:[KeepingSpoil];
+  // One row per preservation entry of the keeping table whose rung the band does not hold: what
+  // holding it would save a turn, whether the faction knows the lesson, whether a build is declared
+  // and what the build draws. Own bands only.
+  storageSaves:[StorageSave];
+  // labor_config.band_orders.storage_build_min_saved echoed per cohort (own bands): the food a turn a
+  // storage build must save before the chief or a rival's food specialist orders it.
+  storageBuildMinSaved:float = 0;
+  // Every `keeping.preservation` rung the band currently HOLDS (the rack at its camp, a store on the tile
+  // it keeps), one row each: the keeping class and the shelf life it gives. Own bands only.
+  heldStores:[HeldStore];
 }
 
 // ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH - a row of `PopulationCohortState.bandImprovements`,
@@ -1740,6 +1755,8 @@ table BandImprovementState {
   buildersKitted:uint = 0;
   buildersCap:uint = 0;
   buildToe:[PoolToeLine];
+  // The meter on the rung being raised, 0..1 (`TileImprovementState.buildFraction`'s twin, appended last).
+  buildFraction:float = 0;
 }
 
 // An amount of one material: a recipe input per PASS (the bench's material efficiency already
@@ -1805,6 +1822,34 @@ table CulturePressureState {
   // Turns left on the clock toward the next phase (pulled -> asked, asked -> forced); 0 when that
   // clock is not running.
   turnsToNext:ushort = 0;
+}
+
+// One keeping class's spoilage per turn - a row of `PopulationCohortState.spoilAhead`.
+table KeepingSpoil {
+  keeping:string;
+  food:float = 0;
+}
+
+// One preservation rung the band holds - a row of `PopulationCohortState.heldStores`.
+table HeldStore {
+  rung:string;
+  keeping:string;
+  shelfLifeTurns:float = 0;
+}
+
+// One storage rung the band does not hold - a row of `PopulationCohortState.storageSaves`.
+table StorageSave {
+  rung:string;
+  keeping:string;
+  foodSaved:float = 0;
+  lessonKnown:bool = false;
+  declared:bool = false;
+  materialId:string;
+  materialNeeded:float = 0;
+  materialOnHand:float = 0;
+  // True when the rung is a tile improvement built on the band's own tile (a store); false for a band
+  // improvement held at the camp (the rack).
+  tileKept:bool = false;
 }
 
 // One keeping class's hunting meal - a row of `PopulationCohortState.huntMeals`.
@@ -2695,6 +2740,10 @@ table LaborAssignment {
   // for a row no order covers. chiefOwned: the same fact as a bool (orderKind is not empty).
   orderKind:string;
   chiefOwned:bool = false;
+  // THE SHARE OF realizedYield (and of arrivalSchedule) THE HOME BAND CANNOT EAT BEFORE IT SPOILS: a far
+  // hunt's aged packs outrun the band's meals. 0 = all of it is eaten. realizedYield is the row's display
+  // figure (the walk's rot alone); a seat that VALUES the source reads realizedYield x (1 - eatenShortfall).
+  eatenShortfall:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

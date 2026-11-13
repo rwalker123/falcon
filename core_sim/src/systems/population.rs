@@ -487,7 +487,7 @@ fn band_food_flow(labor: Option<&LaborAllocation>) -> Option<FoodFlow> {
             if row.is_need_row() {
                 y.sustainable
             } else {
-                y.realized
+                y.eaten_realized()
             }
         })
         .sum();

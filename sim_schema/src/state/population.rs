@@ -524,6 +524,10 @@ pub struct LaborAssignmentState {
     /// Whether the chief works this row (`order_kind` is not empty). Appended last (#860).
     #[serde(default)]
     pub chief_owned: bool,
+    /// The share of `realized_yield` (and `arrival_schedule`) the home band cannot eat before it
+    /// spoils; `0` = all of it is eaten. `realized_yield` is the walk's rot alone. Appended last.
+    #[serde(default)]
+    pub eaten_shortfall: f32,
     /// Of `workers`: keepers. `keepers + kitted + bare == workers` on a staffed row. Appended last.
     #[serde(default)]
     pub keepers_staffed: u32,
@@ -1844,6 +1848,18 @@ pub struct PopulationCohortState {
     /// `keeping.classes` order. Appended last.
     #[serde(default)]
     pub hunt_meals: Vec<KeepingMealState>,
+    /// **The band's spoilage** — per keeping class, food a turn that spoils. Appended last.
+    #[serde(default)]
+    pub spoil_ahead: Vec<KeepingSpoilState>,
+    /// **The storage the band could hold** — one row per unheld preservation rung. Appended last.
+    #[serde(default)]
+    pub storage_saves: Vec<StorageSaveState>,
+    /// `band_orders.storage_build_min_saved`, echoed (own bands). Appended last.
+    #[serde(default)]
+    pub storage_build_min_saved: f32,
+    /// **The preservation rungs the band holds.** Appended last.
+    #[serde(default)]
+    pub held_stores: Vec<HeldStoreState>,
     /// **The messenger reach**, in tiles (`ExpeditionConfig::effective_comm_range`) — a stationed
     /// party's report lands the turn it leaves inside it. Global config echoed per cohort. Appended last.
     #[serde(default)]
@@ -2066,6 +2082,8 @@ pub struct BandImprovementState {
     pub build_toe: Vec<PoolToeLineState>,
     /// Whether this band has a build declared on this improvement.
     pub is_queued: bool,
+    /// The meter on the rung being raised, `0..=1`. Appended last.
+    pub build_fraction: f32,
 }
 
 impl Default for BandImprovementState {
@@ -2092,6 +2110,7 @@ impl Default for BandImprovementState {
             builders_cap: 0,
             build_toe: Vec::new(),
             is_queued: false,
+            build_fraction: 0.0,
         }
     }
 }
@@ -2216,6 +2235,47 @@ pub struct BandOrderState {
     pub land_gives: f32,
     /// When `limit` is `"kit"`: the units of `limit_item` the order's listed rows lack.
     pub limit_count: u32,
+}
+
+/// **ONE KEEPING CLASS'S SPOILAGE PER TURN** — a row of [`PopulationCohortState::spoil_ahead`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct KeepingSpoilState {
+    /// The keeping class id.
+    pub keeping: String,
+    /// Food a turn that class spoils in the band's larder and stores.
+    pub food: f32,
+}
+
+/// **ONE PRESERVATION RUNG THE BAND HOLDS** — a row of [`PopulationCohortState::held_stores`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct HeldStoreState {
+    /// The rung's wire key (`branch:rung`).
+    pub rung: String,
+    /// The keeping class it lengthens.
+    pub keeping: String,
+    /// The shelf life, in turns, the class has while it is held.
+    pub shelf_life_turns: f32,
+}
+
+/// **ONE STORAGE RUNG THE BAND DOES NOT HOLD** — a row of [`PopulationCohortState::storage_saves`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct StorageSaveState {
+    /// The rung's wire key (`branch:rung`).
+    pub rung: String,
+    /// The keeping class the preservation entry lengthens.
+    pub keeping: String,
+    /// Food a turn the band would save by holding it.
+    pub food_saved: f32,
+    /// Does the band's faction know the rung's lesson?
+    pub lesson_known: bool,
+    /// Is a build of the rung already declared for the band?
+    pub declared: bool,
+    /// The build's material (empty when it draws none), what the bill needs, what the band holds.
+    pub material_id: String,
+    pub material_needed: f32,
+    pub material_on_hand: f32,
+    /// A tile improvement on the band's own tile (a store) rather than a band improvement.
+    pub tile_kept: bool,
 }
 
 /// **ONE KEEPING CLASS'S HUNTING MEAL** — a row of [`PopulationCohortState::hunt_meals`]: the food

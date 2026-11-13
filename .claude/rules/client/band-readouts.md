@@ -1,6 +1,6 @@
 ---
 paths:
-  - "clients/godot_thin_client/src/scripts/ui/hud/{BandDetailLines,FactionReadouts,DetailFormat}.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/{BandDetailLines,FactionReadouts,DetailFormat,hud_storage_vocab}.gd"
   - "clients/godot_thin_client/src/scripts/ui/{BandFoodStatus,TileHabitability,TileClimate,TileSurvivability}.gd"
 ---
 
@@ -1929,3 +1929,21 @@ reason's hover from the list above (none for case (d)).
 `tribe_formed_led`, `tribe_joiner_*` and `tribe_reason_{no_place,different_place,partner_no_place,partners_no_place,different_beats_none,no_network,alone}` in `band_expedition` (docked right, Band tab); the harness asserts one line, the
 card's minimum width within the strip, the verbatim tooltips, a council-led tribe, and every suffix off
 the statics.
+
+## THE SPOILAGE LINE — food the larder loses uneaten, beside the Food number
+
+An own band's cohort dict carries `spoil_ahead` (`[{keeping, food}]`, non-zero classes) and `storage_saves`
+(one row per store the band does not hold); every figure is the sim's. `BandDetailLines.unit_summary_lines`
+appends ONE sentence after the Food line (and the starving line) when the classes total above
+`HudStorageVocab.FOOD_EPSILON`: `⚠ 0.7 food a turn spoils uneaten · a drying rack would save 0.4`. The fix
+clause names the best `storage_saves` row, a DECLARED build outranking an open one:
+`<rung> being built` when declared, `needs Storage` when its lesson is unknown, else `a <rung> would save N`.
+The rung name is the `ladder_rungs` roster's `display_name`, lower-cased (`BandDetailLines` takes the
+catalog as a Callable, `FactionReadouts.ladder_rungs`), never the id.
+
+- **Amber, and hover-bearing.** It leads with `HudStorageVocab.SPOIL_LINE_LEAD` (the hazard mark) and
+  `DetailFormat.detail_bbcode` matches it on `SPOIL_PHRASE` BEFORE the generic hazard branch so it can be
+  wrapped in `hover_wrap` under `SPOIL_HOVER_KEY`; the hover lists the per-class figures as `meat` / `greens` /
+  `grain` (`flesh` / `fresh_plant` / `dry`, `HudStorageVocab.KEEPING_WORDS`).
+- **The hunt row's `rots on the way home` is walk rot alone** (`spoiled_rate_home`); nothing on the hunt row
+  reads `spoil_ahead`.

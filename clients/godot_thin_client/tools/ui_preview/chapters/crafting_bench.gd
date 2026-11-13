@@ -765,6 +765,7 @@ func _crafting_states() -> void:
 	await _auto_craft_states()
 	await _staffed_hands_state()
 	await _kit_order_states()
+	await _storage_states()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
@@ -4795,3 +4796,51 @@ func _crew_plus(node: Node) -> Button:
 		if found != null:
 			return found
 	return null
+
+# ---- THE BAND PANEL'S SPOILAGE LINE (HudStorageVocab) --------------------------------
+
+const STORAGE_SPOIL_FLESH := 0.5
+const STORAGE_SPOIL_FRESH_PLANT := 0.2
+const STORAGE_RACK_RUNG := "camp_stores:drying_rack"
+const STORAGE_PIT_RUNG := "food_stores:storage_pit"
+const STORAGE_RACK_SAVED := 0.4
+const STORAGE_PIT_SAVED := 0.3
+const STORAGE_WOOD_NEEDED := 8.0
+const STORAGE_WOOD_SHORT_ON_HAND := 5.0
+
+func _ladder_fixture() -> Array:
+	return [
+		{"rung_key": "drying_rack", "branch": "camp_stores", "order": 2, "display_name": "Drying rack"},
+		{"rung_key": "storage_pit", "branch": "food_stores", "order": 1, "display_name": "Storage pit"},
+	]
+
+## The reference band carrying `spoil_ahead` and two `storage_saves` rows: a rack whose lesson is known with a
+## wood gap, and a pit already declared.
+func _storage_band(wood_on_hand: float, pit_declared: bool = true) -> Dictionary:
+	var band := _crafting_band()
+	band["spoil_ahead"] = [
+		{"keeping": "flesh", "food": STORAGE_SPOIL_FLESH},
+		{"keeping": "fresh_plant", "food": STORAGE_SPOIL_FRESH_PLANT},
+	]
+	band["storage_saves"] = [
+		{"rung": STORAGE_RACK_RUNG, "keeping": "flesh", "food_saved": STORAGE_RACK_SAVED,
+			"lesson_known": true, "declared": false, "material_id": "wood",
+			"material_needed": STORAGE_WOOD_NEEDED, "material_on_hand": wood_on_hand, "tile_kept": false},
+		{"rung": STORAGE_PIT_RUNG, "keeping": "dry", "food_saved": STORAGE_PIT_SAVED,
+			"lesson_known": true, "declared": pit_declared, "material_id": "wood",
+			"material_needed": STORAGE_WOOD_NEEDED, "material_on_hand": wood_on_hand, "tile_kept": true},
+	]
+	return band
+
+func _storage_states() -> void:
+	h._hud.update_ladder_rungs(_ladder_fixture())
+	var band := _storage_band(STORAGE_WOOD_SHORT_ON_HAND)
+	# The band panel's food side, on the short-wood band.
+	h._hud.close_crafting_panel()
+	h._hud.update_band_alerts([band])
+	h._hud.show_unit_selection(band)
+	await h._settle()
+	await h._save("storage_spoil_band")
+	h._hud._band_labor._player_bands = []
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	await h._settle()

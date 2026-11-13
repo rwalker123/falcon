@@ -20,13 +20,13 @@ use super::ledger::{
     survives, Book, Change, PatchBook, Projection, Reassignment, BEST_FLOOR,
 };
 use super::sources::{
-    cluster_sites, crew_take, deal_free_hands, foreign_band_at, is_walkable, keeping_hands,
-    patch_per_worker_yield, surplus_hands, sustained_hands, workable_patch_at, DealtSite, KeptSite,
-    Source, SourceKey,
+    cluster_sites, crew_take, deal_free_hands, eaten_realized, foreign_band_at, is_walkable,
+    keeping_hands, patch_per_worker_yield, surplus_hands, sustained_hands, workable_patch_at,
+    DealtSite, KeptSite, Source, SourceKey,
 };
 use super::{
     Food, INTENT_ASSIGN, INTENT_DRAWDOWN, INTENT_FEED_MOVE, INTENT_HOLD, INTENT_HUNT, INTENT_ROOM,
-    INTENT_SETTLE, INTENT_SPLIT, INTENT_UPGRADE, NO_MAX, ROLE_FORAGE, ROLE_HUNT,
+    INTENT_SETTLE, INTENT_SPLIT, INTENT_STORAGE, INTENT_UPGRADE, NO_MAX, ROLE_FORAGE, ROLE_HUNT,
 };
 use crate::board::{Demand, Resource, BARE_KIT_ID};
 use crate::geometry::Tile;
@@ -65,6 +65,14 @@ const PAUSED_FLOOR: f32 = 1.0;
 /// What *make room for the build* scores at: it is a bill the declared build owes, not a bid weighed
 /// against the goal gap (pausing a row lowers the income the gap is read on).
 const MAKE_ROOM_SCORE: f32 = 1.0;
+/// The score of ordering a storage build: a duty like holding what the band has, not a rival bid.
+const STORAGE_BUILD_SCORE: f32 = 1.0;
+/// The role token of a band-improvement crew (`assign_labor ... band <branch>`).
+const ROLE_BAND: &str = "band";
+/// The role token of a tile-improvement crew (`assign_labor ... tile <branch> <x> <y>`).
+const ROLE_TILE: &str = "tile";
+/// The kind of the food order a chief keeps (`keep_on_hand::FOOD_KIND`).
+const FOOD_ORDER_KIND: &str = "food";
 /// **The harvest-floor slider's coarse step**, chosen so the search is ten projections per row
 /// from Best down to zero.
 const FLOOR_STEP: f32 = 0.1;
@@ -2911,11 +2919,7 @@ impl Food {
     /// goal turn to turn and a pause is undone the turn after it is made.
     fn steady_book(band: &PopulationCohortState) -> Book {
         Book {
-            income: band
-                .labor_assignments
-                .iter()
-                .map(|row| row.realized_yield)
-                .sum(),
+            income: band.labor_assignments.iter().map(eaten_realized).sum(),
             ..Self::book(band)
         }
     }
@@ -3005,7 +3009,7 @@ impl Food {
         });
         rows.into_iter().find_map(|row| {
             let change = Reassignment {
-                income_lost: row.realized_yield,
+                income_lost: eaten_realized(row),
                 income_gained: 0.0,
                 payoff_turn: 0,
             };
@@ -6946,5 +6950,64 @@ mod tests {
         let proposal = make_room(&view).expect("the reserve is gone");
         assert_eq!(assigned_to(&proposal.commands[0]).2, Some(RICH_PATCH));
         assert_eq!(floor_of(&proposal.commands[0]), None, "back to Best");
+    }
+}
+
+impl Food {
+    /// **ORDER THE STORAGE THAT SAVES THE FOOD THE BAND SPOILS** (`food:storage:<band>`). Where no
+    /// chief owns the band's food order (a chief builds it himself), read the sim's `storageSaves`:
+    /// a rung whose lesson is known, with no build declared, that would save at least the lever the
+    /// sim echoes (`storageBuildMinSaved`, the chief's own threshold) a turn, and whose build
+    /// material the band holds, is ordered by the command the player would send -
+    /// `assign_labor ... band <branch>` for a band improvement, `... tile <branch> <x> <y>` on the
+    /// band's own tile for a store.
+    pub fn build_storage(&self, band: &PopulationCohortState) -> Option<Proposal> {
+        let chief_owns_food = band
+            .band_orders
+            .iter()
+            .any(|order| order.kind == FOOD_ORDER_KIND && order.chief_owned);
+        if chief_owns_food || band.is_traveling {
+            return None;
+        }
+        let save = band
+            .storage_saves
+            .iter()
+            .filter(|save| {
+                save.lesson_known
+                    && !save.declared
+                    && save.food_saved >= band.storage_build_min_saved
+                    && save.material_on_hand >= save.material_needed
+            })
+            .max_by(|a, b| a.food_saved.total_cmp(&b.food_saved))?;
+        // The rung's wire key is `<branch>:<rung>`.
+        let branch = save.rung.split(':').next()?.to_string();
+        let here = band_tile(band);
+        let commands = vec![CommandPayload::AssignLabor {
+            faction_id: self.faction,
+            band_id: Some(band.band_id),
+            role: if save.tile_kept { ROLE_TILE } else { ROLE_BAND }.to_string(),
+            workers: NO_MAX,
+            target_x: save.tile_kept.then_some(here.x),
+            target_y: save.tile_kept.then_some(here.y),
+            fauna_id: None,
+            policy: None,
+            species: Some(branch),
+            floor: None,
+            kit_id: None,
+            take_species: Vec::new(),
+            move_with_herd: false,
+        }];
+        Some(Proposal {
+            cost: Cost::claimed(0, band.band_id, &commands),
+            commands,
+            intent: intent_key(SPECIALIST_FOOD, INTENT_STORAGE, band.band_id),
+            score: STORAGE_BUILD_SCORE * self.weight,
+            reason: format!(
+                "storage: {} would save {:.2} {} a turn (threshold {:.2})",
+                save.rung, save.food_saved, save.keeping, band.storage_build_min_saved
+            ),
+            memo: None,
+            standing: false,
+        })
     }
 }

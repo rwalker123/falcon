@@ -8563,6 +8563,7 @@ pub fn advance_labor_allocation(
                         sustainable,
                         // The forward-projected steady headline (computed pre-take above).
                         realized: forage_realized,
+                        eaten_fraction: 1.0,
                         arrivals,
                         // Resolved: a fact, so the band is a point.
                         range: YieldRange::certain(provisions.to_f32()),
@@ -9481,6 +9482,7 @@ pub fn advance_labor_allocation(
                             // The forward-projected steady headline (computed pre-take above; a pen
                             // projects its managed yield, already smooth).
                             realized: hunt_realized.provisions,
+                            eaten_fraction: 1.0,
                             arrivals,
                             // Resolved: a fact, so the band is a point — the same reading the
                             // range arm's row carries. (It said *"a pen has no stochastic stage at
@@ -10305,6 +10307,7 @@ pub fn advance_labor_allocation(
                         // The forward-projected steady headline (computed pre-take above): rate-based,
                         // so it is smooth where `actual` (the whole-animal kill) pulses.
                         realized: hunt_realized.provisions,
+                        eaten_fraction: 1.0,
                         arrivals,
                         // Resolved: a fact, so the band is a point. This is
                         // the row whose *seeded* twin carries a real distribution once `wariness` or
@@ -12298,10 +12301,21 @@ fn publish_build_chain(
             && allocation
                 .build_crew(&entry.source)
                 .is_some_and(|crew| crew.fed_first);
+        // **A cause that stops the build whatever the larder holds outranks "feeding first"**: a store
+        // that cannot feed the build (Materials) and a gate that refuses it are why it holds nobody,
+        // and saying the band is eating first would hide them.
+        let gate_refuses = quote
+            .as_ref()
+            .map(BuildQuote::blocking_gate)
+            .is_some_and(|gate| !gate.holds());
+        let materials_stalled = stalled.contains(&entry.source)
+            && quote
+                .as_ref()
+                .is_none_or(|quote| quote.blocking_gate().holds());
         let (published, reason) = match quote.as_ref().and_then(|quote| quote.turns(builders)) {
             // **A BUILD THE BAND IS NOT STAFFING SO IT CAN EAT** says so, ahead of any date a quote
             // at zero builders could state.
-            _ if fed_first => (
+            _ if fed_first && !materials_stalled && !gate_refuses => (
                 Some(crate::intensification::BuildTurns::Blocked),
                 crate::intensification::BuildGate::FeedingFirst,
             ),
@@ -20518,6 +20532,40 @@ mod labor_yield_tests {
             crate::intensification::BuildGate::Materials,
             "**AND IT SAYS WHY** — the rung's own gate HOLDS here, so a chain pass reading that \
              would publish a block with no cause; the remedy is the bench, not the Builders role"
+        );
+    }
+
+    /// **A MATERIALLY STALLED BUILD SAYS SO ON A FOOD-FIRST TURN.** A dry pen build and a `sow` queued
+    /// behind it, on a band whose larder is empty: the sow would hold builders, so the food-first
+    /// look-ahead fires - and the pen, which could not progress anyway, must still publish
+    /// `Materials`, not `feeding_first`.
+    #[test]
+    fn a_materials_stalled_build_publishes_materials_on_a_food_first_turn() {
+        let (mut dry, band) = world_with_a_sow_queued_behind_a_pen();
+        stock_pen_materials_units(&mut dry, band, 0.0);
+        dry.get_mut::<PopulationCohort>(band)
+            .expect("the fixture band")
+            .stores = LocalStore::new();
+        dry.run_system_once(advance_labor_allocation);
+        let fed_first_builds = dry
+            .get::<LaborAllocation>(band)
+            .expect("the allocation")
+            .builds
+            .iter()
+            .filter_map(|entry| {
+                dry.get::<LaborAllocation>(band)
+                    .and_then(|allocation| allocation.build_crew(&entry.source))
+            })
+            .filter(|crew| crew.fed_first)
+            .count();
+        assert!(
+            fed_first_builds >= 1,
+            "liveness: the look-ahead fired and the buildable sow waits on the food"
+        );
+        assert_eq!(
+            published_pen_block_reason(&dry),
+            crate::intensification::BuildGate::Materials,
+            "the dry store is why the pen holds nobody, not feeding first"
         );
     }
 

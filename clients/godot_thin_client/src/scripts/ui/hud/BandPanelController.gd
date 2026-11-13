@@ -2918,6 +2918,18 @@ func _tile_model(band: Dictionary, x: int, y: int, branch: String, assignment: D
         "rung_name": HudRouteVocab.rung_name_in(catalog, rung_key) \
             if rung_key != "" else HudRouteVocab.branch_root_name(catalog, branch),
     }
+    if HudStorageVocab.is_store_branch(band, branch):
+        # A STORE ROW NAMES WHAT IS BUILT (`Storage pit · in camp`) and its subline says the build's state.
+        var place := _roadwork_roster_locator(distance, camp, Vector2i(x, y))
+        var store_key := HudStorageVocab.store_rung_key(band, branch)
+        var state := HudStorageVocab.tile_store_state(row, store_key)
+        model["name"] = HudWorkVocab.WORKINGS_ROSTER_NAME_FORMAT % [
+            HudRouteVocab.rung_name_in(catalog, store_key),
+            HudStorageVocab.STORE_IN_CAMP if place == HudWorkVocab.ROADWORK_ROSTER_HERE else place]
+        model["rung_name"] = HudStorageVocab.state_line(state,
+            float(row.get("build_fraction", HudStorageVocab.NO_BUILD_FRACTION)),
+            # `held_stores` is scoped to the tile the band keeps, so only the camp tile's row reads its shelf life.
+            HudStorageVocab.held_of(band, branch) if distance == 0 else {})
     _put_staffed_fields(model, _band_labor.effective_worker_map(band).get(key, {}), assignment)
     return model
 
@@ -2962,7 +2974,38 @@ func _band_improvement_models(band: Dictionary) -> Array:
             "rung_name": HudRouteVocab.branch_root_name(catalog, branch),
         })
         _put_staffed_fields(models[models.size() - 1], merged, assignment)
+        _name_band_store(models[models.size() - 1], band, catalog)
+    # A store the band knows how to raise gets its row before any crew is on it: the row IS the offer.
+    for save_variant in band.get(HudStorageVocab.STORAGE_SAVES_KEY, []):
+        if not (save_variant is Dictionary):
+            continue
+        var store_branch := HudStorageVocab.rung_branch(String((save_variant as Dictionary).get(
+            HudStorageVocab.RUNG_KEY, "")))
+        if not HudStorageVocab.is_known_unheld_band_store(band, store_branch):
+            continue
+        var crewed := false
+        for existing in models:
+            if String((existing as Dictionary).get("branch", "")) == store_branch:
+                crewed = true
+        if crewed:
+            continue
+        var placeholder := {
+            "kind": HudConst.LABOR_KIND_BAND, "branch": store_branch, "workers": 0,
+            "placeholder": true,
+        }
+        _name_band_store(placeholder, band, catalog)
+        models.append(placeholder)
     return models
+
+## A band store's row words: the rung it raises as the title, its build state as the subline.
+func _name_band_store(model: Dictionary, band: Dictionary, catalog: Array) -> void:
+    var branch := String(model.get("branch", ""))
+    if not HudStorageVocab.is_store_branch(band, branch):
+        return
+    model["name"] = HudRouteVocab.rung_name_in(catalog, HudStorageVocab.store_rung_key(band, branch))
+    model["rung_name"] = HudStorageVocab.state_line(HudStorageVocab.band_store_state(band, branch),
+        HudStorageVocab.band_build_fraction(band, branch), HudStorageVocab.held_of(band, branch))
+    model["offer_build"] = HudStorageVocab.offers_build(band, branch)
 
 func _build_band_improvement_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var shell := _site_row_shell(HudWorkVocab.EXTRACT_ROW_HEIGHT, false, Color(0.0, 0.0, 0.0, 0.0))
@@ -2983,6 +3026,21 @@ func _build_band_improvement_row(band: Dictionary, model: Dictionary) -> PanelCo
     title.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(title)
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(String(model["rung_name"]))))
+    if bool(model.get("placeholder", false)):
+        # No crew row yet: the row is the offer, and its Build declares the branch's first build.
+        if bool(model.get("offer_build", false)):
+            var branch := String(model["branch"])
+            var build := Button.new()
+            build.text = HudStorageVocab.BUILD_BUTTON_LABEL
+            build.focus_mode = Control.FOCUS_NONE
+            build.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+            build.set_meta(HudStorageVocab.BUILD_BUTTON_META, branch)
+            HudStyle.apply_button(build, "primary")
+            build.pressed.connect(func() -> void:
+                _emit_assign_labor(band, HudConst.LABOR_KIND_BAND, 0, -1, -1, "",
+                    SourceForecast.FLOOR_UNNAMED, branch))
+            (shell[SITE_ROW_SHELL_BODY] as HBoxContainer).add_child(build)
+        return row
     # A READ-ONLY crew (the sim's), on the same strip every other work row wears.
     (shell[SITE_ROW_SHELL_BODY] as HBoxContainer).add_child(_build_row_strip(band, model))
     return row

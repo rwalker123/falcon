@@ -321,8 +321,13 @@ var _herd_label_for_id_fn: Callable
 # render context that travels to `DetailFormat`.
 var _food_flow_present: bool = false
 
+## The ladder catalog (`FactionReadouts.ladder_rungs`), so the spoilage line names a store by the roster's
+## own word. Empty Callable (a harness that builds the lines alone) reads as no catalog.
+var _ladder_rungs_fn: Callable = Callable()
+
 func _init(band_labor: HudBandLaborState, disclosures: DisclosureController,
-        herd_label_for_id: Callable) -> void:
+        herd_label_for_id: Callable, ladder_rungs: Callable = Callable()) -> void:
+    _ladder_rungs_fn = ladder_rungs
     _band_labor = band_labor
     _disclosures = disclosures
     _herd_label_for_id_fn = herd_label_for_id
@@ -403,6 +408,13 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
             var starving := DetailFormat.food_starving_line(unit_data)
             if starving != "":
                 lines.append(starving)
+        # Food the larder will lose uneaten, amber beside the food number, with the store that fixes it.
+        # The per-class breakdown is the row's hover (`HudStorageVocab.SPOIL_HOVER_KEY`).
+        var catalog: Array = _ladder_rungs_fn.call() if _ladder_rungs_fn.is_valid() else []
+        var spoil := HudStorageVocab.spoil_line(unit_data, catalog)
+        if spoil != "":
+            lines.append(spoil)
+            context.row_tooltips[HudStorageVocab.SPOIL_HOVER_KEY] = HudStorageVocab.spoil_tooltip(unit_data)
         # Category-aggregated food breakdown under Food: a click-to-open disclosure. `_band_food_line`
         # set `_food_flow_present` (a PRIVATE handshake between the two — the formatter never reads
         # it); `DisclosureController.register` stashes the rows for the popover and records the row so

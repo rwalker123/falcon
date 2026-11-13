@@ -318,6 +318,17 @@ band realized with bare hands (the walk is buying the baskets; a splinter's wind
 parent worked unequipped). A herd's curve is `assume_kit_held` (below), struck by **the stream
 keep** (below).
 
+#### Storage: a band with no chief on its food order orders it (`food:storage:<band>`)
+
+`Food::build_storage` reads the band's `storageSaves` and, for a row whose lesson is known, with no
+build declared, `foodSaved >= storageBuildMinSaved` (the chief's own lever
+`labor_config.band_orders.storage_build_min_saved`, echoed on the cohort so both act on one number)
+and the band holding the build material (`materialOnHand >= materialNeeded`), sends the command the
+player would: `assign_labor <f> <b> band <branch>` (a band improvement) or `... tile <branch> <x> <y>`
+on the band's tile (`tileKept`). A band whose food order a chief owns is left to the chief. The hunt
+row no longer books surplus spoilage, so the stream keep below prices only a herd's eat-share and is
+not double counted.
+
 #### The stream keep: a herd is worth what the band EATS of its landing stream
 
 Flesh keeps four turns (`demographics_config.json`), so a crew that lands more than the band eats

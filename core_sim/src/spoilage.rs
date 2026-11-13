@@ -909,3 +909,148 @@ mod tests {
         assert_eq!(kept, scalar_from_f32(2.0));
     }
 }
+
+/// **WHAT THE BAND'S STEADY INCOME LANDS AS, per keeping class, per turn** — the input of
+/// [`spoilage_ahead`].
+pub type IncomeByClass = BTreeMap<String, f32>;
+
+/// **WHAT THE BAND SPOILS A TURN, per keeping class** — the larder and the stores walked forward
+/// `horizon` turns in the turn's own order (the meal first, eating whatever is closest to rotting
+/// ([`plan_meal`]); then the rot pass; then the steady `income` landing at age 0), at the band's own
+/// held preservation. Returns the food each class rots a turn, **averaged over the window**; classes
+/// that rot nothing are absent.
+///
+/// **A FORWARD PROJECTION**, never a trailing average: it reads the band's standing rows' `realized`
+/// split by class and nothing from history. The meal is `need` a turn at the band's demand.
+/// Pure: the capture, the chief's managing pass and the saves calculation all call it.
+#[allow(clippy::too_many_arguments)] // the walk's whole scene
+pub fn spoilage_ahead(
+    larder: &FoodMix,
+    stores: &FoodMix,
+    income: &IncomeByClass,
+    need: f32,
+    horizon: u32,
+    keeping: &KeepingConfig,
+    held: &HeldPreservation,
+    store_held: &HeldPreservation,
+) -> BTreeMap<String, f32> {
+    let ration = scalar_from_f32(need.max(0.0));
+    let order = keeping.eat_order();
+    let (mut larder, mut stores) = (larder.clone(), stores.clone());
+    let mut rotted: BTreeMap<String, f32> = BTreeMap::new();
+    for _ in 0..horizon {
+        let mut lots = meal_lots(&larder, None, keeping, held);
+        lots.extend(meal_lots(&stores, Some(0), keeping, store_held));
+        for (meal_lot, part) in plan_meal(lots, ration, &order) {
+            let pile = if meal_lot.source.is_none() {
+                &mut larder
+            } else {
+                &mut stores
+            };
+            pile.take_exact_lot(&meal_lot.class, meal_lot.lot.age, meal_lot.lot.stored, part);
+        }
+        for (pile, lives) in [(&mut larder, held), (&mut stores, store_held)] {
+            let before = class_totals(pile);
+            pile.age_and_expire(|class| band_shelf_life(keeping, lives, class));
+            let after = class_totals(pile);
+            for (class, was) in before {
+                let lost = was - after.get(&class).copied().unwrap_or(0.0);
+                if lost > 0.0 {
+                    *rotted.entry(class).or_insert(0.0) += lost;
+                }
+            }
+        }
+        for (class, amount) in income {
+            if *amount > 0.0 {
+                larder.add(class, scalar_from_f32(*amount));
+            }
+        }
+    }
+    if horizon == 0 {
+        return BTreeMap::new();
+    }
+    rotted
+        .into_iter()
+        .map(|(class, total)| (class, total / horizon as f32))
+        .filter(|(_, per_turn)| *per_turn > f32::EPSILON)
+        .collect()
+}
+
+/// The food of each class in a pile, as floats.
+fn class_totals(food: &FoodMix) -> BTreeMap<String, f32> {
+    let mut totals = BTreeMap::new();
+    for (class, lot) in food.lots() {
+        *totals.entry(class).or_insert(0.0) += lot.amount.to_f32();
+    }
+    totals
+}
+
+#[cfg(test)]
+mod party_and_forecast_tests {
+    use super::*;
+    use crate::components::LocalStore;
+    use crate::demographics_config::DemographicsConfig;
+
+    /// A shelf-life reading the shipped table gives, so the test follows a re-tune.
+    fn keeping() -> KeepingConfig {
+        DemographicsConfig::builtin().keeping.clone()
+    }
+
+    /// **A party's upkeep eats what is closest to rotting first**, not the class order: grain one turn
+    /// from spoiling goes before fresh meat, though meat is the faster-rotting class.
+    #[test]
+    fn a_partys_meal_eats_grain_one_turn_from_spoiling_before_fresh_meat() {
+        const GRAIN: &str = "dry";
+        const MEAT: &str = "flesh";
+        const LOT: f32 = 5.0;
+        const MEAL: f32 = 1.0;
+        let keeping = keeping();
+        let grain_age = keeping.shelf_life(GRAIN).expect("grain keeps") as u32 - 1;
+        let mut stores = LocalStore::new();
+        stores.add_food_aged(GRAIN, scalar_from_f32(LOT), grain_age);
+        stores.add_food_aged(MEAT, scalar_from_f32(LOT), 0);
+        eat_least_time_left(
+            &mut stores,
+            scalar_from_f32(MEAL),
+            &keeping,
+            &HeldPreservation::none(),
+            u32::MAX,
+        );
+        let held = |class: &str| {
+            stores
+                .food()
+                .lots()
+                .into_iter()
+                .filter(|(c, _)| c == class)
+                .map(|(_, lot)| lot.amount.to_f32())
+                .sum::<f32>()
+        };
+        assert!(
+            (held(GRAIN) - (LOT - MEAL)).abs() < 1e-3,
+            "the old grain was eaten"
+        );
+        assert!((held(MEAT) - LOT).abs() < 1e-3, "the fresh meat was left");
+    }
+
+    /// The forecast rots nothing for a band that eats all it earns, and a surplus of meat rots.
+    #[test]
+    fn the_forecast_rots_a_surplus_and_not_a_meal() {
+        const NEED: f32 = 1.0;
+        const HORIZON: u32 = 20;
+        let keeping = keeping();
+        let walk = |income: f32| {
+            spoilage_ahead(
+                &FoodMix::default(),
+                &FoodMix::default(),
+                &[("flesh".to_string(), income)].into_iter().collect(),
+                NEED,
+                HORIZON,
+                &keeping,
+                &HeldPreservation::none(),
+                &HeldPreservation::none(),
+            )
+        };
+        assert!(walk(NEED * 10.0).get("flesh").copied().unwrap_or(0.0) > 0.0);
+        assert!(walk(NEED * 0.5).is_empty());
+    }
+}

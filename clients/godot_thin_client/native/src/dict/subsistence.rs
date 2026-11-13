@@ -32,7 +32,7 @@ pub(crate) fn regrowth_samples_packed(
 /// reconstructed either would be a second producer of a verdict that already has one, which is the
 /// failure the whole `buildTurnsRemaining` family exists to stop. The negatives are the same four
 /// the countdown carries and are passed through VERBATIM.
-fn build_legs_to_array(
+pub(crate) fn build_legs_to_array(
     legs: Option<Vector<'_, ForwardsUOffset<fb::BuildLegState<'_>>>>,
 ) -> VarArray {
     let mut array = VarArray::new();
@@ -1520,6 +1520,59 @@ pub(crate) fn tile_improvements_to_array(
         let _ = dict.insert("has_store_owner", row.hasStoreOwner());
         let _ = dict.insert("store_owner_band", row.storeOwnerBand() as i64);
         let _ = dict.insert("store_spoiled", f64::from(row.storeSpoiled()));
+        let _ = dict.insert("build_fraction", f64::from(row.buildFraction()));
+        crate::dict::population::insert_build_crew(
+            &mut dict,
+            row.buildersStaffed(),
+            row.buildersKitted(),
+            row.buildersCap(),
+            row.buildToe(),
+        );
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+/// **A BAND'S OWN IMPROVEMENTS** (`PopulationCohortState.bandImprovements`): the tile row's keeping,
+/// neglect and countdown block, keyed by `branch`, plus the build meter (`build_fraction`).
+pub(crate) fn band_improvements_to_array(
+    rows: Vector<'_, ForwardsUOffset<fb::BandImprovementState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for row in rows {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("branch", row.branch().unwrap_or_default());
+        let _ = dict.insert("current_rung", row.currentRung().unwrap_or_default());
+        let _ = dict.insert(
+            "build_destination_rung",
+            row.buildDestinationRung().unwrap_or_default(),
+        );
+        let _ = dict.insert("build_legs", &build_legs_to_array(row.buildLegs()));
+        let _ = dict.insert("build_turns_remaining", row.buildTurnsRemaining() as i64);
+        let _ = dict.insert(
+            "build_blocked_reason",
+            row.buildBlockedReason().unwrap_or_default(),
+        );
+        let _ = dict.insert("upkeep_demand", f64::from(row.upkeepDemand()));
+        let _ = dict.insert("upkeep_supplied", f64::from(row.upkeepSupplied()));
+        let _ = dict.insert("upkeep_shortfall", f64::from(row.upkeepShortfall()));
+        let _ = dict.insert("neglect_turns", row.neglectTurns() as i64);
+        let _ = dict.insert("has_neglect_grace", row.hasNeglectGrace());
+        let _ = dict.insert(
+            "neglect_grace_remaining",
+            row.neglectGraceRemaining() as i64,
+        );
+        let _ = dict.insert(
+            "upkeep_workers_needed",
+            i64::from(row.upkeepWorkersNeeded()),
+        );
+        let _ = dict.insert("upkeep_hands", f64::from(row.upkeepHands()));
+        let _ = dict.insert("upkeep_tools_short", row.upkeepToolsShort());
+        let _ = dict.insert(
+            "upkeep_toe",
+            &crate::dict::population::kit_toe_to_array(row.upkeepToe()),
+        );
+        let _ = dict.insert("is_queued", row.isQueued());
         let _ = dict.insert("build_fraction", f64::from(row.buildFraction()));
         crate::dict::population::insert_build_crew(
             &mut dict,

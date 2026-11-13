@@ -683,6 +683,9 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.breeding_members = rows();
         cohort.breeding_peoples = rows();
         cohort.hunt_meals = rows();
+        cohort.spoil_ahead = rows();
+        cohort.storage_saves = rows();
+        cohort.held_stores = rows();
         cohort.envoy_terms = seeded_terms();
         cohort.culture_pressures = rows();
         cohort.band_orders = rows();

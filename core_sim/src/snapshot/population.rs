@@ -56,6 +56,8 @@ pub(crate) fn labor_assignment_to_state(
         standing_yield: yields.standing,
         overdraws: yields.overdraws,
         realized_yield: yields.realized,
+        // What the home band cannot eat of `realized_yield` before it spoils (`0` = all of it).
+        eaten_shortfall: 1.0 - yields.eaten_fraction,
         // **This row's own keeping hands** — its share of the site's bill, never the site's total.
         keep_hands: yields.keep_hands,
         // The discrete arrival schedule: index `i` = the food landing `i + 1` turns ahead. Cloned
@@ -666,19 +668,16 @@ pub(crate) fn band_turns_of_food(
     is_expedition: bool,
     pooling_steady: f32,
 ) -> f32 {
-    runway_over(
-        pooling_steady,
+    let terms = food_terms_over(
+        cohort,
         allocation,
-        &food_terms_over(
-            cohort,
-            allocation,
-            demographics,
-            held,
-            is_expedition,
-            &|_| true,
-            Some(stores),
-        ),
-    )
+        demographics,
+        held,
+        is_expedition,
+        &|_| true,
+        Some(stores),
+    );
+    runway_over(pooling_steady, allocation, &terms)
 }
 
 /// **THE FOOD A KILL OF `kill_class` REPLACES, AS A RUNWAY** — the need clock's turns
@@ -763,11 +762,11 @@ pub(crate) fn kill_food_terms(
     )
 }
 
-/// **WHAT THE BAND EATS EACH TURN BEYOND ITS OTHER ROWS** - `max(0, demand - Σ realized)` over every
+/// **WHAT THE BAND EATS EACH TURN BEYOND ITS OTHER ROWS** - `max(0, demand - Σ eaten)` over every
 /// standing row but the one for `source` (`None` leaves none out: a source the band does not work
 /// yet). The same demand and steady income `food_terms_over` reads, so the figure a caravan forecast
 /// caps an aged pack at ([`crate::work_party::TransitRot::meals_per_turn`]) and the one the wire lets
-/// a seat compute (`food_need` less the other rows' `realized_yield`) are one number.
+/// a seat compute (`food_need` less the other rows' `realized_yield x eaten_fraction`) are one number.
 pub(crate) fn net_eat_without(
     cohort: &PopulationCohort,
     allocation: &LaborAllocation,
@@ -787,7 +786,7 @@ pub(crate) fn net_eat_without(
         .zip(&allocation.last_yields)
         .filter(|(row, _)| !row.is_need_row())
         .filter(|(row, _)| !source.is_some_and(|target| row.target.same_source(target)))
-        .map(|(_, yields)| yields.realized)
+        .map(|(_, yields)| yields.eaten_realized())
         .sum();
     (demand - others).max(0.0)
 }
@@ -828,7 +827,7 @@ fn food_terms_over(
         &demographics.consumption,
     );
     let steady_income: f32 = allocation
-        .map(|a| standing_yields(a).map(|y| y.realized).sum())
+        .map(|a| standing_yields(a).map(|y| y.eaten_realized()).sum())
         .unwrap_or(0.0);
     let larder = cohort.stores.food().retaining(counts);
     let usable_larder = if is_expedition {
@@ -1020,7 +1019,7 @@ pub(crate) fn pooling_steady_nets<'a>(
             )
             .to_f32();
             let income: f32 = allocation
-                .map(|a| standing_yields(a).map(|y| y.realized).sum())
+                .map(|a| standing_yields(a).map(|y| y.eaten_realized()).sum())
                 .unwrap_or(0.0);
             (
                 entity,
@@ -1067,8 +1066,8 @@ fn merged_arrival_schedule(allocation: Option<&LaborAllocation>) -> Vec<f32> {
         if yields.arrivals.len() > merged.len() {
             merged.resize(yields.arrivals.len(), 0.0);
         }
-        for (slot, arrival) in yields.arrivals.iter().enumerate() {
-            merged[slot] += arrival;
+        for (slot, total) in merged.iter_mut().enumerate().take(yields.arrivals.len()) {
+            *total += yields.eaten_arrival(slot);
         }
     }
     merged
@@ -1376,6 +1375,8 @@ pub(crate) fn tribe_progress(
 pub(crate) type BandNameLookup = std::collections::HashMap<BandId, String>;
 
 pub(crate) struct PopulationStateInputs<'a> {
+    /// **The band's spoilage forecast and the storage it could hold** (`band_spoilage`).
+    pub(crate) spoilage: crate::band_spoilage::BandSpoilage,
     pub(crate) entity: Entity,
     /// The band's durable id, published so a client can address it in a command without sending
     /// back an ECS handle that the next rollback renumbers.
@@ -1949,6 +1950,7 @@ pub(crate) fn apply_order_limits(
 
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
     let PopulationStateInputs {
+        spoilage,
         belief_reach,
         belief_anchor_weight,
         belief_relay_region,
@@ -3420,6 +3422,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .collect(),
         // **The idle hands next turn's muster takes** (#798) — the idle share of the need row's crew.
         idle_mustered: muster_plan.as_ref().map_or(0, |plan| plan.from_idle),
+        spoil_ahead: spoilage.spoil_ahead,
+        storage_saves: spoilage.storage_saves,
+        storage_build_min_saved: spoilage.storage_build_min_saved,
+        held_stores: spoilage.held_stores,
         hunt_meals: crate::hunt_by_need::meals_by_class(
             cohort,
             allocation,
@@ -4056,6 +4062,7 @@ mod tests {
         pooling_steady: f32,
     ) -> PopulationCohortState {
         population_state(PopulationStateInputs {
+            spoilage: Default::default(),
             belief_reach: Vec::new(),
             belief_anchor_weight: 0.0,
             belief_relay_region: Vec::new(),
@@ -4218,6 +4225,43 @@ mod tests {
         assert!(
             (runway - historical).abs() < EPSILON,
             "an expedition's runway must be unchanged: got {runway}, historical {historical}"
+        );
+    }
+
+    /// **THE RUNWAY READS WHAT THE BAND CAN EAT, NOT THE ROW'S DISPLAY FIGURE**: a row whose aged packs
+    /// the band cannot eat before they spoil (`eaten_fraction < 1`) shortens the runway exactly as a
+    /// row that lands that much less would (HEAD's capped figure), and the control row with nothing
+    /// spoiling reads the runway it always did.
+    #[test]
+    fn the_runway_reads_the_income_the_band_can_eat() {
+        let cohort = cohort(TEST_LARDER);
+        let demand = demand_of(&cohort);
+        let per_turn = demand * 0.8;
+        let eaten_share = 0.5;
+        let control = allocation_with(vec![per_turn; 20], per_turn);
+        let mut spoiling = allocation_with(vec![per_turn; 20], per_turn);
+        for row in &mut spoiling.last_yields {
+            row.eaten_fraction = eaten_share;
+        }
+        let capped = allocation_with(vec![per_turn * eaten_share; 20], per_turn * eaten_share);
+        let control_runway = captured_runway(&cohort, Some(&control), None);
+        let spoiling_runway = captured_runway(&cohort, Some(&spoiling), None);
+        let capped_runway = captured_runway(&cohort, Some(&capped), None);
+        assert!(
+            spoiling_runway < control_runway,
+            "liveness: the spoiled share shortens the runway ({spoiling_runway} vs {control_runway})"
+        );
+        assert!(
+            (spoiling_runway - capped_runway).abs() < EPSILON,
+            "the runway equals the capped computation: {spoiling_runway} vs {capped_runway}"
+        );
+        let published = captured(&cohort, Some(&spoiling), None).labor_assignments;
+        assert!(
+            published.iter().all(
+                |row| (row.eaten_shortfall - (1.0 - eaten_share)).abs() < EPSILON
+                    && (row.realized_yield - per_turn).abs() < EPSILON
+            ),
+            "the row publishes the walk-only figure and the shortfall beside it"
         );
     }
 
@@ -4640,6 +4684,7 @@ pub(crate) fn band_improvement_rows(
                 builders_cap: crew.cap,
                 build_toe: crew.toe,
                 is_queued: queued,
+                build_fraction: improvement.build_fraction(ladder),
             }
         })
         .collect()

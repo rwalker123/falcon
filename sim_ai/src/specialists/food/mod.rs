@@ -90,6 +90,8 @@ pub const INTENT_ASSIGN: &str = "assign";
 pub const INTENT_FEED_MOVE: &str = "feed_move";
 pub const INTENT_SPLIT: &str = "split";
 pub const INTENT_SETTLE: &str = "settle";
+/// The intent of ordering a storage build (a drying rack, a pit) that saves spoiling food.
+pub const INTENT_STORAGE: &str = "storage";
 pub const INTENT_HUNT: &str = "hunt";
 pub const INTENT_UPGRADE: &str = "upgrade";
 pub const INTENT_DRAWDOWN: &str = "drawdown";
@@ -583,6 +585,7 @@ impl Specialist for Food {
             }
             out.proposals
                 .extend(self.draw_down_to_survive(view, plan, memory, band, &in_force));
+            out.proposals.extend(self.build_storage(band));
         }
         out
     }
@@ -903,5 +906,56 @@ pub(crate) mod tests {
         plan.goals.clear();
         let proposals = food().propose(&view, &plan, &memory(), &GroundReadings::default());
         assert!(proposals.proposals.is_empty(), "{:?}", proposals.proposals);
+    }
+    /// **A band with no chief on its food order orders the storage that saves spoiling food** - the
+    /// same command the player sends - once the lesson is known, nothing is declared, the save
+    /// clears the sim's echoed threshold and the band holds the material; each condition alone
+    /// withholds it, and a chief-owned food order leaves it to the chief.
+    #[test]
+    fn a_band_without_a_chief_orders_storage_that_saves_enough_and_only_then() {
+        use sim_runtime::{BandOrderState, StorageSaveState};
+        const THRESHOLD: f32 = 0.2;
+        let ready = StorageSaveState {
+            rung: "camp_stores:drying_rack".to_string(),
+            keeping: "flesh".to_string(),
+            food_saved: THRESHOLD * 2.0,
+            lesson_known: true,
+            declared: false,
+            material_id: "wood".to_string(),
+            material_needed: 4.0,
+            material_on_hand: 4.0,
+            tile_kept: false,
+        };
+        let band = |save: StorageSaveState, chief: bool| {
+            let mut band = own_band(&a_view()).clone();
+            band.storage_build_min_saved = THRESHOLD;
+            band.storage_saves = vec![save];
+            if chief {
+                band.band_orders = vec![BandOrderState {
+                    kind: "food".to_string(),
+                    chief_owned: true,
+                    ..Default::default()
+                }];
+            }
+            band
+        };
+        let proposal = food()
+            .build_storage(&band(ready.clone(), false))
+            .expect("liveness: the ready save is ordered");
+        assert!(matches!(
+            &proposal.commands[0],
+            CommandPayload::AssignLabor { role, species, .. }
+                if role == "band" && species.as_deref() == Some("camp_stores")
+        ));
+        let withheld = |change: fn(&mut StorageSaveState)| {
+            let mut save = ready.clone();
+            change(&mut save);
+            food().build_storage(&band(save, false)).is_none()
+        };
+        assert!(withheld(|s| s.lesson_known = false));
+        assert!(withheld(|s| s.declared = true));
+        assert!(withheld(|s| s.food_saved = THRESHOLD / 2.0));
+        assert!(withheld(|s| s.material_on_hand = 0.0));
+        assert!(food().build_storage(&band(ready, true)).is_none());
     }
 }

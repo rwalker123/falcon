@@ -209,6 +209,23 @@ impl BandImprovement {
         )
     }
 
+    /// **THE METER ON THE RUNG THIS IMPROVEMENT IS ACTUALLY RAISING**, `0..=1` - the tile kind's twin
+    /// ([`crate::tile_improvement::TileImprovement::build_fraction`]), through the same
+    /// `rung_work_done` / `build_fraction` seam.
+    pub fn build_fraction(&self, ladder: &LadderConfig) -> f32 {
+        let at_risk = self.at_risk_rung();
+        let span = band_rung_span(at_risk, ladder);
+        crate::intensification::build_fraction(
+            crate::intensification::rung_work_done(
+                self.standing,
+                ladder.rung(at_risk),
+                self.position,
+                span,
+            ),
+            span.1,
+        )
+    }
+
     /// **The rung whose bill is at risk**, the one being raised once work is banked on it, else the
     /// one held.
     pub fn at_risk_rung(&self) -> RungId {

@@ -528,6 +528,10 @@ pub struct BandOrdersConfig {
     /// fodder rows at while the order is AT or ABOVE its target: the *Learning* preset, above the Best
     /// floor, so spare food buys knowledge. Below the target he works them at Best. In `(0.5, 1.0]`.
     pub learning_floor: f32,
+    /// **The least food a turn a storage build must save before it is declared** — the one threshold
+    /// the chief (`food_orders`) and a rival's food specialist (it reads the echo on the cohort,
+    /// `PopulationCohortState.storageBuildMinSaved`) both act on. Finite and `>= 0`.
+    pub storage_build_min_saved: f32,
 }
 
 impl BandOrdersConfig {
@@ -696,6 +700,15 @@ impl LaborConfig {
                 field: "band_orders.learning_floor",
                 constraint: "lie above the Best floor and at most 1.0".to_string(),
                 value: self.band_orders.learning_floor.to_string(),
+            });
+        }
+        if !self.band_orders.storage_build_min_saved.is_finite()
+            || self.band_orders.storage_build_min_saved < 0.0
+        {
+            return Err(LaborConfigError::Invalid {
+                field: "band_orders.storage_build_min_saved",
+                constraint: "be finite and at least 0".to_string(),
+                value: self.band_orders.storage_build_min_saved.to_string(),
             });
         }
         // A party walks at the band's own pace, so a zero would make a far posting's walk never

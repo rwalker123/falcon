@@ -619,6 +619,8 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
             // `transit_keeps_turns` the shelf life that loses it — both `0` when nothing rots.
             let _ = dict.insert("rate_home", f64::from(reply.rate_home));
             let _ = dict.insert("spoiled_rate_home", f64::from(reply.spoiled_rate_home));
+            // The share of `rate_home` the home band can eat before it spoils (1 = all of it).
+            let _ = dict.insert("eaten_fraction", f64::from(reply.eaten_fraction));
             let _ = dict.insert("transit_keeps_turns", f64::from(reply.transit_keeps_turns));
             // What else the packs carry home per turn (#706) — a far forage row's fodder and its
             // materials, at the rates the committed row will publish as `fodderRateHome` /
@@ -776,6 +778,11 @@ fn crew_row_to_dict(row: &sim_runtime::HuntCrewTakeRow) -> VarDictionary {
     // What this crew LANDS at home, animals a turn (the caravan forecast; equals `animals_likely`
     // inside the apron), and the turn its first pack lands (`0` inside the apron).
     let _ = dict.insert("home_animals_likely", f64::from(row.home_animals_likely));
+    // The same figure as the home band can eat it before it spoils (what a seat that values the herd reads).
+    let _ = dict.insert(
+        "home_eaten_animals_likely",
+        f64::from(row.home_eaten_animals_likely),
+    );
     let _ = dict.insert("home_first_load_turn", i64::from(row.home_first_load_turn));
     dict
 }

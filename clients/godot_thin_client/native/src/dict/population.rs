@@ -365,6 +365,55 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         }
     }
     let _ = dict.insert("hunt_meals", &hunt_meals);
+    // The band's spoilage per keeping class and the storage rungs it could hold (own bands only).
+    let mut spoil_ahead = VarArray::new();
+    if let Some(rows) = cohort.spoilAhead() {
+        for spoil in rows.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("keeping", spoil.keeping().unwrap_or_default());
+            let _ = row.insert("food", f64::from(spoil.food()));
+            spoil_ahead.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("spoil_ahead", &spoil_ahead);
+    let mut storage_saves = VarArray::new();
+    if let Some(rows) = cohort.storageSaves() {
+        for save in rows.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("rung", save.rung().unwrap_or_default());
+            let _ = row.insert("keeping", save.keeping().unwrap_or_default());
+            let _ = row.insert("food_saved", f64::from(save.foodSaved()));
+            let _ = row.insert("lesson_known", save.lessonKnown());
+            let _ = row.insert("declared", save.declared());
+            let _ = row.insert("material_id", save.materialId().unwrap_or_default());
+            let _ = row.insert("material_needed", f64::from(save.materialNeeded()));
+            let _ = row.insert("material_on_hand", f64::from(save.materialOnHand()));
+            let _ = row.insert("tile_kept", save.tileKept());
+            storage_saves.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("storage_saves", &storage_saves);
+    let mut held_stores = VarArray::new();
+    if let Some(rows) = cohort.heldStores() {
+        for held in rows.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("rung", held.rung().unwrap_or_default());
+            let _ = row.insert("keeping", held.keeping().unwrap_or_default());
+            let _ = row.insert("shelf_life_turns", f64::from(held.shelfLifeTurns()));
+            held_stores.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("held_stores", &held_stores);
+    if let Some(rows) = cohort.bandImprovements() {
+        let _ = dict.insert(
+            "band_improvements",
+            &crate::dict::subsistence::band_improvements_to_array(rows),
+        );
+    }
+    let _ = dict.insert(
+        "storage_build_min_saved",
+        f64::from(cohort.storageBuildMinSaved()),
+    );
     let _ = dict.insert("generation", cohort.generation() as i64);
     let _ = dict.insert("faction", cohort.faction() as i64);
     let _ = dict.insert("turns_of_food", cohort.turnsOfFood() as f64);
@@ -1318,6 +1367,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // empty for a player-crewed row; `chief_owned` is the same fact as a bool.
             let _ = entry.insert("order_kind", assignment.orderKind().unwrap_or(""));
             let _ = entry.insert("chief_owned", assignment.chiefOwned());
+            // The share of `realized_yield` the band cannot eat before it spoils (0 = all of it).
+            let _ = entry.insert("eaten_shortfall", f64::from(assignment.eatenShortfall()));
             array.push(&entry.to_variant());
         }
     }

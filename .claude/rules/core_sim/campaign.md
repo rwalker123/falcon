@@ -463,7 +463,8 @@ party coming home, a band merging) can eat it. Engine: `core_sim/src/spoilage.rs
   larder before a store, the nearer store, the class that rots fastest (`KeepingConfig::eat_order`:
   flesh, then greens, then grain), the older lot, the longer-stored lot. Fresh food is therefore
   still eaten flesh, greens, grain; it is an old lot that jumps the queue. A detached party's
-  upkeep (`systems::expeditions`) still eats by class order.
+  upkeep (`systems::expeditions`) eats the same way (`spoilage::eat_least_time_left`, no preservation
+  held, no storage lesson taught): grain a turn from spoiling goes before fresh meat.
 - **The larder rot runs once a turn, right after the meal and before the turn's take lands**
   (`spoilage::rot_band_larders`, next in the Population chain after `simulate_population`): every
   lot ages one turn (`FoodMix::age_and_expire`) and a lot whose age has reached its class's shelf
@@ -486,6 +487,47 @@ party coming home, a band merging) can eat it. Engine: `core_sim/src/spoilage.rs
 - **A detached party's pack carries its composition but does not rot in this slice.** The larder
   rot is `With<ResidentBand>`; the pack keeps its lots and ages and lands home in the band's larder,
   where they rot by this rule.
+
+#### The band's spoilage, and the storage it would save
+
+Surplus spoilage belongs to the band and its storage, never to a hunt row. Engine:
+`core_sim/src/band_spoilage.rs`, `spoilage::spoilage_ahead`.
+
+- **`spoilage_ahead`** walks the larder and the reachable stores forward
+  `labor_config.yield_average_horizon_turns` turns in the turn's own order (the meal eats whatever is
+  closest to rotting, `plan_meal`; the rot pass; then the steady income lands at age 0), at the band's
+  held preservation (stores at the store lives), and returns the food each class rots a turn averaged
+  over the window. A FORWARD projection, never a trailing average. The income is each food row's
+  `realized` split by keeping class (`band_spoilage::income_by_class`: a hunt row by its herd's class,
+  `FaunaConfig::keeping_for` else `kill_fallback_class`; a forage row by `forage::patch_food_mix`
+  shares; a need row at its `sustainable`, as `band_food_flow` reads it).
+- **Wire** (own resident bands, appended last on `PopulationCohortState`, not on the redaction
+  allow-list): `spoilAhead:[KeepingSpoil{keeping, food}]` (non-zero classes, the keeping table's
+  order), `storageSaves:[StorageSave{rung, keeping, foodSaved, lessonKnown, declared, materialId,
+  materialNeeded, materialOnHand, tileKept}]` - one row per `keeping.preservation` entry whose rung
+  the band does not hold - `storageBuildMinSaved` (the lever below, echoed) - and `heldStores:[HeldStore{rung,
+  keeping, shelfLifeTurns}]`, one row per `keeping.preservation` rung the band HOLDS (the rack at its camp; a
+  store on the tile the band stands on), so the rack reads "meat keeps 20 turns". `BandImprovementState`
+  also carries `buildFraction` (the tile improvement's twin, `BandImprovement::build_fraction`). Native keys
+  `spoil_ahead`, `storage_saves`, `storage_build_min_saved`, `held_stores`, `band_improvements`.
+- **`foodSaved`** = the total spoil rate now less the same projection with that entry's class held
+  at its `shelf_life_turns`. **Approximation for a tile store (the pit):** its class is treated as
+  held in the larder rather than modelling the deposit into the pit. `lessonKnown` is the faction
+  knowing the rung's `unlock_knowledge`; `declared` a build of the rung already declared for the
+  band (the band row's `BuildSource::Band`, or a tile build on the band's own tile). No rung or class
+  id is named in the engine.
+- **The chief builds it** (`storage_orders::advance_chief_storage`, Population chain after
+  `deposit_into_stores`): a band with a leader whose `food` order is the chief's, for each
+  `storageSaves` row with the lesson known, nothing declared and `foodSaved >=
+  labor_config.band_orders.storage_build_min_saved` (**0.2** food/turn, a Workbench row), places the
+  improvement, lists the row under the `food` order (`keep_on_hand::{band,tile}_improvement_key`:
+  `b:<branch>`, `t:<branch>:<x>,<y>`, so the wire shows it chief-owned and `release`/`claim` of one
+  row work; `food_orders::row_is_improvement` keeps it from being retired), declares the branch's
+  first build (`LaborAllocation::declare_build`) and writes one Extraction feed line, "<Leader> orders
+  a drying rack built - 0.5 food a turn is spoiling." (a council: "<Band>'s elders order ..."). The
+  command path's `declare_the_branchs_first_build` now covers a band-improvement row as it did a tile
+  row. A rival's food specialist reads the same rows and the same echoed threshold
+  (`ai-driver.md`).
 
 #### A storage pit is its band's second larder (#709)
 

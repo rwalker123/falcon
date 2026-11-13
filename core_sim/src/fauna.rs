@@ -7726,6 +7726,7 @@ pub(crate) fn forecast_source_yield(
         // (`project_realized_hunt` / `project_realized_forage`), computed by the caller from the same
         // source state — a pure function of state, so the seed and the resolved row agree exactly.
         realized,
+        eaten_fraction: 1.0,
         wasted: (production.provisions - actual.provisions).max(0.0),
         // **`workers_needed` IS THE TAKE ACTIVITY'S OWN COUNT — hands to haul the offer**
         // (`docs/plan_standing_upkeep.md` §2.2). It used to be `source_crew_needed(standing, take)`,

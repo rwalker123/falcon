@@ -1500,6 +1500,7 @@ mod tests {
             comm_range_tiles: 0,
         };
         population_state(PopulationStateInputs {
+            spoilage: Default::default(),
             belief_reach: Vec::new(),
             belief_anchor_weight: 0.0,
             belief_relay_region: Vec::new(),
@@ -1609,6 +1610,7 @@ mod tests {
                     overdraws: false,
                     // Continuous forage: realized == actual.
                     realized: 2.5,
+                    eaten_fraction: 1.0,
                     // A continuous source lands the same amount every turn.
                     arrivals: vec![2.5; 3],
                     // A resolved fixture row: the take happened, so its band is a point.
@@ -1629,6 +1631,7 @@ mod tests {
                     overdraws: true,
                     // Lumpy hunt: the steady average is below this kill turn's spike.
                     realized: 0.25,
+                    eaten_fraction: 1.0,
                     // A lumpy hunt: nothing for two turns, then a whole animal.
                     arrivals: vec![0.0, 0.0, 0.75],
                     range: YieldRange::certain(0.5),

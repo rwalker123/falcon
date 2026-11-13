@@ -4557,6 +4557,12 @@ pub struct SourceYield {
     /// `labor_config.yield_average_horizon_turns` turns, a pure function of the source's current state.
     /// See the struct-level doc above.
     pub realized: f32,
+    /// **The share of [`Self::realized`] (and of `arrivals`) the home band can EAT before it spoils** -
+    /// `1` unless a far hunt's aged packs outrun the band's meals ([`crate::work_party::CaravanForecast::eaten_fraction`]).
+    /// `realized` is the row's DISPLAY figure and carries the walk's rot alone; everything that VALUES
+    /// the source (the runway, the need clock, the shed order, a seat's herd pricing) reads
+    /// [`Self::eaten_realized`] and [`Self::eaten_arrival`].
+    pub eaten_fraction: f32,
     /// **The discrete arrival schedule** — `arrivals[i]` = the food landing `i + 1` turns from now,
     /// `labor_config.arrivals_horizon_turns` entries long, `0.0` on a turn nothing lands. See the
     /// struct-level doc above.
@@ -4702,6 +4708,17 @@ impl YieldRange {
 }
 
 impl SourceYield {
+    /// The steady yield the band can actually EAT - [`Self::realized`] less the aged packs it cannot
+    /// eat before they spoil. What every reader that values the source reads.
+    pub fn eaten_realized(&self) -> f32 {
+        self.realized * self.eaten_fraction
+    }
+
+    /// What lands `slot + 1` turns from now, as the band can eat it ([`Self::eaten_realized`]'s twin).
+    pub fn eaten_arrival(&self, slot: usize) -> f32 {
+        self.arrivals.get(slot).copied().unwrap_or(0.0) * self.eaten_fraction
+    }
+
     /// A source that has produced nothing: the row every assignment starts each turn's resolution
     /// with (so an arm that bails — out of range, module lost, herd gone — leaves a correct 0-yield
     /// row), and the row a freshly-staffed assignment carries until it is seeded from its pre-commit
@@ -4715,6 +4732,8 @@ impl SourceYield {
         overdraws: false,
         // Nothing was taken, so the steady average is zero too.
         realized: 0.0,
+        // Nothing is capped by what the band eats where nothing lands.
+        eaten_fraction: 1.0,
         // …nor in the feed currency: nothing was harvested, so nothing was foddered.
         fodder: 0.0,
         // Nothing was harvested, so nothing was made of anything. An **empty** list, not a row of
@@ -8709,7 +8728,7 @@ impl LaborAllocation {
         }
         self.last_yields
             .get(index)
-            .map_or(NOTHING_PER_WORKER, |yields| yields.realized)
+            .map_or(NOTHING_PER_WORKER, SourceYield::eaten_realized)
             / assignment.workers as f32
     }
 
@@ -8739,7 +8758,7 @@ impl LaborAllocation {
         let Some(yields) = self.last_yields.get(index) else {
             return false;
         };
-        yields.realized > PAYS_NOTHING
+        yields.eaten_realized() > PAYS_NOTHING
             || yields.fodder > PAYS_NOTHING
             || yields
                 .materials

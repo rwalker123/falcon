@@ -15,12 +15,13 @@ use crate::state::population::{
     BandOrderState, BenchKitOrderState, BenchOrderState, BenchState, BreedingMemberState,
     BreedingPeopleState, CharacteristicReadingState, CohortStoreState, CraftOfferState,
     CraftSuggestionSourceState, CraftSuggestionState, CulturePressureState, DrawnInputState,
-    EquipmentBatchState, GenerationState, HarvestTaskState, KeepingMealState,
-    KitItemConditionState, KitNeedItemState, KitNeedRecipeState, KitNeedState, KitToeLineState,
-    LaborAssignmentState, MaterialAmountState, MaterialBatchState, MaterialShortfallState,
-    PoolCrewLineState, PoolToeLineState, PoolingLinkState, PopulationCohortState,
-    PopulationDemographicsState, ScoutTaskState, SettlementStageViewState, SourcePriorityState,
-    TransferCrossingState, TribeClosenessState, TribePairState, WorkKitWantState,
+    EquipmentBatchState, GenerationState, HarvestTaskState, HeldStoreState, KeepingMealState,
+    KeepingSpoilState, KitItemConditionState, KitNeedItemState, KitNeedRecipeState, KitNeedState,
+    KitToeLineState, LaborAssignmentState, MaterialAmountState, MaterialBatchState,
+    MaterialShortfallState, PoolCrewLineState, PoolToeLineState, PoolingLinkState,
+    PopulationCohortState, PopulationDemographicsState, ScoutTaskState, SettlementStageViewState,
+    SourcePriorityState, StorageSaveState, TransferCrossingState, TribeClosenessState,
+    TribePairState, WorkKitWantState,
 };
 use crate::state::subsistence::BuildLegState;
 use crate::world::{WorldDelta, WorldSnapshot};
@@ -514,6 +515,7 @@ fn create_populations<'a>(
                                 bareIdle: assignment.bare_idle,
                                 orderKind: Some(order_kind),
                                 chiefOwned: assignment.chief_owned,
+                                eatenShortfall: assignment.eaten_shortfall,
                             },
                         )
                     })
@@ -940,6 +942,9 @@ fn create_populations<'a>(
             let breeding_members = create_breeding_members(builder, &cohort.breeding_members);
             let breeding_peoples = create_breeding_peoples(builder, &cohort.breeding_peoples);
             let hunt_meals = create_hunt_meals(builder, &cohort.hunt_meals);
+            let spoil_ahead = create_spoil_ahead(builder, &cohort.spoil_ahead);
+            let held_stores = create_held_stores(builder, &cohort.held_stores);
+            let storage_saves = create_storage_saves(builder, &cohort.storage_saves);
             let kit_needs = create_kit_needs(builder, &cohort.kit_needs);
             let materials_free = create_material_amounts(builder, &cohort.materials_free);
             let culture_pressures = create_culture_pressures(builder, &cohort.culture_pressures);
@@ -1281,6 +1286,10 @@ fn create_populations<'a>(
                     poolingSteadyNet: cohort.pooling_steady_net,
                     bandOrders: Some(band_orders),
                     moraleLeadership: cohort.morale_leadership,
+                    spoilAhead: Some(spoil_ahead),
+                    storageSaves: Some(storage_saves),
+                    storageBuildMinSaved: cohort.storage_build_min_saved,
+                    heldStores: Some(held_stores),
                 },
             )
         })
@@ -1693,6 +1702,7 @@ fn decode_labor_assignment(
         bare_idle: assignment.bareIdle(),
         order_kind: text(assignment.orderKind()),
         chief_owned: assignment.chiefOwned(),
+        eaten_shortfall: assignment.eatenShortfall(),
     })
 }
 
@@ -2202,6 +2212,7 @@ fn decode_population(
             builders_cap: row.buildersCap(),
             build_toe: decode_build_toe(row.buildToe()),
             is_queued: row.isQueued(),
+            build_fraction: row.buildFraction(),
         }),
         tribe_threshold: cohort.tribeThreshold(),
         tribe_weights: cohort
@@ -2236,6 +2247,27 @@ fn decode_population(
         cohesion_ceiling: cohort.cohesionCeiling(),
         morale_fresh_water: cohort.moraleFreshWater(),
         morale_leadership: cohort.moraleLeadership(),
+        spoil_ahead: map_rows(cohort.spoilAhead(), |row| KeepingSpoilState {
+            keeping: text(row.keeping()),
+            food: row.food(),
+        }),
+        storage_build_min_saved: cohort.storageBuildMinSaved(),
+        held_stores: map_rows(cohort.heldStores(), |row| HeldStoreState {
+            rung: text(row.rung()),
+            keeping: text(row.keeping()),
+            shelf_life_turns: row.shelfLifeTurns(),
+        }),
+        storage_saves: map_rows(cohort.storageSaves(), |row| StorageSaveState {
+            rung: text(row.rung()),
+            keeping: text(row.keeping()),
+            food_saved: row.foodSaved(),
+            lesson_known: row.lessonKnown(),
+            declared: row.declared(),
+            material_id: text(row.materialId()),
+            material_needed: row.materialNeeded(),
+            material_on_hand: row.materialOnHand(),
+            tile_kept: row.tileKept(),
+        }),
         food_into_store: cohort.foodIntoStore(),
         food_from_store: cohort.foodFromStore(),
         food_in_stores_in_reach: cohort.foodInStoresInReach(),
@@ -2468,6 +2500,7 @@ fn create_band_improvements<'a>(
                     buildersCap: row.builders_cap,
                     buildToe: build_toe,
                     isQueued: row.is_queued,
+                    buildFraction: row.build_fraction,
                 },
             )
         })
@@ -2536,6 +2569,80 @@ fn create_band_orders<'a>(
                     limitItem: Some(limit_item),
                     landGives: row.land_gives,
                     limitCount: row.limit_count,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+/// `PopulationCohortState.spoilAhead`.
+fn create_spoil_ahead<'a>(
+    builder: &mut FbBuilder<'a>,
+    rows: &[KeepingSpoilState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::KeepingSpoil<'a>>>> {
+    let offsets: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            let keeping = builder.create_string(&row.keeping);
+            fb::KeepingSpoil::create(
+                builder,
+                &fb::KeepingSpoilArgs {
+                    keeping: Some(keeping),
+                    food: row.food,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+/// `PopulationCohortState.heldStores`.
+fn create_held_stores<'a>(
+    builder: &mut FbBuilder<'a>,
+    rows: &[HeldStoreState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::HeldStore<'a>>>> {
+    let offsets: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            let rung = builder.create_string(&row.rung);
+            let keeping = builder.create_string(&row.keeping);
+            fb::HeldStore::create(
+                builder,
+                &fb::HeldStoreArgs {
+                    rung: Some(rung),
+                    keeping: Some(keeping),
+                    shelfLifeTurns: row.shelf_life_turns,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+/// `PopulationCohortState.storageSaves`.
+fn create_storage_saves<'a>(
+    builder: &mut FbBuilder<'a>,
+    rows: &[StorageSaveState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::StorageSave<'a>>>> {
+    let offsets: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            let rung = builder.create_string(&row.rung);
+            let keeping = builder.create_string(&row.keeping);
+            let material_id = builder.create_string(&row.material_id);
+            fb::StorageSave::create(
+                builder,
+                &fb::StorageSaveArgs {
+                    rung: Some(rung),
+                    keeping: Some(keeping),
+                    foodSaved: row.food_saved,
+                    lessonKnown: row.lesson_known,
+                    declared: row.declared,
+                    materialId: Some(material_id),
+                    materialNeeded: row.material_needed,
+                    materialOnHand: row.material_on_hand,
+                    tileKept: row.tile_kept,
                 },
             )
         })

@@ -4048,6 +4048,67 @@ fn the_crew_curve_equals_the_take_for_snared_small_game_near_and_far() {
     }
 }
 
+/// **THE HUNT ROW CARRIES THE WALK'S ROT AND NOTHING ELSE** (`TransitRot::kept_of_pack`). A pack
+/// that survives its walk lands whole on the forecast however little the band eats: the crew
+/// curve's home rate is the same for a band that eats the pack in time and for one that cannot, and
+/// it is what the larder receives. A walk the class outlasts is lost whole. The band's own spoilage
+/// of a surplus is the band's (`spoilage_ahead`), not the row's.
+#[test]
+fn the_forecast_is_the_walks_rot_alone_whatever_the_band_eats() {
+    /// Hands in the band's pool beyond the crew: a band this big eats every pack in its few turns.
+    const BIG_BAND: f32 = 600.0;
+    /// The crew curve is the same row to this tolerance across band sizes.
+    const SAME_RATE: f32 = 1e-4;
+    for distance in [3_u32, 4, 5, 6] {
+        let mut homes = Vec::new();
+        for pool in [CREW as f32, BIG_BAND] {
+            let (mut app, band) = world_hunting_at(distance);
+            app.world
+                .get_mut::<PopulationCohort>(band)
+                .expect("the band")
+                .working = scalar_from_f32(pool);
+            resolve_a_turn(&mut app);
+            let reply = core_sim::forecast_query::answer_forecast_query(
+                &mut app.world,
+                &QueryPayload::HuntCrewTake(HuntCrewTakeQuery {
+                    faction_id: FACTION.0,
+                    band_id: BAND,
+                    herd_id: HERD_ID.to_string(),
+                    kit_id: default_hunt_kit(),
+                    floor: FLOOR,
+                    max_workers: CREW,
+                    follow: false,
+                    assume_kit_held: false,
+                }),
+            );
+            let QueryReply::HuntCrewTake(HuntCrewTakeReply { per_crew, .. }) = reply else {
+                panic!("the crew-take query must answer with a curve");
+            };
+            homes.push(
+                per_crew
+                    .iter()
+                    .find(|row| row.workers == CREW)
+                    .expect("the curve has the staffed crew's row")
+                    .home_animals_likely,
+            );
+        }
+        assert!(
+            (homes[0] - homes[1]).abs() <= SAME_RATE,
+            "distance {distance}: the home rate must not depend on what the band eats ({homes:?})"
+        );
+        // Six hexes is a walk the flesh class outlasts, so nothing lands.
+        let lost_whole = distance >= 6;
+        assert_eq!(
+            homes[0] > 0.0,
+            !lost_whole,
+            "distance {distance}: liveness and whole loss ({homes:?})"
+        );
+    }
+}
+
+/// **WHAT A SEAT VALUES A HERD AT IS WHAT THE BAND CAN EAT OF THE PACKS AFTER THEIR WALK** - the row's
+/// `home_animals_likely` is the walk's rot alone (the display figure); `home_eaten_animals_likely` is the
+/// capped reading HEAD published as the one figure, read here against the larder driven live.
 /// **THE FORECAST COUNTS THE MEALS A PACK CAN STILL BE EATEN FOR AFTER ITS WALK**
 /// (`TransitRot::kept_of_pack`). A pack lands aged by its walk, so a walk of `w` turns leaves a
 /// flesh pack `4 - w` meals; what the band cannot eat at its own rate in them rots with it, and the
@@ -4100,7 +4161,7 @@ fn the_forecast_keeps_only_the_meals_left_after_the_walk() {
                 .iter()
                 .find(|row| row.workers == CREW)
                 .expect("the curve has the staffed crew's row")
-                .home_animals_likely
+                .home_eaten_animals_likely
                 * food_per_animal;
             let ration = {
                 let cohort = app.world.get::<PopulationCohort>(band).expect("the band");
@@ -4155,4 +4216,69 @@ fn the_forecast_keeps_only_the_meals_left_after_the_walk() {
             "distance {distance}: a band that cannot eat the packs in time keeps no more than one that can"
         );
     }
+}
+
+/// **THE ROW DISPLAYS THE WALK'S ROT; THE BAND VALUES WHAT IT CAN EAT** (encoded frame). Far hunt rows
+/// of a band too small to eat its packs in time publish the same `realizedYield` as the control band
+/// that eats them all, and a positive `eatenShortfall` where the control publishes none.
+#[test]
+fn a_hunt_row_publishes_the_walks_rot_and_a_separate_eaten_shortfall() {
+    const BIG_BAND: f32 = 600.0;
+    const SAME_RATE: f32 = 1e-4;
+    let mut short_somewhere = false;
+    for distance in [3_u32, 4, 5] {
+        let mut rows = Vec::new();
+        for pool in [CREW as f32, BIG_BAND] {
+            let (mut app, band) = world_hunting_at(distance);
+            app.world
+                .get_mut::<PopulationCohort>(band)
+                .expect("the band")
+                .working = scalar_from_f32(pool);
+            resolve_a_turn(&mut app);
+            rows.push(published_hunt_eaten(&app));
+        }
+        let (small, control) = (rows[0], rows[1]);
+        assert!(
+            (small.0 - control.0).abs() <= SAME_RATE && small.0 > 0.0,
+            "distance {distance}: the row's own figure is the walk's rot alone ({rows:?})"
+        );
+        assert!(
+            control.1.abs() <= SAME_RATE,
+            "distance {distance}: the control band eats everything it is landed ({rows:?})"
+        );
+        short_somewhere |= small.1 > SAME_RATE;
+    }
+    assert!(
+        short_somewhere,
+        "liveness: a band too small to eat its packs publishes a shortfall somewhere"
+    );
+}
+
+/// The hunt row's published `(realizedYield, eatenShortfall)`.
+fn published_hunt_eaten(app: &App) -> (f32, f32) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == BAND)
+        .expect("the fixture band is on the wire");
+    let row = cohort
+        .laborAssignments()
+        .into_iter()
+        .flatten()
+        .find(|row| row.kind().unwrap_or_default() == "hunt")
+        .expect("the hunt row is on the wire");
+    (row.realizedYield(), row.eatenShortfall())
 }

@@ -194,6 +194,8 @@ fn row_is_improvement(
             .herds
             .find(fauna_id)
             .is_some_and(|herd| herd.is_corralled() || herd.ladder_position() > NOTHING),
+        // A storage build the chief ordered (a drying rack, a pit) is an improvement: it is kept.
+        LaborTarget::Band { .. } | LaborTarget::Tile { .. } => true,
         _ => false,
     }
 }

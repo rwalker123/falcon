@@ -747,7 +747,7 @@ func _ready() -> void:
     # `BandPanelController`'s vitals label + parties inspector strip.
     # It takes NO faction-scope cluster: the dormant `Fodder:` row's hover is a fixed sentence
     # (`DetailFormat.fodder_dormant_row`).
-    _banddetail = BandDetailLines.new(_band_labor, _disclosures, _herd_label_for_id)
+    _banddetail = BandDetailLines.new(_band_labor, _disclosures, _herd_label_for_id, _topbar.ladder_rungs)
     # The Band/City panel. Constructed AFTER `_disclosures` (the vitals row wires its carets through
     # it) and `_banddetail` (it renders its rows), and handed the SAME state models, the selection card
     # it routes map focus through, the HUD CanvasLayer as the host it parents its confirm dialog into,
@@ -1669,7 +1669,7 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
     # the CROP COMMIT, which is not part of that row's identity and must not enter its key.
     # …and on a `tile` row it is the BRANCH, which is half that row's key (`pending_key`).
     var material := species if kind == HudConst.LABOR_KIND_EXTRACT \
-        or kind == HudConst.LABOR_KIND_TILE else ""
+        or kind == HudConst.LABOR_KIND_TILE or kind == HudConst.LABOR_KIND_BAND else ""
     # ⛔ **A SHEET THAT OFFERED NO DIAL NAMES NO FLOOR, AND THE COMMAND THEN CARRIES NO TOKEN**
     # (issue #650). `SourceForecast.FLOOR_UNNAMED` arrives from the deposit sheet's finite arm and from
     # nowhere else; what an omitted token MEANS is the sim's to answer, and on ground that never renews

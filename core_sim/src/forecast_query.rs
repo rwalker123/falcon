@@ -820,6 +820,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
                 next_rung_keep_hands,
                 // Filled below, once the world's borrows are released.
                 home_animals_likely: row.likely,
+                home_eaten_animals_likely: row.likely,
                 home_first_load_turn: NO_LOAD_WITHIN_THE_HORIZON,
             }
         })
@@ -852,6 +853,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
             ) {
                 if landed.posts_a_party && food_per_animal > 0.0 {
                     row.home_animals_likely = landed.rate_home / food_per_animal;
+                    row.home_eaten_animals_likely = row.home_animals_likely * landed.eaten_fraction;
                     row.home_first_load_turn = landed.first_load_turn;
                 }
             }
@@ -1855,6 +1857,7 @@ fn work_party_forecast(
         materials_rate_home,
         rate_home: forecast.rate_home,
         spoiled_rate_home: forecast.spoiled_rate_home,
+        eaten_fraction: forecast.eaten_fraction,
         transit_keeps_turns: forecast.transit_keeps_turns,
         walk_tiles,
         walk_turns,

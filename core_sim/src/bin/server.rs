@@ -9458,7 +9458,7 @@ fn handle_build_rung(app: &mut bevy::prelude::App, faction: FactionId, request: 
     );
 }
 
-/// **PUTTING A BAND ON A TILE BRANCH ROW IS THE ORDER FOR ITS FIRST BUILD.**
+/// **PUTTING A BAND ON A TILE OR BAND-IMPROVEMENT ROW IS THE ORDER FOR ITS FIRST BUILD.**
 ///
 /// When a `tile` crew row is created or raised and the tile still stands at the branch's root rung
 /// with no build declared on it, the branch's next rung up from the root is declared - exactly what
@@ -9472,11 +9472,12 @@ fn declare_the_branchs_first_build(
     faction: FactionId,
     target: &LaborTarget,
 ) {
-    let LaborTarget::Tile { tile, branch } = target else {
+    let (LaborTarget::Tile { branch, .. } | LaborTarget::Band { branch, .. }) = target else {
         return;
     };
+    let branch = *branch;
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let Some(root) = ladder.root_of(*branch) else {
+    let Some(root) = ladder.root_of(branch) else {
         return;
     };
     let Some(first) = ladder.above_rung(root) else {
@@ -9485,11 +9486,15 @@ fn declare_the_branchs_first_build(
     let Some(verb) = first.verb_id() else {
         return;
     };
-    let stands_at_the_root = app
-        .world
-        .resource::<core_sim::TileImprovementRegistry>()
-        .get(*tile, *branch)
-        .is_none_or(|improvement| improvement.held_rung() == root.rung_id());
+    let registry = app.world.resource::<core_sim::TileImprovementRegistry>();
+    let held = match target {
+        LaborTarget::Tile { tile, .. } => registry.get(*tile, branch).map(|i| i.held_rung()),
+        LaborTarget::Band { band, .. } => {
+            registry.bands().get(*band, branch).map(|i| i.held_rung())
+        }
+        _ => None,
+    };
+    let stands_at_the_root = held.is_none_or(|rung| rung == root.rung_id());
     if !stands_at_the_root {
         return;
     }
@@ -17734,6 +17739,90 @@ mod tests {
             capped <= TIGHT_MAX,
             "a Max of {TIGHT_MAX} caps the crew: {capped}"
         );
+    }
+
+    /// **THE CLIENT'S BUILD BUTTON DECLARES THE BUILD** - the crafting screen sends
+    /// `assign_labor <f> <b> band camp_stores 0` for the rack and `assign_labor <f> <b> tile
+    /// food_stores <x> <y> 0` at the band's tile for a store. Each line goes through the real parser
+    /// and the encoded envelope, and with the lesson known a zero count (no Max on a staffed kind)
+    /// declares the branch's first build, exactly as the chief's pass does.
+    #[test]
+    fn the_crafting_screens_build_lines_declare_the_rack_and_the_pit() {
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = starting_band_id(&mut app, faction);
+        app.world
+            .resource_mut::<core_sim::DiscoveryProgressLedger>()
+            .add_progress(
+                faction,
+                core_sim::spoilage::STORAGE_DISCOVERY_ID,
+                core_sim::scalar_one(),
+            );
+        let tile = app
+            .world
+            .query::<(&PopulationCohort, &BandId)>()
+            .iter(&app.world)
+            .find(|(_, id)| id.0 == band)
+            .map(|(cohort, _)| cohort.current_tile)
+            .and_then(|entity| app.world.get::<core_sim::Tile>(entity).map(|t| t.position))
+            .expect("the band stands on a tile");
+        let declared = |app: &mut bevy::prelude::App, source: BuildSource| {
+            app.world
+                .query::<(&PopulationCohort, &LaborAllocation)>()
+                .iter(&app.world)
+                .any(|(cohort, allocation)| {
+                    cohort.faction == faction && allocation.has_build(&source)
+                })
+        };
+        let rack = BuildSource::Band {
+            band: BandId(band),
+            branch: core_sim::BranchId::new("camp_stores"),
+        };
+        let pit = BuildSource::Tile {
+            tile,
+            branch: core_sim::BranchId::new("food_stores"),
+        };
+        assert!(!declared(&mut app, rack.clone()) && !declared(&mut app, pit.clone()));
+        send_command_line(
+            &mut app,
+            &format!("assign_labor {} {band} band camp_stores 0", faction.0),
+        );
+        let has_row = |app: &mut bevy::prelude::App, wanted: fn(&LaborTarget) -> bool| {
+            app.world
+                .query::<(&PopulationCohort, &LaborAllocation)>()
+                .iter(&app.world)
+                .any(|(cohort, allocation)| {
+                    cohort.faction == faction
+                        && allocation.assignments.iter().any(|row| wanted(&row.target))
+                })
+        };
+        assert!(
+            has_row(&mut app, |target| matches!(
+                target,
+                LaborTarget::Band { .. }
+            )),
+            "the rack's Build line creates the band crew row"
+        );
+        assert!(
+            declared(&mut app, rack),
+            "the rack's Build line declares it"
+        );
+        send_command_line(
+            &mut app,
+            &format!(
+                "assign_labor {} {band} tile food_stores {} {} 0",
+                faction.0, tile.x, tile.y
+            ),
+        );
+        assert!(
+            has_row(&mut app, |target| matches!(
+                target,
+                LaborTarget::Tile { .. }
+            )),
+            "the pit's Build line creates the tile crew row"
+        );
+        assert!(declared(&mut app, pit), "the pit's Build line declares it");
     }
 
     /// **A QUEUED RACK CAN BE CANCELLED, RE-ORDERED AND RANKED** - the five queue verbs address a band

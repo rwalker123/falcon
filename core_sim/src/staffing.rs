@@ -348,16 +348,30 @@ fn remainder_rides_with_a_gatherer(row: &StaffRowInput<'_>) -> bool {
 /// The fraction rides only where it FITS: the whole crew, with the fractional keeping taken out of
 /// its work, must still reach `target` with `armed` of them kitted (asked of the row's own `hands`
 /// closure at the take that crew would need to make up the keeping). Otherwise one head is added.
+/// **DOES THE KEEPING'S FRACTION RIDE IN A WHOLE CREW'S SLACK?** `crew` whole hunters, with `fraction`
+/// of a hand taken out of their work, must still reach `target` with `armed` of them kitted (asked of
+/// the row's own `hands` closure at the take the crew would need to make up the keeping). The one rule
+/// [`crew_heads`] sizes a hunt crew by and [`crew_take_capacity`] prices it by.
+fn keeping_fraction_fits(
+    row: &StaffRowInput<'_>,
+    crew: f32,
+    fraction: f32,
+    target: f32,
+    armed: u32,
+) -> bool {
+    fraction <= NO_HANDS || {
+        let working = crew - fraction;
+        working > NO_HANDS
+            && (row.hands)(target * crew / working, armed).is_none_or(|hands| hands <= crew)
+    }
+}
+
 fn crew_heads(row: &StaffRowInput<'_>, gather: f32, target: f32, armed: u32) -> u32 {
     if row.whole_hands && gather > NO_HANDS {
         let whole = whole_keepers(row);
         let crew = gather.ceil();
         let fraction = row.keep_hands.max(NO_HANDS) - whole as f32;
-        let fits = fraction <= NO_HANDS || {
-            let working = crew - fraction;
-            working > NO_HANDS
-                && (row.hands)(target * crew / working, armed).is_none_or(|hands| hands <= crew)
-        };
+        let fits = keeping_fraction_fits(row, crew, fraction, target, armed);
         return whole + crew as u32 + u32::from(!fits);
     }
     (row.keep_hands.max(NO_HANDS) + gather).ceil() as u32
@@ -546,7 +560,21 @@ fn scout_arming_input(plan: &ScoutPlan) -> StaffRowInput<'static> {
 /// above the floor, priced at the row's food rate. Found by bisecting the closure, so every web (a
 /// basket's linear hands, a hunt's whole crews) answers through the one function it is staffed by.
 fn crew_take_capacity(row: &StaffRowInput<'_>, crew: &StaffedCrew) -> f32 {
-    let hands = (crew.total() as f32 - row.keep_hands.max(NO_HANDS)).max(NO_HANDS);
+    let hands = if row.whole_hands {
+        // A hunt's take hands are a WHOLE crew: only the whole keepers come off it, and the keeping's
+        // fraction rides in the hunters' slack where it fits (as `crew_heads` deals it), else it cost
+        // one head of its own.
+        let whole = whole_keepers(row);
+        let heads = crew.total().saturating_sub(whole) as f32;
+        let fraction = row.keep_hands.max(NO_HANDS) - whole as f32;
+        if keeping_fraction_fits(row, heads, fraction, row.useful_take, crew.kitted) {
+            heads
+        } else {
+            (heads - 1.0).max(NO_HANDS)
+        }
+    } else {
+        (crew.total() as f32 - row.keep_hands.max(NO_HANDS)).max(NO_HANDS)
+    };
     if hands <= NO_HANDS || row.useful_take <= NO_TAKE_WANTED {
         return NO_TAKE_WANTED;
     }
@@ -1352,14 +1380,19 @@ pub fn staff_rows<'a>(
         .builds
         .iter()
         .zip(&staffed[source_rows..])
-        .map(|(meta, crew)| {
+        .zip(&inputs.rows[source_rows..])
+        .map(|((meta, crew), row)| {
             (
                 meta.source.clone(),
                 BuildCrew {
                     kitted: crew.kitted,
                     bare: crew.bare,
                     cap: meta.cap,
-                    fed_first: fed_first && crew.total() == NOBODY,
+                    // Only a build that would have held builders in the builds-first deal (a cap above
+                    // nobody and a climb that can progress) is waiting on the food.
+                    fed_first: fed_first
+                        && crew.total() == NOBODY
+                        && row.max.is_some_and(|max| max > NOBODY),
                 },
             )
         })
@@ -3384,6 +3417,81 @@ mod tests {
         let (with, fed_with) = food_first(&feeding_band(Some(2.0)), 3.0);
         assert!(!fed_with);
         assert_eq!(with[1].total(), 3, "the finishing build keeps its builders");
+    }
+
+    /// A hunt-shaped row (whole crews, the Goosefen warren): one hunter takes `ONE_HUNTER_TAKE`, and
+    /// the site's keeping is a sliver of a hand.
+    fn a_warren_row<'a>(keeping: f32) -> StaffRowInput<'a> {
+        const ONE_HUNTER_TAKE: f32 = 2.0;
+        let mut row = linear_row(
+            SourcePriority::Normal,
+            None,
+            0,
+            ONE_HUNTER_TAKE / 2.0,
+            // The room the stand can give is under one hunter's full take, so the keeping's sliver
+            // rides in his slack.
+            ONE_HUNTER_TAKE * 0.75,
+            1.0,
+            1.0,
+            Vec::new(),
+        );
+        row.keep_hands = keeping;
+        row.whole_hands = true;
+        row.food_per_take = 1.0;
+        row.hands = Box::new(|take, _| Some((take / ONE_HUNTER_TAKE).ceil().max(1.0)));
+        row
+    }
+
+    /// **A HUNT'S TAKE COUNTS IN THE FOOD-FIRST WALK THOUGH ITS KEEPING IS A SLIVER OF A HAND** (the
+    /// Goosefen case: one rabbit hunter, 0.005 keeping). The row's `hands` closure answers WHOLE
+    /// crews, so pricing the crew at `1 - 0.005` fractional hands made every target need more than the
+    /// crew had and the hunt read as no food at all - food-first fired and the builder was pulled.
+    #[test]
+    fn a_hunt_with_a_sliver_of_keeping_counts_its_take_and_the_builder_stays() {
+        const KEEPING: f32 = 0.005;
+        const LARDER: f32 = 2.0;
+        let rows = vec![
+            a_warren_row(KEEPING),
+            a_build(SourcePriority::Normal, 1, None),
+        ];
+        let (out, _, fed_first) = staff_band_food_first(
+            &rows,
+            2,
+            &mut shelf(0),
+            &BTreeMap::new(),
+            &ScoutPlan::default(),
+            FoodLedger {
+                larder: LARDER,
+                need: 1.0,
+                standing: 0.0,
+            },
+            FOOD_FIRST_WINDOW,
+        );
+        assert_eq!(out[0].total(), 1, "liveness: the hunter is staffed");
+        assert_eq!(out[1].total(), 1, "the builder is staffed beside him");
+        assert!(
+            !fed_first,
+            "one hunter's take covers the meal, so the band does not feed itself first"
+        );
+        // The control: no hunt row, the same larder and meal: the band does run short.
+        let bare = vec![a_build(SourcePriority::Normal, 1, None)];
+        let (_, _, short) = staff_band_food_first(
+            &bare,
+            2,
+            &mut shelf(0),
+            &BTreeMap::new(),
+            &ScoutPlan::default(),
+            FoodLedger {
+                larder: LARDER,
+                need: 1.0,
+                standing: 0.0,
+            },
+            FOOD_FIRST_WINDOW,
+        );
+        assert!(
+            !short || bare.len() == 1,
+            "no food row: nothing to feed from"
+        );
     }
 
     /// **A HERD BUILD FINISHING INSIDE THE WINDOW KEEPS ITS BUILDER** (the Goosefen case: a warren
