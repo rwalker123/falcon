@@ -449,6 +449,8 @@ func _ready() -> void:
             hud.connect("set_starting_loadout_requested", Callable(self, "_on_hud_set_starting_loadout"))
         if hud.has_signal("answer_fork_requested") and not hud.is_connected("answer_fork_requested", Callable(self, "_on_hud_answer_fork")):
             hud.connect("answer_fork_requested", Callable(self, "_on_hud_answer_fork"))
+        if hud.has_signal("chief_proposal_requested") and not hud.is_connected("chief_proposal_requested", Callable(self, "_on_hud_chief_proposal")):
+            hud.connect("chief_proposal_requested", Callable(self, "_on_hud_chief_proposal"))
         # **THE FORECAST QUERY'S TRANSPORT, injected rather than reached for.** The HUD composes the
         # question out of what it is already rendering; the socket is `Main`'s. `_process` pumps the
         # answers back the other way — a query triggers NO snapshot, so nothing else ever would.
@@ -2335,6 +2337,30 @@ static func format_set_starting_loadout(payload: Dictionary) -> Dictionary:
         "message": "Outfitted the band: %d kits, %d units." % [kits, units],
     }
 
+## **THE CHIEF'S PROPOSAL, ANSWERED**: `approve_proposal <faction> <band>` or
+## `defer_proposal <faction> <band> <build_key>` ("Not now"). The build key is the sim's own token
+## (`rung` or `rung@x,y`) and is passed through untouched; a defer without one builds nothing.
+static func format_chief_proposal(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    match String(payload.get("action", "")):
+        "approve":
+            return {
+                "line": "approve_proposal %d %d" % [faction, band_id],
+                "message": "Approved the chief's proposal.",
+            }
+        "defer":
+            var build_key := String(payload.get("build_key", "")).strip_edges()
+            if build_key == "":
+                return {}
+            return {
+                "line": "defer_proposal %d %d %s" % [faction, band_id, build_key],
+                "message": "Not now.",
+            }
+    return {}
+
 ## **`bench_crew <faction_id> <band_id> workers <n>`** — re-crew the bench, leaving its queue and its
 ## progress alone. It works on an IDLE (empty-queue) bench too: the crew stays with the bench across
 ## orders. `workers` is a NAMED token and is mandatory; `0` is a legal, meaningful value (the queue
@@ -2875,6 +2901,9 @@ func _on_hud_bench_enqueue(payload: Dictionary) -> void:
     _send_formatted_command(format_bench_enqueue(payload))
 
 ## Re-crew the bench, leaving its queue and progress alone.
+func _on_hud_chief_proposal(payload: Dictionary) -> void:
+    _send_formatted_command(format_chief_proposal(payload))
+
 func _on_hud_bench_crew(payload: Dictionary) -> void:
     _send_formatted_command(format_bench_crew(payload))
 

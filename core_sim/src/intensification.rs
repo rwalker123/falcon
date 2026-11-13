@@ -2708,6 +2708,10 @@ pub struct RungDef {
     /// (`… lost — back to a tended patch`). The article is part of the config: "a tended patch" but
     /// "wild ground", and no rule derives one from the other.
     pub label_fallback: String,
+    /// **THE PHRASE A CHIEF'S BUILD PROPOSAL NAMES THIS RUNG BY** - "dig a storage pit", "build a
+    /// drying rack" ([`crate::chief_proposals`]). Absent: the verb and the rung's `label_fallback`.
+    #[serde(default)]
+    pub proposal_phrase: Option<String>,
 }
 
 /// **WHAT AN EXTRACTION OR FORESTRY RUNG BUYS** (`docs/plan_extraction.md` §4c), on

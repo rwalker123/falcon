@@ -13,15 +13,15 @@ use crate::state::population::{
     AccessibleStockpileEntryState, AccessibleStockpileState, BandImprovementState,
     BandKitCrewState, BandKitTiersState, BandLoadoutSupplyRowState, BandLoadoutWindowState,
     BandOrderState, BenchKitOrderState, BenchOrderState, BenchState, BreedingMemberState,
-    BreedingPeopleState, CharacteristicReadingState, CohortStoreState, CraftOfferState,
-    CraftSuggestionSourceState, CraftSuggestionState, CulturePressureState, DrawnInputState,
-    EquipmentBatchState, GenerationState, HarvestTaskState, HeldStoreState, KeepingMealState,
-    KeepingSpoilState, KitItemConditionState, KitNeedItemState, KitNeedRecipeState, KitNeedState,
-    KitToeLineState, LaborAssignmentState, MaterialAmountState, MaterialBatchState,
-    MaterialShortfallState, PoolCrewLineState, PoolToeLineState, PoolingLinkState,
-    PopulationCohortState, PopulationDemographicsState, ScoutTaskState, SettlementStageViewState,
-    SourcePriorityState, StorageSaveState, TransferCrossingState, TribeClosenessState,
-    TribePairState, WorkKitWantState,
+    BreedingPeopleState, CharacteristicReadingState, ChiefProposalState, CohortStoreState,
+    CraftOfferState, CraftSuggestionSourceState, CraftSuggestionState, CulturePressureState,
+    DrawnInputState, EquipmentBatchState, GenerationState, HarvestTaskState, HeldStoreState,
+    KeepRaiseState, KeepingMealState, KeepingSpoilState, KitItemConditionState, KitNeedItemState,
+    KitNeedRecipeState, KitNeedState, KitToeLineState, LaborAssignmentState, MaterialAmountState,
+    MaterialBatchState, MaterialShortfallState, PoolCrewLineState, PoolToeLineState,
+    PoolingLinkState, PopulationCohortState, PopulationDemographicsState, ScoutTaskState,
+    SettlementStageViewState, SourcePriorityState, StorageSaveState, TransferCrossingState,
+    TribeClosenessState, TribePairState, WorkKitWantState,
 };
 use crate::state::subsistence::BuildLegState;
 use crate::world::{WorldDelta, WorldSnapshot};
@@ -945,6 +945,7 @@ fn create_populations<'a>(
             let spoil_ahead = create_spoil_ahead(builder, &cohort.spoil_ahead);
             let held_stores = create_held_stores(builder, &cohort.held_stores);
             let storage_saves = create_storage_saves(builder, &cohort.storage_saves);
+            let chief_proposals = create_chief_proposals(builder, &cohort.chief_proposals);
             let kit_needs = create_kit_needs(builder, &cohort.kit_needs);
             let materials_free = create_material_amounts(builder, &cohort.materials_free);
             let culture_pressures = create_culture_pressures(builder, &cohort.culture_pressures);
@@ -1290,6 +1291,7 @@ fn create_populations<'a>(
                     storageSaves: Some(storage_saves),
                     storageBuildMinSaved: cohort.storage_build_min_saved,
                     heldStores: Some(held_stores),
+                    chiefProposals: Some(chief_proposals),
                 },
             )
         })
@@ -2257,6 +2259,27 @@ fn decode_population(
             keeping: text(row.keeping()),
             shelf_life_turns: row.shelfLifeTurns(),
         }),
+        chief_proposals: map_rows(cohort.chiefProposals(), |row| ChiefProposalState {
+            build_key: text(row.buildKey()),
+            rung: text(row.rung()),
+            branch: text(row.branch()),
+            verb: text(row.verb()),
+            phrase: text(row.phrase()),
+            has_tile: row.hasTile(),
+            tile_x: row.tileX(),
+            tile_y: row.tileY(),
+            reason: text(row.reason()),
+            food_saved: row.foodSaved(),
+            idle: row.idle(),
+            idle_turns: row.idleTurns(),
+            escalation: row.escalation(),
+            keep_raises: map_rows(row.keepRaises(), |raise| KeepRaiseState {
+                material: text(raise.material()),
+                from: raise.from(),
+                to: raise.to(),
+            }),
+            text: text(row.text()),
+        }),
         storage_saves: map_rows(cohort.storageSaves(), |row| StorageSaveState {
             rung: text(row.rung()),
             keeping: text(row.keeping()),
@@ -2613,6 +2636,62 @@ fn create_held_stores<'a>(
                     rung: Some(rung),
                     keeping: Some(keeping),
                     shelfLifeTurns: row.shelf_life_turns,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+/// `PopulationCohortState.chiefProposals`.
+fn create_chief_proposals<'a>(
+    builder: &mut FbBuilder<'a>,
+    rows: &[ChiefProposalState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::ChiefProposal<'a>>>> {
+    let offsets: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            let raises: Vec<_> = row
+                .keep_raises
+                .iter()
+                .map(|raise| {
+                    let material = builder.create_string(&raise.material);
+                    fb::KeepRaise::create(
+                        builder,
+                        &fb::KeepRaiseArgs {
+                            material: Some(material),
+                            from: raise.from,
+                            to: raise.to,
+                        },
+                    )
+                })
+                .collect();
+            let keep_raises = builder.create_vector(&raises);
+            let build_key = builder.create_string(&row.build_key);
+            let rung = builder.create_string(&row.rung);
+            let branch = builder.create_string(&row.branch);
+            let verb = builder.create_string(&row.verb);
+            let phrase = builder.create_string(&row.phrase);
+            let reason = builder.create_string(&row.reason);
+            let text = builder.create_string(&row.text);
+            fb::ChiefProposal::create(
+                builder,
+                &fb::ChiefProposalArgs {
+                    buildKey: Some(build_key),
+                    rung: Some(rung),
+                    branch: Some(branch),
+                    verb: Some(verb),
+                    phrase: Some(phrase),
+                    hasTile: row.has_tile,
+                    tileX: row.tile_x,
+                    tileY: row.tile_y,
+                    reason: Some(reason),
+                    foodSaved: row.food_saved,
+                    idle: row.idle,
+                    idleTurns: row.idle_turns,
+                    escalation: row.escalation,
+                    keepRaises: Some(keep_raises),
+                    text: Some(text),
                 },
             )
         })

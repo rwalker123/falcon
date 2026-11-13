@@ -516,18 +516,12 @@ Surplus spoilage belongs to the band and its storage, never to a hunt row. Engin
   knowing the rung's `unlock_knowledge`; `declared` a build of the rung already declared for the
   band (the band row's `BuildSource::Band`, or a tile build on the band's own tile). No rung or class
   id is named in the engine.
-- **The chief builds it** (`storage_orders::advance_chief_storage`, Population chain after
-  `deposit_into_stores`): a band with a leader whose `food` order is the chief's, for each
-  `storageSaves` row with the lesson known, nothing declared and `foodSaved >=
-  labor_config.band_orders.storage_build_min_saved` (**0.2** food/turn, a Workbench row), places the
-  improvement, lists the row under the `food` order (`keep_on_hand::{band,tile}_improvement_key`:
-  `b:<branch>`, `t:<branch>:<x>,<y>`, so the wire shows it chief-owned and `release`/`claim` of one
-  row work; `food_orders::row_is_improvement` keeps it from being retired), declares the branch's
-  first build (`LaborAllocation::declare_build`) and writes one Extraction feed line, "<Leader> orders
-  a drying rack built - 0.5 food a turn is spoiling." (a council: "<Band>'s elders order ..."). The
-  command path's `declare_the_branchs_first_build` now covers a band-improvement row as it did a tile
-  row. A rival's food specialist reads the same rows and the same echoed threshold
-  (`ai-driver.md`).
+- **The chief proposes it; the player approves it** (`chief_proposals.rs`, `work-party.md` -> "A chief
+  proposes a build"). A `storageSaves` row with the lesson known, nothing declared and `foodSaved >=
+  labor_config.band_orders.storage_build_min_saved` (**0.2** food/turn, a Workbench row) is a proposal
+  candidate whose ranking value is its `foodSaved`; nothing is declared until `approve_proposal`. The
+  chief never declares a storage build. A rival's food specialist reads the same rows and the same
+  echoed threshold and declares for itself (`ai-driver.md`).
 
 #### A storage pit is its band's second larder (#709)
 

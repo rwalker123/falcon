@@ -1377,6 +1377,8 @@ pub(crate) type BandNameLookup = std::collections::HashMap<BandId, String>;
 pub(crate) struct PopulationStateInputs<'a> {
     /// **The band's spoilage forecast and the storage it could hold** (`band_spoilage`).
     pub(crate) spoilage: crate::band_spoilage::BandSpoilage,
+    /// **The chief's build proposal** (zero or one row, own bands only).
+    pub(crate) chief_proposals: Vec<sim_schema::ChiefProposalState>,
     pub(crate) entity: Entity,
     /// The band's durable id, published so a client can address it in a command without sending
     /// back an ECS handle that the next rollback renumbers.
@@ -1951,6 +1953,7 @@ pub(crate) fn apply_order_limits(
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
     let PopulationStateInputs {
         spoilage,
+        chief_proposals,
         belief_reach,
         belief_anchor_weight,
         belief_relay_region,
@@ -3426,6 +3429,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         storage_saves: spoilage.storage_saves,
         storage_build_min_saved: spoilage.storage_build_min_saved,
         held_stores: spoilage.held_stores,
+        chief_proposals,
         hunt_meals: crate::hunt_by_need::meals_by_class(
             cohort,
             allocation,
@@ -4062,6 +4066,7 @@ mod tests {
         pooling_steady: f32,
     ) -> PopulationCohortState {
         population_state(PopulationStateInputs {
+            chief_proposals: Vec::new(),
             spoilage: Default::default(),
             belief_reach: Vec::new(),
             belief_anchor_weight: 0.0,

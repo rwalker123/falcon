@@ -267,6 +267,11 @@ pub struct SimState {
     /// across turns, the `culture_pull` line is an edge read off the previous turn's entry, and the
     /// capture publishes the rows before a restored world has run a turn.
     pub culture_pressure: crate::systems::CulturePressureLedger,
+    /// Every band's chief-proposal state (`chief_proposals`): the idle streaks, the "Not now" timers,
+    /// the approved builds awaiting completion, the leader's pending order-met credits and the
+    /// proposal on offer. **State, not derived**: the timers and the streak run across turns and the
+    /// capture publishes the offer before a restored world has run a turn.
+    pub chief_proposals: crate::chief_proposals::ChiefProposalBook,
     /// The peoples whose breeding the head-count freed for good (`lineage::FreeBreedingPeoples`,
     /// issue #691). **State, not derived**: the latch outlives the population that earned it, so
     /// nothing in a restored world can rebuild it.
@@ -532,6 +537,10 @@ pub fn capture_sim_state(world: &World) -> SimState {
             .get_resource::<crate::systems::CulturePressureLedger>()
             .cloned()
             .unwrap_or_default(),
+        chief_proposals: world
+            .get_resource::<crate::chief_proposals::ChiefProposalBook>()
+            .cloned()
+            .unwrap_or_default(),
         free_breeding: world
             .get_resource::<crate::lineage::FreeBreedingPeoples>()
             .cloned()
@@ -755,6 +764,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.factions.clone());
     world.insert_resource(state.hearts.clone());
     world.insert_resource(state.culture_pressure.clone());
+    world.insert_resource(state.chief_proposals.clone());
     world.insert_resource(state.free_breeding.clone());
     world.insert_resource(state.deposits.clone());
     world.insert_resource(state.forage.clone());

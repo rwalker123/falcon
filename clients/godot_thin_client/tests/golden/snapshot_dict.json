@@ -7333,6 +7333,77 @@
       "carry_fodder_weight": 50.959999,
       "carry_material_weight": 39.889999,
       "carry_per_worker": 112.379997,
+      "chief_proposals": [
+        {
+          "branch": "populations[0].chief_proposals[0].branch",
+          "build_key": "populations[0].chief_proposals[0].build_key",
+          "escalation": 194,
+          "food_saved": 85.080002,
+          "has_tile": true,
+          "idle": 103,
+          "idle_turns": 2,
+          "keep_raises": [
+            {
+              "from": 168,
+              "material": "populations[0].chief_proposals[0].keep_raises[0].material",
+              "to": 143
+            }
+          ],
+          "phrase": "populations[0].chief_proposals[0].phrase",
+          "reason": "populations[0].chief_proposals[0].reason",
+          "rung": "populations[0].chief_proposals[0].rung",
+          "text": "populations[0].chief_proposals[0].text",
+          "tile_x": 56,
+          "tile_y": 45,
+          "verb": "populations[0].chief_proposals[0].verb"
+        },
+        {
+          "branch": "populations[0].chief_proposals[1].branch",
+          "build_key": "populations[0].chief_proposals[1].build_key",
+          "escalation": 103,
+          "food_saved": 36.02,
+          "has_tile": false,
+          "idle": 138,
+          "idle_turns": 79,
+          "keep_raises": [
+            {
+              "from": 135,
+              "material": "populations[0].chief_proposals[1].keep_raises[0].material",
+              "to": 136
+            }
+          ],
+          "phrase": "populations[0].chief_proposals[1].phrase",
+          "reason": "populations[0].chief_proposals[1].reason",
+          "rung": "populations[0].chief_proposals[1].rung",
+          "text": "populations[0].chief_proposals[1].text",
+          "tile_x": 105,
+          "tile_y": 116,
+          "verb": "populations[0].chief_proposals[1].verb"
+        },
+        {
+          "branch": "populations[0].chief_proposals[2].branch",
+          "build_key": "populations[0].chief_proposals[2].build_key",
+          "escalation": 132,
+          "food_saved": 28.75,
+          "has_tile": false,
+          "idle": 137,
+          "idle_turns": 164,
+          "keep_raises": [
+            {
+              "from": 62,
+              "material": "populations[0].chief_proposals[2].keep_raises[0].material",
+              "to": 117
+            }
+          ],
+          "phrase": "populations[0].chief_proposals[2].phrase",
+          "reason": "populations[0].chief_proposals[2].reason",
+          "rung": "populations[0].chief_proposals[2].rung",
+          "text": "populations[0].chief_proposals[2].text",
+          "tile_x": 6,
+          "tile_y": 195,
+          "verb": "populations[0].chief_proposals[2].verb"
+        }
+      ],
       "children": 97,
       "cohesion_ceiling": 4,
       "cohesion_headcount": 62,
@@ -10163,6 +10234,77 @@
       "carry_fodder_weight": 12.16,
       "carry_material_weight": 81.660004,
       "carry_per_worker": 74.93,
+      "chief_proposals": [
+        {
+          "branch": "populations[1].chief_proposals[0].branch",
+          "build_key": "populations[1].chief_proposals[0].build_key",
+          "escalation": 197,
+          "food_saved": 100.160004,
+          "has_tile": true,
+          "idle": 144,
+          "idle_turns": 141,
+          "keep_raises": [
+            {
+              "from": 1,
+              "material": "populations[1].chief_proposals[0].keep_raises[0].material",
+              "to": 34
+            }
+          ],
+          "phrase": "populations[1].chief_proposals[0].phrase",
+          "reason": "populations[1].chief_proposals[0].reason",
+          "rung": "populations[1].chief_proposals[0].rung",
+          "text": "populations[1].chief_proposals[0].text",
+          "tile_x": 75,
+          "tile_y": 86,
+          "verb": "populations[1].chief_proposals[0].verb"
+        },
+        {
+          "branch": "populations[1].chief_proposals[1].branch",
+          "build_key": "populations[1].chief_proposals[1].build_key",
+          "escalation": 104,
+          "food_saved": 39.389999,
+          "has_tile": false,
+          "idle": 141,
+          "idle_turns": 80,
+          "keep_raises": [
+            {
+              "from": 10,
+              "material": "populations[1].chief_proposals[1].keep_raises[0].material",
+              "to": 9
+            }
+          ],
+          "phrase": "populations[1].chief_proposals[1].phrase",
+          "reason": "populations[1].chief_proposals[1].reason",
+          "rung": "populations[1].chief_proposals[1].rung",
+          "text": "populations[1].chief_proposals[1].text",
+          "tile_x": 26,
+          "tile_y": 15,
+          "verb": "populations[1].chief_proposals[1].verb"
+        },
+        {
+          "branch": "populations[1].chief_proposals[2].branch",
+          "build_key": "populations[1].chief_proposals[2].build_key",
+          "escalation": 43,
+          "food_saved": 27.18,
+          "has_tile": false,
+          "idle": 102,
+          "idle_turns": 51,
+          "keep_raises": [
+            {
+              "from": 179,
+              "material": "populations[1].chief_proposals[2].keep_raises[0].material",
+              "to": 44
+            }
+          ],
+          "phrase": "populations[1].chief_proposals[2].phrase",
+          "reason": "populations[1].chief_proposals[2].reason",
+          "rung": "populations[1].chief_proposals[2].rung",
+          "text": "populations[1].chief_proposals[2].text",
+          "tile_x": 109,
+          "tile_y": 120,
+          "verb": "populations[1].chief_proposals[2].verb"
+        }
+      ],
       "children": 148,
       "cohesion_ceiling": 117,
       "cohesion_headcount": 87,
@@ -12937,6 +13079,77 @@
       "carry_fodder_weight": 77.010002,
       "carry_material_weight": 33.52,
       "carry_per_worker": 84.809998,
+      "chief_proposals": [
+        {
+          "branch": "populations[2].chief_proposals[0].branch",
+          "build_key": "populations[2].chief_proposals[0].build_key",
+          "escalation": 40,
+          "food_saved": 8.84,
+          "has_tile": true,
+          "idle": 61,
+          "idle_turns": 200,
+          "keep_raises": [
+            {
+              "from": 162,
+              "material": "populations[2].chief_proposals[0].keep_raises[0].material",
+              "to": 41
+            }
+          ],
+          "phrase": "populations[2].chief_proposals[0].phrase",
+          "reason": "populations[2].chief_proposals[0].reason",
+          "rung": "populations[2].chief_proposals[0].rung",
+          "text": "populations[2].chief_proposals[0].text",
+          "tile_x": 194,
+          "tile_y": 183,
+          "verb": "populations[2].chief_proposals[0].verb"
+        },
+        {
+          "branch": "populations[2].chief_proposals[1].branch",
+          "build_key": "populations[2].chief_proposals[1].build_key",
+          "escalation": 149,
+          "food_saved": 85.330002,
+          "has_tile": false,
+          "idle": 184,
+          "idle_turns": 5,
+          "keep_raises": [
+            {
+              "from": 65,
+              "material": "populations[2].chief_proposals[1].keep_raises[0].material",
+              "to": 178
+            }
+          ],
+          "phrase": "populations[2].chief_proposals[1].phrase",
+          "reason": "populations[2].chief_proposals[1].reason",
+          "rung": "populations[2].chief_proposals[1].rung",
+          "text": "populations[2].chief_proposals[1].text",
+          "tile_x": 43,
+          "tile_y": 54,
+          "verb": "populations[2].chief_proposals[1].verb"
+        },
+        {
+          "branch": "populations[2].chief_proposals[2].branch",
+          "build_key": "populations[2].chief_proposals[2].build_key",
+          "escalation": 70,
+          "food_saved": 37.450001,
+          "has_tile": false,
+          "idle": 107,
+          "idle_turns": 38,
+          "keep_raises": [
+            {
+              "from": 164,
+              "material": "populations[2].chief_proposals[2].keep_raises[0].material",
+              "to": 131
+            }
+          ],
+          "phrase": "populations[2].chief_proposals[2].phrase",
+          "reason": "populations[2].chief_proposals[2].reason",
+          "rung": "populations[2].chief_proposals[2].rung",
+          "text": "populations[2].chief_proposals[2].text",
+          "tile_x": 84,
+          "tile_y": 73,
+          "verb": "populations[2].chief_proposals[2].verb"
+        }
+      ],
       "children": 39,
       "cohesion_ceiling": 186,
       "cohesion_headcount": 92,

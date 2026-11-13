@@ -299,6 +299,7 @@ pub fn judge_leader(
     cohort: &PopulationCohort,
     axis_over_span: Option<f32>,
     deficit_fraction: f32,
+    met_builds: u32,
 ) -> LeaderJudgement {
     let patience = config.patience(axis_over_span.unwrap_or(NEUTRAL_AXIS));
     let mut reading = LeadershipReading::default();
@@ -318,6 +319,9 @@ pub fn judge_leader(
             }
         }
     }
+    // **A build the leader proposed and the player approved counts once, as an order met, when it
+    // completes** (`chief_proposals`): the same popularity and the same drift as a met order.
+    reading.met_orders += met_builds;
     reading.hungry = deficit_fraction > 0.0;
     let popularity = reading.met_orders as f32 * config.popularity_per_met_order;
     let strain = reading.falling_orders as f32 * config.strain_per_falling_order * patience;
@@ -391,6 +395,7 @@ pub fn advance_leadership(
     follow_steps: Option<Res<HerdFollowSteps>>,
     mut event_log: ResMut<CommandEventLog>,
     mut bands: Query<LeadershipBandItems, With<ResidentBand>>,
+    mut proposals: ResMut<crate::chief_proposals::ChiefProposalBook>,
 ) {
     let config = config.get();
     let stages = stage_config.get();
@@ -430,6 +435,9 @@ pub fn advance_leadership(
         &mut culture,
         &bands,
     );
+    // The completions credited this turn are what the next judgement counts; the ones this turn's
+    // drift just read are spent.
+    proposals.rotate_met_builds();
     announce_chief_takeover(tick.0, &mut event_log, &mut bands);
 }
 

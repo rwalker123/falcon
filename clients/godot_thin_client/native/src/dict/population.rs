@@ -404,6 +404,40 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         }
     }
     let _ = dict.insert("held_stores", &held_stores);
+    // The chief's build proposal: zero or one row (own bands only).
+    let mut chief_proposals = VarArray::new();
+    if let Some(rows) = cohort.chiefProposals() {
+        for proposal in rows.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("build_key", proposal.buildKey().unwrap_or_default());
+            let _ = row.insert("rung", proposal.rung().unwrap_or_default());
+            let _ = row.insert("branch", proposal.branch().unwrap_or_default());
+            let _ = row.insert("verb", proposal.verb().unwrap_or_default());
+            let _ = row.insert("phrase", proposal.phrase().unwrap_or_default());
+            let _ = row.insert("has_tile", proposal.hasTile());
+            let _ = row.insert("tile_x", i64::from(proposal.tileX()));
+            let _ = row.insert("tile_y", i64::from(proposal.tileY()));
+            let _ = row.insert("reason", proposal.reason().unwrap_or_default());
+            let _ = row.insert("food_saved", f64::from(proposal.foodSaved()));
+            let _ = row.insert("idle", i64::from(proposal.idle()));
+            let _ = row.insert("idle_turns", i64::from(proposal.idleTurns()));
+            let _ = row.insert("escalation", i64::from(proposal.escalation()));
+            let mut keep_raises = VarArray::new();
+            if let Some(raises) = proposal.keepRaises() {
+                for raise in raises.iter() {
+                    let mut raise_row = VarDictionary::new();
+                    let _ = raise_row.insert("material", raise.material().unwrap_or_default());
+                    let _ = raise_row.insert("from", i64::from(raise.from()));
+                    let _ = raise_row.insert("to", i64::from(raise.to()));
+                    keep_raises.push(&raise_row.to_variant());
+                }
+            }
+            let _ = row.insert("keep_raises", &keep_raises);
+            let _ = row.insert("text", proposal.text().unwrap_or_default());
+            chief_proposals.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("chief_proposals", &chief_proposals);
     if let Some(rows) = cohort.bandImprovements() {
         let _ = dict.insert(
             "band_improvements",

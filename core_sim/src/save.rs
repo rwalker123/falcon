@@ -163,7 +163,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 66 | A tribe's closeness is a points bank that fills only while a leader exists (#861): `TribeRegistry::shared_history` is replaced by per-pair `points` (banked points on the `tribe_score_threshold` scale, faded by `tribe_points_fade_turns`); a version-65 blob does not decode |
 /// | 67 | The animal ladder pays as it is built: `RungStanding` (stamped on every `ForagePatch`, `Herd`, `Road` and `DepositSource`) gained `built`, the fraction of the raising rung's job banked whatever its partial-credit mode, which a herd's handling terms read. A version-66 blob lacks it |
 /// | 68 | The band judges its leader (#710): `MoraleContributions` gained `leadership` (published as `moraleLeadership`), and `PopulationCohort` gained `last_leadership` (`LeadershipReading`: the met and falling order counts and the hunger flag the culture drift and the Telling read); a version-67 blob lacks them |
-pub const SAVE_FORMAT_VERSION: u32 = 68;
+/// | 69 | A chief proposes a build and the player approves it: `SimState` gained `chief_proposals` (`ChiefProposalBook`: per band the idle streak, the "Not now" timers, the approved builds awaiting completion, the leader's pending order-met credits and the proposal on offer); a version-68 blob lacks it |
+pub const SAVE_FORMAT_VERSION: u32 = 69;
 
 /// gzip level for the payload document.
 ///

@@ -1,6 +1,7 @@
 ---
 paths:
   - "core_sim/src/leadership.rs"
+  - "core_sim/src/chief_proposals.rs"
   - "core_sim/src/leadership_config.rs"
   - "core_sim/src/leader_names.rs"
   - "core_sim/src/data/leadership_config.json"
@@ -115,6 +116,15 @@ Per turn, for a led band:
 
 The order readings are one turn old (`LaborAllocation` resolves after `simulate_population`), the same lag the
 fertility food-flow reading has.
+
+**A build the chief proposed and the player approved counts once.** When the approved build completes
+(`chief_proposals::refresh_proposals`, the turn's pass, sees the improvement at or above the rung it raised)
+`ChiefProposalBook` banks one `met_builds_fresh` for the band; `advance_leadership` ends by moving it to
+`met_builds_ready`, which `judge_leader` adds to `met_orders` on the next judgement (the same
+`popularity_per_met_order`) and so to `last_leadership.met_orders`, which the Hierarchical drift reads: the
+same morale and the same drift as a met order, once, and nothing while it is building. A build abandoned
+before it completes is dropped with no penalty. `chief_proposals.rs` owns it; `work-party.md` -> "A chief
+proposes a build" has the rest.
 
 **Patience.** `max(0, 1 + egalitarian_sensitivity x clamp(axis / CULTURE_TRAIT_SPAN, -1, 1))` on the band's
 own culture layer's `HierarchicalEgalitarian` value (negative = hierarchical); a band with no layer reads

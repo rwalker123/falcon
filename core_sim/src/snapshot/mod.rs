@@ -1500,6 +1500,7 @@ mod tests {
             comm_range_tiles: 0,
         };
         population_state(PopulationStateInputs {
+            chief_proposals: Vec::new(),
             spoilage: Default::default(),
             belief_reach: Vec::new(),
             belief_anchor_weight: 0.0,

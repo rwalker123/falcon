@@ -532,6 +532,15 @@ pub struct BandOrdersConfig {
     /// the chief (`food_orders`) and a rival's food specialist (it reads the echo on the cohort,
     /// `PopulationCohortState.storageBuildMinSaved`) both act on. Finite and `>= 0`.
     pub storage_build_min_saved: f32,
+    /// **Idle turns before a chief's build proposal reads "N hands idle M turns"** (escalation rung 1).
+    /// At least 1. An opening value, a playtest dial.
+    pub proposal_idle_turns_notice: u32,
+    /// **Idle turns before a chief's build proposal reads "N hands wasted for M turns"** (rung 2, drawn
+    /// amber). At least `proposal_idle_turns_notice`. An opening value, a playtest dial.
+    pub proposal_idle_turns_wasted: u32,
+    /// **How many turns "Not now" hides a proposed build** (`defer_proposal`). At least 1. An opening
+    /// value, a playtest dial.
+    pub proposal_not_now_turns: u32,
 }
 
 impl BandOrdersConfig {
@@ -709,6 +718,28 @@ impl LaborConfig {
                 field: "band_orders.storage_build_min_saved",
                 constraint: "be finite and at least 0".to_string(),
                 value: self.band_orders.storage_build_min_saved.to_string(),
+            });
+        }
+        if self.band_orders.proposal_idle_turns_notice == 0 {
+            return Err(LaborConfigError::Invalid {
+                field: "band_orders.proposal_idle_turns_notice",
+                constraint: "be at least 1".to_string(),
+                value: self.band_orders.proposal_idle_turns_notice.to_string(),
+            });
+        }
+        if self.band_orders.proposal_idle_turns_wasted < self.band_orders.proposal_idle_turns_notice
+        {
+            return Err(LaborConfigError::Invalid {
+                field: "band_orders.proposal_idle_turns_wasted",
+                constraint: "be at least proposal_idle_turns_notice".to_string(),
+                value: self.band_orders.proposal_idle_turns_wasted.to_string(),
+            });
+        }
+        if self.band_orders.proposal_not_now_turns == 0 {
+            return Err(LaborConfigError::Invalid {
+                field: "band_orders.proposal_not_now_turns",
+                constraint: "be at least 1".to_string(),
+                value: self.band_orders.proposal_not_now_turns.to_string(),
             });
         }
         // A party walks at the band's own pace, so a zero would make a far posting's walk never

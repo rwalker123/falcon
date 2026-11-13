@@ -1860,6 +1860,9 @@ pub struct PopulationCohortState {
     /// **The preservation rungs the band holds.** Appended last.
     #[serde(default)]
     pub held_stores: Vec<HeldStoreState>,
+    /// **The chief's build proposal** (zero or one row, own bands only). Appended last.
+    #[serde(default)]
+    pub chief_proposals: Vec<ChiefProposalState>,
     /// **The messenger reach**, in tiles (`ExpeditionConfig::effective_comm_range`) — a stationed
     /// party's report lands the turn it leaves inside it. Global config echoed per cohort. Appended last.
     #[serde(default)]
@@ -2244,6 +2247,41 @@ pub struct KeepingSpoilState {
     pub keeping: String,
     /// Food a turn that class spoils in the band's larder and stores.
     pub food: f32,
+}
+
+/// **A MATERIAL KEEP ORDER A PROPOSAL RAISES** — a row of [`ChiefProposalState::keep_raises`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct KeepRaiseState {
+    pub material: String,
+    /// The keep target before and after the raise.
+    pub from: u32,
+    pub to: u32,
+}
+
+/// **A CHIEF'S BUILD PROPOSAL** — the row of [`PopulationCohortState::chief_proposals`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ChiefProposalState {
+    /// What `defer_proposal` names.
+    pub build_key: String,
+    /// The rung's wire key (`branch:rung`), its branch and its verb.
+    pub rung: String,
+    pub branch: String,
+    pub verb: String,
+    /// "dig a storage pit".
+    pub phrase: String,
+    pub has_tile: bool,
+    pub tile_x: u32,
+    pub tile_y: u32,
+    /// "0.4 food a turn spoiling"; empty without a food figure.
+    pub reason: String,
+    pub food_saved: f32,
+    pub idle: u32,
+    pub idle_turns: u32,
+    /// 0 idle, 1 noticed, 2 wasted.
+    pub escalation: u32,
+    pub keep_raises: Vec<KeepRaiseState>,
+    /// The fully resolved sentence.
+    pub text: String,
 }
 
 /// **ONE PRESERVATION RUNG THE BAND HOLDS** — a row of [`PopulationCohortState::held_stores`].

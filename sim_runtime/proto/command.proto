@@ -445,6 +445,21 @@ enum BandOrderAction {
   BAND_ORDER_ACTION_CLAIM = 3;
 }
 
+// APPROVE THE CHIEF'S BUILD PROPOSAL for one band: the sim re-validates it, declares the build exactly as
+// a player's declaration would and raises the keep orders the proposal carries, in one step.
+message ApproveProposalCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+}
+
+// "NOT NOW": hide one proposed build (`ChiefProposal.buildKey`) from the band's proposals for
+// `band_orders.proposal_not_now_turns` turns.
+message DeferProposalCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  string build_key = 3;
+}
+
 // A BAND ORDER (#860): `kind` is "food", "fodder" or a material id. `target` and `priority` (`high`,
 // `normal` or `low`) are read for SET only. Refused for a band with no leader yet.
 message BandOrderCommand {
@@ -1890,5 +1905,7 @@ message CommandEnvelope {
     EndTreatyCommand end_treaty = 94;
     StopLaborCommand stop_labor = 95;
     BandOrderCommand band_order = 97;
+    ApproveProposalCommand approve_proposal = 98;
+    DeferProposalCommand defer_proposal = 99;
   }
 }

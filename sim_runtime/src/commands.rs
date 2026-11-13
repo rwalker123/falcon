@@ -338,6 +338,17 @@ pub enum CommandPayload {
         /// The one row a `release` / `claim` is about, `None` for the whole kind.
         row: Option<BandOrderRow>,
     },
+    /// **Approve the chief's build proposal** for one band (`approve_proposal <faction> <band>`).
+    ApproveProposal {
+        faction_id: u32,
+        band_id: u64,
+    },
+    /// **"Not now" on a proposed build** (`defer_proposal <faction> <band> <build-key>`).
+    DeferProposal {
+        faction_id: u32,
+        band_id: u64,
+        build_key: String,
+    },
     /// **Say how a band splits a maintenance pool it cannot stretch**
     /// (`docs/plan_standing_upkeep.md` §2.5) — `"spread"` (everything degrades a little) or
     /// `"priority"` (fund sources completely, most-invested first).
@@ -2249,6 +2260,22 @@ impl CommandEnvelope {
                 branch: branch.clone(),
                 roadwork: *roadwork,
             }),
+            CommandPayload::ApproveProposal {
+                faction_id,
+                band_id,
+            } => pb::command_envelope::Command::ApproveProposal(pb::ApproveProposalCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+            }),
+            CommandPayload::DeferProposal {
+                faction_id,
+                band_id,
+                build_key,
+            } => pb::command_envelope::Command::DeferProposal(pb::DeferProposalCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                build_key: build_key.clone(),
+            }),
             CommandPayload::BandOrder {
                 faction_id,
                 band_id,
@@ -3066,6 +3093,17 @@ impl CommandEnvelope {
                 material: cmd.material,
                 branch: cmd.branch,
                 roadwork: cmd.roadwork,
+            },
+            pb::command_envelope::Command::ApproveProposal(cmd) => {
+                CommandPayload::ApproveProposal {
+                    faction_id: cmd.faction_id,
+                    band_id: cmd.band_id,
+                }
+            }
+            pb::command_envelope::Command::DeferProposal(cmd) => CommandPayload::DeferProposal {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                build_key: cmd.build_key,
             },
             pb::command_envelope::Command::BandOrder(cmd) => CommandPayload::BandOrder {
                 faction_id: cmd.faction_id,

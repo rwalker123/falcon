@@ -1648,6 +1648,8 @@ type PartiesAndLadder<'w, 's> = (
     // The leadership morale term's inputs: who has a leader, and each band's culture (patience).
     Query<'w, 's, &'static crate::leadership::BandLeadership>,
     Res<'w, crate::culture::CultureManager>,
+    // The builds a chief proposed and the player approved that completed: an order met, once.
+    Option<Res<'w, crate::chief_proposals::ChiefProposalBook>>,
 );
 
 /// The larder time no lot reaches: a world with no ladder counts no food as kept.
@@ -1682,7 +1684,7 @@ pub fn simulate_population(
     // **What counts as kept food** (#708) - the ladder's `storage_kept_age_turns`; a world with no
     // ladder teaches nothing from kept food. Bundled with the parties query, since a Bevy system
     // takes at most sixteen parameters.
-    (parties, ladder, store_context, leaderships, culture_manager): PartiesAndLadder,
+    (parties, ladder, store_context, leaderships, culture_manager, proposal_book): PartiesAndLadder,
 ) {
     let party_working = stationed_party_workers(&parties);
     // **The food each band can reach in the stores it owns** (#709), for the fertility reserve.
@@ -1830,6 +1832,11 @@ pub fn simulate_population(
                             / CULTURE_TRAIT_SPAN
                     }),
                     meal_deficit_fraction(&demographic_state, &demo).to_f32(),
+                    band_id.map_or(0, |band| {
+                        proposal_book
+                            .as_deref()
+                            .map_or(0, |book| book.met_builds_ready(*band))
+                    }),
                 )
             })
             .unwrap_or_default();

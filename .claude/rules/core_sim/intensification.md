@@ -433,7 +433,7 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
 | **building** | `LaborAllocation::build_crews`, one crew per declared build, dealt by staffing | `cultivate` / `sow` / `tame` / `corral` / … declare the build | `buildersStaffed` / `buildersKitted` / `buildersCap` on the source |
 
 **A build is a job and a keeping is a standing charge**, so the builders do not stand on the source
-row: they are the hands staffing deals to the build beside it ("Builds join the site's crew"). **The
+row: they are the hands staffing deals to the build beside it ("Builds join the site's crew"). **An approved chief proposal** (`work-party.md` -> "A chief proposes a build") declares its build through the same `declare_build` a player's declaration uses, on a player-owned row, so its builders are dealt exactly as any declared build's. **The
 keeping is the site's** (`docs/plan_site_crews.md`): the site's own crew keeps first, and a fractional
 `keep_hands` removes the leftover a band-level pool existed to avoid.
 

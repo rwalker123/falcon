@@ -23,6 +23,8 @@ signal narration_requested(lines: PackedStringArray)
 signal narration_stopped
 # The orb face advanced the turn (after catching the book up) — relayed to HudLayer.next_turn_requested(1).
 signal advance_requested
+## A chief-proposal button (Approve / Not now): `{action, band_id, faction, build_key}`.
+signal proposal_action_requested(payload: Dictionary)
 # An orb row's "Jump →" — HudLayer wires this to AttentionController.on_turn_orb_focus (the band-routing handler).
 signal focus_requested(x: int, y: int)
 # A "a people awaits your answer" orb row was activated -- relayed to HudLayer, which brings the
@@ -102,6 +104,8 @@ func _connect_turn_orb() -> void:
 		_turn_orb.focus_requested.connect(_on_turn_orb_focus)
 	if not _turn_orb.is_connected("advance_requested", Callable(self, "_on_turn_orb_advance")):
 		_turn_orb.advance_requested.connect(_on_turn_orb_advance)
+	if not _turn_orb.is_connected("proposal_action_requested", Callable(self, "_on_turn_orb_proposal_action")):
+		_turn_orb.proposal_action_requested.connect(_on_turn_orb_proposal_action)
 	if not _turn_orb.is_connected("panel_requested", Callable(self, "_on_turn_orb_panel_requested")):
 		_turn_orb.panel_requested.connect(_on_turn_orb_panel_requested)
 
@@ -398,6 +402,9 @@ func note_unanswered_fork() -> void:
 ## retained handler.
 func _on_turn_orb_focus(x: int, y: int) -> void:
 	emit_signal("focus_requested", x, y)
+
+func _on_turn_orb_proposal_action(payload: Dictionary) -> void:
+	proposal_action_requested.emit(payload)
 
 func _on_turn_orb_advance() -> void:
 	# Advancing the turn is "catch me up": reveal the newest telling so a player who moves on isn't left

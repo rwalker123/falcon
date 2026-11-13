@@ -18,6 +18,9 @@ signal assign_labor_requested(payload: Dictionary)
 ## The Telling (docs/plan_the_telling.md): the player answered a pending narrative fork.
 ## Payload keys: { faction, beat_id, choice_id }. Main formats the `answer_fork …` command.
 signal answer_fork_requested(payload: Dictionary)
+## The chief's build proposal, answered from the orb: `{action: approve|defer, faction, band_id, build_key}`.
+## Main formats `approve_proposal` / `defer_proposal`.
+signal chief_proposal_requested(payload: Dictionary)
 ## Emitted after the player picks a destination tile for the selected band's move.
 ## Payload keys: { faction, band, x, y }. Main formats the `move_band …` command.
 signal move_band_requested(payload: Dictionary)
@@ -666,6 +669,7 @@ func _ready() -> void:
     # relays each onto the signals Main connects to (the controller never emits a HudLayer signal).
     _turnorb = TurnOrbController.new(turn_orb, self, _telling, _note_sink)
     _turnorb.answer_fork_requested.connect(func(payload: Dictionary) -> void: answer_fork_requested.emit(payload))
+    _turnorb.proposal_action_requested.connect(func(payload: Dictionary) -> void: chief_proposal_requested.emit(payload))
     _narrator = NarratorController.new()
     _narrator.setup(self)
     _telling.page_shown.connect(_narrator.speak.bind(HudNarratorVocab.SOURCE_PANEL))

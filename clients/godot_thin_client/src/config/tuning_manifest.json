@@ -166,6 +166,39 @@
           "hint": "The spoilage a drying rack or storage pit must save a turn before the chief (or a rival's food specialist) orders it built."
         },
         {
+          "pointer": "/band_orders/proposal_idle_turns_notice",
+          "label": "Chief proposal: idle turns before it reads 'idle N turns'",
+          "type": "int",
+          "min": 1,
+          "max": 30,
+          "step": 1,
+          "default": 3,
+          "unit": "turns",
+          "hint": "How many turns in a row a band's hands sit idle before the chief's build proposal says how long."
+        },
+        {
+          "pointer": "/band_orders/proposal_idle_turns_wasted",
+          "label": "Chief proposal: idle turns before it reads 'wasted' (amber)",
+          "type": "int",
+          "min": 1,
+          "max": 60,
+          "step": 1,
+          "default": 8,
+          "unit": "turns",
+          "hint": "How many idle turns in a row before the chief's build proposal says the hands are wasted and turns amber. At least the notice lever."
+        },
+        {
+          "pointer": "/band_orders/proposal_not_now_turns",
+          "label": "Chief proposal: turns 'Not now' hides a build",
+          "type": "int",
+          "min": 1,
+          "max": 100,
+          "step": 1,
+          "default": 20,
+          "unit": "turns",
+          "hint": "How long a build you answered 'Not now' stays out of the chief's proposals."
+        },
+        {
           "pointer": "/band_orders/starting_target/food",
           "label": "Food order at start (turns)",
           "type": "int",

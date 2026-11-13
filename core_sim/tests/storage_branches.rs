@@ -1087,12 +1087,84 @@ fn a_meat_surplus_publishes_its_spoilage_and_the_rack_that_would_save_it() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The chief builds the storage that saves the food his band spoils
+// The chief PROPOSES the storage that saves the food his band spoils; the player approves it
 // ---------------------------------------------------------------------------------------------
 
-/// A band with a meat surplus, with or without a leader, the storage lesson and a chief-owned food
-/// order; the chief's storage pass run `runs` times.
-fn chief_world(leader: bool, lesson: bool, chief_owned: bool, runs: usize) -> (App, Entity) {
+/// What the encoded frame carries for the band's proposal.
+#[derive(Debug, Clone, PartialEq)]
+struct WireProposal {
+    build_key: String,
+    rung: String,
+    text: String,
+    reason: String,
+    escalation: u32,
+    food_saved: f32,
+    keep_raises: Vec<(String, u32, u32)>,
+}
+
+/// The band's published proposals and its published storage saves, off the encoded envelope.
+fn published_offer(app: &mut App) -> (Vec<WireProposal>, Vec<(String, f32)>) {
+    app.world.insert_resource(ViewerFaction(FACTION));
+    core_sim::recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        shadow_scale_flatbuffers::generated::shadow_scale::sim::root_as_envelope(bytes.as_ref())
+            .expect("the snapshot encodes to a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == BAND)
+        .expect("the fixture band is on the wire");
+    let proposals = cohort
+        .chiefProposals()
+        .into_iter()
+        .flatten()
+        .map(|row| WireProposal {
+            build_key: row.buildKey().unwrap_or_default().to_string(),
+            rung: row.rung().unwrap_or_default().to_string(),
+            text: row.text().unwrap_or_default().to_string(),
+            reason: row.reason().unwrap_or_default().to_string(),
+            escalation: row.escalation(),
+            food_saved: row.foodSaved(),
+            keep_raises: row
+                .keepRaises()
+                .into_iter()
+                .flatten()
+                .map(|raise| {
+                    (
+                        raise.material().unwrap_or_default().to_string(),
+                        raise.from(),
+                        raise.to(),
+                    )
+                })
+                .collect(),
+        })
+        .collect();
+    let saves = cohort
+        .storageSaves()
+        .into_iter()
+        .flatten()
+        .map(|row| (row.rung().unwrap_or_default().to_string(), row.foodSaved()))
+        .collect();
+    (proposals, saves)
+}
+
+/// Hands the band holds beyond its hunt crew: the idle hands a chief proposes work for.
+const SPARE_HANDS: f32 = 4.0;
+
+/// A band with a meat surplus, with or without a leader, the storage lesson and spare hands; the
+/// chief's proposal pass run `runs` times.
+fn chief_world(leader: bool, lesson: bool, spare: f32, runs: usize) -> (App, Entity) {
     let (mut app, band) = rot_world();
     let mut allocation = LaborAllocation::default();
     allocation.set_assignment(
@@ -1112,10 +1184,8 @@ fn chief_world(leader: bool, lesson: bool, chief_owned: bool, runs: usize) -> (A
         20,
         core_sim::SourcePriority::Normal,
     );
-    if !chief_owned {
-        core_sim::keep_on_hand::release_order(&mut allocation, core_sim::keep_on_hand::FOOD_KIND);
-    }
     app.world.entity_mut(band).insert(allocation);
+    app.world.get_mut::<PopulationCohort>(band).unwrap().working = scalar_from_f32(CREW + spare);
     let mut leadership = core_sim::BandLeadership::default();
     if leader {
         leadership.leader = Some(core_sim::BandLeader {
@@ -1132,7 +1202,7 @@ fn chief_world(leader: bool, lesson: bool, chief_owned: bool, runs: usize) -> (A
     }
     for _ in 0..runs {
         app.world
-            .run_system_once(core_sim::storage_orders::advance_chief_storage);
+            .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
     }
     (app, band)
 }
@@ -1147,51 +1217,237 @@ fn rack_declared(app: &App, band: Entity) -> bool {
         })
 }
 
-/// **A chief with surplus meat and the storage lesson declares a drying rack once**, lists the row
-/// under his food order, and does not declare it again; without the lesson, without a leader, or once
-/// the player has taken the order back, nobody does.
+/// **A chief with surplus meat, the storage lesson and idle hands PROPOSES a storage build, and the
+/// frame carries it with its words resolved; he declares nothing himself.** Each absence is read off
+/// the same encoded frame beside the case that carries one: no chief, no idle hands.
 #[test]
-fn a_chief_orders_a_rack_once_and_only_where_it_is_his_to_order() {
-    let (app, band) = chief_world(true, true, true, 1);
+fn a_chief_with_idle_hands_proposes_storage_and_declares_nothing() {
+    let (mut app, band) = chief_world(true, true, SPARE_HANDS, 1);
+    let (proposals, _) = published_offer(&mut app);
+    assert_eq!(proposals.len(), 1, "liveness: one proposal is on offer");
+    let proposal = &proposals[0];
     assert!(
-        rack_declared(&app, band),
-        "liveness: the chief declares the rack"
+        proposal
+            .text
+            .contains(" idle hands \u{b7} Orrin proposes: "),
+        "{}",
+        proposal.text
     );
-    let allocation = app.world.get::<LaborAllocation>(band).unwrap();
-    assert_eq!(
-        allocation
-            .order_rows
-            .get(&core_sim::keep_on_hand::band_improvement_key(
-                camp_stores().as_str()
-            ))
-            .map(String::as_str),
-        Some(core_sim::keep_on_hand::FOOD_KIND),
-        "the rack row is listed under the food order"
+    assert!(
+        proposal.food_saved > 0.0 && proposal.reason.ends_with("food a turn spoiling"),
+        "a storage build states the food it saves: {proposal:?}"
     );
-    let once = allocation.builds.len();
+    assert!(
+        !rack_declared(&app, band),
+        "the chief proposes; nothing is declared until the player approves"
+    );
 
-    let (twice, band) = chief_world(true, true, true, 2);
+    let (mut app, _) = chief_world(false, true, SPARE_HANDS, 1);
+    assert!(
+        published_offer(&mut app).0.is_empty(),
+        "no chief, no proposal"
+    );
+    // Every hand at the bench: the same chief, nothing idle.
+    let (mut app, band) = chief_world(true, true, SPARE_HANDS, 0);
+    app.world.entity_mut(band).insert(core_sim::BandBench {
+        workers: u32::MAX,
+        ..Default::default()
+    });
+    app.world
+        .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
+    assert!(
+        published_offer(&mut app).0.is_empty(),
+        "no idle hands, no proposal"
+    );
+}
+
+/// **The ranking puts food first, most food first**, and a build with no food figure follows: with the
+/// storage lesson the proposal is the storage rung that saves the most; without it (control) the only
+/// candidate is a monument, which names no food.
+#[test]
+fn the_ranking_puts_food_first() {
+    let ritual = |app: &mut App| {
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(FACTION, core_sim::RITUAL_DISCOVERY_ID, scalar_one());
+        app.world
+            .resource_mut::<core_sim::BeliefRegistry>()
+            .add(camp(), 5.0);
+    };
+    let (mut app, _) = chief_world(true, true, SPARE_HANDS, 0);
+    ritual(&mut app);
+    app.world
+        .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
+    let (proposals, saves) = published_offer(&mut app);
+    let top = proposals.first().expect("liveness: a proposal");
+    let best = saves
+        .iter()
+        .map(|(_, saved)| *saved)
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        top.reason.contains("food a turn spoiling") && (top.food_saved - best).abs() < 1e-6,
+        "food first, and the most food: {top:?} against saves {saves:?}"
+    );
+
+    let (mut app, _) = chief_world(true, false, SPARE_HANDS, 0);
+    ritual(&mut app);
+    app.world
+        .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
+    let (proposals, _) = published_offer(&mut app);
+    let only = proposals.first().expect("the monument is still proposed");
+    assert!(
+        only.text.contains("raise a monument") && only.reason.is_empty(),
+        "with no food figure on offer a build with none is proposed: {only:?}"
+    );
+}
+
+/// **A material shortfall rides the proposal as the keep raise**: with the pit already dug the rack is
+/// the offer, the band holds no wood, and the wood keep goes from its opening target to that plus the
+/// rack's pile. Control: stock the wood and the raise is gone.
+#[test]
+fn the_material_keep_raise_is_carried() {
+    let rack_pile = 8;
+    let (mut app, band) = chief_world(true, true, SPARE_HANDS, 0);
+    dig_a_pit(&mut app, camp(), FACTION, 1.0);
+    app.world
+        .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
+    let (proposals, _) = published_offer(&mut app);
+    let proposal = proposals.first().expect("liveness: the rack is proposed");
+    assert!(
+        proposal.rung.ends_with("drying_rack"),
+        "the pit is dug, so the offer is the rack: {proposal:?}"
+    );
+    let opening = {
+        let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+        labor.band_orders.starting_target_for("wood").unwrap()
+    };
     assert_eq!(
-        twice
+        proposal.keep_raises,
+        vec![("wood".to_string(), opening, opening + rack_pile)]
+    );
+    assert!(
+        proposal
+            .text
+            .ends_with(&format!("(raises wood keep to {})", opening + rack_pile)),
+        "{}",
+        proposal.text
+    );
+
+    stock_wood(&mut app, band, 50.0);
+    app.world
+        .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
+    let (proposals, _) = published_offer(&mut app);
+    assert!(
+        proposals[0].keep_raises.is_empty(),
+        "stocked wood needs no raise: {:?}",
+        proposals[0]
+    );
+}
+
+/// **The escalation rung follows the two levers**: the words read "idle" under the notice lever, "idle N
+/// turns" from it and "wasted for N turns" (rung 2) from the wasted lever.
+#[test]
+fn the_escalation_rungs_follow_the_levers() {
+    let (mut app, _) = chief_world(true, true, SPARE_HANDS, 0);
+    {
+        let mut handle = app.world.resource_mut::<core_sim::LaborConfigHandle>();
+        let mut config = (*handle.0).clone();
+        config.band_orders.proposal_idle_turns_notice = 2;
+        config.band_orders.proposal_idle_turns_wasted = 4;
+        handle.0 = std::sync::Arc::new(config);
+    }
+    let mut seen = Vec::new();
+    for turn in 1..=4 {
+        app.world
+            .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
+        let (proposals, _) = published_offer(&mut app);
+        seen.push((turn, proposals[0].escalation, proposals[0].text.clone()));
+    }
+    let rung = |turn: usize| seen[turn - 1].1;
+    assert_eq!(
+        (rung(1), rung(2), rung(3), rung(4)),
+        (0, 1, 1, 2),
+        "{seen:?}"
+    );
+    assert!(
+        seen[0].2.contains(" idle hands \u{b7} Orrin proposes: "),
+        "{}",
+        seen[0].2
+    );
+    assert!(
+        seen[1].2.contains(" hands idle 2 turns \u{b7} "),
+        "{}",
+        seen[1].2
+    );
+    assert!(
+        seen[3].2.contains(" hands wasted for 4 turns \u{b7} "),
+        "{}",
+        seen[3].2
+    );
+}
+
+/// **A completed approved build counts ONCE as an order met** for the leader, and an unapproved one
+/// (the control) counts for nothing.
+#[test]
+fn a_completed_approved_build_counts_once_as_an_order_met() {
+    let judged = |app: &App, band: Entity, ready: u32| {
+        let wellbeing = app
             .world
-            .get::<LaborAllocation>(band)
-            .unwrap()
-            .builds
-            .len(),
-        once,
-        "the second pass declares nothing more"
-    );
-
-    let (app, band) = chief_world(true, false, true, 1);
-    assert!(!rack_declared(&app, band), "without the lesson he does not");
-    let (app, band) = chief_world(false, true, true, 1);
+            .resource::<core_sim::WellbeingConfigHandle>()
+            .get();
+        let cohort = app.world.get::<PopulationCohort>(band).unwrap();
+        core_sim::judge_leader(&wellbeing.leadership, None, cohort, None, 0.0, ready)
+            .reading
+            .met_orders
+    };
+    let (mut app, band) = chief_world(true, true, SPARE_HANDS, 1);
+    core_sim::chief_proposals::approve_proposal(&mut app.world, FACTION, BandId(BAND))
+        .expect("the proposal is approved");
     assert!(
-        !rack_declared(&app, band),
-        "a leaderless band never auto-declares"
+        rack_declared(&app, band) || {
+            // The top offer may be the pit: either way a build is declared by the approval.
+            !app.world
+                .get::<LaborAllocation>(band)
+                .unwrap()
+                .builds
+                .is_empty()
+        }
     );
-    let (app, band) = chief_world(true, true, false, 1);
-    assert!(
-        !rack_declared(&app, band),
-        "a released order's band does not"
+    // The build completes: the rack (or the pit) stands at the top of its rung.
+    hold_the_rack(&mut app, BandId(BAND));
+    dig_a_pit(&mut app, camp(), FACTION, 1.0);
+    app.world
+        .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
+    let book = |app: &App| {
+        app.world
+            .resource::<core_sim::chief_proposals::ChiefProposalBook>()
+            .clone()
+    };
+    assert_eq!(
+        book(&app).bands[&BandId(BAND)].met_builds_fresh,
+        1,
+        "credited when it completes"
+    );
+    // The leadership pass hands it to the next judgement, once.
+    app.world
+        .resource_mut::<core_sim::chief_proposals::ChiefProposalBook>()
+        .rotate_met_builds();
+    let ready = book(&app).met_builds_ready(BandId(BAND));
+    assert_eq!(ready, 1);
+    assert_eq!(judged(&app, band, ready), 1, "one order met");
+    assert_eq!(
+        judged(&app, band, 0),
+        0,
+        "control: no completed approval, none met"
+    );
+    app.world
+        .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
+    app.world
+        .resource_mut::<core_sim::chief_proposals::ChiefProposalBook>()
+        .rotate_met_builds();
+    assert_eq!(
+        book(&app).met_builds_ready(BandId(BAND)),
+        0,
+        "it is not counted a second time"
     );
 }

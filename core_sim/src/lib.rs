@@ -23,7 +23,9 @@ pub mod belief;
 mod belief_config;
 pub mod belief_relay;
 mod biome_palette;
+pub mod build_gates;
 pub mod carry;
+pub mod chief_proposals;
 pub mod climate;
 pub mod combat;
 mod combat_config;
@@ -113,7 +115,6 @@ pub mod staffing;
 pub mod staffing_preview;
 mod start_profile;
 pub mod starting_loadout;
-pub mod storage_orders;
 mod supply;
 mod supply_network_config;
 mod systems;
@@ -424,7 +425,7 @@ pub use leader_names::{
     LeaderNameCatalogMetadata, LeaderNamesError, BUILTIN_LEADER_NAMES, LEADER_NAME_SALT,
 };
 pub use leadership::{
-    advance_leadership, BandLeader, BandLeadership, LeaderKind, LEADER_KIND_CHIEF,
+    advance_leadership, judge_leader, BandLeader, BandLeadership, LeaderKind, LEADER_KIND_CHIEF,
     LEADER_KIND_ELDER_COUNCIL, LEADER_KIND_NONE,
 };
 pub use leadership_config::{
@@ -1114,6 +1115,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(tribe::TribeRegistry::default())
         .insert_resource(systems::HeartLedger::default())
         .insert_resource(systems::CulturePressureLedger::default())
+        .insert_resource(chief_proposals::ChiefProposalBook::default())
         .insert_resource(systems::BreedingBreakOffs::default())
         .insert_resource(culture::CultureSplitQueue::default())
         .insert_resource(lineage::FreeBreedingPeoples::default())
@@ -1592,8 +1594,8 @@ pub fn build_headless_app() -> App {
                 // **A band's dry take goes into its pits as it is gathered** (#709): the deposit
                 // follows the labor pass that landed the take and precedes everything after it.
                 fixed_store::deposit_into_stores.after(systems::advance_labor_allocation),
-                storage_orders::advance_chief_storage.after(fixed_store::deposit_into_stores),
-                leadership::advance_leadership.after(storage_orders::advance_chief_storage),
+                chief_proposals::advance_chief_proposals.after(fixed_store::deposit_into_stores),
+                leadership::advance_leadership.after(chief_proposals::advance_chief_proposals),
                 auto_craft::advance_auto_craft.after(leadership::advance_leadership),
                 systems::advance_crafting.after(auto_craft::advance_auto_craft),
                 auto_craft::advance_auto_craft_after_bench.after(systems::advance_crafting),

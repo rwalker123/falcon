@@ -1720,6 +1720,17 @@ enum Command {
         action: sim_runtime::BandOrderAction,
         row: Option<sim_runtime::BandOrderRow>,
     },
+    /// **Approve the chief's build proposal** for one band. See `handle_approve_proposal`.
+    ApproveProposal {
+        faction: FactionId,
+        band_id: u64,
+    },
+    /// **"Not now"** on a proposed build. See `handle_defer_proposal`.
+    DeferProposal {
+        faction: FactionId,
+        band_id: u64,
+        build_key: String,
+    },
     /// **Stop a staffed row** (#871) — remove the band's row for one source, or its Roadwork pool.
     /// See `handle_stop_labor`.
     StopLabor {
@@ -4610,40 +4621,24 @@ fn source_kind_noun(kind: SourceKind) -> &'static str {
     }
 }
 
-/// **"Your people have not learned X yet"** — the knowledge gate, off the rung record's own
-/// `unlock_knowledge`, judged by the ladder's own `knows` so the command and the turn compare one
-/// threshold. `None` when the rung is ungated or the knowledge is known.
+/// The knowledge gate (`build_gates::knowledge_refusal`) over a live `App`.
 fn knowledge_refusal(
     app: &bevy::prelude::App,
     faction: FactionId,
-    ladder: &core_sim::LadderConfig,
+    _ladder: &core_sim::LadderConfig,
     rung: &core_sim::RungDef,
 ) -> Option<String> {
-    let id = rung.unlock_discovery_id()?;
-    let known = knows(
-        app.world.resource::<DiscoveryProgressLedger>(),
-        faction,
-        id,
-        ladder.knowledge.completion_threshold,
-    );
-    (!known).then(|| {
-        let name = rung.unlock_knowledge.as_deref().unwrap_or_default();
-        let title = core_sim::knowledge_title_from_id(name);
-        // **How it is learned is the ladder's own fact**: the rung that `earns_knowledge` this name
-        // teaches it, so the sentence names that rung's `label` rather than a per-verb tail.
-        let teacher = ladder
-            .branches_in_config_order()
-            .into_iter()
-            .flat_map(|branch| ladder.rungs_of(branch))
-            .find(|candidate| candidate.earns_knowledge.as_deref() == Some(name));
-        match teacher {
-            Some(teacher) => format!(
-                "Your people have not learned {title} yet. Sustain-work the {} to learn it.",
-                teacher.label.to_lowercase()
-            ),
-            None => format!("Your people have not learned {title} yet."),
-        }
+    with_gate_scene(&app.world, |scene| {
+        core_sim::build_gates::knowledge_refusal(scene, faction, rung)
     })
+}
+
+/// Build a [`core_sim::build_gates::GateScene`] over `world` and run `f` on it.
+fn with_gate_scene<R>(
+    world: &bevy::prelude::World,
+    f: impl FnOnce(&core_sim::build_gates::GateScene<'_>) -> R,
+) -> R {
+    core_sim::build_gates::with_scene(world, f)
 }
 
 /// **The next step up from `rung`** as a sentence tail - the verb that raises the rung above it, or
@@ -4811,52 +4806,7 @@ fn validate_deposit_verb(
     Ok(())
 }
 
-/// **The land's refusal, phrased for the player** — one wording per fault, shared by every plant
-/// gate, so the same ground never gets two different explanations depending on which verb asked.
-///
-/// Each names the thing the player can actually *do* about it. `NotGatheringSite` is the one that is
-/// not a "yet": no rung below Farm relaxes it, so the answer is to work ground your people already
-/// gather rather than to wait.
-fn site_refusal_message(refusal: SiteRefusal, tile: UVec2, verb: &str) -> String {
-    match refusal {
-        SiteRefusal::NotGatheringSite => format!(
-            "Nobody gathers at ({}, {}) — your people cannot {} ground they do not already work. \
-             Choose a gathering site, or move to one.",
-            tile.x, tile.y, verb
-        ),
-        SiteRefusal::NoDeposit => format!(
-            "There is not enough at ({}, {}) to {} — a scatter is not a body of rock. Find real \
-             stone: the highlands, the plateaus and the badlands carry it.",
-            tile.x, tile.y, verb
-        ),
-        SiteRefusal::TooPoor => format!(
-            "Nothing will grow at ({}, {}) — that ground is too thin to take a crop. Your people \
-             cannot yet feed the land.",
-            tile.x, tile.y
-        ),
-        SiteRefusal::TooDry => format!(
-            "Nothing will grow at ({}, {}) — that ground is too dry to take a crop. Your people can \
-             carry seed, but not yet water: sow the well-watered ground along the rivers.",
-            tile.x, tile.y
-        ),
-        SiteRefusal::TooPoorAndTooDry => format!(
-            "Nothing will grow at ({}, {}) — that ground is too thin and too dry to take a crop. \
-             Your people can carry seed, but not yet water or feed the land.",
-            tile.x, tile.y
-        ),
-        SiteRefusal::NoBelief => format!(
-            "({}, {}) does not hold enough belief to {} - belief gathers where people have buried \
-             their dead and met, so hold more gatherings and bury your dead there first.",
-            tile.x, tile.y, verb
-        ),
-        SiteRefusal::NeedsLesson => format!(
-            "Your people have not learned how to {} ground beyond the sites they already gather, \
-             at ({}, {}) - a lesson they have not learned would open it.",
-            verb, tile.x, tile.y
-        ),
-        SiteRefusal::PenTaken => PEN_TAKEN_HINT.to_string(),
-    }
-}
+use core_sim::build_gates::{site_refusal_message, PEN_TAKEN_HINT};
 
 /// **THE REFUSAL FOR GROUND A LESSON WOULD OPEN, naming the lesson and where it is learned** - the
 /// [`SiteRefusal::NeedsLesson`] answer with its particulars filled from the rung's own
@@ -8767,73 +8717,9 @@ fn validate_tile_verb(
     branch: BranchId,
     rung: &core_sim::RungDef,
 ) -> Result<(), String> {
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
-    if let Some(refusal) = knowledge_refusal(app, faction, &ladder, rung) {
-        return Err(refusal);
-    }
-    let destination = rung.rung_id();
-    let required = ladder
-        .below_id(destination)
-        .expect("a rung a verb raises stands on the rung beneath it");
-    let label = rung.label.to_lowercase();
-    // **The ground, through the one `rung_site_refusal` seam** every other source's command and
-    // gate resolve: a rung that states a `site_requirement` (a belief branch's monument asks the
-    // tile for `min_belief`) is judged against the tile and the belief standing on it.
-    if rung.site_requirement.is_some() {
-        let labor = app.world.resource::<LaborConfigHandle>().get();
-        let registry = app.world.resource::<TileRegistry>();
-        let Some(ground) = registry
-            .index(tile.x, tile.y)
-            .and_then(|entity| app.world.get::<Tile>(entity))
-        else {
-            return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
-        };
-        if let Some(refusal) = rung_site_refusal(
-            rung,
-            ground,
-            &labor.forage,
-            // A tile rung asks nothing about gathering or water: both are passed permissive.
-            true,
-            true,
-            core_sim::NO_DEPOSIT_FLOOR,
-            app.world.resource::<core_sim::BeliefRegistry>().get(tile),
-            // A tile rung declares no `site_relaxations`, so no lesson changes its rule.
-            &|_| false,
-        ) {
-            return Err(site_refusal_message(
-                refusal,
-                tile,
-                rung.verb.as_deref().unwrap_or(&label),
-            ));
-        }
-    }
-    let improvements = app.world.resource::<core_sim::TileImprovementRegistry>();
-    match improvements.get(tile, branch) {
-        Some(improvement) if improvement.faction != faction => Err(format!(
-            "The {} at ({}, {}) belongs to another people.",
-            ladder.rung(improvement.held_rung()).label.to_lowercase(),
-            tile.x,
-            tile.y
-        )),
-        Some(improvement) if ladder.at_or_above(improvement.held_rung(), destination) => Err(
-            format!("The {label} at ({}, {}) is already built.", tile.x, tile.y),
-        ),
-        Some(improvement) if !ladder.at_or_above(improvement.held_rung(), required) => {
-            Err(format!(
-                "It is only a {} - it must be a {} before you can raise it to a {label}.",
-                ladder.rung(improvement.held_rung()).label.to_lowercase(),
-                ladder.rung(required).label.to_lowercase(),
-            ))
-        }
-        Some(_) => Ok(()),
-        None if ladder.root_of(branch).map(core_sim::RungDef::rung_id) == Some(required) => Ok(()),
-        None => Err(format!(
-            "Nothing stands at ({}, {}) yet - raise the {} first.",
-            tile.x,
-            tile.y,
-            ladder.rung(required).label.to_lowercase()
-        )),
-    }
+    with_gate_scene(&app.world, |scene| {
+        core_sim::build_gates::validate_tile_verb(scene, faction, tile, branch, rung)
+    })
 }
 
 /// **A band-kind verb's gate** - [`validate_tile_verb`]'s twin for an improvement a band holds at its
@@ -8859,36 +8745,9 @@ fn validate_band_verb(
             rung.label.to_lowercase()
         ));
     }
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
-    if let Some(refusal) = knowledge_refusal(app, faction, &ladder, rung) {
-        return Err(refusal);
-    }
-    let destination = rung.rung_id();
-    let required = ladder
-        .below_id(destination)
-        .expect("a rung a verb raises stands on the rung beneath it");
-    let label = rung.label.to_lowercase();
-    let improvements = app.world.resource::<core_sim::TileImprovementRegistry>();
-    match improvements.bands().get(band, branch) {
-        Some(improvement) if ladder.at_or_above(improvement.held_rung(), destination) => {
-            Err(format!("Band {}'s {label} is already built.", band.0))
-        }
-        Some(improvement) if !ladder.at_or_above(improvement.held_rung(), required) => {
-            Err(format!(
-                "It is only a {} - it must be a {} before you can raise it to a {label}.",
-                ladder.rung(improvement.held_rung()).label.to_lowercase(),
-                ladder.rung(required).label.to_lowercase(),
-            ))
-        }
-        Some(_) => Ok(()),
-        None if ladder.root_of(branch).map(core_sim::RungDef::rung_id) == Some(required) => Ok(()),
-        None => Err(format!(
-            "Band {} holds no {} yet - raise the {} first.",
-            band.0,
-            branch.as_str(),
-            ladder.rung(required).label.to_lowercase()
-        )),
-    }
+    with_gate_scene(&app.world, |scene| {
+        core_sim::build_gates::validate_band_verb(scene, faction, band, branch, rung)
+    })
 }
 
 /// **Every refusal `grade` / `pave` can produce, in the order they are asked.** Split out so the
@@ -11249,6 +11108,75 @@ fn handle_band_order(
     );
 }
 
+/// **APPROVE THE CHIEF'S BUILD PROPOSAL** - `approve_proposal <faction> <band>`
+/// (`core_sim::chief_proposals`). The sim re-validates the proposal (it may be stale), declares the
+/// build as a player's declaration would and raises the keep orders it carries, in one step; the band
+/// is then restaffed so the builders show on the wire at once and the next proposal is offered.
+fn handle_approve_proposal(app: &mut bevy::prelude::App, faction: FactionId, band_id: u64) {
+    let Some(band) = select_starting_band(
+        app,
+        faction,
+        Some(band_id),
+        "approve_proposal",
+        CommandEventKind::Extraction,
+    ) else {
+        return;
+    };
+    if let Err(reason) =
+        core_sim::chief_proposals::approve_proposal(&mut app.world, faction, BandId(band_id))
+    {
+        emit_command_failure(app, CommandEventKind::Extraction, faction, reason);
+        return;
+    }
+    restaff_and_reseed(app, band.entity);
+    core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+    info!(
+        target: "shadow_scale::command",
+        command = "approve_proposal",
+        faction = %faction.0,
+        band = band_id,
+        "command.approve_proposal.applied"
+    );
+}
+
+/// **"NOT NOW"** - `defer_proposal <faction> <band> <build_key>` hides one proposed build for
+/// `band_orders.proposal_not_now_turns` turns.
+fn handle_defer_proposal(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: u64,
+    build_key: &str,
+) {
+    if select_starting_band(
+        app,
+        faction,
+        Some(band_id),
+        "defer_proposal",
+        CommandEventKind::Extraction,
+    )
+    .is_none()
+    {
+        return;
+    }
+    if let Err(reason) = core_sim::chief_proposals::defer_proposal(
+        &mut app.world,
+        faction,
+        BandId(band_id),
+        build_key,
+    ) {
+        emit_command_failure(app, CommandEventKind::Extraction, faction, reason);
+        return;
+    }
+    info!(
+        target: "shadow_scale::command",
+        command = "defer_proposal",
+        faction = %faction.0,
+        band = band_id,
+        build = %build_key,
+        "command.defer_proposal.applied"
+    );
+}
+
 /// **STOP A STAFFED ROW** (#871) - `stop_labor <faction> <band> <source>` removes the band's row for
 /// the source (its work party is stood down and walks home, its declared build goes with it), or its
 /// Roadwork pool for the lone token `roadwork`. It exists because `assign_labor`'s count is the
@@ -11649,9 +11577,6 @@ fn bands_that_may_queue_the_pen(
     }
     bands
 }
-
-/// The hint a refused second Corral carries.
-const PEN_TAKEN_HINT: &str = "Another band is already penning this herd";
 
 /// How many bands may hold one herd's Corral in their queues at once - a herd cannot be in two
 /// places.
@@ -12635,6 +12560,22 @@ fn command_from_payload(
             },
             roadwork,
         }),
+        ProtoCommandPayload::ApproveProposal {
+            faction_id,
+            band_id,
+        } => Some(Command::ApproveProposal {
+            faction: FactionId(faction_id),
+            band_id,
+        }),
+        ProtoCommandPayload::DeferProposal {
+            faction_id,
+            band_id,
+            build_key,
+        } => Some(Command::DeferProposal {
+            faction: FactionId(faction_id),
+            band_id,
+            build_key,
+        }),
         ProtoCommandPayload::BandOrder {
             faction_id,
             band_id,
@@ -13580,6 +13521,8 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::Unqueue { faction, .. } => Some((*faction, "unqueue")),
         Command::StopLabor { faction, .. } => Some((*faction, "stop_labor")),
         Command::BandOrder { faction, .. } => Some((*faction, "band_order")),
+        Command::ApproveProposal { faction, .. } => Some((*faction, "approve_proposal")),
+        Command::DeferProposal { faction, .. } => Some((*faction, "defer_proposal")),
         Command::WorkPriority { faction, .. } => Some((*faction, "work_priority")),
         Command::BenchPriority { faction, .. } => Some((*faction, "bench_priority")),
         Command::BenchAuto { faction, .. } => Some((*faction, "bench_auto")),
@@ -14076,6 +14019,16 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             row,
         } => {
             handle_band_order(app, faction, band_id, &kind, action, row);
+        }
+        Command::ApproveProposal { faction, band_id } => {
+            handle_approve_proposal(app, faction, band_id);
+        }
+        Command::DeferProposal {
+            faction,
+            band_id,
+            build_key,
+        } => {
+            handle_defer_proposal(app, faction, band_id, &build_key);
         }
         Command::ExtendPen {
             faction,
@@ -17823,6 +17776,270 @@ mod tests {
             "the pit's Build line creates the tile crew row"
         );
         assert!(declared(&mut app, pit), "the pit's Build line declares it");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The chief proposes a build; the player approves it (`core_sim::chief_proposals`)
+    // ---------------------------------------------------------------------------------------------
+
+    /// What the encoded frame carries for the band's proposal.
+    #[derive(Debug, Clone, PartialEq)]
+    struct WireProposal {
+        build_key: String,
+        text: String,
+        escalation: u32,
+        idle: u32,
+        idle_turns: u32,
+        keep_raises: Vec<(String, u32, u32)>,
+    }
+
+    /// The band's proposal as a client reads it: recapture, encode, walk the cohort row.
+    fn wire_proposal(app: &mut bevy::prelude::App, band: u64) -> Option<WireProposal> {
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+        app.world
+            .insert_resource(core_sim::ViewerFaction(FactionId(0)));
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<core_sim::SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+        let cohort = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot")
+            .population()
+            .and_then(|section| section.populations())
+            .expect("the cohorts")
+            .iter()
+            .find(|cohort| cohort.bandId() == band)
+            .expect("the band is on the wire");
+        let row = cohort.chiefProposals()?.iter().next()?;
+        Some(WireProposal {
+            build_key: row.buildKey().unwrap_or_default().to_string(),
+            text: row.text().unwrap_or_default().to_string(),
+            escalation: row.escalation(),
+            idle: row.idle(),
+            idle_turns: row.idleTurns(),
+            keep_raises: row
+                .keepRaises()
+                .map(|raises| {
+                    raises
+                        .iter()
+                        .map(|raise| {
+                            (
+                                raise.material().unwrap_or_default().to_string(),
+                                raise.from(),
+                                raise.to(),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        })
+    }
+
+    /// The starting band with idle hands, the storage lesson, a wood-less camp and a storage threshold
+    /// of zero (so the rack qualifies without a meat surplus); `chief` decides whether it has a leader.
+    fn proposal_world(chief: bool) -> (bevy::prelude::App, FactionId, u64) {
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = starting_band_id(&mut app, faction);
+        app.world
+            .resource_mut::<core_sim::DiscoveryProgressLedger>()
+            .add_progress(
+                faction,
+                core_sim::spoilage::STORAGE_DISCOVERY_ID,
+                core_sim::scalar_one(),
+            );
+        {
+            let mut handle = app.world.resource_mut::<LaborConfigHandle>();
+            let mut config = (*handle.0).clone();
+            config.band_orders.storage_build_min_saved = 0.0;
+            handle.0 = std::sync::Arc::new(config);
+        }
+        let entity = app
+            .world
+            .query::<(bevy::prelude::Entity, &BandId)>()
+            .iter(&app.world)
+            .find(|(_, id)| id.0 == band)
+            .map(|(entity, _)| entity)
+            .expect("the band");
+        app.world
+            .get_mut::<PopulationCohort>(entity)
+            .expect("cohort")
+            .stores
+            .clear_materials();
+        app.world
+            .entity_mut(entity)
+            .insert(core_sim::BandLeadership {
+                leader: chief.then(|| core_sim::BandLeader {
+                    name: "Orrin".to_string(),
+                    kind: core_sim::LeaderKind::Chief,
+                    since_turn: 0,
+                }),
+                ..Default::default()
+            });
+        core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+        (app, faction, band)
+    }
+
+    fn band_entity(app: &mut bevy::prelude::App, band: u64) -> bevy::prelude::Entity {
+        app.world
+            .query::<(bevy::prelude::Entity, &BandId)>()
+            .iter(&app.world)
+            .find(|(_, id)| id.0 == band)
+            .map(|(entity, _)| entity)
+            .expect("the band")
+    }
+
+    /// **A proposal appears with a chief and idle hands, and not without either** - read off the
+    /// encoded frame, each absence beside the case that does carry one.
+    #[test]
+    fn a_chief_with_idle_hands_proposes_a_build_and_the_frame_carries_it() {
+        let (mut app, _, band) = proposal_world(true);
+        let proposal = wire_proposal(&mut app, band).expect("a chief with idle hands proposes");
+        assert!(proposal.idle > 0, "{proposal:?}");
+        assert!(
+            proposal
+                .text
+                .contains("Orrin proposes: build a drying rack")
+                && proposal
+                    .text
+                    .starts_with(&format!("{} idle hand", proposal.idle)),
+            "{}",
+            proposal.text
+        );
+
+        // Control: no chief, no proposal.
+        let (mut app, _, band) = proposal_world(false);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "no chief, no proposal"
+        );
+
+        // Control: a chief whose every hand is busy proposes nothing.
+        let (mut app, _, band) = proposal_world(true);
+        let entity = band_entity(&mut app, band);
+        app.world.entity_mut(entity).insert(core_sim::BandBench {
+            workers: u32::MAX,
+            ..Default::default()
+        });
+        core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "no idle hands, no proposal"
+        );
+    }
+
+    /// **A material the band is short of rides the proposal as a keep raise**, and approving declares
+    /// the build AND raises the keep order, through the real parser.
+    #[test]
+    fn approving_declares_the_build_and_raises_the_keep() {
+        let (mut app, faction, band) = proposal_world(true);
+        let proposal = wire_proposal(&mut app, band).expect("a proposal");
+        assert_eq!(
+            proposal.keep_raises.len(),
+            1,
+            "the rack is short of its wood: {proposal:?}"
+        );
+        let (material, from, to) = proposal.keep_raises[0].clone();
+        assert_eq!(material, "wood");
+        assert!(to > from, "{proposal:?}");
+        assert!(
+            proposal
+                .text
+                .contains(&format!("(raises wood keep to {to})")),
+            "{}",
+            proposal.text
+        );
+        let entity = band_entity(&mut app, band);
+        let rack = BuildSource::Band {
+            band: BandId(band),
+            branch: core_sim::BranchId::new("camp_stores"),
+        };
+        assert!(
+            !app.world
+                .get::<LaborAllocation>(entity)
+                .unwrap()
+                .has_build(&rack),
+            "control: nothing is declared before the approval"
+        );
+        send_command_line(&mut app, &format!("approve_proposal {} {band}", faction.0));
+        let allocation = app.world.get::<LaborAllocation>(entity).unwrap();
+        assert!(
+            allocation.has_build(&rack),
+            "the approval declares the rack"
+        );
+        assert_eq!(
+            allocation.order_for("wood").map(|order| order.target),
+            Some(to),
+            "and raises the wood keep"
+        );
+        // The offer moves on: the approved rack is not proposed again.
+        let after = wire_proposal(&mut app, band);
+        assert!(
+            after
+                .as_ref()
+                .is_none_or(|next| next.build_key != proposal.build_key),
+            "{after:?}"
+        );
+    }
+
+    /// **"Not now" hides the build for the lever's turns, then it returns** - and the band is offered
+    /// the next build meanwhile.
+    #[test]
+    fn not_now_hides_the_build_for_the_levers_turns_and_then_it_returns() {
+        let (mut app, faction, band) = proposal_world(true);
+        let first = wire_proposal(&mut app, band).expect("a proposal");
+        let turns = u64::from(
+            app.world
+                .resource::<LaborConfigHandle>()
+                .get()
+                .band_orders
+                .proposal_not_now_turns,
+        );
+        send_command_line(
+            &mut app,
+            &format!("defer_proposal {} {band} {}", faction.0, first.build_key),
+        );
+        let during = wire_proposal(&mut app, band);
+        assert!(
+            during
+                .as_ref()
+                .is_some_and(|next| next.build_key != first.build_key),
+            "the deferred build is hidden and the next is offered: {during:?}"
+        );
+        app.world.resource_mut::<SimulationTick>().0 += turns - 1;
+        core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+        assert_ne!(
+            wire_proposal(&mut app, band).map(|next| next.build_key),
+            Some(first.build_key.clone()),
+            "still hidden on the last turn of the deferral"
+        );
+        app.world.resource_mut::<SimulationTick>().0 += 1;
+        core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+        assert_eq!(
+            wire_proposal(&mut app, band).map(|next| next.build_key),
+            Some(first.build_key),
+            "after the lever's turns it returns"
+        );
+    }
+
+    /// **A stale proposal is refused, not declared**: a band with no proposal answers an approval with
+    /// a failure line, and declares nothing.
+    #[test]
+    fn approving_with_no_proposal_is_refused() {
+        let (mut app, faction, band) = proposal_world(false);
+        send_command_line(&mut app, &format!("approve_proposal {} {band}", faction.0));
+        assert!(
+            extraction_failure_contains(&app, "Nobody is proposing"),
+            "{:?}",
+            extraction_failure_reasons(&app)
+        );
     }
 
     /// **A QUEUED RACK CAN BE CANCELLED, RE-ORDERED AND RANKED** - the five queue verbs address a band

@@ -1,6 +1,8 @@
 ---
 paths:
   - "core_sim/src/work_party.rs"
+  - "core_sim/src/chief_proposals.rs"
+  - "core_sim/src/build_gates.rs"
   - "core_sim/src/staffing.rs"
   - "core_sim/src/keep_on_hand.rs"
   - "core_sim/src/staffing_preview.rs"
@@ -522,6 +524,57 @@ re-staff on a smaller pool and the turn's staffed rows), `shedding_order::a_smal
 `take_kit_claims` (granted claims against asks) and `server::tests` (`stop_labor`, the Max on
 `assign_labor`).
 
+### A chief proposes a build; the player approves it (#911)
+
+Engine: `core_sim/src/chief_proposals.rs` (the pass, `approve_proposal`, `defer_proposal`), the gates in
+`core_sim/src/build_gates.rs`, the state in `ChiefProposalBook` (`SimState`, `SAVE_FORMAT_VERSION` 69).
+**The chief never declares a build.** Whenever a band has a leader and `BandWorkforce::idle() > 0`,
+`advance_chief_proposals` (an exclusive system in the Population chain, after `deposit_into_stores` and
+before `advance_leadership`) offers **one** build and the player answers it. A leaderless band gets none
+and works as it did.
+
+- **Candidates are every build the band could declare now**: the next rung above what the band holds on
+  each band-kind branch (the rack) and, on the band's own tile, each tile-kind branch (the pit, a
+  monument). Eligibility is `build_gates::{validate_band_verb, validate_tile_verb}` - the very functions
+  `build <verb>` runs (`bin/server.rs` wraps them through `build_gates::with_scene`), so a proposal can
+  never be one the command would refuse - and `!LaborAllocation::has_build`. Patch, herd, deposit and road
+  builds need a crew row that names a source and are not candidates.
+- **Rank**: a build that adds or saves food first, most food first (a storage rung's value is its
+  `storageSaves.foodSaved`, gated by `band_orders.storage_build_min_saved`; a storage rung below the lever
+  is not a candidate), then builds with no food figure in ladder order (branch order, rung order), then
+  the build key.
+- **A material shortfall rides the proposal.** A rung whose `build.materials` the band does not hold is
+  still eligible when the material is an ordered kind (`band_orders.ordered_kinds`) and its order is not
+  the player's; the proposal carries `KeepRaise { material, from, to }` with `from` the order's target
+  (`starting_target` where there is none) and `to = from + ceil(pile)`. A material that cannot be gathered
+  makes the build ineligible.
+- **Idle streak and the words.** `BandProposals::idle_turns` counts consecutive turns of idle hands (the
+  turn's pass only). The escalation rung is 0 under `band_orders.proposal_idle_turns_notice` (**3**), 1 from
+  it, 2 from `band_orders.proposal_idle_turns_wasted` (**8**). The proposal's text is resolved in the sim:
+  `3 idle hands · Orrin proposes: dig a storage pit` / `3 hands idle 4 turns · ...` / `3 hands wasted for 9
+  turns · ...`, then ` - 0.4 food a turn spoiling` where there is a food figure and ` (raises wood keep to
+  13)` where there is a raise; a council reads `<Band>'s elders propose`. The phrase is the rung's
+  `proposal_phrase` (`intensification_ladder.json`; absent: the verb and `label_fallback`).
+- **Approve** (`approve_proposal <faction> <band>`): re-runs the candidates (the offer may be stale),
+  refuses if the chosen build is gone, then places the improvement, stages the row as a player's row
+  (`set_staffed_row`, not listed under an order), declares `BuildJob::Climb(rung)` and raises each keep
+  order through `keep_on_hand::set_order` (priority kept), in one step; the server then restaffs the band.
+  The build is tracked on `BandProposals::approved`.
+- **Not now** (`defer_proposal <faction> <band> <build_key>`): the key is hidden until `tick +
+  band_orders.proposal_not_now_turns` (**20**); the next candidate is offered meanwhile. The build key is
+  the rung's wire key, with `@x,y` for a tile build (`food_stores:storage_pit@4,9`).
+- **Leadership**: an approved build that completes counts once as an order met (`leadership.md`).
+- **Wire**: `PopulationCohortState.chiefProposals` (zero or one `ChiefProposal`, own bands only), native key
+  `chief_proposals`. The offer is refreshed by the turn's pass and by both commands, so a recapture after a
+  command shows the new offer.
+
+Pinned off the encoded frame by `tests/storage_branches.rs::{a_chief_with_idle_hands_proposes_storage_and_declares_nothing,
+the_ranking_puts_food_first, the_material_keep_raise_is_carried, the_escalation_rungs_follow_the_levers,
+a_completed_approved_build_counts_once_as_an_order_met}` and, through the real parser,
+`server::tests::{a_chief_with_idle_hands_proposes_a_build_and_the_frame_carries_it,
+approving_declares_the_build_and_raises_the_keep, not_now_hides_the_build_for_the_levers_turns_and_then_it_returns,
+approving_with_no_proposal_is_refused}`.
+
 ### Scouting is a range, not a count (#875)
 
 Design: `docs/plan_labor_at_scale.md` "Scouts: a range, not a count". The player states a **scouting
@@ -624,7 +677,7 @@ in `query_seat_gate.rs`, and `sim_runtime`'s `the_staffing_preview_round_trips`.
 | `src/data/labor_config.json` | `band_work_range` (**2**) is the apron: past it every job posts a party, and the walk is measured from it. `band_move_tiles_per_turn` (**1**) is read a second time as the party's walking speed — the walk out and every porter's walk home — and is validated `>= 1` for that reason. **No lever of this arc's own exists**: the share of a party on the road falls out of carry, take rate and distance |
 | `src/data/labor_config.json` (`food_first_window_turns`) | **5**, playtest dial, `0` switches it off: how many turns ahead the staffing walks the larder for a missed meal before it lets builders work (see "A band that would go hungry feeds itself before it builds"). A Workbench row (`/food_first_window_turns`) |
 | `src/data/labor_config.json` (keep-on-hand) | `keep_on_hand_refill_turns` (**10**, validated `>= 1`, playtest dial): the turns an ordered material's keep-on-hand deficit is spread over - the dig takes `draw + deficit / this` |
-| `src/data/labor_config.json` (`band_orders`) | `ordered_kinds` (**`["stone", "wood", "food", "fodder"]`**, playtest lever): the kinds a chief takes orders for - `food`, `fodder` or a material id; each listed kind needs a `starting_target` above zero. `starting_target` (**stone 30, wood 30, food 20, fodder 10**, playtest levers): the target a chief opens each kind at when he arrives, and a claim falls back to - units for a material, turns for food and fodder. `learning_floor` (**0.8**, validated in `(0.5, 1.0]`, playtest dial): the floor the chief works his food and fodder rows at while the order is at or above its target; it **must equal the client's Learning preset**, `SourceForecast.FLOOR_PRESET_VALUES[FLOOR_PRESET_LEARN]` (`0.80`, `clients/godot_thin_client/src/scripts/ui/hud/SourceForecast.gd`) - pinned by `food_orders::the_shipped_learning_floor_is_the_clients_learning_preset`, which reads the client file. Below the target he works Best. The `starting_target` values are Workbench rows (`/band_orders/starting_target/*`) |
+| `src/data/labor_config.json` (`band_orders`) | `ordered_kinds` (**`["stone", "wood", "food", "fodder"]`**, playtest lever): the kinds a chief takes orders for - `food`, `fodder` or a material id; each listed kind needs a `starting_target` above zero. `starting_target` (**stone 30, wood 30, food 20, fodder 10**, playtest levers): the target a chief opens each kind at when he arrives, and a claim falls back to - units for a material, turns for food and fodder. `learning_floor` (**0.8**, validated in `(0.5, 1.0]`, playtest dial): the floor the chief works his food and fodder rows at while the order is at or above its target; it **must equal the client's Learning preset**, `SourceForecast.FLOOR_PRESET_VALUES[FLOOR_PRESET_LEARN]` (`0.80`, `clients/godot_thin_client/src/scripts/ui/hud/SourceForecast.gd`) - pinned by `food_orders::the_shipped_learning_floor_is_the_clients_learning_preset`, which reads the client file. Below the target he works Best. The `starting_target` values are Workbench rows (`/band_orders/starting_target/*`). `storage_build_min_saved` (**0.2**) gates a storage rung as a proposal candidate. `proposal_idle_turns_notice` (**3**, `>= 1`), `proposal_idle_turns_wasted` (**8**, `>=` the notice) and `proposal_not_now_turns` (**20**, `>= 1`) are the chief's build proposal levers ("A chief proposes a build"), all Workbench rows and playtest dials |
 | `src/data/supply_network_config.json` | Read, not written: `reach_tiles` is subtracted from `supply::free_pooling_reach_tiles` to give the **road bonus** — how much of a walk a road takes away. `friction` is **not** read: distance is paid in walking |
 | `src/data/materials.json` | Read, not written: every material's required **`weight`** — biomass-equivalent mass per unit, validated positive and finite — is what a deposit's pack is divided by (wood **2.4**, stone **3.0**; every value PROVISIONAL, stated in the file's `_comment_weight`) |
 | `src/data/equipment.json` | Read, not written: the extract kits `sledding` (`sled`), `woodcutting` (`sled` + `axe`) and `stonework` (`sled` + `wedges`), claimed whole like every job's kit, so a far working's porters haul on the sled on every rung |

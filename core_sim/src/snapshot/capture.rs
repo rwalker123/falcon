@@ -108,6 +108,9 @@ pub struct SnapshotContext<'w> {
     /// Every improvement on a tile-kind branch. Published filtered to the tiles the viewer has
     /// explored; the checkpoint carries the registry itself.
     pub tile_improvements: Res<'w, crate::tile_improvement::TileImprovementRegistry>,
+    /// Every band's chief-proposal state; the capture publishes each own band's offer. `Option` for
+    /// the hand-rolled capture worlds that never install it.
+    pub chief_proposals: Option<Res<'w, crate::chief_proposals::ChiefProposalBook>>,
     /// Every live working on a deposit. Published filtered to the workings the viewer has explored;
     /// the checkpoint carries the registry itself. **Sparse and lazy** — a working exists only from
     /// the turn a band first put a crew on it.
@@ -2803,6 +2806,7 @@ pub fn capture_snapshot(
         knowledge_contact,
         roads,
         tile_improvements,
+        chief_proposals,
         deposits,
         extraction,
         tile_registry,
@@ -3547,7 +3551,18 @@ pub fn capture_snapshot(
                         ),
                         _ => crate::band_spoilage::BandSpoilage::default(),
                     };
+                    // **The chief's build proposal** (own resident bands only, like the spoilage beside it).
+                    let chief_proposals: Vec<_> = match (expedition.is_none(), band_id) {
+                        (true, Some(band)) => chief_proposals
+                            .as_deref()
+                            .and_then(|book| book.current(*band))
+                            .cloned()
+                            .into_iter()
+                            .collect(),
+                        _ => Vec::new(),
+                    };
                     Some(population_state(PopulationStateInputs {
+                        chief_proposals,
                         spoilage,
                         belief_reach,
                         belief_anchor_weight,

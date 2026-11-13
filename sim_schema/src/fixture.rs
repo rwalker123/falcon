@@ -686,6 +686,11 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.spoil_ahead = rows();
         cohort.storage_saves = rows();
         cohort.held_stores = rows();
+        // A proposal's own `keep_raises` is a nested repeated field, so both levels are seeded.
+        cohort.chief_proposals = rows_of(crate::state::population::ChiefProposalState {
+            keep_raises: vec![crate::state::population::KeepRaiseState::default()],
+            ..Default::default()
+        });
         cohort.envoy_terms = seeded_terms();
         cohort.culture_pressures = rows();
         cohort.band_orders = rows();

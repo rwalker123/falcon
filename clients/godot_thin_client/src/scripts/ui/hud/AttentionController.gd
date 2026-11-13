@@ -429,7 +429,7 @@ func _idle_workers_row(entry: Dictionary) -> Dictionary:
     var idle_workers := _band_labor.people_idle(entry)
     if idle_workers <= 0:
         return {}
-    return {
+    var row := {
         "kind": HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS,
         "owner": int(entry.get("entity", -1)),
         "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
@@ -437,6 +437,18 @@ func _idle_workers_row(entry: Dictionary) -> Dictionary:
         "detail": HudFormat.band_name(entry),
         "x": int(entry.get("current_x", -1)), "y": int(entry.get("current_y", -1)),
     }
+    # **THE CHIEF'S PROPOSAL RIDES THIS ENTRY** — the sim's sentence as published, never composed here.
+    var proposals: Array = entry.get(HudAttentionVocab.CHIEF_PROPOSALS_KEY, [])
+    if not proposals.is_empty() and proposals[0] is Dictionary:
+        var proposal: Dictionary = proposals[0]
+        row[HudAttentionVocab.ATTENTION_PROPOSAL] = {
+            HudAttentionVocab.PROPOSAL_TEXT_KEY: String(proposal.get(HudAttentionVocab.PROPOSAL_TEXT_KEY, "")),
+            HudAttentionVocab.PROPOSAL_BUILD_KEY: String(proposal.get(HudAttentionVocab.PROPOSAL_BUILD_KEY, "")),
+            HudAttentionVocab.PROPOSAL_ESCALATION_KEY: int(proposal.get(HudAttentionVocab.PROPOSAL_ESCALATION_KEY, 0)),
+            HudAttentionVocab.PROPOSAL_BAND_ID: int(entry.get("band_id", HudConst.NO_BAND_ID)),
+            HudAttentionVocab.PROPOSAL_FACTION: int(entry.get("faction", HudConst.PLAYER_FACTION_ID)),
+        }
+    return row
 
 ## The band half with every idle-workers row recomputed against the CURRENT pending overlay. A stepper
 ## press changes `people_idle` but not the snapshot, and a full `build_band_attention` then would run

@@ -13,8 +13,14 @@
   "band_orders": {
     "_comment_learning_floor": "THE FLOOR THE CHIEF WORKS HIS FOOD AND FODDER ROWS AT WHILE THE ORDER IS AT OR ABOVE ITS TARGET: the Learning preset (the client's FLOOR_PRESET_LEARN, 0.80), above the Best floor (0.5) he works them at below the target. Spare food buys ladder knowledge instead of drawing a source down. THE CLIENT'S LEARNING BUTTON SENDS THE SAME NUMBER: this MUST AGREE with SourceForecast.FLOOR_PRESET_VALUES[FLOOR_PRESET_LEARN] (0.80) in clients/godot_thin_client/src/scripts/ui/hud/SourceForecast.gd, so a row the chief eases to Learning reads as the Learning preset on its sheet; change one and change the other. Validated in (0.5, 1.0]. PLAYTEST DIAL.",
     "learning_floor": 0.8,
-    "_comment_storage_build_min_saved": "THE LEAST FOOD A TURN A STORAGE BUILD MUST SAVE BEFORE IT IS DECLARED: a chief with a food order declares a drying rack or storage pit once it would save at least this much spoilage a turn (the band's storageSaves rows), and a rival's food specialist reads the same number off the cohort (storageBuildMinSaved), so both act on one threshold. Finite, >= 0. OPENING VALUE, PLAYTEST DIAL.",
+    "_comment_storage_build_min_saved": "THE LEAST FOOD A TURN A STORAGE BUILD MUST SAVE BEFORE IT IS PROPOSED: a chief proposes (the player approves) a drying rack or storage pit once it would save at least this much spoilage a turn (the band's storageSaves rows), and a rival's food specialist reads the same number off the cohort (storageBuildMinSaved), so both act on one threshold. Finite, >= 0. OPENING VALUE, PLAYTEST DIAL.",
     "storage_build_min_saved": 0.2,
+    "_comment_proposal_idle_turns_notice": "A CHIEF PROPOSES A BUILD WHEN HANDS ARE IDLE (chief_proposals.rs): idle turns in a row before the proposal reads 'N hands idle M turns' (escalation rung 1). At least 1. OPENING VALUE, PLAYTEST DIAL.",
+    "proposal_idle_turns_notice": 3,
+    "_comment_proposal_idle_turns_wasted": "Idle turns in a row before the proposal reads 'N hands wasted for M turns' and the client tints it amber (rung 2). At least proposal_idle_turns_notice. OPENING VALUE, PLAYTEST DIAL.",
+    "proposal_idle_turns_wasted": 8,
+    "_comment_proposal_not_now_turns": "How many turns 'Not now' (defer_proposal) hides a proposed build before it may be proposed again. At least 1. OPENING VALUE, PLAYTEST DIAL.",
+    "proposal_not_now_turns": 20,
     "ordered_kinds": ["stone", "wood", "food", "fodder"],
     "starting_target": {
       "stone": 30,

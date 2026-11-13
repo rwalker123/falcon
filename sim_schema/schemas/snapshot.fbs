@@ -1696,6 +1696,9 @@ table PopulationCohortState {
   // Every `keeping.preservation` rung the band currently HOLDS (the rack at its camp, a store on the tile
   // it keeps), one row each: the keeping class and the shelf life it gives. Own bands only.
   heldStores:[HeldStore];
+  // THE CHIEF'S BUILD PROPOSAL (appended last): zero or one row. A band with a leader and idle hands is
+  // offered one build to approve (`approve_proposal`) or put off (`defer_proposal`). Own bands only.
+  chiefProposals:[ChiefProposal];
 }
 
 // ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH - a row of `PopulationCohortState.bandImprovements`,
@@ -1822,6 +1825,34 @@ table CulturePressureState {
   // Turns left on the clock toward the next phase (pulled -> asked, asked -> forced); 0 when that
   // clock is not running.
   turnsToNext:ushort = 0;
+}
+
+// One material keep order a proposal raises - a row of `ChiefProposal.keepRaises`.
+table KeepRaise {
+  material:string;
+  from:uint = 0;
+  to:uint = 0;
+}
+
+// A CHIEF'S BUILD PROPOSAL - a row of `PopulationCohortState.chiefProposals`. `text` is the fully resolved
+// sentence the client renders; `escalation` is 0 (idle hands), 1 (idle for the notice lever's turns) or 2
+// (wasted: the amber rung). `buildKey` is what `defer_proposal` names.
+table ChiefProposal {
+  buildKey:string;
+  rung:string;
+  branch:string;
+  verb:string;
+  phrase:string;
+  hasTile:bool = false;
+  tileX:uint = 0;
+  tileY:uint = 0;
+  reason:string;
+  foodSaved:float = 0;
+  idle:uint = 0;
+  idleTurns:uint = 0;
+  escalation:uint = 0;
+  keepRaises:[KeepRaise];
+  text:string;
 }
 
 // One keeping class's spoilage per turn - a row of `PopulationCohortState.spoilAhead`.
