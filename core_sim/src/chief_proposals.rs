@@ -57,6 +57,8 @@ pub struct ApprovedBuild {
     pub dest: RungId,
     /// The tile of a tile-kind build; `None` for a band-kind one.
     pub tile: Option<UVec2>,
+    /// The herd id of a herd build.
+    pub herd: Option<String>,
 }
 
 /// One band's proposal state. Saved.
@@ -309,38 +311,9 @@ fn candidates(world: &World, view: &BandView) -> Vec<Candidate> {
                 Some(_) => continue,
                 None => None,
             };
-            // **A shortfall of a material the band can gather is carried as a keep raise**; one it
-            // cannot gather makes the build ineligible.
-            let mut raises = Vec::new();
-            let mut gatherable = true;
-            for (material, need) in &build.materials {
-                let on_hand = cohort.stores.material_total(material).to_f32();
-                if on_hand >= *need {
-                    continue;
-                }
-                let order = allocation.order_for(material);
-                let Some(from) = order
-                    .map(|order| order.target)
-                    .or_else(|| labor.band_orders.starting_target_for(material))
-                else {
-                    gatherable = false;
-                    break;
-                };
-                let player_owned =
-                    order.is_some_and(|order| order.owner == crate::components::OrderOwner::Player);
-                if !labor.band_orders.is_ordered(material) || player_owned {
-                    gatherable = false;
-                    break;
-                }
-                raises.push(KeepRaiseState {
-                    material: material.clone(),
-                    from,
-                    to: from + need.ceil() as u32,
-                });
-            }
-            if !gatherable {
+            let Some(raises) = keep_raises(cohort, allocation, &labor, &build.materials) else {
                 continue;
-            }
+            };
             found.push(Candidate {
                 key: build_key(rung, tile),
                 branch,
@@ -356,8 +329,183 @@ fn candidates(world: &World, view: &BandView) -> Vec<Candidate> {
             });
         }
     });
+    // **Rung upgrades on sources the band ALREADY works**: its crew row exists, so declaring the build
+    // is what a player's `build <verb>` on that source does. The band never proposes starting work on
+    // a source it does not hold a row on.
+    let mut seen_sources: Vec<BuildSource> = Vec::new();
+    for row in &allocation.assignments {
+        if !(row.workers > 0 || row.target.is_staffed()) {
+            continue;
+        }
+        let (kind, tile, herd, material) = match &row.target {
+            LaborTarget::Forage { tile, .. } => (SourceKind::Patch, Some(*tile), None, None),
+            LaborTarget::Hunt { fauna_id, .. } => {
+                (SourceKind::Herd, None, Some(fauna_id.clone()), None)
+            }
+            LaborTarget::Extract { tile, material, .. } => (
+                SourceKind::Deposit,
+                Some(*tile),
+                None,
+                Some(material.clone()),
+            ),
+            _ => continue,
+        };
+        let Some(source) = source_of(&row.target) else {
+            continue;
+        };
+        if seen_sources.contains(&source) || allocation.has_build(&source) {
+            continue;
+        }
+        seen_sources.push(source);
+        for (branch_index, branch) in ladder.branches_in_config_order().into_iter().enumerate() {
+            if ladder.source_kind(branch) != Some(kind) {
+                continue;
+            }
+            for rung in ladder.rungs_of(branch) {
+                let (Some(verb), Some(build)) = (rung.verb.as_deref(), rung.build.as_ref()) else {
+                    continue;
+                };
+                let Some(verb_id) = rung.verb_id() else {
+                    continue;
+                };
+                if crate::build_gates::validate_improvement(
+                    world,
+                    view.faction,
+                    &row.target,
+                    verb_id,
+                )
+                .is_err()
+                {
+                    continue;
+                }
+                let Some(raises) = keep_raises(cohort, allocation, &labor, &build.materials) else {
+                    continue;
+                };
+                let food_saved = source_food_gain(
+                    world,
+                    &ladder,
+                    &labor,
+                    &flora,
+                    sim_config.map_seed,
+                    &row.target,
+                    rung,
+                );
+                let mut key = rung.wire_key();
+                if let Some(tile) = tile {
+                    key.push_str(&format!("@{},{}", tile.x, tile.y));
+                }
+                if let Some(herd) = &herd {
+                    key.push_str(&format!("@{herd}"));
+                }
+                if let Some(material) = &material {
+                    key.push_str(&format!(":{material}"));
+                }
+                found.push(Candidate {
+                    key,
+                    branch,
+                    dest: rung.rung_id(),
+                    tile,
+                    target: row.target.clone(),
+                    ladder_order: (branch_index, rung.order),
+                    food_saved,
+                    raises,
+                    phrase: proposal_phrase(rung),
+                    rung_key: rung.wire_key(),
+                    verb: verb.to_string(),
+                });
+            }
+        }
+    }
     found
 }
+
+/// **A shortfall of a material the band can gather is carried as a keep raise**; one it cannot gather
+/// makes the build ineligible (`None`).
+fn keep_raises(
+    cohort: &PopulationCohort,
+    allocation: &LaborAllocation,
+    labor: &crate::labor_config::LaborConfig,
+    materials: &BTreeMap<String, f32>,
+) -> Option<Vec<KeepRaiseState>> {
+    let mut raises = Vec::new();
+    for (material, need) in materials {
+        let on_hand = cohort.stores.material_total(material).to_f32();
+        if on_hand >= *need {
+            continue;
+        }
+        let order = allocation.order_for(material);
+        let from = order
+            .map(|order| order.target)
+            .or_else(|| labor.band_orders.starting_target_for(material))?;
+        let player_owned =
+            order.is_some_and(|order| order.owner == crate::components::OrderOwner::Player);
+        if !labor.band_orders.is_ordered(material) || player_owned {
+            return None;
+        }
+        raises.push(KeepRaiseState {
+            material: material.clone(),
+            from,
+            to: from + need.ceil() as u32,
+        });
+    }
+    Some(raises)
+}
+
+/// **The food a turn a source build adds**, from the figures the staffing's own food-first check reads
+/// (`staffing::{patch,herd}_build_finish`): a patch's `forage::rung_payoff` at the destination rung less
+/// the held one, a herd's sustained MSY at the destination block less the held block at the species'
+/// hunt yield. `None` where the rung adds no food (and for a deposit, which yields none).
+fn source_food_gain(
+    world: &World,
+    ladder: &LadderConfig,
+    labor: &crate::labor_config::LaborConfig,
+    flora: &crate::flora_config::FloraConfig,
+    map_seed: u64,
+    target: &LaborTarget,
+    rung: &RungDef,
+) -> Option<f32> {
+    let gain = match target {
+        LaborTarget::Forage { tile, .. } => {
+            let patch = world.resource::<ForageRegistry>().patch(*tile)?;
+            let registry = world.resource::<TileRegistry>();
+            let ground = world.get::<Tile>(registry.index(tile.x, tile.y)?)?;
+            let composition =
+                crate::forage::tile_flora_composition(flora, &labor.forage, ground, map_seed)
+                    .into_owned();
+            let payoff_at = |payoff| {
+                crate::forage::rung_payoff(
+                    patch,
+                    &composition,
+                    &labor.forage,
+                    flora,
+                    UNBOOSTED_OUTPUT,
+                    payoff,
+                )
+            };
+            let finished = crate::forage::PlantPayoff::of(rung.trait_set());
+            let held = crate::forage::PlantPayoff::of(patch.standing().traits);
+            payoff_at(finished) - payoff_at(held)
+        }
+        LaborTarget::Hunt { fauna_id, .. } => {
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            let herd = world.resource::<HerdRegistry>().find(fauna_id)?;
+            let yield_per_biomass =
+                crate::fauna::herd_hunt_yield(herd, &fauna).provisions_per_biomass;
+            let msy_at = |payoff| crate::fauna::herd_msy_biomass_at(herd, &fauna, payoff);
+            let finished = crate::fauna::HerdPayoff::of(rung.trait_set());
+            let held = crate::fauna::HerdPayoff::of(herd.standing().traits);
+            (msy_at(finished) - msy_at(held)) * yield_per_biomass * UNBOOSTED_OUTPUT
+        }
+        _ => return None,
+    };
+    let _ = ladder;
+    (gain > NO_FOOD).then_some(gain)
+}
+
+/// The productivity multiplier a rung quote is struck at: the identity.
+const UNBOOSTED_OUTPUT: f32 = 1.0;
+/// No food added.
+const NO_FOOD: f32 = 0.0;
 
 /// "dig a storage pit": the rung's configured phrase, else its verb and its article'd name.
 fn proposal_phrase(rung: &RungDef) -> String {
@@ -413,7 +561,16 @@ fn resolve(
 ) -> ChiefProposalState {
     let reason = candidate
         .food_saved
-        .map(|saved| format!("{saved:.1} food a turn spoiling"))
+        .map(|saved| {
+            if matches!(
+                candidate.target,
+                LaborTarget::Band { .. } | LaborTarget::Tile { .. }
+            ) {
+                format!("{saved:.1} food a turn spoiling")
+            } else {
+                format!("{saved:.1} more food a turn")
+            }
+        })
         .unwrap_or_default();
     let verb = if keeper.plural { "propose" } else { "proposes" };
     let mut text = format!(
@@ -452,9 +609,18 @@ fn resolve(
     }
 }
 
-/// Has the approved build finished (the improvement stands at or above the rung it raised)?
+/// Has the approved build finished (the improvement or source stands at or above the rung it raised)?
 fn approved_completed(world: &World, band: BandId, approved: &ApprovedBuild) -> bool {
     let ladder = world.resource::<LadderConfigHandle>().get();
+    if let Some(herd) = &approved.herd {
+        return world
+            .resource::<HerdRegistry>()
+            .find(herd)
+            .is_some_and(|herd| {
+                herd.standing()
+                    .holds_at_or_above(ladder.rung(approved.dest))
+            });
+    }
     let improvements = world.resource::<TileImprovementRegistry>();
     let held = match approved.tile {
         Some(tile) => improvements
@@ -465,28 +631,46 @@ fn approved_completed(world: &World, band: BandId, approved: &ApprovedBuild) -> 
             .get(band, approved.branch)
             .map(|held| held.held_rung()),
     };
+    if let (None, Some(tile)) = (held, approved.tile) {
+        // A patch build: no tile improvement, the patch itself holds the rung.
+        return world
+            .resource::<ForageRegistry>()
+            .patch(tile)
+            .is_some_and(|patch| {
+                patch
+                    .standing()
+                    .holds_at_or_above(ladder.rung(approved.dest))
+            });
+    }
     held.is_some_and(|held| ladder.at_or_above(held, approved.dest))
 }
 
 /// Is the approved build still declared (so it is still in progress)?
 fn approved_declared(world: &World, view: &BandView, approved: &ApprovedBuild) -> bool {
-    let target = match approved.tile {
-        Some(tile) => LaborTarget::Tile {
-            tile,
-            branch: approved.branch,
-        },
-        None => LaborTarget::Band {
-            band: view.id,
-            branch: approved.branch,
-        },
+    let source = if let Some(herd) = &approved.herd {
+        BuildSource::Herd(herd.clone())
+    } else {
+        match (
+            approved.tile,
+            world
+                .resource::<LadderConfigHandle>()
+                .get()
+                .source_kind(approved.branch),
+        ) {
+            (Some(tile), Some(SourceKind::Patch)) => BuildSource::Patch(tile),
+            (Some(tile), _) => BuildSource::Tile {
+                tile,
+                branch: approved.branch,
+            },
+            (None, _) => BuildSource::Band {
+                band: view.id,
+                branch: approved.branch,
+            },
+        }
     };
-    let (Some(source), Some(allocation)) = (
-        source_of(&target),
-        world.get::<LaborAllocation>(view.entity),
-    ) else {
-        return false;
-    };
-    allocation.has_build(&source)
+    world
+        .get::<LaborAllocation>(view.entity)
+        .is_some_and(|allocation| allocation.has_build(&source))
 }
 
 /// **THE PROPOSAL PASS**, run each turn after labor (`advance_chief_proposals`) and after any command
@@ -557,10 +741,32 @@ pub fn advance_chief_proposals(world: &mut World) {
     refresh_proposals(world, true);
 }
 
-/// **APPROVE THE BAND'S PROPOSAL** (`approve_proposal <faction> <band>`): re-validate, declare the build
-/// as a player's declaration would, raise the keep orders, and say so on the feed. Refuses a band that
-/// is not the faction's, one with no proposal, and a proposal the gates no longer allow.
-pub fn approve_proposal(world: &mut World, faction: FactionId, band: BandId) -> Result<(), String> {
+/// A proposal that has been checked against the world as it stands now, ready to commit.
+pub struct Approval {
+    view_entity: Entity,
+    candidate: Candidate,
+}
+
+impl Approval {
+    /// For a build on a source the band already works (a patch, a herd, a deposit): the row's target
+    /// and the rung to raise. The caller declares it through the path a player's `build <verb>` on that
+    /// source takes and then calls [`commit_approval`] with `declared = true`. `None` for a band or tile
+    /// improvement, which [`commit_approval`] declares itself.
+    pub fn source_build(&self) -> Option<(&LaborTarget, RungId)> {
+        match self.candidate.target {
+            LaborTarget::Band { .. } | LaborTarget::Tile { .. } => None,
+            _ => Some((&self.candidate.target, self.candidate.dest)),
+        }
+    }
+}
+
+/// **CHECK THE BAND'S PROPOSAL AGAINST THE WORLD AS IT STANDS** (the offer may be stale): the band is
+/// the faction's, it has a proposal, and the chosen build is still a candidate through the gates.
+pub fn prepare_approval(
+    world: &mut World,
+    faction: FactionId,
+    band: BandId,
+) -> Result<Approval, String> {
     let view = resident_bands(world)
         .into_iter()
         .find(|view| view.id == band && view.faction == faction)
@@ -570,43 +776,62 @@ pub fn approve_proposal(world: &mut World, faction: FactionId, band: BandId) -> 
         .current(band)
         .map(|proposal| proposal.build_key.clone())
         .ok_or_else(|| "Nobody is proposing a build for that band.".to_string())?;
-    // The proposal may be stale: the chosen build must still be a candidate now.
     let candidate = candidates(world, &view)
         .into_iter()
         .find(|candidate| candidate.key == key)
         .ok_or_else(|| "That build is no longer possible.".to_string())?;
+    Ok(Approval {
+        view_entity: view.entity,
+        candidate,
+    })
+}
+
+/// **COMMIT AN APPROVAL**: declare a band or tile build as a player's declaration would (a source build
+/// was already declared by the caller, `declared`), raise the keep orders the proposal carries, track
+/// the build for the order-met credit and say so on the feed.
+pub fn commit_approval(
+    world: &mut World,
+    faction: FactionId,
+    band: BandId,
+    approval: &Approval,
+    declared: bool,
+) -> Result<(), String> {
+    let candidate = &approval.candidate;
+    let entity = approval.view_entity;
     let ladder = world.resource::<LadderConfigHandle>().get();
     let tick = world.resource::<SimulationTick>().0;
     let subject = {
         let name = world
-            .get::<BandName>(view.entity)
+            .get::<BandName>(entity)
             .map_or_else(|| format!("Band {}", band.0), |name| name.0.clone());
-        Keeper::of(world.get::<BandLeadership>(view.entity), &name)
+        Keeper::of(world.get::<BandLeadership>(entity), &name)
             .map(|keeper| keeper.subject)
             .unwrap_or(name)
     };
-    {
-        let mut improvements = world.resource_mut::<TileImprovementRegistry>();
-        match &candidate.target {
-            LaborTarget::Band { band, branch } => {
-                improvements.bands_mut().place(*band, *branch, &ladder);
+    if !declared {
+        {
+            let mut improvements = world.resource_mut::<TileImprovementRegistry>();
+            match &candidate.target {
+                LaborTarget::Band { band, branch } => {
+                    improvements.bands_mut().place(*band, *branch, &ladder);
+                }
+                LaborTarget::Tile { tile, branch } => {
+                    improvements.place_owned(*tile, *branch, faction, Some(band), &ladder);
+                }
+                _ => return Err("That build has no place to stand.".to_string()),
             }
-            LaborTarget::Tile { tile, branch } => {
-                improvements.place_owned(*tile, *branch, faction, Some(band), &ladder);
-            }
-            _ => return Err("That build has no place to stand.".to_string()),
         }
-    }
-    let source = source_of(&candidate.target)
-        .ok_or_else(|| "That build has no place to stand.".to_string())?;
-    {
-        let Some(mut allocation) = world.get_mut::<LaborAllocation>(view.entity) else {
+        let source = source_of(&candidate.target)
+            .ok_or_else(|| "That build has no place to stand.".to_string())?;
+        let Some(mut allocation) = world.get_mut::<LaborAllocation>(entity) else {
             return Err("That band has no work to direct.".to_string());
         };
         allocation.set_staffed_row(candidate.target.clone(), None, None);
         if !allocation.declare_build(source, BuildJob::Climb(candidate.dest)) {
             return Err("That build could not be declared.".to_string());
         }
+    }
+    if let Some(mut allocation) = world.get_mut::<LaborAllocation>(entity) {
         for raise in &candidate.raises {
             let priority = allocation
                 .order_for(&raise.material)
@@ -616,13 +841,24 @@ pub fn approve_proposal(world: &mut World, faction: FactionId, band: BandId) -> 
         }
     }
     let note = ladder.rung(candidate.dest).label.to_lowercase();
+    let herd = match &candidate.target {
+        LaborTarget::Hunt { fauna_id, .. } => Some(fauna_id.clone()),
+        _ => None,
+    };
+    let credited = !matches!(candidate.target, LaborTarget::Extract { .. });
     world.resource_scope::<ChiefProposalBook, _>(|_, mut book| {
-        let state = book.bands.entry(band).or_default();
-        state.approved.push(ApprovedBuild {
-            branch: candidate.branch,
-            dest: candidate.dest,
-            tile: candidate.tile,
-        });
+        if credited {
+            book.bands
+                .entry(band)
+                .or_default()
+                .approved
+                .push(ApprovedBuild {
+                    branch: candidate.branch,
+                    dest: candidate.dest,
+                    tile: candidate.tile,
+                    herd,
+                });
+        }
     });
     world.resource_mut::<CommandEventLog>().push(
         CommandEventEntry::new(
@@ -639,6 +875,16 @@ pub fn approve_proposal(world: &mut World, faction: FactionId, band: BandId) -> 
     );
     refresh_proposals(world, false);
     Ok(())
+}
+
+/// **APPROVE A BAND OR TILE PROPOSAL IN ONE STEP** (a build on a worked source needs the server's
+/// declaration path: [`prepare_approval`] / [`commit_approval`]).
+pub fn approve_proposal(world: &mut World, faction: FactionId, band: BandId) -> Result<(), String> {
+    let approval = prepare_approval(world, faction, band)?;
+    if approval.source_build().is_some() {
+        return Err("That build is declared through the build command.".to_string());
+    }
+    commit_approval(world, faction, band, &approval, false)
 }
 
 /// **"NOT NOW"** (`defer_proposal <faction> <band> <build-key>`): hide that build for

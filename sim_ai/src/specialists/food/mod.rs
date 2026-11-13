@@ -92,6 +92,8 @@ pub const INTENT_SPLIT: &str = "split";
 pub const INTENT_SETTLE: &str = "settle";
 /// The intent of ordering a storage build (a drying rack, a pit) that saves spoiling food.
 pub const INTENT_STORAGE: &str = "storage";
+/// The intent of answering a chief's build proposal (approve or "Not now").
+pub const INTENT_PROPOSAL: &str = "proposal";
 pub const INTENT_HUNT: &str = "hunt";
 pub const INTENT_UPGRADE: &str = "upgrade";
 pub const INTENT_DRAWDOWN: &str = "drawdown";
@@ -586,6 +588,7 @@ impl Specialist for Food {
             out.proposals
                 .extend(self.draw_down_to_survive(view, plan, memory, band, &in_force));
             out.proposals.extend(self.build_storage(band));
+            out.proposals.extend(self.answer_proposal(band));
         }
         out
     }
@@ -910,10 +913,10 @@ pub(crate) mod tests {
     /// **A band with no chief on its food order orders the storage that saves spoiling food** - the
     /// same command the player sends - once the lesson is known, nothing is declared, the save
     /// clears the sim's echoed threshold and the band holds the material; each condition alone
-    /// withholds it, and a chief-owned food order leaves it to the chief.
+    /// withholds it; a band with a chief is offered a proposal instead, and a band short of food builds none.
     #[test]
     fn a_band_without_a_chief_orders_storage_that_saves_enough_and_only_then() {
-        use sim_runtime::{BandOrderState, StorageSaveState};
+        use sim_runtime::StorageSaveState;
         const THRESHOLD: f32 = 0.2;
         let ready = StorageSaveState {
             rung: "camp_stores:drying_rack".to_string(),
@@ -931,11 +934,7 @@ pub(crate) mod tests {
             band.storage_build_min_saved = THRESHOLD;
             band.storage_saves = vec![save];
             if chief {
-                band.band_orders = vec![BandOrderState {
-                    kind: "food".to_string(),
-                    chief_owned: true,
-                    ..Default::default()
-                }];
+                band.leader_kind = 1;
             }
             band
         };
@@ -956,6 +955,67 @@ pub(crate) mod tests {
         assert!(withheld(|s| s.declared = true));
         assert!(withheld(|s| s.food_saved = THRESHOLD / 2.0));
         assert!(withheld(|s| s.material_on_hand = 0.0));
-        assert!(food().build_storage(&band(ready, true)).is_none());
+        assert!(
+            food().build_storage(&band(ready.clone(), true)).is_none(),
+            "a band with a chief is offered the build as a proposal, not declared for"
+        );
+        // A band short of food builds no storage.
+        let mut short = band(ready, false);
+        short.turns_of_food = 0.0;
+        assert!(food().build_storage(&short).is_none());
+    }
+
+    /// **The seat answers a chief's proposal as a player would**: approve a storage build that saves
+    /// enough, put it off ("Not now") when it saves too little or the band is short of food.
+    #[test]
+    fn a_proposal_is_approved_or_put_off_by_the_same_judgement_as_building_storage() {
+        use sim_runtime::{ChiefProposalState, StorageSaveState};
+        const THRESHOLD: f32 = 0.2;
+        let save = StorageSaveState {
+            rung: "camp_stores:drying_rack".to_string(),
+            keeping: "flesh".to_string(),
+            food_saved: THRESHOLD * 2.0,
+            lesson_known: true,
+            ..Default::default()
+        };
+        let band = |saved: f32, turns_of_food: f32| {
+            let mut band = own_band(&a_view()).clone();
+            band.storage_build_min_saved = THRESHOLD;
+            band.leader_kind = 1;
+            band.turns_of_food = turns_of_food;
+            band.storage_saves = vec![save.clone()];
+            band.chief_proposals = vec![ChiefProposalState {
+                build_key: "camp_stores:drying_rack".to_string(),
+                rung: "camp_stores:drying_rack".to_string(),
+                food_saved: saved,
+                ..Default::default()
+            }];
+            band
+        };
+        let answer = |band: &PopulationCohortState| {
+            food()
+                .answer_proposal(band)
+                .expect("a proposal is answered")
+                .commands
+                .remove(0)
+        };
+        assert!(matches!(
+            answer(&band(THRESHOLD * 2.0, 40.0)),
+            CommandPayload::ApproveProposal { .. }
+        ));
+        assert!(matches!(
+            answer(&band(THRESHOLD / 2.0, 40.0)),
+            CommandPayload::DeferProposal { .. }
+        ));
+        assert!(
+            matches!(
+                answer(&band(THRESHOLD * 2.0, 0.0)),
+                CommandPayload::DeferProposal { .. }
+            ),
+            "a band short of food puts the build off"
+        );
+        let mut none = band(THRESHOLD, 40.0);
+        none.chief_proposals.clear();
+        assert!(food().answer_proposal(&none).is_none());
     }
 }

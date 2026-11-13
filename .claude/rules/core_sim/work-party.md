@@ -535,13 +535,19 @@ and works as it did.
 
 - **Candidates are every build the band could declare now**: the next rung above what the band holds on
   each band-kind branch (the rack) and, on the band's own tile, each tile-kind branch (the pit, a
-  monument). Eligibility is `build_gates::{validate_band_verb, validate_tile_verb}` - the very functions
-  `build <verb>` runs (`bin/server.rs` wraps them through `build_gates::with_scene`), so a proposal can
-  never be one the command would refuse - and `!LaborAllocation::has_build`. Patch, herd, deposit and road
-  builds need a crew row that names a source and are not candidates.
+  monument); plus every verb rung on a source the band **already works** - a forage patch, a herd or a
+  deposit it holds a crew row on (`LaborAssignment` that is staffed or has hands), because the row exists.
+  He never proposes starting work on a source the band has no row on. Eligibility is the one gate set
+  `build <verb>` runs (`build_gates::{validate_band_verb, validate_tile_verb, validate_improvement}`, which
+  `bin/server.rs` wraps through `build_gates::with_scene`), so a proposal can never be one the command would
+  refuse, and `!LaborAllocation::has_build` on the source. Road builds are not candidates.
+  Build keys: `branch:rung` (band), `branch:rung@x,y` (tile or patch), `branch:rung@<herd id>` (herd),
+  `branch:rung@x,y:<material>` (deposit).
 - **Rank**: a build that adds or saves food first, most food first (a storage rung's value is its
   `storageSaves.foodSaved`, gated by `band_orders.storage_build_min_saved`; a storage rung below the lever
-  is not a candidate), then builds with no food figure in ladder order (branch order, rung order), then
+  is not a candidate; a patch rung's value is `forage::rung_payoff` at the destination less the held rung, a
+  herd rung's the sustained MSY at the destination block less the held block at the species' hunt yield -
+  the figures `staffing::{patch,herd}_build_finish` read; a deposit rung has none), then builds with no food figure in ladder order (branch order, rung order), then
   the build key.
 - **A material shortfall rides the proposal.** A rung whose `build.materials` the band does not hold is
   still eligible when the material is an ordered kind (`band_orders.ordered_kinds`) and its order is not
@@ -555,11 +561,18 @@ and works as it did.
   turns · ...`, then ` - 0.4 food a turn spoiling` where there is a food figure and ` (raises wood keep to
   13)` where there is a raise; a council reads `<Band>'s elders propose`. The phrase is the rung's
   `proposal_phrase` (`intensification_ladder.json`; absent: the verb and `label_fallback`).
-- **Approve** (`approve_proposal <faction> <band>`): re-runs the candidates (the offer may be stale),
-  refuses if the chosen build is gone, then places the improvement, stages the row as a player's row
-  (`set_staffed_row`, not listed under an order), declares `BuildJob::Climb(rung)` and raises each keep
-  order through `keep_on_hand::set_order` (priority kept), in one step; the server then restaffs the band.
-  The build is tracked on `BandProposals::approved`.
+- **Approve** (`approve_proposal <faction> <band>`): `chief_proposals::prepare_approval` re-runs the
+  candidates (the offer may be stale) and refuses if the chosen build is gone. A band or tile build is then
+  placed, staged as a player's row (`set_staffed_row`, not listed under an order) and declared
+  (`BuildJob::Climb(rung)`) by `commit_approval`; a build on a worked source is declared by the server
+  through `queue_build_on_working_bands`, the path a player's `build <verb>` on that source takes, and
+  `commit_approval(.., declared = true)` follows. Both raise each keep order through
+  `keep_on_hand::set_order` (priority kept) and the server restaffs the band. The build is tracked on
+  `BandProposals::approved` (completion: the improvement, patch or herd standing at or above the rung; a
+  deposit build earns no order-met credit).
+- **A rival seat answers the same way a player does** (`ai-driver.md` -> "Storage"): it reads
+  `chiefProposals` off the wire and sends `approve_proposal` / `defer_proposal`. Nothing in the server knows
+  which seat sent a command.
 - **Not now** (`defer_proposal <faction> <band> <build_key>`): the key is hidden until `tick +
   band_orders.proposal_not_now_turns` (**20**); the next candidate is offered meanwhile. The build key is
   the rung's wire key, with `@x,y` for a tile build (`food_stores:storage_pit@4,9`).
