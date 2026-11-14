@@ -816,6 +816,11 @@ enum ConfigOverrideKind {
   // The turn pipeline's population block - staged for the terrain morale allowance and the
   // fresh-water morale bonus. Append-only.
   CONFIG_OVERRIDE_KIND_TURN_PIPELINE = 12;
+  // The far-kin levers (docs/plan_far_kin.md): the free pooling reach, the kin relay depth and tie
+  // decay once a people knows messengers, and the messengers lesson. Append-only.
+  CONFIG_OVERRIDE_KIND_SUPPLY_NETWORK = 13;
+  CONFIG_OVERRIDE_KIND_CONNECTIONS = 14;
+  CONFIG_OVERRIDE_KIND_INTENSIFICATION_LADDER = 15;
 }
 
 // Stage a config-tuning override that takes effect at the NEXT new_game — `build_headless_app`

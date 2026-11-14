@@ -93,6 +93,13 @@ func _ready() -> void:
 	await _settle()
 	await _save("workbench_tuning_comfortable")
 	_assert_rows_fit()
+	# The END of the page, where the far-kin kinds (supply_network, connections, intensification_ladder)
+	# sit: scrolled to the bottom for one frame, then back to the top so later frames are unchanged.
+	_shell._scroll.scroll_vertical = int(_shell._scroll.get_v_scroll_bar().max_value)
+	await _settle()
+	await _save("workbench_tuning_bottom")
+	_shell._scroll.scroll_vertical = 0
+	await _settle()
 
 	# Dirty — modified dots, the counted status line, both actions live, all at the TOP of the page:
 	# the action bar is pinned below the scroll, so it is on screen at every scroll position.

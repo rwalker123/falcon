@@ -27,15 +27,18 @@ use thiserror::Error;
 use crate::{
     combat_config::{CombatConfig, BUILTIN_COMBAT_CONFIG},
     config_load::{clear_override_paths, override_path_for, set_override_path},
+    connections_config::{ConnectionsConfig, BUILTIN_CONNECTIONS_CONFIG},
     demographics_config::{DemographicsConfig, BUILTIN_DEMOGRAPHICS_CONFIG},
     expedition_config::{ExpeditionConfig, BUILTIN_EXPEDITION_CONFIG},
     fauna_config::{FaunaConfig, BUILTIN_FAUNA_CONFIG},
+    intensification::{LadderConfig, BUILTIN_INTENSIFICATION_LADDER},
     labor_config::{LaborConfig, BUILTIN_LABOR_CONFIG},
     leadership_config::{LeadershipConfig, BUILTIN_LEADERSHIP_CONFIG},
     materials_config::{MaterialsConfig, BUILTIN_MATERIALS_CONFIG},
     mobility_config::{MobilityConfig, BUILTIN_MOBILITY_CONFIG},
     recipes_config::{RecipesConfig, BUILTIN_RECIPES_CONFIG},
     resources::{SimulationConfig, BUILTIN_SIMULATION_CONFIG},
+    supply_network_config::{SupplyNetworkConfig, BUILTIN_SUPPLY_NETWORK_CONFIG},
     turn_pipeline_config::{TurnPipelineConfig, BUILTIN_TURN_PIPELINE_CONFIG},
     wellbeing_config::{WellbeingConfig, BUILTIN_WELLBEING_CONFIG},
 };
@@ -155,7 +158,74 @@ pub fn spec_for(kind: ConfigOverrideKind) -> ConfigKindSpec {
             builtin_json: BUILTIN_TURN_PIPELINE_CONFIG,
             validate: |json| erase(TurnPipelineConfig::from_json_str(json)),
         },
+        ConfigOverrideKind::SupplyNetwork => ConfigKindSpec {
+            kind,
+            env_var: "SUPPLY_NETWORK_CONFIG_PATH",
+            default_rel_path: "src/data/supply_network_config.json",
+            builtin_json: BUILTIN_SUPPLY_NETWORK_CONFIG,
+            validate: validate_supply_network,
+        },
+        ConfigOverrideKind::Connections => ConfigKindSpec {
+            kind,
+            env_var: "CONNECTIONS_CONFIG_PATH",
+            default_rel_path: "src/data/connections_config.json",
+            builtin_json: BUILTIN_CONNECTIONS_CONFIG,
+            validate: validate_connections,
+        },
+        ConfigOverrideKind::IntensificationLadder => ConfigKindSpec {
+            kind,
+            env_var: "INTENSIFICATION_LADDER_PATH",
+            default_rel_path: "src/data/intensification_ladder.json",
+            builtin_json: BUILTIN_INTENSIFICATION_LADDER,
+            validate: validate_ladder,
+        },
     }
+}
+
+/// A connections candidate: parse, then the messengers values' own ordering rules.
+fn validate_connections(json: &str) -> Result<(), String> {
+    let config = ConnectionsConfig::from_json_str(json).map_err(|err| err.to_string())?;
+    config.validate().map_err(|err| err.to_string())
+}
+
+/// **A supply-network candidate, proved against the ladder that would load beside it.** The free
+/// pooling reach of a people that knows messengers must stay below the trail rung's
+/// `holds_link_to_tiles`: `build_headless_app` panics on a violation, so a staged patch that broke it
+/// would kill the server at the next New Game. The check reads the ladder's CURRENT effective JSON
+/// (a staged ladder override included), the same text a rebuild would load.
+fn validate_supply_network(json: &str) -> Result<(), String> {
+    let config = SupplyNetworkConfig::from_json_str(json).map_err(|err| err.to_string())?;
+    config.validate().map_err(|err| err.to_string())?;
+    let ladder = current_ladder()?;
+    config
+        .validate_against_trail(crate::routes::trail_reach_tiles(&ladder))
+        .map_err(|err| err.to_string())
+}
+
+/// **A ladder candidate, proved against the supply network that would load beside it** - the other
+/// half of the check above (a ladder patch can lower the trail's reach beneath the messengers one).
+fn validate_ladder(json: &str) -> Result<(), String> {
+    let ladder = LadderConfig::from_json_str(json).map_err(|err| err.to_string())?;
+    let supply = current_supply_network()?;
+    supply
+        .validate_against_trail(crate::routes::trail_reach_tiles(&ladder))
+        .map_err(|err| err.to_string())
+}
+
+/// The ladder a rebuild would load right now (registry -> env -> default file -> builtin).
+fn current_ladder() -> Result<LadderConfig, String> {
+    let spec = spec_for(ConfigOverrideKind::IntensificationLadder);
+    let (text, origin) = current_effective_json(&spec).map_err(|err| err.to_string())?;
+    LadderConfig::from_json_str(&text)
+        .map_err(|err| format!("the current ladder at {origin}: {err}"))
+}
+
+/// The supply network a rebuild would load right now.
+fn current_supply_network() -> Result<SupplyNetworkConfig, String> {
+    let spec = spec_for(ConfigOverrideKind::SupplyNetwork);
+    let (text, origin) = current_effective_json(&spec).map_err(|err| err.to_string())?;
+    SupplyNetworkConfig::from_json_str(&text)
+        .map_err(|err| format!("the current supply network at {origin}: {err}"))
 }
 
 /// Collapse any `from_json_str` result to "did the sim accept it, and if not why" — the five kinds

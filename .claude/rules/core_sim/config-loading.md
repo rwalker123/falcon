@@ -195,7 +195,7 @@ no file, registers nothing, and leaves the running world untouched; it logs
 `config_override.rejected` at `warn!`.
 
 The stageable kinds are `simulation`, `labor`, `demographics`, `expedition`, `combat`, `materials`,
-`recipes`, `wellbeing`, `fauna`, `mobility`, `leadership` and `turn_pipeline` (`ConfigOverrideKind::ALL`; proto `CONFIG_OVERRIDE_KIND_FAUNA = 9`,
+`recipes`, `wellbeing`, `fauna`, `mobility`, `leadership`, `turn_pipeline`, `supply_network`, `connections` and `intensification_ladder` (`ConfigOverrideKind::ALL`; proto `CONFIG_OVERRIDE_KIND_FAUNA = 9`,
 env `FAUNA_CONFIG_PATH`, `FaunaConfig::from_json_str`). `fauna` is staged for the `drives` levers
 `hunt.drive_engage_gain` and `hunt.drive_full_head_count` (#799); it validates against itself only
 (the materials cross-check stays a boot-path concern), and
@@ -210,7 +210,24 @@ is staged for the practice threshold and the four per-source quanta (#859). `tur
 is staged for `population.attrition_morale_tolerance` and `population.fresh_water_morale_bonus`;
 `tests/turn_pipeline_override_takes_effect.rs` pins it. A `new_game` rebuild re-reads it through
 `load_turn_pipeline_config_from_env` and nothing carries the old handle across, so it has no
-`simulation`-style trap.
+`simulation`-style trap. The three far-kin kinds (`docs/plan_far_kin.md`) are the same shape: proto
+`CONFIG_OVERRIDE_KIND_SUPPLY_NETWORK = 13` (env `SUPPLY_NETWORK_CONFIG_PATH`),
+`CONFIG_OVERRIDE_KIND_CONNECTIONS = 14` (`CONNECTIONS_CONFIG_PATH`) and
+`CONFIG_OVERRIDE_KIND_INTENSIFICATION_LADDER = 15` (`INTENSIFICATION_LADDER_PATH`), each re-read by
+`build_headless_app` through its `load_*_from_env` with no carried handle, and staged for the
+messengers levers (`reach_tiles_with_messengers`; `kin_relay.max_hops_with_messengers` and
+`strength.decay_per_turn_with_messengers`; `knowledge.messengers_lesson_per_turn`,
+`messengers_lesson_per_tile` and `lesson_costs.messengers`). Pinned by
+`tests/{supply_network,connections,ladder}_override_takes_effect.rs`.
+
+**A cross-config rule is checked at the edit, against the OTHER config's current effective JSON.**
+`reach_tiles_with_messengers < the trail rung's holds_link_to_tiles` is a boot panic in
+`build_headless_app`, so the `supply_network` validate (`validate_supply_network`) and the
+`intensification_ladder` validate (`validate_ladder`) each read the other's effective text
+(`current_effective_json`: a staged override included) and apply
+`SupplyNetworkConfig::validate_against_trail`. Without that a patch valid alone would kill the
+server at the next New Game. The ladder's other boot cross-checks (materials, extraction, knowledge
+tags) are not repeated at the edit; the staged levers touch none of them.
 
 The `set_config_override` / `clear_config_overrides` commands are **not** written to the replay log
 for the same reason `reload_config` is not: they change what the *next* world boots on, and a

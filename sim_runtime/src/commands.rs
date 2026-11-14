@@ -1762,6 +1762,15 @@ pub enum ConfigOverrideKind {
     /// The turn pipeline (`turn_pipeline_config.json`) - staged for the population block's
     /// `attrition_morale_tolerance` and `fresh_water_morale_bonus`.
     TurnPipeline,
+    /// The supply network (`supply_network_config.json`) - staged for the free pooling reach of a
+    /// people that knows messengers.
+    SupplyNetwork,
+    /// The connection primitive (`connections_config.json`) - staged for the messengers relay depth
+    /// and tie decay.
+    Connections,
+    /// The intensification ladder (`intensification_ladder.json`) - staged for the messengers
+    /// lesson's pace and price.
+    IntensificationLadder,
 }
 
 impl ConfigOverrideKind {
@@ -1780,6 +1789,9 @@ impl ConfigOverrideKind {
         ConfigOverrideKind::Mobility,
         ConfigOverrideKind::Leadership,
         ConfigOverrideKind::TurnPipeline,
+        ConfigOverrideKind::SupplyNetwork,
+        ConfigOverrideKind::Connections,
+        ConfigOverrideKind::IntensificationLadder,
     ];
 
     /// The wire spelling, shared with the client's `tuning_manifest.json` `kind` field.
@@ -1797,6 +1809,9 @@ impl ConfigOverrideKind {
             ConfigOverrideKind::Mobility => "mobility",
             ConfigOverrideKind::Leadership => "leadership",
             ConfigOverrideKind::TurnPipeline => "turn_pipeline",
+            ConfigOverrideKind::SupplyNetwork => "supply_network",
+            ConfigOverrideKind::Connections => "connections",
+            ConfigOverrideKind::IntensificationLadder => "intensification_ladder",
         }
     }
 
@@ -3923,6 +3938,9 @@ fn config_override_kind_to_proto(kind: ConfigOverrideKind) -> pb::ConfigOverride
         ConfigOverrideKind::Mobility => pb::ConfigOverrideKind::Mobility,
         ConfigOverrideKind::Leadership => pb::ConfigOverrideKind::Leadership,
         ConfigOverrideKind::TurnPipeline => pb::ConfigOverrideKind::TurnPipeline,
+        ConfigOverrideKind::SupplyNetwork => pb::ConfigOverrideKind::SupplyNetwork,
+        ConfigOverrideKind::Connections => pb::ConfigOverrideKind::Connections,
+        ConfigOverrideKind::IntensificationLadder => pb::ConfigOverrideKind::IntensificationLadder,
     }
 }
 
@@ -3940,6 +3958,11 @@ fn config_override_kind_from_proto(value: i32) -> Result<ConfigOverrideKind, Com
         Ok(pb::ConfigOverrideKind::Mobility) => Ok(ConfigOverrideKind::Mobility),
         Ok(pb::ConfigOverrideKind::Leadership) => Ok(ConfigOverrideKind::Leadership),
         Ok(pb::ConfigOverrideKind::TurnPipeline) => Ok(ConfigOverrideKind::TurnPipeline),
+        Ok(pb::ConfigOverrideKind::SupplyNetwork) => Ok(ConfigOverrideKind::SupplyNetwork),
+        Ok(pb::ConfigOverrideKind::Connections) => Ok(ConfigOverrideKind::Connections),
+        Ok(pb::ConfigOverrideKind::IntensificationLadder) => {
+            Ok(ConfigOverrideKind::IntensificationLadder)
+        }
         Ok(pb::ConfigOverrideKind::Unspecified) | Err(_) => Err(CommandDecodeError::InvalidEnum {
             field: "ConfigOverrideKind",
             value,
