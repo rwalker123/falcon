@@ -2109,16 +2109,12 @@ pub fn apply_tag_budget_solver(
                 let mut candidates: Vec<usize> = (0..tile_info.len())
                     .filter(|&idx| {
                         let info = &tile_info[idx];
-                        if info.tags.contains(sim_runtime::TerrainTags::ARID)
+                        !(info.tags.contains(sim_runtime::TerrainTags::ARID)
                             || info.tags.contains(sim_runtime::TerrainTags::WATER)
                             || info.tags.contains(sim_runtime::TerrainTags::WETLAND)
                             || info.tags.contains(sim_runtime::TerrainTags::FRESHWATER)
                             || info.tags.contains(sim_runtime::TerrainTags::POLAR)
-                            || info.tags.contains(sim_runtime::TerrainTags::HIGHLAND)
-                        {
-                            return false;
-                        }
-                        true
+                            || info.tags.contains(sim_runtime::TerrainTags::HIGHLAND))
                     })
                     .collect();
                 candidates.sort_by_key(|idx| {

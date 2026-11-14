@@ -4148,11 +4148,10 @@ pub fn advance_predation(
         // a herbivore), but the diet check below also excludes any *other* carnivore.
         let mut prey_indices: Vec<usize> = Vec::new();
         let mut total_available = 0.0;
-        for j in 0..len {
+        for (j, prey) in herds.herds.iter().enumerate() {
             if j == i {
                 continue;
             }
-            let prey = &herds.herds[j];
             let pdef = fauna.species_by_display(&prey.species);
             if pdef.map(|d| d.diet) == Some(Diet::Carnivore) {
                 continue;
