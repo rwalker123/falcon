@@ -37,10 +37,10 @@ ciborium = "0.2"
 # Measured on a 160x104 world: 20,766,409 bytes raw, 1,257,874 at level 6 (16.5x). Level 9 gives
 # 1,221,708 for materially more CPU, which is why the level is a named constant and not the max.
 flate2 = "1.0"
-# `UVec2` and every other glam type in `SimState` serializes only with this feature. It arrives
-# transitively today via `bevy_reflect`'s `bevy_math` feature — which is exactly why it is named
-# here: the `# TODO: narrow feature set for pure headless build` above is a live intention to prune
-# bevy's features, and pruning the wrong one would take serde off glam and break saves.
+# `UVec2` and every other glam type in `SimState` serializes only with this feature. It also
+# arrives transitively via `bevy_reflect`'s `bevy_math` feature, but bevy's feature set above is
+# narrowed to the headless core, and naming it here is what keeps a further change to bevy's
+# features from taking serde off glam and breaking saves.
 glam = { version = "0.25", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
