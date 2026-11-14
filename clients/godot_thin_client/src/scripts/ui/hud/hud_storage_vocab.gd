@@ -147,6 +147,21 @@ const BUILD_BUTTON_LABEL := "Build"
 ## The Build button's meta, valued with its branch.
 const BUILD_BUTTON_META := &"storage_build_button"
 
+## The band improvement's build-stall keys and the one cause the rack row words (`materials`).
+const BUILDERS_STAFFED_KEY := "builders_staffed"
+const BUILD_BLOCKED_REASON_KEY := "build_blocked_reason"
+const BLOCKED_REASON_MATERIALS := "materials"
+const MATERIAL_ID_KEY := "material_id"
+const MATERIAL_NEEDED_KEY := "material_needed"
+const MATERIAL_ON_HAND_KEY := "material_on_hand"
+## A materials-blocked rack's second line, in the amber the shared hazard marks wear.
+const MATERIALS_NEEDS_FORMAT := "needs %s %s · %s"
+const MATERIALS_NONE_ON_HAND := "none on hand"
+const MATERIALS_ON_HAND_FORMAT := "%s on hand"
+## Material amounts say to a tenth, trailing zeros dropped; below the epsilon the shelf holds none.
+const MATERIAL_SNAP := 0.1
+const MATERIAL_EPSILON := 0.05
+
 ## The wire rung id (`camp_stores:drying_rack`) of the store the band's published rows name for `branch`:
 ## an unheld rung is a `storage_saves` row, a held one a `held_stores` row. `""` when neither names the branch,
 ## which is how a branch that is not a store reads.
@@ -187,6 +202,36 @@ static func band_build_fraction(band: Dictionary, branch: String) -> float:
 		if row_variant is Dictionary and String((row_variant as Dictionary).get("branch", "")) == branch:
 			return float((row_variant as Dictionary).get("build_fraction", NO_BUILD_FRACTION))
 	return NO_BUILD_FRACTION
+
+## The band's `band_improvements` entry for the branch (`{branch, build_fraction, builders_staffed,
+## build_blocked_reason, ...}`), `{}` while none is published.
+static func band_improvement_of(band: Dictionary, branch: String) -> Dictionary:
+	for row_variant in band.get(BAND_IMPROVEMENTS_KEY, []):
+		if row_variant is Dictionary and String((row_variant as Dictionary).get("branch", "")) == branch:
+			return row_variant
+	return {}
+
+## The builders the sim staffed on the band improvement this turn (`builders_staffed`); the row's crew count
+## reads them while the rack is being built, because a rack under construction has no keepers.
+static func band_builders_staffed(band: Dictionary, branch: String) -> int:
+	return maxi(int(band_improvement_of(band, branch).get(BUILDERS_STAFFED_KEY, 0)), 0)
+
+## Whether the band improvement's build is stalled on a material (`build_blocked_reason == "materials"`).
+static func band_blocked_on_materials(band: Dictionary, branch: String) -> bool:
+	return String(band_improvement_of(band, branch).get(BUILD_BLOCKED_REASON_KEY, "")) \
+		== BLOCKED_REASON_MATERIALS
+
+## `needs 8 wood · none on hand` / `needs 8 wood · 5 on hand`, off the rung's `storage_saves` row
+## (`material_id` / `material_needed` / `material_on_hand`); the material is named by its wire id.
+static func materials_line(save: Dictionary) -> String:
+	var held := float(save.get(MATERIAL_ON_HAND_KEY, 0.0))
+	return MATERIALS_NEEDS_FORMAT % [format_material(float(save.get(MATERIAL_NEEDED_KEY, 0.0))),
+		String(save.get(MATERIAL_ID_KEY, "")),
+		MATERIALS_NONE_ON_HAND if held < MATERIAL_EPSILON else MATERIALS_ON_HAND_FORMAT % format_material(held)]
+
+static func format_material(value: float) -> String:
+	var snapped := snappedf(value, MATERIAL_SNAP)
+	return str(roundi(snapped)) if is_equal_approx(snapped, roundf(snapped)) else String.num(snapped)
 
 ## The band's published `storage_saves` entry for the store branch's rung, `{}` once the rung is held
 ## (the sim lists only the rungs the band does not hold).

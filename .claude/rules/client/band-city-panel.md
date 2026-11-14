@@ -6140,6 +6140,15 @@ priority list. A staffed row's `workers` is the SIM's answer, so the Work tab dr
   keeping class in the band panel's food words (`HudStorageVocab.KEEPING_WORDS`: `meat`, `greens`, `grain`)
   and `shelf_life_turns`; `held_stores` is scoped to the tile the band keeps, so only the camp-tile pit row
   reads it and a pit elsewhere reads plain `built`.
+- **A MATERIALS-BLOCKED RACK SAYS WHAT IT WAITS ON, AND A RACK UNDER CONSTRUCTION COUNTS ITS BUILDERS.**
+  When the rack's `band_improvements` entry reads `build_blocked_reason == "materials"` the subline is
+  `needs 8 wood · none on hand` / `needs 8 wood · 5 on hand` (`HudStorageVocab.materials_line`, figures and
+  material id off the rung's `storage_saves` row: `material_needed` / `material_on_hand` / `material_id`),
+  drawn in `HudStyle.WARN` (`_build_site_crew_line`'s `ink`); any other reason keeps `building, N%`. While the
+  rack's state is building, the row's `builders_staffed` (off `band_improvements[]`) rides the model as
+  `WorkStrip.ROW_BUILDERS_KEY`, so the trailing count is keepers + builders like the tile and deposit rows
+  (the `band` labor row's own `workers` are keepers, 0 before the rack stands). Harness:
+  `band_panel_storage_rows_{blocked_none,blocked_some,builder}`.
 - **THE RACK'S ROW EXISTS BEFORE ANY CREW** (`_band_improvement_models` adds a `placeholder` model while
   a `storage_saves` entry says `lesson_known` and `tile_kept` is false). With no build declared it carries
   a `Build` button (`BUILD_BUTTON_META`) whose press is `_emit_assign_labor` at zero hands on the `band`
