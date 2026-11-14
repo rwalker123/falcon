@@ -487,10 +487,11 @@ fn band_wear(world: &World, band: Entity, equipment: &EquipmentConfig) -> BandEq
         .unwrap_or_else(|| BandEquipment::start_stocked(equipment))
 }
 
-/// **FILL A BAND'S IDLE BENCH FROM ITS SUGGESTIONS** when auto-craft is on - whenever no order can
-/// progress (`worked_order` is `None`), which an empty queue is one case of. Returns whether an
-/// order was queued. A no-op for a bench that is off, a bench with an order that can progress, a
-/// detached party, or a band with no usable suggestion.
+/// **FILL A BAND'S BENCH FROM ITS SUGGESTIONS** when auto-craft is on - whenever the bench has room,
+/// meaning every workable order is at its crafter cap (an empty queue is one case), and it tops up
+/// its own auto order while that order's row is still suggested. Returns whether an order was
+/// queued. A no-op for a bench that is off, a bench with no room, a detached party, or a band with
+/// no usable suggestion.
 ///
 /// Called by the turn system ([`advance_auto_craft`]) and at the end of every command that can
 /// leave the bench with nothing workable or switch auto on.
@@ -558,8 +559,10 @@ pub fn set_auto_craft(world: &mut World, band: Entity, enabled: bool) {
 
 /// **SKIP THE AUTO ORDER THE BENCH IS WAITING ON.** Valid only when the bench has no order it can
 /// work **and** the head order is auto-craft's. The head's item is parked in
-/// [`BandBench::auto_skipped`], the head order is removed (it has drawn nothing — a drawn order is
-/// workable — so nothing is forfeited), and the queue is refilled from the next suggestion.
+/// [`BandBench::auto_skipped`], the head order is removed (an order with items in flight that is not
+/// workable — its recipe is missing from the book or its material cannot be worked — can still be
+/// skipped, so its set-aside batches go back into the band's store via
+/// [`crate::BenchOrder::return_set_aside`]) and the queue is refilled from the next suggestion.
 ///
 /// Returns the skipped item's id.
 pub fn auto_craft_skip(world: &mut World, band: Entity) -> Result<String, AutoSkipRefusal> {
@@ -599,9 +602,12 @@ pub fn auto_craft_skip(world: &mut World, band: Entity) -> Result<String, AutoSk
         .get_mut::<BandBench>(band)
         .ok_or(AutoSkipRefusal::NoBench)?;
     bench.auto_skipped.insert(item.clone());
-    bench
+    let mut removed = bench
         .remove_order(0)
         .map_err(|_| AutoSkipRefusal::NothingQueued)?;
+    if let Some(mut cohort) = world.get_mut::<PopulationCohort>(band) {
+        removed.return_set_aside(&mut cohort.stores);
+    }
     auto_craft_fill(world, band);
     Ok(item)
 }

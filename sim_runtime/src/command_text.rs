@@ -1472,9 +1472,9 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 }
             })
         }
-        // **THE BENCH'S RANK**, shaped like `upkeep_mode` — a band handle and one trailing token —
+        // **THE BENCH'S RANK**, shaped like `upkeep_mode` — a band handle, an `order <index>` and a level —
         // because it addresses a band-level thing and the bench family it joins (`bench_enqueue`,
-        // `bench_crew`, the queue edits) is addressed that way too. It is deliberately NOT a
+        // the queue edits) is addressed that way too. It is deliberately NOT a
         // `work_priority` token: that grammar reads a bare single token as a HERD ID, so `bench`
         // would be ambiguous with a herd of that name.
         //
@@ -5181,7 +5181,7 @@ mod tests {
     }
 
     /// **`bench_priority` names a BAND and a LEVEL, and no source at all** — the bench family's own
-    /// shape (`bench_enqueue` / `bench_crew` / the queue edits are all `<faction> <band> …`), and
+    /// shape (`bench_enqueue` / the queue edits are all `<faction> <band> …`), and
     /// deliberately not a `work_priority` token: that grammar reads a lone token as a **herd id**, so
     /// `work_priority <f> <b> bench low` would be ambiguous with a herd named `bench`.
     #[test]

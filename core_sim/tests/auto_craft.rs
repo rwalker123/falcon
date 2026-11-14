@@ -10,12 +10,14 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::{App, Entity, UVec2, With};
 
 use core_sim::auto_craft::{
-    advance_auto_craft, advance_auto_craft_after_bench, auto_craft_fill, set_auto_craft,
+    advance_auto_craft, advance_auto_craft_after_bench, auto_craft_fill, auto_craft_skip,
+    set_auto_craft,
 };
 use core_sim::{
-    advance_crafting, build_test_app, scalar_from_f32, BandBench, BandEquipment, BuildSource,
-    DiscoveryProgressLedger, KeepingIssue, LaborAllocation, LadderConfigHandle,
-    MaterialsConfigHandle, PopulationCohort, RecipesConfigHandle, ResidentBand,
+    advance_crafting, build_test_app, scalar_from_f32, BandBench, BandEquipment, BenchOrder,
+    BuildSource, DiscoveryProgressLedger, DrawnInputs, DrawnMaterial, ItemInFlight, KeepingIssue,
+    LaborAllocation, LadderConfigHandle, MaterialDraw, MaterialsConfigHandle, PopulationCohort,
+    RecipesConfigHandle, ResidentBand, Scalar,
 };
 use std::collections::BTreeMap;
 
@@ -441,4 +443,93 @@ fn a_suggestion_already_queued_is_not_queued_twice() {
         baskets, 1,
         "a blocked baskets order already stands for the suggestion"
     );
+}
+
+/// A recipe id the book does not carry, so an order for it is never workable.
+const ABSENT_RECIPE: &str = "recipe_missing_from_the_book";
+/// How much hide one in-flight item has set aside in the skip tests.
+const SET_ASIDE: f32 = 3.0;
+
+/// Stage an auto head order for a recipe absent from the book, holding `set_aside` hide (none when
+/// zero) in one item in flight, with the store otherwise holding only `PLENTY` of hide.
+fn skippable_head_holding(app: &mut App, band: Entity, set_aside: f32) {
+    auto_bench(app, band, STANDING_CREW);
+    bank(
+        app,
+        band,
+        HIDE,
+        PLENTY,
+        &[("toughness", 0.6), ("suppleness", 0.5)],
+    );
+    let readings: BTreeMap<String, f32> = [("toughness", 0.6), ("suppleness", 0.5)]
+        .iter()
+        .map(|(axis, value)| ((*axis).to_string(), *value))
+        .collect();
+    let key = app
+        .world
+        .resource::<MaterialsConfigHandle>()
+        .get()
+        .band_key(HIDE, &readings)
+        .expect("the shipped table carries hide");
+    let mut order = BenchOrder::new(ABSENT_RECIPE, 1);
+    order.auto = true;
+    if set_aside > 0.0 {
+        let amount: Scalar = scalar_from_f32(set_aside);
+        order.items.push(ItemInFlight {
+            progress: scalar_from_f32(0.0),
+            drawn: DrawnInputs {
+                reading: None,
+                grade: None,
+                withdrawn: vec![DrawnMaterial {
+                    material: HIDE.to_string(),
+                    amount,
+                    batches: vec![MaterialDraw {
+                        band: key,
+                        amount,
+                        characteristics: readings,
+                    }],
+                }],
+                at_tool: false,
+            },
+        });
+    }
+    let mut bench = app.world.get_mut::<BandBench>(band).expect("bench");
+    bench.auto = true;
+    bench.orders.push(order);
+}
+
+fn hide_total(app: &App, band: Entity) -> Scalar {
+    app.world
+        .get::<PopulationCohort>(band)
+        .expect("the band has a cohort")
+        .stores
+        .material_total(HIDE)
+}
+
+/// **SKIPPING AN AUTO HEAD THAT IS NOT WORKABLE RETURNS ITS SET-ASIDE.** An order with items in
+/// flight whose recipe is gone from the book is not workable, so it can be skipped; the batches it
+/// set aside go back to the store rather than vanishing with the order.
+#[test]
+fn skipping_an_unworkable_auto_head_returns_what_it_set_aside() {
+    let (mut app, band) = world();
+    skippable_head_holding(&mut app, band, SET_ASIDE);
+    let before = hide_total(&app, band);
+    let skipped = auto_craft_skip(&mut app.world, band).expect("the unworkable auto head skips");
+    assert_eq!(skipped, ABSENT_RECIPE);
+    assert!(bench(&app, band).orders.is_empty());
+    assert_eq!(
+        hide_total(&app, band),
+        before + scalar_from_f32(SET_ASIDE),
+        "the skipped order's set-aside hide is back in the store"
+    );
+}
+
+/// Control: nothing set aside, so the skip leaves the store as it was.
+#[test]
+fn skipping_an_auto_head_with_nothing_set_aside_leaves_the_store_unchanged() {
+    let (mut app, band) = world();
+    skippable_head_holding(&mut app, band, 0.0);
+    let before = hide_total(&app, band);
+    auto_craft_skip(&mut app.world, band).expect("the unworkable auto head skips");
+    assert_eq!(hide_total(&app, band), before);
 }

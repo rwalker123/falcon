@@ -10023,7 +10023,8 @@ fn handle_bench_enqueue_kit(
 }
 
 /// **Remove or raise a whole kit order** — `bench_remove_kit` / `bench_raise_kit … kit_order <id>`.
-/// Removal loses drawn piles exactly as [`handle_bench_queue_edit`]'s `Remove` does.
+/// Removal returns every part's set-aside batches to the band's store ([`return_set_aside`]), exactly
+/// as [`handle_bench_queue_edit`]'s `Remove` does.
 fn handle_bench_kit_edit(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -10122,13 +10123,12 @@ impl BenchQueueEdit {
 
 /// **Edit one order on a band's bench queue** — `bench_order_count`, `bench_remove`, `bench_raise`.
 ///
-/// **Removing the head spends what it drew, exactly as clearing the bench always has.** The
-/// materials were cut for the thing the player has just stopped making, and the store has no
-/// representation for a half-worked pile; `BenchState.drawnInputs` names what goes beforehand, and
-/// the command's help text says so. The crew stays at the bench for the next order.
+/// **Removing an order returns what it set aside.** Every in-flight item's withdrawn batches go back
+/// into the band's store at their exact readings ([`return_set_aside`]); `BenchState.drawnInputs`
+/// names what comes back beforehand. The remaining orders are restaffed.
 ///
-/// **Raising keeps every pile.** The displaced head is paused, not cleared: its progress and its
-/// drawn pile ride on the order itself ([`core_sim::BenchOrder`]).
+/// **Raising keeps every pile.** Progress and the set-aside batches ride on the order itself
+/// ([`core_sim::BenchOrder`]), so they move with it.
 fn handle_bench_queue_edit(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -10225,19 +10225,13 @@ fn return_set_aside(
     }
 }
 
-/// **MARK A BAND'S CRAFTING BENCH WITH THE PLAYER'S OWN RANK** — `bench_priority <faction> <band>
-/// high|normal|low` (`docs/plan_standing_upkeep.md` §4.9 item 9b).
+/// **RANK ONE BENCH ORDER** — `bench_priority <faction> <band> <order> high|normal|low`
+/// (`docs/plan_standing_upkeep.md` §4.9 item 9b).
 ///
-/// The same [`core_sim::SourcePriority`] a worked row carries, read by the same shedding order. It
-/// touches nothing else on the bench: the recipe, the crew, the progress and the drawn pile are all
-/// separate statements the player made.
-///
-/// # IT APPLIES TO AN IDLE BENCH TOO
-///
-/// Unlike `bench_crew`, which needs a running job to re-crew, a rank is a standing preference about
-/// *the bench* — so it is settable before a recipe is put on it and survives the job being swapped,
-/// exactly as a source row's mark survives an edit to its crew. Refusing it on an idle bench would
-/// mean the player could only rank the bench in the window where they were least likely to want to.
+/// The same [`core_sim::SourcePriority`] a worked row carries, read by the same staffing and shedding
+/// order. The rank belongs to the order at index `order` (a kit part ranks its whole kit block); it
+/// touches nothing else on the bench. Refused when the band has no bench or no order stands at that
+/// index, so a typo cannot rank nothing.
 ///
 /// # AN UNKNOWN LEVEL IS REFUSED BY NAME
 ///

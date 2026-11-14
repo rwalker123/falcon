@@ -422,8 +422,8 @@ Recipes that make the same item carry the same value.
 
 An order's crew cap is `crafters_per_item × items still to make`, so a batch works its items side by
 side and twenty crafters never land on one spear (`docs/plan_labor_at_scale.md` → "The bench: several
-orders at once"). The bench that staffs orders against it is #873's; the one-order bench above works
-its order with the player's crew and does not read it.
+orders at once"). The staffing passes read it: an order takes crafters up to that cap and no further
+(see "Every workable order is worked at once" below).
 
 ## Knowledge gates a recipe only when the recipe says so
 
@@ -657,15 +657,14 @@ it in the store a turn before anything could hand it out: the published pool car
 read short beside a ledger that already held the hoe. Parked, **the turn a tool first shows in the
 store is the turn it is first issued** — the one-turn lag is kept (the tool did not exist while that
 turn's work was done), and the store and the issue agree. A finished **bench tool** works from the
-next turn: the re-draw after a completion resolves tiers off the ledger as it stands, which does not
-yet hold the parked tool, and the next turn's delivery lands before the next turn's bench.
+next turn: an item started after a completion resolves tiers off the ledger as it stands, which does
+not yet hold the parked tool, and the next turn's delivery lands before the next turn's bench.
 
 - **Resolved at completion, delivered with no lookup.** The tier and the grade's absolutes are
   copied into the `FinishedBatch` exactly as they were stamped onto the stocked batch before, so a
   recipe retuned or a bench re-tasked between turns cannot change what arrives.
 - **A queue edit never drops it.** No queue editor touches `finished` (nor `last_started`) — the
-  items are made; only the next one is cancelled. The shed's
-  `shed_one_worker` touches nothing but the crew.
+  items are made; only the next one is cancelled.
 - **It rides `BandRecord::bench`** with the rest of the bench (`SAVE_FORMAT_VERSION` 16), so a save
   or a rollback taken between the finishing turn and the next keeps it.
 - **A splinter does not take it.** Fission's kit divide moves units out of the parent's
@@ -1196,18 +1195,19 @@ output — `rate_per_turn / work × the output's amount`, struck through the sam
 It is the forward half of a band's material income (`intensification.md` → "THE BAND'S LEDGER"), read
 by the wire's `materialUpkeepIncome` row and by the material-shortfall Alert.
 
-⛔ **It is empty unless the bench would actually bank this turn.** `advance_crafting` skips a bench
-whose pile is neither **drawn** nor **affordable** (`pass_is_affordable`, the availability half of
-`draw_pass` — factored out so the projection asks the question the draw will ask), so the three gates
-are, in that order: a recipe the book still carries, a crew, and a pile it can cut. A rate published
-without the third is income that never arrives: a band with `hurdles` queued and no `wood` banks zero
+⛔ **It is empty unless an order would actually bank this turn.** Each order is gated through
+`bench_plan`, the same plan the staffing passes and `advance_crafting` read: an order counts only if it
+is **workable** — an item already in flight, or one it can start because the store can set its pile
+aside (`pass_is_affordable`) — and it contributes its own `order_rate`. So the gates are, in that
+order: a recipe the book still carries, a workable item, and a crew on the order. A rate published
+without the second is income that never arrives: a band with `hurdles` queued and no `wood` banks zero
 for ever while the ledger read ~`0.29`/turn, which drove `materialUpkeepIncome` above
 `materialUpkeepNeed`, printed a runway of `∞` and left the caret untinted in exactly the state the
 standing bill exists to announce. `a_bench_that_cannot_draw_its_pile_publishes_no_income` pairs the
 projection against `advance_crafting`'s own progress on both halves.
 
-**A pile already cut keeps the bench running** even where the store could not fund a *second* pass —
-the gate is on the draw, not on the progress.
+**An item already in flight keeps its order running** even where the store could not set aside a
+*second* item — the gate is on starting an item, not on progressing one.
 
 ## The three per-world catalogues, plus the learned one
 
@@ -1495,14 +1495,16 @@ worked like any order.
   moves as one.
 - `raise_kit(id)` moves the whole block above the unit directly ahead (a single order, or another
   kit's whole block); refused at the head.
-- `remove_kit(id)` removes every part; drawn piles are lost exactly as a single `remove_order` loses
-  them (the command's event says `piles_returned`). A single part may still be removed or have its count
-  edited (the well's ✕ and the part stepper) — the block stays contiguous either way.
+- `remove_kit(id)` removes every part and hands the parts back, and the command returns what each
+  part had set aside for its items in flight, exactly as a single `remove_order` does (the command's
+  event says `piles_returned`). A single part may still be removed or have its count edited (the well's
+  ✕ and the part stepper) — the block stays contiguous either way.
 - **One helper drops a `KitOrder`**: `prune_kit_orders` retains only the kit orders some order still
-  carries, and `remove_order`, `remove_kit` and `complete_item` all call it. A kit order is therefore
-  never left without parts and never outlives them, however the last one went.
-- `complete_item` banks a finished part's `made` into its `KitOrder::done` before the part leaves; a
-  part still queued reports its own `made` (the grouped box's progress is `done` + the live parts').
+  carries, and `remove_order`, `remove_kit` and `retire_done_orders` all call it. A kit order is
+  therefore never left without parts and never outlives them, however the last one went.
+- `retire_done_orders` banks a finished part's `made` into its `KitOrder::done` before the part leaves
+  (`finish_item` counts each item into `made` as it completes); a part still queued reports its own
+  `made` (the grouped box's progress is `done` + the live parts').
 - **Auto-craft queues at the END** of the queue, behind any kit block, so it never interleaves with one.
 - **Persisted** (`BandRecord::bench`; `SAVE_FORMAT_VERSION` 44).
 
@@ -1661,8 +1663,8 @@ and `server::tests::a_known_recipe_queues_short_of_material_and_an_unlearned_one
 
 ## The queue's FORECAST — `shortToFinish`, `CraftSuggestion.shortfalls` and the dock notice
 
-`pass_is_affordable` only ever asks about ONE pass, so a six-sled order that can draw pass 1 said
-nothing until it stalled. `systems::queue_material_shortfalls` looks at the whole queue and is the
+`pass_is_affordable` only ever asks about ONE item, so a six-sled order that can start its first sled
+said nothing until it stalled. `systems::queue_material_shortfalls` looks at the whole queue and is the
 **one function** the wire and the event read:
 
 - **An order's need** is, per input material, the passes still to DRAW (`remaining()`, less one when

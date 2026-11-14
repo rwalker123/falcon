@@ -5600,10 +5600,12 @@ pub struct FinishedBatch {
 /// already coming ([`crate::craft_suggestions`]).
 ///
 /// **The pass in flight belongs to the ORDER, not to the bench** — its progress and the pile it drew.
-/// Only one order is worked a turn (the **worked order**, `systems::crafting::worked_order`), so on
-/// every other order both are at rest; they live on the order rather than the bench so that an order
-/// overtaken mid-item — raised over, or passed by one ahead of it whose inputs arrived — **pauses**
-/// rather than losing what it cut, and resumes, pile and progress intact, when it is worked again.
+/// Every workable order on the bench is worked in the same turn, each staffed in the staffing passes
+/// up to its own cap (`crafters_per_item` × the items it can work) and ranked by its own priority.
+/// An order that is not workable — short of inputs, or its recipe or material is unusable — holds
+/// its progress and pile at rest. Both live on the order rather than the bench so they travel with
+/// it when the queue is reordered, and cancelling the order hands its set-aside batches back to the
+/// store ([`BenchOrder::return_set_aside`]).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BenchOrder {
     /// The recipe this order makes — an id from `recipes.json`, resolved at the command boundary.
@@ -5670,7 +5672,7 @@ pub struct KitOrder {
 /// **THE SMALLEST COUNT AN ORDER MAY CARRY** — one item. An order of zero is not an order.
 pub const MIN_ORDER_COUNT: u32 = 1;
 
-/// **THE HEAD OF THE QUEUE** — the one order the bench works. Named because the queue's index `0`
+/// **THE HEAD OF THE QUEUE** — index `0`. Named because the queue's index `0`
 /// is a statement (*"the order being made"*), not a magnitude.
 pub const HEAD_ORDER: usize = 0;
 
@@ -5761,23 +5763,21 @@ pub enum BenchQueueError {
     EmptyKitOrder,
 }
 
-/// **A band's crafting bench — ONE BENCH, ONE QUEUE, worked one order at a time.**
+/// **A band's crafting bench — ONE BENCH, ONE QUEUE, every workable order worked in parallel.**
 ///
 /// Design: `docs/plan_crafting_and_materials.md` §5/§7. **Make IS the assignment**: queueing a recipe
 /// is what a band crafts, so there is no Crafter role card and no [`LaborTarget`] variant. Crafting
 /// always has a subject, so it is staffed like a worked source rather than like a standing role.
 ///
-/// **The bench holds an ordered queue of [`BenchOrder`]s and works ONE of them a turn** — the first,
-/// in queue order, that holds a pile or can draw one now (`systems::crafting::worked_order`). A short
-/// order keeps its place and is skipped until its inputs are there. Each finished item counts against
-/// the worked order, and when its count is met the order leaves and the next worked order draws its
-/// own inputs. **The crew stays with the bench** across orders — a new worked order
-/// is not an order to send anyone home — and an empty queue leaves the crew standing at an idle
-/// bench. Parallel crafting comes from more benches, never from splitting one bench's crew.
+/// **The bench holds an ordered queue of [`BenchOrder`]s and works every workable one a turn.** Each
+/// order is staffed in the staffing passes up to its own cap (`crafters_per_item` × the items it can
+/// work) and carries its own [`SourcePriority`], which sets the order crafters are dealt in. An order
+/// short of inputs keeps its place and is not staffed until its inputs are there. Each finished item
+/// counts against its order, and when the count is met the order leaves the queue. An empty queue
+/// has no crafters.
 ///
-/// **The crew is its own number and it comes out of the same pool `assign_labor` spends**
-/// ([`crate::components::available_workers`] minus what the bench holds), so a band cannot staff the
-/// bench and the range with the same people.
+/// **Crafters come out of the same pool `assign_labor` spends**, so a band cannot staff the bench and
+/// the range with the same people.
 ///
 /// **Persisted** (`SimState`'s `BandRecord::bench`) — a checkpoint that forgot a half-finished craft
 /// would silently hand back the materials it had already drawn.
@@ -5976,9 +5976,10 @@ impl BandBench {
         }
     }
 
-    /// **Remove every part of a kit order** — each part is lost exactly as a single
-    /// [`Self::remove_order`] loses it (drawn piles forfeited; items already made stay in the
-    /// store). Returns the removed orders.
+    /// **Remove every part of a kit order** — each part leaves the queue exactly as a single
+    /// [`Self::remove_order`] takes it, still holding its items in flight; the caller hands each to
+    /// [`BenchOrder::return_set_aside`] so the set-aside batches go back to the store (items already
+    /// made stay in the store). Returns the removed orders.
     pub fn remove_kit(&mut self, id: u32) -> Result<Vec<BenchOrder>, BenchQueueError> {
         let (start, end) = self
             .kit_block(id)
