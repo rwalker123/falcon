@@ -23,7 +23,7 @@ const DoorQ := preload("res://tools/ui_preview/door_query.gd")
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 
 ## The checkpoints this chapter owes the walk (a FLOOR; see `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS`).
-const EXPECTED_CHECKPOINTS := 35
+const EXPECTED_CHECKPOINTS := 37
 
 var h
 
@@ -835,6 +835,28 @@ func _short_crew_claims() -> void:
 			and HudWorkVocab.crew_shortfall(0, 0, 8, false, 3) == HudWorkVocab.SHORT_CREW_NO_MAX_STARVED
 			and HudWorkVocab.crew_shortfall(0, 0, 8, true, 0) == HudWorkVocab.SHORT_CREW_NO_MAX_STARVED
 			and HudWorkVocab.crew_shortfall(2, 0, 8, true, 0) == 0)
+	# (b3) a no-Max `bare_idle` row short of its hold crew whose every hand IS armed (kit_toe filled ==
+	# required, the live boar hunt): the cause is the missing kit, so the KIT sentence, naming the row's item.
+	# Paired with the same row NOT bare_idle, which keeps the hands sentence.
+	var armed_toe := [{"pool": "", "item_id": SLED_ITEM, "required": 2.0, "filled": 2.0}]
+	var b3 := _short_assignment(2, 0, 8, armed_toe)
+	b3["bare_idle"] = true
+	b3["hold_crew"] = 3
+	var row_b3 := _short_row([b3], b3, [])
+	column.add_child(row_b3)
+	var marks_b3 := _warn_marks(row_b3)
+	h._assert_hud("short crew (b3): a bare_idle row short of its hold crew with every hand armed names the kit (%s)"
+			% [(marks_b3[0] as Label).tooltip_text if not marks_b3.is_empty() else "no mark"],
+		marks_b3.size() == 1 and (marks_b3[0] as Label).tooltip_text == KIT_SENTENCE)
+	var b3_hands := _short_assignment(0, 1, 1, armed_toe)
+	var row_b3_hands := _short_row([b3_hands], b3_hands, [])
+	column.add_child(row_b3_hands)
+	var marks_b3_hands := _warn_marks(row_b3_hands)
+	h._assert_hud("short crew (b3): the same armed toe on a row that is NOT bare_idle keeps the hands sentence (%s)"
+			% [(marks_b3_hands[0] as Label).tooltip_text if not marks_b3_hands.is_empty() else "no mark"],
+		marks_b3_hands.size() == 1 and (marks_b3_hands[0] as Label).tooltip_text == HANDS_SENTENCE)
+	row_b3.queue_free()
+	row_b3_hands.queue_free()
 	# (c) NO Max and 3 of a useful 8: not short, no ⚠ (noise).
 	var c := _short_assignment(3, 0, 8, [])
 	var row_c := _short_row([c], c, [])

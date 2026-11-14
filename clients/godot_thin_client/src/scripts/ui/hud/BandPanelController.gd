@@ -2839,12 +2839,18 @@ func _extract_source_models(band: Dictionary) -> Array:
 ## `warn_lines` so a row already warning carries both reasons in one hover. A kit reason (any `kit_toe` line
 ## with `filled < required`, named off the roster) REPLACES the row's own `kit_note` line, so the kit shortfall
 ## is stated once, in the one sentence; otherwise the hands reason.
+## **A `bare_idle` ROW IS SHORT OF KIT, NEVER OF HANDS**: an unarmed hand adds nothing there, so idle hands
+## cannot fill it and the cause is the missing kit even though `kit_toe` counts only the crew already armed
+## (every staffed hunter holds spears, so no line reads `filled < required`). The sentence names the row's
+## kit items instead of advising a Priority that cannot arm anyone.
 func _add_short_crew_warn(warn_lines: Array, workers: int, max_workers: int, useful_crew: int,
         toe: Array, kit_note: String = "", bare_idle: bool = false, hold_crew: int = 0) -> void:
     var short := HudWorkVocab.crew_shortfall(workers, max_workers, useful_crew, bare_idle, hold_crew)
     if short <= 0:
         return
     var kit_names := HudWorkVocab.toe_short_item_names(toe, _item_display_names)
+    if kit_names == "" and bare_idle:
+        kit_names = HudWorkVocab.toe_item_names(toe, _item_display_names)
     if kit_names != "" and kit_note != "":
         warn_lines.erase(kit_note)
     warn_lines.append(HudWorkVocab.short_crew_reason(short, kit_names))
