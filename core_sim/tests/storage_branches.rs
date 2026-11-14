@@ -112,6 +112,7 @@ fn spawn_band(app: &mut App) -> Entity {
                 last_belief_relay_hops: 0,
                 predators_kept_off: 0,
                 last_cohesion: Default::default(),
+                last_leadership: Default::default(),
             },
         ))
         .id()
@@ -919,4 +920,545 @@ fn the_published_roster_carries_storage_as_a_step_and_the_roaming_skills_as_capa
         assert_eq!(skill.branch().unwrap_or_default(), "roam");
         assert!(!skill.isStep(), "a roaming skill gates no rung");
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The band's spoilage forecast and what storage would save, on the encoded snapshot
+// ---------------------------------------------------------------------------------------------
+
+/// What a hunt row's `realized` is set to when the band's meat is far more than it eats a turn.
+const MEAT_SURPLUS_INCOME: f32 = 50.0;
+/// And when the band eats everything the row brings in.
+const MEAT_EATEN_INCOME: f32 = 0.01;
+/// The class the fixture's hunt row lands in (the table's kill fallback; no herd stands behind it).
+const MEAT_CLASS: &str = "flesh";
+
+/// `(class, food a turn)` spoilage and `(rung, keeping, saved)` rows the fixture band publishes.
+struct PublishedSpoilage {
+    held: Vec<(String, String, f32)>,
+    spoil: Vec<(String, f32)>,
+    saves: Vec<(String, String, f32)>,
+}
+
+fn spoilage_world(income: f32, rack: bool) -> PublishedSpoilage {
+    let (mut app, band) = rot_world();
+    let mut allocation = LaborAllocation::default();
+    allocation.set_assignment(
+        LaborTarget::Hunt {
+            fauna_id: "the_unseen_herd".to_string(),
+            floor: 0.5,
+            move_with_herd: false,
+        },
+        1,
+        CREW as u32,
+        None,
+    );
+    allocation.last_yields[0].realized = income;
+    app.world.entity_mut(band).insert(allocation);
+    if rack {
+        hold_the_rack(&mut app, BandId(BAND));
+    }
+    app.world.insert_resource(ViewerFaction(FACTION));
+    core_sim::recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        shadow_scale_flatbuffers::generated::shadow_scale::sim::root_as_envelope(bytes.as_ref())
+            .expect("the snapshot encodes to a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == BAND)
+        .expect("the fixture band is on the wire");
+    PublishedSpoilage {
+        held: cohort
+            .heldStores()
+            .into_iter()
+            .flatten()
+            .map(|row| {
+                (
+                    row.rung().unwrap_or_default().to_string(),
+                    row.keeping().unwrap_or_default().to_string(),
+                    row.shelfLifeTurns(),
+                )
+            })
+            .collect(),
+        spoil: cohort
+            .spoilAhead()
+            .into_iter()
+            .flatten()
+            .map(|row| (row.keeping().unwrap_or_default().to_string(), row.food()))
+            .collect(),
+        saves: cohort
+            .storageSaves()
+            .into_iter()
+            .flatten()
+            .map(|row| {
+                (
+                    row.rung().unwrap_or_default().to_string(),
+                    row.keeping().unwrap_or_default().to_string(),
+                    row.foodSaved(),
+                )
+            })
+            .collect(),
+    }
+}
+
+fn spoiled_of(published: &PublishedSpoilage, class: &str) -> f32 {
+    published
+        .spoil
+        .iter()
+        .find(|(keeping, _)| keeping == class)
+        .map_or(0.0, |(_, food)| *food)
+}
+
+/// The shelf life the shipped keeping table gives the rack.
+fn app_rack_life() -> f32 {
+    let mut app = build_test_app();
+    app.update();
+    preserved_shelf(&app, drying_rack(), MEAT_CLASS) as f32
+}
+
+/// **A band whose meat income exceeds what it eats spoils the surplus, and says what a drying rack
+/// would save; holding the rack removes the row and lowers the spoilage; a band that eats everything
+/// spoils nothing.** All three on the encoded snapshot, each beside the others as its control.
+#[test]
+fn a_meat_surplus_publishes_its_spoilage_and_the_rack_that_would_save_it() {
+    let surplus = spoilage_world(MEAT_SURPLUS_INCOME, false);
+    let racked = spoilage_world(MEAT_SURPLUS_INCOME, true);
+    let eaten = spoilage_world(MEAT_EATEN_INCOME, false);
+
+    let spoiled = spoiled_of(&surplus, MEAT_CLASS);
+    assert!(
+        spoiled > 0.0,
+        "liveness: the surplus meat spoils: {surplus_spoil:?}",
+        surplus_spoil = surplus.spoil
+    );
+    let rack_row = surplus
+        .saves
+        .iter()
+        .find(|(rung, keeping, _)| rung == &drying_rack().wire_key() && keeping == MEAT_CLASS)
+        .expect("the unheld rack is offered");
+    assert!(rack_row.2 > 0.0, "the rack saves meat a turn: {rack_row:?}");
+    assert!(
+        rack_row.2 <= spoiled + 1e-3,
+        "it cannot save more than spoils: {} vs {spoiled}",
+        rack_row.2
+    );
+
+    assert!(
+        !racked
+            .saves
+            .iter()
+            .any(|(rung, _, _)| rung == &drying_rack().wire_key()),
+        "a held rack is not offered again"
+    );
+    assert!(
+        surplus.held.is_empty(),
+        "an unbuilt rack is not a held store: {:?}",
+        surplus.held
+    );
+    let rack_life = app_rack_life();
+    assert_eq!(
+        racked.held,
+        vec![(drying_rack().wire_key(), MEAT_CLASS.to_string(), rack_life)],
+        "the held rack reads its keeping and the shelf life the table gives"
+    );
+    assert!(
+        spoiled_of(&racked, MEAT_CLASS) < spoiled,
+        "holding the rack lowers the spoilage: {} vs {spoiled}",
+        spoiled_of(&racked, MEAT_CLASS)
+    );
+
+    assert!(
+        eaten.spoil.is_empty(),
+        "a band that eats everything spoils nothing: {:?}",
+        eaten.spoil
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The chief PROPOSES the storage that saves the food his band spoils; the player approves it
+// ---------------------------------------------------------------------------------------------
+
+/// What the encoded frame carries for the band's proposal.
+#[derive(Debug, Clone, PartialEq)]
+struct WireProposal {
+    build_key: String,
+    rung: String,
+    text: String,
+    reason: String,
+    escalation: u32,
+    food_saved: f32,
+    keep_raises: Vec<(String, u32, u32)>,
+}
+
+/// The band's published proposals and its published storage saves, off the encoded envelope.
+fn published_offer(app: &mut App) -> (Vec<WireProposal>, Vec<(String, f32)>) {
+    app.world.insert_resource(ViewerFaction(FACTION));
+    core_sim::recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        shadow_scale_flatbuffers::generated::shadow_scale::sim::root_as_envelope(bytes.as_ref())
+            .expect("the snapshot encodes to a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == BAND)
+        .expect("the fixture band is on the wire");
+    let proposals = cohort
+        .chiefProposals()
+        .into_iter()
+        .flatten()
+        .map(|row| WireProposal {
+            build_key: row.buildKey().unwrap_or_default().to_string(),
+            rung: row.rung().unwrap_or_default().to_string(),
+            text: row.text().unwrap_or_default().to_string(),
+            reason: row.reason().unwrap_or_default().to_string(),
+            escalation: row.escalation(),
+            food_saved: row.foodSaved(),
+            keep_raises: row
+                .keepRaises()
+                .into_iter()
+                .flatten()
+                .map(|raise| {
+                    (
+                        raise.material().unwrap_or_default().to_string(),
+                        raise.from(),
+                        raise.to(),
+                    )
+                })
+                .collect(),
+        })
+        .collect();
+    let saves = cohort
+        .storageSaves()
+        .into_iter()
+        .flatten()
+        .map(|row| (row.rung().unwrap_or_default().to_string(), row.foodSaved()))
+        .collect();
+    (proposals, saves)
+}
+
+/// Hands the band holds beyond its hunt crew: the idle hands a chief proposes work for.
+const SPARE_HANDS: f32 = 4.0;
+
+/// A band with a meat surplus, with or without a leader, the storage lesson and spare hands; the
+/// chief's proposal pass run `runs` times.
+fn chief_world(leader: bool, lesson: bool, spare: f32, runs: usize) -> (App, Entity) {
+    let (mut app, band) = rot_world();
+    let mut allocation = LaborAllocation::default();
+    allocation.set_assignment(
+        LaborTarget::Hunt {
+            fauna_id: "the_unseen_herd".to_string(),
+            floor: 0.5,
+            move_with_herd: false,
+        },
+        1,
+        CREW as u32,
+        None,
+    );
+    allocation.last_yields[0].realized = MEAT_SURPLUS_INCOME;
+    core_sim::keep_on_hand::set_order(
+        &mut allocation,
+        core_sim::keep_on_hand::FOOD_KIND,
+        20,
+        core_sim::SourcePriority::Normal,
+    );
+    app.world.entity_mut(band).insert(allocation);
+    app.world.get_mut::<PopulationCohort>(band).unwrap().working = scalar_from_f32(CREW + spare);
+    let mut leadership = core_sim::BandLeadership::default();
+    if leader {
+        leadership.leader = Some(core_sim::BandLeader {
+            name: "Orrin".to_string(),
+            kind: core_sim::LeaderKind::Chief,
+            since_turn: 0,
+        });
+    }
+    app.world.entity_mut(band).insert(leadership);
+    if lesson {
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(FACTION, STORAGE_DISCOVERY_ID, scalar_one());
+    }
+    for _ in 0..runs {
+        app.world
+            .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
+    }
+    (app, band)
+}
+
+fn rack_declared(app: &App, band: Entity) -> bool {
+    app.world
+        .get::<LaborAllocation>(band)
+        .unwrap()
+        .has_build(&BuildSource::Band {
+            band: BandId(BAND),
+            branch: camp_stores(),
+        })
+}
+
+/// **A chief with surplus meat, the storage lesson and idle hands PROPOSES a storage build, and the
+/// frame carries it with its words resolved; he declares nothing himself.** Each absence is read off
+/// the same encoded frame beside the case that carries one: no chief, no idle hands.
+#[test]
+fn a_chief_with_idle_hands_proposes_storage_and_declares_nothing() {
+    let (mut app, band) = chief_world(true, true, SPARE_HANDS, 1);
+    let (proposals, _) = published_offer(&mut app);
+    assert_eq!(proposals.len(), 1, "liveness: one proposal is on offer");
+    let proposal = &proposals[0];
+    assert!(
+        proposal
+            .text
+            .contains(" idle hands \u{b7} Orrin proposes: "),
+        "{}",
+        proposal.text
+    );
+    assert!(
+        proposal.food_saved > 0.0 && proposal.reason.ends_with("food a turn spoiling"),
+        "a storage build states the food it saves: {proposal:?}"
+    );
+    assert!(
+        !rack_declared(&app, band),
+        "the chief proposes; nothing is declared until the player approves"
+    );
+
+    let (mut app, _) = chief_world(false, true, SPARE_HANDS, 1);
+    assert!(
+        published_offer(&mut app).0.is_empty(),
+        "no chief, no proposal"
+    );
+    // Every hand at the bench: the same chief, nothing idle.
+    let (mut app, band) = chief_world(true, true, SPARE_HANDS, 0);
+    app.world.entity_mut(band).insert(core_sim::BandBench {
+        orders: vec![every_hand_at_the_bench()],
+        ..Default::default()
+    });
+    app.world
+        .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
+    assert!(
+        published_offer(&mut app).0.is_empty(),
+        "no idle hands, no proposal"
+    );
+}
+
+/// **The ranking puts food first, most food first**, and a build with no food figure follows: with the
+/// storage lesson the proposal is the storage rung that saves the most; without it (control) the only
+/// candidate is a monument, which names no food.
+#[test]
+fn the_ranking_puts_food_first() {
+    let ritual = |app: &mut App| {
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(FACTION, core_sim::RITUAL_DISCOVERY_ID, scalar_one());
+        app.world
+            .resource_mut::<core_sim::BeliefRegistry>()
+            .add(camp(), 5.0);
+    };
+    let (mut app, _) = chief_world(true, true, SPARE_HANDS, 0);
+    ritual(&mut app);
+    app.world
+        .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
+    let (proposals, saves) = published_offer(&mut app);
+    let top = proposals.first().expect("liveness: a proposal");
+    let best = saves
+        .iter()
+        .map(|(_, saved)| *saved)
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        top.reason.contains("food a turn spoiling") && (top.food_saved - best).abs() < 1e-6,
+        "food first, and the most food: {top:?} against saves {saves:?}"
+    );
+
+    let (mut app, _) = chief_world(true, false, SPARE_HANDS, 0);
+    ritual(&mut app);
+    app.world
+        .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
+    let (proposals, _) = published_offer(&mut app);
+    let only = proposals.first().expect("the monument is still proposed");
+    assert!(
+        only.text.contains("raise a monument") && only.reason.is_empty(),
+        "with no food figure on offer a build with none is proposed: {only:?}"
+    );
+}
+
+/// **A material shortfall rides the proposal as the keep raise**: with the pit already dug the rack is
+/// the offer, the band holds no wood, and the wood keep goes from its opening target to that plus the
+/// rack's pile. Control: stock the wood and the raise is gone.
+#[test]
+fn the_material_keep_raise_is_carried() {
+    let rack_pile = 8;
+    let (mut app, band) = chief_world(true, true, SPARE_HANDS, 0);
+    dig_a_pit(&mut app, camp(), FACTION, 1.0);
+    app.world
+        .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
+    let (proposals, _) = published_offer(&mut app);
+    let proposal = proposals.first().expect("liveness: the rack is proposed");
+    assert!(
+        proposal.rung.ends_with("drying_rack"),
+        "the pit is dug, so the offer is the rack: {proposal:?}"
+    );
+    let opening = {
+        let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+        labor.band_orders.starting_target_for("wood").unwrap()
+    };
+    assert_eq!(
+        proposal.keep_raises,
+        vec![("wood".to_string(), opening, opening + rack_pile)]
+    );
+    assert!(
+        proposal
+            .text
+            .ends_with(&format!("(raises wood keep to {})", opening + rack_pile)),
+        "{}",
+        proposal.text
+    );
+
+    stock_wood(&mut app, band, 50.0);
+    app.world
+        .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
+    let (proposals, _) = published_offer(&mut app);
+    assert!(
+        proposals[0].keep_raises.is_empty(),
+        "stocked wood needs no raise: {:?}",
+        proposals[0]
+    );
+}
+
+/// **The escalation rung follows the two levers**: the words read "idle" under the notice lever, "idle N
+/// turns" from it and "wasted for N turns" (rung 2) from the wasted lever.
+#[test]
+fn the_escalation_rungs_follow_the_levers() {
+    let (mut app, _) = chief_world(true, true, SPARE_HANDS, 0);
+    {
+        let mut handle = app.world.resource_mut::<core_sim::LaborConfigHandle>();
+        let mut config = (*handle.0).clone();
+        config.band_orders.proposal_idle_turns_notice = 2;
+        config.band_orders.proposal_idle_turns_wasted = 4;
+        handle.0 = std::sync::Arc::new(config);
+    }
+    let mut seen = Vec::new();
+    for turn in 1..=4 {
+        app.world
+            .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
+        let (proposals, _) = published_offer(&mut app);
+        seen.push((turn, proposals[0].escalation, proposals[0].text.clone()));
+    }
+    let rung = |turn: usize| seen[turn - 1].1;
+    assert_eq!(
+        (rung(1), rung(2), rung(3), rung(4)),
+        (0, 1, 1, 2),
+        "{seen:?}"
+    );
+    assert!(
+        seen[0].2.contains(" idle hands \u{b7} Orrin proposes: "),
+        "{}",
+        seen[0].2
+    );
+    assert!(
+        seen[1].2.contains(" hands idle 2 turns \u{b7} "),
+        "{}",
+        seen[1].2
+    );
+    assert!(
+        seen[3].2.contains(" hands wasted for 4 turns \u{b7} "),
+        "{}",
+        seen[3].2
+    );
+}
+
+/// **A completed approved build counts ONCE as an order met** for the leader, and an unapproved one
+/// (the control) counts for nothing.
+#[test]
+fn a_completed_approved_build_counts_once_as_an_order_met() {
+    let judged = |app: &App, band: Entity, ready: u32| {
+        let wellbeing = app
+            .world
+            .resource::<core_sim::WellbeingConfigHandle>()
+            .get();
+        let cohort = app.world.get::<PopulationCohort>(band).unwrap();
+        core_sim::judge_leader(&wellbeing.leadership, None, cohort, None, 0.0, ready)
+            .reading
+            .met_orders
+    };
+    let (mut app, band) = chief_world(true, true, SPARE_HANDS, 1);
+    core_sim::chief_proposals::approve_proposal(&mut app.world, FACTION, BandId(BAND))
+        .expect("the proposal is approved");
+    assert!(
+        rack_declared(&app, band) || {
+            // The top offer may be the pit: either way a build is declared by the approval.
+            !app.world
+                .get::<LaborAllocation>(band)
+                .unwrap()
+                .builds
+                .is_empty()
+        }
+    );
+    // The build completes: the rack (or the pit) stands at the top of its rung.
+    hold_the_rack(&mut app, BandId(BAND));
+    dig_a_pit(&mut app, camp(), FACTION, 1.0);
+    app.world
+        .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
+    let book = |app: &App| {
+        app.world
+            .resource::<core_sim::chief_proposals::ChiefProposalBook>()
+            .clone()
+    };
+    assert_eq!(
+        book(&app).bands[&BandId(BAND)].met_builds_fresh,
+        1,
+        "credited when it completes"
+    );
+    // The leadership pass hands it to the next judgement, once.
+    app.world
+        .resource_mut::<core_sim::chief_proposals::ChiefProposalBook>()
+        .rotate_met_builds();
+    let ready = book(&app).met_builds_ready(BandId(BAND));
+    assert_eq!(ready, 1);
+    assert_eq!(judged(&app, band, ready), 1, "one order met");
+    assert_eq!(
+        judged(&app, band, 0),
+        0,
+        "control: no completed approval, none met"
+    );
+    app.world
+        .run_system_once(core_sim::chief_proposals::advance_chief_proposals);
+    app.world
+        .resource_mut::<core_sim::chief_proposals::ChiefProposalBook>()
+        .rotate_met_builds();
+    assert_eq!(
+        book(&app).met_builds_ready(BandId(BAND)),
+        0,
+        "it is not counted a second time"
+    );
+}
+
+/// A bench order crewed by more hands than any band has, so no hand is idle.
+fn every_hand_at_the_bench() -> core_sim::BenchOrder {
+    const MORE_HANDS_THAN_ANY_BAND: u32 = 1_000_000;
+    let mut order = core_sim::BenchOrder::new("spear", 1);
+    order.crew = core_sim::BenchCrew {
+        at_tool: 0,
+        by_hand: MORE_HANDS_THAN_ANY_BAND,
+    };
+    order
 }

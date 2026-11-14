@@ -1,6 +1,7 @@
 ---
 paths:
   - "core_sim/src/leadership.rs"
+  - "core_sim/src/chief_proposals.rs"
   - "core_sim/src/leadership_config.rs"
   - "core_sim/src/leader_names.rs"
   - "core_sim/src/data/leadership_config.json"
@@ -8,6 +9,8 @@ paths:
   - "core_sim/tests/leadership.rs"
   - "core_sim/src/tribe.rs"
   - "core_sim/tests/tribe.rs"
+  - "core_sim/tests/leadership_consent.rs"
+  - "core_sim/src/food_orders.rs"
 ---
 
 # Leadership: a chief emerges from work that needs an organiser
@@ -88,6 +91,78 @@ gets one — once, permanently.
   `leadership.chief_rises` and
   `leadership.council_forms` (not `once`; each band may get one). The prose says the band grew too
   many, too spread out and too much on the move for everyone to just know what to do.
+
+## The band judges its leader by what he delivers
+
+Design: `docs/plan_civilization_steps.md` -> "Directed labor and consent" and `docs/plan_labor_at_scale.md`
+-> "Band orders - the chief". **Strain comes from the leader failing to deliver, not from how much he
+directs; when goals are met the leader gains popularity.** The leader is credited and blamed for the
+band's overall results whoever crews the rows: a player-crewed ("Crew it yourself") order counts exactly
+like a chief-owned one.
+
+**The term.** `MoraleContributions::leadership` (`MoraleFactor::Leadership`, `MoraleCause::Leadership`,
+wire cause `6`), signed. Only a band with a leader (`BandLeadership::leader.is_some()`) has it; every other
+band reads `0`. Priced inside `simulate_population`'s per-band loop by `leadership::judge_leader`: the
+hunger half needs this turn's meal deficit, which is struck there. The band's opening
+`DemographicState` is built before morale, and `meal_deficit_fraction` / `deficit_fraction_of` are the same
+function `advance_demographics` kills with, so the term and the deaths read one deficit.
+
+Per turn, for a led band:
+
+| Part | Reads | Term |
+|---|---|---|
+| Each order in `LaborAllocation::orders` (every kind, either owner; fodder only while the band pens hay-eaters) | `food_orders::OrderReadings::figures` - `on_hand`, `target`, `take`, `draw`, the same figures `PopulationCohortState.bandOrders` publishes (`snapshot::population::band_order_rows` calls it too) | **Met** (`on_hand >= target`): `+popularity_per_met_order`. **Falling** (`on_hand < target` and `take < draw`): `-strain_per_falling_order x patience`. Below target but filling: `0` |
+| The people go short at the meal | the real starvation deficit (`deficit_fraction > 0`), never income against consumption | `-starvation_strain x min(1, deficit / starvation_full_at) x patience` |
+
+The order readings are one turn old (`LaborAllocation` resolves after `simulate_population`), the same lag the
+fertility food-flow reading has.
+
+**A build the chief proposed and the player approved counts once.** When the approved build completes
+(`chief_proposals::refresh_proposals`, the turn's pass, sees the improvement at or above the rung it raised)
+`ChiefProposalBook` banks one `met_builds_fresh` for the band; `advance_leadership` ends by moving it to
+`met_builds_ready`, which `judge_leader` adds to `met_orders` on the next judgement (the same
+`popularity_per_met_order`) and so to `last_leadership.met_orders`, which the Hierarchical drift reads: the
+same morale and the same drift as a met order, once, and nothing while it is building. A build abandoned
+before it completes is dropped with no penalty. `chief_proposals.rs` owns it; `work-party.md` -> "A chief
+proposes a build" has the rest.
+
+**Patience.** `max(0, 1 + egalitarian_sensitivity x clamp(axis / CULTURE_TRAIT_SPAN, -1, 1))` on the band's
+own culture layer's `HierarchicalEgalitarian` value (negative = hierarchical); a band with no layer reads
+patience 1. It scales the negative parts only, so egalitarian bands turn on a failing leader sooner.
+
+**Delivery drifts the band toward Hierarchical.** `simulate_population` parks the counts on
+`PopulationCohort::last_leadership` (`LeadershipReading { met_orders, falling_orders, hungry }`).
+`advance_leadership` ends by subtracting `drift_per_met_order x met_orders` from the band layer's MODIFIER on
+the axis (`CultureManager::drift_band_toward_hierarchical`, clamped to the span; the modifier, never the
+resolved value, as contact drift and the personality lean). Failing orders drift nothing the other way, and
+a leader's kind stays what it was at emergence. The drift lives in `advance_leadership` because that is the
+leadership system that already holds the culture manager (`ResMut`); a separate system tripped the
+ambiguity gate against most of the Population stage.
+
+**Config.** `wellbeing_config.json` -> `leadership` (`LeadershipMoraleConfig`; validated finite, `>= 0`,
+`starvation_full_at > 0`; Workbench rows in `tuning_manifest.json` under Wellbeing). All OPENING VALUES and
+PLAYTEST DIALS:
+
+| Lever | Opening |
+|---|---|
+| `popularity_per_met_order` | 0.002 |
+| `strain_per_falling_order` | 0.004 |
+| `starvation_strain` | 0.03 |
+| `starvation_full_at` | 0.1 (share of the meal) |
+| `egalitarian_sensitivity` | 0.5 |
+| `drift_per_met_order` | 0.0005 (trait units) |
+
+**Wire and save.** `PopulationCohortState.moraleLeadership:long` (appended last; fixed-point; native dict key
+`morale_leadership`), part of the breakdown whose signed sum is `moraleDelta`; `moraleCause` `6` names it.
+Not on the foreign-row allow-list, so a rival's row reads `0`. `SAVE_FORMAT_VERSION` 69 (`MoraleContributions`
+gained `leadership`, `PopulationCohort` gained `last_leadership`).
+
+**The Telling.** Signals `leadership.bands_hungry_under_leader` (led bands whose people went short at this
+turn's meal), `leadership.bands_leader_failing` (led bands whose term is negative) and
+`leadership.bands_leader_delivering` (term positive), each a count read off the cohort fields above. Two
+ambient, edge-gated (`crosses` rising through 1) beats: `leadership.leader_cannot_feed_us` and
+`leadership.leader_delivers`; the prose names no leader kind, so one line serves a chief and a council.
+Tests: `core_sim/tests/leadership_consent.rs`.
 
 ## A leader's reach
 

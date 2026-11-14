@@ -1994,7 +1994,8 @@ fn animal_landed(herd: &Herd, def: &SpeciesDef, workers: u32, s: &Shipped) -> La
         TYPICAL_BAND_PEOPLE * s.per_capita_draw,
         &core_sim::MaterialsConfig::builtin(),
     );
-    let home = forecast.rate_home / workers as f32;
+    // What the band can eat: the row's own figure is the walk's rot alone.
+    let home = forecast.rate_home * forecast.eaten_fraction / workers as f32;
     let class = s
         .now
         .keeping_for(&herd.species)

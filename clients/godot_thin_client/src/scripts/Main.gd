@@ -447,6 +447,8 @@ func _ready() -> void:
             hud.connect("set_starting_loadout_requested", Callable(self, "_on_hud_set_starting_loadout"))
         if hud.has_signal("answer_fork_requested") and not hud.is_connected("answer_fork_requested", Callable(self, "_on_hud_answer_fork")):
             hud.connect("answer_fork_requested", Callable(self, "_on_hud_answer_fork"))
+        if hud.has_signal("chief_proposal_requested") and not hud.is_connected("chief_proposal_requested", Callable(self, "_on_hud_chief_proposal")):
+            hud.connect("chief_proposal_requested", Callable(self, "_on_hud_chief_proposal"))
         # **THE FORECAST QUERY'S TRANSPORT, injected rather than reached for.** The HUD composes the
         # question out of what it is already rendering; the socket is `Main`'s. `_process` pumps the
         # answers back the other way — a query triggers NO snapshot, so nothing else ever would.
@@ -1554,6 +1556,17 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
                 "message": "Assign %d worker%s to the %s at (%d, %d)." % [
                     workers, "" if workers == 1 else "s", tbranch, tx, ty],
             }
+        "band":
+            # **A BAND IMPROVEMENT'S CREW** (a drying rack) -- `assign_labor <f> <b> band <branch> <n>`, the
+            # tile row's twin with no tile; the BRANCH rides the `species` token and is not optional.
+            var bbranch := String(payload.get("species", "")).strip_edges().to_lower()
+            if bbranch == "":
+                return {}
+            return {
+                "line": "assign_labor %d %d band %s %d" % [faction, band_id, bbranch, workers],
+                "message": "Assign %d worker%s to the %s." % [
+                    workers, "" if workers == 1 else "s", bbranch],
+            }
         "scout", "warrior", "roadwork":
             # **A BAND-WIDE ROLE CARRIES THE KIT TOKEN TOO, and it is the only optional token these
             # rows take.** They have no tile, no herd, no floor and no species — the sim ignores
@@ -2320,6 +2333,30 @@ static func format_set_starting_loadout(payload: Dictionary) -> Dictionary:
         "message": "Outfitted the band: %d kits, %d units." % [kits, units],
     }
 
+## **THE CHIEF'S PROPOSAL, ANSWERED**: `approve_proposal <faction> <band>` or
+## `defer_proposal <faction> <band> <build_key>` ("Not now"). The build key is the sim's own token
+## (`rung` or `rung@x,y`) and is passed through untouched; a defer without one builds nothing.
+static func format_chief_proposal(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    match String(payload.get("action", "")):
+        "approve":
+            return {
+                "line": "approve_proposal %d %d" % [faction, band_id],
+                "message": "Approved the chief's proposal.",
+            }
+        "defer":
+            var build_key := String(payload.get("build_key", "")).strip_edges()
+            if build_key == "":
+                return {}
+            return {
+                "line": "defer_proposal %d %d %s" % [faction, band_id, build_key],
+                "message": "Not now.",
+            }
+    return {}
+
 ## **`bench_priority <faction_id> <band_id> order <i> high|normal|low` — THE PLAYER'S RANK ON ONE ORDER**
 ## (#873), emitted by the crafting panel's per-order priority picker. `<i>` is the order's index in
 ## `bench.orders`, the same index `bench_order_count` / `bench_remove` / `bench_raise` address; the sim
@@ -2843,6 +2880,9 @@ func _on_hud_diplomacy_command(payload: Dictionary) -> void:
 ## this sends the recipe and its count; the sim staffs the order.
 func _on_hud_bench_enqueue(payload: Dictionary) -> void:
     _send_formatted_command(format_bench_enqueue(payload))
+
+func _on_hud_chief_proposal(payload: Dictionary) -> void:
+    _send_formatted_command(format_chief_proposal(payload))
 
 ## Change how many one queued order asks for.
 func _on_hud_bench_order_count(payload: Dictionary) -> void:

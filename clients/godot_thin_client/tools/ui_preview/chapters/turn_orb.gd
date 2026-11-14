@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 64
+const EXPECTED_CHECKPOINTS := 77
 
 ## **THE BANDS' NAMES, ONE PER PRODUCER.** The sim sends every cohort a name (issue #615) and every
 ## attention row is composed from it, so a fixture without one renders `HudFormat`'s `Band #<id>` tell
@@ -30,6 +30,7 @@ const KnowledgeFx := preload("res://tools/ui_preview/fixtures_knowledge.gd")
 const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 ## Shared node lookups, for the popover-row walk this chapter and `starting_loadout` both read.
 const NodeQuery := preload("res://tools/ui_preview/node_query.gd")
+const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -1541,3 +1542,86 @@ func _assert_knowledge_producers(inherited_tracks: Dictionary) -> void:
 	h._hud.turn_orb.set_attention([])
 	h._hud._band_labor.set_tile_temperatures({})
 	await _assert_gathering_row()
+	await _chief_proposal_states()
+
+
+# ---- THE CHIEF'S BUILD PROPOSAL, RIDING THE IDLE-WORKERS ENTRY ------------------------------------
+## The sim resolves the sentence (`chief_proposals[0].text`); these fixtures state it verbatim, the three
+## escalation rungs and one with a keep-raise clause. The client renders it as given.
+const PROPOSAL_BAND_ID := 77
+const PROPOSAL_BUILD_KEY := "food_stores:storage_pit@30,20"
+const PROPOSAL_TEXT_NOTICE := "3 idle hands · Orrin proposes: dig a storage pit (0.4 food a turn spoiling)"
+const PROPOSAL_TEXT_IDLE := "3 hands idle 4 turns · Orrin proposes: dig a storage pit (0.4 food a turn spoiling)"
+const PROPOSAL_TEXT_WASTED := "3 hands wasted for 9 turns · Orrin proposes: dig a storage pit (0.4 food a turn spoiling)"
+const PROPOSAL_TEXT_KEEP := "3 hands idle 4 turns · Orrin proposes: build a drying rack (0.4 food a turn spoiling) (raises wood keep to 13)"
+const PROPOSAL_IDLE_HANDS := 3
+const PROPOSAL_FRAMES := [
+	["chief_proposal_rung0", 0, PROPOSAL_TEXT_NOTICE, []],
+	["chief_proposal_rung1", 1, PROPOSAL_TEXT_IDLE, []],
+	["chief_proposal_rung2", 2, PROPOSAL_TEXT_WASTED, []],
+	["chief_proposal_keep_raise", 1, PROPOSAL_TEXT_KEEP, [{"material": "wood", "from": 5, "to": 13}]],
+]
+
+func _proposal_band(escalation: int, text: String, raises: Array, with_proposal: bool) -> Dictionary:
+	var band := {"faction": 0, "entity": 511, "band_id": PROPOSAL_BAND_ID, "size": 40,
+		"name": ORB_IDLE_BAND_NAME, "turns_of_food": 999.0, "activity": "forage",
+		"current_x": 30, "current_y": 20, "working_age": PROPOSAL_IDLE_HANDS,
+		"idle_workers": PROPOSAL_IDLE_HANDS, "chief_proposals": []}
+	if with_proposal:
+		band["chief_proposals"] = [{"build_key": PROPOSAL_BUILD_KEY, "rung": "food_stores:storage_pit",
+			"branch": "food_stores", "verb": "dig", "phrase": "dig a storage pit", "has_tile": true,
+			"tile_x": 30, "tile_y": 20, "reason": "0.4 food a turn spoiling", "food_saved": 0.4,
+			"idle": PROPOSAL_IDLE_HANDS, "idle_turns": 4, "escalation": escalation,
+			"keep_raises": raises, "text": text}]
+	return band
+
+## Every button inside the open popover whose face is `face`.
+func _proposal_buttons(face: String) -> Array:
+	var found: Array = []
+	var stack: Array = [h._hud.turn_orb._popover]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is Button and (node as Button).text == face:
+			found.append(node)
+		stack.append_array(node.get_children())
+	return found
+
+func _chief_proposal_states() -> void:
+	for frame in PROPOSAL_FRAMES:
+		h._hud.update_band_alerts([_proposal_band(int(frame[1]), String(frame[2]), frame[3], true)])
+		h._hud.turn_orb.open_popover()
+		await h._settle()
+		h._assert_turn_orb("%s — the entry carries the sim's sentence as published" % String(frame[0]),
+			NodeQuery.has_label_containing(h._hud.turn_orb._popover, String(frame[2])))
+		h._assert_turn_orb("%s — Approve and Not now are on the entry" % String(frame[0]),
+			_proposal_buttons(HudAttentionVocab.PROPOSAL_APPROVE_LABEL).size() == 1
+				and _proposal_buttons(HudAttentionVocab.PROPOSAL_NOT_NOW_LABEL).size() == 1)
+		await h._save(String(frame[0]))
+		h._hud.turn_orb.toggle_popover()
+	# The two buttons send the sim's verbs, with the build key on Not now alone.
+	var lines: Array = []
+	var record := func(p: Dictionary) -> void:
+		lines.append(String(MAIN_SCRIPT.format_chief_proposal(p).get("line", "")))
+	h._hud.chief_proposal_requested.connect(record)
+	h._hud.update_band_alerts([_proposal_band(0, PROPOSAL_TEXT_NOTICE, [], true)])
+	h._hud.turn_orb.open_popover()
+	await h._settle()
+	(_proposal_buttons(HudAttentionVocab.PROPOSAL_APPROVE_LABEL)[0] as Button).pressed.emit()
+	await h._settle()
+	h._hud.turn_orb.open_popover()
+	await h._settle()
+	(_proposal_buttons(HudAttentionVocab.PROPOSAL_NOT_NOW_LABEL)[0] as Button).pressed.emit()
+	h._hud.chief_proposal_requested.disconnect(record)
+	h._assert_turn_orb("Approve sends `approve_proposal 0 %d`, Not now `defer_proposal 0 %d %s` (got %s)"
+			% [PROPOSAL_BAND_ID, PROPOSAL_BAND_ID, PROPOSAL_BUILD_KEY, str(lines)],
+		lines == ["approve_proposal 0 %d" % PROPOSAL_BAND_ID,
+			"defer_proposal 0 %d %s" % [PROPOSAL_BAND_ID, PROPOSAL_BUILD_KEY]])
+	# No proposal: the entry is exactly the old one, with neither button.
+	h._hud.update_band_alerts([_proposal_band(0, "", [], false)])
+	h._hud.turn_orb.open_popover()
+	await h._settle()
+	h._assert_turn_orb("no proposal — the idle entry carries no Approve / Not now",
+		_proposal_buttons(HudAttentionVocab.PROPOSAL_APPROVE_LABEL).is_empty()
+			and _proposal_buttons(HudAttentionVocab.PROPOSAL_NOT_NOW_LABEL).is_empty())
+	h._hud.turn_orb.toggle_popover()
+	h._hud.turn_orb.set_attention([])

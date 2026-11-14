@@ -2,6 +2,7 @@ use super::*;
 use crate::belief::{BeliefRegistry, NO_BELIEF};
 use crate::belief_config::BeliefConfigHandle;
 use crate::components::{CohesionReading, FertilityFactors};
+use crate::culture::{CultureOwner, CultureTraitAxis, CULTURE_TRAIT_SPAN};
 use crate::demographics_config::{
     DemographicsBirths, DemographicsTemperatureTail, DemographicsTrend,
 };
@@ -334,6 +335,29 @@ struct MealAndBirths {
     would_be_births: Scalar,
 }
 
+/// The share of the meal's `demand` the band went without (`0` when it needs nothing). The one
+/// definition of the starvation deficit, read by the deaths in [`advance_demographics`] and by the
+/// leadership morale term, which prices the same hunger the people die of.
+fn deficit_fraction_of(demand: Scalar, consumed: Scalar) -> Scalar {
+    if demand > scalar_zero() {
+        (demand - consumed) / demand // consumed <= demand, so >= 0
+    } else {
+        scalar_zero()
+    }
+}
+
+/// The starvation deficit of a cohort's opening state: the larder against the meal's demand. Exactly
+/// what [`advance_demographics`] will resolve for the same state.
+fn meal_deficit_fraction(state: &DemographicState, demo: &DemographicsConfig) -> Scalar {
+    let demand = food_demand(
+        state.children,
+        state.working + state.party_working,
+        state.elders,
+        &demo.consumption,
+    );
+    deficit_fraction_of(demand, min(demand, state.food_store))
+}
+
 /// Resolve [`MealAndBirths`] for a cohort's opening state. See [`advance_demographics`] for the
 /// model; this is its first and third steps without the deaths.
 fn meal_and_births(
@@ -463,7 +487,7 @@ fn band_food_flow(labor: Option<&LaborAllocation>) -> Option<FoodFlow> {
             if row.is_need_row() {
                 y.sustainable
             } else {
-                y.realized
+                y.eaten_realized()
             }
         })
         .sum();
@@ -505,13 +529,7 @@ fn advance_demographics(
         remaining_food,
         ..
     } = meal;
-    let has_demand = demand > scalar_zero();
-    let deficit = demand - consumed; // >= 0 (consumed <= demand)
-    let deficit_fraction = if has_demand {
-        deficit / demand
-    } else {
-        scalar_zero()
-    };
+    let deficit_fraction = deficit_fraction_of(demand, consumed);
 
     // 2. Deaths: starvation (scales with the food deficit, dependents more vulnerable, but never
     // more than the deficit itself) against temperature (degrees past whichever tail's onset the
@@ -1627,6 +1645,11 @@ type PartiesAndLadder<'w, 's> = (
     Query<'w, 's, (&'static PopulationCohort, &'static Expedition), Without<ResidentBand>>,
     Option<Res<'w, LadderConfigHandle>>,
     crate::fixed_store::StoreContext<'w>,
+    // The leadership morale term's inputs: who has a leader, and each band's culture (patience).
+    Query<'w, 's, &'static crate::leadership::BandLeadership>,
+    Res<'w, crate::culture::CultureManager>,
+    // The builds a chief proposed and the player approved that completed: an order met, once.
+    Option<Res<'w, crate::chief_proposals::ChiefProposalBook>>,
 );
 
 /// The larder time no lot reaches: a world with no ladder counts no food as kept.
@@ -1661,7 +1684,7 @@ pub fn simulate_population(
     // **What counts as kept food** (#708) - the ladder's `storage_kept_age_turns`; a world with no
     // ladder teaches nothing from kept food. Bundled with the parties query, since a Bevy system
     // takes at most sixteen parameters.
-    (parties, ladder, store_context): PartiesAndLadder,
+    (parties, ladder, store_context, leaderships, culture_manager, proposal_book): PartiesAndLadder,
 ) {
     let party_working = stationed_party_workers(&parties);
     // **The food each band can reach in the stores it owns** (#709), for the fertility reserve.
@@ -1775,6 +1798,48 @@ pub fn simulate_population(
                 term: scalar_zero(),
                 cohesion: CohesionReading::default(),
             });
+        // The band's opening state for this turn's demographics, struck before morale because the
+        // leadership term prices the SAME meal deficit the people die of (`meal_deficit_fraction`
+        // is `advance_demographics`' own `deficit_fraction`).
+        let food_before = cohort.stores.get(FOOD);
+        let demographic_state = DemographicState {
+            children: cohort.children,
+            working: cohort.working,
+            elders: cohort.elders,
+            food_store: food_before,
+            party_working: party_working.get(&entity).copied().unwrap_or_default(),
+            reachable_store_food: store_food.get(&entity).copied().unwrap_or_default(),
+        };
+        // **The band judges its leader by what he delivers** (`leadership::judge_leader`): only a band
+        // with a leader has the term. Its order readings are the band-orders wire's own, one turn old
+        // (the labor pass resolves after this one - the same lag the fertility food flow reads), and
+        // its hunger is this turn's real meal deficit.
+        let leadership = leaderships
+            .get(entity)
+            .ok()
+            .filter(|leadership| leadership.leader.is_some())
+            .map(|_| {
+                let axis = band_id.and_then(|band| {
+                    culture_manager.band_layer_by_owner(CultureOwner::from_band(*band))
+                });
+                crate::leadership::judge_leader(
+                    &wellbeing.leadership,
+                    labor,
+                    &cohort,
+                    axis.map(|layer| {
+                        layer.traits.values()[CultureTraitAxis::HierarchicalEgalitarian.index()]
+                            .to_f32()
+                            / CULTURE_TRAIT_SPAN
+                    }),
+                    meal_deficit_fraction(&demographic_state, &demo).to_f32(),
+                    band_id.map_or(0, |band| {
+                        proposal_book
+                            .as_deref()
+                            .map_or(0, |book| book.met_builds_ready(*band))
+                    }),
+                )
+            })
+            .unwrap_or_default();
         // Layer 1 (wellbeing): the morale delta is the signed sum of named contributors, so a
         // future factor is a new `MoraleFactor` variant + one field here — not a rewrite. The
         // contribution set doubles as the client's per-band morale breakdown. `unrest` = crisis
@@ -1787,6 +1852,7 @@ pub fn simulate_population(
             unrest: impacts.morale_delta + effects.morale_bias,
             culture,
             cohesion: cohesion.term,
+            leadership: leadership.term,
             fresh_water: fresh_water_terms
                 .get(&entity)
                 .copied()
@@ -1807,6 +1873,8 @@ pub fn simulate_population(
         cohort.last_belief_relay_hops = relay_hops;
         // The group and ceiling `cohesion` was priced from, published as priced.
         cohort.last_cohesion = cohesion.cohesion;
+        // What the leader was judged on, for the drift system and the Telling.
+        cohort.last_leadership = leadership.reading;
         cohort.morale = (cohort.morale + morale_delta).clamp(scalar_zero(), scalar_one());
 
         // Layer 2 (wellbeing): map morale → the discontented share of the band. `0` at/above
@@ -1816,16 +1884,8 @@ pub fn simulate_population(
 
         // Demographic model: consume the band's local food, then resolve deaths, births,
         // maturation, and aging (see `advance_demographics`).
-        let food_before = cohort.stores.get(FOOD);
         let outcome = advance_demographics(
-            DemographicState {
-                children: cohort.children,
-                working: cohort.working,
-                elders: cohort.elders,
-                food_store: food_before,
-                party_working: party_working.get(&entity).copied().unwrap_or_default(),
-                reachable_store_food: store_food.get(&entity).copied().unwrap_or_default(),
-            },
+            demographic_state,
             band_food_flow(labor),
             temperature,
             max_cap_scalar,
@@ -3664,6 +3724,7 @@ mod wellbeing_tests {
             last_belief_relay_hops: 0,
             predators_kept_off: 0,
             last_cohesion: Default::default(),
+            last_leadership: Default::default(),
         };
         cohort.sync_size();
         cohort

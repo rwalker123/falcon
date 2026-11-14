@@ -20,13 +20,14 @@ use super::ledger::{
     survives, Book, Change, PatchBook, Projection, Reassignment, BEST_FLOOR,
 };
 use super::sources::{
-    cluster_sites, crew_take, deal_free_hands, foreign_band_at, is_walkable, keeping_hands,
-    patch_per_worker_yield, surplus_hands, sustained_hands, workable_patch_at, DealtSite, KeptSite,
-    Source, SourceKey,
+    cluster_sites, crew_take, deal_free_hands, eaten_realized, foreign_band_at, is_walkable,
+    keeping_hands, patch_per_worker_yield, surplus_hands, sustained_hands, workable_patch_at,
+    DealtSite, KeptSite, Source, SourceKey,
 };
 use super::{
-    Food, INTENT_ASSIGN, INTENT_DRAWDOWN, INTENT_FEED_MOVE, INTENT_HOLD, INTENT_HUNT, INTENT_ROOM,
-    INTENT_SETTLE, INTENT_SPLIT, INTENT_UPGRADE, NO_MAX, ROLE_FORAGE, ROLE_HUNT,
+    Food, INTENT_ASSIGN, INTENT_DRAWDOWN, INTENT_FEED_MOVE, INTENT_HOLD, INTENT_HUNT,
+    INTENT_PROPOSAL, INTENT_ROOM, INTENT_SETTLE, INTENT_SPLIT, INTENT_STORAGE, INTENT_UPGRADE,
+    NO_MAX, ROLE_FORAGE, ROLE_HUNT,
 };
 use crate::board::{Demand, Resource, BARE_KIT_ID};
 use crate::geometry::Tile;
@@ -65,6 +66,12 @@ const PAUSED_FLOOR: f32 = 1.0;
 /// What *make room for the build* scores at: it is a bill the declared build owes, not a bid weighed
 /// against the goal gap (pausing a row lowers the income the gap is read on).
 const MAKE_ROOM_SCORE: f32 = 1.0;
+/// The score of ordering a storage build: a duty like holding what the band has, not a rival bid.
+const STORAGE_BUILD_SCORE: f32 = 1.0;
+/// The role token of a band-improvement crew (`assign_labor ... band <branch>`).
+const ROLE_BAND: &str = "band";
+/// The role token of a tile-improvement crew (`assign_labor ... tile <branch> <x> <y>`).
+const ROLE_TILE: &str = "tile";
 /// **The harvest-floor slider's coarse step**, chosen so the search is ten projections per row
 /// from Best down to zero.
 const FLOOR_STEP: f32 = 0.1;
@@ -2911,11 +2918,7 @@ impl Food {
     /// goal turn to turn and a pause is undone the turn after it is made.
     fn steady_book(band: &PopulationCohortState) -> Book {
         Book {
-            income: band
-                .labor_assignments
-                .iter()
-                .map(|row| row.realized_yield)
-                .sum(),
+            income: band.labor_assignments.iter().map(eaten_realized).sum(),
             ..Self::book(band)
         }
     }
@@ -3005,7 +3008,7 @@ impl Food {
         });
         rows.into_iter().find_map(|row| {
             let change = Reassignment {
-                income_lost: row.realized_yield,
+                income_lost: eaten_realized(row),
                 income_gained: 0.0,
                 payoff_turn: 0,
             };
@@ -6948,3 +6951,116 @@ mod tests {
         assert_eq!(floor_of(&proposal.commands[0]), None, "back to Best");
     }
 }
+
+impl Food {
+    /// **IS THE BAND SHORT OF FOOD?** The signal the `FoodShort` alarm already reads: the band's runway is
+    /// below the profile's `food.runway_floor_turns`. A band short of food builds no storage.
+    fn short_of_food(&self, band: &PopulationCohortState) -> bool {
+        band.turns_of_food < self.floors.runway_floor_turns
+    }
+
+    /// **ORDER THE STORAGE THAT SAVES THE FOOD THE BAND SPOILS** (`food:storage:<band>`). A band with no
+    /// chief declares it itself: read the sim's `storageSaves`; a rung whose lesson is known, with no
+    /// build declared, that would save at least the lever the sim echoes (`storageBuildMinSaved`) a turn,
+    /// and whose build material the band holds, is ordered by the command the player's Build button
+    /// sends - `assign_labor ... band <branch>` for a band improvement, `... tile <branch> <x> <y>` on
+    /// the band's own tile for a store. A band with a chief is offered the build as a proposal instead
+    /// ([`Self::answer_proposal`]). **A band short of food builds none.**
+    pub fn build_storage(&self, band: &PopulationCohortState) -> Option<Proposal> {
+        if band.leader_kind != 0 || band.is_traveling || self.short_of_food(band) {
+            return None;
+        }
+        let save = band
+            .storage_saves
+            .iter()
+            .filter(|save| {
+                save.lesson_known
+                    && !save.declared
+                    && save.food_saved >= band.storage_build_min_saved
+                    && save.material_on_hand >= save.material_needed
+            })
+            .max_by(|a, b| a.food_saved.total_cmp(&b.food_saved))?;
+        // The rung's wire key is `<branch>:<rung>`.
+        let branch = save.rung.split(':').next()?.to_string();
+        let here = band_tile(band);
+        let commands = vec![CommandPayload::AssignLabor {
+            faction_id: self.faction,
+            band_id: Some(band.band_id),
+            role: if save.tile_kept { ROLE_TILE } else { ROLE_BAND }.to_string(),
+            workers: NO_MAX,
+            target_x: save.tile_kept.then_some(here.x),
+            target_y: save.tile_kept.then_some(here.y),
+            fauna_id: None,
+            policy: None,
+            species: Some(branch),
+            floor: None,
+            kit_id: None,
+            take_species: Vec::new(),
+            move_with_herd: false,
+        }];
+        Some(Proposal {
+            cost: Cost::claimed(0, band.band_id, &commands),
+            commands,
+            intent: intent_key(SPECIALIST_FOOD, INTENT_STORAGE, band.band_id),
+            score: STORAGE_BUILD_SCORE * self.weight,
+            reason: format!(
+                "storage: {} would save {:.2} {} a turn (threshold {:.2})",
+                save.rung, save.food_saved, save.keeping, band.storage_build_min_saved
+            ),
+            memo: None,
+            standing: false,
+        })
+    }
+
+    /// **ANSWER THE CHIEF'S BUILD PROPOSAL AS A PLAYER WOULD** (`food:proposal:<band>`): the band's
+    /// `chiefProposals` row is read off the wire. A band short of food puts every build off ("Not now").
+    /// A storage proposal is approved when the food it saves reaches the echoed lever (the judgement
+    /// [`Self::build_storage`] makes); any other build is approved when it adds food, and put off when it
+    /// does not.
+    pub fn answer_proposal(&self, band: &PopulationCohortState) -> Option<Proposal> {
+        let proposal = band.chief_proposals.first()?;
+        let storage = band
+            .storage_saves
+            .iter()
+            .find(|save| save.rung == proposal.rung);
+        let wanted = !self.short_of_food(band)
+            && match storage {
+                Some(save) => {
+                    save.lesson_known
+                        && !save.declared
+                        && proposal.food_saved >= band.storage_build_min_saved
+                }
+                None => proposal.food_saved > NO_FOOD_ADDED,
+            };
+        let command = if wanted {
+            CommandPayload::ApproveProposal {
+                faction_id: self.faction,
+                band_id: band.band_id,
+            }
+        } else {
+            CommandPayload::DeferProposal {
+                faction_id: self.faction,
+                band_id: band.band_id,
+                build_key: proposal.build_key.clone(),
+            }
+        };
+        let commands = vec![command];
+        Some(Proposal {
+            cost: Cost::claimed(0, band.band_id, &commands),
+            commands,
+            intent: intent_key(SPECIALIST_FOOD, INTENT_PROPOSAL, band.band_id),
+            score: STORAGE_BUILD_SCORE * self.weight,
+            reason: format!(
+                "proposal: {} ({} {:.2} food a turn)",
+                proposal.build_key,
+                if wanted { "approve" } else { "not now" },
+                proposal.food_saved
+            ),
+            memo: None,
+            standing: false,
+        })
+    }
+}
+
+/// A build whose food figure is at or below this adds no food.
+const NO_FOOD_ADDED: f32 = 0.0;

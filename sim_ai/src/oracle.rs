@@ -79,9 +79,11 @@ pub struct CrewTakeCurve {
 
 impl CrewTakeCurve {
     /// The reply converted to food: every animal count times `food_per_animal`, **at the rate that
-    /// lands HOME** (`HuntCrewTakeRow::home_animals_likely`): a herd past the work range is a
-    /// caravan, and the at-source take overstates what the larder gets by the walk, the porters
-    /// and the rot. `low` / `high` keep their spread, scaled by the same home-to-source ratio.
+    /// lands HOME AND CAN BE EATEN** (`HuntCrewTakeRow::home_eaten_animals_likely`): a herd past the
+    /// work range is a caravan, and the at-source take overstates what the larder gets by the walk,
+    /// the porters and the rot, and a surplus the band cannot eat before it spoils is not worth
+    /// hunting (the row's own `home_animals_likely` is the walk's rot alone, a display figure).
+    /// `low` / `high` keep their spread, scaled by the same eaten-to-source ratio.
     pub fn from_reply(reply: &HuntCrewTakeReply, food_per_animal: f32) -> Self {
         Self {
             rows: reply
@@ -89,14 +91,14 @@ impl CrewTakeCurve {
                 .iter()
                 .map(|row| {
                     let home_share = if row.animals_likely > 0.0 {
-                        row.home_animals_likely / row.animals_likely
+                        row.home_eaten_animals_likely / row.animals_likely
                     } else {
                         1.0
                     };
                     CrewTakeRow {
                         crew: row.workers,
                         low: row.animals_low * food_per_animal * home_share,
-                        likely: row.home_animals_likely * food_per_animal,
+                        likely: row.home_eaten_animals_likely * food_per_animal,
                         high: row.animals_high * food_per_animal * home_share,
                         first_load: row.home_first_load_turn,
                         source_likely: row.animals_likely * food_per_animal,
@@ -310,6 +312,7 @@ mod tests {
                     next_rung_keep_hands: 0.0,
                     keep_hands: 0.0,
                     home_animals_likely: (workers.min(3)) as f32 * 0.25,
+                    home_eaten_animals_likely: (workers.min(3)) as f32 * 0.25,
                     home_first_load_turn: workers,
                 })
                 .collect(),

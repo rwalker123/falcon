@@ -2,6 +2,7 @@ use super::*;
 use crate::components::{BandName, RaidOrders, ShipmentTerms, StationReport};
 use crate::connections::Sighting;
 use crate::fauna::AnimalTake;
+use crate::spoilage;
 
 /// **The reason token for a SHIPMENT whose destination vanished under it** — the band it was bound
 /// for despawned while the party walked, so there is nobody left to hand the cargo to. The party
@@ -33,6 +34,9 @@ const HOST_NOT_FOUND_MID_POST: &str = "host_not_found";
 /// The home band that fed the party and took its reports no longer exists: the party has no one to
 /// report to, so the post ends and the party folds where it stands.
 const HOME_GONE_MID_POST: &str = "home_gone";
+/// A detached party's meals count no food as "kept": `eat_least_time_left` measures the kept share for
+/// the storage lesson, and a party's pack teaches none (only the band's own larder does).
+const PARTY_MEAL_TEACHES_NO_STORAGE: u32 = u32::MAX;
 /// The player's own recall of a stationed party — see `handle_recall_expedition`.
 pub const POST_RECALLED: &str = "recalled";
 
@@ -1956,8 +1960,15 @@ pub fn advance_expeditions(
             // c. Provisions depletion (a raid lives off its kills instead). Non-fatal.
             let upkeep = scalar_from_f32(workers as f32 * cfg.provision_upkeep_per_worker);
             if upkeep > scalar_zero() {
-                // The party eats its pack fastest-rotting class first, as a band does (#706).
-                cohort.stores.eat_food(upkeep, &keeping.eat_order());
+                // The party eats what is closest to rotting first, as the band's meal does: a party
+                // holds no preservation, and its meals teach no storage.
+                spoilage::eat_least_time_left(
+                    &mut cohort.stores,
+                    upkeep,
+                    keeping,
+                    &spoilage::HeldPreservation::none(),
+                    PARTY_MEAL_TEACHES_NO_STORAGE,
+                );
             }
 
             // ---- Opportunistic replenish: GATHER FIRST, THEN HUNT ---------------------------

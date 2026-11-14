@@ -528,6 +528,19 @@ pub struct BandOrdersConfig {
     /// fodder rows at while the order is AT or ABOVE its target: the *Learning* preset, above the Best
     /// floor, so spare food buys knowledge. Below the target he works them at Best. In `(0.5, 1.0]`.
     pub learning_floor: f32,
+    /// **The least food a turn a storage build must save before it is declared** — the one threshold
+    /// the chief (`food_orders`) and a rival's food specialist (it reads the echo on the cohort,
+    /// `PopulationCohortState.storageBuildMinSaved`) both act on. Finite and `>= 0`.
+    pub storage_build_min_saved: f32,
+    /// **Idle turns before a chief's build proposal reads "N hands idle M turns"** (escalation rung 1).
+    /// At least 1. An opening value, a playtest dial.
+    pub proposal_idle_turns_notice: u32,
+    /// **Idle turns before a chief's build proposal reads "N hands wasted for M turns"** (rung 2, drawn
+    /// amber). At least `proposal_idle_turns_notice`. An opening value, a playtest dial.
+    pub proposal_idle_turns_wasted: u32,
+    /// **How many turns "Not now" hides a proposed build** (`defer_proposal`). At least 1. An opening
+    /// value, a playtest dial.
+    pub proposal_not_now_turns: u32,
 }
 
 impl BandOrdersConfig {
@@ -574,6 +587,11 @@ pub struct LaborConfig {
     /// stock returns to the target in about this many turns. Validated `>= 1`: a zero would divide
     /// the deficit by nothing. A playtest dial (opening value 10).
     pub keep_on_hand_refill_turns: u32,
+    /// **HOW FAR AHEAD THE STAFFING LOOKS FOR A MEAL THE BAND WOULD COME UP SHORT OF**, in turns. After
+    /// the normal builds-first deal the band's larder is walked forward this many turns at the crews
+    /// just dealt; if any meal in the window comes up short, the band is re-staffed with every source
+    /// row dealt before any build. `0` switches the look-ahead off. A playtest dial (opening value 5).
+    pub food_first_window_turns: u32,
     /// **THE BAND ORDERS** (#860): which kinds take an order and the chief's opening target for each.
     pub band_orders: BandOrdersConfig,
     /// **The forward-projection horizon for a source's steady `realized` yield**, in turns. Each
@@ -691,6 +709,37 @@ impl LaborConfig {
                 field: "band_orders.learning_floor",
                 constraint: "lie above the Best floor and at most 1.0".to_string(),
                 value: self.band_orders.learning_floor.to_string(),
+            });
+        }
+        if !self.band_orders.storage_build_min_saved.is_finite()
+            || self.band_orders.storage_build_min_saved < 0.0
+        {
+            return Err(LaborConfigError::Invalid {
+                field: "band_orders.storage_build_min_saved",
+                constraint: "be finite and at least 0".to_string(),
+                value: self.band_orders.storage_build_min_saved.to_string(),
+            });
+        }
+        if self.band_orders.proposal_idle_turns_notice == 0 {
+            return Err(LaborConfigError::Invalid {
+                field: "band_orders.proposal_idle_turns_notice",
+                constraint: "be at least 1".to_string(),
+                value: self.band_orders.proposal_idle_turns_notice.to_string(),
+            });
+        }
+        if self.band_orders.proposal_idle_turns_wasted < self.band_orders.proposal_idle_turns_notice
+        {
+            return Err(LaborConfigError::Invalid {
+                field: "band_orders.proposal_idle_turns_wasted",
+                constraint: "be at least proposal_idle_turns_notice".to_string(),
+                value: self.band_orders.proposal_idle_turns_wasted.to_string(),
+            });
+        }
+        if self.band_orders.proposal_not_now_turns == 0 {
+            return Err(LaborConfigError::Invalid {
+                field: "band_orders.proposal_not_now_turns",
+                constraint: "be at least 1".to_string(),
+                value: self.band_orders.proposal_not_now_turns.to_string(),
             });
         }
         // A party walks at the band's own pace, so a zero would make a far posting's walk never

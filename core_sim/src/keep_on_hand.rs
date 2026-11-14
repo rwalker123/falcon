@@ -61,8 +61,22 @@ pub fn source_key(target: &LaborTarget) -> Option<String> {
         LaborTarget::Forage { tile, .. } => Some(format!("f:{},{}", tile.x, tile.y)),
         LaborTarget::Hunt { fauna_id, .. } => Some(format!("h:{fauna_id}")),
         LaborTarget::Extract { tile, material, .. } => Some(dig_key(material, tile.x, tile.y)),
+        LaborTarget::Band { branch, .. } => Some(band_improvement_key(branch.as_str())),
+        LaborTarget::Tile { tile, branch } => {
+            Some(tile_improvement_key(branch.as_str(), tile.x, tile.y))
+        }
         _ => None,
     }
+}
+
+/// The [`source_key`] of the band's own improvement of `branch` (the drying rack).
+pub fn band_improvement_key(branch: &str) -> String {
+    format!("b:{branch}")
+}
+
+/// The [`source_key`] of the tile improvement of `branch` at `(x, y)` (the storage pit).
+pub fn tile_improvement_key(branch: &str, x: u32, y: u32) -> String {
+    format!("t:{branch}:{x},{y}")
 }
 
 /// The [`source_key`] of the working of `material` at `(x, y)`.

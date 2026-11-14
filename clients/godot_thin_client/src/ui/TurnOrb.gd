@@ -33,6 +33,7 @@ class_name TurnOrb
 ## Palette comes entirely from HudStyle (no hardcoded hexes).
 
 const HudStyle := preload("res://src/scripts/ui/HudStyle.gd")
+const HudAttentionVocab := preload("res://src/scripts/ui/hud/hud_attention_vocab.gd")
 # Only for the awaiting-orders row icon: the orb stays producer-agnostic, but that glyph must be the
 # SAME one the Band panel's awaiting row wears, so it comes from the shared registry, not a copy.
 const FoodIcons := preload("res://src/scripts/ui/FoodIcons.gd")
@@ -52,6 +53,9 @@ signal advance_requested
 ## producer whose panel has more than one subject (the outfitting picker has one window per BAND)
 ## needs the row to say which, or the press opens whichever subject the panel was already on.
 signal panel_requested(kind: String, subject: int)
+## A button on a chief-proposal block was pressed: `{action, band_id, faction, build_key}`. The orb passes
+## the entry's own proposal block through without reading what a proposal means.
+signal proposal_action_requested(payload: Dictionary)
 
 ## What a row carries when its producer named no subject — every producer but the outfitting picker,
 ## whose panel has one window per band. `0` is "no band" throughout this client.
@@ -355,6 +359,8 @@ const ROW_H_PADDING := 12
 const ROW_SEPARATION := 12
 const SEV_STRIPE_WIDTH := 3
 const ROW_ICON_SIZE := 30
+## The gap around a proposal block's sentence and its buttons.
+const PROPOSAL_BLOCK_PADDING := 6
 # **THE DETAIL IS SMALL PRINT AND NOW SAYS SO.** It took the theme's default size, i.e. the LABEL's,
 # and read as a second headline in a fainter ink — while the rows CLIP, so every point it did not
 # need was a word of the detail cut off the card. Under-kept rows carry three facts (the pool, its
@@ -1080,7 +1086,7 @@ func _build_popover() -> PanelContainer:
 		var n := _entries.size()
 		body.add_child(_popover_header("Needs your attention", "%d item%s" % [n, "" if n == 1 else "s"]))
 		for entry in _entries:
-			body.add_child(_reason_row(entry))
+			body.add_child(_reason_block(entry))
 	body.add_child(_popover_footer())
 	return panel
 
@@ -1133,6 +1139,67 @@ func _all_clear_block() -> Control:
 	margin.add_theme_constant_override("margin_bottom", 18)
 	margin.add_child(box)
 	return margin
+
+## One entry: its row, and under it the chief's proposal block when the entry carries one.
+func _reason_block(entry: Variant) -> Control:
+	var row := _reason_row(entry)
+	var proposal: Variant = (entry as Dictionary).get(HudAttentionVocab.ATTENTION_PROPOSAL, null)
+	if not (proposal is Dictionary):
+		return row
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 0)
+	box.add_child(row)
+	box.add_child(_proposal_block(proposal as Dictionary))
+	return box
+
+## The chief's sentence (the sim's words, as published) with its two buttons. Amber at the wasted rung.
+func _proposal_block(proposal: Dictionary) -> Control:
+	var wasted := int(proposal.get(HudAttentionVocab.PROPOSAL_ESCALATION_KEY, 0)) \
+		>= HudAttentionVocab.PROPOSAL_ESCALATION_WASTED
+	var panel := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(HudStyle.WARN, HudAttentionVocab.PROPOSAL_WASH_ALPHA) if wasted else Color(0, 0, 0, 0)
+	sb.content_margin_left = ROW_H_PADDING + SEV_STRIPE_WIDTH
+	sb.content_margin_right = ROW_H_PADDING
+	sb.content_margin_top = PROPOSAL_BLOCK_PADDING
+	sb.content_margin_bottom = PROPOSAL_BLOCK_PADDING
+	panel.add_theme_stylebox_override("panel", sb)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", PROPOSAL_BLOCK_PADDING)
+	panel.add_child(col)
+	var text := Label.new()
+	text.text = String(proposal.get(HudAttentionVocab.PROPOSAL_TEXT_KEY, ""))
+	text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	text.custom_minimum_size = Vector2(POPOVER_WIDTH - 2 * ROW_H_PADDING - SEV_STRIPE_WIDTH, 0)
+	text.add_theme_color_override("font_color", HudStyle.WARN if wasted else HudStyle.INK)
+	col.add_child(text)
+	var buttons := HBoxContainer.new()
+	buttons.alignment = BoxContainer.ALIGNMENT_END
+	buttons.add_theme_constant_override("separation", ROW_SEPARATION)
+	col.add_child(buttons)
+	var not_now := Button.new()
+	not_now.text = HudAttentionVocab.PROPOSAL_NOT_NOW_LABEL
+	not_now.tooltip_text = HudAttentionVocab.PROPOSAL_NOT_NOW_TOOLTIP
+	not_now.focus_mode = Control.FOCUS_NONE
+	HudStyle.apply_button(not_now, "ghost")
+	not_now.pressed.connect(_on_proposal_pressed.bind(HudAttentionVocab.PROPOSAL_ACTION_DEFER, proposal))
+	buttons.add_child(not_now)
+	var approve := Button.new()
+	approve.text = HudAttentionVocab.PROPOSAL_APPROVE_LABEL
+	approve.tooltip_text = HudAttentionVocab.PROPOSAL_APPROVE_TOOLTIP
+	approve.focus_mode = Control.FOCUS_NONE
+	HudStyle.apply_button(approve, "primary")
+	approve.pressed.connect(_on_proposal_pressed.bind(HudAttentionVocab.PROPOSAL_ACTION_APPROVE, proposal))
+	buttons.add_child(approve)
+	return panel
+
+func _on_proposal_pressed(action: String, proposal: Dictionary) -> void:
+	proposal_action_requested.emit({
+		HudAttentionVocab.PROPOSAL_ACTION_KEY: action,
+		HudAttentionVocab.PROPOSAL_BAND_ID: int(proposal.get(HudAttentionVocab.PROPOSAL_BAND_ID, 0)),
+		HudAttentionVocab.PROPOSAL_FACTION: int(proposal.get(HudAttentionVocab.PROPOSAL_FACTION, 0)),
+		HudAttentionVocab.PROPOSAL_BUILD_KEY: String(proposal.get(HudAttentionVocab.PROPOSAL_BUILD_KEY, "")),
+	})
 
 func _reason_row(entry: Variant) -> Button:
 	var severity := String(entry.get("severity", SEVERITY_INFO))

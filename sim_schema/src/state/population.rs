@@ -524,6 +524,10 @@ pub struct LaborAssignmentState {
     /// Whether the chief works this row (`order_kind` is not empty). Appended last (#860).
     #[serde(default)]
     pub chief_owned: bool,
+    /// The share of `realized_yield` (and `arrival_schedule`) the home band cannot eat before it
+    /// spoils; `0` = all of it is eaten. `realized_yield` is the walk's rot alone. Appended last.
+    #[serde(default)]
+    pub eaten_shortfall: f32,
     /// Of `workers`: keepers. `keepers + kitted + bare == workers` on a staffed row. Appended last.
     #[serde(default)]
     pub keepers_staffed: u32,
@@ -1007,7 +1011,7 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub morale_delta: i64,
     /// Dominant negative morale driver this turn: `0 = None, 1 = Terrain, 2 = Cold, 3 = Unrest,
-    /// 4 = Culture, 5 = Cohesion`.
+    /// 4 = Culture, 5 = Cohesion, 6 = Leadership`.
     /// Names *why* morale is falling. Recomputed each turn alongside [`Self::morale_delta`].
     #[serde(default)]
     pub morale_cause: u8,
@@ -1849,6 +1853,21 @@ pub struct PopulationCohortState {
     /// `keeping.classes` order. Appended last.
     #[serde(default)]
     pub hunt_meals: Vec<KeepingMealState>,
+    /// **The band's spoilage** — per keeping class, food a turn that spoils. Appended last.
+    #[serde(default)]
+    pub spoil_ahead: Vec<KeepingSpoilState>,
+    /// **The storage the band could hold** — one row per unheld preservation rung. Appended last.
+    #[serde(default)]
+    pub storage_saves: Vec<StorageSaveState>,
+    /// `band_orders.storage_build_min_saved`, echoed (own bands). Appended last.
+    #[serde(default)]
+    pub storage_build_min_saved: f32,
+    /// **The preservation rungs the band holds.** Appended last.
+    #[serde(default)]
+    pub held_stores: Vec<HeldStoreState>,
+    /// **The chief's build proposal** (zero or one row, own bands only). Appended last.
+    #[serde(default)]
+    pub chief_proposals: Vec<ChiefProposalState>,
     /// **The messenger reach**, in tiles (`ExpeditionConfig::effective_comm_range`) — a stationed
     /// party's report lands the turn it leaves inside it. Global config echoed per cohort. Appended last.
     #[serde(default)]
@@ -1989,6 +2008,10 @@ pub struct PopulationCohortState {
     /// deposit of or holds a nonzero target for. Own bands only. Appended last.
     #[serde(default)]
     pub band_orders: Vec<BandOrderState>,
+    /// The leadership morale contribution (`snapshot.fbs` -> `moraleLeadership`, signed), part of the
+    /// `morale_*` breakdown whose signed sum IS `morale_delta`. Fixed-point raw. Appended last.
+    #[serde(default)]
+    pub morale_leadership: i64,
 }
 
 /// `PopulationCohortState::tribe_leader_kind`: the band is in no tribe.
@@ -2067,6 +2090,8 @@ pub struct BandImprovementState {
     pub build_toe: Vec<PoolToeLineState>,
     /// Whether this band has a build declared on this improvement.
     pub is_queued: bool,
+    /// The meter on the rung being raised, `0..=1`. Appended last.
+    pub build_fraction: f32,
 }
 
 impl Default for BandImprovementState {
@@ -2093,6 +2118,7 @@ impl Default for BandImprovementState {
             builders_cap: 0,
             build_toe: Vec::new(),
             is_queued: false,
+            build_fraction: 0.0,
         }
     }
 }
@@ -2217,6 +2243,82 @@ pub struct BandOrderState {
     pub land_gives: f32,
     /// When `limit` is `"kit"`: the units of `limit_item` the order's listed rows lack.
     pub limit_count: u32,
+}
+
+/// **ONE KEEPING CLASS'S SPOILAGE PER TURN** — a row of [`PopulationCohortState::spoil_ahead`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct KeepingSpoilState {
+    /// The keeping class id.
+    pub keeping: String,
+    /// Food a turn that class spoils in the band's larder and stores.
+    pub food: f32,
+}
+
+/// **A MATERIAL KEEP ORDER A PROPOSAL RAISES** — a row of [`ChiefProposalState::keep_raises`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct KeepRaiseState {
+    pub material: String,
+    /// The keep target before and after the raise.
+    pub from: u32,
+    pub to: u32,
+}
+
+/// **A CHIEF'S BUILD PROPOSAL** — the row of [`PopulationCohortState::chief_proposals`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ChiefProposalState {
+    /// What `defer_proposal` names.
+    pub build_key: String,
+    /// The rung's wire key (`branch:rung`), its branch and its verb.
+    pub rung: String,
+    pub branch: String,
+    pub verb: String,
+    /// "dig a storage pit".
+    pub phrase: String,
+    pub has_tile: bool,
+    pub tile_x: u32,
+    pub tile_y: u32,
+    /// "0.4 food a turn spoiling"; empty without a food figure.
+    pub reason: String,
+    pub food_saved: f32,
+    pub idle: u32,
+    pub idle_turns: u32,
+    /// 0 idle, 1 noticed, 2 wasted.
+    pub escalation: u32,
+    pub keep_raises: Vec<KeepRaiseState>,
+    /// The fully resolved sentence.
+    pub text: String,
+}
+
+/// **ONE PRESERVATION RUNG THE BAND HOLDS** — a row of [`PopulationCohortState::held_stores`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct HeldStoreState {
+    /// The rung's wire key (`branch:rung`).
+    pub rung: String,
+    /// The keeping class it lengthens.
+    pub keeping: String,
+    /// The shelf life, in turns, the class has while it is held.
+    pub shelf_life_turns: f32,
+}
+
+/// **ONE STORAGE RUNG THE BAND DOES NOT HOLD** — a row of [`PopulationCohortState::storage_saves`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct StorageSaveState {
+    /// The rung's wire key (`branch:rung`).
+    pub rung: String,
+    /// The keeping class the preservation entry lengthens.
+    pub keeping: String,
+    /// Food a turn the band would save by holding it.
+    pub food_saved: f32,
+    /// Does the band's faction know the rung's lesson?
+    pub lesson_known: bool,
+    /// Is a build of the rung already declared for the band?
+    pub declared: bool,
+    /// The build's material (empty when it draws none), what the bill needs, what the band holds.
+    pub material_id: String,
+    pub material_needed: f32,
+    pub material_on_hand: f32,
+    /// A tile improvement on the band's own tile (a store) rather than a band improvement.
+    pub tile_kept: bool,
 }
 
 /// **ONE KEEPING CLASS'S HUNTING MEAL** — a row of [`PopulationCohortState::hunt_meals`]: the food

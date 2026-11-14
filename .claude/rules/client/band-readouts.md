@@ -1,6 +1,6 @@
 ---
 paths:
-  - "clients/godot_thin_client/src/scripts/ui/hud/{BandDetailLines,FactionReadouts,DetailFormat}.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/{BandDetailLines,FactionReadouts,DetailFormat,hud_storage_vocab}.gd"
   - "clients/godot_thin_client/src/scripts/ui/{BandFoodStatus,TileHabitability,TileClimate,TileSurvivability}.gd"
 ---
 
@@ -646,6 +646,13 @@ which is a property of the tier and not of the merge.
     anchor tile), so the row wraps to at most one extra line in the popover. A band publishing no
     head-count (`cohesion_headcount` 0) gets the bare `too many to hold together`; a band at zero cohesion
     term draws no row, under the same epsilon.
+    **The leadership row** (`morale_leadership`, signed, #710; `morale_cause` code 6 =
+    `DetailFormat.MORALE_CAUSE_LEADERSHIP`, label `the leader is failing`): positive reads
+    `Orrin's orders are being met`, negative `Orrin's orders are falling short`
+    (`BandDetailLines._leadership_label`; a council reads `the elders' orders…`, a band that publishes no
+    leader name `the leader's`). A leaderless band's term is always 0, so it draws no row under the same
+    epsilon. Recovery line for the cause: `↑ Recover: meet the band's orders: feed the band first`
+    (`RECOVERY_GUIDANCE_ORDERS`). ui_preview: `_leadership_states` (`band_morale_leadership`).
   - **Recovery guidance** (`DetailFormat.recovery_guidance_text(cause, terrain_rating)`): a dim line
     beginning with `RECOVERY_GUIDANCE_GLYPH` (`↑`), appended under the breakdown **only when morale is
     concerning**. It names the lever that REMOVES the dominant `morale_cause`, and only it: Cohesion →
@@ -1922,3 +1929,21 @@ reason's hover from the list above (none for case (d)).
 `tribe_formed_led`, `tribe_joiner_*` and `tribe_reason_{no_place,different_place,partner_no_place,partners_no_place,different_beats_none,no_network,alone}` in `band_expedition` (docked right, Band tab); the harness asserts one line, the
 card's minimum width within the strip, the verbatim tooltips, a council-led tribe, and every suffix off
 the statics.
+
+## THE SPOILAGE LINE — food the larder loses uneaten, beside the Food number
+
+An own band's cohort dict carries `spoil_ahead` (`[{keeping, food}]`, non-zero classes) and `storage_saves`
+(one row per store the band does not hold); every figure is the sim's. `BandDetailLines.unit_summary_lines`
+appends ONE sentence after the Food line (and the starving line) when the classes total above
+`HudStorageVocab.FOOD_EPSILON`: `⚠ 0.7 food a turn spoils uneaten · a drying rack would save 0.4`. The fix
+clause names the best `storage_saves` row, a DECLARED build outranking an open one:
+`<rung> being built` when declared, `needs Storage` when its lesson is unknown, else `a <rung> would save N`.
+The rung name is the `ladder_rungs` roster's `display_name`, lower-cased (`BandDetailLines` takes the
+catalog as a Callable, `FactionReadouts.ladder_rungs`), never the id.
+
+- **Amber, and hover-bearing.** It leads with `HudStorageVocab.SPOIL_LINE_LEAD` (the hazard mark) and
+  `DetailFormat.detail_bbcode` matches it on `SPOIL_PHRASE` BEFORE the generic hazard branch so it can be
+  wrapped in `hover_wrap` under `SPOIL_HOVER_KEY`; the hover lists the per-class figures as `meat` / `greens` /
+  `grain` (`flesh` / `fresh_plant` / `dry`, `HudStorageVocab.KEEPING_WORDS`).
+- **The hunt row's `rots on the way home` is walk rot alone** (`spoiled_rate_home`); nothing on the hunt row
+  reads `spoil_ahead`.

@@ -222,6 +222,18 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "band_order <faction_id> <band_id> <kind> set <target> high|normal|low | band_order <faction_id> <band_id> <kind> release [<x> <y> | <herd_id>] | band_order <faction_id> <band_id> <kind> claim [<x> <y> | <herd_id>]",
     },
     CommandVerbHelp {
+        verb: "approve_proposal",
+        aliases: &[],
+        summary: "APPROVE THE CHIEF'S BUILD PROPOSAL for a band: when a band with a leader has idle hands the chief proposes one build (the band's published `chiefProposals` row). Approving re-checks it, declares the build exactly as `build <verb>` would and raises the keep order for any material it is short of, in one step. Refused for a band with no proposal or one that is no longer possible.",
+        usage: "approve_proposal <faction_id> <band_id>",
+    },
+    CommandVerbHelp {
+        verb: "defer_proposal",
+        aliases: &[],
+        summary: "NOT NOW: hide one proposed build from the band's proposals for the Workbench lever `band_orders.proposal_not_now_turns` turns, after which it may be proposed again. `<build_key>` is the proposal's `buildKey`.",
+        usage: "defer_proposal <faction_id> <band_id> <build_key>",
+    },
+    CommandVerbHelp {
         verb: "upkeep_mode",
         aliases: &[],
         summary: "Say how one band splits its ROADWORK POOL when it cannot cover every road it keeps. Road-keeping is a band-level standing role (`assign_labor <faction> <band> roadwork <n>`), and the band's demand is the SUM over every road it keeps; a patch, herd or working is kept by its own crew instead, which keeps it first and collects with the rest. When the pool falls short, 'spread' funds every road in proportion to its demand so EVERYTHING degrades a little, and 'priority' funds roads COMPLETELY until the pool runs out, MOST-INVESTED FIRST, so the biggest investments stay whole and the marginal ones rot. Defaults to spread. An unknown mode is refused by name.",
@@ -1205,6 +1217,36 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 kind: kind.to_owned(),
                 action,
                 row,
+            })
+        }
+        // **THE CHIEF'S BUILD PROPOSAL** - `approve_proposal <faction> <band>` and
+        // `defer_proposal <faction> <band> <build_key>` ("Not now").
+        "approve_proposal" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            Ok(CommandPayload::ApproveProposal {
+                faction_id: parse_u32(faction_str, "approve_proposal faction")?,
+                band_id: parse_u64(band_str, "approve_proposal band")?,
+            })
+        }
+        "defer_proposal" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let key = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("build_key"))?;
+            Ok(CommandPayload::DeferProposal {
+                faction_id: parse_u32(faction_str, "defer_proposal faction")?,
+                band_id: parse_u64(band_str, "defer_proposal band")?,
+                build_key: key.to_owned(),
             })
         }
         // **STOP A STAFFED ROW** (#871) - `work_priority`'s band handle and source addressing with no
@@ -2864,6 +2906,15 @@ pub fn render_command_line(payload: &CommandPayload) -> String {
             }
             line
         }
+        CommandPayload::ApproveProposal {
+            faction_id,
+            band_id,
+        } => format!("approve_proposal {faction_id} {band_id}"),
+        CommandPayload::DeferProposal {
+            faction_id,
+            band_id,
+            build_key,
+        } => format!("defer_proposal {faction_id} {band_id} {build_key}"),
         CommandPayload::BandOrder {
             faction_id,
             band_id,
@@ -4928,6 +4979,34 @@ mod tests {
     /// **`stop_labor` reads the band and any of the five source shapes** (#871): a tile, a herd, a
     /// working (`<x> <y> <material>`), a tile improvement (`<branch> <x> <y>`) and the Roadwork pool
     /// (the lone token `roadwork`), with no trailing level and a refusal when no source is named.
+    #[test]
+    fn the_proposal_verbs_parse_and_render_back() {
+        let approve = parse_command_line("approve_proposal 1 7").unwrap();
+        assert_eq!(
+            approve,
+            CommandPayload::ApproveProposal {
+                faction_id: 1,
+                band_id: 7
+            }
+        );
+        assert_eq!(render_command_line(&approve), "approve_proposal 1 7");
+        let defer = parse_command_line("defer_proposal 1 7 food_stores:storage_pit@4,9").unwrap();
+        assert_eq!(
+            defer,
+            CommandPayload::DeferProposal {
+                faction_id: 1,
+                band_id: 7,
+                build_key: "food_stores:storage_pit@4,9".to_string()
+            }
+        );
+        assert_eq!(
+            render_command_line(&defer),
+            "defer_proposal 1 7 food_stores:storage_pit@4,9"
+        );
+        assert!(parse_command_line("approve_proposal 1").is_err());
+        assert!(parse_command_line("defer_proposal 1 7").is_err());
+    }
+
     #[test]
     fn band_order_parses_and_renders_back_in_all_three_forms() {
         let set = parse_command_line("band_order 1 7 stone set 60 HIGH").unwrap();

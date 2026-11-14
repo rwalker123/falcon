@@ -108,6 +108,9 @@ pub struct SnapshotContext<'w> {
     /// Every improvement on a tile-kind branch. Published filtered to the tiles the viewer has
     /// explored; the checkpoint carries the registry itself.
     pub tile_improvements: Res<'w, crate::tile_improvement::TileImprovementRegistry>,
+    /// Every band's chief-proposal state; the capture publishes each own band's offer. `Option` for
+    /// the hand-rolled capture worlds that never install it.
+    pub chief_proposals: Option<Res<'w, crate::chief_proposals::ChiefProposalBook>>,
     /// Every live working on a deposit. Published filtered to the workings the viewer has explored;
     /// the checkpoint carries the registry itself. **Sparse and lazy** — a working exists only from
     /// the turn a band first put a crew on it.
@@ -2803,6 +2806,7 @@ pub fn capture_snapshot(
         knowledge_contact,
         roads,
         tile_improvements,
+        chief_proposals,
         deposits,
         extraction,
         tile_registry,
@@ -2985,7 +2989,7 @@ pub fn capture_snapshot(
         config.map_seed,
         grid,
     );
-    for tile in patch_tiles {
+    for tile in patch_tiles.iter().copied() {
         tile_capacities.insert(
             tile.position,
             crate::forage::tile_forage_capacity(&labor_config.forage, tile),
@@ -3126,6 +3130,24 @@ pub fn capture_snapshot(
             reach_tiles: supply_network_cfg.reach_tiles,
             grid: (tile_registry.width, config.map_topology.wrap_horizontal),
         };
+        // **The baskets of the tiles that hold a patch**, for splitting a forage row's income by keeping
+        // class (`band_spoilage::income_by_class`): the flora realisation off the tile, as the labor
+        // arm reads it.
+        let patch_compositions: HashMap<UVec2, Vec<crate::flora_config::FloraShare>> = patch_tiles
+            .iter()
+            .map(|tile| {
+                (
+                    tile.position,
+                    crate::forage::tile_flora_composition(
+                        &flora_config,
+                        &labor_config.forage,
+                        tile,
+                        config.map_seed,
+                    )
+                    .into_owned(),
+                )
+            })
+            .collect();
         // **How far a band's people walk** — the one `WalkReach` the culture morale term and
         // migration read, built here from the same levers so each band's published anchor reach
         // region is exactly the set of tiles that term would call near.
@@ -3486,7 +3508,62 @@ pub fn capture_snapshot(
                     let belief_anchor_weight = cohort.belief_anchor.map_or(0.0, |anchor| {
                         wellbeing_config.culture.anchor_weight(belief.get(anchor))
                     });
+                    let held_now = preservation_scene.held_by(band_id.copied());
+                    let reachable_now = if expedition.is_none() {
+                        crate::fixed_store::reachable_stores(
+                            &preservation_scene,
+                            band_id.copied(),
+                            cohort.faction,
+                            current_pos,
+                        )
+                    } else {
+                        crate::fixed_store::ReachableStores::none()
+                    };
+                    // **The band's spoilage forecast and what storage would save** — own resident
+                    // bands only; a party's pack is not a larder.
+                    let spoilage = match (expedition.is_none(), allocation) {
+                        (true, Some(allocation)) => crate::band_spoilage::band_spoilage_of(
+                            &crate::band_spoilage::BandSpoilInputs {
+                                cohort,
+                                allocation,
+                                band: band_id.copied(),
+                                at: current_pos,
+                                demographics: &demographics_config,
+                                fauna: &fauna_config,
+                                flora: &flora_config,
+                                labor: &labor_config,
+                                herds: &herd_registry,
+                                forage: &forage_registry,
+                                composition: &|tile| patch_compositions.get(&tile).cloned(),
+                                ladder: &ladder_config,
+                                improvements: &tile_improvements,
+                                held: &held_now,
+                                stores: &reachable_now,
+                                knows: &|id| {
+                                    crate::intensification::knows(
+                                        &discovery_progress,
+                                        cohort.faction,
+                                        id,
+                                        ladder_config.knowledge.completion_threshold,
+                                    )
+                                },
+                            },
+                        ),
+                        _ => crate::band_spoilage::BandSpoilage::default(),
+                    };
+                    // **The chief's build proposal** (own resident bands only, like the spoilage beside it).
+                    let chief_proposals: Vec<_> = match (expedition.is_none(), band_id) {
+                        (true, Some(band)) => chief_proposals
+                            .as_deref()
+                            .and_then(|book| book.current(*band))
+                            .cloned()
+                            .into_iter()
+                            .collect(),
+                        _ => Vec::new(),
+                    };
                     Some(population_state(PopulationStateInputs {
+                        chief_proposals,
+                        spoilage,
                         belief_reach,
                         belief_anchor_weight,
                         belief_relay_region,

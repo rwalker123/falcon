@@ -18,6 +18,9 @@ signal assign_labor_requested(payload: Dictionary)
 ## The Telling (docs/plan_the_telling.md): the player answered a pending narrative fork.
 ## Payload keys: { faction, beat_id, choice_id }. Main formats the `answer_fork …` command.
 signal answer_fork_requested(payload: Dictionary)
+## The chief's build proposal, answered from the orb: `{action: approve|defer, faction, band_id, build_key}`.
+## Main formats `approve_proposal` / `defer_proposal`.
+signal chief_proposal_requested(payload: Dictionary)
 ## Emitted after the player picks a destination tile for the selected band's move.
 ## Payload keys: { faction, band, x, y }. Main formats the `move_band …` command.
 signal move_band_requested(payload: Dictionary)
@@ -663,6 +666,7 @@ func _ready() -> void:
     # relays each onto the signals Main connects to (the controller never emits a HudLayer signal).
     _turnorb = TurnOrbController.new(turn_orb, self, _telling, _note_sink)
     _turnorb.answer_fork_requested.connect(func(payload: Dictionary) -> void: answer_fork_requested.emit(payload))
+    _turnorb.proposal_action_requested.connect(func(payload: Dictionary) -> void: chief_proposal_requested.emit(payload))
     _narrator = NarratorController.new()
     _narrator.setup(self)
     _telling.page_shown.connect(_narrator.speak.bind(HudNarratorVocab.SOURCE_PANEL))
@@ -744,7 +748,7 @@ func _ready() -> void:
     # `BandPanelController`'s vitals label + parties inspector strip.
     # It takes NO faction-scope cluster: the dormant `Fodder:` row's hover is a fixed sentence
     # (`DetailFormat.fodder_dormant_row`).
-    _banddetail = BandDetailLines.new(_band_labor, _disclosures, _herd_label_for_id)
+    _banddetail = BandDetailLines.new(_band_labor, _disclosures, _herd_label_for_id, _topbar.ladder_rungs)
     # The Band/City panel. Constructed AFTER `_disclosures` (the vitals row wires its carets through
     # it) and `_banddetail` (it renders its rows), and handed the SAME state models, the selection card
     # it routes map focus through, the HUD CanvasLayer as the host it parents its confirm dialog into,
@@ -1664,7 +1668,7 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
     # the CROP COMMIT, which is not part of that row's identity and must not enter its key.
     # …and on a `tile` row it is the BRANCH, which is half that row's key (`pending_key`).
     var material := species if kind == HudConst.LABOR_KIND_EXTRACT \
-        or kind == HudConst.LABOR_KIND_TILE else ""
+        or kind == HudConst.LABOR_KIND_TILE or kind == HudConst.LABOR_KIND_BAND else ""
     # ⛔ **A SHEET THAT OFFERED NO DIAL NAMES NO FLOOR, AND THE COMMAND THEN CARRIES NO TOKEN**
     # (issue #650). `SourceForecast.FLOOR_UNNAMED` arrives from the deposit sheet's finite arm and from
     # nowhere else; what an omitted token MEANS is the sim's to answer, and on ground that never renews

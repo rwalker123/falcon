@@ -487,6 +487,7 @@ fn spawn_the_holding_band(
             last_belief_relay_hops: 0,
             predators_kept_off: 0,
             last_cohesion: Default::default(),
+            last_leadership: Default::default(),
         },
         StartingUnit {
             kind: "BandForager".to_string(),
@@ -1550,6 +1551,17 @@ fn a_blocked_head_publishes_no_supply_against_the_zero_demand_it_publishes() {
             }
             assert!(found, "fixture: the band holds the source patch");
         }
+        // **A FED BAND.** The staffing feeds a band that would miss a meal before it builds
+        // (`labor_config.food_first_window_turns`), which is not what this test is about.
+        for mut cohort in app
+            .world
+            .query::<&mut core_sim::PopulationCohort>()
+            .iter_mut(&mut app.world)
+        {
+            cohort
+                .stores
+                .reset_food("dry", core_sim::Scalar::from_f32(A_FULL_LARDER));
+        }
         let keepers = keeping_demand_in_hands(&app, source);
         staff_the_keeping(&mut app, source, keepers);
         core_sim::run_turn(&mut app);
@@ -1568,6 +1580,8 @@ fn a_blocked_head_publishes_no_supply_against_the_zero_demand_it_publishes() {
         )
     };
 
+    /// Food enough that no meal in the look-ahead window is short.
+    const A_FULL_LARDER: f32 = 10_000.0;
     let (supplied, demand, banked, reason, turns) = run(!THE_GATE_IS_OPEN);
     assert_eq!(
         turns, BUILD_QUEUE_BLOCKED,

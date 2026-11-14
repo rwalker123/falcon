@@ -700,7 +700,7 @@ FAILURE state leads with `HudSelectionVocab.RUNG_HAZARD_GLYPH`:
 > published by the one site that mints the sentinel.
 > **The sim decides `eligible`, so the sim says why** — the client has
 > its own `RungGates` machinery and re-deriving here would be a second producer of one verdict.
-> `HudSelectionVocab.BUILD_BLOCKED_REASONS` owns the wording for all ten keys **plus a fallback**, on
+> `HudSelectionVocab.BUILD_BLOCKED_REASONS` owns the wording for every key (including `feeding_first` — the band is staffing builds last because it would run out of food within the look-ahead; one sentence fusing cause and lever, no per-web fork) **plus a fallback**, on
 > `SOW_REFUSAL_REASONS`' precedent: an unrecognised key states that the client cannot name the reason,
 > because a blank line under a hazard mark is what this whole repair exists to delete.
 >

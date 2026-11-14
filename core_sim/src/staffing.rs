@@ -95,6 +95,111 @@ const AT_LEAST_ONE_HAND: u32 = 1;
 /// **NO HANDS** - the empty fractional crew.
 const NO_HANDS: f32 = 0.0;
 
+/// **NO FOOD** - a row whose take is not food (a dig, a tile or band improvement, a build).
+const NO_FOOD: f32 = 0.0;
+
+/// **WHAT THE BAND'S LARDER LOOKS LIKE TO THE FOOD-FIRST CHECK**: the food it holds and what its
+/// people need each turn (`PopulationCohort::last_food_need`). A need of nothing switches the check
+/// off, so a world with no people (a probe, a fixture) never trips it.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct FoodLedger {
+    /// The food in the larder now.
+    pub larder: f32,
+    /// What the people eat each turn: the cohort's `food_demand` at its current brackets.
+    pub need: f32,
+    /// **The food a turn that is not a sim-staffed source row**: the band's steady pooling net
+    /// (`snapshot::pooling_steady_nets`, the standing term the published runway adds) and each need
+    /// row at its `sustainable` rate, as `FoodFlow` reads it.
+    pub standing: f32,
+}
+
+/// **THE BAND'S LARDER AS THE FOOD-FIRST CHECK READS IT**: the food held, this turn's meal demand
+/// (`food_demand` over the current brackets and the party the band feeds - the runway's own need),
+/// and the standing income that is not a staffed row. Spoilage is deliberately not in it.
+pub(crate) fn food_ledger_of(
+    cohort: &crate::components::PopulationCohort,
+    allocation: &LaborAllocation,
+    demographics: &crate::demographics_config::DemographicsConfig,
+    pooling_steady: f32,
+) -> FoodLedger {
+    let need = crate::systems::food_demand(
+        cohort.children,
+        cohort.working + cohort.fed_party_workers,
+        cohort.elders,
+        &demographics.consumption,
+    )
+    .to_f32();
+    let need_rows: f32 = allocation
+        .assignments
+        .iter()
+        .zip(&allocation.last_yields)
+        .filter(|(row, _)| row.is_need_row())
+        .map(|(_, yields)| yields.sustainable)
+        .sum();
+    FoodLedger {
+        larder: cohort.stores.get(crate::components::FOOD).to_f32(),
+        need,
+        standing: pooling_steady + need_rows,
+    }
+}
+
+/// **THE STEADY POOLING NET OF ONE BAND, read off a world** - the command path's twin of the turn's
+/// per-network pre-pass (`snapshot::pooling_steady_nets`), `0` in no network or with no membership.
+fn pooling_steady_of(world: &bevy::prelude::World, band: bevy::prelude::Entity) -> f32 {
+    let (Some(membership), Some(supply), Some(demographics)) = (
+        world.get_resource::<crate::supply::SupplyNetworkMembership>(),
+        world.get_resource::<crate::supply_network_config::SupplyNetworkConfigHandle>(),
+        world.get_resource::<crate::demographics_config::DemographicsConfigHandle>(),
+    ) else {
+        return NO_FOOD;
+    };
+    let bands: Vec<(
+        bevy::prelude::Entity,
+        &crate::components::PopulationCohort,
+        Option<&LaborAllocation>,
+    )> = world
+        .iter_entities()
+        .filter_map(|entity| {
+            Some((
+                entity.id(),
+                entity.get::<crate::components::PopulationCohort>()?,
+                entity.get::<LaborAllocation>(),
+            ))
+        })
+        .collect();
+    crate::snapshot::population::pooling_steady_nets(
+        bands.into_iter(),
+        membership,
+        &demographics.get(),
+        &supply.get(),
+    )
+    .get(&band)
+    .copied()
+    .unwrap_or(NO_FOOD)
+}
+
+impl FoodLedger {
+    /// No larder to read: the check is off.
+    pub const OFF: FoodLedger = FoodLedger {
+        larder: 0.0,
+        need: 0.0,
+        standing: 0.0,
+    };
+}
+
+/// **WHAT A BUILD IS WORTH TO THE LARDER WHEN IT FINISHES**: the work it still owes, what one builder
+/// banks a turn, and the food a turn the finished rung adds. Plain values the world half resolves
+/// ([`build_inputs`]); a build with no food gain carries `None` instead.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BuildFinish {
+    /// Work units still owed on the climb.
+    pub work_remaining: f32,
+    /// Work units one builder banks a turn.
+    pub work_per_builder: f32,
+    /// Food a turn the finished rung adds, from the turn after it completes.
+    pub gain: f32,
+}
+
 /// What the reach pass is aiming at on one row.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ReachTarget {
@@ -155,6 +260,16 @@ pub struct StaffRowInput<'a> {
     /// **A ROW THE CHIEF'S FOOD ORDER KEEPS UP**: its hold crew is dealt bare hands (where a bare
     /// hand takes something) in pass 1c, ahead of every row's kitted reach heads.
     pub food_keep_up: bool,
+    /// **THE ROW'S TAKE HANDS ARRIVE AS A WHOLE CREW** (a hunt: haul, reach and fight terms are each
+    /// ceiled by [`crate::fauna::hunt_crew_for_take`]). Such a crew's last head has slack by
+    /// construction, so the fraction of a hand of keeping rides in it exactly as it rides in a
+    /// fractional gatherer's head: only the whole keepers add heads.
+    pub whole_hands: bool,
+    /// **Food a unit of this row's take is worth** (provisions per biomass); [`NO_FOOD`] where the
+    /// take is not food. Read by the food-first check ([`band_runs_short`]) to price a crew.
+    pub food_per_take: f32,
+    /// **What finishing this build adds to the larder** (a build input only).
+    pub finish: Option<BuildFinish>,
 }
 
 /// What the passes decided for one row, in the order the inputs came.
@@ -233,13 +348,57 @@ fn remainder_rides_with_a_gatherer(row: &StaffRowInput<'_>) -> bool {
 
 /// **THE HEADS A CREW NEEDS IN ALL**, keeping and gathering, rounded up ONCE: the keeper keeps first
 /// and gathers with what is left, exactly as the turn splits it.
-fn crew_heads(row: &StaffRowInput<'_>, gather: f32) -> u32 {
+///
+/// Where the gatherers' hands are a whole crew already ([`StaffRowInput::whole_hands`]) the keeping's
+/// fraction rides inside their slack and only the whole keepers add heads.
+/// The fraction rides only where it FITS: the whole crew, with the fractional keeping taken out of
+/// its work, must still reach `target` with `armed` of them kitted (asked of the row's own `hands`
+/// closure at the take that crew would need to make up the keeping). Otherwise one head is added.
+/// **DOES THE KEEPING'S FRACTION RIDE IN A WHOLE CREW'S SLACK?** `crew` whole hunters, with `fraction`
+/// of a hand taken out of their work, must still reach `target` with `armed` of them kitted (asked of
+/// the row's own `hands` closure at the take the crew would need to make up the keeping). The one rule
+/// [`crew_heads`] sizes a hunt crew by and [`crew_take_capacity`] prices it by.
+fn keeping_fraction_fits(
+    row: &StaffRowInput<'_>,
+    crew: f32,
+    fraction: f32,
+    target: f32,
+    armed: u32,
+) -> bool {
+    fraction <= NO_HANDS || {
+        let working = crew - fraction;
+        working > NO_HANDS
+            && (row.hands)(target * crew / working, armed).is_none_or(|hands| hands <= crew)
+    }
+}
+
+fn crew_heads(row: &StaffRowInput<'_>, gather: f32, target: f32, armed: u32) -> u32 {
+    if row.whole_hands && gather > NO_HANDS {
+        let whole = whole_keepers(row);
+        let crew = gather.ceil();
+        let fraction = row.keep_hands.max(NO_HANDS) - whole as f32;
+        let fits = keeping_fraction_fits(row, crew, fraction, target, armed);
+        return whole + crew as u32 + u32::from(!fits);
+    }
     (row.keep_hands.max(NO_HANDS) + gather).ceil() as u32
+}
+
+/// The take the reach pass aims at, where it is a take (a `Heads` reach is whole heads, not a take).
+fn reach_take(row: &StaffRowInput<'_>) -> f32 {
+    match row.reach {
+        ReachTarget::Take(target) => target,
+        ReachTarget::Nothing | ReachTarget::Heads(_) => NO_TAKE_WANTED,
+    }
 }
 
 /// The crew that holds the source at its floor, keepers included.
 fn hold_heads(row: &StaffRowInput<'_>, armed: u32) -> u32 {
-    let heads = crew_heads(row, gather_hands(row, row.hold_take, armed));
+    let heads = crew_heads(
+        row,
+        gather_hands(row, row.hold_take, armed),
+        row.hold_take,
+        armed,
+    );
     if row.hold_take > NO_TAKE_WANTED {
         heads.max(AT_LEAST_ONE_HAND)
     } else {
@@ -259,7 +418,12 @@ fn reach_gather(row: &StaffRowInput<'_>, armed: u32) -> f32 {
 /// The crew that draws the stock down toward the floor, keepers included.
 fn reach_heads(row: &StaffRowInput<'_>, armed: u32) -> u32 {
     let hold = gather_hands(row, row.hold_take, armed);
-    crew_heads(row, reach_gather(row, armed).max(hold))
+    crew_heads(
+        row,
+        reach_gather(row, armed).max(hold),
+        reach_take(row).max(row.hold_take),
+        armed,
+    )
 }
 
 /// The crew past which the take stops rising, keepers included.
@@ -269,7 +433,12 @@ fn useful_heads(row: &StaffRowInput<'_>, armed: u32) -> u32 {
         ReachTarget::Heads(heads) => heads as f32,
         _ => gather_hands(row, row.useful_take, armed),
     };
-    crew_heads(row, useful.max(reach_gather(row, armed)).max(hold))
+    crew_heads(
+        row,
+        useful.max(reach_gather(row, armed)).max(hold),
+        row.useful_take.max(reach_take(row)).max(row.hold_take),
+        armed,
+    )
 }
 
 /// Which passes a staffing run deals.
@@ -387,6 +556,272 @@ fn scout_arming_input(plan: &ScoutPlan) -> StaffRowInput<'static> {
         kitless: false,
         tile: None,
         food_keep_up: false,
+        whole_hands: false,
+        food_per_take: NO_FOOD,
+        finish: None,
+    }
+}
+
+/// **THE FOOD THE ROW'S CREW BRINGS HOME A TURN, at its best** - the largest take (biomass) the row's
+/// own `hands` closure says `crew` take hands reach with `armed` of them kitted, capped at the room
+/// above the floor, priced at the row's food rate. Found by bisecting the closure, so every web (a
+/// basket's linear hands, a hunt's whole crews) answers through the one function it is staffed by.
+fn crew_take_capacity(row: &StaffRowInput<'_>, crew: &StaffedCrew) -> f32 {
+    let hands = if row.whole_hands {
+        // A hunt's take hands are a WHOLE crew: only the whole keepers come off it, and the keeping's
+        // fraction rides in the hunters' slack where it fits (as `crew_heads` deals it), else it cost
+        // one head of its own.
+        let whole = whole_keepers(row);
+        let heads = crew.total().saturating_sub(whole) as f32;
+        let fraction = row.keep_hands.max(NO_HANDS) - whole as f32;
+        if keeping_fraction_fits(row, heads, fraction, row.useful_take, crew.kitted) {
+            heads
+        } else {
+            (heads - 1.0).max(NO_HANDS)
+        }
+    } else {
+        (crew.total() as f32 - row.keep_hands.max(NO_HANDS)).max(NO_HANDS)
+    };
+    if hands <= NO_HANDS || row.useful_take <= NO_TAKE_WANTED {
+        return NO_TAKE_WANTED;
+    }
+    let reaches = |target: f32| (row.hands)(target, crew.kitted).is_some_and(|need| need <= hands);
+    if reaches(row.useful_take) {
+        return row.useful_take;
+    }
+    let (mut low, mut high) = (NO_TAKE_WANTED, row.useful_take);
+    for _ in 0..TAKE_BISECTION_STEPS {
+        let mid = 0.5 * (low + high);
+        if reaches(mid) {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    low
+}
+
+/// **HOW FINELY A CREW'S TAKE IS BISECTED** - the interval halves this many times, which is far
+/// below a hundredth of a unit of food on any row.
+const TAKE_BISECTION_STEPS: u32 = 24;
+
+/// **WOULD THE BAND MISS A MEAL IN THE NEXT `window` TURNS AT THESE CREWS?** The larder is walked in
+/// the order the runway reads it: the meal is checked and eaten first, then the turn's income lands.
+/// Income is each food row's take at its crew (the room above its floor drawn down, the regrowth at
+/// the floor refilling it), plus - from the turn after it completes at the crew it was dealt - the
+/// food a finishing build adds ([`BuildFinish`]).
+pub fn band_runs_short(
+    rows: &[StaffRowInput<'_>],
+    crews: &[StaffedCrew],
+    ledger: FoodLedger,
+    window: u32,
+) -> bool {
+    if window == 0 || ledger.need <= NO_FOOD {
+        return false;
+    }
+    let mut room: Vec<f32> = rows.iter().map(|row| row.useful_take).collect();
+    let capacity: Vec<f32> = rows
+        .iter()
+        .zip(crews)
+        .map(|(row, crew)| {
+            if row.food_per_take > NO_FOOD && !row.is_build {
+                crew_take_capacity(row, crew)
+            } else {
+                NO_TAKE_WANTED
+            }
+        })
+        .collect();
+    let finishes: Vec<(u32, f32)> = rows
+        .iter()
+        .zip(crews)
+        .filter_map(|(row, crew)| {
+            let finish = row.finish?;
+            let builders = crew.total();
+            let per_turn = builders as f32 * finish.work_per_builder;
+            (row.is_build && per_turn > NO_HANDS && finish.gain > NO_FOOD).then(|| {
+                (
+                    (finish.work_remaining / per_turn).ceil() as u32,
+                    finish.gain,
+                )
+            })
+        })
+        .collect();
+    let mut larder = ledger.larder;
+    for turn in 0..window {
+        if larder < ledger.need {
+            return true;
+        }
+        let mut income = NO_FOOD;
+        for (i, row) in rows.iter().enumerate() {
+            if capacity[i] <= NO_TAKE_WANTED {
+                continue;
+            }
+            let take = capacity[i].min(room[i].max(NO_TAKE_WANTED));
+            income += take * row.food_per_take;
+            room[i] = room[i] - take + row.hold_take;
+        }
+        income += ledger.standing;
+        income += finishes
+            .iter()
+            .filter(|(finished_in, _)| turn >= *finished_in)
+            .map(|(_, gain)| gain)
+            .sum::<f32>();
+        larder = larder - ledger.need + income;
+    }
+    false
+}
+
+/// **THE THREE PASSES, FOOD FIRST WHEN THE BAND WOULD GO HUNGRY.** The deal runs in today's order
+/// (builds ahead of their group's hold crews). If the larder walked forward `window` turns at the
+/// crews it produced comes up short ([`band_runs_short`]) and a build holds builders, the band is
+/// re-dealt with every source row and bench order before any build: they get the whole pool and
+/// shelf, the builds only what they leave, and the keepers (pass 1a) still go first on every row.
+/// The last value is whether the second deal was the one returned.
+pub fn staff_band_food_first(
+    rows: &[StaffRowInput<'_>],
+    pool: u32,
+    shelf: &mut BTreeMap<Arc<str>, u32>,
+    tile_room: &BTreeMap<TileKey, u32>,
+    scouts: &ScoutPlan,
+    ledger: FoodLedger,
+    window: u32,
+) -> (Vec<RowStaffing>, ScoutCrew, bool) {
+    let (dealt, fed_first) =
+        deal_band_food_first(rows, pool, shelf, tile_room, scouts, ledger, window);
+    (dealt.out, dealt.scout, fed_first)
+}
+
+/// [`staff_band_food_first`] with the bench's readings ([`Dealt`]).
+fn deal_band_food_first(
+    rows: &[StaffRowInput<'_>],
+    pool: u32,
+    shelf: &mut BTreeMap<Arc<str>, u32>,
+    tile_room: &BTreeMap<TileKey, u32>,
+    scouts: &ScoutPlan,
+    ledger: FoodLedger,
+    window: u32,
+) -> (Dealt, bool) {
+    let mut builds_first_shelf = shelf.clone();
+    let dealt = deal_builds(
+        rows,
+        pool,
+        &mut builds_first_shelf,
+        tile_room,
+        scouts,
+        EVERY_HIGH_OPENER,
+        BuildsDealt::InTurn,
+    );
+    let builders_dealt = rows
+        .iter()
+        .zip(&dealt.out)
+        .any(|(row, crew)| is_a_build(row) && crew.total() > NOBODY);
+    if !builders_dealt || !band_runs_short(rows, &dealt.out, ledger, window) {
+        *shelf = builds_first_shelf;
+        return (dealt, false);
+    }
+    let mut builds_last_shelf = shelf.clone();
+    let dealt = deal_builds(
+        rows,
+        pool,
+        &mut builds_last_shelf,
+        tile_room,
+        scouts,
+        EVERY_HIGH_OPENER,
+        BuildsDealt::Last,
+    );
+    *shelf = builds_last_shelf;
+    (dealt, true)
+}
+
+/// **WHEN THE BUILDS ARE DEALT**: in their groups' turn (the ordinary passes), or after every source
+/// row and bench order has been dealt (a band feeding itself first).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BuildsDealt {
+    InTurn,
+    Last,
+}
+
+/// A declared build (a bench order joins the passes like a build but is not one).
+fn is_a_build(row: &StaffRowInput<'_>) -> bool {
+    row.is_build && !row.is_bench
+}
+
+/// **THE PASSES, WITH THE BUILDS DEALT `when`.** `Last` deals every other input first over the whole
+/// pool, shelf and tile room, then the builds over what is left; the bench's readings are the first
+/// deal's (no builder was dealt before pass 2).
+fn deal_builds(
+    rows: &[StaffRowInput<'_>],
+    pool: u32,
+    shelf: &mut BTreeMap<Arc<str>, u32>,
+    tile_room: &BTreeMap<TileKey, u32>,
+    scouts: &ScoutPlan,
+    opener_limit: usize,
+    when: BuildsDealt,
+) -> Dealt {
+    if when == BuildsDealt::InTurn {
+        return staff_passes_counted(
+            rows,
+            pool,
+            shelf,
+            Passes::All,
+            tile_room,
+            scouts,
+            opener_limit,
+            Inputs::Every,
+        );
+    }
+    let mut dealt = staff_passes_counted(
+        rows,
+        pool,
+        shelf,
+        Passes::All,
+        tile_room,
+        scouts,
+        opener_limit,
+        Inputs::AllButBuilds,
+    );
+    let spent: u32 = dealt.out.iter().map(StaffedCrew::total).sum::<u32>() + dealt.scout.total();
+    let mut room_left = tile_room.clone();
+    for (row, crew) in rows.iter().zip(&dealt.out) {
+        if let Some(tile) = row.tile {
+            if let Some(room) = room_left.get_mut(&tile_key(tile)) {
+                *room = room.saturating_sub(crew.total());
+            }
+        }
+    }
+    let built = staff_passes_counted(
+        rows,
+        pool.saturating_sub(spent),
+        shelf,
+        Passes::All,
+        &room_left,
+        &ScoutPlan::default(),
+        opener_limit,
+        Inputs::BuildsOnly,
+    );
+    for (i, row) in rows.iter().enumerate() {
+        if is_a_build(row) {
+            dealt.out[i] = built.out[i];
+        }
+    }
+    dealt
+}
+
+/// **WHICH INPUTS A DEAL STAFFS**; the rest are left at nobody.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Inputs {
+    Every,
+    AllButBuilds,
+    BuildsOnly,
+}
+
+impl Inputs {
+    fn deals(self, row: &StaffRowInput<'_>) -> bool {
+        match self {
+            Inputs::Every => true,
+            Inputs::AllButBuilds => !is_a_build(row),
+            Inputs::BuildsOnly => is_a_build(row),
+        }
     }
 }
 
@@ -423,6 +858,7 @@ fn staff_passes_scouting(
         tile_room,
         scouts,
         EVERY_HIGH_OPENER,
+        Inputs::Every,
     );
     (dealt.out, dealt.scout)
 }
@@ -464,7 +900,9 @@ fn deal_bench_opener(
 
 /// [`staff_passes_scouting`] that also reports where the hands went before pass 2 opened.
 /// `opener_limit` caps how many High bench orders take their first crafter in pass 1
-/// ([`EVERY_HIGH_OPENER`] for the real staffing).
+/// ([`EVERY_HIGH_OPENER`] for the real staffing). `inputs` names the rows dealt; the rest stay at
+/// nobody.
+#[allow(clippy::too_many_arguments)] // the pass's own inputs plus which of them to deal
 fn staff_passes_counted(
     rows: &[StaffRowInput<'_>],
     pool: u32,
@@ -473,8 +911,11 @@ fn staff_passes_counted(
     tile_room: &BTreeMap<TileKey, u32>,
     scouts: &ScoutPlan,
     opener_limit: usize,
+    inputs: Inputs,
 ) -> Dealt {
-    let mut order: Vec<usize> = (0..rows.len()).collect();
+    let mut order: Vec<usize> = (0..rows.len())
+        .filter(|&i| inputs.deals(&rows[i]))
+        .collect();
     order.sort_by_key(|&i| (std::cmp::Reverse(rows[i].priority), i));
 
     let mut out: Vec<RowStaffing> = vec![StaffedCrew::default(); rows.len()];
@@ -863,6 +1304,8 @@ pub struct StaffingWorld<'a> {
     /// **WHAT THE BAND'S STORE HOLDS OF A MATERIAL** - the "on hand" a keep-on-hand target is
     /// judged against (`LocalStore::material_total`: the store only, not loads at the site).
     pub on_hand: &'a dyn Fn(&str) -> f32,
+    /// **The band's larder and need**, for the food-first check. [`FoodLedger::OFF`] reads nothing.
+    pub food: FoodLedger,
     /// **THE BENCH'S ORDERS** as the passes need them ([`crate::systems::bench_plan`]): which are
     /// workable, their crew caps and their tool.
     pub bench: &'a crate::systems::BenchPlan,
@@ -1179,21 +1622,29 @@ pub fn staff_rows<'a>(
             .or_insert_with(|| band_kit.live_units(item, equipment));
     }
     let opening_shelf = shelf.clone();
-    let Dealt {
-        out: staffed,
-        scout,
-        first_call,
-        pass_one,
-        openers,
-    } = staff_passes_counted(
+    let (
+        Dealt {
+            out: staffed,
+            scout,
+            first_call,
+            pass_one,
+            openers,
+        },
+        fed_first,
+    ) = deal_band_food_first(
         &inputs.rows,
         pool,
         &mut shelf,
-        Passes::All,
         &inputs.tile_room,
         &inputs.scouts,
-        EVERY_HIGH_OPENER,
+        world.food,
+        world.sources.labor.food_first_window_turns,
     );
+    let builds_dealt = if fed_first {
+        BuildsDealt::Last
+    } else {
+        BuildsDealt::InTurn
+    };
     let source_rows = inputs.targets.len();
     let build_end = source_rows + inputs.builds.len();
     // **WHICH HIGH ORDER TOOK A HOLD CREW'S HANDS**: only when an opener took a pass-1 hand, rerun
@@ -1202,14 +1653,14 @@ pub fn staff_rows<'a>(
     let mut hold_losses: Vec<crate::components::HoldLoss> = Vec::new();
     let mut with_openers = pass_one;
     for (taken, &opener) in openers.iter().enumerate().rev() {
-        let without = staff_passes_counted(
+        let without = deal_builds(
             &inputs.rows,
             pool,
             &mut opening_shelf.clone(),
-            Passes::All,
             &inputs.tile_room,
             &inputs.scouts,
             taken,
+            builds_dealt,
         )
         .pass_one;
         for (row, target) in inputs.targets.iter().enumerate() {
@@ -1245,13 +1696,19 @@ pub fn staff_rows<'a>(
         .builds
         .iter()
         .zip(&staffed[source_rows..])
-        .map(|(meta, crew)| {
+        .zip(&inputs.rows[source_rows..])
+        .map(|((meta, crew), row)| {
             (
                 meta.source.clone(),
                 BuildCrew {
                     kitted: crew.kitted,
                     bare: crew.bare,
                     cap: meta.cap,
+                    // Only a build that would have held builders in the builds-first deal (a cap above
+                    // nobody and a climb that can progress) is waiting on the food.
+                    fed_first: fed_first
+                        && crew.total() == NOBODY
+                        && row.max.is_some_and(|max| max > NOBODY),
                 },
             )
         })
@@ -1670,6 +2127,9 @@ fn build_staff_inputs<'a>(
             kitless: false,
             tile: crate::systems::party_source_position(&target, sources.herds),
             food_keep_up: allocation.keeps_food_up(&target),
+            whole_hands: false,
+            food_per_take: NO_FOOD,
+            finish: None,
         };
         if let (Some(camp), Some(site)) = (
             &world.camp,
@@ -1811,6 +2271,9 @@ fn bench_inputs<'a>(world: &StaffingWorld<'a>, rows: &mut Vec<StaffRowInput<'a>>
             distance: NOBODY,
             is_build: false,
             is_bench: true,
+            whole_hands: false,
+            food_per_take: NO_FOOD,
+            finish: None,
             kitless: false,
             tile: None,
             food_keep_up: false,
@@ -1893,6 +2356,8 @@ fn build_inputs<'a>(
         let toe = equipment.pool_toe(rung.branch, Some(&rung.wire_key()));
         let kit_items = live_kit_items(toe.kit(), band_kit, world);
         let can_progress = rung_cap > NOBODY && (world.build_can_progress)(declaration);
+        let finish = patch_build_finish(world, declaration)
+            .or_else(|| herd_build_finish(world, declaration));
         rows.push(StaffRowInput {
             priority,
             max: Some(if can_progress { rung_cap } else { NOBODY }),
@@ -1909,6 +2374,9 @@ fn build_inputs<'a>(
             kitless: toe.tools().is_empty(),
             tile,
             food_keep_up: false,
+            whole_hands: false,
+            food_per_take: NO_FOOD,
+            finish,
         });
         metas.push(BuildMeta {
             source: source.clone(),
@@ -1917,6 +2385,107 @@ fn build_inputs<'a>(
     }
     metas
 }
+
+/// **WHAT A PATCH BUILD ADDS TO THE LARDER WHEN IT FINISHES**: the work its climb still owes
+/// ([`crate::forage::patch_build_legs`], at the Field's own price), what one bare builder banks a
+/// turn, and the food a turn the destination rung pays above the rung the patch holds
+/// ([`crate::forage::rung_payoff`] - the quote the wire's `rungQuotes[].foodYield` is struck from).
+/// `None` for any other source, and for a climb that adds nothing: a herd's rung is not counted, so
+/// the check errs toward feeding the band first.
+fn patch_build_finish(
+    world: &StaffingWorld<'_>,
+    declaration: &crate::components::BuildDeclaration,
+) -> Option<BuildFinish> {
+    let BuildSource::Patch(tile) = &declaration.source else {
+        return None;
+    };
+    let sources = world.sources;
+    let ladder = sources.ladder;
+    let patch = sources.patch(*tile)?;
+    let destination = declaration.declared.destination(ladder);
+    let composition: Vec<crate::flora_config::FloraShare> = (sources.ground_of)(*tile)
+        .map(|ground| {
+            crate::forage::tile_flora_composition(
+                sources.flora,
+                &sources.labor.forage,
+                &ground,
+                sources.map_seed,
+            )
+            .into_owned()
+        })
+        .unwrap_or_default();
+    let price = crate::forage::patch_field_cost_multiplier(
+        &patch,
+        &composition,
+        sources.flora,
+        &sources.labor.forage,
+        ladder,
+    );
+    let work_remaining: f32 = crate::forage::patch_build_legs(&patch, destination, ladder, price)
+        .iter()
+        .map(|leg| leg.work_remaining)
+        .sum();
+    let payoff_at = |rung: crate::forage::PlantPayoff| {
+        crate::forage::rung_payoff(
+            &patch,
+            &composition,
+            &sources.labor.forage,
+            sources.flora,
+            NO_OUTPUT_BONUS,
+            rung,
+        )
+    };
+    let finished = crate::forage::PlantPayoff::of(ladder.rung_by_id(destination)?.trait_set());
+    let held = crate::forage::PlantPayoff::of(patch.standing().traits);
+    let gain = payoff_at(finished) - payoff_at(held);
+    (work_remaining > NO_HANDS && gain > NO_FOOD).then_some(BuildFinish {
+        work_remaining,
+        work_per_builder: crate::intensification::PER_WORKER_OUTPUT,
+        gain,
+    })
+}
+
+/// **WHAT A HERD BUILD ADDS TO THE LARDER WHEN IT FINISHES**: the work the destination rung still
+/// owes on this herd (its price on this species, less what the herd's position has banked into it),
+/// what one bare builder banks a turn, and the food a turn the destination's block pays above the
+/// block the herd holds - the sustained MSY the wire's `rungQuotes[].foodYield` is struck from
+/// ([`crate::fauna::herd_msy_biomass_at`] at the species' hunt yield). A ring or an output
+/// commitment names a rung the herd already holds and so adds nothing. A deposit, road, tile or band
+/// build yields no food, and carries no finish.
+fn herd_build_finish(
+    world: &StaffingWorld<'_>,
+    declaration: &crate::components::BuildDeclaration,
+) -> Option<BuildFinish> {
+    let BuildSource::Herd(id) = &declaration.source else {
+        return None;
+    };
+    let sources = world.sources;
+    let (ladder, fauna) = (sources.ladder, sources.fauna);
+    let herd = sources.herd(id)?;
+    let destination = declaration.declared.destination(ladder);
+    let rung = ladder.rung_by_id(destination)?;
+    let cost = rung.build_cost(match rung.cost_scale {
+        crate::intensification::CostScale::SpeciesTaming => {
+            fauna.taming_cost_multiplier_for(&herd.species)
+        }
+        _ => crate::intensification::RUNG_COST_UNSCALED,
+    })?;
+    let work_remaining = (cost - herd.rung_work_done(destination, ladder)).max(NO_HANDS);
+    let yield_per_biomass = crate::fauna::herd_hunt_yield(&herd, fauna).provisions_per_biomass;
+    let msy_at = |payoff| crate::fauna::herd_msy_biomass_at(&herd, fauna, payoff);
+    let finished = crate::fauna::HerdPayoff::of(rung.trait_set());
+    let held = crate::fauna::HerdPayoff::of(herd.standing().traits);
+    let gain = (msy_at(finished) - msy_at(held)) * yield_per_biomass * NO_OUTPUT_BONUS;
+    (work_remaining > NO_HANDS && gain > NO_FOOD).then_some(BuildFinish {
+        work_remaining,
+        work_per_builder: crate::intensification::PER_WORKER_OUTPUT,
+        gain,
+    })
+}
+
+/// **THE PRODUCTIVITY MULTIPLIER A RUNG QUOTE IS STRUCK AT** - the identity: the check prices a band's
+/// own crews, and the discontent modifier is the same on both sides of the comparison.
+const NO_OUTPUT_BONUS: f32 = 1.0;
 
 /// Forage: a patch's regrowth at the floor and the peak between the floor and today's stock, turned
 /// into hands over the basket rates.
@@ -1953,6 +2522,13 @@ fn forage_input<'a>(
         &sources.labor.forage,
         take_species,
         floor,
+    );
+    input.food_per_take = crate::forage::patch_provisions_per_biomass_taking(
+        &patch,
+        &composition,
+        sources.flora,
+        &sources.labor.forage,
+        take_species,
     );
     let equipment = sources.equipment;
     let season = (sources.season_of)(tile);
@@ -2036,12 +2612,14 @@ fn hunt_input<'a>(
     input: &mut StaffRowInput<'a>,
 ) {
     let sources = world.sources;
+    input.whole_hands = true;
     let Some(herd) = sources.herd(fauna_id) else {
         return;
     };
     let herd = herd.into_owned();
     let equipment = sources.equipment;
     let fauna = sources.fauna;
+    input.food_per_take = crate::fauna::herd_hunt_yield(&herd, fauna).provisions_per_biomass;
     let room = crate::fauna::hunt_crew_room(&herd, fauna, floor);
     let items = input.kit_items.clone();
     let coverage = coverage_with(equipment, kit.clone(), band_kit, items, crew);
@@ -2244,6 +2822,7 @@ pub(crate) fn probe_source(
         tile_hands_elsewhere: &elsewhere,
         build_can_progress: &can_progress,
         on_hand: &on_hand,
+        food: FoodLedger::OFF,
         bench: &no_bench,
     };
     let kit = sources.equipment.default_kit(target.kit_job());
@@ -2264,6 +2843,9 @@ pub(crate) fn probe_source(
         kitless: false,
         tile: None,
         food_keep_up: false,
+        whole_hands: false,
+        food_per_take: NO_FOOD,
+        finish: None,
     };
     let (food_rate, fodder_rate) = match target {
         LaborTarget::Forage {
@@ -2498,6 +3080,16 @@ pub(crate) fn with_band_staffing_over<R>(
                 tile_hands_elsewhere: &elsewhere,
                 build_can_progress: &can_progress,
                 on_hand: &on_hand,
+                food: world
+                    .get_resource::<crate::demographics_config::DemographicsConfigHandle>()
+                    .map_or(FoodLedger::OFF, |demographics| {
+                        food_ledger_of(
+                            cohort,
+                            &allocation,
+                            &demographics.get(),
+                            pooling_steady_of(world, band),
+                        )
+                    }),
                 bench: &bench_plan,
             };
             body(&staffing_world, &allocation, &band_kit, pool, available)
@@ -2869,6 +3461,9 @@ mod tests {
             kitless: false,
             tile: None,
             food_keep_up: false,
+            whole_hands: false,
+            food_per_take: NO_FOOD,
+            finish: None,
         }
     }
 
@@ -3162,6 +3757,9 @@ mod tests {
             kitless: true,
             tile,
             food_keep_up: false,
+            whole_hands: false,
+            food_per_take: NO_FOOD,
+            finish: None,
         }
     }
 
@@ -3250,6 +3848,229 @@ mod tests {
         let rows = vec![a_build(SourcePriority::Normal, RUNG_CAP, None)];
         let out = staff_band(&rows, 20, &mut shelf(0));
         assert_eq!(out[0].total(), RUNG_CAP);
+    }
+
+    /// A band of three: one bare-handed food row (a take of one food a unit, 100 of room, one
+    /// regrowing a turn) and one build that would take every hand. `gain` is what the build adds
+    /// to the larder a turn once it finishes (in one turn, at three builders).
+    fn feeding_band<'a>(gain: Option<f32>) -> Vec<StaffRowInput<'a>> {
+        let mut food = linear_row(
+            SourcePriority::Normal,
+            None,
+            0,
+            1.0,
+            100.0,
+            1.0,
+            1.0,
+            Vec::new(),
+        );
+        food.useful_take = 100.0;
+        food.food_per_take = 1.0;
+        let mut build = a_build(SourcePriority::Normal, 3, None);
+        build.finish = gain.map(|gain| BuildFinish {
+            work_remaining: 3.0,
+            work_per_builder: 1.0,
+            gain,
+        });
+        vec![food, build]
+    }
+
+    const FOOD_FIRST_WINDOW: u32 = 5;
+
+    fn food_first(rows: &[StaffRowInput<'_>], larder: f32) -> (Vec<RowStaffing>, bool) {
+        let (out, _, fed_first) = staff_band_food_first(
+            rows,
+            3,
+            &mut shelf(0),
+            &BTreeMap::new(),
+            &ScoutPlan::default(),
+            FoodLedger {
+                larder,
+                need: 1.0,
+                standing: 0.0,
+            },
+            FOOD_FIRST_WINDOW,
+        );
+        (out, fed_first)
+    }
+
+    /// **A BAND THAT WOULD STARVE WITH ITS BUILDER WORKING IS RE-STAFFED BUILDS LAST**: builds
+    /// first gives the build all three hands and the food row none; the larder (2, need 1) empties
+    /// inside the window, so every hand goes to food and the build waits.
+    #[test]
+    fn a_band_that_would_starve_is_restaffed_builds_last() {
+        let rows = feeding_band(None);
+        let (out, fed_first) = food_first(&rows, 2.0);
+        assert!(fed_first);
+        assert_eq!((out[0].total(), out[1].total()), (3, 0));
+        // The control: the same rows at the ordinary order give the build everything.
+        let plain = staff_band(&rows, 3, &mut shelf(0));
+        assert_eq!(
+            plain[0].total(),
+            0,
+            "builds first leaves the food row nobody"
+        );
+    }
+
+    /// **A BAND THAT IS SHORT BUT SURVIVES THE WINDOW KEEPS ITS BUILDER.**
+    #[test]
+    fn a_band_that_survives_the_window_keeps_its_builder() {
+        let rows = feeding_band(None);
+        let (out, fed_first) = food_first(&rows, 100.0);
+        assert!(!fed_first);
+        assert_eq!((out[0].total(), out[1].total()), (0, 3));
+    }
+
+    /// **A BUILD FINISHING INSIDE THE WINDOW COUNTS ITS GAIN**: a larder of 3 against a need of 1
+    /// starves on the fourth meal without the build's finished yield and does not with it.
+    #[test]
+    fn a_build_finishing_in_the_window_counts_its_gain() {
+        let (without, fed_without) = food_first(&feeding_band(None), 3.0);
+        assert!(fed_without);
+        assert_eq!(without[1].total(), 0);
+        let (with, fed_with) = food_first(&feeding_band(Some(2.0)), 3.0);
+        assert!(!fed_with);
+        assert_eq!(with[1].total(), 3, "the finishing build keeps its builders");
+    }
+
+    /// A hunt-shaped row (whole crews, the Goosefen warren): one hunter takes `ONE_HUNTER_TAKE`, and
+    /// the site's keeping is a sliver of a hand.
+    fn a_warren_row<'a>(keeping: f32) -> StaffRowInput<'a> {
+        const ONE_HUNTER_TAKE: f32 = 2.0;
+        let mut row = linear_row(
+            SourcePriority::Normal,
+            None,
+            0,
+            ONE_HUNTER_TAKE / 2.0,
+            // The room the stand can give is under one hunter's full take, so the keeping's sliver
+            // rides in his slack.
+            ONE_HUNTER_TAKE * 0.75,
+            1.0,
+            1.0,
+            Vec::new(),
+        );
+        row.keep_hands = keeping;
+        row.whole_hands = true;
+        row.food_per_take = 1.0;
+        row.hands = Box::new(|take, _| Some((take / ONE_HUNTER_TAKE).ceil().max(1.0)));
+        row
+    }
+
+    /// **A HUNT'S TAKE COUNTS IN THE FOOD-FIRST WALK THOUGH ITS KEEPING IS A SLIVER OF A HAND** (the
+    /// Goosefen case: one rabbit hunter, 0.005 keeping). The row's `hands` closure answers WHOLE
+    /// crews, so pricing the crew at `1 - 0.005` fractional hands made every target need more than the
+    /// crew had and the hunt read as no food at all - food-first fired and the builder was pulled.
+    #[test]
+    fn a_hunt_with_a_sliver_of_keeping_counts_its_take_and_the_builder_stays() {
+        const KEEPING: f32 = 0.005;
+        const LARDER: f32 = 2.0;
+        let rows = vec![
+            a_warren_row(KEEPING),
+            a_build(SourcePriority::Normal, 1, None),
+        ];
+        let (out, _, fed_first) = staff_band_food_first(
+            &rows,
+            2,
+            &mut shelf(0),
+            &BTreeMap::new(),
+            &ScoutPlan::default(),
+            FoodLedger {
+                larder: LARDER,
+                need: 1.0,
+                standing: 0.0,
+            },
+            FOOD_FIRST_WINDOW,
+        );
+        assert_eq!(out[0].total(), 1, "liveness: the hunter is staffed");
+        assert_eq!(out[1].total(), 1, "the builder is staffed beside him");
+        assert!(
+            !fed_first,
+            "one hunter's take covers the meal, so the band does not feed itself first"
+        );
+        // The control: no hunt row, the same larder and meal: the band does run short.
+        let bare = vec![a_build(SourcePriority::Normal, 1, None)];
+        let (_, _, short) = staff_band_food_first(
+            &bare,
+            2,
+            &mut shelf(0),
+            &BTreeMap::new(),
+            &ScoutPlan::default(),
+            FoodLedger {
+                larder: LARDER,
+                need: 1.0,
+                standing: 0.0,
+            },
+            FOOD_FIRST_WINDOW,
+        );
+        assert!(
+            !short || bare.len() == 1,
+            "no food row: nothing to feed from"
+        );
+    }
+
+    /// **A HERD BUILD FINISHING INSIDE THE WINDOW KEEPS ITS BUILDER** (the Goosefen case: a warren
+    /// going to Pastoral). The gain is the finished rung's sustained food above the held rung's,
+    /// through the same `herd_msy_biomass_at` the forecast and `herd_build_finish` read.
+    #[test]
+    fn a_herd_build_finishing_in_the_window_keeps_its_builder() {
+        let fauna = crate::fauna_config::FaunaConfig::builtin();
+        let mut herd = crate::fauna::Herd::new(
+            "game_warren".to_string(),
+            "Rabbit Warren".to_string(),
+            crate::fauna_config::SizeClass::Small,
+            vec![UVec2::new(1, 1)],
+            1000.0,
+            1000.0,
+            0.06,
+            0.35,
+            0.27,
+            crate::shipped::root_standing(crate::shipped::animal()),
+        );
+        herd.husbandry_ceiling = Some(crate::shipped::animal_pen());
+        let per_biomass = crate::fauna::herd_hunt_yield(&herd, &fauna).provisions_per_biomass;
+        let msy = |payoff| crate::fauna::herd_msy_biomass_at(&herd, &fauna, payoff);
+        let gain = (msy(crate::fauna::HerdPayoff::Pastoral) - msy(crate::fauna::HerdPayoff::Wild))
+            * per_biomass;
+        assert!(gain > 0.0, "liveness: taming must add food");
+        // Scale the herd's gain so the larder (3 against a need of 1) starves without it.
+        let scaled = gain.max(2.0) * 10.0;
+        let (without, fed_without) = food_first(&feeding_band(None), 3.0);
+        assert!(fed_without && without[1].total() == 0);
+        let (with, fed_with) = food_first(&feeding_band(Some(scaled)), 3.0);
+        assert!(!fed_with);
+        assert_eq!(with[1].total(), 3);
+    }
+
+    /// **POOLING AND NEED ROWS ARE INCOME**: a band fed by its network (a standing net above its
+    /// meal) does not read as starving, and keeps its builder.
+    #[test]
+    fn a_band_fed_by_its_network_keeps_its_builder() {
+        let rows = feeding_band(None);
+        let (out, _, fed_first) = staff_band_food_first(
+            &rows,
+            3,
+            &mut shelf(0),
+            &BTreeMap::new(),
+            &ScoutPlan::default(),
+            FoodLedger {
+                larder: 2.0,
+                need: 1.0,
+                standing: 1.0,
+            },
+            FOOD_FIRST_WINDOW,
+        );
+        assert!(!fed_first);
+        assert_eq!(out[1].total(), 3);
+    }
+
+    /// **STABILITY**: the same state staffed twice gives the same answer.
+    #[test]
+    fn food_first_is_stable() {
+        let rows = feeding_band(None);
+        let first = food_first(&rows, 2.0);
+        let second = food_first(&rows, 2.0);
+        assert_eq!(crews(&first.0), crews(&second.0));
+        assert_eq!(first.1, second.1);
     }
 
     /// **A BUILD THAT CANNOT PROGRESS TAKES NOBODY** (its cap is stated as zero).
@@ -3425,6 +4246,7 @@ mod tests {
                     kitted: 0,
                     bare: HANDS,
                     cap: HANDS,
+                    fed_first: false,
                 },
             )],
             scout: ScoutCrew::default(),
@@ -3474,6 +4296,91 @@ mod tests {
         assert_eq!(out[0].keepers, 1);
         assert_eq!(out[0].keepers + out[0].kitted + out[0].bare, out[0].total());
         assert_eq!(out[0].hold_crew, 3);
+    }
+
+    /// A hunt-like row: its take hands arrive as a WHOLE crew (`ceil(target / rate)`), kitted with
+    /// `item`, and no bare hand can work it.
+    fn hunt_like<'a>(item: &str, take: f32, keep_hands: f32) -> StaffRowInput<'a> {
+        const RATE: f32 = 0.6;
+        let mut row = linear_row(
+            SourcePriority::Normal,
+            None,
+            0,
+            take,
+            take,
+            RATE,
+            0.0,
+            vec![(Arc::from(item), 1)],
+        );
+        row.hands = Box::new(|target, _| Some((target / RATE).ceil()));
+        row.keep_hands = keep_hands;
+        row.whole_hands = true;
+        row
+    }
+
+    /// **A WHOLE HUNT CREW CARRIES THE KEEPING'S FRACTION IN ITS SLACK**: one hunter's take plus
+    /// 0.0046 of a hand of keeping is one head, not `ceil(1.0046)` = two.
+    #[test]
+    fn a_whole_hunt_crew_carries_the_keeping_fraction_in_its_slack() {
+        let rows = vec![hunt_like("traps", 0.5, 0.0046)];
+        let mut units = BTreeMap::from([(Arc::from("traps"), 5)]);
+        let out = staff_band(&rows, 10, &mut units);
+        assert_eq!(out[0].total(), 1);
+        assert_eq!(out[0].hold_crew, 1);
+        assert_eq!(out[0].reach_crew, 1);
+        assert_eq!(out[0].useful_crew, 1);
+        // Whole keepers still come as heads of their own: 1.5 keepers + 1 hunter = 2 heads.
+        let rows = vec![hunt_like("traps", 0.2, 1.5)];
+        let out = staff_band(&rows, 10, &mut units);
+        assert_eq!((out[0].keepers, out[0].total()), (1, 2));
+    }
+
+    /// **THE FRACTION RIDES ONLY WHERE IT FITS**: a need just under a whole head leaves too little
+    /// slack for half a hand of keeping, so the row gets the extra head.
+    #[test]
+    fn keeping_that_does_not_fit_the_slack_adds_a_head() {
+        // 0.58 at 0.6 a hand is 0.97 of a hand: one hunter, 0.03 of slack.
+        let rows = vec![hunt_like("traps", 0.58, 0.5)];
+        let mut units = BTreeMap::from([(Arc::from("traps"), 5)]);
+        let out = staff_band(&rows, 10, &mut units);
+        assert_eq!(out[0].total(), 2);
+        // 0.3 at 0.6 a hand is half a hand: the half a hand of keeping fits beside it.
+        let rows = vec![hunt_like("traps", 0.3, 0.5)];
+        let out = staff_band(&rows, 10, &mut units);
+        assert_eq!(out[0].total(), 1);
+    }
+
+    /// **GOOSEFEN**: three workers, five baskets, two traps. The rabbit row's tiny keeping must not
+    /// take a second hunter off the forage row's hands.
+    #[test]
+    fn a_tame_warrens_keeping_does_not_take_the_last_worker_from_food() {
+        let mut forage = linear_row(
+            SourcePriority::Normal,
+            None,
+            0,
+            0.2,
+            0.2,
+            0.29,
+            0.29,
+            vec![(Arc::from("baskets"), 1)],
+        );
+        forage.useful_take = 3.0;
+        // A second forage row held at its floor: nothing to take, nothing to keep.
+        let held = linear_row(
+            SourcePriority::Normal,
+            None,
+            0,
+            0.0,
+            0.0,
+            0.29,
+            0.29,
+            vec![(Arc::from("baskets"), 1)],
+        );
+        let rows = vec![forage, held, hunt_like("traps", 0.5184, 0.0046)];
+        let mut units = BTreeMap::from([(Arc::from("traps"), 2), (Arc::from("baskets"), 5)]);
+        let out = staff_band(&rows, 3, &mut units);
+        assert_eq!(out[0].total(), 2, "the forage row gets the other two hands");
+        assert_eq!(out[2].total(), 1, "one rabbit hunter");
     }
 
     /// A row with nothing to take still keeps its improvement with a whole head.

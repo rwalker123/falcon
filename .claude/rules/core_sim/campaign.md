@@ -37,7 +37,7 @@ paths:
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), **`keeping`** (how food keeps, #706 — `classes`, each `{ id, shelf_life_turns }`: **`flesh` 4.0**, **`fresh_plant` 8.0**, **`dry` 60.0**; `startup_class` **`dry`**, the class the opening reserve is seeded into; `plant_fallback_class` **`fresh_plant`** / `kill_fallback_class` **`flesh`**, where a take's food lands when no species says; **`preservation`** (#708, a list of `{ rung, class, shelf_life_turns }` — the value a class's shelf life takes while a band holds that store rung: `camp_stores:drying_rack` flesh **20**, `food_stores:storage_pit` dry **120**, PLAYTEST DIALS; see "What a store buys" below); **`fixed_stores`** (#709, a list of `{ rung, capacity }` — a tile store's capacity in food units, `food_stores:storage_pit` **400**, ≈150 people × 20 turns, a PLAYTEST DIAL; see "A storage pit is its band's second larder" below). Validated at parse — unique ids, finite positive shelf lives, every named class present — and every fauna/flora species' `keeping` is reconciled against it at boot; see "Food spoils by keeping class" below), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `lineage.founding_lines` (`L`, **8**, a `NonZeroU16` so `0` is a parse error — how many founding lines a starting band holds; see "Founding lines" below), `lineage.people_per_line` (`K`, **19**, a `NonZeroU16` — how many people one line carries before births stop; an isolated starting band ceilings at `L × K` = 152, pinned above the shipped `band_size` by `demographics_config::tests::the_shipped_starting_band_opens_below_its_breeding_ceiling`; see "The breeding ceiling" below), `lineage.free_breeding_at` (**500** PEOPLE, a `NonZeroU32` — the head-count at which a people breeds freely for good: a people is latched into `FreeBreedingPeoples`, and no population of it is capped again, in the pre-pass of the turn a breeding population opens at it or its own ceiling is at least it and its uncapped births carry it there (that turn's births are uncapped, so the head-count can pass it); before the latch the effective ceiling is `min(shared ceiling, free_breeding_at)`; pinned above the shipped `L × K` by `demographics_config::tests::the_shipped_lone_band_ceiling_sits_below_the_free_breeding_size`, so a lone band opens capped; see "The breeding ceiling" below), `lineage.shed_share` (**0.25**, an `f32` validated in `(0, 1]` at parse: the share of a breeding population's excess over its ceiling that leaves each turn, a PLAYTEST DIAL; see "Shedding above the ceiling" below), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
 | `src/data/start_profiles.json` | Campaign initialization. Per profile: `food_modules`, `victory_modes_enabled` (AI tuning is per seat and lives in `sim_ai/data/ai_profiles.json`, not here) and a required, ordered **`archetypes`** array — one entry per kind of people (shipped: `major`, `minor`; `factions.md` → "Start archetypes"). Each archetype carries `id`, `display_label`, `min_separation`, `default_count` and the per-people opening: `starting_units` (`kind`/`count`/`band_size` — major 30, minor 12), `starting_knowledge_tags`, `inventory` — plus the **required** `opening_loadout` block (the minor's is the major's with `kit_defaults` empty; the figures below are the major's): `pickable_materials` (`bone`, `fibre`, `hide`, `wood`, `stone` — the picker's list, in the order it is drawn), `material_defaults` (`bone 2` / `fibre 12` / `hide 6`) and **`kit_defaults`** (`big_game 5` / `trapping 5` / `gathering 7` — one kit per hand on the shipped 30-person band). Together they are the **opening band's** default outfit (load 47 against its ≈ 47 goods allowance), APPLIED after the world-build meal, not suggested; a splinter's default is `split_default_outfit`, not these. ⛔ **There is no budget in this file**: what a band may outfit is its CARRY less its larder (`.claude/rules/core_sim/band-carry.md`), and the retired `material_points` key is **refused at load**, not ignored (`start_profile::the_retired_material_points_key_is_refused`). `StartProfiles::validate_against_materials` rejects a pickable or default naming a material the roster does not carry, and `validate_against_equipment` rejects a `kit_defaults` key the equipment roster does not carry **or one whose `uses` is empty** — both run from `build_headless_app`. Defaults over the band's allowance are fitted at apply (`fit_to_carry`, materials cut before tools); the full rules are `starting-loadout.md` |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius, in **hex steps**), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer_fraction` (the dead-band, as a fraction of the node's own per-capita fair share of that commodity — see "The dead-band is RELATIVE, because one balancer serves food and a bone pile" below) |
-| `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`), `independence` (`grievance_threshold` — see `independence.md`), `culture` (the near / far from the ancestors morale term: `near_bonus`, `away_drag`, `belief_half_saturation` — key table in `belief.md`), `cohesion` (`base_ceiling`, `belief_lift`, `belief_half_saturation`, `drag` — table in `belief.md`) |
+| `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`), `independence` (`grievance_threshold` — see `independence.md`), `culture` (the near / far from the ancestors morale term: `near_bonus`, `away_drag`, `belief_half_saturation` — key table in `belief.md`), `cohesion` (`base_ceiling`, `belief_lift`, `belief_half_saturation`, `drag` — table in `belief.md`), `leadership` (`popularity_per_met_order`, `strain_per_falling_order`, `starvation_strain`, `starvation_full_at`, `egalitarian_sensitivity`, `drift_per_met_order` — table in `leadership.md`) |
 ## Campaign Loop & System Activation
 
 ### Start Flow
@@ -341,11 +341,11 @@ Wellbeing, below): `settling` (`+population_growth_rate`), `terrain` (`−terrai
 `climate` (`−cold pressure`), `unrest` (crisis impacts + cultural sentiment, signed), `culture`
 (near / far from the band's belief anchor, signed — `belief.md` → "The culture morale term"), `cohesion`
 (the band over its cohesion ceiling, ≤ 0 — `belief.md` → "The cohesion morale
-term"), `fresh_water` (≥ 0, below). Their
+term"), `leadership` (signed, a led band only - `leadership.md` -> "The band judges its leader by what he delivers"), `fresh_water` (≥ 0, below). Their
 sum IS
 `last_morale_delta`; adding a future factor is a new `MoraleFactor` variant + one field, not a
 rewrite of the morale update. The dominant *negative* contributor becomes `last_morale_cause`
-(`MoraleCause` ∈ `None | Terrain | Cold | Unrest | Culture | Cohesion`) when the delta is negative, else `None`. Drivers:
+(`MoraleCause` ∈ `None | Terrain | Cold | Unrest | Culture | Cohesion | Leadership`) when the delta is negative, else `None`. Drivers:
 `Terrain` = terrain attrition + logistics hardness, `Cold` = temperature-difference penalty,
 `Unrest` = crisis impacts + cultural sentiment, `Culture` = the away side of the near / far from
 the ancestors term — a band not tied to its ancestors' place at full strength (`belief.md` → "The
@@ -376,7 +376,7 @@ pre-pass beside culture and cohesion (`resolve_fresh_water_terms`). Published as
 reuses this helper, so most of the map rates Hospitable/Fair and only extremes read Harsh/Hostile. These fields are **recomputed each turn** by
 `simulate_population`. Exported as `PopulationCohortState.moraleDelta`
 (fixed-point `long`, `FIXED_POINT_SCALE` = 1e6) + `moraleCause:ubyte` (`0=None, 1=Terrain, 2=Cold,
-3=Unrest, 4=Culture, 5=Cohesion`). `TileState.habitability:long` carries the band-independent `tile_morale_pressure` total
+3=Unrest, 4=Culture, 5=Cohesion, 6=Leadership`). `TileState.habitability:long` carries the band-independent `tile_morale_pressure` total
 for the tile (same fixed-point scale) so the client can rate a hex's harshness. All three are wired
 through `sim_schema`/`snapshot.rs`; the client consumes them for a morale trend arrow + named cause
 and a Tile-card Habitability line (client half).
@@ -463,7 +463,8 @@ party coming home, a band merging) can eat it. Engine: `core_sim/src/spoilage.rs
   larder before a store, the nearer store, the class that rots fastest (`KeepingConfig::eat_order`:
   flesh, then greens, then grain), the older lot, the longer-stored lot. Fresh food is therefore
   still eaten flesh, greens, grain; it is an old lot that jumps the queue. A detached party's
-  upkeep (`systems::expeditions`) still eats by class order.
+  upkeep (`systems::expeditions`) eats the same way (`spoilage::eat_least_time_left`, no preservation
+  held, no storage lesson taught): grain a turn from spoiling goes before fresh meat.
 - **The larder rot runs once a turn, right after the meal and before the turn's take lands**
   (`spoilage::rot_band_larders`, next in the Population chain after `simulate_population`): every
   lot ages one turn (`FoodMix::age_and_expire`) and a lot whose age has reached its class's shelf
@@ -486,6 +487,41 @@ party coming home, a band merging) can eat it. Engine: `core_sim/src/spoilage.rs
 - **A detached party's pack carries its composition but does not rot in this slice.** The larder
   rot is `With<ResidentBand>`; the pack keeps its lots and ages and lands home in the band's larder,
   where they rot by this rule.
+
+#### The band's spoilage, and the storage it would save
+
+Surplus spoilage belongs to the band and its storage, never to a hunt row. Engine:
+`core_sim/src/band_spoilage.rs`, `spoilage::spoilage_ahead`.
+
+- **`spoilage_ahead`** walks the larder and the reachable stores forward
+  `labor_config.yield_average_horizon_turns` turns in the turn's own order (the meal eats whatever is
+  closest to rotting, `plan_meal`; the rot pass; then the steady income lands at age 0), at the band's
+  held preservation (stores at the store lives), and returns the food each class rots a turn averaged
+  over the window. A FORWARD projection, never a trailing average. The income is each food row's
+  `realized` split by keeping class (`band_spoilage::income_by_class`: a hunt row by its herd's class,
+  `FaunaConfig::keeping_for` else `kill_fallback_class`; a forage row by `forage::patch_food_mix`
+  shares; a need row at its `sustainable`, as `band_food_flow` reads it).
+- **Wire** (own resident bands, appended last on `PopulationCohortState`, not on the redaction
+  allow-list): `spoilAhead:[KeepingSpoil{keeping, food}]` (non-zero classes, the keeping table's
+  order), `storageSaves:[StorageSave{rung, keeping, foodSaved, lessonKnown, declared, materialId,
+  materialNeeded, materialOnHand, tileKept}]` - one row per `keeping.preservation` entry whose rung
+  the band does not hold - `storageBuildMinSaved` (the lever below, echoed) - and `heldStores:[HeldStore{rung,
+  keeping, shelfLifeTurns}]`, one row per `keeping.preservation` rung the band HOLDS (the rack at its camp; a
+  store on the tile the band stands on), so the rack reads "meat keeps 20 turns". `BandImprovementState`
+  also carries `buildFraction` (the tile improvement's twin, `BandImprovement::build_fraction`). Native keys
+  `spoil_ahead`, `storage_saves`, `storage_build_min_saved`, `held_stores`, `band_improvements`.
+- **`foodSaved`** = the total spoil rate now less the same projection with that entry's class held
+  at its `shelf_life_turns`. **Approximation for a tile store (the pit):** its class is treated as
+  held in the larder rather than modelling the deposit into the pit. `lessonKnown` is the faction
+  knowing the rung's `unlock_knowledge`; `declared` a build of the rung already declared for the
+  band (the band row's `BuildSource::Band`, or a tile build on the band's own tile). No rung or class
+  id is named in the engine.
+- **The chief proposes it; the player approves it** (`chief_proposals.rs`, `work-party.md` -> "A chief
+  proposes a build"). A `storageSaves` row with the lesson known, nothing declared and `foodSaved >=
+  labor_config.band_orders.storage_build_min_saved` (**0.2** food/turn, a Workbench row) is a proposal
+  candidate whose ranking value is its `foodSaved`; nothing is declared until `approve_proposal`. The
+  chief never declares a storage build. A rival's food specialist reads the same rows and the same
+  echoed threshold and declares for itself (`ai-driver.md`).
 
 #### A storage pit is its band's second larder (#709)
 

@@ -22,6 +22,7 @@ use crate::{
     forage::CULTIVATION_DISCOVERY_ID,
     orders::FactionId,
     resources::{DiscoveryProgressLedger, SimulationTick},
+    scalar::scalar_zero,
     scalar::Scalar,
     sedentarization::SedentarizationScore,
     sites::DiscoveredSites,
@@ -56,7 +57,7 @@ pub const TRIBES_FORMED_TOTAL_KEY: &str = "internal.tribes.formed_total";
 pub const VOICE_MEDIUM_INDEX: &str = "voice.medium_index";
 
 /// Every signal id content may reference, other than the per-axis culture family.
-const BASE_SIGNALS: [&str; 13] = [
+const BASE_SIGNALS: [&str; 16] = [
     VOICE_MEDIUM_INDEX,
     "turn.index",
     "band.count",
@@ -67,6 +68,9 @@ const BASE_SIGNALS: [&str; 13] = [
     "tribes.formed_this_turn",
     "leadership.chiefs_emerged_this_turn",
     "leadership.councils_emerged_this_turn",
+    "leadership.bands_hungry_under_leader",
+    "leadership.bands_leader_failing",
+    "leadership.bands_leader_delivering",
     "discovery.progress.cultivation",
     "discovery.progress.herding",
     "fauna.collapsing_group_count",
@@ -250,6 +254,34 @@ pub fn sample_signals(sources: &SignalSources<'_>) -> (SignalSample, CumulativeT
     sample.set(
         "leadership.councils_emerged_this_turn",
         emerged_this_turn(sources, LeaderKind::ElderCouncil),
+    );
+
+    // How the player's led bands judge their leaders this turn (`leadership.md` -> "The band judges its
+    // leader by what he delivers"): read off the term and reading `simulate_population` parked on each
+    // led band, so the Telling and the morale breakdown cannot disagree.
+    let led = || {
+        sources
+            .bands
+            .iter()
+            .filter(|band| band.leadership.is_some_and(|l| l.leader.is_some()))
+    };
+    sample.set(
+        "leadership.bands_hungry_under_leader",
+        led()
+            .filter(|band| band.cohort.last_leadership.hungry)
+            .count() as f64,
+    );
+    sample.set(
+        "leadership.bands_leader_failing",
+        led()
+            .filter(|band| band.cohort.last_morale_contributions.leadership < scalar_zero())
+            .count() as f64,
+    );
+    sample.set(
+        "leadership.bands_leader_delivering",
+        led()
+            .filter(|band| band.cohort.last_morale_contributions.leadership > scalar_zero())
+            .count() as f64,
     );
 
     // Gatherings are a cumulative per-people count too, so "this turn" is the same kind of diff.

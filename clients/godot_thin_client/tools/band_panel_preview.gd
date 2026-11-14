@@ -2555,6 +2555,7 @@ func _ready() -> void:
 	# The Work tab's sections, its site crews and its two priority marks (`docs/plan_site_crews.md`).
 	await _render_build_crew_states()
 	await _render_tile_crew_state()
+	await _render_storage_row_states()
 
 	await _render_work_party_states()
 
@@ -19443,6 +19444,210 @@ func _render_tile_crew_state() -> void:
 		"branch": BAND_IMPROVEMENT_FX_BRANCH})
 	_assert_band_panel("band improvement — stopping it names `branch=<id>` (got %s)" % str(rack_line),
 		String(rack_line.get("line", "")).ends_with(" branch=%s" % BAND_IMPROVEMENT_FX_BRANCH))
+	_hud.update_ladder_rungs([])
+	_hud.update_ladder_branches([])
+	_hud.update_tile_improvements([])
+	_restore_workings_roster_fixture()
+
+## **THE STORE ROWS — the drying rack and the storage pit in GROUNDWORK**, each in its three states
+## (`not built` with the rack's Build, `building`, `built`). The rack is a band improvement published
+## only through `storage_saves` while unheld; the pit is a tile row at the camp tile (and one a way off, to
+## show the place wording survives). Three frames: `band_panel_storage_rows_<state>`.
+const STORE_FX_RACK_BRANCH := "camp_stores"
+const STORE_FX_PIT_BRANCH := "food_stores"
+const STORE_FX_PIT_RUNG := "food_stores:storage_pit"
+const STORE_FX_RACK_RUNG := "camp_stores:drying_rack"
+const STORE_FX_RACK_SHELF_LIFE := 20.0
+const STORE_FX_PIT_SHELF_LIFE := 120.0
+const STORE_FX_RACK_BUILD_FRACTION := 0.4
+const STORE_FX_RACK_LABEL := "Drying rack"
+const STORE_FX_PIT_LABEL := "Storage pit"
+const STORE_FX_PIT_BUILD_FRACTION := 0.4
+const STORE_FX_RACK_CREW := 2
+const STORE_FX_PIT_CREW := 1
+const STORE_FX_RACK_CREW_NONE := 0
+const STORE_FX_RACK_BUILDERS := 1
+
+func _store_fx_catalog() -> Array:
+	return [
+		{"rung_key": "carried", "branch": STORE_FX_RACK_BRANCH, "order": 1, "verb": "",
+			"label": "Carried", "source_kind": "band"},
+		{"rung_key": "drying_rack", "branch": STORE_FX_RACK_BRANCH, "order": 2, "verb": "rack",
+			"label": STORE_FX_RACK_LABEL, "source_kind": "band"},
+		{"rung_key": "open", "branch": STORE_FX_PIT_BRANCH, "order": 1, "verb": "",
+			"label": "Open ground", "source_kind": "tile"},
+		{"rung_key": "storage_pit", "branch": STORE_FX_PIT_BRANCH, "order": 2, "verb": "dig",
+			"label": STORE_FX_PIT_LABEL, "source_kind": "tile"},
+	]
+
+func _store_fx_pit_row(tile: Vector2i, rung: String, queued: bool) -> Dictionary:
+	return {
+		"tile_x": tile.x, "tile_y": tile.y, "branch": STORE_FX_PIT_BRANCH,
+		"current_rung": rung, "upkeep_demand": 0.0, "upkeep_supplied": 0.0,
+		"upkeep_workers_needed": 0, "upkeep_hands": 0.0, "upkeep_tools_short": false,
+		"upkeep_toe": [], "is_queued": queued, "build_turns_remaining": -1,
+		"build_legs": [], "build_blocked_reason": "",
+		"build_fraction": STORE_FX_PIT_BUILD_FRACTION if queued else 0.0,
+	}
+
+func _store_fx_save(rung: String, declared: bool, tile_kept: bool) -> Dictionary:
+	return {"rung": rung, "keeping": "dry" if tile_kept else "flesh", "food_saved": 0.4, "lesson_known": true,
+		"declared": declared, "material_id": "wood", "material_needed": 8.0,
+		"material_on_hand": 8.0, "tile_kept": tile_kept}
+
+## One state's frame. `rack_save` empty means the rack is held; `rack_crew` 0 means no crew row.
+func _stage_store_state(state: String, rack_save: Dictionary, rack_crew: int,
+		pit_rung: String, pit_queued: bool, rack_meter: float = -1.0,
+		rack_improvement: Dictionary = {}, rack_row_unstaffed: bool = false) -> void:
+	var band := _sections_band_fixture()
+	var camp := SourceForecast.band_tile(band)
+	_hud.update_tile_improvements([
+		_store_fx_pit_row(camp, pit_rung, pit_queued),
+		_store_fx_pit_row(ROSTER_NEAR_TILE, pit_rung, pit_queued)])
+	var saves: Array = []
+	if not rack_save.is_empty():
+		saves.append(rack_save)
+	band["storage_saves"] = saves
+	# The held half: a rung the band holds is a `held_stores` row (the pit scoped to the kept tile) and no save.
+	var held: Array = []
+	if rack_save.is_empty():
+		held.append({"rung": STORE_FX_RACK_RUNG, "keeping": "flesh",
+			"shelf_life_turns": STORE_FX_RACK_SHELF_LIFE})
+	if pit_rung == "":
+		saves.append(_store_fx_save(STORE_FX_PIT_RUNG, pit_queued, true))
+	else:
+		held.append({"rung": STORE_FX_PIT_RUNG, "keeping": "dry",
+			"shelf_life_turns": STORE_FX_PIT_SHELF_LIFE})
+	band["held_stores"] = held
+	band["band_improvements"] = [] if rack_meter < 0.0 else [
+		{"branch": STORE_FX_RACK_BRANCH, "build_fraction": rack_meter}]
+	if not rack_improvement.is_empty():
+		band["band_improvements"] = [rack_improvement]
+	var rows: Array = band["labor_assignments"]
+	for tile in [camp, ROSTER_NEAR_TILE]:
+		rows.append({"kind": HudConst.LABOR_KIND_TILE, "workers": STORE_FX_PIT_CREW,
+			"target_x": tile.x, "target_y": tile.y, "fauna_id": "", "branch": STORE_FX_PIT_BRANCH})
+	if rack_crew > 0 or rack_row_unstaffed:
+		rows.append({"kind": HudConst.LABOR_KIND_BAND, "workers": rack_crew,
+			"target_x": -1, "target_y": -1, "fauna_id": "", "branch": STORE_FX_RACK_BRANCH})
+	_push_bands([band])
+	_hud._bandpanel.rerender()
+	await _settle()
+
+func _store_fx_texts(meta: StringName, value: String) -> Array:
+	var texts: Array = []
+	var row := _find_meta_control_valued(_panel, String(meta), value)
+	if row == null:
+		return texts
+	var labels: Array = []
+	_collect_labels(row, labels)
+	for label in labels:
+		texts.append((label as Label).text)
+	return texts
+
+## The rack row's label reading exactly `text`, or null.
+func _store_fx_label(text: String) -> Label:
+	var row := _find_meta_control_valued(_panel, String(HudWorkVocab.BAND_IMPROVEMENT_ROW_META),
+		STORE_FX_RACK_BRANCH)
+	var labels: Array = []
+	_collect_labels(row, labels)
+	for label in labels:
+		if (label as Label).text == text:
+			return label
+	return null
+
+func _render_storage_row_states() -> void:
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	_hud.update_ladder_branches([
+		{"branch": STORE_FX_RACK_BRANCH, "area": "food", "source_kind": "band", "label": "Camp stores"},
+		{"branch": STORE_FX_PIT_BRANCH, "area": "food", "source_kind": "tile", "label": "Food stores"}])
+	_hud.update_ladder_rungs(_store_fx_catalog())
+	_set_world_herds(_herd_fixtures())
+	_set_forage_patches(_sections_patches(false))
+
+	# NOT BUILT: the rack row is the offer (no crew row yet), the pit stands unbuilt.
+	await _stage_store_state("not_built", _store_fx_save("camp_stores:drying_rack", false, false), 0,
+		"", false)
+	var camp := SourceForecast.band_tile(_sections_band_fixture())
+	var rack := _store_fx_texts(HudWorkVocab.BAND_IMPROVEMENT_ROW_META, STORE_FX_RACK_BRANCH)
+	var pit := _store_fx_texts(HudWorkVocab.TILE_ROW_META, "%d,%d:%s" % [camp.x, camp.y, STORE_FX_PIT_BRANCH])
+	var build: Button = _find_button_with_text(_panel, HudStorageVocab.BUILD_BUTTON_LABEL)
+	_assert_band_panel("store rows — an unbuilt rack reads `Drying rack` / `not built` with a Build (got %s)"
+			% str(rack),
+		rack.has(STORE_FX_RACK_LABEL) and rack.has("not built") and build != null)
+	_assert_band_panel("store rows — the pit at camp reads `Storage pit · in camp` / `not built` (got %s)"
+			% str(pit),
+		pit.has("%s · in camp" % STORE_FX_PIT_LABEL) and pit.has("not built"))
+	var lines: Array = []
+	var on_assign := func(payload: Dictionary) -> void:
+		lines.append(String(MAIN_SCRIPT.format_assign_labor(payload).get("line", "")))
+	_hud.assign_labor_requested.connect(on_assign)
+	if build != null:
+		build.pressed.emit()
+	_hud.assign_labor_requested.disconnect(on_assign)
+	_assert_band_panel("store rows — Build sends `... band camp_stores 0` (got %s)" % str(lines),
+		lines.size() == 1 and String(lines[0]).ends_with(" band %s 0" % STORE_FX_RACK_BRANCH))
+	await _stage_store_state("not_built", _store_fx_save("camp_stores:drying_rack", false, false), 0,
+		"", false)
+	await _save("band_panel_storage_rows_not_built")
+
+	# BUILDING: a declared build and no crew yet reads `building` without a Build; the pit shows its meter.
+	await _stage_store_state("building", _store_fx_save("camp_stores:drying_rack", true, false), 0,
+		"", true, STORE_FX_RACK_BUILD_FRACTION)
+	rack = _store_fx_texts(HudWorkVocab.BAND_IMPROVEMENT_ROW_META, STORE_FX_RACK_BRANCH)
+	pit = _store_fx_texts(HudWorkVocab.TILE_ROW_META, "%d,%d:%s" % [camp.x, camp.y, STORE_FX_PIT_BRANCH])
+	_assert_band_panel("store rows — a declared rack reads `building, 40%%` off its meter and offers no Build (got %s)"
+			% str(rack),
+		rack.has("building, 40%") and _find_button_with_text(_panel, HudStorageVocab.BUILD_BUTTON_LABEL) == null)
+	_assert_band_panel("store rows — the pit reads `building, 40%%` off its meter (got %s)" % str(pit),
+		pit.has("building, 40%"))
+	await _save("band_panel_storage_rows_building")
+
+	# MATERIALS-BLOCKED: the rack's second line says what it waits on, amber, with the figures off `storage_saves`.
+	var blocked := {"branch": STORE_FX_RACK_BRANCH, "build_fraction": 0.0, "builders_staffed": 0,
+		"builders_cap": 2, "build_blocked_reason": "materials"}
+	for case in [["none", 0.0, "needs 8 wood · none on hand"], ["some", 5.0, "needs 8 wood · 5 on hand"]]:
+		var blocked_save := _store_fx_save("camp_stores:drying_rack", true, false)
+		blocked_save["material_on_hand"] = float(case[1])
+		await _stage_store_state("blocked", blocked_save, STORE_FX_RACK_CREW_NONE, "", false, 0.0, blocked, true)
+		rack = _store_fx_texts(HudWorkVocab.BAND_IMPROVEMENT_ROW_META, STORE_FX_RACK_BRANCH)
+		var blocked_label := _store_fx_label(String(case[2]))
+		_assert_band_panel("store rows — a materials-blocked rack reads `%s` in WARN amber (got %s)"
+				% [case[2], str(rack)],
+			rack.has(case[2]) and not rack.has("building, 0%") and blocked_label != null
+			and blocked_label.get_theme_color("font_color") == HudStyle.WARN)
+		await _save("band_panel_storage_rows_blocked_%s" % case[0])
+
+	# BUILDING WITH A BUILDER: the crew number reads the builders, not the rack's zero keepers.
+	var staffed := {"branch": STORE_FX_RACK_BRANCH, "build_fraction": 0.2, "builders_staffed": 1,
+		"builders_cap": 2, "build_blocked_reason": ""}
+	await _stage_store_state("builder", _store_fx_save("camp_stores:drying_rack", true, false),
+		STORE_FX_RACK_CREW_NONE, "", false, 0.2, staffed, true)
+	rack = _store_fx_texts(HudWorkVocab.BAND_IMPROVEMENT_ROW_META, STORE_FX_RACK_BRANCH)
+	var rack_row := _find_meta_control_valued(_panel, String(HudWorkVocab.BAND_IMPROVEMENT_ROW_META),
+		STORE_FX_RACK_BRANCH)
+	var crew_values: Array = []
+	for crew_control in _collect_meta_controls(rack_row, HudWorkVocab.WORK_STRIP_CREW_META, []):
+		crew_values.append(crew_control.get_meta(HudWorkVocab.WORK_STRIP_CREW_META))
+	_assert_band_panel("store rows — a rack with 1 builder reads `building, 20%%` and a crew of 1 (got %s, crew %s)"
+			% [str(rack), str(crew_values)],
+		rack.has("building, 20%") and crew_values == [STORE_FX_RACK_BUILDERS])
+	await _save("band_panel_storage_rows_builder")
+
+	# BUILT: the rack's published row is gone (held) and a crew keeps it; the pit's rung is the storage pit.
+	await _stage_store_state("built", {}, STORE_FX_RACK_CREW, STORE_FX_PIT_RUNG, false)
+	rack = _store_fx_texts(HudWorkVocab.BAND_IMPROVEMENT_ROW_META, STORE_FX_RACK_BRANCH)
+	pit = _store_fx_texts(HudWorkVocab.TILE_ROW_META, "%d,%d:%s" % [camp.x, camp.y, STORE_FX_PIT_BRANCH])
+	_assert_band_panel("store rows — a held rack reads `meat keeps 20 turns` (got %s)" % str(rack),
+		rack.has("meat keeps 20 turns"))
+	_assert_band_panel("store rows — a held pit at camp reads `grain keeps 120 turns` (got %s)" % str(pit),
+		pit.has("grain keeps 120 turns"))
+	var far_pit := _store_fx_texts(HudWorkVocab.TILE_ROW_META, "%d,%d:%s" % [ROSTER_NEAR_TILE.x,
+		ROSTER_NEAR_TILE.y, STORE_FX_PIT_BRANCH])
+	_assert_band_panel("store rows — a pit off the kept tile reads plain `built` (got %s)" % str(far_pit),
+		far_pit.has("built") and not far_pit.has("grain keeps 120 turns"))
+	await _save("band_panel_storage_rows_built")
 	_hud.update_ladder_rungs([])
 	_hud.update_ladder_branches([])
 	_hud.update_tile_improvements([])

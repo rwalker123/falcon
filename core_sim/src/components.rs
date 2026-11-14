@@ -1921,6 +1921,10 @@ pub struct PopulationCohort {
     /// [`CohesionReading`]). Recomputed each turn beside `last_morale_contributions` and published as
     /// `PopulationCohortState.cohesionHeadcount` / `cohesionCeiling`.
     pub last_cohesion: CohesionReading,
+    /// **What the band's leader was judged on this turn** (see [`LeadershipReading`]). Recomputed each
+    /// turn beside `last_morale_contributions`; read by the delivery-drift system and the Telling's
+    /// `leadership.*` signals, so nothing recounts the orders after the turn changed them.
+    pub last_leadership: LeadershipReading,
     /// The three named fertility factors behind this turn's births — `hunger` (did we eat) ×
     /// `reserve` (is there a cushion) × `trend` (is the cushion growing or shrinking), the
     /// `birth_rate` multiplier from `docs/plan_population_growth_model.md`. The birth path's
@@ -1986,7 +1990,7 @@ pub struct PopulationCohort {
 /// Starvation is deliberately excluded — it is surfaced through the days-of-food path, not morale.
 ///
 /// Snapshot wire encoding (see [`MoraleCause::as_u8`]): `0 = None, 1 = Terrain, 2 = Cold,
-/// 3 = Unrest, 4 = Culture, 5 = Cohesion`.
+/// 3 = Unrest, 4 = Culture, 5 = Cohesion, 6 = Leadership`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum MoraleCause {
     /// Morale rose or held this turn — no dominant negative driver.
@@ -2005,6 +2009,9 @@ pub enum MoraleCause {
     /// The cohesion term dominated: the band itself is over its
     /// cohesion ceiling.
     Cohesion,
+    /// The leadership term dominated: the band's leader is failing to deliver (falling orders, or the
+    /// people going short at the meal).
+    Leadership,
 }
 
 /// Which mortality term did most of the killing in one age bracket on one turn.
@@ -2121,7 +2128,7 @@ impl DemographicFlowAccumulator {
 
 impl MoraleCause {
     /// Encode for the snapshot's `moraleCause:ubyte` field: `0=None, 1=Terrain, 2=Cold, 3=Unrest,
-    /// 4=Culture, 5=Cohesion`.
+    /// 4=Culture, 5=Cohesion, 6=Leadership`.
     pub fn as_u8(self) -> u8 {
         match self {
             MoraleCause::None => 0,
@@ -2130,6 +2137,7 @@ impl MoraleCause {
             MoraleCause::Unrest => 3,
             MoraleCause::Culture => 4,
             MoraleCause::Cohesion => 5,
+            MoraleCause::Leadership => 6,
         }
     }
 }
@@ -2154,6 +2162,8 @@ pub enum MoraleFactor {
     /// The band is too big to hold together: its own size over its cohesion ceiling
     /// (≤ 0).
     Cohesion,
+    /// The band's leader delivers (`+`) or fails to (`−`) — signed.
+    Leadership,
     /// The band stands on fresh-watered ground (`>= 0`; never a cause, causes are negative).
     FreshWater,
 }
@@ -2180,6 +2190,10 @@ pub struct MoraleContributions {
     /// cohesion: `−drag × max(0, size − ceiling) / ceiling` for the band's own size
     /// (≤ 0; `wellbeing_config.json` → `cohesion`). Another band on the same tile does not count.
     pub cohesion: Scalar,
+    /// leadership: the band judges its leader by what he delivers — `+popularity` per met order,
+    /// `−strain × patience` per falling order and for going short at the meal; `0` with no leader
+    /// (signed; `wellbeing_config.json` → `leadership`, `.claude/rules/core_sim/leadership.md`).
+    pub leadership: Scalar,
     /// fresh water: `+fresh_water_morale_bonus` while the band's current tile is fresh-watered
     /// (`forage::tile_is_fresh_watered`), else `0` (>= 0; `turn_pipeline_config.json` -> `population`).
     pub fresh_water: Scalar,
@@ -2197,6 +2211,20 @@ pub struct CohesionReading {
     pub headcount: u32,
     /// The band's cohesion ceiling, in whole people.
     pub ceiling: u32,
+}
+
+/// **What a band's leader was judged on this turn** (`.claude/rules/core_sim/leadership.md` → "The
+/// band judges its leader by what he delivers"): how many of the band's orders were met and how many
+/// were falling, and whether its people went short at the meal. All zero / false for a band with no
+/// leader.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeadershipReading {
+    /// Orders whose stock stood at or above their target.
+    pub met_orders: u32,
+    /// Orders below their target whose take was below their draw.
+    pub falling_orders: u32,
+    /// The people went short at this turn's meal (the starvation deficit was above zero).
+    pub hungry: bool,
 }
 
 /// The three named fertility factors behind a cohort's births this turn — the `birth_rate`
@@ -2247,15 +2275,16 @@ impl FertilityFactors {
 impl MoraleContributions {
     /// The active contributions as `(factor, signed value)` pairs — the itemized breakdown the
     /// client can render and the single source both `total` and cause attribution iterate. Ordered
-    /// by the tie-break priority (Terrain ≥ Climate ≥ Unrest ≥ Culture ≥ Cohesion) so the dominant-cause scan
+    /// by the tie-break priority (Terrain ≥ Climate ≥ Unrest ≥ Culture ≥ Cohesion ≥ Leadership) so the dominant-cause scan
     /// is a stable first-max.
-    pub fn contributions(&self) -> [(MoraleFactor, Scalar); 7] {
+    pub fn contributions(&self) -> [(MoraleFactor, Scalar); 8] {
         [
             (MoraleFactor::Terrain, self.terrain),
             (MoraleFactor::Climate, self.climate),
             (MoraleFactor::Unrest, self.unrest),
             (MoraleFactor::Culture, self.culture),
             (MoraleFactor::Cohesion, self.cohesion),
+            (MoraleFactor::Leadership, self.leadership),
             (MoraleFactor::FreshWater, self.fresh_water),
             (MoraleFactor::Settling, self.settling),
         ]
@@ -2270,7 +2299,7 @@ impl MoraleContributions {
 
     /// The dominant *negative* contributor as a [`MoraleCause`] (the "why morale fell" label). The
     /// most-negative labeled contribution wins; `Settling` is base growth (never a negative cause),
-    /// and ties resolve by `contributions()` order (Terrain ≥ Climate ≥ Unrest ≥ Culture ≥ Cohesion).
+    /// and ties resolve by `contributions()` order (Terrain ≥ Climate ≥ Unrest ≥ Culture ≥ Cohesion ≥ Leadership).
     pub fn dominant_negative_cause(&self) -> MoraleCause {
         let mut best: Option<(MoraleFactor, Scalar)> = None;
         for (factor, value) in self.contributions() {
@@ -2287,6 +2316,7 @@ impl MoraleContributions {
             Some((MoraleFactor::Unrest, _)) => MoraleCause::Unrest,
             Some((MoraleFactor::Culture, _)) => MoraleCause::Culture,
             Some((MoraleFactor::Cohesion, _)) => MoraleCause::Cohesion,
+            Some((MoraleFactor::Leadership, _)) => MoraleCause::Leadership,
             _ => MoraleCause::None,
         }
     }
@@ -4496,6 +4526,12 @@ pub struct SourceYield {
     /// `labor_config.yield_average_horizon_turns` turns, a pure function of the source's current state.
     /// See the struct-level doc above.
     pub realized: f32,
+    /// **The share of [`Self::realized`] (and of `arrivals`) the home band can EAT before it spoils** -
+    /// `1` unless a far hunt's aged packs outrun the band's meals ([`crate::work_party::CaravanForecast::eaten_fraction`]).
+    /// `realized` is the row's DISPLAY figure and carries the walk's rot alone; everything that VALUES
+    /// the source (the runway, the need clock, the shed order, a seat's herd pricing) reads
+    /// [`Self::eaten_realized`] and [`Self::eaten_arrival`].
+    pub eaten_fraction: f32,
     /// **The discrete arrival schedule** — `arrivals[i]` = the food landing `i + 1` turns from now,
     /// `labor_config.arrivals_horizon_turns` entries long, `0.0` on a turn nothing lands. See the
     /// struct-level doc above.
@@ -4641,6 +4677,17 @@ impl YieldRange {
 }
 
 impl SourceYield {
+    /// The steady yield the band can actually EAT - [`Self::realized`] less the aged packs it cannot
+    /// eat before they spoil. What every reader that values the source reads.
+    pub fn eaten_realized(&self) -> f32 {
+        self.realized * self.eaten_fraction
+    }
+
+    /// What lands `slot + 1` turns from now, as the band can eat it ([`Self::eaten_realized`]'s twin).
+    pub fn eaten_arrival(&self, slot: usize) -> f32 {
+        self.arrivals.get(slot).copied().unwrap_or(0.0) * self.eaten_fraction
+    }
+
     /// A source that has produced nothing: the row every assignment starts each turn's resolution
     /// with (so an arm that bails — out of range, module lost, herd gone — leaves a correct 0-yield
     /// row), and the row a freshly-staffed assignment carries until it is seeded from its pre-commit
@@ -4654,6 +4701,8 @@ impl SourceYield {
         overdraws: false,
         // Nothing was taken, so the steady average is zero too.
         realized: 0.0,
+        // Nothing is capped by what the band eats where nothing lands.
+        eaten_fraction: 1.0,
         // …nor in the feed currency: nothing was harvested, so nothing was foddered.
         fodder: 0.0,
         // Nothing was harvested, so nothing was made of anything. An **empty** list, not a row of
@@ -7156,6 +7205,10 @@ pub struct BuildCrew {
     /// **The most builders the build could take this turn** — the rung's own cap, cut by the room
     /// the tile left. What the wire states beside the crew.
     pub cap: u32,
+    /// **THE BUILD HOLDS NO BUILDERS BECAUSE THE BAND IS FEEDING ITSELF FIRST** - the staffing's
+    /// food-first look-ahead found a meal short with the builders working and dealt every source row
+    /// before any build. The published reason is [`crate::intensification::BuildGate::FeedingFirst`].
+    pub fed_first: bool,
 }
 
 impl BuildCrew {
@@ -8696,7 +8749,7 @@ impl LaborAllocation {
         }
         self.last_yields
             .get(index)
-            .map_or(NOTHING_PER_WORKER, |yields| yields.realized)
+            .map_or(NOTHING_PER_WORKER, SourceYield::eaten_realized)
             / assignment.workers as f32
     }
 
@@ -8726,7 +8779,7 @@ impl LaborAllocation {
         let Some(yields) = self.last_yields.get(index) else {
             return false;
         };
-        yields.realized > PAYS_NOTHING
+        yields.eaten_realized() > PAYS_NOTHING
             || yields.fodder > PAYS_NOTHING
             || yields
                 .materials

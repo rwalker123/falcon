@@ -338,6 +338,17 @@ pub enum CommandPayload {
         /// The one row a `release` / `claim` is about, `None` for the whole kind.
         row: Option<BandOrderRow>,
     },
+    /// **Approve the chief's build proposal** for one band (`approve_proposal <faction> <band>`).
+    ApproveProposal {
+        faction_id: u32,
+        band_id: u64,
+    },
+    /// **"Not now" on a proposed build** (`defer_proposal <faction> <band> <build-key>`).
+    DeferProposal {
+        faction_id: u32,
+        band_id: u64,
+        build_key: String,
+    },
     /// **Say how a band splits a maintenance pool it cannot stretch**
     /// (`docs/plan_standing_upkeep.md` §2.5) — `"spread"` (everything degrades a little) or
     /// `"priority"` (fund sources completely, most-invested first).
@@ -1003,6 +1014,9 @@ pub struct WorkPartyForecastReply {
     /// **Cargo per turn lost on the walk home to transit rot** (#706), over the same horizon as
     /// `rate_home` (which is net of it). `0` inside the apron and on any walk everything survives.
     pub spoiled_rate_home: f32,
+    /// **The share of [`Self::rate_home`] the home band can EAT before it spoils** (`1` = all of it);
+    /// `rate_home` is the walk's rot alone. Meaningful only when `posts_a_party`.
+    pub eaten_fraction: f32,
     /// **The shortest shelf life among the cargo's classes that rot on this walk**, in turns; `0`
     /// when nothing rots.
     pub transit_keeps_turns: f32,
@@ -1627,6 +1641,10 @@ pub struct HuntCrewTakeRow {
     /// **The 1-based turn this crew's first pack lands**, from the same forecast; `0` inside the
     /// apron (nothing walks) or when no pack lands within the forecast horizon.
     pub home_first_load_turn: u32,
+    /// **[`Self::home_animals_likely`] x the share the home band can eat before it spoils** - what a
+    /// seat that values the herd reads; `home_animals_likely` is the display figure (the walk's rot
+    /// alone).
+    pub home_eaten_animals_likely: f32,
 }
 
 /// **The hunt take curve** — what each crew size actually brings down, so a pre-commit panel can
@@ -2225,6 +2243,22 @@ impl CommandEnvelope {
                 material: material.clone(),
                 branch: branch.clone(),
                 roadwork: *roadwork,
+            }),
+            CommandPayload::ApproveProposal {
+                faction_id,
+                band_id,
+            } => pb::command_envelope::Command::ApproveProposal(pb::ApproveProposalCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+            }),
+            CommandPayload::DeferProposal {
+                faction_id,
+                band_id,
+                build_key,
+            } => pb::command_envelope::Command::DeferProposal(pb::DeferProposalCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                build_key: build_key.clone(),
             }),
             CommandPayload::BandOrder {
                 faction_id,
@@ -3035,6 +3069,17 @@ impl CommandEnvelope {
                 branch: cmd.branch,
                 roadwork: cmd.roadwork,
             },
+            pb::command_envelope::Command::ApproveProposal(cmd) => {
+                CommandPayload::ApproveProposal {
+                    faction_id: cmd.faction_id,
+                    band_id: cmd.band_id,
+                }
+            }
+            pb::command_envelope::Command::DeferProposal(cmd) => CommandPayload::DeferProposal {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                build_key: cmd.build_key,
+            },
             pb::command_envelope::Command::BandOrder(cmd) => CommandPayload::BandOrder {
                 faction_id: cmd.faction_id,
                 band_id: cmd.band_id,
@@ -3493,6 +3538,7 @@ impl QueryReplyEnvelope {
                             next_rung_keep_hands: row.next_rung_keep_hands,
                             home_animals_likely: row.home_animals_likely,
                             home_first_load_turn: row.home_first_load_turn,
+                            home_eaten_animals_likely: row.home_eaten_animals_likely,
                         })
                         .collect(),
                     armed_crew: answer.armed_crew,
@@ -3582,6 +3628,7 @@ impl QueryReplyEnvelope {
                     take_next_turn: answer.take_next_turn,
                     keep_hands: answer.keep_hands,
                     spoiled_rate_home: answer.spoiled_rate_home,
+                    eaten_fraction: answer.eaten_fraction,
                     transit_keeps_turns: answer.transit_keeps_turns,
                     fodder_rate_home: answer.fodder_rate_home,
                     materials_rate_home: answer
@@ -3656,6 +3703,7 @@ impl QueryReplyEnvelope {
                             next_rung_keep_hands: row.next_rung_keep_hands,
                             home_animals_likely: row.home_animals_likely,
                             home_first_load_turn: row.home_first_load_turn,
+                            home_eaten_animals_likely: row.home_eaten_animals_likely,
                         })
                         .collect(),
                     armed_crew: answer.armed_crew,
@@ -3740,6 +3788,7 @@ impl QueryReplyEnvelope {
                     take_next_turn: answer.take_next_turn,
                     keep_hands: answer.keep_hands,
                     spoiled_rate_home: answer.spoiled_rate_home,
+                    eaten_fraction: answer.eaten_fraction,
                     transit_keeps_turns: answer.transit_keeps_turns,
                     fodder_rate_home: answer.fodder_rate_home,
                     materials_rate_home: answer
@@ -4380,6 +4429,7 @@ mod tests {
                 take_next_turn: 12.5,
                 keep_hands: 1.25,
                 spoiled_rate_home: 0.75,
+                eaten_fraction: 0.5,
                 transit_keeps_turns: 4.0,
                 fodder_rate_home: 0.5,
                 materials_rate_home: vec![MaterialPayoff {
@@ -4435,6 +4485,7 @@ mod tests {
                         keep_hands: 0.75,
                         home_animals_likely: workers as f32 * 0.3,
                         home_first_load_turn: 4,
+                        home_eaten_animals_likely: workers as f32 * 0.2,
                     })
                     .collect(),
                 // **Short of the crew asked about, and named** — the shape the sheet's

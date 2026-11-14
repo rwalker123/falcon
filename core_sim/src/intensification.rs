@@ -762,6 +762,12 @@ pub enum BuildGate {
     /// or a trade. Naming the *good* is the whole point — *"raise this band's Builders role"* is
     /// wrong advice the moment the missing thing is stone.
     Materials,
+    /// **THE BAND IS FEEDING ITSELF FIRST** - the staffing's food-first look-ahead
+    /// (`labor_config.food_first_window_turns`) found a meal short within the window with the
+    /// builders working, so every source row was dealt before any build and this one got no hands.
+    /// Not a conjunct of any rung's `eligible`: it is minted by the staffing, and it clears the turn
+    /// the larder no longer needs the hands.
+    FeedingFirst,
 }
 
 impl BuildGate {
@@ -789,6 +795,7 @@ impl BuildGate {
             BuildGate::RingIdle => "ring_idle",
             BuildGate::Unworked => "unworked",
             BuildGate::Materials => "materials",
+            BuildGate::FeedingFirst => "feeding_first",
         }
     }
 
@@ -2701,6 +2708,10 @@ pub struct RungDef {
     /// (`… lost — back to a tended patch`). The article is part of the config: "a tended patch" but
     /// "wild ground", and no rule derives one from the other.
     pub label_fallback: String,
+    /// **THE PHRASE A CHIEF'S BUILD PROPOSAL NAMES THIS RUNG BY** - "dig a storage pit", "build a
+    /// drying rack" ([`crate::chief_proposals`]). Absent: the verb and the rung's `label_fallback`.
+    #[serde(default)]
+    pub proposal_phrase: Option<String>,
 }
 
 /// **WHAT AN EXTRACTION OR FORESTRY RUNG BUYS** (`docs/plan_extraction.md` §4c), on
@@ -7043,6 +7054,9 @@ mod tests {
         grafted["unlock_knowledge"] = Value::Null;
         grafted["earns_knowledge"] = Value::Null;
         grafted["site_requirement"] = Value::Null;
+        // The cloned Tended rung carries a `worked_land` relaxation; a rung with no site rule has
+        // nothing for a lesson to loosen.
+        grafted["site_relaxations"] = serde_json::json!([]);
         grafted["requires_crop"] = Value::Bool(false);
         grafted["traits"] = serde_json::json!(["managed"]);
         grafted["label"] = Value::String("Grafted orchard".to_string());
