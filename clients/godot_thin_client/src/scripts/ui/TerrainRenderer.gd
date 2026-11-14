@@ -320,15 +320,15 @@ const RIVER_CHANNEL_MASK := 0b111111  # the 6 exit bits, one per odd-r direction
 # FROM BELOW — paved is unchanged and stays the anchor — while staying monotone in both width and
 # opacity. Prominence still rides opacity rather than four palette colours (see the rule file); what
 # changed is the medium the alphas are measured in, not the principle.
-const ROAD_DEFAULT_PATH_WIDTH := 0.080
-const ROAD_DEFAULT_TRAIL_WIDTH := 0.100
-const ROAD_DEFAULT_DIRT_ROAD_WIDTH := 0.118
-const ROAD_DEFAULT_PAVED_ROAD_WIDTH := 0.135
+const ROAD_DEFAULT_PATH_WIDTH := 0.025
+const ROAD_DEFAULT_TRAIL_WIDTH := 0.040
+const ROAD_DEFAULT_DIRT_ROAD_WIDTH := 0.058
+const ROAD_DEFAULT_PAVED_ROAD_WIDTH := 0.080
 const ROAD_DEFAULT_PATH_OPACITY := 0.58
 const ROAD_DEFAULT_TRAIL_OPACITY := 0.70
 const ROAD_DEFAULT_DIRT_ROAD_OPACITY := 0.82
 const ROAD_DEFAULT_PAVED_ROAD_OPACITY := 0.94
-const ROAD_DEFAULT_SOFTNESS_WIDTH := 0.03
+const ROAD_DEFAULT_SOFTNESS_WIDTH := 0.015
 const ROAD_DEFAULT_TEXTURE_SCALE := 1.4
 const ROAD_DEFAULT_AT_RISK_TINT := 0.75
 const ROAD_DEFAULT_MIN_RADIUS := 3.0

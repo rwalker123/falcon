@@ -1045,7 +1045,7 @@ const ROAD_JUNCT_LONE := [Vector2i(6, 3)]
 const ROAD_JUNCT_RUNG_INDEX := 2        # dirt road — wide enough that the geometry is legible
 
 # ⛔ **THE LONE TILE'S OWN GUARD, and the frame CANNOT be read for it by eye.** The disc a linkless
-# road paints is ONE ROAD-WIDTH ACROSS — at this fixture's rung and radius a blob ~17 px wide — which
+# road paints is ONE ROAD-WIDTH ACROSS — at this fixture's rung and radius a blob ~9 px wide — which
 # on the prairie's own high-frequency texture is indistinguishable from a bare patch of ground. Two
 # readers hunting for it in `road_junctions.png` both concluded the disc was missing when it was in
 # fact drawing correctly; a caption pointing at something no one can find is not verification. So the
@@ -1054,10 +1054,10 @@ const ROAD_JUNCT_RUNG_INDEX := 2        # dirt road — wide enough that the geo
 # forms tile by tile, so the FIRST tile of every road in the game is exactly this case.
 #
 # Floor derivation, not a taste number: the disc's footprint is pi*(half_width + softness)^2 at the
-# fixture's rung and radius — pi*(0.118*75 + 0.03*75)^2 ~= 387 px. The floor sits well under that (so
-# retuning the ladder's middle rungs cannot trip it) and enormously above the EXACTLY ZERO a disc that
+# fixture's rung and radius — pi*(0.058*75 + 0.015*75)^2 ~= 94 px (measured 91). The floor sits well
+# under that (so retuning the ladder's middle rungs cannot trip it) and enormously above the EXACTLY ZERO a disc that
 # never drew would move.
-const ROAD_LONE_MIN_CHANGED_PX := 120
+const ROAD_LONE_MIN_CHANGED_PX := 60
 
 # State 21 (ATRISK): §7's at-risk rule. **The OPACITY half carries over verbatim and the WIDTH half was
 # deliberately raised**: the retired `AnnotationRenderer` drew an at-risk road at `ROAD_AT_RISK_WIDTH`
