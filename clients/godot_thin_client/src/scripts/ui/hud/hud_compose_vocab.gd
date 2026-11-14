@@ -1977,6 +1977,12 @@ const STAFFING_PREVIEW_ALL_IDLE := ", all idle"
 const STAFFING_PREVIEW_BUILD_KIND_PREFIX := "build:"
 const STAFFING_PREVIEW_BUILD_FORMAT := "the %s build"
 
+## So do a bench order's crafters, named as the Crafting panel names the order: `1 from the Baskets
+## order`. The kind is `sim_runtime`'s `STAFFING_LOSS_KIND_BENCH`; the sim resolves the name.
+const STAFFING_PREVIEW_BENCH_KIND := "bench"
+const STAFFING_PREVIEW_BENCH_FORMAT := "the %s order"
+const STAFFING_PREVIEW_BENCH_UNNAMED := "a bench order"
+
 ## The Work tab's names for the row kinds that have no per-source format of their own.
 const STAFFING_PREVIEW_ROADWORK_NAME := "Roadwork"
 const STAFFING_PREVIEW_BAND_NAME := "Band work"
@@ -1999,6 +2005,10 @@ static func staffing_loss_name(loss: Dictionary, herd_label_for_id: Callable) ->
         var inner := loss.duplicate()
         inner["kind"] = kind.substr(STAFFING_PREVIEW_BUILD_KIND_PREFIX.length())
         return STAFFING_PREVIEW_BUILD_FORMAT % staffing_loss_name(inner, herd_label_for_id)
+    if kind == STAFFING_PREVIEW_BENCH_KIND:
+        var order_name := String(loss.get("order_name", ""))
+        return STAFFING_PREVIEW_BENCH_UNNAMED if order_name == "" \
+            else STAFFING_PREVIEW_BENCH_FORMAT % order_name
     var x := int(loss.get("x", 0))
     var y := int(loss.get("y", 0))
     if kind == SourceForecast.LABOR_KIND_HUNT:

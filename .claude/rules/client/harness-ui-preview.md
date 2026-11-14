@@ -546,7 +546,10 @@ rendered before it is trusted — an empty conflict list proves nothing here.
 Appended LAST in `CHAPTERS`. Four frames: `work_strip_forage_sheet` (an unworked patch, the strip with the
 next rung on offer), `work_strip_forage_sheet_rung_card` (the chip pressed, the rung card open),
 `work_strip_hunt_sheet`, and `work_strip_worked_sheet` (a worked patch, the chip filling and the footer's
-`Show on map`).
+`Show on map`). Two more frames, `work_strip_hands_to_bench_one` / `_two`, put the sim's `hands_to_bench`
+sentence on its own line under the worked row's strip (the two-order string reads in full at the sheet's width); an empty sentence is asserted to
+draw no label. `crafting_bench` asserts the High order's Priority hover carries the High line and a Normal's
+does not.
 
 The claims a frame cannot make: the card is a visible `Window` over the sheet's `CanvasLayer` (read off
 `RungCardController.card()`), it dismisses, and an UNWORKED source's footer carries no `Show on map`
@@ -2511,7 +2514,7 @@ inspection.
 `pressed.emit()` being unable to see a covered, disabled, zero-size or IGNORE-filtered control. The
 command is asserted on the LINE through `MAIN_SCRIPT.format_bench_priority`, the work board's own
 idiom, for **all three** levels: a commit hard-wired to `normal` satisfies any single-level claim.
-Beside each, what did NOT go out — a mis-wired rung emitting `bench_crew` or `bench_remove` satisfies
+Beside each, what did NOT go out — a mis-wired rung emitting `bench_remove` satisfies
 a bare *something was emitted*.
 
 **The LIT test is the SAME one `band_panel_preview._assert_work_priority_picker_lit` makes** — the
@@ -3697,9 +3700,8 @@ reference bench grew ~26px and that state's ledger, which fits its room with und
 began scrolling. Measured by the run (`FAIL — precondition: the collapsed BOTTOM-dock ledger fits
 inside its room`), not estimated.
 
-**`_crew_button_disabled` skips the queue's own steppers** (`ORDER_DECREMENT_META` /
-`ORDER_INCREMENT_META`): they wear the crew stepper's `−` / `+` glyphs, so a face search would read a
-live COUNT `+` as a live crew `+` and pass the benchable-ceiling claim on the wrong control.
+**The bench-wide crew stepper and its harness helpers are gone** (#873): the order rows' count steppers are
+reached by `ORDER_DECREMENT_META` / `ORDER_INCREMENT_META` valued the order index, never by face.
 
 **THE SHORT-HEAD FOLLOW-UP added one frame and nine claims** — `crafting_queue_short_head`
 (`_short_head_state`, after the queue state): the well follows `BenchState.worked`, the skipped head
@@ -3730,6 +3732,8 @@ Three frames and thirteen claims, appended LAST in the chapter (`_auto_craft_sta
 - `crafting_auto_waiting` -- an auto head short of bone: the `AUTO` tag on the well title, the Skip link under the red blocked line, the switch ON. PNG-less beside it: a REAL press on the switch sends `bench_auto <f> <band> off` and on Skip `bench_auto_skip <f> <band>` (asserted on the command LINE through `Main.format_bench_auto*`), and the negatives that make the pair mean something -- a waiting head the PLAYER queued gets no Skip/tag, and Auto OFF hides Skip even on an auto-tagged head while the switch reads OFF.
 - `crafting_auto_working` -- an auto order being worked, the clubs suggestion in `auto_skipped`: its note by equality (`Auto skipped — back when bone is in`), no red shortfall line, Queue live, no Skip. PNG-less: the same item with nothing short reads the free-bench line, and a queued auto order on a queue ROW wears the tag.
 - `crafting_auto_idle` -- Auto on over an idle bench reads `Auto: nothing to make.` and not the Make-a-row prompt.
+- `crafting_auto_wait_idle` / `crafting_auto_wait_note` -- `auto_wait_reason` as the idle sub line (`Auto: <reason>.`) and as the dim note under a bench with orders; an empty reason falls back / draws no note.
+- `crafting_every_hand` -- an uncrewed order's long neutral `blocked_reason` renders on its row, whole on the tooltip.
 
 - `crafting_build_queue_suggestion` (`_build_queue_suggestion_states`, after the auto frames) -- a declared-build suggestion reading `2 builders, for (12, 7)` (`1 builder, for (12, 7)` at one), the label being the build's own site name with no position (`HudWorkVocab.build_site_subject`). PNG-less beside it: a Sled short for a take AND a declared build keeps `3 hunters without`.
 

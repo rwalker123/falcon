@@ -291,7 +291,7 @@ pub struct MaterialBatch {
 ///
 /// A partial take leaves the source batch's readings untouched (an average does not move when a
 /// uniform part of it is removed), so this reports the batch's reading verbatim.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MaterialDraw {
     /// Which batch it came from.
     pub band: crate::materials_config::BandKey,
@@ -1057,10 +1057,14 @@ impl LocalStore {
             .map(|axis| {
                 let held = batch.characteristics.get(axis).copied().unwrap_or_default();
                 let arriving = characteristics.get(axis).copied().unwrap_or_default();
-                (
-                    axis.clone(),
-                    held * existing_share + arriving * arriving_share,
-                )
+                // **Two equal readings blend to themselves exactly**, so a set-aside batch returned at
+                // its own reading restores the store to the bit rather than to an ulp.
+                let reading = if held == arriving {
+                    held
+                } else {
+                    held * existing_share + arriving * arriving_share
+                };
+                (axis.clone(), reading)
             })
             .collect();
         batch.amount = total;
@@ -3942,40 +3946,65 @@ pub struct MusterPlan {
     pub from_idle: u32,
     /// `(row index, hands)` taken from donor rows, in the order they gave them up.
     pub from_rows: Vec<(usize, u32)>,
-    /// Hands taken from the crafting bench's crew. The bench is a donor beside the rows
-    /// ([`MusterBench`]), so its share is part of the one plan every reader asks.
+    /// Hands taken from the crafting bench's crew - the sum of [`Self::from_bench_orders`]. The bench
+    /// is a donor beside the rows ([`MusterBench`]), so its share is part of the one plan every
+    /// reader asks.
     pub from_bench: u32,
+    /// `(bench order index, hands)` taken from each order, in the order they gave them up.
+    pub from_bench_orders: Vec<(usize, u32)>,
 }
 
-/// **THE CRAFTING BENCH AS A MUSTER DONOR** — what [`LaborAllocation::muster_donors`] needs of it: the
-/// player's rank on the bench and the crew standing at it. The bench is not a [`LaborTarget`] row, so
-/// it is handed in beside the allocation rather than found in it. It lends like a worked row does —
-/// ranked by its own [`BandBench::priority`] among the source rows, and **before that tier's rows**
-/// (a bench pays into no account, the famine shed's own tie-break). It stands at camp, so it is
-/// always local. It carries no hunt take kit, so it never joins the kit-carrying pass.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// **THE CRAFTING BENCH AS A MUSTER DONOR** — what [`LaborAllocation::muster_donors`] needs of it: one
+/// candidate per staffed order, each with the order's own rank and its crew. The bench is not a
+/// [`LaborTarget`] row, so it is handed in beside the allocation rather than found in it. Each order
+/// lends like a worked row does — ranked by its own [`BenchOrder::priority`] among the source rows,
+/// and **before that tier's rows** (a bench pays into no account, the famine shed's own tie-break).
+/// It stands at camp, so it is always local. It carries no hunt take kit, so it never joins the
+/// kit-carrying pass.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MusterBench {
-    /// The bench's own rank ([`BandBench::priority`]).
-    pub priority: SourcePriority,
-    /// The crew at the bench ([`BandBench::workers`]).
-    pub hands: u32,
+    /// `(order index, the order's rank, the order's crew)` for every staffed order.
+    pub orders: Vec<(usize, SourcePriority, u32)>,
 }
 
 impl MusterBench {
-    /// The bench as a donor, or `None` when nobody is at it (nothing to lend).
+    /// The bench as donors, or `None` when nobody is at it (nothing to lend).
     pub fn of(bench: &BandBench) -> Option<Self> {
-        (bench.workers > NO_CREW_ON_THIS_ACTIVITY).then_some(Self {
-            priority: bench.priority,
-            hands: bench.workers,
-        })
+        let orders: Vec<(usize, SourcePriority, u32)> = bench
+            .orders
+            .iter()
+            .enumerate()
+            .filter(|(_, order)| order.crew.total() > NO_CREW_ON_THIS_ACTIVITY)
+            .map(|(index, order)| (index, order.priority, order.crew.total()))
+            .collect();
+        (!orders.is_empty()).then_some(Self { orders })
+    }
+
+    fn hands_of(&self, order: usize) -> u32 {
+        self.orders
+            .iter()
+            .find(|(index, _, _)| *index == order)
+            .map_or(NO_CREW_ON_THIS_ACTIVITY, |(_, _, hands)| *hands)
+    }
+
+    fn priority_of(&self, order: usize) -> SourcePriority {
+        self.orders
+            .iter()
+            .find(|(index, _, _)| *index == order)
+            .map_or(SourcePriority::default(), |(_, priority, _)| *priority)
+    }
+
+    /// Every hand the bench could lend.
+    pub fn total(&self) -> u32 {
+        self.orders.iter().map(|(_, _, hands)| *hands).sum()
     }
 }
 
-/// One candidate in the muster's donor order: a worked source row, or the crafting bench.
+/// One candidate in the muster's donor order: a worked source row, or one crafting-bench order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum MusterDonor {
     Row(usize),
-    Bench,
+    Bench(usize),
 }
 
 /// **HOW SHORT THE HUNT'S TAKE KIT IS, AND WHO IS HOLDING IT** — what [`LaborAllocation::muster_donors`]
@@ -4064,18 +4093,12 @@ impl LaborAssignment {
     }
 }
 
-/// **WHAT A SHED TOOK HANDS OFF** — a labor row, or the band's crafting bench.
-///
-/// **The bench is deliberately NOT a [`LaborTarget`]** (*"make IS the assignment"*): giving it one
-/// would put a fictitious row on every yield readout in the game. But it spends the same pool the
-/// rows do, so the shedding order has to be able to name it — hence a second vocabulary here, at the
-/// one seam that reports what the walk took, rather than a variant inside the labor targets.
+/// **WHAT A SHED TOOK HANDS OFF** - a labor row. (The crafting bench is the sim's to staff, zeroed
+/// before the shed and refilled after it, so the shed never takes a bench hand.)
 #[derive(Debug, Clone, PartialEq)]
 pub enum ShedSubject {
     /// A source or a band-wide standing role.
     Row(LaborTarget),
-    /// The band's crafting bench. It carries no id because a band has exactly one.
-    Bench,
 }
 
 impl ShedSubject {
@@ -4084,16 +4107,13 @@ impl ShedSubject {
     pub fn same_subject(&self, other: &Self) -> bool {
         match (self, other) {
             (ShedSubject::Row(left), ShedSubject::Row(right)) => left.same_source(right),
-            (ShedSubject::Bench, ShedSubject::Bench) => true,
-            _ => false,
         }
     }
 
-    /// The labor target this subject names, or `None` for the bench.
+    /// The labor target this subject names.
     pub fn row(&self) -> Option<&LaborTarget> {
         match self {
             ShedSubject::Row(target) => Some(target),
-            ShedSubject::Bench => None,
         }
     }
 }
@@ -4267,7 +4287,7 @@ impl ShedFacts {
     }
 }
 
-/// **WHAT THE WALK PICKED** — a row of `assignments` by index, or the band's bench.
+/// **WHAT THE WALK PICKED** — a row of `assignments` by index.
 ///
 /// Separate from [`ShedSubject`] on purpose: this is an *index into a vector the walk is about to
 /// mutate*, which must not escape [`LaborAllocation::normalize`], while `ShedSubject` is what the
@@ -4275,7 +4295,6 @@ impl ShedFacts {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ShedPick {
     Row(usize),
-    Bench,
 }
 
 /// **THE KEY EVERY *LEAST PRODUCTIVE* STEP ORDERS ON**, in one place so a row and the bench cannot be
@@ -4287,8 +4306,7 @@ struct ShedRank {
     /// The player's own mark. **Outermost, always** — see [`SourcePriority`].
     priority: SourcePriority,
     /// Is there a lesson here to lose? A learner ranks **last** among equals, so it is passed over.
-    /// [`NO_LESSON_AT_STAKE`] for every step but the fifth, and for the bench (see
-    /// [`Self::of_bench`]).
+    /// [`NO_LESSON_AT_STAKE`] for every step but the fifth.
     learning: bool,
     /// Does this candidate pay into any account at all — food, fodder or materials?
     pays_any_account: bool,
@@ -4297,37 +4315,6 @@ struct ShedRank {
 }
 
 impl ShedRank {
-    /// **THE BENCH'S RANK, and every level of it is a statement of fact rather than a judgement.**
-    ///
-    /// - `pays_any_account` is **false**: a craft pays into no food, fodder or material account. It
-    ///   *consumes* materials and produces items, and items are not one of the three accounts the
-    ///   shed can read. So an unmarked bench is thinned before any paying row — which is the right
-    ///   default in a famine, and exactly what the mark exists to override.
-    /// - `yield_per_worker` is **zero**, for the same reason: there is no per-worker take to read.
-    /// - `learning` is [`NO_LESSON_AT_STAKE`], and that one is a decision. A craft *does* charge a
-    ///   lesson per finished item, so thinning the bench does cost knowledge — but the lesson level
-    ///   exists because a **source's** lesson is invisible to the yield figure the choice is
-    ///   otherwise made on, and the bench has no yield figure at all: it already ranks bottom on both
-    ///   account levels. Marking it a learner would lift it **above every non-learning row**,
-    ///   including the food rows, so a famine band would strip its own larder to protect a craft that
-    ///   happened to be teaching something. The lesson term would not add the missing information —
-    ///   it would invert the one thing the bench's other two levels get right.
-    fn of_bench(bench: &BandBench) -> Self {
-        Self {
-            priority: bench.priority,
-            learning: NO_LESSON_AT_STAKE,
-            pays_any_account: A_CRAFT_PAYS_NO_ACCOUNT,
-            yield_per_worker: NOTHING_PER_WORKER,
-        }
-    }
-
-    /// **Is this candidate the one that should give?** — strictly below `other` on the lexicographic
-    /// order, so equal ranks never displace one another and the choice cannot depend on which
-    /// candidate was examined first.
-    fn is_below(&self, other: &Self) -> bool {
-        self.cmp_key(other) == std::cmp::Ordering::Less
-    }
-
     fn cmp_key(&self, other: &Self) -> std::cmp::Ordering {
         self.priority
             .cmp(&other.priority)
@@ -4338,11 +4325,6 @@ impl ShedRank {
             .then_with(|| self.yield_per_worker.total_cmp(&other.yield_per_worker))
     }
 }
-
-/// **A CRAFT PAYS INTO NO ACCOUNT** — the bench's reading of the presence test, named because a bare
-/// `false` there would read as *"this bench happens to be paying nothing today"* when what it says is
-/// *"items are not one of the three accounts"*.
-const A_CRAFT_PAYS_NO_ACCOUNT: bool = false;
 
 /// **A SCOUTING RANGE OF NOTHING** - no tiles past the band's local range, so no Scout row.
 pub const NO_SCOUTING_RANGE: u32 = 0;
@@ -4399,19 +4381,6 @@ pub enum ShedStep {
     /// boundary sits **above** the player's rank by construction, and a bench in its own step would
     /// mean a `Low`-marked bench outliving a `High`-marked source purely by step order.
     ThinLeastProductive,
-    /// **5b — the bench's LAST hand, leaving the job stalled.** Numbered `5b` rather than renumbering
-    /// six steps and forty-odd references to them: the repo's own `4.7a` / `9b` convention for a late
-    /// insertion, and this enum's **order** is the authority anyway.
-    ///
-    /// **Above step 6 because a stalled craft ends nothing.** The recipe, the progress, the drawn
-    /// pile and the finished count all stand and re-staffing resumes, where emptying a source drops
-    /// the row and takes its declared build with it.
-    ///
-    /// **Yes, a `High`-marked bench stalls before a `Low`-marked source is emptied**, and that is the
-    /// same rule already pinned for sources: an unimproved `High` row is emptied at step 6 before an
-    /// improved `Normal` one is a candidate at step 9. **The steps encode consequence; the mark
-    /// orders candidates within a step.**
-    StallBench,
     /// **6 — empty the least-productive source carrying no improvement and no declared build.** The row
     /// ends, and nothing invested ends with it.
     EmptyUnimproved,
@@ -5519,6 +5488,9 @@ pub struct DrawnInputs {
     /// `craft_material_efficiency` sits between them, and the readout that names what will be lost
     /// has to name what was really taken.
     pub withdrawn: Vec<DrawnMaterial>,
+    /// **WHETHER THE ITEM WAS SET ASIDE WITH A BENCH TOOL IN HAND** - the tool's tier, quality ceiling
+    /// and `craft_material_efficiency` applied. What the wear charge on completion is gated on.
+    pub at_tool: bool,
 }
 
 /// **One material's share of a draw** — a row of [`DrawnInputs::withdrawn`].
@@ -5531,6 +5503,74 @@ pub struct DrawnMaterial {
     pub material: String,
     /// What the store actually lost on this row, summed over every batch the draw touched.
     pub amount: Scalar,
+    /// **The batches actually withdrawn**, each at its exact reading - what cancelling the order
+    /// hands back to the store ([`LocalStore::deposit_material`]). `amount` is their total.
+    pub batches: Vec<MaterialDraw>,
+}
+
+/// **ONE ITEM OF AN ORDER THAT HAS BEEN STARTED AND NOT FINISHED** - [`BenchOrder::items`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemInFlight {
+    /// Worker-turns accrued toward the recipe's `work`. Fixed-point, so a slow bench accumulates.
+    pub progress: Scalar,
+    /// What was set aside for THIS item, its grade fixed at set-aside.
+    pub drawn: DrawnInputs,
+}
+
+/// **WHO THE SIM STAFFED ON ONE ORDER** - the crafters holding the bench tool and the ones working by
+/// hand. Restamped by every staffing; outside any intent equality.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BenchCrew {
+    pub at_tool: u32,
+    pub by_hand: u32,
+}
+
+/// **WHERE THE STAFFABLE HANDS WENT BEFORE PASS 2 OPENED** - only a High order's first crafter is
+/// staffed before pass 2, so this is what a crewless workable order was waiting behind. Restamped by every
+/// staffing ([`crate::staffing::StaffedBand::apply_bench`]); persisted with the bench so a restored
+/// world publishes the reason an uninterrupted one would.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FirstCall {
+    /// Scouts placed off the top of the pool.
+    pub scouting: u32,
+    /// Hands keeping ground the band already has (pass 1a).
+    pub keeping: u32,
+    /// Declared builds' first builders (pass 1b).
+    pub building: u32,
+    /// Hold crews of the take rows (pass 1b kitted, pass 1c bare): the hands that keep taking what
+    /// regrows at the row's floor.
+    pub holding: u32,
+    /// High bench orders' first crafters (dealt after the builders, before any hold crew).
+    pub crafting: u32,
+    /// The staffable pool the passes dealt from.
+    pub pool: u32,
+}
+
+impl FirstCall {
+    /// Every hand dealt before pass 2.
+    pub fn dealt(&self) -> u32 {
+        self.scouting + self.keeping + self.building + self.holding + self.crafting
+    }
+}
+
+/// **HANDS A TAKE ROW'S HOLD CREW GAVE UP TO ONE HIGH BENCH ORDER** - the row's pass-1 hold heads
+/// without that order's first crafter less the row's with it. Restamped by every staffing
+/// ([`crate::staffing::StaffedBand::apply_bench`]); the snapshot resolves the order's name.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HoldLoss {
+    /// The row whose hold crew came up short.
+    pub target: LaborTarget,
+    /// The bench order (queue index) that took the hands.
+    pub order: usize,
+    /// How many hands.
+    pub hands: u32,
+}
+
+impl BenchCrew {
+    /// Every crafter on the order.
+    pub fn total(&self) -> u32 {
+        self.at_tool + self.by_hand
+    }
 }
 
 /// **A finished equipment batch waiting for the top of the next turn** — one row of
@@ -5560,10 +5600,12 @@ pub struct FinishedBatch {
 /// already coming ([`crate::craft_suggestions`]).
 ///
 /// **The pass in flight belongs to the ORDER, not to the bench** — its progress and the pile it drew.
-/// Only one order is worked a turn (the **worked order**, `systems::crafting::worked_order`), so on
-/// every other order both are at rest; they live on the order rather than the bench so that an order
-/// overtaken mid-item — raised over, or passed by one ahead of it whose inputs arrived — **pauses**
-/// rather than losing what it cut, and resumes, pile and progress intact, when it is worked again.
+/// Every workable order on the bench is worked in the same turn, each staffed in the staffing passes
+/// up to its own cap (`crafters_per_item` × the items it can work) and ranked by its own priority.
+/// An order that is not workable — short of inputs, or its recipe or material is unusable — holds
+/// its progress and pile at rest. Both live on the order rather than the bench so they travel with
+/// it when the queue is reordered, and cancelling the order hands its set-aside batches back to the
+/// store ([`BenchOrder::return_set_aside`]).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BenchOrder {
     /// The recipe this order makes — an id from `recipes.json`, resolved at the command boundary.
@@ -5575,13 +5617,22 @@ pub struct BenchOrder {
     /// craft's lesson were charged, so a readout of one is a readout of the others. When it reaches
     /// [`Self::count`] the order leaves the queue.
     pub made: u32,
-    /// Progress toward this pass's `work`. Fixed-point, so a slow bench accumulates instead of
-    /// rounding to nothing each turn.
-    pub progress: Scalar,
-    /// The materials already withdrawn for the pass in flight, and the grade they fixed. `None`
-    /// before the draw — a **short draw withdraws nothing at all**, so this stays `None` and the
-    /// turn is a no-op rather than a half-spent pile.
-    pub drawn: Option<DrawnInputs>,
+    /// **EVERY ITEM OF THIS ORDER STARTED AND NOT FINISHED**, oldest first. An item's inputs are set
+    /// aside the turn a crafter starts it, all or nothing; cancelling the order returns them.
+    pub items: Vec<ItemInFlight>,
+    /// **THE ORDER'S OWN RANK** - default Normal for every new order. The parts of a kit order share
+    /// one (setting it on any part sets the whole kit block).
+    pub priority: SourcePriority,
+    /// **THE CREW THE SIM STAFFED ON THIS ORDER**, restamped by every staffing. Outside intent
+    /// equality (a fact), saved.
+    pub crew: BenchCrew,
+    /// **THE CAP THE STAFFING USED** - `crafters_per_item x items it could work`. Restamped with
+    /// [`Self::crew`].
+    pub crew_cap: u32,
+    /// **THE HANDS THIS ORDER HAS LENT TO A HUNTING-BY-NEED CREW THIS TURN** - `0` at every turn
+    /// boundary (`advance_crafting` clears it), so never persisted.
+    #[serde(skip)]
+    pub lent_to_hunt: u32,
     /// **WHETHER AUTO-CRAFT QUEUED THIS ORDER** ([`BandBench::auto`]) rather than the player. Set
     /// only by `auto_craft::auto_craft_fill`; every player-queued order (a suggestion's Queue, the
     /// ledger's Make, `bench_enqueue`) is `false`. It is what makes an order skippable
@@ -5621,7 +5672,7 @@ pub struct KitOrder {
 /// **THE SMALLEST COUNT AN ORDER MAY CARRY** — one item. An order of zero is not an order.
 pub const MIN_ORDER_COUNT: u32 = 1;
 
-/// **THE HEAD OF THE QUEUE** — the one order the bench works. Named because the queue's index `0`
+/// **THE HEAD OF THE QUEUE** — index `0`. Named because the queue's index `0`
 /// is a statement (*"the order being made"*), not a magnitude.
 pub const HEAD_ORDER: usize = 0;
 
@@ -5644,8 +5695,11 @@ impl BenchOrder {
             recipe_id: recipe_id.to_string(),
             count,
             made: NOTHING_MADE,
-            progress: scalar_zero(),
-            drawn: None,
+            items: Vec::new(),
+            priority: SourcePriority::default(),
+            crew: BenchCrew::default(),
+            crew_cap: 0,
+            lent_to_hunt: 0,
             auto: false,
             kit_order: NOT_A_KIT_PART,
         }
@@ -5656,9 +5710,34 @@ impl BenchOrder {
         self.count.saturating_sub(self.made)
     }
 
+    /// **Worker-turns accrued across every item in flight.**
+    pub fn progress_total(&self) -> Scalar {
+        self.items
+            .iter()
+            .fold(scalar_zero(), |total, item| total + item.progress)
+    }
+
     /// Whether the order has made everything it asked for.
     pub fn is_done(&self) -> bool {
         self.made >= self.count
+    }
+
+    /// **GIVE BACK EVERYTHING THE ORDER HAS SET ASIDE** - every in-flight item's withdrawn batches go
+    /// into `store` at their exact readings ([`LocalStore::deposit_material`]), and the items are
+    /// dropped. What cancelling an order does with its piles.
+    pub fn return_set_aside(&mut self, store: &mut LocalStore) {
+        for item in self.items.drain(..) {
+            for row in item.drawn.withdrawn {
+                for batch in row.batches {
+                    store.deposit_material(
+                        &row.material,
+                        batch.band,
+                        batch.amount,
+                        &batch.characteristics,
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -5684,23 +5763,21 @@ pub enum BenchQueueError {
     EmptyKitOrder,
 }
 
-/// **A band's crafting bench — ONE BENCH, ONE QUEUE, worked one order at a time.**
+/// **A band's crafting bench — ONE BENCH, ONE QUEUE, every workable order worked in parallel.**
 ///
 /// Design: `docs/plan_crafting_and_materials.md` §5/§7. **Make IS the assignment**: queueing a recipe
 /// is what a band crafts, so there is no Crafter role card and no [`LaborTarget`] variant. Crafting
 /// always has a subject, so it is staffed like a worked source rather than like a standing role.
 ///
-/// **The bench holds an ordered queue of [`BenchOrder`]s and works ONE of them a turn** — the first,
-/// in queue order, that holds a pile or can draw one now (`systems::crafting::worked_order`). A short
-/// order keeps its place and is skipped until its inputs are there. Each finished item counts against
-/// the worked order, and when its count is met the order leaves and the next worked order draws its
-/// own inputs. **The crew stays with the bench** across orders — a new worked order
-/// is not an order to send anyone home — and an empty queue leaves the crew standing at an idle
-/// bench. Parallel crafting comes from more benches, never from splitting one bench's crew.
+/// **The bench holds an ordered queue of [`BenchOrder`]s and works every workable one a turn.** Each
+/// order is staffed in the staffing passes up to its own cap (`crafters_per_item` × the items it can
+/// work) and carries its own [`SourcePriority`], which sets the order crafters are dealt in. An order
+/// short of inputs keeps its place and is not staffed until its inputs are there. Each finished item
+/// counts against its order, and when the count is met the order leaves the queue. An empty queue
+/// has no crafters.
 ///
-/// **The crew is its own number and it comes out of the same pool `assign_labor` spends**
-/// ([`crate::components::available_workers`] minus what the bench holds), so a band cannot staff the
-/// bench and the range with the same people.
+/// **Crafters come out of the same pool `assign_labor` spends**, so a band cannot staff the bench and
+/// the range with the same people.
 ///
 /// **Persisted** (`SimState`'s `BandRecord::bench`) — a checkpoint that forgot a half-finished craft
 /// would silently hand back the materials it had already drawn.
@@ -5710,25 +5787,8 @@ pub struct BandBench {
     /// Every id is from `recipes.json`, resolved at the command boundary so an unknown one is a
     /// command failure rather than a bench that quietly does nothing.
     pub orders: Vec<BenchOrder>,
-    /// How many of the band's workers are on it. **A property of the bench, not of an order** — it
-    /// survives every queue edit.
-    pub workers: u32,
     /// The grade of the last item this bench finished, whichever order made it.
     pub last_output_grade: Option<String>,
-    /// **WHERE THE PLAYER PUT THE BENCH WHEN THE BAND RUNS SHORT** — the same mark a worked row
-    /// carries ([`SourcePriority`]), because the bench competes for hands with those rows and a rank
-    /// that could not name it would leave the one thing a band gives up first unrankable.
-    ///
-    /// **Inside this type's `PartialEq`** (it is derived) and **persisted with the rest of the
-    /// bench** (`SimState`'s `BandRecord::bench`): a checkpoint that forgot the mark would silently
-    /// re-rank a band's work on rollback. **A property of the bench**, so it survives every queue
-    /// edit.
-    ///
-    /// Set by `bench_priority <faction> <band> high|normal|low` — the bench's own verb rather than a
-    /// `work_priority` token, because every other bench command is addressed `<faction> <band>` with
-    /// no source, and squeezing the bench into `work_priority`'s source grammar would make the bare
-    /// token `bench` ambiguous with a herd id.
-    pub priority: SourcePriority,
     /// **WHICH RECIPE THIS BAND LAST QUEUED, PER THING IT MAKES** — row key
     /// ([`crate::recipes_config::RecipeDef::row_key`], the item or material id) → recipe id.
     ///
@@ -5772,17 +5832,6 @@ pub struct BandBench {
     /// never preempts a running order). Switching auto off clears it. `BTreeSet` so the checkpoint
     /// and the wire iterate in a stable order. **Persisted** with the rest of the bench.
     pub auto_skipped: BTreeSet<String>,
-    /// **THE HANDS THE BENCH HAS LENT TO A HUNTING-BY-NEED CREW THIS TURN** - written by the labor
-    /// pass when [`LaborAllocation::muster_donors`] takes crafters for the hunt, and read by
-    /// `advance_crafting` as `workers - lent_to_hunt`. The labor pass hands the crew back
-    /// (`workers` is the player's number again) before `advance_crafting` runs later in the same
-    /// stage, so this field is how the lent hands stay absent from THIS turn's craft pass: the bench
-    /// banks and draws as a bench of the smaller crew. `advance_crafting` clears it, so it is `0` at
-    /// every turn boundary. A turn fact, not an order; `workers` stays what the player set. Not
-    /// persisted (`serde(skip)`): it is `0` whenever a checkpoint or a save can be taken, so the
-    /// save format is unchanged.
-    #[serde(skip)]
-    pub lent_to_hunt: u32,
     /// **THE LIVE KIT ORDERS** ([`KitOrder`]), oldest first. An entry exists exactly while some
     /// order on [`Self::orders`] carries its id: the one helper that drops them
     /// ([`Self::prune_kit_orders`]) runs from every path that removes an order. **Persisted.**
@@ -5790,6 +5839,12 @@ pub struct BandBench {
     /// **HOW MANY KIT ORDERS THIS BENCH HAS EVER ISSUED** — the next id is this plus one, so ids
     /// start at `1` and are never reused. **Persisted.**
     pub next_kit_order: u32,
+    /// **WHERE THE HANDS WENT BEFORE THE BENCH WAS DEALT ANY** ([`FirstCall`]) - what the published
+    /// `blockedReason` of a crewless workable order names. Restamped by every staffing. **Persisted.**
+    pub first_call: FirstCall,
+    /// **WHICH HIGH BENCH ORDER TOOK A ROW'S HOLD-CREW HANDS** ([`HoldLoss`]), in bench order.
+    /// Restamped by every staffing. **Persisted.**
+    pub hold_losses: Vec<HoldLoss>,
 }
 
 impl BandBench {
@@ -5803,23 +5858,6 @@ impl BandBench {
     /// The recipe this band last queued for `row`, if it has queued one.
     pub fn last_started_for(&self, row: &str) -> Option<&str> {
         self.last_started.get(row).map(String::as_str)
-    }
-
-    /// **The head of the queue** — the first order, or `None` on an idle bench. Not necessarily the
-    /// order being worked: that is the first order that holds a pile or can draw one
-    /// (`systems::crafting::worked_order`).
-    pub fn head(&self) -> Option<&BenchOrder> {
-        self.orders.get(HEAD_ORDER)
-    }
-
-    /// The head, mutably.
-    pub fn head_mut(&mut self) -> Option<&mut BenchOrder> {
-        self.orders.get_mut(HEAD_ORDER)
-    }
-
-    /// The recipe the head order makes, or `None` on an idle bench.
-    pub fn head_recipe(&self) -> Option<&str> {
-        self.head().map(|order| order.recipe_id.as_str())
     }
 
     /// **Add an order to the BACK of the queue.** Onto an empty bench it is the head at once. The
@@ -5859,18 +5897,13 @@ impl BandBench {
         Ok(())
     }
 
-    /// **Take one order off the queue** and return it.
+    /// **Take one order off the queue** and return it, still holding its items in flight: the caller
+    /// hands it to [`BenchOrder::return_set_aside`] so every set-aside batch goes back into the
+    /// store at its exact readings. What is returned is stated on the wire beforehand
+    /// (`BenchOrder.drawnInputs`).
     ///
-    /// ⛔ **THIS FORFEITS THE ORDER'S DRAWN PILE**, exactly as clearing the bench always has: the
-    /// materials were cut for the thing the player stopped making, and a `LocalStore` has no
-    /// representation for a half-worked pile. What is lost is stated on the wire beforehand:
-    /// `BenchState::drawnInputs` names the pile of the order the bench row describes (the worked
-    /// order), and every order's `BenchOrder::drawn` says whether it holds one. The shed must never
-    /// call this — it uses
-    /// [`Self::shed_one_worker`].
-    ///
-    /// **The crew, [`Self::last_started`] and [`Self::finished`] all survive it**: the crew is the
-    /// bench's, the choice is the band's, and finished items are already made.
+    /// **[`Self::last_started`] and [`Self::finished`] survive it**: the choice is the band's, and
+    /// finished items are already made.
     pub fn remove_order(&mut self, index: usize) -> Result<BenchOrder, BenchQueueError> {
         if index >= self.orders.len() {
             return Err(BenchQueueError::NoSuchOrder {
@@ -5943,9 +5976,10 @@ impl BandBench {
         }
     }
 
-    /// **Remove every part of a kit order** — each part is lost exactly as a single
-    /// [`Self::remove_order`] loses it (drawn piles forfeited; items already made stay in the
-    /// store). Returns the removed orders.
+    /// **Remove every part of a kit order** — each part leaves the queue exactly as a single
+    /// [`Self::remove_order`] takes it, still holding its items in flight; the caller hands each to
+    /// [`BenchOrder::return_set_aside`] so the set-aside batches go back to the store (items already
+    /// made stay in the store). Returns the removed orders.
     pub fn remove_kit(&mut self, id: u32) -> Result<Vec<BenchOrder>, BenchQueueError> {
         let (start, end) = self
             .kit_block(id)
@@ -5992,21 +6026,32 @@ impl BandBench {
         Ok(())
     }
 
-    /// **THE WORKED ORDER FINISHED ONE ITEM** — count it against the order at `index`, reset its
-    /// pass, and pop it if its count is met. Returns `true` when the order left the queue, so the
-    /// caller knows the next worked order has to draw its own inputs. An index with no order is a
-    /// no-op returning `false`.
+    /// **AN ITEM OF THE ORDER AT `index` IS FINISHED** - count it against the order and take it out of
+    /// the order's items in flight. The order is NOT removed here: a turn finishes several items of
+    /// several orders, so [`Self::retire_done_orders`] runs once after them and the indices a turn is
+    /// walking stay valid. An index or item with nothing there is a no-op.
     ///
-    /// **The overflow past `work` is dropped, not carried**: progress past a completion was done on
-    /// an item whose materials have not been drawn yet.
-    pub fn complete_item(&mut self, index: usize) -> bool {
+    /// **The overflow past `work` is dropped, not carried.**
+    pub fn finish_item(&mut self, index: usize, item: usize) {
         let Some(order) = self.orders.get_mut(index) else {
-            return false;
+            return;
         };
+        if item >= order.items.len() {
+            return;
+        }
+        order.items.remove(item);
         order.made = order.made.saturating_add(ONE_ITEM_MADE);
-        order.progress = scalar_zero();
-        order.drawn = None;
-        if order.is_done() {
+    }
+
+    /// **TAKE EVERY ORDER THAT HAS MADE EVERYTHING IT ASKED FOR OFF THE QUEUE**, with the kit-order
+    /// bookkeeping a finished part owes its kit.
+    pub fn retire_done_orders(&mut self) {
+        let mut index = 0;
+        while index < self.orders.len() {
+            if !self.orders[index].is_done() {
+                index += 1;
+                continue;
+            }
             let finished = self.orders.remove(index);
             if let Some(kit) = self
                 .kit_orders
@@ -6015,10 +6060,8 @@ impl BandBench {
             {
                 kit.done = kit.done.saturating_add(finished.made);
             }
-            self.prune_kit_orders();
-            return true;
         }
-        false
+        self.prune_kit_orders();
     }
 
     /// **Hand every parked batch to the band's store, in the order the bench finished them** —
@@ -6030,20 +6073,41 @@ impl BandBench {
         }
     }
 
-    /// **TAKE ONE HAND OFF THE BENCH AND LEAVE EVERYTHING ELSE STANDING** — what the shedding order
-    /// does to a bench, and the whole of it.
-    ///
-    /// The queue — every order's progress, drawn pile and made count — and the last grade are all
-    /// untouched, so the crew coming back resumes rather than restarts. At zero the **worked order
-    /// stalls**:
-    /// it is still the order the player chose, making no progress, which is the crafting system's
-    /// own shipped answer to a pass it cannot advance (*"silently emptying their bench is a worse
-    /// answer than a job that makes no progress"*).
-    ///
-    /// Returns the crew left. Saturating, so a call on an empty bench is a no-op rather than a wrap.
-    pub fn shed_one_worker(&mut self) -> u32 {
-        self.workers = self.workers.saturating_sub(ONE_WORKER);
-        self.workers
+    /// **EVERY CRAFTER THE SIM STAFFED ON THE BENCH** - the sum of the orders' crews. The one authority
+    /// for "how many hands are at the bench"; there is no separate crew field.
+    pub fn crew_total(&self) -> u32 {
+        self.orders.iter().map(|order| order.crew.total()).sum()
+    }
+
+    /// **THE HANDS THE BENCH HAS LENT TO A HUNTING-BY-NEED CREW THIS TURN** - the sum of the orders'
+    /// shares ([`BenchOrder::lent_to_hunt`]).
+    pub fn lent_total(&self) -> u32 {
+        self.orders.iter().map(|order| order.lent_to_hunt).sum()
+    }
+
+    /// **THE ORDERS IN RANK ORDER** - priority High to Low, then queue order. Every per-order walk
+    /// (staffing inputs, set-aside, shortfall forecasts, the bench's material income) goes this way.
+    pub fn ranked(&self) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..self.orders.len()).collect();
+        order.sort_by_key(|&index| std::cmp::Reverse(self.orders[index].priority));
+        order
+    }
+
+    /// **Set one order's priority** - and the whole kit block's when it is a kit part.
+    pub fn set_priority(
+        &mut self,
+        index: usize,
+        priority: SourcePriority,
+    ) -> Result<(), BenchQueueError> {
+        let len = self.orders.len();
+        if index >= len {
+            return Err(BenchQueueError::NoSuchOrder { len });
+        }
+        let (start, end) = self.unit_at(index);
+        for order in &mut self.orders[start..end] {
+            order.priority = priority;
+        }
+        Ok(())
     }
 
     /// Whether anything is queued on the bench at all.
@@ -6070,9 +6134,9 @@ pub struct BandWorkforce {
     pub pool: u32,
     /// What the labor allocation already staffs across all its sources and roles.
     pub assigned: u32,
-    /// What is standing at the bench. Not a [`LaborTarget`] — a bench is not an in-range source, and
-    /// giving it one would put a fictitious row on every yield readout in the game — so it is never
-    /// part of `assigned` and has to be subtracted on its own.
+    /// What the sim staffed at the bench ([`BandBench::crew_total`]). Not a [`LaborTarget`] — a bench
+    /// is not an in-range source, and giving it one would put a fictitious row on every yield readout
+    /// in the game — so it is never part of `assigned` and has to be subtracted on its own.
     pub benched: u32,
     /// **Hands of a stood-down work party still walking home** ([`LaborAllocation::homeward`]) —
     /// on no row and at no bench, but not with the band either, so they are netted out of every
@@ -6099,7 +6163,7 @@ impl BandWorkforce {
             // are as unavailable as its gatherers, and `idle()` would lie about a band mid-Cultivate
             // if it counted only the take (`docs/plan_standing_upkeep.md` §2.2).
             assigned: allocation.map(|a| a.assigned_total()).unwrap_or(0),
-            benched: bench.map(|b| b.workers).unwrap_or(0),
+            benched: bench.map(BandBench::crew_total).unwrap_or(0),
             walking_home: allocation.map(|a| a.walking_home()).unwrap_or(0),
             sim_staffed: allocation.map_or(0, |a| {
                 a.assignments
@@ -6122,31 +6186,18 @@ impl BandWorkforce {
             .saturating_sub(self.walking_home)
     }
 
-    /// **The ceiling an `assign_labor` clamps against** — the pool the *range* may spend, which the
-    /// bench's crew has already left. Passed to [`LaborAllocation::set_assignment`], which nets out
-    /// the other assignments itself (and lets a re-staffed source reuse its own crew), so this must
-    /// NOT have `assigned` taken off it.
+    /// **The ceiling an `assign_labor` clamps against** - the pool the *range* may spend. The bench's
+    /// crew is the sim's (it staffs the bench in the same passes as the rows), so it does not block a
+    /// player-set crew. Passed to [`LaborAllocation::set_assignment`], which nets out the other
+    /// assignments itself, so this must NOT have `assigned` taken off it.
     pub fn assignable(&self) -> u32 {
-        self.pool
-            .saturating_sub(self.benched)
-            .saturating_sub(self.walking_home)
+        self.pool.saturating_sub(self.walking_home)
     }
 
-    /// **The most hands a detached party may draw** - the pool less every player-set crew (the bench
-    /// included) and the walkers. Sim-staffed source rows count as available: they are what is left
-    /// after the player's orders and give the hands up at once.
+    /// **The most hands a detached party may draw** - the pool less every player-set crew and the
+    /// walkers. Sim-staffed source rows and the bench count as available: they are what is left after
+    /// the player's orders and give the hands up at once.
     pub fn partyable(&self) -> u32 {
-        self.pool
-            .saturating_sub(self.assigned.saturating_sub(self.sim_staffed))
-            .saturating_sub(self.benched)
-            .saturating_sub(self.walking_home)
-    }
-
-    /// **The ceiling a bench command clamps against** — the pool less the player-set crews and the
-    /// hands walking home. The sim-staffed rows count as available (they are what is left after the
-    /// player's orders and give the hands up at once), and the bench's own crew is not subtracted, so
-    /// it is not counted twice while its job is swapped.
-    pub fn benchable(&self) -> u32 {
         self.pool
             .saturating_sub(self.assigned.saturating_sub(self.sim_staffed))
             .saturating_sub(self.walking_home)
@@ -7654,7 +7705,7 @@ impl LaborAllocation {
         need_idx: usize,
         crew: u32,
         is_local: &dyn Fn(&LaborTarget) -> bool,
-        bench: Option<MusterBench>,
+        bench: Option<&MusterBench>,
         kit: &MusterKit,
     ) -> MusterPlan {
         // With the kit short, idle hands fill only what the kit-carrying donors will not: a bare
@@ -7709,13 +7760,21 @@ impl LaborAllocation {
             .iter()
             .filter_map(|donor| match donor {
                 MusterDonor::Row(idx) => taken.get(donor).map(|hands| (*idx, *hands)),
-                MusterDonor::Bench => None,
+                MusterDonor::Bench(_) => None,
+            })
+            .collect();
+        let from_bench_orders: Vec<(usize, u32)> = order
+            .iter()
+            .filter_map(|donor| match donor {
+                MusterDonor::Bench(idx) => taken.get(donor).map(|hands| (*idx, *hands)),
+                MusterDonor::Row(_) => None,
             })
             .collect();
         MusterPlan {
             from_idle,
             from_rows,
-            from_bench: taken.get(&MusterDonor::Bench).copied().unwrap_or(0),
+            from_bench: from_bench_orders.iter().map(|(_, hands)| *hands).sum(),
+            from_bench_orders,
         }
     }
 
@@ -7726,7 +7785,7 @@ impl LaborAllocation {
         idle: u32,
         need_idx: usize,
         is_local: &dyn Fn(&LaborTarget) -> bool,
-        bench: Option<MusterBench>,
+        bench: Option<&MusterBench>,
     ) -> u32 {
         idle + self
             .donor_order(need_idx, is_local, bench)
@@ -7747,16 +7806,18 @@ impl LaborAllocation {
             .into_iter()
             .filter_map(|donor| match donor {
                 MusterDonor::Row(idx) => Some(idx),
-                MusterDonor::Bench => None,
+                MusterDonor::Bench(_) => None,
             })
             .collect()
     }
 
     /// The hands donor `donor` holds that it could lend.
-    fn donor_hands(&self, donor: MusterDonor, bench: Option<MusterBench>) -> u32 {
+    fn donor_hands(&self, donor: MusterDonor, bench: Option<&MusterBench>) -> u32 {
         match donor {
             MusterDonor::Row(idx) => self.hands_present(idx),
-            MusterDonor::Bench => bench.map_or(NO_CREW_ON_THIS_ACTIVITY, |bench| bench.hands),
+            MusterDonor::Bench(order) => {
+                bench.map_or(NO_CREW_ON_THIS_ACTIVITY, |bench| bench.hands_of(order))
+            }
         }
     }
 
@@ -7766,7 +7827,7 @@ impl LaborAllocation {
         &self,
         need_idx: usize,
         is_local: &dyn Fn(&LaborTarget) -> bool,
-        bench: Option<MusterBench>,
+        bench: Option<&MusterBench>,
     ) -> Vec<MusterDonor> {
         let mut donors: Vec<MusterDonor> = self
             .assignments
@@ -7782,12 +7843,20 @@ impl LaborAllocation {
             })
             .map(|(idx, _)| MusterDonor::Row(idx))
             .collect();
-        if bench.is_some_and(|bench| bench.hands > NO_CREW_ON_THIS_ACTIVITY) {
-            donors.push(MusterDonor::Bench);
+        if let Some(bench) = bench {
+            donors.extend(
+                bench
+                    .orders
+                    .iter()
+                    .filter(|(_, _, hands)| *hands > NO_CREW_ON_THIS_ACTIVITY)
+                    .map(|(index, _, _)| MusterDonor::Bench(*index)),
+            );
         }
         let priority_of = |donor: &MusterDonor| match donor {
             MusterDonor::Row(idx) => self.assignments[*idx].priority,
-            MusterDonor::Bench => bench.map_or(SourcePriority::default(), |bench| bench.priority),
+            MusterDonor::Bench(order) => {
+                bench.map_or(SourcePriority::default(), |bench| bench.priority_of(*order))
+            }
         };
         // Within a tier the bench (`false`) precedes every row (`true`); rows run later row first.
         donors.sort_by_key(|donor| {
@@ -7795,8 +7864,7 @@ impl LaborAllocation {
                 priority_of(donor),
                 matches!(donor, MusterDonor::Row(_)),
                 std::cmp::Reverse(match donor {
-                    MusterDonor::Row(idx) => *idx,
-                    MusterDonor::Bench => 0,
+                    MusterDonor::Row(idx) | MusterDonor::Bench(idx) => *idx,
                 }),
             )
         });
@@ -8419,12 +8487,7 @@ impl LaborAllocation {
     /// existed) may carry none; an absent bench contributes zero and is never a candidate, which is
     /// the same fallback the rest of the band pass takes.
     #[must_use = "a shed crew must be announced — see the doc comment"]
-    pub fn normalize(
-        &mut self,
-        mut bench: Option<&mut BandBench>,
-        available: u32,
-        facts: ShedFacts,
-    ) -> Vec<ShedCrew> {
+    pub fn normalize(&mut self, available: u32, facts: ShedFacts) -> Vec<ShedCrew> {
         // Aligned up front: every "least productive" step reads `last_yields` by the row's index.
         self.align_yields();
         let mut facts = facts;
@@ -8434,14 +8497,8 @@ impl LaborAllocation {
         // **Hands walking home are people the band has and cannot staff** (#706), so they stand in
         // the total beside the bench; nothing in the walk can shed them, so a pool below them
         // strips every row and stops.
-        while self.assigned_total()
-            + self.walking_home()
-            + bench
-                .as_deref()
-                .map_or(NO_CREW_ON_THIS_ACTIVITY, |bench| bench.workers)
-            > available
-        {
-            let Some((pick, step)) = self.pick_that_gives(&facts, bench.as_deref()) else {
+        while self.assigned_total() + self.walking_home() > available {
+            let Some((pick, step)) = self.pick_that_gives(&facts) else {
                 break;
             };
             // Step 3 spends a surplus down: each spare keeper taken is one the bill no longer has
@@ -8471,15 +8528,6 @@ impl LaborAllocation {
                     self.settle_rejoining_on(&target, ExcessRejoining::Discard);
                     (ShedSubject::Row(target), remaining)
                 }
-                // ⛔ **NEVER `remove_order`** — that forfeits the drawn pile. The queue, every
-                // order's progress and the materials already cut all stand; at zero the bench simply
-                // stalls.
-                ShedPick::Bench => {
-                    let remaining = bench
-                        .as_deref_mut()
-                        .map_or(NO_CREW_ON_THIS_ACTIVITY, BandBench::shed_one_worker);
-                    (ShedSubject::Bench, remaining)
-                }
             };
             // **ONE SUBJECT, ONE `ShedCrew`, however many passes of the walk took hands off it** —
             // the caller narrates one feed line per subject, and three lines for three hands off the
@@ -8508,11 +8556,7 @@ impl LaborAllocation {
     ///
     /// Read it beside [`ShedStep`]'s variant docs: every arm below is one line of that list, in that
     /// order, and the pairing is the whole point of naming the steps.
-    fn pick_that_gives(
-        &self,
-        facts: &ShedFacts,
-        bench: Option<&BandBench>,
-    ) -> Option<(ShedPick, ShedStep)> {
+    fn pick_that_gives(&self, facts: &ShedFacts) -> Option<(ShedPick, ShedStep)> {
         // ## Nothing is lost
         // (There is no step 1: the Scout row is the sim's to place each turn, zeroed before the shed
         // and restaffed after it, so it never reaches the shed to give a hand.)
@@ -8554,31 +8598,8 @@ impl LaborAllocation {
         let thinnest_row = self.least_productive_row_passing_over_lessons(thinnable, |index| {
             facts.source(index).accruing_knowledge
         });
-        let thinnable_bench = bench.filter(|bench| bench.workers >= SMALLEST_THINNABLE_CREW);
-        match (thinnest_row, thinnable_bench) {
-            (Some(index), Some(bench)) => {
-                // **A TIE GOES TO THE ROW.** Nothing but an exact tie on all four levels can reach
-                // here, and a stated order beats one that depends on which candidate was examined
-                // first — the same reason ties between rows go to the earliest row.
-                let pick = if ShedRank::of_bench(bench).is_below(&self.rank_of_row(index, facts)) {
-                    ShedPick::Bench
-                } else {
-                    ShedPick::Row(index)
-                };
-                return Some((pick, ShedStep::ThinLeastProductive));
-            }
-            (Some(index), None) => {
-                return Some((ShedPick::Row(index), ShedStep::ThinLeastProductive))
-            }
-            (None, Some(_)) => return Some((ShedPick::Bench, ShedStep::ThinLeastProductive)),
-            (None, None) => {}
-        }
-
-        // 5b. The bench's LAST hand — the job stalls, and nothing ends. Above step 6 because a
-        //     stalled craft keeps its recipe, its progress and its drawn pile, where emptying a
-        //     source drops the row and takes its declared build with it.
-        if bench.is_some_and(|bench| bench.workers > NO_CREW_ON_THIS_ACTIVITY) {
-            return Some((ShedPick::Bench, ShedStep::StallBench));
+        if let Some(index) = thinnest_row {
+            return Some((ShedPick::Row(index), ShedStep::ThinLeastProductive));
         }
 
         // ## Something ends
@@ -8830,13 +8851,7 @@ impl LaborAllocation {
             .map(|(index, _)| index)
     }
 
-    /// **ONE ROW'S [`ShedRank`], with step 5's lesson term live** — the reading the bench is compared
-    /// against, so the two candidates are ranked by one rule rather than two.
-    fn rank_of_row(&self, index: usize, facts: &ShedFacts) -> ShedRank {
-        self.rank_of_row_learning(index, facts.source(index).accruing_knowledge)
-    }
-
-    /// [`Self::rank_of_row`] with the lesson term supplied, because the four steps that *empty* a row
+    /// The row's [`ShedRank`] with the lesson term supplied, because the four steps that *empty* a row
     /// hand [`NO_LESSON_AT_STAKE`] rather than a fact.
     fn rank_of_row_learning(&self, index: usize, learning: bool) -> ShedRank {
         ShedRank {
@@ -9540,12 +9555,6 @@ mod tests {
             .collect()
     }
 
-    /// Every subject `normalize` touched, bench included — the shape a bench assertion reads.
-    #[cfg(test)]
-    fn shed_subjects(shed: &[ShedCrew]) -> Vec<ShedSubject> {
-        shed.iter().map(|entry| entry.subject.clone()).collect()
-    }
-
     /// **SHEDDING ONE HAND TOUCHES ONLY THE ROW IT CAME OFF.** A staffed row is zeroed ahead of the
     /// shed (it is refilled after), so its rejoining walkers read as excess to any sweep over every
     /// source; the shed settles the shed row's walkers alone, and a staffed row's walk, with its
@@ -9570,7 +9579,7 @@ mod tests {
             goods: Default::default(),
             rejoins_row: crate::work_party::WALKS_BACK_TO_ITS_ROW,
         });
-        let shed = allocation.normalize(None, 1, ShedFacts::default());
+        let shed = allocation.normalize(1, ShedFacts::default());
         assert_eq!(
             shed_targets(&shed),
             vec![LaborTarget::Warrior],
@@ -9604,7 +9613,7 @@ mod tests {
 
         let mut unthreatened = allocation.clone();
         assert_eq!(
-            shed_targets(&unthreatened.normalize(None, 6, spare.clone())),
+            shed_targets(&unthreatened.normalize(6, spare.clone())),
             vec![LaborTarget::Warrior],
             "a guard against nothing is the cheapest hand in the allocation"
         );
@@ -9612,7 +9621,6 @@ mod tests {
         let mut threatened = allocation;
         assert_eq!(
             shed_targets(&threatened.normalize(
-                None,
                 6,
                 ShedFacts {
                     threatened: true,
@@ -9638,7 +9646,6 @@ mod tests {
             ..Default::default()
         };
         let shed = allocation.normalize(
-            None,
             4,
             ShedFacts {
                 spare_roadwork_keepers: 1,
@@ -9680,7 +9687,7 @@ mod tests {
             threatened: true,
             ..Default::default()
         };
-        let shed = allocation.normalize(None, 5, facts);
+        let shed = allocation.normalize(5, facts);
         assert_eq!(
             allocation.workers_on(&staffed_forage(PATCH_A, 0).target),
             4,
@@ -9715,7 +9722,6 @@ mod tests {
             ..Default::default()
         };
         let shed = allocation.normalize(
-            None,
             2,
             ShedFacts {
                 sources: vec![kept_site(4.0), kept_site(4.0)],
@@ -9748,7 +9754,7 @@ mod tests {
 
         let mut plain = allocation.clone();
         assert_eq!(
-            shed_targets(&plain.normalize(None, 5, ShedFacts::default())),
+            shed_targets(&plain.normalize(5, ShedFacts::default())),
             vec![staffed_forage(PATCH_A, 0).target],
             "least yield PER WORKER is the key, not the biggest crew or the biggest total"
         );
@@ -9757,7 +9763,6 @@ mod tests {
         let mut learning = allocation;
         assert_eq!(
             shed_targets(&learning.normalize(
-                None,
                 5,
                 ShedFacts {
                     sources: vec![
@@ -9816,7 +9821,7 @@ mod tests {
         // level is constant, so this is the answer the two-level order gave before the rank existed.
         let mut unmarked = fixture();
         assert_eq!(
-            shed_targets(&unmarked.normalize(None, 3, ShedFacts::default())),
+            shed_targets(&unmarked.normalize(3, ShedFacts::default())),
             vec![staffed_forage(PATCH_B, 0).target],
             "with nothing marked the poorer row per head still gives, exactly as before"
         );
@@ -9826,7 +9831,7 @@ mod tests {
         let mut rich_row_marked_low = fixture();
         rich_row_marked_low.assignments[0].priority = SourcePriority::Low;
         assert_eq!(
-            shed_targets(&rich_row_marked_low.normalize(None, 3, ShedFacts::default())),
+            shed_targets(&rich_row_marked_low.normalize(3, ShedFacts::default())),
             vec![staffed_forage(PATCH_A, 0).target],
             "the row the player marked Low gives, though it is the better ground per hand"
         );
@@ -9836,7 +9841,7 @@ mod tests {
         let mut poor_row_marked_high = fixture();
         poor_row_marked_high.assignments[1].priority = SourcePriority::High;
         assert_eq!(
-            shed_targets(&poor_row_marked_high.normalize(None, 3, ShedFacts::default())),
+            shed_targets(&poor_row_marked_high.normalize(3, ShedFacts::default())),
             vec![staffed_forage(PATCH_A, 0).target],
             "a High mark holds the poor row and sends the hand off the rich one instead"
         );
@@ -9865,173 +9870,14 @@ mod tests {
         };
         let marked = vec![staffed_forage(PATCH_A, 0).target];
         assert_eq!(
-            shed_targets(&forward.normalize(None, 3, ShedFacts::default())),
+            shed_targets(&forward.normalize(3, ShedFacts::default())),
             marked,
             "the marked row gives when it sits first"
         );
         assert_eq!(
-            shed_targets(&reversed.normalize(None, 3, ShedFacts::default())),
+            shed_targets(&reversed.normalize(3, ShedFacts::default())),
             marked,
             "…and when it sits last — the mark is a property of the row, not of the vector"
-        );
-    }
-
-    /// **An order long enough that no shed fixture finishes it** — the shed never advances the bench,
-    /// so any count would do; one is the smallest that is an order at all.
-    #[cfg(test)]
-    const SHED_FIXTURE_ORDER_COUNT: u32 = MIN_ORDER_COUNT;
-
-    /// A running bench holding `crafters`, carrying the player's `priority`.
-    #[cfg(test)]
-    fn staffed_bench(crafters: u32, priority: SourcePriority) -> BandBench {
-        BandBench {
-            orders: vec![BenchOrder::new("sled", SHED_FIXTURE_ORDER_COUNT)],
-            workers: crafters,
-            priority,
-            ..Default::default()
-        }
-    }
-
-    /// **THE BENCH IS RANKED IN STEP 5, NOT GIVEN A STEP OF ITS OWN.**
-    ///
-    /// A step boundary sits **above** the player's rank by construction, so a bench in its own step
-    /// would be protected from — or sacrificed to — a marked row purely by step order, which is the
-    /// defect the lesson level was just repaired for in a different costume.
-    ///
-    /// Both candidates are thinnable and unmarked, so the rank level is constant and the accounts
-    /// decide: the row pays and the bench does not.
-    #[test]
-    fn an_unmarked_bench_is_thinned_before_a_paying_row() {
-        let mut allocation = LaborAllocation {
-            assignments: vec![staffed_forage(PATCH_A, 2)],
-            last_yields: vec![realized(4.0)],
-            ..Default::default()
-        };
-        let mut bench = staffed_bench(3, SourcePriority::default());
-        let shed = allocation.normalize(Some(&mut bench), 4, ShedFacts::default());
-
-        assert_eq!(
-            shed_subjects(&shed),
-            vec![ShedSubject::Bench],
-            "a craft pays into no account and carries no per-worker yield, so it ranks bottom on \
-             both levels and gives first"
-        );
-        assert_eq!(bench.workers, 2, "…one hand, like every other step");
-        assert_eq!(
-            allocation.assignments[0].workers, 2,
-            "and the row that pays is untouched"
-        );
-    }
-
-    /// **AND THE MARK OVERRIDES IT, which is the whole reason the bench takes one.** A `High` bench
-    /// beside a `Low` row inverts the answer with nothing else changed.
-    ///
-    /// **It carries its own control, and that is not padding.** *"The marked bench keeps its crew"*
-    /// is also true of a bench that is not a candidate at all — so a bench given its own step
-    /// **below** step 5, the shape this design forbids, would satisfy it. The pair is the claim: the
-    /// same two candidates answer differently depending only on the marks.
-    #[test]
-    fn a_high_marked_bench_sends_the_hand_to_a_low_marked_row_instead() {
-        let fixture = |row: SourcePriority| LaborAllocation {
-            assignments: vec![ranked_forage(PATCH_A, 2, row)],
-            last_yields: vec![realized(4.0)],
-            ..Default::default()
-        };
-
-        // The control: both at the default, so the rank level is constant and the accounts decide.
-        let mut unmarked = fixture(SourcePriority::default());
-        let mut idle_rank_bench = staffed_bench(3, SourcePriority::default());
-        assert_eq!(
-            shed_subjects(&unmarked.normalize(Some(&mut idle_rank_bench), 4, ShedFacts::default())),
-            vec![ShedSubject::Bench],
-            "control: unmarked, the bench gives — so both ARE candidates in this one step"
-        );
-
-        let mut marked = fixture(SourcePriority::Low);
-        let mut bench = staffed_bench(3, SourcePriority::High);
-        let shed = marked.normalize(Some(&mut bench), 4, ShedFacts::default());
-        assert_eq!(
-            shed_subjects(&shed),
-            vec![ShedSubject::Row(staffed_forage(PATCH_A, 0).target)],
-            "the rank is the outermost level for the bench exactly as it is for a row"
-        );
-        assert_eq!(bench.workers, 3, "the marked bench keeps its crew");
-    }
-
-    /// **STEP 5b — THE BENCH'S LAST HAND, AND IT GOES BEFORE A SOURCE IS EMPTIED.**
-    ///
-    /// Neither candidate is thinnable (one hand each), so step 5 has nothing and the walk reaches
-    /// 5b. The bench is `High` and the row is `Low`, and the bench **still** stalls: the steps encode
-    /// consequence — a stalled craft ends nothing, an emptied row ends a holding — and the mark only
-    /// orders candidates *within* a step.
-    #[test]
-    fn the_bench_stalls_before_a_row_is_emptied_whatever_the_marks_say() {
-        let mut allocation = LaborAllocation {
-            assignments: vec![ranked_forage(PATCH_A, 1, SourcePriority::Low)],
-            last_yields: vec![realized(4.0)],
-            ..Default::default()
-        };
-        let mut bench = staffed_bench(1, SourcePriority::High);
-        let shed = allocation.normalize(Some(&mut bench), 1, ShedFacts::default());
-
-        assert_eq!(
-            shed_subjects(&shed),
-            vec![ShedSubject::Bench],
-            "the bench's last hand is step 5b, above the step that empties a row"
-        );
-        assert_eq!(bench.workers, 0, "it stalled");
-        assert!(
-            bench.is_running(),
-            "…and the order is still on it — the shed must never `remove_order`, which forfeits \
-             the pile"
-        );
-        assert_eq!(
-            allocation.assignments.len(),
-            1,
-            "the Low-marked row still stands"
-        );
-    }
-
-    /// **THE LOOP COUNTS THE BENCH, WHICH IS THE INVARIANT THAT CHANGED.** The quantity driven down
-    /// is `assignments + bench` against the band's whole head-count — so an allocation that fits the
-    /// pool on its own but does not fit *beside the bench* is now corrected rather than tolerated.
-    #[test]
-    fn the_walk_drives_assignments_plus_bench_down_to_the_pool() {
-        const POOL: u32 = 4;
-        let mut allocation = LaborAllocation {
-            assignments: vec![staffed_forage(PATCH_A, 3)],
-            last_yields: vec![realized(9.0)],
-            ..Default::default()
-        };
-        let mut bench = staffed_bench(3, SourcePriority::default());
-        let shed = allocation.normalize(Some(&mut bench), POOL, ShedFacts::default());
-
-        assert_eq!(
-            allocation.assigned_total() + bench.workers,
-            POOL,
-            "the walk runs until the rows and the bench TOGETHER fit the band's people"
-        );
-        assert!(!shed.is_empty(), "…and it says what it took: {shed:?}");
-    }
-
-    /// **A BAND WITH NO BENCH IS EXACTLY THE BAND IT WAS.** The `None` arm contributes nothing to the
-    /// loop and is never a candidate, so every step below is bit-identical to the walk before the
-    /// bench existed.
-    #[test]
-    fn a_band_with_no_bench_walks_the_order_it_always_did() {
-        let fixture = || LaborAllocation {
-            assignments: vec![staffed_forage(PATCH_A, 2), staffed_forage(PATCH_B, 2)],
-            last_yields: vec![realized(2.0), realized(8.0)],
-            ..Default::default()
-        };
-        let mut without = fixture();
-        let mut with_idle = fixture();
-        let mut idle_bench = BandBench::default();
-
-        assert_eq!(
-            shed_targets(&without.normalize(None, 3, ShedFacts::default())),
-            shed_targets(&with_idle.normalize(Some(&mut idle_bench), 3, ShedFacts::default())),
-            "an absent bench and an empty one are the same band"
         );
     }
 
@@ -10078,7 +9924,6 @@ mod tests {
         };
         let staffed = allocation.assigned_total();
         let shed = allocation.normalize(
-            None,
             staffed - HANDS_LOST,
             ShedFacts {
                 // Only the hunt is learning — which is what made it ineligible, and what the rank
@@ -10129,7 +9974,6 @@ mod tests {
             ..Default::default()
         };
         let shed = allocation.normalize(
-            None,
             3,
             ShedFacts {
                 sources: vec![learning(), SourceShedFacts::default()],
@@ -10161,7 +10005,6 @@ mod tests {
             ..Default::default()
         };
         let shed = allocation.normalize(
-            None,
             2,
             ShedFacts {
                 sources: vec![learning(), learning()],
@@ -10204,7 +10047,6 @@ mod tests {
             ..Default::default()
         };
         let shed = allocation.normalize(
-            None,
             3,
             ShedFacts {
                 sources: vec![learning(), SourceShedFacts::default()],
@@ -10234,7 +10076,6 @@ mod tests {
             ..Default::default()
         };
         let shed = allocation.normalize(
-            None,
             1,
             ShedFacts {
                 sources: vec![learning(), SourceShedFacts::default()],
@@ -10272,7 +10113,6 @@ mod tests {
             ..Default::default()
         };
         let shed = allocation.normalize(
-            None,
             1,
             ShedFacts {
                 sources: vec![
@@ -10308,7 +10148,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            shed_targets(&allocation.normalize(None, 0, ShedFacts::default())),
+            shed_targets(&allocation.normalize(0, ShedFacts::default())),
             vec![staffed_forage(PATCH_A, 0).target],
             "the terminal step takes the last worker off the last row whatever it is marked"
         );
@@ -10386,7 +10226,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            shed_targets(&allocation.normalize(None, 2, ShedFacts::default())),
+            shed_targets(&allocation.normalize(2, ShedFacts::default())),
             vec![staffed_forage(PATCH_A, 0).target],
             "the rich crew thins rather than the poor row ending"
         );
@@ -10410,7 +10250,6 @@ mod tests {
             ..Default::default()
         };
         let shed = allocation.normalize(
-            None,
             2,
             ShedFacts {
                 threatened: true,
@@ -10449,7 +10288,6 @@ mod tests {
             ..Default::default()
         };
         let shed = allocation.normalize(
-            None,
             1,
             ShedFacts {
                 sources: vec![
@@ -10490,7 +10328,7 @@ mod tests {
             threatened: true,
             ..Default::default()
         };
-        let shed = allocation.normalize(None, 0, facts);
+        let shed = allocation.normalize(0, facts);
         assert_eq!(
             shed_targets(&shed),
             vec![
@@ -10519,7 +10357,6 @@ mod tests {
         };
         assert_eq!(allocation.assigned_total(), 5);
         let shed = allocation.normalize(
-            None,
             2,
             ShedFacts {
                 spare_roadwork_keepers: 1,
@@ -10545,7 +10382,7 @@ mod tests {
             last_yields: vec![realized(4.0)],
             ..Default::default()
         };
-        let shed = allocation.normalize(None, 0, ShedFacts::default());
+        let shed = allocation.normalize(0, ShedFacts::default());
         assert_eq!(shed.len(), 1);
         assert!(!shed[0].row_survived(), "the row ends");
         assert!(allocation.assignments.is_empty());
@@ -10580,7 +10417,7 @@ mod tests {
         );
 
         // …and the band loses a worker that same turn.
-        let shed = allocation.normalize(None, BAND - 1, ShedFacts::default());
+        let shed = allocation.normalize(BAND - 1, ShedFacts::default());
         assert_eq!(
             allocation.workers_on(&staffed_forage(PATCH_B, 0).target),
             2,
@@ -11233,42 +11070,35 @@ mod tests {
         }
     }
 
-    /// ⛔ **THE BENCH LENDS LIKE A ROW, RANKED BY ITS OWN MARK, AND BEFORE ITS TIER'S ROWS.**
+    /// ⛔ **EACH BENCH ORDER LENDS LIKE A ROW, RANKED BY ITS OWN MARK, AND BEFORE ITS TIER'S ROWS.**
     #[test]
-    fn the_bench_lends_by_its_own_priority_before_that_tiers_rows() {
+    fn each_bench_order_lends_by_its_own_priority_before_that_tiers_rows() {
         let board = muster_board(vec![
             muster_row(muster_hunt("normal", false), 3, SourcePriority::Normal),
             muster_row(muster_hunt("low", false), 2, SourcePriority::Low),
             muster_row(muster_hunt("high", false), 4, SourcePriority::High),
         ]);
-        let bench = |priority| Some(MusterBench { priority, hands: 5 });
-        let ask = |priority, crew| {
-            board.muster_donors(
-                0,
-                0,
-                crew,
-                &|_| true,
-                bench(priority),
-                &MusterKit::default(),
-            )
+        // Two bench orders: order 0 is Normal with 5 hands, order 1 is Low with 2.
+        let bench = Some(MusterBench {
+            orders: vec![(0, SourcePriority::Normal, 5), (1, SourcePriority::Low, 2)],
+        });
+        let ask = |crew| {
+            board.muster_donors(0, 0, crew, &|_| true, bench.as_ref(), &MusterKit::default())
         };
-        // A Low bench ranks with the Low row, ahead of it: its 5 hands, then the Low row's.
-        let plan = ask(SourcePriority::Low, 6);
-        assert_eq!((plan.from_bench, plan.from_rows), (5, vec![(2, 1)]));
-        // A Normal bench lends before the Normal row and after every Low row.
-        let plan = ask(SourcePriority::Normal, 9);
-        assert_eq!((plan.from_bench, plan.from_rows), (5, vec![(2, 2), (1, 2)]));
-        let plan = ask(SourcePriority::Normal, 7);
-        assert_eq!((plan.from_bench, plan.from_rows), (5, vec![(2, 2)]));
-        // A High bench lends only once every Low and Normal row is exhausted.
-        let plan = ask(SourcePriority::High, 5);
-        assert_eq!((plan.from_bench, plan.from_rows), (0, vec![(2, 2), (1, 3)]));
-        let plan = ask(SourcePriority::High, 7);
-        assert_eq!((plan.from_bench, plan.total()), (2, 7));
-        // The pool counts the bench's crew.
+        // The Low bench order lends first (ahead of the Low row), then the Low row.
+        let plan = ask(3);
         assert_eq!(
-            board.musterable_pool(1, 0, &|_| true, bench(SourcePriority::Normal)),
-            1 + 3 + 2 + 4 + 5
+            (plan.from_bench_orders.clone(), plan.from_rows.clone()),
+            (vec![(1, 2)], vec![(2, 1)])
+        );
+        // The Normal bench order lends after every Low donor and before the Normal row.
+        let plan = ask(8);
+        assert_eq!(plan.from_bench_orders, vec![(1, 2), (0, 4)]);
+        assert_eq!(plan.from_bench, 6);
+        // The pool counts every order's crew.
+        assert_eq!(
+            board.musterable_pool(1, 0, &|_| true, bench.as_ref()),
+            1 + 3 + 2 + 4 + 5 + 2
         );
     }
 
@@ -11574,6 +11404,23 @@ mod tests {
         );
     }
 
+    /// Finish one item of the order at `index` the way the turn does; `true` when the order left.
+    fn finish_one(bench: &mut BandBench, index: usize) -> bool {
+        let before = bench.orders.len();
+        bench.orders[index].items.push(ItemInFlight {
+            progress: scalar_zero(),
+            drawn: DrawnInputs {
+                reading: None,
+                grade: None,
+                withdrawn: Vec::new(),
+                at_tool: false,
+            },
+        });
+        bench.finish_item(index, 0);
+        bench.retire_done_orders();
+        bench.orders.len() < before
+    }
+
     /// **`remove_kit` takes every part and drops the kit order;** a drawn pile is lost exactly as a
     /// single removal loses it, and the other orders are untouched.
     #[test]
@@ -11583,14 +11430,18 @@ mod tests {
         bench
             .enqueue_kit(KIT, KIT_COUNT, parts(&[("spears", 2), ("sled", 1)]))
             .unwrap();
-        bench.orders[1].drawn = Some(DrawnInputs {
-            reading: None,
-            grade: None,
-            withdrawn: Vec::new(),
+        bench.orders[1].items.push(ItemInFlight {
+            progress: scalar_zero(),
+            drawn: DrawnInputs {
+                reading: None,
+                grade: None,
+                withdrawn: Vec::new(),
+                at_tool: false,
+            },
         });
         let removed = bench.remove_kit(1).expect("the kit order is on the queue");
         assert_eq!(removed.len(), 2);
-        assert!(removed[0].drawn.is_some(), "the drawn pile went with it");
+        assert!(!removed[0].items.is_empty(), "the pile went with it");
         assert_eq!(queue_shape(&bench), ["plain"]);
         assert!(bench.kit_orders.is_empty());
         assert_eq!(
@@ -11607,18 +11458,21 @@ mod tests {
         bench
             .enqueue_kit(KIT, KIT_COUNT, parts(&[("spears", 2), ("sled", 1)]))
             .unwrap();
-        assert!(!bench.complete_item(0), "one of two spears");
+        assert!(!finish_one(&mut bench, 0), "one of two spears");
         assert_eq!(
             bench.kit_orders[0].done, 0,
             "an unfinished part reports its own made"
         );
-        assert!(bench.complete_item(0), "the spears part is done and leaves");
+        assert!(
+            finish_one(&mut bench, 0),
+            "the spears part is done and leaves"
+        );
         assert_eq!(
             bench.kit_orders[0].done, 2,
             "the finished part's made is banked"
         );
         assert_eq!(queue_shape(&bench), ["sled#1"]);
-        assert!(bench.complete_item(0));
+        assert!(finish_one(&mut bench, 0));
         assert!(
             bench.kit_orders.is_empty(),
             "the last part finished: the kit order is gone"

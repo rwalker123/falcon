@@ -1161,7 +1161,7 @@ pub fn bench_tool_suggestions(
                 .filter_map(|order| {
                     let recipe = recipes.recipe(&order.recipe_id)?;
                     (recipe.bench_material() == Some(material)).then(|| {
-                        (order.remaining() as f32 * recipe.work - order.progress.to_f32())
+                        (order.remaining() as f32 * recipe.work - order.progress_total().to_f32())
                             .max(NOTHING_TO_MAKE)
                     })
                 })
@@ -1285,11 +1285,11 @@ fn quoted_rate(
         return 0.0;
     };
     let crew = bench
-        .map(|bench| bench.workers)
+        .map(crate::components::BandBench::crew_total)
         .filter(|workers| *workers > 0)
         .unwrap_or(UNSTAFFED_BENCH_QUOTE_CREW);
     let tiers = bench_tiers(material, inputs.materials, equipment, wear);
-    rate_per_turn(crew, &recipes.crafting, tiers.speed)
+    rate_per_turn(0, crew, &recipes.crafting, tiers.speed, tiers.speed)
 }
 
 /// **TURNS THE BENCH NEEDS TO FINISH THE WORK ALREADY QUEUED** - each order's remaining passes times
@@ -1314,7 +1314,7 @@ fn queued_lead_turns(
             if rate <= 0.0 {
                 return None;
             }
-            let work = order.remaining() as f32 * recipe.work - order.progress.to_f32();
+            let work = order.remaining() as f32 * recipe.work - order.progress_total().to_f32();
             Some(work.max(0.0) / rate)
         })
         .sum()

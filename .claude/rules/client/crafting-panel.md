@@ -25,149 +25,65 @@ they can read differently, and a client deriving both from a boolean cannot tell
 panel therefore renders the reason as it arrives, tinted by the published severity, and composes no
 sentence of its own — least of all *"cannot craft"*.
 
-### The bench well says how far along and why stopped as TWO lines
+### The bench is several orders at once, each with its own crew (#873)
 
-The well's word column is title, then the progress line — the `work` accrued against the pass's cost,
-what a turn adds and the turns that implies, and the grade the pile in flight fixed — and then, only
-when `bench.blocked_reason` is non-empty, the refusal on **its own line beneath**, verbatim and in the
-tint its published `blocked_severity` picks, while the progress line stays `INK_DIM`. **Neither fact may cost the panel the
-other.** *How far along am I* and *why am I stopped* are both live questions on a stopped bench, and
-the progress reading is what tells the player whether clearing the block recovers a nearly-finished
-item or a barely-started one; a refusal written over it takes that away exactly when it is wanted.
-A running bench adds no label at all, so nothing about its card moves for a line it does not have.
+`docs/plan_labor_at_scale.md` → "The bench: several orders at once, each with a crafter limit". The sim
+staffs every order each turn from the band's idle hands, highest priority first, so the panel **never
+proposes a crew**: there is no `bench_crew` verb, no `crew_changed` signal, no Crafters stepper and no
+`benchable_workers` ceiling. The bench well is one **header line** — `R of M orders running · C crafters ·
+S spare` — and every order is its own row under it.
 
-**The refusal line carries `BENCH_BLOCKED_META`**, which is the only way a claim can be scoped to it:
-the reason is a sim string a harness must not predict, and the danger ink is worn by every refused row
-in the ledger below.
+- **R** = orders with `crew_at_tool + crew_by_hand > 0`; **M** = every order; **C** = `bench.workers`, the
+  sim's crew total; **S** = `HudBandLaborState.people_idle`, the idle figure the labor UI already tells
+  the player (handed in as `PAYLOAD_IDLE_WORKERS`). None is derived by a rule of the panel's own.
+- An empty queue replaces the line with `Nothing on the bench` and its sub line (`Auto` has its own).
+- Bench-level wire keys are only `workers`, `orders`, `auto`, `auto_skipped`, `auto_wait_reason`, `lent_to_hunt`,
+  `kit_orders` and `set_aside`. **Everything else is per order** — a bench-level read of `recipe_id`,
+  `progress`, `worked`, `blocked_reason` is a read of a field that no longer exists
+  (`KnowledgePanelController._bench_recipes` was one and now walks the orders).
 
-#### A BENCH WAITING FOR ITS CREW IS A PROMPT, AND THE SIM IS WHAT SAYS SO
+### An order row: name line, meters, one sub line
 
-**`bench.blocked_severity` is `blocked_reason`'s twin, in the offer vocabulary** — `danger` /
-`neutral` / `good`, `""` while nothing is blocking — and it is what the blocked line is tinted by.
-*"No one at the bench"* resolves `neutral`; a shortage, an unknown craft or a zero craft rate resolve
-`danger`; a joined reason takes `danger` if any half of it does.
+`_build_order_row`. **Name line:** the sim's `display_name` (the recipe book's name only as a fallback),
+the AUTO tag, the order's `Priority: <High|Normal|Low>` link, `made/count` inside its own `− n +`, `↑`
+(never on index 0) and `✕`. **Meters:** the crew bar beside a thin progress bar. **Sub line, one line:** the
+copy limit is two lines a row besides the bars, so anything longer rides a tooltip.
 
-It exists because **the player staffs the bench**, so a crewless bench is the ORDINARY state one click
-after **Make** — and a panel that rendered every refusal in `HudStyle.DANGER` made the expected state
-read as a fault. **Which refusals are serious is not the client's call**, exactly as `reason` itself is
-not: a tint derived from the wording is a resolved string being parsed as data, and the field beside it
-is the whole answer. It resolves through **`REASON_COLORS`, the same table the ledger's offer rows
-use** — one severity vocabulary means one tint table, and a second one for the bench would be a second
-opinion about what `danger` looks like. `neutral` and every unrecognised value land on
-`REASON_COLOR_QUIET`, so an unknown severity degrades to a prompt rather than to an alarm.
+- **Crew bar = the work strip's `CrewSplitMarks`, generalised, not forked.** At the tool (`crew_at_tool`,
+  the kitted green), by hand (`crew_by_hand`, the bare green) and **room** (`crew_cap − both`, floored at
+  zero) as hollow outlined seats — `CrewSplitMarks` gained a fifth `room` segment that widens the run of
+  marks but is never counted by `crew()`. The hover is `HudWorkVocab.crew_bar_words`, which gained a
+  `room` clause (`room for 1 more`); the tool's name is the recipe book's name for the recipe that makes
+  `bench_tool`. A recipe with no bench tool has no at-tool segment.
+- **Progress bar** fills `progress / (work × max(items_in_flight, 1))` — every item in flight's work, never
+  one item's. Work, `rate_per_turn` and what it teaches ride its **tooltip**, not its face.
+- **Sub line:** unblocked it reads `<output_grade> · done in ≈T turns · <n> set aside`, `T =
+  ceil((work_total − progress) / rate_per_turn)` floored at one turn and **omitted at a rate of zero**;
+  `n` is Σ `drawn_inputs`. **Blocked, the sim's `blocked_reason` stands in its place VERBATIM, tinted by
+  `blocked_severity`** through the one `REASON_COLORS` table (`danger` = the alarm, `neutral` = quiet): a
+  "done in 3 turns" beside `Short 0.6 fibre` would promise progress that is not happening, and `No spare
+  hands this turn` is the ordinary state one click after Make, not a fault. `lent_to_hunt > 0` appends
+  `· n lent to the hunt`. The forecast of what the stock cannot cover (`short_to_finish`) rides the sub
+  line's tooltip under the line itself.
+- **Priority is per order**: `bench_priority <f> <b> order <i> high|normal|low`, `<i>` the order's index in
+  `bench.orders` (the index `bench_order_count` / `bench_remove` / `bench_raise` address). It is a SIBLING
+  verb of `work_priority`, whose grammar reads a lone trailing token as a herd id. The picker is the same
+  `HudWidgets.build_work_priority_picker` the work inspector uses; `_priority_order` (view state, one open
+  at a time, closed on a pick and on an index that left the queue) says which row shows it. No optimistic
+  overlay: the order's `priority` is captured live and arrives on the command's own recapture.
+- **Skip lives on a waiting AUTO head only when what stops it is a shortage** (`danger`): the server's
+  skip check ignores the crew prompt, so a link on `No spare hands` would be refused.
+- A kit order's parts are ONE box drawn where its first part sits; a part's status word is WORKING when the
+  sim staffed it, WAITING on a `danger` refusal, else QUEUED.
+  The `Priority: <level>` link carries a hover: `HudWorkVocab.WORK_PRIORITY_HINT`, plus
+  `HudCraftingVocab.ORDER_PRIORITY_HIGH_TIP` (`High: takes a crafter ahead of the food rows' hold crews.`) when
+  the order is High — the sim gives a workable High order one crafter ahead of those hold crews.
 
-**The estimate's gate is untouched by any of this**: the rate and the finish still render only on
-`rate_per_turn > 0` *and* an empty `blocked_reason`, so a crewless bench (rate `0`, a reason present)
-shows neither whatever colour its reason is in.
+### The rail's `N set aside for the bench` line
 
-### THE UNIT IS `work`, AND THE TURNS ARE STATED BECAUSE A WORKER-TURN IS NOT A WORKER'S TURN
-
-The progress line reads **`1.0 of 6 work · +4.0/turn · done in 2 turns`**. It said `worker-turns`, and
-that unit produced a real playtest error: a player with two crafters divided 6 by 2, expected three
-turns and measured six (the bench then ran at `progress_per_worker_turn` 1.0). The bench now runs at 2.0
-and bare-handed `craft_speed` is `0.5`, so a bare crew delivers its head count a turn; a tool-bounded
-bench (`craft_speed` 1.0) delivers twice that. The name invited an arithmetic wrong by exactly the tool
-multiplier, so the unit is the recipe's own `work` and what a turn adds is stated rather than left to
-be inferred.
-
-- **The rate is `bench.rate_per_turn` rendered VERBATIM and is never re-derived.** It is
-  `workers × progress_per_worker_turn × craft_speed` with `craft_speed` already resolved through the
-  bounding tool or the material's bare-handed rate — the same tool-or-bare-hand join `kitTiers` exists
-  to keep sim-side, and nothing else on this wire carries that factor.
-- **The estimate is `ceil((work − progress) / rate_per_turn)`, computed client-side, and that is
-  within the rule rather than an exception to it**: it is exact arithmetic over three published
-  numbers, which is the boundary `yield-forecast.md` draws — where a closed form exists the sim ships
-  the terms. A turns-remaining field beside the rate would be a second home for one fact. It floors at
-  one turn and spells that one as **`done next turn`**, the plural format having produced
-  *"done in 1 turns"*.
-
-**BOTH CLAUSES ARE GATED ON `rate_per_turn > 0` *AND* AN EMPTY `blocked_reason`, WHICH ARE TWO
-DIFFERENT QUESTIONS.** The rate is a property of **the crew and the tool**; whether the bench is
-actually moving is `blocked_reason`'s answer, and merging them gets one of the two stopped benches
-wrong. A bench **short of material** publishes its real, non-zero rate — the crew is standing there
-and the tool is fine, it simply has not drawn — so a gate on the rate alone would quote *"done in 5
-turns"* beside *"Short 0.6 fibre"* and promise progress that is not happening. A bench with **no crew
-or a zero craft speed** publishes `0`, and there is nothing to compute at all. The harness stages both,
-because a single stopped fixture cannot say which half of the gate withheld the estimate.
-
-### THE ✕ ON THE WELL TAKES THE WORKED ORDER OFF THE BENCH
-
-It emits `bench_remove <faction> <band> order <worked>` — the retired `clear_bench`'s control, now
-the worked order's own ✕ (`BenchState.worked`, the order the well describes; `0` only when the head
-is the one being worked or nothing can be). A skipped head keeps its own ✕ on its queue row, so a
-well hard-wired to `order 0` would remove the waiting head and spend the wrong pile. It sits beside the crew stepper, **absent
-entirely on an idle bench** (`recipe_id == ""`), and relays through the seam every bench verb uses:
-panel (`order_remove_requested`) → `CraftingPanelController` → `HudLayer` → `Main`, no branch of its
-own.
-
-**Its tooltip names what will be destroyed, off `drawn_inputs`** — *"Take this order off the bench —
-2 fibre · 0.2 hide already cut are lost"*, and the no-pile wording on an undrawn bench. **Composed from the WITHDRAWAL,
-never from the recipe's inputs**: the two differ the moment a bench tool's material efficiency applies
-(a tooled sled cuts 4.8 hide against a book price of 6), and naming what will really be lost is the
-whole point. **No confirmation dialog** — the tooltip states the cost, the loss is small and
-recoverable, and saying consequences in text rather than popping a modal is this panel's idiom
-throughout.
-
-**THE GLYPH COLLISION IS ANSWERED THREE WAYS AT ONCE, because the card header carries the same ✕ for
-closing the whole panel.** This one sits INSIDE the well's own bordered box, it is inset from the
-card's right edge by the crew stepper's width, and it wears `HudStyle`'s **`armed`** variant — the
-destructive treatment the pause menu's Abandon and Quit already use — against the header's quiet
-ghost. Rendered, the two read as a warm-bordered chip in a boxed readout and a dark-green corner
-button; the harness reaches it by `CLEAR_BENCH_META` rather than by face, a face match finding both.
-
-### THE BENCH TAKES THE PLAYER'S OWN RANK, AND IT IS THE WORKED ROW'S CONTROL, NOT A SECOND ONE
-
-`docs/plan_standing_upkeep.md` §4.9 item 9b. A short-handed band sheds its crafters exactly as it
-sheds a gathering crew, so the bench carries the SAME `SourcePriority` a worked row does —
-`BenchState.priority`, decoded as the lowercase word `bench.priority`, `"normal"` on an unmarked
-bench, on an IDLE one and on a band with no bench at all.
-
-**THE VOCABULARY IS `HudWorkVocab`'S AND IS NOT RESTATED HERE.** The levels, the picker's faces, its
-reading order, the `High priority · ` / `Low priority · ` prefixes, the tier inks, the hint line and
-`work_priority_of`'s normalization are one property of one kind; a second spelling in
-`hud_crafting_vocab.gd` would be free to drift from the board's. What this panel's own vocabulary
-holds is the wire KEY and the two metas — the prefix's and the link's — which are facts about this
-surface.
-
-**`bench_priority <faction> <band> high|normal|low` IS A SIBLING VERB, NOT A `work_priority` TOKEN.**
-That grammar reads a lone trailing token as a herd id, so `work_priority … bench low` would be
-ambiguous with a herd named `bench`. The three VALUE tokens ARE shared, which is what lets one picker
-echo back the word the decoder handed it. It names the band and nothing else, one bench per band
-meaning there is no order argument to disambiguate — `bench_crew`'s shape, for `bench_crew`'s reason.
-
-**IT RENDERS ON AN IDLE BENCH, which is the opposite of the ✕ one line above and deliberately so.**
-The ✕ removes an ORDER, so a bench with an empty queue has nothing to remove; a rank is a standing statement
-about the BENCH, and an empty bench is exactly when a player says *"the axes go first"*. A control
-hidden there would hide the one moment it is most wanted.
-
-**⛔ THE CONTROL COSTS THE WELL NO ROW, AND THAT WAS A MEASUREMENT RATHER THAN A PREFERENCE.** The
-`Priority` link was built as a fourth line under the teach line first, at ~24px on EVERY bench
-forever — and `crafting_panel_band_dock_collapsed`'s ledger clears its 1072px room by **18px**, under
-one row, so the fourth line pushed a state that is asserted NOT to scroll into an internal scroll.
-It rides the trailing edge of LINE TWO instead: that line always exists, the sub label expands into
-the slack so the link right-aligns, and the rank is line two's own subject anyway — the mark leads
-the very same line. **The card's WIDTH was never the constraint** (it is an `AutoSizingPanel` fitting
-to content, measured at 1067 against a 960 nominal on the bare band), so the link cost nothing there
-either.
-
-**THE MARK IS ITS OWN `Label`, never spliced into the sub line's string** — `_bench_sub_line` composes
-and joins that string out of the job's clauses, and a prefix inside it would sit inside what that
-producer measures. The prefix carries its own ` · `, so the row's separation is `0` and line two's
-spacing is stated in one place. A Normal bench mounts nothing at all and its line two is
-byte-identical to what it printed before the mark existed.
-
-**NO OPTIMISTIC OVERLAY AND THEREFORE NO ROLLBACK HANDLE.** `BenchState.priority` is captured live
-off the bench the command mutates and the server re-captures after every command, so the new mark
-arrives on THIS command's own recapture — `work_priority`'s rule, one surface over. The picker CLOSES
-on the pick for the same reason it does there: a picker left open over a value that has not landed
-invites a second press at the same button.
-
-**`_priority_open` IS A PLAIN `bool`, NOT the work inspector's three-valued `_work_picker_open`.**
-That state exists over there because the floor picker and the rank picker are mutually exclusive in a
-fixed-size zone whose tallest state is what the box is reserved against; this well has no second
-expansion and this card refits to its content. It is VIEW state with exactly the standing of `_folded`
-and the scroll offset — and it closes with the card, unlike `_folded`, an expansion being transient
-where a folded group is a preference.
+When `bench.set_aside` is non-empty the rail ends with ONE line, `2.2 set aside for the bench` (Σ amounts),
+its per-material split (`fibre 2 · hide 0.2`) in the tooltip. It sits with the existing rail rows, not in a
+section of its own.
 
 ## The readout rules the design is built on
 
@@ -459,93 +375,18 @@ of card, not by a clipped sentence. **The material is still absent from it**: th
 already, and an ADJECTIVE form (*"your least supple hide"*) would be the client mapping a published
 axis noun to English, which is the rule `quantumNoun` states one field over.
 
-## THE BENCH TITLE IS THE THING, THEN THE CRAFT — never the two nouns juxtaposed
-
-`Hurdles · Tanning`, not `Tanning Hurdles`. The title joins the recipe's `display_name` to the craft's
-sim-resolved one, and juxtaposing them was reported from play as a DIFFERENT ITEM from the `Hurdles`
-row in the ledger below. **The collision is the shape, not that row's bad luck**: every craft in the
-book is named with a gerund, so the same format renders `Weaving Baskets` (a verb phrase) and
-`Bone-working Crook` (a compound noun). The separator is the `·` the sub line and the cost cell
-already join clauses with, and **a bench whose craft the sim has not published prints the thing
-alone** rather than a title opening on a dangling separator.
-
-**The thing is `BenchState.displayName` VERBATIM, and on an item with several recipes the sim's name
-carries the recipe** — `Spears (Flint) · Knapping`, `Baskets (Reed) · Weaving` — while a single-recipe
-job reads `Crook · Bone-working`. The client composes no `item · recipe` of its own; the recipe is
-locked once the build starts, and the name the sim publishes is where the bench says which one it is.
-
-## MAKE QUEUES AN ORDER, THE PLAYER STAFFS THE BENCH — and there is still no Crafter role card
+## MAKE QUEUES AN ORDER, THE SIM STAFFS IT — and there is still no Crafter role card
 
 `docs/plan_crafting_and_materials.md` §7 → "The queue". Pressing **Make** emits
-`bench_enqueue <faction> <band> recipe <id> count 1` (`HudCraftingVocab.MAKE_ORDER_COUNT`): an ORDER
-of one joins the back of the bench's queue — onto an empty bench it is the job at once — with
-**nobody on it**. The crew `− n +` stepper emits `bench_crew <faction> <band> workers <n>` and is the
-only thing that picks the number, **live on an idle bench too**: the crew stays with the bench across
-orders, so a player may staff an empty bench ahead of the order that will use it. The well's ✕ emits
-`bench_remove … order <worked>`. `set_bench` and `clear_bench` are retired verbs and nothing builds them.
+`bench_enqueue <faction> <band> recipe <id> count 1` (`HudCraftingVocab.MAKE_ORDER_COUNT`); a suggestion's
+Queue sends its whole count. **No `workers` token is ever sent** — on an enqueue or a kit enqueue — because
+the sim staffs the order and a client-chosen crew would be a second answer. The queue gate is `queueable`
+(next section); a Make always adds an order.
 
-**So a crew of `0` is the normal reading one click after Make**, not a fault: the sim recruits nobody,
-because how many hands stop hunting is the decision the game is made of. A new head order on a bench
-that already has a crew keeps that crew — not recruiting is not the same as dismissing — and the well
-says so in the quiet ink, which is what "A BENCH WAITING FOR ITS CREW IS A PROMPT" above is about.
-
-Scout and Warrior are standing roles with nothing to point at; crafting always has a subject — the
-thing being made — so it is staffed at the bench like a worked source. That also sidesteps a measured
-constraint: the Band panel's WORKFORCE zone reads 326px against a 275px box and its column split sits
-*exactly* on `band_panel_preview`'s levelness floor (`band-city-panel.md` → "The band zone's tier
-reads the whole STACKING BUDGET"), so a third role card there would have to be paid for by
-re-authoring that split.
-
-**`bench_enqueue` sends the recipe and its count and NOT a crew.** The grammar admits
-`[workers <n>]`, and omitting it is the point: a client-chosen crew would be a second answer to the
-question the stepper exists to ask, and an absent number means *leave the crew where it is* rather
-than *ignore the one that is there*.
-
-### THE WELL IS THE WORKED ORDER'S ROW; THE QUEUE ROWS ARE EVERY OTHER ORDER
-
-The bench works ONE order at a time — **the first order in queue order that holds a pile or can
-draw**, published as `BenchState.worked` — so a short head no longer stalls the queue. Every
-`BenchState` scalar — title, progress, rate, refusal, crew, drawn pile — describes `orders[worked]`;
-when nothing can be worked `worked` is 0 and the bench reads as its blocked head. So the well IS the
-worked order's row: it carries that order's **`made/count` stepper** (`1/3`, captioned `Made`, in the
-crew stepper's own metrics so the well reads as two captioned steppers) beside its ✕, both addressing
-index `worked`; and the queue rows under the well list **every OTHER order at its published index** —
-uncapped, inside the card's internal scroll. A skipped head is therefore a queue row ABOVE the rest.
-`CraftOffer.onBench` follows the worked order too.
-
-**A row for the worked order under the well was built first and withdrawn, for two reasons, one of
-them a measurement.** It repeated the well's name and carried a second ✕ for the same act; and it
-cost ~26px on EVERY running bench, which pushed `crafting_panel_band_dock_collapsed` — the state that
-stages the ledger FITTING its room, with under 20px to spare — into an internal scroll its
-precondition asserts it does not need. A one-order bench costs the well no row at all.
-
-Each queue row (`_build_queue_row`, keyed `QUEUE_ROW_META` = the order's PUBLISHED index, which is the
-`order` the queue verbs address):
-
-- **A status word, and IT CARRIES THE COLOUR** — `WAITING` in `HudStyle.DANGER` when the order carries
-  a `blocked_reason` (the bench is SKIPPING it); `PAUSED` in `WARN`, hover-explained, when `drawn` (it
-  was raised over while holding a cut pile and keeps the pile and its progress until it is worked
-  again); else `QUEUED` in `INK_DIM`. The word is the signal because Ray found the old faint status
-  words invisible and two colours for two shortage stories too much. The second line under the name is
-  ONE muted (`INK_FAINT`) line whatever the status: the sim's `blocked_reason` VERBATIM (no severity
-  tint — the well's blocked line is the one that keeps it), else the `short_to_finish` forecast. The two
-  are mutually exclusive — two lines, the panel's copy limit. The crew's refusal is never on an order
-  row — it stays the well's.
-- **The name.** The worked order's is the well's title, `BenchState.displayName` verbatim. **Any other
-  order publishes no name**, so it is the recipe book's `display_name` + `label` in the sim's own
-  `RecipeDef::full_name` shape (`ORDER_NAME_WITH_LABEL_FORMAT`, `Spears (Flint)`).
-- **`− made/count +`** → `bench_order_count … order <i> count <n>`. **`−` is dead at `made + 1`** —
-  the server refuses a count at or below `made`, which would finish the order; stopping an order is
-  its ✕. `+` has no ceiling. The well's stepper follows the same rule (`_wire_count_decrement` /
-  `_wire_count_increment` are shared by both).
-- **`↑`** → `bench_raise … order <i>`, on every row but index 0, which the server refuses; there the
-  button is an INVISIBLE dead placeholder, so the ✕ column still lines up (a bare gap of the nominal
-  size does not — the button's stylebox padding is wider than its minimum). Its hover warns when the
-  order directly above is the worked one and has CUT ITS PILE, since raising over it pauses it
-  (`ORDER_RAISE_PAUSES_TOOLTIP`).
-- **`✕`** → `bench_remove … order <i>`. An order the well does not describe publishes no withdrawal,
-  so its hover says only whether a pile is cut — and lost (`ORDER_REMOVE_TOOLTIP_DRAWN` / `_UNDRAWN`);
-  the worked order's ✕ is the well's, which names the withdrawn pile off `drawn_inputs`.
+Each order row carries its own count stepper, `↑` and `✕`: `−` is dead at `made + 1` (a count at or below
+`made` would finish the order; stopping it is the ✕), `↑` is absent on index 0, and the ✕'s hover says
+whether a set-aside pile is lost (`ORDER_REMOVE_TOOLTIP_DRAWN` / `_UNDRAWN`). Every control keeps the
+order's published index, which is the `order` the verbs address.
 
 ### THE QUEUE GATE IS `queueable`, NOT `available`
 
@@ -569,10 +410,8 @@ running but will run dry. Two published fields carry the forecast, both in the `
   draw (queue-order claims). **It is a FORECAST, not a block**: `blocked_reason` stays the only
   "skipped" field. A queue row with an EMPTY `blocked_reason` and a non-empty `short_to_finish` carries a
   second line in the slot the blocked reason uses — the two are mutually exclusive, so the row stays at
-  two lines (`ORDER_SHORT_TO_FINISH_META` = the order index). **The WORKED order has no queue row** —
-  it is drawn in the well — so the well carries the same line for `orders[worked]` when the bench has
-  no `blocked_reason` (`BENCH_SHORT_TO_FINISH_META`). Without it a lone order affordable for one pass,
-  the case the forecast exists for, would say nothing on the panel until it stalled.
+  two lines. Every order is a row now, and the row's copy limit is two lines besides the bars, so the
+  forecast rides the TOOLTIP of the order's sub line, under the line itself.
 - **`craft_suggestions[].shortfalls`** — the WHOLE suggested count against the stock the queue leaves.
   A muted line in the words column under the consequence (`SUGGESTION_SHORTFALL_META` = the item id).
   The refusal under a disabled Queue button is unchanged; this is the material story for the count.
@@ -586,9 +425,8 @@ link, not copy on every row. The number is the sim's `short` formatted to one de
 second tint for a second shortage story was rejected. A line wider than its column trims with an
 ellipsis and carries the full text as its tooltip, so nothing is dropped.
 
-**The delivered count has ONE home, the `made/count` face.** The well's progress line said
-`· 1 finished` off `BenchState.itemsCompleted`; that clause is gone, and no client surface reads
-`itemsCompleted` — the worked order's `made` is the same number.
+**The delivered count has ONE home, the `made/count` face** of each order row; no client surface reads
+`itemsCompleted`.
 
 ## SUGGESTIONS — WHAT TO MAKE NEXT, RANKED BY WHO IS GOING WITHOUT
 
@@ -639,26 +477,14 @@ Each row is TWO lines and one button (`_build_suggestion_row`, keyed `SUGGESTION
 - `upcoming_count == 0` shows nothing forecast-related, whatever `expires_in_turns`/`lead_turns` say.
 - Preview: `crafting_coming_up.png` (`_coming_up_state`, one merged, one coming-up-only).
 
-### The stepper's ceiling is `idle + the crew at the bench`, which is NOT the band's idle count
+### IDLE MEANS IDLE, and the header's `S spare` is that same figure
 
-**IDLE MEANS IDLE.** `PopulationCohortState.idleWorkers` is `working_age − assigned − bench.workers`
-— the sim's `BandWorkforce::idle()`, the one seam every head-count reading resolves through,
-including the clamp `assign_labor` makes — because a band's people are spent on the labor assignments
-AND on the bench, and a bench crew is not a `LaborTarget`. `HudBandLaborState.effective_idle` makes
-the same subtraction over its optimistic overlay, so the WORKFORCE zone's three "n idle" sites and
-`FactionRollup`'s faction total report hands that are actually free.
-
-**The stepper asks a different question and so takes a different number**
-(`HudBandLaborState.benchable_workers` = `orderable_hands + bench.workers` (`labor-ui.md` "PLAYER-SET CREWS CEILING AT `orderable_hands`": sim-staffed crews never block a player-set one), the sim's
-`BandWorkforce::benchable()`). Re-crewing a bench does not require freeing its crew first — those
-hands stay put while the job is swapped — so a ceiling of `idle` alone would pin the stepper to the
-crew already standing there and make `+` dead on every running bench.
-
-> `effective_idle` STAYS a local computation rather than reading the published `idleWorkers`: the `+`
-> steppers gate on an OPTIMISTIC idle, so a just-issued assign counts before the turn resolves, and
-> that overlay (`pending_labor`) is exactly what the wire's answer cannot carry. The bench crew has no
-> such overlay — a `bench_crew` edit shows on the next snapshot — so the published crew is the honest
-> third term.
+`PopulationCohortState.idleWorkers` is `working_age − assigned − bench.workers` — the sim's
+`BandWorkforce::idle()`, the one seam every head-count reading resolves through, because a bench crew is
+not a `LaborTarget`. `HudBandLaborState.people_idle` (over `effective_idle`) is what the WORKFORCE zone's
+"n idle" sites and `FactionRollup` report, and it is what the bench header's `S spare` reads. `effective_idle`
+stays a local computation: the `+` steppers gate on an OPTIMISTIC idle, and the bench crew has no such
+overlay (the sim staffs it), so the published crew is the honest third term.
 
 ## It is the FREE-FLOATING case, hence `AutoSizingPanel`
 
@@ -820,14 +646,21 @@ over until it can be drawn. Switching off clears the skips and touches neither o
 on|off` and `bench_auto_skip <f> <band>`, relayed panel → `CraftingPanelController` → `HudLayer` →
 `Main.format_bench_auto` / `format_bench_auto_skip` exactly as `bench_priority` is.
 
+- **Why Auto queued nothing** is `bench.auto_wait_reason` (sim-resolved; `""` unless Auto is on, the bench
+  has room and the top suggestion cannot be queued, e.g. `Spears: Short 0.4 bone`). On an IDLE bench it is
+  the well's sub line, `Auto: <reason>.` (`AUTO_WAIT_FORMAT`), falling back to `Auto: nothing to make.`
+  when empty. On a bench WITH orders it is a dim autowrapped note under the header well (meta
+  `AUTO_WAIT_NOTE_META`), absent when the reason is empty. Auto queues whenever the bench has room; it
+  needs no idle hand.
+- **An order row's sub line** is one ellipsized line; the whole refusal rides its tooltip (a neutral
+  `Every hand is needed first: 4 holding rows, 2 scouting` is longer than `No spare hands this turn`).
 - **The switch** is a pill (30x15 track, 11px knob, both `AUTO_SWITCH_*`) over an `AUTO` caption in the
   Made/Crafters caption size. On, track/knob/caption take `HudStyle.WARN`; off, `INK_FAINT`. It is a
-  top-row sibling of the steppers (after the Priority link on line two, before `Made`), and renders on an
-  IDLE bench too. A click asks for the OPPOSITE state; no optimistic overlay.
-- **The `AUTO` tag** is a thin amber-bordered box after an order's name, on queue rows (meta valued the
-  order index) and on the well title (index `AUTO_TAG_WELL_INDEX`, -1).
-- **Skip** shows only when `bench.auto`, the bench carries a `blocked_reason` and `orders[0].auto`; an
-  amber underlined link directly under the red blocked line.
+  trailing control of the bench header line, and renders on an IDLE bench too. A click asks for the OPPOSITE state; no optimistic overlay.
+- **The `AUTO` tag** is a thin amber-bordered box after an order's name, on order rows (meta valued the
+  order index).
+- **Skip** shows only when `bench.auto`, `orders[0].auto` and that order's `blocked_severity` is `danger`; an
+  amber underlined link directly under the order's blocked line.
 - **A skipped suggestion** (item in `auto_skipped`) dims its name and consequence and swaps the red
   shortfall line for a faint `Auto skipped — back when <materials> is in`, the materials being the item's
   suggested offer's `shortfalls` for ONE item (or `Auto takes it back when the bench is free` when none
@@ -904,13 +737,11 @@ over four wire terms — `kit_needs[]` and `materials_free[]` on the cohort, `be
   kit missing an item's recipe. `Start` sends `bench_enqueue_kit … kit <id> kits <n> recipe <id> …`, one
   recipe per item. The picker's state (`_kit_picker`, `_kit_count`, `_kit_recipes`) is VIEW state,
   checked against every payload like `_picker_row`.
-- **The queue draws a kit order as ONE box**, where its first part sits: a status word (WORKING when a
-  part is the worked order and not blocked, WAITING when every part is blocked, else QUEUED), `<Kit> ×N`
+- **The queue draws a kit order as ONE box**, where its first part sits: a status word (WORKING when the sim staffed any part,
+  WAITING when every part has a `danger` refusal, else QUEUED), `<Kit> ×N`
   (`bench.kit_orders[].kits`), a progress bar and `made of total` (`done + Σ made` over `done + Σ count`),
   the parts summed on a sub-line while folded, and the WHOLE kit's ↑ (absent at index 0) and ✕. Unfolded,
-  each part has a `− made/count +` addressing it by its own order index, and no ↑ or ✕. The worked part
-  is in the box as well as in the well.
-- **The well's title appends `· for <Kit>`** when the worked order belongs to a kit order.
+  each part has a `− made/count +` addressing it by its own order index, and no ↑ or ✕.
 - **A kit row reads CLAIMS, not the headcount.** Each `kit_needs[].items[]` carries `claimed` (a float:
   units actually claimed on this kit by rows, pools, sites and declared builds) and `short` (an int: whole
   units missing on those claims, before the bench's queue is netted off - the figure Make Next starts
@@ -948,22 +779,17 @@ over four wire terms — `kit_needs[]` and `materials_free[]` on the cohort, `be
 
 | Script | Purpose |
 |--------|---------|
-| `ui/hud/CraftingPanel.gd` | The surface (`AutoSizingPanel`): header + `Band:` picker/cycler, the 250px material rail, the SUGGESTIONS at the top of the main column (`_build_suggestions`, see "SUGGESTIONS"), the bench well — the worked order's row, with its `made/count` stepper, its ✕ and the crew stepper — and the queue rows for every other order (`_build_queue`, see "THE WELL IS THE WORKED ORDER'S ROW"), and the four-column ledger (Item · Owned · Rebuild costs · action) in FOLDABLE groups — `Gear`, `Bench tools`, `Materials`, all three built by one head builder — ONE ROW PER THING MADE, the offers grouped by `outputItemId` or, for a material recipe, by the material it makes, and the row's cells read off the SUGGESTED offer, with the `N recipes` link, its read-only `PopupPanel` and the Make picker under the row (see "ONE SHORT ROW PER THING MADE"). Emits `closed` / `band_selected` / `cycle_requested` / `enqueue_requested(recipe_id, count)` / `crew_changed` / `order_count_changed(order, count)` / `order_remove_requested(order)` / `order_raise_requested(order)` / `bench_priority_requested` and holds no snapshot state apart from the VIEW bits it carries across its per-snapshot rebuild (`_folded`, `_priority_open`, `_popup_row`, `_picker_row`, `_picker_choice`, `_picker_count`, `_picker_in_suggestions`) — `render(payload)` is its whole input. Builds its rows as a VBox of `HBoxContainer`s rather than a `GridContainer` because a GROUP HEAD spans the width and a grid cannot span. **The ACTION column is sized by the refusal under the button, not by the button** — a published `reason` is a whole clause, and it was the column's 132px that wrapped every one of them onto two lines and inflated every row |
-| `ui/hud/CraftingPanelController.gd` | `RefCounted` controller: owns the panel node (parented into the HUD CanvasLayer — a `RefCounted` cannot `add_child`), holds the four per-world catalogues, resolves the subject band by ENTITY each snapshot, and turns the panel's signals into `bench_enqueue_requested` / `bench_crew_requested` / `bench_order_count_requested` / `bench_remove_requested` / `bench_raise_requested` / `bench_priority_requested` — the six bench verbs, each naming the band by its durable `band_id` and the queue edits an `order` index. It also carries the **room** the card is bounded by (`HudLayer.floating_room`, handed in through `setup` and set on the panel as `room_bounds`) — handed down rather than looked up, a `RefCounted` reaching into its host's tree being the coupling this pattern exists to avoid — and exposes **`refit_room()`**, which `Hud.set_overlay_inset` calls when that room changes shape under an open card. `HudLayer` holds it as `_crafting`, relays all six signals, and refreshes it from the same per-snapshot seam the Band/City dock uses |
-| `ui/hud/hud_crafting_vocab.gd` | The vocabulary leaf (`HudCraftingVocab`) — ALL-`const`, zero funcs, zero vars: the wire keys (including the queue's `orders` row keys and `ORDER_HEAD_INDEX`, and the `craft_suggestions` row and source keys), the chrome words (the queue's status words, steppers, ↑/✕ tooltips and metas valued by ORDER INDEX; the suggestions' head, title/consequence/source formats, the `workers` fallback noun and their metas; `MAKE_ORDER_COUNT`), the severity→tint table and the geometry measured off the prototype. **Nothing here is a refusal, a grade, a shortfall or a tier word** — those are the sim's — and there is no condition wording at all, that reading belonging to the role cards. It holds the ONE OWNERSHIP word (`Not made`, every group's answer to the `Owned` head — what the published `group` keys is the chip's INK, not its wording), the stock row's craft-led `worst <axis> spent first` line — which said `quality from <axis>` until a material-only recipe was found to stamp no grade at all, the axis surviving on it as the SPEND ORDER `reads` also decides (see “THE AXIS ON THAT LINE IS A SPEND ORDER”) — and the cost cell's `→ <n> <material>` yield clause, the four legend-INDEX tints the grade chip resolves through, the bench's `work` unit + rate + finish-estimate formats (including the singular `done next turn`) and the ✕'s two tooltip shapes, the bench's RANK key and its two metas — the prefix's and the link's, the LEVELS themselves being `HudWorkVocab`'s and deliberately not restated (see "THE BENCH TAKES THE PLAYER'S OWN RANK") — the `blocked_severity` key and the ONE `REASON_COLORS` table (plus its `REASON_COLOR_QUIET` fallback) that both the bench well and the ledger's offer rows tint through, so the two cannot hold different opinions of what a published severity looks like, the five recipe keys the ledger's grouping reads (`recipe_label` / `makes` / `lasts` / `suggested` / `owned_at_tier`, plus `OWNED_AT_TIER_UNATTRIBUTED`), the link / popup / picker words and their metas (`RECIPES_LINK_META`, `RECIPES_POPUP_COLUMN_META`, `PICKER_META` / `PICKER_OPTION_META` / `PICKER_START_META` / `PICKER_CANCEL_META`, `MAKE_BUTTON_META`), the three section heads (`GROUP_HEADS`, `GROUP_ORDER` = kit · tool · stock), and the caret pair + `GROUP_HEAD_META` / `OWNED_CELL_META` / `CLEAR_BENCH_META` the harness reaches a head, a cell and the clear button by — the last of those being the only route to a button whose face the card header also wears. `BandCityPanel` reads its `LAUNCH_GLYPH` / `LAUNCH_TOOLTIP` back, so the registered launcher and the panel it opens cannot drift |
-| `tools/ui_preview/chapters/crafting_bench.gd` | The harness chapter: the prototype's own band (every ledger state at once — its running bench publishes a one-order queue, `worked: 0`, the head being the order the scalars describe), a bare band with an idle bench (an empty queue), the bench-bound band that separates idle from benchable, and the RESERVED-EDGE state. Its assertions are the claims no picture can carry — the refusal rendered verbatim with its number, the urgency order, the shrug dimmed **while a used row is not** (asserted as a pair, since a panel dimming every neutral row satisfies the first half alone), and the ownership/condition pair: the Owned cell states ownership **and** no condition wording reaches the ledger, over a fixture that deliberately keeps publishing `life` so the negative is not vacuous. **The STOCK row's readout is a pair straddling one save**: state 1 asserts the Cordage cell reports the band's whole pile as ONE total — the fixture's two batches summed, read back through the rail's `BATCH_AMOUNT_FORMAT` over deliberately un-whole amounts (6.5 + 2.8 = 9.3), asserted as the cell's ENTIRE contents so a cell that kept the rail's per-batch lines or its chips fails here — with the not-a-count claim named separately, since a cell reaching for the equipment column's `×n` renders `×9` and that is a different mistake from rendering the wrong pile, the yield closing the REBUILD-COSTS cell and no arrow left in the Owned one (both halves, since a panel that never moved the yield passes the first and one that dropped it passes the second). Its other half is **PNG-less and re-opens the SAME band with its store emptied**: the pile reads the ledger's one none-wording, `Not made`, and the cost cell still names the yield. **A SECOND PAIR RIDES THAT SAME SAVE — the material-only row's TWO SENTENCES**, and it is asked by EQUALITY throughout because the defect it guards was a sentence that was individually plausible and a `contains` would have passed on it. The stock row's line two must read the spend-order clause **and** the retired `quality from <axis>` one must be nowhere in the panel (the first alone passes on a panel printing both, the second alone on one that dropped line two entirely), with a looser negative on the bare word `quality` behind them, since a rewording that kept the claim in other words is the same lie. The other half is the sim's: the stock row's refusal must carry no `→ grade` tail **while the KIT row beside it still does** — the fixture pairs `Reed, no loom` with `Reed, no loom → fair`, the SAME bench material and the SAME missing loom, so the two differ in the tail and in nothing else and a build that stripped grade words everywhere fails there while every claim above stays green. A third names the TOOL row's `Bench tool — fibre`, the group the stock branch's edit must not have reached. **The fixture's own cordage reason was corrected in the same pass**: it read `Reed .70 → strong`, a payload no sim can resolve now that `grade_for` returns `None` for a material-only recipe. Sabotage-verified twice, disjointly — restoring the retired format fails exactly the three role-line claims (naming `Weaving · quality from strong` in the found text) while both equipment claims stay green, and dropping the axis clause altogether fails the spend-order EQUALITY **alone**, both negatives correctly staying green, which is the demonstration that a negative cannot stand in for the equality. The empty half is staged by emptying the STORE rather than by adding a second stock RECIPE, for two reasons — a second recipe makes the pairing a property of the fixture, and the extra ledger row puts `crafting_panel_band_dock_collapsed`, which stages the ledger FITTING its room, one row over the line it exists to sit under (measured: it fails that precondition). **`crafting_panel_two_tiers` + `crafting_panel_group_folded` are the OWNED readout**, on the shipped second tier: a band that can knap `flint` and still carries PLAIN clubs, so the band holds two tiers at once and every owned batch publishes a `tier_id` a cell could leak. Both spear recipes can be made there, which is also what the Make picker's Start claim needs. The fold is taken on the `Gear` head with `Loom` under `Bench tools` as the group that must stay. Five claims, every one a PAIRING, since a one-sided assertion passes on a panel that lost the thing entirely — two grades render a line each **while** a single-grade item renders exactly one; an Owned cell carries nothing beside its grades (phrased as *everything that is not a count or a legend word*, so a line COMPOSED client-side fails it); `Not made` reaching the cell at all, one wording for every group; folding hides ITS rows **while** another group's stay visible, the head remains, and the reverse toggle restores them; and no Owned CELL carries any tier word — scoped to the cells by `OWNED_CELL_META`, since the popup and the picker name tiers by design and a panel-wide scan cannot tell them apart, behind a precondition that the fixture publishes a `tier_id` on its batches, and asked of BOTH the two-tier and the reference band. Its positive half is the recipe popup's per-tier Owned column (`×6` / `—` on Spears). Sabotage-verified by rendering each batch's `tier_id` in the Owned cell beside its grade lines: exactly three claims fail — the tier-word negative on BOTH bands (two-tier `["plain", "flint", "flint", "flint"]`, reference `["plain" ×7]`) and the nothing-beside-its-grades claim (`["flint", "flint", "flint"]`) — while the popup's per-tier Owned column (`×6` / `—`) stays green. **`crafting_bench_priority` is the RANK's one frame, and it is one frame on purpose**: an IDLE bench (no job, so no ✕) carrying a HIGH mark on its line two with the picker OPEN and its `High` rung lit against two unlit ones — every new thing at once, a frame per state putting the defect in the gap between them. **A marked bench and an unmarked one cannot share a PNG**, this card rendering one band's bench, so the unmarked half is a CLAIM made on the reference band in the same block and PAIRED with the marked one: *prints a prefix* alone passes on a panel that always prints one, *prints nothing* alone on a panel that lost the mark entirely. The command is asserted on the LINE (`bench_priority 0 4971 low`) rather than on the payload dict — the work board's own idiom, so the verb and the token order are judged as the socket would see them — for **every** level, a commit hard-wired to `normal` satisfying any single-level claim; and each press asserts what did NOT go out, a mis-wired rung emitting `bench_crew` or `bench_remove` satisfying a bare *something was emitted*. The link and the rungs are driven as REAL POINTER INPUT through `InputProbe`, `pressed.emit()` being unable to see a covered, disabled, zero-size or IGNORE-filtered control. Sabotage-verified three ways, each failing a DISJOINT subset: a commit hard-wired to `normal` fails the `high` and `low` line claims alone (the `normal` one correctly staying green); hiding the control on an idle bench fails the link-to-press guard, the idle-bench render claim and the lit-rung claim while the MARK claims stay green; and never rendering the prefix fails the two marked claims and the LOW-ink one while the *a Normal bench prints nothing* negative correctly stays green. **`crafting_panel_reserved_edges` is the height bound**: `Main` is never instanced here, so the chapter pushes a left and a bottom reservation into `Hud.set_reserved_inset` by hand (the `event_dock` chapter's idiom), asserts the card's rect sits inside `layout_root`'s on both axes with its ledger scrolling internally, and releases them again. **The "it got shorter than state 1" claim is the vacuity guard** — every rect test passes trivially on a card that already fitted. **`crafting_panel_event_bar` is the OVERLAY bound**, and it is a different failure: it injects a real `EventDockPanel` docked TOP, connects `occupancy_changed` to `Hud.set_overlay_inset`, opens the card while the bar is SUPPRESSED, and only then un-suppresses it — so what is under test is the re-fit, not the opening. It keeps the bottom reservation, because a card centred in a tall room clears a top bar for free and the collision only exists once the ledger fills its room; that is why it was reported from play and not from here. Two vacuity guards carry it: the card's pre-bar top edge lay inside the bar's band, and the two rects share a horizontal one. Sabotage-verified by dropping the overlay term from the room's top edge — the clearance claim fails at `card top 12 vs bar bottom 66` while both guards stay green. **Three more states stand a REAL `BandCityPanel` up** rather than pushing a depth, since the reservation, the collapse and the HUD's yield verdict all have to be the panel's own answers: `crafting_panel_band_dock_bottom` (docked BOTTOM, fanned out through `Main.band_dock_overlays_hud` + `Main.push_hud_strip` so the harness restates neither), `crafting_panel_co_edge_bottom` (the bar on that SAME edge, displaced past it) and `crafting_panel_band_dock_collapsed` (railed under an OPEN card, so the room GROWS — the direction a re-fit that only ever shrank would pass). Each pairs a clearance claim with "no room is left over while rows are still hidden" and declares which of the two fit cases it is staging; the co-edge one additionally states the MAXIMUM's premise as the inequality it rests on. **A fourth, PNG-less, isolates the reserved half**: every move above changes both registries at once, so a bare reservation is pushed under a second id and the open card must shorten for it. Sabotage-verified three ways, each failing a DISJOINT subset — dropping `_refit_floating_cards` from `set_reserved_inset` fails only that isolated pair (`1030 → 1030 for a 360 strip`); dropping the overlay half of `push_hud_strip` puts the card 274px through the strip (`card bottom 1091 vs strip top 817`), which is the reported defect, while the co-edge frame correctly stays green because the bar's extent already covers the panel; and taking `_edge_offset` out of `occupied_extent()` fails the co-edge frame alone (`card bottom 805 vs bar top 751`). **A last PNG-less block is the RE-RENDER pair, and its two halves need opposite fixtures** — a ledger only scrolls when it did not fit, and a card that did not fit is already at the room's top edge, where a park moves it nowhere. So the RECT is asked of the bare band in an undocked room (card top 450 against a room top of 12, and 999px wide against a 960 nominal — both stated as preconditions, since a card filling its room or never wider than its nominal cannot be seen to jump), read the instant `refresh_snapshot` returns rather than after it settles, and the OFFSET is asked of the prototype's band in a room a reservation has shortened, ticked with `_ticked_crafting_band` because Next Turn changes the payload. Sabotage-verified: parking before the fit fails the rect claim alone at `450 → 12`, re-applying the nominal width unconditionally fails it alone at `999 → 960`, and `centred_in_room = false` fails three — the two "no room left over while rows are hidden" claims (the clamp the ceiling protects against) plus the filled card's rect, which the re-render RATCHETS (330 tall before it, 549 after — a card clamped by its own centring, then re-clamped from the higher top edge that left it). **The scroll carry-across is the one thing NO sabotage fails**: measured, the offset already survives the tear-down for the reason recorded above, so the assertion pins the property rather than the mechanism. **The BENCH block is two stopped fixtures and two PNG-less arithmetic ones**, because every claim about the finish estimate needs a partner: the crew-of-zero bench (rate `0`) beside the short-of-material one (a real rate, stopped anyway) is what says which half of the gate withheld the estimate; a remainder that only a CEILING rounds up beside a bench inside one turn of done, which is where the wording changes; the ✕ present on a job beside its absence on an idle bench; the drawn tooltip beside the undrawn one; and the press asserted to emit `bench_remove_requested` at order 0 **and not** `bench_enqueue_requested`, since a mis-wired button satisfies a bare "something was emitted". The fixtures carry the sim's own two new fields, and the running bench's numbers are chosen so a crew-derived rate renders a DIFFERENT sentence rather than the same one. **Those same two frames are the TINT pairing**, since a panel with one colour for every refusal passes either half alone: the crewless bench's reason renders in the quiet ink (asserted `== REASON_COLOR_QUIET` **and** `!= DANGER`) while the short bench's keeps the alarm. A **third, PNG-less** fixture is what separates the two implementations — a shortfall SENTENCE published at `neutral`, a payload no sim resolves, so a panel re-deriving the tint from the wording tints it `danger` and one reading the field does not; the picture is identical either way, which is why it has no frame. Sabotage-verified by restoring the always-`DANGER` tint: the crewless claim and the mismatch claim fail, the shortage claim and every other bench claim stay green. Its six other sabotages are recorded in `harness-ui-preview.md`, and so is the ONE-ROW-PER-THING-MADE block — `crafting_recipes_popup` and `crafting_make_picker` beside `crafting_panel`, the ledger at rest. **`crafting_queue_suggestions` + `crafting_suggestion_picker` are the QUEUE and the SUGGESTIONS**, appended last (`_queue_and_suggestion_states`): one band whose bench holds three orders — the head in the well at `1/3`, a PAUSED flint-spear order (drawn, not the head) and a QUEUED sled — and three suggestions in rank order: clubs short of bone (a LIVE Queue — the craft is known — with its muted `Short 12.0 wood for all 4` line; the dead-button case is staged separately with `queueable=false`), spears on two TAKE rows (`3 hunters without`, two recipes so Queue opens the picker under the suggestion), sled costing WORK (`+1.6 work a turn`). The claims: the head's `made/count` and stepper ride the WELL and no row repeats it; one row per order behind it at its PUBLISHED index; PAUSED vs QUEUED; `−` dead exactly at `made + 1`; no ↑ on the head; each ✕'s pile tooltip; the pausing-raise hover; published order; two lines per suggestion; the sources hover by equality; and every control PRESSED as real pointer input with the LINE asserted (`bench_order_count … order 0 count 4`, `bench_raise … order 2`, `bench_remove … order 1`, `bench_enqueue … recipe sled count 2`, Start → `recipe spears_flint count 3`, Make → `count 1`). **`crafting_queue_short_head` is the SHORT HEAD** (`_short_head_state`): baskets short of fibre at index 0, flint spears WORKED at index 1 (`worked: 1`, every bench scalar the spears order's, `on_bench` following it), a sled queued. The claims are pairs on the two places an index can go wrong — the well titles the worked order and shows its `1/3`; the skipped head is a queue row ABOVE the sled reading `WAITING` (the status word in DANGER) with its muted `Short … fibre` reason and no ↑; and the head ROW's `+` and ✕ send `order 0` while the WELL's send `order 1`, since a panel still hard-wired to the head would send 0 from both |
+| `ui/hud/CraftingPanel.gd` | The surface (`AutoSizingPanel`): header + `Band:` picker/cycler, the 250px material rail, the SUGGESTIONS at the top of the main column (`_build_suggestions`, see "SUGGESTIONS"), the bench well (the header line) and one row per order (`_build_queue` / `_build_order_row`, see "An order row"), with the rail's set-aside line, and the four-column ledger (Item · Owned · Rebuild costs · action) in FOLDABLE groups — `Gear`, `Bench tools`, `Materials`, all three built by one head builder — ONE ROW PER THING MADE, the offers grouped by `outputItemId` or, for a material recipe, by the material it makes, and the row's cells read off the SUGGESTED offer, with the `N recipes` link, its read-only `PopupPanel` and the Make picker under the row (see "ONE SHORT ROW PER THING MADE"). Emits `closed` / `band_selected` / `cycle_requested` / `enqueue_requested(recipe_id, count)` / `order_count_changed(order, count)` / `order_remove_requested(order)` / `order_raise_requested(order)` / `bench_priority_requested(order, level)` and holds no snapshot state apart from the VIEW bits it carries across its per-snapshot rebuild (`_folded`, `_priority_order`, `_popup_row`, `_picker_row`, `_picker_choice`, `_picker_count`, `_picker_in_suggestions`) — `render(payload)` is its whole input. Builds its rows as a VBox of `HBoxContainer`s rather than a `GridContainer` because a GROUP HEAD spans the width and a grid cannot span. **The ACTION column is sized by the refusal under the button, not by the button** — a published `reason` is a whole clause, and it was the column's 132px that wrapped every one of them onto two lines and inflated every row |
+| `ui/hud/CraftingPanelController.gd` | `RefCounted` controller: owns the panel node (parented into the HUD CanvasLayer — a `RefCounted` cannot `add_child`), holds the four per-world catalogues, resolves the subject band by ENTITY each snapshot, and turns the panel's signals into `bench_enqueue_requested` / `bench_order_count_requested` / `bench_remove_requested` / `bench_raise_requested` / `bench_priority_requested` — the bench verbs (priority naming an `order`), each naming the band by its durable `band_id` and the queue edits an `order` index. It also carries the **room** the card is bounded by (`HudLayer.floating_room`, handed in through `setup` and set on the panel as `room_bounds`) — handed down rather than looked up, a `RefCounted` reaching into its host's tree being the coupling this pattern exists to avoid — and exposes **`refit_room()`**, which `Hud.set_overlay_inset` calls when that room changes shape under an open card. `HudLayer` holds it as `_crafting`, relays all of those signals, and refreshes it from the same per-snapshot seam the Band/City dock uses |
+| `ui/hud/hud_crafting_vocab.gd` | The vocabulary leaf (`HudCraftingVocab`) — ALL-`const`, zero funcs, zero vars: the wire keys (including the queue's `orders` row keys and `ORDER_HEAD_INDEX`, and the `craft_suggestions` row and source keys), the chrome words (the queue's status words, steppers, ↑/✕ tooltips and metas valued by ORDER INDEX; the suggestions' head, title/consequence/source formats, the `workers` fallback noun and their metas; `MAKE_ORDER_COUNT`), the severity→tint table and the geometry measured off the prototype. **Nothing here is a refusal, a grade, a shortfall or a tier word** — those are the sim's — and there is no condition wording at all, that reading belonging to the role cards. It holds the ONE OWNERSHIP word (`Not made`, every group's answer to the `Owned` head — what the published `group` keys is the chip's INK, not its wording), the stock row's craft-led `worst <axis> spent first` line — which said `quality from <axis>` until a material-only recipe was found to stamp no grade at all, the axis surviving on it as the SPEND ORDER `reads` also decides (see “THE AXIS ON THAT LINE IS A SPEND ORDER”) — and the cost cell's `→ <n> <material>` yield clause, the four legend-INDEX tints the grade chip resolves through, the order rows' keys (priority, crew at tool / by hand / cap, items in flight, work, rate, grade, bench tool, drawn inputs, lent) and formats (header line, `done in ≈T turns`, `n set aside`, `Priority: …`, `n lent to the hunt`, the rail's set-aside line) with their index-valued metas, the ✕'s two tooltip shapes, the LEVELS themselves being `HudWorkVocab`'s and deliberately not restated — the `blocked_severity` key and the ONE `REASON_COLORS` table (plus its `REASON_COLOR_QUIET` fallback) that both the order rows and the ledger's offer rows tint through, so the two cannot hold different opinions of what a published severity looks like, the five recipe keys the ledger's grouping reads (`recipe_label` / `makes` / `lasts` / `suggested` / `owned_at_tier`, plus `OWNED_AT_TIER_UNATTRIBUTED`), the link / popup / picker words and their metas (`RECIPES_LINK_META`, `RECIPES_POPUP_COLUMN_META`, `PICKER_META` / `PICKER_OPTION_META` / `PICKER_START_META` / `PICKER_CANCEL_META`, `MAKE_BUTTON_META`), the three section heads (`GROUP_HEADS`, `GROUP_ORDER` = kit · tool · stock), and the caret pair + `GROUP_HEAD_META` / `OWNED_CELL_META` the harness reaches a head and a cell by. `BandCityPanel` reads its `LAUNCH_GLYPH` / `LAUNCH_TOOLTIP` back, so the registered launcher and the panel it opens cannot drift |
+| `tools/ui_preview/chapters/crafting_bench.gd` | The harness chapter: the prototype's own band (every ledger state at once — its running bench publishes THREE orders — baskets High at the loom with two items in flight, spears Normal by hand, a sled blocked `No spare hands this turn` — plus a non-empty `set_aside`), a bare band with an idle bench (an empty queue), and the RESERVED-EDGE state. The band-dock states use an idle bench (`_dock_band`) because they stage whether the LEDGER fits a room. Its assertions are the claims no picture can carry — the refusal rendered verbatim with its number, the urgency order, the shrug dimmed **while a used row is not** (asserted as a pair, since a panel dimming every neutral row satisfies the first half alone), and the ownership/condition pair: the Owned cell states ownership **and** no condition wording reaches the ledger, over a fixture that deliberately keeps publishing `life` so the negative is not vacuous. **The STOCK row's readout is a pair straddling one save**: state 1 asserts the Cordage cell reports the band's whole pile as ONE total — the fixture's two batches summed, read back through the rail's `BATCH_AMOUNT_FORMAT` over deliberately un-whole amounts (6.5 + 2.8 = 9.3), asserted as the cell's ENTIRE contents so a cell that kept the rail's per-batch lines or its chips fails here — with the not-a-count claim named separately, since a cell reaching for the equipment column's `×n` renders `×9` and that is a different mistake from rendering the wrong pile, the yield closing the REBUILD-COSTS cell and no arrow left in the Owned one (both halves, since a panel that never moved the yield passes the first and one that dropped it passes the second). Its other half is **PNG-less and re-opens the SAME band with its store emptied**: the pile reads the ledger's one none-wording, `Not made`, and the cost cell still names the yield. **A SECOND PAIR RIDES THAT SAME SAVE — the material-only row's TWO SENTENCES**, and it is asked by EQUALITY throughout because the defect it guards was a sentence that was individually plausible and a `contains` would have passed on it. The stock row's line two must read the spend-order clause **and** the retired `quality from <axis>` one must be nowhere in the panel (the first alone passes on a panel printing both, the second alone on one that dropped line two entirely), with a looser negative on the bare word `quality` behind them, since a rewording that kept the claim in other words is the same lie. The other half is the sim's: the stock row's refusal must carry no `→ grade` tail **while the KIT row beside it still does** — the fixture pairs `Reed, no loom` with `Reed, no loom → fair`, the SAME bench material and the SAME missing loom, so the two differ in the tail and in nothing else and a build that stripped grade words everywhere fails there while every claim above stays green. A third names the TOOL row's `Bench tool — fibre`, the group the stock branch's edit must not have reached. **The fixture's own cordage reason was corrected in the same pass**: it read `Reed .70 → strong`, a payload no sim can resolve now that `grade_for` returns `None` for a material-only recipe. Sabotage-verified twice, disjointly — restoring the retired format fails exactly the three role-line claims (naming `Weaving · quality from strong` in the found text) while both equipment claims stay green, and dropping the axis clause altogether fails the spend-order EQUALITY **alone**, both negatives correctly staying green, which is the demonstration that a negative cannot stand in for the equality. The empty half is staged by emptying the STORE rather than by adding a second stock RECIPE, for two reasons — a second recipe makes the pairing a property of the fixture, and the extra ledger row puts `crafting_panel_band_dock_collapsed`, which stages the ledger FITTING its room, one row over the line it exists to sit under (measured: it fails that precondition). **`crafting_panel_two_tiers` + `crafting_panel_group_folded` are the OWNED readout**, on the shipped second tier: a band that can knap `flint` and still carries PLAIN clubs, so the band holds two tiers at once and every owned batch publishes a `tier_id` a cell could leak. Both spear recipes can be made there, which is also what the Make picker's Start claim needs. The fold is taken on the `Gear` head with `Loom` under `Bench tools` as the group that must stay. Five claims, every one a PAIRING, since a one-sided assertion passes on a panel that lost the thing entirely — two grades render a line each **while** a single-grade item renders exactly one; an Owned cell carries nothing beside its grades (phrased as *everything that is not a count or a legend word*, so a line COMPOSED client-side fails it); `Not made` reaching the cell at all, one wording for every group; folding hides ITS rows **while** another group's stay visible, the head remains, and the reverse toggle restores them; and no Owned CELL carries any tier word — scoped to the cells by `OWNED_CELL_META`, since the popup and the picker name tiers by design and a panel-wide scan cannot tell them apart, behind a precondition that the fixture publishes a `tier_id` on its batches, and asked of BOTH the two-tier and the reference band. Its positive half is the recipe popup's per-tier Owned column (`×6` / `—` on Spears). Sabotage-verified by rendering each batch's `tier_id` in the Owned cell beside its grade lines: exactly three claims fail — the tier-word negative on BOTH bands (two-tier `["plain", "flint", "flint", "flint"]`, reference `["plain" ×7]`) and the nothing-beside-its-grades claim (`["flint", "flint", "flint"]`) — while the popup's per-tier Owned column (`×6` / `—`) stays green. **`crafting_bench_priority` is the RANK's one frame, and it is one frame on purpose**: an IDLE bench (no job, so no ✕) carrying a HIGH mark on its line two with the picker OPEN and its `High` rung lit against two unlit ones — every new thing at once, a frame per state putting the defect in the gap between them. **A marked bench and an unmarked one cannot share a PNG**, this card rendering one band's bench, so the unmarked half is a CLAIM made on the reference band in the same block and PAIRED with the marked one: *prints a prefix* alone passes on a panel that always prints one, *prints nothing* alone on a panel that lost the mark entirely. The command is asserted on the LINE (`bench_priority 0 4971 low`) rather than on the payload dict — the work board's own idiom, so the verb and the token order are judged as the socket would see them — for **every** level, a commit hard-wired to `normal` satisfying any single-level claim; and each press asserts what did NOT go out, a mis-wired rung emitting `bench_remove` satisfying a bare *something was emitted*. The link and the rungs are driven as REAL POINTER INPUT through `InputProbe`, `pressed.emit()` being unable to see a covered, disabled, zero-size or IGNORE-filtered control. Sabotage-verified three ways, each failing a DISJOINT subset: a commit hard-wired to `normal` fails the `high` and `low` line claims alone (the `normal` one correctly staying green); hiding the control on an idle bench fails the link-to-press guard, the idle-bench render claim and the lit-rung claim while the MARK claims stay green; and never rendering the prefix fails the two marked claims and the LOW-ink one while the *a Normal bench prints nothing* negative correctly stays green. **`crafting_panel_reserved_edges` is the height bound**: `Main` is never instanced here, so the chapter pushes a left and a bottom reservation into `Hud.set_reserved_inset` by hand (the `event_dock` chapter's idiom), asserts the card's rect sits inside `layout_root`'s on both axes with its ledger scrolling internally, and releases them again. **The "it got shorter than state 1" claim is the vacuity guard** — every rect test passes trivially on a card that already fitted. **`crafting_panel_event_bar` is the OVERLAY bound**, and it is a different failure: it injects a real `EventDockPanel` docked TOP, connects `occupancy_changed` to `Hud.set_overlay_inset`, opens the card while the bar is SUPPRESSED, and only then un-suppresses it — so what is under test is the re-fit, not the opening. It keeps the bottom reservation, because a card centred in a tall room clears a top bar for free and the collision only exists once the ledger fills its room; that is why it was reported from play and not from here. Two vacuity guards carry it: the card's pre-bar top edge lay inside the bar's band, and the two rects share a horizontal one. Sabotage-verified by dropping the overlay term from the room's top edge — the clearance claim fails at `card top 12 vs bar bottom 66` while both guards stay green. **Three more states stand a REAL `BandCityPanel` up** rather than pushing a depth, since the reservation, the collapse and the HUD's yield verdict all have to be the panel's own answers: `crafting_panel_band_dock_bottom` (docked BOTTOM, fanned out through `Main.band_dock_overlays_hud` + `Main.push_hud_strip` so the harness restates neither), `crafting_panel_co_edge_bottom` (the bar on that SAME edge, displaced past it) and `crafting_panel_band_dock_collapsed` (railed under an OPEN card, so the room GROWS — the direction a re-fit that only ever shrank would pass). Each pairs a clearance claim with "no room is left over while rows are still hidden" and declares which of the two fit cases it is staging; the co-edge one additionally states the MAXIMUM's premise as the inequality it rests on. **A fourth, PNG-less, isolates the reserved half**: every move above changes both registries at once, so a bare reservation is pushed under a second id and the open card must shorten for it. Sabotage-verified three ways, each failing a DISJOINT subset — dropping `_refit_floating_cards` from `set_reserved_inset` fails only that isolated pair (`1030 → 1030 for a 360 strip`); dropping the overlay half of `push_hud_strip` puts the card 274px through the strip (`card bottom 1091 vs strip top 817`), which is the reported defect, while the co-edge frame correctly stays green because the bar's extent already covers the panel; and taking `_edge_offset` out of `occupied_extent()` fails the co-edge frame alone (`card bottom 805 vs bar top 751`). **A last PNG-less block is the RE-RENDER pair, and its two halves need opposite fixtures** — a ledger only scrolls when it did not fit, and a card that did not fit is already at the room's top edge, where a park moves it nowhere. So the RECT is asked of the bare band in an undocked room (card top 450 against a room top of 12, and 999px wide against a 960 nominal — both stated as preconditions, since a card filling its room or never wider than its nominal cannot be seen to jump), read the instant `refresh_snapshot` returns rather than after it settles, and the OFFSET is asked of the prototype's band in a room a reservation has shortened, ticked with `_ticked_crafting_band` because Next Turn changes the payload. Sabotage-verified: parking before the fit fails the rect claim alone at `450 → 12`, re-applying the nominal width unconditionally fails it alone at `999 → 960`, and `centred_in_room = false` fails three — the two "no room left over while rows are hidden" claims (the clamp the ceiling protects against) plus the filled card's rect, which the re-render RATCHETS (330 tall before it, 549 after — a card clamped by its own centring, then re-clamped from the higher top edge that left it). **The scroll carry-across is the one thing NO sabotage fails**: measured, the offset already survives the tear-down for the reason recorded above, so the assertion pins the property rather than the mechanism. **The BENCH block is two stopped fixtures and two PNG-less arithmetic ones**, because every claim about the finish estimate needs a partner: the crew-of-zero bench (rate `0`) beside the short-of-material one (a real rate, stopped anyway) is what says which half of the gate withheld the estimate; a remainder that only a CEILING rounds up beside a bench inside one turn of done, which is where the wording changes; the ✕ present on a job beside its absence on an idle bench; the drawn tooltip beside the undrawn one; and the press asserted to emit `bench_remove_requested` at order 0 **and not** `bench_enqueue_requested`, since a mis-wired button satisfies a bare "something was emitted". The fixtures carry the sim's own two new fields, and the running bench's numbers are chosen so a crew-derived rate renders a DIFFERENT sentence rather than the same one. **Those same two frames are the TINT pairing**, since a panel with one colour for every refusal passes either half alone: the crewless bench's reason renders in the quiet ink (asserted `== REASON_COLOR_QUIET` **and** `!= DANGER`) while the short bench's keeps the alarm. A **third, PNG-less** fixture is what separates the two implementations — a shortfall SENTENCE published at `neutral`, a payload no sim resolves, so a panel re-deriving the tint from the wording tints it `danger` and one reading the field does not; the picture is identical either way, which is why it has no frame. Sabotage-verified by restoring the always-`DANGER` tint: the crewless claim and the mismatch claim fail, the shortage claim and every other bench claim stay green. Its six other sabotages are recorded in `harness-ui-preview.md`, and so is the ONE-ROW-PER-THING-MADE block — `crafting_recipes_popup` and `crafting_make_picker` beside `crafting_panel`, the ledger at rest. **`crafting_queue_suggestions` + `crafting_suggestion_picker` are the QUEUE and the SUGGESTIONS**, appended last (`_queue_and_suggestion_states`): one band whose bench holds three orders — the head in the well at `1/3`, a PAUSED flint-spear order (drawn, not the head) and a QUEUED sled — and three suggestions in rank order: clubs short of bone (a LIVE Queue — the craft is known — with its muted `Short 12.0 wood for all 4` line; the dead-button case is staged separately with `queueable=false`), spears on two TAKE rows (`3 hunters without`, two recipes so Queue opens the picker under the suggestion), sled costing WORK (`+1.6 work a turn`). The claims: the head's `made/count` and stepper ride the WELL and no row repeats it; one row per order behind it at its PUBLISHED index; PAUSED vs QUEUED; `−` dead exactly at `made + 1`; no ↑ on the head; each ✕'s pile tooltip; the pausing-raise hover; published order; two lines per suggestion; the sources hover by equality; and every control PRESSED as real pointer input with the LINE asserted (`bench_order_count … order 0 count 4`, `bench_raise … order 2`, `bench_remove … order 1`, `bench_enqueue … recipe sled count 2`, Start → `recipe spears_flint count 3`, Make → `count 1`). **`crafting_queue_short_head` is the SHORT HEAD** (`_short_head_state`): baskets short of fibre at index 0, flint spears WORKED at index 1 (`worked: 1`, every bench scalar the spears order's, `on_bench` following it), a sled queued. The claims are pairs on the two places an index can go wrong — the well titles the worked order and shows its `1/3`; the skipped head is a queue row ABOVE the sled reading `WAITING` (the status word in DANGER) with its muted `Short … fibre` reason and no ↑; and the head ROW's `+` and ✕ send `order 0` while the WELL's send `order 1`, since a panel still hard-wired to the head would send 0 from both |
 
 ---
 
-## The bench lends hands to a hunt, in the donor rows' words (hunting by need)
+## An order lends hands to a hunt, in its sub line (hunting by need)
 
-`BenchState.lentToHunt` (decoded as `bench.lent_to_hunt`) is the bench's share of the next-turn hunting
-muster, from the same plan that fills each donor source row's `lent_to_hunt`. `workers` stays the crew
-the player set, and `rate_per_turn` already subtracts the lent hands, so the turns-to-finish clause
-(`_bench_estimate_clause`) needs no change.
-
-`CraftingPanel` draws one warn-ink line under the bench's progress bar when it is above 0 —
-`HudWorkVocab.WORK_ROW_LENT_LINE_FORMAT` (`2 out hunting · back after the kill`), the exact string the
-Work tab's donor rows use — and nothing at 0. Key and meta live in `hud_crafting_vocab.gd`
-(`BENCH_LENT_TO_HUNT_KEY`, `BENCH_LENT_LINE_META`). Frame: `crafting_bench_lent_to_hunt`
+`BenchOrderState.lentToHunt` (`orders[i].lent_to_hunt`) is that order's share of the next-turn hunting muster;
+`BenchState.lentToHunt` (`bench.lent_to_hunt`) is their sum and is what `HudBandLaborState` nets out of the
+bench crew. `rate_per_turn` already subtracts the lent hands, so the estimate needs no change. The row's sub
+line ends `· n lent to the hunt` (`ORDER_LENT_FORMAT`) and nothing at 0. Frame: `crafting_bench_lent_to_hunt`
 (`chapters/crafting_bench.gd`, with a lending-nothing negative).

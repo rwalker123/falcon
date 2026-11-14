@@ -2,7 +2,7 @@ use std::num::{ParseFloatError, ParseIntError};
 
 use thiserror::Error;
 
-use crate::commands::{BandOrderAction, BandOrderRow, BENCH_CREW_UNSPECIFIED};
+use crate::commands::{BandOrderAction, BandOrderRow};
 
 /// Describes a runtime command verb, its aliases, and usage hint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -230,8 +230,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "bench_enqueue",
         aliases: &[],
-        summary: "Add an order - a recipe and a count - to the back of a band's crafting bench queue. ONE BENCH, ONE QUEUE: the bench works the head order, and when its count is met the order leaves and the next one starts, drawing its own inputs; onto an empty bench this order is the head at once. Every order has a count (at least 1) - there is no repeat-until-cleared job. THE PLAYER STAFFS THE BENCH, NEVER THE SIM - labor is the scarce currency, so how many hands stop hunting to craft is never guessed. Omit 'workers' (or pass 0) and the crew is left exactly as it is; name a number and exactly that crew is applied. Use 'bench_crew' to set a crew afterwards, zero included. An unknown recipe, one whose crafts the faction has not learned, or a count of 0 is refused with a reason.",
-        usage: "bench_enqueue <faction_id> <band_id> recipe <recipe_id> count <n> [workers <n>]",
+        summary: "Add an order - a recipe and a count - to the back of a band's crafting bench queue. EVERY WORKABLE ORDER IS WORKED AT ONCE and THE SIM STAFFS THE BENCH: each order has its own priority (bench_priority) and its crew is dealt in the same passes as the work rows, capped at the recipe's crafters per item times the items it can work. An item's inputs are set aside the turn a crafter starts it, all or nothing; removing an order returns them. Every order has a count (at least 1). An unknown recipe, one whose crafts the faction has not learned, or a count of 0 is refused with a reason.",
+        usage: "bench_enqueue <faction_id> <band_id> recipe <recipe_id> count <n>",
     },
     CommandVerbHelp {
         verb: "bench_order_count",
@@ -276,16 +276,10 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "set_starting_loadout <faction_id> <band_id> [kit <kit_id> <count>]... [material <material_id> <units>]...",
     },
     CommandVerbHelp {
-        verb: "bench_crew",
-        aliases: &[],
-        summary: "Change the crew on a band's crafting bench, leaving the queue and every order's progress alone. The crew belongs to the bench, not to an order: it stays through every queue edit, and stands at an idle bench when the queue is empty. Clamped to the band's idle pool - the bench spends the same workers assign_labor does.",
-        usage: "bench_crew <faction_id> <band_id> workers <n>",
-    },
-    CommandVerbHelp {
         verb: "bench_priority",
         aliases: &[],
-        summary: "MARK A BAND'S CRAFTING BENCH WITH YOUR OWN RANK: 'high', 'normal' (the default) or 'low' - the same mark `work_priority` puts on a worked row, and read by the same shedding order. WHY THE BENCH NEEDS ONE: it spends the same workers your gatherers do, so when the band runs short it competes with them - and a craft pays into no food, fodder or material account, so an unmarked bench is the FIRST thing thinned. That is the right default in a famine and this is how you override it. The bench is ranked in the same step as your worked sources, never a step of its own. Its LAST hand goes before any source is emptied, so a 'high' bench still stalls before a 'low' patch is given up - the steps say what is at stake, the mark says who goes first among equals. A stalled bench keeps its recipe, its progress and the materials it already drew; re-crew it and it carries on. Its own verb rather than a `work_priority` token because that grammar reads a lone token as a herd id.",
-        usage: "bench_priority <faction_id> <band_id> high|normal|low",
+        summary: "RANK ONE BENCH ORDER: 'high', 'normal' (the default) or 'low'. A higher order is crewed first - it takes the bench tool and spare hands ahead of lower orders and even ahead of a lower-priority work row's reach crew - but every workable order still gets its first crafter. A kit order's parts share one rank, so ranking any part ranks the whole kit. Refused when no order stands at that index or the level is unknown.",
+        usage: "bench_priority <faction_id> <band_id> order <i> high|normal|low",
     },
     CommandVerbHelp {
         verb: "bench_auto",
@@ -1346,7 +1340,6 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 .ok_or(CommandParseError::MissingArgument("recipe"))?;
             let count = take_named_token(&mut tail, "count", "bench_enqueue count")?
                 .ok_or(CommandParseError::MissingArgument("count"))?;
-            let workers = take_named_token(&mut tail, "workers", "bench_enqueue workers")?;
             if let Some(extra) = tail.first() {
                 return Err(CommandParseError::UnexpectedToken(extra.to_string()));
             }
@@ -1355,10 +1348,6 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 band_id: parse_u64(band_str, "bench_enqueue band_id")?,
                 recipe_id,
                 count: parse_u32(&count, "bench_enqueue count")?,
-                workers: workers
-                    .map(|value| parse_u32(&value, "bench_enqueue workers"))
-                    .transpose()?
-                    .unwrap_or(BENCH_CREW_UNSPECIFIED),
             })
         }
         "bench_order_count" => {
@@ -1483,28 +1472,9 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 }
             })
         }
-        "bench_crew" => {
-            let faction_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
-            let band_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("band_id"))?;
-            let mut tail: Vec<&str> = parts.collect();
-            let workers = take_named_token(&mut tail, "workers", "bench_crew workers")?
-                .ok_or(CommandParseError::MissingArgument("workers"))?;
-            if let Some(extra) = tail.first() {
-                return Err(CommandParseError::UnexpectedToken(extra.to_string()));
-            }
-            Ok(CommandPayload::BenchCrew {
-                faction_id: parse_u32(faction_str, "bench_crew faction")?,
-                band_id: parse_u64(band_str, "bench_crew band_id")?,
-                workers: parse_u32(&workers, "bench_crew workers")?,
-            })
-        }
-        // **THE BENCH'S RANK**, shaped like `upkeep_mode` — a band handle and one trailing token —
+        // **THE BENCH'S RANK**, shaped like `upkeep_mode` — a band handle, an `order <index>` and a level —
         // because it addresses a band-level thing and the bench family it joins (`bench_enqueue`,
-        // `bench_crew`, the queue edits) is addressed that way too. It is deliberately NOT a
+        // the queue edits) is addressed that way too. It is deliberately NOT a
         // `work_priority` token: that grammar reads a bare single token as a HERD ID, so `bench`
         // would be ambiguous with a herd of that name.
         //
@@ -1517,16 +1487,20 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let band_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("band_id"))?;
-            let level = parts
-                .next()
+            let mut tail: Vec<&str> = parts.collect();
+            let order = take_named_token(&mut tail, "order", "bench_priority order")?
+                .ok_or(CommandParseError::MissingArgument("order"))?;
+            let level = tail
+                .first()
                 .ok_or(CommandParseError::MissingArgument("level"))?
                 .to_ascii_lowercase();
-            if let Some(extra) = parts.next() {
+            if let Some(extra) = tail.get(1) {
                 return Err(CommandParseError::UnexpectedToken(extra.to_string()));
             }
             Ok(CommandPayload::BenchPriority {
                 faction_id: parse_u32(faction_str, "bench_priority faction")?,
                 band_id: parse_u64(band_str, "bench_priority band_id")?,
+                order: parse_u32(&order, "bench_priority order")?,
                 level,
             })
         }
@@ -5207,25 +5181,27 @@ mod tests {
     }
 
     /// **`bench_priority` names a BAND and a LEVEL, and no source at all** — the bench family's own
-    /// shape (`bench_enqueue` / `bench_crew` / the queue edits are all `<faction> <band> …`), and
+    /// shape (`bench_enqueue` / the queue edits are all `<faction> <band> …`), and
     /// deliberately not a `work_priority` token: that grammar reads a lone token as a **herd id**, so
     /// `work_priority <f> <b> bench low` would be ambiguous with a herd named `bench`.
     #[test]
     fn parse_bench_priority_reads_the_band_and_the_level() {
         assert_eq!(
-            parse_command_line("bench_priority 1 7 low").unwrap(),
+            parse_command_line("bench_priority 1 7 order 2 low").unwrap(),
             CommandPayload::BenchPriority {
                 faction_id: 1,
                 band_id: 7,
+                order: 2,
                 level: "low".to_string(),
             }
         );
         // Case-folded, exactly as `upkeep_mode`'s mode and `work_priority`'s level are.
         assert_eq!(
-            parse_command_line("bench_priority 1 7 HIGH").unwrap(),
+            parse_command_line("bench_priority 1 7 order 0 HIGH").unwrap(),
             CommandPayload::BenchPriority {
                 faction_id: 1,
                 band_id: 7,
+                order: 0,
                 level: "high".to_string(),
             }
         );
@@ -5237,15 +5213,15 @@ mod tests {
     #[test]
     fn parse_bench_priority_takes_any_level_token_but_exactly_three() {
         assert!(matches!(
-            parse_command_line("bench_priority 1 7 sideways"),
+            parse_command_line("bench_priority 1 7 order 0 sideways"),
             Ok(CommandPayload::BenchPriority { .. })
         ));
         assert!(matches!(
-            parse_command_line("bench_priority 1 7"),
+            parse_command_line("bench_priority 1 7 order 0"),
             Err(CommandParseError::MissingArgument("level"))
         ));
         assert!(matches!(
-            parse_command_line("bench_priority 1 7 low extra"),
+            parse_command_line("bench_priority 1 7 order 0 low extra"),
             Err(CommandParseError::UnexpectedToken(_))
         ));
     }
@@ -5263,17 +5239,6 @@ mod tests {
                     band_id: 7,
                     recipe_id: "spears".to_string(),
                     count: 3,
-                    workers: BENCH_CREW_UNSPECIFIED,
-                },
-            ),
-            (
-                "bench_enqueue 1 7 recipe spears count 3 workers 2",
-                CommandPayload::BenchEnqueue {
-                    faction_id: 1,
-                    band_id: 7,
-                    recipe_id: "spears".to_string(),
-                    count: 3,
-                    workers: 2,
                 },
             ),
             (

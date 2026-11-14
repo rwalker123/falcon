@@ -157,8 +157,8 @@ the Crafters stepper is retired like the Builders one.
   (#852): 1 for a thing one person holds and shapes (spears, clubs, hoes, snares, the awl), 2 for a
   thing a second pair of hands holds while the first lashes or weaves (the sled, baskets, hurdles, the
   tanning frame, the loom, the road tool sets).
-- **Orders are staffed the way builds are.** One crafter on every workable order first, at any
-  priority; then round-robin within High up to each order's cap, then Normal, then Low.
+- **Orders are staffed the way builds are.** A High order's first crafter in pass 1, ahead of the hold
+  crews; then one crafter on every other workable order at the top of pass 2, at any priority; then round-robin within High up to each order's cap, then Normal, then Low.
 - **Each order carries a priority**, and it ranks against sources on the one priority list. So a High
   craft order can take kitted workers ahead of a Normal source's reach crew — some kitted workers are
   spared for the crafting the player asked for.
@@ -176,8 +176,11 @@ the Crafters stepper is retired like the Builders one.
   loom goes to the higher priority.
 - **The bench fills itself only when crafters are free**, and only with the gear the band is shortest
   of — `auto_craft_fill` must not flood a bench that can run several orders.
-- **The bench has no hold crew.** It is staffed in pass 2 (and pass 3 where bare hands help), never
-  pass 1. A bare-handed crafter crafts, so the bench is a pass-3 destination.
+- **The bench has no hold crew, but a High order's first crafter goes ahead of the hold crews.** The
+  player's way to say "work this one" is the order's Priority = High: that order takes one crafter in
+  pass 1, after the keepers and builders and before any hold crew; the row whose hold crew came up
+  short names the order. Normal and Low orders are staffed from pass 2 (and pass 3 where bare hands
+  help). A bare-handed crafter crafts, so the bench is a pass-3 destination.
 - **"Kitted" for the bench means holding its bench tool** (the tanning frame, the awl, the billet).
 - **On screen, each running order shows the work strip's crew bar**: crafters at the bench tool, by
   hand, and the room left under the order's cap. The work figures move into tooltips.

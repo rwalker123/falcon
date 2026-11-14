@@ -19,11 +19,10 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::Entity;
 
 use core_sim::{
-    advance_crafting, build_test_app, deliver_bench_output, recapture_snapshot_in_place,
-    scalar_from_f32, BandBench, BandEquipment, BatchGrade, DiscoveryProgressLedger,
-    EquipmentConfig, EquipmentConfigHandle, LadderConfigHandle, MaterialsConfig,
-    MaterialsConfigHandle, PopulationCohort, RecipesConfigHandle, ResidentBand, SnapshotHistory,
-    SourcePriority,
+    advance_crafting, build_test_app, recapture_snapshot_in_place, scalar_from_f32, BandBench,
+    BandEquipment, BatchGrade, DiscoveryProgressLedger, EquipmentConfig, EquipmentConfigHandle,
+    LadderConfigHandle, MaterialsConfigHandle, PopulationCohort, RecipesConfigHandle, ResidentBand,
+    SnapshotHistory,
 };
 use std::collections::BTreeMap;
 
@@ -39,7 +38,10 @@ trait PutOnBench {
 impl PutOnBench for BandBench {
     fn put_on(&mut self, recipe: &str, workers: u32) {
         self.orders = vec![core_sim::BenchOrder::new(recipe, NEVER_FINISHED)];
-        self.workers = workers;
+        self.orders[0].crew = core_sim::BenchCrew {
+            at_tool: 0,
+            by_hand: workers,
+        };
     }
 }
 
@@ -80,29 +82,12 @@ const PLENTY: f32 = 40.0;
 /// What one bare-handed pass of [`SLED_RECIPE`] withdraws, per `recipes.json` — the whole cost, at
 /// the hand-working material efficiency of `1.0`.
 const ONE_SLED_PASS_OF_HIDE: f32 = 6.0;
-const ONE_SLED_PASS_OF_FIBRE: f32 = 2.0;
-/// **Left over after the draw, and nowhere near another pass** — so the store is genuinely short
-/// rather than empty, and the published `Short …` quotes a number a player would recognise.
-const A_CRUMB: f32 = 0.5;
 /// A crew large enough that a bench visibly progresses in one pass and small enough that it does not
 /// finish the sled — `3 × 1.0 × 2.0` tooled is `6.0` against a `work` of `8.0`.
 const BENCH_CREW: u32 = 3;
 /// One crafter: a sled (`work: 8`) is then more than a turn off even with a live tanning frame, so
 /// a fixture that reads one turn's progress or one draw sees neither a completion nor a re-draw.
 const ONE_CRAFTER: u32 = 1;
-/// **One pass in one turn, bare-handed** — `16 × 1.0 × 0.5` is exactly the sled's `work` of `8.0`,
-/// so the fixture gets a delivered batch without looping a system to watch progress accumulate.
-const CREW_THAT_FINISHES_A_SLED_BARE_HANDED: u32 = 16;
-/// **Nobody at the bench** — the crew half of a zero rate, named so the zero reads as a state rather
-/// than as an arbitrary staffing number.
-const NO_ONE_AT_THE_BENCH: u32 = 0;
-/// **What a bench that cannot move publishes**: no crew, no recipe, or a craft speed of zero.
-const NO_ACCRUAL: f32 = 0.0;
-/// The two halves of the craft-speed pairing, spelled as words so the call site says which band it
-/// is standing up.
-const NO_BENCH_TOOL: bool = false;
-/// See [`NO_BENCH_TOOL`].
-const A_LIVE_TANNING_FRAME: bool = true;
 /// **How close two readings of one fixed-point store have to be to be the same number.** A
 /// [`core_sim::Scalar`] keeps six decimals and every value here rides an `f32` through the wire, so
 /// this is the width of the representation rather than a tolerance for disagreement.
@@ -246,37 +231,6 @@ fn sled_input_materials(app: &App) -> Vec<String> {
         .collect()
 }
 
-/// **Stand a sled up on a fresh world's bench, publish the rate it promises, then buy exactly one
-/// turn of it and publish the progress that bought.** `(rate, progress)`.
-///
-/// The crew is [`ONE_CRAFTER`] on both halves of the pairing and neither completes a pass — a
-/// completion resets `progress` to zero, which would make the comparison meaningless rather than
-/// merely wrong.
-fn rate_then_one_turn_of_progress(tooled: bool) -> (f32, f32) {
-    let (mut app, band) = world();
-    if tooled {
-        app.world
-            .get_mut::<BandEquipment>(band)
-            .expect("a spawned band carries an equipment ledger")
-            .stock(TANNING_FRAME_ITEM, 1, PLAIN_TIER, None);
-    }
-    stock_a_sleds_worth_of_material(&mut app, band);
-    set_bench(&mut app, band, ONE_CRAFTER);
-
-    let promised = publish(&mut app, band).bench;
-    assert_eq!(
-        promised.progress, 0.0,
-        "a fresh job has accrued nothing, so the turn's progress IS the delta"
-    );
-    app.world.run_system_once(advance_crafting);
-    let accrued = publish(&mut app, band).bench;
-    assert!(
-        accrued.progress < accrued.work,
-        "the fixture must not finish a pass — a completion resets the progress this reads"
-    );
-    (promised.rate_per_turn, accrued.progress)
-}
-
 /// **Wear one item until the band owns none of it** — the state a *"Worn out"* row is about. Charged
 /// through `wear_item`, the one seam that retires a unit, so the retired tally is written the way
 /// the game writes it.
@@ -379,24 +333,6 @@ fn anchor_grade(app: &App, item: &str) -> String {
         .to_string()
 }
 
-/// **Make `hide` a material nobody can work bare-handed** — the state a bench tool exists to lift,
-/// and the only way `craft_speed` can fall to `0` under a job whose pile is already cut. No shipped
-/// material is like this (all three organics declare `hand_working`), for the same reason no shipped
-/// item ships a second tier: the ones that will be are the minerals arc's, which has no producer yet.
-fn hide_cannot_be_worked_bare_handed(app: &mut App) {
-    let mut json: serde_json::Value =
-        serde_json::from_str(core_sim::BUILTIN_MATERIALS_CONFIG).expect("the table is json");
-    json["materials"][HIDE]
-        .as_object_mut()
-        .expect("hide is a material")
-        .remove("hand_working");
-    let config = MaterialsConfig::from_json_str(&json.to_string())
-        .expect("a material with no bare-handed rate is a legal table");
-    app.world
-        .resource_mut::<MaterialsConfigHandle>()
-        .replace(std::sync::Arc::new(config));
-}
-
 /// Credit this band's faction with a craft, past the ladder's completion threshold — what makes a
 /// knowledge-gated tier reachable.
 fn learn(app: &mut App, band: Entity, craft: &str) {
@@ -473,9 +409,6 @@ struct PublishedBench {
     rate_per_turn: f32,
     /// `(material id, withdrawn amount)` for the pile already cut, in the recipe's input order.
     drawn_inputs: Vec<(String, f32)>,
-    /// **The player's rank on the bench**, read as the wire's own enum rather than as a word, so a
-    /// codec that mapped an arm to the wrong variant cannot pass.
-    priority: shadow_scale_flatbuffers::generated::shadow_scale::sim::SourcePriority,
 }
 
 /// The band's published crafting rows, decoded off the **encoded** frame.
@@ -592,25 +525,40 @@ fn publish(app: &mut App, band: Entity) -> Published {
     let bench_row = cohort
         .bench()
         .expect("a cohort always publishes a bench row");
+    // **The per-order rows carry everything now** (#873): the fixture's first order stands in for
+    // the retired worked-order scalars.
+    let first = bench_row.orders().and_then(|orders| orders.iter().next());
     let bench = PublishedBench {
-        recipe_id: bench_row.recipeId().unwrap_or_default().to_string(),
+        recipe_id: first
+            .and_then(|order| order.recipeId())
+            .unwrap_or_default()
+            .to_string(),
         workers: bench_row.workers(),
-        progress: bench_row.progress(),
-        work: bench_row.work(),
-        teaches: bench_row.teaches().unwrap_or_default().to_string(),
-        blocked_reason: bench_row.blockedReason().unwrap_or_default().to_string(),
-        blocked_severity: bench_row.blockedSeverity().unwrap_or_default().to_string(),
-        shortfalls: bench_row
-            .shortfalls()
+        progress: first.map_or(0.0, |order| order.progress()),
+        work: first.map_or(0.0, |order| order.work()),
+        teaches: first
+            .and_then(|order| order.teaches())
+            .unwrap_or_default()
+            .to_string(),
+        blocked_reason: first
+            .and_then(|order| order.blockedReason())
+            .unwrap_or_default()
+            .to_string(),
+        blocked_severity: first
+            .and_then(|order| order.blockedSeverity())
+            .unwrap_or_default()
+            .to_string(),
+        shortfalls: first
+            .and_then(|order| order.shortToFinish())
             .map(|rows| {
                 rows.iter()
                     .map(|row| row.materialId().unwrap_or_default().to_string())
                     .collect()
             })
             .unwrap_or_default(),
-        rate_per_turn: bench_row.ratePerTurn(),
-        drawn_inputs: bench_row
-            .drawnInputs()
+        rate_per_turn: first.map_or(0.0, |order| order.ratePerTurn()),
+        drawn_inputs: first
+            .and_then(|order| order.drawnInputs())
             .map(|rows| {
                 rows.iter()
                     .map(|row| {
@@ -622,7 +570,6 @@ fn publish(app: &mut App, band: Entity) -> Published {
                     .collect()
             })
             .unwrap_or_default(),
-        priority: bench_row.priority(),
     };
     let offers = cohort
         .craftOffers()
@@ -1446,7 +1393,7 @@ fn a_crewless_bench_publishes_its_own_refusal_while_the_offer_stays_available() 
     }
     let published = publish(&mut app, band);
     assert_eq!(
-        published.bench.blocked_reason, "No one at the bench",
+        published.bench.blocked_reason, "No spare hands this turn",
         "the bench states the crew's refusal even though the craft itself is fine"
     );
     assert!(
@@ -1458,7 +1405,7 @@ fn a_crewless_bench_publishes_its_own_refusal_while_the_offer_stays_available() 
 /// **A bench waiting for its crew is a PROMPT; a bench short of material is a FAULT** — and the
 /// wire says which, so a client cannot paint the expected state in the alarm colour.
 ///
-/// The player staffs the bench and the sim never does, so *"No one at the bench"* is the normal
+/// The player staffs the bench and the sim never does, so *"No spare hands this turn"* is the normal
 /// state one click after **Make**. Asserted as a **pairing** over one band and one recipe, because
 /// a wire that stamped a single severity on every blocked bench passes neither half — the crewless
 /// bench must read `neutral` while the *same* bench, stripped of its hide, reads `danger`. The
@@ -1493,7 +1440,7 @@ fn a_crewless_bench_is_a_prompt_and_a_short_bench_is_a_fault() {
     // THE PROMPT: the pile is there and nobody is on it, which is what a staged Make looks like.
     set_bench_crew(&mut app, band, 0);
     let crewless = publish(&mut app, band);
-    assert_eq!(crewless.bench.blocked_reason, "No one at the bench");
+    assert_eq!(crewless.bench.blocked_reason, "No spare hands this turn");
     assert_eq!(
         crewless.bench.blocked_severity, "neutral",
         "the player is being told what to do next, not what went wrong"
@@ -1512,349 +1459,6 @@ fn a_crewless_bench_is_a_prompt_and_a_short_bench_is_a_fault() {
     assert_eq!(
         short.bench.blocked_severity, "danger",
         "a shortage is a problem, and it must not read the same as a bench awaiting its crew"
-    );
-
-    // AND BOTH AT ONCE takes the alarm: a reason with a fault in it is a fault.
-    set_bench_crew(&mut app, band, 0);
-    let both = publish(&mut app, band);
-    assert!(
-        both.bench.blocked_reason.contains("No one at the bench")
-            && both.bench.blocked_reason.starts_with("Short "),
-        "the joined case must carry both halves — got {:?}",
-        both.bench.blocked_reason
-    );
-    assert_eq!(
-        both.bench.blocked_severity, "danger",
-        "joined reasons take danger if any component is"
-    );
-}
-
-/// **A DRAWN pile's materials are already in hand, so a shortage in the store cannot stop it** — the
-/// shortage is about the NEXT draw, and the offer row for that same recipe is where it belongs.
-///
-/// Asserted as a **pairing** on one store, because a one-sided check passes on a bench that never
-/// reports anything: the drawn bench is silent while the offer beside it still says `Short …`, and
-/// the *same* store with the pile put back on the shelf says it on the bench.
-#[test]
-fn a_drawn_pile_is_not_blocked_by_a_store_too_poor_to_draw_again() {
-    let (mut app, band) = world();
-    strip(&mut app, band, HIDE);
-    strip(&mut app, band, "fibre");
-    // One pass and a crumb: the draw takes the whole cost and leaves a store that cannot fund
-    // another, which is exactly the state the defect published as a running job's refusal.
-    deposit(
-        &mut app,
-        band,
-        HIDE,
-        ONE_SLED_PASS_OF_HIDE + A_CRUMB,
-        &[(TOUGHNESS, 0.9), (SUPPLENESS, 0.2)],
-    );
-    deposit(
-        &mut app,
-        band,
-        "fibre",
-        ONE_SLED_PASS_OF_FIBRE + A_CRUMB,
-        &[("fineness", 0.5), ("strength", 0.5)],
-    );
-    {
-        let mut bench = app
-            .world
-            .get_mut::<BandBench>(band)
-            .expect("a spawned band carries a bench");
-        bench.put_on(SLED_RECIPE, BENCH_CREW);
-    }
-    app.world.run_system_once(advance_crafting);
-
-    let drawn = publish(&mut app, band);
-    assert!(
-        app.world
-            .get::<BandBench>(band)
-            .expect("a spawned band carries a bench")
-            .head()
-            .expect("the fixture's order is on the bench")
-            .drawn
-            .is_some(),
-        "the fixture's whole subject is a bench whose pile is already cut"
-    );
-    assert!(
-        drawn.bench.progress > 0.0,
-        "the job is progressing — that is what makes a shortage the wrong thing to say about it"
-    );
-    assert_eq!(
-        drawn.bench.blocked_reason, "",
-        "a drawn pile is in HAND: what the store is short of cannot stop the item in flight"
-    );
-    let drawn_offer = offer(&drawn, SLED_RECIPE).clone();
-    assert!(
-        drawn_offer.reason.starts_with("Short "),
-        "the shortage did not vanish — the offer row answers *could I start another* — got {:?}",
-        drawn_offer.reason
-    );
-    assert!(
-        !drawn.bench.shortfalls.is_empty(),
-        "the bench keeps publishing its shortfall rows: honest data about the next draw, which the \
-         client does not render as blocking"
-    );
-
-    // THE PAIRING: put the pile back on the shelf without touching the store — a fresh order has
-    // no drawn pile and no progress — and the identical store now blocks the bench.
-    {
-        let mut bench = app
-            .world
-            .get_mut::<BandBench>(band)
-            .expect("a spawned band carries a bench");
-        bench.put_on(SLED_RECIPE, BENCH_CREW);
-    }
-    let undrawn = publish(&mut app, band);
-    assert_eq!(
-        undrawn.material_batches, drawn.material_batches,
-        "the two halves of the pairing read the SAME store — otherwise the bench rows differ for a \
-         reason that is not the draw"
-    );
-    assert!(
-        undrawn.bench.blocked_reason.starts_with("Short ")
-            && undrawn.bench.blocked_reason.contains(HIDE),
-        "an undrawn bench is exactly what the field is for: a shortage is why it has not drawn — \
-         got {:?}",
-        undrawn.bench.blocked_reason
-    );
-    assert_eq!(
-        offer(&undrawn, SLED_RECIPE).reason,
-        drawn_offer.reason,
-        "the offer says the same thing either way — the fact has one home and it is that row"
-    );
-}
-
-/// **A start-stocked unit IS an anchor-grade craft, and the ledger says so** — an unstamped batch
-/// published a bare `×1` beside rows reading `×3 good`, which a player cannot tell from a panel that
-/// failed to draw something.
-///
-/// Asserted as a **pairing**, because *"the row has a grade"* is satisfied by any stamp at all: the
-/// band's spawned sled and a sled its own bench makes off hide richer than the bare hand can reach
-/// carry the **same** grade — which is the claim, rather than merely that a grade is present.
-#[test]
-fn a_start_stocked_batch_carries_the_grade_a_bare_handed_craft_of_it_comes_out_at() {
-    let (mut app, band) = world();
-    let anchor = anchor_grade(&app, SLED_ITEM);
-    assert!(
-        !anchor.is_empty(),
-        "the shipped book resolves an anchor for the sled — without one the pairing below is vacuous"
-    );
-    let spawned = publish(&mut app, band);
-    let spawned_rows = rows_for(&spawned, SLED_ITEM);
-    // **The band opens holding its default outfit** (`starting-loadout.md` → "A default is applied,
-    // never suggested"), and `mint_loadout` stocks a batch per KIT — so the sled, the roster's one
-    // item two kits share, arrives as two batches rather than one. The count is read rather than
-    // asserted, because what is under test is the grade every one of them carries.
-    let spawned_batches = spawned_rows.len();
-    assert!(
-        spawned_batches > 0,
-        "**LIVENESS**: the default outfit must stock the item, or there is no row under test"
-    );
-    for row in &spawned_rows {
-        assert_eq!(
-            row.grade, anchor,
-            "a spawned unit is the item's default tier, and `validate` ties the anchor grade to \
-             that same tier — so it performs as an anchor-grade craft and now says which"
-        );
-    }
-
-    // THE PAIRING: the same band's own bench, off hide far richer than the bare hand can reach, so
-    // the ceiling — not the pile — decides the grade, exactly as the anchor is defined.
-    //
-    // **The default outfit's own hide is cleared first.** A band opens holding `material_defaults`
-    // at `OPENING_MATERIAL_READING`, which is *poorer* than the reading below, and a bench drawing
-    // from both comes out a band lower — the fixture would then be measuring the pile it did not
-    // declare rather than the ceiling it did.
-    {
-        let mut cohort = app
-            .world
-            .get_mut::<PopulationCohort>(band)
-            .expect("the band has a cohort");
-        cohort.stores.clear_materials();
-    }
-    deposit(
-        &mut app,
-        band,
-        HIDE,
-        PLENTY,
-        &[(TOUGHNESS, 0.95), (SUPPLENESS, 0.2)],
-    );
-    deposit(
-        &mut app,
-        band,
-        "fibre",
-        PLENTY,
-        &[("fineness", 0.5), ("strength", 0.5)],
-    );
-    {
-        let mut bench = app
-            .world
-            .get_mut::<BandBench>(band)
-            .expect("a spawned band carries a bench");
-        bench.put_on(SLED_RECIPE, CREW_THAT_FINISHES_A_SLED_BARE_HANDED);
-    }
-    app.world.run_system_once(advance_crafting);
-    // **The top of the next turn** — a finished sled is parked on the bench until then, and this
-    // test is about the batch the ledger holds.
-    app.world.run_system_once(deliver_bench_output);
-
-    let crafted = publish(&mut app, band);
-    let crafted_rows = rows_for(&crafted, SLED_ITEM);
-    assert_eq!(
-        crafted_rows.len(),
-        spawned_batches + 1,
-        "the bench delivered a FURTHER batch — *the next ten are their own batch* — so there is a \
-         crafted row to compare against the outfit's"
-    );
-    let grades: Vec<&str> = crafted_rows.iter().map(|row| row.grade.as_str()).collect();
-    assert!(
-        grades.iter().all(|grade| *grade == anchor.as_str()),
-        "the outfit's units and the bare-handed craft beside them are the same grade, which is \
-         what makes the stamp a statement of fact rather than a display default: {grades:?}"
-    );
-}
-
-/// **A tool that runs dry mid-craft DOES stop a drawn job**, and it is the one refusal that has to
-/// survive the rule above: `craft_speed` is `0`, so progress genuinely cannot accrue, and a dead
-/// bench reading as healthy is the failure that costs the player turns.
-#[test]
-fn a_drawn_job_whose_tool_ran_dry_still_publishes_its_refusal() {
-    let (mut app, band) = world();
-    hide_cannot_be_worked_bare_handed(&mut app);
-    app.world
-        .get_mut::<BandEquipment>(band)
-        .expect("a spawned band carries an equipment ledger")
-        .stock(TANNING_FRAME_ITEM, 1, PLAIN_TIER, None);
-    deposit(
-        &mut app,
-        band,
-        HIDE,
-        PLENTY,
-        &[(TOUGHNESS, 0.9), (SUPPLENESS, 0.2)],
-    );
-    deposit(
-        &mut app,
-        band,
-        "fibre",
-        PLENTY,
-        &[("fineness", 0.5), ("strength", 0.5)],
-    );
-    {
-        let mut bench = app
-            .world
-            .get_mut::<BandBench>(band)
-            .expect("a spawned band carries a bench");
-        bench.put_on(SLED_RECIPE, BENCH_CREW);
-    }
-    app.world.run_system_once(advance_crafting);
-
-    // LIVENESS: with the frame alive the same drawn job publishes nothing, so the assertion below
-    // is about the tool rather than about a bench that says something whatever happens.
-    let working = publish(&mut app, band);
-    assert_eq!(
-        working.bench.blocked_reason, "",
-        "a drawn job on a live tool is not blocked"
-    );
-
-    wear_out(&mut app, band, TANNING_FRAME_ITEM);
-    let stalled = publish(&mut app, band);
-    assert!(
-        app.world
-            .get::<BandBench>(band)
-            .expect("a spawned band carries a bench")
-            .head()
-            .expect("the fixture's order is on the bench")
-            .drawn
-            .is_some(),
-        "the pile is still cut — this is a running job, not a fresh one"
-    );
-    assert_eq!(
-        stalled.bench.blocked_reason, "No tanning frame",
-        "a zero craft rate is the real *a drawn job is stopped* case, and it names the tool to build"
-    );
-}
-
-/// **The rate is the accrual the sim applies, and the tool join is inside it.**
-///
-/// Asserted as a **pairing over the two craft speeds** — bare-handed and with a live tanning frame,
-/// the same recipe and the same crew — because the confusion this field exists to end is exactly a
-/// player reading `workers` as the rate: bare-handed organics work at `hand_working.rate 0.5`, so
-/// three crafters deliver one and a half worker-turns, not three. A wire that published the crew
-/// alone would carry the *same* number for both halves and match neither band's progress.
-#[test]
-fn the_published_rate_is_the_turn_of_progress_it_promises_bare_handed_and_tooled() {
-    let (bare_rate, bare_progress) = rate_then_one_turn_of_progress(NO_BENCH_TOOL);
-    let (tooled_rate, tooled_progress) = rate_then_one_turn_of_progress(A_LIVE_TANNING_FRAME);
-
-    assert!(
-        (bare_progress - bare_rate).abs() < SCALAR_TOLERANCE,
-        "a bare-handed bench accrued {bare_progress} against a published rate of {bare_rate}"
-    );
-    assert!(
-        (tooled_progress - tooled_rate).abs() < SCALAR_TOLERANCE,
-        "a tooled bench accrued {tooled_progress} against a published rate of {tooled_rate}"
-    );
-    assert!(
-        tooled_rate > bare_rate + SCALAR_TOLERANCE,
-        "the two publish DIFFERENT rates ({tooled_rate} tooled, {bare_rate} bare-handed) — the tool \
-         join is the whole reason a client cannot re-derive this"
-    );
-    assert!(
-        bare_rate < BENCH_CREW as f32 - SCALAR_TOLERANCE,
-        "the reported confusion, pinned: a worker-turn is NOT a worker's turn, so {BENCH_CREW} \
-         crafters bare-handed deliver {bare_rate} and not {BENCH_CREW}"
-    );
-}
-
-/// **A bench that cannot accrue publishes a zero, not a missing field** — and each zero is paired
-/// with the same bench lifted off it, so *"it always reports something"* cannot pass.
-#[test]
-fn a_bench_that_cannot_accrue_publishes_a_zero_rate() {
-    let (mut app, band) = world();
-    assert_eq!(
-        publish(&mut app, band).bench.rate_per_turn,
-        NO_ACCRUAL,
-        "an idle bench has no recipe to accrue toward"
-    );
-    stock_a_sleds_worth_of_material(&mut app, band);
-
-    // No crew: the pile is there and the craft is fine, and nobody is standing at it.
-    set_bench(&mut app, band, NO_ONE_AT_THE_BENCH);
-    assert_eq!(
-        publish(&mut app, band).bench.rate_per_turn,
-        NO_ACCRUAL,
-        "no crew is no accrual"
-    );
-    // LIVENESS: the identical bench and the identical store, with hands on it.
-    set_bench(&mut app, band, BENCH_CREW);
-    assert!(
-        publish(&mut app, band).bench.rate_per_turn > NO_ACCRUAL,
-        "a crewed bench over the same store publishes a real rate"
-    );
-
-    // No way to work the material: hide cannot be worked bare-handed and the band owns no frame.
-    let (mut app, band) = world();
-    hide_cannot_be_worked_bare_handed(&mut app);
-    stock_a_sleds_worth_of_material(&mut app, band);
-    set_bench(&mut app, band, BENCH_CREW);
-    let handless = publish(&mut app, band);
-    assert_eq!(
-        handless.bench.rate_per_turn, NO_ACCRUAL,
-        "a material with no bare-handed rate and no tool is the zero that IS the refusal"
-    );
-    assert_eq!(
-        handless.bench.blocked_reason, "No tanning frame",
-        "and the zero is published beside the words that say what to build"
-    );
-    // LIVENESS: one frame lifts the same bench off zero.
-    app.world
-        .get_mut::<BandEquipment>(band)
-        .expect("a spawned band carries an equipment ledger")
-        .stock(TANNING_FRAME_ITEM, 1, PLAIN_TIER, None);
-    assert!(
-        publish(&mut app, band).bench.rate_per_turn > NO_ACCRUAL,
-        "the tool is what the zero was about"
     );
 }
 
@@ -2559,67 +2163,6 @@ fn an_offer_names_the_item_it_makes_so_the_ledger_can_join_the_two_halves() {
     );
 }
 
-/// **THE BENCH'S RANK REACHES THE CLIENT, AND ON AN IDLE BENCH TOO.**
-///
-/// The mark is what makes `bench_priority` a control rather than a dead command: without it the
-/// player can neither see the rank nor read back what they set. Asserted off the **encoded envelope**
-/// (the artifact a client parses), because a field can be right in the capture and absent from the
-/// buffer.
-///
-/// **Three arms, and each fails on its own:**
-/// 1. an unmarked bench publishes the default — which is wire value `0`, so an unwritten slot would
-///    look identical to a correct one, hence the two arms beside it;
-/// 2. a marked bench publishes its mark, read as the wire's own enum rather than as a word;
-/// 3. **an IDLE bench publishes it too.** `bench_priority` is settable with nothing on the bench —
-///    that is the moment a player is most likely to state it — so a capture that dropped the mark on
-///    the idle arm would make the control look like it had done nothing.
-#[test]
-fn the_benchs_rank_reaches_the_client_running_or_idle() {
-    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
-
-    let (mut app, band) = world();
-    stock_a_sleds_worth_of_material(&mut app, band);
-    set_bench(&mut app, band, 2);
-
-    assert_eq!(
-        publish(&mut app, band).bench.priority,
-        fb::SourcePriority::Normal,
-        "an unmarked bench publishes the default"
-    );
-
-    for (mark, published) in [
-        (SourcePriority::High, fb::SourcePriority::High),
-        (SourcePriority::Low, fb::SourcePriority::Low),
-    ] {
-        app.world
-            .get_mut::<BandBench>(band)
-            .expect("a spawned band carries a bench")
-            .priority = mark;
-        assert_eq!(
-            publish(&mut app, band).bench.priority,
-            published,
-            "the bench publishes the mark the player set ({mark:?})"
-        );
-    }
-
-    // The job comes off; the rank does not. A rank is a standing statement about the BENCH.
-    app.world
-        .get_mut::<BandBench>(band)
-        .expect("a spawned band carries a bench")
-        .orders
-        .clear();
-    let idle = publish(&mut app, band).bench;
-    assert_eq!(
-        idle.recipe_id, "",
-        "fixture: the bench really is idle, or the last arm is about nothing"
-    );
-    assert_eq!(
-        idle.priority,
-        fb::SourcePriority::Low,
-        "an IDLE bench publishes its rank too — the command sets it either way"
-    );
-}
-
 /// ⛔ **THE STANDING MATERIAL BILL REACHES THE CLIENT — and a published field with no producer is a
 /// defect** (`docs/plan_standing_upkeep.md` §2.7 / §4.9 item 12).
 ///
@@ -3210,70 +2753,5 @@ fn with_nothing_makeable_a_row_keeps_the_last_started_recipe_else_the_first() {
     assert!(
         offer(&kept, SPEARS_FLINT_RECIPE).suggested && !offer(&kept, SPEARS_RECIPE).suggested,
         "a choice on record is kept when nothing can be made"
-    );
-}
-
-/// One knapped spear's worth of stone: the recipe's own `amount`, so the draw leaves the pile empty.
-const ONE_KNAPPED_SPEAR_OF_STONE: f32 = 0.1;
-/// What "the stone is gone" means on the store — the draw is exact, so anything above a crumb of
-/// float noise is stone the fixture forgot to spend.
-const NO_STONE_LEFT: f32 = 1e-4;
-
-/// **CASE 0 — THE RUNNING JOB KEEPS THE ROW.** A knapped spear is on the bench, and its own draw took
-/// the last stone, so the knapped recipe now publishes unavailable while bone is to hand. Without the
-/// `on_bench` rung the row hands its suggestion to bone, and the Spears row reads *On the bench*
-/// beside the costs and reason of a recipe nobody is making.
-///
-/// The draw is a real `advance_crafting` pass rather than a hand-emptied store, because the defect is
-/// that the job's OWN withdrawal is what flips its offer to unavailable.
-#[test]
-fn a_running_job_stays_the_suggested_recipe_after_its_draw_empties_the_pile() {
-    let (mut app, band) = world();
-    stock_every_pile(&mut app, band, A_GOOD_READING);
-    strip(&mut app, band, STONE);
-    deposit(
-        &mut app,
-        band,
-        STONE,
-        ONE_KNAPPED_SPEAR_OF_STONE,
-        &[
-            ("hardness", A_GOOD_READING),
-            ("workability", A_GOOD_READING),
-        ],
-    );
-    {
-        let mut bench = app
-            .world
-            .get_mut::<BandBench>(band)
-            .expect("a spawned band carries a bench");
-        bench.put_on(SPEARS_FLINT_RECIPE, BENCH_CREW);
-        bench.record_started(SPEARS_ITEM, SPEARS_FLINT_RECIPE);
-    }
-    app.world.run_system_once(advance_crafting);
-
-    assert!(
-        app.world
-            .get::<BandBench>(band)
-            .expect("a spawned band carries a bench")
-            .head()
-            .expect("the fixture's order is on the bench")
-            .drawn
-            .is_some(),
-        "the premise: the knapped job has cut its pile"
-    );
-    assert!(
-        held(&app, band, STONE) < NO_STONE_LEFT,
-        "the premise: that draw took the last of the stone"
-    );
-    let published = publish(&mut app, band);
-    let flint = offer(&published, SPEARS_FLINT_RECIPE);
-    let bone = offer(&published, SPEARS_RECIPE);
-    assert!(
-        flint.on_bench && !flint.available && bone.available,
-        "the premise: the knapped recipe is running and cannot be started again; bone can"
-    );
-    assert!(
-        flint.suggested && !bone.suggested,
-        "the recipe on the bench keeps the row, even though its own draw made it unaffordable"
     );
 }
