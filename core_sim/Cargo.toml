@@ -17,18 +17,10 @@ bevy = { version = "0.13", default-features = false, features = [
     # core no matter what the schedule says. It is half of a pair: the other half is not
     # `.chain()`-ing systems that have no dependency on each other (see `build_headless_app`).
     "multi-threaded",
-    "bevy_asset",
-    "bevy_audio",
-    "bevy_core_pipeline",
-    "bevy_gilrs",
-    "bevy_render",
-    "bevy_sprite",
-    "bevy_winit",
-    "x11",
-    "png",
-    "hdr"
 ] }
-# TODO: narrow feature set for pure headless build
+# Headless sim: only bevy's ECS/app/math/time core is used; the Godot client does all windowing,
+# rendering, audio and input. Do not re-add `bevy_winit`: it pulls winit 0.29 -> objc2 0.4.1,
+# which no longer compiles on Rust >= 1.100.
 rand = { version = "0.8", features = ["small_rng"] }
 rand_chacha = "0.3"
 # `rc` is what lets `Arc<str>` / `Arc<[Arc<str>]>` serialize, which `KitChoice` — and therefore the
