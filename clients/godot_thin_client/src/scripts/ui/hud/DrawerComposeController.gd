@@ -2057,6 +2057,9 @@ func _mount_work_strip(parent: VBoxContainer, band: Dictionary, kind: String, x:
     # standing one on a worked source), stamped for the harness: the strip itself draws the committed crew.
     strip.set_meta(HudComposeVocab.SHEET_CREW_NUMBER_META, priced_crew)
     block.add_child(strip)
+    var hands_line := WorkStrip.build_hands_line(model)
+    if hands_line != null:
+        block.add_child(hands_line)
     _mount_row_details(block, row)
     if warn_line != "":
         var warn := HudWidgets.build_wrapping_status_part(warn_line, HudStyle.WARN)

@@ -5014,3 +5014,151 @@ fn a_far_hay_row_lands_its_fodder_and_fibre_only_when_a_pack_lands() {
         "hay cut on turn {cut} lands no sooner than the {walk}-turn walk allows: turn {landed}"
     );
 }
+
+/// **A BUILD THAT COMPLETES THIS TURN FREES ITS BUILDER, AND THE TURN'S OWN FRAME SHOWS THE HAND ON A
+/// ROW WITH ROOM** (`systems::restaff_freed_hands`, `.claude/rules/core_sim/work-party.md`).
+///
+/// The labor pass staffs the builder at its head; the build completes inside that pass, so without
+/// the end-of-turn restaff the frame published the hand idle beside a forage row under its Max until
+/// the next turn. Control: the same band with the row already at its Max has no room anywhere, so the
+/// hand stays idle - the restaff does not conjure work.
+#[test]
+fn a_builder_freed_by_a_finished_build_is_dealt_before_the_frame_is_cut() {
+    /// Hands the band stands up with; the one builder is the freed hand.
+    const HANDS: u32 = 6;
+    /// The fraction of the rung's cost already banked, so one turn's work finishes it.
+    const NEARLY_BUILT: f32 = 0.999;
+    /// The band's id on the wire.
+    const FIXTURE_BAND: u64 = 77_002;
+    /// Food a hand eats in a turn, rounded far up, so the larder covers the window with margin.
+    const FOOD_PER_HAND_PER_TURN_MARGIN: f32 = 10.0;
+
+    // `(idle, forage row workers)` of the band's frame after the turn, and the row's crew the turn
+    // opened with.
+    let run = |row_max: Option<u32>| -> (u32, u32, u32) {
+        let mut app = core_sim::build_test_app();
+        app.update();
+        let (tile, coord) = prime_thriving_patch(&mut app);
+        grant_cultivation_knowledge(&mut app, FactionId(0));
+        let crop = {
+            let labor = app.world.resource::<LaborConfigHandle>().get();
+            let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+            let map_seed = app.world.resource::<SimulationConfig>().map_seed;
+            let mut query = app.world.query::<&Tile>();
+            let ground = query
+                .iter(&app.world)
+                .find(|ground| ground.position == coord)
+                .expect("the build tile exists")
+                .clone();
+            let composition = tile_flora_composition(&flora, &labor.forage, &ground, map_seed);
+            default_species_for_rung(
+                &composition,
+                &flora,
+                shipped::ladder(),
+                shipped::plant_tended(),
+            )
+            .expect("prime_thriving_patch chose ground the tended rung can commit to")
+        };
+        let cost = cultivate_cost(&app);
+        {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).expect("patch");
+            patch.set_ladder_position(cost * NEARLY_BUILT, &core_sim::LadderConfig::builtin());
+            patch.owner = Some(FactionId(0));
+            patch.species = Some(crop);
+        }
+        let band = spawn_forager_of(&mut app, tile, coord, Some(shipped::cultivate()), 1);
+        let window = app
+            .world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .food_first_window_turns;
+        {
+            let mut entity = app.world.entity_mut(band);
+            entity.insert(core_sim::BandId(FIXTURE_BAND));
+            entity.remove::<core_sim::SeatedBuilders>();
+            entity
+                .get_mut::<PopulationCohort>()
+                .expect("cohort")
+                .working = scalar_from_f32(HANDS as f32);
+            // A larder over the whole food-first window, so the band is not food-short and the
+            // staffing deals the builder (this test is about the freed builder, not hunger).
+            entity
+                .get_mut::<PopulationCohort>()
+                .expect("cohort")
+                .stores
+                .add_food(
+                    "dry",
+                    scalar_from_f32(
+                        (window + 1) as f32 * HANDS as f32 * FOOD_PER_HAND_PER_TURN_MARGIN,
+                    ),
+                );
+            let mut allocation = entity.get_mut::<LaborAllocation>().expect("allocation");
+            for row in allocation.assignments.iter_mut() {
+                row.max_workers = row_max;
+            }
+        }
+        core_sim::staffing::restaff_band(&mut app.world, band);
+        let row_before: u32 = app
+            .world
+            .get::<LaborAllocation>(band)
+            .unwrap()
+            .assignments
+            .iter()
+            .map(|row| row.workers)
+            .sum();
+        let builders_before = app
+            .world
+            .get::<LaborAllocation>(band)
+            .unwrap()
+            .builders_total();
+        assert!(builders_before > 0, "liveness: a builder is on the build");
+        app.update();
+        assert!(
+            app.world
+                .get::<LaborAllocation>(band)
+                .unwrap()
+                .builds
+                .is_empty(),
+            "liveness: the build completed this turn"
+        );
+        let snapshot = app
+            .world
+            .resource::<core_sim::SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = shadow_scale_flatbuffers::generated::shadow_scale::sim::root_as_envelope(
+            bytes.as_ref(),
+        )
+        .expect("a valid envelope");
+        let cohort = envelope
+            .payload_as_snapshot()
+            .and_then(|snapshot| snapshot.population())
+            .and_then(|section| section.populations())
+            .expect("the population section")
+            .iter()
+            .find(|cohort| cohort.bandId() == FIXTURE_BAND)
+            .expect("the band is published");
+        let row_after: u32 = cohort
+            .laborAssignments()
+            .into_iter()
+            .flatten()
+            .map(|row| row.workers())
+            .sum();
+        (cohort.idleWorkers(), row_after, row_before)
+    };
+
+    let (idle, row_after, row_before) = run(None);
+    assert_eq!(idle, 0, "the freed builder was dealt in the same turn");
+    assert!(row_after > row_before, "it went onto the row with room");
+
+    let (_, _, row_before) = run(None);
+    let (idle_full, row_full, _) = run(Some(row_before));
+    assert_eq!(
+        (idle_full, row_full),
+        (1, row_before),
+        "control: the row is at its Max, so the freed hand stays idle"
+    );
+}

@@ -74,7 +74,7 @@ use sim_runtime::{
         query_error, save_error, ConfigOverrideKind,
         EspionageGeneratorUpdate as CommandGeneratorUpdate, FactionCapacityReply, QueryPayload,
         QueryReply, QueryReplyEnvelope, ReloadConfigKind, SaveOpReply, SeatClaimReply,
-        AUTOSAVE_SLOT, BENCH_CREW_UNSPECIFIED, MAX_PROTO_FRAME,
+        AUTOSAVE_SLOT, MAX_PROTO_FRAME,
     },
     render_command_line, CancelScope, CommandEnvelope as ProtoCommandEnvelope,
     CommandPayload as ProtoCommandPayload, OrdersDirective as ProtoOrdersDirective,
@@ -1745,6 +1745,7 @@ enum Command {
     BenchPriority {
         faction: FactionId,
         band_id: u64,
+        order: u32,
         level: String,
     },
     /// **Turn one band's bench auto-craft on or off** — see `handle_bench_auto`.
@@ -1785,7 +1786,6 @@ enum Command {
         band_id: Option<u64>,
         recipe_id: String,
         count: u32,
-        workers: u32,
     },
     /// Queue a whole kit as ONE grouped order. See `handle_bench_enqueue_kit`.
     BenchEnqueueKit {
@@ -1808,12 +1808,6 @@ enum Command {
         band_id: Option<u64>,
         order: u32,
         edit: BenchQueueEdit,
-    },
-    /// Re-crew a band's bench, leaving the queue and every order's progress alone.
-    BenchCrew {
-        faction: FactionId,
-        band_id: Option<u64>,
-        workers: u32,
     },
     CancelOrder {
         faction: FactionId,
@@ -9092,8 +9086,7 @@ fn band_bench_mut(app: &mut bevy::prelude::App, band: Entity) -> bevy::prelude::
         .expect("bench inserted above")
 }
 
-/// **Add an order to a band's bench queue** — `bench_enqueue <faction> <band> recipe <id> count <n>
-/// [workers <n>]` (`docs/plan_crafting_and_materials.md` §7, "The queue").
+/// **Add an order to a band's bench queue** — `bench_enqueue <faction> <band> recipe <id> count <n>` (`docs/plan_crafting_and_materials.md` §7, "The queue").
 ///
 /// Three refusals, all **command failures with a reason** rather than silent no-ops, for the same
 /// reason an unknown kit id is one: the player is choosing between recipes, so a quiet substitution
@@ -9110,16 +9103,14 @@ fn band_bench_mut(app: &mut bevy::prelude::App, band: Entity) -> bevy::prelude::
 /// *"no 'you cannot craft that' branch in the sim"*: the panel names the shortfall, the sim just
 /// does not move.
 ///
-/// **The crew is the player's to name, never the sim's to guess** — see [`BENCH_CREW_UNSPECIFIED`]
-/// at the clamp below. Naming no crew leaves the crew where it is; `bench_crew` is what takes a
-/// number.
+/// **The crew is the sim's**: every workable order is staffed in the labor passes and the band is
+/// restaffed here, so the new order takes idle hands at once.
 fn handle_bench_enqueue(
     app: &mut bevy::prelude::App,
     faction: FactionId,
     band_id: Option<u64>,
     recipe_id: &str,
     count: u32,
-    workers: u32,
 ) {
     let event_kind = CommandEventKind::Craft;
     let Some(display_name) = bench_recipe_refusal(app, faction, recipe_id, "bench_enqueue") else {
@@ -9149,28 +9140,10 @@ fn handle_bench_enqueue(
     else {
         return;
     };
-    // The band's OWN crew stays on the bench through every queue edit, so the pool this is clamped
-    // against is the free hands PLUS the crew already standing there — [`BandWorkforce::benchable`],
-    // which is the one place that decides not to count them twice.
-    let benchable = band_workforce(app, band.entity).benchable();
-    // **A crew of zero changes nothing about the crew.** The command arrives over a proto3 scalar,
-    // which cannot tell an absent `workers` from an explicit `0`, and the client sends neither —
-    // so this verb keeps whoever is already standing at the bench and recruits nobody. An idle
-    // bench therefore stages at zero and the player staffs it, which is the point: labor is the
-    // scarce currency and dividing the band is the decision the game is made of, so the one number
-    // the sim must not pick is how many hands stop hunting. `bench_crew <n>` sets the crew, zero
-    // included, so no reachable intent is lost.
-    let standing = band_bench_mut(app, band.entity).workers;
-    let applied = if workers == BENCH_CREW_UNSPECIFIED {
-        standing.min(benchable)
-    } else {
-        workers.min(benchable)
-    };
     let position = {
         let mut bench = band_bench_mut(app, band.entity);
-        bench.workers = applied;
         bench.enqueue(recipe_id, count);
-        // **Written HERE and nowhere else** — queueing an order is the one event that says which of
+        // **Written HERE and nowhere else** - queueing an order is the one event that says which of
         // an item's recipes this band chose, and the ledger suggests that one again next time. A
         // readout must never write it: it would be the panel deciding what the player picked.
         if let Some(row) = row_key.as_deref() {
@@ -9178,26 +9151,25 @@ fn handle_bench_enqueue(
         }
         bench.orders.len() - ONE_ORDER
     };
+    // **The sim staffs the order** in the same passes as the work rows: restaffing the band is what
+    // makes the snapshot show the new crew at once.
     restaff_and_reseed(app, band.entity);
+    let crew = app
+        .world
+        .get::<BandBench>(band.entity)
+        .and_then(|bench| bench.orders.get(position))
+        .map_or(0, |order| order.crew.total());
     let tick = app.world.resource::<SimulationTick>().0;
-    let clamp_note = if applied < workers {
-        format!(" (clamped from {workers} — the band has only {benchable} hands off other work)")
-    } else {
-        String::new()
-    };
     push_band_event(
         app,
         tick,
         event_kind,
         faction,
         band.id,
-        format!(
-            "{} queued {display_name} x{count}, crew {applied}{clamp_note}",
-            band.label
-        ),
+        format!("{} queued {display_name} x{count}, crew {crew}", band.label),
         Some(format!(
             "status=applied action=bench_enqueue recipe={recipe_id} count={count} \
-             order={position} workers={applied} benchable={benchable}"
+             order={position} workers={crew}"
         )),
     );
 }
@@ -9431,6 +9403,7 @@ fn handle_bench_enqueue_kit(
         }
         id
     };
+    restaff_and_reseed(app, band.entity);
     let tick = app.world.resource::<SimulationTick>().0;
     push_band_event(
         app,
@@ -9450,7 +9423,8 @@ fn handle_bench_enqueue_kit(
 }
 
 /// **Remove or raise a whole kit order** — `bench_remove_kit` / `bench_raise_kit … kit_order <id>`.
-/// Removal loses drawn piles exactly as [`handle_bench_queue_edit`]'s `Remove` does.
+/// Removal returns every part's set-aside batches to the band's store ([`return_set_aside`]), exactly
+/// as [`handle_bench_queue_edit`]'s `Remove` does.
 fn handle_bench_kit_edit(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -9463,6 +9437,7 @@ fn handle_bench_kit_edit(
     let Some(band) = select_starting_band(app, faction, band_id, verb, event_kind) else {
         return;
     };
+    let mut returned: Vec<core_sim::BenchOrder> = Vec::new();
     let outcome = {
         let mut bench = band_bench_mut(app, band.entity);
         let kit_id = bench
@@ -9473,13 +9448,14 @@ fn handle_bench_kit_edit(
             .unwrap_or_default();
         match edit {
             BenchKitEdit::Remove => bench.remove_kit(kit_order).map(|removed| {
-                let spent = removed.iter().filter(|part| part.drawn.is_some()).count();
+                let spent = removed.iter().filter(|part| !part.items.is_empty()).count();
+                let parts = removed.len();
+                returned = removed;
                 (
                     format!("{} took the {kit_id} kit order off the bench", band.label),
                     format!(
                         "status=applied action={verb} kit_order={kit_order} kit={kit_id} \
-                         parts={} piles_spent={spent}",
-                        removed.len()
+                         parts={parts} piles_returned={spent}"
                     ),
                 )
             }),
@@ -9494,6 +9470,10 @@ fn handle_bench_kit_edit(
             }),
         }
     };
+    return_set_aside(app, band.entity, returned);
+    if outcome.is_ok() {
+        restaff_and_reseed(app, band.entity);
+    }
     match outcome {
         Ok((sentence, detail)) => {
             if edit == BenchKitEdit::Remove {
@@ -9543,13 +9523,12 @@ impl BenchQueueEdit {
 
 /// **Edit one order on a band's bench queue** — `bench_order_count`, `bench_remove`, `bench_raise`.
 ///
-/// **Removing the head spends what it drew, exactly as clearing the bench always has.** The
-/// materials were cut for the thing the player has just stopped making, and the store has no
-/// representation for a half-worked pile; `BenchState.drawnInputs` names what goes beforehand, and
-/// the command's help text says so. The crew stays at the bench for the next order.
+/// **Removing an order returns what it set aside.** Every in-flight item's withdrawn batches go back
+/// into the band's store at their exact readings ([`return_set_aside`]); `BenchState.drawnInputs`
+/// names what comes back beforehand. The remaining orders are restaffed.
 ///
-/// **Raising keeps every pile.** The displaced head is paused, not cleared: its progress and its
-/// drawn pile ride on the order itself ([`core_sim::BenchOrder`]).
+/// **Raising keeps every pile.** Progress and the set-aside batches ride on the order itself
+/// ([`core_sim::BenchOrder`]), so they move with it.
 fn handle_bench_queue_edit(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -9563,6 +9542,7 @@ fn handle_bench_queue_edit(
         return;
     };
     let index = order as usize;
+    let mut returned: Vec<core_sim::BenchOrder> = Vec::new();
     let outcome = {
         let mut bench = band_bench_mut(app, band.entity);
         match edit {
@@ -9576,15 +9556,17 @@ fn handle_bench_queue_edit(
                 )
             }),
             BenchQueueEdit::Remove => bench.remove_order(index).map(|removed| {
-                let spent = removed.drawn.is_some();
-                (
+                let returned_pile = !removed.items.is_empty();
+                let text = (
                     format!("{} stopped making {}", band.label, removed.recipe_id),
                     format!(
                         "status=applied action={verb} order={order} recipe={} made={} \
-                         count={} pile_spent={spent}",
+                         count={} pile_returned={returned_pile}",
                         removed.recipe_id, removed.made, removed.count
                     ),
-                )
+                );
+                returned.push(removed);
+                text
             }),
             BenchQueueEdit::Raise => bench.raise_order(index).map(|()| {
                 let recipe = bench.orders[index - ONE_ORDER].recipe_id.clone();
@@ -9595,6 +9577,10 @@ fn handle_bench_queue_edit(
             }),
         }
     };
+    return_set_aside(app, band.entity, returned);
+    if outcome.is_ok() {
+        restaff_and_reseed(app, band.entity);
+    }
     match outcome {
         Ok((sentence, detail)) => {
             // **Removing the last order can leave the queue empty** - an auto bench refills it at
@@ -9622,19 +9608,30 @@ fn handle_bench_queue_edit(
     }
 }
 
-/// **MARK A BAND'S CRAFTING BENCH WITH THE PLAYER'S OWN RANK** — `bench_priority <faction> <band>
-/// high|normal|low` (`docs/plan_standing_upkeep.md` §4.9 item 9b).
+/// **CANCELLING RETURNS WHAT AN ORDER HOLDS** - every in-flight item's set-aside batches go back into
+/// the band's store at their exact readings.
+fn return_set_aside(
+    app: &mut bevy::prelude::App,
+    band: Entity,
+    mut removed: Vec<core_sim::BenchOrder>,
+) {
+    if removed.iter().all(|order| order.items.is_empty()) {
+        return;
+    }
+    if let Some(mut cohort) = app.world.get_mut::<PopulationCohort>(band) {
+        for order in &mut removed {
+            order.return_set_aside(&mut cohort.stores);
+        }
+    }
+}
+
+/// **RANK ONE BENCH ORDER** — `bench_priority <faction> <band> <order> high|normal|low`
+/// (`docs/plan_standing_upkeep.md` §4.9 item 9b).
 ///
-/// The same [`core_sim::SourcePriority`] a worked row carries, read by the same shedding order. It
-/// touches nothing else on the bench: the recipe, the crew, the progress and the drawn pile are all
-/// separate statements the player made.
-///
-/// # IT APPLIES TO AN IDLE BENCH TOO
-///
-/// Unlike `bench_crew`, which needs a running job to re-crew, a rank is a standing preference about
-/// *the bench* — so it is settable before a recipe is put on it and survives the job being swapped,
-/// exactly as a source row's mark survives an edit to its crew. Refusing it on an idle bench would
-/// mean the player could only rank the bench in the window where they were least likely to want to.
+/// The same [`core_sim::SourcePriority`] a worked row carries, read by the same staffing and shedding
+/// order. The rank belongs to the order at index `order` (a kit part ranks its whole kit block); it
+/// touches nothing else on the bench. Refused when the band has no bench or no order stands at that
+/// index, so a typo cannot rank nothing.
 ///
 /// # AN UNKNOWN LEVEL IS REFUSED BY NAME
 ///
@@ -9644,6 +9641,7 @@ fn handle_bench_priority(
     app: &mut bevy::prelude::App,
     faction: FactionId,
     band_id: u64,
+    order: u32,
     level: String,
 ) {
     let event_kind = CommandEventKind::Craft;
@@ -9677,7 +9675,19 @@ fn handle_bench_priority(
         );
         return;
     }
-    band_bench_mut(app, band.entity).priority = priority;
+    // **A priority belongs to ONE ORDER** (a kit part sets its whole kit block). Refused when no order
+    // stands at that index, so a typo cannot rank nothing.
+    let set = band_bench_mut(app, band.entity).set_priority(order as usize, priority);
+    if let Err(error) = set {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            bench_queue_refusal("bench_priority", &band.label, order, error),
+        );
+        return;
+    }
+    restaff_and_reseed(app, band.entity);
     let tick = app.world.resource::<SimulationTick>().0;
     info!(
         target: "shadow_scale::command",
@@ -9688,9 +9698,9 @@ fn handle_bench_priority(
         "command.bench_priority.applied"
     );
     let sentence = match priority {
-        SourcePriority::High => format!("{}: the bench is held before anything else", band.label),
-        SourcePriority::Normal => format!("{}: the bench takes its turn like the rest", band.label),
-        SourcePriority::Low => format!("{}: the bench is the first thing given up", band.label),
+        SourcePriority::High => format!("{}: bench order {order} is crewed first", band.label),
+        SourcePriority::Normal => format!("{}: bench order {order} takes its turn", band.label),
+        SourcePriority::Low => format!("{}: bench order {order} is crewed last", band.label),
     };
     push_band_event(
         app,
@@ -9700,7 +9710,7 @@ fn handle_bench_priority(
         band.id,
         sentence,
         Some(format!(
-            "status=applied action=bench_priority level={} band={band_id}",
+            "status=applied action=bench_priority order={order} level={} band={band_id}",
             priority.as_str()
         )),
     );
@@ -9788,57 +9798,6 @@ fn handle_bench_auto_skip(app: &mut bevy::prelude::App, faction: FactionId, band
             );
         }
     }
-}
-
-/// **Re-crew a band's bench** — `bench_crew <faction> <band> workers <n>`. The queue and every
-/// order's progress are untouched, exactly as `assign_labor` leaves an improvement in flight alone:
-/// editing the crew is a crew-side edit and must not restart a build the player committed to.
-///
-/// **It applies to an IDLE bench too.** The crew belongs to the bench, not to an order, so when the
-/// last order leaves the queue the crew is still standing there — and this verb is how the player
-/// sends them home. Refusing it on an empty queue would strand them.
-fn handle_bench_crew(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    band_id: Option<u64>,
-    workers: u32,
-) {
-    let event_kind = CommandEventKind::Craft;
-    let Some(band) = select_starting_band(app, faction, band_id, "bench_crew", event_kind) else {
-        return;
-    };
-    // Same ceiling `bench_enqueue` clamps against, and for the same reason: the crew already on the
-    // bench is being re-set, not added to.
-    let benchable = band_workforce(app, band.entity).benchable();
-    // **Zero is an order here, not a question.** This verb exists to name a crew, so it is the one
-    // way to stand the bench down without taking an order off it — the opposite reading from
-    // `bench_enqueue`'s [`BENCH_CREW_UNSPECIFIED`].
-    let applied = workers.min(benchable);
-    let recipe_id = {
-        let mut bench = band_bench_mut(app, band.entity);
-        bench.workers = applied;
-        bench.head_recipe().unwrap_or_default().to_string()
-    };
-    // The bench's crew leaves the pool the sim staffs from: sources give those hands up at once.
-    restaff_and_reseed(app, band.entity);
-    let tick = app.world.resource::<SimulationTick>().0;
-    let clamp_note = if applied < workers {
-        format!(" (clamped from {workers} — the band has only {benchable} hands off other work)")
-    } else {
-        String::new()
-    };
-    push_band_event(
-        app,
-        tick,
-        event_kind,
-        faction,
-        band.id,
-        format!("{} bench crew x{applied}{clamp_note}", band.label),
-        Some(format!(
-            "status=applied action=bench_crew recipe={recipe_id} workers={applied} \
-             benchable={benchable}"
-        )),
-    );
 }
 
 // **RETIRED with `abandon_improvement`**: `describe_source` and `improvement_event_kind`, its two
@@ -12178,10 +12137,12 @@ fn command_from_payload(
         ProtoCommandPayload::BenchPriority {
             faction_id,
             band_id,
+            order,
             level,
         } => Some(Command::BenchPriority {
             faction: FactionId(faction_id),
             band_id,
+            order,
             level,
         }),
         ProtoCommandPayload::BenchAuto {
@@ -12232,13 +12193,11 @@ fn command_from_payload(
             band_id,
             recipe_id,
             count,
-            workers,
         } => Some(Command::BenchEnqueue {
             faction: FactionId(faction_id),
             band_id: Some(band_id),
             recipe_id,
             count,
-            workers,
         }),
         ProtoCommandPayload::BenchEnqueueKit {
             faction_id,
@@ -12303,15 +12262,6 @@ fn command_from_payload(
             band_id: Some(band_id),
             order,
             edit: BenchQueueEdit::Raise,
-        }),
-        ProtoCommandPayload::BenchCrew {
-            faction_id,
-            band_id,
-            workers,
-        } => Some(Command::BenchCrew {
-            faction: FactionId(faction_id),
-            band_id: Some(band_id),
-            workers,
         }),
         ProtoCommandPayload::CancelOrder {
             faction_id,
@@ -13099,7 +13049,6 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::BenchQueueEdit { faction, edit, .. } => Some((*faction, edit.verb())),
         Command::BenchEnqueueKit { faction, .. } => Some((*faction, "bench_enqueue_kit")),
         Command::BenchKitEdit { faction, edit, .. } => Some((*faction, edit.verb())),
-        Command::BenchCrew { faction, .. } => Some((*faction, "bench_crew")),
         Command::CancelOrder { faction, .. } => Some((*faction, "cancel_order")),
         Command::SetStartingLoadout { faction, .. } => Some((*faction, "set_starting_loadout")),
         // The faction the mission is **run by**, out of whose roster and budget it is queued. Its
@@ -13614,9 +13563,8 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             band_id,
             recipe_id,
             count,
-            workers,
         } => {
-            handle_bench_enqueue(app, faction, band_id, &recipe_id, count, workers);
+            handle_bench_enqueue(app, faction, band_id, &recipe_id, count);
         }
         Command::BenchQueueEdit {
             faction,
@@ -13643,19 +13591,13 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
         } => {
             handle_bench_kit_edit(app, faction, band_id, kit_order, edit);
         }
-        Command::BenchCrew {
-            faction,
-            band_id,
-            workers,
-        } => {
-            handle_bench_crew(app, faction, band_id, workers);
-        }
         Command::BenchPriority {
             faction,
             band_id,
+            order,
             level,
         } => {
-            handle_bench_priority(app, faction, band_id, level);
+            handle_bench_priority(app, faction, band_id, order, level);
         }
         Command::BenchAuto {
             faction,
@@ -17512,7 +17454,16 @@ mod tests {
         let (mut app, _, band) = proposal_world(true);
         let entity = band_entity(&mut app, band);
         app.world.entity_mut(entity).insert(core_sim::BandBench {
-            workers: u32::MAX,
+            orders: vec![{
+                // Crewed by more hands than any band has, so no hand is idle.
+                const MORE_HANDS_THAN_ANY_BAND: u32 = 1_000_000;
+                let mut order = core_sim::BenchOrder::new("spear", 1);
+                order.crew = core_sim::BenchCrew {
+                    at_tool: 0,
+                    by_hand: MORE_HANDS_THAN_ANY_BAND,
+                };
+                order
+            }],
             ..Default::default()
         });
         core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
@@ -24998,37 +24949,6 @@ mod tests {
     /// An **ungated** recipe — nothing in `requires_knowledge` a fresh faction lacks — so the bench
     /// fixtures below are about the crew, not about a refusal.
     const BENCH_IDLE_RECIPE: &str = "sled";
-    /// The crew the fixtures stand at the bench. Small enough that any campaign band has the hands,
-    /// large enough that a lost subtraction is unmistakable in the assertion.
-    const BENCH_IDLE_CREW: u32 = 3;
-
-    /// `PopulationCohortState.idleWorkers` for one band, read off the **encoded** envelope. The claim
-    /// is about what the client is told, and a field that never reached the codec still satisfies an
-    /// in-process check.
-    fn published_idle_workers(app: &mut bevy::prelude::App, band: Entity) -> u32 {
-        use core_sim::{recapture_snapshot_in_place, SnapshotHistory};
-        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
-
-        recapture_snapshot_in_place(&mut app.world);
-        let snapshot = app
-            .world
-            .resource::<SnapshotHistory>()
-            .latest_entry()
-            .expect("a snapshot was captured")
-            .snapshot;
-        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
-        let envelope = fb::root_as_envelope(&bytes).expect("the snapshot encodes");
-        envelope
-            .payload_as_snapshot()
-            .expect("the envelope carries a snapshot")
-            .population()
-            .and_then(|section| section.populations())
-            .expect("the population section carries the cohort list")
-            .iter()
-            .find(|cohort| cohort.entity() == band.to_bits())
-            .expect("the band is on the wire")
-            .idleWorkers()
-    }
 
     /// The world's first resident band, the one a band-less command picks — see
     /// `select_starting_band`'s default picker.
@@ -25047,337 +24967,6 @@ mod tests {
     const BENCH_TEST_ORDER: u32 = 3;
     /// The head of a bench queue, as the queue verbs address it.
     const HEAD: u32 = 0;
-    /// The order behind the head.
-    const SECOND: u32 = 1;
-    /// A crew of nobody — how `bench_crew` stands a bench down.
-    const NOBODY_AT_THE_BENCH: u32 = 0;
-
-    /// **A crew at the bench is published as BUSY** — the same hands `assign_labor` refuses to send
-    /// anywhere.
-    ///
-    /// The published field was `working_age − assigned`, and a bench crew is a number on
-    /// [`BandBench`] rather than a `LaborTarget`, so it was never in `assigned`: every "n idle of m"
-    /// readout in the game counted the bench's hands as free, in the *reassuring* direction.
-    #[test]
-    fn a_bench_crew_is_missing_from_the_published_idle_count() {
-        let mut app = build_test_app();
-        app.update();
-        let faction = FactionId(0);
-        let band = first_resident_band(&mut app);
-        let idle_before = published_idle_workers(&mut app, band);
-        assert!(
-            idle_before >= BENCH_IDLE_CREW,
-            "the fixture band must have the hands to staff the bench at all"
-        );
-
-        handle_bench_enqueue(
-            &mut app,
-            faction,
-            None,
-            BENCH_IDLE_RECIPE,
-            BENCH_TEST_ORDER,
-            BENCH_IDLE_CREW,
-        );
-        // Liveness: the crew really is standing there. Without this the assertion below passes on a
-        // bench that silently refused the order — and on a sim that stopped publishing idle at all.
-        assert_eq!(
-            app.world
-                .get::<BandBench>(band)
-                .map(|bench| bench.workers)
-                .unwrap_or(0),
-            BENCH_IDLE_CREW,
-            "the command must have put the crew on the bench"
-        );
-
-        assert_eq!(
-            published_idle_workers(&mut app, band),
-            idle_before - BENCH_IDLE_CREW,
-            "the bench's crew must leave the published idle count"
-        );
-
-        // …and standing them down restores it, so the subtraction is a live one rather than a band
-        // that simply lost workers. The crew belongs to the BENCH, so `bench_crew 0` is how — taking
-        // the order off would leave them standing at an idle bench.
-        handle_bench_crew(&mut app, faction, None, NOBODY_AT_THE_BENCH);
-        assert_eq!(
-            published_idle_workers(&mut app, band),
-            idle_before,
-            "standing the crew down returns it to the idle pool"
-        );
-    }
-
-    /// **The published idle count is exactly what the command path will let the player assign.**
-    ///
-    /// The liveness half of the pair above: a sim that published `0` idle forever would satisfy
-    /// "fewer with a bench crew" and fail here. Asserted by asking `assign_labor` for *more* hands
-    /// than exist and reading what it applied — the clamp is `BandWorkforce::assignable()` minus the
-    /// other assignments, which is the same arithmetic `idle()` reports.
-    #[test]
-    fn the_published_idle_count_is_what_assign_labor_will_staff() {
-        let mut app = build_test_app();
-        app.update();
-        let faction = FactionId(0);
-        let band = first_resident_band(&mut app);
-        handle_bench_enqueue(
-            &mut app,
-            faction,
-            None,
-            BENCH_IDLE_RECIPE,
-            BENCH_TEST_ORDER,
-            BENCH_IDLE_CREW,
-        );
-        let published = published_idle_workers(&mut app, band);
-        assert!(
-            published > 0,
-            "the fixture must leave hands free, or the equality below proves nothing"
-        );
-
-        // A band-wide role, so the answer is about the head-count and not about a source's range.
-        handle_assign_labor(
-            &mut app,
-            faction,
-            None,
-            "warrior".to_string(),
-            published + BENCH_IDLE_CREW,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Vec::new(),
-            false,
-        );
-
-        assert_eq!(
-            app.world
-                .get::<LaborAllocation>(band)
-                .map(|allocation| allocation.assigned_total())
-                .unwrap_or(0),
-            published,
-            "the command staffs exactly the workers the wire called idle — no more, and not fewer"
-        );
-        assert_eq!(
-            published_idle_workers(&mut app, band),
-            0,
-            "and with them staffed the band publishes nobody idle"
-        );
-    }
-
-    /// One band's hands as the ENCODED envelope states them: `(working_age, idle, bench crew, Σ rows,
-    /// homeward)`. The client derives its own "n idle of m" from exactly these.
-    fn published_hands(app: &mut bevy::prelude::App, band: Entity) -> (u32, u32, u32, u32, u32) {
-        use core_sim::{recapture_snapshot_in_place, SnapshotHistory};
-        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
-
-        recapture_snapshot_in_place(&mut app.world);
-        let snapshot = app
-            .world
-            .resource::<SnapshotHistory>()
-            .latest_entry()
-            .expect("a snapshot was captured")
-            .snapshot;
-        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
-        let envelope = fb::root_as_envelope(&bytes).expect("the snapshot encodes");
-        let cohort = envelope
-            .payload_as_snapshot()
-            .expect("the envelope carries a snapshot")
-            .population()
-            .and_then(|section| section.populations())
-            .expect("the population section carries the cohort list")
-            .iter()
-            .find(|cohort| cohort.entity() == band.to_bits())
-            .expect("the band is on the wire");
-        let rows: u32 = cohort
-            .laborAssignments()
-            .map(|rows| rows.iter().map(|row| row.workers()).sum())
-            .unwrap_or(0);
-        (
-            cohort.workingAge(),
-            cohort.idleWorkers(),
-            cohort.bench().map(|bench| bench.workers()).unwrap_or(0),
-            rows,
-            cohort.homewardWorkers(),
-        )
-    }
-
-    /// Hands the scout row takes in the idle-bench fixture below: any count that leaves hands free.
-    const IDLE_BENCH_SCOUTS: u32 = 2;
-
-    /// **An IDLE bench still publishes its crew.** The crew stays at the bench once the queue
-    /// empties and `BandWorkforce` nets it out of `idle`, so a row that dropped `workers` made the
-    /// client's `working_age - rows - bench` read those hands as free ("2 idle of 10" beside a
-    /// published idle of 0). The invariant: bench + idle + rows + homeward = working age.
-    #[test]
-    fn an_idle_bench_publishes_its_crew_and_the_hands_add_up() {
-        let mut app = build_test_app();
-        app.update();
-        let faction = FactionId(0);
-        let band = first_resident_band(&mut app);
-        handle_assign_labor(
-            &mut app,
-            faction,
-            None,
-            "warrior".to_string(),
-            IDLE_BENCH_SCOUTS,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Vec::new(),
-            false,
-        );
-
-        // Control: no crew at an idle bench publishes 0 and the hands already add up.
-        let (age, idle, bench, rows, homeward) = published_hands(&mut app, band);
-        assert_eq!(rows, IDLE_BENCH_SCOUTS, "the fixture's rows must be live");
-        assert_eq!(bench, NOBODY_AT_THE_BENCH);
-        assert_eq!(bench + idle + rows + homeward, age);
-
-        // Crew the bench, then empty the queue: the crew stays at an idle bench.
-        handle_bench_enqueue(
-            &mut app,
-            faction,
-            None,
-            BENCH_IDLE_RECIPE,
-            BENCH_TEST_ORDER,
-            BENCH_IDLE_CREW,
-        );
-        handle_bench_queue_edit(&mut app, faction, None, HEAD, BenchQueueEdit::Remove);
-        assert!(
-            the_bench(&app, band).orders.is_empty(),
-            "the queue must be empty for the bench to be idle"
-        );
-        assert_eq!(bench_crew(&app, band), BENCH_IDLE_CREW);
-
-        let (age_after, idle_after, bench_after, rows_after, homeward_after) =
-            published_hands(&mut app, band);
-        assert_eq!(
-            bench_after, BENCH_IDLE_CREW,
-            "an idle bench must publish the crew standing at it"
-        );
-        assert_eq!(idle_after, idle - BENCH_IDLE_CREW);
-        assert_eq!(
-            bench_after + idle_after + rows_after + homeward_after,
-            age_after,
-            "published bench + idle + rows + homeward must equal working age"
-        );
-    }
-
-    /// **The clamp note states the hands free for THIS source**, not the pool before the other rows.
-    #[test]
-    fn the_clamp_note_names_the_hands_actually_free() {
-        let mut app = build_test_app();
-        app.update();
-        let faction = FactionId(0);
-        let band = first_resident_band(&mut app);
-        let (_, idle_before, ..) = published_hands(&mut app, band);
-        assert!(idle_before > IDLE_BENCH_SCOUTS);
-
-        // Take every hand but IDLE_BENCH_SCOUTS (at the bench: the warrior row is the only
-        // hand-set crew left), then ask the warrior row for more than is left.
-        handle_bench_enqueue(
-            &mut app,
-            faction,
-            None,
-            BENCH_IDLE_RECIPE,
-            BENCH_TEST_ORDER,
-            idle_before - IDLE_BENCH_SCOUTS,
-        );
-        handle_assign_labor(
-            &mut app,
-            faction,
-            None,
-            "warrior".to_string(),
-            IDLE_BENCH_SCOUTS + 1,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Vec::new(),
-            false,
-        );
-        let expected = format!(
-            "(clamped from {} \u{2014} only {} idle)",
-            IDLE_BENCH_SCOUTS + 1,
-            IDLE_BENCH_SCOUTS
-        );
-        let logged = app
-            .world
-            .resource::<CommandEventLog>()
-            .iter()
-            .any(|entry| entry.label.contains(&expected));
-        assert!(
-            logged,
-            "the clamp note must name the {IDLE_BENCH_SCOUTS} hands free, not the pool"
-        );
-    }
-
-    /// **Hands already on the row are not idle**: a staffed row asked for more names only the growth.
-    #[test]
-    fn the_clamp_note_excludes_the_hands_already_on_the_row() {
-        const ALREADY_ON_ROW: u32 = 4;
-        const ASKED: u32 = 1000;
-        let mut app = build_test_app();
-        app.update();
-        let faction = FactionId(0);
-        let band = first_resident_band(&mut app);
-        let assign = |app: &mut bevy::prelude::App, role: &str, n: u32| {
-            handle_assign_labor(
-                app,
-                faction,
-                None,
-                role.to_string(),
-                n,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Vec::new(),
-                false,
-            );
-        };
-        assign(&mut app, "warrior", ALREADY_ON_ROW);
-        let (_, idle, ..) = published_hands(&mut app, band);
-        assert!(idle > IDLE_BENCH_SCOUTS);
-        handle_bench_enqueue(
-            &mut app,
-            faction,
-            None,
-            BENCH_IDLE_RECIPE,
-            BENCH_TEST_ORDER,
-            idle - IDLE_BENCH_SCOUTS,
-        );
-        assign(&mut app, "warrior", ASKED);
-        let expected = format!("(clamped from {ASKED} \u{2014} only {IDLE_BENCH_SCOUTS} idle)");
-        let logged = app
-            .world
-            .resource::<CommandEventLog>()
-            .iter()
-            .any(|entry| entry.label.contains(&expected));
-        assert!(
-            logged,
-            "the note must name only the {IDLE_BENCH_SCOUTS} idle hands"
-        );
-    }
-
-    /// A **second** ungated recipe, so a second order is a real change of recipe rather than a
-    /// re-queue of the same one.
-    const BENCH_SWAP_RECIPE: &str = "baskets";
-
-    /// What is actually standing at a band's bench.
-    fn bench_crew(app: &bevy::prelude::App, band: Entity) -> u32 {
-        app.world
-            .get::<BandBench>(band)
-            .map(|bench| bench.workers)
-            .unwrap_or(0)
-    }
 
     /// The band's bench, which every fixture below has.
     fn the_bench(app: &bevy::prelude::App, band: Entity) -> &BandBench {
@@ -25425,10 +25014,8 @@ mod tests {
             Some(id.0),
             BENCH_IDLE_RECIPE,
             BENCH_TEST_ORDER,
-            BENCH_IDLE_CREW,
         );
         handle_bench_queue_edit(&mut app, faction, Some(id.0), HEAD, BenchQueueEdit::Remove);
-        handle_bench_crew(&mut app, faction, Some(id.0), BENCH_IDLE_CREW);
 
         let lines: Vec<(String, Option<String>, u64)> = app
             .world
@@ -25438,8 +25025,8 @@ mod tests {
             .map(|entry| (entry.label.clone(), entry.detail.clone(), entry.band))
             .collect();
         assert!(
-            lines.len() >= 3,
-            "liveness: the queue, the edit and the crew each wrote a line: {lines:?}"
+            lines.len() >= 2,
+            "liveness: the queue and the edit each wrote a line: {lines:?}"
         );
         for (label, detail, entry_band) in &lines {
             assert!(
@@ -25464,219 +25051,6 @@ mod tests {
         }
     }
 
-    /// **Naming no crew recruits nobody; naming one is obeyed to the head.**
-    ///
-    /// A pairing, because every other bench fixture passes an explicit crew — which is the one call
-    /// shape the client never makes. **The player staffs the bench and the sim never does**: labor
-    /// is the scarce currency and splitting the band is the game's turn-to-turn decision, so an
-    /// idle bench stages at zero and waits for the stepper. The second half is what keeps that from
-    /// meaning *"a named crew is ignored too"*.
-    #[test]
-    fn a_bench_enqueue_with_no_crew_named_recruits_nobody() {
-        let mut app = build_test_app();
-        app.update();
-        let faction = FactionId(0);
-        let band = first_resident_band(&mut app);
-        let idle_before = published_idle_workers(&mut app, band);
-        assert!(
-            idle_before > BENCH_IDLE_CREW,
-            "the fixture band must have more hands than the explicit crew, or the two halves \
-             below cannot be told apart"
-        );
-
-        handle_bench_enqueue(
-            &mut app,
-            faction,
-            None,
-            BENCH_IDLE_RECIPE,
-            BENCH_TEST_ORDER,
-            BENCH_CREW_UNSPECIFIED,
-        );
-        assert_eq!(
-            bench_crew(&app, band),
-            0,
-            "an enqueue that names no crew stages the order with nobody on it — the sim does not \
-             pick how many hands stop hunting"
-        );
-        assert_eq!(
-            published_idle_workers(&mut app, band),
-            idle_before,
-            "…so the band's idle count is untouched: every hand is still free to be spent elsewhere"
-        );
-
-        handle_bench_enqueue(
-            &mut app,
-            faction,
-            None,
-            BENCH_IDLE_RECIPE,
-            BENCH_TEST_ORDER,
-            BENCH_IDLE_CREW,
-        );
-        assert_eq!(
-            bench_crew(&app, band),
-            BENCH_IDLE_CREW,
-            "an enqueue that DOES name a crew applies exactly that crew — an absent number means \
-             leave the crew alone, not ignore the one that is there"
-        );
-    }
-
-    /// **The crew stays with the BENCH across every queue edit** — a second order queued with no
-    /// crew named, the head removed, and the queue emptied entirely all leave it standing.
-    #[test]
-    fn the_crew_stays_with_the_bench_across_queue_edits() {
-        let mut app = build_test_app();
-        app.update();
-        let faction = FactionId(0);
-        let band = first_resident_band(&mut app);
-
-        handle_bench_enqueue(
-            &mut app,
-            faction,
-            None,
-            BENCH_IDLE_RECIPE,
-            BENCH_TEST_ORDER,
-            BENCH_IDLE_CREW,
-        );
-        handle_bench_enqueue(
-            &mut app,
-            faction,
-            None,
-            BENCH_SWAP_RECIPE,
-            BENCH_TEST_ORDER,
-            BENCH_CREW_UNSPECIFIED,
-        );
-        let queue: Vec<&str> = the_bench(&app, band)
-            .orders
-            .iter()
-            .map(|order| order.recipe_id.as_str())
-            .collect();
-        assert_eq!(
-            queue,
-            vec![BENCH_IDLE_RECIPE, BENCH_SWAP_RECIPE],
-            "the second order goes to the BACK — the head is still the first"
-        );
-        assert_eq!(
-            bench_crew(&app, band),
-            BENCH_IDLE_CREW,
-            "queueing kept the crew"
-        );
-
-        handle_bench_queue_edit(&mut app, faction, None, HEAD, BenchQueueEdit::Remove);
-        assert_eq!(
-            the_bench(&app, band).head_recipe(),
-            Some(BENCH_SWAP_RECIPE),
-            "removing the head makes the next order the head"
-        );
-        assert_eq!(
-            bench_crew(&app, band),
-            BENCH_IDLE_CREW,
-            "…and the crew stays"
-        );
-
-        handle_bench_queue_edit(&mut app, faction, None, HEAD, BenchQueueEdit::Remove);
-        assert!(
-            !the_bench(&app, band).is_running(),
-            "fixture: the queue is empty"
-        );
-        assert_eq!(
-            bench_crew(&app, band),
-            BENCH_IDLE_CREW,
-            "an empty queue leaves the crew standing at an idle bench"
-        );
-
-        // …and the bench's own verb still reaches them, or they would be stranded there.
-        handle_bench_crew(&mut app, faction, None, NOBODY_AT_THE_BENCH);
-        assert_eq!(
-            bench_crew(&app, band),
-            0,
-            "bench_crew works on an idle bench"
-        );
-    }
-
-    /// **REMOVING THE HEAD SPENDS ITS PILE, exactly as clearing the bench always has** — the store
-    /// does not get the drawn materials back. Paired with the raise: a displaced head KEEPS its pile
-    /// and progress, so moving an order up never costs what was cut.
-    #[test]
-    fn removing_the_head_spends_its_pile_and_raising_over_it_keeps_it() {
-        const CUT: f32 = 4.0;
-        const BANKED: f32 = 2.5;
-        let mut app = build_test_app();
-        app.update();
-        let faction = FactionId(0);
-        let band = first_resident_band(&mut app);
-        handle_bench_enqueue(
-            &mut app,
-            faction,
-            None,
-            BENCH_IDLE_RECIPE,
-            BENCH_TEST_ORDER,
-            BENCH_IDLE_CREW,
-        );
-        handle_bench_enqueue(
-            &mut app,
-            faction,
-            None,
-            BENCH_SWAP_RECIPE,
-            BENCH_TEST_ORDER,
-            BENCH_CREW_UNSPECIFIED,
-        );
-        {
-            let mut bench = app
-                .world
-                .get_mut::<BandBench>(band)
-                .expect("a campaign band carries a bench");
-            let head = bench.head_mut().expect("the fixture queued an order");
-            head.progress = core_sim::scalar_from_f32(BANKED);
-            head.drawn = Some(core_sim::DrawnInputs {
-                reading: None,
-                grade: None,
-                withdrawn: vec![core_sim::DrawnMaterial {
-                    material: "hide".to_string(),
-                    amount: core_sim::scalar_from_f32(CUT),
-                }],
-            });
-        }
-
-        handle_bench_queue_edit(&mut app, faction, None, SECOND, BenchQueueEdit::Raise);
-        let bench = the_bench(&app, band);
-        assert_eq!(
-            bench.head_recipe(),
-            Some(BENCH_SWAP_RECIPE),
-            "the raise took"
-        );
-        let paused = &bench.orders[SECOND as usize];
-        assert!(
-            paused.drawn.is_some() && paused.progress == core_sim::scalar_from_f32(BANKED),
-            "the displaced head keeps its pile and its progress — it is paused, not cleared"
-        );
-
-        let hide_before = app
-            .world
-            .get::<PopulationCohort>(band)
-            .expect("a campaign band carries a cohort")
-            .stores
-            .material_total("hide");
-        handle_bench_queue_edit(&mut app, faction, None, SECOND, BenchQueueEdit::Remove);
-        assert_eq!(
-            the_bench(&app, band).orders.len(),
-            1,
-            "the order holding the pile is gone"
-        );
-        assert_eq!(
-            app.world
-                .get::<PopulationCohort>(band)
-                .expect("a campaign band carries a cohort")
-                .stores
-                .material_total("hide"),
-            hide_before,
-            "its pile is spent, not returned — the store has no representation for a half-worked one"
-        );
-        assert!(
-            craft_event_mentions(&app, "pile_spent=true"),
-            "the event says the pile went with it"
-        );
-    }
-
     /// **Every refusal names its number and changes nothing** — a zero count, an index with no
     /// order, a count at or below what the order already made, and raising the head.
     #[test]
@@ -25690,14 +25064,7 @@ mod tests {
         let faction = FactionId(0);
         let band = first_resident_band(&mut app);
 
-        handle_bench_enqueue(
-            &mut app,
-            faction,
-            None,
-            BENCH_IDLE_RECIPE,
-            NOTHING,
-            BENCH_CREW_UNSPECIFIED,
-        );
+        handle_bench_enqueue(&mut app, faction, None, BENCH_IDLE_RECIPE, NOTHING);
         assert!(
             !the_bench(&app, band).is_running(),
             "an order of zero is not queued"
@@ -25707,18 +25074,12 @@ mod tests {
             "…and the refusal says why"
         );
 
-        handle_bench_enqueue(
-            &mut app,
-            faction,
-            None,
-            BENCH_IDLE_RECIPE,
-            BENCH_TEST_ORDER,
-            BENCH_CREW_UNSPECIFIED,
-        );
+        handle_bench_enqueue(&mut app, faction, None, BENCH_IDLE_RECIPE, BENCH_TEST_ORDER);
         app.world
             .get_mut::<BandBench>(band)
             .expect("a campaign band carries a bench")
-            .head_mut()
+            .orders
+            .first_mut()
             .expect("the fixture queued an order")
             .made = ALREADY_MADE;
 
@@ -25783,28 +25144,14 @@ mod tests {
             .stores
             .clear_materials();
 
-        handle_bench_enqueue(
-            &mut app,
-            faction,
-            None,
-            UNLEARNED_RECIPE,
-            BENCH_TEST_ORDER,
-            BENCH_CREW_UNSPECIFIED,
-        );
+        handle_bench_enqueue(&mut app, faction, None, UNLEARNED_RECIPE, BENCH_TEST_ORDER);
         assert!(
             the_bench(&app, band).orders.is_empty(),
             "an unlearned craft is refused"
         );
         assert!(craft_event_mentions(&app, "has not learned"));
 
-        handle_bench_enqueue(
-            &mut app,
-            faction,
-            None,
-            BENCH_IDLE_RECIPE,
-            BENCH_TEST_ORDER,
-            BENCH_CREW_UNSPECIFIED,
-        );
+        handle_bench_enqueue(&mut app, faction, None, BENCH_IDLE_RECIPE, BENCH_TEST_ORDER);
         assert_eq!(
             the_bench(&app, band).orders.len(),
             1,
@@ -25888,7 +25235,6 @@ mod tests {
             Some("spears"),
             "each part records the recipe the band chose for its item"
         );
-        assert_eq!(bench.workers, 0, "the crew is untouched");
 
         handle_bench_kit_edit(&mut app, faction, None, 1, BenchKitEdit::Raise);
         assert!(
@@ -25926,28 +25272,14 @@ mod tests {
         };
         assert_eq!(last_started(&app), None, "a fresh band has started nothing");
 
-        handle_bench_enqueue(
-            &mut app,
-            faction,
-            None,
-            KNAPPED,
-            BENCH_TEST_ORDER,
-            BENCH_CREW_UNSPECIFIED,
-        );
+        handle_bench_enqueue(&mut app, faction, None, KNAPPED, BENCH_TEST_ORDER);
         assert_eq!(
             last_started(&app).as_deref(),
             Some(KNAPPED),
             "queueing the knapped recipe records it against the spears row"
         );
 
-        handle_bench_enqueue(
-            &mut app,
-            faction,
-            None,
-            BONE,
-            BENCH_TEST_ORDER,
-            BENCH_CREW_UNSPECIFIED,
-        );
+        handle_bench_enqueue(&mut app, faction, None, BONE, BENCH_TEST_ORDER);
         assert_eq!(
             last_started(&app).as_deref(),
             Some(BONE),
@@ -33376,25 +32708,6 @@ mod tests {
             .filter(|row| row.target.is_staffed())
             .map(|row| row.workers)
             .sum()
-    }
-
-    /// **SIM-STAFFED CREWS NEVER BLOCK A PLAYER ORDER**: with every hand on a source, a bench crew of
-    /// three applies three and the staffed rows give up three hands at once. A bench larger than the
-    /// pool still clamps to the pool.
-    #[test]
-    fn a_fully_staffed_band_can_still_staff_the_bench() {
-        const CREW: u32 = 3;
-        let mut app = build_world_app();
-        let (band, entity) = fully_staffed_band(&mut app);
-        let pool = band_workforce(&app, entity).pool;
-
-        handle_bench_crew(&mut app, FactionId(0), Some(band.0), CREW);
-        assert_eq!(app.world.get::<BandBench>(entity).unwrap().workers, CREW);
-        assert_eq!(staffed_hands(&app, entity), pool - CREW);
-
-        handle_bench_crew(&mut app, FactionId(0), Some(band.0), pool + 5);
-        assert_eq!(app.world.get::<BandBench>(entity).unwrap().workers, pool);
-        assert_eq!(staffed_hands(&app, entity), 0);
     }
 
     /// **A PARTY VERB GETS ITS HANDS FROM THE SIM-STAFFED ROWS**: with every hand on a source, a

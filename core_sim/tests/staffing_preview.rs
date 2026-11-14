@@ -15,15 +15,17 @@ use bevy::math::UVec2;
 use bevy::prelude::Entity;
 use core_sim::shipped;
 use core_sim::{
-    build_test_app, scalar_from_f32, scalar_one, scalar_zero, BandEquipment, BandId,
-    EquipmentConfig, FactionId, FaunaConfigHandle, GenerationId, Herd, HerdRegistry,
-    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause, PopulationCohort,
-    ResidentBand, SizeClass, SourcePriority, TileRegistry,
+    build_test_app, scalar_from_f32, scalar_one, scalar_zero, BandBench, BandEquipment, BandId,
+    BenchOrder, EquipmentConfig, EquipmentConfigHandle, FactionId, FaunaConfigHandle, GenerationId,
+    Herd, HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
+    MaterialsConfigHandle, MoraleCause, PopulationCohort, RecipesConfigHandle, ResidentBand,
+    SizeClass, SourcePriority, TileRegistry,
 };
 use sim_runtime::commands::{
     query_error, QueryPayload, QueryReply, StaffingPreviewQuery, StaffingPreviewReply,
-    WorkPartySource,
+    WorkPartySource, STAFFING_LOSS_KIND_BENCH,
 };
+use std::collections::BTreeMap;
 
 const BOAR: &str = "Wild Boar";
 const BAND: u64 = 41;
@@ -374,4 +376,86 @@ fn a_question_about_another_factions_band_or_a_bad_ask_is_refused_with_a_token()
     let mut bad_kit = ask_for("normal", 0, FACTION.0);
     bad_kit.kit_id = "no_such_kit".to_string();
     assert_eq!(token(&mut app, bad_kit), query_error::UNKNOWN_KIT);
+}
+
+/// Baskets: two crafters per item, fibre and hide in, so a stocked order takes several hands.
+const BASKETS: &str = "baskets";
+/// Enough baskets that the order's cap is never what bounds it.
+const BASKETS_ORDERED: u32 = 3;
+/// Stock enough for every basket ordered.
+const PLENTY: f32 = 400.0;
+const FIBRE_AXES: [(&str, f32); 2] = [("fineness", 0.5), ("strength", 0.5)];
+const HIDE_AXES: [(&str, f32); 2] = [("toughness", 0.6), ("suppleness", 0.5)];
+
+fn bank(app: &mut App, band: Entity, material: &str, axes: &[(&str, f32)]) {
+    let materials = app.world.resource::<MaterialsConfigHandle>().get();
+    let readings: BTreeMap<String, f32> = axes
+        .iter()
+        .map(|(axis, value)| ((*axis).to_string(), *value))
+        .collect();
+    let key = materials
+        .band_key(material, &readings)
+        .expect("the shipped table carries this material");
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band has a cohort")
+        .stores
+        .deposit_material(material, key, scalar_from_f32(PLENTY), &readings);
+}
+
+fn bench_crew(app: &App, band: Entity) -> u32 {
+    app.world
+        .get::<BandBench>(band)
+        .expect("the band has a bench")
+        .orders[0]
+        .crew
+        .total()
+}
+
+/// **A bench order that loses crafters to the previewed row is named among the losses**, by the
+/// name the Crafting panel gives it, with the crew the command's restaff then leaves it (#873: the
+/// bench is staffed in the same passes as the rows).
+#[test]
+fn a_bench_order_that_loses_crafters_is_named_among_the_losses() {
+    let (mut app, band) = world_with(Vec::new());
+    bank(&mut app, band, "fibre", &FIBRE_AXES);
+    bank(&mut app, band, "hide", &HIDE_AXES);
+    let mut bench = BandBench::default();
+    let mut order = BenchOrder::new(BASKETS, BASKETS_ORDERED);
+    order.priority = SourcePriority::Low;
+    bench.orders.push(order);
+    app.world.entity_mut(band).insert(bench);
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    let crafters_before = bench_crew(&app, band);
+    assert!(
+        crafters_before > 1,
+        "liveness: the bench order holds hands a High row can take"
+    );
+
+    let reply = preview_reply(&mut app, ask_for("high", SMALL_MAX, FACTION.0));
+    let loss = reply
+        .losses
+        .iter()
+        .find(|loss| loss.kind == STAFFING_LOSS_KIND_BENCH)
+        .unwrap_or_else(|| panic!("the bench order is among the losses: {:?}", reply.losses))
+        .clone();
+    let recipes = app.world.resource::<RecipesConfigHandle>().get();
+    let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+    assert_eq!(
+        loss.order_name,
+        recipes
+            .recipe(BASKETS)
+            .expect("baskets is a shipped recipe")
+            .row_name(&equipment),
+        "named as the Crafting panel names the order"
+    );
+    assert_eq!(loss.before, crafters_before);
+    assert!(loss.after < loss.before, "the order loses crafters");
+
+    send_the_matching_assign_labor(&mut app, band, SourcePriority::High, SMALL_MAX);
+    assert_eq!(
+        loss.after,
+        bench_crew(&app, band),
+        "the preview IS the command's restaff"
+    );
 }

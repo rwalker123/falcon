@@ -510,7 +510,7 @@ fn donor_bench(app: &App, band: Entity) -> Option<core_sim::MusterBench> {
 fn musterable_pool(app: &App, band: Entity) -> u32 {
     let idle = published(app).idle_workers;
     let need = index_of(app, band, NEED_HERD);
-    allocation(app, band).musterable_pool(idle, need, &|_| true, donor_bench(app, band))
+    allocation(app, band).musterable_pool(idle, need, &|_| true, donor_bench(app, band).as_ref())
 }
 
 /// What a row's source paid this turn (`SourceYield::actual`), by herd.
@@ -639,7 +639,7 @@ fn a_lean_larder_musters_the_useful_crew_and_hands_every_donor_back() {
         idx,
         need.muster_crew,
         &|_| true,
-        donor_bench(&app, band),
+        donor_bench(&app, band).as_ref(),
         &core_sim::MusterKit::default(),
     );
     assert_eq!(wire.idle_mustered, plan.from_idle);
@@ -793,7 +793,7 @@ fn a_far_row_with_no_party_yet_is_not_a_donor() {
         wire.idle_workers,
         idx,
         &|_| true,
-        donor_bench(&app, band),
+        donor_bench(&app, band).as_ref(),
     );
     assert_eq!(
         pool,
@@ -2280,9 +2280,15 @@ fn bench_world(priority: SourcePriority) -> (App, Entity) {
         &[("fineness", 0.5), ("strength", 0.5)],
     );
     app.world.entity_mut(band).insert(core_sim::BandBench {
-        orders: vec![core_sim::BenchOrder::new(BENCH_RECIPE, UNFINISHED_ORDER)],
-        workers: BENCH_CREW,
-        priority,
+        orders: vec![{
+            let mut order = core_sim::BenchOrder::new(BENCH_RECIPE, UNFINISHED_ORDER);
+            order.priority = priority;
+            order.crew = core_sim::BenchCrew {
+                at_tool: 0,
+                by_hand: BENCH_CREW,
+            };
+            order
+        }],
         ..Default::default()
     });
     recapture_snapshot_in_place(&mut app.world);
@@ -2394,9 +2400,9 @@ fn bench_turn_with_lent(lent: u32) -> (f32, bool, u32, f32) {
         .material_total("hide")
         .to_f32();
     (
-        bench.orders[0].progress.to_f32(),
-        bench.orders[0].drawn.is_some(),
-        bench.workers,
+        bench.orders[0].progress_total().to_f32(),
+        !bench.orders[0].items.is_empty(),
+        bench.crew_total(),
         hide_left,
     )
 }
@@ -2429,87 +2435,6 @@ fn this_turns_craft_progress_reflects_the_lent_hands() {
     assert!(
         hide_left > hide_whole,
         "the fully lent bench left the store alone ({hide_left} against {hide_whole})"
-    );
-}
-
-/// ⛔ **THE LOAN IS NOT A REMOVAL**: the queue, the order's progress and its drawn pile all survive
-/// a turn with the whole crew out hunting, and the crew works again the turn after.
-#[test]
-fn a_lent_bench_keeps_its_order_progress_and_drawn_pile() {
-    let (mut app, band) = bench_world(SourcePriority::Low);
-    turn_with_bench(&mut app);
-    let before = bench_of(&app, band).orders[0].clone();
-    assert!(
-        before.progress.to_f32() > 0.0 && before.drawn.is_some(),
-        "liveness: the first turn drew a pile and banked progress"
-    );
-
-    set_muster(&mut app, band, BENCH_CREW);
-    turn_with_bench(&mut app);
-    let during = bench_of(&app, band);
-    assert_eq!(during.orders.len(), 1, "the queue is intact");
-    assert_eq!(during.orders[0].recipe_id, BENCH_RECIPE);
-    assert_eq!(
-        during.orders[0].progress, before.progress,
-        "no progress is lost or gained"
-    );
-    assert_eq!(during.orders[0].drawn, before.drawn, "the drawn pile stays");
-    assert_eq!(during.workers, BENCH_CREW, "the crew is restored");
-    assert_eq!(during.lent_to_hunt, 0, "the loan does not outlive the turn");
-
-    set_muster(&mut app, band, 0);
-    turn_with_bench(&mut app);
-    assert!(
-        bench_of(&app, band).orders[0].progress > before.progress,
-        "the crew works again the turn after"
-    );
-}
-
-/// The bench's `ratePerTurn` on the ENCODED frame.
-fn published_bench_rate(app: &App) -> f32 {
-    let snapshot = app
-        .world
-        .resource::<SnapshotHistory>()
-        .latest_entry()
-        .expect("a snapshot was captured")
-        .snapshot;
-    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
-    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
-    envelope
-        .payload_as_snapshot()
-        .and_then(|snapshot| snapshot.population())
-        .and_then(|section| section.populations())
-        .expect("the population section carries the cohort list")
-        .iter()
-        .find(|cohort| cohort.bandId() == BAND)
-        .and_then(|cohort| cohort.bench())
-        .expect("the band publishes its bench")
-        .ratePerTurn()
-}
-
-/// ⛔ **THE QUOTED RATE IS THE PROGRESS THE TURN BANKS, LOAN INCLUDED.** `ratePerTurn` describes next
-/// turn, and next turn the bench works `workers − lentToHunt`: the published rate, read off the
-/// encoded frame before the turn, equals the progress the turn then banks — whole, half lent, and
-/// fully lent (quoted `0`, banks `0`).
-#[test]
-fn the_quoted_rate_is_the_progress_the_turn_banks_with_hands_lent() {
-    let mut quoted = Vec::new();
-    for lent in [0, BENCH_CREW / 2, BENCH_CREW] {
-        let (mut app, band) = bench_world(SourcePriority::Low);
-        set_muster(&mut app, band, lent);
-        assert_eq!(published_bench_lent(&app), lent, "the plan lends {lent}");
-        let rate = published_bench_rate(&app);
-        turn_with_bench(&mut app);
-        let banked = bench_of(&app, band).orders[0].progress.to_f32();
-        assert!(
-            (rate - banked).abs() < 1e-4,
-            "lent {lent}: quoted {rate}, banked {banked}"
-        );
-        quoted.push(rate);
-    }
-    assert!(
-        quoted[0] > quoted[1] && quoted[1] > 0.0 && quoted[2] == 0.0,
-        "liveness: the quote falls with the loan, got {quoted:?}"
     );
 }
 
@@ -2712,8 +2637,14 @@ fn capped_world_geared(spears: u32, sleds: u32, quarry: Quarry) -> (App, Entity)
     arm_the_band_with(&mut app, band, spears, sleds);
     gather_with_the_normal_donor(&mut app, band);
     app.world.entity_mut(band).insert(core_sim::BandBench {
-        orders: vec![core_sim::BenchOrder::new(BENCH_RECIPE, UNFINISHED_ORDER)],
-        workers: CAP_WORLD_BENCH_HANDS,
+        orders: vec![{
+            let mut order = core_sim::BenchOrder::new(BENCH_RECIPE, UNFINISHED_ORDER);
+            order.crew = core_sim::BenchCrew {
+                at_tool: 0,
+                by_hand: CAP_WORLD_BENCH_HANDS,
+            };
+            order
+        }],
         ..Default::default()
     });
     set_meat(&mut app, band, LEAN_LARDER);

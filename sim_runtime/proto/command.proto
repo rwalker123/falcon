@@ -864,12 +864,8 @@ message BenchEnqueueCommand {
   uint64 band_id = 2;
   string recipe_id = 3;
   uint32 count = 4;     // items to make, >= 1
-  // Workers to put on the bench, clamped to the band's hands off other work. Absent (which for a
-  // proto3 scalar is indistinguishable from an explicit 0, and is the shape the client always sends)
-  // means "do not change the crew": an idle bench stages the order with NOBODY on it, and a bench
-  // already crewed keeps its crew. The sim never picks a crew; `BenchCrewCommand` is how one is set,
-  // zero included.
-  uint32 workers = 5;
+  // Field 5 carried the player's crew (`workers`) and is RESERVED: the sim staffs the bench.
+  reserved 5;
 }
 
 // SET ONE QUEUED ORDER'S COUNT. `order` is the index in `BenchState.orders` (0 = the head). Refused
@@ -932,13 +928,6 @@ message BenchRaiseKitCommand {
   uint32 kit_order = 3;
 }
 
-// Change the crew on a band's bench, leaving the queue and every order's progress alone.
-message BenchCrewCommand {
-  uint32 faction_id = 1;
-  uint64 band_id = 2;
-  uint32 workers = 3;
-}
-
 // Mark one band's CRAFTING BENCH with the player's own rank - `high` | `normal` | `low`.
 //
 // The bench's own verb rather than a `work_priority` token, because every other bench command
@@ -954,6 +943,9 @@ message BenchPriorityCommand {
   uint32 faction_id = 1;
   uint64 band_id = 2;
   string level = 3;     // "high" | "normal" | "low"
+  // The queue index of the order to rank (a kit part ranks its whole kit). #873: a priority belongs
+  // to one ORDER, not to the bench.
+  uint32 order = 4;
 }
 
 // Turn a band's bench AUTO-CRAFT on or off. While on, the bench keeps an empty queue filled from the
@@ -1185,7 +1177,7 @@ message StaffingPreviewQuery {
 // for a declared build's builders (the source's own kind token after `build:`). The identity fields
 // are the ones the kind uses and are otherwise empty/zero: `x`,`y` for forage, extract, tile, and
 // a patch / deposit / tile build; `herd_id` for hunt; `material` for extract; `branch` for a
-// tile or band row.
+// tile or band row. A bench order's crafters are kind `bench`, named by `order_name`.
 message StaffingPreviewLoss {
   string kind = 1;
   uint32 x = 2;
@@ -1196,6 +1188,8 @@ message StaffingPreviewLoss {
   // The row's crew staffed WITHOUT the previewed row, and WITH it.
   uint32 before = 7;
   uint32 after = 8;
+  // A `bench` row's order, named as the Crafting panel names it (the made item's row name).
+  string order_name = 9;
 }
 
 // The answer to `StaffingPreviewQuery`.
@@ -1745,10 +1739,12 @@ message HuntCrewTakeReply {
 
 message CommandEnvelope {
   optional uint64 correlation_id = 15;
+  reserved 54;
 
   // Retired field numbers. Never reuse one: a stale client's message would silently decode as the
   // wrong command.
   //   24 `found_camp`  — retired.
+  //   54 `bench_crew`  — retired with the player-staffed bench (#873).
   //   30 `domesticate` — the intensification ladder's animal rung-2 EARLY-CLAIM, retired in favour
   //      of `tame` (field 40), which makes the player actually pay the taming investment.
   //
@@ -1833,8 +1829,8 @@ message CommandEnvelope {
     SplitBandCommand split_band = 51;
     // 51 is held by `split_band`, so the crafting bench's three took 52-54 (append-only). 52
     // `set_bench` and 53 `clear_bench` are RESERVED - retired with the bench queue, see above.
-    BenchCrewCommand bench_crew = 54;
-    // 54 is held by `bench_crew`, so the trade expedition takes 55 (append-only; never renumber).
+    // 54 carried `bench_crew` and is RESERVED (#873: the sim staffs the bench).
+    // Trade expedition takes 55 (append-only; never renumber).
     SendTradeExpeditionCommand send_trade_expedition = 55;
     // 55 is held by `send_trade_expedition`, so the upkeep mode takes 56 (append-only).
     UpkeepModeCommand upkeep_mode = 56;

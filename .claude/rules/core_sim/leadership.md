@@ -154,7 +154,7 @@ PLAYTEST DIALS:
 
 **Wire and save.** `PopulationCohortState.moraleLeadership:long` (appended last; fixed-point; native dict key
 `morale_leadership`), part of the breakdown whose signed sum is `moraleDelta`; `moraleCause` `6` names it.
-Not on the foreign-row allow-list, so a rival's row reads `0`. `SAVE_FORMAT_VERSION` 68 (`MoraleContributions`
+Not on the foreign-row allow-list, so a rival's row reads `0`. `SAVE_FORMAT_VERSION` 69 (`MoraleContributions`
 gained `leadership`, `PopulationCohort` gained `last_leadership`).
 
 **The Telling.** Signals `leadership.bands_hungry_under_leader` (led bands whose people went short at this

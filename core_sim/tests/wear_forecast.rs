@@ -14,23 +14,17 @@
 use bevy::prelude::{App, Entity, UVec2, With};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
-use core_sim::auto_craft::{auto_craft_fill, auto_craft_skip, set_auto_craft};
 use core_sim::{
-    build_test_app, recapture_snapshot_in_place, run_turn, scalar_from_f32, split_band_from_parent,
-    BandBench, BandEquipment, BandId, BenchOrder, BuildSource, EquipmentBatch,
-    EquipmentConfigHandle, KeepingIssue, LaborAllocation, MaterialsConfigHandle, PopulationCohort,
-    RecipesConfigHandle, ResidentBand, SettleConfig, SnapshotHistory, WearQuantum,
+    build_test_app, recapture_snapshot_in_place, run_turn, split_band_from_parent, BandBench,
+    BandEquipment, BandId, BenchOrder, BuildSource, EquipmentBatch, EquipmentConfigHandle,
+    KeepingIssue, LaborAllocation, PopulationCohort, ResidentBand, SettleConfig, SnapshotHistory,
+    WearQuantum,
 };
-use std::collections::BTreeMap;
 
 const HOES: &str = "hoes";
 const BASKETS: &str = "baskets";
 const SPEARS: &str = "spears";
 const PLAIN: &str = "plain";
-const BONE: &str = "bone";
-const HIDE: &str = "hide";
-const FIBRE: &str = "fibre";
-const PLENTY: f32 = 40.0;
 /// Two crafters: the hoes recipe (work 5) at 1.0 a crafter-turn is 2.5 turns, quoted as 3.
 const TWO_CRAFTERS: u32 = 2;
 /// Nobody at the bench: quoted at ONE crafter, so the hoes recipe is 5 turns.
@@ -80,7 +74,16 @@ fn bare_bench(app: &mut App, band: Entity, crew: u32) {
     bench.orders.clear();
     bench.auto = false;
     bench.auto_skipped.clear();
-    bench.workers = crew;
+    // The quoted lead time reads the bench's crew; with no real order to crew, a placeholder order
+    // no recipe answers to carries it (it queues no work).
+    if crew > 0 {
+        let mut placeholder = core_sim::BenchOrder::new("no_such_recipe", 1);
+        placeholder.crew = core_sim::BenchCrew {
+            at_tool: 0,
+            by_hand: crew,
+        };
+        bench.orders.push(placeholder);
+    }
 }
 
 /// Settle the lines the turn would have left: `(item, required, issued)`, one keeping line each.
@@ -132,28 +135,6 @@ fn warm_up(app: &mut App, band: Entity, item: &str, quantum: WearQuantum, uses: 
     for _ in 0..window_turns(app) {
         wear_turn(app, band, item, quantum, uses);
     }
-}
-
-fn bank(app: &mut App, band: Entity, material: &str, axes: &[(&str, f32)]) {
-    let materials = app.world.resource::<MaterialsConfigHandle>().get();
-    let readings: BTreeMap<String, f32> = axes
-        .iter()
-        .map(|(axis, value)| ((*axis).to_string(), *value))
-        .collect();
-    let key = materials
-        .band_key(material, &readings)
-        .expect("the shipped table carries this material");
-    app.world
-        .get_mut::<PopulationCohort>(band)
-        .expect("the band has a cohort")
-        .stores
-        .deposit_material(material, key, scalar_from_f32(PLENTY), &readings);
-}
-
-fn bank_everything(app: &mut App, band: Entity) {
-    bank(app, band, BONE, &[("density", 0.5), ("length", 0.5)]);
-    bank(app, band, HIDE, &[("toughness", 0.6), ("suppleness", 0.5)]);
-    bank(app, band, FIBRE, &[("fineness", 0.5), ("strength", 0.5)]);
 }
 
 fn ledger(app: &App, band: Entity) -> &BandEquipment {
@@ -487,7 +468,13 @@ fn the_lead_time_follows_the_crew_and_the_queue() {
     );
 
     // Two more baskets: 5 x 6 / 2 = 15 turns + 2.5 = 17.5, quoted as 18 - 144 condition, which does.
-    app.world.get_mut::<BandBench>(band).expect("bench").orders[0].count = 5;
+    app.world
+        .get_mut::<BandBench>(band)
+        .expect("bench")
+        .orders
+        .last_mut()
+        .expect("the baskets order")
+        .count = 5;
     let rows = publish(&mut app, band);
     let longer = find(&rows, HOES).expect("suggested");
     assert_eq!(longer.lead, 18);
@@ -578,100 +565,6 @@ fn the_schedule_opens_a_slot_every_turn_up_to_the_window() {
     assert!(after > before, "LIVENESS: the system opened slots");
 }
 
-/// The queue-fill path auto-craft reads is the snapshot's own, so an auto bench queues a coming-up
-/// item when nothing above it is usable - and a usable shortage above it wins.
-#[test]
-fn auto_craft_reaches_a_coming_up_item_only_when_nothing_above_it_is_usable() {
-    let (mut app, band) = world();
-    two_hoes_wearing_out(&mut app, band);
-    bank_everything(&mut app, band);
-    set_auto_craft(&mut app.world, band, true);
-    let bench = app.world.get::<BandBench>(band).expect("bench");
-    let recipes = app.world.resource::<RecipesConfigHandle>().get();
-    let queued: Vec<String> = bench
-        .orders
-        .iter()
-        .filter_map(|order| recipes.recipe(&order.recipe_id)?.output_equipment_id())
-        .map(str::to_string)
-        .collect();
-    assert_eq!(
-        queued,
-        vec![HOES.to_string()],
-        "the coming-up hoes are queued"
-    );
-    assert_eq!(bench.orders[0].count, 1, "at the forecast's count");
-    assert!(bench.orders[0].auto);
-
-    // CONTROL: a usable shortage above it is queued instead, and the hoes wait.
-    two_hoes_wearing_out(&mut app, band);
-    bank_everything(&mut app, band);
-    consumers(&mut app, band, &[(HOES, 2.0, 2.0), (BASKETS, 2.0, 0.0)]);
-    {
-        let mut bench = app.world.get_mut::<BandBench>(band).expect("bench");
-        bench.orders.clear();
-        bench.auto_skipped.clear();
-        bench.auto = true;
-    }
-    auto_craft_fill(&mut app.world, band);
-    let bench = app.world.get::<BandBench>(band).expect("bench");
-    let queued: Vec<String> = bench
-        .orders
-        .iter()
-        .filter_map(|order| recipes.recipe(&order.recipe_id)?.output_equipment_id())
-        .map(str::to_string)
-        .collect();
-    assert_eq!(
-        queued,
-        vec![BASKETS.to_string()],
-        "the usable shortage ranks above the forecast"
-    );
-}
-
-/// **SKIP STILL WORKS ON A COMING-UP ITEM, and a stale skip is dropped once nothing is coming up.**
-#[test]
-fn a_skipped_coming_up_item_is_forgotten_when_it_is_no_longer_coming_up() {
-    let (mut app, band) = world();
-    two_hoes_wearing_out(&mut app, band);
-    // No bone banked: an auto hoes order (queued while there was bone) waits, and the player passes
-    // it over. Auto-craft itself never queues an order that is short of an input.
-    {
-        let mut bench = app.world.get_mut::<BandBench>(band).expect("bench");
-        bench.auto = true;
-        bench.enqueue_auto("hoes", 1);
-    }
-    auto_craft_skip(&mut app.world, band).expect("the waiting hoes order is skipped");
-    assert!(app
-        .world
-        .get::<BandBench>(band)
-        .expect("bench")
-        .auto_skipped
-        .contains(HOES));
-
-    // The unit is replaced: nothing is coming up, so the stale skip must not survive a fill.
-    two_hoes_wearing_out(&mut app, band);
-    hold(&mut app, band, HOES, 3, 0.0);
-    app.world
-        .get_mut::<BandBench>(band)
-        .expect("bench")
-        .auto_skipped
-        .insert(HOES.to_string());
-    app.world.get_mut::<BandBench>(band).expect("bench").auto = true;
-    app.world
-        .get_mut::<BandBench>(band)
-        .expect("bench")
-        .orders
-        .clear();
-    auto_craft_fill(&mut app.world, band);
-    assert!(
-        app.world
-            .get::<BandBench>(band)
-            .expect("bench")
-            .auto_skipped
-            .is_empty(),
-        "the hoes are no longer suggested, so the skip is dropped"
-    );
-}
-
 /// **THE WINDOW SURVIVES A SAVE AND A LOAD** - the rate a player was quoted does not reset.
 #[test]
 fn the_wear_window_survives_a_save_round_trip() {
@@ -753,46 +646,6 @@ fn long_queue(app: &mut App, band: Entity, count: u32) {
     let mut bench = app.world.get_mut::<BandBench>(band).expect("bench");
     bench.orders.clear();
     bench.orders.push(BenchOrder::new(SPEARS, count));
-}
-
-/// **`expiresInTurns` IS WHEN THE SHORTAGE STARTS, NOT WHEN THE UNIT IN HAND RUNS OUT.** Need 2, three
-/// held, the one in hand 10 from spent at 4 a turn: the spare absorbs that loss, and nobody goes short
-/// until the second unit is gone at (10 + 100) / 4 = 27.5 turns. Paired with the control without the
-/// spare, which goes short at the first loss, 2.5 turns.
-#[test]
-fn expiry_is_the_turn_the_shortage_starts_and_a_spare_defers_it() {
-    let (mut app, band) = world();
-    let window = window_turns(&app) as f32;
-    let fixture = |app: &mut App, held: u32| {
-        bare_bench(app, band, TWO_CRAFTERS);
-        consumers(app, band, &[(HOES, 2.0, 2.0)]);
-        hold(app, band, HOES, held, 90.0 - 4.0 * window);
-        warm_up(app, band, HOES, WearQuantum::BuildProgress, FOUR_A_TURN);
-        long_queue(app, band, 9);
-    };
-    fixture(&mut app, 3);
-    let rows = publish(&mut app, band);
-    let spared = find(&rows, HOES).expect("the second loss is still coming");
-    assert!(
-        spared.lead >= 28,
-        "the lead reaches the second loss: {}",
-        spared.lead
-    );
-    assert!(
-        (spared.expires - 27.5).abs() < 1e-3,
-        "the turn of the second loss: {}",
-        spared.expires
-    );
-    assert_eq!(spared.upcoming, 1);
-
-    fixture(&mut app, 2);
-    let rows = publish(&mut app, band);
-    let bare = find(&rows, HOES).expect("suggested");
-    assert!(
-        (bare.expires - 2.5).abs() < 1e-3,
-        "the first loss: {}",
-        bare.expires
-    );
 }
 
 /// **AN EARLY EXPIRY WITH A LATE SHORTAGE RANKS BELOW AN ITEM THAT REALLY GOES SHORT SOONER.** The

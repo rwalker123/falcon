@@ -682,7 +682,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
                 .unwrap_or(crate::hunt_by_need::NO_NEED_ROW),
             idle: scene.idle,
             is_local: &is_local,
-            bench: scene.bench,
+            bench: scene.bench.clone(),
             claims: &scene.claims,
         });
     // **A `follow` ASK'S CAP IS A CEILING, NOT THE POOL**: locality is geometric, so the client
@@ -692,7 +692,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
             pricing.idle,
             pricing.need_idx,
             pricing.is_local,
-            pricing.bench,
+            pricing.bench.as_ref(),
         ))
     });
     let equipment = world.resource::<EquipmentConfigHandle>().get();

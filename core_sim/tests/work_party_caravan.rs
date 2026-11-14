@@ -2753,10 +2753,10 @@ fn a_herd_back_inside_the_apron_does_not_count_its_walkers_twice() {
         None,
     );
     assert!(
-        workforce.benchable().min(1) == 1 && workforce.benchable() == RAY_POOL - RAY_ROW,
+        workforce.partyable().min(1) == 1 && workforce.partyable() == RAY_POOL - RAY_ROW,
         "the sim-staffed hunt is benchable, the player-set Warrior is not: idle {}, benchable {}",
         read.band_idle,
-        workforce.benchable()
+        workforce.partyable()
     );
 }
 

@@ -592,8 +592,9 @@ func _owned_materials(bands: Array) -> Dictionary:
 				+ float(batch.get(HudCraftingVocab.BATCH_AMOUNT_KEY, 0.0))
 	return owned
 
-## The recipe ids on a player band's bench right now. An empty `recipe_id` is an IDLE bench, which is
-## a different statement from a blocked one and contributes nothing here.
+## The recipe ids the player bands' benches are working right now: every order the sim has staffed or
+## holds items in flight for (#873 — the bench works several orders at once). An order still waiting
+## with nothing drawn contributes nothing here.
 func _bench_recipes(bands: Array) -> Array:
 	var running: Array = []
 	for band_variant in bands:
@@ -603,10 +604,17 @@ func _bench_recipes(bands: Array) -> Array:
 			HudCraftingVocab.BAND_BENCH_KEY, {})
 		if not (bench_variant is Dictionary):
 			continue
-		var recipe_id := String((bench_variant as Dictionary).get(
-			HudCraftingVocab.BENCH_RECIPE_ID_KEY, "")).strip_edges()
-		if recipe_id != "" and not running.has(recipe_id):
-			running.append(recipe_id)
+		for order_variant in (bench_variant as Dictionary).get(HudCraftingVocab.BENCH_ORDERS_KEY, []):
+			if not (order_variant is Dictionary):
+				continue
+			var order: Dictionary = order_variant
+			var staffed := int(order.get(HudCraftingVocab.ORDER_CREW_AT_TOOL_KEY, 0)) \
+				+ int(order.get(HudCraftingVocab.ORDER_CREW_BY_HAND_KEY, 0)) > 0
+			if not staffed and not bool(order.get(HudCraftingVocab.ORDER_DRAWN_KEY, false)):
+				continue
+			var recipe_id := String(order.get(HudCraftingVocab.ORDER_RECIPE_ID_KEY, "")).strip_edges()
+			if recipe_id != "" and not running.has(recipe_id):
+				running.append(recipe_id)
 	return running
 
 ## The player's own craft tracks. **The wire now carries the VIEWER's alone** — `craftKnowledge` joined

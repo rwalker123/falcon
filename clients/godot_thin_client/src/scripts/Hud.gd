@@ -155,13 +155,11 @@ signal open_borders_requested(payload: Dictionary)
 signal diplomacy_command_requested(payload: Dictionary)
 ## Emitted when the player presses **Make** (count 1) or a suggestion's **Queue** (its whole count) in
 ## Materials & Crafting — an ORDER joins the back of the band's bench queue and nobody is recruited
-## onto it. **The player staffs the bench and the sim never does**, so there is no crew argument here:
-## the `− n +` stepper is the one thing that picks the number, and the bench is staffed like a worked
-## source rather than through a standing role, which is why there is no Crafter role card anywhere.
+## onto it. **The sim staffs the bench**, so there is no crew argument here: every order is staffed each
+## turn from the band's idle hands, and there is no Crafter role card anywhere.
 ## Payload keys: { faction, band_id, recipe_id, count }. Main formats
 ## `bench_enqueue <faction> <band> recipe <id> count <n>`. RELAYED from `CraftingPanelController`.
 signal bench_enqueue_requested(payload: Dictionary)
-signal bench_crew_requested(payload: Dictionary)
 ## Emitted when a queued order's own `− n +` moves. Payload keys: { faction, band_id, order, count },
 ## `order` the order's index in `bench.orders` (0 = the head). Main formats
 ## `bench_order_count <faction> <band> order <i> count <n>`. RELAYED from `CraftingPanelController`.
@@ -173,12 +171,11 @@ signal bench_remove_requested(payload: Dictionary)
 ## Emitted when an order's ↑ is pressed — never on index 0. Payload keys: { faction, band_id, order }.
 ## Main formats `bench_raise <faction> <band> order <i>`. RELAYED from `CraftingPanelController`.
 signal bench_raise_requested(payload: Dictionary)
-## Emitted when a rung of the bench's rank picker is pressed — the player's own answer to what the band
-## gives up first when it cannot cover everything it holds (`docs/plan_standing_upkeep.md` §4.9 item
-## 9b). Payload keys: { faction, band_id, level }, `level` one of `high` / `normal` / `low`. Main
-## formats `bench_priority <faction> <band> <level>` — a SIBLING verb of `work_priority`, not a token
-## of it, that grammar reading a lone trailing token as a herd id. RELAYED from
-## `CraftingPanelController`.
+## Emitted when a rung of an order's rank picker is pressed (#873): the player's own answer to which
+## order the crew staffs first. Payload keys: { faction, band_id, order, level }, `order` the order's
+## index in `bench.orders`, `level` one of `high` / `normal` / `low`. Main formats
+## `bench_priority <faction> <band> order <i> <level>` — a SIBLING verb of `work_priority`, not a token
+## of it. RELAYED from `CraftingPanelController`.
 signal bench_priority_requested(payload: Dictionary)
 ## Emitted when the bench's Auto switch is flipped. Payload keys: { faction, band_id, on }. Main formats
 ## `bench_auto <faction> <band> on|off`. RELAYED from `CraftingPanelController`.
@@ -826,8 +823,6 @@ func _ready() -> void:
     _crafting.setup(self, _band_labor, floating_room)
     _crafting.bench_enqueue_requested.connect(
         func(payload: Dictionary) -> void: bench_enqueue_requested.emit(payload))
-    _crafting.bench_crew_requested.connect(
-        func(payload: Dictionary) -> void: bench_crew_requested.emit(payload))
     _crafting.bench_order_count_requested.connect(
         func(payload: Dictionary) -> void: bench_order_count_requested.emit(payload))
     _crafting.bench_remove_requested.connect(

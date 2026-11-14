@@ -6,6 +6,32 @@ use crate::components::LocalStore;
 
 use super::*;
 
+/// Between two orders in a row's `handsToBench`.
+const HANDS_TO_BENCH_SEPARATOR: &str = ", ";
+
+/// **THE ORDERS THAT TOOK A ROW'S HOLD-CREW HANDS, NAMED** - `"1 to the Spears order, 1 to the
+/// Baskets order"`, in bench order; empty when none did. The name is the order's published
+/// `displayName`.
+fn hands_to_bench_text(
+    bench: &crate::components::BandBench,
+    target: &LaborTarget,
+    published: &sim_schema::BenchState,
+) -> String {
+    bench
+        .hold_losses
+        .iter()
+        .filter(|loss| loss.target.same_source(target))
+        .filter_map(|loss| {
+            let order = published.orders.get(loss.order)?;
+            Some(format!(
+                "{} to the {} order",
+                loss.hands, order.display_name
+            ))
+        })
+        .collect::<Vec<_>>()
+        .join(HANDS_TO_BENCH_SEPARATOR)
+}
+
 /// Serialize one labor assignment for the client readout. The `yields` carry this turn's
 /// actual/sustainable food income for the source (per-source breakdown; defaulted to `0` when the
 /// telemetry row is absent, e.g. an assignment no `advance_labor_allocation` has resolved yet).
@@ -367,7 +393,7 @@ fn with_hunt_curve<R>(
         need_idx,
         idle: gear.idle,
         is_local: gear.is_local,
-        bench: gear.bench,
+        bench: gear.bench.clone(),
         claims: gear.claims,
     });
     Some(read(&crate::fauna::HuntCrewCurveInputs {
@@ -2428,7 +2454,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     need_idx,
                     idle: idle_workers,
                     is_local: &donor_is_local,
-                    bench: donor_bench,
+                    bench: donor_bench.clone(),
                     claims: &claims.claims,
                 }
                 .plan_at(crew, &hunt_kit, kit_levers.config, &kit)
@@ -2448,7 +2474,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             a.assignments[need_idx].muster_crew,
             idle_workers,
             &donor_is_local,
-            donor_bench,
+            donor_bench.clone(),
             &claim_sources,
             &kit,
             kit_levers.config,
@@ -2470,7 +2496,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // Zip each assignment with its retained per-source yield telemetry (same index order). An
     // assignment with no telemetry row yet → default 0 yields rather than a panic.
     const NO_YIELD: SourceYield = SourceYield::ZERO;
-    let labor_assignments: Vec<sim_schema::LaborAssignmentState> = allocation
+    let mut labor_assignments: Vec<sim_schema::LaborAssignmentState> = allocation
         .map(|a| {
             a.assignments
                 .iter()
@@ -2491,7 +2517,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     // **A NEED ROW'S POOL IS THE MUSTERABLE ONE** — it holds no hands of its own and
                     // its crew is made of idle hands plus what its donors lend.
                     let crew_pool = if assignment.is_need_row() {
-                        a.musterable_pool(idle_workers, i, &donor_is_local, donor_bench)
+                        a.musterable_pool(idle_workers, i, &donor_is_local, donor_bench.as_ref())
                     } else {
                         assignment.workers.saturating_add(idle_workers)
                     };
@@ -2502,7 +2528,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         claims: &claims.claims,
                         idle: idle_workers,
                         is_local: &donor_is_local,
-                        bench: donor_bench,
+                        bench: donor_bench.clone(),
                     };
                     let hunt_useful_workers = assigned_hunt_useful_crew(
                         &assignment.target,
@@ -2869,7 +2895,18 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // structures four times. See `snapshot::crafting`: the refusal is turned into words *here*, not
     // on the client.
     // The bench's share of next turn's muster: the hands its quoted rate must leave out.
-    let bench_lent = muster_plan.as_ref().map_or(0, |plan| plan.from_bench);
+    let bench_lent_orders: Vec<u32> = {
+        let mut lent = vec![0; bench.map_or(0, |bench| bench.orders.len())];
+        for (order, hands) in muster_plan
+            .as_ref()
+            .map_or(&[][..], |plan| plan.from_bench_orders.as_slice())
+        {
+            if let Some(slot) = lent.get_mut(*order) {
+                *slot = *hands;
+            }
+        }
+        lent
+    };
     let crate::snapshot::crafting::BandCraftState {
         material_batches,
         bench: mut bench_state,
@@ -2880,13 +2917,23 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     } = crate::snapshot::crafting::band_craft_state(
         &cohort.stores,
         bench,
-        bench_lent,
+        &bench_lent_orders,
         &kit,
         craft_inputs,
     );
     // **THE HANDS THE BENCH LENDS TO NEXT TURN'S HUNT** - the bench's share of the one muster plan
     // above (the same `muster_donors` call that fills each donor row's `lentToHunt`).
-    bench_state.lent_to_hunt = bench_lent;
+    for (order, hands) in bench_state.orders.iter_mut().zip(&bench_lent_orders) {
+        order.lent_to_hunt = *hands;
+    }
+    bench_state.lent_to_hunt = bench_lent_orders.iter().sum();
+    // **WHICH HIGH BENCH ORDER TOOK A ROW'S HOLD-CREW HANDS** - resolved here, where the order's
+    // published name is, onto the row the staffing recorded the loss against.
+    if let (Some(bench), Some(a)) = (bench, allocation) {
+        for (row, assignment) in labor_assignments.iter_mut().zip(&a.assignments) {
+            row.hands_to_bench = hands_to_bench_text(bench, &assignment.target, &bench_state);
+        }
+    }
     // **WHAT TO MAKE NEXT** (`docs/plan_crafting_and_materials.md` §7 "Suggestions") — scored off the
     // same settled lines the wire publishes: the pools' and site crews' off the allocation, the take
     // rows' off `row_gear`, which is what each row's `kitToe` is copied from. **A detached party
@@ -2898,7 +2945,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             alloc,
             idle_workers,
             &donor_is_local,
-            donor_bench,
+            donor_bench.clone(),
             &claim_sources,
             &kit,
             kit_levers.config,
@@ -2966,6 +3013,30 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         .to_string(),
                     None => crate::crafting::title_from_id(&suggestion.item),
                 };
+            }
+            // **WHY AUTO-CRAFT HAS NOT STARTED THE TOP SUGGESTION** - the pick the fill makes, read
+            // here off the same list and offers (`auto_craft::auto_wait_reason`).
+            if let Some(bench) = bench {
+                let plan = crate::systems::bench_plan(
+                    bench,
+                    &cohort.stores,
+                    craft_inputs.recipes,
+                    craft_inputs.materials,
+                    craft_inputs.equipment,
+                    &kit,
+                );
+                bench_state.auto_wait_reason =
+                    crate::auto_craft::auto_wait_reason(&crate::auto_craft::AutoWaitInputs {
+                        bench,
+                        plan: &plan,
+                        suggestions: &suggestions,
+                        offers: &craft_offers,
+                        store: &cohort.stores,
+                        wear: &kit,
+                        recipes: craft_inputs.recipes,
+                        materials: craft_inputs.materials,
+                        equipment: craft_inputs.equipment,
+                    });
             }
             let mut states = crate::snapshot::crafting::craft_suggestion_states(suggestions);
             // **What the whole count needs that the stock cannot cover**, off the same forecast the

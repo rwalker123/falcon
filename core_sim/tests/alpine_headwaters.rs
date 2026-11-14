@@ -264,10 +264,8 @@ impl Terrain {
         let total = (width * height) as usize;
         let mut terrain = Vec::with_capacity(total);
         let mut has_river_edge = Vec::with_capacity(total);
-        for i in 0..total {
-            let tile = world
-                .get::<Tile>(registry.tiles[i])
-                .expect("tile entity exists");
+        for &entity in registry.tiles.iter().take(total) {
+            let tile = world.get::<Tile>(entity).expect("tile entity exists");
             terrain.push(tile.terrain);
             has_river_edge.push(tile.has_any_river_edge());
         }

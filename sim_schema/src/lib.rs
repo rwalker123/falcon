@@ -53,6 +53,7 @@ mod tests {
                 bench: BenchState {
                     auto: true,
                     auto_skipped: vec!["clubs".to_string(), "hoes".to_string()],
+                    auto_wait_reason: "No idle hands to start Spears".to_string(),
                     orders: vec![
                         BenchOrderState {
                             recipe_id: "baskets".to_string(),
@@ -79,6 +80,10 @@ mod tests {
         assert!(bench.auto, "the toggle");
         assert_eq!(bench.auto_skipped, vec!["clubs", "hoes"], "the skipped ids");
         assert_eq!(
+            bench.auto_wait_reason, "No idle hands to start Spears",
+            "why auto is waiting"
+        );
+        assert_eq!(
             bench
                 .orders
                 .iter()
@@ -86,6 +91,28 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![true, false],
             "each order's own tag, not one value for the queue"
+        );
+    }
+
+    /// **A row's hands given up to High bench orders ride the wire** (`LaborAssignment.handsToBench`).
+    #[test]
+    fn a_rows_hands_to_bench_ride_the_wire() {
+        let snapshot = WorldSnapshot {
+            populations: vec![PopulationCohortState {
+                entity: 7,
+                labor_assignments: vec![LaborAssignmentState {
+                    hands_to_bench: "1 to the Spears order".to_string(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let decoded = decode_snapshot_flatbuffer(&bytes).expect("the snapshot decodes");
+        assert_eq!(
+            decoded.populations[0].labor_assignments[0].hands_to_bench,
+            "1 to the Spears order"
         );
     }
 

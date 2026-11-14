@@ -1250,7 +1250,7 @@ fn a_chief_with_idle_hands_proposes_storage_and_declares_nothing() {
     // Every hand at the bench: the same chief, nothing idle.
     let (mut app, band) = chief_world(true, true, SPARE_HANDS, 0);
     app.world.entity_mut(band).insert(core_sim::BandBench {
-        workers: u32::MAX,
+        orders: vec![every_hand_at_the_bench()],
         ..Default::default()
     });
     app.world
@@ -1450,4 +1450,15 @@ fn a_completed_approved_build_counts_once_as_an_order_met() {
         0,
         "it is not counted a second time"
     );
+}
+
+/// A bench order crewed by more hands than any band has, so no hand is idle.
+fn every_hand_at_the_bench() -> core_sim::BenchOrder {
+    const MORE_HANDS_THAN_ANY_BAND: u32 = 1_000_000;
+    let mut order = core_sim::BenchOrder::new("spear", 1);
+    order.crew = core_sim::BenchCrew {
+        at_tool: 0,
+        by_hand: MORE_HANDS_THAN_ANY_BAND,
+    };
+    order
 }

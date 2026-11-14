@@ -6189,8 +6189,12 @@ control the sheets used to mount; and it retired the Work inspector for source r
   worker(s) · no free <items>` over `Fix: make <items> — rows carrying their kit are staffed first` when any
   `kit_toe` line has `filled < required` (the items named by `toe_short_item_names`, lower-cased; this
   REPLACES the row's own `Short of <items>` kit line so the kit is stated once), else `⚠ Short N worker(s) ·
-  no spare hands` over `Fix: raise this row's Priority · lower another row's Max`. No text line is added to
-  the row. **`ⓘ`** carries the tools-short sentence, which stops nothing.
+  no spare hands` over `Fix: raise this row's Priority · lower another row's Max`. **A `bare_idle` row takes
+  the kit sentence even when no `kit_toe` line is short**, naming every item its kit uses
+  (`toe_item_names`): `kit_toe` counts only the crew already staffed, so a boar hunt whose 7 hunters all
+  carry spears reads full while it wants an 8th, and idle hands cannot fill it because an unarmed hand adds
+  nothing there. The cause is the missing kit, and "raise this row's Priority" would arm nobody. No text
+  line is added to the row. **`ⓘ`** carries the tools-short sentence, which stops nothing.
 - ⛔ **NO LINE OF TEXT OR PILLS MAY SET A ROW'S MINIMUM WIDTH.** The strip, crew bar and `⋮` sit to the right
   of the row's left column, so whatever that column asks for is taken from the zone and the right end is
   clipped. The pill line (`Priority` / `Max N` / `Build`) was an `HBoxContainer` asking ~220px, which put the
