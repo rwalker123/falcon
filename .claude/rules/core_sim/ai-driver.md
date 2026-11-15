@@ -250,6 +250,9 @@ very herd the seat is about to crew), so the row can be the chief's server-side 
 it, and the server's per-row release refuses a row the band does not hold ("has no food row there for
 the chief to hand over"); only the kind's release gets past it. Seed 54, t59: `stop_labor 1 2 59 11`
 then `assign_labor 1 2 hunt game_aurochs_80` was refused with "Tidefell's elders keep food on hand".
+Once the kind is released, a later per-row food release for that band in the same pass is not sent,
+because the kind release handed the whole food order over and the server refuses the row release
+after it; per-row releases of other order kinds (a dig stand) are untouched.
 The release is derived from the commands, not proposed, so no specialist bids on it and
 `Cost::claimed` claims a one-row `band_order` under the same `row_key` the labor commands on that
 row claim. The scripted brain goes through the same `Composite::decide`. The release is not in

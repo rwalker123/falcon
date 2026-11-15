@@ -194,17 +194,33 @@ fn release_food_for_new_row(
 
 /// **`commands` with a one-row release in front of the first hand command on each chief-run row.**
 /// Order is kept: every other command stays where it was, and a row two commands name is released
-/// once.
+/// once. Once a band's food KIND is released, no later per-row food release for that band is sent:
+/// the kind release handed the whole food order over, and the server refuses a row release after it.
 pub fn release_chief_rows(
     view: &SeatView,
     faction: u32,
     commands: Vec<CommandPayload>,
 ) -> Vec<CommandPayload> {
     let mut released: Vec<CommandPayload> = Vec::new();
+    // The bands whose whole food order this pass has already handed to the seat.
+    let mut food_kind_released: Vec<u64> = Vec::new();
     let mut out = Vec::with_capacity(commands.len());
     for command in commands {
         if let Some(release) = release_for(view, faction, &command) {
-            if !released.contains(&release) {
+            let food_release = match &release {
+                CommandPayload::BandOrder {
+                    band_id, kind, row, ..
+                } if kind == FOOD_ORDER_KIND => Some((*band_id, row.is_none())),
+                _ => None,
+            };
+            let covered = matches!(
+                food_release,
+                Some((band_id, false)) if food_kind_released.contains(&band_id)
+            );
+            if !covered && !released.contains(&release) {
+                if let Some((band_id, true)) = food_release {
+                    food_kind_released.push(band_id);
+                }
                 released.push(release.clone());
                 out.push(release);
             }
@@ -389,6 +405,29 @@ mod tests {
             release_chief_rows(&view, FACTION, vec![hunt.clone()]),
             vec![hunt]
         );
+    }
+
+    /// The kind release hands the whole food order over, so a per-row food release for the same
+    /// band after it is not sent (the server refuses it); the hand command itself still goes.
+    #[test]
+    fn a_food_row_release_after_the_kind_release_is_not_sent() {
+        let mut view = a_view(vec![row("forage", PATCH.0, PATCH.1, "", "food")]);
+        view.snapshot.populations[0].band_orders = vec![sim_runtime::BandOrderState {
+            kind: "food".into(),
+            chief_owned: true,
+            ..Default::default()
+        }];
+        let kind_release = CommandPayload::BandOrder {
+            faction_id: FACTION,
+            band_id: BAND,
+            kind: "food".into(),
+            action: BandOrderAction::Release,
+            row: None,
+        };
+        let hunt = assign("hunt", 0, 0, Some(HERD));
+        let stop_forage = stop(PATCH.0, PATCH.1, None);
+        let sent = release_chief_rows(&view, FACTION, vec![hunt.clone(), stop_forage.clone()]);
+        assert_eq!(sent, vec![kind_release, hunt, stop_forage]);
     }
 
     /// A dig stand is released under its material, by tile; the labor command that follows claims
