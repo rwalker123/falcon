@@ -1054,10 +1054,10 @@ const ROAD_JUNCT_RUNG_INDEX := 2        # dirt road — wide enough that the geo
 # forms tile by tile, so the FIRST tile of every road in the game is exactly this case.
 #
 # Floor derivation, not a taste number: the disc's footprint is pi*(half_width + softness)^2 at the
-# fixture's rung and radius — pi*(0.058*75 + 0.015*75)^2 ~= 94 px (measured 91). The floor sits well
-# under that (so retuning the ladder's middle rungs cannot trip it) and enormously above the EXACTLY ZERO a disc that
-# never drew would move.
-const ROAD_LONE_MIN_CHANGED_PX := 60
+# fixture's rung and radius — pi*(0.058*75 + 0.015*75)^2 ~= 94 px (measured 91). The floor sits at
+# about a third of that (so retuning the ladder's middle rungs cannot trip it) and enormously above
+# the EXACTLY ZERO a disc that never drew would move.
+const ROAD_LONE_MIN_CHANGED_PX := 30
 
 # State 21 (ATRISK): §7's at-risk rule. **The OPACITY half carries over verbatim and the WIDTH half was
 # deliberately raised**: the retired `AnnotationRenderer` drew an at-risk road at `ROAD_AT_RISK_WIDTH`
