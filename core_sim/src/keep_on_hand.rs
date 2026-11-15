@@ -386,6 +386,40 @@ pub struct DigSiteInputs<'a> {
     pub walk_to: &'a dyn Fn(UVec2) -> Option<(u32, u32)>,
 }
 
+/// **WHAT ONE HAND BRINGS HOME A TURN FROM `tile`** - the one ranking helper the chief's dig sites and
+/// food sources share. `cargo_per_hand` is what a hand lands (units of the cargo) and `bulk_per_hand`
+/// what it cuts (what a pack is measured in); both are the material's units on a deposit, and a
+/// source's food units and biomass on the food webs. Inside the apron there is no walk and the answer
+/// is `cargo_per_hand`; past it the figure is the work-party caravan forecast
+/// ([`crate::work_party::forecast_caravan`]) for one hand posted over [`DigSiteInputs::walk_to`]'s
+/// walk, at a pack of `pack_bulk`.
+pub(crate) fn caravan_net_per_hand(
+    inputs: &DigSiteInputs<'_>,
+    tile: UVec2,
+    pack_bulk: f32,
+    cargo_per_hand: f32,
+    bulk_per_hand: f32,
+) -> f32 {
+    let Some((walk_tiles, walk_turns)) = (inputs.walk_to)(tile) else {
+        return cargo_per_hand;
+    };
+    let mut party = crate::work_party::WorkParty::posted(tile, walk_tiles, walk_turns);
+    party.restamp(tile, ONE_HAND, walk_tiles, walk_turns);
+    crate::work_party::forecast_caravan(
+        &party,
+        inputs.sources.labor.yield_average_horizon_turns,
+        pack_bulk,
+        crate::work_party::NO_TRANSIT_ROT,
+        |present| {
+            Some(crate::work_party::SourceTake {
+                cargo: cargo_per_hand * present as f32,
+                bulk: bulk_per_hand * present as f32,
+            })
+        },
+    )
+    .rate_home
+}
+
 /// The rank of digging `material` at `tile`, `None` where nothing is reachable there.
 fn rank_site(inputs: &DigSiteInputs<'_>, tile: UVec2, material: &str) -> Option<SiteRank> {
     let sources = inputs.sources;
@@ -459,28 +493,15 @@ fn rank_site(inputs: &DigSiteInputs<'_>, tile: UVec2, material: &str) -> Option<
     } else {
         cap
     };
-    let net_per_hand = match ((inputs.walk_to)(tile), sources.materials.material(material)) {
-        (Some((walk_tiles, walk_turns)), Some(def)) => {
-            let pack = crate::work_party::material_pack(haul_carry, def.weight);
-            let party = crate::work_party::WorkParty::posted(tile, walk_tiles, walk_turns);
-            let mut party = party;
-            party.restamp(tile, ONE_HAND, walk_tiles, walk_turns);
-            crate::work_party::forecast_caravan(
-                &party,
-                sources.labor.yield_average_horizon_turns,
-                pack,
-                crate::work_party::NO_TRANSIT_ROT,
-                |present| {
-                    let cut = per_hand * present as f32;
-                    Some(crate::work_party::SourceTake {
-                        cargo: cut,
-                        bulk: cut,
-                    })
-                },
-            )
-            .rate_home
-        }
-        _ => per_hand,
+    let net_per_hand = match sources.materials.material(material) {
+        Some(def) => caravan_net_per_hand(
+            inputs,
+            tile,
+            crate::work_party::material_pack(haul_carry, def.weight),
+            per_hand,
+            per_hand,
+        ),
+        None => per_hand,
     };
     let gives = if cap.is_finite() { cap } else { reachable };
     Some(SiteRank {

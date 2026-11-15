@@ -1333,6 +1333,41 @@ pub fn rung_site_refusal(
     belief: f32,
     knows: &dyn Fn(&str) -> bool,
 ) -> Option<SiteRefusal> {
+    rung_site_verdict(
+        rung,
+        tile,
+        forage,
+        gathering_site,
+        fresh_water,
+        deposit_capacity,
+        belief,
+        knows,
+    )
+    .map(|verdict| verdict.refusal)
+}
+
+/// **A SITE REFUSAL AND THE LESSON IT WAITS ON** - what [`rung_site_verdict`] answers. `lesson` is
+/// `Some` exactly when `refusal` is [`SiteRefusal::NeedsLesson`], and is the lesson
+/// [`RungDef::lesson_that_would_admit`] named for the gate.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SiteVerdict {
+    pub refusal: SiteRefusal,
+    pub lesson: Option<String>,
+}
+
+/// **THE ONE SITE VERDICT** - [`rung_site_refusal`] with the lesson the gate picked beside it, so
+/// the wire states the very lesson the command refuses on instead of the client guessing one.
+#[allow(clippy::too_many_arguments)] // the rung, the tile, and every reading the site rule judges
+pub fn rung_site_verdict(
+    rung: &RungDef,
+    tile: &Tile,
+    forage: &ForageLaborConfig,
+    gathering_site: bool,
+    fresh_water: bool,
+    deposit_capacity: f32,
+    belief: f32,
+    knows: &dyn Fn(&str) -> bool,
+) -> Option<SiteVerdict> {
     // **THE RULE THE ACTING FACTION IS JUDGED BY** - the rung's own, or the last lesson-keyed
     // relaxation it holds ([`RungDef::effective_site_requirement`]). `knows` answers "does this
     // faction hold the lesson named X"; a caller with no faction in play passes `&|_| false`.
@@ -1361,20 +1396,23 @@ pub fn rung_site_refusal(
         belief,
     )?;
     // **A LESSON THE FACTION LACKS WOULD ADMIT THIS GROUND**: say what to learn, not what is wrong.
-    if rung
-        .lesson_that_would_admit(
-            knows,
-            gathering_site,
-            forage_capacity,
-            fresh_water,
-            deposit_capacity,
-            belief,
-        )
-        .is_some()
-    {
-        return Some(SiteRefusal::NeedsLesson);
+    if let Some(lesson) = rung.lesson_that_would_admit(
+        knows,
+        gathering_site,
+        forage_capacity,
+        fresh_water,
+        deposit_capacity,
+        belief,
+    ) {
+        return Some(SiteVerdict {
+            refusal: SiteRefusal::NeedsLesson,
+            lesson: Some(lesson.to_string()),
+        });
     }
-    Some(refusal)
+    Some(SiteVerdict {
+        refusal,
+        lesson: None,
+    })
 }
 
 /// **DOES THE WILD RUNG'S OWN SITE RULE REFUSE THIS GROUND?** - the one question every gather arm,

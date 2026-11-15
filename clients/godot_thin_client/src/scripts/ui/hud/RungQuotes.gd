@@ -41,6 +41,8 @@ const KEY_FOOD_YIELD := "food_yield"
 const KEY_FODDER := "fodder"
 const KEY_MATERIAL_PAYOFF := "material_payoff"
 const KEY_SITE_REFUSAL := "site_refusal"
+## The lesson id the server names for a `needs_lesson` refusal (`""` when none would admit the ground).
+const KEY_NEEDS_LESSON := "needs_lesson"
 ## A crop-picker quote's own keys (one per plant, per rung above the plant root).
 const KEY_CAN_CLIMB := "can_climb"
 const KEY_FOOD_PAYOFF := "food_payoff"
@@ -346,33 +348,17 @@ static func offsite_placing_quote(src: Dictionary, prefix: String = "") -> Dicti
 			return quote
 	return {}
 
-## The lesson id a placing rung's refusal is waiting on (`""` when none is). The rung lists TWO
-## relaxations in loosening order (`seed_selection`: fertile watered ground; `worked_land`: fertile
-## ground away from water), and the server names the NEAREST one the faction lacks. The wire does not
-## carry that name, so it is derived the same way: the first relaxation, in catalog order, whose lesson
-## the faction does not yet hold (`knowledge` = its track progress). Without `knowledge` nothing is
-## held, which names the first (`seed_selection`).
-static func lesson_to_place(src: Dictionary, prefix: String = "", knowledge: Dictionary = {}) -> String:
+## The lesson id a placing rung's refusal is waiting on (`""` when none is): the server's own
+## `needs_lesson` on the quote it answered `needs_lesson`, never derived here.
+static func lesson_to_place(src: Dictionary, prefix: String = "") -> String:
 	for quote in quotes(src, prefix):
 		if not places_source(quote):
 			continue
 		if String(quote.get(KEY_SITE_REFUSAL, "")).strip_edges() != SITE_REFUSAL_NEEDS_LESSON:
 			continue
-		var relaxations: Variant = quote.get(KEY_SITE_RELAXATIONS, [])
-		if not (relaxations is Array):
-			continue
-		var last_named := ""
-		for relaxation in (relaxations as Array):
-			if not (relaxation is Dictionary):
-				continue
-			var lesson := String((relaxation as Dictionary).get("knowledge", ""))
-			if lesson == "":
-				continue
-			last_named = lesson
-			if float(knowledge.get(lesson, 0.0)) < HudConst.KNOWLEDGE_COMPLETE:
-				return lesson
-		if last_named != "":
-			return last_named
+		var lesson := String(quote.get(KEY_NEEDS_LESSON, "")).strip_edges()
+		if lesson != "":
+			return lesson
 	return ""
 
 ## The placing quote the server answered `needs_lesson` for (`{}` when none): the rung whose own gate

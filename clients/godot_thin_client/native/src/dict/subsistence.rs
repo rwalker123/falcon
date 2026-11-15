@@ -719,6 +719,7 @@ pub(crate) fn rung_quotes_to_array(
             &material_payoffs_to_array(quote.materialPayoff()),
         );
         let _ = dict.insert("site_refusal", quote.siteRefusal().unwrap_or_default());
+        let _ = dict.insert("needs_lesson", quote.needsLesson().unwrap_or_default());
         array.push(&dict.to_variant());
     }
     array

@@ -403,8 +403,10 @@ How every order is carried out:
   kitted reach, so a stone or wood refill never beats it to the hands. Only the chief's food order
   has this step; fodder, the materials, player-crewed rows and leaderless bands keep "kitted first,
   across priorities".
-- **The chief picks the sources**: the most per worker first, then the shortest walk, filling one up
-  to what it gives at its setting before starting the next.
+- **The chief picks the sources**: the most a hand brings home first (what one hand lands after the
+  walk past the apron, at the band's best carry gear, so baskets and sleds count; inside the apron
+  distance drops out), then the most the source gives a turn, filling one up to what it gives at its
+  setting before starting the next.
 - **The chief never overdraws.** Below the target he adds hands and sources, all at Best; above it he
   eases his rows to Learning, so spare food buys knowledge. Cutting a stand or a herd harder is the
   player's to do on a row they crew themselves — or, later, a bolder chief's (leader traits, #905).

@@ -397,7 +397,7 @@ const PROPOSAL_TRIGGER_FOOD_FALLING := "food_falling"
 ## player can still answer, not yet a starving crisis. The sim's sentence rides beneath it as the block.
 const ATTENTION_KIND_FOOD_FALLING := "food_falling"
 const ATTENTION_FOOD_FALLING_LABEL_FORMAT := "%s food falling"
-const ATTENTION_FOOD_FALLING_DETAIL := "The chief proposes a fix — approve it or not now"
+const ATTENTION_FOOD_FALLING_DETAIL := "Chief proposes a fix"
 ## The entry key the orb reads the proposal block from, and what that block carries.
 const ATTENTION_PROPOSAL := "proposal"
 const PROPOSAL_BAND_ID := "band_id"

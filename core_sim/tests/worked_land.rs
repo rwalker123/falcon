@@ -309,6 +309,16 @@ fn a_dry_gathering_site_takes_the_farm_and_dry_new_ground_needs_worked_land() {
 }
 
 fn quote_at(app: &App, target: UVec2, rung_key: &str) -> String {
+    quote_fields_at(app, target, rung_key).0
+}
+
+/// The lesson the quote says the ground waits on (`needsLesson`), on the encoded envelope.
+fn lesson_at(app: &App, target: UVec2, rung_key: &str) -> String {
+    quote_fields_at(app, target, rung_key).1
+}
+
+/// `(siteRefusal, needsLesson)` of a patch's rung quote, read off the encoded envelope.
+fn quote_fields_at(app: &App, target: UVec2, rung_key: &str) -> (String, String) {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
     let snapshot = app
         .world
@@ -328,11 +338,12 @@ fn quote_at(app: &App, target: UVec2, rung_key: &str) -> String {
         .iter()
         .find(|p| p.x() == target.x && p.y() == target.y)
         .expect("the patch is on the wire");
-    sim_schema::wire_rung_quote(patch.rungQuotes(), rung_key)
-        .expect("the rung is quoted")
-        .siteRefusal()
-        .unwrap_or_default()
-        .to_string()
+    let quote =
+        sim_schema::wire_rung_quote(patch.rungQuotes(), rung_key).expect("the rung is quoted");
+    (
+        quote.siteRefusal().unwrap_or_default().to_string(),
+        quote.needsLesson().unwrap_or_default().to_string(),
+    )
 }
 
 fn the_viewer_faction(app: &mut App) -> core_sim::FactionId {
@@ -380,6 +391,33 @@ fn the_quotes_name_a_lesson_until_the_people_hold_the_one_that_opens_the_ground(
         assert_eq!(quote_at(&app, watered, key), "needs_lesson");
         assert_eq!(quote_at(&app, dry, key), "needs_lesson");
         assert_eq!(quote_at(&app, thin, key), "not_gathering_site");
+        // **The wire names the very lesson the gate picks** (`lesson_that_would_admit`), per tile:
+        // Seed Selection on watered ground, Worked Land on dry ground, none where no lesson admits.
+        let rung = if key == "plant:tended" {
+            shipped::plant_tended()
+        } else {
+            shipped::plant_farm()
+        };
+        let ground_of = |position: UVec2| {
+            *ground
+                .iter()
+                .find(|g| g.position == position)
+                .expect("the tile")
+        };
+        assert_eq!(lesson_at(&app, watered, key), SEED_SELECTION, "{key}");
+        assert_eq!(lesson_at(&app, dry, key), WORKED_LAND, "{key}");
+        assert_eq!(
+            lesson_at(&app, thin, key),
+            "",
+            "{key}: no lesson admits thin ground"
+        );
+        for position in [watered, dry] {
+            assert_eq!(
+                Some(lesson_at(&app, position, key)),
+                nearest_lesson(&app, rung, &ground_of(position)),
+                "{key}: the wire carries the gate's own pick"
+            );
+        }
     }
 
     learn(&mut app, faction, SEED_SELECTION_DISCOVERY_ID);
@@ -390,6 +428,12 @@ fn the_quotes_name_a_lesson_until_the_people_hold_the_one_that_opens_the_ground(
             "",
             "Seed Selection opens watered ground on {key}"
         );
+        assert_eq!(
+            lesson_at(&app, watered, key),
+            "",
+            "an admitted quote names no lesson on {key}"
+        );
+        assert_eq!(lesson_at(&app, dry, key), WORKED_LAND, "{key}");
         assert_eq!(
             quote_at(&app, dry, key),
             "needs_lesson",
@@ -406,6 +450,7 @@ fn the_quotes_name_a_lesson_until_the_people_hold_the_one_that_opens_the_ground(
     app.update();
     for key in ["plant:tended", "plant:farm"] {
         assert_eq!(quote_at(&app, dry, key), "", "Worked Land opens dry ground");
+        assert_eq!(lesson_at(&app, dry, key), "", "{key}");
     }
 }
 

@@ -3056,6 +3056,10 @@ table RungQuoteState {
   // (the retired sowSiteRefusal; "too_poor" | "too_dry" | "too_poor_and_too_dry" for the shipped
   // field rung). A free-form key, so a new refusal needs no schema change.
   siteRefusal:string;
+  // The lesson (knowledge id) this ground waits on when `siteRefusal` is "needs_lesson": the very
+  // lesson the build gate names, resolved by the sim (`RungDef::lesson_that_would_admit`). "" when
+  // the quote is admitted or no lesson would admit the tile. Appended; never guessed client-side.
+  needsLesson:string;
 }
 
 // One depletable forage patch's cultivation + ecology state for the client tile card

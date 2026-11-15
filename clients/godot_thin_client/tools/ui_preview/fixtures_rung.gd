@@ -130,7 +130,7 @@ static func _authored_flat(row: Dictionary, prefix: String, keys: Array) -> bool
 	return false
 
 const _PATCH_FLAT_KEYS := ["is_cultivated", "is_field", "cultivation_progress", "field_progress",
-	"tended_yield", "field_yield", "tended_fodder", "field_fodder", "sow_site_refusal",
+	"tended_yield", "field_yield", "tended_fodder", "field_fodder", "sow_site_refusal", "sow_needs_lesson",
 	"cultivation_work_cost", "field_work_cost", "cultivation_work_done", "field_work_done",
 	"cultivation_upkeep_demand", "field_upkeep_demand", "extra_step"]
 const _HERD_FLAT_KEYS := ["domestication", "corralled", "corral_progress", "corral_yield",
@@ -168,6 +168,8 @@ static func _patch_quotes(patch: Dictionary, prefix: String) -> Array:
 			_num(patch, prefix + "field_yield"), _num(patch, prefix + "field_fodder"), [],
 			String(patch.get(prefix + "sow_site_refusal", ""))),
 	]
+	# The server's own answer to WHICH lesson a `needs_lesson` refusal waits on (`""` otherwise).
+	quotes[1]["needs_lesson"] = String(patch.get(prefix + "sow_needs_lesson", ""))
 	# `extra_step` authors the harness-only fourth plant rung (`plant:terrace`), reached when its meter is
 	# full, so a fixture can stand a Field with a step above it and price that step from `terrace_*` keys.
 	if bool(patch.get(prefix + "extra_step", false)):

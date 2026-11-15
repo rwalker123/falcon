@@ -76,7 +76,7 @@ static func source_gates(src: Dictionary, prefix: String, knowledge: Dictionary)
         var refusal := String(quote.get(RungQuotes.KEY_SITE_REFUSAL, "")).strip_edges()
         if refusal == RungQuotes.SITE_REFUSAL_NEEDS_LESSON:
             # Names the lesson off the quote's own relaxation, never a table here.
-            var lesson := RungQuotes.lesson_to_place(src, prefix, knowledge)
+            var lesson := RungQuotes.lesson_to_place(src, prefix)
             reasons.append(HudFloraVocab.SOW_NEEDS_LESSON_FORMAT % lesson.capitalize())
         elif refusal != "":
             reasons.append(String(HudFloraVocab.SOW_REFUSAL_REASONS.get(

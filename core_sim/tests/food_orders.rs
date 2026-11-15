@@ -1407,3 +1407,84 @@ fn a_forage_row_on_ground_that_refuses_gathering_is_dealt_no_gatherers() {
         "the off-site patch is published"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// The chief's food ranking: net per hand after the walk, then what the source gives, then key.
+// ---------------------------------------------------------------------------------------------
+
+/// A patch left almost bare: a thin source.
+const THIN_STOCK_FRACTION: f32 = 0.02;
+
+/// **INSIDE THE APRON A BIGGER PATCH BEATS A NEARER THIN ONE.** Every gathering patch in reach is
+/// left nearly bare except one standing at its full stock, which is not the nearest; the chief's
+/// first share (the ranking's head, `keep_shares` in rank order) goes to it, where "shortest walk"
+/// used to hand the nearer thin patch the head of the list.
+#[test]
+fn inside_the_apron_a_bigger_patch_is_ranked_over_a_nearer_thin_one() {
+    use bevy::prelude::UVec2;
+    let (mut app, band) = world();
+    let camp = {
+        let cohort = app.world.get::<PopulationCohort>(band).unwrap();
+        app.world
+            .get::<core_sim::Tile>(cohort.current_tile)
+            .unwrap()
+            .position
+    };
+    let (width, wrap) = {
+        let registry = app.world.resource::<core_sim::TileRegistry>();
+        (
+            registry.width,
+            app.world
+                .resource::<SimulationConfig>()
+                .map_topology
+                .wrap_horizontal,
+        )
+    };
+    let range = app
+        .world
+        .resource::<LaborConfigHandle>()
+        .get()
+        .band_work_range;
+    let distance =
+        |tile: UVec2| core_sim::grid_utils::hex_distance_wrapped(camp, tile, width, wrap);
+    let mut in_reach: Vec<UVec2> = app
+        .world
+        .resource::<core_sim::ForageRegistry>()
+        .patches
+        .keys()
+        .copied()
+        .filter(|tile| distance(*tile) <= range)
+        .collect();
+    in_reach.sort_by_key(|tile| (distance(*tile), tile.y, tile.x));
+    let nearest = in_reach[0];
+    let big = *in_reach
+        .iter()
+        .find(|tile| distance(**tile) > distance(nearest))
+        .expect("**LIVENESS**: a farther patch is in reach");
+    {
+        let mut forage = app.world.resource_mut::<core_sim::ForageRegistry>();
+        for tile in &in_reach {
+            let patch = forage.patches.get_mut(tile).expect("the patch");
+            patch.biomass = if *tile == big {
+                patch.carrying_capacity
+            } else {
+                patch.carrying_capacity * THIN_STOCK_FRACTION
+            };
+        }
+    }
+    set_target(&mut app, band, FOOD, 1000);
+    set_larder(&mut app, band, NEED);
+    let first = app
+        .world
+        .get::<LaborAllocation>(band)
+        .unwrap()
+        .keep_shares
+        .iter()
+        .find(|(kind, _)| kind == FOOD)
+        .map(|(_, share)| share.tile)
+        .expect("**LIVENESS**: the chief shares the want out");
+    assert_eq!(
+        first, big,
+        "the full patch at {big:?} outranks the nearer thin ones (nearest {nearest:?})"
+    );
+}

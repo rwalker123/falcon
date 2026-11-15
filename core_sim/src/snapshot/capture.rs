@@ -2998,11 +2998,13 @@ pub fn capture_snapshot(
         .collect();
     lesson_sets.sort();
     lesson_sets.dedup();
-    let mut rung_site_refusals: HashMap<Vec<&str>, HashMap<(UVec2, RungId), SiteRefusal>> =
-        lesson_sets
-            .iter()
-            .map(|set| (set.clone(), HashMap::new()))
-            .collect();
+    let mut rung_site_refusals: HashMap<
+        Vec<&str>,
+        HashMap<(UVec2, RungId), crate::forage::SiteVerdict>,
+    > = lesson_sets
+        .iter()
+        .map(|set| (set.clone(), HashMap::new()))
+        .collect();
     // **The size of the land under each patch** — the tile's own forage `K`, through the one
     // `forage::tile_forage_capacity` seam. Every plant upkeep figure the patch row publishes is
     // quoted per **tender-load** of it (`forage::patch_tender_loads`), the plant twin of a herd's
@@ -3026,7 +3028,7 @@ pub fn capture_snapshot(
         });
         for (lessons, refusals) in &mut rung_site_refusals {
             for rung in &site_gated_rungs {
-                if let Some(refusal) = rung_site_refusal(
+                if let Some(verdict) = crate::forage::rung_site_verdict(
                     rung,
                     tile,
                     &labor_config.forage,
@@ -3039,7 +3041,7 @@ pub fn capture_snapshot(
                     crate::belief::NO_BELIEF,
                     &|name| lessons.contains(&name),
                 ) {
-                    refusals.insert((tile.position, rung.rung_id()), refusal);
+                    refusals.insert((tile.position, rung.rung_id()), verdict);
                 }
             }
         }

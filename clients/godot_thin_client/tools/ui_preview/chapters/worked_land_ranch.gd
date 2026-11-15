@@ -114,6 +114,7 @@ func _off_site_tile(refusal: String) -> Dictionary:
 	tile["food_module_label"] = ""
 	tile.erase("food_kind")
 	tile["patch_sow_site_refusal"] = refusal
+	tile["patch_sow_needs_lesson"] = RungFx.KNOWLEDGE_WORKED_LAND if refusal == "needs_lesson" else ""
 	return RungFx.stamp_patch(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 func _off_site_states() -> void:

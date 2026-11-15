@@ -441,7 +441,7 @@ labor pass and by every command restaff), `staffing::probe_source`, `staffing::a
   `intensification.md` -> "Site relaxations"), so the probe finds no useful take. A Tended or Farm patch
   the band holds off-site keeps its season and stays a candidate. A chief row on ground that has become
   ineligible is retired by the ordinary retirement and cargo rules. Ranked by the order's
-  product per hand at the floor (kitted as the band is), then the shortest walk, then the source key.
+  net product per hand (the product per hand at the floor, kitted as the band is, run through the work-party caravan forecast over the walk past the apron at the best live kit's carry: baskets for a gather, the sled's pack for a hunt; `keep_on_hand::caravan_net_per_hand`, the helper the dig sites share), then the most the source gives a turn at the floor (`cap_units`), then the source key. There is no "shortest walk" key; distance acts only through the net figure. Candidates are gated inside `band_work_range`, so today every food source's net equals its per hand and the walk term is exercised by dig sites alone. Pinned by `food_orders::inside_the_apron_a_bigger_patch_is_ranked_over_a_nearer_thin_one`.
   Each is given a share up to its cap (what it gives at the floor without being drawn down plus its stock
   above the floor over `keep_on_hand_refill_turns`, never more than `tile_worker_cap` hands take;
   `staffing::SourceProbe::cap`), best first, until the want is covered; the share is written as a `KeepShare` (`hold`/`take` in biomass, `herd` set for a hunt

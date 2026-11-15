@@ -12,7 +12,8 @@
 //!   draw itself at or above it** - the band eats every turn, so the keep-up crew still works.
 //! - **Which sources.** Every known forage patch and huntable herd in work range, each probed through
 //!   the staffing's own reading ([`crate::staffing::probe_source`]) so a herd the band's kit cannot
-//!   wound is no candidate. Ranked by food (or fodder) per hand at the floor, then the shortest walk,
+//!   wound is no candidate. Ranked by the net food (or fodder) a hand brings home (per hand at the floor
+//!   through the caravan forecast over the walk past the apron), then the most the source gives a turn,
 //!   then the source key; each is given a share up to its **cap**, best first - what it gives at the
 //!   floor without being drawn down plus its stock above the floor over `keep_on_hand_refill_turns`,
 //!   never more than a full tile crew takes ([`crate::staffing::SourceProbe::cap`]; the floor stays the
@@ -229,7 +230,9 @@ struct Candidate {
     key: String,
     tile: UVec2,
     herd: String,
-    distance: u32,
+    /// What one hand brings HOME a turn after the walk (`keep_on_hand::caravan_net_per_hand`);
+    /// equal to [`Self::units_per_hand`] inside the apron.
+    net_units_per_hand: f32,
     /// `Some(FODDER_KIND)` when the source gives more fodder than food per hand, else food.
     order: &'static str,
     /// The product's units per hand at the floor.
@@ -287,9 +290,35 @@ fn candidate_of(
     } else {
         return None;
     };
+    // The pack one hand carries home, in biomass, at the band's best live kit for the job: baskets
+    // for a gather, the sled for a hunt (a herd's pack is seated in whole animals).
+    let kit = sources.equipment.default_kit(target.kit_job());
+    let pack = if herd.is_empty() {
+        sources.equipment.forage_per_worker_biomass_capacity(
+            sources.labor.forage.per_worker_biomass_capacity,
+            &kit,
+            inputs.site.band_kit,
+        )
+    } else {
+        let carry = sources.equipment.hunt_per_worker_biomass_capacity(
+            sources.labor.hunt.per_worker_biomass_capacity,
+            &kit,
+            inputs.site.band_kit,
+        );
+        sources.herd(&herd).map_or(carry, |found| {
+            crate::work_party::hunt_pack_biomass(&found, sources.fauna, carry)
+        })
+    };
+    let net_units_per_hand = crate::keep_on_hand::caravan_net_per_hand(
+        inputs.site,
+        tile,
+        pack,
+        units_per_hand,
+        probe.per_hand,
+    );
     Some(Candidate {
         key: source_key(&target)?,
-        distance: inputs.site.camp.map_or(0, |camp| camp.distance_to(tile)),
+        net_units_per_hand,
         target,
         tile,
         herd,
@@ -512,10 +541,14 @@ pub fn manage_food_orders(
             })
             .collect();
         ranked.sort_by(|a, b| {
-            b.units_per_hand
-                .partial_cmp(&a.units_per_hand)
+            b.net_units_per_hand
+                .partial_cmp(&a.net_units_per_hand)
                 .unwrap_or(std::cmp::Ordering::Equal)
-                .then(a.distance.cmp(&b.distance))
+                .then(
+                    b.cap_units
+                        .partial_cmp(&a.cap_units)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
                 .then(a.key.cmp(&b.key))
         });
         // Rows kept at no share whatever the listing (improvements, pinned rows) keep their last

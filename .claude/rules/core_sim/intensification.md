@@ -2669,6 +2669,7 @@ is the one reading the command's message uses (`needs_lesson_message` takes the 
 (too thin) keeps its ordinary refusal, and a people holding the lesson reads the ordinary `too_poor` / `too_dry`.
 The per-viewer capture sweep keys its cache on the viewer's held lesson set (`held_site_lessons`).
 `forage::rung_site_refusal` takes the `knows` predicate as its last argument.
+**The wire states that lesson** (`RungQuoteState.needsLesson`, appended beside `siteRefusal`; native dict key `needs_lesson`): `forage::rung_site_verdict` returns the refusal and the lesson `lesson_that_would_admit` picked together (`rung_site_refusal` is its refusal half), and the capture sweep publishes it, so a client never guesses which lesson a refused tile waits on. Empty when the quote is admitted or no lesson would admit the tile; a herd's rung quote carries none. Pinned on the encoded frame by `worked_land::the_quotes_name_a_lesson_until_the_people_hold_the_one_that_opens_the_ground`.
 
 **The lessons open farming and cultivating, never gathering.** A build is declared on a tile a crew already works,
 so an off-site tile needs a crew first. `assign_labor forage` admits a crew on ground the root (gathering) rule

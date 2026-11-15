@@ -1452,7 +1452,7 @@ struct PatchQuoteInputs<'a> {
     /// What a `replaced_share` rung is priced at on this patch.
     field_cost_multiplier: f32,
     /// Why each site-gated rung refuses this tile; absent = it takes the rung.
-    site_refusals: &'a HashMap<(UVec2, RungId), SiteRefusal>,
+    site_refusals: &'a HashMap<(UVec2, RungId), crate::forage::SiteVerdict>,
 }
 
 /// **EVERY RUNG OF THE PLANT BRANCH, QUOTED ON THIS PATCH** - the one producer of what the retired
@@ -1516,8 +1516,13 @@ fn patch_rung_quotes(inputs: &PatchQuoteInputs<'_>) -> Vec<RungQuoteState> {
                 material_payoff: Vec::new(),
                 site_refusal: site_refusals
                     .get(&(patch.tile, rung))
-                    .map_or(SITE_ACCEPTED, |refusal| refusal.as_str())
+                    .map_or(SITE_ACCEPTED, |verdict| verdict.refusal.as_str())
                     .to_string(),
+                // The lesson the gate named, never a client guess.
+                needs_lesson: site_refusals
+                    .get(&(patch.tile, rung))
+                    .and_then(|verdict| verdict.lesson.clone())
+                    .unwrap_or_default(),
             }
         })
         .collect()
@@ -1632,6 +1637,7 @@ fn herd_rung_quotes(inputs: &HerdQuoteInputs<'_>) -> Vec<RungQuoteState> {
                     }
                     _ => SITE_ACCEPTED.to_string(),
                 },
+                needs_lesson: String::new(),
             }
         })
         .collect()
@@ -1786,7 +1792,7 @@ pub(crate) fn snapshot_forage_patches(
     // what a row the viewer may not read the improvement on publishes, so a rival's Field on ground
     // the viewer has not explored is indistinguishable from the wild tile it hides.
     wild_seasonal_weights: &HashMap<UVec2, f32>,
-    rung_site_refusals: &HashMap<(UVec2, RungId), SiteRefusal>,
+    rung_site_refusals: &HashMap<(UVec2, RungId), crate::forage::SiteVerdict>,
     tile_capacities: &HashMap<UVec2, f32>,
     tile_quotes: &FloraQuoteCache,
     // **The live builders kit per queued source** — read off the bands' queues at capture rather

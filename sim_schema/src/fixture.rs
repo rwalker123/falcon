@@ -183,6 +183,8 @@ fn rung_quotes() -> Vec<RungQuoteState> {
             build_material_cost: rows(),
             upkeep_material_demand: rows(),
             material_payoff: rows(),
+            site_refusal: "needs_lesson".to_string(),
+            needs_lesson: "worked_land".to_string(),
             ..Default::default()
         })
         .collect()
