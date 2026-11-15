@@ -449,15 +449,15 @@ tense — and it is what makes the top rungs a **capability** rather than a disc
 > of `reach_tiles` (`3`) breaks it — and it breaks as **some long roads just don't work**, with
 > nothing erroring anywhere. So `cell_size = max(cfg.reach_tiles, max_route_reach_tiles(ladder))`.
 >
-> > The cell is also at least `reach_tiles_with_messengers`, the free reach a people that knows
+> **Nobody reads the rung records for that number directly**, the same discipline `road_keeping_range`
+> exists for: the day a rung is added or its reach retuned, the binning follows with no call site
+> moving.
+>
+> The cell is also at least `reach_tiles_with_messengers`, the free reach a people that knows
 > `messengers` pools out to (`supply_network_config.json`; see `campaign.md` → Supply Network). That
 > value feeds the link test's free reach for a pair of that people and nothing else: the road bonus a
 > walker reads stays measured above `reach_tiles`, and `trail_reach_tiles` stays above it by a load
 > check.
-
-**Nobody reads the rung records for that number directly**, the same discipline `road_keeping_range`
-> exists for: the day a rung is added or its reach retuned, the binning follows with no call site
-> moving.
 >
 > **Cost**: the trace runs only once the free test has already failed *and* the pair is within
 > `max_route_reach_tiles`, so a game with no roads — the shipped turn-1 state — traces nothing.

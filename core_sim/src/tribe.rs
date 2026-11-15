@@ -554,9 +554,11 @@ type TribeBandParts = (
 );
 
 /// **Score the pairs, then keep the tribes: match, form, change membership, dissolve.** Runs at the
-/// end of the Population stage, after the belief anchors, the supply networks and the leaders of
-/// the turn are settled. Bands and tribes are visited in id order, so identity and the feed are
-/// deterministic.
+/// end of the Population stage, after the belief anchors and the leaders of the turn are settled.
+/// Locality reads the [`ConnectionLedger`], which `advance_connections` writes in the Visibility
+/// stage, after this one: the ties are as the previous turn's contact left them, so locality (and a
+/// lapse) runs one turn behind contact. Bands and tribes are visited in id order, so identity and
+/// the feed are deterministic.
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn advance_tribes(
     tick: Res<SimulationTick>,

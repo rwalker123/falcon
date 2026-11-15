@@ -1900,7 +1900,8 @@ paramount chief, 2 council of chiefs), and, for a band not yet in a tribe,
   `band_id`) and the `connections` rows (`observer_band_id`, `subject_band_id`, `strength`). The supply
   network plays no part: tribe locality is one people, one belief anchor and a live tie in both
   directions. Tested in order, one line each: (a) `has_belief_anchor` false: `Tribe: no sacred ground
-  yet`; (b) another own band with a DIFFERENT sacred ground
+  yet`; (c) below is tested BEFORE (b) and (b2): a same-ground band out of touch is what blocks the
+  pairing, so it wins even when the people spans several grounds; (b) another own band with a DIFFERENT sacred ground
   (`belief_anchor_x/y`): `Tribe: different sacred ground`, a fixed phrase so
   no name can overflow it; the hover is exactly two lines and names no partner and no coordinates: the
   rule, then `<band> honours different sacred ground from your other bands — see Beliefs.`;
@@ -1925,6 +1926,6 @@ never listed: the player cannot change them. With no partner the line after the 
 reason's hover from the list above (none for case (d)). 
 
 **Frames:** `tribe_chiefless` (no block), `tribe_pairs`, `tribe_no_partner`, `tribe_formed_chiefless`,
-`tribe_formed_led`, `tribe_joiner_*` and `tribe_reason_{no_place,different_place,partner_no_place,partners_no_place,different_beats_none,out_of_touch,out_of_touch_one_way,out_of_touch_two,alone}` in `band_expedition` (docked right, Band tab); the harness asserts one line, the
+`tribe_formed_led`, `tribe_joiner_*` and `tribe_reason_{no_place,different_place,partner_no_place,partners_no_place,different_beats_none,out_of_touch,out_of_touch_beats_different,out_of_touch_one_way,out_of_touch_two,alone}` in `band_expedition` (docked right, Band tab); the harness asserts one line, the
 card's minimum width within the strip, the verbatim tooltips, a council-led tribe, and every suffix off
 the statics.

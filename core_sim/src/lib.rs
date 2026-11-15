@@ -1667,9 +1667,10 @@ pub fn build_headless_app() -> App {
                     .before(sedentarization::sedentarization_tick),
                 sedentarization::sedentarization_tick,
                 // **Tribes are read off what the whole stage settled**: the belief anchors
-                // (refreshed inside `simulate_population`), this turn's supply networks
-                // (`balance_supply_networks`, Logistics) and every band's final people, size and
-                // leader. It reads `PopulationCohort` and files on `CommandEventLog`, which most of
+                // (refreshed inside `simulate_population`), the `ConnectionLedger` ties that
+                // locality reads (written by `advance_connections` in Visibility, a LATER stage, so
+                // they are the previous turn's: tribe locality runs one turn behind contact) and
+                // every band's final people, size and leader. It reads `PopulationCohort` and files on `CommandEventLog`, which most of
                 // the stage writes, so it takes the end of the spine and of the pressure/sedentarization
                 // tail: that one edge puts it after `advance_leadership`, migration, breeding shed,
                 // defection, independence and the culture splits.

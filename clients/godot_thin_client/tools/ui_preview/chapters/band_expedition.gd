@@ -2743,6 +2743,10 @@ func _hay_ledger_states() -> void:
 			# One direction live is still out of touch: the tie must run both ways.
 			["tribe_reason_out_of_touch_one_way", reason_here, [reason_far], "Tribe: out of touch with Farwatch",
 				HudFormat.TRIBE_OUT_OF_TOUCH_TOOLTIP, [tie_out, tie_back]],
+			# THE SPAN CASE: kin on this band's urn who are out of touch outrank a third band on another
+			# urn (and one with no urn at all) -- the people spans two places, and out of touch still shows.
+			["tribe_reason_out_of_touch_beats_different", reason_here, [reason_far, reason_fen, reason_blank],
+				"Tribe: out of touch with Farwatch", HudFormat.TRIBE_OUT_OF_TOUCH_TOOLTIP, []],
 			["tribe_reason_out_of_touch_two", reason_here, [reason_far, reason_far_two], "Tribe: out of touch with 2 bands",
 				HudFormat.TRIBE_OUT_OF_TOUCH_TOOLTIP + "
 Out of touch with: Farwatch, Farmere", []],

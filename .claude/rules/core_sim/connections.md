@@ -634,8 +634,9 @@ switches the source off).
   (the trail rung's `holds_link_to_tiles`, 6), so messengers never gives every far pair a trail's
   link for free.
 
-None of these configs is a Workbench / tuning-manifest kind, so the new levers are edited in the
-files and not exposed on the tuning panel. Tests: `core_sim/tests/far_kin.rs` (both credits, the
+All three are on the Workbench: `supply_network`, `connections` and `intensification_ladder` are
+stageable override kinds (proto 13 / 14 / 15, `config-loading.md`), with rows in the tuning
+manifest. Tests: `core_sim/tests/far_kin.rs` (both credits, the
 three-hop relay, the slower drain), `tests/route_traffic.rs`
 (`a_pair_just_past_the_free_reach_pools_only_with_messengers`), the config modules' unit tests.
 

@@ -197,7 +197,9 @@ last turn's total, which rides `CumulativeTotals::tribes_formed` under `internal
 it drives the `tribe.forms` beat.
 
 **Schedule.** `advance_tribes` is ordered `.after(sedentarization_tick)`, the end of the Population
-stage; `balance_supply_networks` (Logistics) precedes it by stage. The edge is that late because the
+stage. The ties it reads (`ConnectionLedger`) are written by `advance_connections` in the Visibility
+stage, which runs after Population, so locality sees the previous turn's ties: a tie formed or
+lapsed on turn N changes locality on turn N+1. The edge is that late because the
 system reads `PopulationCohort` and files on `CommandEventLog`, which most of the stage writes, and
 the ambiguity gate rejects a system left unordered against them (an earlier
 `.after(simulate_population)` / `.after(advance_leadership)` placement produced 13 conflicts). From

@@ -835,11 +835,12 @@ static func band_tribe_progress(entry: Dictionary, other_bands: Array = [], ties
 
 ## The dim line and hover of a band with no partner, naming the real reason from the player's own
 ## bands (`other_bands`: the other own, non-expedition bands) and the published `ties` (directed
-## connection rows of the player's bands). Tested in order: this band has no sacred ground; another
-## band holds a different place; another band has none; another band shares the place but a live tie
-## does not run both ways between the two (out of touch). No other band: the alone line. A band that
-## shares the place AND holds a live tie both ways is not a reason, so with only such bands the view
-## is empty rather than a claim the wire does not support.
+## connection rows of the player's bands). Tested in order: this band has no sacred ground; a band on
+## the SAME place that does not hold a live tie both ways with this one (out of touch: it is what blocks
+## the pairing, so it outranks the rest even when the people spans several places); another band holds a
+## different place; another band has none. No other band: the alone line. A band that shares the place
+## AND holds a live tie both ways is not a reason, so with only such bands the view is empty rather than
+## a claim the wire does not support.
 static func tribe_no_partner_view(entry: Dictionary, other_bands: Array, ties: Array = []) -> Dictionary:
     var tooltip: Array[String] = [TRIBE_TOOLTIP_RULE]
     var line := TRIBE_ALONE_LINE
@@ -859,11 +860,18 @@ static func tribe_no_partner_view(entry: Dictionary, other_bands: Array, ties: A
             if int(other.get("belief_anchor_x", 0)) != int(entry.get("belief_anchor_x", 0)) \
                     or int(other.get("belief_anchor_y", 0)) != int(entry.get("belief_anchor_y", 0)):
                 differs = true
-                break
+                continue
             var other_id := int(other.get("band_id", HudConst.NO_BAND_ID))
             if not (_tie_live_between(ties, here_id, other_id) and _tie_live_between(ties, other_id, here_id)):
                 out_of_touch.append(band_name(other))
-        if differs:
+        if not out_of_touch.is_empty():
+            tooltip.append(TRIBE_OUT_OF_TOUCH_TOOLTIP)
+            if out_of_touch.size() == 1:
+                line = TRIBE_OUT_OF_TOUCH_LINE_FORMAT % out_of_touch[0]
+            else:
+                line = TRIBE_OUT_OF_TOUCH_COUNT_LINE_FORMAT % out_of_touch.size()
+                tooltip.append(TRIBE_OUT_OF_TOUCH_NAMES_FORMAT % TRIBE_NAME_SEPARATOR.join(out_of_touch))
+        elif differs:
             line = TRIBE_DIFFERENT_PLACE_LINE
             tooltip.append(TRIBE_DIFFERENT_PLACE_TOOLTIP_FORMAT % here)
         elif not groundless.is_empty():
@@ -873,13 +881,6 @@ static func tribe_no_partner_view(entry: Dictionary, other_bands: Array, ties: A
             else:
                 line = TRIBE_PARTNERS_NO_PLACE_LINE_FORMAT % groundless.size()
                 tooltip.append(TRIBE_PARTNERS_NO_PLACE_NAMES_FORMAT % TRIBE_NAME_SEPARATOR.join(groundless))
-        elif not out_of_touch.is_empty():
-            tooltip.append(TRIBE_OUT_OF_TOUCH_TOOLTIP)
-            if out_of_touch.size() == 1:
-                line = TRIBE_OUT_OF_TOUCH_LINE_FORMAT % out_of_touch[0]
-            else:
-                line = TRIBE_OUT_OF_TOUCH_COUNT_LINE_FORMAT % out_of_touch.size()
-                tooltip.append(TRIBE_OUT_OF_TOUCH_NAMES_FORMAT % TRIBE_NAME_SEPARATOR.join(out_of_touch))
         else:
             return {}
     return {"line": "[color=#%s]%s[/color]" % [HudStyle.INK_FAINT.to_html(false), line],
