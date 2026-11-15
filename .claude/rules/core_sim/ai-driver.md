@@ -241,9 +241,16 @@ it yourself"). The seat plays by the player's rule: `orders::release_chief_rows`
 commands in `Composite::decide`, **after** the arbiter, and puts `band_order <faction> <band> <orderKind>
 release <x> <y>` (a patch or a dig stand) or `release <herd id>` (a hunt row) directly in front of the first
 hand command on each row the frame shows `chiefOwned`; the command itself follows in the same turn. A
-row two commands name is released once. It is per ROW: the seat never releases a whole kind and never
-claims a row back, and a row that is not `chiefOwned` (a new patch, a row already released) gets no
-release. The release is derived from the commands, not proposed, so no specialist bids on it and
+row two commands name is released once. It is per ROW: the seat never claims a row back, and a row
+that is not `chiefOwned` (a row already released) gets no per-row release. **One exception, the
+kind:** an `assign_labor` forage or hunt onto a row the frame shows NO row for, in a band whose `food`
+`bandOrders` entry is `chiefOwned`, is preceded by `band_order <faction> <band> food release` (no row).
+The sim lists a source under the chief's order itself (a restaff after another command can pick the
+very herd the seat is about to crew), so the row can be the chief's server-side before any frame shows
+it, and the server's per-row release refuses a row the band does not hold ("has no food row there for
+the chief to hand over"); only the kind's release gets past it. Seed 54, t59: `stop_labor 1 2 59 11`
+then `assign_labor 1 2 hunt game_aurochs_80` was refused with "Tidefell's elders keep food on hand".
+The release is derived from the commands, not proposed, so no specialist bids on it and
 `Cost::claimed` claims a one-row `band_order` under the same `row_key` the labor commands on that
 row claim. The scripted brain goes through the same `Composite::decide`. The release is not in
 `decisions.jsonl` `commands_text` (that is the arbiter's accepted proposal); it is in the commands sent

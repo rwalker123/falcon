@@ -2750,7 +2750,10 @@ fn hunt_input<'a>(
     let hold = growth(floor * capacity).max(0.0) * meat;
     let peak = crate::fauna::peak_regrowth_between(capacity, low, high, growth) * meat;
     input.hold_take = hold.min(room);
-    if hold > room {
+    // **Only a KEPT herd sizes its hold crew on the regrowth** (the keeping's fraction rides a hunter's
+    // slack only where the slack reaches it). A wild herd keeps nobody and takes its room this turn:
+    // sizing it on a regrowth its room cannot yield dealt bare hands to a row that takes nothing.
+    if hold > room && input.keep_hands > NO_HANDS {
         input.sustained = Some(SustainedTake {
             take: hold,
             hands: hands_within(f32::INFINITY),

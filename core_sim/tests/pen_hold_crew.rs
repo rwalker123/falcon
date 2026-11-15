@@ -271,3 +271,135 @@ fn a_penned_herd_staffed_at_two_pays_its_msy_where_one_keeper_does_not() {
     assert_eq!(covered, 1);
     assert!(covered_actual >= PAYS_ITS_MSY * covered_sustainable);
 }
+
+// ---------------------------------------------------------------------------------------------
+// A WILD HERD STANDING AT ITS FLOOR DOES NOT DRAW THE HANDS A PRODUCING ROW COULD USE
+// ---------------------------------------------------------------------------------------------
+
+/// Hands the band can field in the two-herd fixture.
+const BAND_HANDS: u32 = 8;
+/// A herd standing under its floor by a share of the floor stock that its regrowth just closes: the
+/// turn staffs it after the regrowth, so its room this turn is a sliver of what it regrows at the floor.
+const REGROWS_ONTO_ITS_FLOOR: f32 = 0.84;
+/// The most hands a row for a herd with only a sliver of room may be dealt.
+const A_SLIVERS_HANDS: u32 = 2;
+
+/// **A WILD HERD AT ITS FLOOR TAKES THE HANDS ITS ROOM CAN USE, NOT THE REGROWTH'S WORTH OF BARE
+/// HANDS** (seed 37 of the AI bench: a boar herd with 0.00 take drew 6 of a band's 8 hands off a
+/// producing forage row). The pen's hold crew is sized on the regrowth at the floor because its
+/// keepers must take it; a wild herd keeps nobody, and its take this turn is its room, so pass 3 must
+/// not deal it bare hands sized on a regrowth its room cannot yield. Two wild warrens, one full (room
+/// to spare) and one a hair over its floor, on the real restaff path.
+#[test]
+fn a_wild_herd_at_its_floor_does_not_draw_hands_off_a_herd_with_room() {
+    let mut app = build_test_app();
+    app.world
+        .insert_resource(core_sim::labor_config_with_room_on_the_tile());
+    app.world
+        .resource_mut::<core_sim::SimulationConfig>()
+        .map_seed = SEED;
+    app.update();
+    let body_mass = app
+        .world
+        .resource::<FaunaConfigHandle>()
+        .get()
+        .species_by_display(PENNED)
+        .expect("shipped species")
+        .body_mass;
+    let warren = app
+        .world
+        .resource::<FaunaConfigHandle>()
+        .get()
+        .species_by_display("Rabbit Warren")
+        .expect("shipped species")
+        .body_mass;
+    let _ = body_mass;
+    let (full_id, thin_id, pos) = {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let ids: Vec<String> = registry
+            .herds
+            .iter()
+            .filter(|h| h.id.starts_with("game_"))
+            .map(|h| h.id.clone())
+            .take(2)
+            .collect();
+        assert_eq!(ids.len(), 2, "the map seeded two game herds");
+        let pos = registry
+            .herds
+            .iter()
+            .find(|h| h.id == ids[0])
+            .expect("herd")
+            .position();
+        for (index, id) in ids.iter().enumerate() {
+            let herd = registry
+                .herds
+                .iter_mut()
+                .find(|h| &h.id == id)
+                .expect("herd");
+            herd.species = "Rabbit Warren".to_string();
+            herd.body_mass = warren;
+            herd.fodder_per_biomass = 0.0;
+            herd.carrying_capacity = CAPACITY;
+            herd.regrowth_rate = WARREN_REGROWTH_RATE;
+            herd.predator_eaten_this_turn = 0.0;
+            herd.current_pos = pos;
+            herd.route.clear();
+            herd.biomass = if index == 0 {
+                CAPACITY
+            } else {
+                CAPACITY * FLOOR * REGROWS_ONTO_ITS_FLOOR
+            };
+            herd.biomass_before_regrowth = herd.biomass;
+        }
+        (ids[0].clone(), ids[1].clone(), pos)
+    };
+    app.world.run_system_once(spawn_initial_herds);
+    let entity = band(&mut app, pos, &full_id);
+    {
+        let mut cohort = app
+            .world
+            .get_mut::<PopulationCohort>(entity)
+            .expect("cohort");
+        cohort.working = scalar_from_f32(BAND_HANDS as f32);
+        let mut allocation = app.world.get_mut::<LaborAllocation>(entity).expect("a");
+        let template = allocation.assignments[0].clone();
+        allocation.assignments.clear();
+        for id in [&full_id, &thin_id] {
+            let mut row = template.clone();
+            row.max_workers = None;
+            row.workers = 0;
+            row.target = LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                floor: FLOOR,
+                move_with_herd: false,
+            };
+            allocation.assignments.push(row);
+        }
+    }
+    core_sim::staffing::restaff_band(&mut app.world, entity);
+    let crews: Vec<(String, u32)> = app
+        .world
+        .get::<LaborAllocation>(entity)
+        .expect("allocation")
+        .assignments
+        .iter()
+        .filter_map(|row| match &row.target {
+            LaborTarget::Hunt { fauna_id, .. } => Some((fauna_id.clone(), row.workers)),
+            _ => None,
+        })
+        .collect();
+    let crew_of = |id: &str| {
+        crews
+            .iter()
+            .find(|(held, _)| held == id)
+            .map_or(0, |(_, workers)| *workers)
+    };
+    assert!(
+        crew_of(&full_id) > 0,
+        "**LIVENESS**: the herd with room is worked: {crews:?}"
+    );
+    assert!(
+        crew_of(&thin_id) <= A_SLIVERS_HANDS && crew_of(&thin_id) <= crew_of(&full_id),
+        "a herd with a sliver of room is not dealt the regrowth's worth of bare hands: {crews:?}"
+    );
+}
