@@ -111,6 +111,12 @@ ten dead at the anchor with the band on it (tie 0.5) pays 0.2 practice a turn (1
 20-practice cost), a deep cemetery approaches 0.4. Tests: `core_sim/tests/ritual_trickle.rs` (credit
 proportional to tie, unreached and anchorless pay nothing, max not sum, lever 0).
 
+**Messengers is ritual's sibling**: the same standalone branch `rites` / area `lore`, the same
+`ledger_credit` seam and `lesson_costs` entry (`messengers` **20**, discovery id **2025**,
+`messengers::MESSENGERS_DISCOVERY_ID`), learned by keeping far kin in touch and by deliveries between
+kin rather than by gatherings or the dead. It gates nothing here; what it unlocks (a longer kin
+relay, a slower tie drain, a wider free pooling reach) is `connections.md` -> "Messengers".
+
 ## The deaths source: where the band STANDS, never its home
 
 The dead are buried where the band is, so every credit goes to `cohort.current_tile`'s position, not

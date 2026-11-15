@@ -55,6 +55,10 @@ const KNOWLEDGE_DRIVES := "drives"
 ## capitalized fallback.
 const BRANCH_STORES := "stores"
 const KNOWLEDGE_STORAGE := "storage"
+## The standalone far-kin row (docs/plan_far_kin.md): a step knowledge under `lore`, branch `rites`, order 2.
+const BRANCH_RITES := "rites"
+const KNOWLEDGE_MESSENGERS := "messengers"
+const AREA_LORE := "lore"
 
 ## **THE DISPLAY ORDER THE SIM PUBLISHES** — the config's `areas` list verbatim
 ## (`SubsistenceSection.ladderAreas`), including the three areas no branch teaches under yet. Those
@@ -92,6 +96,14 @@ const KNOWLEDGE_QUARRYING := "quarrying"
 ## **six** domains, `forestry` and `extraction` both sitting under **Making** beside the craft fan.
 ## A short transcription passes against a producer that has stopped producing the rest, which is the
 ## one thing this file exists not to do.
+## The roster plus the far-kin standalone row, for the one frame that shows it. Kept OUT of
+## `ladder_roster` so the area / fold / size assertions that count that roster stay on the shipped
+## five-branch shape.
+static func ladder_roster_with_messengers() -> Array:
+	var roster := ladder_roster()
+	roster.append(_row(KNOWLEDGE_MESSENGERS, "Messengers", BRANCH_RITES, 2, true, AREA_LORE))
+	return roster
+
 static func ladder_roster() -> Array:
 	return [
 		_row(KNOWLEDGE_CULTIVATION, "Cultivation", BRANCH_PLANT, 1, true, AREA_FOOD),

@@ -411,12 +411,12 @@ in-process rollback needs.
   remaining work is `core_sim`-only. The only constructs serde could not derive through were a
   `SmallRng` — deleted; the influencer roster draws from derived seeds now, like every other RNG
   consumer — and `Entity`, which the first construction rule removes.
-- **Two dependency features the closure needs are on transitively rather than by request.**
+- **Two dependency features the closure needs also arrive transitively, so `core_sim` names both.**
   `glam/serde` reaches `UVec2` through `bevy_reflect`'s `bevy_math` feature, and `serde/rc` — which
-  `KitChoice`'s `Arc<str>` / `Arc<[Arc<str>]>` require — is enabled by `sim_schema`. Both are
-  consequences of the current feature set rather than of anything `core_sim` asks for; narrowing
-  `core_sim`'s bevy features, which its `Cargo.toml` carries a TODO for, can take the first away.
-  Losing either is a compile error, not silent corruption.
+  `KitChoice`'s `Arc<str>` / `Arc<[Arc<str>]>` require — is enabled by `sim_schema`. `core_sim`'s
+  `Cargo.toml` requests each explicitly (`glam` with `serde`, `serde` with `rc`), so neither depends
+  on another crate's feature set; bevy's features are narrowed to the headless core
+  (`multi-threaded` only). Losing either is a compile error, not silent corruption.
 - **`bevy::utils::HashMap` needs nothing** — `bevy_utils` already depends on `hashbrown` with its
   `serde` feature, and the impls are generic over the hasher. `CapabilityFlags` is the only
   `bitflags` type in the closure and already derives both halves.

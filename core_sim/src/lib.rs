@@ -84,6 +84,7 @@ pub mod log_stream;
 mod map_preset;
 mod mapgen;
 mod materials_config;
+pub mod messengers;
 pub mod metrics;
 mod mobility;
 mod mobility_config;
@@ -173,14 +174,14 @@ pub use components::{
     BenchQueueError, BuildDeclaration, BuildJob, BuildSource, BuildToeLine, CohesionReading,
     DeathCause, DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind,
     EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase, FinishedBatch, FoodBatch,
-    FoodMix, ItemInFlight, KeepShare, KeepingIssue, KeepingToolLine, KitOrder, KnowledgeFragment,
-    LaborAllocation, LaborAssignment, LaborTarget, LeadershipReading, LocalStore, MaterialBatch,
-    MaterialDraw, MoraleCause, MusterBench, MusterKit, MusterPlan, OrderOwner, PoolToeLine,
-    PopulationCohort, PowerNode, ResidentBand, ScoutPack, Settlement, ShedCrew, ShedFacts,
-    ShedStep, ShedSubject, ShipmentTerms, SourcePriority, SourceShedFacts, SourceYield,
-    StaffedCrew, StartingUnit, StationReport, StrangersOrder, TakeSelection, Tile, TownCenter,
-    TransferCause, TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger,
-    TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER,
+    FoodMix, FoundingWalk, ItemInFlight, KeepShare, KeepingIssue, KeepingToolLine, KitOrder,
+    KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LeadershipReading,
+    LocalStore, MaterialBatch, MaterialDraw, MoraleCause, MusterBench, MusterKit, MusterPlan,
+    OrderOwner, PoolToeLine, PopulationCohort, PowerNode, ResidentBand, ScoutPack, Settlement,
+    ShedCrew, ShedFacts, ShedStep, ShedSubject, ShipmentTerms, SourcePriority, SourceShedFacts,
+    SourceYield, StaffedCrew, StartingUnit, StationReport, StrangersOrder, TakeSelection, Tile,
+    TownCenter, TransferCause, TransferCounterparty, TransferCrossing, TransferDirection,
+    TransferLedger, TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER,
     MATERIAL_DUST_UNITS, MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
@@ -363,6 +364,10 @@ pub use lineage::{
     breeding_ceiling, effective_breeding_ceiling, shared_breeding_ceiling, tie_joined_groups,
     BreedingMember, BreedingPeople, BreedingReading, FoundingLines, FreeBreedingPeoples, LineId,
     TieJoinedGroup, MIN_BAND_LINES, NO_INBREEDING_CEILING,
+};
+pub use messengers::{
+    credit_far_kin_contact, credit_messengers_practice, credit_trip_lesson, knows_messengers,
+    peoples_in_far_touch, MESSENGERS_DISCOVERY_ID, MESSENGERS_KNOWLEDGE,
 };
 pub use personalities::{
     load_personalities_from_env, PersonalitiesError, Personality, PersonalityCatalog,
@@ -963,6 +968,13 @@ pub fn build_headless_app() -> App {
         demographics_config::DemographicsConfigHandle::new(demographics_config);
     let (supply_network_config, supply_network_metadata) =
         supply_network_config::load_supply_network_config_from_env();
+    // **Messengers' pooling reach stays below a trail's** (`docs/plan_far_kin.md` §3): the
+    // cross-config half of the supply config's own check, run where the ladder is in scope.
+    if let Err(err) = supply_network_config
+        .validate_against_trail(routes::trail_reach_tiles(&ladder_for_reconcile))
+    {
+        panic!("supply network config does not reconcile with the intensification ladder: {err}");
+    }
     let supply_network_handle =
         supply_network_config::SupplyNetworkConfigHandle::new(supply_network_config);
     let (wellbeing_config, wellbeing_metadata) = wellbeing_config::load_wellbeing_config_from_env();
@@ -1661,9 +1673,10 @@ pub fn build_headless_app() -> App {
                     .before(sedentarization::sedentarization_tick),
                 sedentarization::sedentarization_tick,
                 // **Tribes are read off what the whole stage settled**: the belief anchors
-                // (refreshed inside `simulate_population`), this turn's supply networks
-                // (`balance_supply_networks`, Logistics) and every band's final people, size and
-                // leader. It reads `PopulationCohort` and files on `CommandEventLog`, which most of
+                // (refreshed inside `simulate_population`), the `ConnectionLedger` ties that
+                // locality reads (written by `advance_connections` in Visibility, a LATER stage, so
+                // they are the previous turn's: tribe locality runs one turn behind contact) and
+                // every band's final people, size and leader. It reads `PopulationCohort` and files on `CommandEventLog`, which most of
                 // the stage writes, so it takes the end of the spine and of the pressure/sedentarization
                 // tail: that one edge puts it after `advance_leadership`, migration, breeding shed,
                 // defection, independence and the culture splits.
@@ -1713,6 +1726,12 @@ pub fn build_headless_app() -> App {
                 // site sweep touches nothing the rider reads. See
                 // `knowledge_contact::learn_over_connections`.
                 knowledge_contact::learn_over_connections.after(sites::discover_sites),
+                // **Far kin in touch teach messengers** (`messengers.rs`): reads the ties this
+                // turn's sight and relay just refreshed, and credits the same discovery ledger
+                // the knowledge rider writes, so it is ordered behind it.
+                messengers::credit_far_kin_contact
+                    .after(sites::discover_sites)
+                    .after(knowledge_contact::learn_over_connections),
                 // **A standing link raises each people's opinion of the other, and word of it
                 // travels along the road** — read at this stage because the roads' keeping has been
                 // judged by now (the moment `light_kept_routes` reads it). It takes

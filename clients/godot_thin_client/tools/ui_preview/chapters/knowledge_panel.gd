@@ -695,6 +695,14 @@ func _knowledge_frames() -> void:
 	await _press_node(KnowledgeFx.KNOWLEDGE_HERD_LORE)
 	await h._save("knowledge_panel_roam")
 	await _press_node(KnowledgeFx.KNOWLEDGE_HERD_LORE)
+	# STATE 3c — the far-kin standalone knowledge (docs/plan_far_kin.md): both copy columns filled.
+	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster_with_messengers())
+	await h._settle()
+	await _press_node(KnowledgeFx.KNOWLEDGE_MESSENGERS)
+	await h._save("knowledge_panel_messengers")
+	await _press_node(KnowledgeFx.KNOWLEDGE_MESSENGERS)
+	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
+	await h._settle()
 
 	# **STATE 4 — A FILTER LIVE, so the DIMMING is in a frame.** Non-matching nodes keep their place
 	# at `FILTERED_OUT_ALPHA`; the shape of the tree is most of what this screen teaches.

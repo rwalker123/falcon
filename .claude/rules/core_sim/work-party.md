@@ -543,7 +543,7 @@ re-staff on a smaller pool and the turn's staffed rows), `shedding_order::a_smal
 ### A chief proposes a build; the player approves it (#911)
 
 Engine: `core_sim/src/chief_proposals.rs` (the pass, `approve_proposal`, `defer_proposal`), the gates in
-`core_sim/src/build_gates.rs`, the state in `ChiefProposalBook` (`SimState`, `SAVE_FORMAT_VERSION` 70).
+`core_sim/src/build_gates.rs`, the state in `ChiefProposalBook` (`SimState`, `SAVE_FORMAT_VERSION` 71).
 **The chief never declares a build.** Whenever a band has a leader and `BandWorkforce::idle() > 0`,
 `advance_chief_proposals` (an exclusive system in the Population chain, after `deposit_into_stores` and
 before `advance_leadership`) offers **one** build and the player answers it. A leaderless band gets none
