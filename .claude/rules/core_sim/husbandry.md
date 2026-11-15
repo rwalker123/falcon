@@ -222,22 +222,22 @@ domestication *reduce* capacity). **Playtest dials.**
 | Wild, Sustain hunt | `ecology` | `wild_r` (rabbit 0.35 · deer 0.10 · mammoth 0.04) | a worker |
 | Mobile domesticated (**pastoral**) | `husbandry.pastoral.ecology` | `min(cap, wild_r × pastoral_gain)` (gain 1.25) | **a worker** (a Hunt assignment, like a wild herd — passive-free pastoral is retired) |
 | Corral, building | unchanged — the hunters beside the build carry what hunters carry | — | **the build's own crew** (`corral … <workers>`, hands not hunting) and **75 work units** (not a fixed turn count — the crew is the throughput, so the turns move with the number the player typed) |
-| Corral, finished (**pen**) | `husbandry.pen.ecology` | `min(cap, wild_r × pen_gain)` (gain 1.5, cap 1.0) | a worker + **feed (footprint-offset)** + pinned |
+| Corral, finished (**pen**) | `husbandry.pen.ecology` | `min(cap, wild_r × pen_gain)` (gain 2.7, cap 1.0) | a worker + **feed (footprint-offset)** + pinned |
 
 - **Grazing 2d retired the flat pastoral 0.25 / pen 0.90.** The managed rungs now scale each species'
-  **own wild `r`** by `husbandry.pastoral_gain` (1.25) / `pen_gain` (1.5), clamped to
-  `husbandry_regrowth_cap` (1.0) — a penned rabbit (`r` 0.525) and a penned aurochs (`r` 0.135) are
+  **own wild `r`** by `husbandry.pastoral_gain` (1.25) / `pen_gain` (2.7), clamped to
+  `husbandry_regrowth_cap` (1.0) — a penned rabbit (`r` 0.945) and a penned aurochs (`r` 0.243) are
   different economies. This also fixes the fast-breeder pastoral inversion (pastoral `r` =
   `wild_r × 1.25 > wild_r` for every species).
   > **WHAT THE GAIN MEANS: keeping animals lowers their DEATH RATE, it does not multiply their
   > breeding.** Fewer are lost to predators, winter and disease, so a kept herd grows a little
   > faster than a wild one — hence small gains. They shipped at 1.5 / 3.0, were raised to 2.0 / 4.0
-  > on a breeding-multiple reading, and were cut to 1.25 / 1.5 on this one. `fauna::herd_ecology` folds the per-species
+  > on a breeding-multiple reading, and were cut to 1.25 / 1.5 on this one. `pen_gain` was then raised to **2.7** (`pastoral_gain` unchanged) as a playtest trial: a pen's protection and handling lift the herd's growth 2.7×, chosen so a penned herd pays roughly twice its wild yield. `fauna::herd_ecology` folds the per-species
   rate in; `pen_ecology_for` / `pastoral_ecology_for` are the seams, `managed_regrowth_rate` the `wild_r ×
   gain → capped` map.
   > **THE CAP BINDS NO PENNABLE SPECIES AT THE SHIPPED GAINS.** A species loses part of the pen
-  > bonus only where its wild `r` exceeds `cap / pen_gain` — **0.67** at `pen_gain` 1.5 — and the
-  > fastest pennable breeder is `0.35`. At the retired `pen_gain` 4.0 the threshold was 0.25 and three
+  > bonus only where its wild `r` exceeds `cap / pen_gain` — **0.37** at `pen_gain` 2.7 (0.67 at the retired 1.5) — and the
+  > fastest pennable breeder is `0.35`, so none loses any. At the retired `pen_gain` 4.0 the threshold was 0.25 and three
   > species lost part of it (**fowl** and **rabbit** 29%, `0.35 × 4 = 1.4` delivered `1.0`; **snow
   > hare** 17%); the text below is that era's reading, kept because the trap it names returns with any
   > `pen_gain` above 2.86.
@@ -449,6 +449,7 @@ domestication *reduce* capacity). **Playtest dials.**
   > shape of this bug, and it has now been fixed twice. The retired `TENDED_SOURCE_WORKERS_NEEDED = 1` claimed one keeper could collect a pen
   of any size. **The `policy` axis no longer collapses either** — that was the managed harvest's own
   claim, and it went with it.
+- **A PEN'S HOLD CREW TAKES THE REGROWTH AT THE FLOOR, NOT THIS TURN'S ROOM.** The turn staffs after Logistics has regrown the herd, so the stock above the floor it reads can be well under what the pen regrows each turn (live case: a penned boar herd at 643.6 of `K` 1243 stands 22.0 above its floor while its regrowth at the floor is 46.6). The keeping's fraction (0.54 of a hand there) rides in one keeper's slack only where that slack reaches the regrowth; otherwise the hold crew is two keepers and the pen pays its MSY (2.80 on that herd) instead of the ~2.09 one keeper can take. `staffing::hold_heads` carries the rule (`work-party.md` -> "Hold crew"); pinned on the encoded frame by `tests/pen_hold_crew.rs`.
 - **What the fence still switches, and it is not payout**: where the animals live (`corralled_at`),
   the hay feeding and `pen_fed_fraction`, and the frozen capacity on a barren footprint. Those are
   facts about the pen, not rates, and they are untouched.
@@ -967,7 +968,7 @@ food/turn = r_pen × base_K × pen_density × hunt.provisions_per_biomass / 4
 ```
 
 **The tables in this section were calibrated at `hunt.provisions_per_biomass` = `0.02`** (so the
-factor was `0.005`), with `pen_gain` at `4.0`. The meat rate is `0.06` now and `pen_gain` is `1.5`,
+factor was `0.005`), with `pen_gain` at `4.0`. The meat rate is `0.06` now and `pen_gain` is `2.7` (it was `1.5` when this table was last re-read),
 and `pen_density` was deliberately not retuned with them: every food/turn figure below is the
 0.02-era calibration, and today's lines are `0.06/0.02 × 1.5/4.0 = 1.125` times them wherever
 the old `husbandry_regrowth_cap` did not bind (it bound rabbit, snow hare and fowl at 4.0).
@@ -1851,7 +1852,7 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
   **deleted** (`K_pen` is the fenced footprint's graze flow) and so is **`upkeep_per_biomass`** — the
   block is `deny_unknown_fields`, so a file that still carries it fails the load (see "THE PEN'S FEED
   IS ITS OWN MECHANISM"). Plus the **per-species growth gains** `pastoral_gain` (1.25) / `pen_gain`
-  (1.5) / `husbandry_regrowth_cap` (1.0), **`pen_radius_max`** (2 — the `ExtendPen` fence cap, 2d-β,
+  (2.7) / `husbandry_regrowth_cap` (1.0), **`pen_radius_max`** (2 — the `ExtendPen` fence cap, 2d-β,
   validated `>= 1`), the **`pastoral`** block (phase bands only). **The pen's
   investment cost and build rate moved to `intensification_ladder.json`'s `animal:pen` rung** — the old
   `corralling_yield_fraction` 0.50 became its `yield_fraction_while_building`, since **retired**

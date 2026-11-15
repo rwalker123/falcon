@@ -320,20 +320,21 @@ pub use forage::{
     commit_payoff, commit_yield_ratio, composition_for_rung, crew_take_room,
     crop_field_cost_multiplier, default_species_for_rung, field_cost_multiplier_at_share,
     forage_crew_needed, forage_per_worker_biomass, forage_provisions, forage_source_yield_preview,
-    forage_take_overdraws, next_turns_stand, patch_build_legs, patch_build_rung, patch_build_verb,
-    patch_carrying_capacity, patch_claims_keeping, patch_composition, patch_crew_keeping,
-    patch_destination_capacity, patch_ecology, patch_field_cost_multiplier, patch_keeping_basis,
-    patch_land_capacity, patch_material_yields, patch_material_yields_taking, patch_meter_rot,
-    patch_provisions_per_biomass, patch_provisions_per_biomass_taking, patch_rung_already_built,
-    patch_rung_span, patch_rung_work_done, patch_tender_loads, patch_unwinding_key,
-    patch_upkeep_demand, patch_upkeep_shortfall, patch_upkeep_workers_needed, plant_rung_span,
-    project_arrivals_forage, project_realized_forage, resolve_committed_species,
+    forage_take_overdraws, gather_season, next_turns_stand, patch_build_legs, patch_build_rung,
+    patch_build_verb, patch_carrying_capacity, patch_claims_keeping, patch_composition,
+    patch_crew_keeping, patch_destination_capacity, patch_ecology, patch_field_cost_multiplier,
+    patch_keeping_basis, patch_land_capacity, patch_material_yields, patch_material_yields_taking,
+    patch_meter_rot, patch_provisions_per_biomass, patch_provisions_per_biomass_taking,
+    patch_rung_already_built, patch_rung_span, patch_rung_work_done, patch_tender_loads,
+    patch_unwinding_key, patch_upkeep_demand, patch_upkeep_shortfall, patch_upkeep_workers_needed,
+    plant_rung_span, project_arrivals_forage, project_realized_forage, resolve_committed_species,
     resolve_take_selection, rung_material_yields, rung_payoff, rung_site_refusal,
     selected_biomass_share, spawn_initial_forage, species_is_legal_here, species_stands_in,
     tended_take_fodder, tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered,
-    wild_payoff, ForagePatch, ForageRegistry, PlantPayoff, SpeciesRate, SpeciesRefusal,
-    CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, NO_TENDER_LOAD,
-    ONE_TENDER_LOAD, SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET, WORKED_LAND_DISCOVERY_ID,
+    wild_ground_refuses_gathering, wild_payoff, ForagePatch, ForageRegistry, PlantPayoff,
+    SpeciesRate, SpeciesRefusal, CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON,
+    NO_TENDER_LOAD, ONE_TENDER_LOAD, SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
+    WORKED_LAND_DISCOVERY_ID,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use goodwill::{
@@ -2027,4 +2028,14 @@ fn population_stage_enabled() -> impl FnMut(Res<CapabilityFlags>) -> bool {
 
 fn capability_enabled(flags: CapabilityFlags) -> impl FnMut(Res<CapabilityFlags>) -> bool {
     move |current: Res<CapabilityFlags>| current.intersects(flags)
+}
+
+/// **Make `position` a gathering site in `world`** (creating the registry if the fixture has none):
+/// the shared fixture step for a test that works a wild patch on a tile the curated sites do not
+/// hold. Wild gathering is site-bound (`forage::gather_season`), so the tile must be a site for the
+/// crew to take anything; no assertion needs to change.
+pub fn mark_gathering_site(world: &mut bevy::prelude::World, position: bevy::math::UVec2) {
+    world
+        .get_resource_or_insert_with(FoodSiteRegistry::default)
+        .ensure_site(position);
 }

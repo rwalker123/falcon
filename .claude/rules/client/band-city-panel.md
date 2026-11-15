@@ -6155,6 +6155,15 @@ priority list. A staffed row's `workers` is the SIM's answer, so the Work tab dr
   kind with the branch (`assign_labor <f> <b> band camp_stores 0`); a declared build shows `building` and no
   button. Once a crew row exists the row is the ordinary band-improvement row. Harness:
   `band_panel_storage_rows_{not_built,building,built}`.
+- **WHILE A BUILD IS DECLARED THE RACK'S `Build` SLOT IS A `Stop`** (`STOP_BUTTON_META`, ghost chrome in
+  DANGER ink, on the crewed row as well as the placeholder: building is the model's `building` flag, so a
+  build blocked on wood with zero builders still shows it). Its press sends `unqueue <f> <band_id>
+  branch=<id>` - `Main.format_unqueue` prefixes the band id to `site_address`'s `branch=<id>` form, and
+  refuses a payload with no `band_id` - with no confirm, because `unqueue` keeps the meter and the crew.
+  The press records the withdrawal on the pending overlay (`kind` band, the branch in the `material` slot
+  `pending_key` keys band rows on), and `_name_band_store` reads that overlay so the row reads not-built and
+  offers `Build` on the press frame; a crewed row offers `Build` too once the declaration is gone.
+  Harness: `_assert_storage_rack_stop_button`, frame `band_panel_storage_rows_stopped`.
 - **The retired stepper machinery.** `SourceForecast.crew_cap_state` / `source_worker_cap_state`, the row's
   `can_add` / `add_blocked_reason`, the cap note on the hover, `STEPPER_WORKING_FULL_REASON_FORMAT` and the
   `+` ceiling that read the sim's useful crew are gone: no control clamps a crew any more. The keepers' own

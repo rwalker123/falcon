@@ -1853,6 +1853,9 @@ table ChiefProposal {
   escalation:uint = 0;
   keepRaises:[KeepRaise];
   text:string;
+  // What raised the proposal: "idle" (the band has idle hands) or "food_falling" (the chief's food
+  // order reads Falling). Appended last.
+  trigger:string;
 }
 
 // One keeping class's spoilage per turn - a row of `PopulationCohortState.spoilAhead`.

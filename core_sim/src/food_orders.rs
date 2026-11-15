@@ -176,6 +176,29 @@ impl OrderReadings {
     }
 }
 
+/// **IS THE BAND'S FOOD ORDER FALLING?** - the one judgement leadership, the wire's order line and the
+/// chief's proposals share: the `food` order reads [`OrderVerdict::Falling`] through
+/// [`OrderReadings::figures`] (below target and what comes in is below what is drawn). `false` for a
+/// band holding no food order.
+pub fn food_order_is_falling(
+    cohort: &crate::components::PopulationCohort,
+    allocation: &LaborAllocation,
+) -> bool {
+    let Some(order) = allocation.order_for(FOOD_KIND) else {
+        return false;
+    };
+    let readings = OrderReadings {
+        food_stock: cohort.stores.get(crate::components::FOOD).to_f32(),
+        food_need: cohort.last_food_need,
+        fodder_stock: cohort.stores.get(crate::components::FODDER).to_f32(),
+    };
+    let on_hand = |kind: &str| cohort.stores.material_total(kind).to_f32();
+    readings
+        .figures(FOOD_KIND, order, allocation, &on_hand)
+        .verdict()
+        == Some(OrderVerdict::Falling)
+}
+
 /// A listed source takes at least one head, however small its share.
 const MIN_HEADS_PER_SOURCE: u32 = 1;
 
@@ -327,9 +350,16 @@ pub fn manage_food_orders(
         if !within || !(inputs.tile_known)(tile) {
             continue;
         }
-        let Some(_) = sources.forage.patch(tile) else {
+        let Some(patch) = sources.forage.patch(tile) else {
             continue;
         };
+        // **A crew must take something**: a patch still at the wild rung has the gather season the
+        // wild rung's own site rule leaves it ([`crate::forage::gather_season`], zero off a gathering
+        // site), so ground a player's `assign_labor forage` would refuse is no candidate. A Tended or
+        // Farm patch the band holds off-site keeps its season and stays one.
+        if !patch.is_cultivated() && (sources.season_of)(tile) <= NOTHING {
+            continue;
+        }
         if let Some(candidate) =
             candidate_of(inputs, forage_target(tile, best), tile, String::new(), crew)
         {

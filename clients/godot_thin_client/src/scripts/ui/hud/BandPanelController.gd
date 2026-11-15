@@ -3009,17 +3009,27 @@ func _name_band_store(model: Dictionary, band: Dictionary, catalog: Array) -> vo
     var branch := String(model.get("branch", ""))
     if not HudStorageVocab.is_store_branch(band, branch):
         return
+    # A Stop pressed this turn withdraws the declaration before the snapshot says so: the row reads as
+    # not building (and offers Build) on the press frame, off the same overlay a site row's chip uses.
+    var stopped := _band_labor.pending_unqueues_for(int(band.get("entity", -1))).has(
+        _band_labor.pending_key(HudConst.LABOR_KIND_BAND, -1, -1, "", branch))
+    var state: int = HudStorageVocab.band_store_state(band, branch)
+    if stopped and state == HudStorageVocab.StoreState.BUILDING:
+        state = HudStorageVocab.StoreState.NOT_BUILT
     model["name"] = HudRouteVocab.rung_name_in(catalog, HudStorageVocab.store_rung_key(band, branch))
-    model["rung_name"] = HudStorageVocab.state_line(HudStorageVocab.band_store_state(band, branch),
+    model["rung_name"] = HudStorageVocab.state_line(state,
         HudStorageVocab.band_build_fraction(band, branch), HudStorageVocab.held_of(band, branch))
-    model["offer_build"] = HudStorageVocab.offers_build(band, branch)
+    model["offer_build"] = HudStorageVocab.offers_build(band, branch) \
+        or (stopped and HudStorageVocab.is_known_unheld_band_store(band, branch))
+    model["building"] = state == HudStorageVocab.StoreState.BUILDING
     # A materials-blocked build says what it is waiting on, in amber, where `building, N%` would sit.
-    if HudStorageVocab.band_blocked_on_materials(band, branch):
+    if state == HudStorageVocab.StoreState.BUILDING \
+            and HudStorageVocab.band_blocked_on_materials(band, branch):
         model["rung_name"] = HudStorageVocab.materials_line(HudStorageVocab.save_of(band, branch))
         model["rung_warn"] = true
     # While the rack is being built its crew is the builders (it has no keepers yet): the strip's count
     # is keepers + builders, the tile and deposit rows' own reading.
-    if HudStorageVocab.band_store_state(band, branch) == HudStorageVocab.StoreState.BUILDING:
+    if state == HudStorageVocab.StoreState.BUILDING:
         model[WorkStrip.ROW_BUILDERS_KEY] = HudStorageVocab.band_builders_staffed(band, branch)
 
 func _build_band_improvement_row(band: Dictionary, model: Dictionary) -> PanelContainer:
@@ -3043,24 +3053,57 @@ func _build_band_improvement_row(band: Dictionary, model: Dictionary) -> PanelCo
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(String(model["rung_name"])),
         HudWorkVocab.SITE_CREW_LINE_META, null,
         HudStyle.WARN if bool(model.get("rung_warn", false)) else HudStyle.INK_DIM))
+    var body: HBoxContainer = shell[SITE_ROW_SHELL_BODY]
+    var branch := String(model["branch"])
+    # The Build / Stop slot: Stop while a build is declared on the branch (blocked on wood counts), Build
+    # where one is offered. Both ride the crewed row as well as the placeholder, since an unqueue keeps the crew.
+    if bool(model.get("building", false)):
+        body.add_child(_build_band_improvement_stop_button(band, branch))
+    elif bool(model.get("offer_build", false)):
+        var build := Button.new()
+        build.text = HudStorageVocab.BUILD_BUTTON_LABEL
+        build.focus_mode = Control.FOCUS_NONE
+        build.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+        build.set_meta(HudStorageVocab.BUILD_BUTTON_META, branch)
+        HudStyle.apply_button(build, "primary")
+        build.pressed.connect(func() -> void:
+            _emit_assign_labor(band, HudConst.LABOR_KIND_BAND, 0, -1, -1, "",
+                SourceForecast.FLOOR_UNNAMED, branch))
+        body.add_child(build)
     if bool(model.get("placeholder", false)):
         # No crew row yet: the row is the offer, and its Build declares the branch's first build.
-        if bool(model.get("offer_build", false)):
-            var branch := String(model["branch"])
-            var build := Button.new()
-            build.text = HudStorageVocab.BUILD_BUTTON_LABEL
-            build.focus_mode = Control.FOCUS_NONE
-            build.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-            build.set_meta(HudStorageVocab.BUILD_BUTTON_META, branch)
-            HudStyle.apply_button(build, "primary")
-            build.pressed.connect(func() -> void:
-                _emit_assign_labor(band, HudConst.LABOR_KIND_BAND, 0, -1, -1, "",
-                    SourceForecast.FLOOR_UNNAMED, branch))
-            (shell[SITE_ROW_SHELL_BODY] as HBoxContainer).add_child(build)
         return row
     # A READ-ONLY crew (the sim's), on the same strip every other work row wears.
-    (shell[SITE_ROW_SHELL_BODY] as HBoxContainer).add_child(_build_row_strip(band, model))
+    body.add_child(_build_row_strip(band, model))
     return row
+
+## **THE STOP BUTTON OF A BAND IMPROVEMENT'S BUILD** - the Build button's slot while a build is declared.
+## Ghost chrome in DANGER ink, like the panel's other destructive controls; no confirm, since `unqueue`
+## keeps the meter and the crew.
+func _build_band_improvement_stop_button(band: Dictionary, branch: String) -> Button:
+    var stop := Button.new()
+    stop.text = HudStorageVocab.STOP_BUTTON_LABEL
+    stop.tooltip_text = HudStorageVocab.STOP_BUTTON_TOOLTIP
+    stop.focus_mode = Control.FOCUS_NONE
+    stop.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+    stop.set_meta(HudStorageVocab.STOP_BUTTON_META, branch)
+    HudStyle.apply_button(stop, "ghost")
+    stop.add_theme_color_override("font_color", HudStyle.DANGER)
+    stop.pressed.connect(func() -> void: _emit_band_improvement_unqueue(band, branch))
+    return stop
+
+## `unqueue <faction> <band_id> branch=<id>`: a band improvement is addressed by its band and branch, no
+## tile. `material` carries the branch into the overlay's `pending_key` (the slot a band row keys on); the
+## command builder reads neither it nor `kind`.
+func _emit_band_improvement_unqueue(band: Dictionary, branch: String) -> void:
+    emit_signal("unqueue_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+        "x": -1, "y": -1, "herd_id": "", "road": false,
+        "branch": branch, "material": branch,
+        "kind": HudConst.LABOR_KIND_BAND,
+        "pending_entity": int(band.get("entity", -1)),
+    })
 
 ## **ONE TILE CREW'S ROW** -- a site row's shell (`_site_row_shell`) carrying the catalog's name for the
 ## branch and its rung, the keeping mark off the standing bill, the crew count and, on a far posting, the

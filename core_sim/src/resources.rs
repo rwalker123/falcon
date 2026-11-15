@@ -1484,6 +1484,24 @@ impl FoodSiteRegistry {
         }
     }
 
+    /// **Make `position` a gathering site if it is not one** - for a fixture that stages a worked
+    /// patch on a tile the curated registry does not hold (wild gathering is site-bound, so a crew on
+    /// any other ground takes nothing). The entry is a plain savanna track at full season; it adds no
+    /// terrain and the tile's own food module is untouched.
+    pub fn ensure_site(&mut self, position: UVec2) {
+        if self.is_site(position) {
+            return;
+        }
+        let mut entries = std::mem::take(&mut self.sites);
+        entries.push(FoodSiteEntry {
+            position,
+            module: crate::FoodModule::SavannaGrassland,
+            kind: FoodSiteKind::SavannaTrack,
+            seasonal_weight: 1.0,
+        });
+        self.set_sites(entries);
+    }
+
     pub fn set_sites(&mut self, entries: Vec<FoodSiteEntry>) {
         self.positions = entries.iter().map(|entry| entry.position).collect();
         self.sites = entries;

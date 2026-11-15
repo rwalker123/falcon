@@ -213,6 +213,15 @@ pub enum ReachTarget {
     Heads(u32),
 }
 
+/// A hunt row's sustained take and the hands closure that reaches it with no room bound
+/// ([`StaffRowInput::sustained`]).
+pub struct SustainedTake<'a> {
+    /// The regrowth at the floor, in biomass a turn.
+    pub take: f32,
+    /// [`StaffRowInput::hands`] with the room bound lifted.
+    pub hands: Box<dyn Fn(f32, u32) -> Option<f32> + 'a>,
+}
+
 /// One staffed row, as the passes see it.
 pub struct StaffRowInput<'a> {
     /// The player's rank for the row ([`SourcePriority`]) — the order passes serve rows in.
@@ -265,6 +274,13 @@ pub struct StaffRowInput<'a> {
     /// construction, so the fraction of a hand of keeping rides in it exactly as it rides in a
     /// fractional gatherer's head: only the whole keepers add heads.
     pub whole_hands: bool,
+    /// **THE SUSTAINED TAKE A HOLD CREW IS SIZED ON, where it is not the room.** A hunt row's hold
+    /// crew takes the regrowth at the floor every turn, which can be more than the stock above the
+    /// floor this turn (`hold_take` is bounded by that room). The keeping's fit in a hunter's slack
+    /// is asked against this take with the room bound lifted, so a hand whose leftover reach cannot
+    /// take the regrowth is not counted as holding it. `None` for every row that sizes on its own
+    /// `hold_take`.
+    pub sustained: Option<SustainedTake<'a>>,
     /// **Food a unit of this row's take is worth** (provisions per biomass); [`NO_FOOD`] where the
     /// take is not food. Read by the food-first check ([`band_runs_short`]) to price a crew.
     pub food_per_take: f32,
@@ -365,19 +381,40 @@ fn keeping_fraction_fits(
     target: f32,
     armed: u32,
 ) -> bool {
+    keeping_fraction_fits_by(&*row.hands, crew, fraction, target, armed)
+}
+
+/// [`keeping_fraction_fits`] asked of a given hands closure.
+fn keeping_fraction_fits_by(
+    hands: &dyn Fn(f32, u32) -> Option<f32>,
+    crew: f32,
+    fraction: f32,
+    target: f32,
+    armed: u32,
+) -> bool {
     fraction <= NO_HANDS || {
         let working = crew - fraction;
-        working > NO_HANDS
-            && (row.hands)(target * crew / working, armed).is_none_or(|hands| hands <= crew)
+        working > NO_HANDS && hands(target * crew / working, armed).is_none_or(|need| need <= crew)
     }
 }
 
 fn crew_heads(row: &StaffRowInput<'_>, gather: f32, target: f32, armed: u32) -> u32 {
+    crew_heads_by(row, gather, target, armed, &*row.hands)
+}
+
+/// [`crew_heads`] with the keeping's fit asked of `fit_hands`.
+fn crew_heads_by(
+    row: &StaffRowInput<'_>,
+    gather: f32,
+    target: f32,
+    armed: u32,
+    fit_hands: &dyn Fn(f32, u32) -> Option<f32>,
+) -> u32 {
     if row.whole_hands && gather > NO_HANDS {
         let whole = whole_keepers(row);
         let crew = gather.ceil();
         let fraction = row.keep_hands.max(NO_HANDS) - whole as f32;
-        let fits = keeping_fraction_fits(row, crew, fraction, target, armed);
+        let fits = keeping_fraction_fits_by(fit_hands, crew, fraction, target, armed);
         return whole + crew as u32 + u32::from(!fits);
     }
     (row.keep_hands.max(NO_HANDS) + gather).ceil() as u32
@@ -391,14 +428,22 @@ fn reach_take(row: &StaffRowInput<'_>) -> f32 {
     }
 }
 
-/// The crew that holds the source at its floor, keepers included.
+/// The crew that holds the source at its floor, keepers included. A row with a sustained take (a
+/// hunt) is sized on it: the hands that take the regrowth at the floor, the keeping's fraction
+/// riding in a hunter's slack only where the slack reaches that regrowth.
 fn hold_heads(row: &StaffRowInput<'_>, armed: u32) -> u32 {
-    let heads = crew_heads(
-        row,
-        gather_hands(row, row.hold_take, armed),
-        row.hold_take,
-        armed,
-    );
+    let heads = match &row.sustained {
+        Some(sustained) if sustained.take > row.hold_take => {
+            let gather = (sustained.hands)(sustained.take, armed).map_or(NO_HANDS, f32::ceil);
+            crew_heads_by(row, gather, sustained.take, armed, &*sustained.hands)
+        }
+        _ => crew_heads(
+            row,
+            gather_hands(row, row.hold_take, armed),
+            row.hold_take,
+            armed,
+        ),
+    };
     if row.hold_take > NO_TAKE_WANTED {
         heads.max(AT_LEAST_ONE_HAND)
     } else {
@@ -424,6 +469,7 @@ fn reach_heads(row: &StaffRowInput<'_>, armed: u32) -> u32 {
         reach_take(row).max(row.hold_take),
         armed,
     )
+    .max(hold_heads(row, armed))
 }
 
 /// The crew past which the take stops rising, keepers included.
@@ -439,6 +485,7 @@ fn useful_heads(row: &StaffRowInput<'_>, armed: u32) -> u32 {
         row.useful_take.max(reach_take(row)).max(row.hold_take),
         armed,
     )
+    .max(hold_heads(row, armed))
 }
 
 /// Which passes a staffing run deals.
@@ -557,6 +604,7 @@ fn scout_arming_input(plan: &ScoutPlan) -> StaffRowInput<'static> {
         tile: None,
         food_keep_up: false,
         whole_hands: false,
+        sustained: None,
         food_per_take: NO_FOOD,
         finish: None,
     }
@@ -1159,6 +1207,14 @@ fn staff_passes_counted(
                 *needed[i].get_or_insert_with(|| useful_heads(row, kitted).saturating_sub(kept[i]));
             ledger.deal_head(i, kitted + ledger.out[i].bare < useful, HeadKind::Bare)
         });
+    }
+    // The published reach and useful crews state the crew actually dealt: bare hands past the
+    // basket supply are less effective than the kit the targets were struck at, so the row can
+    // field more heads than the kitted aim named. The deal itself is unchanged.
+    for crew in &mut ledger.out {
+        let dealt = crew.total();
+        crew.reach_crew = crew.reach_crew.max(dealt);
+        crew.useful_crew = crew.useful_crew.max(crew.reach_crew);
     }
     Dealt {
         out: ledger.out,
@@ -2128,6 +2184,7 @@ fn build_staff_inputs<'a>(
             tile: crate::systems::party_source_position(&target, sources.herds),
             food_keep_up: allocation.keeps_food_up(&target),
             whole_hands: false,
+            sustained: None,
             food_per_take: NO_FOOD,
             finish: None,
         };
@@ -2272,6 +2329,7 @@ fn bench_inputs<'a>(world: &StaffingWorld<'a>, rows: &mut Vec<StaffRowInput<'a>>
             is_build: false,
             is_bench: true,
             whole_hands: false,
+            sustained: None,
             food_per_take: NO_FOOD,
             finish: None,
             kitless: false,
@@ -2375,6 +2433,7 @@ fn build_inputs<'a>(
             tile,
             food_keep_up: false,
             whole_hands: false,
+            sustained: None,
             food_per_take: NO_FOOD,
             finish,
         });
@@ -2541,6 +2600,14 @@ fn forage_input<'a>(
     };
     let bare = per_hand(&equipment.no_kit());
     input.bare_can_work = bare > 0.0;
+    // **GROUND THAT REFUSES GATHERING HAS NO TAKE TO STAFF.** A zero season is the gather seam's
+    // answer for wild ground off a gathering site (`forage::gather_season`), so the row asks for no
+    // take hands: hold, reach and useful takes stay at nothing and only the keepers (and any build on
+    // the patch, dealt as a build) are dealt.
+    if season <= crate::forage::NO_FORAGE_SEASON {
+        input.bare_can_work = false;
+        return;
+    }
     let items = input.kit_items.clone();
     let coverage = coverage_with(equipment, kit.clone(), band_kit, items, crew);
     input.hands =
@@ -2647,23 +2714,31 @@ fn hunt_input<'a>(
     let bare_carry =
         equipment.hunt_per_worker_biomass_capacity(base, &equipment.no_kit(), band_kit);
     let drives = sources.drives_known;
-    let hands_herd = herd.clone();
-    input.hands = Box::new(move |target, armed| {
-        let cov = coverage(armed);
-        let party = party_of(&cov, &hands_herd);
-        crate::fauna::hunt_crew_for_take(
-            target,
-            room,
-            &hands_herd,
-            fauna,
-            &cov,
-            |crew_kit| equipment.hunt_per_worker_biomass_capacity(base, crew_kit, band_kit),
-            bare_carry,
-            &party,
-            drives,
-        )
-        .map(|crew| crew as f32)
-    });
+    // The hands closure for a room bound: the take sizes on the room, the sustained take's fit on none.
+    let coverage = std::rc::Rc::new(coverage);
+    let party_of = std::rc::Rc::new(party_of);
+    let hands_within = |room_bound: f32| -> Box<dyn Fn(f32, u32) -> Option<f32> + 'a> {
+        let (coverage, party_of) = (coverage.clone(), party_of.clone());
+        let hands_herd = herd.clone();
+        let no_kit_carry = bare_carry;
+        Box::new(move |target, armed| {
+            let cov = coverage(armed);
+            let party = party_of(&cov, &hands_herd);
+            crate::fauna::hunt_crew_for_take(
+                target,
+                room_bound,
+                &hands_herd,
+                fauna,
+                &cov,
+                |crew_kit| equipment.hunt_per_worker_biomass_capacity(base, crew_kit, band_kit),
+                no_kit_carry,
+                &party,
+                drives,
+            )
+            .map(|crew| crew as f32)
+        })
+    };
+    input.hands = hands_within(room);
     if room <= NO_TAKE_WANTED {
         return;
     }
@@ -2675,6 +2750,12 @@ fn hunt_input<'a>(
     let hold = growth(floor * capacity).max(0.0) * meat;
     let peak = crate::fauna::peak_regrowth_between(capacity, low, high, growth) * meat;
     input.hold_take = hold.min(room);
+    if hold > room {
+        input.sustained = Some(SustainedTake {
+            take: hold,
+            hands: hands_within(f32::INFINITY),
+        });
+    }
     input.useful_take = room;
     input.reach = ReachTarget::Take(reach_target(peak, room));
 }
@@ -2844,6 +2925,7 @@ pub(crate) fn probe_source(
         tile: None,
         food_keep_up: false,
         whole_hands: false,
+        sustained: None,
         food_per_take: NO_FOOD,
         finish: None,
     };
@@ -3147,10 +3229,38 @@ fn managed_dig_allocation(
                 tiles(),
             )
         };
+        let supply = world
+            .resource::<crate::supply_network_config::SupplyNetworkConfigHandle>()
+            .get();
+        let access = crate::routes::road_access_in_world(world, faction, sources.ladder);
+        let widest_route_reach = crate::routes::max_route_reach_tiles(sources.ladder);
+        let geometry = (
+            registry.width,
+            registry.height,
+            world
+                .resource::<crate::resources::SimulationConfig>()
+                .map_topology
+                .wrap_horizontal,
+        );
+        let walk_to = |tile: UVec2| {
+            camp.as_ref().and_then(|camp| {
+                crate::work_party::resolve_walk(
+                    camp.position,
+                    tile,
+                    sources.labor,
+                    &supply,
+                    world.resource::<crate::routes::RoadRegistry>(),
+                    &access,
+                    widest_route_reach,
+                    geometry,
+                )
+            })
+        };
         let inputs = crate::keep_on_hand::DigSiteInputs {
             sources,
             band_kit: &band_kit,
             camp: camp.as_ref(),
+            walk_to: &walk_to,
         };
         let pool = staffable_pool(&allocation, available);
         let cohort_stores = &cohort.stores;
@@ -3462,6 +3572,7 @@ mod tests {
             tile: None,
             food_keep_up: false,
             whole_hands: false,
+            sustained: None,
             food_per_take: NO_FOOD,
             finish: None,
         }
@@ -3758,6 +3869,7 @@ mod tests {
             tile,
             food_keep_up: false,
             whole_hands: false,
+            sustained: None,
             food_per_take: NO_FOOD,
             finish: None,
         }
@@ -3954,6 +4066,54 @@ mod tests {
         row.food_per_take = 1.0;
         row.hands = Box::new(|take, _| Some((take / ONE_HUNTER_TAKE).ceil().max(1.0)));
         row
+    }
+
+    /// **A PEN'S HOLD CREW TAKES THE REGROWTH AT THE FLOOR, NOT THIS TURN'S ROOM.** One keeper whose
+    /// leftover reach (after the keeping's 0.54 of a hand) cannot take what the pen regrows each turn
+    /// is not a hold crew: the keeping rides in his slack only where the slack reaches the regrowth.
+    /// The control: a pen whose regrowth the slack does cover stays at one head, and a row with no
+    /// sustained take is sized on its own hold take as before.
+    #[test]
+    fn a_pens_hold_crew_is_sized_on_the_regrowth_its_slack_must_reach() {
+        const KEEPING: f32 = 0.542;
+        const ONE_HUNTER_REACH: f32 = 80.0;
+        const ROOM: f32 = 22.0;
+        const REGROWTH_ONE_SLACK_CANNOT_TAKE: f32 = 46.6;
+        const REGROWTH_ONE_SLACK_COVERS: f32 = 30.0;
+        let reach = |bound: f32| -> Box<dyn Fn(f32, u32) -> Option<f32>> {
+            Box::new(move |take, _| Some((take.min(bound) / ONE_HUNTER_REACH).ceil().max(1.0)))
+        };
+        let pen = |regrowth: f32| {
+            let mut row = a_warren_row(KEEPING);
+            row.hold_take = ROOM;
+            row.hands = reach(ROOM);
+            row.sustained = Some(SustainedTake {
+                take: regrowth,
+                hands: reach(f32::INFINITY),
+            });
+            row
+        };
+        assert_eq!(
+            hold_heads(&pen(REGROWTH_ONE_SLACK_CANNOT_TAKE), 0),
+            2,
+            "one keeper's slack cannot take the regrowth: the keeping gets a head of its own"
+        );
+        assert_eq!(
+            hold_heads(&pen(REGROWTH_ONE_SLACK_COVERS), 0),
+            1,
+            "the control: the slack covers the regrowth, so one head holds it"
+        );
+        let mut roomed = pen(REGROWTH_ONE_SLACK_CANNOT_TAKE);
+        roomed.sustained = None;
+        assert_eq!(
+            hold_heads(&roomed, 0),
+            1,
+            "with no sustained take the row is sized on its own hold take"
+        );
+        // The reach and useful crews never fall under the hold crew.
+        let row = pen(REGROWTH_ONE_SLACK_CANNOT_TAKE);
+        assert!(reach_heads(&row, 0) >= hold_heads(&row, 0));
+        assert!(useful_heads(&row, 0) >= hold_heads(&row, 0));
     }
 
     /// **A HUNT'S TAKE COUNTS IN THE FOOD-FIRST WALK THOUGH ITS KEEPING IS A SLIVER OF A HAND** (the

@@ -1674,7 +1674,7 @@ static func site_lesson_tooltip(tile_info: Dictionary, labels: Dictionary, knowl
 
 static func _site_lesson_parts(tile_info: Dictionary, labels: Dictionary, knowledge: Dictionary) -> Dictionary:
     var prefix: String = HudComposeVocab.FORAGE_FORECAST_PREFIX
-    var lesson := RungQuotes.lesson_to_place(tile_info, prefix)
+    var lesson := RungQuotes.lesson_to_place(tile_info, prefix, knowledge)
     if lesson == "":
         return {}
     if RungGates.knowledge_gate_unmet(RungQuotes.lesson_placing_quote(tile_info, prefix), knowledge):

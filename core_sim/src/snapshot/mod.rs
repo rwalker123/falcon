@@ -2560,6 +2560,7 @@ mod tests {
             &LadderConfig::builtin(),
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
             // No tiles behind these fixture patches, so no ground is named here either: the row
             // presents no tender-load and its upkeep figures read the honest zero, the same
             // absent-means-nothing reading the composition takes below.
@@ -2642,6 +2643,7 @@ mod tests {
             ),
             &FloraConfig::builtin(),
             &ladder,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
@@ -3150,6 +3152,7 @@ mod tests {
                 ),
                 &FloraConfig::builtin(),
                 &ladder,
+                &HashMap::new(),
                 &HashMap::new(),
                 &HashMap::new(),
                 &tile_capacities,

@@ -327,12 +327,22 @@ pub fn discovered_deposit_tiles<'a>(
         .collect()
 }
 
-/// **A SITE'S STANDING IN THE RANKING** - most per worker, then the shortest walk, then tile order.
+/// **A SITE'S STANDING IN THE RANKING** - most NET per hand (what one hand brings home after the
+/// walk), then the most the tile can give a turn, then tile order. There is no "shortest walk" key:
+/// distance is already inside the net figure, and inside the apron it is nothing.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct SiteRank {
     tile: UVec2,
+    /// What one hand cuts a turn at the site (the working's yield plus the best live kit's take),
+    /// before any walk.
     per_hand: f32,
-    distance: u32,
+    /// **What one hand brings HOME a turn**: [`Self::per_hand`] through the work-party caravan
+    /// forecast ([`crate::work_party::forecast_caravan`]) over the walk to the site, at the haul
+    /// carry of the band's best live kit. Equal to `per_hand` inside the apron.
+    net_per_hand: f32,
+    /// **The most the tile can give a turn**: [`Self::cap`] where the stand renews, and what is
+    /// still reachable in the ground where it never does (stone ranks by stock left).
+    gives: f32,
     /// The floor the chief works this site at: Best where it regrows, strip-it-bare where it never does.
     floor: f32,
     /// What the site gives a turn at that floor without drawing it down - unbounded for a deposit
@@ -348,11 +358,11 @@ struct SiteRank {
 impl SiteRank {
     /// Whether `self` ranks strictly ahead of `other`.
     fn beats(&self, other: &SiteRank) -> bool {
-        if self.per_hand != other.per_hand {
-            return self.per_hand > other.per_hand;
+        if self.net_per_hand != other.net_per_hand {
+            return self.net_per_hand > other.net_per_hand;
         }
-        if self.distance != other.distance {
-            return self.distance < other.distance;
+        if self.gives != other.gives {
+            return self.gives > other.gives;
         }
         (self.tile.y, self.tile.x) < (other.tile.y, other.tile.x)
     }
@@ -363,12 +373,17 @@ impl SiteRank {
 const UNBOUNDED_SITE: f32 = f32::INFINITY;
 /// No take.
 const NO_TAKE: f32 = 0.0;
+/// The one hand a site's net per-hand figure is struck for.
+const ONE_HAND: u32 = 1;
 
 /// What the ranking reads: the claim sources, the band's gear and where it camps.
 pub struct DigSiteInputs<'a> {
     pub sources: &'a ClaimSources<'a>,
     pub band_kit: &'a BandEquipment,
     pub camp: Option<&'a CampSite>,
+    /// **The walk from camp to a tile** - `(tiles, turns)` from the apron with the road bonus
+    /// ([`crate::work_party::resolve_walk`]), `None` inside the apron.
+    pub walk_to: &'a dyn Fn(UVec2) -> Option<(u32, u32)>,
 }
 
 /// The rank of digging `material` at `tile`, `None` where nothing is reachable there.
@@ -391,17 +406,33 @@ fn rank_site(inputs: &DigSiteInputs<'_>, tile: UVec2, material: &str) -> Option<
     let equipment = sources.equipment;
     let rung = working.rung();
     let rung_key = rung.wire_key();
-    let best_kit = equipment
-        .deposit_kits_for(rung.branch)
+    // The best live kit's addition to a cut, and the best haul carry any live kit gives a porter
+    // (the bare carry where none is live): a sled drags the cut home on every rung, whichever kit
+    // the row ends up carrying.
+    let branch_kits = equipment.deposit_kits_for(rung.branch);
+    let live_kits: Vec<_> = branch_kits
         .iter()
         .filter(|kit| {
             kit.uses()
                 .all(|item| kit.item_live(item, inputs.band_kit, equipment))
         })
+        .collect();
+    let best_kit = live_kits
+        .iter()
         .map(|kit| {
             equipment.deposit_take_per_worker(kit, inputs.band_kit, rung.branch, Some(&rung_key))
         })
         .fold(NO_DEPOSIT_GEAR, f32::max);
+    let haul_carry = live_kits
+        .iter()
+        .map(|kit| {
+            equipment.hunt_per_worker_biomass_capacity(
+                sources.labor.hunt.per_worker_biomass_capacity,
+                kit,
+                inputs.band_kit,
+            )
+        })
+        .fold(sources.labor.hunt.per_worker_biomass_capacity, f32::max);
     let floor = dig_floor(ground_rate);
     let (sustainable, cap) = if ground_rate > NEVER_RENEWS {
         let rate = ground_rate * payoff.regrowth_multiplier;
@@ -428,10 +459,35 @@ fn rank_site(inputs: &DigSiteInputs<'_>, tile: UVec2, material: &str) -> Option<
     } else {
         cap
     };
+    let net_per_hand = match ((inputs.walk_to)(tile), sources.materials.material(material)) {
+        (Some((walk_tiles, walk_turns)), Some(def)) => {
+            let pack = crate::work_party::material_pack(haul_carry, def.weight);
+            let party = crate::work_party::WorkParty::posted(tile, walk_tiles, walk_turns);
+            let mut party = party;
+            party.restamp(tile, ONE_HAND, walk_tiles, walk_turns);
+            crate::work_party::forecast_caravan(
+                &party,
+                sources.labor.yield_average_horizon_turns,
+                pack,
+                crate::work_party::NO_TRANSIT_ROT,
+                |present| {
+                    let cut = per_hand * present as f32;
+                    Some(crate::work_party::SourceTake {
+                        cargo: cut,
+                        bulk: cut,
+                    })
+                },
+            )
+            .rate_home
+        }
+        _ => per_hand,
+    };
+    let gives = if cap.is_finite() { cap } else { reachable };
     Some(SiteRank {
         tile,
         per_hand,
-        distance: inputs.camp.map_or(0, |camp| camp.distance_to(tile)),
+        net_per_hand,
+        gives,
         floor,
         sustainable,
         cap,
@@ -468,7 +524,7 @@ fn row_is_pinned(allocation: &LaborAllocation, target: &LaborTarget) -> bool {
 ///   every ordered kind it has none for, and the kinds are queued for the feed line.
 /// - **per chief-owned material**: the order's **want** is the band's draw plus the deficit spread
 ///   over `keep_on_hand_refill_turns` (zero at or above the target). The candidate sites are ranked
-///   ([`SiteRank`]: most per hand, then the shortest walk, then tile order) and each gets a share, in
+///   ([`SiteRank`]: most NET per hand after the walk, then the most the tile can give a turn, then tile order) and each gets a share, in
 ///   that order, of up to what it gives a turn at the order's floor without drawing it down, until
 ///   the want is covered; the best site is always in the set, so a band at target keeps its row. A
 ///   deposit that never regrows gives without bound, so it ends with one row. A row is created on each

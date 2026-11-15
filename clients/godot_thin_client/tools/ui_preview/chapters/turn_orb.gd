@@ -1625,3 +1625,26 @@ func _chief_proposal_states() -> void:
 			and _proposal_buttons(HudAttentionVocab.PROPOSAL_NOT_NOW_LABEL).is_empty())
 	h._hud.turn_orb.toggle_popover()
 	h._hud.turn_orb.set_attention([])
+	await _food_falling_state()
+
+
+# ---- THE FALLING-FOOD PROPOSAL: NO IDLE HANDS, SO ITS OWN ENTRY -----------------------------------
+const FALLING_TEXT := "Food falling · Orrin proposes: dig a storage pit (0.4 food a turn spoiling)"
+const FALLING_NO_IDLE_HANDS := 0
+
+func _food_falling_state() -> void:
+	var band := _proposal_band(0, FALLING_TEXT, [], true)
+	band["idle_workers"] = FALLING_NO_IDLE_HANDS
+	band["chief_proposals"][0]["trigger"] = HudAttentionVocab.PROPOSAL_TRIGGER_FOOD_FALLING
+	h._hud.update_band_alerts([band])
+	h._hud.turn_orb.open_popover()
+	await h._settle()
+	h._assert_turn_orb("food falling — its own entry names the band and carries the sim's sentence",
+		NodeQuery.has_label_containing(h._hud.turn_orb._popover, "food falling")
+			and NodeQuery.has_label_containing(h._hud.turn_orb._popover, FALLING_TEXT))
+	h._assert_turn_orb("food falling — Approve and Not now are on the entry",
+		_proposal_buttons(HudAttentionVocab.PROPOSAL_APPROVE_LABEL).size() == 1
+			and _proposal_buttons(HudAttentionVocab.PROPOSAL_NOT_NOW_LABEL).size() == 1)
+	await h._save("chief_proposal_food_falling")
+	h._hud.turn_orb.toggle_popover()
+	h._hud.turn_orb.set_attention([])

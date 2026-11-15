@@ -365,6 +365,8 @@ fn food_tile(app: &mut App) -> (UVec2, bevy::prelude::Entity) {
             .find(|pos| seeded.contains(pos))
             .expect("expected at least one food-module tile carrying a forage patch")
     };
+    // Wild gathering is site-bound: the staged tile is a gathering site, so its crew takes something.
+    core_sim::mark_gathering_site(&mut app.world, pos);
     let entity = app
         .world
         .resource::<TileRegistry>()
@@ -2440,6 +2442,9 @@ fn two_equal_priority_forage_rows_split_the_hands_evenly() {
         let patch = registry.patch_mut(pos).expect("patch");
         patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
     }
+    // Wild gathering is site-bound: both staged tiles are gathering sites.
+    core_sim::mark_gathering_site(&mut app.world, first);
+    core_sim::mark_gathering_site(&mut app.world, second);
     let mut allocation = forage_alloc(first, HANDS);
     let mut other = forage_alloc(second, HANDS).assignments.remove(0);
     other.max_workers = None;

@@ -350,6 +350,57 @@ pub fn plant_rung_site_refusal(
     )
 }
 
+/// **THE NEAREST LESSON THE FACTION LACKS THAT WOULD OPEN THIS GROUND TO `rung_key`** - the lesson a
+/// [`SiteRefusal::NeedsLesson`] names: Seed Selection for fertile watered ground, Worked Land for
+/// fertile dry ground (the first relaxation not yet held whose rule admits the readings,
+/// [`crate::RungDef::lesson_that_would_admit`]). `None` where no lesson would admit it.
+pub fn plant_rung_nearest_lesson(
+    world: &World,
+    faction: FactionId,
+    rung_key: RungId,
+    tile: UVec2,
+) -> Option<String> {
+    let registry = world.get_resource::<TileRegistry>()?;
+    let tile_entity = registry.index(tile.x, tile.y)?;
+    let ground = world.get::<Tile>(tile_entity)?;
+    let wrap_horizontal = world
+        .resource::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let fresh_water = tile_is_fresh_watered(
+        ground,
+        registry.width,
+        registry.height,
+        wrap_horizontal,
+        |coord| {
+            registry
+                .index(coord.x, coord.y)
+                .and_then(|entity| world.get::<Tile>(entity))
+                .map(|neighbor| neighbor.terrain_tags)
+        },
+    );
+    let labor = world.resource::<LaborConfigHandle>().get();
+    let ladder = world.resource::<LadderConfigHandle>().get();
+    ladder
+        .rung(rung_key)
+        .lesson_that_would_admit(
+            &|name| {
+                crate::knows_lesson(
+                    world.resource::<DiscoveryProgressLedger>(),
+                    faction,
+                    name,
+                    ladder.knowledge.completion_threshold,
+                )
+            },
+            world.resource::<FoodSiteRegistry>().is_site(tile),
+            crate::tile_forage_capacity(&labor.forage, ground),
+            fresh_water,
+            crate::NO_DEPOSIT_FLOOR,
+            crate::NO_BELIEF,
+        )
+        .map(str::to_string)
+}
+
 /// **MAY THIS BAND RAISE THIS RUNG ON THIS DEPOSIT?** — the deposit branches' arm of
 /// [`validate_improvement`], and the twin of `validate_sow`.
 ///
@@ -426,15 +477,11 @@ pub fn validate_deposit_verb(
 /// `site_relaxations` and the rung that `earns_knowledge` it, so the sentence says what to do next.
 pub fn needs_lesson_message(
     ladder: &crate::LadderConfig,
-    rung: &crate::RungDef,
+    lesson: Option<&str>,
     tile: UVec2,
     verb: &str,
 ) -> String {
-    let Some(lesson) = rung
-        .site_relaxations
-        .last()
-        .map(|relaxation| relaxation.knowledge.as_str())
-    else {
+    let Some(lesson) = lesson else {
         return site_refusal_message(SiteRefusal::NeedsLesson, tile, verb);
     };
     let title = crate::knowledge_title_from_id(lesson);
@@ -488,7 +535,10 @@ pub fn validate_patch_build(
     let key = rung.rung_id();
     if let Some(refusal) = plant_rung_site_refusal(world, faction, key, tile) {
         return Err(match refusal {
-            SiteRefusal::NeedsLesson => needs_lesson_message(&ladder, rung, tile, verb),
+            SiteRefusal::NeedsLesson => {
+                let lesson = plant_rung_nearest_lesson(world, faction, key, tile);
+                needs_lesson_message(&ladder, lesson.as_deref(), tile, verb)
+            }
             other => site_refusal_message(other, tile, verb),
         });
     }

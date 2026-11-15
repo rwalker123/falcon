@@ -1571,6 +1571,23 @@ fn work_party_forecast(
             .map_or(crate::forage::NO_FORAGE_SEASON, |module| {
                 module.seasonal_weight.max(0.0)
             });
+        // Gathering is site-bound (`forage::gather_season`), as the labor arm reads it.
+        let seasonal = crate::forage::gather_season(
+            seasonal,
+            world
+                .resource::<crate::forage::ForageRegistry>()
+                .patch(tile),
+            entity
+                .and_then(|entity| world.get::<crate::components::Tile>(entity))
+                .is_some_and(|ground| {
+                    crate::forage::wild_ground_refuses_gathering(
+                        &ladder,
+                        &labor.forage,
+                        ground,
+                        world.resource::<crate::FoodSiteRegistry>().is_site(tile),
+                    )
+                }),
+        );
         let composition = entity
             .and_then(|entity| world.get::<crate::components::Tile>(entity))
             .map(|ground| {

@@ -188,6 +188,9 @@ fn a_smaller_pool_restaffs_the_rows_and_sheds_nothing() {
         .resource::<TileRegistry>()
         .index(home.x, home.y)
         .expect("the home patch resolves to a tile");
+    // Wild gathering is site-bound: both staged tiles are gathering sites.
+    core_sim::mark_gathering_site(&mut app.world, home);
+    core_sim::mark_gathering_site(&mut app.world, other);
     let mut allocation = LaborAllocation::default();
     allocation.set_staffed_row(forage_on(home), Some(MAX_PER_ROW), None);
     allocation.set_staffed_row(forage_on(other), Some(MAX_PER_ROW), None);

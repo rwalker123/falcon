@@ -2296,6 +2296,7 @@ fn decode_population(
                 to: raise.to(),
             }),
             text: text(row.text()),
+            trigger: text(row.trigger()),
         }),
         storage_saves: map_rows(cohort.storageSaves(), |row| StorageSaveState {
             rung: text(row.rung()),
@@ -2691,6 +2692,7 @@ fn create_chief_proposals<'a>(
             let phrase = builder.create_string(&row.phrase);
             let reason = builder.create_string(&row.reason);
             let text = builder.create_string(&row.text);
+            let trigger = builder.create_string(&row.trigger);
             fb::ChiefProposal::create(
                 builder,
                 &fb::ChiefProposalArgs {
@@ -2709,6 +2711,7 @@ fn create_chief_proposals<'a>(
                     escalation: row.escalation,
                     keepRaises: Some(keep_raises),
                     text: Some(text),
+                    trigger: Some(trigger),
                 },
             )
         })

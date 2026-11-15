@@ -2287,6 +2287,9 @@ pub struct ChiefProposalState {
     pub keep_raises: Vec<KeepRaiseState>,
     /// The fully resolved sentence.
     pub text: String,
+    /// What raised the proposal: `"idle"` or `"food_falling"`. Appended last.
+    #[serde(default)]
+    pub trigger: String,
 }
 
 /// **ONE PRESERVATION RUNG THE BAND HOLDS** — a row of [`PopulationCohortState::held_stores`].

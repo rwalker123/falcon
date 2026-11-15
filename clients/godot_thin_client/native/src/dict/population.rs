@@ -434,6 +434,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             }
             let _ = row.insert("keep_raises", &keep_raises);
             let _ = row.insert("text", proposal.text().unwrap_or_default());
+            let _ = row.insert("trigger", proposal.trigger().unwrap_or_default());
             chief_proposals.push(&row.to_variant());
         }
     }

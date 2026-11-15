@@ -6460,10 +6460,25 @@ pub fn advance_labor_allocation(
                     .cloned()
             };
             let staff_season_of = |pos: UVec2| {
-                tile_registry
-                    .index(pos.x, pos.y)
+                let entity = tile_registry.index(pos.x, pos.y);
+                let season = entity
                     .and_then(|entity| food_modules.get(entity).ok())
-                    .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0))
+                    .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0));
+                // Gathering is site-bound: see `forage::gather_season`.
+                crate::forage::gather_season(
+                    season,
+                    forage_registry.patch(pos),
+                    entity
+                        .and_then(|entity| tiles.get(entity).ok())
+                        .is_some_and(|ground| {
+                            crate::forage::wild_ground_refuses_gathering(
+                                &ladder,
+                                &labor.forage,
+                                ground,
+                                food_sites.is_site(pos),
+                            )
+                        }),
+                )
             };
             let staff_sources = crate::take_claims::ClaimSources {
                 forage: &forage_registry,
@@ -6505,10 +6520,29 @@ pub fn advance_labor_allocation(
                 let has_leader = band_leadership
                     .as_deref()
                     .is_some_and(|leadership| leadership.leader.is_some());
+                let dig_access = crate::routes::RoadAccess {
+                    walker: configs.rights.walker(faction),
+                    foreign: foreign_roads,
+                };
+                let walk_to = |tile: UVec2| {
+                    band_pos.and_then(|from| {
+                        crate::work_party::resolve_walk(
+                            from,
+                            tile,
+                            &labor,
+                            &supply_cfg,
+                            &roads,
+                            &dig_access,
+                            widest_route_reach,
+                            (grid_width, grid_height, wrap_horizontal),
+                        )
+                    })
+                };
                 let site_inputs = crate::keep_on_hand::DigSiteInputs {
                     sources: &staff_sources,
                     band_kit: &band_kit,
                     camp: camp.as_ref(),
+                    walk_to: &walk_to,
                 };
                 crate::keep_on_hand::manage_dig_rows(
                     &mut allocation,
@@ -6643,10 +6677,25 @@ pub fn advance_labor_allocation(
                         .cloned()
                 };
                 let season_of = |pos: UVec2| {
-                    tile_registry
-                        .index(pos.x, pos.y)
+                    let entity = tile_registry.index(pos.x, pos.y);
+                    let season = entity
                         .and_then(|entity| food_modules.get(entity).ok())
-                        .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0))
+                        .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0));
+                    // Gathering is site-bound: see `forage::gather_season`.
+                    crate::forage::gather_season(
+                        season,
+                        forage_registry.patch(pos),
+                        entity
+                            .and_then(|entity| tiles.get(entity).ok())
+                            .is_some_and(|ground| {
+                                crate::forage::wild_ground_refuses_gathering(
+                                    &ladder,
+                                    &labor.forage,
+                                    ground,
+                                    food_sites.is_site(pos),
+                                )
+                            }),
+                    )
                 };
                 crate::take_claims::row_claims(
                     &crate::take_claims::ClaimSources {
@@ -7149,10 +7198,25 @@ pub fn advance_labor_allocation(
                     .cloned()
             };
             let season_of = |pos: UVec2| {
-                tile_registry
-                    .index(pos.x, pos.y)
+                let entity = tile_registry.index(pos.x, pos.y);
+                let season = entity
                     .and_then(|entity| food_modules.get(entity).ok())
-                    .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0))
+                    .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0));
+                // Gathering is site-bound: see `forage::gather_season`.
+                crate::forage::gather_season(
+                    season,
+                    forage_registry.patch(pos),
+                    entity
+                        .and_then(|entity| tiles.get(entity).ok())
+                        .is_some_and(|ground| {
+                            crate::forage::wild_ground_refuses_gathering(
+                                &ladder,
+                                &labor.forage,
+                                ground,
+                                food_sites.is_site(pos),
+                            )
+                        }),
+                )
             };
             crate::take_claims::row_claims(
                 &crate::take_claims::ClaimSources {
@@ -7570,9 +7634,24 @@ pub fn advance_labor_allocation(
                     // `Sow` places a Field on ground the `plant:farm` rung's `site_requirement`
                     // accepts (a gathering site), module or not, and a Field's harvest is
                     // biomass-based and seasonless.
-                    let seasonal = food_modules
-                        .get(tile_entity)
-                        .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0));
+                    // **GATHERING IS SITE-BOUND**: a patch still at the wild rung on ground the wild
+                    // rung refuses yields nothing (a crew may stand there to build, never to take) -
+                    // [`crate::forage::gather_season`], the seam the seed, the forecast and the
+                    // staffing read too.
+                    let seasonal = crate::forage::gather_season(
+                        food_modules
+                            .get(tile_entity)
+                            .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0)),
+                        forage_registry.patch(*tile),
+                        tiles.get(tile_entity).is_ok_and(|ground| {
+                            crate::forage::wild_ground_refuses_gathering(
+                                &ladder,
+                                &labor.forage,
+                                ground,
+                                food_sites.is_site(*tile),
+                            )
+                        }),
+                    );
                     // **May this faction sow THIS ground?** — the `plant:farm` rung's two gates,
                     // both resolved off the rung record, both read here because each gates the *same*
                     // two things below: the seed going into the ground at all, and the build meter it
@@ -11849,10 +11928,25 @@ pub fn advance_labor_allocation(
                     .cloned()
             };
             let season_of = |pos: UVec2| {
-                tile_registry
-                    .index(pos.x, pos.y)
+                let entity = tile_registry.index(pos.x, pos.y);
+                let season = entity
                     .and_then(|entity| food_modules.get(entity).ok())
-                    .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0))
+                    .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0));
+                // Gathering is site-bound: see `forage::gather_season`.
+                crate::forage::gather_season(
+                    season,
+                    forage_registry.patch(pos),
+                    entity
+                        .and_then(|entity| tiles.get(entity).ok())
+                        .is_some_and(|ground| {
+                            crate::forage::wild_ground_refuses_gathering(
+                                &ladder,
+                                &labor.forage,
+                                ground,
+                                food_sites.is_site(pos),
+                            )
+                        }),
+                )
             };
             let claims = crate::take_claims::row_claims(
                 &crate::take_claims::ClaimSources {

@@ -19603,6 +19603,7 @@ func _render_storage_row_states() -> void:
 	_assert_band_panel("store rows — the pit reads `building, 40%%` off its meter (got %s)" % str(pit),
 		pit.has("building, 40%"))
 	await _save("band_panel_storage_rows_building")
+	await _assert_storage_rack_stop_button()
 
 	# MATERIALS-BLOCKED: the rack's second line says what it waits on, amber, with the figures off `storage_saves`.
 	var blocked := {"branch": STORE_FX_RACK_BRANCH, "build_fraction": 0.0, "builders_staffed": 0,
@@ -19652,6 +19653,40 @@ func _render_storage_row_states() -> void:
 	_hud.update_ladder_branches([])
 	_hud.update_tile_improvements([])
 	_restore_workings_roster_fixture()
+
+## ⛔ **A BUILDING RACK WEARS STOP IN BUILD'S SLOT.** Run on the `building` state (a declared rack, no
+## crew row yet): Stop shows and Build does not; a real press emits `unqueue_requested` carrying the band
+## and branch, which `Main.format_unqueue` turns into `unqueue <faction> <band_id> branch=camp_stores`;
+## the optimistic overlay then flips the row back to Build on the press frame. The overlay is dropped on
+## the way out so later states do not inherit the withdrawal.
+func _assert_storage_rack_stop_button() -> void:
+	var stop: Button = _find_meta_control_valued(_panel, String(HudStorageVocab.STOP_BUTTON_META),
+		STORE_FX_RACK_BRANCH) as Button
+	_assert_band_panel("store rows — a building rack shows Stop (%s) and no Build" % str(stop),
+		stop != null and stop.text == HudStorageVocab.STOP_BUTTON_LABEL
+		and _find_button_with_text(_panel, HudStorageVocab.BUILD_BUTTON_LABEL) == null)
+	var payloads: Array = []
+	var on_unqueue := func(payload: Dictionary) -> void:
+		payloads.append(payload)
+	_hud.unqueue_requested.connect(on_unqueue)
+	if stop != null:
+		stop.pressed.emit()
+	_hud.unqueue_requested.disconnect(on_unqueue)
+	var line := String(MAIN_SCRIPT.format_unqueue(payloads[0]).get("line", "")) if payloads.size() == 1 else ""
+	var band_id := int(payloads[0].get("band_id", -1)) if payloads.size() == 1 else -1
+	print("band_panel_preview: rack Stop press -> %s" % line)
+	_assert_band_panel("store rows — Stop sends `unqueue 0 <band_id> branch=%s` (got %s)" % [STORE_FX_RACK_BRANCH, line],
+		payloads.size() == 1 and band_id >= 0
+		and line == "unqueue 0 %d branch=%s" % [band_id, STORE_FX_RACK_BRANCH])
+	await _settle()
+	var build: Button = _find_button_with_text(_panel, HudStorageVocab.BUILD_BUTTON_LABEL)
+	_assert_band_panel("store rows — after Stop the row offers Build again and no Stop",
+		build != null and _find_meta_control_valued(_panel, String(HudStorageVocab.STOP_BUTTON_META),
+			STORE_FX_RACK_BRANCH) == null)
+	await _save("band_panel_storage_rows_stopped")
+	var entity := int(_sections_band_fixture().get("entity", -1))
+	_hud._band_labor.drop_pending_unqueue(entity, _hud._band_labor.pending_key(
+		HudConst.LABOR_KIND_BAND, -1, -1, "", STORE_FX_RACK_BRANCH))
 
 const BAND_IMPROVEMENT_FX_BRANCH := "camp_stores"
 const BAND_IMPROVEMENT_FX_WORKERS := 2

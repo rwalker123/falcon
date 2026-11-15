@@ -2870,6 +2870,9 @@ pub fn capture_snapshot(
     // Forage arm of `advance_labor_allocation` folds into `forage_take`'s worker cap. The forage
     // patch forecast (below) needs it to report a per-worker yield that matches what the sim pays.
     let mut seasonal_weights: HashMap<UVec2, f32> = HashMap::new();
+    // The same season read as WILD ground (no improvement standing): what a row publishes where the
+    // viewer may not read the improvement (`snapshot_forage_patches`).
+    let mut wild_seasonal_weights: HashMap<UVec2, f32> = HashMap::new();
     // Per-tile terrain tags, grid-indexed — what the fresh-water half of the `plant:farm` rung's
     // site rule reads about a tile's NEIGHBOURS (`forage::tile_is_fresh_watered`). Collected in this
     // pass so the patch sweep below reads a finished grid rather than walking the world again.
@@ -2898,7 +2901,31 @@ pub fn capture_snapshot(
             ));
             tile_tags.set(tile.position, tile.terrain_tags);
             if let Some(module) = food_module {
-                seasonal_weights.insert(tile.position, module.seasonal_weight);
+                let wild_refused = crate::forage::wild_ground_refuses_gathering(
+                    &ladder_config,
+                    &labor_config.forage,
+                    tile,
+                    food_sites.is_site(tile.position),
+                );
+                wild_seasonal_weights.insert(
+                    tile.position,
+                    crate::forage::gather_season(module.seasonal_weight, None, wild_refused),
+                );
+                // Gathering is site-bound: a wild patch on ground the wild rung refuses has no
+                // gather season, exactly as the labor arm reads it (`forage::gather_season`).
+                seasonal_weights.insert(
+                    tile.position,
+                    crate::forage::gather_season(
+                        module.seasonal_weight,
+                        forage_registry.patch(tile.position),
+                        crate::forage::wild_ground_refuses_gathering(
+                            &ladder_config,
+                            &labor_config.forage,
+                            tile,
+                            food_sites.is_site(tile.position),
+                        ),
+                    ),
+                );
             }
             if forage_registry.patch(tile.position).is_some() {
                 patch_tiles.push(tile);
@@ -4422,6 +4449,7 @@ pub fn capture_snapshot(
             &flora_config,
             &ladder_config,
             &seasonal_weights,
+            &wild_seasonal_weights,
             rung_site_refusals
                 .get(&held_site_lessons(viewer))
                 .expect("every audience's lesson set was swept"),

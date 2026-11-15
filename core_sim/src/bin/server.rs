@@ -3726,6 +3726,22 @@ fn seed_source_yield(
             let Some(patch) = app.world.resource::<ForageRegistry>().patch(*tile) else {
                 return; // unseeded patch → the turn pays 0 (a bare-ground sow's honest opening row).
             };
+            // Gathering is site-bound: a wild patch on ground the wild rung refuses has no gather
+            // season, exactly as the labor arm reads it (`forage::gather_season`).
+            let seasonal = core_sim::gather_season(
+                seasonal,
+                Some(patch),
+                app.world.get::<Tile>(tile_entity).is_some_and(|ground| {
+                    core_sim::wild_ground_refuses_gathering(
+                        &app.world.resource::<LadderConfigHandle>().get(),
+                        &app.world.resource::<LaborConfigHandle>().get().forage,
+                        ground,
+                        app.world
+                            .resource::<core_sim::FoodSiteRegistry>()
+                            .is_site(*tile),
+                    )
+                }),
+            );
             let flora = app.world.resource::<FloraConfigHandle>().get();
             // **What is growing on this tile** — the same realized basket the labor arm and the
             // snapshot read, so the assign-time seed is priced off the identical composition the
@@ -4445,8 +4461,9 @@ fn validate_labor_policy(
                             });
                         if !farmed && species.is_none() {
                             return Err(format!(
-                                "({}, {}) is not a gathering site. Worked Land lets you farm there, \
-                                 not gather: name the crop to {} and the crew will raise a farm.",
+                                "({}, {}) is not a gathering site. What you have learned lets you \
+                                 farm there, not gather: name the crop to {} and the crew will raise \
+                                 a farm.",
                                 tile.x,
                                 tile.y,
                                 rung.verb.as_deref().unwrap_or("sow")
@@ -4455,7 +4472,18 @@ fn validate_labor_policy(
                     }
                     Some((rung, Some(SiteRefusal::NeedsLesson))) => {
                         let verb = rung.verb.as_deref().unwrap_or("gather");
-                        return Err(needs_lesson_message(&ladder, rung, *tile, verb));
+                        let lesson = core_sim::build_gates::plant_rung_nearest_lesson(
+                            &app.world,
+                            faction,
+                            rung.rung_id(),
+                            *tile,
+                        );
+                        return Err(needs_lesson_message(
+                            &ladder,
+                            lesson.as_deref(),
+                            *tile,
+                            verb,
+                        ));
                     }
                     _ => return Err(site_refusal_message(refusal, *tile, "gather")),
                 }
@@ -14784,11 +14812,22 @@ mod tests {
         if !app.world.contains_resource::<TileRegistry>() {
             seed_grid_with_baskets(app, coord.x.max(coord.y).max(PHASE_GATE_GRID - 1) + 1);
         }
+        let module = FoodModule::SavannaGrassland;
+        // A gathering site's tile carries its food module, whose season is the gather's: without one
+        // the tile has no season at all and a crew on it takes (and is dealt) nothing.
+        if let Some(entity) = app.world.resource::<TileRegistry>().index(coord.x, coord.y) {
+            if app.world.get::<FoodModuleTag>(entity).is_none() {
+                app.world.entity_mut(entity).insert(FoodModuleTag::new(
+                    module,
+                    1.0,
+                    module.site_kind(),
+                ));
+            }
+        }
         let mut sites = app.world.resource_mut::<FoodSiteRegistry>();
         if sites.is_site(coord) {
             return;
         }
-        let module = FoodModule::SavannaGrassland;
         let mut entries = sites.sites().to_vec();
         entries.push(FoodSiteEntry {
             position: coord,
@@ -17312,6 +17351,8 @@ mod tests {
         idle: u32,
         idle_turns: u32,
         keep_raises: Vec<(String, u32, u32)>,
+        trigger: String,
+        food_saved: f32,
     }
 
     /// The band's proposal as a client reads it: recapture, encode, walk the cohort row.
@@ -17344,6 +17385,8 @@ mod tests {
             escalation: row.escalation(),
             idle: row.idle(),
             idle_turns: row.idleTurns(),
+            trigger: row.trigger().unwrap_or_default().to_string(),
+            food_saved: row.foodSaved(),
             keep_raises: row
                 .keepRaises()
                 .map(|raises| {
@@ -17567,12 +17610,13 @@ mod tests {
         );
     }
 
-    /// **A rung upgrade on a source the band ALREADY works is a candidate; one on a source it does not
-    /// work is not.** Read off the encoded frame: with cultivation known, the worked patch's next rung is
-    /// the offer; deferring each offer in turn shows no offer ever names the unworked patch; and
-    /// approving declares the build on the patch through the same path `build cultivate` takes.
+    /// **A rung upgrade on a source the band ALREADY works is a candidate; on a source it does not
+    /// work only the plant branch's first step is (Cultivate on new ground).** Read off the encoded
+    /// frame: with cultivation known, the worked patch's next rung is among the offers; an unworked
+    /// patch is only ever offered as `plant:tended@x,y`; and approving declares the build on the patch
+    /// through the same path `build cultivate` takes.
     #[test]
-    fn a_worked_patchs_next_rung_is_proposed_and_an_unworked_patchs_is_not() {
+    fn a_worked_patchs_next_rung_is_proposed_and_an_unworked_patch_only_as_cultivate() {
         let (mut app, faction, band) = proposal_world_with(true, false);
         grant_cultivation(&mut app, faction);
         // Spare hands: the chief's takeover already staffs the band's other rows.
@@ -17583,10 +17627,12 @@ mod tests {
         }
         let (_, patches) = band_entity_and_patches(&app, BandId(band), 80);
         core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
-        assert!(
-            wire_proposal(&mut app, band).is_none(),
-            "control: with no source worked there is nothing to propose"
-        );
+        if let Some(offer) = wire_proposal(&mut app, band) {
+            assert!(
+                offer.build_key.starts_with("plant:tended@"),
+                "with no source worked the only offer is Cultivate on new ground: {offer:?}"
+            );
+        }
         // Two patches the gates admit a Cultivate on once worked.
         let mut admitted = Vec::new();
         for patch in patches {
@@ -17633,8 +17679,9 @@ mod tests {
         let mut named_worked = false;
         while let Some(proposal) = offer {
             assert!(
-                !proposal.build_key.ends_with(&unworked_suffix),
-                "an unworked patch is never proposed: {proposal:?}"
+                !proposal.build_key.ends_with(&unworked_suffix)
+                    || proposal.build_key.starts_with("plant:tended@"),
+                "an unworked patch is only proposed as Cultivate: {proposal:?}"
             );
             named_worked |= proposal.build_key.ends_with(&suffix);
             offers.push(proposal.clone());
@@ -17670,6 +17717,219 @@ mod tests {
             allocation.has_build(&BuildSource::Patch(worked)),
             "approving {again:?} declares the build on the worked patch"
         );
+    }
+
+    /// Stand the proposal world's band on `coord` (so the patch there is inside its work range) with
+    /// fog off and hands to spare, cultivation known.
+    fn proposal_band_on(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        band: u64,
+        coord: UVec2,
+    ) -> bevy::prelude::Entity {
+        grant_cultivation(app, faction);
+        app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
+        let entity = band_entity(app, band);
+        let tile = app
+            .world
+            .resource::<TileRegistry>()
+            .index(coord.x, coord.y)
+            .expect("on the map");
+        {
+            let mut cohort = app.world.get_mut::<PopulationCohort>(entity).unwrap();
+            cohort.current_tile = tile;
+            cohort.working = scalar_from_f32(60.0);
+        }
+        // The chief's takeover runs on the first managing pass (it adopts the rows that exist then);
+        // run it now so a row the approval stages later is not swept into it.
+        core_sim::staffing::restaff_band(&mut app.world, entity);
+        core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+        entity
+    }
+
+    /// Every offer the band's chief would make in turn, by deferring each one (the keys, in order).
+    fn offers_in_turn(app: &mut bevy::prelude::App, band: u64) -> Vec<String> {
+        let mut keys = Vec::new();
+        while let Some(offer) = wire_proposal(app, band) {
+            send_command_line(app, &format!("defer_proposal 0 {band} {}", offer.build_key));
+            keys.push(offer.build_key);
+            assert!(keys.len() < 200, "the offers end");
+        }
+        keys
+    }
+
+    /// **CULTIVATE ON NEW GROUND IS OFFERED ONLY ON GROUND THE GATES ADMIT.** A leaderful band with idle
+    /// hands, standing beside an off-site fertile watered patch it does not work: without Seed
+    /// Selection that patch is never offered; with it `plant:tended@x,y` is, and approving stages a
+    /// player forage row on it and declares Tended, with the row taking no food (off-site wild ground)
+    /// while the build progresses.
+    #[test]
+    fn a_chief_proposes_cultivate_on_off_site_ground_only_with_seed_selection() {
+        let (mut app, faction, band) = proposal_world_with(true, false);
+        let coord = find_lesson_ground(&app, true);
+        let entity = proposal_band_on(&mut app, faction, band, coord);
+        let key = format!("plant:tended@{},{}", coord.x, coord.y);
+
+        let without = offers_in_turn(&mut app, band);
+        assert!(
+            !without.contains(&key),
+            "no lesson, no offer on off-site ground: {without:?}"
+        );
+        // Bring the hidden offers back for the second half.
+        app.world.resource_mut::<SimulationTick>().0 += 1000;
+
+        grant_seed_selection(&mut app, faction);
+        core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+        let mut offer = wire_proposal(&mut app, band).expect("liveness: the lesson opens an offer");
+        for _ in 0..200 {
+            if offer.build_key == key {
+                break;
+            }
+            send_command_line(
+                &mut app,
+                &format!("defer_proposal 0 {band} {}", offer.build_key),
+            );
+            offer = wire_proposal(&mut app, band).expect("the patch is among the offers");
+        }
+        assert_eq!(
+            offer.build_key, key,
+            "the new ground is offered with the lesson"
+        );
+        assert_eq!(offer.trigger, "idle");
+        assert!(
+            offer.text.contains(&format!(
+                "cultivate the patch at ({}, {})",
+                coord.x, coord.y
+            )) && offer.text.contains("food a turn once tended"),
+            "{}",
+            offer.text
+        );
+
+        send_command_line(&mut app, &format!("approve_proposal 0 {band}"));
+        let allocation = app.world.get::<LaborAllocation>(entity).unwrap();
+        assert!(
+            allocation.has_build(&BuildSource::Patch(coord)),
+            "approving declares Tended on the new patch"
+        );
+        let row = allocation
+            .assignments
+            .iter()
+            .find(|row| matches!(&row.target, LaborTarget::Forage { tile, .. } if *tile == coord))
+            .expect("approving stages a forage row on the patch");
+        assert!(
+            !allocation
+                .order_rows
+                .contains_key(&core_sim::keep_on_hand::source_key(&row.target).unwrap()),
+            "the staged row is the player's, not listed under the food order"
+        );
+        let before = app
+            .world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .unwrap()
+            .ladder_position();
+        for _ in 0..4 {
+            app.update();
+        }
+        let allocation = app.world.get::<LaborAllocation>(entity).unwrap();
+        let index = allocation
+            .assignments
+            .iter()
+            .position(
+                |row| matches!(&row.target, LaborTarget::Forage { tile, .. } if *tile == coord),
+            )
+            .expect("the row stands");
+        assert_eq!(
+            allocation.last_yields[index].actual, 0.0,
+            "off-site wild ground takes nothing"
+        );
+        assert!(
+            app.world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .unwrap()
+                .ladder_position()
+                > before,
+            "the build progresses"
+        );
+    }
+
+    /// **A FALLING FOOD ORDER RAISES A PROPOSAL EVEN WITH NO IDLE HANDS, AND OFFERS ONLY BUILDS THAT ADD
+    /// FOOD.** Beside the controls: food not Falling and no idle hands proposes nothing; idle hands
+    /// win the wording when both hold.
+    #[test]
+    fn a_falling_food_order_raises_a_food_proposal_with_no_idle_hands() {
+        let (mut app, faction, band) = proposal_world_with(true, true);
+        let site = find_site_tile(&app, true).expect("a gathering site with a patch");
+        let entity = proposal_band_on(&mut app, faction, band, site);
+        // No hand is idle: a bench order crewed past any band's size.
+        app.world.entity_mut(entity).insert(core_sim::BandBench {
+            orders: vec![{
+                const MORE_HANDS_THAN_ANY_BAND: u32 = 1_000_000;
+                let mut order = core_sim::BenchOrder::new("spear", 1);
+                order.crew = core_sim::BenchCrew {
+                    at_tool: 0,
+                    by_hand: MORE_HANDS_THAN_ANY_BAND,
+                };
+                order
+            }],
+            ..Default::default()
+        });
+        let set_food = |app: &mut bevy::prelude::App, stock: f32| {
+            {
+                let mut cohort = app.world.get_mut::<PopulationCohort>(entity).unwrap();
+                cohort.last_food_need = 4.0;
+                cohort
+                    .stores
+                    .reset_food("fresh_plant", scalar_from_f32(stock));
+            }
+            let mut allocation = app.world.get_mut::<LaborAllocation>(entity).unwrap();
+            allocation.orders.insert(
+                "food".to_string(),
+                core_sim::BandOrder {
+                    target: 1000,
+                    priority: core_sim::SourcePriority::Normal,
+                    owner: core_sim::OrderOwner::Chief,
+                },
+            );
+            core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+        };
+
+        // Control: plenty of food (not Falling: the order is met) and no idle hands - no proposal.
+        set_food(&mut app, 1_000_000.0);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "food not falling and no idle hands proposes nothing"
+        );
+
+        // Falling: a small larder under a target nothing fills.
+        set_food(&mut app, 1.0);
+        let offer = wire_proposal(&mut app, band).expect("a falling food order proposes a build");
+        assert_eq!(offer.trigger, "food_falling");
+        assert_eq!(offer.idle, 0);
+        assert_eq!(offer.escalation, 2, "amber");
+        assert!(
+            offer
+                .text
+                .starts_with("Food falling \u{b7} Orrin proposes:"),
+            "{}",
+            offer.text
+        );
+        // Every offer while Falling-only adds food.
+        let mut seen = 0;
+        while let Some(offer) = wire_proposal(&mut app, band) {
+            assert!(
+                offer.food_saved > 0.0,
+                "a Falling-only proposal never offers a no-food build: {offer:?}"
+            );
+            send_command_line(
+                &mut app,
+                &format!("defer_proposal 0 {band} {}", offer.build_key),
+            );
+            seen += 1;
+            assert!(seen < 200, "the offers end");
+        }
+        assert!(seen > 0);
     }
 
     /// **A stale proposal is refused, not declared**: a band with no proposal answers an approval with
@@ -18690,6 +18950,8 @@ mod tests {
         // edit: `assign_labor` names no verb, so the phase gate is never consulted and the build
         // survives at the new head-count. Before the split this command re-issued `Cultivate` and
         // the gate refused it, leaving `workers == 0` (abandon it) as the only executable answer.
+        // Wild gathering is site-bound: the patch is a gathering site, so the eased-off crew gathers.
+        seed_gathering_site(&mut app, coord);
         let band = spawn_resident_working_band(
             &mut app,
             faction,
@@ -20251,30 +20513,6 @@ mod tests {
         )
     }
 
-    /// The first tile matching `accept`, scanned in a **totally ordered** `(y, x)` sweep — never map
-    /// iteration order, so no seed/hash flake (the lesson of `7c09c7e`).
-    fn find_tile(
-        app: &bevy::prelude::App,
-        accept: impl Fn(Option<SiteRefusal>, Option<&ForagePatch>) -> bool,
-    ) -> Option<UVec2> {
-        let (width, height) = {
-            let registry = app.world.resource::<TileRegistry>();
-            (registry.width, registry.height)
-        };
-        for y in 0..height {
-            for x in 0..width {
-                let coord = UVec2::new(x, y);
-                let Some(verdict) = site_verdict(app, coord) else {
-                    continue;
-                };
-                if accept(verdict, app.world.resource::<ForageRegistry>().patch(coord)) {
-                    return Some(coord);
-                }
-            }
-        }
-        None
-    }
-
     /// **Ground the ladder will take seed on** — rich *and* watered. On the pinned map this is the
     /// river-valley set (~46 tiles of 4160), which is the scarcity the rung is made of.
     fn find_sowable_tile(app: &bevy::prelude::App) -> UVec2 {
@@ -20307,11 +20545,57 @@ mod tests {
         None
     }
 
-    /// Ground the land refuses, in the *specific* way named — the two failures are different problems
-    /// and the messages must say which.
-    fn find_refused_tile(app: &bevy::prelude::App, refusal: SiteRefusal) -> UVec2 {
-        find_tile(app, |verdict, _| verdict == Some(refusal))
-            .unwrap_or_else(|| panic!("the pinned map must carry ground that is {refusal:?}"))
+    /// Off-site fertile ground with a patch that some lesson would admit (`NeedsLesson` to a people
+    /// holding none), WATERED or DRY as asked - Seed Selection opens the watered, Worked Land the dry.
+    fn find_lesson_ground(app: &bevy::prelude::App, watered: bool) -> UVec2 {
+        let (width, height) = {
+            let registry = app.world.resource::<TileRegistry>();
+            (registry.width, registry.height)
+        };
+        (0..height)
+            .flat_map(|y| (0..width).map(move |x| UVec2::new(x, y)))
+            .find(|coord| {
+                site_verdict(app, *coord) == Some(Some(SiteRefusal::NeedsLesson))
+                    && app
+                        .world
+                        .resource::<ForageRegistry>()
+                        .patch(*coord)
+                        .is_some()
+                    && (water_only_verdict(app, *coord).is_none()) == watered
+                    && {
+                        // A crop a crew can name there: the basket's first plant climbs the ladder.
+                        let flora = app.world.resource::<FloraConfigHandle>().get();
+                        let crop = a_species_growing_at(app, *coord);
+                        flora.species.get(&crop).is_some_and(|def| {
+                            def.cultivation_ceiling
+                                .is_none_or(|ceiling| ceiling != shipped::plant_wild())
+                        })
+                    }
+            })
+            .unwrap_or_else(|| {
+                panic!("the pinned map must carry lesson ground (watered: {watered})")
+            })
+    }
+
+    /// Ground NO lesson opens (too thin for either relaxation's fertility floor), DRY as well, with a
+    /// patch on it - `NotGatheringSite` even to a people holding every lesson.
+    fn find_thin_dry_tile(app: &bevy::prelude::App) -> UVec2 {
+        let (width, height) = {
+            let registry = app.world.resource::<TileRegistry>();
+            (registry.width, registry.height)
+        };
+        (0..height)
+            .flat_map(|y| (0..width).map(move |x| UVec2::new(x, y)))
+            .find(|coord| {
+                site_verdict(app, *coord) == Some(Some(SiteRefusal::NotGatheringSite))
+                    && app
+                        .world
+                        .resource::<ForageRegistry>()
+                        .patch(*coord)
+                        .is_some()
+                    && water_only_verdict(app, *coord) == Some(SiteRefusal::TooDry)
+            })
+            .expect("the pinned map must carry thin dry ground with a patch")
     }
 
     /// **The gate the slice-4 knowledge finally spends.** Without Seed Selection there is no `sow`,
@@ -20396,23 +20680,19 @@ mod tests {
         assert!(queued(&mut app), "with the lesson the Farm is declared");
     }
 
-    /// **THE OFF-SITE CREW PATH IS GATED BY THE SAME LESSON**: Worked Land opens the ground, but a
-    /// crew naming a crop declares the Farm, so a people without Seed Selection is refused by name.
+    /// **THE OFF-SITE CREW PATH IS GATED BY THE LESSON THAT OPENS THE GROUND**: fertile watered
+    /// ground off the gathering sites is Seed Selection's, anywhere; dry fertile ground is Worked
+    /// Land's. Seed Selection alone is refused the dry ground (the control), and Worked Land opens
+    /// it.
     #[test]
-    fn an_off_site_crew_is_refused_without_seed_selection() {
+    fn an_off_site_crew_is_refused_without_the_lesson_that_opens_the_ground() {
         let mut app = build_world_app();
         let faction = FactionId(0);
-        let coord = find_refused_tile(&app, SiteRefusal::NeedsLesson);
-        app.world
-            .resource_mut::<DiscoveryProgressLedger>()
-            .add_progress(
-                faction,
-                core_sim::WORKED_LAND_DISCOVERY_ID,
-                scalar_from_f32(1.0),
-            );
+        let watered = find_lesson_ground(&app, true);
+        let dry = find_lesson_ground(&app, false);
         let band = starting_band_id(&mut app, faction);
-        let crop = a_species_growing_at(&app, coord);
-        let assign = |app: &mut bevy::prelude::App| {
+        let assign = |app: &mut bevy::prelude::App, coord: UVec2| {
+            let crop = a_species_growing_at(app, coord);
             handle_assign_labor(
                 app,
                 faction,
@@ -20422,14 +20702,14 @@ mod tests {
                 Some(coord.x),
                 Some(coord.y),
                 None,
-                Some(crop.clone()),
+                Some(crop),
                 None,
                 None,
                 Vec::new(),
                 false,
             );
         };
-        let crew_on = |app: &mut bevy::prelude::App| -> u32 {
+        let crew_on = |app: &mut bevy::prelude::App, coord: UVec2| -> u32 {
             app.world
                 .query::<&LaborAllocation>()
                 .iter(&app.world)
@@ -20437,14 +20717,39 @@ mod tests {
                 .filter(
                     |row| matches!(&row.target, LaborTarget::Forage { tile, .. } if *tile == coord),
                 )
-                .map(|row| row.workers)
+                // The crew the command stated (the Max): a wild off-site row is dealt no gatherers,
+                // so its staffed hands read nothing whether or not the order was accepted.
+                .map(|row| row.max_workers.unwrap_or(0))
                 .sum()
         };
-        assign(&mut app);
-        assert_eq!(crew_on(&mut app), 0, "no Seed Selection, no farming crew");
+        assign(&mut app, watered);
+        assert_eq!(crew_on(&mut app, watered), 0, "no lesson, no crew");
         grant_seed_selection(&mut app, faction);
-        assign(&mut app);
-        assert_eq!(crew_on(&mut app), 2);
+        assign(&mut app, dry);
+        assert_eq!(
+            crew_on(&mut app, dry),
+            0,
+            "Seed Selection does not open ground away from water"
+        );
+        assign(&mut app, watered);
+        assert_eq!(
+            crew_on(&mut app, watered),
+            2,
+            "Seed Selection opens fertile watered ground anywhere"
+        );
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(
+                faction,
+                core_sim::WORKED_LAND_DISCOVERY_ID,
+                scalar_from_f32(1.0),
+            );
+        assign(&mut app, dry);
+        assert_eq!(
+            crew_on(&mut app, dry),
+            2,
+            "Worked Land opens fertile dry ground too"
+        );
     }
 
     /// **Sow stands on ground the people already work.** Rung 3 knows how to move seed, not how to
@@ -20455,8 +20760,7 @@ mod tests {
     fn sow_rejected_on_ground_nobody_gathers() {
         let mut app = build_world_app();
         let faction = FactionId(0);
-        let coord = find_refused_tile(&app, SiteRefusal::NotGatheringSite);
-        grant_seed_selection(&mut app, faction);
+        let coord = find_thin_dry_tile(&app);
         spawn_working_band(
             &mut app,
             faction,
@@ -20485,17 +20789,16 @@ mod tests {
         );
     }
 
-    /// **Worked Land opens ground a gathering site does not - at the COMMAND, not only the wire.**
-    /// Fertile, watered ground that is not a gathering site is refused to a people that has not
-    /// learned Worked Land, and the refusal names the lesson and where it is learned; the same
-    /// people may not even send a crew there. Once the lesson is held the crew is accepted and the
-    /// `sow` clears the site gate (it then waits on the usual knowledge, which is granted too).
+    /// **The lessons open ground a gathering site does not - at the COMMAND, not only the wire.**
+    /// Fertile ground that is not a gathering site is refused to a people holding no lesson, and the
+    /// refusal names the NEAREST lesson it lacks (Seed Selection for watered ground). A bare gather
+    /// is refused whatever is learned (foraging is site-bound); a crew that names its crop is
+    /// sent to raise a farm once the lesson is held.
     #[test]
-    fn worked_land_opens_off_site_ground_to_a_crew_and_a_sow() {
+    fn the_lessons_open_off_site_ground_to_a_crew_and_a_sow() {
         let mut app = build_world_app();
         let faction = FactionId(0);
-        let coord = find_refused_tile(&app, SiteRefusal::NeedsLesson);
-        grant_seed_selection(&mut app, faction);
+        let coord = find_lesson_ground(&app, true);
         let band = starting_band_id(&mut app, faction);
         let crew_on = |app: &mut bevy::prelude::App| -> u32 {
             app.world
@@ -20505,7 +20808,9 @@ mod tests {
                 .filter(
                     |row| matches!(&row.target, LaborTarget::Forage { tile, .. } if *tile == coord),
                 )
-                .map(|row| row.workers)
+                // The crew the command stated (the Max): a wild off-site row is dealt no gatherers,
+                // so its staffed hands read nothing whether or not the order was accepted.
+                .map(|row| row.max_workers.unwrap_or(0))
                 .sum()
         };
         let assign = |app: &mut bevy::prelude::App, crop: Option<String>| {
@@ -20525,40 +20830,33 @@ mod tests {
                 false,
             );
         };
+        let crop = a_species_growing_at(&app, coord);
 
-        // Without the lesson: no crew, and the refusal says what to learn.
-        assign(&mut app, None);
+        // Without a lesson: no crew, and the refusal says what to learn (Seed Selection, the nearest).
+        assign(&mut app, Some(crop.clone()));
         assert_eq!(
             crew_on(&mut app),
             0,
-            "no crew goes to ground the lesson opens"
+            "no crew goes to ground a lesson opens"
         );
         let refused = app.world.resource::<CommandEventLog>().iter().any(|entry| {
             entry
                 .detail
                 .as_deref()
-                .is_some_and(|detail| detail.contains("Worked Land"))
+                .is_some_and(|detail| detail.contains("Seed Selection"))
         });
-        assert!(refused, "the refusal names the lesson");
+        assert!(refused, "the refusal names the nearest lesson");
 
-        // With it: the crew is accepted.
-        app.world
-            .resource_mut::<DiscoveryProgressLedger>()
-            .add_progress(
-                faction,
-                core_sim::WORKED_LAND_DISCOVERY_ID,
-                scalar_from_f32(1.0),
-            );
-        // **WORKED LAND OPENS FARMING, NOT GATHERING**: a bare gather on the off-site wild ground
-        // is still refused, lesson or no lesson.
+        grant_seed_selection(&mut app, faction);
+        // **THE LESSON OPENS FARMING, NOT GATHERING**: a bare gather on the off-site wild ground is
+        // still refused, lesson or no lesson.
         assign(&mut app, None);
         assert_eq!(
             crew_on(&mut app),
             0,
-            "a crew may not gather wild off-site ground just because Worked Land is known"
+            "a crew may not gather wild off-site ground just because a lesson is known"
         );
         // Naming the crop to sow makes it a farming crew: accepted, and the sow is declared with it.
-        let crop = a_species_growing_at(&app, coord);
         assign(&mut app, Some(crop));
         assert_eq!(
             crew_on(&mut app),
@@ -20707,10 +21005,7 @@ mod tests {
     fn the_site_fault_supersedes_the_ground_readings() {
         let mut app = build_world_app();
         let faction = FactionId(0);
-        let coord = find_tile(&app, |verdict, _| {
-            verdict == Some(SiteRefusal::NotGatheringSite)
-        })
-        .expect("the pinned map must carry ground off every gathering site");
+        let coord = find_thin_dry_tile(&app);
         // The same ground, judged by a rung that asks only about water: it is genuinely dry, so the
         // refusal above suppressed a real second fault rather than a vacuous one.
         assert_eq!(
@@ -20718,7 +21013,6 @@ mod tests {
             Some(SiteRefusal::TooDry),
             "the fixture tile must ALSO fail the water rule, or this asserts nothing"
         );
-        grant_seed_selection(&mut app, faction);
         spawn_working_band(
             &mut app,
             faction,
@@ -20896,14 +21190,15 @@ mod tests {
                 // land that has one, but the first such tile in the sweep can as easily be a glacier
                 // that does not, and then the assertion fails on the fixture rather than the rule.
                 Some(_) if expected_wire == SiteRefusal::NotGatheringSite.as_str() => {
-                    find_tile(&app, |verdict, patch| {
-                        verdict == Some(SiteRefusal::NotGatheringSite) && patch.is_some()
-                    })
-                    .expect("the pinned map must carry a patch off every gathering site")
+                    find_thin_dry_tile(&app)
                 }
                 Some(_) => unreachable!("only the two cases above are staged"),
             };
-            grant_seed_selection(&mut app, faction);
+            // Ground no lesson opens reads `not_gathering_site` to a people holding none; the sowable
+            // control needs the lesson that gates the verb.
+            if expected_command_fault.is_none() {
+                grant_seed_selection(&mut app, faction);
+            }
             spawn_working_band(
                 &mut app,
                 faction,
@@ -27935,6 +28230,8 @@ mod tests {
                 .terrain = SOURCE_BIOME;
         }
         seed_thriving_patch(&mut app, tile);
+        // Wild gathering is site-bound: the staged tile is a gathering site, so its crew takes something.
+        seed_gathering_site(&mut app, tile);
 
         // **The rank AND the crew, together.** The crew is what makes the survives-an-edit
         // assertion an assertion at all: an `assign_labor` the world refused would leave the mark
@@ -29888,16 +30185,31 @@ mod tests {
         assert!(allocation.assignments[0].max_workers.is_none());
         let chief_crew = allocation.assignments[0].workers;
         assert!(chief_crew > 0, "**LIVENESS**: the chief sends diggers");
+        // The chief picks the stand (the ranking is not nearest-first), so the hand commands below
+        // address the stand he listed.
+        let chief_tile = match &allocation.assignments[0].target {
+            LaborTarget::Extract { tile, .. } => *tile,
+            other => panic!("the chief's row is a dig: {other:?}"),
+        };
 
         // Hand commands on a chief-owned kind are refused naming him.
-        assign_extract(&mut app, faction, WORKING, "stone", None, 3);
+        assign_extract(&mut app, faction, chief_tile, "stone", None, 3);
         assert!(
             extraction_failure_contains(&app, "Ash keeps stone on hand - choose Crew it yourself"),
             "{:?}",
             extraction_failure_reasons(&app)
         );
-        send_command_line(&mut app, "stop_labor 0 7 1 1 stone");
-        send_command_line(&mut app, "work_priority 0 7 1 1 stone low");
+        send_command_line(
+            &mut app,
+            &format!("stop_labor 0 7 {} {} stone", chief_tile.x, chief_tile.y),
+        );
+        send_command_line(
+            &mut app,
+            &format!(
+                "work_priority 0 7 {} {} stone low",
+                chief_tile.x, chief_tile.y
+            ),
+        );
         assert!(extraction_failure_contains(&app, "Crew it yourself"));
         assert_eq!(rows(&app), 1, "refused commands changed nothing");
 
@@ -29913,7 +30225,7 @@ mod tests {
             allocation.assignments[0].max_workers,
             Some(chief_crew.max(1))
         );
-        assign_extract(&mut app, faction, WORKING, "stone", None, 2);
+        assign_extract(&mut app, faction, chief_tile, "stone", None, 2);
         assert_eq!(rows(&app), 1, "the player crews it by hand now");
         assert_eq!(
             app.world.get::<LaborAllocation>(band).unwrap().assignments[0].max_workers,

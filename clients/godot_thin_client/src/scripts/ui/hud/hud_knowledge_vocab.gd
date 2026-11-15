@@ -421,6 +421,7 @@ const DETAIL_NEEDS_NOT_BEGUN := "Your people have not started on this."
 const PRACTISE_NOTES := {
 	"cultivation": "Your people learn it by gathering from wild patches — leave more standing and they learn faster.",
 	"seed_selection": "Your people learn it by working patches they have already cultivated.",
+	"worked_land": "Your people learn it by working a farm they have already sown.",
 	"herding": "Your people learn it by hunting wild herds — leave more standing and they learn faster.",
 	"penning": "Your people learn it by keeping herds they have already tamed.",
 	# **THE ROUTE BRANCH'S TWO.** Neither carries a "leave more standing" clause: a road is not drawn

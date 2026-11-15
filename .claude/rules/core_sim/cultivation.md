@@ -254,7 +254,7 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   (`cultivation.tended_regrowth_gain`, folded in by **`forage::patch_ecology`** — the plant twin of
   `fauna::herd_ecology`, and the one seam every consumer resolves a patch's ecology through). **The
   boost ships at 1.5** — weeding and clearing the competitors lets the stand come back faster, the
-  plant twin of the kept-herd gains (`pastoral_gain` 1.25, `pen_gain` 1.5), between wild (1.0) and
+  plant twin of the kept-herd gains (`pastoral_gain` 1.25, `pen_gain` 2.7), between wild (1.0) and
   the Field's `field_regrowth_gain` (2.53, which a settled Field reads alone — the two gains do not
   compose). History: Flora Roster S2 had retired it to a NEUTRAL 1.0 (`docs/plan_flora_roster.md`
   §4.3) on the grounds that a growth boost double-counted S1's explicit competitor-removal. The
@@ -733,8 +733,8 @@ herd has one appetite).
     (`FoodSiteRegistry::is_site`). **Inherited from rungs 1–2, not invented here**: gathering itself is
     site-bound, so rung 3 narrows an already-scarce set rather than starting a second scarcity.
   - **`requires_fresh_water: false`** on the Farm's own rule: a gathering site is already the rich ground, so
-    it is sown dry or wet. The water rule is asked only of NEW ground (the `worked_land` relaxation keeps
-    `requires_fresh_water: true`). Where asked, the tile must be on or beside **fresh** water
+    it is sown dry or wet. Off the sites the water rule is asked only by the `seed_selection` relaxation
+    (`requires_fresh_water: true`); `worked_land` asks none. Where asked, the tile must be on or beside **fresh** water
     (`forage::tile_is_fresh_watered`): `TerrainTags::FRESHWATER` on the tile, **or** a river along one
     of its six sides (`Tile::has_any_river_edge` — the hydrology edge primitive, set on *both* flanking
     hexes, so the riverbank needs no neighbour lookup), **or** a fresh-water hex next door (odd-r
@@ -743,7 +743,7 @@ herd has one appetite).
     RiverDelta 210, Floodplain 205, AlluvialPlain 195) while this rung had no site rule, and stacking
     the two demanded a curated site that ALSO landed on one of three biomes AND had water — scarcity
     three times over on a set the marker list had already made small. **The dial stays live because
-    the Worked Land relaxation needs it**: it has no site rule, so fertility is the only thing between it and planting a
+    the two site relaxations need it (80 on each)**: they have no site rule, so fertility is the only thing between it and planting a
     glacier.
   - **Measured on the standard map** (earthlike 80×52, seed 119304647, through the **real Startup
     chain**): **174 tiles clear a fertility+water rule of 4160 (4.2%; the retired Field rule - the Farm now asks only a gathering site, 132 of them bearing a patch)**, against **2113** that merely
@@ -989,12 +989,13 @@ See Also: "Cultivation (Intensification Phase 1a)" (the rung below), "Corral (In
 ---
 
 
-## Worked Land - the Farm off the gathering sites
+## Seed Selection and Worked Land - Cultivate and Sow off the gathering sites
 
-The Farm (`plant:farm`, formerly `plant:field`) is sown only on a gathering site until the faction learns
-**Worked Land** (earned by working a Farm); the lesson swaps in the `site_relaxations` rule (fertile,
-watered ground, no gathering site) on both the Farm and Tended, since an off-site Farm climbs through Tended. Mechanism, the F lever and the counts: `intensification.md` -> "Site
-relaxations".
+Cultivate and the Farm stand on a gathering site (foraging itself is site-bound and never relaxes: off-site ground
+still at the wild rung yields nothing). **Seed Selection** opens ground that is already very fertile and near fresh
+water, anywhere; **Worked Land** (plows and irrigation, earned by working a Farm) opens fertile ground away from
+water too. Both are `site_relaxations` entries on Tended and the Farm (an off-site Farm climbs through Tended).
+Mechanism, the levers and the refusal wording: `intensification.md` -> "Site relaxations".
 
 ## Which band is building it — `builder_band`
 

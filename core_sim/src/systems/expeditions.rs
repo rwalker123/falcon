@@ -164,6 +164,10 @@ pub struct ExpeditionConfigs<'w> {
     pub fauna: Res<'w, FaunaConfigHandle>,
     pub labor: Res<'w, LaborConfigHandle>,
     pub ladder: Res<'w, LadderConfigHandle>,
+    /// **Gathering is site-bound for a party too**: the wild rung's site rule
+    /// (`forage::wild_ground_refuses_gathering`) is read through the same `forage::gather_season`
+    /// seam a band's forage reads.
+    pub food_sites: Res<'w, crate::FoodSiteRegistry>,
     pub combat: Res<'w, CombatConfigHandle>,
     pub creatures: Res<'w, CreaturesConfigHandle>,
     /// The TOE kit table — a detached party resolves its own attack/haul tiers off it and wears them.
@@ -2023,8 +2027,18 @@ pub fn advance_expeditions(
                     // gather at all (`NO_FORAGE_SEASON`), exactly as on the resident Forage arm.
                     let composition =
                         tile_flora_composition(&flora, &labor.forage, ground, map_seed);
-                    let seasonal =
-                        module.map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0));
+                    let seasonal = module.map_or(NO_FORAGE_SEASON, |module| {
+                        crate::forage::gather_season(
+                            module.seasonal_weight.max(0.0),
+                            forage_registry.patch(tile),
+                            crate::forage::wild_ground_refuses_gathering(
+                                &ladder,
+                                &labor.forage,
+                                ground,
+                                configs.food_sites.is_site(tile),
+                            ),
+                        )
+                    });
                     let room = (low_buffer - cohort.stores.get(FOOD)).max(scalar_zero());
                     let patch = forage_registry
                         .patch_mut(tile)

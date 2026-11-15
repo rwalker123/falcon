@@ -122,6 +122,9 @@ struct Candidate {
     phrase: String,
     rung_key: String,
     verb: String,
+    /// A patch the band holds no row on yet (the one exception to "never a new source"): approving
+    /// it stages the row as a player's row and declares the build in one step.
+    new_ground: bool,
 }
 
 /// What a band is, read once.
@@ -129,17 +132,40 @@ struct BandView {
     entity: Entity,
     id: BandId,
     faction: FactionId,
+    /// The forage tiles this band holds a crew row on.
+    forage_rows: Vec<UVec2>,
 }
 
+/// The `trigger` a proposal rides: idle hands.
+pub const TRIGGER_IDLE: &str = "idle";
+/// The `trigger` a proposal rides: the chief's food order reads Falling.
+pub const TRIGGER_FOOD_FALLING: &str = "food_falling";
+/// The escalation rung of a proposal raised by a falling food order (amber).
+const FALLING_ESCALATION: u32 = 2;
+
 fn resident_bands(world: &mut World) -> Vec<BandView> {
-    let mut query =
-        world.query_filtered::<(Entity, &BandId, &PopulationCohort), With<ResidentBand>>();
+    let mut query = world.query_filtered::<(
+        Entity,
+        &BandId,
+        &PopulationCohort,
+        Option<&LaborAllocation>,
+    ), With<ResidentBand>>();
     let mut bands: Vec<BandView> = query
         .iter(world)
-        .map(|(entity, id, cohort)| BandView {
+        .map(|(entity, id, cohort, allocation)| BandView {
             entity,
             id: *id,
             faction: cohort.faction,
+            forage_rows: allocation.map_or_else(Vec::new, |allocation| {
+                allocation
+                    .assignments
+                    .iter()
+                    .filter_map(|row| match &row.target {
+                        LaborTarget::Forage { tile, .. } => Some(*tile),
+                        _ => None,
+                    })
+                    .collect()
+            }),
         })
         .collect();
     bands.sort_by_key(|band| band.id);
@@ -179,7 +205,7 @@ fn build_key(rung: &RungDef, tile: Option<UVec2>) -> String {
 
 /// Every build `band` could declare right now, with its food figure and keep raises. The eligibility
 /// is the gates' ([`crate::build_gates`]), never a second check here.
-fn candidates(world: &World, view: &BandView) -> Vec<Candidate> {
+fn candidates(world: &World, view: &BandView, bands: &[BandView]) -> Vec<Candidate> {
     let Some(cohort) = world.get::<PopulationCohort>(view.entity) else {
         return Vec::new();
     };
@@ -326,6 +352,7 @@ fn candidates(world: &World, view: &BandView) -> Vec<Candidate> {
                 phrase: proposal_phrase(rung),
                 rung_key,
                 verb: verb.to_string(),
+                new_ground: false,
             });
         }
     });
@@ -383,12 +410,12 @@ fn candidates(world: &World, view: &BandView) -> Vec<Candidate> {
                 };
                 let food_saved = source_food_gain(
                     world,
-                    &ladder,
                     &labor,
                     &flora,
                     sim_config.map_seed,
                     &row.target,
                     rung,
+                    false,
                 );
                 let mut key = rung.wire_key();
                 if let Some(tile) = tile {
@@ -412,6 +439,111 @@ fn candidates(world: &World, view: &BandView) -> Vec<Candidate> {
                     phrase: proposal_phrase(rung),
                     rung_key: rung.wire_key(),
                     verb: verb.to_string(),
+                    new_ground: false,
+                });
+            }
+        }
+    }
+    // **THE ONE NEW SOURCE: Cultivate on a forage patch in work range the band does not work yet.**
+    // Eligibility is the gate set a player's `cultivate` on that ground passes (the site rule through
+    // `rung_site_refusal`, the lesson, ownership); another band of this faction already on it, or
+    // ground the band's people have not discovered, is skipped.
+    if let (Some(at), Some(tended)) = (
+        at,
+        ladder
+            .root_of(ladder.branch_of_kind(SourceKind::Patch))
+            .and_then(|root| ladder.above_rung(root)),
+    ) {
+        if let (Some(verb), Some(build), Some(verb_id)) = (
+            tended.verb.as_deref(),
+            tended.build.as_ref(),
+            tended.verb_id(),
+        ) {
+            let branch = tended.branch;
+            let branch_index = ladder
+                .branches_in_config_order()
+                .into_iter()
+                .position(|candidate| candidate == branch)
+                .unwrap_or_default();
+            let apron = crate::work_party::party_begins_past(&labor);
+            let fog = sim_config.fog_enabled;
+            let visibility = world.get_resource::<crate::visibility::VisibilityLedger>();
+            let sites = world.get_resource::<crate::FoodSiteRegistry>();
+            let mut tiles: Vec<UVec2> = forage.patches.keys().copied().collect();
+            tiles.sort_by_key(|tile| (tile.y, tile.x));
+            for tile in tiles {
+                let distance = crate::grid_utils::hex_distance_wrapped(
+                    at,
+                    tile,
+                    tile_registry.width,
+                    sim_config.map_topology.wrap_horizontal,
+                );
+                let worked = bands.iter().any(|other| {
+                    other.faction == view.faction && other.forage_rows.contains(&tile)
+                });
+                let unseen = fog
+                    && !visibility
+                        .is_some_and(|ledger| ledger.is_discovered(view.faction, tile.x, tile.y));
+                if distance > apron || worked || unseen {
+                    continue;
+                }
+                let target = LaborTarget::Forage {
+                    tile,
+                    floor: crate::DEFAULT_ESCAPEMENT_FLOOR,
+                    species: None,
+                    take_species: crate::components::TakeSelection::EVERYTHING,
+                };
+                if BuildSource::of(&target).is_some_and(|source| allocation.has_build(&source)) {
+                    continue;
+                }
+                if crate::build_gates::validate_improvement(world, view.faction, &target, verb_id)
+                    .is_err()
+                {
+                    continue;
+                }
+                let off_site_wild = tile_registry
+                    .index(tile.x, tile.y)
+                    .and_then(|entity| world.get::<Tile>(entity))
+                    .is_some_and(|ground| {
+                        crate::forage::wild_ground_refuses_gathering(
+                            &ladder,
+                            &labor.forage,
+                            ground,
+                            sites.is_some_and(|sites| sites.is_site(tile)),
+                        )
+                    });
+                let Some(food) = source_food_gain(
+                    world,
+                    &labor,
+                    &flora,
+                    sim_config.map_seed,
+                    &target,
+                    tended,
+                    off_site_wild,
+                ) else {
+                    continue;
+                };
+                let Some(raises) = keep_raises(cohort, allocation, &labor, &build.materials) else {
+                    continue;
+                };
+                let base = proposal_phrase(tended);
+                let phrase = match base.strip_suffix(" a patch") {
+                    Some(head) => format!("{head} the patch at ({}, {})", tile.x, tile.y),
+                    None => format!("{base} at ({}, {})", tile.x, tile.y),
+                };
+                found.push(Candidate {
+                    key: build_key(tended, Some(tile)),
+                    branch,
+                    dest: tended.rung_id(),
+                    tile: Some(tile),
+                    target,
+                    ladder_order: (branch_index, tended.order),
+                    food_saved: Some(food),
+                    raises,
+                    phrase,
+                    rung_key: tended.wire_key(),
+                    verb: verb.to_string(),
+                    new_ground: true,
                 });
             }
         }
@@ -457,12 +589,12 @@ fn keep_raises(
 /// hunt yield. `None` where the rung adds no food (and for a deposit, which yields none).
 fn source_food_gain(
     world: &World,
-    ladder: &LadderConfig,
     labor: &crate::labor_config::LaborConfig,
     flora: &crate::flora_config::FloraConfig,
     map_seed: u64,
     target: &LaborTarget,
     rung: &RungDef,
+    held_gives_nothing: bool,
 ) -> Option<f32> {
     let gain = match target {
         LaborTarget::Forage { tile, .. } => {
@@ -484,7 +616,14 @@ fn source_food_gain(
             };
             let finished = crate::forage::PlantPayoff::of(rung.trait_set());
             let held = crate::forage::PlantPayoff::of(patch.standing().traits);
-            payoff_at(finished) - payoff_at(held)
+            // Ground the wild rung refuses (off a gathering site) gives nothing while wild: the
+            // whole payoff of the destination is the gain.
+            let held_gives = if held_gives_nothing && !patch.is_cultivated() {
+                NO_FOOD
+            } else {
+                payoff_at(held)
+            };
+            payoff_at(finished) - held_gives
         }
         LaborTarget::Hunt { fauna_id, .. } => {
             let fauna = world.resource::<FaunaConfigHandle>().get();
@@ -498,7 +637,6 @@ fn source_food_gain(
         }
         _ => return None,
     };
-    let _ = ladder;
     (gain > NO_FOOD).then_some(gain)
 }
 
@@ -555,6 +693,7 @@ pub fn escalation_rung(idle_turns: u32, notice: u32, wasted: u32) -> u32 {
 fn resolve(
     candidate: &Candidate,
     keeper: &Keeper,
+    trigger: &str,
     idle: u32,
     idle_turns: u32,
     escalation: u32,
@@ -562,7 +701,9 @@ fn resolve(
     let reason = candidate
         .food_saved
         .map(|saved| {
-            if matches!(
+            if candidate.new_ground {
+                format!("+{saved:.1} food a turn once tended")
+            } else if matches!(
                 candidate.target,
                 LaborTarget::Band { .. } | LaborTarget::Tile { .. }
             ) {
@@ -573,11 +714,14 @@ fn resolve(
         })
         .unwrap_or_default();
     let verb = if keeper.plural { "propose" } else { "proposes" };
+    let lead = if trigger == TRIGGER_FOOD_FALLING {
+        "Food falling".to_string()
+    } else {
+        hands_phrase(escalation, idle, idle_turns)
+    };
     let mut text = format!(
         "{} \u{b7} {} {verb}: {}",
-        hands_phrase(escalation, idle, idle_turns),
-        keeper.subject,
-        candidate.phrase
+        lead, keeper.subject, candidate.phrase
     );
     if !reason.is_empty() {
         text.push_str(&format!(" \u{2014} {reason}"));
@@ -606,6 +750,7 @@ fn resolve(
         escalation,
         keep_raises: candidate.raises.clone(),
         text,
+        trigger: trigger.to_string(),
     }
 }
 
@@ -685,7 +830,7 @@ pub fn refresh_proposals(world: &mut World, advance: bool) {
         book.bands
             .retain(|id, _| bands.iter().any(|band| band.id == *id));
         for view in &bands {
-            let (idle, led, keeper) = {
+            let (idle, led, keeper, falling) = {
                 let (Some(cohort), Some(allocation)) = (
                     world.get::<PopulationCohort>(view.entity),
                     world.get::<LaborAllocation>(view.entity),
@@ -701,7 +846,12 @@ pub fn refresh_proposals(world: &mut World, advance: bool) {
                     .get::<BandName>(view.entity)
                     .map_or_else(|| format!("Band {}", view.id.0), |name| name.0.clone());
                 let keeper = Keeper::of(world.get::<BandLeadership>(view.entity), &name);
-                (workforce.idle(), keeper.is_some(), keeper)
+                (
+                    workforce.idle(),
+                    keeper.is_some(),
+                    keeper,
+                    crate::food_orders::food_order_is_falling(cohort, allocation),
+                )
             };
             let state = book.bands.entry(view.id).or_default();
             if advance {
@@ -717,19 +867,40 @@ pub fn refresh_proposals(world: &mut World, advance: bool) {
             }
             state.deferred.retain(|_, until| *until > tick);
             state.current = None;
-            let (true, Some(keeper)) = (led && idle > 0, keeper) else {
+            // **Two triggers**: idle hands, or the food order reading Falling (the one judgement
+            // leadership and the wire's order line use). When both hold the idle wording wins; a
+            // Falling-only proposal offers only builds that add food.
+            let idle_trigger = idle > 0;
+            let (true, Some(keeper)) = (led && (idle_trigger || falling), keeper) else {
                 continue;
             };
-            let mut found = candidates(world, view);
+            let mut found = candidates(world, view, &bands);
             found.retain(|candidate| !state.deferred.contains_key(&candidate.key));
+            if !idle_trigger {
+                found.retain(|candidate| candidate.food_saved.is_some_and(|saved| saved > NO_FOOD));
+            }
             rank(&mut found);
             if let Some(best) = found.first() {
-                let escalation = escalation_rung(
+                let (trigger, escalation) = if idle_trigger {
+                    (
+                        TRIGGER_IDLE,
+                        escalation_rung(
+                            state.idle_turns,
+                            orders.proposal_idle_turns_notice,
+                            orders.proposal_idle_turns_wasted,
+                        ),
+                    )
+                } else {
+                    (TRIGGER_FOOD_FALLING, FALLING_ESCALATION)
+                };
+                state.current = Some(resolve(
+                    best,
+                    &keeper,
+                    trigger,
+                    idle,
                     state.idle_turns,
-                    orders.proposal_idle_turns_notice,
-                    orders.proposal_idle_turns_wasted,
-                );
-                state.current = Some(resolve(best, &keeper, idle, state.idle_turns, escalation));
+                    escalation,
+                ));
             }
         }
     });
@@ -753,6 +924,9 @@ impl Approval {
     /// source takes and then calls [`commit_approval`] with `declared = true`. `None` for a band or tile
     /// improvement, which [`commit_approval`] declares itself.
     pub fn source_build(&self) -> Option<(&LaborTarget, RungId)> {
+        if self.candidate.new_ground {
+            return None;
+        }
         match self.candidate.target {
             LaborTarget::Band { .. } | LaborTarget::Tile { .. } => None,
             _ => Some((&self.candidate.target, self.candidate.dest)),
@@ -776,7 +950,8 @@ pub fn prepare_approval(
         .current(band)
         .map(|proposal| proposal.build_key.clone())
         .ok_or_else(|| "Nobody is proposing a build for that band.".to_string())?;
-    let candidate = candidates(world, &view)
+    let all = resident_bands(world);
+    let candidate = candidates(world, &view, &all)
         .into_iter()
         .find(|candidate| candidate.key == key)
         .ok_or_else(|| "That build is no longer possible.".to_string())?;
@@ -818,6 +993,8 @@ pub fn commit_approval(
                 LaborTarget::Tile { tile, branch } => {
                     improvements.place_owned(*tile, *branch, faction, Some(band), &ladder);
                 }
+                // A patch the band holds no row on: the row is staged below as a player's row.
+                LaborTarget::Forage { .. } if candidate.new_ground => {}
                 _ => return Err("That build has no place to stand.".to_string()),
             }
         }

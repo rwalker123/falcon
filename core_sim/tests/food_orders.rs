@@ -27,10 +27,49 @@ fn set_hands(app: &mut App, band: Entity, hands: f32) {
     app.world.get_mut::<PopulationCohort>(band).unwrap().working = scalar_from_f32(hands);
 }
 
-/// A world whose band has a chief, only the food and fodder orders listed.
+/// A world whose band has a chief, only the food and fodder orders listed, and EVERY patch a gathering
+/// site: foraging is site-bound, and these fixtures are about how the chief spreads his hands over
+/// many gatherable sources, so they stand on ground where every patch is gatherable.
 fn world() -> (App, Entity) {
+    world_with_sites(true)
+}
+
+/// [`world`], with every patch made a gathering site only when `every_patch_a_site`; otherwise the
+/// world's own curated sites stand and most patches are off them.
+fn world_with_sites(every_patch_a_site: bool) -> (App, Entity) {
     let mut app = build_test_app();
     app.update();
+    if every_patch_a_site {
+        let template = app
+            .world
+            .resource::<core_sim::FoodSiteRegistry>()
+            .sites()
+            .first()
+            .cloned()
+            .expect("the world carries a gathering site");
+        let mut sites: Vec<core_sim::FoodSiteEntry> = app
+            .world
+            .resource::<core_sim::FoodSiteRegistry>()
+            .sites()
+            .to_vec();
+        let patches: Vec<bevy::prelude::UVec2> = app
+            .world
+            .resource::<core_sim::ForageRegistry>()
+            .patches
+            .keys()
+            .copied()
+            .collect();
+        for position in patches {
+            if !sites.iter().any(|site| site.position == position) {
+                let mut site = template.clone();
+                site.position = position;
+                sites.push(site);
+            }
+        }
+        app.world
+            .resource_mut::<core_sim::FoodSiteRegistry>()
+            .set_sites(sites);
+    }
     app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
     {
         let mut handle = app.world.resource_mut::<LaborConfigHandle>();
@@ -1048,5 +1087,323 @@ fn a_pasture_fed_pen_publishes_no_hay_consumer_and_no_absurd_cover() {
     assert!(
         on_hand > 0.0 && on_hand.is_finite() && on_hand <= HAY_ON_HAND / draw * 1.01,
         "a finite turns figure, got {on_hand} over a draw of {draw}"
+    );
+}
+
+/// **THE CHIEF LISTS ONLY PATCHES HIS CREW WOULD TAKE SOMETHING FROM.** Foraging is site-bound, so a
+/// patch still at the wild rung on ground that is not a gathering site yields nothing and is no
+/// candidate; a gathering site still is. The control is a patch off the sites inside the apron: it
+/// is there (the precondition) and never listed.
+#[test]
+fn the_chief_lists_no_off_site_wild_patch_and_still_lists_a_gathering_site() {
+    let (mut app, band) = world_with_sites(false);
+    set_target(&mut app, band, FOOD, 1000);
+    set_larder(&mut app, band, NEED);
+    let camp = {
+        let cohort = app.world.get::<PopulationCohort>(band).unwrap();
+        app.world
+            .get::<core_sim::Tile>(cohort.current_tile)
+            .unwrap()
+            .position
+    };
+    let (width, wrap) = {
+        let registry = app.world.resource::<core_sim::TileRegistry>();
+        (
+            registry.width,
+            app.world
+                .resource::<SimulationConfig>()
+                .map_topology
+                .wrap_horizontal,
+        )
+    };
+    let range = app
+        .world
+        .resource::<LaborConfigHandle>()
+        .get()
+        .band_work_range;
+    let sites = app.world.resource::<core_sim::FoodSiteRegistry>();
+    let in_reach: Vec<bevy::prelude::UVec2> = app
+        .world
+        .resource::<core_sim::ForageRegistry>()
+        .patches
+        .keys()
+        .copied()
+        .filter(|tile| {
+            core_sim::grid_utils::hex_distance_wrapped(camp, *tile, width, wrap) <= range
+        })
+        .collect();
+    let off_site = in_reach
+        .iter()
+        .filter(|tile| !sites.is_site(**tile))
+        .count();
+    let on_site = in_reach.iter().filter(|tile| sites.is_site(**tile)).count();
+    assert!(
+        off_site > 0 && on_site > 0,
+        "precondition: the camp has both kinds of patch in reach ({off_site} off-site, {on_site} on)"
+    );
+    let listed: Vec<bevy::prelude::UVec2> = chief_rows(&app, band, FOOD)
+        .into_iter()
+        .filter_map(|row| {
+            let (x, y) = row.0.strip_prefix("f:")?.split_once(',')?;
+            Some(bevy::prelude::UVec2::new(x.parse().ok()?, y.parse().ok()?))
+        })
+        .collect();
+    assert!(
+        !listed.is_empty(),
+        "**LIVENESS**: the chief still lists a gathering site"
+    );
+    let sites = app.world.resource::<core_sim::FoodSiteRegistry>();
+    for tile in &listed {
+        assert!(
+            sites.is_site(*tile),
+            "the chief lists an off-site wild patch at {tile:?}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// A band shaped like Saltmarsh: a thin larder, a declared build on off-site wild ground, a chief's
+// forage rows on sites.
+// ---------------------------------------------------------------------------------------------
+
+/// The hands the band fields: every one of them is spoken for in the live case.
+const SALTMARSH_HANDS: f32 = 32.0;
+/// A larder a turn or two deep, so the food order is falling and food-first fires.
+const THIN_LARDER: f32 = NEED * 2.0;
+/// The chief's food target, in turns: far above the larder.
+const SALTMARSH_TARGET: u32 = 20;
+
+/// One forage row as the encoded frame carries it.
+#[derive(Debug)]
+struct FrameRow {
+    x: u32,
+    y: u32,
+    workers: u32,
+    hold: u32,
+    useful: u32,
+    reach: u32,
+    order_kind: String,
+}
+
+/// What the encoded frame says about the band's forage rows, patches and food order.
+#[derive(Debug)]
+struct Frame {
+    rows: Vec<FrameRow>,
+    /// `(x, y, build_blocked_reason)` per patch row.
+    patches: Vec<(u32, u32, String)>,
+    /// The food order's published `(holdHeads, refillHeads)`.
+    food_heads: (u32, u32),
+    /// The hands staffed on every row (any kind) the food order lists.
+    food_staffed: u32,
+}
+
+fn encoded_frame(app: &mut App) -> Frame {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    core_sim::recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<core_sim::SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let snap = envelope.payload_as_snapshot().expect("a snapshot");
+    let cohorts = snap
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the cohort list");
+    let mut rows = Vec::new();
+    let mut food_heads = (0, 0);
+    let mut food_staffed = 0;
+    for cohort in cohorts.iter() {
+        for order in cohort.bandOrders().into_iter().flatten() {
+            if order.kind() == Some(FOOD) {
+                food_heads = (order.holdHeads(), order.refillHeads());
+            }
+        }
+        for row in cohort.laborAssignments().into_iter().flatten() {
+            if row.orderKind() == Some(FOOD) {
+                food_staffed += row.workers();
+            }
+            if row.kind().unwrap_or_default() == "forage" {
+                rows.push(FrameRow {
+                    x: row.targetX(),
+                    y: row.targetY(),
+                    workers: row.workers(),
+                    hold: row.holdCrew(),
+                    useful: row.usefulCrew(),
+                    reach: row.reachCrew(),
+                    order_kind: row.orderKind().unwrap_or_default().to_string(),
+                });
+            }
+        }
+    }
+    let patches = snap
+        .subsistence()
+        .and_then(|section| section.foragePatches())
+        .map(|list| {
+            list.iter()
+                .map(|patch| {
+                    (
+                        patch.x(),
+                        patch.y(),
+                        patch.buildBlockedReason().unwrap_or_default().to_string(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Frame {
+        rows,
+        patches,
+        food_heads,
+        food_staffed,
+    }
+}
+
+/// Stage the Saltmarsh shape and return `(app, band, the off-site patch)`.
+fn saltmarsh() -> (App, Entity, bevy::prelude::UVec2) {
+    let (mut app, band) = world_with_sites(false);
+    let (band_tile, faction) = {
+        let cohort = app.world.get::<PopulationCohort>(band).unwrap();
+        (
+            app.world
+                .get::<core_sim::Tile>(cohort.current_tile)
+                .unwrap()
+                .position,
+            cohort.faction,
+        )
+    };
+    let work_range = app
+        .world
+        .resource::<LaborConfigHandle>()
+        .get()
+        .band_work_range;
+    let (width, wrap) = {
+        let config = app.world.resource::<SimulationConfig>();
+        (config.grid_size.x, config.map_topology.wrap_horizontal)
+    };
+    let mut nearby: Vec<bevy::prelude::UVec2> = app
+        .world
+        .resource::<core_sim::ForageRegistry>()
+        .patches
+        .keys()
+        .copied()
+        .filter(|tile| {
+            core_sim::grid_utils::hex_distance_wrapped(band_tile, *tile, width, wrap) <= work_range
+        })
+        .collect();
+    nearby.sort_by_key(|tile| (tile.y, tile.x));
+    let off_site = *nearby.first().expect("a patch in range");
+    // Every other patch in range is a site; the staged one is not.
+    let mut sites: Vec<core_sim::FoodSiteEntry> = app
+        .world
+        .resource::<core_sim::FoodSiteRegistry>()
+        .sites()
+        .iter()
+        .filter(|site| site.position != off_site)
+        .cloned()
+        .collect();
+    let template = sites.first().cloned().expect("a site");
+    for tile in nearby.iter().filter(|tile| **tile != off_site) {
+        if !sites.iter().any(|site| site.position == *tile) {
+            let mut site = template.clone();
+            site.position = *tile;
+            sites.push(site);
+        }
+    }
+    app.world
+        .resource_mut::<core_sim::FoodSiteRegistry>()
+        .set_sites(sites);
+    {
+        let mut ledger = app
+            .world
+            .resource_mut::<core_sim::DiscoveryProgressLedger>();
+        for id in [
+            core_sim::CULTIVATION_DISCOVERY_ID,
+            core_sim::SEED_SELECTION_DISCOVERY_ID,
+            core_sim::WORKED_LAND_DISCOVERY_ID,
+        ] {
+            ledger.add_progress(faction, id, core_sim::scalar_one());
+        }
+    }
+    set_target(&mut app, band, FOOD, SALTMARSH_TARGET);
+    {
+        let mut allocation = app.world.get_mut::<LaborAllocation>(band).unwrap();
+        allocation.assignments.push(core_sim::LaborAssignment {
+            party: None,
+            muster_crew: 0,
+            planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
+            max_workers: None,
+            staffing: Default::default(),
+            target: LaborTarget::Forage {
+                tile: off_site,
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
+                species: None,
+                take_species: TakeSelection::EVERYTHING,
+            },
+            workers: 0,
+            kit: None,
+            priority: SourcePriority::Normal,
+        });
+        assert!(allocation.declare_build(
+            core_sim::BuildSource::Patch(off_site),
+            core_sim::BuildJob::Climb(core_sim::shipped::plant_tended()),
+        ));
+    }
+    set_larder_with_hands(&mut app, band, THIN_LARDER, SALTMARSH_HANDS);
+    (app, band, off_site)
+}
+
+/// **A FORAGE ROW ON GROUND THAT REFUSES GATHERING IS DEALT NO GATHERERS**, on the encoded frame: a
+/// band shaped like Saltmarsh (32 hands, a thin larder, the chief's food order falling) holds a player
+/// row and a declared Tended build on an off-site wild patch. The row's hold, reach and useful crews
+/// read nothing (they read 12 / 12 / 12 before the staffing read the gather seam), and the chief's
+/// rows on the sites around it are still dealt hands.
+#[test]
+fn a_forage_row_on_ground_that_refuses_gathering_is_dealt_no_gatherers() {
+    let (mut app, _band, off_site) = saltmarsh();
+    let frame = encoded_frame(&mut app);
+    let off = frame
+        .rows
+        .iter()
+        .find(|row| row.x == off_site.x && row.y == off_site.y)
+        .expect("the player's row on the off-site patch is on the wire");
+    assert_eq!(
+        (off.workers, off.hold, off.reach, off.useful),
+        (0, 0, 0, 0),
+        "off-site wild ground takes nothing, so it is dealt no gatherers: {off:?}"
+    );
+    let on_sites: u32 = frame
+        .rows
+        .iter()
+        .filter(|row| row.order_kind == FOOD)
+        .map(|row| row.workers)
+        .sum();
+    assert_eq!(
+        frame.food_heads.0 + frame.food_heads.1,
+        frame.food_staffed,
+        "the food order's heads (hold + refill) are the hands its rows are staffed: {frame:?}"
+    );
+    for row in frame.rows.iter().filter(|row| row.order_kind == FOOD) {
+        assert!(
+            row.useful >= row.workers,
+            "a chief row's published useful crew covers the hands it is dealt: {row:?}"
+        );
+    }
+    assert!(
+        on_sites > 0,
+        "**LIVENESS**: the chief's rows on the gathering sites are staffed: {:?}",
+        frame.rows
+    );
+    assert!(
+        frame
+            .patches
+            .iter()
+            .any(|(x, y, _)| (*x, *y) == (off_site.x, off_site.y)),
+        "the off-site patch is published"
     );
 }

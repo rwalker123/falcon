@@ -118,6 +118,7 @@ var _ladder_branches: Array = []
 const KNOWLEDGE_UNLOCK_NOTES := {
 	"cultivation": "The Cultivate policy is now available on Thriving wild patches.",
 	"seed_selection": "The Sow policy is now available — but only on rich, well-watered ground.",
+	"worked_land": "Fields can now be sown on fertile ground away from water too.",
 	"herding": "The Tame policy is now available on wild herds that can be domesticated.",
 	"penning": "The Corral policy is now available on herds you have tamed.",
 	# **THE ROUTE BRANCH'S TWO LESSONS.** Each names the verb it opens, in the siblings' voice. They

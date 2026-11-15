@@ -2642,44 +2642,51 @@ A client therefore reads the roaming branch exactly as it reads any other column
 
 ---
 
-## Site relaxations - Worked Land loosens the Farm's ground rule
+## Site relaxations - two lessons open fertile ground beyond the gathering sites
 
-A rung may declare `site_relaxations: [{ knowledge, site_requirement }]` beside its own
-`site_requirement`. The rule that applies is the LAST relaxation whose lesson the faction holds
-(`RungDef::effective_site_requirement`), else the rung's own. The shipped Farm (`plant:farm`) carries one,
-and so does Tended (`plant:tended`), the same entry copied whole:
-`worked_land` (discovery **2022**, cost 20, earned by working a Farm) drops `requires_gathering_site` and
-asks `min_forage_capacity` **80** and `requires_fresh_water`. Tended carries it because it is the leg every
-off-site Farm climbs through (the labor arm site-checks only `places_source` rungs), so the wire's per-rung
-site refusal (`rung_site_refusal` over every site-gated rung) must admit on Tended what it admits on the Farm.
-A consequence: a Worked-Land faction with a crew on off-site ground may also declare a bare `cultivate`
-there. The Farm's own rule asks a gathering site and nothing
-else (`requires_fresh_water` false, `min_forage_capacity` 0): sites are already the rich ground, so water matters
-only for new ground. **A lesson only loosens** - `rung_site_refusal` admits whatever the rung's own rule admits
-before it consults a relaxation, so a dry gathering site never loses the Farm to the stricter relaxed rule. A
-relaxation needs a base rule to loosen and a knowledge `discovery_id_for` resolves; both are refused at boot.
+Design: `docs/plan_intensification_ladder.md` rung 3. **Foraging is site-bound**: `plant:wild` asks a gathering
+site and nothing relaxes it (no `site_relaxations`). **Cultivate (`plant:tended`) and Sow (`plant:farm`) stand on a
+gathering site** (their own rule: Tended as foraging, the Farm with no water rule), and two lessons loosen where:
 
-**F = 80 is the opening lever.** Measured on earthlike 80x52 seed 119304647 (4160 tiles, 132 gathering sites,
-2113 patch tiles): all **132** gathering sites bearing a patch take a farm (water not asked), and the off-site
-watered patch tiles open by floor: F>=70 377, F>=80 **280** (about 2x the on-site set, 7% of the map), F>=100
-~250, F>=195 101 (412 sowable in all at F=80).
+| lesson | opens | rule (both entries `min_forage_capacity` **80**, separate levers) |
+|---|---|---|
+| `seed_selection` (earned by working a tended patch) | ground that is already very fertile and near fresh water, ANYWHERE | not a gathering site, `requires_fresh_water` true |
+| `worked_land` (earned by working a Farm: plows and irrigation) | fertile ground away from water too | not a gathering site, `requires_fresh_water` false |
 
-**A refusal the lesson would lift is its own refusal.** `SiteRefusal::NeedsLesson` (wire key `needs_lesson`) wins
-over the ordinary refusal when an unlearned relaxation would admit the ground; the per-viewer capture sweep keys
-its cache on the viewer's held lesson set (`held_site_lessons`). `forage::rung_site_refusal` takes the `knows`
-predicate as its seventh argument.
+A rung declares `site_relaxations: [{ knowledge, site_requirement }]` beside its own `site_requirement`; Tended and
+the Farm carry the same two entries, in that order. The rule a faction is judged by is the LAST relaxation whose
+lesson it holds (`RungDef::effective_site_requirement`), so a people holding both gets the looser `worked_land`
+rule. **A lesson only loosens** - `forage::rung_site_refusal` admits whatever the rung's own rule admits before it
+consults a relaxation, so a dry gathering site never loses the Farm. A relaxation needs a base rule to loosen and a
+knowledge `discovery_id_for` resolves; both are refused at boot. Cultivate still unlocks on `cultivation`: the
+lessons only widen WHERE.
 
-**Worked Land opens farming, not gathering.** A sow is declared on a tile a crew already works, so an off-site
-tile needs a crew first. The `assign_labor forage` gate therefore admits a crew on ground the root (gathering)
-rule refuses only when the highest `places_source` rung admits it for this faction AND the crew is a farming
-crew: it names a crop, or the patch already holds the Farm or is being raised to it. A bare gather on off-site
-ground is refused whatever the faction knows. An admitted off-site crew has the Farm build declared with it
-(`off_site_placing_rung`), so it is a builder from its first turn. Player path: learn Worked Land by working a
-Farm on a gathering site, then assign a crew to the off-site tile naming a crop to sow.
+**A refusal the lesson would lift is its own refusal, and it names the NEAREST lesson the faction lacks.**
+`SiteRefusal::NeedsLesson` (wire key `needs_lesson`) wins over the ordinary refusal when an unlearned relaxation
+would admit the ground; `RungDef::lesson_that_would_admit` returns the first relaxation not yet held whose rule
+admits the readings: `seed_selection` for watered ground, `worked_land` for dry. `build_gates::plant_rung_nearest_lesson`
+is the one reading the command's message uses (`needs_lesson_message` takes the lesson). A tile no lesson admits
+(too thin) keeps its ordinary refusal, and a people holding the lesson reads the ordinary `too_poor` / `too_dry`.
+The per-viewer capture sweep keys its cache on the viewer's held lesson set (`held_site_lessons`).
+`forage::rung_site_refusal` takes the `knows` predicate as its last argument.
+
+**The lessons open farming and cultivating, never gathering.** A build is declared on a tile a crew already works,
+so an off-site tile needs a crew first. `assign_labor forage` admits a crew on ground the root (gathering) rule
+refuses only when the highest `places_source` rung admits it for this faction AND the crew is a farming crew: it
+names a crop, or the patch already holds the Farm or is being raised to it (`off_site_placing_rung`). A bare gather
+on off-site ground is refused whatever the faction knows.
+
+**On off-site ground still at the wild rung a crew takes NOTHING.** The gather season is the one input the take, its
+forecast, the assign-time seed, the staffing and the snapshot share, so `forage::gather_season(season, patch,
+wild_refused)` zeroes it where `forage::wild_ground_refuses_gathering` (the wild rung through `rung_site_refusal`)
+refuses the ground and the patch is not cultivated. Every reader (the labor arm, `take_claims`, the staffing
+closures, the work-party forecast query, the assign-time seed, the capture's `seasonal_weights`) goes through it, so
+forecast equals actual. A Tended or Farm patch the band holds off-site keeps its season. The build is unaffected: a
+declared Cultivate on off-site ground is raised by builders and needs no take.
 
 The catalog row carries `siteRule` (`requiresGatheringSite`, `minForageCapacity`, `requiresFreshWater`) and
-`siteRelaxations` (`knowledge` + nested `rule`), so a client words the hint and draws the opened ground from
-data (native dict keys `site_rule`, `site_relaxations`).
+`siteRelaxations` (`knowledge` + nested `rule`), in rung-config order, so a client words the hint and draws the
+opened ground from data (native dict keys `site_rule`, `site_relaxations`).
 
 ## Size tiers and knowledge gains - the Ranch is a big Pen, not a fourth rung
 

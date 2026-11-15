@@ -692,6 +692,8 @@ fn seed_snapshot() -> WorldSnapshot {
         // A proposal's own `keep_raises` is a nested repeated field, so both levels are seeded.
         cohort.chief_proposals = rows_of(crate::state::population::ChiefProposalState {
             keep_raises: vec![crate::state::population::KeepRaiseState::default()],
+            // The appended wire field, so the decode golden carries it (`idle` | `food_falling`).
+            trigger: "food_falling".to_string(),
             ..Default::default()
         });
         cohort.envoy_terms = seeded_terms();

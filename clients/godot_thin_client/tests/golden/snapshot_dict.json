@@ -7405,6 +7405,7 @@
           "text": "populations[0].chief_proposals[0].text",
           "tile_x": 56,
           "tile_y": 45,
+          "trigger": "food_falling",
           "verb": "populations[0].chief_proposals[0].verb"
         },
         {
@@ -7428,6 +7429,7 @@
           "text": "populations[0].chief_proposals[1].text",
           "tile_x": 105,
           "tile_y": 116,
+          "trigger": "food_falling",
           "verb": "populations[0].chief_proposals[1].verb"
         },
         {
@@ -7451,6 +7453,7 @@
           "text": "populations[0].chief_proposals[2].text",
           "tile_x": 6,
           "tile_y": 195,
+          "trigger": "food_falling",
           "verb": "populations[0].chief_proposals[2].verb"
         }
       ],
@@ -10359,6 +10362,7 @@
           "text": "populations[1].chief_proposals[0].text",
           "tile_x": 75,
           "tile_y": 86,
+          "trigger": "food_falling",
           "verb": "populations[1].chief_proposals[0].verb"
         },
         {
@@ -10382,6 +10386,7 @@
           "text": "populations[1].chief_proposals[1].text",
           "tile_x": 26,
           "tile_y": 15,
+          "trigger": "food_falling",
           "verb": "populations[1].chief_proposals[1].verb"
         },
         {
@@ -10405,6 +10410,7 @@
           "text": "populations[1].chief_proposals[2].text",
           "tile_x": 109,
           "tile_y": 120,
+          "trigger": "food_falling",
           "verb": "populations[1].chief_proposals[2].verb"
         }
       ],
@@ -13257,6 +13263,7 @@
           "text": "populations[2].chief_proposals[0].text",
           "tile_x": 194,
           "tile_y": 183,
+          "trigger": "food_falling",
           "verb": "populations[2].chief_proposals[0].verb"
         },
         {
@@ -13280,6 +13287,7 @@
           "text": "populations[2].chief_proposals[1].text",
           "tile_x": 43,
           "tile_y": 54,
+          "trigger": "food_falling",
           "verb": "populations[2].chief_proposals[1].verb"
         },
         {
@@ -13303,6 +13311,7 @@
           "text": "populations[2].chief_proposals[2].text",
           "tile_x": 84,
           "tile_y": 73,
+          "trigger": "food_falling",
           "verb": "populations[2].chief_proposals[2].verb"
         }
       ],

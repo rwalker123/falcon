@@ -8506,24 +8506,46 @@ mod tests {
     }
 
     /// **THE EFFECTIVE RULE IS THE LAST RELAXATION THE FACTION HOLDS**, else the rung's own - the
-    /// shipped Farm's own rule needs a gathering site, and Worked Land drops it.
+    /// shipped Farm's own rule needs a gathering site; Seed Selection drops it and keeps the water
+    /// rule; Worked Land drops it and the water rule too; a people holding both is judged by the
+    /// looser Worked Land rule.
     #[test]
     fn the_effective_site_rule_is_the_last_held_relaxation() {
         let ladder = LadderConfig::builtin();
-        let farm = ladder.rung(shipped::plant_farm());
-        let own = farm
-            .effective_site_requirement(&|_| false)
-            .expect("the Farm asks something of the site");
-        assert!(own.requires_gathering_site);
-        let relaxed = farm
-            .effective_site_requirement(&|name| name == "worked_land")
-            .expect("the relaxation still asks something");
-        assert!(!relaxed.requires_gathering_site);
+        for rung in [shipped::plant_tended(), shipped::plant_farm()] {
+            let rung = ladder.rung(rung);
+            let own = rung
+                .effective_site_requirement(&|_| false)
+                .expect("the rung asks something of the site");
+            assert!(own.requires_gathering_site);
+            let seeded = rung
+                .effective_site_requirement(&|name| name == "seed_selection")
+                .expect("the relaxation still asks something");
+            assert!(!seeded.requires_gathering_site);
+            assert!(
+                seeded.requires_fresh_water,
+                "Seed Selection keeps the water rule"
+            );
+            assert!(seeded.min_forage_capacity > own.min_forage_capacity);
+            let worked = rung
+                .effective_site_requirement(&|name| name == "worked_land")
+                .expect("the relaxation still asks something");
+            assert!(!worked.requires_gathering_site);
+            assert!(!worked.requires_fresh_water, "Worked Land asks no water");
+            assert!(worked.min_forage_capacity > own.min_forage_capacity);
+            let both = rung
+                .effective_site_requirement(&|_| true)
+                .expect("the relaxation still asks something");
+            assert!(
+                !both.requires_fresh_water,
+                "holding both lessons judges by the looser Worked Land rule"
+            );
+        }
+        let wild = ladder.rung(shipped::plant_wild());
         assert!(
-            relaxed.requires_fresh_water,
-            "the water rule survives the lesson"
+            wild.site_relaxations.is_empty(),
+            "foraging is site-bound: no lesson relaxes the wild rung"
         );
-        assert!(relaxed.min_forage_capacity > own.min_forage_capacity);
     }
 
     #[test]

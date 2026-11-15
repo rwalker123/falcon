@@ -748,6 +748,7 @@ A **provisioned** party (`Scout` and `Trade`, the two missions that drain
    conversion rate (the plant twin of the roadside kill's `carry_room_biomass`), so a nearly
    topped-up party takes less off the ground rather than gathering food it must drop. The kit's
    baskets are charged `WearQuantum::BiomassGathered` for the biomass actually taken.
+   **The gather is site-bound, as a band's is**: the season goes through `forage::gather_season` with `wild_ground_refuses_gathering`, so a stand at the wild rung off a gathering site yields a party nothing, a gathering site yields, and ground opened by Seed Selection or Worked Land yields once it is Tended (`intensification.md` -> "Site relaxations"). Pinned by `tests/expedition_replenish.rs::a_scout_gathers_nothing_off_a_gathering_site_and_something_on_one`.
 2. **Hunt.** Only if the party is *still* below the mark does it fall through to the opportunistic
    roadside kill, unchanged.
 

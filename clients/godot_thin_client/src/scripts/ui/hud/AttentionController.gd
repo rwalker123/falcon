@@ -438,17 +438,44 @@ func _idle_workers_row(entry: Dictionary) -> Dictionary:
         "x": int(entry.get("current_x", -1)), "y": int(entry.get("current_y", -1)),
     }
     # **THE CHIEF'S PROPOSAL RIDES THIS ENTRY** — the sim's sentence as published, never composed here.
-    var proposals: Array = entry.get(HudAttentionVocab.CHIEF_PROPOSALS_KEY, [])
-    if not proposals.is_empty() and proposals[0] is Dictionary:
-        var proposal: Dictionary = proposals[0]
-        row[HudAttentionVocab.ATTENTION_PROPOSAL] = {
-            HudAttentionVocab.PROPOSAL_TEXT_KEY: String(proposal.get(HudAttentionVocab.PROPOSAL_TEXT_KEY, "")),
-            HudAttentionVocab.PROPOSAL_BUILD_KEY: String(proposal.get(HudAttentionVocab.PROPOSAL_BUILD_KEY, "")),
-            HudAttentionVocab.PROPOSAL_ESCALATION_KEY: int(proposal.get(HudAttentionVocab.PROPOSAL_ESCALATION_KEY, 0)),
-            HudAttentionVocab.PROPOSAL_BAND_ID: int(entry.get("band_id", HudConst.NO_BAND_ID)),
-            HudAttentionVocab.PROPOSAL_FACTION: int(entry.get("faction", HudConst.PLAYER_FACTION_ID)),
-        }
+    var block := _proposal_block_of(entry)
+    if not block.is_empty():
+        row[HudAttentionVocab.ATTENTION_PROPOSAL] = block
     return row
+
+## The orb's proposal block for a band's published proposal, `{}` when it has none.
+func _proposal_block_of(entry: Dictionary) -> Dictionary:
+    var proposals: Array = entry.get(HudAttentionVocab.CHIEF_PROPOSALS_KEY, [])
+    if proposals.is_empty() or not (proposals[0] is Dictionary):
+        return {}
+    var proposal: Dictionary = proposals[0]
+    return {
+        HudAttentionVocab.PROPOSAL_TEXT_KEY: String(proposal.get(HudAttentionVocab.PROPOSAL_TEXT_KEY, "")),
+        HudAttentionVocab.PROPOSAL_BUILD_KEY: String(proposal.get(HudAttentionVocab.PROPOSAL_BUILD_KEY, "")),
+        HudAttentionVocab.PROPOSAL_ESCALATION_KEY: int(proposal.get(HudAttentionVocab.PROPOSAL_ESCALATION_KEY, 0)),
+        HudAttentionVocab.PROPOSAL_TRIGGER_KEY: String(proposal.get(HudAttentionVocab.PROPOSAL_TRIGGER_KEY, "")),
+        HudAttentionVocab.PROPOSAL_BAND_ID: int(entry.get("band_id", HudConst.NO_BAND_ID)),
+        HudAttentionVocab.PROPOSAL_FACTION: int(entry.get("faction", HudConst.PLAYER_FACTION_ID)),
+    }
+
+## The row a FALLING-FOOD proposal rides, `{}` unless the band's published proposal was raised by falling
+## food. The server prefers the idle wording when hands are idle, and the idle row (which then carries
+## the proposal) wins here too, so one proposal is never offered on two rows.
+func _food_falling_row(entry: Dictionary) -> Dictionary:
+    if not _idle_workers_row(entry).is_empty():
+        return {}
+    var block := _proposal_block_of(entry)
+    if String(block.get(HudAttentionVocab.PROPOSAL_TRIGGER_KEY, "")) != HudAttentionVocab.PROPOSAL_TRIGGER_FOOD_FALLING:
+        return {}
+    return {
+        "kind": HudAttentionVocab.ATTENTION_KIND_FOOD_FALLING,
+        "owner": int(entry.get("entity", -1)),
+        "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
+        "label": HudAttentionVocab.ATTENTION_FOOD_FALLING_LABEL_FORMAT % HudFormat.band_name(entry),
+        "detail": HudAttentionVocab.ATTENTION_FOOD_FALLING_DETAIL,
+        "x": int(entry.get("current_x", -1)), "y": int(entry.get("current_y", -1)),
+        HudAttentionVocab.ATTENTION_PROPOSAL: block,
+    }
 
 ## The band half with every idle-workers row recomputed against the CURRENT pending overlay. A stepper
 ## press changes `people_idle` but not the snapshot, and a full `build_band_attention` then would run
@@ -457,15 +484,23 @@ func _idle_workers_row(entry: Dictionary) -> Dictionary:
 func refresh_idle_rows(attention: Array, player_bands: Array) -> Array:
     var out: Array = []
     for row_variant in attention:
-        if row_variant is Dictionary and String((row_variant as Dictionary).get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS:
+        if row_variant is Dictionary and _is_idle_or_falling_row(row_variant as Dictionary):
             continue
         out.append(row_variant)
     for band_variant in player_bands:
         if band_variant is Dictionary:
             var row := _idle_workers_row(band_variant)
+            if row.is_empty():
+                row = _food_falling_row(band_variant)
             if not row.is_empty():
                 out.append(row)
     return out
+
+## Both rows a pending edit can swap between (idle hands carry the proposal, else falling food does).
+static func _is_idle_or_falling_row(row: Dictionary) -> bool:
+    var kind := String(row.get("kind", ""))
+    return kind == HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS \
+        or kind == HudAttentionVocab.ATTENTION_KIND_FOOD_FALLING
 
 func build_band_attention(player_bands: Array, player_expeditions: Array) -> Array:
     var attention: Array = []
@@ -519,6 +554,10 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
         var idle_row := _idle_workers_row(entry)
         if not idle_row.is_empty():
             attention.append(idle_row)
+        else:
+            var falling_row := _food_falling_row(entry)
+            if not falling_row.is_empty():
+                attention.append(falling_row)
         # Producer 5 — a starving pen this band keeps (amber/warn; see HudAttentionVocab.ATTENTION_KIND_STARVING_PEN
         # for why it is not critical). Keyed off the band's OWN Corral assignments, never a scan of
         # every herd on the wire: that is what makes it the PLAYER's pen (a herd carries no owner

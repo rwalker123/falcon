@@ -95,7 +95,7 @@
       "earns_knowledge": "cultivation",
       "requires_rung": null,
       "ceiling_required": null,
-      "_comment_site_requirement": "THE PLANT BRANCH'S SCARCITY, and it starts at rung 1 because gathering itself is the scarce thing. `requires_gathering_site` means the tile must be a curated FoodSiteRegistry entry — the 130-134 sites worldgen lays down as a share of land, spatially quota'd with minimum spacing and biased toward fresh water — NOT merely a tile carrying a FoodModuleTag, which ~every land tile does and which would make the rule vacuous. So a band cannot gather just anywhere: which site it can reach is the early game's real decision, and the move/stay/fork choice the whole design rests on. It sits on rung 1 rather than being an unwritten property of the Forage verb so that rungs 2-4 inherit or drop it BY CONFIG. No fertility floor and no water rule: a site is workable by definition, which is what being a site means.",
+      "_comment_site_requirement": "THE PLANT BRANCH'S SCARCITY, and it starts at rung 1 because gathering itself is the scarce thing. `requires_gathering_site` means the tile must be a curated FoodSiteRegistry entry — the 130-134 sites worldgen lays down as a share of land, spatially quota'd with minimum spacing and biased toward fresh water — NOT merely a tile carrying a FoodModuleTag, which ~every land tile does and which would make the rule vacuous. So a band cannot gather just anywhere: which site it can reach is the early game's real decision, and the move/stay/fork choice the whole design rests on. FORAGING NEVER RELAXES: no lesson loosens this rung, and a crew standing on off-site ground that is still at the wild rung (a crew may stand there to BUILD) takes NOTHING - the ground yields nothing until it is Tended (forage::gather_season). It sits on rung 1 rather than being an unwritten property of the Forage verb so that rungs 2-4 inherit or drop it BY CONFIG. No fertility floor and no water rule: a site is workable by definition, which is what being a site means.",
       "site_requirement": {
         "requires_gathering_site": true,
         "min_forage_capacity": 0.0,
@@ -132,14 +132,22 @@
         "min_forage_capacity": 0.0,
         "requires_fresh_water": false
       },
-      "_comment_site_relaxations": "Tended is the leg every off-site Farm climbs through, so it admits the ground Farm admits: the same `worked_land` relaxation as `plant:farm`, copied whole. Without it the wire refuses a rung the build is crossing (Tended shown locked while the climb is 8% through it).",
+      "_comment_site_relaxations": "Cultivate and Sow are placed on ground you already gather, and two lessons let a people reach beyond the gathering sites. SEED SELECTION (earned by working a tended patch) opens ground that is ALREADY VERY FERTILE AND NEAR FRESH WATER, anywhere: not a gathering site, fresh water required, `min_forage_capacity` 80. WORKED LAND (plows and irrigation, earned by working a Farm) opens fertile ground AWAY FROM WATER too: not a gathering site, `requires_fresh_water` false, `min_forage_capacity` 80. A faction is judged by the LAST relaxation it holds, so a people with both lessons gets the looser worked_land rule; a lesson only loosens, ground the own rule admits stays admitted. The two 80 values are separate playtest levers. Tended and Farm carry the same two entries, so a Farm climbing through an off-site Tended leg is never refused the leg. A refused off-site tile reads `needs_lesson` naming the NEAREST lesson the faction lacks (seed_selection for watered ground, worked_land for dry ground) until it is held, then the ordinary too_poor / too_dry. Foraging (plant:wild) never relaxes: off-site ground yields nothing until it is Tended.",
       "site_relaxations": [
+        {
+          "knowledge": "seed_selection",
+          "site_requirement": {
+            "requires_gathering_site": false,
+            "min_forage_capacity": 80.0,
+            "requires_fresh_water": true
+          }
+        },
         {
           "knowledge": "worked_land",
           "site_requirement": {
             "requires_gathering_site": false,
             "min_forage_capacity": 80.0,
-            "requires_fresh_water": true
+            "requires_fresh_water": false
           }
         }
       ],
@@ -186,20 +194,28 @@
       "requires_rung": "tended",
       "_comment_ceiling_required": "Null — the husbandry ceiling is a per-SPECIES gate on the animal branch (`Herd::can_pen`). A plant has no species, so there is no species ceiling here; the LAND is what this rung is choosy about, and that is `site_requirement` below — the plant twin of the same idea.",
       "ceiling_required": null,
-      "_comment_site_requirement": "The Farm stands on ground your people already gather: a gathering site. Sites are already the rich ground (few, curated, and what a band organises itself around), so the rung asks nothing more of them - no fertility floor (`min_forage_capacity` 0) and no water rule (`requires_fresh_water` false). Water matters only for NEW ground: the `worked_land` relaxation below drops the site rule and puts a fertility floor and the water rule back. PLAYTEST DIAL: set `requires_fresh_water` true to make farmland rarer again.",
+      "_comment_site_requirement": "The Farm stands on ground your people already gather: a gathering site. Sites are already the rich ground (few, curated, and what a band organises itself around), so the rung asks nothing more of them - no fertility floor (`min_forage_capacity` 0) and no water rule (`requires_fresh_water` false). Off the gathering sites the `seed_selection` relaxation (fertile and watered, anywhere) and the `worked_land` relaxation (fertile, water not asked) below apply. PLAYTEST DIAL: set `requires_fresh_water` true to make farmland rarer again.",
       "site_requirement": {
         "requires_gathering_site": true,
         "min_forage_capacity": 0.0,
         "requires_fresh_water": false
       },
-      "_comment_site_relaxations": "WORKED LAND LOOSENS THE SITE RULE, IT DOES NOT ADD A STEP. A faction that holds the lesson is judged by the LAST relaxation it qualifies for instead of the rung's own rule: sow may then go on ground that is NOT a gathering site, provided the tile clears a fertility floor and keeps the fresh-water rule. min_forage_capacity 80 is the PLAYTEST LEVER and the whole of how much new ground opens. On the standard map (earthlike 80x52, seed 119304647) all 132 gathering sites bearing a patch take a farm (water is not asked of them) and 280 more watered tiles clear 80 off-site (about 2x the sites, 7% of the map); 100 gives ~250 and 70 gives ~377. A lesson only loosens: ground the rung's own rule admits stays admitted. Never most of the land. A refused off-site tile reads 'needs_lesson' until the lesson is held, then the ordinary too_poor / too_dry.",
+      "_comment_site_relaxations": "Sow is placed on ground you already gather, and two lessons let a people reach beyond the gathering sites. SEED SELECTION (earned by working a tended patch) opens ground that is ALREADY VERY FERTILE AND NEAR FRESH WATER, anywhere: not a gathering site, fresh water required, `min_forage_capacity` 80. WORKED LAND (plows and irrigation, earned by working a Farm) opens fertile ground AWAY FROM WATER too: not a gathering site, `requires_fresh_water` false, `min_forage_capacity` 80. A faction is judged by the LAST relaxation it holds, so a people with both lessons gets the looser worked_land rule; a lesson only loosens, ground the own rule admits stays admitted. The two 80 values are separate playtest levers. Tended and Farm carry the same two entries, so a Farm climbing through an off-site Tended leg is never refused the leg. A refused off-site tile reads `needs_lesson` naming the NEAREST lesson the faction lacks (seed_selection for watered ground, worked_land for dry ground) until it is held, then the ordinary too_poor / too_dry. Foraging (plant:wild) never relaxes: off-site ground yields nothing until it is Tended.",
       "site_relaxations": [
+        {
+          "knowledge": "seed_selection",
+          "site_requirement": {
+            "requires_gathering_site": false,
+            "min_forage_capacity": 80.0,
+            "requires_fresh_water": true
+          }
+        },
         {
           "knowledge": "worked_land",
           "site_requirement": {
             "requires_gathering_site": false,
             "min_forage_capacity": 80.0,
-            "requires_fresh_water": true
+            "requires_fresh_water": false
           }
         }
       ],

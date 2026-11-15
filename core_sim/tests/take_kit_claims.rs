@@ -98,6 +98,9 @@ fn the_scene(baskets: u32) -> (App, Entity, UVec2, UVec2) {
     // One `update()` runs the whole Startup worldgen chain, which seeds the patches and the registry.
     app.update();
     let (rich, thin) = two_worked_patches(&app);
+    // Wild gathering is site-bound: the staged tile is a gathering site, so its crew takes something.
+    core_sim::mark_gathering_site(&mut app.world, rich);
+    core_sim::mark_gathering_site(&mut app.world, thin);
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry

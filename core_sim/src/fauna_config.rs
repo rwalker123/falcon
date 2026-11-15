@@ -1865,8 +1865,8 @@ const DEFAULT_PEN_IS_A_LARDER: bool = true;
 
 /// **The pen growth multiplier (Grazing 2d §3).** The ladder's top: a penned herd grows `pen_gain ×`
 /// its wild rate (capped) — a fenced, fed herd loses fewer animals still, and again breeds no more
-/// often. Resulting pen `r`: rabbit `0.525` · boar `0.15` · aurochs `0.135`. A **playtest lever**.
-const DEFAULT_PEN_GAIN: f32 = 1.5;
+/// often. Resulting pen `r` at `2.7`: rabbit `0.945` · boar `0.27` · aurochs `0.243`. A **playtest lever**.
+const DEFAULT_PEN_GAIN: f32 = 2.7;
 
 /// **HOW MUCH OF ITS OWN WARINESS A TAMED HERD KEEPS** (`docs/plan_standing_upkeep.md` §4.9 item
 /// 12b) — the multiplier on the species' `wariness` at the pastoral rung. Half: a haltered animal

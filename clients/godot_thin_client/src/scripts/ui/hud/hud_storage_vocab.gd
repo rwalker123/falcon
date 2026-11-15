@@ -146,6 +146,12 @@ const STORE_IN_CAMP := "in camp"
 const BUILD_BUTTON_LABEL := "Build"
 ## The Build button's meta, valued with its branch.
 const BUILD_BUTTON_META := &"storage_build_button"
+## The Stop button a band improvement's row wears while a build is declared on its branch: the Build
+## button's slot. `unqueue` keeps the meter, so the tooltip says the work done so far is kept.
+const STOP_BUTTON_LABEL := "Stop"
+const STOP_BUTTON_TOOLTIP := "Stop building. The work done so far is kept."
+## The Stop button's meta, valued with its branch.
+const STOP_BUTTON_META := &"storage_stop_button"
 
 ## The band improvement's build-stall keys and the one cause the rack row words (`materials`).
 const BUILDERS_STAFFED_KEY := "builders_staffed"

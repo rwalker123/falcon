@@ -70,7 +70,7 @@ const DEFAULT_NAVIGABLE_RIVER_FORAGE_BONUS: f32 = 80.0;
 ///
 /// **Shipped at `1.5`, the kept-herd reading of the boost.** Weeding and clearing the competing plants
 /// lowers what holds a stand back, so it comes back faster — the same argument that sets the herd
-/// gains (`pastoral_gain` 1.25, `pen_gain` 1.5: keeping lowers the death rate, it does not multiply
+/// gains (`pastoral_gain` 1.25, `pen_gain` 2.7: keeping lowers the death rate, it does not multiply
 /// breeding). It sits between wild (`1.0`) and the Field's `field_regrowth_gain` (2.53), which is
 /// independent of it: a settled Field reads its own gain alone (`forage::rung_regrowth_gain`), and
 /// only a Sow still being raised interpolates between the two. Weeding and conversion remain the

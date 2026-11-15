@@ -7023,7 +7023,10 @@ impl Food {
             .storage_saves
             .iter()
             .find(|save| save.rung == proposal.rung);
-        let wanted = !self.short_of_food(band)
+        // A plant build costs hands, not food, so a short band still approves one that adds food;
+        // every other build waits until the band is fed.
+        let costs_only_work = proposal.build_key.starts_with(PLANT_BUILD_PREFIX);
+        let wanted = (costs_only_work || !self.short_of_food(band))
             && match storage {
                 Some(save) => {
                     save.lesson_known
@@ -7061,6 +7064,9 @@ impl Food {
         })
     }
 }
+
+/// A chief proposal whose build key starts with this is a plant-ladder climb (`plant:tended@x,y`).
+const PLANT_BUILD_PREFIX: &str = "plant:";
 
 /// A build whose food figure is at or below this adds no food.
 const NO_FOOD_ADDED: f32 = 0.0;

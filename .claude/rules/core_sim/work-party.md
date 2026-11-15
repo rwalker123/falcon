@@ -170,11 +170,13 @@ row's full kit (`kit_choice`), and so do the take's pricing and the crew curves,
 count does. **Hold crew** is the hands that take the
 regrowth at the floor; **reach crew** is the hands whose take is strictly above the peak regrowth
 between the floor and today's stock (`REACH_STRICTLY_ABOVE_PEAK`), so they draw the stock down
-toward the floor. A hand-crewed seam that never renews takes `ReachTarget::Heads(Max - keepers)`; a material a chief keeps on hand is staffed from its deficit instead ("A chief keeps an ordered material on hand" below). A source
+toward the floor. **A hunt row's hold crew is sized on the regrowth at the floor, not on this turn's room.** `hold_take` is bounded by the room above the floor now, which can be under what the herd regrows each turn (a penned herd standing near its floor); the keeping's fraction rides in a hunter's slack only where the slack, with the keeping taken out of the hunter's work, reaches that regrowth. `StaffRowInput::sustained` carries the regrowth and a hands closure with the room bound lifted for exactly that fit test (`staffing::hold_heads`; `hunt_input` sets it where `hold > room`), and the reach and useful crews are never under the hold crew. A pen whose regrowth one hand's slack covers stays at one head. Pinned by `staffing::tests::a_pens_hold_crew_is_sized_on_the_regrowth_its_slack_must_reach` and, through the command restaff on a penned herd, `tests/pen_hold_crew.rs`. **A forage row on ground that refuses gathering is dealt no gatherers**: `forage_input` reads the gather season (`forage::gather_season`, zero for wild ground off a gathering site), and at a zero season the row's hold, reach and useful takes stay at nothing, so staffing deals only its keepers and any build on the patch (a build's builders are dealt as builds). Pinned on the encoded frame by `food_orders::a_forage_row_on_ground_that_refuses_gathering_is_dealt_no_gatherers`. A hand-crewed seam that never renews takes `ReachTarget::Heads(Max - keepers)`; a material a chief keeps on hand is staffed from its deficit instead ("A chief keeps an ordered material on hand" below). A source
 already at or under its floor staffs its keepers only. Each web builds its own take-per-hand
 (`forage_input`, `hunt_input`, `extract_input`; a tile improvement and Roadwork size by their
 keeping bill alone) and at least one hand is asked of a take that rounds to nothing
 (`AT_LEAST_ONE_HAND`).
+
+**The published reach and useful crews state the crew actually dealt.** The targets are struck at the best kit the shelf could arm, but pass 3 deals bare hands (about a fifth as effective as a basket) past the kit's supply, so a row can be dealt more heads than its kitted aim named. After pass 3 the staffing raises each row's `reach_crew` to at least the heads it was dealt and `useful_crew` to at least `reach_crew`; the deal itself is not capped. So a chief row's published `useful_crew` covers its hands, and the food order's `holdHeads + refillHeads` equals the hands staffed on its rows. A build left with no builders by `feeding_first` stays so; this changes no crew. Pinned on the encoded frame by `food_orders::a_forage_row_on_ground_that_refuses_gathering_is_dealt_no_gatherers`.
 
 **A row's crew targets never exceed what its tile can hold.** `hold_crew`, `reach_crew` and
 `useful_crew` are capped at the room the row's tile has left for this band (`tile_worker_cap` less the
@@ -351,10 +353,7 @@ order).
 restaff, `staffing::managed_dig_allocation`; a band that crews by hand is not touched, nor is a stand the player crews). Candidates are
 the faction's discovered tiles holding the material (the `deposit_states` fog gate) with something
 reachable above `DEPOSIT_EMPTY`; opened or not (`ClaimSources::working` derives the unopened one).
-Rank (`SiteRank`): most **per hand** first (`yield_per_worker_turn` of the working's ladder position
-plus the best `deposit_take_per_worker` among kits whose items the band holds live), then the
-**shortest walk**, then tile order - so a quarry outranks a nearer gathering site, and on a tie the
-nearer wins.
+Rank (`SiteRank`): most **net per hand** first - what one hand brings HOME a turn: `per_hand` (`yield_per_worker_turn` of the working's ladder position plus the best `deposit_take_per_worker` among kits whose items the band holds live) run through the work-party caravan forecast (`work_party::forecast_caravan`, one hand posted over `resolve_walk`'s walk from the apron with the road bonus, the pack `material_pack(haul carry, weight)` at the best live kit's haul carry, so a sled counts and a sledless band's bare pack is small); inside the apron there is no walk and net equals `per_hand`. Then **the most the tile can give a turn** (`gives`: the site's `cap`, regrowth plus the stock above the floor over the refill turns, held to a full crew; for stone, whose cap is unbounded, the stock still reachable in the ground), then tile order. There is no "shortest walk" key: distance acts only through the net figure, so a thin stand one tile out no longer beats a big forest two out, a quarry outranks a nearer gathering site, and a far face beats a near one only when its cut still pays after the walk. The walk reaches the ranking through `DigSiteInputs::walk_to`. Pinned by `tests/keep_on_hand.rs::{inside_the_apron_the_bigger_forest_is_picked_over_a_nearer_thin_stand, a_far_face_beats_a_near_stand_only_when_sleds_carry_its_cut_home, stone_ties_on_what_is_left_in_the_ground}`.
 
 **As many rows as the want needs.** Walking the ranking, each site gets a share of the want: up to its
 **cap** - what it gives a turn at the order's floor without drawing it down (for a site that regrows,
@@ -436,7 +435,12 @@ labor pass and by every command restaff), `staffing::probe_source`, `staffing::a
   still works - unlike a material, where nobody works at the target).
 - **Sources.** Every known forage patch and every visible herbivore herd inside `band_work_range`,
   probed through the staffing's own reading (`probe_source` runs `forage_input` / `hunt_input` on a
-  hypothetical row), so a herd the band's kit cannot wound is no candidate. Ranked by the order's
+  hypothetical row), so a herd the band's kit cannot wound is no candidate. **A patch the band's crew
+  would take nothing from is no candidate either**: the probe's gather season is `forage::gather_season`,
+  which is zero for a patch still at the wild rung on ground the wild rung refuses (off a gathering site;
+  `intensification.md` -> "Site relaxations"), so the probe finds no useful take. A Tended or Farm patch
+  the band holds off-site keeps its season and stays a candidate. A chief row on ground that has become
+  ineligible is retired by the ordinary retirement and cargo rules. Ranked by the order's
   product per hand at the floor (kitted as the band is), then the shortest walk, then the source key.
   Each is given a share up to its cap (what it gives at the floor without being drawn down plus its stock
   above the floor over `keep_on_hand_refill_turns`, never more than `tile_worker_cap` hands take;
@@ -588,6 +592,20 @@ and works as it did.
 - **Not now** (`defer_proposal <faction> <band> <build_key>`): the key is hidden until `tick +
   band_orders.proposal_not_now_turns` (**20**); the next candidate is offered meanwhile. The build key is
   the rung's wire key, with `@x,y` for a tile build (`food_stores:storage_pit@4,9`).
+- **New ground (Cultivate on a patch the band does not work).** Beside the worked-source verb rungs, the
+  pass lists a Cultivate candidate on every in-range forage patch the band holds no row on, through the
+  same gates as the player's `build cultivate`; a patch owned by another faction or worked by another band
+  is skipped. Its food figure is the Tended payoff less the current payoff (0 on an off-site wild patch,
+  which gives nothing today, so the figure is the whole Tended payoff). Approving it stages a PLAYER forage
+  row on the patch and declares Tended in one step. Key `plant:tended@x,y`.
+- **Second trigger: the food order is Falling.** A leaderful band whose food order reads Falling
+  (`food_orders::food_order_is_falling`, the `OrderReadings::figures` verdict) is offered a proposal even
+  with 0 idle hands. A Falling-only proposal offers only builds with a positive food figure. Text:
+  `Food falling · <Keeper> proposes: cultivate the patch at (x, y) - +N food a turn once tended`; escalation
+  2. When both triggers hold the idle wording wins. `trigger` records which fired.
+- **Wire**: `ChiefProposal.trigger` (`"idle"` or `"food_falling"`, appended to the table), native key
+  `trigger`. The client's "Food falling" attention entry reads it. A rival seat approves a plant climb even
+  when short of food (it costs hands, not food).
 - **Leadership**: an approved build that completes counts once as an order met (`leadership.md`).
 - **Wire**: `PopulationCohortState.chiefProposals` (zero or one `ChiefProposal`, own bands only), native key
   `chief_proposals`. The offer is refreshed by the turn's pass and by both commands, so a recapture after a

@@ -330,7 +330,7 @@ for a traveling band and for a band **short of food** (`Food::short_of_food`: `t
 
 `Food::answer_proposal` (`food:proposal:<band>`) reads the band's `chiefProposals` row off the wire as any
 player would (`.claude/rules/core_sim/work-party.md` -> "A chief proposes a build") and answers it with
-`approve_proposal <f> <b>` or `defer_proposal <f> <b> <build_key>`: a band short of food puts every build off;
+`approve_proposal <f> <b>` or `defer_proposal <f> <b> <build_key>`: a band short of food puts every build off except a plant climb (`plant:` key, it costs hands not food);
 a storage proposal (its rung is a `storageSaves` row) is approved when `foodSaved` reaches the echoed lever and
 the lesson is known with nothing declared; any other build is approved when its food figure is above zero. The
 server knows nothing of seats. The hunt row no longer books surplus spoilage, so the stream keep below prices

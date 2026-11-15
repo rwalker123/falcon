@@ -1782,6 +1782,10 @@ pub(crate) fn snapshot_forage_patches(
     flora: &FloraConfig,
     ladder: &LadderConfig,
     seasonal_weights: &HashMap<UVec2, f32>,
+    // The gather season of a tile read AS WILD GROUND (off a gathering site the wild rung refuses it):
+    // what a row the viewer may not read the improvement on publishes, so a rival's Field on ground
+    // the viewer has not explored is indistinguishable from the wild tile it hides.
+    wild_seasonal_weights: &HashMap<UVec2, f32>,
     rung_site_refusals: &HashMap<(UVec2, RungId), SiteRefusal>,
     tile_capacities: &HashMap<UVec2, f32>,
     tile_quotes: &FloraQuoteCache,
@@ -1842,10 +1846,14 @@ pub(crate) fn snapshot_forage_patches(
         let improvement_is_legible = patch.owner.is_none_or(|owner| owner == viewer)
             || !fog_enabled
             || visibility.is_discovered(viewer, patch.tile.x, patch.tile.y);
-        let seasonal = seasonal_weights
-            .get(&patch.tile)
-            .copied()
-            .unwrap_or(NO_FORAGE_SEASON);
+        let seasonal = if improvement_is_legible {
+            seasonal_weights
+        } else {
+            wild_seasonal_weights
+        }
+        .get(&patch.tile)
+        .copied()
+        .unwrap_or(NO_FORAGE_SEASON);
         // **What is growing on this tile**, off the same memo entry the quotes came from — every
         // rate below is the share-weighted average of the *patch's* basket, which `forage.rs`
         // derives from this one (#433). A patch whose tile is absent from the map names no

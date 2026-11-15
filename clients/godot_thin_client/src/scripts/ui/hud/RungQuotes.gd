@@ -346,20 +346,33 @@ static func offsite_placing_quote(src: Dictionary, prefix: String = "") -> Dicti
 			return quote
 	return {}
 
-## The lesson id a placing rung's refusal is waiting on (`""` when none is): the knowledge of the last
-## `site_relaxation`, which is the one the server's own refusal sentence names, set against a quote the
-## server answered `needs_lesson`.
-static func lesson_to_place(src: Dictionary, prefix: String = "") -> String:
+## The lesson id a placing rung's refusal is waiting on (`""` when none is). The rung lists TWO
+## relaxations in loosening order (`seed_selection`: fertile watered ground; `worked_land`: fertile
+## ground away from water), and the server names the NEAREST one the faction lacks. The wire does not
+## carry that name, so it is derived the same way: the first relaxation, in catalog order, whose lesson
+## the faction does not yet hold (`knowledge` = its track progress). Without `knowledge` nothing is
+## held, which names the first (`seed_selection`).
+static func lesson_to_place(src: Dictionary, prefix: String = "", knowledge: Dictionary = {}) -> String:
 	for quote in quotes(src, prefix):
 		if not places_source(quote):
 			continue
 		if String(quote.get(KEY_SITE_REFUSAL, "")).strip_edges() != SITE_REFUSAL_NEEDS_LESSON:
 			continue
 		var relaxations: Variant = quote.get(KEY_SITE_RELAXATIONS, [])
-		if relaxations is Array and not (relaxations as Array).is_empty():
-			var last: Variant = (relaxations as Array).back()
-			if last is Dictionary:
-				return String((last as Dictionary).get("knowledge", ""))
+		if not (relaxations is Array):
+			continue
+		var last_named := ""
+		for relaxation in (relaxations as Array):
+			if not (relaxation is Dictionary):
+				continue
+			var lesson := String((relaxation as Dictionary).get("knowledge", ""))
+			if lesson == "":
+				continue
+			last_named = lesson
+			if float(knowledge.get(lesson, 0.0)) < HudConst.KNOWLEDGE_COMPLETE:
+				return lesson
+		if last_named != "":
+			return last_named
 	return ""
 
 ## The placing quote the server answered `needs_lesson` for (`{}` when none): the rung whose own gate

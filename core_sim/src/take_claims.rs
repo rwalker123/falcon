@@ -146,15 +146,41 @@ pub fn with_world_sources<R>(
             .and_then(|entity| world.get::<Tile>(entity))
             .cloned()
     };
+    let labor = config(world, crate::LaborConfigHandle::get, LaborConfig::builtin);
+    let ladder_for_season = config(
+        world,
+        crate::LadderConfigHandle::get,
+        crate::intensification::LadderConfig::builtin,
+    );
+    // Gathering is site-bound: a wild patch on ground the wild rung refuses has no gather season
+    // (`forage::gather_season`), exactly as the labor arm reads it.
     let season_of = |pos: UVec2| {
-        tiles
-            .and_then(|tiles| tiles.index(pos.x, pos.y))
+        let entity = tiles.and_then(|tiles| tiles.index(pos.x, pos.y));
+        let season = entity
             .and_then(|entity| world.get::<crate::food::FoodModuleTag>(entity))
             .map_or(crate::forage::NO_FORAGE_SEASON, |module| {
                 module.seasonal_weight.max(crate::forage::NO_FORAGE_SEASON)
-            })
+            });
+        let refused = entity
+            .and_then(|entity| world.get::<Tile>(entity))
+            .is_some_and(|ground| {
+                crate::forage::wild_ground_refuses_gathering(
+                    &ladder_for_season,
+                    &labor.forage,
+                    ground,
+                    world
+                        .get_resource::<crate::FoodSiteRegistry>()
+                        .is_some_and(|sites| sites.is_site(pos)),
+                )
+            });
+        crate::forage::gather_season(
+            season,
+            world
+                .get_resource::<crate::forage::ForageRegistry>()
+                .and_then(|registry| registry.patch(pos)),
+            refused,
+        )
     };
-    let labor = config(world, crate::LaborConfigHandle::get, LaborConfig::builtin);
     let flora = config(world, crate::FloraConfigHandle::get, FloraConfig::builtin);
     let fauna = config(world, crate::FaunaConfigHandle::get, FaunaConfig::builtin);
     let equipment = config(

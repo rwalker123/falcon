@@ -389,6 +389,15 @@ const CHIEF_PROPOSALS_KEY := "chief_proposals"
 const PROPOSAL_TEXT_KEY := "text"
 const PROPOSAL_BUILD_KEY := "build_key"
 const PROPOSAL_ESCALATION_KEY := "escalation"
+## The proposal's own `trigger` (what raised it) and the value that means the band's food order reads Falling.
+const PROPOSAL_TRIGGER_KEY := "trigger"
+const PROPOSAL_TRIGGER_FOOD_FALLING := "food_falling"
+## **THE FALLING-FOOD ROW.** A Falling-only proposal is raised with NO idle hands, so it has no idle-workers
+## entry to ride; this is the entry that carries it. WARN, like the idle row: a loss in progress the
+## player can still answer, not yet a starving crisis. The sim's sentence rides beneath it as the block.
+const ATTENTION_KIND_FOOD_FALLING := "food_falling"
+const ATTENTION_FOOD_FALLING_LABEL_FORMAT := "%s food falling"
+const ATTENTION_FOOD_FALLING_DETAIL := "The chief proposes a fix — approve it or not now"
 ## The entry key the orb reads the proposal block from, and what that block carries.
 const ATTENTION_PROPOSAL := "proposal"
 const PROPOSAL_BAND_ID := "band_id"

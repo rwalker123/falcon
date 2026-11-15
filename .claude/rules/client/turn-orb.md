@@ -606,6 +606,12 @@ resolved). `AttentionController._idle_workers_row` copies `{text, build_key, esc
 `band_id` and `faction` onto the idle-workers entry as `HudAttentionVocab.ATTENTION_PROPOSAL`; nothing on the
 client composes or rewords the sentence. With no proposal the entry is exactly the old one.
 
+**A proposal raised by falling food (`trigger == "food_falling"`) has no idle hands to ride**, so
+`AttentionController._food_falling_row` gives it its own `food_falling` entry (warn; label `"<band> food falling"`,
+detail names the chief's proposal; the same proposal block rides under it). When the client's pending-aware idle
+count is above zero the idle row carries the proposal and the falling row is not built, so one proposal is never on
+two rows; `refresh_idle_rows` swaps between the two. `turn_orb.gd::_food_falling_state` renders it.
+
 - **The orb draws it under the entry's row** (`TurnOrb._reason_block` / `_proposal_block`): the sentence, then
   `Not now` and `Approve`. The orb stays producer-agnostic: it reports a press as
   `proposal_action_requested({action, band_id, faction, build_key})` and does not read what a proposal means.

@@ -1014,6 +1014,19 @@ pub(crate) mod tests {
             ),
             "a band short of food puts the build off"
         );
+        // A plant climb costs hands, not food: a short band still approves one that adds food.
+        let mut cultivate = band(THRESHOLD * 2.0, 0.0);
+        cultivate.chief_proposals[0].build_key = "plant:tended@3,4".to_string();
+        cultivate.chief_proposals[0].rung = "plant:tended".to_string();
+        assert!(matches!(
+            answer(&cultivate),
+            CommandPayload::ApproveProposal { .. }
+        ));
+        cultivate.chief_proposals[0].food_saved = 0.0;
+        assert!(matches!(
+            answer(&cultivate),
+            CommandPayload::DeferProposal { .. }
+        ));
         let mut none = band(THRESHOLD, 40.0);
         none.chief_proposals.clear();
         assert!(food().answer_proposal(&none).is_none());

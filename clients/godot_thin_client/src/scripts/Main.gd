@@ -2009,6 +2009,12 @@ static func format_unqueue(payload: Dictionary) -> Dictionary:
     var site := site_address(payload)
     if site == "":
         return {}
+    # A BAND improvement (a drying rack) is addressed by its band and branch: `<band_id> branch=<id>`.
+    if site.begins_with(SITE_ADDRESS_BRANCH_PREFIX):
+        var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+        if band_id == HudConst.NO_BAND_ID:
+            return {}
+        site = "%d %s" % [band_id, site]
     return {
         "line": "unqueue %d %s" % [faction, site],
         "message": "Stop the build on %s." % site_label(payload),
@@ -2117,7 +2123,7 @@ static func site_address(payload: Dictionary, allow_road: bool = true) -> String
     # A BAND improvement (a drying rack) names no tile: `branch=<id>`, the band being the command's own.
     var band_branch := String(payload.get("branch", "")).strip_edges().to_lower()
     if (x < 0 or y < 0) and band_branch != "":
-        return "branch=%s" % band_branch
+        return SITE_ADDRESS_BRANCH_PREFIX + band_branch
     if x < 0 or y < 0:
         return ""
     # A tile-kind improvement's crew row is addressed by its branch, which leads: `<branch> <x> <y>`.
@@ -2133,6 +2139,9 @@ static func site_address(payload: Dictionary, allow_road: bool = true) -> String
 
 ## The token that leads a road build's address: the ladder's ROAD BRANCH id (`route` in
 ## `intensification_ladder.json`), which the server resolves against the loaded ladder.
+## The token that names a band improvement's branch in a source address (`branch=camp_stores`).
+const SITE_ADDRESS_BRANCH_PREFIX := "branch="
+
 const SITE_ADDRESS_ROAD_TOKEN := HudRouteVocab.ROAD_BRANCH
 
 ## **THE SAME SITE, AS THE FEED LINE NAMES IT** — `(x, y)` for a patch, `(x, y) <material>` for a

@@ -184,6 +184,8 @@ fn richest_stand(app: &mut App) -> UVec2 {
     let tile = *candidates
         .first()
         .expect("the harness world seeds at least one in-season forage patch");
+    // Gathering is site-bound (the wild rung's site rule), so the stand is a gathering site.
+    core_sim::mark_gathering_site(&mut app.world, tile);
     let mut registry = app.world.resource_mut::<ForageRegistry>();
     let patch = registry.patch_mut(tile).expect("the stand was just found");
     patch.biomass = patch.carrying_capacity;
@@ -523,4 +525,40 @@ fn the_ranging_kit_gathers_more_than_bare_hands() {
         "PRECONDITION: both parties must be bounded by their ARMS, not by the room to the \
          low-water mark — otherwise the two kits would be capped at the same number"
     );
+}
+
+/// **A SCOUT GATHERS ONLY OFF A GATHERING SITE** - the wild rung's site rule, read through the same
+/// `forage::gather_season` seam a band's forage reads. The same stand, the same party, the same
+/// empty larder (herds cleared, so only the stand can feed it): off the site list it yields nothing
+/// and the stand is untouched; marked a site it yields.
+#[test]
+fn a_scout_gathers_nothing_off_a_gathering_site_and_something_on_one() {
+    let gathered = |is_site: bool| -> (f32, f32, f32) {
+        let mut app = spawn_world();
+        let stand = richest_stand(&mut app);
+        let home = spawn_home_band(&mut app, stand);
+        let kit = ranging_kit(&app);
+        let party = spawn_scout_party(&mut app, home, stand, 0.0, kit);
+        app.world.resource_mut::<HerdRegistry>().herds.clear();
+        if !is_site {
+            app.world
+                .resource_mut::<core_sim::FoodSiteRegistry>()
+                .set_sites(Vec::new());
+        }
+        let before = stand_biomass(&app, stand);
+        app.world.run_system_once(advance_expeditions);
+        (carried(&app, party), before, stand_biomass(&app, stand))
+    };
+    let (off_carried, off_before, off_after) = gathered(false);
+    assert_eq!(
+        off_carried, 0.0,
+        "off-site wild ground yields a scout nothing"
+    );
+    assert_eq!(off_after, off_before, "and the stand is left untouched");
+    let (on_carried, on_before, on_after) = gathered(true);
+    assert!(
+        on_carried > 0.0,
+        "the same stand marked a site yields: {on_carried}"
+    );
+    assert!(on_after < on_before, "and the gather draws it down");
 }

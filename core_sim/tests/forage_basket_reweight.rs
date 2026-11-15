@@ -1402,6 +1402,8 @@ fn a_patch_tile_growing(app: &mut App, species: Option<&str>) -> (bevy::prelude:
             })
             .tile
     };
+    // Wild gathering is site-bound: the staged tile is a gathering site, so its crew takes something.
+    core_sim::mark_gathering_site(&mut app.world, coord);
     drop(labor);
     drop(flora);
     let entity = app

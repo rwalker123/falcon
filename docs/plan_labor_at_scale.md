@@ -214,7 +214,9 @@ material's sheet — see "Band orders — the chief" below:
   builds' and its upkeep's draw.
 - **Reach** (pass 2): the extra crew that refills the pile toward the target.
 - **At or above the target**: no workers.
-- **Which sites**: the ones that give the most per worker — the best-geared rung, the shortest walk.
+- **Which sites**: the most each worker brings home (the best-geared rung, less the hands a walk
+  past the apron puts on the road, so sleds count), then the most the site can give, then tile
+  order. Inside the apron distance does not count.
 
 A deposit's current "useful crew" (the crew that cuts everything above the floor in one turn — 958
 cutters on the Firbrook deadfall) is not a target anywhere in this design.

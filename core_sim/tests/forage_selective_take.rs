@@ -821,6 +821,8 @@ fn a_mixed_patch_tile(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
             .expect("the standard map must carry an in-season patch growing food and fibre")
             .tile
     };
+    // Wild gathering is site-bound: the staged tile is a gathering site, so its crew takes something.
+    core_sim::mark_gathering_site(&mut app.world, coord);
     drop(labor);
     drop(flora);
     let entity = app
@@ -905,6 +907,8 @@ fn a_patch_where_two_plants_pay_one_material(
             })
             .expect("the standard map must carry a patch where two plants pay one material")
     };
+    // Wild gathering is site-bound: the staged tile is a gathering site, so its crew takes something.
+    core_sim::mark_gathering_site(&mut app.world, found.0);
     drop(labor);
     drop(flora);
     let entity = app
