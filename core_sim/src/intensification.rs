@@ -3631,6 +3631,20 @@ pub struct LadderKnowledge {
     /// At `0.4`, ten dead at the anchor with the band standing on it (tie `0.5`) pays `0.2` a turn.
     /// `0` switches the trickle off. PLAYTEST DIAL; validated finite and `>= 0`.
     pub ritual_lesson_per_turn_at_full_tie: f32,
+    /// **What keeping far kin in touch is worth toward the messengers lesson, per turn, in PRACTICE
+    /// UNITS** (`docs/plan_far_kin.md` §3): each turn a people has ANY resident band holding a live
+    /// two-way tie with a same-people resident band standing farther than
+    /// `supply_network_config.reach_tiles`, it is credited this much through [`Self::ledger_credit`],
+    /// once per people per turn and never per pair. At `0.25` against a `messengers` cost of `20`
+    /// contact alone takes 80 turns. `0` switches it off. PLAYTEST DIAL; validated finite and
+    /// `>= 0`.
+    pub messengers_lesson_per_turn: f32,
+    /// **What a delivery between kin is worth toward the messengers lesson, per TILE walked, in
+    /// PRACTICE UNITS**: a Trade shipment or envoy arriving at a destination band of the SAME people
+    /// as its home band is credited this times the hex distance from the party's launch tile to its
+    /// arrival tile, so a longer trip teaches more. At `0.5` a ten-tile delivery is worth 5 of the
+    /// 20. `0` switches it off. PLAYTEST DIAL; validated finite and `>= 0`.
+    pub messengers_lesson_per_tile: f32,
     /// **How much rot is one full turn of STORAGE practice** (#707), in turns of the band's OWN
     /// need: food rotting in one turn equal to this many turns of need counts as one full turn of
     /// practice (`learn_rate` worth). A sibling of [`Self::learn_rate`] because the quantum differs;
@@ -5094,7 +5108,10 @@ impl LadderConfig {
         let taught = self.rungs.iter().flat_map(|rung| rung.taught_lessons());
         let rot_taught = std::iter::once(crate::spoilage::STORAGE_KNOWLEDGE);
         let roaming = crate::roaming_skills::ROAMING_SKILLS.iter().copied();
-        let gathering_taught = std::iter::once(crate::belief::RITUAL_KNOWLEDGE);
+        let gathering_taught = [
+            crate::belief::RITUAL_KNOWLEDGE,
+            crate::messengers::MESSENGERS_KNOWLEDGE,
+        ];
         for name in taught
             .chain(crate::crafting::CRAFTS_WITH_A_DISCOVERY.iter().copied())
             .chain(rot_taught)
@@ -5601,6 +5618,26 @@ fn validate_knowledge(knowledge: &LadderKnowledge) -> Result<(), LadderConfigErr
                 knowledge.ritual_lesson_per_turn_at_full_tie
             ),
         });
+    }
+    for (field, value) in [
+        (
+            "messengers_lesson_per_turn",
+            knowledge.messengers_lesson_per_turn,
+        ),
+        (
+            "messengers_lesson_per_tile",
+            knowledge.messengers_lesson_per_tile,
+        ),
+    ] {
+        if !value.is_finite() || value < 0.0 {
+            return Err(LadderConfigError::Invalid {
+                field: "knowledge".to_string(),
+                constraint: "pay a finite, non-negative amount of messengers practice - `0` \
+                             switches the source off, a negative rate would unlearn it"
+                    .to_string(),
+                value: format!("{field} = {value}"),
+            });
+        }
     }
     if !knowledge.storage_lesson_rot_turns.is_finite() || knowledge.storage_lesson_rot_turns <= 0.0
     {
@@ -7261,10 +7298,14 @@ mod tests {
     /// `match` the name lookup used to be.
     #[test]
     fn every_knowledge_name_resolves_through_the_tag_table_to_its_coded_id() {
-        let coded: [(&str, u32); 14] = [
+        let coded: [(&str, u32); 15] = [
             (
                 crate::belief::RITUAL_KNOWLEDGE,
                 crate::belief::RITUAL_DISCOVERY_ID,
+            ),
+            (
+                crate::messengers::MESSENGERS_KNOWLEDGE,
+                crate::messengers::MESSENGERS_DISCOVERY_ID,
             ),
             ("cultivation", crate::forage::CULTIVATION_DISCOVERY_ID),
             ("herding", crate::fauna::HERDING_DISCOVERY_ID),

@@ -133,6 +133,7 @@ const KNOWLEDGE_UNLOCK_NOTES := {
 	"storage": "Build a drying rack at camp and dig storage pits, so food keeps longer.",
 	# Ritual (#692): taught by gatherings, unlocks the monument.
 	"ritual": "Raise a monument at a gathering ground, a place where your dead lie or bands have met.",
+	"messengers": "Bands share food up to 4 tiles apart instead of 3, news passes through one more band, and kin stay in touch about twice as long.",
 }
 
 # --- Owned state (moved off HudLayer) ---

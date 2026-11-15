@@ -183,6 +183,7 @@ fn launch_station(app: &mut App, home: Entity, host: BandId, host_pos: UVec2) ->
                 goodwill_news: Default::default(),
                 exchange_return: Default::default(),
                 unpaid_return: Default::default(),
+                launch_tile: None,
                 scout_pack: Default::default(),
                 aim: Some(host_pos),
             },

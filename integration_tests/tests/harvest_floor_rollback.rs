@@ -334,6 +334,7 @@ fn a_raids_target_round_trips_through_the_rollback() {
                 goodwill_news: Default::default(),
                 exchange_return: Default::default(),
                 unpaid_return: Default::default(),
+                launch_tile: None,
                 scout_pack: Default::default(),
                 aim: None,
             },

@@ -1292,7 +1292,7 @@ func _build_tribe_block(band: Dictionary) -> Control:
         if other is Dictionary and int(other.get("band_id", HudConst.NO_BAND_ID)) != band_id \
                 and not bool(other.get("is_expedition", false)):
             others.append(other)
-    var view := HudFormat.band_tribe_progress(band, others)
+    var view := HudFormat.band_tribe_progress(band, others, _band_labor.connections())
     if view.is_empty():
         return null
     var block := VBoxContainer.new()

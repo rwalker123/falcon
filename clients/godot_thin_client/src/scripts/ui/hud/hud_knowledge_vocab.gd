@@ -437,6 +437,9 @@ const PRACTISE_NOTES := {
 	# Ritual (#692) — taught by gatherings, two bands meeting with no live tie between them, and
 	# slowly by a band living near its dead (the ancestor tie, `belief.md`).
 	"ritual": "Learned each time your bands meet a band they had no tie to, and slowly by living near your dead.",
+	# Messengers (docs/plan_far_kin.md) — taught by staying in touch with far kin and by trade
+	# expeditions between your own bands.
+	"messengers": "Learned by keeping in touch with kin who live far away, and by trade trips and envoys between your own bands.",
 }
 
 ## The craft half, which needs no table: every craft is learned the same way, and the sim charges the

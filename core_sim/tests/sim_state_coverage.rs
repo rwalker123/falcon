@@ -409,7 +409,7 @@ const CONFIG_RESOURCES_CONT: [&str; 33] = [
 /// Component state on entities. Omitting one of these is exactly the failure `PowerNode`'s missing
 /// `base_generation` / `base_demand` already is, which is why this table exists alongside the
 /// resource one: a resource-only guard would have missed the bug that motivated the guard.
-const SIM_STATE_COMPONENTS: [&str; 18] = [
+const SIM_STATE_COMPONENTS: [&str; 19] = [
     "Tile",
     // A band's durable identity — the thing `Entity` could not be across a restore.
     "BandId",
@@ -442,6 +442,9 @@ const SIM_STATE_COMPONENTS: [&str; 18] = [
     // leader is permanent, so a checkpoint that dropped it would let a band emerge a second one
     // under a different name on rollback.
     "BandLeadership",
+    // Marks a commanded split's new band as still on its founding walk (`BandRecord::founding_walk`):
+    // dropped, a save taken mid-walk would stop laying the full trail.
+    "FoundingWalk",
     "Expedition",
     // Carries `base_generation` / `base_demand`, which no checkpoint has ever recorded.
     "PowerNode",

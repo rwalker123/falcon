@@ -1,10 +1,12 @@
 {
   "strength": {
     "gain_per_contact": 0.25,
-    "decay_per_turn": 0.02
+    "decay_per_turn": 0.02,
+    "decay_per_turn_with_messengers": 0.01
   },
   "forget_turns": 200,
   "kin_relay": {
-    "max_hops": 2
+    "max_hops": 2,
+    "max_hops_with_messengers": 3
   }
 }

@@ -6108,6 +6108,16 @@ fn handle_move_band(
     );
 }
 
+/// **The tile a party leaves from** - the position of the tile its home band stands on, stamped on
+/// the party as `Expedition::launch_tile` (what a delivery between kin measures its trip from).
+fn launch_tile_of(
+    app: &bevy::prelude::App,
+    band: bevy::prelude::Entity,
+) -> Option<bevy::math::UVec2> {
+    let tile = app.world.get::<PopulationCohort>(band)?.current_tile;
+    app.world.get::<Tile>(tile).map(|tile| tile.position)
+}
+
 /// Outfit and launch a scouting expedition: draw `party_workers` off the resolved home band's
 /// working pool and larder-drawn provisions, then spawn a detached `StartingUnit` band tagged
 /// `Expedition` (deliberately no `ResidentBand`) traveling toward the target. v1 is deterministic
@@ -6403,6 +6413,7 @@ fn handle_send_scout(
                 goodwill_news: Default::default(),
                 exchange_return: Default::default(),
                 unpaid_return: Default::default(),
+                launch_tile: launch_tile_of(app, band.entity),
                 scout_pack: core_sim::ScoutPack {
                     order: match strangers {
                         sim_runtime::StrangersKind::Keep => core_sim::StrangersOrder::Keep,
@@ -6938,6 +6949,7 @@ fn launch_party_from_band(
                 goodwill_news: Default::default(),
                 exchange_return: Default::default(),
                 unpaid_return: Default::default(),
+                launch_tile: launch_tile_of(app, band.entity),
                 scout_pack: Default::default(),
                 aim: None,
             },
@@ -19567,6 +19579,7 @@ mod tests {
                 goodwill_news: Default::default(),
                 exchange_return: Default::default(),
                 unpaid_return: Default::default(),
+                launch_tile: None,
                 scout_pack: Default::default(),
                 aim: None,
             },

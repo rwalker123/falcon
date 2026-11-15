@@ -737,6 +737,93 @@
           "hint": "Morale a band gains each turn standing on or beside fresh water — a river along its tile, a lake or marsh next door. 0: water does nothing for morale."
         }
       ]
+    },
+    {
+      "kind": "supply_network",
+      "label": "Sharing food",
+      "env_var": "SUPPLY_NETWORK_CONFIG_PATH",
+      "params": [
+        {
+          "pointer": "/reach_tiles_with_messengers",
+          "label": "Food reach with Messengers",
+          "type": "int",
+          "min": 3,
+          "max": 5,
+          "step": 1,
+          "default": 4,
+          "unit": "tiles",
+          "hint": "How far apart two bands of one people can be and still share food once they know Messengers. Without it the reach is 3 tiles. Keep it under what a trail holds open (6)."
+        }
+      ]
+    },
+    {
+      "kind": "connections",
+      "label": "Staying in touch",
+      "env_var": "CONNECTIONS_CONFIG_PATH",
+      "params": [
+        {
+          "pointer": "/kin_relay/max_hops_with_messengers",
+          "label": "News chain with Messengers",
+          "type": "int",
+          "min": 2,
+          "max": 5,
+          "step": 1,
+          "default": 3,
+          "unit": "bands",
+          "hint": "How many bands in a chain news of a kin band travels through once the people knows Messengers. Without it the chain is 2."
+        },
+        {
+          "pointer": "/strength/decay_per_turn_with_messengers",
+          "label": "Tie fade with Messengers",
+          "type": "float",
+          "min": 0,
+          "max": 0.02,
+          "step": 0.001,
+          "default": 0.01,
+          "unit": "per turn",
+          "hint": "How much of a full tie a quiet turn costs once the people knows Messengers. Without it a tie loses 0.02 a turn and lapses in about 50 turns. 0: ties never fade."
+        }
+      ]
+    },
+    {
+      "kind": "intensification_ladder",
+      "label": "Messengers",
+      "env_var": "INTENSIFICATION_LADDER_PATH",
+      "params": [
+        {
+          "pointer": "/knowledge/messengers_lesson_per_turn",
+          "label": "Far kin in touch",
+          "type": "float",
+          "min": 0,
+          "max": 2,
+          "step": 0.05,
+          "default": 0.25,
+          "unit": "per turn",
+          "hint": "Practice a people gains each turn any of its bands holds a live two-way tie with a kin band farther than 3 tiles away. Once per people, not per pair. 0: staying in touch teaches nothing."
+        },
+        {
+          "pointer": "/knowledge/messengers_lesson_per_tile",
+          "label": "Deliveries to kin",
+          "type": "float",
+          "min": 0,
+          "max": 3,
+          "step": 0.1,
+          "default": 0.5,
+          "unit": "per tile",
+          "hint": "Practice gained for each tile a shipment or envoy walks to reach a band of its own people. A longer delivery teaches more. 0: deliveries teach nothing."
+        },
+        {
+          "pointer": "/knowledge/lesson_costs/messengers",
+          "label": "Practice to learn",
+          "type": "float",
+          "min": 1,
+          "max": 100,
+          "step": 1,
+          "default": 20,
+          "unit": "practice",
+          "hint": "Practice a people needs to learn Messengers. Low: learned almost at once. High: a long wait."
+        }
+      ]
     }
   ]
 }

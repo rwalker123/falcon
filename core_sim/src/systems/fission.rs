@@ -208,7 +208,26 @@ pub fn split_band_from_parent(
 ) -> Result<SplitBand, SplitRefusals> {
     let split = split_band_from_parent_with(world, parent, asked, settle, LineDivision::Partition)?;
     credit_commanded_split(world, parent, split.band);
+    mark_founding_walk(world, split.band);
     Ok(split)
+}
+
+/// **A commanded split's new band starts on its founding walk** (`docs/plan_far_kin.md` §2): the
+/// marker makes the tiles its first move order crosses bank a full trail
+/// ([`crate::components::FoundingWalk`]). Set here, in the wrapper the player's `split_band` verb
+/// runs, and not in [`split_band_from_parent_with`]: the breeding break-off and the independence
+/// break-away are nobody's walk to a better land.
+fn mark_founding_walk(world: &mut World, child: BandId) {
+    let child_entity = world
+        .query::<(Entity, &BandId)>()
+        .iter(world)
+        .find(|(_, id)| **id == child)
+        .map(|(entity, _)| entity);
+    if let Some(entity) = child_entity {
+        world
+            .entity_mut(entity)
+            .insert(crate::components::FoundingWalk);
+    }
 }
 
 /// **A commanded split is work that needs an organiser, for BOTH bands**

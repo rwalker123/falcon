@@ -166,6 +166,10 @@ pub struct BandRecord {
     /// (`crate::leadership`). Carried unconditionally: the leader is permanent, so a checkpoint that
     /// forgot it would let a band emerge a second one on rollback, under a different name.
     pub leadership: BandLeadership,
+    /// **Whether the band is still on its founding walk** ([`crate::components::FoundingWalk`]):
+    /// a commanded split's new band, until it completes its first move order. Carried, because a
+    /// save taken mid-walk must keep laying a full trail for the rest of it.
+    pub founding_walk: bool,
 }
 
 /// A settlement and its town centre.
@@ -442,6 +446,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
                     .unwrap_or_default(),
                 supply: supply.membership_of(entity.id()),
                 leadership: entity.get::<BandLeadership>().cloned().unwrap_or_default(),
+                founding_walk: entity.contains::<crate::components::FoundingWalk>(),
             })
         })
         .collect();
@@ -642,6 +647,9 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
         }
         if let Some(travel) = record.travel {
             entity.insert(travel);
+        }
+        if record.founding_walk {
+            entity.insert(crate::components::FoundingWalk);
         }
         band_entities.insert(record.id, entity.id());
     }

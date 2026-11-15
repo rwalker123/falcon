@@ -163,7 +163,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 66 | A tribe's closeness is a points bank that fills only while a leader exists (#861): `TribeRegistry::shared_history` is replaced by per-pair `points` (banked points on the `tribe_score_threshold` scale, faded by `tribe_points_fade_turns`); a version-65 blob does not decode |
 /// | 67 | The animal ladder pays as it is built: `RungStanding` (stamped on every `ForagePatch`, `Herd`, `Road` and `DepositSource`) gained `built`, the fraction of the raising rung's job banked whatever its partial-credit mode, which a herd's handling terms read. A version-66 blob lacks it |
 /// | 68 | The bench runs several orders at once (#873): `BandBench` gained `first_call` (where the staffable hands went before pass 2: scouts, keepers, builders, High-order crafters, hold crews) and `hold_losses` (which High order took a row's hold-crew hands), which a crewless order's published reason names; a version-67 blob lacks it |
-pub const SAVE_FORMAT_VERSION: u32 = 68;
+/// | 69 | A split's founding walk lays a full trail (`docs/plan_far_kin.md`): `BandRecord` gained `founding_walk` (the band is on its founding walk until its first move order completes) and `Expedition` gained `launch_tile` (the tile a party left from, which a delivery between kin measures its trip from for the messengers lesson). A version-68 blob lacks both and is refused. |
+pub const SAVE_FORMAT_VERSION: u32 = 69;
 
 /// gzip level for the payload document.
 ///

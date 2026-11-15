@@ -176,7 +176,7 @@ pub struct ExpeditionConfigs<'w> {
     pub demographics: Option<Res<'w, DemographicsConfigHandle>>,
     /// **What each people has learned** (#799) — a party hunts under its home people's `drives`.
     /// Optional, for the minimal worlds that never insert a ledger: no ledger knows nothing.
-    pub discovery: Option<Res<'w, DiscoveryProgressLedger>>,
+    pub discovery: Option<ResMut<'w, DiscoveryProgressLedger>>,
     /// **Every people's Open Borders** — a stationed party's host of another people must keep its
     /// borders open for the post to last. `None` reads as open (the seeded value), for the hand-rolled
     /// test worlds that never installed the resource. In the bundle for the 16-parameter reason.
@@ -707,6 +707,9 @@ type MovingBand = (
     Option<&'static BandId>,
     Has<ResidentBand>,
     Has<Expedition>,
+    // **On its founding walk** (`FoundingWalk`): its march banks a full trail, and the marker clears
+    // when this first move order arrives.
+    Has<crate::components::FoundingWalk>,
 );
 
 /// Advance any `move_band` order one step toward its target. The band travels at
@@ -767,6 +770,7 @@ pub fn advance_band_movement(
         band_id,
         resident,
         expedition,
+        founding,
     ) in cohorts.iter_mut()
     {
         let current = tiles
@@ -775,6 +779,11 @@ pub fn advance_band_movement(
             .unwrap_or(travel.target);
         if current == travel.target {
             commands.entity(entity).remove::<BandTravel>();
+            if founding {
+                commands
+                    .entity(entity)
+                    .remove::<crate::components::FoundingWalk>();
+            }
             continue;
         }
         // **THE DEPARTURE** — this order's first step. Only a RESIDENT band sheds: a detached party
@@ -870,14 +879,25 @@ pub fn advance_band_movement(
         // **The boots that actually crossed the ground**, recorded only where the party moved —
         // `marched` carries the same `from != to` guard, and a party held at its own tile wears
         // nothing.
-        params.route_traffic.marched(
-            current,
-            next,
-            crate::components::available_workers(cohort.working),
-            &ladder,
-        );
+        // **A founding walk lays a full trail** (`docs/plan_far_kin.md` §2): while the marker holds,
+        // each tile crossed banks the top of the free floor instead of the per-worker rate.
+        if founding {
+            params.route_traffic.founding_march(current, next, &ladder);
+        } else {
+            params.route_traffic.marched(
+                current,
+                next,
+                crate::components::available_workers(cohort.working),
+                &ladder,
+            );
+        }
         if next == travel.target {
             commands.entity(entity).remove::<BandTravel>();
+            if founding {
+                commands
+                    .entity(entity)
+                    .remove::<crate::components::FoundingWalk>();
+            }
         }
     }
 }
@@ -2380,6 +2400,27 @@ pub fn advance_expeditions(
                                 .get(host_entity)
                                 .ok()
                                 .map(|(_, host, ..)| host.faction);
+                            // **A DELIVERY BETWEEN KIN TEACHES MESSENGERS** (`messengers.rs`): a
+                            // shipment or envoy that arrives at a band of its OWN people is credited
+                            // per tile walked, launch tile to arrival tile - whatever then becomes
+                            // of its cargo.
+                            if receiver_faction == Some(faction) {
+                                if let (Some(launch), Some(discovery)) =
+                                    (expedition.launch_tile, configs.discovery.as_deref_mut())
+                                {
+                                    crate::messengers::credit_trip_lesson(
+                                        &ladder.knowledge,
+                                        faction,
+                                        crate::grid_utils::hex_distance_wrapped(
+                                            launch,
+                                            host_pos,
+                                            grid_width,
+                                            wrap_horizontal,
+                                        ),
+                                        discovery,
+                                    );
+                                }
+                            }
                             // A dealing needs both ends' durable ids; a hand-rolled world without
                             // the resource, or a party with no id, keeps the direct hand-over.
                             // **An agreed trade settles by its own terms**, never through the
