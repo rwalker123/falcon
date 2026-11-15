@@ -113,16 +113,21 @@ frame, and the reason prominence rides opacity rather than four tints is the par
 > which `.claude/rules/core_sim/routes.md` calls *"the commonest road in the game rather than an edge
 > case"*.
 >
-> **Same number, different medium.** The ladder now compresses UPWARD FROM BELOW — width
-> 0.080 / 0.100 / 0.118 / 0.135, opacity **0.58 / 0.70 / 0.82 / 0.94** — monotone in both, with paved
-> UNCHANGED as the anchor it already was. The rungs stay distinguishable because the four SURFACES
+> **Same number, different medium.** The OPACITY ladder compresses UPWARD FROM BELOW —
+> **0.58 / 0.70 / 0.82 / 0.94**, with paved unchanged as the anchor it already was. WIDTH is a
+> separate ladder, **0.025 / 0.040 / 0.058 / 0.080**, narrowed and spread as a whole (paved was 0.135)
+> so that paved reads about 3× a path. Both are monotone. The rungs stay distinguishable because the four SURFACES
 > differ (grey scuff → pale sand → brown → grey cobble) on top of the width step, which is the whole
 > reason a compressed opacity ladder is affordable here and was not on a single ink.
 >
 > ⛔ **THE WEAR FADE HAD TO SURVIVE THAT COMPRESSION, and it is measured rather than assumed.** The
-> path→trail opacity ramp narrowed from 0.30→0.52 to 0.58→0.70, so the WIDTH ramp (0.080→0.100) now
+> path→trail opacity ramp narrowed from 0.30→0.52 to 0.58→0.70, so the WIDTH ramp (0.025→0.040) now
 > carries more of it. Across `blend_probe`'s five wear steps the road's luminance over the bare field
-> reads **+7.5 / +15.7 / +22.5 / +33.6 / +41.3** per 255 — monotone, every step visible.
+> reads **+8.0 / +9.7 / +20.3 / +31.2 / +38.8** per 255 at the line's brightest row (mean over the
+> strip, at 0.05 / 0.25 / 0.50 / 0.75 / 0.95 wear). The criterion is **monotone, every step
+> visible**, and the narrowed ladder MISSES it on the first step: 0.05→0.25 is +1.7 per 255, below
+> what the eye resolves on a ~4px line (the wider ladder it replaced gave +8.2 there). The later
+> steps clear it. `19/WEAR` still passes because it counts changed pixels, not their magnitude.
 > `blend_probe`'s `19/WEAR` guard is the standing assertion and **its threshold may not be lowered to
 > fit a retune** — a ramp that genuinely collapsed is a reason to widen the WIDTH spread, not to move
 > the bar.
@@ -166,16 +171,17 @@ frame, and the reason prominence rides opacity rather than four tints is the par
 A road tile with **no connections** — the first tile of every road in the game, so the ordinary case
 rather than an edge one — is drawn by the road pass's always-on CENTRE DISC and nothing else. The
 disc is **one road-width across**: at the dirt rung and the player's own map radius, a blob about
-17px wide. On the prairie's high-frequency texture that is indistinguishable by eye from a bare
+9px wide. On the prairie's high-frequency texture that is indistinguishable by eye from a bare
 patch of ground, and `blend_probe`'s `20/JUNCT` frame captions one specifically so it can be judged.
 
 **Both readers of that frame reported the disc missing. It was drawing correctly the whole time** —
-measured at 372px of moved pixels, against a footprint of π·(half_width + softness)² ≈ 387. What was
+measured at 91px of moved pixels, against a footprint of π·(half_width + softness)² ≈ 94. What was
 missing was a way to tell, since a caption pointing at something nobody can find is not verification.
 
 `blend_probe._assert_road_lone_tile_draws` is now that way: the junction fixture is re-stated with
 the lone tile's row removed and the frame must MOVE by the disc's own footprint
-(`ROAD_LONE_MIN_CHANGED_PX`, floored well under the derived figure and enormously above the EXACTLY
+(`ROAD_LONE_MIN_CHANGED_PX` = 30, about a third of the derived figure so a middle-rung retune
+cannot trip it, and enormously above the EXACTLY
 ZERO a disc that never drew would move). **Whether a lone tile should read LARGER than one
 road-width is a design question and deliberately not settled here** — the disc's size is the road's
 own width, which is the honest geometry.

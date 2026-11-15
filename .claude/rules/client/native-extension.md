@@ -389,7 +389,7 @@ than a signal off the worker, so a render never observes a half-applied answer.
 **`QueryPayload::StaffingPreview` is the compose sheets' dry run of the real staffing** (`QUERY_KIND_STAFFING_PREVIEW`). Its
 source is addressed exactly as a work-party ask's (`work_party_source`, shared), it rides the seated link with
 the other faction-bearing questions, and its reply decodes to `{workers, keepers, kitted, bare, idle_before,
-idle_after, losses: [{kind, x, y, herd_id, material, branch, before, after}]}`.
+idle_after, losses: [{kind, x, y, herd_id, material, branch, before, after, order_name}]}` (`order_name` names a `bench` loss).
 
 **A QUERY TRIGGERS NO SNAPSHOT.** The server answers and skips the recapture — the query changed
 nothing, and that recapture is the expensive half of a turn. Nothing downstream may wait on a frame

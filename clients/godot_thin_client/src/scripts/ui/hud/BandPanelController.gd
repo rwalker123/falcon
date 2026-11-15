@@ -2839,12 +2839,18 @@ func _extract_source_models(band: Dictionary) -> Array:
 ## `warn_lines` so a row already warning carries both reasons in one hover. A kit reason (any `kit_toe` line
 ## with `filled < required`, named off the roster) REPLACES the row's own `kit_note` line, so the kit shortfall
 ## is stated once, in the one sentence; otherwise the hands reason.
+## **A `bare_idle` ROW IS SHORT OF KIT, NEVER OF HANDS**: an unarmed hand adds nothing there, so idle hands
+## cannot fill it and the cause is the missing kit even though `kit_toe` counts only the crew already armed
+## (every staffed hunter holds spears, so no line reads `filled < required`). The sentence names the row's
+## kit items instead of advising a Priority that cannot arm anyone.
 func _add_short_crew_warn(warn_lines: Array, workers: int, max_workers: int, useful_crew: int,
         toe: Array, kit_note: String = "", bare_idle: bool = false, hold_crew: int = 0) -> void:
     var short := HudWorkVocab.crew_shortfall(workers, max_workers, useful_crew, bare_idle, hold_crew)
     if short <= 0:
         return
     var kit_names := HudWorkVocab.toe_short_item_names(toe, _item_display_names)
+    if kit_names == "" and bare_idle:
+        kit_names = HudWorkVocab.toe_item_names(toe, _item_display_names)
     if kit_names != "" and kit_note != "":
         warn_lines.erase(kit_note)
     warn_lines.append(HudWorkVocab.short_crew_reason(short, kit_names))
@@ -2861,6 +2867,7 @@ func _put_staffed_fields(model: Dictionary, merged: Dictionary, assignment: Dict
         "", int(merged.get("bare_idle", 0)) != 0, int(merged.get("hold_crew", 0)))
     model["warn_lines"] = warn_lines
     model["hold_crew"] = int(merged.get("hold_crew", 0))
+    model[HudWorkVocab.ROW_HANDS_TO_BENCH_KEY] = String(merged.get(HudWorkVocab.ROW_HANDS_TO_BENCH_KEY, ""))
     model["keepers_staffed"] = int(merged.get("keepers_staffed", 0))
     model["kitted_staffed"] = int(merged.get("kitted_staffed", 0))
     model["bare_staffed"] = int(merged.get("bare_staffed", 0))
@@ -3365,7 +3372,16 @@ func _build_row_strip(band: Dictionary, row: Dictionary, deposit: Dictionary = {
     var strip := WorkStrip.build(
         WorkStrip.model_from_row(row), strip_handlers(band, row, deposit))
     strip.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-    return strip
+    var hands_line := WorkStrip.build_hands_line(WorkStrip.model_from_row(row))
+    if hands_line == null:
+        return strip
+    # The sentence rides its own line under the strip; only a row that has one is wrapped.
+    var column := VBoxContainer.new()
+    column.add_theme_constant_override("separation", 0)
+    column.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+    column.add_child(strip)
+    column.add_child(hands_line)
+    return column
 
 ## What the strip's two buttons do: both open the SAME rung card, from a row or from a sheet.
 func strip_handlers(band: Dictionary, row: Dictionary, deposit: Dictionary = {},
@@ -5200,6 +5216,7 @@ func _work_source_model(band: Dictionary, key: Variant, m: Dictionary, kind: Str
         # crew bar from these; the Max is the player's, the only crew control a staffed row has.
         "max_workers": int(m.get("max_workers", 0)),
         "hold_crew": int(m.get("hold_crew", 0)),
+        HudWorkVocab.ROW_HANDS_TO_BENCH_KEY: String(m.get(HudWorkVocab.ROW_HANDS_TO_BENCH_KEY, "")),
         "keepers_staffed": int(m.get("keepers_staffed", 0)),
         "kitted_staffed": int(m.get("kitted_staffed", 0)),
         "bare_staffed": int(m.get("bare_staffed", 0)),

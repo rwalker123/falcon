@@ -936,3 +936,117 @@ fn a_hunt_row_handed_over_that_is_no_candidate_stays_listed_in_reserve() {
         assert!(!allocation.order_rows.contains_key(&key));
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// A pasture-fed pen's float-dust hay need is NO need (the dust tolerance at the one seam).
+// ---------------------------------------------------------------------------------------------
+
+/// One penned herd's demand for fodder, per biomass, per turn.
+const PEN_FODDER_RATE: f32 = 0.10;
+/// The seated pen's biomass: demand is `PEN_FODDER_RATE x PEN_BIOMASS`.
+const PEN_BIOMASS: f32 = 200.0;
+const PEN_CAPACITY: f32 = 4000.0;
+const PEN_WILD_R: f32 = 0.35;
+const PEN_BODY_MASS: f32 = 2.0;
+/// The hay in the store while the order is read: a finite stock either way.
+const HAY_ON_HAND: f32 = 40.0;
+/// Hands tending the pen.
+const PEN_KEEPERS: u32 = 4;
+/// The pasture's intake short of the pen's demand by half the dust tolerance: the need left is dust.
+const HALF_DUST_FACTOR: f32 = 0.5;
+
+/// Seat one corralled, tamed herd on the band's own tile, a hunt row tending it, the pasture
+/// feeding it `intake`, run the real labor pass, and return the fodder order as the encoded frame
+/// publishes it: `(hasConsumers, onHand, draw)`.
+fn pen_order_on_the_wire(intake_short_by: f32) -> (bool, f32, f32) {
+    let (mut app, band) = world();
+    let tile = {
+        let current = app
+            .world
+            .get::<PopulationCohort>(band)
+            .unwrap()
+            .current_tile;
+        app.world.get::<core_sim::Tile>(current).unwrap().position
+    };
+    let demand = PEN_FODDER_RATE * PEN_BIOMASS;
+    {
+        let ladder = core_sim::LadderConfig::builtin();
+        let mut herd = core_sim::Herd::new(
+            "pen_dust".to_string(),
+            "Pen".to_string(),
+            core_sim::SizeClass::Small,
+            vec![tile],
+            PEN_BIOMASS,
+            PEN_CAPACITY,
+            PEN_FODDER_RATE,
+            PEN_WILD_R,
+            PEN_BODY_MASS,
+            core_sim::shipped::root_standing(core_sim::shipped::animal()),
+        );
+        let faction = app.world.get::<PopulationCohort>(band).unwrap().faction;
+        herd.tame_outright(faction, &ladder);
+        assert!(herd.corral_at(tile, &ladder), "the species can be penned");
+        herd.footprint_intake = demand - intake_short_by;
+        let mut registry = app.world.resource_mut::<core_sim::HerdRegistry>();
+        registry.herds.clear();
+        registry.herds.push(herd);
+    }
+    {
+        let mut cohort = app.world.get_mut::<PopulationCohort>(band).unwrap();
+        cohort.working = scalar_from_f32(MANY_HANDS);
+        cohort
+            .stores
+            .set(core_sim::FODDER, scalar_from_f32(HAY_ON_HAND));
+    }
+    {
+        let mut allocation = app.world.get_mut::<LaborAllocation>(band).unwrap();
+        allocation.assignments.clear();
+        allocation.assignments.push(core_sim::LaborAssignment {
+            party: None,
+            muster_crew: 0,
+            planned_crew: 0,
+            scouting_range: 0,
+            scouting_reach: 0,
+            max_workers: Some(PEN_KEEPERS),
+            staffing: Default::default(),
+            target: LaborTarget::Hunt {
+                fauna_id: "pen_dust".to_string(),
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
+                move_with_herd: false,
+            },
+            workers: PEN_KEEPERS,
+            kit: None,
+            priority: SourcePriority::Normal,
+        });
+    }
+    set_target(&mut app, band, FODDER, 10);
+    bevy::ecs::system::RunSystemOnce::run_system_once(
+        &mut app.world,
+        core_sim::advance_labor_allocation,
+    );
+    let (consumers, on_hand, draw, _) = published_order(&mut app, FODDER);
+    (consumers, on_hand, draw)
+}
+
+/// **A band whose pens are wholly pasture-fed has no hay consumer, and its fodder order does not
+/// publish millions of turns of cover off float dust.** Control: a pen that really draws hay
+/// publishes a consumer, its draw, and a finite turns figure.
+#[test]
+fn a_pasture_fed_pen_publishes_no_hay_consumer_and_no_absurd_cover() {
+    let dust = core_sim::MATERIAL_DUST_UNITS * HALF_DUST_FACTOR;
+    let (consumers, on_hand, draw) = pen_order_on_the_wire(dust);
+    assert!(!consumers, "a dust need is no consumer");
+    assert_eq!(draw, 0.0, "a dust need is no draw");
+    assert_eq!(on_hand, 0.0, "and no turns of cover are read off it");
+
+    let (consumers, on_hand, draw) = pen_order_on_the_wire(PEN_FODDER_RATE * PEN_BIOMASS);
+    assert!(
+        consumers,
+        "**LIVENESS**: a pen that draws hay is a consumer"
+    );
+    assert!(draw > 0.0);
+    assert!(
+        on_hand > 0.0 && on_hand.is_finite() && on_hand <= HAY_ON_HAND / draw * 1.01,
+        "a finite turns figure, got {on_hand} over a draw of {draw}"
+    );
+}

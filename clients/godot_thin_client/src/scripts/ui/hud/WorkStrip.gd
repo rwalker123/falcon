@@ -53,6 +53,7 @@ const M_NEED_ROW := "need_row"
 const M_NEED_CREW := "need_crew"
 const M_LENT := "lent"
 const M_ROW := "row"
+const M_HANDS_TO_BENCH := "hands_to_bench"
 
 ## The row-vocabulary keys the strip reads for the site's build crew: the wire's `builders_staffed` and the
 ## hover composed from it.
@@ -144,6 +145,7 @@ static func model_from_row(row: Dictionary) -> Dictionary:
         M_FLOOR_GLYPH: floor_glyph, M_FLOOR_TIP: floor_tip,
         M_WARN_LINES: lines, M_INFO_TIP: info_tip,
         M_KEEPERS: keepers, M_BUILDERS: builders, M_KITTED: kitted, M_BARE: bare,
+        M_HANDS_TO_BENCH: String(row.get(HudWorkVocab.ROW_HANDS_TO_BENCH_KEY, "")),
         M_HOLD: int(row.get("hold_crew", 0)), M_KIT_NAMES: String(row.get("kit_names", "")),
         M_CREW: workers + builders,
         M_NEED_ROW: need_row, M_NEED_CREW: int(row.get("muster_crew", 0)),
@@ -187,6 +189,22 @@ static func build(model: Dictionary, handlers: Dictionary, sheet: bool = false) 
         marks.add_child(info)
     strip.add_child(_build_crew_column(model, sheet))
     return strip
+
+## **THE HANDS THE HOLD CREW GAVE A BENCH ORDER, ON ITS OWN LINE UNDER THE STRIP** (`null` when the sim's
+## sentence is empty, so nothing is mounted and no gap opens). Amber, right-aligned under the crew figure it
+## explains, the strip's full width, one line; the ellipsis + full-text hover only bite past that width.
+## The CALLER mounts it directly after the strip: the strip itself stays an `HBoxContainer`.
+static func build_hands_line(model: Dictionary) -> Label:
+    var hands := String(model.get(M_HANDS_TO_BENCH, ""))
+    if hands == "":
+        return null
+    var label := _mark_label(hands, HudStyle.WARN, hands)
+    label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    label.clip_text = true
+    label.set_meta(HudWorkVocab.WORK_STRIP_HANDS_META, hands)
+    return label
 
 static func _mark_label(text: String, ink: Color, tip: String) -> Label:
     var label := Label.new()

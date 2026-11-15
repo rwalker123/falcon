@@ -3458,6 +3458,8 @@ const CREW_BAR_BUILDERS_FORMAT := "%d building"
 const CREW_BAR_KITTED_FORMAT := "%d with %s"
 const CREW_BAR_BARE_FORMAT := "%d bare-handed"
 const CREW_BAR_NOBODY := "Nobody here this turn"
+## The bench order rows' hollow seats: how many more crafters the order could still staff.
+const CREW_BAR_ROOM_FORMAT := "room for %d more"
 const CREW_BAR_CLAUSE_SEPARATOR := " · "
 ## What the hover appends once the source has a floor to hold: how many of the taking hands hold the
 ## source there and how many more draw it down to the floor.
@@ -3472,11 +3474,13 @@ const CREW_BAR_GEAR_FALLBACK := "gear"
 ## TAKE (the crew less its keepers), `hold_crew` hold the source at the floor and the rest draw it
 ## down to it.
 static func crew_bar_words(keepers: int, kitted: int, bare: int, kit_names: String,
-        hold_crew: int, builders: int = 0) -> String:
+        hold_crew: int, builders: int = 0, room: int = 0) -> String:
     var crew := keepers + builders + kitted + bare
-    if crew <= 0:
+    if crew <= 0 and room <= 0:
         return CREW_BAR_NOBODY
     var parts: Array[String] = []
+    if crew <= 0:
+        parts.append(CREW_BAR_NOBODY)
     if keepers > 0:
         parts.append(CREW_BAR_KEEPERS_FORMAT % keepers)
     if builders > 0:
@@ -3486,6 +3490,8 @@ static func crew_bar_words(keepers: int, kitted: int, bare: int, kit_names: Stri
             kit_names if kit_names != "" else CREW_BAR_GEAR_FALLBACK])
     if bare > 0:
         parts.append(CREW_BAR_BARE_FORMAT % bare)
+    if room > 0:
+        parts.append(CREW_BAR_ROOM_FORMAT % room)
     var words := CREW_BAR_CLAUSE_SEPARATOR.join(PackedStringArray(parts))
     var taking := kitted + bare
     if hold_crew > 0 and taking > 0:
@@ -3551,6 +3557,11 @@ const WORK_STRIP_CHIP_PADDING_H := 5
 const WORK_STRIP_CHIP_PADDING_V := 1
 ## The bar's room in a row; the squares fit themselves into it (`CrewSplitMarks.layout_for`).
 const WORK_STRIP_CREW_WIDTH := 48.0
+## **THE HANDS A TAKE ROW'S HOLD CREW GAVE A BENCH ORDER** (`LaborAssignment.handsToBench`): the sim's finished
+## sentence (`1 to the Spears order, 1 to the Baskets order`), "" = none. `WorkStrip.build_hands_line` draws it verbatim,
+## amber, on its own line under the strip, right-aligned; the full sentence rides the hover.
+const ROW_HANDS_TO_BENCH_KEY := "hands_to_bench"
+const WORK_STRIP_HANDS_META := &"work_strip_hands_to_bench"
 ## How opaque the progress fill lies over the chip's chrome.
 const WORK_STRIP_FILL_ALPHA := 0.6
 

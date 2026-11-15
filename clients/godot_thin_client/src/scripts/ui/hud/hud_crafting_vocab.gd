@@ -36,66 +36,19 @@ const READING_AXIS_KEY := "axis"
 const READING_VALUE_KEY := "value"
 const READING_BAND_NAME_KEY := "band_name"
 
-## `PopulationCohortState.bench` — every scalar describes the WORKED order of the bench's queue,
-## `orders[worked]` (`BENCH_ORDERS_KEY`, `BENCH_WORKED_KEY`). An empty `recipe_id` is an IDLE bench (an empty queue), which is a different
-## statement from a BLOCKED one.
+## `PopulationCohortState.bench` (#873) — the bench is a QUEUE OF ORDERS the sim works at once; the
+## bench-level keys are only the totals. `workers` is the sim's own crew total (never a number the player
+## sets), `lent_to_hunt` the sum of the orders' loans, `set_aside` what the items in flight hold per
+## material (`{material_id, amount}` rows). Everything about one order — its crew, priority, progress,
+## refusal — is on the order (`BENCH_ORDERS_KEY`). An empty `orders` is an IDLE bench.
 const BAND_BENCH_KEY := "bench"
-const BENCH_RECIPE_ID_KEY := "recipe_id"
-const BENCH_DISPLAY_NAME_KEY := "display_name"
 const BENCH_WORKERS_KEY := "workers"
-const BENCH_PROGRESS_KEY := "progress"
-const BENCH_WORK_KEY := "work"
-const BENCH_TEACHES_KEY := "teaches"
-const BENCH_BLOCKED_REASON_KEY := "blocked_reason"
-## **HOW THAT REFUSAL SHOULD READ, in the OFFER's own severity vocabulary** — `danger` / `neutral` /
-## `good`, `""` while nothing is blocking. A bench waiting for its crew is the normal state one click
-## after **Make** — the player staffs the bench — and resolves `neutral`, while a shortage, an unknown
-## craft or a zero craft rate resolve `danger`. It rides beside the reason for the same reason the
-## reason rides at all: **the client does not decide which refusals are serious**, and one tinting them
-## all alike renders the expected state as a fault. Read through `REASON_COLORS`, the SAME table the
-## ledger's offer rows resolve through, so the bench and the ledger cannot disagree about what a
-## published severity looks like.
-const BENCH_BLOCKED_SEVERITY_KEY := "blocked_severity"
-## The worked order has cut its pile for the pass in flight — which is what raising an order over it pauses.
-const BENCH_DRAWN_KEY := "drawn"
-const BENCH_OUTPUT_GRADE_KEY := "output_grade"
-## **WHAT ONE TURN ADDS, RESOLVED SIM-SIDE** — `workers × progress_per_worker_turn × craft_speed`,
-## where `craft_speed` is the equipped bench tool's rate or the material's bare-handed one. **Never
-## re-derive it**: that join is the same one `kitTiers` exists to keep sim-side, and a client
-## multiplying crew by work would read a bare-handed organic's 0.5 as 1.0 and promise a finish in
-## half the turns it takes. `0` is a STATE — no crew, no recipe, or a craft speed of zero — and the
-## refusal beside it says which.
-const BENCH_RATE_PER_TURN_KEY := "rate_per_turn"
-## The hands the bench lends to a hunting-by-need muster next turn (`BenchState.lentToHunt`). Shown in
-## the donor rows' own words (`HudWorkVocab.WORK_ROW_LENT_LINE_FORMAT`); `rate_per_turn` already
-## subtracts them. Nothing is drawn at 0.
+const BENCH_SET_ASIDE_KEY := "set_aside"
+## The hands the bench lends to a hunting-by-need muster next turn (the sum of its orders' loans); read
+## by the labor state's muster arithmetic.
 const BENCH_LENT_TO_HUNT_KEY := "lent_to_hunt"
-const BENCH_LENT_LINE_META := &"bench_lent_line"
-## **THE PILE ALREADY CUT, so a clear can name what it destroys.** The WITHDRAWN amounts, not the
-## recipe's inputs and not a shortfall's `required` — a bench tool's material efficiency sits between
-## the book and the withdrawal, and naming what will really be lost is the whole point. Empty on an
-## undrawn bench.
-const BENCH_DRAWN_INPUTS_KEY := "drawn_inputs"
 const DRAWN_INPUT_MATERIAL_ID_KEY := "material_id"
 const DRAWN_INPUT_AMOUNT_KEY := "amount"
-## **THE PLAYER'S OWN RANK ON THIS BENCH** (`docs/plan_standing_upkeep.md` §4.9 item 9b) — the same
-## `SourcePriority` a worked row carries, arriving as the LOWERCASE WORD the decoder converted the
-## ordinal into. The vocabulary itself is `HudWorkVocab`'s (`WORK_PRIORITY_LEVELS` / `_FACES` /
-## `work_priority_of`) and is deliberately NOT restated here: the bench competes with the gathering
-## rows in one shedding walk, so one property means one word list — a second spelling would be the
-## drift the wire's shared enum exists to prevent.
-##
-## `"normal"` on an unmarked bench, on an IDLE one and on a band with no bench at all, so the panel
-## reads it the same way in all three.
-const BENCH_PRIORITY_KEY := "priority"
-## How the rank's line-two prefix is found by IDENTITY — it is a `HudWorkVocab` face this panel does
-## not compose, so an assertion matching on its wording would be matching on the other module's
-## spelling. Valued the LEVEL, which is what the harness actually wants to read back.
-const BENCH_PRIORITY_META := "crafting_bench_priority"
-## …and the handle on the LINK that opens the picker. Its face is `HudWorkVocab.WORK_INSPECT_PRIORITY`,
-## the same word the work inspector's link wears, so a search by text finds a control in two panels and
-## cannot say which — the `CLEAR_BENCH_META` argument, one control over.
-const BENCH_PRIORITY_LINK_META := "crafting_bench_priority_link"
 
 # ---- AUTO-CRAFT (`bench_auto` / `bench_auto_skip`, issue #779) ------------------------------------
 ## `bench.auto` — the per-band switch that keeps the bench's queue filled from `Make next`. It fills
@@ -111,6 +64,12 @@ const BENCH_AUTO_TOOLTIP := "Keep the bench working down Make next"
 const AUTO_TAG_TEXT := "Auto"
 const AUTO_SKIP_LINK := "Skip to the next suggestion"
 const AUTO_IDLE_SUB := "Auto: nothing to make."
+## `bench.auto_wait_reason` — why auto has queued nothing though the bench has room (the top suggestion's
+## refusal, sim-resolved); `""` when nothing waits.
+const BENCH_AUTO_WAIT_REASON_KEY := "auto_wait_reason"
+const AUTO_WAIT_FORMAT := "Auto: %s."
+## Handle for the harness: the dim note under the header when the bench has orders AND auto waits.
+const AUTO_WAIT_NOTE_META := "crafting_auto_wait_note"
 const AUTO_SKIPPED_FORMAT := "Auto skipped \u2014 back when %s is in"
 const AUTO_SKIPPED_FREE := "Auto takes it back when the bench is free"
 const AUTO_SKIPPED_MATERIAL_SEPARATOR := ", "
@@ -138,8 +97,6 @@ const AUTO_TAG_PADDING_V := 0
 const AUTO_SKIPPED_DIM_ALPHA := 0.5
 const AUTO_TAG_SEPARATION := 6
 const AUTO_SKIP_TOP_MARGIN := 4
-## Minimum gap between the bench info column's sub line and the Priority link / control row.
-const BENCH_LINK_GAP := 14.0
 
 ## **THE QUEUE** (`BenchState.orders`, `docs/plan_crafting_and_materials.md` §7 → "The queue") — every
 ## order on the bench, HEAD FIRST, `[]` on an idle bench. An order's INDEX in this array is the `order`
@@ -152,25 +109,45 @@ const ORDER_COUNT_KEY := "count"
 ## How many it has finished. The server refuses a count at or below this (it would finish the order),
 ## which is what the row's `−` greys against.
 const ORDER_MADE_KEY := "made"
+## Worker-turns accrued across EVERY item of the order in flight.
 const ORDER_PROGRESS_KEY := "progress"
-## **`drawn` ON AN ORDER THE BENCH IS NOT WORKING IS A PAUSED ORDER** — raised over while it held a cut
-## pile, which it keeps, with its progress, until it is worked again. Removing it destroys that pile.
+## The order holds at least one item in flight (its inputs set aside). Removing it destroys that pile.
 const ORDER_DRAWN_KEY := "drawn"
 ## The head's index — the one order that cannot be raised.
 const ORDER_HEAD_INDEX := 0
-## **WHICH ORDER THE BENCH IS WORKING** (`BenchState.worked`) — the first in queue order that holds a
-## pile or can draw, so a short head no longer stalls the queue. EVERY bench scalar describes
-## `orders[worked]`, and so does the well; `0` when nothing can be worked.
-const BENCH_WORKED_KEY := "worked"
-## Why the bench is SKIPPING an order (`"Short 3.0 fibre"`), sim-resolved and rendered verbatim, with
-## its severity in the offer vocabulary; `""` on an order that holds a pile or can draw. The crew's own
-## refusal is never here — it stays on the bench's `blocked_reason`.
+## Why an order is not moving (`"Short 3.0 fibre"` / `"No spare hands this turn"`), sim-resolved and
+## rendered verbatim, with its severity in the offer vocabulary (`danger` / `neutral`); `""` on an order
+## with a crew. A neutral one is the ordinary state one click after Make.
 const ORDER_BLOCKED_REASON_KEY := "blocked_reason"
 const ORDER_BLOCKED_SEVERITY_KEY := "blocked_severity"
 ## **A FORECAST, NOT A BLOCK** — the stock on hand will not cover every pass this order still has to
 ## draw (queue-order claims). Same row shape as `shortfalls`; empty when covered. `blocked_reason` stays
 ## the only "skipped" field, so a row never carries both lines.
 const ORDER_SHORT_TO_FINISH_KEY := "short_to_finish"
+## **THE ORDER'S OWN STAFFING AND PRIORITY** (#873), all sim-resolved: the word `high|normal|low`, the
+## crew at the bench tool and by hand (before any muster loan), the cap the staffing used and the
+## recipe's crafters per item, the items in flight, and the recipe's name, lesson, per-item `work`, the
+## `rate_per_turn` the order accrues next turn (the one rate authority — never re-derived), the grade of
+## the oldest item in flight, the bench tool item id the recipe wants (`""` = none), what its items set
+## aside and its share of the muster.
+const ORDER_PRIORITY_KEY := "priority"
+const ORDER_CREW_AT_TOOL_KEY := "crew_at_tool"
+const ORDER_CREW_BY_HAND_KEY := "crew_by_hand"
+const ORDER_CREW_CAP_KEY := "crew_cap"
+const ORDER_CREW_PER_ITEM_KEY := "crew_per_item"
+const ORDER_ITEMS_IN_FLIGHT_KEY := "items_in_flight"
+const ORDER_DISPLAY_NAME_KEY := "display_name"
+const ORDER_TEACHES_KEY := "teaches"
+const ORDER_WORK_KEY := "work"
+const ORDER_RATE_PER_TURN_KEY := "rate_per_turn"
+const ORDER_OUTPUT_GRADE_KEY := "output_grade"
+const ORDER_BENCH_TOOL_KEY := "bench_tool"
+const ORDER_DRAWN_INPUTS_KEY := "drawn_inputs"
+const ORDER_LENT_TO_HUNT_KEY := "lent_to_hunt"
+## "No order" — the open rank picker's resting value, and an index the queue never has.
+const NO_ORDER := -1
+## An order with nothing drawn yet still has one item's work as its progress denominator.
+const ORDER_MIN_ITEMS_IN_FLIGHT := 1
 
 ## **WHAT TO MAKE NEXT** (`PopulationCohortState.craftSuggestions`, §7 → "Suggestions") — ranked
 ## SIM-SIDE by the workers going without the item, published in that order, and rendered in it. The
@@ -423,75 +400,53 @@ const CHARACTERISTIC_CHIP_FORMAT := "%s: %s"
 
 const BENCH_IDLE_TITLE := "Nothing on the bench"
 const BENCH_IDLE_SUB := "Press Make on a row below to queue it."
-## What the bench is making: **the THING first, then the craft, with a separator between them.** The
-## two nouns were juxtaposed (`Tanning Hurdles`) until it was reported as a different item from the
-## `Hurdles` row in the ledger below — and the collision is not that row's bad luck, it is the shape:
-## every craft name in the book is a gerund, so `Weaving Baskets` reads as a verb phrase and
-## `Bone-working Crook` as a compound noun. The separator is the `·` the sub line and the cost cell
-## already join clauses with. **A bench whose craft the sim has not published prints the thing alone**
-## rather than a dangling separator.
-const BENCH_TITLE_FORMAT := "%s · %s"
-## Its progress, in the units the sim keeps it in: the recipe's own `work`, accrued against the
-## pass's cost. **THE UNIT IS `work`, NOT `worker-turns`** — a worker-turn is not what a worker does
-## in a turn (bare-handed `craft_speed` is 0.5, so two crafters deliver 1.0), and the old name
-## invited a division by the crew that is wrong by exactly the tool multiplier. What a turn really
-## adds is published, and says so on the line beside this one.
+## An order's progress in the units the sim keeps it in: the recipe's own `work`, accrued against the
+## cost of every item in flight. **THE UNIT IS `work`, NOT `worker-turns`** — a worker-turn is not what a
+## worker does in a turn (bare-handed `craft_speed` is 0.5). It rides the progress bar's TOOLTIP.
 const BENCH_PROGRESS_FORMAT := "%.1f of %.0f work"
 ## What a turn adds, rendered VERBATIM from `rate_per_turn` — never recomputed from the crew.
 const BENCH_RATE_FORMAT := "+%.1f/turn"
-## **THE FINISH ESTIMATE, `ceil((work − progress) / rate_per_turn)`** — exact arithmetic over three
-## published numbers, which is the boundary the sim's forecast rule draws: where a closed form
-## exists it ships the terms and the client evaluates them. *"done in 1 turn"* reads poorly, so one
-## turn is spelled as the next one.
-const BENCH_ESTIMATE_FORMAT := "done in %d turns"
-const BENCH_ESTIMATE_NEXT_TURN := "done next turn"
-## A bench about to finish still owes a turn to do it in, so the estimate floors at one rather than
-## claiming a job is already done.
+## **THE FINISH ESTIMATE, `ceil((work − progress) / rate_per_turn)`** — exact arithmetic over published
+## numbers, which is the boundary the sim's forecast rule draws. A bench about to finish still owes a turn
+## to do it in, so the estimate floors at one rather than claiming a job is already done.
+const ORDER_ESTIMATE_FORMAT := "done in ≈%d turns"
+const ORDER_ESTIMATE_ONE := "done in ≈1 turn"
 const BENCH_ESTIMATE_MIN_TURNS := 1
-const BENCH_GRADE_FORMAT := "this pile → %s"
 const BENCH_SUB_SEPARATOR := " · "
-const BENCH_CREW_CAPTION := "Crafters"
-const BENCH_CREW_DECREMENT := "−"
-const BENCH_CREW_INCREMENT := "+"
-
-## **TAKING THE WORKED ORDER OFF THE BENCH — `bench_remove <faction> <band> order <worked>`**, the
-## retired `clear_bench`'s control. The bench then works the next order it can, if any. Offered only on a bench that HAS
-## an order: an idle bench has nothing to remove, so the control is absent rather than dead.
-##
-## **IT WEARS THE `armed` TREATMENT, WHICH IS WHAT KEEPS IT APART FROM THE HEADER'S ✕.** The card
-## header carries the same glyph for "close this panel"; this one destroys committed materials. They
-## are told apart by three things at once — this one sits INSIDE the bench well's bordered box, it is
-## inset from the card's right edge by the crew stepper, and it is drawn in the destructive variant
-## the pause menu's Abandon / Quit already use rather than the header's quiet ghost.
-const CLEAR_BENCH_GLYPH := "✕"
-## **THE TOOLTIP NAMES WHAT WILL BE DESTROYED, off `drawn_inputs`.** Composed from the WITHDRAWAL, so
-## it states what the store really loses; a tooltip built from the recipe's inputs would name a
-## different number the moment a bench tool's material efficiency applies. There is no confirmation
-## dialog — the cost is stated in text, which is this panel's idiom for a consequence.
-const CLEAR_BENCH_TOOLTIP_FORMAT := "Take this order off the bench — %s already cut are lost"
-## What it says when nothing has been withdrawn yet: the order can still be removed, and removing it
-## costs nothing.
-const CLEAR_BENCH_TOOLTIP_NOTHING := "Take this order off the bench — nothing has been cut yet"
-## One drawn material, and the separator between two of them — the cost cell's own clause shape, so
-## the pile reads the way a rebuild cost does.
-const CLEAR_BENCH_CLAUSE_FORMAT := "%s %s"
-const CLEAR_BENCH_SEPARATOR := " · "
-## How it is found by IDENTITY — and here that is not a convenience but the only way: the header's
-## close button wears the SAME glyph, so a search by face finds two buttons and cannot say which is
-## which.
-const CLEAR_BENCH_META := "crafting_clear_bench"
-## **THE REFUSAL IS A LINE OF ITS OWN, BENEATH THE PROGRESS LINE** — how far along the job is and why
-## it is stopped are two facts, and a stopped bench raises both at once. How the blocked line is found
-## by IDENTITY, since its text is a sim string the client cannot predict: an assertion about the
-## refusal that matched on wording would be matching on the sim's spelling, and one that scanned for
-## the danger ink would also catch every refused row in the ledger below.
-const BENCH_BLOCKED_META := "crafting_bench_blocked"
-## The muted forecast line in the well for the WORKED order (never beside a blocked line).
-const BENCH_SHORT_TO_FINISH_META := "crafting_bench_short_to_finish"
+## `Teaching Weaving — every one finished teaches it.` — crafting is the FOURTH TEACHER.
 const BENCH_TEACH_FORMAT := "Teaching %s — every one finished teaches it."
-## Crafting is the FOURTH TEACHER, but a bench with no lesson to credit says nothing rather than
-## saying "teaches nothing".
-const BENCH_TEACH_NONE := ""
+## **THE HEADER LINE** — `R of M orders running · C crafters · S spare`.
+const BENCH_HEADER_FORMAT := "%d of %d %s running · %d %s · %d spare"
+const BENCH_ORDER_NOUN_ONE := "order"
+const BENCH_ORDER_NOUN_MANY := "orders"
+const BENCH_CRAFTER_NOUN_ONE := "crafter"
+const BENCH_CRAFTER_NOUN_MANY := "crafters"
+## `Priority: Normal` — the order's own rank link, over the work inspector's three faces.
+const ORDER_PRIORITY_FORMAT := "Priority: %s"
+## What High does for a WORKABLE bench order: the sim gives it one crafter ahead of the food rows' hold crews.
+## Appended to the link's hover (after `HudWorkVocab.WORK_PRIORITY_HINT`) when the order is High.
+const ORDER_PRIORITY_HIGH_TIP := "High: takes a crafter ahead of the food rows' hold crews."
+## `3.2 set aside` and `2 lent to the hunt`, the sub line's trailing clauses.
+const ORDER_SET_ASIDE_FORMAT := "%s set aside"
+const ORDER_LENT_FORMAT := "%d lent to the hunt"
+## One material and its amount in a tooltip clause (`fibre 3.2`), and the separator between two.
+const ASIDE_CLAUSE_FORMAT := "%s %s"
+const ASIDE_SEPARATOR := " · "
+## The joint between a tooltip's lines.
+const ORDER_TOOLTIP_LINE_JOIN := "\n"
+## **THE RAIL'S ONE LINE** for what the bench holds out of the piles, its per-material split in the
+## tooltip.
+const RAIL_SET_ASIDE_FORMAT := "%s set aside for the bench"
+## Handles, found by IDENTITY: the header line, a row's name, sub line, refusal, progress bar and crew
+## bar (all valued the order index), the priority link (index) and its level, and the rail's line.
+const BENCH_HEADER_META := "crafting_bench_header"
+const ORDER_NAME_META := "crafting_order_name"
+const ORDER_SUB_META := "crafting_order_sub"
+const ORDER_PROGRESS_META := "crafting_order_progress"
+const ORDER_CREW_BAR_META := "crafting_order_crew_bar"
+const ORDER_PRIORITY_META := "crafting_order_priority"
+const ORDER_PRIORITY_LINK_META := "crafting_order_priority_link"
+const RAIL_SET_ASIDE_META := "crafting_rail_set_aside"
 
 ## **FOUR COLUMNS: Item · Owned · Rebuild costs · action.** There is no condition column — the role
 ## cards on the Band panel state how worn each kit's item is, and this table states what replacing it
@@ -834,6 +789,10 @@ const COLUMN_SEPARATION := 10
 
 const BAR_CORNER_RADIUS := 2
 const BENCH_BAR_HEIGHT := 3.0
+## The width an order row's crew bar claims, so every row's progress bar starts at one x.
+const ORDER_CREW_BAR_WIDTH := 96.0
+## Air above and below one order row.
+const ORDER_ROW_PADDING_V := 3
 const ROW_SEPARATION := 4
 const GROUP_HEAD_TOP_MARGIN := 14
 const LEDGER_ROW_PADDING_V := 7

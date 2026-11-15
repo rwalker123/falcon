@@ -507,17 +507,18 @@ fn seed_snapshot() -> WorldSnapshot {
             })
             .collect();
         cohort.bench = BenchState {
-            shortfalls: rows_of(MaterialShortfallState::default()),
-            // The pile already cut for the job in flight — a repeated field inside a repeated field
-            // like the shortfalls above it, so it needs elements or the guard never decodes a row.
-            drawn_inputs: rows_of(DrawnInputState::default()),
-            // The queue, head first — a repeated field inside the bench, seeded for the same reason.
+            // What the bench has set aside - a repeated field, seeded so the guard decodes a row.
+            set_aside: rows_of(DrawnInputState::default()),
+            // The queue - a repeated field inside the bench, whose rows carry two of their own.
             orders: rows_of(BenchOrderState {
                 short_to_finish: rows_of(MaterialShortfallState::default()),
+                drawn_inputs: rows_of(DrawnInputState::default()),
                 ..Default::default()
             }),
             // The skipped item ids — a repeated string field, seeded so the guard decodes one.
             auto_skipped: vec!["spears".to_string(), "hoes".to_string()],
+            // Why auto has not started the top suggestion - a string, seeded non-empty.
+            auto_wait_reason: "No idle hands to start Spears".to_string(),
             // The live whole-kit orders (#780) — a repeated field, seeded for the same reason.
             kit_orders: rows_of(BenchKitOrderState::default()),
             ..Default::default()
@@ -606,6 +607,8 @@ fn seed_snapshot() -> WorldSnapshot {
             // other way round would show a client author an ordering the schema promises cannot
             // happen — and invite exactly the re-sort it forbids.
             assignment.take_species = vec!["flax".to_string(), "wild_emmer".to_string()];
+            // **HANDS GIVEN UP TO HIGH BENCH ORDERS** - a string, seeded non-empty.
+            assignment.hands_to_bench = "1 to the Spears order".to_string();
             // **WHICH KIT ITEMS ARE SHORT, BY NAME** — a nested repeated field, seeded for
             // `material_yield`'s reason. Spelled out rather than `rows()` on `pool_toe`'s rule: the
             // list is keyed by item, and a duplicate item on one row is not something the server
@@ -1406,7 +1409,7 @@ fn apply_structural_fixups(s: &mut WorldSnapshot) {
         cohort.entity = 100 + i as u64;
         cohort.current_x = row_x(i);
         cohort.current_y = row_y(i);
-        // **THE BENCH'S RANK IS AN ENUM, SO SATURATION LEAVES IT AT ITS DEFAULT** — the same gap the
+        // **AN ORDER'S RANK IS AN ENUM, SO SATURATION LEAVES IT AT ITS DEFAULT** — the same gap the
         // labor rows' `EVERY_SOURCE_PRIORITY` closes (see that const). A cohort carries exactly ONE
         // bench, so with two cohorts the fixture can reach two of the three arms, and these are the
         // two it must reach: a decoder maps this enum with a `_ =>` catch-all on the DEFAULT (the
@@ -1414,7 +1417,9 @@ fn apply_structural_fixups(s: &mut WorldSnapshot) {
         // unreachable by construction while a wrong `High` or `Low` decodes silently as `normal`.
         // The `Normal` arm is covered end-to-end at the codec level by
         // `core_sim/tests/crafting_wire.rs`, which asserts it off the encoded envelope.
-        cohort.bench.priority = BENCHED_SOURCE_PRIORITIES[i % BENCHED_SOURCE_PRIORITIES.len()];
+        for (k, order) in cohort.bench.orders.iter_mut().enumerate() {
+            order.priority = BENCHED_SOURCE_PRIORITIES[(i + k) % BENCHED_SOURCE_PRIORITIES.len()];
+        }
     }
     for (i, herd) in s.herds.iter_mut().enumerate() {
         herd.x = row_x(i);

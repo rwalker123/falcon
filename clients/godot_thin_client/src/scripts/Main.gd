@@ -425,8 +425,6 @@ func _ready() -> void:
             hud.connect("stop_labor_requested", Callable(self, "_on_hud_stop_labor"))
         if hud.has_signal("bench_enqueue_requested") and not hud.is_connected("bench_enqueue_requested", Callable(self, "_on_hud_bench_enqueue")):
             hud.connect("bench_enqueue_requested", Callable(self, "_on_hud_bench_enqueue"))
-        if hud.has_signal("bench_crew_requested") and not hud.is_connected("bench_crew_requested", Callable(self, "_on_hud_bench_crew")):
-            hud.connect("bench_crew_requested", Callable(self, "_on_hud_bench_crew"))
         if hud.has_signal("bench_order_count_requested") and not hud.is_connected("bench_order_count_requested", Callable(self, "_on_hud_bench_order_count")):
             hud.connect("bench_order_count_requested", Callable(self, "_on_hud_bench_order_count"))
         if hud.has_signal("bench_remove_requested") and not hud.is_connected("bench_remove_requested", Callable(self, "_on_hud_bench_remove")):
@@ -2207,10 +2205,8 @@ static func format_stop_labor(payload: Dictionary) -> Dictionary:
 ## bench it is the job at once.
 ##
 ## **EVERY ORDER HAS A COUNT**, so `count` is always sent and never below one: the ledger's Make adds
-## one, a suggestion's Queue adds its whole shortfall. **The grammar's `[workers <n>]` tail is
-## deliberately never sent**: the player staffs the bench, and a client-chosen crew here would be a
-## second answer to the question the `− n +` stepper exists to ask. Naming no crew leaves the crew
-## where it is — the crew stays with the bench across orders.
+## one, a suggestion's Queue adds its whole shortfall. **No `workers` token is ever
+## sent**: the sim staffs every order each turn, and a client-chosen crew would be a second answer.
 ##
 ## It takes `<faction_id> <band_id>` first, like `assign_labor`, and names the band by its DURABLE
 ## `band_id` — never its ECS entity bits, which a rollback renumbers.
@@ -2324,35 +2320,20 @@ static func format_set_starting_loadout(payload: Dictionary) -> Dictionary:
         "message": "Outfitted the band: %d kits, %d units." % [kits, units],
     }
 
-## **`bench_crew <faction_id> <band_id> workers <n>`** — re-crew the bench, leaving its queue and its
-## progress alone. It works on an IDLE (empty-queue) bench too: the crew stays with the bench across
-## orders. `workers` is a NAMED token and is mandatory; `0` is a legal, meaningful value (the queue
-## stays up with nobody on it) rather than a missing argument, so it is never omitted.
-static func format_bench_crew(payload: Dictionary) -> Dictionary:
-    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
-    if band_id == HudConst.NO_BAND_ID:
-        return {}
-    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
-    var workers: int = max(0, int(payload.get("workers", 0)))
-    return {
-        "line": "bench_crew %d %d workers %d" % [faction, band_id, workers],
-        "message": "Put %d crafter%s on the bench." % [workers, "" if workers == 1 else "s"],
-    }
-
-## **`bench_priority <faction_id> <band_id> high|normal|low` — THE PLAYER'S OWN RANK ON THE BENCH**
-## (`docs/plan_standing_upkeep.md` §4.9 item 9b), emitted by the crafting panel's bench picker.
+## **`bench_priority <faction_id> <band_id> order <i> high|normal|low` — THE PLAYER'S RANK ON ONE ORDER**
+## (#873), emitted by the crafting panel's per-order priority picker. `<i>` is the order's index in
+## `bench.orders`, the same index `bench_order_count` / `bench_remove` / `bench_raise` address; the sim
+## staffs the highest-ranked order first.
 ##
 ## **IT IS A SIBLING VERB OF `work_priority`, NOT A TOKEN OF IT.** `work_priority`'s grammar reads a
-## lone trailing token as a herd id, so `work_priority <f> <b> bench low` would be ambiguous with a
-## herd named `bench`. The two share the three VALUE tokens and nothing else — which is what lets one
-## picker serve both, echoing back the word the decoder handed it.
-##
-## **IT NAMES THE BAND AND NOTHING ELSE**, one bench at a time meaning there is no job argument to
-## disambiguate — the same shape `bench_crew` takes, and for the same reason. It is legal on an IDLE
-## bench: a rank is a standing statement about the bench rather than about the job on it.
+## lone trailing token as a herd id. The two share the three VALUE tokens and nothing else — which is
+## what lets one picker serve both, echoing back the word the decoder handed it.
 static func format_bench_priority(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var order := int(payload.get("order", -1))
+    if order < 0:
         return {}
     var level := String(payload.get("level", "")).strip_edges().to_lower()
     if not HudWorkVocab.WORK_PRIORITY_FACES.has(level):
@@ -2362,8 +2343,8 @@ static func format_bench_priority(payload: Dictionary) -> Dictionary:
     # player pressed carry one word between them — `format_work_priority`'s rule, one verb over.
     var face := String(HudWorkVocab.WORK_PRIORITY_FACES[level])
     return {
-        "line": "bench_priority %d %d %s" % [faction, band_id, level],
-        "message": "The bench is now %s priority for this band." % face.to_lower(),
+        "line": "bench_priority %d %d order %d %s" % [faction, band_id, order, level],
+        "message": "That order is now %s priority." % face.to_lower(),
     }
 
 ## **`bench_auto <faction_id> <band_id> on|off` - THE BENCH'S AUTO SWITCH** (issue #779). While on, an
@@ -2859,13 +2840,9 @@ func _on_hud_diplomacy_command(payload: Dictionary) -> void:
     _send_formatted_command(format_diplomacy_command(payload))
 
 ## Add an order to the band's bench queue (Materials & Crafting). The player staffs the bench, so
-## this sends the recipe and its count and the crew stays where it was until the stepper moves it.
+## this sends the recipe and its count; the sim staffs the order.
 func _on_hud_bench_enqueue(payload: Dictionary) -> void:
     _send_formatted_command(format_bench_enqueue(payload))
-
-## Re-crew the bench, leaving its queue and progress alone.
-func _on_hud_bench_crew(payload: Dictionary) -> void:
-    _send_formatted_command(format_bench_crew(payload))
 
 ## Change how many one queued order asks for.
 func _on_hud_bench_order_count(payload: Dictionary) -> void:
@@ -2879,7 +2856,7 @@ func _on_hud_bench_remove(payload: Dictionary) -> void:
 func _on_hud_bench_raise(payload: Dictionary) -> void:
     _send_formatted_command(format_bench_raise(payload))
 
-## Rank the bench against the band's other work. **No optimistic write, so nothing to roll back** —
+## Rank one bench order against the others. **No optimistic write, so nothing to roll back** —
 ## the mark is captured live off the bench and lands on this command's own recapture.
 func _on_hud_bench_priority(payload: Dictionary) -> void:
     _send_formatted_command(format_bench_priority(payload))

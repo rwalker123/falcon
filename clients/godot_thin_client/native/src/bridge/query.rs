@@ -655,6 +655,7 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
                 let _ = row.insert("branch", loss.branch.as_str());
                 let _ = row.insert("before", i64::from(loss.before));
                 let _ = row.insert("after", i64::from(loss.after));
+                let _ = row.insert("order_name", loss.order_name.as_str());
                 losses.push(&row.to_variant());
             }
             let _ = dict.insert("losses", &losses);

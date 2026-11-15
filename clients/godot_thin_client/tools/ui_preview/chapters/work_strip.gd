@@ -9,7 +9,7 @@ extends RefCounted
 ## on its own -- that the rung card is a window drawn ABOVE the sheet that opened it.
 
 ## The checkpoints this chapter owes the walk -- assertions made plus frames saved, as a FLOOR.
-const EXPECTED_CHECKPOINTS := 14
+const EXPECTED_CHECKPOINTS := 19
 
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
@@ -20,6 +20,10 @@ const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 ## The builders the sim staffed on the worked patch's build, and the most that build could take.
 const SITE_BUILDERS := 2
 const SITE_BUILDERS_CAP := 3
+
+## The sim's `handsToBench` sentences: one order, and two orders (long enough to clip beside the crew figure).
+const HANDS_TO_BENCH_ONE := "1 to the Spears order"
+const HANDS_TO_BENCH_TWO := "1 to the Spears order, 1 to the Baskets order"
 
 ## Every craft known, so the next rung of either web is on offer rather than refused.
 const ALL_KNOWN := {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0}
@@ -35,6 +39,7 @@ func run(harness) -> void:
 	await _forage_sheet_strip()
 	await _hunt_sheet_strip()
 	await _worked_sheet_strip()
+	await _hands_to_bench_strip()
 	h._hud._rungcard.dismiss()
 	h._hud._drawercompose.close_compose_sheet()
 	h._hud._compose.reset_forage_source()
@@ -110,6 +115,39 @@ func _worked_sheet_strip() -> void:
 			and chip_tip.contains(HudWorkVocab.BUILD_CREW_DONE_FORMAT.split("%s")[1]))
 	h._assert_hud("…and links `Show on map` in the footer",
 		_find_meta(sheet, HudComposeVocab.SHOW_ON_MAP_META) != null)
+
+## A take row whose hold crew gave hands to a bench order: the strip says so in amber beside the crew figure
+## (`LaborAssignment.handsToBench`, the sim's sentence), clipped to one line with the whole sentence on the
+## hover; an empty string draws nothing.
+func _hands_to_bench_strip() -> void:
+	var band := BandFx.cultivating_forage_band_fixture()
+	var tile := BaseFx.food_tile_fixture()
+	tile["patch_builders_cap"] = SITE_BUILDERS_CAP
+	h._hud._band_labor._player_band = band
+	h._hud._band_labor._player_bands = [band]
+	BandFx.staff_builders(h._hud._band_labor, SITE_BUILDERS)
+	for sentence in [HANDS_TO_BENCH_ONE, HANDS_TO_BENCH_TWO]:
+		(band["labor_assignments"][0] as Dictionary)[HudWorkVocab.ROW_HANDS_TO_BENCH_KEY] = sentence
+		h._hud._band_labor._player_band = band
+		h._hud._compose.reset_forage_source()
+		h._show_tile(tile)
+		h._compose_forage(tile)
+		await h._settle()
+		var sheet = h._hud._drawercompose._compose_sheet
+		await h._save("work_strip_hands_to_bench_%s" % ("two" if sentence == HANDS_TO_BENCH_TWO else "one"))
+		var label := _find_meta(sheet, HudWorkVocab.WORK_STRIP_HANDS_META)
+		h._assert_hud("the strip draws the sim's sentence `%s`, amber, on its own line under the strip, full text on hover" % sentence,
+			label is Label and (label as Label).text == sentence and (label as Label).tooltip_text == sentence
+				and (label as Label).get_theme_color("font_color") == HudStyle.WARN
+				and (label as Label).clip_text)
+	(band["labor_assignments"][0] as Dictionary)[HudWorkVocab.ROW_HANDS_TO_BENCH_KEY] = ""
+	h._hud._band_labor._player_band = band
+	h._hud._compose.reset_forage_source()
+	h._show_tile(tile)
+	h._compose_forage(tile)
+	await h._settle()
+	h._assert_hud("an empty sentence draws no label (no layout gap)",
+		_find_meta(h._hud._drawercompose._compose_sheet, HudWorkVocab.WORK_STRIP_HANDS_META) == null)
 
 ## The ladder chip's press target on a sheet's strip, or `null`.
 func _ladder_button(sheet: Node) -> Button:

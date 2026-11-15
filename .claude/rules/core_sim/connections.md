@@ -614,7 +614,7 @@ both levers sit in `intensification_ladder.json` -> `knowledge`:
 | A `Trade` shipment or envoy arrives at a band of the SAME people as its home band | `messengers_lesson_per_tile` (**0.5**) x hex distance from the party's `Expedition::launch_tile` to the arrival tile | the `TargetStep::Arrived` arm of `advance_expeditions`, before the cargo is settled |
 
 `Expedition::launch_tile` is stamped by the server's two party spawns (`launch_tile_of`: the home
-band's tile at launch) and rides the checkpoint with the `Expedition` (`SAVE_FORMAT_VERSION` 68); a
+band's tile at launch) and rides the checkpoint with the `Expedition` (`SAVE_FORMAT_VERSION` 69); a
 hand-built party with `None` earns no trip credit. Both levers validate finite and `>= 0` (`0`
 switches the source off).
 

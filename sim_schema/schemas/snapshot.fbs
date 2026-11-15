@@ -2689,6 +2689,9 @@ table LaborAssignment {
   // for a row no order covers. chiefOwned: the same fact as a bool (orderKind is not empty).
   orderKind:string;
   chiefOwned:bool = false;
+  // HANDS THIS ROW'S HOLD CREW GAVE UP TO HIGH BENCH ORDERS THIS TURN, resolved sim-side:
+  // "1 to the Spears order, 1 to the Baskets order" (bench order). "" = none.
+  handsToBench:string;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -5174,147 +5177,90 @@ table DrawnInput {
   amount:float;
 }
 
-// WHAT IS ON THIS BAND'S BENCH — ONE BENCH, ONE QUEUE, worked one order at a time.
-//
-// Every scalar field below describes the HEAD order (`orders[0]`), the one being worked; `orders`
-// is the whole queue. `recipeId` empty = an idle bench (an empty queue) - a different statement
-// from a blocked one: a blocked bench has a recipe AND a `blockedReason`. The crew (`workers`) and
-// `priority` belong to the BENCH and survive every queue edit; an idle bench may still have a crew.
+// WHAT IS ON THIS BAND'S BENCH - the queue of orders, ALL WORKED AT ONCE, staffed by the sim
+// (#873). There is no "worked order" and no player crew: every workable order is staffed in the
+// same passes as the work rows, each order carries its own priority and its own crew, and an item's
+// inputs are set aside the turn a crafter starts it. Everything about an order is on its
+// `BenchOrder` row; the bench row carries only what is the bench's.
 table BenchState {
-  recipeId:string;
-  displayName:string;
+  // EVERY CRAFTER THE SIM STAFFED ON THE BENCH - the sum of the orders' crews (before any muster
+  // loan). The sim's number, never the player's.
   workers:uint;
-  progress:float;         // worker-turns accrued toward `work`
-  work:float;             // worker-turns one pass of this recipe costs
-  teaches:string;         // the craft id one completed item credits — crafting is the 4th teacher
-  // WHY THIS BENCH IS NOT MOVING, resolved sim-side. "" = it is working. It reads in exactly the
-  // CraftOffer vocabulary ("Short 4.9 bone", "No loom", joined with " · ") plus the crew's own
-  // refusal, because a bench with a full pile and nobody on it is also stopped.
-  blockedReason:string;
-  shortfalls:[MaterialShortfall];
-  drawn:bool;             // the pile for the pass in flight is already cut
-  // The grade that pile FIXED. "" before the draw, and "" on a recipe that resolves no grade — the
-  // same two cases as `CraftOffer.outputGrade` below (reads no characteristic, or outputs only
-  // materials). NOT "an ungraded recipe" in the sense of one declaring no `grades` map, which this
-  // line used to say: a recipe with no declared grades is still stamped with the band it was made
-  // at, because declaration governs the grade's EFFECTS and not its name.
-  outputGrade:string;
-  // --- WHAT THE BENCH WILL SPEND AND WHAT IT ALREADY SPENT (appended last) ----------------------
-  // WHAT THIS BENCH WILL ACCRUE NEXT TURN — `workers × progress_per_worker_turn × craft_speed`,
-  // already resolved through the bounding tool (or the material's bare-handed rate, which is what
-  // makes a "worker-turn" not a worker's turn). `0` when nothing will accrue: no crew, no recipe, or
-  // a craft speed of zero. THE CLIENT MUST NOT RE-DERIVE THIS — `craft_speed` is the tool join.
-  //
-  // It is a TERM, not an answer: the finish estimate is `ceil((work - progress) / ratePerTurn)`,
-  // exact arithmetic over three numbers all on this wire. A turns-remaining field would be a second
-  // home for one fact.
-  ratePerTurn:float = 0;
-  // THE PILE ALREADY CUT FOR THE JOB IN FLIGHT, so a clear/swap can name what it destroys. Empty
-  // when nothing is drawn. One row per input material, in the recipe's own input order.
-  drawnInputs:[DrawnInput];
-  // --- IS THE BLOCK A FAULT OR A PROMPT? (appended last) ----------------------------------------
-  // HOW `blockedReason` SHOULD READ, in the SAME vocabulary as CraftOffer.severity - "danger" |
-  // "neutral" | "good" - and "" whenever nothing is blocking.
-  //
-  // *** A BENCH AWAITING ITS CREW IS THE NORMAL STATE ONE CLICK AFTER "MAKE". ***
-  //
-  // The player staffs the bench, so "No one at the bench" is what the panel says while it waits for
-  // the stepper - an instruction, `neutral`. A material shortage, an unknown craft or a zero craft
-  // rate are problems, `danger`; joined reasons take `danger` if any component is. Without this
-  // field a client renders every reason in one alarm colour and the expected state reads as an
-  // error, which is the exact distinction `reason`/`severity` already draw on CraftOffer.
-  //
-  // THE CLIENT MUST NOT RE-DERIVE IT from the reason string - same rule as `reason` itself.
-  blockedSeverity:string;
-  // --- THE PLAYER'S OWN RANK ON THE BENCH (appended last) ---------------------------------------
-  // WHAT THE BAND GIVES UP FIRST WHEN IT CANNOT COVER EVERYTHING IT HOLDS - the SAME `SourcePriority`
-  // a worked row carries on LaborAssignment.priority, deliberately reusing that enum rather than
-  // minting a second one: it is one property of one kind, and two vocabularies for it would drift.
-  // Set with `bench_priority <faction> <band> high|normal|low`.
-  //
-  // WHY THE BENCH HAS ONE. It spends the same workers the gathering rows do, so when the band runs
-  // short it competes with them - and a craft pays into no food, fodder or material account, so an
-  // UNMARKED bench is the FIRST thing thinned. That is the right default in a famine and this field
-  // is how the player overrides it. The bench is ranked in the SAME step as the worked sources, never
-  // a step of its own; its LAST hand goes before any source is emptied, so a `High` bench still
-  // stalls before a `Low` patch is given up - the steps say what is at stake, the mark says who goes
-  // first among equals.
-  //
-  // `Normal` on an unmarked bench AND on a band with no bench at all. It is published on an IDLE
-  // bench too (`recipeId` empty), because a rank is a standing statement about the bench rather than
-  // about the job on it and the command sets it either way - a client that hid the control while the
-  // bench was empty would be hiding the one moment the player most wants to state it.
-  //
-  // Captured LIVE off the bench, exactly as `LaborAssignment.priority` is, so an edit lands on the
-  // command's own recapture and no optimistic overlay is needed. Appended last (append-only).
-  priority:SourcePriority;
-  // --- THE QUEUE (appended last) -----------------------------------------------------------------
-  // Every order on the bench, HEAD FIRST. Empty on an idle bench. An order's index here is the
-  // `order` the queue verbs (`bench_order_count`, `bench_remove`, `bench_raise`) address.
+  // Every order on the bench, in QUEUE order. An order's index here is the `order` the queue verbs
+  // (`bench_order_count`, `bench_remove`, `bench_raise`, `bench_priority`) address. Empty = idle.
   orders:[BenchOrder];
-  // --- WHICH ORDER THE SCALARS ABOVE DESCRIBE (appended last) -----------------------------------
-  // THE WORKED ORDER: the bench works the FIRST order, in queue order, that holds a pile or can draw
-  // one now. A short order keeps its place and is skipped (its own `BenchOrder.blockedReason` says
-  // why). Every scalar above describes `orders[worked]`; when no order can be worked they describe
-  // the head and `worked` is 0, so a fully stuck bench reads as its blocked head. 0 on an idle bench.
-  worked:uint = 0;
-  // --- AUTO-CRAFT (appended last) ----------------------------------------------------------------
-  // The per-band opt-in toggle (`bench_auto <faction> <band> on|off`). While on, an EMPTY queue is
-  // refilled from the ranked craft suggestions; the crew is never touched. Published on an idle
-  // bench too - it is a standing statement about the bench.
+  // The per-band opt-in toggle (`bench_auto <faction> <band> on|off`). While on, ONE order is added
+  // whenever crafters are free (idle hands, and every workable order at its crew cap). Published on
+  // an idle bench too - it is a standing statement about the bench.
   auto:bool = false;
   // The items the player skipped (`bench_auto_skip`) while auto-craft waited on them, by item id.
-  // A skipped item is passed over until one of it can be drawn from stock; the client reads the
-  // materials it is waiting on off the existing CraftOffer for that item (`suggested` offer's
-  // `shortfalls`/`reason`). Cleared when auto is switched off. Sorted.
+  // Sorted.
   autoSkipped:[string];
-  // --- THE HANDS THE BENCH LENDS TO A HUNT NEXT TURN (appended last) ----------------------------
-  // On a band with a hunting-by-need row (LaborAssignment.musterCrew > 0), the crafting bench is a
-  // donor like a worked source row: the hands it gives up next turn, from the SAME
-  // `muster_donors` call that fills each donor row's `lentToHunt`. `workers` above stays the crew the
-  // player set; this is the part of it that is out hunting for the one turn. 0 when the bench lends
-  // nothing, and on a band with no need row sending a crew.
+  // THE HANDS THE BENCH LENDS TO A HUNT NEXT TURN - the sum of the orders' `lentToHunt`.
   lentToHunt:uint = 0;
-  // --- WHOLE-KIT ORDERS (appended last, #780) ----------------------------------------------------
   // The live kit orders, oldest first. Each is the group some `orders[].kitOrder` points at.
   kitOrders:[BenchKitOrder];
+  // WHAT THE BENCH HAS SET ASIDE, PER MATERIAL - the sum over every order's items in flight. The
+  // pile rail's "N set aside for the bench".
+  setAside:[DrawnInput];
+  // WHY AUTO-CRAFT HAS NOT STARTED THE TOP SUGGESTION, resolved sim-side by the same pick the fill
+  // uses ("No idle hands to start Spears" / "Spears: Short 0.4 bone"). "" = not waiting, auto off,
+  // or nothing to make.
+  autoWaitReason:string;
 }
 
-// ONE ORDER ON A BENCH'S QUEUE — `recipe x count`. Every order has a count (>= 1); the
-// repeat-until-cleared job is retired. When `made` reaches `count` the order leaves the queue and
-// the next one starts, drawing its own inputs.
-//
-// `progress` and `drawn` are the ORDER's pass in flight. Only the head is worked, but an order
-// raised over a head that had already drawn leaves that head PAUSED with its pile and progress - so
-// a non-head order can hold a cut pile, and removing it destroys that pile exactly as removing the
-// head does.
+// ONE ORDER ON A BENCH'S QUEUE - `recipe x count`, with everything the sim decided about it. Every
+// order has a count (>= 1); when `made` reaches `count` it leaves the queue.
 table BenchOrder {
   recipeId:string;
   count:uint;          // items this order asks for (finished passes)
-  made:uint;           // items it has finished — the count the wear and lesson were charged
-  progress:float;      // worker-turns accrued toward the recipe's `work` on the pass in flight
-  drawn:bool;          // this order holds a pile already cut for its pass in flight
-  // WHY THIS ORDER IS BEING SKIPPED, resolved sim-side in the CraftOffer vocabulary ("Short 4.9
-  // bone", joined with " · "). "" for an order that holds a pile or can draw one now - it is not
-  // skipped. The "Short n material" numbers are this order's `shortToFinish` rows: the WHOLE remaining
-  // run against what the orders ahead of it leave, not one pass. The crew's own refusal is NOT here: it is the bench's, on BenchState.blockedReason.
-  // Appended last.
+  made:uint;           // items it has finished
+  // Worker-turns accrued across every item of this order in flight.
+  progress:float;
+  // This order holds at least one item in flight (a pile set aside).
+  drawn:bool;
+  // WHY THIS ORDER IS NOT MOVING, resolved sim-side in the CraftOffer vocabulary. An order short of
+  // an input with nothing in flight reads "Short 4.9 bone" (`danger`); an order that is workable but
+  // got no crafter reads "No spare hands this turn" (`neutral`). "" for an order with a crew.
   blockedReason:string;
-  // `danger` when `blockedReason` is set, "" otherwise - the BenchState.blockedSeverity vocabulary.
+  // `danger` | `neutral` | "" - the CraftOffer.severity vocabulary.
   blockedSeverity:string;
-  // WHAT THE STOCK ON HAND CANNOT COVER OF THIS ORDER'S WHOLE RUN. One MaterialShortfall per input
-  // material the passes still to DRAW need more of than the queue left for this order (the queue
-  // spends in its own order, so an earlier order's claim is already out of `held`). `required` is
-  // every pass still to draw at the band's current tiers, `held` what was left for this order, `short`
-  // the gap. Empty when the stock on hand covers every pass still to draw. A FORECAST, not a block:
-  // `blockedReason` stays the only "why this order is skipped" field. Appended last.
+  // WHAT THE STOCK ON HAND CANNOT COVER OF THIS ORDER'S WHOLE RUN, against what the orders ranked
+  // ahead of it leave. A forecast, not a block.
   shortToFinish:[MaterialShortfall];
-  // AUTO-CRAFT QUEUED THIS ORDER rather than the player. Only an auto head can be skipped
-  // (`bench_auto_skip`); otherwise an ordinary order. Appended last.
+  // AUTO-CRAFT QUEUED THIS ORDER rather than the player.
   auto:bool = false;
-  // THE KIT ORDER THIS ORDER IS A PART OF (`BenchKitOrder.id`), 0 for a plain order. The parts of one
-  // kit order are contiguous in `BenchState.orders`. Appended last (#780).
+  // THE KIT ORDER THIS ORDER IS A PART OF (`BenchKitOrder.id`), 0 for a plain order.
   kitOrder:uint = 0;
+  // THE ORDER'S OWN PRIORITY - the SAME `SourcePriority` a worked row carries. A kit order's parts
+  // share one. Set with `bench_priority <faction> <band> order <i> high|normal|low`.
+  priority:SourcePriority;
+  // THE STAFFED CREW (before any muster loan): crafters holding the bench tool, and crafters working
+  // by hand. The crew bar's room is `crewCap - crewAtTool - crewByHand`.
+  crewAtTool:uint = 0;
+  crewByHand:uint = 0;
+  // THE CAP THE STAFFING USED - `crafters_per_item x items it could work`.
+  crewCap:uint = 0;
+  // The recipe's `crafters_per_item`.
+  crewPerItem:uint = 0;
+  // Items set aside and being worked.
+  itemsInFlight:uint = 0;
+  // The recipe's display name and the craft id one finished item teaches, and its `work`.
+  displayName:string;
+  teaches:string;
+  work:float = 0;
+  // WHAT THIS ORDER ACCRUES NEXT TURN over every item it works, net of lent hands - the one rate
+  // authority. The client must not re-derive it.
+  ratePerTurn:float = 0;
+  // The grade of the OLDEST item in flight. "" when nothing is in flight or the recipe resolves no
+  // grade.
+  outputGrade:string;
+  // The bench tool item id the recipe's material uses; "" = the material has none.
+  benchTool:string;
+  // Sum of what was set aside across this order's items in flight, one row per material.
+  drawnInputs:[DrawnInput];
+  // THIS ORDER'S SHARE OF NEXT TURN'S MUSTER.
+  lentToHunt:uint = 0;
 }
 
 // ONE WHOLE-KIT ORDER on the bench's queue (#780) - what `bench_enqueue_kit` queued. `done` is the

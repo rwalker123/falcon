@@ -402,7 +402,7 @@ impl MusterPricing<'_> {
             self.need_idx,
             crew,
             self.is_local,
-            self.bench,
+            self.bench.as_ref(),
             &kit,
         )
     }

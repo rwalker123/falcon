@@ -37,7 +37,6 @@ use sim_runtime::{
 use crate::{
     components::{
         BandBench, BandEquipment, BuildSource, EquipmentBatch, LocalStore, SourcePriority,
-        HEAD_ORDER,
     },
     craft_suggestions::SupplySource,
     crafting::{craft_discovery_id, title_from_id},
@@ -50,7 +49,7 @@ use crate::{
     recipes_config::{RecipeDef, RecipesConfig},
     resources::DiscoveryProgressLedger,
     scalar::{scalar_from_f32, scalar_zero},
-    systems::{bench_tiers, preview_grade, rate_per_turn, BenchTiers},
+    systems::{bench_tiers, preview_grade, BenchTiers},
 };
 
 /// The three severities a craft offer may carry. Opaque presentation tokens the sim never branches
@@ -84,7 +83,46 @@ const REASON_NOT_NEEDED: &str = "Not needed yet";
 /// **The bench has a job and nobody on it.** A contract string like [`REASON_NOT_NEEDED`], and for
 /// the same reason: it is the *normal* state one click after **Make** — the player staffs the bench,
 /// so this reads at [`SEVERITY_NEUTRAL`] while every other bench refusal is a problem.
-const REASON_NO_CREW: &str = "No one at the bench";
+const REASON_NO_SPARE_HANDS: &str = "No spare hands this turn";
+
+/// **Every staffable hand was dealt before the bench was** - the lead of the reason a crewless order
+/// publishes, followed by what took them (`"4 holding rows, 2 scouting"`).
+const REASON_EVERY_HAND_NEEDED_FIRST: &str = "Every hand is needed first: ";
+/// The words for the five things a hand can be dealt to before pass 2, in the order a tie between
+/// two of them is broken.
+const FIRST_CALL_HOLDING: &str = "holding rows";
+const FIRST_CALL_KEEPING: &str = "keeping ground";
+const FIRST_CALL_BUILDING: &str = "building";
+const FIRST_CALL_SCOUTING: &str = "scouting";
+const FIRST_CALL_CRAFTING: &str = "High crafting";
+/// Between two named kinds in the reason.
+const FIRST_CALL_SEPARATOR: &str = ", ";
+
+/// **WHAT TOOK THE HANDS BEFORE PASS 2**, `None` when hands were left over (the order then simply got
+/// none: trimmed, or no bare work and no tool) - only the nonzero kinds, largest first.
+fn every_hand_needed_first(first: &crate::components::FirstCall) -> Option<String> {
+    if first.dealt() == 0 || first.dealt() < first.pool {
+        return None;
+    }
+    let mut kinds = [
+        (first.holding, FIRST_CALL_HOLDING),
+        (first.keeping, FIRST_CALL_KEEPING),
+        (first.building, FIRST_CALL_BUILDING),
+        (first.scouting, FIRST_CALL_SCOUTING),
+        (first.crafting, FIRST_CALL_CRAFTING),
+    ];
+    // `sort_by_key` is stable, so equal counts keep the order above.
+    kinds.sort_by_key(|(count, _)| std::cmp::Reverse(*count));
+    let named: Vec<String> = kinds
+        .iter()
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, word)| format!("{count} {word}"))
+        .collect();
+    Some(format!(
+        "{REASON_EVERY_HAND_NEEDED_FIRST}{}",
+        named.join(FIRST_CALL_SEPARATOR)
+    ))
+}
 
 /// **Nothing is blocking**, so there is no severity to state either. Spelled once so the empty
 /// `blocked_reason` and the empty `blocked_severity` cannot drift apart.
@@ -294,9 +332,9 @@ pub(crate) struct BandCraftState {
 pub(crate) fn band_craft_state(
     store: &LocalStore,
     bench: Option<&BandBench>,
-    // The hands the bench lends to next turn's hunt (`MusterPlan::from_bench`): the bench's quoted
-    // rate is priced at `workers − lent_to_hunt`, the crew the turn will work.
-    lent_to_hunt: u32,
+    // The hands each bench order lends to next turn's hunt (`MusterPlan::from_bench_orders`),
+    // index-aligned with the queue: an order's quoted rate is priced at its crew less its loan.
+    lent_by_order: &[u32],
     wear: &BandEquipment,
     inputs: &BandCraftInputs<'_>,
 ) -> BandCraftState {
@@ -310,10 +348,9 @@ pub(crate) fn band_craft_state(
                 .or_insert_with(|| bench_tiers(material, inputs.materials, inputs.equipment, wear));
         }
     }
-    // **THE ORDER THE BENCH ROW DESCRIBES** — the worked order, else the head (a fully stuck queue
-    // reads as its head, blocked). One resolution, shared by the bench row and `onBench`.
-    let described = bench.and_then(|bench| {
-        crate::systems::worked_order(
+    // **THE ORDERS AS THE STAFFING SEES THEM**, struck once: workable, cap, tool.
+    let bench_plan = bench.map(|bench| {
+        crate::systems::bench_plan(
             bench,
             store,
             inputs.recipes,
@@ -321,12 +358,17 @@ pub(crate) fn band_craft_state(
             inputs.equipment,
             wear,
         )
-        .or_else(|| bench.head().map(|_| HEAD_ORDER))
     });
-    let running = bench
-        .zip(described)
-        .and_then(|(bench, index)| bench.orders.get(index))
-        .map(|order| order.recipe_id.as_str());
+    // **THE RECIPE ON THE BENCH** - the first workable order in rank order, else the head - the one
+    // the offers' `onBench` flag and `suggested` rule read.
+    let running = bench.zip(bench_plan.as_ref()).and_then(|(bench, plan)| {
+        plan.rank
+            .iter()
+            .copied()
+            .find(|&index| plan.orders[index].workable)
+            .or_else(|| (!bench.orders.is_empty()).then_some(0))
+            .map(|index| bench.orders[index].recipe_id.as_str())
+    });
     let mut craft_offers: Vec<CraftOfferState> = inputs
         .plans
         .iter()
@@ -349,8 +391,8 @@ pub(crate) fn band_craft_state(
     );
     let bench_row = bench_state(
         bench,
-        lent_to_hunt,
-        described,
+        lent_by_order,
+        bench_plan.as_ref(),
         store,
         wear,
         inputs,
@@ -359,7 +401,7 @@ pub(crate) fn band_craft_state(
     );
     let bench_material_rate = crate::systems::bench_material_rate(
         bench,
-        lent_to_hunt,
+        lent_by_order,
         store,
         inputs.recipes,
         inputs.materials,
@@ -428,18 +470,7 @@ pub(crate) fn material_batches(
         .collect()
 }
 
-/// **A DRAWN job's shortfalls block nothing** — the pile is already withdrawn and in hand, so what
-/// the store is short of cannot stop the item in flight; it speaks to the *next* draw, which is the
-/// ledger's own offer row for that recipe. It is the rule [`bench_state`]'s `output_grade` follows
-/// one field down: **this row is about the item being made**.
-///
-/// The shortfall does not move to the bench in a softer form — it leaves the bench entirely, because
-/// a fact published in two places is one that can disagree with itself.
-/// [`BenchState::shortfalls`] keeps being populated either way: it is honest data about the next
-/// draw, and the client does not render it as blocking.
-const NOTHING_SHORT_STOPS_A_DRAWN_PILE: &[MaterialShortfallState] = &[];
-
-/// **THE BENCH'S RANK, IN THE WIRE'S SPELLING** — the same mapping a labor row's takes
+/// **THE ORDER'S RANK, IN THE WIRE'S SPELLING** — the same mapping a labor row's takes
 /// (`snapshot::population`), mapped rather than cast because the wire puts the **default** at `0`
 /// while the shedding order runs `Low` → `Normal` → `High`.
 fn published_bench_priority(priority: SourcePriority) -> SourcePriorityState {
@@ -450,189 +481,75 @@ fn published_bench_priority(priority: SourcePriority) -> SourcePriorityState {
     }
 }
 
-/// **What is on the bench, and why it is not moving.**
+/// **What is on the bench.**
 ///
-/// An idle bench publishes an all-default row rather than nothing, because *"idle"* and *"blocked"*
-/// are different states and a client must be able to tell them apart without a second field.
-///
-/// **The row's scalars describe ONE order** — `described`, the worked order, or the head when no
-/// order can be worked — and `worked` says which. Every order also carries its own skip reason.
-///
-/// **Once the pile is drawn only two things can stop the job**: nobody at the bench, and a zero
-/// craft rate (the bounding tool wore out mid-craft on a material that cannot be worked bare-handed
-/// — the one genuine *"a running job is stopped"* case). See [`NOTHING_SHORT_STOPS_A_DRAWN_PILE`].
+/// An idle bench publishes an all-default row rather than nothing. Every order carries its own
+/// staffed crew, cap, rate, grade and pile ([`bench_orders`]); the row itself holds only the
+/// bench's: the sim's crew total, the standing auto-craft state, the kit orders and what the bench
+/// has **set aside** per material (the sum over every order's items in flight).
 #[allow(clippy::too_many_arguments)] // One resolved bench row; each argument is a distinct input.
 fn bench_state(
     bench: Option<&BandBench>,
-    lent_to_hunt: u32,
-    described: Option<usize>,
+    lent_by_order: &[u32],
+    plan: Option<&crate::systems::BenchPlan>,
     store: &LocalStore,
     wear: &BandEquipment,
     inputs: &BandCraftInputs<'_>,
     tiers_by_material: &BTreeMap<&str, BenchTiers>,
     forecast: &crate::systems::QueueForecast,
 ) -> BenchState {
-    let Some(bench) = bench else {
+    let (Some(bench), Some(plan)) = (bench, plan) else {
         return BenchState::default();
     };
-    // **THE RANK IS A PROPERTY OF THE BENCH, NOT OF THE JOB ON IT**, so an idle bench publishes the
-    // mark it carries rather than the default. `bench_priority` is settable with nothing on the
-    // bench — that is the moment a player is most likely to state it — and a row that dropped the
-    // mark here would make the control look like it had done nothing.
-    let published_priority = published_bench_priority(bench.priority);
-    // **THE QUEUE, head first**, published on an idle bench too (as an empty list) — every order's
-    // recipe, count and made, plus the progress and pile a displaced order is holding at rest.
-    let orders = bench_orders(bench, store, wear, inputs, tiers_by_material, forecast);
-    // **AUTO-CRAFT is a standing statement about the bench**, published on an idle bench and on a
-    // stalled one alike, like the rank above it. The skipped set iterates sorted (`BTreeSet`).
-    let auto = bench.auto;
-    let auto_skipped: Vec<String> = bench.auto_skipped.iter().cloned().collect();
-    let kit_orders = published_kit_orders(bench);
-    let Some((worked, head)) =
-        described.and_then(|index| bench.orders.get(index).map(|order| (index, order)))
-    else {
-        // **THE CREW STANDS AT AN IDLE BENCH TOO** (`crafting.md` → "The crew stays with the bench"),
-        // and `BandWorkforce` nets it out of `idle`; a row that dropped it would make the client's
-        // `working_age - rows - bench` read those hands as free. No `blocked_reason`: an idle bench
-        // has no job to be blocked.
-        return BenchState {
-            workers: bench.workers,
-            priority: published_priority,
-            orders,
-            auto,
-            auto_skipped,
-            kit_orders,
-            ..BenchState::default()
-        };
-    };
-    let worked = worked as u32;
-    let recipe_id = head.recipe_id.as_str();
-    let Some(plan) = inputs.plans.iter().find(|plan| plan.id == recipe_id) else {
-        // A recipe the book no longer carries — reachable only through a config edit under a running
-        // world, and the bench stalls rather than clearing itself. The row states the id so the
-        // player sees what their bench is stuck on.
-        return BenchState {
-            recipe_id: recipe_id.to_string(),
-            workers: bench.workers,
-            blocked_reason: format!("Recipe '{recipe_id}' is not in the book"),
-            blocked_severity: SEVERITY_DANGER.to_string(),
-            priority: published_priority,
-            orders,
-            worked,
-            auto,
-            auto_skipped,
-            kit_orders,
-            ..BenchState::default()
-        };
-    };
-    let tiers = plan
-        .bench_material
-        .and_then(|material| tiers_by_material.get(material).copied())
-        .unwrap_or(NO_BENCH_TIERS);
-    let shortfalls = shortfalls_for(plan.recipe, &tiers, store);
-    // **The bench's blocked reason is the offer's refusal plus the crew's.** A bench with a full
-    // pile and nobody on it is stopped too, and that is not a craft-offer question — the offer
-    // answers *"could this be made"*, not *"is anyone making it"*.
-    //
-    // **Except a shortage, once the pile is DRAWN** — see [`NOTHING_SHORT_STOPS_A_DRAWN_PILE`].
-    //
-    // **And the NUMBERS are the order's own** — see [`queue_aware_shortfalls`].
-    let queue_aware = queue_aware_shortfalls(&shortfalls, forecast.orders.get(worked as usize));
-    let blocking = if head.drawn.is_some() {
-        NOTHING_SHORT_STOPS_A_DRAWN_PILE
-    } else {
-        queue_aware.as_slice()
-    };
-    let mut reasons = refusal_reasons(plan, &tiers, blocking, inputs);
-    // **A fault reads differently from a prompt, and only the sim can tell them apart.** Everything
-    // `refusal_reasons` returns is something gone wrong — a shortage, an unlearned craft, a tool
-    // that cannot work the material — so it carries the alarm. A bench merely waiting for its crew
-    // is the *expected* state after a Make, because the player is the one who staffs it, so it is an
-    // instruction instead. A joined reason takes the alarm if any half of it does.
-    let mut severity = if reasons.is_empty() {
-        SEVERITY_NONE
-    } else {
-        SEVERITY_DANGER
-    };
-    if bench.workers == 0 {
-        reasons.push(REASON_NO_CREW.to_string());
-        if severity == SEVERITY_NONE {
-            severity = SEVERITY_NEUTRAL;
-        }
+    let orders = bench_orders(
+        bench,
+        lent_by_order,
+        plan,
+        store,
+        wear,
+        inputs,
+        tiers_by_material,
+        forecast,
+    );
+    // **WHAT THE BENCH HAS SET ASIDE** - per material, summed over every order, in id order.
+    let mut set_aside: BTreeMap<&str, f32> = BTreeMap::new();
+    for row in orders.iter().flat_map(|order| order.drawn_inputs.iter()) {
+        *set_aside.entry(row.material_id.as_str()).or_insert(0.0) += row.amount;
     }
+    let set_aside: Vec<DrawnInputState> = set_aside
+        .into_iter()
+        .map(|(material, amount)| DrawnInputState {
+            material_id: material.to_string(),
+            amount,
+        })
+        .collect();
     BenchState {
-        // Appended last, and read live off the bench — see [`published_bench_priority`].
-        priority: published_priority,
+        workers: bench.crew_total(),
+        orders,
+        auto: bench.auto,
+        auto_skipped: bench.auto_skipped.iter().cloned().collect(),
         // The capture stamps the hands next turn's hunt muster takes from the bench
         // (`snapshot::population`), off the one plan every reader asks.
         lent_to_hunt: 0,
-        recipe_id: recipe_id.to_string(),
-        // **The row's name with the recipe's label** — *Spears (Flint)* — because the running job is
-        // one recipe of the item, and the row's name alone would not say which.
-        display_name: plan.recipe.full_name(inputs.equipment),
-        workers: bench.workers,
-        progress: head.progress.to_f32(),
-        work: plan.recipe.work,
-        teaches: plan.recipe.craft.clone(),
-        blocked_reason: reasons.join(REASON_JOIN),
-        blocked_severity: severity.to_string(),
-        shortfalls,
-        drawn: head.drawn.is_some(),
-        // **The grade the pile in flight FIXED**, not the one the next draw would pick — the two
-        // differ the moment the store changes under a running job, and this row is about the item
-        // being made.
-        output_grade: head
-            .drawn
-            .as_ref()
-            .and_then(|drawn| drawn.grade.clone())
-            .unwrap_or_default(),
-        // **The accrual itself, not its parts.** `craft_speed` is the tool-or-bare-hand join, and a
-        // client that multiplied `workers × work` would read a bare-handed organic's `0.5` as `1.0`
-        // and promise a finish in half the turns it takes. Resolved through the same helper
-        // `advance_crafting` accrues with, so the published rate is the applied rate.
-        rate_per_turn: rate_per_turn(
-            bench.workers.saturating_sub(lent_to_hunt),
-            &inputs.recipes.crafting,
-            tiers.speed,
-        ),
-        // **What the store already lost for the job in flight** — the withdrawn amounts, not the
-        // recipe's stated inputs, so a clear or a swap can name what it destroys. Empty on an
-        // undrawn bench, which is the honest answer: nothing has been cut yet.
-        drawn_inputs: head
-            .drawn
-            .as_ref()
-            .map(|drawn| {
-                drawn
-                    .withdrawn
-                    .iter()
-                    .map(|input| DrawnInputState {
-                        material_id: input.material.clone(),
-                        amount: input.amount.to_f32(),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
-        orders,
-        worked,
-        auto,
-        auto_skipped,
-        kit_orders,
+        kit_orders: published_kit_orders(bench),
+        set_aside,
+        // Stamped by the capture (`snapshot::population`), which holds the suggestions.
+        auto_wait_reason: String::new(),
     }
 }
 
-/// **THE BENCH'S QUEUE ON THE WIRE**, head first — one [`BenchOrderState`] per order.
+/// **THE BENCH'S QUEUE ON THE WIRE**, in queue order - one [`BenchOrderState`] per order.
 ///
-/// Every order carries its own `progress` and whether it holds a cut pile, not only the worked one:
-/// an order overtaken after it had drawn — raised over, or passed by an earlier order whose stock
-/// arrived — is **paused** with its pile, and a removal of it destroys what it cut — so the readout
-/// that offers the removal must be able to say so.
-///
-/// **Each order also says why it is being SKIPPED** — `blockedReason` / `blockedSeverity`, empty for
-/// an order that holds a pile or can draw one ([`crate::systems::order_is_workable`], the rule the
-/// bench picks its worked order by), otherwise the bench's own refusal vocabulary for that order's
-/// recipe (*"Short 4.9 bone"*).
+/// Each order carries everything the sim decided about it: its own priority, the staffed crew and the
+/// cap the staffing used, the items in flight, what it accrues next turn (net of its muster loan),
+/// the grade of its oldest item in flight and the pile set aside across its items. **Why an order is
+/// not moving** is resolved here: workable but crewless reads *"No spare hands this turn"*
+/// (`neutral`), short of an input with nothing in flight reads the offer's shortage (`danger`).
+#[allow(clippy::too_many_arguments)]
 fn bench_orders(
     bench: &BandBench,
+    lent_by_order: &[u32],
+    plan: &crate::systems::BenchPlan,
     store: &LocalStore,
     wear: &BandEquipment,
     inputs: &BandCraftInputs<'_>,
@@ -644,22 +561,55 @@ fn bench_orders(
         .iter()
         .enumerate()
         .map(|(index, order)| {
-            let (blocked_reason, blocked_severity) = order_skip_reason(
+            let recipe_plan = inputs.plans.iter().find(|plan| plan.id == order.recipe_id);
+            let lent = lent_by_order.get(index).copied().unwrap_or(0);
+            let (blocked_reason, blocked_severity) = order_block_reason(
                 order,
+                plan.orders.get(index),
                 store,
-                wear,
                 inputs,
                 tiers_by_material,
                 forecast.orders.get(index),
+                &bench.first_call,
             );
+            let rate = recipe_plan
+                .and_then(|plan| plan.bench_material)
+                .map_or(0.0, |material| {
+                    crate::systems::order_rate(
+                        order.crew,
+                        lent,
+                        material,
+                        &inputs.recipes.crafting,
+                        inputs.materials,
+                        inputs.equipment,
+                        wear,
+                    )
+                });
+            let mut drawn_inputs: Vec<DrawnInputState> = Vec::new();
+            for row in order
+                .items
+                .iter()
+                .flat_map(|item| item.drawn.withdrawn.iter())
+            {
+                match drawn_inputs
+                    .iter_mut()
+                    .find(|existing| existing.material_id == row.material)
+                {
+                    Some(existing) => existing.amount += row.amount.to_f32(),
+                    None => drawn_inputs.push(DrawnInputState {
+                        material_id: row.material.clone(),
+                        amount: row.amount.to_f32(),
+                    }),
+                }
+            }
             BenchOrderState {
                 blocked_reason,
                 blocked_severity: blocked_severity.to_string(),
                 recipe_id: order.recipe_id.clone(),
                 count: order.count,
                 made: order.made,
-                progress: order.progress.to_f32(),
-                drawn: order.drawn.is_some(),
+                progress: order.progress_total().to_f32(),
+                drawn: !order.items.is_empty(),
                 short_to_finish: forecast
                     .orders
                     .get(index)
@@ -667,6 +617,34 @@ fn bench_orders(
                     .unwrap_or_default(),
                 auto: order.auto,
                 kit_order: order.kit_order,
+                priority: published_bench_priority(order.priority),
+                crew_at_tool: order.crew.at_tool,
+                crew_by_hand: order.crew.by_hand,
+                crew_cap: order.crew_cap,
+                crew_per_item: plan.orders.get(index).map_or(0, |row| row.per_item),
+                items_in_flight: order.items.len() as u32,
+                // **The row's name with the recipe's label** - *Spears (Flint)*.
+                display_name: recipe_plan
+                    .map(|plan| plan.recipe.full_name(inputs.equipment))
+                    .unwrap_or_default(),
+                teaches: recipe_plan
+                    .map(|plan| plan.recipe.craft.clone())
+                    .unwrap_or_default(),
+                work: recipe_plan.map_or(0.0, |plan| plan.recipe.work),
+                rate_per_turn: rate,
+                // **The grade the OLDEST item in flight FIXED**, not the one the next draw would pick.
+                output_grade: order
+                    .items
+                    .first()
+                    .and_then(|item| item.drawn.grade.clone())
+                    .unwrap_or_default(),
+                bench_tool: recipe_plan
+                    .and_then(|plan| plan.bench_material)
+                    .and_then(|material| inputs.equipment.bench_tool_for(material))
+                    .map(|(id, _)| id.to_string())
+                    .unwrap_or_default(),
+                drawn_inputs,
+                lent_to_hunt: 0,
             }
         })
         .collect()
@@ -874,31 +852,34 @@ fn queue_aware_shortfalls(
     }
 }
 
-/// **WHY ONE QUEUED ORDER IS BEING SKIPPED**, `("", "")` when it is not — see [`bench_orders`].
-fn order_skip_reason(
+/// **WHY ONE QUEUED ORDER IS NOT MOVING**, `("", "")` when it has a crew - see [`bench_orders`].
+fn order_block_reason(
     order: &crate::components::BenchOrder,
+    plan_row: Option<&crate::systems::BenchOrderPlan>,
     store: &LocalStore,
-    wear: &BandEquipment,
     inputs: &BandCraftInputs<'_>,
     tiers_by_material: &BTreeMap<&str, BenchTiers>,
     forecast_rows: Option<&Vec<crate::systems::MaterialNeed>>,
+    first_call: &crate::components::FirstCall,
 ) -> (String, &'static str) {
-    if crate::systems::order_is_workable(
-        order,
-        store,
-        inputs.recipes,
-        inputs.materials,
-        inputs.equipment,
-        wear,
-    ) {
-        return (String::new(), SEVERITY_NONE);
-    }
     let Some(plan) = inputs.plans.iter().find(|plan| plan.id == order.recipe_id) else {
         return (
             format!("Recipe '{}' is not in the book", order.recipe_id),
             SEVERITY_DANGER,
         );
     };
+    if plan_row.is_some_and(|row| row.workable) {
+        // A workable order that got no crafter is waiting on spare hands - a prompt, not a fault.
+        return if order.crew.total() == 0 {
+            (
+                every_hand_needed_first(first_call)
+                    .unwrap_or_else(|| REASON_NO_SPARE_HANDS.to_string()),
+                SEVERITY_NEUTRAL,
+            )
+        } else {
+            (String::new(), SEVERITY_NONE)
+        };
+    }
     let tiers = plan
         .bench_material
         .and_then(|material| tiers_by_material.get(material).copied())
@@ -1988,5 +1969,58 @@ mod tests {
             ONE_UNIT_IS_ITS_OWN_NOUN,
             "so its published `quantaLeft` is a raw biomass count, unconverted"
         );
+    }
+}
+
+#[cfg(test)]
+mod first_call_reason_tests {
+    use super::{every_hand_needed_first, REASON_EVERY_HAND_NEEDED_FIRST};
+    use crate::components::FirstCall;
+
+    /// **Only the nonzero kinds, largest first, ties in the order holding, keeping, building,
+    /// scouting.**
+    #[test]
+    fn the_reason_names_what_took_the_hands_largest_first() {
+        let first = FirstCall {
+            scouting: 2,
+            keeping: 0,
+            building: 0,
+            holding: 4,
+            crafting: 0,
+            pool: 6,
+        };
+        assert_eq!(
+            every_hand_needed_first(&first).as_deref(),
+            Some(format!("{REASON_EVERY_HAND_NEEDED_FIRST}4 holding rows, 2 scouting").as_str())
+        );
+        let tied = FirstCall {
+            scouting: 2,
+            keeping: 2,
+            building: 2,
+            holding: 2,
+            crafting: 2,
+            pool: 10,
+        };
+        assert_eq!(
+            every_hand_needed_first(&tied).as_deref(),
+            Some(
+                format!(
+                    "{REASON_EVERY_HAND_NEEDED_FIRST}2 holding rows, 2 keeping ground, 2 building, 2 scouting, 2 High crafting"
+                )
+                .as_str()
+            )
+        );
+    }
+
+    /// **Hands left over, or none to deal, is not "needed first"** - the order keeps the plain wording.
+    #[test]
+    fn hands_left_over_keep_the_plain_wording() {
+        let left = FirstCall {
+            holding: 3,
+            pool: 6,
+            ..Default::default()
+        };
+        assert_eq!(every_hand_needed_first(&left), None);
+        assert_eq!(every_hand_needed_first(&FirstCall::default()), None);
     }
 }

@@ -551,6 +551,10 @@ pub struct LaborAssignmentState {
     /// An unarmed hand adds nothing on this take row (`StaffedCrew::bare_idle`). Appended last.
     #[serde(default)]
     pub bare_idle: bool,
+    /// Hands this row's hold crew gave up to High bench orders this turn, named by the sim
+    /// (`"1 to the Spears order, 1 to the Baskets order"`). Empty = none. Appended last.
+    #[serde(default)]
+    pub hands_to_bench: String,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].
@@ -1275,8 +1279,9 @@ pub struct PopulationCohortState {
     /// for a band that has banked no material at all, which is a real answer.
     #[serde(default)]
     pub material_batches: Vec<MaterialBatchState>,
-    /// **What is on this band's bench.** `recipe_id` empty = idle; a *blocked* bench has a recipe
-    /// and a [`BenchState::blocked_reason`].
+    /// **What is on this band's bench** - every order with its own crew, rate and pile
+    /// ([`BenchOrderState`]); an order that is not moving says why in
+    /// [`BenchOrderState::blocked_reason`].
     #[serde(default)]
     pub bench: BenchState,
     /// **One row per recipe, always** — with the refusal already resolved into words. See
@@ -2437,146 +2442,116 @@ pub struct MaterialShortfallState {
     pub short: f32,
 }
 
-/// **What is on a band's bench** — one queue, worked one order at a time. Every scalar field
-/// describes the **head** order (`orders[0]`); [`Self::orders`] is the whole queue. The crew and the
-/// priority belong to the bench and survive every queue edit.
+/// **What is on a band's bench** - the queue of orders, **all worked at once** and staffed by the
+/// sim (#873). Everything about an order rides its [`BenchOrderState`]; this row carries only what
+/// is the bench's.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct BenchState {
-    /// `""` = an idle bench, which is a *different* state from a blocked one.
-    pub recipe_id: String,
-    pub display_name: String,
+    /// **Every crafter the sim staffed on the bench** - the sum of the orders' crews (before any
+    /// muster loan).
     pub workers: u32,
-    /// Worker-turns accrued toward [`Self::work`].
-    pub progress: f32,
-    /// Worker-turns one pass of this recipe costs.
-    pub work: f32,
-    /// The craft id one completed item credits — crafting is the fourth teacher, and **what is being
-    /// made decides what is learned**.
-    pub teaches: String,
-    /// **Why this bench is not moving**, resolved sim-side. `""` = it is working. Same vocabulary as
-    /// [`CraftOfferState::reason`], plus the crew's own refusal: a bench with a full pile and nobody
-    /// on it is also stopped.
-    pub blocked_reason: String,
-    pub shortfalls: Vec<MaterialShortfallState>,
-    /// The pile for the pass in flight is already cut. A short draw takes **nothing**, so this stays
-    /// `false` rather than leaving a half-spent pile.
-    pub drawn: bool,
-    /// The grade that pile **fixed** — `""` before the draw or on a recipe that reads nothing. It
-    /// never moves once set: a tool running dry mid-craft does not retroactively coarsen the thing
-    /// on the bench.
-    pub output_grade: String,
-    /// **What this bench will accrue next turn** — `workers × progress_per_worker_turn ×
-    /// craft_speed`, already resolved through the bounding tool (or the material's bare-handed rate,
-    /// which is what makes a *worker-turn* not a worker's turn). `0` when nothing will accrue: no
-    /// crew, no recipe, or a craft speed of zero.
-    ///
-    /// **A client must not re-derive it** — `craft_speed` is the tool-or-bare-hand join, the same
-    /// one `kitTiers` exists to keep sim-side. It is a **term**, not an answer: the finish estimate
-    /// is `ceil((work − progress) / rate_per_turn)`, exact arithmetic over three numbers all on this
-    /// wire, and a turns-remaining field would be a second home for one fact. Appended last
-    /// (append-only).
-    #[serde(default)]
-    pub rate_per_turn: f32,
-    /// **The pile already cut for the job in flight**, so a clear or a swap can name what it
-    /// destroys. Empty when nothing is drawn. One row per input material, in the recipe's own input
-    /// order. Appended last (append-only).
-    #[serde(default)]
-    pub drawn_inputs: Vec<DrawnInputState>,
-    /// **How [`Self::blocked_reason`] should read** — the same vocabulary as
-    /// [`CraftOfferState::severity`] (`danger` / `neutral` / `good`), `""` whenever nothing is
-    /// blocking.
-    ///
-    /// **A bench waiting for its crew is a prompt, not a fault.** The player staffs the bench, so
-    /// *"No one at the bench"* is the normal state one click after **Make** — an instruction,
-    /// `neutral`. A material shortage, an unknown craft or a zero craft rate are problems, `danger`;
-    /// joined reasons take `danger` if any component does. Without the field a client renders every
-    /// reason in one alarm colour and the expected state reads as an error — the same distinction
-    /// `reason`/`severity` already draw on an offer row, and **a client must not re-derive it**.
-    /// Appended last (append-only).
-    #[serde(default)]
-    pub blocked_severity: String,
-    /// **WHERE THE PLAYER PUT THE BENCH WHEN THE BAND RUNS SHORT** — the **same**
-    /// [`SourcePriorityState`] a worked row carries on [`LaborAssignmentState::priority`], reusing
-    /// that vocabulary rather than minting a second one: it is one property of one kind, and two
-    /// spellings of it would drift. Set with `bench_priority <faction> <band> high|normal|low`.
-    ///
-    /// **Why the bench has one.** It spends the same workers the gathering rows do, so a short band
-    /// ranks it against them — and a craft pays into no food, fodder or material account, so an
-    /// **unmarked bench is the first thing thinned**. That is the right default in a famine, and this
-    /// is how the player overrides it. The bench is ranked in the *same step* as the worked sources,
-    /// never a step of its own; its **last** hand goes before any source is emptied, so a `High`
-    /// bench still stalls before a `Low` patch is given up — the steps say what is at stake, the mark
-    /// says who goes first among equals.
-    ///
-    /// [`SourcePriorityState::Normal`] on an unmarked bench **and** on a band with no bench at all.
-    /// It is published on an **idle** bench too (empty [`Self::recipe_id`]), because a rank is a
-    /// standing statement about the bench rather than about the job on it — and the command sets it
-    /// either way, so a client that hid the control while the bench was empty would hide the one
-    /// moment the player most wants to state it.
-    ///
-    /// Captured **live** off the bench, as [`LaborAssignmentState::priority`] is, so an edit lands on
-    /// the command's own recapture and no optimistic overlay is needed. Appended last (append-only).
-    #[serde(default)]
-    pub priority: SourcePriorityState,
-    /// **THE QUEUE, head first.** Empty on an idle bench. An order's index here is the `order` the
-    /// queue verbs address. Appended last (append-only).
+    /// **THE QUEUE, in queue order.** Empty on an idle bench. An order's index here is the `order`
+    /// the queue verbs address.
     #[serde(default)]
     pub orders: Vec<BenchOrderState>,
-    /// **The index into [`Self::orders`] the scalars above describe** — the worked order (the first
-    /// that holds a pile or can draw one), else the head. `0` on an idle bench. Appended last.
-    #[serde(default)]
-    pub worked: u32,
-    /// **Auto-craft is on for this bench** — an empty queue is refilled from the craft suggestions.
-    /// Appended last.
+    /// **Auto-craft is on for this bench** - one order is added whenever crafters are free.
     #[serde(default)]
     pub auto: bool,
-    /// **The item ids the player skipped** while auto-craft waited on them, sorted. Appended last.
+    /// **The item ids the player skipped** while auto-craft waited on them, sorted.
     #[serde(default)]
     pub auto_skipped: Vec<String>,
-    /// **The hands the bench lends to a hunting-by-need crew next turn** — the bench's share of the
-    /// one `muster_donors` call that fills each donor row's [`LaborAssignmentState::lent_to_hunt`].
-    /// [`Self::workers`] stays the crew the player set; this is the part of it away for the one
-    /// turn. `0` when nothing is lent. Appended last.
+    /// **The hands the bench lends to a hunting-by-need crew next turn** - the sum of the orders'
+    /// [`BenchOrderState::lent_to_hunt`]. `0` when nothing is lent.
     #[serde(default)]
     pub lent_to_hunt: u32,
-    /// **The live whole-kit orders**, oldest first (#780). Appended last.
+    /// **The live whole-kit orders**, oldest first (#780).
     #[serde(default)]
     pub kit_orders: Vec<BenchKitOrderState>,
+    /// **What the bench has set aside, per material** - the sum over every order's items in flight.
+    #[serde(default)]
+    pub set_aside: Vec<DrawnInputState>,
+    /// **Why auto-craft has not started the top suggestion**, resolved sim-side by the pick the fill
+    /// uses (`"No idle hands to start Spears"`, `"Spears: Short 0.4 bone"`). Empty when not waiting,
+    /// auto is off, or there is nothing to make.
+    #[serde(default)]
+    pub auto_wait_reason: String,
 }
 
-/// **One order on a bench's queue** — `recipe × count`, a row of [`BenchState::orders`].
-///
-/// `progress` and `drawn` are the order's own pass in flight: an order raised over a head that had
-/// already drawn leaves that head paused with its pile, so a non-head order can hold one.
+/// **One order on a bench's queue** - `recipe x count` and everything the sim decided about it, a
+/// row of [`BenchState::orders`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct BenchOrderState {
     pub recipe_id: String,
-    /// Items the order asks for — always `>= 1`.
+    /// Items the order asks for - always `>= 1`.
     pub count: u32,
     /// Items it has finished. The order leaves the queue when this reaches [`Self::count`].
     pub made: u32,
-    /// Worker-turns accrued toward the recipe's `work` on the pass in flight.
+    /// Worker-turns accrued across every item of the order in flight.
     pub progress: f32,
-    /// The order holds a pile already cut for its pass in flight.
+    /// The order holds at least one item in flight.
     pub drawn: bool,
-    /// **Why the bench is skipping this order**, in the craft-offer vocabulary; `""` when it holds a
-    /// pile or can draw one.
+    /// **Why this order is not moving**, in the craft-offer vocabulary: `"Short 4.9 bone"` (an input
+    /// short with nothing in flight, `danger`) or `"No spare hands this turn"` (workable, no crafter,
+    /// `neutral`). `""` for an order with a crew.
     #[serde(default)]
     pub blocked_reason: String,
-    /// `danger` when [`Self::blocked_reason`] is set, `""` otherwise.
+    /// `danger` | `neutral` | `""`.
     #[serde(default)]
     pub blocked_severity: String,
-    /// **What the stock on hand cannot cover of this order's whole run** — a forecast, not a block;
-    /// empty when every pass still to draw is covered. See `snapshot.fbs`.
+    /// **What the stock on hand cannot cover of this order's whole run** - a forecast, not a block.
     #[serde(default)]
     pub short_to_finish: Vec<MaterialShortfallState>,
-    /// Auto-craft queued this order rather than the player — the only kind a skip applies to.
+    /// Auto-craft queued this order rather than the player.
     #[serde(default)]
     pub auto: bool,
     /// **The kit order this order is a part of** ([`BenchKitOrderState::id`]); `0` for a plain
-    /// order. A kit order's parts are contiguous in [`BenchState::orders`]. Appended last (#780).
+    /// order. A kit order's parts are contiguous in [`BenchState::orders`].
     #[serde(default)]
     pub kit_order: u32,
+    /// **The order's own priority** - the same [`SourcePriorityState`] a worked row carries. A kit
+    /// order's parts share one.
+    #[serde(default)]
+    pub priority: SourcePriorityState,
+    /// **The staffed crew**, before any muster loan: crafters holding the bench tool.
+    #[serde(default)]
+    pub crew_at_tool: u32,
+    /// The staffed crafters working by hand.
+    #[serde(default)]
+    pub crew_by_hand: u32,
+    /// **The cap the staffing used** - `crafters_per_item x items it could work`.
+    #[serde(default)]
+    pub crew_cap: u32,
+    /// The recipe's `crafters_per_item`.
+    #[serde(default)]
+    pub crew_per_item: u32,
+    /// Items set aside and being worked.
+    #[serde(default)]
+    pub items_in_flight: u32,
+    /// The recipe's display name.
+    #[serde(default)]
+    pub display_name: String,
+    /// The craft id one finished item credits.
+    #[serde(default)]
+    pub teaches: String,
+    /// Worker-turns one item of this recipe costs.
+    #[serde(default)]
+    pub work: f32,
+    /// **What this order accrues next turn** over every item it works, net of lent hands - the one
+    /// rate authority; a client must not re-derive it.
+    #[serde(default)]
+    pub rate_per_turn: f32,
+    /// The grade of the oldest item in flight; `""` when none or the recipe resolves no grade.
+    #[serde(default)]
+    pub output_grade: String,
+    /// The bench tool item id the recipe's material uses; `""` = it has none.
+    #[serde(default)]
+    pub bench_tool: String,
+    /// What was set aside across this order's items in flight, one row per material.
+    #[serde(default)]
+    pub drawn_inputs: Vec<DrawnInputState>,
+    /// **This order's share of next turn's muster.**
+    #[serde(default)]
+    pub lent_to_hunt: u32,
 }
 
 /// **One craft suggestion** — an item the band's consumers went without, and how many to make. A row
@@ -2641,8 +2616,8 @@ pub struct CraftSuggestionSourceState {
     pub work_per_turn: f32,
 }
 
-/// **One material of the pile a bench has already withdrawn** for the item in flight — a row of
-/// [`BenchState::drawn_inputs`].
+/// **One material of the pile a bench has already withdrawn** for the items in flight - a row of
+/// [`BenchOrderState::drawn_inputs`] and of [`BenchState::set_aside`].
 ///
 /// It is the **withdrawn** amount, not the recipe's stated input and not a shortfall's `required`:
 /// those differ once a bench tool's material efficiency applies, and the readout's whole job is to

@@ -17,7 +17,7 @@ use bevy::math::UVec2;
 use bevy::prelude::{Entity, World};
 use sim_runtime::commands::{
     query_error, QueryReply, StaffingPreviewLoss, StaffingPreviewQuery, StaffingPreviewReply,
-    WorkPartySource,
+    WorkPartySource, STAFFING_LOSS_KIND_BENCH,
 };
 
 use crate::components::{
@@ -32,6 +32,7 @@ use crate::intensification::LadderConfigHandle;
 use crate::intensification::NO_CREW_ON_THIS_ACTIVITY;
 use crate::orders::FactionId;
 use crate::resources::TileRegistry;
+use crate::staffing::BenchStaffed;
 use crate::EquipmentConfigHandle;
 
 /// **THE WORKING ON `(tile, material)` AS IT STANDS NOW** — the registry's live working, or, where no
@@ -236,6 +237,56 @@ fn loss_of_build(source: &BuildSource, before: u32, after: u32) -> StaffingPrevi
     loss
 }
 
+/// **The bench orders whose crafters fall**, in the bench's own rank (High first, then queue
+/// order — the order the passes deal them). The bench is staffed in the same passes as the rows and
+/// builds, so a previewed row can take a crafter off an order; each is named as the Crafting panel
+/// names it.
+fn bench_losses(
+    world: &World,
+    band: Entity,
+    before: &[BenchStaffed],
+    after: &[BenchStaffed],
+) -> Vec<StaffingPreviewLoss> {
+    let Some(bench) = world.get::<BandBench>(band) else {
+        return Vec::new();
+    };
+    let recipes = world
+        .resource::<crate::recipes_config::RecipesConfigHandle>()
+        .get();
+    let equipment = world.resource::<EquipmentConfigHandle>().get();
+    let mut falling: Vec<(SourcePriority, usize, StaffingPreviewLoss)> = before
+        .iter()
+        .filter_map(|was| {
+            let now = after
+                .iter()
+                .find(|staffed| staffed.order == was.order)
+                .map_or(NO_CREW_ON_THIS_ACTIVITY, |staffed| staffed.crew.total());
+            let was_total = was.crew.total();
+            (now < was_total).then(|| {
+                let order_name = bench
+                    .orders
+                    .get(was.order)
+                    .and_then(|order| recipes.recipe(&order.recipe_id))
+                    .map(|recipe| recipe.row_name(&equipment))
+                    .unwrap_or_default();
+                (
+                    was.priority,
+                    was.order,
+                    StaffingPreviewLoss {
+                        kind: STAFFING_LOSS_KIND_BENCH.to_string(),
+                        before: was_total,
+                        after: now,
+                        order_name,
+                        ..StaffingPreviewLoss::default()
+                    },
+                )
+            })
+        })
+        .collect();
+    falling.sort_by_key(|(priority, order, _)| (std::cmp::Reverse(*priority), *order));
+    falling.into_iter().map(|(_, _, loss)| loss).collect()
+}
+
 fn find_band(world: &mut World, faction: FactionId, band_id: u64) -> Option<Entity> {
     let wanted = BandId(band_id);
     world
@@ -313,7 +364,7 @@ pub fn answer_staffing_preview(world: &mut World, ask: &StaffingPreviewQuery) ->
     );
     proposed.set_source_priority(&target, priority);
 
-    let (Some(before), Some(after)) = (
+    let (Some((before, bench_before)), Some((after, bench_after))) = (
         crate::staffing::staff_allocation_copy(world, band, held),
         crate::staffing::staff_allocation_copy(world, band, proposed),
     ) else {
@@ -363,6 +414,7 @@ pub fn answer_staffing_preview(world: &mut World, ask: &StaffingPreviewQuery) ->
             losses.push(loss_of_build(source, was, crew.total()));
         }
     }
+    losses.extend(bench_losses(world, band, &bench_before, &bench_after));
 
     QueryReply::StaffingPreview(StaffingPreviewReply {
         workers: row.workers,

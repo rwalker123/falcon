@@ -41,6 +41,17 @@ Design: `docs/plan_labor_at_scale.md` ("Decided"). Engine: `core_sim/src/staffin
 head of each band's labor pass in `systems/labor.rs`, restated by the command path through
 `staffing::restaff_band`.
 
+**A band whose hands come free during the turn is restaffed at the end of it.** A build that
+completes or a bench order retired with its crew (`advance_crafting`) frees hands after the labor
+pass staffed them, so `systems::restaff_freed_hands` runs first in the `Snapshot` stage, ahead of
+the capture, and restaffs every resident band whose published idle (`BandWorkforce::idle`) is above
+zero through the command path's staffing (`staffing::restaff_band_end_of_turn`). A band with no idle
+hand cannot have had one freed and is skipped. The published `idleWorkers` is therefore what the
+passes leave over the hands the band ends the turn with. The end-of-turn restaff skips the managing
+passes (`manage_dig_rows`, `manage_food_orders`): they may drop a managed row, which would take the
+turn's published yield with it, and the next turn's labor pass runs them at its head. It writes only
+rows' crews, build crews and bench crews, so the turn's takes, yields and crafting do not move.
+
 **A forage, hunt (not a need row), extraction, tile-improvement, band-improvement or Roadwork row's
 `workers` is the sim's answer**, not the player's. The player states a **Max** (`LaborAssignment::max_workers`;
 `None` = no Max) and the **floor** the row already carries; each turn the sim zeroes those rows'
@@ -48,8 +59,10 @@ hands and refills them. `LaborTarget::is_staffed` names the kinds. Warrior and a
 player's count; **the Scout row is the sim's too, from a range rather than a Max**
 (`LaborTarget::is_sim_staffed`, "Scouting is a range" below).
 
-**The pool** is `staffable_pool`: the working people less the bench, the hands still walking home and
-every crew the player set by hand (the rows that are not sim-staffed: Warrior and a need row's muster).
+**The pool** is `staffable_pool`: the working people less the hands still walking home and every crew
+the player set by hand (the rows that are not sim-staffed: Warrior and a need row's muster). **The crafting
+bench is inside the staffing, not netted out of it** (#873): each workable bench order is a pass input
+(`StaffRowInput::is_bench`) dealt with its group's builds; only a High order's first crafter is a pass-1 head, and pass 2 opens with one crafter on every workable order that has none (`crafting.md` -> "Staffing - orders join the passes like builds").
 Rows are grouped by
 `SourcePriority`, High to Low.
 
@@ -77,14 +90,13 @@ heads, and pass 3 deals the group's unspent-kit heads before its bare heads.
 
 **Sim-staffed crews never block a player-set order.** They are what is left after the player's own
 orders, so every ceiling a player-set crew clamps against counts them as available:
-`BandWorkforce::benchable` (the bench crew and `bench_enqueue`) is `pool − (assigned − sim_staffed) −
-walking_home`, and `LaborAllocation::set_assignment` nets only the other **player-set** rows (Warrior, a need row)
-out of the headroom. `assignable` (the pool less the bench and the
-walkers) and the published `idleWorkers` (what pass 3 left over) keep their meaning. `bench_crew`,
-`bench_enqueue` and every `assign_labor` restaff the band, so the sources give up the hands at once.
+`LaborAllocation::set_assignment` nets only the other **player-set** rows (Warrior, a need row) out of
+the headroom. `assignable` (the pool less the walkers) and the published `idleWorkers` (what pass 3 left
+over, the bench's crew counted in the committed hands) keep their meaning. Every `assign_labor` and every
+bench command restaffs the band, so the sources give up the hands at once.
 The party verbs (`send_scout`, `send_expedition`, `send_denial_raid`, `station_expedition`,
-`send_trade_expedition`) draw from `BandWorkforce::partyable` (pool less the player-set crews, the
-bench and the walkers) and restaff the band after the launch. A hunting-by-need muster is unchanged.
+`send_trade_expedition`) draw from `BandWorkforce::partyable` (pool less the player-set crews and the
+walkers) and restaff the band after the launch. A hunting-by-need muster is unchanged.
 
 **A band-improvement row (`LaborTarget::Band`, the drying rack) is staffed exactly as a tile row is**:
 its keepers come from the record's bill (`staffing::band_keepers`, the tile kind's reading off the
@@ -100,7 +112,7 @@ Pinned by `server::tests::a_band_improvements_crew_is_the_keepers_the_sim_staffs
 |---|---|
 | 0 | the band's **scouts** (below), off the top of the pool and shelf, before any row |
 | 1a | the site's **keepers** on every row at every priority, High to Low: `floor(keep_hands)` whole-keeper heads round-robin, then, for a row with a fraction of a hand of keeping left, one head that carries it (a kitted gatherer if the shelf can arm one, else a bare one where a bare hand works, else a keeper; a row with no hold take gives it a keeper's head so the improvement is kept) |
-| 1b | per priority group High to Low: the group's **builds'** first builder (kitted if the shelf can arm one, else bare), then the group's **kitted** hands up to the row's **hold crew** |
+| 1b | per priority group High to Low: the group's **builds'** first builder (kitted if the shelf can arm one, else bare), then - in the High group only - each **High bench order's first crafter** (queue order; ahead of every hold crew, since the High group is dealt first), then the group's **kitted** hands up to the row's **hold crew** |
 | 1c | a **chief's FOOD order** only (`LaborAllocation::keeps_food_up`: a forage or hunt row `order_rows` lists under `food` while the chief owns the kind): per priority group High to Low, round-robin nearest first, **bare** hands up to the row's hold crew under its Max, only where a bare hand takes something. After every group's pass 1b, before any row's pass 2 |
 | 2 | per priority group High to Low: first a chief's FOOD order's rows (same `keeps_food_up` rows) get **bare** hands up to their **reach crew** (hold + refill), round-robin nearest first, only where a bare hand takes something; then the group's **kitted** hands up to the row's **reach crew**. A High stone refill therefore goes before a Normal food refill, and a Normal food refill before a Normal stone refill; player rows, a released food row, fodder and the materials keep kitted-first |
 | 3 | every row up to its **useful crew** (the room above the floor, clear-it-now; the crew past which the take stops rising): the kit's units still unspent first, then **bare** hands, only on a web where a bare hand takes something (never on a hunt that needs a weapon) |
@@ -501,7 +513,7 @@ a_band_order_needs_a_leader_and_the_chief_owns_the_material_until_it_is_released
 an_elders_council_is_named_in_the_refusal, a_never_renewing_dig_with_no_count_is_refused_and_a_count_is_not}`.
 
 **Wire** (`LaborAssignment`, appended): `maxWorkers` (`0` = no Max), `holdCrew`, `reachCrew`,
-`usefulCrew` (pass 3's ceiling, keepers included, after the Max), `keepersStaffed`, `kittedStaffed`, `bareStaffed` (the last three sum to `workers` on a staffed row).
+`usefulCrew` (pass 3's ceiling, keepers included, after the Max), `keepersStaffed`, `kittedStaffed`, `bareStaffed` (the last three sum to `workers` on a staffed row), `handsToBench` (string, appended last: the hands the row's hold crew gave up to High bench orders, `1 to the Spears order, 1 to the Baskets order`, `""` = none).
 `SAVE_FORMAT_VERSION` 52 (the staffing), 53 (the dig load).
 
 **Approximations to know.** The command-time restaff reads the world before the coming turn's
@@ -588,16 +600,20 @@ default `assign_labor` resolves for that row), `floor`, `priority` (`high` | `no
 normal) and `max_workers` (`0` = no Max). **The reply**: `workers` with its `keepers` / `kitted` /
 `bare` split, `idle_before` / `idle_after` (the published `idleWorkers` meaning: hands pass 3 left
 unused, without and with the row) and `losses`: one `{ kind, x, y, herd_id, material, branch, before,
-after }` per row whose crew falls, High priority first then row order, declared builds last
-(`kind` is `build:<kind>` for their builders).
+after, order_name }` per row whose crew falls, High priority first then row order, declared builds
+next (`kind` is `build:<kind>` for their builders), bench orders last (`kind` is `bench`,
+`STAFFING_LOSS_KIND_BENCH`, ranked High first then queue order). A bench row is named by
+`order_name`, the made item's row name (`RecipeDef::row_name`), the name the Crafting panel gives the
+order; the field is empty on every other kind. The bench is staffed in the same passes as the rows
+(`crafting.md`), so a previewed row can take a crafter off an order.
 
 **One staffing, two callers.** The row is built by the helpers `assign_labor` shares
 (`staffing_preview::{default_kit_for_target, working_as_it_stands,
 never_renewing_dig_without_a_count}`) and written onto a COPY of the band's allocation with
 `set_staffed_row` and `set_source_priority`; an existing row on that source is overwritten in place.
 The copy is staffed by `staffing::staff_allocation_copy` (`with_band_staffing_over` →
-`staff_rows_settled` with the band's bench and nobody lost → `apply_staffing` +
-`apply_build_crews`), the staffing `restaff_band` runs, and the UNMODIFIED allocation is staffed the
+`staff_rows_settled` with nobody lost → `apply_staffing` + `apply_build_crews`, returning the bench
+orders' crews beside the rows), the staffing `restaff_band` runs, and the UNMODIFIED allocation is staffed the
 same way for the "before" figures, so a loss compares like with like and never against stale
 stored crews. The reply therefore equals the crew the row gets after the matching `assign_labor`.
 The take selection is passed as sent (the command's prune-to-the-current-basket repair is not
@@ -612,7 +628,8 @@ field.
 
 Pinned by `tests/staffing_preview.rs` (a new Normal row takes from the Low row and equals the
 command's restaff; a Low row leaves the Normal row alone; idle hands first with no losses; the
-allocation unchanged after the query; the refusal tokens), the cross-seat refusal over the socket
+allocation unchanged after the query; the refusal tokens; a High row taking crafters off a Low bench
+order names that order and equals the command's restaff), the cross-seat refusal over the socket
 in `query_seat_gate.rs`, and `sim_runtime`'s `the_staffing_preview_round_trips`.
 
 ## Config files
@@ -1166,7 +1183,7 @@ them; they rejoin only as they arrive) and `work_party::tests::a_deep_cut_turns_
 
 **The hands are away until they arrive.** `LaborAllocation::walking_home` sums the **plain** walks'
 workers (a walk that [rejoins its row](#a-re-entered-rows-walkers-rejoin-it-and-are-counted-once) is
-inside that row's `workers` already); `BandWorkforce::walking_home` nets it out of `idle`, `assignable` and `benchable`, and
+inside that row's `workers` already); `BandWorkforce::walking_home` nets it out of `idle` and `assignable`, and
 `LaborAllocation::normalize` counts it beside the bench in the total it drives down (nothing in the
 shed can shed a walker, so a pool below them strips every row and stops). It rides `SimState` with
 the allocation (save v18) and sits outside the allocation's intent `PartialEq`, as a row's party
@@ -1260,8 +1277,7 @@ second set of hands, so they are counted on the row and nowhere else:
   survives the pass (`stand_down_party(.., WALKS_BACK_TO_ITS_ROW)`). Every other stand-down
   (`bring_the_dropped_party_home`, a row held at zero, a row lapsing under its party) walks **plain**
   (`WALKS_PLAIN`).
-- **Counting.** `LaborAllocation::walking_home` — and so `BandWorkforce::idle / assignable /
-  benchable` and `normalize`'s total — counts **plain walks only**; `assigned_total` counts the row's
+- **Counting.** `LaborAllocation::walking_home` — and so `BandWorkforce::idle / assignable` and `normalize`'s total — counts **plain walks only**; `assigned_total` counts the row's
   `workers`, rejoining hands included. A band of eleven holding rows of four and four with three
   hands on the road home reads idle **3**, not 0: forage 4 + hunt 4 are committed and nothing is
   counted twice.
@@ -1541,24 +1557,21 @@ numbers; kits come through the ordinary claims at the need row's own Priority. A
   a_kit_shortage_binds_only_where_bare_hands_cannot_wound,
   a_short_kit_is_lent_by_its_donor_before_any_idle_hand_goes}` and
   `components::tests::a_short_kit_holds_the_idle_back_until_the_donors_holding_it_have_lent`.
-- **The crafting bench lends like a row.** It is not a `LaborTarget`, so `muster_donors` takes it as
-  a `MusterBench { priority: BandBench::priority, hands: BandBench::workers }` beside the allocation
-  (`MusterBench::of`; `None` for a bench nobody is at). It joins the donor order as one candidate
+- **The crafting bench lends like a row, per order.** It is not a `LaborTarget`, so `muster_donors` takes it
+  as a `MusterBench` (`MusterBench::of`; `None` for a bench nobody is at) beside the allocation, one
+  candidate per staffed order (`orders: [(index, the order's priority, its crew)]`). Each order joins the donor order
   ranked by its own mark among the source rows, and **within a tier it lends before that tier's
   rows** (a bench pays into no account — the famine shed's own tie-break, `yield-forecast.md` →
   "The crafting bench is a candidate in the walk"). It stands at camp, so it is always local, and it
   carries no hunt take kit, so it only joins the ordinary-order pass, never the kit-carrying one.
-  `MusterPlan::from_bench` is its share (`total()` includes it) and `musterable_pool` counts its
-  crew. `MusterPricing::bench`, `HuntCrewGear::bench` and the forecast query's `MusterScene` carry
+  `MusterPlan::from_bench_orders` is each order's share (`from_bench` is the sum, `total()` includes it) and
+  `musterable_pool` counts every order's crew. `MusterPricing::bench`, `HuntCrewGear::bench` and the forecast query's `MusterScene` carry
   it to every reader, so the board, the turn, the crew pricing and the craft suggestions agree.
-- **Applying the bench's loan is non-destructive** (`apply_muster` / `restore_muster`): the bench's
-  `workers` are cut for the row walk and handed back with the rows' — never `remove_order`, so the
-  queue, every order's progress and made count, the drawn pile and the last grade all stay. The
-  labor pass hands the crew back **before** `advance_crafting` runs (it follows the labor pass in
-  the Population chain), so the loan is also written to `BandBench::lent_to_hunt`, and
-  `advance_crafting` works `workers − lent_to_hunt` and clears it. That is what makes this turn's
-  craft progress reflect the lent hands, and a fully lent bench bank nothing and draw nothing (the
-  `AN_IDLE_BENCH` gate reads the reduced crew). The field is `0` at every turn boundary.
+- **Applying the bench's loan is non-destructive** (`apply_muster`): each order's loan is written to
+  `BenchOrder::lent_to_hunt` and the crew itself stays - never `remove_order`, so the queue, every order's
+  items and made count and the last grade all stay. `advance_crafting` works `crew − lent_to_hunt` per
+  order and clears it. That is what makes this turn's craft progress reflect the lent hands, and a fully lent
+  order bank nothing and set nothing aside. The field is `0` at every turn boundary.
 - **Kit-aware order** (`MusterKit`, struck by `hunt_by_need::muster_kit` from the band's own
   `BandItemBudget` on the rows' standing claims): an item of the need row's kit is *short* when the
   units no row claims (`BandItemBudget::unclaimed_units`) arm fewer hands than the crew. When one is,
@@ -1624,7 +1637,7 @@ numbers; kits come through the ordinary claims at the need row's own Priority. A
 |---|---|
 | `musterCrew` | the hands this need row sends next turn (`0` = waiting) |
 | `lentToHunt` | on a donor row, the hands it gives up next turn (same `muster_donors` call) |
-| `BenchState.lentToHunt` | the hands the crafting bench gives up next turn — the bench's share of that same call (`MusterPlan::from_bench`); `BenchState.workers` stays the crew the player set. Pinned on the encoded frame by `hunt_by_need::{the_bench_lends_by_its_mark_and_before_the_rows_of_its_tier, this_turns_craft_progress_reflects_the_lent_hands, a_lent_bench_keeps_its_order_progress_and_drawn_pile}` |
+| `BenchState.lentToHunt` / `BenchOrder.lentToHunt` | the hands the crafting bench gives up next turn — the sum of, and each order's share of, that same call (`MusterPlan::from_bench_orders`); an order's `crewAtTool` / `crewByHand` stay the crew the staffing dealt. Pinned on the encoded frame by `hunt_by_need::{the_bench_lends_by_its_mark_and_before_the_rows_of_its_tier, this_turns_craft_progress_reflects_the_lent_hands, a_lent_bench_keeps_its_order_progress_and_drawn_pile}` |
 | `needRunway` | on a need row, the turns the meat on hand lasts (the need clock above); `0` elsewhere |
 | `turnsUntilHunt` | on a waiting need row, `ceil(runway - turns_to_kill - margin)`, floor 1; `NO_HUNT_NEEDED` (`u32::MAX`) when the larder is not food-limited, no crew can be raised or the herd is out of camp range; `0` on a sending row |
 | `turnsToKill` | turns until the animal is down at the planned crew, counting wounds; `0` when no crew can be raised |

@@ -254,7 +254,7 @@ trail is free to hold.
 The marker clears on the band's first completed move order (`BandTravel` removed on arrival, a
 zero-length order included); the last step of that order still banks as a founding march. It is in
 the ground, not on the band: a band that later moves off the trail loses the link by the weakest-tile
-rule. Persisted as `BandRecord::founding_walk` (`SAVE_FORMAT_VERSION` 68). Pinned by
+rule. Persisted as `BandRecord::founding_walk` (`SAVE_FORMAT_VERSION` 69). Pinned by
 `core_sim/tests/far_kin.rs`: every tile of a commanded split's walk reads a full trail, a second move
 after arrival banks `work_per_worker_tile`, a breeding break-off banks none, the marker survives a
 checkpoint.

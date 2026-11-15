@@ -242,4 +242,4 @@ leader (`BandLeaderLookup`) for `partnerHasLeader`.
 
 **Checkpoint.** `SimState::tribes` (`TribeRegistry`: tribes, per-pair `points`, `next_id`, `formed`,
 this turn's `scores` and `standing`;
-`SIM_STATE_RESOURCES`); `SAVE_FORMAT_VERSION` 68.
+`SIM_STATE_RESOURCES`); `SAVE_FORMAT_VERSION` 69.

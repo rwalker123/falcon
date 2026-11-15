@@ -1265,8 +1265,7 @@ step in these files keeps meaning the same step.
 | 1 | *(retired: the Scout row is the sim's — zeroed before the shed and restaffed after it, `work-party.md` → "Scouting is a range" — so no scout is ever a hand the shed gives)* | *Nothing is lost* |
 | 2 | a **warrior**, if nothing threatens the band | |
 | 3 | a **Roadwork keeper above the roads' demand** — the one band-level keeping pool left | |
-| 5 | **thin the least-productive worked source that has two or more hands and a hand ABOVE its keeping line — and the crafting BENCH, ranked beside them** — "least productive" is the four-level test below, whose second level passes over a source still accruing knowledge; a site row gives a hand only while `workers − 1 ≥ keeping_need` (`docs/plan_site_crews.md` §2.6) | *Output falls, nothing ends* |
-| 5b | **the crafting bench's LAST hand** — the job stalls, keeping its recipe, its progress and the pile it drew | |
+| 5 | **thin the least-productive worked source that has two or more hands and a hand ABOVE its keeping line** — "least productive" is the four-level test below, whose second level passes over a source still accruing knowledge; a site row gives a hand only while `workers − 1 ≥ keeping_need` (`docs/plan_site_crews.md` §2.6) | *Output falls, nothing ends* |
 | 6 | **empty the least-productive source carrying no improvement and no declared build** | *Something ends* |
 | 7 | a **warrior**, unconditionally | |
 | 8 | a **keeper below the demand** — a Roadwork keeper first, then a keeping hand off the least-productive improved site row with two or more hands; improvements begin to rot | |
@@ -1538,7 +1537,7 @@ A bare-tile `abandon` is a **place**: its patch row and its road, never a workin
 
 ### `normalize` and the commands now measure the same pool
 
-**The invariant the walk drives is `Σ assignments.workers + bench.workers ≤ available_workers(cohort.working)`** —
+**The invariant the walk drives is `Σ hand-set assignments.workers + walking_home ≤ available_workers(cohort.working)`** (the sim-staffed rows and the bench are zeroed for it and refilled after) —
 the band's whole working-age head-count on the right, with nothing netted out of it, and both of the
 places its people go on the left. Equivalently: the walk runs until `BandWorkforce::idle()` is zero.
 
@@ -1549,84 +1548,14 @@ benched`), an allocation that spent the bench's hands twice was *tolerated* rath
 The two passes disagreed about what a band's spendable pool is, against `BandWorkforce`'s own claim
 to be the single authority over that number. One term closes both.
 
-### The crafting bench is a candidate in the walk
+### The crafting bench is not in the walk (#873)
 
-`BandBench` spends the same pool `assign_labor` does, but it is **not** a `LaborTarget` and not a row
-in `assignments` — *"make IS the assignment"*, and a bench is not an in-range source, so giving it a
-target would put a fictitious row on every yield readout in the game. `normalize` walks
-`assignments`, so the bench was invisible to it: **a starving band stripped every worked row, every
-standing role and its last builder while the crafters kept hammering.**
-
-`normalize` therefore takes `Option<&mut BandBench>`, and `ShedCrew` reports a `ShedSubject`
-(`Row(LaborTarget)` | `Bench`) rather than a bare target. An absent bench contributes nothing and is
-never a candidate, so a band without one walks exactly the order it always did.
-
-**It is ranked in step 5, and it is NOT given a step of its own above or below the rows.** A step
-boundary sits **above** the player's rank by construction, so a bench in its own step would be
-protected from — or sacrificed to — a marked row purely by step order. That is the defect the lesson
-level was repaired for, one arc earlier, in a different costume. Its four levels
-(`ShedRank::of_bench`):
-
-| level | the bench's reading | why |
-|---|---|---|
-| priority | its own mark (`BandBench::priority`) | set by `bench_priority`; the outermost level, as for a row |
-| lesson | `NO_LESSON_AT_STAKE` | **a decision, argued below** |
-| `pays_any_account` | `false` | a craft pays into no food, fodder or material account. It *consumes* materials and produces items, and items are not one of the three accounts the shed can read |
-| `yield_per_worker` | `0` | there is no per-worker take to read |
-
-So an **unmarked bench is thinned before any paying row**. That is the right default in a famine and
-is exactly what the mark exists to override. A tie on all four levels goes to the **row**, a stated
-order rather than one depending on which candidate was examined first — the same reason ties between
-rows go to the earliest row.
-
-> #### ⛔ THE BENCH IS NOT A LEARNER, AND THAT IS ARGUED RATHER THAN DEFAULTED
->
-> A craft *does* charge a lesson per finished item (`credit_craft_lesson`), so thinning the bench
-> genuinely costs knowledge — which looks like the source rows' `accruing_knowledge` case. It is not.
->
-> The lesson level exists because **a source's lesson is invisible to the yield figure the choice is
-> otherwise made on**. The bench has no yield figure at all: it already ranks bottom on both account
-> levels, so its "invisible value" is fully expressed. Marking it a learner would lift it **above
-> every non-learning row, including the food rows** — a famine band would strip its own larder to
-> protect a craft that happened to be teaching something. The term would not add the missing
-> information; it would invert the one thing the bench's other two levels get right.
-
-**Step 5b takes the bench's LAST hand and the job stalls.** Numbered `5b` rather than renumbering six
-steps and forty-odd references to them — the repo's own `4.7a` / `9b` convention for a late
-insertion, and `ShedStep`'s **order** is the authority anyway. It sits above step 6 because a stalled
-craft **ends nothing**, where emptying a source drops the row and takes its declared build with it.
-
-**A `High` bench therefore stalls before a `Low` source is emptied, and that is intended.** It is the
-same rule already pinned for rows, where an unimproved `High` row is emptied at step 6 before an
-improved `Normal` one is a candidate at step 9. **The steps encode consequence; the mark orders
-candidates within a step.**
-
-> #### ⛔ THE SHED MUST NEVER CALL `remove_order`
->
-> `BandBench::remove_order` **forfeits the order's drawn pile** — the materials are dropped, not
-> returned to the store. The shed uses `shed_one_worker`, which takes one hand and leaves the whole
-> queue (every order's progress, made count and drawn pile) and the last grade standing, so
-> re-staffing **resumes** rather than restarts. That is also the crafting system's own
-> shipped answer to a pass it cannot advance: *"the player chose this job, and silently emptying
-> their bench is a worse answer than a job that makes no progress."*
-
-**`status=stalled` is a third token on the shed feed line, and neither existing one would have been
-true.** `trimmed` means *the crew is smaller than you set and the source is still worked*, which a
-bench at zero is not; `lapsed` means *the row is GONE and its investment with it*, and is ranked ALERT
-for that reason — the bench keeps everything, so `lapsed` would be false *and* would shout. A bench
-that still has hands on it **is** a trim in the token's own terms and reuses it. `stalled` ranks with
-`trimmed` (NOTABLE), not with `lapsed`: it is recoverable by one command and costs nothing that
-cannot be got back.
-
-**A zero-crew bench draws nothing** (`systems::crafting`, gated on `AN_IDLE_BENCH`). `advance_crafting`
-runs its draw *before* the workers term is used anywhere, so an idle bench would keep withdrawing a
-pass's inputs every turn — a famine quietly draining the material store into a bench nobody is at.
-The gate is on the **draw**, not the pile: a bench that had already cut its materials keeps them and
-simply banks no progress, which falls out of `rate_per_turn(0, …)` on its own. This state did not
-exist before the shed could take a crew to zero without ending the job.
-
-`core_sim/tests/bench_shed.rs` drives the whole of it through a real turn; the unit half is in
-`components.rs`'s own tests, and the draw gate is pinned in `core_sim/tests/crafting.rs`.
+The bench is the sim's to staff, in the same passes as the work rows (`crafting.md` -> "Staffing"), so like a
+staffed row it is **zeroed before the shed and refilled after it**: `normalize` takes no bench, `ShedSubject`
+has only rows, and step 5b (`StallBench`) and `BandBench::shed_one_worker` are gone. The invariant it drives
+down is `Σ assignments.workers + walking_home <= available` over the hand-set crews; the bench's crew is
+dealt from what that leaves, and the settle trim (`staffing::trim_one_hand`) takes its hands exactly as a
+build's of the same priority.
 
 ### The pool `normalize` reads is not the pool the player composed against
 

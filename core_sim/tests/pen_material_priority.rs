@@ -40,7 +40,10 @@ trait PutOnBench {
 impl PutOnBench for core_sim::BandBench {
     fn put_on(&mut self, recipe: &str, workers: u32) {
         self.orders = vec![core_sim::BenchOrder::new(recipe, NEVER_FINISHED)];
-        self.workers = workers;
+        self.orders[0].crew = core_sim::BenchCrew {
+            at_tool: 0,
+            by_hand: workers,
+        };
     }
 }
 
@@ -1021,7 +1024,7 @@ fn band_material_income(app: &App, keeper: Entity) -> f32 {
         .unwrap_or(&no_kit);
     let rate = core_sim::bench_material_rate(
         bench,
-        0,
+        &[],
         &cohort.stores,
         &recipes,
         &materials,

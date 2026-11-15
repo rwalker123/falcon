@@ -1314,6 +1314,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // empty for a player-crewed row; `chief_owned` is the same fact as a bool.
             let _ = entry.insert("order_kind", assignment.orderKind().unwrap_or(""));
             let _ = entry.insert("chief_owned", assignment.chiefOwned());
+            // A take row whose hold crew gave hands to a bench order (the sim's finished sentence,
+            // e.g. "1 to the Spears order"); empty = none. Rendered verbatim, never re-derived.
+            let _ = entry.insert("hands_to_bench", assignment.handsToBench().unwrap_or(""));
             array.push(&entry.to_variant());
         }
     }
@@ -1551,114 +1554,27 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     }
     let _ = dict.insert("material_batches", &material_batches);
 
-    // WHAT IS ON THIS BAND'S BENCH — the scalars describe the WORKED order, `orders[worked]` (below):
-    // the first order in queue order that holds a pile or can draw, so a short head no longer stalls
-    // the queue. When nothing can be worked `worked` is 0 and the scalars describe the head. An empty
-    // `recipe_id` is an IDLE bench, which is a different statement from a BLOCKED one: a blocked bench
-    // has a recipe AND a `blocked_reason`.
+    // WHAT IS ON THIS BAND'S BENCH (#873) — the bench is a QUEUE OF ORDERS WORKED AT ONCE, each with
+    // its own crew, priority and progress; the bench-level scalars are only the totals. `workers` is
+    // the sim's crew total (never a number the player sets: the sim staffs the bench), `lent_to_hunt`
+    // the sum of the orders' loans, `set_aside` what the items in flight hold per material.
     let mut bench_dict = VarDictionary::new();
-    let _ = bench_dict.insert(
-        "recipe_id",
-        cohort.bench().and_then(|b| b.recipeId()).unwrap_or(""),
-    );
-    let _ = bench_dict.insert(
-        "display_name",
-        cohort.bench().and_then(|b| b.displayName()).unwrap_or(""),
-    );
     let _ = bench_dict.insert("workers", cohort.bench().map_or(0, |b| b.workers()) as i64);
     let _ = bench_dict.insert(
-        "progress",
-        cohort.bench().map_or(0.0, |b| b.progress()) as f64,
+        "set_aside",
+        &drawn_inputs_to_array(cohort.bench().and_then(|b| b.setAside())),
     );
-    let _ = bench_dict.insert("work", cohort.bench().map_or(0.0, |b| b.work()) as f64);
-    // The craft one completed item credits — crafting is the fourth teacher.
-    let _ = bench_dict.insert(
-        "teaches",
-        cohort.bench().and_then(|b| b.teaches()).unwrap_or(""),
-    );
-    // WHY THE BENCH IS NOT MOVING, resolved sim-side. `""` = it is working. It reads in exactly the
-    // offer vocabulary plus the crew's own refusal, because a bench with a full pile and nobody on
-    // it is also stopped.
-    let _ = bench_dict.insert(
-        "blocked_reason",
-        cohort.bench().and_then(|b| b.blockedReason()).unwrap_or(""),
-    );
-    // WHETHER THAT REASON IS A FAULT OR A PROMPT, in the same `danger`/`neutral`/`good` vocabulary as
-    // `CraftOffer.severity`, `""` when nothing is blocking. **A bench waiting for its crew is the
-    // NORMAL state one click after Make** — the player staffs the bench — so it resolves `neutral`
-    // while a shortage, an unknown craft or a zero craft rate resolve `danger`. Resolved sim-side
-    // beside the reason for the reason the reason itself is: a client tinting every refusal one
-    // colour renders the expected state as an alarm, and one re-deriving the severity from the
-    // wording is parsing a string it may only render.
-    let _ = bench_dict.insert(
-        "blocked_severity",
-        cohort
-            .bench()
-            .and_then(|b| b.blockedSeverity())
-            .unwrap_or(""),
-    );
-    let _ = bench_dict.insert(
-        "shortfalls",
-        &shortfalls_to_array(cohort.bench().and_then(|b| b.shortfalls())),
-    );
-    let _ = bench_dict.insert("drawn", cohort.bench().is_some_and(|b| b.drawn()));
-    // The grade the pile in flight FIXED — `""` before the draw, or on an ungraded recipe.
-    let _ = bench_dict.insert(
-        "output_grade",
-        cohort.bench().and_then(|b| b.outputGrade()).unwrap_or(""),
-    );
-    // **WHAT ONE TURN ADDS, ALREADY THROUGH THE TOOL JOIN** — `workers × progress_per_worker_turn ×
-    // craft_speed`, where `craft_speed` is the equipped bench tool's rate or the material's
-    // bare-handed one. A client multiplying `workers` by anything of its own would miss that factor
-    // and promise a finish in half the turns it takes, which is why this rides resolved, exactly as
-    // `kit_tiers` does. `0` is a STATE — no crew, no recipe, or a craft speed of zero — and the
-    // `blocked_reason` beside it says which.
-    let _ = bench_dict.insert(
-        "rate_per_turn",
-        cohort.bench().map_or(0.0, |b| b.ratePerTurn()) as f64,
-    );
-    // **THE PILE ALREADY CUT, SO A CLEAR CAN NAME WHAT IT DESTROYS.** The WITHDRAWN amounts, not the
-    // recipe's stated inputs and not a shortfall's `required`: a bench tool's material efficiency
-    // sits between the book and the withdrawal. Empty on an undrawn bench.
-    let _ = bench_dict.insert(
-        "drawn_inputs",
-        &drawn_inputs_to_array(cohort.bench().and_then(|b| b.drawnInputs())),
-    );
-    // **WHAT THE BAND GIVES UP FIRST WHEN IT CANNOT COVER EVERYTHING IT HOLDS** — the mark
-    // `bench_priority <faction> <band> high|normal|low` sets, the SAME `SourcePriority` a worked row
-    // carries on `labor_assignments[].priority` and inserted the same way: the LOWERCASE WORD, never
-    // the wire ordinal.
+    // **THE QUEUE, HEAD FIRST** (`docs/plan_labor_at_scale.md` → "The bench: several orders at
+    // once"). An order's INDEX here is the `order` argument every queue verb addresses
+    // (`bench_order_count`, `bench_remove`, `bench_raise`, `bench_priority`). Empty on an idle bench.
     //
-    // ⛔ **THE ORDINALS ARE NOT THE SHEDDING ORDER.** `Normal` is `0` so the default costs no bytes;
-    // the band sheds Low, then Normal, then High. The number never leaves this function, so GDScript
-    // is handed a word it cannot sort on and paint that untruth with.
+    // `priority` is the LOWERCASE WORD (`high|normal|low`), never the wire ordinal: `Normal` is `0`
+    // so the default costs no bytes, and the band sheds Low, then Normal, then High, so the number
+    // is not an order GDScript could sort on. The same three tokens `bench_priority` takes.
     //
-    // **`bench_priority` IS A SIBLING VERB, NOT A `work_priority` TOKEN**: `work_priority`'s grammar
-    // reads a lone trailing token as a herd id, so `work_priority … bench low` would be ambiguous
-    // with a herd named `bench`. The three VALUE tokens ARE shared with `work_priority`, so one
-    // picker echoes back what it was shown.
-    //
-    // Always inserted — `"normal"` on an unmarked bench, on an IDLE bench (empty `recipe_id`) and on
-    // a band with no bench at all — so the entry shape is stable and the control renders on an idle
-    // bench, which is exactly when a player says *"the axes go first"*.
-    let _ = bench_dict.insert(
-        "priority",
-        match cohort.bench().map(|b| b.priority()) {
-            Some(fb::SourcePriority::High) => "high",
-            Some(fb::SourcePriority::Low) => "low",
-            _ => "normal",
-        },
-    );
-    // **THE QUEUE, HEAD FIRST** (`docs/plan_crafting_and_materials.md` §7 → "The queue"). Every
-    // scalar above describes `orders[worked]`; this array is every order, and an order's INDEX here is
-    // the `order` argument the queue verbs (`bench_order_count`, `bench_remove`, `bench_raise`)
-    // address. Empty on an idle bench. The worked order's `made` is what the retired `BenchState.
-    // itemsCompleted` carried, which is why that field is no longer read.
-    let _ = bench_dict.insert("worked", cohort.bench().map_or(0, |b| b.worked()) as i64);
-    //
-    // **`drawn` on an order the bench is NOT working is a PAUSED order** — raised over while holding a
-    // cut pile, it keeps that pile and its progress until it is worked again, or until it is removed, which
-    // destroys the pile exactly as removing the head does.
+    // `drawn` on an order with nothing in flight is a PAUSED or not-yet-started order; `progress`
+    // sums every item in flight. `rate_per_turn` is the one rate authority (net of lent hands) — a
+    // client multiplying `crew_*` by anything of its own would miss the tool join.
     let mut bench_orders = VarArray::new();
     if let Some(orders) = cohort.bench().and_then(|b| b.orders()) {
         for order in orders.iter() {
@@ -1668,13 +1584,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = row.insert("made", order.made() as i64);
             let _ = row.insert("progress", order.progress() as f64);
             let _ = row.insert("drawn", order.drawn());
-            // WHY THE BENCH IS SKIPPING THIS ORDER (`"Short 3.0 fibre"`), sim-resolved and rendered
-            // verbatim, with its severity in the offer vocabulary; both `""` when the order holds a
-            // pile or can draw. The crew's refusal stays on the bench row's own `blocked_reason`.
+            // WHY THE ORDER IS NOT MOVING (`"Short 3.0 fibre"`, `"No spare hands this turn"`),
+            // sim-resolved and rendered verbatim, with its severity in the offer vocabulary
+            // (`danger` | `neutral`); both `""` for an order with a crew.
             let _ = row.insert("blocked_reason", order.blockedReason().unwrap_or(""));
             let _ = row.insert("blocked_severity", order.blockedSeverity().unwrap_or(""));
-            // WHAT THE STOCK ON HAND CANNOT COVER OF THE WHOLE RUN — a forecast, not a block; empty
-            // when every pass still to draw is covered. Same row shape as `shortfalls`.
+            // WHAT THE STOCK ON HAND CANNOT COVER OF THE WHOLE RUN — a forecast, not a block.
             let _ = row.insert(
                 "short_to_finish",
                 &shortfalls_to_array(order.shortToFinish()),
@@ -1683,8 +1598,32 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // applies to.
             let _ = row.insert("auto", order.auto());
             // THE KIT ORDER THIS ORDER IS A PART OF (`bench.kit_orders[].id`); `0` for a plain order.
-            // A kit order's parts are contiguous in this array.
             let _ = row.insert("kit_order", i64::from(order.kitOrder()));
+            let _ = row.insert(
+                "priority",
+                match order.priority() {
+                    fb::SourcePriority::High => "high",
+                    fb::SourcePriority::Low => "low",
+                    _ => "normal",
+                },
+            );
+            // THE STAFFED CREW, before any muster loan: at the bench tool, by hand, and the cap the
+            // staffing used (`crew_per_item x items it could work`).
+            let _ = row.insert("crew_at_tool", i64::from(order.crewAtTool()));
+            let _ = row.insert("crew_by_hand", i64::from(order.crewByHand()));
+            let _ = row.insert("crew_cap", i64::from(order.crewCap()));
+            let _ = row.insert("crew_per_item", i64::from(order.crewPerItem()));
+            let _ = row.insert("items_in_flight", i64::from(order.itemsInFlight()));
+            let _ = row.insert("display_name", order.displayName().unwrap_or(""));
+            // The craft one completed item credits — crafting is the fourth teacher.
+            let _ = row.insert("teaches", order.teaches().unwrap_or(""));
+            let _ = row.insert("work", order.work() as f64);
+            let _ = row.insert("rate_per_turn", order.ratePerTurn() as f64);
+            let _ = row.insert("output_grade", order.outputGrade().unwrap_or(""));
+            // The bench tool item id the recipe's material uses; `""` = none (no at-tool crew).
+            let _ = row.insert("bench_tool", order.benchTool().unwrap_or(""));
+            let _ = row.insert("drawn_inputs", &drawn_inputs_to_array(order.drawnInputs()));
+            let _ = row.insert("lent_to_hunt", i64::from(order.lentToHunt()));
             bench_orders.push(&row.to_variant());
         }
     }
@@ -1700,6 +1639,15 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         .map(crate::dict::strings_to_variant_array)
         .unwrap_or_default();
     let _ = bench_dict.insert("auto_skipped", &auto_skipped);
+    // `auto_wait_reason` is why auto-craft has queued nothing despite room on the bench (the top
+    // suggestion's sim-resolved refusal); `""` when nothing waits.
+    let _ = bench_dict.insert(
+        "auto_wait_reason",
+        cohort
+            .bench()
+            .and_then(|b| b.autoWaitReason())
+            .unwrap_or(""),
+    );
     // **THE HANDS THE BENCH LENDS TO A HUNT NEXT TURN** — the bench as a donor, from the same muster
     // plan that fills each donor row's `lent_to_hunt`. `rate_per_turn` already subtracts them.
     let _ = bench_dict.insert(

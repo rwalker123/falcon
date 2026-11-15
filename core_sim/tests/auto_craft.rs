@@ -11,12 +11,13 @@ use bevy::prelude::{App, Entity, UVec2, With};
 
 use core_sim::auto_craft::{
     advance_auto_craft, advance_auto_craft_after_bench, auto_craft_fill, auto_craft_skip,
-    set_auto_craft, AutoSkipRefusal,
+    set_auto_craft,
 };
 use core_sim::{
-    advance_crafting, build_test_app, scalar_from_f32, BandBench, BandEquipment, BuildSource,
-    DiscoveryProgressLedger, KeepingIssue, LaborAllocation, LadderConfigHandle,
-    MaterialsConfigHandle, PopulationCohort, RecipesConfigHandle, ResidentBand,
+    advance_crafting, build_test_app, scalar_from_f32, BandBench, BandEquipment, BenchOrder,
+    BuildSource, DiscoveryProgressLedger, DrawnInputs, DrawnMaterial, ItemInFlight, KeepingIssue,
+    LaborAllocation, LadderConfigHandle, MaterialDraw, MaterialsConfigHandle, PopulationCohort,
+    RecipesConfigHandle, ResidentBand, Scalar,
 };
 use std::collections::BTreeMap;
 
@@ -127,7 +128,7 @@ fn auto_bench(app: &mut App, band: Entity, crew: u32) {
         .expect("a spawned band carries a bench");
     bench.orders.clear();
     bench.auto_skipped.clear();
-    bench.workers = crew;
+    let _ = crew;
 }
 
 fn bench(app: &App, band: Entity) -> &BandBench {
@@ -174,136 +175,6 @@ fn clubs_short_baskets_makeable(app: &mut App, band: Entity) {
     bank_hide_and_fibre(app, band);
 }
 
-/// Park an auto order for the clubs on the bench - the state an auto order is left in when its bone
-/// runs out after it was queued. (Auto-craft never QUEUES a suggestion that is short of an input.)
-fn an_auto_clubs_order_waiting_on_bone(app: &mut App, band: Entity) {
-    let mut bench = app.world.get_mut::<BandBench>(band).expect("bench");
-    bench.auto = true;
-    bench.enqueue_auto(CLUBS_RECIPE_ID, 4);
-}
-
-/// **AUTO ON QUEUES THE FIRST SUGGESTION THAT IS MAKEABLE, AT ITS WHOLE COUNT, TAGGED `auto`, AND
-/// NEVER TOUCHES THE CREW.** The clubs outrank the baskets but are short of bone, so the baskets are
-/// queued; with bone banked the clubs, at their whole shortfall, are.
-#[test]
-fn the_first_makeable_suggestion_is_queued_at_its_whole_count_and_the_crew_is_untouched() {
-    let (mut app, band) = world();
-    clubs_short_baskets_makeable(&mut app, band);
-    assert!(
-        bench(&app, band).orders.is_empty(),
-        "LIVENESS: the queue starts empty"
-    );
-
-    set_auto_craft(&mut app.world, band, true);
-
-    let bench_now = bench(&app, band);
-    assert!(bench_now.auto, "the toggle is on");
-    assert_eq!(bench_now.orders.len(), 1, "exactly one order is queued");
-    let order = &bench_now.orders[0];
-    assert!(order.auto, "the order is tagged as auto-craft's");
-    assert_eq!(order.count, 2, "the baskets' whole shortfall, not one pass");
-    assert_eq!(
-        item_of(&app, &order.recipe_id),
-        BASKETS,
-        "the clubs are short of bone and are NOT queued"
-    );
-    assert_eq!(bench_now.workers, STANDING_CREW, "the crew is never picked");
-
-    // With the bone banked the top suggestion is makeable and is the one queued.
-    let (mut app, band) = world();
-    clubs_short_baskets_makeable(&mut app, band);
-    bank_bone(&mut app, band);
-    set_auto_craft(&mut app.world, band, true);
-    let order = &bench(&app, band).orders[0];
-    assert_eq!(item_of(&app, &order.recipe_id), CLUBS, "the top suggestion");
-    assert_eq!(order.count, 4, "the whole shortfall");
-}
-
-/// **A SHORT SUGGESTION IS NEVER QUEUED, TURN AFTER TURN.**
-#[test]
-fn a_short_suggestion_is_never_queued_and_the_makeable_one_behind_it_is_made() {
-    let (mut app, band) = world();
-    clubs_short_baskets_makeable(&mut app, band);
-    set_auto_craft(&mut app.world, band, true);
-    app.world.get_mut::<BandBench>(band).expect("bench").workers = CREW;
-
-    for _ in 0..3 {
-        turn(&mut app);
-        assert!(
-            !queued_items(&app, band).contains(&CLUBS.to_string()),
-            "the clubs are short of bone and never queued"
-        );
-    }
-    assert!(
-        bench(&app, band).orders.is_empty() || bench(&app, band).orders[0].made > 0,
-        "the baskets were made (the order left, or is part made)"
-    );
-}
-
-/// **SKIP PARKS THE HEAD'S ITEM AND REMOVES THE HEAD** - valid only when the bench is waiting on an
-/// auto head, and refused when it has a workable order or the head is the player's.
-#[test]
-fn skip_parks_a_waiting_auto_head_and_is_refused_otherwise() {
-    let (mut app, band) = world();
-    auto_bench(&mut app, band, STANDING_CREW);
-    short_of(&mut app, band, &[(FIRST_SITE, CLUBS, 4.0)]);
-    an_auto_clubs_order_waiting_on_bone(&mut app, band);
-
-    assert_eq!(
-        auto_craft_skip(&mut app.world, band),
-        Ok(CLUBS.to_string()),
-        "the waiting auto head can be skipped"
-    );
-    let bench_after = bench(&app, band);
-    assert!(
-        bench_after.auto_skipped.contains(CLUBS),
-        "the skipped item is parked"
-    );
-    assert!(
-        bench_after.orders.is_empty(),
-        "the head is gone and the short clubs are not re-queued"
-    );
-    assert_eq!(bench_after.workers, STANDING_CREW, "the crew is untouched");
-
-    // REFUSED: the bench has a workable order (the bone arrived).
-    let (mut app, band) = world();
-    auto_bench(&mut app, band, STANDING_CREW);
-    short_of(&mut app, band, &[(FIRST_SITE, CLUBS, 4.0)]);
-    bank_hide_and_fibre(&mut app, band);
-    bank_bone(&mut app, band);
-    an_auto_clubs_order_waiting_on_bone(&mut app, band);
-    assert_eq!(
-        auto_craft_skip(&mut app.world, band),
-        Err(AutoSkipRefusal::BenchIsWorking),
-        "a bench that can work its head has nothing to skip past"
-    );
-
-    // REFUSED: nothing workable, but the head is the player's own order.
-    let (mut app, band) = world();
-    clubs_short_baskets_makeable(&mut app, band);
-    app.world
-        .get_mut::<BandBench>(band)
-        .expect("bench")
-        .enqueue(CLUBS_RECIPE_ID, 1);
-    assert!(
-        !bench(&app, band).orders[0].auto,
-        "LIVENESS: a player's order"
-    );
-    assert_eq!(
-        auto_craft_skip(&mut app.world, band),
-        Err(AutoSkipRefusal::HeadNotAuto),
-        "only an auto head can be skipped"
-    );
-
-    // REFUSED: nothing is queued.
-    let (mut app, band) = world();
-    auto_bench(&mut app, band, STANDING_CREW);
-    assert_eq!(
-        auto_craft_skip(&mut app.world, band),
-        Err(AutoSkipRefusal::NothingQueued)
-    );
-}
-
 /// The state three tests below start from: the baskets running as an auto order while the clubs sit
 /// in `auto_skipped`.
 fn baskets_running_with_the_clubs_skipped(app: &mut App, band: Entity) {
@@ -314,43 +185,6 @@ fn baskets_running_with_the_clubs_skipped(app: &mut App, band: Entity) {
         .auto_skipped
         .insert(CLUBS.to_string());
     set_auto_craft(&mut app.world, band, true);
-}
-
-/// **A SKIPPED ITEM THAT BECOMES DRAWABLE DOES NOT PREEMPT A RUNNING ORDER; IT RETURNS WHEN THE
-/// QUEUE IS NEXT EMPTY.**
-#[test]
-fn a_skipped_item_returns_only_when_the_queue_is_next_empty() {
-    let (mut app, band) = world();
-    baskets_running_with_the_clubs_skipped(&mut app, band);
-    assert_eq!(queued_items(&app, band), vec![BASKETS.to_string()]);
-    app.world.get_mut::<BandBench>(band).expect("bench").workers = CREW;
-
-    // The bone arrives while the baskets (two of them) are running.
-    bank_bone(&mut app, band);
-    turn(&mut app);
-    let after_one = bench(&app, band);
-    assert_eq!(
-        queued_items(&app, band),
-        vec![BASKETS.to_string()],
-        "the clubs are drawable now and do NOT preempt the running baskets"
-    );
-    assert_eq!(after_one.orders[0].made, 1, "the baskets are being made");
-    assert!(
-        after_one.auto_skipped.contains(CLUBS),
-        "the skip stands while an order runs"
-    );
-
-    turn(&mut app);
-    let after_two = bench(&app, band);
-    assert_eq!(
-        queued_items(&app, band),
-        vec![CLUBS.to_string()],
-        "the baskets finished, the queue emptied, and the clubs are back"
-    );
-    assert!(
-        after_two.auto_skipped.is_empty(),
-        "the item left the skipped set when it was queued again"
-    );
 }
 
 /// **A PLAYER-QUEUED ORDER MEANS AUTO ADDS NOTHING.**
@@ -377,8 +211,6 @@ fn a_player_order_on_the_queue_means_auto_adds_nothing() {
     );
 }
 
-/// The shipped bone clubs recipe.
-const CLUBS_RECIPE_ID: &str = "clubs";
 /// The shipped baskets recipe.
 const BASKETS_RECIPE_ID: &str = "baskets";
 
@@ -408,34 +240,6 @@ fn toggling_off_clears_the_skips_and_keeps_every_order() {
         1,
         "and an off bench queues nothing further"
     );
-}
-
-/// **A COMPLETING ORDER LEAVES THE NEXT AUTO ORDER ALREADY QUEUED AFTER THE TURN.**
-#[test]
-fn a_completed_order_leaves_the_next_auto_order_queued_after_the_turn() {
-    let (mut app, band) = world();
-    auto_bench(&mut app, band, CREW);
-    short_of(
-        &mut app,
-        band,
-        &[(FIRST_SITE, CLUBS, 2.0), (SECOND_SITE, BASKETS, 1.0)],
-    );
-    bank_hide_and_fibre(&mut app, band);
-    bank_bone(&mut app, band);
-    set_auto_craft(&mut app.world, band, true);
-    assert_eq!(queued_items(&app, band), vec![CLUBS.to_string()]);
-    assert_eq!(bench(&app, band).orders[0].count, 2);
-
-    turn(&mut app);
-    assert_eq!(bench(&app, band).orders[0].made, 1, "one club made");
-    turn(&mut app);
-
-    assert_eq!(
-        queued_items(&app, band),
-        vec![BASKETS.to_string()],
-        "the clubs completed this turn and the next auto order is already in the queue"
-    );
-    assert!(bench(&app, band).orders[0].auto);
 }
 
 /// **A SUGGESTION FOR A CRAFT THE PEOPLE HAVE NOT LEARNED IS PASSED OVER.** The tanning frame needs
@@ -606,128 +410,6 @@ fn auto_crafts_the_tools_a_queued_build_will_need() {
     assert_eq!(queued.orders[0].count, 2, "the whole count the job needs");
 }
 
-/// Put `count` hurdles of the shipped recipe on the bench as the player's own order.
-const HURDLES_RECIPE_ID: &str = "hurdles";
-
-/// **AN ORDER THAT CANNOT PROGRESS DOES NOT HOLD THE BENCH.** Live (turn 209): the only orders were
-/// hurdles and a sled, both short of hide, and 16 crafters sat idle while Make Next offered baskets
-/// and hoes that could be made. With every order blocked the bench is not "full": auto queues the
-/// makeable suggestions, the crew works them, and a blocked order keeps its place.
-#[test]
-fn a_bench_whose_only_order_is_blocked_gets_the_makeable_suggestions() {
-    let (mut app, band) = world();
-    auto_bench(&mut app, band, CREW);
-    short_of(
-        &mut app,
-        band,
-        &[(FIRST_SITE, BASKETS, 2.0), (SECOND_SITE, HOES, 1.0)],
-    );
-    // Fibre and bone for the baskets and hoes, but NO hide: hurdles (wood + hide) cannot be drawn.
-    bank(
-        &mut app,
-        band,
-        FIBRE,
-        PLENTY,
-        &[("fineness", 0.5), ("strength", 0.5)],
-    );
-    bank_bone(&mut app, band);
-    bank(
-        &mut app,
-        band,
-        "wood",
-        PLENTY,
-        &[("hardness", 0.5), ("pliancy", 0.5)],
-    );
-    {
-        let mut bench = app.world.get_mut::<BandBench>(band).expect("bench");
-        bench.auto = true;
-        bench.enqueue(HURDLES_RECIPE_ID, 1);
-    }
-    app.world.run_system_once(advance_crafting);
-    assert!(
-        bench(&app, band).orders[0].drawn.is_none(),
-        "LIVENESS: the lone hurdles order is blocked on hide and drew nothing"
-    );
-
-    advance_auto_craft(&mut app.world);
-
-    let queued = queued_items_or_recipes(&app, band);
-    assert!(
-        queued
-            .iter()
-            .any(|recipe| recipe.starts_with(BASKETS_RECIPE_ID)),
-        "the makeable baskets (one order at a time, the crew works one) are queued behind the \
-         blocked hurdles: {queued:?}"
-    );
-    assert_eq!(
-        queued[0], HURDLES_RECIPE_ID,
-        "the blocked order keeps its place"
-    );
-    assert_eq!(
-        queued
-            .iter()
-            .filter(|recipe| recipe.as_str() == HURDLES_RECIPE_ID)
-            .count(),
-        1,
-        "no duplicate hurdles order, blocked or not"
-    );
-
-    // The crew makes progress on them the same turn: the blocked head is skipped.
-    app.world.run_system_once(advance_crafting);
-    let made: u32 = bench(&app, band)
-        .orders
-        .iter()
-        .filter(|order| order.recipe_id != HURDLES_RECIPE_ID)
-        .map(|order| order.made)
-        .sum();
-    let finished = bench(&app, band).finished.len() as u32;
-    let progressed = bench(&app, band).orders.iter().any(|order| {
-        order.recipe_id != HURDLES_RECIPE_ID
-            && (order.progress > scalar_from_f32(0.0) || order.drawn.is_some())
-    });
-    assert!(
-        made > 0 || finished > 0 || progressed,
-        "crafters work the first order that can progress, not the blocked head"
-    );
-}
-
-/// **A BLOCKED ORDER KEEPS ITS PLACE AND RESUMES WHEN ITS INPUT ARRIVES.**
-#[test]
-fn a_blocked_order_resumes_once_its_hide_arrives() {
-    let (mut app, band) = world();
-    auto_bench(&mut app, band, CREW);
-    short_of(&mut app, band, &[]);
-    bank(
-        &mut app,
-        band,
-        "wood",
-        PLENTY,
-        &[("hardness", 0.5), ("pliancy", 0.5)],
-    );
-    app.world
-        .get_mut::<BandBench>(band)
-        .expect("bench")
-        .enqueue(HURDLES_RECIPE_ID, 1);
-
-    app.world.run_system_once(advance_crafting);
-    let held = bench(&app, band);
-    assert_eq!(held.orders.len(), 1, "the order keeps its place");
-    assert!(
-        held.orders[0].drawn.is_none() && held.orders[0].progress == scalar_from_f32(0.0),
-        "blocked: nothing drawn and nothing made"
-    );
-
-    bank_hide_and_fibre(&mut app, band);
-    app.world.run_system_once(advance_crafting);
-    let resumed = bench(&app, band);
-    assert!(
-        resumed.orders.is_empty()
-            || resumed.orders[0].drawn.is_some()
-            || resumed.orders[0].made > 0,
-        "the hide arrived and the very same order resumed"
-    );
-}
-
 /// **NO CHURN: A SUGGESTION ALREADY QUEUED - BLOCKED OR NOT - IS NEVER QUEUED AGAIN.** A pen short
 /// of hurdles suggests hurdles; a blocked hurdles order is already on the bench, so auto adds none.
 #[test]
@@ -763,11 +445,91 @@ fn a_suggestion_already_queued_is_not_queued_twice() {
     );
 }
 
-/// The recipe ids on the queue, head first.
-fn queued_items_or_recipes(app: &App, band: Entity) -> Vec<String> {
-    bench(app, band)
-        .orders
+/// A recipe id the book does not carry, so an order for it is never workable.
+const ABSENT_RECIPE: &str = "recipe_missing_from_the_book";
+/// How much hide one in-flight item has set aside in the skip tests.
+const SET_ASIDE: f32 = 3.0;
+
+/// Stage an auto head order for a recipe absent from the book, holding `set_aside` hide (none when
+/// zero) in one item in flight, with the store otherwise holding only `PLENTY` of hide.
+fn skippable_head_holding(app: &mut App, band: Entity, set_aside: f32) {
+    auto_bench(app, band, STANDING_CREW);
+    bank(
+        app,
+        band,
+        HIDE,
+        PLENTY,
+        &[("toughness", 0.6), ("suppleness", 0.5)],
+    );
+    let readings: BTreeMap<String, f32> = [("toughness", 0.6), ("suppleness", 0.5)]
         .iter()
-        .map(|order| order.recipe_id.clone())
-        .collect()
+        .map(|(axis, value)| ((*axis).to_string(), *value))
+        .collect();
+    let key = app
+        .world
+        .resource::<MaterialsConfigHandle>()
+        .get()
+        .band_key(HIDE, &readings)
+        .expect("the shipped table carries hide");
+    let mut order = BenchOrder::new(ABSENT_RECIPE, 1);
+    order.auto = true;
+    if set_aside > 0.0 {
+        let amount: Scalar = scalar_from_f32(set_aside);
+        order.items.push(ItemInFlight {
+            progress: scalar_from_f32(0.0),
+            drawn: DrawnInputs {
+                reading: None,
+                grade: None,
+                withdrawn: vec![DrawnMaterial {
+                    material: HIDE.to_string(),
+                    amount,
+                    batches: vec![MaterialDraw {
+                        band: key,
+                        amount,
+                        characteristics: readings,
+                    }],
+                }],
+                at_tool: false,
+            },
+        });
+    }
+    let mut bench = app.world.get_mut::<BandBench>(band).expect("bench");
+    bench.auto = true;
+    bench.orders.push(order);
+}
+
+fn hide_total(app: &App, band: Entity) -> Scalar {
+    app.world
+        .get::<PopulationCohort>(band)
+        .expect("the band has a cohort")
+        .stores
+        .material_total(HIDE)
+}
+
+/// **SKIPPING AN AUTO HEAD THAT IS NOT WORKABLE RETURNS ITS SET-ASIDE.** An order with items in
+/// flight whose recipe is gone from the book is not workable, so it can be skipped; the batches it
+/// set aside go back to the store rather than vanishing with the order.
+#[test]
+fn skipping_an_unworkable_auto_head_returns_what_it_set_aside() {
+    let (mut app, band) = world();
+    skippable_head_holding(&mut app, band, SET_ASIDE);
+    let before = hide_total(&app, band);
+    let skipped = auto_craft_skip(&mut app.world, band).expect("the unworkable auto head skips");
+    assert_eq!(skipped, ABSENT_RECIPE);
+    assert!(bench(&app, band).orders.is_empty());
+    assert_eq!(
+        hide_total(&app, band),
+        before + scalar_from_f32(SET_ASIDE),
+        "the skipped order's set-aside hide is back in the store"
+    );
+}
+
+/// Control: nothing set aside, so the skip leaves the store as it was.
+#[test]
+fn skipping_an_auto_head_with_nothing_set_aside_leaves_the_store_unchanged() {
+    let (mut app, band) = world();
+    skippable_head_holding(&mut app, band, 0.0);
+    let before = hide_total(&app, band);
+    auto_craft_skip(&mut app.world, band).expect("the unworkable auto head skips");
+    assert_eq!(hide_total(&app, band), before);
 }

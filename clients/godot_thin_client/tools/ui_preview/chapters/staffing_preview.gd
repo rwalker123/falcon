@@ -12,7 +12,7 @@ extends RefCounted
 ##   * a preview still in flight falls back to the idle estimate (here 0), again with no pending line.
 
 ## The checkpoints this chapter owes the walk -- assertions made plus frames saved, as a FLOOR.
-const EXPECTED_CHECKPOINTS := 20
+const EXPECTED_CHECKPOINTS := 21
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -21,13 +21,18 @@ const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 const NodeQuery := preload("res://tools/ui_preview/node_query.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 
-## The crew the canned preview hands the new row, and where it comes from: the forage row's hands (its
-## crew falls `FORAGE_BEFORE` to `FORAGE_AFTER`) and one builder of that patch's build.
+## The crew the canned preview hands the new row, and where it comes from: one of the forage row's hands
+## (its crew falls `FORAGE_BEFORE` to `FORAGE_AFTER`), one builder of that patch's build, and one crafter
+## off a bench order (#873: the bench is staffed in the same passes).
 const PREVIEW_CREW := 3
 const FORAGE_BEFORE := 5
-const FORAGE_AFTER := 3
+const FORAGE_AFTER := 4
 const BUILDERS_BEFORE := 2
 const BUILDERS_AFTER := 1
+const CRAFTERS_BEFORE := 2
+const CRAFTERS_AFTER := 1
+## The order's name as the sim resolves it (the made item's row name).
+const BENCH_ORDER_NAME := "Baskets"
 const FORAGE_X := 71
 const FORAGE_Y := 18
 
@@ -81,6 +86,11 @@ func _build_loss() -> Dictionary:
 	return {"kind": "build:forage", "x": FORAGE_X, "y": FORAGE_Y, "herd_id": "", "material": "",
 		"branch": "", "before": BUILDERS_BEFORE, "after": BUILDERS_AFTER}
 
+func _bench_loss() -> Dictionary:
+	return {"kind": HudComposeVocab.STAFFING_PREVIEW_BENCH_KIND, "x": 0, "y": 0, "herd_id": "",
+		"material": "", "branch": "", "before": CRAFTERS_BEFORE, "after": CRAFTERS_AFTER,
+		"order_name": BENCH_ORDER_NAME}
+
 func _open_hunt() -> Node:
 	var herd := HerdFx.herd_fixture()
 	h._hud.forecast_query().reset()
@@ -99,7 +109,8 @@ func _crew_stamp(sheet: Node) -> int:
 	return int(strip.get_meta(HudComposeVocab.SHEET_CREW_NUMBER_META, -1))
 
 func _hunt_sheet_takes_the_previewed_crew() -> void:
-	ForecastFx.staffing_preview_canned = _preview(PREVIEW_CREW, [_forage_loss(), _build_loss()], 0, 0)
+	ForecastFx.staffing_preview_canned = _preview(PREVIEW_CREW,
+		[_forage_loss(), _build_loss(), _bench_loss()], 0, 0)
 	var sheet := await _open_hunt()
 	await h._save("staffing_preview_hunt")
 	h._assert_hud("a band with 0 idle hands is priced at the PREVIEW's crew (strip stamps %d, want %d)"
@@ -111,6 +122,8 @@ func _hunt_sheet_takes_the_previewed_crew() -> void:
 		line.contains("%d from Harvest (%d, %d)" % [FORAGE_BEFORE - FORAGE_AFTER, FORAGE_X, FORAGE_Y]))
 	h._assert_hud("…and the build's builders, as `the <site> build`",
 		line.contains("1 from the Harvest (%d, %d) build" % [FORAGE_X, FORAGE_Y]))
+	h._assert_hud("…and a bench order's crafters, as `the <order> order` (got \"%s\")" % line,
+		line.contains("%d from the %s order" % [CRAFTERS_BEFORE - CRAFTERS_AFTER, BENCH_ORDER_NAME]))
 	h._assert_hud("…and no `Costing...` line is left on the sheet",
 		not NodeQuery.has_label_containing(sheet, PENDING_LINE_FRAGMENT))
 	var asked_wide := false
@@ -157,7 +170,8 @@ func _hunt_sheet_pending_falls_back() -> void:
 		not NodeQuery.has_label_containing(sheet, PENDING_LINE_FRAGMENT))
 
 func _forage_sheet_takes_the_previewed_crew() -> void:
-	ForecastFx.staffing_preview_canned = _preview(PREVIEW_CREW, [_forage_loss()], 1, 0)
+	ForecastFx.staffing_preview_canned = _preview(PREVIEW_CREW, [_forage_loss()],
+		PREVIEW_CREW - (FORAGE_BEFORE - FORAGE_AFTER), 0)
 	var tile := TileFx.stressed_tile_fixture()
 	h._hud.forecast_query().reset()
 	h._hud._compose.reset_forage_source()
@@ -169,7 +183,9 @@ func _forage_sheet_takes_the_previewed_crew() -> void:
 	await h._save("staffing_preview_forage")
 	var line := NodeQuery.label_containing(sheet, "If you gather here")
 	h._assert_hud("the forage sheet states its preview line (got \"%s\")" % line,
-		line.contains("3 harvesters") and line.contains("2 from Harvest") and line.contains("1 idle"))
+		line.contains("%d harvesters" % PREVIEW_CREW)
+			and line.contains("%d from Harvest" % (FORAGE_BEFORE - FORAGE_AFTER))
+			and line.contains("%d idle" % (PREVIEW_CREW - (FORAGE_BEFORE - FORAGE_AFTER))))
 	h._assert_hud("…and prices the previewed crew (strip stamps %d, want %d)" % [_crew_stamp(sheet),
 		PREVIEW_CREW], _crew_stamp(sheet) == PREVIEW_CREW)
 

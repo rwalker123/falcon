@@ -140,7 +140,9 @@ fn published_rows(app: &App) -> Vec<PublishedRow> {
             craft_offers: row.craftOffers().map(|v| v.len()).unwrap_or(0),
             bench_recipe: row
                 .bench()
-                .and_then(|bench| bench.recipeId())
+                .and_then(|bench| bench.orders())
+                .and_then(|orders| orders.iter().next())
+                .and_then(|order| order.recipeId())
                 .unwrap_or_default()
                 .to_string(),
             bench_workers: row.bench().map(|bench| bench.workers()).unwrap_or(0),
