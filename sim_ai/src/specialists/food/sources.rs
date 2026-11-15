@@ -830,9 +830,16 @@ pub(crate) fn net_eat_rate(band: &PopulationCohortState, except_herd: Option<&st
         .filter(|row| {
             !(row.kind == ROLE_HUNT && except_herd.is_some_and(|herd| row.fauna_id == herd))
         })
-        .map(|row| row.realized_yield)
+        .map(eaten_realized)
         .sum();
     (band.food_need - others).max(0.0)
+}
+
+/// **A ROW'S STEADY YIELD AS THE BAND CAN EAT IT** - `realized_yield` (the walk's rot alone, the
+/// row's display figure) less the share of it the band cannot eat before it spoils
+/// (`eaten_shortfall`). What every valuation reads.
+pub(crate) fn eaten_realized(row: &LaborAssignmentState) -> f32 {
+    row.realized_yield * (1.0 - row.eaten_shortfall)
 }
 
 /// **THE SHARE OF A LANDING STREAM THE BAND EATS BEFORE IT SPOILS** - `min(1, net_eat / likely)`:

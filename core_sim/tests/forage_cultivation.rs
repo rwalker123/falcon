@@ -475,6 +475,7 @@ fn spawn_forager_at(
                 last_belief_relay_hops: 0,
                 predators_kept_off: 0,
                 last_cohesion: Default::default(),
+                last_leadership: Default::default(),
             },
             StartingUnit {
                 kind: "BandForager".to_string(),
@@ -5029,6 +5030,8 @@ fn a_builder_freed_by_a_finished_build_is_dealt_before_the_frame_is_cut() {
     const NEARLY_BUILT: f32 = 0.999;
     /// The band's id on the wire.
     const FIXTURE_BAND: u64 = 77_002;
+    /// Food a hand eats in a turn, rounded far up, so the larder covers the window with margin.
+    const FOOD_PER_HAND_PER_TURN_MARGIN: f32 = 10.0;
 
     // `(idle, forage row workers)` of the band's frame after the turn, and the row's crew the turn
     // opened with.
@@ -5065,6 +5068,11 @@ fn a_builder_freed_by_a_finished_build_is_dealt_before_the_frame_is_cut() {
             patch.species = Some(crop);
         }
         let band = spawn_forager_of(&mut app, tile, coord, Some(shipped::cultivate()), 1);
+        let window = app
+            .world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .food_first_window_turns;
         {
             let mut entity = app.world.entity_mut(band);
             entity.insert(core_sim::BandId(FIXTURE_BAND));
@@ -5073,6 +5081,18 @@ fn a_builder_freed_by_a_finished_build_is_dealt_before_the_frame_is_cut() {
                 .get_mut::<PopulationCohort>()
                 .expect("cohort")
                 .working = scalar_from_f32(HANDS as f32);
+            // A larder over the whole food-first window, so the band is not food-short and the
+            // staffing deals the builder (this test is about the freed builder, not hunger).
+            entity
+                .get_mut::<PopulationCohort>()
+                .expect("cohort")
+                .stores
+                .add_food(
+                    "dry",
+                    scalar_from_f32(
+                        (window + 1) as f32 * HANDS as f32 * FOOD_PER_HAND_PER_TURN_MARGIN,
+                    ),
+                );
             let mut allocation = entity.get_mut::<LaborAllocation>().expect("allocation");
             for row in allocation.assignments.iter_mut() {
                 row.max_workers = row_max;

@@ -63,6 +63,9 @@ const MORALE_CAUSE_CULTURE := 4
 # The band's head-count exceeds its cohesion ceiling (about 150; belief on its tile lifts it).
 const MORALE_CAUSE_COHESION := 5
 
+# The band's leader is failing it: orders Falling or the people hungry at the meal (a band with no leader never reads this).
+const MORALE_CAUSE_LEADERSHIP := 6
+
 # Plain-language cause labels, shared by the drawer morale line and the alert reason.
 # Cold reads "harsh climate" because the server penalty fires on hot OR cold deviation.
 const MORALE_CAUSE_LABEL_TERRAIN := "harsh terrain"
@@ -82,6 +85,8 @@ const MORALE_CAUSE_LABEL_UNREST := "unrest"
 const MORALE_CAUSE_LABEL_CULTURE := "far from its sacred ground"
 
 const MORALE_CAUSE_LABEL_COHESION := "too many to hold together"
+
+const MORALE_CAUSE_LABEL_LEADERSHIP := "the leader is failing"
 
 # |morale_delta| below this (0.5%/turn) reads as flat (no arrow), so trivial drift — nearly every tile
 # bleeds a hair today — isn't shown as a decline. (The ▲/▼ ARROWS are `BandDetailLines`', the only
@@ -911,6 +916,7 @@ const RECOVERY_GUIDANCE_TAIL := "Scout · Hunt"
 const RECOVERY_GUIDANCE_MOVE := "move to Hospitable ground"
 const RECOVERY_GUIDANCE_SPLIT := "split the band"
 const RECOVERY_GUIDANCE_ANCESTORS := "return to your sacred ground"
+const RECOVERY_GUIDANCE_ORDERS := "meet the band's orders: feed the band first"
 
 ## The recovery line for the band's DOMINANT cause (`morale_cause`): the lever that REMOVES that cause,
 ## and only it — a band crowded past its cohesion ceiling is told to split, never to move, and a band
@@ -928,6 +934,8 @@ static func recovery_guidance_text(cause: int, terrain_rating: String = "") -> S
                 lever = RECOVERY_GUIDANCE_MOVE
         MORALE_CAUSE_CULTURE:
             lever = RECOVERY_GUIDANCE_ANCESTORS
+        MORALE_CAUSE_LEADERSHIP:
+            lever = RECOVERY_GUIDANCE_ORDERS
     return RECOVERY_GUIDANCE_PREFIX + (lever if lever != "" else RECOVERY_GUIDANCE_TAIL)
 
 ## Whether a `TileHabitability` rating justifies the word "harsh". Unknown ("") is NOT harsh.
@@ -1195,6 +1203,15 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
                 out += "[/table]\n"
                 table_open = false
             out += "[color=#%s]%s[/color]\n" % [HudStyle.DANGER_HEX, line]
+            continue
+        # **THE SPOILAGE LINE** is a hazard sentence that also carries a hover (the per-class breakdown),
+        # so it is matched on its phrase before the generic hazard branch and wrapped like a row.
+        if line.begins_with(HudStorageVocab.SPOIL_LINE_LEAD) and line.contains(HudStorageVocab.SPOIL_PHRASE):
+            if table_open:
+                out += "[/table]\n"
+                table_open = false
+            out += hover_wrap(HudStorageVocab.SPOIL_HOVER_KEY,
+                "[color=#%s]%s[/color]" % [HudStyle.WARN_HEX, line], context) + "\n"
             continue
         if line.begins_with(HudSelectionVocab.RUNG_HAZARD_GLYPH):
             if table_open:
@@ -3226,7 +3243,7 @@ static func sacred_ground_hover(tile_info: Dictionary, bands: Array) -> String:
         _:
             return SACRED_GROUND_HONOURED_MANY_FORMAT % [first, holders.size() - 1]
 
-## Plain-language label for a morale cause (0=None,1=Terrain,2=Cold,3=Unrest,4=Culture,5=Cohesion); "" for None or
+## Plain-language label for a morale cause (0=None,1=Terrain,2=Cold,3=Unrest,4=Culture,5=Cohesion,6=Leadership); "" for None or
 ## unknown. Shared by the drawer morale line and the losing-population alert reason.
 ## `terrain_rating` is the `TileHabitability` rating of the tile the band stands on; "harsh" is claimed
 ## only for Harsh/Hostile, and the default "" (unknown) reads plain.
@@ -3244,6 +3261,8 @@ static func morale_cause_label(cause: int, terrain_rating: String = "") -> Strin
             return DetailFormat.MORALE_CAUSE_LABEL_CULTURE
         DetailFormat.MORALE_CAUSE_COHESION:
             return DetailFormat.MORALE_CAUSE_LABEL_COHESION
+        DetailFormat.MORALE_CAUSE_LEADERSHIP:
+            return DetailFormat.MORALE_CAUSE_LABEL_LEADERSHIP
         _:
             return ""
 

@@ -335,6 +335,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                 last_belief_relay_hops: 0,
                 predators_kept_off: 0,
                 last_cohesion: Default::default(),
+                last_leadership: Default::default(),
             },
             StartingUnit {
                 kind: "BandKeeper".to_string(),
@@ -1337,8 +1338,9 @@ fn the_take_crew_answers_for_the_meat_side_alone() {
 fn a_far_pens_milk_and_fleece_are_in_its_caravan_forecast() {
     /// The asking band's durable id.
     const KEEPER_BAND: u64 = 91_706;
-    /// Turns run before reading — the party walks out and settles.
-    const POSTED_TURNS: u32 = 4;
+    /// Turns run before reading — the party walks out and settles, and the herd reaches the ceiling
+    /// it stops growing at (a growing herd makes a between-turns quote differ from the row).
+    const POSTED_TURNS: u32 = 30;
     /// Float slack on one function read twice.
     const SAME: f32 = 1e-4;
     /// **Leave the whole herd standing** — the floor keeps culls to a trickle, so the row's food and
@@ -1348,6 +1350,8 @@ fn a_far_pens_milk_and_fleece_are_in_its_caravan_forecast() {
     /// because the forecast's horizon opens with the walk and the first pack's fill, when nothing
     /// lands. Far above the culls' trickle, so a forecast without the stream fails it.
     const MOST_OF_THE_STREAM: f32 = 0.5;
+    /// Crews past the staffed one that are also quoted, in case the next turn deals more hands.
+    const CREWS_PAST_THE_STAFFED: u32 = 2;
     for (distance, walk_rots) in [(5_u32, false), (8, true)] {
         let mut app = core_sim::build_test_app();
         app.update();
@@ -1378,7 +1382,7 @@ fn a_far_pens_milk_and_fleece_are_in_its_caravan_forecast() {
         for _ in 0..POSTED_TURNS {
             publishing_turn(&mut app, keeper);
         }
-        let (party, net_home, spoiled_home, keeps, fibre_home) = {
+        let read_row = |app: &App| {
             let snapshot = app
                 .world
                 .resource::<SnapshotHistory>()
@@ -1413,6 +1417,7 @@ fn a_far_pens_milk_and_fleece_are_in_its_caravan_forecast() {
                 fibre,
             )
         };
+        let (party, net_home, spoiled_home, keeps, fibre_home) = read_row(&app);
         assert!(party > 0, "{distance} hexes: the pen's row posts a party");
         // **The stream the forecast must carry**, off the same public seam the turn loads by, at the
         // band's own output multiplier.
@@ -1476,6 +1481,10 @@ fn a_far_pens_milk_and_fleece_are_in_its_caravan_forecast() {
             .default_kit(core_sim::KitJob::Hunt)
             .id()
             .to_string();
+        // **The quote is asked at the crew the row was stamped at** (`partyWorkers`): the stamp and the
+        // quote read one herd only once it has stopped growing, which is why the fixture runs until
+        // the pen stands at its ceiling. Every crew near it is quoted so a stamp at any of them is
+        // answered.
         let staffed_crew = app
             .world
             .get::<LaborAllocation>(keeper)
@@ -1484,24 +1493,35 @@ fn a_far_pens_milk_and_fleece_are_in_its_caravan_forecast() {
             .iter()
             .find(|row| matches!(row.target, LaborTarget::Hunt { .. }))
             .map_or(0, |row| row.workers);
-        let answer = match core_sim::forecast_query::answer_forecast_query(
-            &mut app.world,
-            &sim_runtime::QueryPayload::WorkPartyForecast(sim_runtime::WorkPartyForecastQuery {
-                faction_id: 0,
-                band_id: KEEPER_BAND,
-                source: sim_runtime::WorkPartySource::Hunt {
-                    herd_id: id.clone(),
-                },
-                kit_id,
-                // **The crew the sim staffed on the row** (#871) - the quote is asked at the hands
-                // the row actually holds, which the staffing settles, not at a count the fixture names.
-                workers: staffed_crew,
-                floor: NOTHING_CULLED,
-            }),
-        ) {
-            sim_runtime::QueryReply::WorkPartyForecast(answer) => answer,
-            other => panic!("the work-party query must answer with a forecast, got {other:?}"),
-        };
+        let asked: Vec<_> = (1..=staffed_crew + CREWS_PAST_THE_STAFFED)
+            .map(|workers| {
+                match core_sim::forecast_query::answer_forecast_query(
+                    &mut app.world,
+                    &sim_runtime::QueryPayload::WorkPartyForecast(
+                        sim_runtime::WorkPartyForecastQuery {
+                            faction_id: 0,
+                            band_id: KEEPER_BAND,
+                            source: sim_runtime::WorkPartySource::Hunt {
+                                herd_id: id.clone(),
+                            },
+                            kit_id: kit_id.clone(),
+                            workers,
+                            floor: NOTHING_CULLED,
+                        },
+                    ),
+                ) {
+                    sim_runtime::QueryReply::WorkPartyForecast(answer) => answer,
+                    other => {
+                        panic!("the work-party query must answer with a forecast, got {other:?}")
+                    }
+                }
+            })
+            .collect();
+        assert!(
+            party >= 1 && (party as usize) <= asked.len(),
+            "{distance} hexes: the row's crew is one the quotes cover: {party}"
+        );
+        let answer = &asked[party as usize - 1];
         let quoted_fibre: f32 = answer
             .materials_rate_home
             .iter()

@@ -1994,7 +1994,8 @@ fn animal_landed(herd: &Herd, def: &SpeciesDef, workers: u32, s: &Shipped) -> La
         TYPICAL_BAND_PEOPLE * s.per_capita_draw,
         &core_sim::MaterialsConfig::builtin(),
     );
-    let home = forecast.rate_home / workers as f32;
+    // What the band can eat: the row's own figure is the walk's rot alone.
+    let home = forecast.rate_home * forecast.eaten_fraction / workers as f32;
     let class = s
         .now
         .keeping_for(&herd.species)
@@ -2224,5 +2225,73 @@ fn small_game_is_level_with_berries_and_wild_grain_is_below() {
             wild < berries && wild < lowest_small_game,
             "{key}: wild grain nets {wild}, berries {berries}, lowest small game {lowest_small_game}"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// What a pen pays against what the same herd pays wild
+// ---------------------------------------------------------------------------------------------
+
+/// The `husbandry.pen_gain` the survey is first priced at, to put the before beside the shipped value.
+const PEN_GAIN_BEFORE: f32 = 1.5;
+/// The `pen_gain` under consideration, priced beside the shipped one.
+const PEN_GAIN_PROPOSED: f32 = 2.7;
+
+/// **EVERY SPECIES A PEN REACHES: the wild steady-state line against the pen's** (a printing probe,
+/// `cargo test -p core_sim --test food_rate_survey pen_against_wild -- --ignored --nocapture`).
+///
+/// Both lines are the herd's own sustainable yield (MSY, food/turn): the wild one at the roster's
+/// range `K` and wild `r`, the penned one at the pen's `K` (the range `K` times the pen density,
+/// bounded by the fenced footprint's space) and `r = min(cap, wild r × pen_gain)`, at the herd's
+/// default fence. It prints at `pen_gain` [`PEN_GAIN_BEFORE`] and [`PEN_GAIN_PROPOSED`], and puts the
+/// pen's food per footprint tile beside a reference Farm's food per tile (the median Field line over
+/// the land-test grounds). It tunes nothing: it states which term (the regrowth cap, the pen's `K`
+/// against the range `K`) moves a ratio off the gain.
+#[test]
+#[ignore = "a printing probe: run with --ignored --nocapture"]
+fn pen_against_wild() {
+    let s = Shipped::load();
+    let mut farm_per_tile: Vec<f32> = LAND_TEST_TERRAINS
+        .iter()
+        .filter_map(|terrain| {
+            let composition = basket_on(*terrain, &s);
+            let crop = best_crop(&composition, shipped::plant_farm(), &s)?;
+            let patch = seated_patch(*terrain, Some((&crop, shipped::plant_farm())), 1.0, &s);
+            Some(patch_line(&patch, &composition, &s) / PATCH_TILES as f32)
+        })
+        .collect();
+    let farm_per_tile = median(&mut farm_per_tile);
+    println!("\n## PEN AGAINST WILD, per species the pen reaches\n");
+    println!("Reference Farm food per tile (median Field over the land-test grounds): {farm_per_tile:.3}\n");
+    println!("| species | pen_gain | wild r | pen r | wild K | pen K | wild food/turn | pen food/turn | pen / wild | footprint tiles | pen food per tile | per tile / Farm |");
+    println!("|---|---|---|---|---|---|---|---|---|---|---|---|");
+    for gain in [PEN_GAIN_BEFORE, PEN_GAIN_PROPOSED] {
+        let mut fauna = (*s.now).clone();
+        fauna.husbandry.pen_gain = gain;
+        for (key, def) in sorted_species(&s) {
+            if def.husbandry_ceiling != Some(shipped::animal_pen()) {
+                continue;
+            }
+            let (Some(wild), Some(pen)) = (
+                seated_herd(key, def, shipped::animal_wild(), &fauna, &s),
+                seated_herd(key, def, shipped::animal_pen(), &fauna, &s),
+            ) else {
+                continue;
+            };
+            let wild_line = herd_line(&wild, &fauna);
+            let pen_line = herd_line(&pen, &fauna);
+            let tiles = footprint_tiles(&pen, def);
+            let per_tile = pen_line / tiles as f32;
+            println!(
+                "| {} | {gain:.1} | {:.3} | {:.3} | {:.0} | {:.0} | {wild_line:.3} | {pen_line:.3} | {:.2} | {tiles} | {per_tile:.3} | {:.2} |",
+                def.display_name,
+                herd_ecology(&wild, &fauna).regrowth_rate,
+                herd_ecology(&pen, &fauna).regrowth_rate,
+                wild.carrying_capacity,
+                pen.carrying_capacity,
+                pen_line / wild_line.max(f32::EPSILON),
+                per_tile / farm_per_tile.max(f32::EPSILON),
+            );
+        }
     }
 }

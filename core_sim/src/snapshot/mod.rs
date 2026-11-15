@@ -62,8 +62,8 @@ use crate::{
     flora_config::{FloraConfig, FloraConfigHandle, FloraShare},
     food::FoodModuleTag,
     forage::{
-        forage_forecast_at_rate, patch_composition, rung_site_refusal, tile_is_fresh_watered,
-        ForagePatch, ForageRegistry, NO_FORAGE_SEASON,
+        forage_forecast_at_rate, patch_composition, tile_is_fresh_watered, ForagePatch,
+        ForageRegistry, NO_FORAGE_SEASON,
     },
     generations::{GenerationProfile, GenerationRegistry},
     graze::{GrazePatch, GrazeRegistry},
@@ -73,7 +73,7 @@ use crate::{
     },
     heightfield::ElevationField,
     influencers::InfluentialRoster,
-    intensification::{LadderConfig, RungId, SiteRefusal, SITE_ACCEPTED},
+    intensification::{LadderConfig, RungId, SITE_ACCEPTED},
     knowledge_ledger::{encode_ledger_key, KnowledgeLedger, KnowledgeSnapshotPayload},
     labor_config::ForageLaborConfig,
     map_preset::MapPresetsHandle,
@@ -1446,6 +1446,7 @@ mod tests {
             last_belief_relay_hops: 0,
             predators_kept_off: 0,
             last_cohesion: Default::default(),
+            last_leadership: Default::default(),
         };
         (cohort, allocation)
     }
@@ -1499,6 +1500,8 @@ mod tests {
             comm_range_tiles: 0,
         };
         population_state(PopulationStateInputs {
+            chief_proposals: Vec::new(),
+            spoilage: Default::default(),
             belief_reach: Vec::new(),
             belief_anchor_weight: 0.0,
             belief_relay_region: Vec::new(),
@@ -1608,6 +1611,7 @@ mod tests {
                     overdraws: false,
                     // Continuous forage: realized == actual.
                     realized: 2.5,
+                    eaten_fraction: 1.0,
                     // A continuous source lands the same amount every turn.
                     arrivals: vec![2.5; 3],
                     // A resolved fixture row: the take happened, so its band is a point.
@@ -1628,6 +1632,7 @@ mod tests {
                     overdraws: true,
                     // Lumpy hunt: the steady average is below this kill turn's spike.
                     realized: 0.25,
+                    eaten_fraction: 1.0,
                     // A lumpy hunt: nothing for two turns, then a whole animal.
                     arrivals: vec![0.0, 0.0, 0.75],
                     range: YieldRange::certain(0.5),
@@ -2555,6 +2560,7 @@ mod tests {
             &LadderConfig::builtin(),
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
             // No tiles behind these fixture patches, so no ground is named here either: the row
             // presents no tender-load and its upkeep figures read the honest zero, the same
             // absent-means-nothing reading the composition takes below.
@@ -2637,6 +2643,7 @@ mod tests {
             ),
             &FloraConfig::builtin(),
             &ladder,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
@@ -3145,6 +3152,7 @@ mod tests {
                 ),
                 &FloraConfig::builtin(),
                 &ladder,
+                &HashMap::new(),
                 &HashMap::new(),
                 &HashMap::new(),
                 &tile_capacities,

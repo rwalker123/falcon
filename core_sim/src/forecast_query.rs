@@ -820,6 +820,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
                 next_rung_keep_hands,
                 // Filled below, once the world's borrows are released.
                 home_animals_likely: row.likely,
+                home_eaten_animals_likely: row.likely,
                 home_first_load_turn: NO_LOAD_WITHIN_THE_HORIZON,
             }
         })
@@ -852,6 +853,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
             ) {
                 if landed.posts_a_party && food_per_animal > 0.0 {
                     row.home_animals_likely = landed.rate_home / food_per_animal;
+                    row.home_eaten_animals_likely = row.home_animals_likely * landed.eaten_fraction;
                     row.home_first_load_turn = landed.first_load_turn;
                 }
             }
@@ -1569,6 +1571,23 @@ fn work_party_forecast(
             .map_or(crate::forage::NO_FORAGE_SEASON, |module| {
                 module.seasonal_weight.max(0.0)
             });
+        // Gathering is site-bound (`forage::gather_season`), as the labor arm reads it.
+        let seasonal = crate::forage::gather_season(
+            seasonal,
+            world
+                .resource::<crate::forage::ForageRegistry>()
+                .patch(tile),
+            entity
+                .and_then(|entity| world.get::<crate::components::Tile>(entity))
+                .is_some_and(|ground| {
+                    crate::forage::wild_ground_refuses_gathering(
+                        &ladder,
+                        &labor.forage,
+                        ground,
+                        world.resource::<crate::FoodSiteRegistry>().is_site(tile),
+                    )
+                }),
+        );
         let composition = entity
             .and_then(|entity| world.get::<crate::components::Tile>(entity))
             .map(|ground| {
@@ -1855,6 +1874,7 @@ fn work_party_forecast(
         materials_rate_home,
         rate_home: forecast.rate_home,
         spoiled_rate_home: forecast.spoiled_rate_home,
+        eaten_fraction: forecast.eaten_fraction,
         transit_keeps_turns: forecast.transit_keeps_turns,
         walk_tiles,
         walk_turns,
@@ -2126,6 +2146,7 @@ mod tests {
                     last_belief_relay_hops: 0,
                     predators_kept_off: 0,
                     last_cohesion: Default::default(),
+                    last_leadership: Default::default(),
                 },
                 BandEquipment::start_stocked(&EquipmentConfig::builtin()),
             ))

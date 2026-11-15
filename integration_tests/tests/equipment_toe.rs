@@ -189,6 +189,8 @@ fn gathering_world_of(kit: BandEquipment, crew: Option<u32>) -> (bevy::prelude::
         .filter(|p| p.x.abs_diff(band_pos.x).max(p.y.abs_diff(band_pos.y)) <= 1)
         .min_by_key(|p| (p.y, p.x))
         .expect("the starting band must sit on or beside a forage patch");
+    // Wild gathering is site-bound: the staged tile is a gathering site, so its crew takes something.
+    core_sim::mark_gathering_site(&mut app.world, patch);
     app.world.entity_mut(band).insert((
         LaborAllocation {
             assignments: vec![LaborAssignment {

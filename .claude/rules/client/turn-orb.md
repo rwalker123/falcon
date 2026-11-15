@@ -597,3 +597,32 @@ row, like the awaiting-orders rows. **Those rows are scoped by `HudFormat.awaits
   `dealings_focus_requested(band_id)`; `HudLayer` relays it to `BandPanelController.focus_dealings`, which
   brings that band's page forward on the tab the answer waits on: the Trade tab for a trade item, the Peoples tab for
   a treaty proposal (the Parties flank on a wide shell, where both sit under the parties list).
+
+## The chief's build proposal rides the idle-workers entry
+
+A band with a chief and idle hands carries `chief_proposals` on its cohort dict (0 or 1 rows; the sim's
+`text` is the whole sentence, with its idle count, escalation wording, reason and keep-raise clause already
+resolved). `AttentionController._idle_workers_row` copies `{text, build_key, escalation}` plus the band's
+`band_id` and `faction` onto the idle-workers entry as `HudAttentionVocab.ATTENTION_PROPOSAL`; nothing on the
+client composes or rewords the sentence. With no proposal the entry is exactly the old one.
+
+**A proposal raised by falling food (`trigger == "food_falling"`) has no idle hands to ride**, so
+`AttentionController._food_falling_row` gives it its own `food_falling` entry (warn; label `"<band> food falling"`,
+detail names the chief's proposal; the same proposal block rides under it). When the client's pending-aware idle
+count is above zero the idle row carries the proposal and the falling row is not built, so one proposal is never on
+two rows; `refresh_idle_rows` swaps between the two. `turn_orb.gd::_food_falling_state` renders it.
+
+- **The orb draws it under the entry's row** (`TurnOrb._reason_block` / `_proposal_block`): the sentence, then
+  `Not now` and `Approve`. The orb stays producer-agnostic: it reports a press as
+  `proposal_action_requested({action, band_id, faction, build_key})` and does not read what a proposal means.
+- **Amber is the escalation-2 rung** (`PROPOSAL_ESCALATION_WASTED`): the sentence takes `HudStyle.WARN` and the
+  block a faint `WARN` wash. Rungs 0 and 1 read in the plain ink. It is a block inside the popover row, never a
+  pop-up, and it carries no `blocking` flag, so it never holds End Turn.
+- **The relay is orb -> `TurnOrbController.proposal_action_requested` -> `HudLayer.chief_proposal_requested`
+  -> `Main.format_chief_proposal`**, which builds `approve_proposal <faction> <band>` (the band's durable
+  `band_id`) and `defer_proposal <faction> <band> <build_key>` (the sim's token, `rung` or `rung@x,y`, passed
+  through untouched; a defer with no key builds nothing).
+- **Harness:** `ui_preview` frames `chief_proposal_rung0`, `_rung1`, `_rung2` and `_keep_raise`
+  (`chapters/turn_orb.gd`), with the two commands and the no-proposal case asserted; `command_guard` drives
+  both verbs through the orb's signal (`approve_proposal` / `defer_proposal` in `EXPECTED_KINDS`), and
+  `xtask`'s `band_handle` resolves their band.

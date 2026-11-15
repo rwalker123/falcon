@@ -222,12 +222,28 @@ fn a_rung_publishes_its_site_rule_and_the_lessons_that_loosen_it() {
         );
         if rung.wire_key() == "plant:farm" {
             saw_farm = true;
-            let relaxation = row.siteRelaxations().expect("the Farm is relaxed").get(0);
-            assert_eq!(relaxation.knowledge(), Some("worked_land"));
-            let loosened = relaxation.rule().expect("the relaxation carries its rule");
-            assert!(!loosened.requiresGatheringSite());
-            assert!(loosened.requiresFreshWater());
-            assert!(loosened.minForageCapacity() > rule.minForageCapacity());
+            // Every relaxation the config states reaches the wire in order, naming its lesson and
+            // its own rule (no gathering-site requirement, a fertility floor above the site rule's).
+            let published = row.siteRelaxations().expect("the Farm is relaxed");
+            assert_eq!(published.len(), rung.site_relaxations.len());
+            for (index, relaxation_def) in rung.site_relaxations.iter().enumerate() {
+                let relaxation = published.get(index);
+                assert_eq!(
+                    relaxation.knowledge(),
+                    Some(relaxation_def.knowledge.as_str())
+                );
+                let loosened = relaxation.rule().expect("the relaxation carries its rule");
+                assert_eq!(
+                    loosened.requiresGatheringSite(),
+                    relaxation_def.site_requirement.requires_gathering_site
+                );
+                assert_eq!(
+                    loosened.requiresFreshWater(),
+                    relaxation_def.site_requirement.requires_fresh_water
+                );
+                assert!(!loosened.requiresGatheringSite());
+                assert!(loosened.minForageCapacity() > rule.minForageCapacity());
+            }
         }
     }
     assert!(saw_farm, "the shipped ladder has a plant:farm rung");

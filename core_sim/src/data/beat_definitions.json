@@ -267,6 +267,66 @@
     "cooldown_turns": 3
   },
   {
+    "id": "leadership.leader_cannot_feed_us",
+    "tier": "ambient",
+    "soul": {
+      "question": "We gave someone the keeping of us, and now we are hungry."
+    },
+    "when": {
+      "all": [
+        {
+          "signal": "leadership.bands_hungry_under_leader",
+          "crosses": "rising",
+          "threshold": 1
+        }
+      ]
+    },
+    "wardrobe": [
+      {
+        "id": "leader_cannot_feed_us.grumbling",
+        "fit": {},
+        "voice": {
+          "mythic": "The people are hungry, and they say it low and then not so low: the one who keeps the count of us cannot keep us fed.",
+          "warm": "People are going hungry, and they're starting to say it out loud: whoever's keeping track of us can't keep us fed."
+        }
+      }
+    ],
+    "gloss": [
+      "leadership.bands_hungry_under_leader"
+    ],
+    "cooldown_turns": 10
+  },
+  {
+    "id": "leadership.leader_delivers",
+    "tier": "ambient",
+    "soul": {
+      "question": "We gave someone the keeping of us, and the stores are full."
+    },
+    "when": {
+      "all": [
+        {
+          "signal": "leadership.bands_leader_delivering",
+          "crosses": "rising",
+          "threshold": 1
+        }
+      ]
+    },
+    "wardrobe": [
+      {
+        "id": "leader_delivers.stores_kept",
+        "fit": {},
+        "voice": {
+          "mythic": "What was asked of the one who keeps the count of us has been done, and the stores hold. The people speak of it with a little more ease than before.",
+          "warm": "What we asked of whoever's keeping track of us got done, and the stores are holding. People talk about it a bit easier these days."
+        }
+      }
+    ],
+    "gloss": [
+      "leadership.bands_leader_delivering"
+    ],
+    "cooldown_turns": 10
+  },
+  {
     "id": "tribe.forms",
     "tier": "beat",
     "soul": {

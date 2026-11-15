@@ -268,6 +268,7 @@ fn spawn_keeper(app: &mut App, assignments: Vec<LaborAssignment>, tile: UVec2) -
                 last_belief_relay_hops: 0,
                 predators_kept_off: 0,
                 last_cohesion: Default::default(),
+                last_leadership: Default::default(),
             },
             LaborAllocation {
                 assignments,

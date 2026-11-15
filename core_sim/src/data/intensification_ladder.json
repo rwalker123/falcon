@@ -100,7 +100,7 @@
       "earns_knowledge": "cultivation",
       "requires_rung": null,
       "ceiling_required": null,
-      "_comment_site_requirement": "THE PLANT BRANCH'S SCARCITY, and it starts at rung 1 because gathering itself is the scarce thing. `requires_gathering_site` means the tile must be a curated FoodSiteRegistry entry — the 130-134 sites worldgen lays down as a share of land, spatially quota'd with minimum spacing and biased toward fresh water — NOT merely a tile carrying a FoodModuleTag, which ~every land tile does and which would make the rule vacuous. So a band cannot gather just anywhere: which site it can reach is the early game's real decision, and the move/stay/fork choice the whole design rests on. It sits on rung 1 rather than being an unwritten property of the Forage verb so that rungs 2-4 inherit or drop it BY CONFIG. No fertility floor and no water rule: a site is workable by definition, which is what being a site means.",
+      "_comment_site_requirement": "THE PLANT BRANCH'S SCARCITY, and it starts at rung 1 because gathering itself is the scarce thing. `requires_gathering_site` means the tile must be a curated FoodSiteRegistry entry — the 130-134 sites worldgen lays down as a share of land, spatially quota'd with minimum spacing and biased toward fresh water — NOT merely a tile carrying a FoodModuleTag, which ~every land tile does and which would make the rule vacuous. So a band cannot gather just anywhere: which site it can reach is the early game's real decision, and the move/stay/fork choice the whole design rests on. FORAGING NEVER RELAXES: no lesson loosens this rung, and a crew standing on off-site ground that is still at the wild rung (a crew may stand there to BUILD) takes NOTHING - the ground yields nothing until it is Tended (forage::gather_season). It sits on rung 1 rather than being an unwritten property of the Forage verb so that rungs 2-4 inherit or drop it BY CONFIG. No fertility floor and no water rule: a site is workable by definition, which is what being a site means.",
       "site_requirement": {
         "requires_gathering_site": true,
         "min_forage_capacity": 0.0,
@@ -121,6 +121,7 @@
       "requires_ownership": true,
       "label": "Tended patch",
       "label_fallback": "a tended patch",
+      "proposal_phrase": "cultivate a patch",
       "feed_channel": "cultivate",
       "completed_line": "Cultivated patch at ({x}, {y})",
       "verb": "cultivate",
@@ -136,6 +137,25 @@
         "min_forage_capacity": 0.0,
         "requires_fresh_water": false
       },
+      "_comment_site_relaxations": "Cultivate and Sow are placed on ground you already gather, and two lessons let a people reach beyond the gathering sites. SEED SELECTION (earned by working a tended patch) opens ground that is ALREADY VERY FERTILE AND NEAR FRESH WATER, anywhere: not a gathering site, fresh water required, `min_forage_capacity` 80. WORKED LAND (plows and irrigation, earned by working a Farm) opens fertile ground AWAY FROM WATER too: not a gathering site, `requires_fresh_water` false, `min_forage_capacity` 80. A faction is judged by the LAST relaxation it holds, so a people with both lessons gets the looser worked_land rule; a lesson only loosens, ground the own rule admits stays admitted. The two 80 values are separate playtest levers. Tended and Farm carry the same two entries, so a Farm climbing through an off-site Tended leg is never refused the leg. A refused off-site tile reads `needs_lesson` naming the NEAREST lesson the faction lacks (seed_selection for watered ground, worked_land for dry ground) until it is held, then the ordinary too_poor / too_dry. Foraging (plant:wild) never relaxes: off-site ground yields nothing until it is Tended.",
+      "site_relaxations": [
+        {
+          "knowledge": "seed_selection",
+          "site_requirement": {
+            "requires_gathering_site": false,
+            "min_forage_capacity": 80.0,
+            "requires_fresh_water": true
+          }
+        },
+        {
+          "knowledge": "worked_land",
+          "site_requirement": {
+            "requires_gathering_site": false,
+            "min_forage_capacity": 80.0,
+            "requires_fresh_water": false
+          }
+        }
+      ],
       "_comment_build": "work_cost 50 = FIFTY WORKER-TURNS, which was today's 25 turns at the crew of 2 this rung used to declare — the pacing-neutral cost (see _comment_costs at the top of this file). At 1 builder it is 50 turns; at 4 it is 13, and there is no cap beyond the band's own pool. There is no dip here any more: the player states the build's crew on the verb, so a crew preparing this patch costs exactly the hands it names (see the top-of-file note on the retired yield_fraction_while_building). grace_turns is NULL because THIS RUNG COUNTS NO UNWORKED-BUILD TURNS AT ALL: its neglect trigger is the UPKEEP SHORTFALL below, so its grace lives there and a second number here would be a dial nothing reads.",
       "build": {
         "work_cost": 50.0,
@@ -166,6 +186,7 @@
       "places_source": true,
       "label": "Farm",
       "label_fallback": "a farm",
+      "proposal_phrase": "sow a farm",
       "feed_channel": "sow",
       "completed_line": "Farm sown at ({x}, {y})",
       "_comment_verb": "SLICE 5 — the plant twin of `corral`: `sow` PLACES a food source where you want it. Gated on Seed Selection, which the tended rung has been teaching since slice 4 (earned then, spent now — the pacing model working as designed). `Sow` is only legal on GROUND YOUR PEOPLE ALREADY GATHER (see `_comment_site_requirement`) until Worked Land is learned; it CANNOT open rock/ice/desert. Making unfamiliar ground farmable is the Worked Land relaxation below, learned by working a farm. So rung 3 pulls you toward the good country you already hold, which IS the sedentarization pull.",
@@ -178,20 +199,28 @@
       "requires_rung": "tended",
       "_comment_ceiling_required": "Null — the husbandry ceiling is a per-SPECIES gate on the animal branch (`Herd::can_pen`). A plant has no species, so there is no species ceiling here; the LAND is what this rung is choosy about, and that is `site_requirement` below — the plant twin of the same idea.",
       "ceiling_required": null,
-      "_comment_site_requirement": "The Farm stands on ground your people already gather: a gathering site. Sites are already the rich ground (few, curated, and what a band organises itself around), so the rung asks nothing more of them - no fertility floor (`min_forage_capacity` 0) and no water rule (`requires_fresh_water` false). Water matters only for NEW ground: the `worked_land` relaxation below drops the site rule and puts a fertility floor and the water rule back. PLAYTEST DIAL: set `requires_fresh_water` true to make farmland rarer again.",
+      "_comment_site_requirement": "The Farm stands on ground your people already gather: a gathering site. Sites are already the rich ground (few, curated, and what a band organises itself around), so the rung asks nothing more of them - no fertility floor (`min_forage_capacity` 0) and no water rule (`requires_fresh_water` false). Off the gathering sites the `seed_selection` relaxation (fertile and watered, anywhere) and the `worked_land` relaxation (fertile, water not asked) below apply. PLAYTEST DIAL: set `requires_fresh_water` true to make farmland rarer again.",
       "site_requirement": {
         "requires_gathering_site": true,
         "min_forage_capacity": 0.0,
         "requires_fresh_water": false
       },
-      "_comment_site_relaxations": "WORKED LAND LOOSENS THE SITE RULE, IT DOES NOT ADD A STEP. A faction that holds the lesson is judged by the LAST relaxation it qualifies for instead of the rung's own rule: sow may then go on ground that is NOT a gathering site, provided the tile clears a fertility floor and keeps the fresh-water rule. min_forage_capacity 80 is the PLAYTEST LEVER and the whole of how much new ground opens. On the standard map (earthlike 80x52, seed 119304647) all 132 gathering sites bearing a patch take a farm (water is not asked of them) and 280 more watered tiles clear 80 off-site (about 2x the sites, 7% of the map); 100 gives ~250 and 70 gives ~377. A lesson only loosens: ground the rung's own rule admits stays admitted. Never most of the land. A refused off-site tile reads 'needs_lesson' until the lesson is held, then the ordinary too_poor / too_dry.",
+      "_comment_site_relaxations": "Sow is placed on ground you already gather, and two lessons let a people reach beyond the gathering sites. SEED SELECTION (earned by working a tended patch) opens ground that is ALREADY VERY FERTILE AND NEAR FRESH WATER, anywhere: not a gathering site, fresh water required, `min_forage_capacity` 80. WORKED LAND (plows and irrigation, earned by working a Farm) opens fertile ground AWAY FROM WATER too: not a gathering site, `requires_fresh_water` false, `min_forage_capacity` 80. A faction is judged by the LAST relaxation it holds, so a people with both lessons gets the looser worked_land rule; a lesson only loosens, ground the own rule admits stays admitted. The two 80 values are separate playtest levers. Tended and Farm carry the same two entries, so a Farm climbing through an off-site Tended leg is never refused the leg. A refused off-site tile reads `needs_lesson` naming the NEAREST lesson the faction lacks (seed_selection for watered ground, worked_land for dry ground) until it is held, then the ordinary too_poor / too_dry. Foraging (plant:wild) never relaxes: off-site ground yields nothing until it is Tended.",
       "site_relaxations": [
+        {
+          "knowledge": "seed_selection",
+          "site_requirement": {
+            "requires_gathering_site": false,
+            "min_forage_capacity": 80.0,
+            "requires_fresh_water": true
+          }
+        },
         {
           "knowledge": "worked_land",
           "site_requirement": {
             "requires_gathering_site": false,
             "min_forage_capacity": 80.0,
-            "requires_fresh_water": true
+            "requires_fresh_water": false
           }
         }
       ],
@@ -243,6 +272,7 @@
       "requires_ownership": true,
       "label": "Tamed herd",
       "label_fallback": "a tamed herd",
+      "proposal_phrase": "tame a herd",
       "feed_channel": "tame",
       "completed_line": "Tamed the {species} herd",
       "_comment_verb": "The `tame` verb — the animal twin of `cultivate`. Taming is an EXPLICIT, gated investment, no longer a hidden side effect of a Sustain hunt (the §4.1 conflation, fixed): Sustain now only TEACHES the faction Herding, and `tame` is what fills this herd's meter. The `domesticate` early-claim is gone (it existed to skip the investment — the same reason the plant side removed its own).",
@@ -283,6 +313,7 @@
       "requires_ownership": true,
       "label": "Pen",
       "label_fallback": "a pen",
+      "proposal_phrase": "corral a herd",
       "feed_channel": "corral",
       "completed_line": "Corralled {id} at ({x}, {y})",
       "verb": "corral",
@@ -512,6 +543,7 @@
       "order": 2,
       "label": "Felling",
       "label_fallback": "a felled wood",
+      "proposal_phrase": "fell the timber",
       "feed_channel": "extraction",
       "_comment_rung": "FELLING - actively cutting standing timber, and THE RUNG AT WHICH OVER-CUTTING BECOMES POSSIBLE. 2.0 a worker-turn against a mixed woodland's 4.5 of renewal means three hands out-cut the wood, which is the whole point of the renewable half: you can ruin a wood, and nothing in the take clamps it. `recovery_fraction` stays at its ceiling like every forestry rung - a wood can be cut to nothing - and `regrowth_multiplier` stays at 1.0, because what this rung buys is the RATE OF TAKE and the rung above it is what buys management. work_cost 60 is a shade above the plant web's Cultivate (50) and well under a dirt road (300): opening a working is a season's job for a small crew. It declares NO MATERIALS - you fell with what you have, and the free floor below is where the wood for a haft comes from. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE.",
       "verb": "fell",
@@ -550,6 +582,7 @@
       "order": 3,
       "label": "Coppice",
       "label_fallback": "a coppice",
+      "proposal_phrase": "coppice the woodland",
       "feed_channel": "extraction",
       "_comment_rung": "A COPPICE - a managed, cut-and-regrow wood, and CONSERVATIONISM EXPRESSED MECHANICALLY: you do not get much more per turn by cutting harder, you get more per turn FOR EVER by managing the wood. `regrowth_multiplier` 2.0 doubles the ground's own renewal (a mixed woodland goes from 4.5 a turn to 9.0 at its peak), which is what makes a crew that over-cut at `felling` sustainable here at the same hands. The take rises only from 2.0 to 2.5 - deliberately a small step, because a forestry rung that mostly bought RATE would be the extraction branch wearing a different name. IT DOES NOT AND CANNOT RAISE CAPACITY: conservationism is about the rate of renewal, not about there being more forest, and the payoff block has no key for one. work_cost 150 is two and a half times the felling rung beneath it - laying out a coppice is a bigger job than opening a face. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE.",
       "verb": "coppice",
@@ -619,6 +652,7 @@
       "order": 2,
       "label": "Quarry",
       "label_fallback": "a quarry",
+      "proposal_phrase": "open a quarry",
       "feed_channel": "extraction",
       "_comment_rung": "A QUARRY - a cut working face, and WHAT IT BUYS IS REACH RATHER THAN RATE. A finite deposit has no regrowth to raise, so `regrowth_multiplier` stays at 1.0 and `recovery_fraction` goes 0.15 -> 0.85: on a 900-unit hill body the reachable stock goes from 135 to 765, five and a half times as much over the working's whole life. THAT is the rung's decision - a cheap working now, or 250 units of work and 8 wood to reach most of the body - and it is exactly the decision a copper mine will want. Mechanically it is the fauna escapement floor UPSIDE DOWN: fauna has a floor you may not draw below, and here the rung LOWERS the floor. The take rises too (0.4 -> 2.2 a worker-turn), because a face you can stand at is worked faster than ground you stoop over; at four hands a hill quarry is worked out in about eighty turns, or thirty-eight paved road tiles. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE.",
       "verb": "quarry",
@@ -684,6 +718,7 @@
       "order": 2,
       "label": "Drying rack",
       "label_fallback": "a drying rack",
+      "proposal_phrase": "build a drying rack",
       "feed_channel": "extraction",
       "_comment_rung": "A DRYING RACK (#708) - the band's own, and it moves with it. Raised by the band's builders and kept by a crew row (`assign_labor <faction> <band> band camp_stores <n>`); gated on the `storage` lesson rot teaches (#707), so a people learns to dry meat by watching it spoil. WHAT IT BUYS IS A SHELF LIFE and nothing else: demographics_config.json keeping.preservation names the value flesh takes while a band holds this rung. Upkeep is a FIXED amount of work per turn whatever the band's size (`source_load` is a constant 1 on the band kind, as on the tile kind), and an unkept rack rots back to `carried` after its grace. 8 wood is the slats and cord, DRAWN AS THE METER CLIMBS like the pen's hurdles. partial_credit on_completion: a half-built rack dries nothing. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE - playtest dials.",
       "verb": "rack",
@@ -737,6 +772,7 @@
       "order": 2,
       "label": "Storage pit",
       "label_fallback": "a storage pit",
+      "proposal_phrase": "dig a storage pit",
       "feed_channel": "extraction",
       "_comment_rung": "A STORAGE PIT (#708) - a lined hole in the ground a people dug, on ONE TILE. Placed and kept by a tile crew (`assign_labor <faction> <band> tile food_stores <x> <y> <n>`), gated on the `storage` lesson. Its payoff is a shelf life for the people's bands that camp within the supply network's reach of it (demographics_config.json keeping.preservation), and the pit is the people's, not the band's: any band of the faction near enough keeps its dry food longer. Work alone, like every tile rung (the tile kind settles no material). An unkept pit fills in after its grace. partial_credit on_completion: a half-dug pit stores nothing. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE - playtest dials.",
       "verb": "dig",
@@ -787,6 +823,7 @@
       "order": 2,
       "label": "Monument",
       "label_fallback": "a monument",
+      "proposal_phrase": "raise a monument",
       "feed_channel": "extraction",
       "_comment_rung": "A MONUMENT (#692) - THE FIRST RUNG WITH NO YIELD, THE GOBEKLI TEPE MOVE: a people raises a standing thing at a place that already holds its dead and its meetings, before it has any farm to feed the builders. What it buys is not here - belief_config.json `improvement_belief` names the belief it adds to its own tile each turn it is HELD - and the ladder file says what a rung costs and needs, never what it keeps. Kept like any tile rung by its crew (`assign_labor <faction> <band> tile belief <x> <y> <n>`), raised by the band's builders with 20 stone drawn from that band's own store as the meter climbs, and gated on the `ritual` lesson gatherings teach and on `site_requirement.min_belief` (one dead-equivalent standing on the tile: a gathering ground). An unkept monument decays back to the ground after its grace; the belief it already added stays, because belief is monotone. partial_credit on_completion: a half-raised monument adds nothing. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE - playtest dials.",
       "verb": "raise",

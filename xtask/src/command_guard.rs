@@ -420,6 +420,10 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         // **A band order is a band's** (#860): the stock it holds and the dig row the sim
         // places for it are that band's own.
         CommandPayload::BandOrder { band_id, .. } => Some(*band_id),
+        // **THE CHIEF'S PROPOSAL IS A BAND'S**: approving declares that band's build and Not now hides it
+        // for that band, so both name it (the orb sends them with the band's durable id).
+        CommandPayload::ApproveProposal { band_id, .. } => Some(*band_id),
+        CommandPayload::DeferProposal { band_id, .. } => Some(*band_id),
         // …and so does a queued build's BUILD MARK: the settlement it ranks is that band's own tools
         // and stores (`docs/plan_site_crews.md` §2.4), so its handle is required for the same reason.
         // …and the BENCH's rank names a band too, and requires it: a bench belongs to exactly one

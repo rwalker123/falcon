@@ -1483,3 +1483,134 @@ fn a_stand_worked_through_real_turns_is_never_drawn_below_its_floor() {
         "**LIVENESS**: the chief drew wood from the stands: {wood_home}"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// The chief's ranking: net per hand after the walk, then what the tile gives, then tile order.
+// ---------------------------------------------------------------------------------------------
+
+/// A small standing order: one stand covers it, so only the first-ranked stand is listed.
+const A_SMALL_WOOD_TARGET: u32 = 10;
+/// Thin ground: a stand the shipped wood table holds a quarter of a woodland's capacity on.
+const THIN_STAND: TerrainType = TerrainType::Floodplain;
+/// How far out the far face stands, in tiles from camp (past the two-tile apron).
+const FAR_FACE: u32 = 8;
+/// Sleds and axes the band holds in the kitted case.
+const KIT_UNITS: u32 = 4;
+
+/// A leader world on bare ground, wood the only ordered kind; returns the camp and the map width.
+fn wood_ranking_world() -> (App, Entity, UVec2, u32) {
+    let (mut app, band, camp) = world();
+    ordered(&mut app, &[WOOD]);
+    bare_the_map(&mut app);
+    let width = app.world.resource::<TileRegistry>().width;
+    (app, band, camp, width)
+}
+
+/// Seat a wood working on `tile` at the top of `rung`.
+fn seat_wood(app: &mut App, tile: UVec2, rung: core_sim::RungId) {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let config = app.world.resource::<ExtractionConfigHandle>().get();
+    let entity = app
+        .world
+        .resource::<TileRegistry>()
+        .index(tile.x, tile.y)
+        .expect("tile");
+    let capacity = tile_deposit_capacity(&config, WOOD, app.world.get::<Tile>(entity).expect("t"));
+    let mut working =
+        DepositSource::opening(tile, WOOD, capacity, shipped::root_standing(rung.branch));
+    let (base, width) = deposit_rung_span(rung, &ladder);
+    working.set_ladder_position(base + width, &ladder, rung.branch);
+    app.world.resource_mut::<DepositRegistry>().insert(working);
+}
+
+/// The band holds `units` sleds and `units` axes and nothing else: a cutting kit when `units > 0`
+/// (the axe lifts a felling cut, the sled hauls it), no gear at all at zero.
+fn hold_cutting_kit(app: &mut App, band: Entity, units: u32) {
+    let config = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get();
+    let mut kit = core_sim::BandEquipment::default();
+    for item in ["sled", "axe"] {
+        let tier = config
+            .item(item)
+            .expect("a shipped item")
+            .default_tier()
+            .id
+            .clone();
+        kit.stock(item, units, &tier, None);
+    }
+    app.world.entity_mut(band).insert(kit);
+}
+
+fn chosen_wood(app: &App, band: Entity) -> Vec<UVec2> {
+    wood_rows(app, band).iter().map(|row| row.0).collect()
+}
+
+/// **A THIN STAND NEARER THAN A BIG FOREST NO LONGER WINS ON DISTANCE.** Both are inside the apron,
+/// so no walk separates them and the chief takes the stand that can give more.
+#[test]
+fn inside_the_apron_the_bigger_forest_is_picked_over_a_nearer_thin_stand() {
+    let (mut app, band, camp, width) = wood_ranking_world();
+    let thin = UVec2::new((camp.x + 1) % width, camp.y);
+    let big = UVec2::new((camp.x + 2) % width, camp.y);
+    reground(&mut app, thin, THIN_STAND);
+    seat_wood(&mut app, thin, shipped::forestry_felling());
+    reground(&mut app, big, WOODLAND);
+    seat_wood(&mut app, big, shipped::forestry_felling());
+    keep_wood(&mut app, band, A_SMALL_WOOD_TARGET);
+    assert_eq!(
+        chosen_wood(&app, band),
+        vec![big],
+        "the big forest gives more a turn, and both are inside the apron"
+    );
+}
+
+/// **A WALK IS PAID FOR BY THE PACK THE PORTER CARRIES.** A felling face past the apron cuts more a
+/// hand than the deadfall beside camp, but its cut walks home: with no sled a bare porter's pack is
+/// small and the walk eats the difference; with sleds the pack is big and the face wins.
+#[test]
+fn a_far_face_beats_a_near_stand_only_when_sleds_carry_its_cut_home() {
+    let (mut app, band, camp, width) = wood_ranking_world();
+    let near = UVec2::new((camp.x + 1) % width, camp.y);
+    let far = UVec2::new((camp.x + FAR_FACE) % width, camp.y);
+    reground(&mut app, near, WOODLAND);
+    reground(&mut app, far, WOODLAND);
+    seat_wood(&mut app, far, shipped::forestry_felling());
+    hold_cutting_kit(&mut app, band, 0);
+    keep_wood(&mut app, band, A_SMALL_WOOD_TARGET);
+    assert_eq!(
+        chosen_wood(&app, band),
+        vec![near],
+        "without a sled the walk costs the far face more than it cuts over the near stand"
+    );
+    hold_cutting_kit(&mut app, band, KIT_UNITS);
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    assert_eq!(
+        chosen_wood(&app, band),
+        vec![far],
+        "with sleds a porter hauls the far face's cut home and the face wins"
+    );
+}
+
+/// **STONE NEVER REGROWS, SO THE TILE WITH MORE STOCK LEFT RANKS FIRST.** Two gathering scatters
+/// inside the apron, the nearer thin: the chief digs the bigger body.
+#[test]
+fn stone_ties_on_what_is_left_in_the_ground() {
+    let (mut app, band, camp) = world();
+    let width = app.world.resource::<TileRegistry>().width;
+    let near = UVec2::new((camp.x + 1) % width, camp.y);
+    let far = UVec2::new((camp.x + 2) % width, camp.y);
+    bare_the_map(&mut app);
+    reground(&mut app, near, TerrainType::RollingHills);
+    reground(&mut app, far, ROCK);
+    keep(&mut app, band, A_BIG_TARGET);
+    assert_eq!(
+        stone_rows(&app, band)
+            .iter()
+            .map(|r| r.0)
+            .collect::<Vec<_>>(),
+        vec![far],
+        "the bigger body is picked over the nearer thin one"
+    );
+}

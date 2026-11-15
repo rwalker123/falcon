@@ -760,7 +760,10 @@ over four wire terms — `kit_needs[]` and `materials_free[]` on the cohort, `be
   - **claimed and nothing short** - `All N <noun> equipped` in `INK_FAINT`.
 
   The Owned cell is `X of Y equipped` for the weakest claimed item (largest `need - equipped`), Y being the
-  claim rounded up; `None equipped` (`DANGER`) when something is claimed and nothing held. **Kit ORDERING is
+  claim rounded up; `None equipped` (`DANGER`) when something is claimed and nothing held. **The people
+  counts (`X of Y`, `All N <noun>`, singular at 1) count HEADS, not claim: a take row contributes its `workers` and the
+  heads its `kit_toe` line holds, so a row held at 0 (which still asks one head) counts nothing; a claim no take row accounts for
+  (pools, builds, upkeep) keeps the claim reading, and the shortage logic always reads the claim.** **Kit ORDERING is
   unchanged: the order count is the player's and is never capped by need.** Pinned by `crafting_bench`
   frames `crafting_kits_ledger` (partial queue, fully queued, all equipped and not in use at once) and
   `crafting_kit_settled_short` (8 crooks held, 9 claimed: `8 of 9`, `Crook 1 short`).

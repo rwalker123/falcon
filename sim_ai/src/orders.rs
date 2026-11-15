@@ -5,10 +5,13 @@
 //! same thing on the wire: [`release_chief_rows`] runs over the turn's accepted commands and puts a
 //! one-row release in front of the first hand command on every row the frame shows as `chiefOwned`.
 //!
-//! ⛔ **Per ROW, never per kind, and never a claim back.** The release names the one stand the
-//! seat is about to work, so the chief keeps every other row of the order; the seat never hands a
-//! row back. A row that is not `chiefOwned` (a new patch, a row already released) gets no release,
-//! so the commands the specialists emit are untouched there.
+//! ⛔ **Per ROW, and never a claim back.** The release names the one stand the seat is about to
+//! work, so the chief keeps every other row of the order; the seat never hands a row back. A row
+//! that is not `chiefOwned` (a row already released) gets no release, so the commands the
+//! specialists emit are untouched there. **The one per-kind exception**
+//! ([`release_food_for_new_row`]): a hand-crewed food assign on a row the frame shows no row for, in
+//! a band whose food order the chief owns, where the sim may already list the source under the
+//! chief and has no held row for a per-row release to name.
 //!
 //! The pass sits after arbitration and reads only the frame: a specialist never proposes a release,
 //! so there is no second proposal for a release to conflict with. [`Cost::claimed`] still claims
@@ -123,7 +126,10 @@ fn release_for(view: &SeatView, faction: u32, command: &CommandPayload) -> Optio
             && address
                 .material
                 .is_none_or(|material| row.order_kind == material)
-    })?;
+    });
+    let Some(row) = row else {
+        return release_food_for_new_row(faction, command, &address, band);
+    };
     Some(CommandPayload::BandOrder {
         faction_id: faction,
         band_id: band.band_id,
@@ -142,19 +148,79 @@ fn release_for(view: &SeatView, faction: u32, command: &CommandPayload) -> Optio
     })
 }
 
+/// The kind id of the food order (`keep_on_hand::FOOD_KIND`): the order a forage or hunt row is
+/// listed under.
+const FOOD_ORDER_KIND: &str = "food";
+
+/// **A hand-crewed food assign on a row the frame does not show, in a band whose food order the
+/// chief owns.** The sim lists a source under the chief's order itself (a restaff after another
+/// command can pick the very herd the seat is about to crew), so the row can be the chief's on the
+/// server before any frame shows it, and a per-row release has nothing to name: the sim only
+/// releases a row the band already holds. The release the sim expects there is the KIND's
+/// (`band_order <faction> <band> food release`), which hands every food row to the seat where it
+/// stands. `None` for any other command, any row the frame already shows, and a band the chief does
+/// not feed.
+fn release_food_for_new_row(
+    faction: u32,
+    command: &CommandPayload,
+    address: &Address<'_>,
+    band: &sim_runtime::PopulationCohortState,
+) -> Option<CommandPayload> {
+    if !matches!(command, CommandPayload::AssignLabor { .. })
+        || !matches!(address.role, ROLE_FORAGE | ROLE_HUNT)
+    {
+        return None;
+    }
+    let chief_feeds = band
+        .band_orders
+        .iter()
+        .any(|order| order.kind == FOOD_ORDER_KIND && order.chief_owned);
+    let shown = band.labor_assignments.iter().any(|row| {
+        row.kind == address.role
+            && if address.role == ROLE_HUNT {
+                row.fauna_id == address.herd
+            } else {
+                row.target_x == address.x && row.target_y == address.y
+            }
+    });
+    (chief_feeds && !shown).then(|| CommandPayload::BandOrder {
+        faction_id: faction,
+        band_id: band.band_id,
+        kind: FOOD_ORDER_KIND.to_owned(),
+        action: BandOrderAction::Release,
+        row: None,
+    })
+}
+
 /// **`commands` with a one-row release in front of the first hand command on each chief-run row.**
 /// Order is kept: every other command stays where it was, and a row two commands name is released
-/// once.
+/// once. Once a band's food KIND is released, no later per-row food release for that band is sent:
+/// the kind release handed the whole food order over, and the server refuses a row release after it.
 pub fn release_chief_rows(
     view: &SeatView,
     faction: u32,
     commands: Vec<CommandPayload>,
 ) -> Vec<CommandPayload> {
     let mut released: Vec<CommandPayload> = Vec::new();
+    // The bands whose whole food order this pass has already handed to the seat.
+    let mut food_kind_released: Vec<u64> = Vec::new();
     let mut out = Vec::with_capacity(commands.len());
     for command in commands {
         if let Some(release) = release_for(view, faction, &command) {
-            if !released.contains(&release) {
+            let food_release = match &release {
+                CommandPayload::BandOrder {
+                    band_id, kind, row, ..
+                } if kind == FOOD_ORDER_KIND => Some((*band_id, row.is_none())),
+                _ => None,
+            };
+            let covered = matches!(
+                food_release,
+                Some((band_id, false)) if food_kind_released.contains(&band_id)
+            );
+            if !covered && !released.contains(&release) {
+                if let Some((band_id, true)) = food_release {
+                    food_kind_released.push(band_id);
+                }
                 released.push(release.clone());
                 out.push(release);
             }
@@ -297,6 +363,71 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// A hunt on a herd the frame shows no row for, in a band whose food order the chief owns: the
+    /// seat releases the FOOD kind first (the sim has no row to release), once, and only for a new
+    /// row of a chief-fed band.
+    #[test]
+    fn a_new_food_row_in_a_chief_fed_band_releases_the_kind_first() {
+        let mut view = a_view(vec![row("forage", 9, 9, "", "")]);
+        let fed = sim_runtime::BandOrderState {
+            kind: "food".into(),
+            chief_owned: true,
+            ..Default::default()
+        };
+        view.snapshot.populations[0].band_orders = vec![fed];
+        let kind_release = CommandPayload::BandOrder {
+            faction_id: FACTION,
+            band_id: BAND,
+            kind: "food".into(),
+            action: BandOrderAction::Release,
+            row: None,
+        };
+        let hunt = assign("hunt", 0, 0, Some(HERD));
+        let sent = release_chief_rows(
+            &view,
+            FACTION,
+            vec![hunt.clone(), assign("hunt", 0, 0, Some("herd_other"))],
+        );
+        assert_eq!(sent.len(), 3, "one release, then both: {sent:?}");
+        assert_eq!(sent[0], kind_release);
+        assert_eq!(sent[1], hunt);
+        // A row the frame already shows (the player's own) needs no release.
+        let shown = assign("forage", 9, 9, None);
+        assert_eq!(
+            release_chief_rows(&view, FACTION, vec![shown.clone()]),
+            vec![shown]
+        );
+        // A band the chief does not feed needs none either.
+        view.snapshot.populations[0].band_orders[0].chief_owned = false;
+        assert_eq!(
+            release_chief_rows(&view, FACTION, vec![hunt.clone()]),
+            vec![hunt]
+        );
+    }
+
+    /// The kind release hands the whole food order over, so a per-row food release for the same
+    /// band after it is not sent (the server refuses it); the hand command itself still goes.
+    #[test]
+    fn a_food_row_release_after_the_kind_release_is_not_sent() {
+        let mut view = a_view(vec![row("forage", PATCH.0, PATCH.1, "", "food")]);
+        view.snapshot.populations[0].band_orders = vec![sim_runtime::BandOrderState {
+            kind: "food".into(),
+            chief_owned: true,
+            ..Default::default()
+        }];
+        let kind_release = CommandPayload::BandOrder {
+            faction_id: FACTION,
+            band_id: BAND,
+            kind: "food".into(),
+            action: BandOrderAction::Release,
+            row: None,
+        };
+        let hunt = assign("hunt", 0, 0, Some(HERD));
+        let stop_forage = stop(PATCH.0, PATCH.1, None);
+        let sent = release_chief_rows(&view, FACTION, vec![hunt.clone(), stop_forage.clone()]);
+        assert_eq!(sent, vec![kind_release, hunt, stop_forage]);
     }
 
     /// A dig stand is released under its material, by tile; the labor command that follows claims

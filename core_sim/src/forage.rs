@@ -1333,6 +1333,41 @@ pub fn rung_site_refusal(
     belief: f32,
     knows: &dyn Fn(&str) -> bool,
 ) -> Option<SiteRefusal> {
+    rung_site_verdict(
+        rung,
+        tile,
+        forage,
+        gathering_site,
+        fresh_water,
+        deposit_capacity,
+        belief,
+        knows,
+    )
+    .map(|verdict| verdict.refusal)
+}
+
+/// **A SITE REFUSAL AND THE LESSON IT WAITS ON** - what [`rung_site_verdict`] answers. `lesson` is
+/// `Some` exactly when `refusal` is [`SiteRefusal::NeedsLesson`], and is the lesson
+/// [`RungDef::lesson_that_would_admit`] named for the gate.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SiteVerdict {
+    pub refusal: SiteRefusal,
+    pub lesson: Option<String>,
+}
+
+/// **THE ONE SITE VERDICT** - [`rung_site_refusal`] with the lesson the gate picked beside it, so
+/// the wire states the very lesson the command refuses on instead of the client guessing one.
+#[allow(clippy::too_many_arguments)] // the rung, the tile, and every reading the site rule judges
+pub fn rung_site_verdict(
+    rung: &RungDef,
+    tile: &Tile,
+    forage: &ForageLaborConfig,
+    gathering_site: bool,
+    fresh_water: bool,
+    deposit_capacity: f32,
+    belief: f32,
+    knows: &dyn Fn(&str) -> bool,
+) -> Option<SiteVerdict> {
     // **THE RULE THE ACTING FACTION IS JUDGED BY** - the rung's own, or the last lesson-keyed
     // relaxation it holds ([`RungDef::effective_site_requirement`]). `knows` answers "does this
     // faction hold the lesson named X"; a caller with no faction in play passes `&|_| false`.
@@ -1361,20 +1396,68 @@ pub fn rung_site_refusal(
         belief,
     )?;
     // **A LESSON THE FACTION LACKS WOULD ADMIT THIS GROUND**: say what to learn, not what is wrong.
-    if rung
-        .lesson_that_would_admit(
-            knows,
-            gathering_site,
-            forage_capacity,
-            fresh_water,
-            deposit_capacity,
-            belief,
-        )
-        .is_some()
-    {
-        return Some(SiteRefusal::NeedsLesson);
+    if let Some(lesson) = rung.lesson_that_would_admit(
+        knows,
+        gathering_site,
+        forage_capacity,
+        fresh_water,
+        deposit_capacity,
+        belief,
+    ) {
+        return Some(SiteVerdict {
+            refusal: SiteRefusal::NeedsLesson,
+            lesson: Some(lesson.to_string()),
+        });
     }
-    Some(refusal)
+    Some(SiteVerdict {
+        refusal,
+        lesson: None,
+    })
+}
+
+/// **DOES THE WILD RUNG'S OWN SITE RULE REFUSE THIS GROUND?** - the one question every gather arm,
+/// forecast, seed and staffing take asks to decide whether a crew on WILD ground takes anything.
+/// Foraging is site-bound (`plant:wild` asks a gathering site): a crew may stand on ground that is
+/// not a site to BUILD, but while the patch stands at the wild rung it gathers nothing, so the
+/// ground yields nothing until it is Tended. Asked through [`rung_site_refusal`], the same seam the
+/// command and the wire use, on the branch's root rung (never a rung named in code).
+///
+/// The wild rung is the ladder's floor and carries no `site_relaxations`, so no lesson is asked.
+/// It asks no fresh-water rule either (a gathering site is workable by definition); the water term
+/// is therefore not consulted and is answered as met.
+pub fn wild_ground_refuses_gathering(
+    ladder: &LadderConfig,
+    forage: &ForageLaborConfig,
+    tile: &Tile,
+    gathering_site: bool,
+) -> bool {
+    let Some(root) = ladder.root_of(ladder.branch_of_kind(SourceKind::Patch)) else {
+        return false;
+    };
+    rung_site_refusal(
+        root,
+        tile,
+        forage,
+        gathering_site,
+        true,
+        intensification::NO_DEPOSIT_FLOOR,
+        crate::belief::NO_BELIEF,
+        &|_| false,
+    )
+    .is_some()
+}
+
+/// **THE GATHER SEASON OF A TILE, AFTER THE WILD RUNG'S SITE RULE** - `season` (the food module's
+/// weight) unless the patch still stands at the wild rung on ground the wild rung refuses, in which
+/// case [`NO_FORAGE_SEASON`]: a zero season is a zero per-worker throughput everywhere the take,
+/// its forecast, its seed and the staffing read it, so they cannot disagree. A Tended or Farm
+/// patch off a gathering site (ground the band opened with a lesson) keeps its season.
+pub fn gather_season(season: f32, patch: Option<&ForagePatch>, wild_refused: bool) -> f32 {
+    if wild_refused && !patch.is_some_and(ForagePatch::is_cultivated) {
+        NO_FORAGE_SEASON
+    } else {
+        season
+    }
 }
 
 /// THE forage-capacity of a tile — the single source the seeding path and the wire path both read,

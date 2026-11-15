@@ -329,15 +329,18 @@ pub struct TransitRot<'a> {
     pub keeping: &'a crate::demographics_config::KeepingConfig,
     pub shares: CargoClasses,
     /// **What the home band eats of this cargo each turn**, in food - the most a pack that lands
-    /// already aged by its walk can be eaten at before it expires ([`TransitRot::kept_of_pack`]).
-    /// [`NOTHING_CAPS_THE_MEAL`] where the caller names no band (the deposit web, a plant basket,
-    /// a bare projection).
+    /// already aged by its walk can be eaten at before it expires ([`TransitRot::eaten_at`]).
+    /// [`NOTHING_CAPS_THE_MEAL`] for the walk's rot alone, which is what a ROW displays; the capped
+    /// reading is the figure everything that VALUES the source reads ([`CaravanForecast::eaten_fraction`]).
     pub meals_per_turn: f32,
 }
 
 /// [`TransitRot::meals_per_turn`] when nothing caps what the band eats: an aged pack is then lost
 /// only where its walk outlasts its class's shelf life.
 pub const NOTHING_CAPS_THE_MEAL: f32 = f32::INFINITY;
+
+/// [`CaravanForecast::eaten_fraction`] when the band eats everything the row lands.
+pub const ALL_OF_IT_IS_EATEN: f32 = 1.0;
 
 /// No transit rot — the deposit web's cargo is a material, and a material keeps.
 pub const NO_TRANSIT_ROT: Option<&TransitRot<'static>> = None;
@@ -363,11 +366,11 @@ impl TransitRot<'_> {
 
     /// **THE PART OF A LANDING PACK THE LARDER KEEPS** - the pack is aged by its walk when it lands
     /// (`systems::labor::land_food_home`), so a class with `shelf` turns of life has `shelf - walk`
-    /// meals left to be eaten at, and what the band cannot eat at `meals_per_turn` in them rots
-    /// with it. A class whose shelf life is no longer than the walk is lost whole
-    /// ([`crate::spoilage::rots_in_transit`], the rule the landing applies); a walk of no length
-    /// lands fresh and is capped by nothing here - how much of a standing stream the band eats is
-    /// the caller's stream reading, not a pack's. A class the table does not carry never ages.
+    /// meals left to be eaten at, and what the band cannot eat at `meals_per_turn` in them rots with
+    /// it (the band's spoilage, which a ROW does not display: its own reading passes
+    /// [`NOTHING_CAPS_THE_MEAL`]). A class whose shelf life is no longer than the walk is lost whole
+    /// ([`crate::spoilage::rots_in_transit`], the rule the landing applies); a walk of no length lands
+    /// fresh and is capped by nothing. A class the table does not carry never ages.
     pub fn kept_of_pack(&self, walk_turns: u32, cargo: f32) -> f32 {
         self.shares
             .iter()
@@ -1194,6 +1197,7 @@ pub fn publish_caravan_projection(
     keeps_the_carcass: bool,
 ) {
     row.realized = forecast.rate_home;
+    row.eaten_fraction = forecast.eaten_fraction;
     row.arrivals = (0..arrivals_horizon as usize)
         .map(|turn| {
             forecast
@@ -1243,6 +1247,12 @@ pub struct CaravanForecast {
     /// **The 1-based turn the first pack lands** — whatever its cargo is worth, so a basket that
     /// carries no food still reports when its first load walks in — or [`NO_LOAD_WITHIN_HORIZON`].
     pub first_load_turn: u32,
+    /// **The share of [`Self::rate_home`] the home band can EAT before it spoils** - `1` where the
+    /// row's pack is not capped (a local row, a forage row, a band that eats it all). The row's
+    /// published figures are the walk's rot alone; every reader that VALUES the source (the runway,
+    /// the need clock, the crew curve a seat prices a herd by) reads `rate_home x eaten_fraction`,
+    /// the figure the capped forecast computed before the band's spoilage left the row.
+    pub eaten_fraction: f32,
 }
 
 /// ⛔ **THE CARAVAN, STEPPED FORWARD `horizon` TURNS FROM `start`** — the one function the turn's
@@ -1283,7 +1293,10 @@ pub fn forecast_caravan_carrying(
     mut take: impl FnMut(u32) -> Option<(SourceTake, CarriedGoods)>,
 ) -> CaravanForecast {
     let mut party = start.clone();
-    let mut forecast = CaravanForecast::default();
+    let mut forecast = CaravanForecast {
+        eaten_fraction: ALL_OF_IT_IS_EATEN,
+        ..Default::default()
+    };
     let mut on_the_road = 0u32;
     let mut spoiled = NOTHING_CARRIED;
     let mut bulk_home = NOTHING_CARRIED;
@@ -1378,17 +1391,64 @@ pub fn forecast_hunt_caravan(
     horizon: u32,
     // **How food keeps** (#706) — a herd's take is its species' one class.
     keeping: &crate::demographics_config::KeepingConfig,
-    // **What the home band eats of this herd's meat a turn** ([`TransitRot::meals_per_turn`]).
+    // **What the home band eats of this herd's meat a turn** ([`TransitRot::meals_per_turn`]): the
+    // eaten reading rides [`CaravanForecast::eaten_fraction`]; the row's own figures stay the walk's.
     meals_per_turn: f32,
     // **What a material weighs** — the bulk a pen's fleece fills a pack with ([`standing_stream`]).
     materials: &crate::materials_config::MaterialsConfig,
 ) -> CaravanForecast {
-    let pack = hunt_pack_biomass(herd, fauna, carry_per_worker);
-    let mut projection = HuntProjection::new(herd, fauna);
     let class = fauna
         .keeping_for(&herd.species)
         .unwrap_or(&keeping.kill_fallback_class);
-    let rot = TransitRot::single(keeping, class).eaten_at(meals_per_turn);
+    let mut forecast = forecast_hunt_caravan_rot(
+        party,
+        herd,
+        fauna,
+        carry_per_worker,
+        hunters,
+        output_multiplier,
+        floor,
+        keep_hands,
+        horizon,
+        &TransitRot::single(keeping, class),
+        materials,
+    );
+    if meals_per_turn.is_finite() && forecast.rate_home > NOTHING_CARRIED {
+        let eaten = forecast_hunt_caravan_rot(
+            party,
+            herd,
+            fauna,
+            carry_per_worker,
+            hunters,
+            output_multiplier,
+            floor,
+            keep_hands,
+            horizon,
+            &TransitRot::single(keeping, class).eaten_at(meals_per_turn),
+            materials,
+        );
+        forecast.eaten_fraction = (eaten.rate_home / forecast.rate_home).clamp(0.0, 1.0);
+    }
+    forecast
+}
+
+/// [`forecast_hunt_caravan`] at one [`TransitRot`] reading.
+#[allow(clippy::too_many_arguments)] // the take's full context, plus the caravan's own term
+fn forecast_hunt_caravan_rot(
+    party: &WorkParty,
+    herd: &crate::fauna::Herd,
+    fauna: &FaunaConfig,
+    carry_per_worker: f32,
+    hunters: &HuntingParty,
+    output_multiplier: f32,
+    floor: f32,
+    keep_hands: f32,
+    horizon: u32,
+    rot: &TransitRot<'_>,
+    materials: &crate::materials_config::MaterialsConfig,
+) -> CaravanForecast {
+    let pack = hunt_pack_biomass(herd, fauna, carry_per_worker);
+    let mut projection = HuntProjection::new(herd, fauna);
     // ⛔ **WHAT THE CARCASS AND THE STANDING HERD SEND HOME, EVERY STEPPED TURN** (#706). The cull's
     // meat and the standing food (milk, eggs — `HuntProjection::step` counts both in the turn's
     // provisions, so `rate_home` carries the milk net of the walk's rot, by the herd's one keeping
@@ -1398,7 +1458,7 @@ pub fn forecast_hunt_caravan(
     // never fills a pack and its standing yield never leaves. A wild herd's stream is empty. A hunt
     // yields no fodder; materials never rot.
     let carcass_rows = fauna.hunt_materials_for(&herd.species);
-    let mut forecast = forecast_caravan_carrying(party, horizon, pack, Some(&rot), |present| {
+    let mut forecast = forecast_caravan_carrying(party, horizon, pack, Some(rot), |present| {
         let culled = projection.step(
             fauna,
             carry_per_worker,
@@ -2271,45 +2331,26 @@ mod tests {
         );
     }
 
-    /// **A PACK LANDS AGED BY ITS WALK, SO THE LARDER KEEPS ONLY THE MEALS LEFT IT**
-    /// ([`TransitRot::kept_of_pack`]): flesh keeps 4 turns, a walk-3 pack has one meal left, so a
-    /// band eating `E` a turn keeps at most `E` of it; a band that eats it all in the meals left keeps
-    /// it whole, a walk-4 pack is lost whole, and a walk of none is capped by nothing.
+    /// **A PACK THAT SURVIVES ITS WALK LANDS WHOLE** ([`TransitRot::kept_of_pack`]): flesh keeps 4
+    /// turns, so a walk-3 pack is kept entire however slowly the band eats; a walk of the shelf life is
+    /// lost whole; a walk of none is fresh. Spoilage of a surplus is the band's, not the row's.
     #[test]
-    fn an_aged_pack_keeps_only_the_meals_it_has_left() {
+    fn a_pack_that_survives_its_walk_lands_whole() {
         const PACK: f32 = 6.0;
-        const SLOW_EATER: f32 = 1.5;
-        const FAST_EATER: f32 = 100.0;
         let keeping = crate::demographics_config::DemographicsConfig::builtin()
             .keeping
             .clone();
         let flesh_shelf = crate::spoilage::base_shelf_life(&keeping, "flesh").expect("flesh keeps");
-        let slow = TransitRot::single(&keeping, "flesh").eaten_at(SLOW_EATER);
-        let fast = TransitRot::single(&keeping, "flesh").eaten_at(FAST_EATER);
+        let rot = TransitRot::single(&keeping, "flesh");
         let last_walk = flesh_shelf as u32 - 1;
-        // The slow band eats SLOW_EATER in each meal the pack has left.
-        for walk in 1..=last_walk {
-            let meals = flesh_shelf - walk as f32;
+        for walk in NO_WALK..=last_walk {
             assert_eq!(
-                slow.kept_of_pack(walk, PACK),
-                (SLOW_EATER * meals).min(PACK)
-            );
-            assert_eq!(
-                fast.kept_of_pack(walk, PACK),
+                rot.kept_of_pack(walk, PACK),
                 PACK,
-                "a fast band eats it whole"
+                "walk {walk} lands whole"
             );
         }
-        assert!(
-            slow.kept_of_pack(last_walk, PACK) < PACK,
-            "liveness: the walk-{last_walk} pack is cut for the slow band"
-        );
-        assert_eq!(slow.kept_of_pack(last_walk + 1, PACK), NOTHING_CARRIED);
-        assert_eq!(
-            slow.kept_of_pack(NO_WALK, PACK),
-            PACK,
-            "a fresh kill is capped by nothing"
-        );
+        assert_eq!(rot.kept_of_pack(last_walk + 1, PACK), NOTHING_CARRIED);
     }
 
     /// **A pack carries what its load was made of, and lands with the walk it came on** (#706) —

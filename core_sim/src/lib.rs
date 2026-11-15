@@ -18,11 +18,14 @@ pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
 pub mod auto_craft;
 pub mod band_improvement;
 mod band_names;
+pub mod band_spoilage;
 pub mod belief;
 mod belief_config;
 pub mod belief_relay;
 mod biome_palette;
+pub mod build_gates;
 pub mod carry;
+pub mod chief_proposals;
 pub mod climate;
 pub mod combat;
 mod combat_config;
@@ -172,13 +175,13 @@ pub use components::{
     DeathCause, DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind,
     EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase, FinishedBatch, FoodBatch,
     FoodMix, FoundingWalk, ItemInFlight, KeepShare, KeepingIssue, KeepingToolLine, KitOrder,
-    KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch,
-    MaterialDraw, MoraleCause, MusterBench, MusterKit, MusterPlan, OrderOwner, PoolToeLine,
-    PopulationCohort, PowerNode, ResidentBand, ScoutPack, Settlement, ShedCrew, ShedFacts,
-    ShedStep, ShedSubject, ShipmentTerms, SourcePriority, SourceShedFacts, SourceYield,
-    StaffedCrew, StartingUnit, StationReport, StrangersOrder, TakeSelection, Tile, TownCenter,
-    TransferCause, TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger,
-    TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER,
+    KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LeadershipReading,
+    LocalStore, MaterialBatch, MaterialDraw, MoraleCause, MusterBench, MusterKit, MusterPlan,
+    OrderOwner, PoolToeLine, PopulationCohort, PowerNode, ResidentBand, ScoutPack, Settlement,
+    ShedCrew, ShedFacts, ShedStep, ShedSubject, ShipmentTerms, SourcePriority, SourceShedFacts,
+    SourceYield, StaffedCrew, StartingUnit, StationReport, StrangersOrder, TakeSelection, Tile,
+    TownCenter, TransferCause, TransferCounterparty, TransferCrossing, TransferDirection,
+    TransferLedger, TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER,
     MATERIAL_DUST_UNITS, MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
@@ -318,20 +321,21 @@ pub use forage::{
     commit_payoff, commit_yield_ratio, composition_for_rung, crew_take_room,
     crop_field_cost_multiplier, default_species_for_rung, field_cost_multiplier_at_share,
     forage_crew_needed, forage_per_worker_biomass, forage_provisions, forage_source_yield_preview,
-    forage_take_overdraws, next_turns_stand, patch_build_legs, patch_build_rung, patch_build_verb,
-    patch_carrying_capacity, patch_claims_keeping, patch_composition, patch_crew_keeping,
-    patch_destination_capacity, patch_ecology, patch_field_cost_multiplier, patch_keeping_basis,
-    patch_land_capacity, patch_material_yields, patch_material_yields_taking, patch_meter_rot,
-    patch_provisions_per_biomass, patch_provisions_per_biomass_taking, patch_rung_already_built,
-    patch_rung_span, patch_rung_work_done, patch_tender_loads, patch_unwinding_key,
-    patch_upkeep_demand, patch_upkeep_shortfall, patch_upkeep_workers_needed, plant_rung_span,
-    project_arrivals_forage, project_realized_forage, resolve_committed_species,
+    forage_take_overdraws, gather_season, next_turns_stand, patch_build_legs, patch_build_rung,
+    patch_build_verb, patch_carrying_capacity, patch_claims_keeping, patch_composition,
+    patch_crew_keeping, patch_destination_capacity, patch_ecology, patch_field_cost_multiplier,
+    patch_keeping_basis, patch_land_capacity, patch_material_yields, patch_material_yields_taking,
+    patch_meter_rot, patch_provisions_per_biomass, patch_provisions_per_biomass_taking,
+    patch_rung_already_built, patch_rung_span, patch_rung_work_done, patch_tender_loads,
+    patch_unwinding_key, patch_upkeep_demand, patch_upkeep_shortfall, patch_upkeep_workers_needed,
+    plant_rung_span, project_arrivals_forage, project_realized_forage, resolve_committed_species,
     resolve_take_selection, rung_material_yields, rung_payoff, rung_site_refusal,
     selected_biomass_share, spawn_initial_forage, species_is_legal_here, species_stands_in,
     tended_take_fodder, tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered,
-    wild_payoff, ForagePatch, ForageRegistry, PlantPayoff, SpeciesRate, SpeciesRefusal,
-    CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, NO_TENDER_LOAD,
-    ONE_TENDER_LOAD, SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET, WORKED_LAND_DISCOVERY_ID,
+    wild_ground_refuses_gathering, wild_payoff, ForagePatch, ForageRegistry, PlantPayoff,
+    SpeciesRate, SpeciesRefusal, CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON,
+    NO_TENDER_LOAD, ONE_TENDER_LOAD, SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
+    WORKED_LAND_DISCOVERY_ID,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use goodwill::{
@@ -427,7 +431,7 @@ pub use leader_names::{
     LeaderNameCatalogMetadata, LeaderNamesError, BUILTIN_LEADER_NAMES, LEADER_NAME_SALT,
 };
 pub use leadership::{
-    advance_leadership, BandLeader, BandLeadership, LeaderKind, LEADER_KIND_CHIEF,
+    advance_leadership, judge_leader, BandLeader, BandLeadership, LeaderKind, LEADER_KIND_CHIEF,
     LEADER_KIND_ELDER_COUNCIL, LEADER_KIND_NONE,
 };
 pub use leadership_config::{
@@ -1124,6 +1128,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(tribe::TribeRegistry::default())
         .insert_resource(systems::HeartLedger::default())
         .insert_resource(systems::CulturePressureLedger::default())
+        .insert_resource(chief_proposals::ChiefProposalBook::default())
         .insert_resource(systems::BreedingBreakOffs::default())
         .insert_resource(culture::CultureSplitQueue::default())
         .insert_resource(lineage::FreeBreedingPeoples::default())
@@ -1602,7 +1607,8 @@ pub fn build_headless_app() -> App {
                 // **A band's dry take goes into its pits as it is gathered** (#709): the deposit
                 // follows the labor pass that landed the take and precedes everything after it.
                 fixed_store::deposit_into_stores.after(systems::advance_labor_allocation),
-                leadership::advance_leadership.after(fixed_store::deposit_into_stores),
+                chief_proposals::advance_chief_proposals.after(fixed_store::deposit_into_stores),
+                leadership::advance_leadership.after(chief_proposals::advance_chief_proposals),
                 auto_craft::advance_auto_craft.after(leadership::advance_leadership),
                 systems::advance_crafting.after(auto_craft::advance_auto_craft),
                 auto_craft::advance_auto_craft_after_bench.after(systems::advance_crafting),
@@ -2041,4 +2047,14 @@ fn population_stage_enabled() -> impl FnMut(Res<CapabilityFlags>) -> bool {
 
 fn capability_enabled(flags: CapabilityFlags) -> impl FnMut(Res<CapabilityFlags>) -> bool {
     move |current: Res<CapabilityFlags>| current.intersects(flags)
+}
+
+/// **Make `position` a gathering site in `world`** (creating the registry if the fixture has none):
+/// the shared fixture step for a test that works a wild patch on a tile the curated sites do not
+/// hold. Wild gathering is site-bound (`forage::gather_season`), so the tile must be a site for the
+/// crew to take anything; no assertion needs to change.
+pub fn mark_gathering_site(world: &mut bevy::prelude::World, position: bevy::math::UVec2) {
+    world
+        .get_resource_or_insert_with(FoodSiteRegistry::default)
+        .ensure_site(position);
 }

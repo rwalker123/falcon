@@ -14,6 +14,8 @@
 //! - `cohesion` — the Layer-1 "a band too big to hold together" morale term, priced against a
 //!   cohesion ceiling that belief underfoot lifts (`docs/plan_civilization_steps.md` §"Cohesion is a
 //!   property of a group").
+//! - `leadership` — the Layer-1 "the band judges its leader by what he delivers" morale term
+//!   (`.claude/rules/core_sim/leadership.md`).
 //!
 //! Mirrors the `demographics_config.rs` / `sedentarization_config.rs` loader (baked-in builtin +
 //! optional file/env override).
@@ -293,6 +295,74 @@ impl CohesionConfig {
     }
 }
 
+/// Layer 1 — the **leadership** morale term: a band with a leader judges him by what he delivers
+/// (`.claude/rules/core_sim/leadership.md` → "The band judges its leader by what he delivers").
+/// Every lever is an OPENING VALUE and a PLAYTEST DIAL.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct LeadershipMoraleConfig {
+    /// Morale per turn gained for each order whose stock is at or above its target. Finite, `>= 0`.
+    pub popularity_per_met_order: f32,
+    /// Morale per turn lost (before patience) for each order below its target whose take is below its
+    /// draw. Finite, `>= 0`.
+    pub strain_per_falling_order: f32,
+    /// Morale per turn lost (before patience) when the people go short at the meal by
+    /// `starvation_full_at` or more of their need. Finite, `>= 0`.
+    pub starvation_strain: f32,
+    /// The meal deficit (a share of need) at which `starvation_strain` is whole. Finite, `> 0`.
+    pub starvation_full_at: f32,
+    /// How far the band's Hierarchical<->Egalitarian culture scales its patience. Finite, `>= 0`.
+    pub egalitarian_sensitivity: f32,
+    /// Trait units the band's culture modifier moves toward Hierarchical per met order per turn.
+    /// Finite, `>= 0`.
+    pub drift_per_met_order: f32,
+}
+
+impl Default for LeadershipMoraleConfig {
+    fn default() -> Self {
+        Self {
+            popularity_per_met_order: 0.002,
+            strain_per_falling_order: 0.004,
+            starvation_strain: 0.03,
+            starvation_full_at: 0.1,
+            egalitarian_sensitivity: 0.5,
+            drift_per_met_order: 0.0005,
+        }
+    }
+}
+
+impl LeadershipMoraleConfig {
+    /// `patience = max(0, 1 + egalitarian_sensitivity × clamp(axis / span, −1, 1))`: `axis` negative
+    /// is hierarchical (more patient), positive egalitarian (less).
+    pub fn patience(&self, axis_over_span: f32) -> f32 {
+        (1.0 + self.egalitarian_sensitivity * axis_over_span.clamp(-1.0, 1.0)).max(0.0)
+    }
+
+    /// The share of the starvation strain a meal deficit (a share of need) costs, in `[0, 1]`.
+    pub fn hunger_share(&self, deficit_fraction: f32) -> f32 {
+        (deficit_fraction / self.starvation_full_at).clamp(0.0, 1.0)
+    }
+
+    /// Finite and `>= 0` throughout, `starvation_full_at` finite and `> 0`.
+    pub fn validate(&self) -> Result<(), WellbeingConfigError> {
+        require_non_negative_finite(
+            "leadership.popularity_per_met_order",
+            self.popularity_per_met_order,
+        )?;
+        require_non_negative_finite(
+            "leadership.strain_per_falling_order",
+            self.strain_per_falling_order,
+        )?;
+        require_non_negative_finite("leadership.starvation_strain", self.starvation_strain)?;
+        require_positive_finite("leadership.starvation_full_at", self.starvation_full_at)?;
+        require_non_negative_finite(
+            "leadership.egalitarian_sensitivity",
+            self.egalitarian_sensitivity,
+        )?;
+        require_non_negative_finite("leadership.drift_per_met_order", self.drift_per_met_order)
+    }
+}
+
 fn require_positive_finite(field: &'static str, value: f32) -> Result<(), WellbeingConfigError> {
     if !value.is_finite() || value <= 0.0 {
         return Err(WellbeingConfigError::Invalid {
@@ -338,6 +408,7 @@ pub struct WellbeingConfig {
     pub independence: IndependenceConfig,
     pub culture: CultureConfig,
     pub cohesion: CohesionConfig,
+    pub leadership: LeadershipMoraleConfig,
 }
 
 impl WellbeingConfig {
@@ -356,12 +427,13 @@ impl WellbeingConfig {
         Ok(config)
     }
 
-    /// The invariants a parsed config must hold: the culture and cohesion levers, and the independence
+    /// The invariants a parsed config must hold: the culture, cohesion and leadership levers, and the independence
     /// threshold (every band's grievance is `>= 0`, so a negative threshold would break every
     /// cut-off group away on its first turn while reading like a strict setting).
     pub fn validate(&self) -> Result<(), WellbeingConfigError> {
         self.culture.validate()?;
         self.cohesion.validate()?;
+        self.leadership.validate()?;
         require_non_negative_finite(
             "independence.grievance_threshold",
             self.independence.grievance_threshold,
@@ -582,6 +654,51 @@ mod tests {
             WellbeingConfig::from_json_str(json),
             Err(WellbeingConfigError::Invalid {
                 field: "culture.away_drag",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn the_shipped_leadership_levers_are_the_documented_defaults() {
+        let shipped = &WellbeingConfig::builtin().leadership;
+        let default = LeadershipMoraleConfig::default();
+        assert_eq!(
+            shipped.popularity_per_met_order,
+            default.popularity_per_met_order
+        );
+        assert_eq!(
+            shipped.strain_per_falling_order,
+            default.strain_per_falling_order
+        );
+        assert_eq!(shipped.starvation_strain, default.starvation_strain);
+        assert_eq!(shipped.starvation_full_at, default.starvation_full_at);
+        assert_eq!(
+            shipped.egalitarian_sensitivity,
+            default.egalitarian_sensitivity
+        );
+        assert_eq!(shipped.drift_per_met_order, default.drift_per_met_order);
+    }
+
+    #[test]
+    fn a_non_positive_starvation_full_at_is_refused() {
+        let json = r#"{ "leadership": { "starvation_full_at": 0.0 } }"#;
+        assert!(matches!(
+            WellbeingConfig::from_json_str(json),
+            Err(WellbeingConfigError::Invalid {
+                field: "leadership.starvation_full_at",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_negative_leadership_lever_is_refused() {
+        let json = r#"{ "leadership": { "strain_per_falling_order": -0.1 } }"#;
+        assert!(matches!(
+            WellbeingConfig::from_json_str(json),
+            Err(WellbeingConfigError::Invalid {
+                field: "leadership.strain_per_falling_order",
                 ..
             })
         ));

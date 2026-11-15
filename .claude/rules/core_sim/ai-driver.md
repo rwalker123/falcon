@@ -241,9 +241,19 @@ it yourself"). The seat plays by the player's rule: `orders::release_chief_rows`
 commands in `Composite::decide`, **after** the arbiter, and puts `band_order <faction> <band> <orderKind>
 release <x> <y>` (a patch or a dig stand) or `release <herd id>` (a hunt row) directly in front of the first
 hand command on each row the frame shows `chiefOwned`; the command itself follows in the same turn. A
-row two commands name is released once. It is per ROW: the seat never releases a whole kind and never
-claims a row back, and a row that is not `chiefOwned` (a new patch, a row already released) gets no
-release. The release is derived from the commands, not proposed, so no specialist bids on it and
+row two commands name is released once. It is per ROW: the seat never claims a row back, and a row
+that is not `chiefOwned` (a row already released) gets no per-row release. **One exception, the
+kind:** an `assign_labor` forage or hunt onto a row the frame shows NO row for, in a band whose `food`
+`bandOrders` entry is `chiefOwned`, is preceded by `band_order <faction> <band> food release` (no row).
+The sim lists a source under the chief's order itself (a restaff after another command can pick the
+very herd the seat is about to crew), so the row can be the chief's server-side before any frame shows
+it, and the server's per-row release refuses a row the band does not hold ("has no food row there for
+the chief to hand over"); only the kind's release gets past it. Seed 54, t59: `stop_labor 1 2 59 11`
+then `assign_labor 1 2 hunt game_aurochs_80` was refused with "Tidefell's elders keep food on hand".
+Once the kind is released, a later per-row food release for that band in the same pass is not sent,
+because the kind release handed the whole food order over and the server refuses the row release
+after it; per-row releases of other order kinds (a dig stand) are untouched.
+The release is derived from the commands, not proposed, so no specialist bids on it and
 `Cost::claimed` claims a one-row `band_order` under the same `row_key` the labor commands on that
 row claim. The scripted brain goes through the same `Composite::decide`. The release is not in
 `decisions.jsonl` `commands_text` (that is the arbiter's accepted proposal); it is in the commands sent
@@ -317,6 +327,24 @@ the roster's equipped reference (`equipped_reference(ForageCarry)`), never the r
 band realized with bare hands (the walk is buying the baskets; a splinter's window reads rows its
 parent worked unequipped). A herd's curve is `assume_kit_held` (below), struck by **the stream
 keep** (below).
+
+#### Storage: a band with no chief declares it; a band with a chief answers the proposal
+
+`Food::build_storage` (`food:storage:<band>`) reads the band's `storageSaves` and, for a row whose lesson is
+known, with no build declared, `foodSaved >= storageBuildMinSaved` (`labor_config.band_orders.storage_build_min_saved`,
+echoed on the cohort) and the band holding the build material (`materialOnHand >= materialNeeded`), sends the
+command the player's Build button sends: `assign_labor <f> <b> band <branch>` (a band improvement) or `... tile
+<branch> <x> <y>` on the band's tile (`tileKept`). It is silent for a band with a leader (`leaderKind != 0`),
+for a traveling band and for a band **short of food** (`Food::short_of_food`: `turnsOfFood` below the profile's
+`food.runway_floor_turns`, the `FoodShort` alarm's own reading).
+
+`Food::answer_proposal` (`food:proposal:<band>`) reads the band's `chiefProposals` row off the wire as any
+player would (`.claude/rules/core_sim/work-party.md` -> "A chief proposes a build") and answers it with
+`approve_proposal <f> <b>` or `defer_proposal <f> <b> <build_key>`: a band short of food puts every build off except a plant climb (`plant:` key, it costs hands not food);
+a storage proposal (its rung is a `storageSaves` row) is approved when `foodSaved` reaches the echoed lever and
+the lesson is known with nothing declared; any other build is approved when its food figure is above zero. The
+server knows nothing of seats. The hunt row no longer books surplus spoilage, so the stream keep below prices
+only a herd's eat-share and is not double counted.
 
 #### The stream keep: a herd is worth what the band EATS of its landing stream
 

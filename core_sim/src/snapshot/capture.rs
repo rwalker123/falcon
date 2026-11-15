@@ -108,6 +108,9 @@ pub struct SnapshotContext<'w> {
     /// Every improvement on a tile-kind branch. Published filtered to the tiles the viewer has
     /// explored; the checkpoint carries the registry itself.
     pub tile_improvements: Res<'w, crate::tile_improvement::TileImprovementRegistry>,
+    /// Every band's chief-proposal state; the capture publishes each own band's offer. `Option` for
+    /// the hand-rolled capture worlds that never install it.
+    pub chief_proposals: Option<Res<'w, crate::chief_proposals::ChiefProposalBook>>,
     /// Every live working on a deposit. Published filtered to the workings the viewer has explored;
     /// the checkpoint carries the registry itself. **Sparse and lazy** — a working exists only from
     /// the turn a band first put a crew on it.
@@ -2803,6 +2806,7 @@ pub fn capture_snapshot(
         knowledge_contact,
         roads,
         tile_improvements,
+        chief_proposals,
         deposits,
         extraction,
         tile_registry,
@@ -2866,6 +2870,9 @@ pub fn capture_snapshot(
     // Forage arm of `advance_labor_allocation` folds into `forage_take`'s worker cap. The forage
     // patch forecast (below) needs it to report a per-worker yield that matches what the sim pays.
     let mut seasonal_weights: HashMap<UVec2, f32> = HashMap::new();
+    // The same season read as WILD ground (no improvement standing): what a row publishes where the
+    // viewer may not read the improvement (`snapshot_forage_patches`).
+    let mut wild_seasonal_weights: HashMap<UVec2, f32> = HashMap::new();
     // Per-tile terrain tags, grid-indexed — what the fresh-water half of the `plant:farm` rung's
     // site rule reads about a tile's NEIGHBOURS (`forage::tile_is_fresh_watered`). Collected in this
     // pass so the patch sweep below reads a finished grid rather than walking the world again.
@@ -2894,7 +2901,31 @@ pub fn capture_snapshot(
             ));
             tile_tags.set(tile.position, tile.terrain_tags);
             if let Some(module) = food_module {
-                seasonal_weights.insert(tile.position, module.seasonal_weight);
+                let wild_refused = crate::forage::wild_ground_refuses_gathering(
+                    &ladder_config,
+                    &labor_config.forage,
+                    tile,
+                    food_sites.is_site(tile.position),
+                );
+                wild_seasonal_weights.insert(
+                    tile.position,
+                    crate::forage::gather_season(module.seasonal_weight, None, wild_refused),
+                );
+                // Gathering is site-bound: a wild patch on ground the wild rung refuses has no
+                // gather season, exactly as the labor arm reads it (`forage::gather_season`).
+                seasonal_weights.insert(
+                    tile.position,
+                    crate::forage::gather_season(
+                        module.seasonal_weight,
+                        forage_registry.patch(tile.position),
+                        crate::forage::wild_ground_refuses_gathering(
+                            &ladder_config,
+                            &labor_config.forage,
+                            tile,
+                            food_sites.is_site(tile.position),
+                        ),
+                    ),
+                );
             }
             if forage_registry.patch(tile.position).is_some() {
                 patch_tiles.push(tile);
@@ -2967,11 +2998,13 @@ pub fn capture_snapshot(
         .collect();
     lesson_sets.sort();
     lesson_sets.dedup();
-    let mut rung_site_refusals: HashMap<Vec<&str>, HashMap<(UVec2, RungId), SiteRefusal>> =
-        lesson_sets
-            .iter()
-            .map(|set| (set.clone(), HashMap::new()))
-            .collect();
+    let mut rung_site_refusals: HashMap<
+        Vec<&str>,
+        HashMap<(UVec2, RungId), crate::forage::SiteVerdict>,
+    > = lesson_sets
+        .iter()
+        .map(|set| (set.clone(), HashMap::new()))
+        .collect();
     // **The size of the land under each patch** — the tile's own forage `K`, through the one
     // `forage::tile_forage_capacity` seam. Every plant upkeep figure the patch row publishes is
     // quoted per **tender-load** of it (`forage::patch_tender_loads`), the plant twin of a herd's
@@ -2985,7 +3018,7 @@ pub fn capture_snapshot(
         config.map_seed,
         grid,
     );
-    for tile in patch_tiles {
+    for tile in patch_tiles.iter().copied() {
         tile_capacities.insert(
             tile.position,
             crate::forage::tile_forage_capacity(&labor_config.forage, tile),
@@ -2995,7 +3028,7 @@ pub fn capture_snapshot(
         });
         for (lessons, refusals) in &mut rung_site_refusals {
             for rung in &site_gated_rungs {
-                if let Some(refusal) = rung_site_refusal(
+                if let Some(verdict) = crate::forage::rung_site_verdict(
                     rung,
                     tile,
                     &labor_config.forage,
@@ -3008,7 +3041,7 @@ pub fn capture_snapshot(
                     crate::belief::NO_BELIEF,
                     &|name| lessons.contains(&name),
                 ) {
-                    refusals.insert((tile.position, rung.rung_id()), refusal);
+                    refusals.insert((tile.position, rung.rung_id()), verdict);
                 }
             }
         }
@@ -3126,6 +3159,24 @@ pub fn capture_snapshot(
             reach_tiles: supply_network_cfg.reach_tiles,
             grid: (tile_registry.width, config.map_topology.wrap_horizontal),
         };
+        // **The baskets of the tiles that hold a patch**, for splitting a forage row's income by keeping
+        // class (`band_spoilage::income_by_class`): the flora realisation off the tile, as the labor
+        // arm reads it.
+        let patch_compositions: HashMap<UVec2, Vec<crate::flora_config::FloraShare>> = patch_tiles
+            .iter()
+            .map(|tile| {
+                (
+                    tile.position,
+                    crate::forage::tile_flora_composition(
+                        &flora_config,
+                        &labor_config.forage,
+                        tile,
+                        config.map_seed,
+                    )
+                    .into_owned(),
+                )
+            })
+            .collect();
         // **How far a band's people walk** — the one `WalkReach` the culture morale term and
         // migration read, built here from the same levers so each band's published anchor reach
         // region is exactly the set of tiles that term would call near.
@@ -3486,7 +3537,62 @@ pub fn capture_snapshot(
                     let belief_anchor_weight = cohort.belief_anchor.map_or(0.0, |anchor| {
                         wellbeing_config.culture.anchor_weight(belief.get(anchor))
                     });
+                    let held_now = preservation_scene.held_by(band_id.copied());
+                    let reachable_now = if expedition.is_none() {
+                        crate::fixed_store::reachable_stores(
+                            &preservation_scene,
+                            band_id.copied(),
+                            cohort.faction,
+                            current_pos,
+                        )
+                    } else {
+                        crate::fixed_store::ReachableStores::none()
+                    };
+                    // **The band's spoilage forecast and what storage would save** — own resident
+                    // bands only; a party's pack is not a larder.
+                    let spoilage = match (expedition.is_none(), allocation) {
+                        (true, Some(allocation)) => crate::band_spoilage::band_spoilage_of(
+                            &crate::band_spoilage::BandSpoilInputs {
+                                cohort,
+                                allocation,
+                                band: band_id.copied(),
+                                at: current_pos,
+                                demographics: &demographics_config,
+                                fauna: &fauna_config,
+                                flora: &flora_config,
+                                labor: &labor_config,
+                                herds: &herd_registry,
+                                forage: &forage_registry,
+                                composition: &|tile| patch_compositions.get(&tile).cloned(),
+                                ladder: &ladder_config,
+                                improvements: &tile_improvements,
+                                held: &held_now,
+                                stores: &reachable_now,
+                                knows: &|id| {
+                                    crate::intensification::knows(
+                                        &discovery_progress,
+                                        cohort.faction,
+                                        id,
+                                        ladder_config.knowledge.completion_threshold,
+                                    )
+                                },
+                            },
+                        ),
+                        _ => crate::band_spoilage::BandSpoilage::default(),
+                    };
+                    // **The chief's build proposal** (own resident bands only, like the spoilage beside it).
+                    let chief_proposals: Vec<_> = match (expedition.is_none(), band_id) {
+                        (true, Some(band)) => chief_proposals
+                            .as_deref()
+                            .and_then(|book| book.current(*band))
+                            .cloned()
+                            .into_iter()
+                            .collect(),
+                        _ => Vec::new(),
+                    };
                     Some(population_state(PopulationStateInputs {
+                        chief_proposals,
+                        spoilage,
                         belief_reach,
                         belief_anchor_weight,
                         belief_relay_region,
@@ -4345,6 +4451,7 @@ pub fn capture_snapshot(
             &flora_config,
             &ladder_config,
             &seasonal_weights,
+            &wild_seasonal_weights,
             rung_site_refusals
                 .get(&held_site_lessons(viewer))
                 .expect("every audience's lesson set was swept"),

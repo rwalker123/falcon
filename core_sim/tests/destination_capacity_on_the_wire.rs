@@ -278,6 +278,10 @@ fn spawn_the_farming_band(
     // **The keeping is staffed generously**, because an unkept plant meter *rots* — this fixture is
     // about where the build is going, not about whether it survives neglect.
     let keepers = 8;
+    // **A FED BAND**: the staffing feeds a band that would miss a meal before it builds
+    // (`labor_config.food_first_window_turns`), which is not what this fixture measures.
+    let mut stores = LocalStore::new();
+    stores.reset_food("dry", scalar_from_f32(A_FULL_LARDER));
     app.world.spawn((
         PopulationCohort {
             home: tile,
@@ -286,7 +290,7 @@ fn spawn_the_farming_band(
             children: scalar_zero(),
             working: scalar_from_f32((gatherers + builders + keepers) as f32),
             elders: scalar_zero(),
-            stores: LocalStore::new(),
+            stores,
             morale: scalar_one(),
             last_food_consumption: 0.0,
             last_food_need: 0.0,
@@ -319,6 +323,7 @@ fn spawn_the_farming_band(
             last_belief_relay_hops: 0,
             predators_kept_off: 0,
             last_cohesion: Default::default(),
+            last_leadership: Default::default(),
         },
         StartingUnit {
             kind: "BandForager".to_string(),
@@ -764,6 +769,7 @@ fn spawn_the_herding_band(
             last_belief_relay_hops: 0,
             predators_kept_off: 0,
             last_cohesion: Default::default(),
+            last_leadership: Default::default(),
         },
         StartingUnit {
             kind: "BandHunter".to_string(),

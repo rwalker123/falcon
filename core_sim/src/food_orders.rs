@@ -12,7 +12,8 @@
 //!   draw itself at or above it** - the band eats every turn, so the keep-up crew still works.
 //! - **Which sources.** Every known forage patch and huntable herd in work range, each probed through
 //!   the staffing's own reading ([`crate::staffing::probe_source`]) so a herd the band's kit cannot
-//!   wound is no candidate. Ranked by food (or fodder) per hand at the floor, then the shortest walk,
+//!   wound is no candidate. Ranked by the net food (or fodder) a hand brings home (per hand at the floor
+//!   through the caravan forecast over the walk past the apron), then the most the source gives a turn,
 //!   then the source key; each is given a share up to its **cap**, best first - what it gives at the
 //!   floor without being drawn down plus its stock above the floor over `keep_on_hand_refill_turns`,
 //!   never more than a full tile crew takes ([`crate::staffing::SourceProbe::cap`]; the floor stays the
@@ -42,7 +43,7 @@
 use bevy::math::UVec2;
 
 use crate::components::{
-    BuildSource, KeepShare, LaborAllocation, LaborTarget, SourcePriority, TakeSelection,
+    BandOrder, BuildSource, KeepShare, LaborAllocation, LaborTarget, SourcePriority, TakeSelection,
     DEFAULT_ESCAPEMENT_FLOOR,
 };
 use crate::fauna::Herd;
@@ -106,6 +107,99 @@ impl OrderReadings {
 
 const NOTHING: f32 = 0.0;
 
+/// **ONE ORDER'S FIGURES** - the four numbers the band-orders wire publishes for an order
+/// (`BandOrderState`'s `on_hand`, `target`, `take`, `draw`) and whether the order has anyone to feed.
+/// [`OrderReadings::figures`] is the ONE place they are read, so the wire and the leadership morale
+/// term (`simulate_population`) judge an order on the same figures.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OrderFigures {
+    /// What the band holds of the kind: turns of cover for food and fodder, units for a material.
+    pub on_hand: f32,
+    /// The stock the order wants kept, in the same unit as `on_hand`.
+    pub target: f32,
+    /// What the order's rows brought in last turn, in the order's per-turn units.
+    pub take: f32,
+    /// What the band draws of the kind each turn.
+    pub draw: f32,
+    /// Whether anything draws on the kind: always for food and materials, and for fodder only while
+    /// the band pens a herd that eats hay.
+    pub has_consumers: bool,
+}
+
+/// How a band's order stands: the verdict its people judge the leader on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderVerdict {
+    /// The stock is at or above the target.
+    Met,
+    /// Below the target and what comes in is below what is drawn: the stock is running down.
+    Falling,
+    /// Below the target but filling.
+    Rising,
+}
+
+impl OrderFigures {
+    /// The order's standing, `None` for an order with no consumers (it is not being judged).
+    pub fn verdict(&self) -> Option<OrderVerdict> {
+        if !self.has_consumers {
+            return None;
+        }
+        Some(if self.on_hand >= self.target {
+            OrderVerdict::Met
+        } else if self.take < self.draw {
+            OrderVerdict::Falling
+        } else {
+            OrderVerdict::Rising
+        })
+    }
+}
+
+impl OrderReadings {
+    /// The figures of the order `order` for `kind`. `material_on_hand` is the band's store total of a
+    /// material kind, in units.
+    pub fn figures(
+        &self,
+        kind: &str,
+        order: &BandOrder,
+        allocation: &LaborAllocation,
+        material_on_hand: &dyn Fn(&str) -> f32,
+    ) -> OrderFigures {
+        OrderFigures {
+            on_hand: if is_row_kind(kind) {
+                self.turns(kind, allocation)
+            } else {
+                material_on_hand(kind)
+            },
+            target: order.target as f32,
+            take: allocation.order_take(kind),
+            draw: self.draw(kind, allocation),
+            has_consumers: kind != FODDER_KIND || allocation.last_fodder_need > NOTHING,
+        }
+    }
+}
+
+/// **IS THE BAND'S FOOD ORDER FALLING?** - the one judgement leadership, the wire's order line and the
+/// chief's proposals share: the `food` order reads [`OrderVerdict::Falling`] through
+/// [`OrderReadings::figures`] (below target and what comes in is below what is drawn). `false` for a
+/// band holding no food order.
+pub fn food_order_is_falling(
+    cohort: &crate::components::PopulationCohort,
+    allocation: &LaborAllocation,
+) -> bool {
+    let Some(order) = allocation.order_for(FOOD_KIND) else {
+        return false;
+    };
+    let readings = OrderReadings {
+        food_stock: cohort.stores.get(crate::components::FOOD).to_f32(),
+        food_need: cohort.last_food_need,
+        fodder_stock: cohort.stores.get(crate::components::FODDER).to_f32(),
+    };
+    let on_hand = |kind: &str| cohort.stores.material_total(kind).to_f32();
+    readings
+        .figures(FOOD_KIND, order, allocation, &on_hand)
+        .verdict()
+        == Some(OrderVerdict::Falling)
+}
+
 /// A listed source takes at least one head, however small its share.
 const MIN_HEADS_PER_SOURCE: u32 = 1;
 
@@ -124,6 +218,8 @@ fn row_is_improvement(
             .herds
             .find(fauna_id)
             .is_some_and(|herd| herd.is_corralled() || herd.ladder_position() > NOTHING),
+        // A storage build the chief ordered (a drying rack, a pit) is an improvement: it is kept.
+        LaborTarget::Band { .. } | LaborTarget::Tile { .. } => true,
         _ => false,
     }
 }
@@ -134,7 +230,9 @@ struct Candidate {
     key: String,
     tile: UVec2,
     herd: String,
-    distance: u32,
+    /// What one hand brings HOME a turn after the walk (`keep_on_hand::caravan_net_per_hand`);
+    /// equal to [`Self::units_per_hand`] inside the apron.
+    net_units_per_hand: f32,
     /// `Some(FODDER_KIND)` when the source gives more fodder than food per hand, else food.
     order: &'static str,
     /// The product's units per hand at the floor.
@@ -192,9 +290,35 @@ fn candidate_of(
     } else {
         return None;
     };
+    // The pack one hand carries home, in biomass, at the band's best live kit for the job: baskets
+    // for a gather, the sled for a hunt (a herd's pack is seated in whole animals).
+    let kit = sources.equipment.default_kit(target.kit_job());
+    let pack = if herd.is_empty() {
+        sources.equipment.forage_per_worker_biomass_capacity(
+            sources.labor.forage.per_worker_biomass_capacity,
+            &kit,
+            inputs.site.band_kit,
+        )
+    } else {
+        let carry = sources.equipment.hunt_per_worker_biomass_capacity(
+            sources.labor.hunt.per_worker_biomass_capacity,
+            &kit,
+            inputs.site.band_kit,
+        );
+        sources.herd(&herd).map_or(carry, |found| {
+            crate::work_party::hunt_pack_biomass(&found, sources.fauna, carry)
+        })
+    };
+    let net_units_per_hand = crate::keep_on_hand::caravan_net_per_hand(
+        inputs.site,
+        tile,
+        pack,
+        units_per_hand,
+        probe.per_hand,
+    );
     Some(Candidate {
         key: source_key(&target)?,
-        distance: inputs.site.camp.map_or(0, |camp| camp.distance_to(tile)),
+        net_units_per_hand,
         target,
         tile,
         herd,
@@ -255,9 +379,16 @@ pub fn manage_food_orders(
         if !within || !(inputs.tile_known)(tile) {
             continue;
         }
-        let Some(_) = sources.forage.patch(tile) else {
+        let Some(patch) = sources.forage.patch(tile) else {
             continue;
         };
+        // **A crew must take something**: a patch still at the wild rung has the gather season the
+        // wild rung's own site rule leaves it ([`crate::forage::gather_season`], zero off a gathering
+        // site), so ground a player's `assign_labor forage` would refuse is no candidate. A Tended or
+        // Farm patch the band holds off-site keeps its season and stays one.
+        if !patch.is_cultivated() && (sources.season_of)(tile) <= NOTHING {
+            continue;
+        }
         if let Some(candidate) =
             candidate_of(inputs, forage_target(tile, best), tile, String::new(), crew)
         {
@@ -410,10 +541,14 @@ pub fn manage_food_orders(
             })
             .collect();
         ranked.sort_by(|a, b| {
-            b.units_per_hand
-                .partial_cmp(&a.units_per_hand)
+            b.net_units_per_hand
+                .partial_cmp(&a.net_units_per_hand)
                 .unwrap_or(std::cmp::Ordering::Equal)
-                .then(a.distance.cmp(&b.distance))
+                .then(
+                    b.cap_units
+                        .partial_cmp(&a.cap_units)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
                 .then(a.key.cmp(&b.key))
         });
         // Rows kept at no share whatever the listing (improvements, pinned rows) keep their last

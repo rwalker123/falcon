@@ -1041,6 +1041,7 @@ fn create_rung_quotes<'a>(
             create_material_payoffs(builder, &quote.upkeep_material_demand);
         let material_payoff = create_material_payoffs(builder, &quote.material_payoff);
         let site_refusal = builder.create_string(quote.site_refusal.as_str());
+        let needs_lesson = builder.create_string(quote.needs_lesson.as_str());
         let entry = fb::RungQuoteState::create(
             builder,
             &fb::RungQuoteStateArgs {
@@ -1056,6 +1057,7 @@ fn create_rung_quotes<'a>(
                 fodder: quote.fodder,
                 materialPayoff: Some(material_payoff),
                 siteRefusal: Some(site_refusal),
+                needsLesson: Some(needs_lesson),
             },
         );
         entries.push(entry);
@@ -1080,6 +1082,7 @@ fn decode_rung_quotes(
         fodder: quote.fodder(),
         material_payoff: decode_material_payoffs(quote.materialPayoff()),
         site_refusal: text(quote.siteRefusal()),
+        needs_lesson: text(quote.needsLesson()),
     })
 }
 

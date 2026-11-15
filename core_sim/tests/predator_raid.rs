@@ -218,6 +218,7 @@ fn resident_band(app: &mut App, tile: Entity, working: u32, warriors: u32) -> En
                 last_belief_relay_hops: 0,
                 predators_kept_off: 0,
                 last_cohesion: Default::default(),
+                last_leadership: Default::default(),
             },
             LaborAllocation {
                 assignments,

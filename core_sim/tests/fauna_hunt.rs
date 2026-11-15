@@ -159,6 +159,7 @@ fn hunt_assignment_takes_biomass_and_yields() {
                 last_belief_relay_hops: 0,
                 predators_kept_off: 0,
                 last_cohesion: Default::default(),
+                last_leadership: Default::default(),
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),

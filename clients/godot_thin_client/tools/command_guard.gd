@@ -257,6 +257,7 @@ func _ready() -> void:
 	await _drive_assign_labor_kits()
 	await _drive_work_priority()
 	_drive_band_order()
+	_drive_chief_proposal()
 	await _drive_stop_labor()
 	await _drive_unqueue()
 	_assert_retired_kit_verbs()
@@ -660,6 +661,16 @@ func _drive_assign_labor_kits() -> void:
 ## **`band_order` - THE CHIEF'S ORDERS** (#860). `BandOrdersController` is the one emitter behind every
 ## button on the Work tab and the sheets, so it is driven through its own sends and each payload is run
 ## through `Main.format_band_order`: the text must be the grammar `sim_runtime::command_text` parses.
+## The chief's proposal verbs, off the same orb signal the HUD relays: Approve names the band alone, Not now
+## names the build key too (a tile build's key carries its tile).
+func _drive_chief_proposal() -> void:
+	var orb: TurnOrb = _hud._turnorb._turn_orb
+	orb.proposal_action_requested.connect(func(p: Dictionary) -> void:
+		_record("%s_proposal" % String(p.get("action", "")), p, MAIN_SCRIPT.format_chief_proposal(p)))
+	for action in ["approve", "defer"]:
+		orb._on_proposal_pressed(action, {"band_id": BAND_ID, "faction": HudConst.PLAYER_FACTION_ID,
+			"build_key": "food_stores:storage_pit@9,4"})
+
 func _drive_band_order() -> void:
 	var controller := BandOrdersController.new(_hud._band_labor)
 	var seen: Array = []
@@ -1465,6 +1476,9 @@ const EXPECTED_KINDS := {
 	"bench_enqueue_kit": 1,
 	"bench_remove_kit": 1,
 	"bench_raise_kit": 1,
+	# ONE EACH — the chief's proposal answered from the orb: Approve (band only) and Not now (band + build key).
+	"approve_proposal": 1,
+	"defer_proposal": 1,
 }
 
 func _assert_every_command_emitted() -> void:

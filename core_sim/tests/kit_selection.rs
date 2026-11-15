@@ -256,6 +256,7 @@ fn cohort(tile: bevy::prelude::Entity, working: u32) -> PopulationCohort {
         last_belief_relay_hops: 0,
         predators_kept_off: 0,
         last_cohesion: Default::default(),
+        last_leadership: Default::default(),
     }
 }
 
@@ -534,6 +535,8 @@ fn a_gather_crew_wears_only_the_baskets_and_a_kitless_one_wears_nothing() {
         }
         found.expect("the campaign map seeds at least one food module")
     };
+    // Wild gathering is site-bound: the staged tile is a gathering site, so its crew takes something.
+    core_sim::mark_gathering_site(&mut app.world, tile_pos);
     // The patch as the world seeded it — restored between the arms so both work the same ground.
     let pristine = app
         .world
@@ -1877,6 +1880,8 @@ fn spawn_gathering_band(app: &mut App, baskets_owned: u32) -> (bevy::prelude::En
         .copied()
         .min_by_key(|p| (p.y, p.x))
         .expect("the campaign map seeds forage patches");
+    // Wild gathering is site-bound: the staged tile is a gathering site, so its crew takes something.
+    core_sim::mark_gathering_site(&mut app.world, tile_pos);
     let tile_entity = tile_at(app, tile_pos);
     let mut wear =
         BandEquipment::start_stocked_for(&EquipmentConfig::for_a_stocked_fixture(), CREW as f32);

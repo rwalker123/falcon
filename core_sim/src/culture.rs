@@ -1044,6 +1044,20 @@ impl CultureManager {
         }
     }
 
+    /// **Move band `owner`'s MODIFIER on the Hierarchical<->Egalitarian axis `amount` toward
+    /// Hierarchical** (negative), clamped to the culture span. The modifier, never the resolved
+    /// value: the baseline relaxes back to the province, so only the modifier persists (the contact
+    /// drift's and the personality lean's rule). A band with no layer is left alone.
+    pub fn drift_band_toward_hierarchical(&mut self, owner: CultureOwner, amount: Scalar) {
+        let Some(layer) = self.bands.get_mut(&owner.0) else {
+            return;
+        };
+        let span = scalar_from_f32(CULTURE_TRAIT_SPAN);
+        let slot =
+            &mut layer.traits.modifier_mut()[CultureTraitAxis::HierarchicalEgalitarian.index()];
+        *slot = (*slot - amount).clamp(-span, span);
+    }
+
     pub fn band_layer_mut_by_owner(&mut self, owner: CultureOwner) -> Option<&mut CultureLayer> {
         self.bands.get_mut(&owner.0)
     }

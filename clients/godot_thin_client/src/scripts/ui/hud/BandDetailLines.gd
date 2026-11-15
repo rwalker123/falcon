@@ -283,6 +283,12 @@ const MORALE_CONTRIB_LABEL_FRESH_WATER := "fresh water"
 # The cohesion row names its numbers on the row itself:
 # `too many to hold together (182 in the band, holds 150)` -- the band's opening head-count and the
 # ceiling it is held against. Past the ceiling some of them leave for another band.
+## The leadership row's wording. `%s` is who leads: a chief's name, or `the elders` for a council.
+const MORALE_CONTRIB_LEADERSHIP_MET_FORMAT := "%s orders are being met"
+const MORALE_CONTRIB_LEADERSHIP_FAILING_FORMAT := "%s orders are falling short"
+const MORALE_LEADER_COUNCIL_NAME := "the elders'"
+const MORALE_LEADER_POSSESSIVE_SUFFIX := "'s"
+const MORALE_LEADER_FALLBACK_NAME := "the leader's"
 const MORALE_CONTRIB_COHESION_FORMAT := "%s (%d in the band, holds %d)"
 # A positive `morale_culture` (within walking reach of the remembered belief place) reads as "close to
 # its sacred ground"; a negative one reads `DetailFormat.MORALE_CAUSE_LABEL_CULTURE` ("far from its
@@ -315,8 +321,13 @@ var _herd_label_for_id_fn: Callable
 # render context that travels to `DetailFormat`.
 var _food_flow_present: bool = false
 
+## The ladder catalog (`FactionReadouts.ladder_rungs`), so the spoilage line names a store by the roster's
+## own word. Empty Callable (a harness that builds the lines alone) reads as no catalog.
+var _ladder_rungs_fn: Callable = Callable()
+
 func _init(band_labor: HudBandLaborState, disclosures: DisclosureController,
-        herd_label_for_id: Callable) -> void:
+        herd_label_for_id: Callable, ladder_rungs: Callable = Callable()) -> void:
+    _ladder_rungs_fn = ladder_rungs
     _band_labor = band_labor
     _disclosures = disclosures
     _herd_label_for_id_fn = herd_label_for_id
@@ -397,6 +408,13 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
             var starving := DetailFormat.food_starving_line(unit_data)
             if starving != "":
                 lines.append(starving)
+        # Food the larder will lose uneaten, amber beside the food number, with the store that fixes it.
+        # The per-class breakdown is the row's hover (`HudStorageVocab.SPOIL_HOVER_KEY`).
+        var catalog: Array = _ladder_rungs_fn.call() if _ladder_rungs_fn.is_valid() else []
+        var spoil := HudStorageVocab.spoil_line(unit_data, catalog)
+        if spoil != "":
+            lines.append(spoil)
+            context.row_tooltips[HudStorageVocab.SPOIL_HOVER_KEY] = HudStorageVocab.spoil_tooltip(unit_data)
         # Category-aggregated food breakdown under Food: a click-to-open disclosure. `_band_food_line`
         # set `_food_flow_present` (a PRIVATE handshake between the two — the formatter never reads
         # it); `DisclosureController.register` stashes the rows for the popover and records the row so
@@ -1363,6 +1381,15 @@ func _cohesion_label(unit_data: Dictionary) -> String:
     return MORALE_CONTRIB_COHESION_FORMAT % [DetailFormat.MORALE_CAUSE_LABEL_COHESION, headcount,
         int(unit_data.get("cohesion_ceiling", 0))]
 
+## The leadership row's label, naming who leads (`Orrin's orders are being met` / `the elders' orders
+## are falling short`); a band that publishes no leader name reads `the leader's`.
+func _leadership_label(unit_data: Dictionary, positive: bool) -> String:
+    var whose := MORALE_LEADER_FALLBACK_NAME
+    if HudOrdersVocab.has_leader(unit_data):
+        whose = MORALE_LEADER_COUNCIL_NAME if HudOrdersVocab.is_council(unit_data) \
+            else String(unit_data.get("leader_name", "")).strip_edges() + MORALE_LEADER_POSSESSIVE_SUFFIX
+    return (MORALE_CONTRIB_LEADERSHIP_MET_FORMAT if positive else MORALE_CONTRIB_LEADERSHIP_FAILING_FORMAT) % whose
+
 ## The band's kin-relay hop count, or `BELIEF_RELAY_DIRECT` when it is not tied in through kin — no
 ## anchor, direct, or unreached (255) all answer 0, which is what keeps their wording plain.
 func _belief_relay_hops(unit_data: Dictionary) -> int:
@@ -1389,7 +1416,8 @@ func _morale_breakdown_lines(unit_data: Dictionary, terrain_label: String, terra
         terrain_row_label = "%s (%s)" % [terrain_word, terrain_label]
     var unrest_value := float(unit_data.get("morale_unrest", 0.0))
     var culture_value := float(unit_data.get("morale_culture", 0.0))
-    # (value, label) in display order: settling, terrain, climate, unrest, culture, fresh water, cohesion.
+    var leadership_value := float(unit_data.get("morale_leadership", 0.0))
+    # (value, label) in display order: settling, terrain, climate, unrest, culture, fresh water, cohesion, leadership.
     var contributions := [
         [float(unit_data.get("morale_settling", 0.0)), MORALE_CONTRIB_LABEL_SETTLING],
         [float(unit_data.get("morale_terrain", 0.0)), terrain_row_label],
@@ -1398,6 +1426,7 @@ func _morale_breakdown_lines(unit_data: Dictionary, terrain_label: String, terra
         [culture_value, _ancestors_near_label(unit_data) if culture_value > 0.0 else _ancestors_far_label(unit_data)],
         [float(unit_data.get("morale_fresh_water", 0.0)), MORALE_CONTRIB_LABEL_FRESH_WATER],
         [float(unit_data.get("morale_cohesion", 0.0)), _cohesion_label(unit_data)],
+        [leadership_value, _leadership_label(unit_data, leadership_value > 0.0)],
     ]
     var epsilon := BandFoodStatus.morale_breakdown_epsilon()
     for entry in contributions:

@@ -183,6 +183,8 @@ fn rung_quotes() -> Vec<RungQuoteState> {
             build_material_cost: rows(),
             upkeep_material_demand: rows(),
             material_payoff: rows(),
+            site_refusal: "needs_lesson".to_string(),
+            needs_lesson: "worked_land".to_string(),
             ..Default::default()
         })
         .collect()
@@ -686,6 +688,16 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.breeding_members = rows();
         cohort.breeding_peoples = rows();
         cohort.hunt_meals = rows();
+        cohort.spoil_ahead = rows();
+        cohort.storage_saves = rows();
+        cohort.held_stores = rows();
+        // A proposal's own `keep_raises` is a nested repeated field, so both levels are seeded.
+        cohort.chief_proposals = rows_of(crate::state::population::ChiefProposalState {
+            keep_raises: vec![crate::state::population::KeepRaiseState::default()],
+            // The appended wire field, so the decode golden carries it (`idle` | `food_falling`).
+            trigger: "food_falling".to_string(),
+            ..Default::default()
+        });
         cohort.envoy_terms = seeded_terms();
         cohort.culture_pressures = rows();
         cohort.band_orders = rows();

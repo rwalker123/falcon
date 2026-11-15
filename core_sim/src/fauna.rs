@@ -7725,6 +7725,7 @@ pub(crate) fn forecast_source_yield(
         // (`project_realized_hunt` / `project_realized_forage`), computed by the caller from the same
         // source state — a pure function of state, so the seed and the resolved row agree exactly.
         realized,
+        eaten_fraction: 1.0,
         wasted: (production.provisions - actual.provisions).max(0.0),
         // **`workers_needed` IS THE TAKE ACTIVITY'S OWN COUNT — hands to haul the offer**
         // (`docs/plan_standing_upkeep.md` §2.2). It used to be `source_crew_needed(standing, take)`,
@@ -12182,16 +12183,8 @@ pub(crate) fn hunt_forecast(
     // `SourceYieldForecast::managed_yield_biomass`. Same `biomass_before_regrowth` basis and
     // `carrying_capacity` the wild ceiling uses, so the ONLY difference from Sustain is the rung's
     // boosted `r`.
-    let pen_msy_biomass = sustainable_yield(
-        herd.biomass_before_regrowth,
-        herd.carrying_capacity,
-        &pen_ecology_for(herd, fauna),
-    );
-    let pastoral_msy_biomass = sustainable_yield(
-        herd.biomass_before_regrowth,
-        herd.carrying_capacity,
-        &pastoral_ecology_for(herd, fauna),
-    );
+    let pen_msy_biomass = herd_msy_biomass_at(herd, fauna, HerdPayoff::Pen);
+    let pastoral_msy_biomass = herd_msy_biomass_at(herd, fauna, HerdPayoff::Pastoral);
     SourceYieldForecast {
         per_worker_yield: hunt_yield.apply(per_worker_biomass_capacity.max(0.0), output_multiplier),
         // The quantum that makes this preview pulse exactly as the take does (slice 8).
@@ -12289,6 +12282,24 @@ pub(crate) fn hunt_forecast(
         standing_commitment: herd.standing_output_fraction,
         standing_provisions: herd_standing_provisions(&quarry, fauna) * output_multiplier,
     }
+}
+
+/// **THE SUSTAINED MSY, IN BIOMASS, A HERD PAYS AT A RUNG'S BLOCK** - the one expression behind the
+/// forecast's `managed_yield` / `pastoral_yield` and the wire's `rungQuotes[].foodYield`, struck on
+/// the same `biomass_before_regrowth` basis and `carrying_capacity` as the wild ceiling, so the only
+/// difference between two blocks is the rung's own ecology. `Wild` is the herd's current ecology.
+/// The staffing's food-first check reads it for what a finished Tame or Corral adds to the larder.
+pub fn herd_msy_biomass_at(herd: &Herd, fauna: &FaunaConfig, payoff: HerdPayoff) -> f32 {
+    let ecology = match payoff {
+        HerdPayoff::Pen => pen_ecology_for(herd, fauna),
+        HerdPayoff::Pastoral => pastoral_ecology_for(herd, fauna),
+        HerdPayoff::Wild => herd_ecology(herd, fauna),
+    };
+    sustainable_yield(
+        herd.biomass_before_regrowth,
+        herd.carrying_capacity,
+        &ecology,
+    )
 }
 
 /// One turn's positive logistic regrowth increment (>= 0) for a group of `biomass`
@@ -15338,6 +15349,25 @@ mod tests {
         )
     }
 
+    /// **ONE DEFINITION OF A RUNG'S SUSTAINED MSY**: the staffing's food-first check and the forecast
+    /// read the same biomass, and the ladder is ordered on it (wild < pastoral < pen).
+    #[test]
+    fn a_rungs_msy_biomass_is_the_forecasts_and_orders_the_ladder() {
+        let fauna = FaunaConfig::builtin();
+        let mut herd = herd_of_size(SizeClass::Big, 1000.0, 1000.0, 0.06);
+        herd.species = "Wild Boar".to_string();
+        herd.regrowth_rate = 0.10;
+        herd.husbandry_ceiling = Some(shipped::animal_pen());
+        herd.body_mass = 50.0;
+        let forecast = hunt_forecast(&herd, &fauna, 40.0, &HuntingParty::builtin_equipped(), 1.0);
+        let wild = herd_msy_biomass_at(&herd, &fauna, HerdPayoff::Wild);
+        let pastoral = herd_msy_biomass_at(&herd, &fauna, HerdPayoff::Pastoral);
+        let pen = herd_msy_biomass_at(&herd, &fauna, HerdPayoff::Pen);
+        assert!(wild > 0.0 && wild < pastoral && pastoral < pen);
+        assert_eq!(pastoral, forecast.pastoral_yield_biomass);
+        assert_eq!(pen, forecast.managed_yield_biomass);
+    }
+
     /// The **Tame rung's payoff** (`pastoral_yield`) is what a Sustain hunt pays *once the herd is
     /// tamed* — the pastoral analog of `managed_yield`/`corralYield`. It exists so the client can
     /// quote Tame's `→ +Y` rather than only the wild hunt beside it, which hides that taming
@@ -15786,6 +15816,7 @@ mod tests {
                     last_belief_relay_hops: 0,
                     predators_kept_off: 0,
                     last_cohesion: Default::default(),
+                    last_leadership: Default::default(),
                 },
             ))
             .id()

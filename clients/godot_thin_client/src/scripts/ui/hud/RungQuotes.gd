@@ -41,6 +41,8 @@ const KEY_FOOD_YIELD := "food_yield"
 const KEY_FODDER := "fodder"
 const KEY_MATERIAL_PAYOFF := "material_payoff"
 const KEY_SITE_REFUSAL := "site_refusal"
+## The lesson id the server names for a `needs_lesson` refusal (`""` when none would admit the ground).
+const KEY_NEEDS_LESSON := "needs_lesson"
 ## A crop-picker quote's own keys (one per plant, per rung above the plant root).
 const KEY_CAN_CLIMB := "can_climb"
 const KEY_FOOD_PAYOFF := "food_payoff"
@@ -346,20 +348,17 @@ static func offsite_placing_quote(src: Dictionary, prefix: String = "") -> Dicti
 			return quote
 	return {}
 
-## The lesson id a placing rung's refusal is waiting on (`""` when none is): the knowledge of the last
-## `site_relaxation`, which is the one the server's own refusal sentence names, set against a quote the
-## server answered `needs_lesson`.
+## The lesson id a placing rung's refusal is waiting on (`""` when none is): the server's own
+## `needs_lesson` on the quote it answered `needs_lesson`, never derived here.
 static func lesson_to_place(src: Dictionary, prefix: String = "") -> String:
 	for quote in quotes(src, prefix):
 		if not places_source(quote):
 			continue
 		if String(quote.get(KEY_SITE_REFUSAL, "")).strip_edges() != SITE_REFUSAL_NEEDS_LESSON:
 			continue
-		var relaxations: Variant = quote.get(KEY_SITE_RELAXATIONS, [])
-		if relaxations is Array and not (relaxations as Array).is_empty():
-			var last: Variant = (relaxations as Array).back()
-			if last is Dictionary:
-				return String((last as Dictionary).get("knowledge", ""))
+		var lesson := String(quote.get(KEY_NEEDS_LESSON, "")).strip_edges()
+		if lesson != "":
+			return lesson
 	return ""
 
 ## The placing quote the server answered `needs_lesson` for (`{}` when none): the rung whose own gate

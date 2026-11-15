@@ -42,6 +42,21 @@
     "_comment_drag": "Morale per turn lost per 100% over the ceiling. At the shipped settling +0.01 a band 10% over nets -0.01 a turn, so the leak starts just past the ceiling. Must be finite and >= 0. OPENING VALUE, PLAYTEST DIAL.",
     "drag": 0.2
   },
+  "leadership": {
+    "_comment": "The band judges its leader by what he delivers (docs/plan_civilization_steps.md 'Directed labor and consent'; .claude/rules/core_sim/leadership.md 'The band judges its leader by what he delivers'). Only a band WITH a leader has the term. Each turn every order the band holds (the chief's and the player's alike) is judged on the figures the band-orders wire publishes: on_hand >= target is MET (+popularity_per_met_order); on_hand < target while take < draw is FALLING (-strain_per_falling_order x patience); below target but rising reads 0. The people going short at the turn's meal (the starvation deficit) cost -starvation_strain x min(1, deficit / starvation_full_at) x patience. Patience = max(0, 1 + egalitarian_sensitivity x clamp(axis / CULTURE_TRAIT_SPAN, -1, 1)) on the band's Hierarchical<->Egalitarian axis (negative = hierarchical), so egalitarian bands turn on a failing leader sooner. Every met order also pushes the band's culture modifier drift_per_met_order toward Hierarchical. All six are OPENING VALUES and PLAYTEST DIALs.",
+    "_comment_popularity_per_met_order": "Morale per turn gained for each order whose stock is at or above its target. Must be finite and >= 0. OPENING VALUE, PLAYTEST DIAL.",
+    "popularity_per_met_order": 0.002,
+    "_comment_strain_per_falling_order": "Morale per turn lost (before patience) for each order below its target whose take is below its draw. Must be finite and >= 0. OPENING VALUE, PLAYTEST DIAL.",
+    "strain_per_falling_order": 0.004,
+    "_comment_starvation_strain": "Morale per turn lost (before patience) when the people go short at the meal by starvation_full_at or more of their need. The major term: it keys off the real meal deficit, never off income against consumption. Must be finite and >= 0. OPENING VALUE, PLAYTEST DIAL.",
+    "starvation_strain": 0.03,
+    "_comment_starvation_full_at": "The share of the meal the band goes without at which the starvation strain is whole; a smaller deficit costs in proportion. Must be finite and > 0 (it is the divisor). OPENING VALUE, PLAYTEST DIAL.",
+    "starvation_full_at": 0.1,
+    "_comment_egalitarian_sensitivity": "How far the band's culture on the Hierarchical<->Egalitarian axis scales its patience: patience = max(0, 1 + sensitivity x axis / span). 0: every band is equally patient. Must be finite and >= 0. OPENING VALUE, PLAYTEST DIAL.",
+    "egalitarian_sensitivity": 0.5,
+    "_comment_drift_per_met_order": "Culture-trait units the band's modifier on the Hierarchical<->Egalitarian axis moves toward Hierarchical per met order per turn. Must be finite and >= 0; 0 switches the drift off. OPENING VALUE, PLAYTEST DIAL.",
+    "drift_per_met_order": 0.0005
+  },
   "independence": {
     "grievance_threshold": 1.0
   }

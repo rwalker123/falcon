@@ -515,6 +515,7 @@ const BUILD_BLOCKED_REASONS := {
     "ring_idle": "Nobody is extending this pen.",
     "undeclared": "This job is out of date — the land has moved on since you ordered it.",
     "unworked": "This band has nobody working here any more.",
+    "feeding_first": "The band is feeding itself first — builders return once food is secure.",
 }
 
 # **THE ONE CAUSE THAT IS WORDED PER WEB** — the state the playtest actually hit, and the only one

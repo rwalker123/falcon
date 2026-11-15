@@ -1972,6 +1972,8 @@ pub struct RungQuoteState {
     pub material_payoff: Vec<MaterialPayoff>,
     /// Why this ground will not take the rung; `""` when it will.
     pub site_refusal: String,
+    /// The lesson the gate names when `site_refusal` is `needs_lesson`; `""` otherwise.
+    pub needs_lesson: String,
 }
 
 /// **THE QUOTE OF A RUNG A SOURCE SAYS NOTHING ABOUT** - every number zero, nothing reached. What
@@ -1990,6 +1992,7 @@ pub static NO_RUNG_QUOTE: RungQuoteState = RungQuoteState {
     fodder: 0.0,
     material_payoff: Vec::new(),
     site_refusal: String::new(),
+    needs_lesson: String::new(),
 };
 
 /// **ONE LESSON-KEYED SITE RULE ON A RUNG** (`snapshot.fbs` -> `SiteRelaxationState`).

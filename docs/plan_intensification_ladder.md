@@ -505,11 +505,14 @@ interesting future rungs (selective breeding, irrigation, traction, crop rotatio
     per-worker thesis is to be restored.
   - *Remaining:* the **client** (slice 8) — nothing renders `wastedYield`, and the tended patch's card
     still needs to show four policy rows rather than one number.
-- [x] *Amended (shipped):* **the Farm asks no water of a gathering site** (`requires_fresh_water` false on its own rule): sites are already the rich ground. Water matters only for new ground - the Worked Land relaxation keeps the fresh-water rule and a fertility floor of 80. On the standard map every gathering site with a patch (132) takes a farm, and Worked Land opens 280 more watered tiles.
-- [x] *Amended (shipped):* **Worked Land** is not a fourth plant rung. It is a lesson earned by working a
-  **Farm** (`plant:farm`, renamed from `plant:field`) and a `site_relaxations` entry on the Farm: with the
-  lesson held the Farm's site rule drops the gathering-site requirement and asks only for fertile, watered
-  ground. The text below is the original plan.
+- [x] *Amended (shipped):* **the Farm asks no water of a gathering site** (`requires_fresh_water` false on its own rule): sites are already the rich ground. Off the sites two lessons apply (below). On the standard map every gathering site with a patch (132) takes a farm, and Seed Selection opens about 280 more watered tiles.
+- [x] *Amended (shipped, restored to the original design):* **Seed Selection** lets you sow (and cultivate) on
+  ground that is already very fertile and near fresh water, ANYWHERE; **Worked Land** (plows and irrigation) opens
+  fertile ground away from water too. Neither is a fourth plant rung: both are `site_relaxations` entries on
+  Tended and the Farm (`plant:farm`, renamed from `plant:field`), the floor 80 on each, the water rule asked by
+  Seed Selection only. Foraging stays site-bound: **on off-site ground still at the wild rung a crew takes nothing**,
+  so the ground yields nothing until Tended. (A later change had made Worked Land do Seed Selection's job; this
+  restores the split.) The text below is the original plan.
 - [ ] **Rung 4 (original plan): Worked Land** (plants) — irrigation / clearing / terracing makes
   unwilling ground farmable; this is where `plan_intensification.md`'s "plant on **arbitrary** tiles"
   actually lives. Its animal twin is **Selective Breeding**. Both should be config-shaped rungs on the

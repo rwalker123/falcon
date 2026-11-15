@@ -382,3 +382,35 @@ const DECLINE_REASON_PEOPLE_LEAVING := "people leaving"
 const DECLINE_REASON_LETHAL_COLD := "lethal cold"
 
 const DECLINE_REASON_LETHAL_HEAT := "lethal heat"
+
+# ---- the chief's build proposal, riding the idle-workers entry ---------------------------------------
+## The band dict's own key (an array of 0 or 1 dicts, the sim's words already resolved in `text`).
+const CHIEF_PROPOSALS_KEY := "chief_proposals"
+const PROPOSAL_TEXT_KEY := "text"
+const PROPOSAL_BUILD_KEY := "build_key"
+const PROPOSAL_ESCALATION_KEY := "escalation"
+## The proposal's own `trigger` (what raised it) and the value that means the band's food order reads Falling.
+const PROPOSAL_TRIGGER_KEY := "trigger"
+const PROPOSAL_TRIGGER_FOOD_FALLING := "food_falling"
+## **THE FALLING-FOOD ROW.** A Falling-only proposal is raised with NO idle hands, so it has no idle-workers
+## entry to ride; this is the entry that carries it. WARN, like the idle row: a loss in progress the
+## player can still answer, not yet a starving crisis. The sim's sentence rides beneath it as the block.
+const ATTENTION_KIND_FOOD_FALLING := "food_falling"
+const ATTENTION_FOOD_FALLING_LABEL_FORMAT := "%s food falling"
+const ATTENTION_FOOD_FALLING_DETAIL := "Chief proposes a fix"
+## The entry key the orb reads the proposal block from, and what that block carries.
+const ATTENTION_PROPOSAL := "proposal"
+const PROPOSAL_BAND_ID := "band_id"
+const PROPOSAL_FACTION := "faction"
+## The escalation rung at which the block tints amber (`band_orders.proposal_idle_turns_wasted`).
+const PROPOSAL_ESCALATION_WASTED := 2
+const PROPOSAL_APPROVE_LABEL := "Approve"
+const PROPOSAL_NOT_NOW_LABEL := "Not now"
+const PROPOSAL_APPROVE_TOOLTIP := "The chief declares this build and raises any keep order it names."
+const PROPOSAL_NOT_NOW_TOOLTIP := "Hide this proposal for a while."
+## The two actions the orb reports, and the payload key naming one.
+const PROPOSAL_ACTION_KEY := "action"
+const PROPOSAL_ACTION_APPROVE := "approve"
+const PROPOSAL_ACTION_DEFER := "defer"
+## The amber block's wash opacity over the popover card.
+const PROPOSAL_WASH_ALPHA := 0.14

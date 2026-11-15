@@ -473,6 +473,7 @@ const BLOCKED_CAUSE_ONLY_LINES := 1
 ## to do with either the keeping or the floor, so a table that answered one sentence for every key
 ## cannot satisfy both it and the escapement claim.
 const BLOCKED_KNOWLEDGE_REASON := "knowledge"
+const BLOCKED_FEEDING_FIRST_REASON := "feeding_first"
 
 ## The THIRD cause key, and the only one whose sentence NAMES something off the wire rather than
 ## reading it out of a table (`docs/plan_standing_upkeep.md` §2.7). The good is the rung's own build
@@ -1557,6 +1558,26 @@ func run(harness) -> void:
 			+ String(HudSelectionVocab.BUILD_BLOCKED_REASONS[BLOCKED_KNOWLEDGE_REASON]))
 	h._assert_hud("…and NOT the escapement one, which is a different remedy entirely",
 		not String(knowledge_lines[0]).contains(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT))
+	#   (2b) `feeding_first` — the band is staffing builds LAST because it would run out of food inside
+	#   the look-ahead. Same `-4` sentinel; the sentence carries its own "what next", so it is asserted
+	#   by equality against the table and the frame is what shows it fits the card.
+	var blocked_feeding := BaseFx.unbuilt(BaseFx.food_tile_fixture())
+	blocked_feeding["patch_cultivation_progress"] = REVERTING_METER_PROGRESS
+	blocked_feeding["patch_build_blocked_reason"] = BLOCKED_FEEDING_FIRST_REASON
+	BaseFx.price_plant_build(blocked_feeding, SourceForecast.BUILD_TURNS_QUEUE_BLOCKED)
+	var feeding_lines := DetailFormat.build_blocked_lines(blocked_feeding,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_FORAGE)
+	h._assert_hud("a build blocked on FEEDING FIRST states its own cause in ONE line (%s)"
+			% str(feeding_lines), feeding_lines.size() == BLOCKED_CAUSE_ONLY_LINES
+		and String(feeding_lines[0]) == DetailFormat.MORALE_BREAKDOWN_INDENT
+			+ String(HudSelectionVocab.BUILD_BLOCKED_REASONS[BLOCKED_FEEDING_FIRST_REASON])
+		and String(feeding_lines[0]).contains("feeding itself first")
+		and String(feeding_lines[0]).contains("builders return once food is secure"))
+	h._hud.clear_selection()
+	h._show_tile(blocked_feeding)
+	await h._settle()
+	await h._save("tile_meter_blocked_feeding_first")
+
 	#   (3) A source that is NOT blocked states NO cause at all. A producer that always emitted a
 	#   line passes every positive above, so this is the half that makes them worth anything.
 	var building := BaseFx.unbuilt(BaseFx.food_tile_fixture())

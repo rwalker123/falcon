@@ -3668,6 +3668,7 @@ fn spawn_population_entity(
         last_belief_relay_hops: 0,
         predators_kept_off: 0,
         last_cohesion: Default::default(),
+        last_leadership: Default::default(),
     });
     // Every band carries a labor allocation (default empty = fully idle). The client drives
     // assignment; the startup food reserve covers the ramp before the first orders land.
