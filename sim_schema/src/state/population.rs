@@ -552,6 +552,13 @@ pub struct LaborAssignmentState {
     /// Appended last.
     #[serde(default)]
     pub scouting_reach: u32,
+    /// **A TRIBE'S LEVY ROW**, or the Scout row carrying the tribe's range. Appended last.
+    #[serde(default)]
+    pub for_tribe: bool,
+    /// On a tribe member's Scout row, its share of the tribe's scouting edge (1 = a lone band's
+    /// ring). Appended last.
+    #[serde(default)]
+    pub scouting_stretch: f32,
     /// An unarmed hand adds nothing on this take row (`StaffedCrew::bare_idle`). Appended last.
     #[serde(default)]
     pub bare_idle: bool,
@@ -2012,7 +2019,44 @@ pub struct PopulationCohortState {
     /// `morale_*` breakdown whose signed sum IS `morale_delta`. Fixed-point raw. Appended last.
     #[serde(default)]
     pub morale_leadership: i64,
+    /// The tribe's levy ceiling (`TRIBE_LEVY_*`; `0` = the band is in no tribe). Own member bands
+    /// only. Appended last.
+    #[serde(default)]
+    pub tribe_levy_ceiling: u8,
+    /// The tribe's scouting range, in tiles past the local range. Appended last.
+    #[serde(default)]
+    pub tribe_scouting_range: u32,
+    /// The tribe's works, in the order they were added. Appended last.
+    #[serde(default)]
+    pub tribe_works: Vec<TribeWorkState>,
 }
+
+/// **ONE WORK THE TRIBE OWNS** - a row of [`PopulationCohortState::tribe_works`]. See
+/// `snapshot.fbs`'s `TribeWorkState`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct TribeWorkState {
+    pub x: u32,
+    pub y: u32,
+    pub branch: String,
+    /// The rung the tribe wants it raised to (`<branch>:<id>`); empty keeps what stands.
+    pub target_rung: String,
+    pub priority: SourcePriorityState,
+    /// The bands carrying a levy row for it this turn, nearest first.
+    pub bands: Vec<u32>,
+    /// The heads on those rows.
+    pub workers: u32,
+}
+
+/// `PopulationCohortState::tribe_levy_ceiling`: the band is in no tribe.
+pub const TRIBE_LEVY_NOT_IN_A_TRIBE: u8 = 0;
+/// `PopulationCohortState::tribe_levy_ceiling`: the tribe levies nothing.
+pub const TRIBE_LEVY_NONE: u8 = 1;
+/// `PopulationCohortState::tribe_levy_ceiling`: a low ceiling.
+pub const TRIBE_LEVY_LOW: u8 = 2;
+/// `PopulationCohortState::tribe_levy_ceiling`: a normal ceiling.
+pub const TRIBE_LEVY_NORMAL: u8 = 3;
+/// `PopulationCohortState::tribe_levy_ceiling`: a high ceiling.
+pub const TRIBE_LEVY_HIGH: u8 = 4;
 
 /// `PopulationCohortState::tribe_leader_kind`: the band is in no tribe.
 pub const TRIBE_LEADER_NONE: u8 = 0;

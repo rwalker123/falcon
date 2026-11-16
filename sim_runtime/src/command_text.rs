@@ -2,7 +2,7 @@ use std::num::{ParseFloatError, ParseIntError};
 
 use thiserror::Error;
 
-use crate::commands::{BandOrderAction, BandOrderRow};
+use crate::commands::{BandOrderAction, BandOrderRow, TribeOrderAction};
 
 /// Describes a runtime command verb, its aliases, and usage hint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,6 +214,24 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         aliases: &[],
         summary: "STOP A STAFFED ROW: remove the band's row for one source. The sim staffs every forage, hunt, extraction, tile-improvement and Roadwork row from your floor, kit and priority, so the count on `assign_labor` for those kinds is your MAX (0 = no max) and no longer ends the row - this does. Two integer tokens name a TILE's forage patch; one token names a HERD id; `<x> <y> <material>` names a WORKING; `<branch> <x> <y>` names a tile improvement; the lone token `roadwork` names the band's Roadwork pool.",
         usage: "stop_labor <faction_id> <band_id> <x> <y> | stop_labor <faction_id> <band_id> <herd_id> | stop_labor <faction_id> <band_id> <x> <y> <material> | stop_labor <faction_id> <band_id> <branch> <x> <y> | stop_labor <faction_id> <band_id> roadwork",
+    },
+    CommandVerbHelp {
+        verb: "tribe_work",
+        aliases: &[],
+        summary: "A TRIBE'S WORK, ordered through one of its member bands (the band names its tribe; refused `band_not_in_tribe` otherwise): add or update a tile improvement the tribe keeps and, with a target rung (`<branch>:<rung>`), builds - the tribe levies its bands for it, putting it on the nearest member's list as a levy row and, while that band's crew falls short, on the next nearest. A member's own row on the site is adopted. Tile-kind branches only. `stop` removes the work and drops its levy rows.",
+        usage: "tribe_work <faction_id> <band_id> <branch> <x> <y> [<branch>:<rung>] [high|normal|low] | tribe_work <faction_id> <band_id> stop <branch> <x> <y>",
+    },
+    CommandVerbHelp {
+        verb: "tribe_levy",
+        aliases: &[],
+        summary: "HOW MUCH OF ITS BANDS' FREE HANDS A TRIBE MAY LEVY, ordered through one of its member bands: none, low, normal or high. The levy is taken from what a band has left after its own keep-up work; an unknown level is refused by name.",
+        usage: "tribe_levy <faction_id> <band_id> none|low|normal|high",
+    },
+    CommandVerbHelp {
+        verb: "tribe_scout",
+        aliases: &[],
+        summary: "A TRIBE'S ONE SCOUTING RANGE, in tiles past the local range, ordered through one of its member bands (clamped as `assign_labor scout` is). Every member scouts its own stretch of the tribe's edge; a member's own `assign_labor scout` is refused `scouting_set_by_tribe`.",
+        usage: "tribe_scout <faction_id> <band_id> <range>",
     },
     CommandVerbHelp {
         verb: "band_order",
@@ -1217,6 +1235,106 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 kind: kind.to_owned(),
                 action,
                 row,
+            })
+        }
+        // **A TRIBE'S ORDERS** (#862), band-addressed: `tribe_work <f> <b> <branch> <x> <y>
+        // [<branch>:<rung>] [priority]`, `tribe_work <f> <b> stop <branch> <x> <y>`, `tribe_levy <f> <b>
+        // <level>` and `tribe_scout <f> <b> <n>`. Levels and priorities are lower-cased on the way in
+        // and an unknown one is the sim's to refuse by name.
+        "tribe_work" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let first = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("branch"))?;
+            let stopping = first == "stop";
+            let branch = if stopping {
+                parts
+                    .next()
+                    .ok_or(CommandParseError::MissingArgument("branch"))?
+            } else {
+                first
+            };
+            let x = parse_u32(
+                parts
+                    .next()
+                    .ok_or(CommandParseError::MissingArgument("x"))?,
+                "tribe_work x",
+            )?;
+            let y = parse_u32(
+                parts
+                    .next()
+                    .ok_or(CommandParseError::MissingArgument("y"))?,
+                "tribe_work y",
+            )?;
+            let action = if stopping {
+                TribeOrderAction::StopWork {
+                    branch: branch.to_owned(),
+                    x,
+                    y,
+                }
+            } else {
+                let mut target_rung = None;
+                let mut priority = None;
+                for token in parts.by_ref() {
+                    if token.contains(':') {
+                        target_rung = Some(token.to_owned());
+                    } else {
+                        priority = Some(token.to_ascii_lowercase());
+                    }
+                }
+                TribeOrderAction::Work {
+                    branch: branch.to_owned(),
+                    x,
+                    y,
+                    target_rung,
+                    priority,
+                }
+            };
+            Ok(CommandPayload::TribeOrder {
+                faction_id: parse_u32(faction_str, "tribe_work faction")?,
+                band_id: parse_u64(band_str, "tribe_work band")?,
+                action,
+            })
+        }
+        "tribe_levy" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let level = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("level"))?;
+            Ok(CommandPayload::TribeOrder {
+                faction_id: parse_u32(faction_str, "tribe_levy faction")?,
+                band_id: parse_u64(band_str, "tribe_levy band")?,
+                action: TribeOrderAction::Levy {
+                    level: level.to_ascii_lowercase(),
+                },
+            })
+        }
+        "tribe_scout" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let range = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("range"))?;
+            Ok(CommandPayload::TribeOrder {
+                faction_id: parse_u32(faction_str, "tribe_scout faction")?,
+                band_id: parse_u64(band_str, "tribe_scout band")?,
+                action: TribeOrderAction::Scout {
+                    range: parse_u32(range, "tribe_scout range")?,
+                },
             })
         }
         // **THE CHIEF'S BUILD PROPOSAL** - `approve_proposal <faction> <band>` and
@@ -2906,6 +3024,37 @@ pub fn render_command_line(payload: &CommandPayload) -> String {
             }
             line
         }
+        CommandPayload::TribeOrder {
+            faction_id,
+            band_id,
+            action,
+        } => match action {
+            TribeOrderAction::Work {
+                branch,
+                x,
+                y,
+                target_rung,
+                priority,
+            } => {
+                let mut line = format!("tribe_work {faction_id} {band_id} {branch} {x} {y}");
+                if let Some(rung) = target_rung {
+                    line.push_str(&format!(" {rung}"));
+                }
+                if let Some(priority) = priority {
+                    line.push_str(&format!(" {priority}"));
+                }
+                line
+            }
+            TribeOrderAction::StopWork { branch, x, y } => {
+                format!("tribe_work {faction_id} {band_id} stop {branch} {x} {y}")
+            }
+            TribeOrderAction::Levy { level } => {
+                format!("tribe_levy {faction_id} {band_id} {level}")
+            }
+            TribeOrderAction::Scout { range } => {
+                format!("tribe_scout {faction_id} {band_id} {range}")
+            }
+        },
         CommandPayload::ApproveProposal {
             faction_id,
             band_id,
@@ -5711,5 +5860,84 @@ mod tests {
         );
         assert_eq!(command_line_verb(&fallback), "Resync");
         assert_eq!(command_line_verb(""), "");
+    }
+
+    /// **A tribe's orders are band-addressed and round-trip** (#862): the shapes
+    /// `render_command_line` writes parse back to the same payload, and the proto round trip keeps it.
+    #[test]
+    fn the_tribe_verbs_parse_and_render_back_and_round_trip_the_proto() {
+        use crate::commands::{CommandEnvelope, TribeOrderAction};
+        let cases = [
+            (
+                "tribe_work 0 904 food_stores 14 11",
+                TribeOrderAction::Work {
+                    branch: "food_stores".into(),
+                    x: 14,
+                    y: 11,
+                    target_rung: None,
+                    priority: None,
+                },
+            ),
+            (
+                "tribe_work 0 904 food_stores 14 11 food_stores:storage_pit high",
+                TribeOrderAction::Work {
+                    branch: "food_stores".into(),
+                    x: 14,
+                    y: 11,
+                    target_rung: Some("food_stores:storage_pit".into()),
+                    priority: Some("high".into()),
+                },
+            ),
+            (
+                "tribe_work 0 904 stop food_stores 14 11",
+                TribeOrderAction::StopWork {
+                    branch: "food_stores".into(),
+                    x: 14,
+                    y: 11,
+                },
+            ),
+            (
+                "tribe_levy 0 904 low",
+                TribeOrderAction::Levy {
+                    level: "low".into(),
+                },
+            ),
+            ("tribe_scout 0 904 6", TribeOrderAction::Scout { range: 6 }),
+        ];
+        for (line, action) in cases {
+            let expected = CommandPayload::TribeOrder {
+                faction_id: 0,
+                band_id: 904,
+                action,
+            };
+            let parsed = parse_command_line(line).expect(line);
+            assert_eq!(parsed, expected, "{line}");
+            assert_eq!(render_command_line(&parsed), line, "{line}");
+            let envelope = CommandEnvelope {
+                payload: parsed,
+                correlation_id: None,
+            };
+            let bytes = envelope.encode_to_vec().expect("encodes");
+            assert_eq!(
+                CommandEnvelope::decode(bytes.as_slice()).expect("decodes"),
+                envelope,
+                "{line}"
+            );
+        }
+        // An unknown level is the sim's to refuse by name, so the parser passes it through lowered.
+        assert_eq!(
+            parse_command_line("tribe_levy 0 904 SIDEWAYS").unwrap(),
+            CommandPayload::TribeOrder {
+                faction_id: 0,
+                band_id: 904,
+                action: TribeOrderAction::Levy {
+                    level: "sideways".into()
+                },
+            }
+        );
+        assert!(matches!(
+            parse_command_line("tribe_work 0 904"),
+            Err(CommandParseError::MissingArgument(_))
+        ));
     }
 }

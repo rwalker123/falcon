@@ -315,6 +315,9 @@ pub struct LaborConfigs<'w> {
     /// party's walk a road takes away (`crate::work_party::resolve_walk`). Read here rather than
     /// re-stated so what a road does for a caravan and what it does for pooling are one reading.
     pub supply_network: Res<'w, crate::supply_network_config::SupplyNetworkConfigHandle>,
+    /// **The tribes** (#862): a member band's staffing deals its tribe's levy from a budget
+    /// (`staffing::LevyPlan`). `Option`: a hand-built test world installs none.
+    pub tribes: Option<Res<'w, crate::tribe::TribeRegistry>>,
     /// **This turn's supply networks** - what the steady pooling term the hunting need clock reads
     /// is struck over ([`crate::snapshot::pooling_steady_nets`]).
     /// `Option`: a hand-built test world that never installed it has no networks.
@@ -6625,6 +6628,16 @@ pub fn advance_labor_allocation(
                     &demographics_cfg,
                     pooling_steady.get(&band_entity).copied().unwrap_or(0.0),
                 ),
+                levy: band_id.and_then(|id| {
+                    crate::tribe_levy::levy_plan(
+                        configs.tribes.as_deref()?,
+                        &configs.leadership.as_deref()?.get(),
+                        id,
+                        band_leadership
+                            .as_deref()
+                            .is_some_and(|leadership| leadership.leader.is_some()),
+                    )
+                }),
                 bench: &bench_plan,
             };
             let pool = crate::staffing::staffable_pool(&allocation, available);
@@ -15997,6 +16010,8 @@ mod labor_yield_tests {
                     planned_crew: 0,
                     scouting_range: 0,
                     scouting_reach: 0,
+                    for_tribe: None,
+                    scouting_stretch: 1.0,
                     max_workers: Some(WORKERS),
                     staffing: Default::default(),
                     target: LaborTarget::Forage {
@@ -16015,6 +16030,8 @@ mod labor_yield_tests {
                     planned_crew: 0,
                     scouting_range: 0,
                     scouting_reach: 0,
+                    for_tribe: None,
+                    scouting_stretch: 1.0,
                     max_workers: Some(WORKERS),
                     staffing: Default::default(),
                     target: LaborTarget::Hunt {
@@ -16095,6 +16112,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -16144,6 +16163,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -16293,6 +16314,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -16333,6 +16356,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(assigned),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -16406,6 +16431,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(assigned),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -16553,6 +16580,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -16575,6 +16604,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -16780,6 +16811,8 @@ mod labor_yield_tests {
                     planned_crew: 0,
                     scouting_range: 0,
                     scouting_reach: 0,
+                    for_tribe: None,
+                    scouting_stretch: 1.0,
                     max_workers: Some(WORKERS),
                     staffing: Default::default(),
                     target: LaborTarget::Forage {
@@ -16916,6 +16949,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(GATHERERS),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -16987,6 +17022,8 @@ mod labor_yield_tests {
                     planned_crew: 0,
                     scouting_range: 0,
                     scouting_reach: 0,
+                    for_tribe: None,
+                    scouting_stretch: 1.0,
                     max_workers: Some(WORKERS),
                     staffing: Default::default(),
                     target: LaborTarget::Hunt {
@@ -17109,6 +17146,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(workers),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -17139,6 +17178,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -17379,6 +17420,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(assigned),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -17609,6 +17652,8 @@ mod labor_yield_tests {
                             planned_crew: 0,
                             scouting_range: 0,
                             scouting_reach: 0,
+                            for_tribe: None,
+                            scouting_stretch: 1.0,
                             max_workers: Some(workers),
                             staffing: Default::default(),
                             target: LaborTarget::Forage {
@@ -17712,6 +17757,8 @@ mod labor_yield_tests {
                                 planned_crew: 0,
                                 scouting_range: 0,
                                 scouting_reach: 0,
+                                for_tribe: None,
+                                scouting_stretch: 1.0,
                                 max_workers: Some(workers),
                                 staffing: Default::default(),
                                 target: LaborTarget::Hunt {
@@ -17936,6 +17983,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(field_workers_needed + field_keepers),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -17960,6 +18009,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(SHORT_HANDED_HUNTERS + pen_keepers),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -18122,6 +18173,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -18232,6 +18285,8 @@ mod labor_yield_tests {
                     planned_crew: 0,
                     scouting_range: 0,
                     scouting_reach: 0,
+                    for_tribe: None,
+                    scouting_stretch: 1.0,
                     max_workers: Some(WORKERS),
                     staffing: Default::default(),
                     target: LaborTarget::Forage {
@@ -18331,6 +18386,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -18356,6 +18413,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -18410,6 +18469,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -18519,6 +18580,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -18557,6 +18620,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -18657,6 +18722,8 @@ mod labor_yield_tests {
                     planned_crew: 0,
                     scouting_range: 0,
                     scouting_reach: 0,
+                    for_tribe: None,
+                    scouting_stretch: 1.0,
                     max_workers: Some(SOLE_FORAGER),
                     staffing: Default::default(),
                     target: LaborTarget::Forage {
@@ -18761,6 +18828,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -18806,6 +18875,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -18887,6 +18958,8 @@ mod labor_yield_tests {
                     planned_crew: 0,
                     scouting_range: 0,
                     scouting_reach: 0,
+                    for_tribe: None,
+                    scouting_stretch: 1.0,
                     max_workers: Some(SOLE_HUNTER + keepers),
                     staffing: Default::default(),
                     target: LaborTarget::Hunt {
@@ -19085,6 +19158,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -19264,6 +19339,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS + keepers),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -19404,6 +19481,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS + keepers),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -19587,6 +19666,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -19819,6 +19900,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -20010,6 +20093,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -20182,6 +20267,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -21078,6 +21165,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -21173,6 +21262,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -21212,6 +21303,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -21251,6 +21344,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -21303,6 +21398,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -21329,6 +21426,8 @@ mod labor_yield_tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(WORKERS),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {

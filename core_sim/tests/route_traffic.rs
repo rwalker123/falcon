@@ -1402,6 +1402,85 @@ fn a_pair_just_past_the_free_reach_pools_only_with_messengers() {
     );
 }
 
+/// **A TRIBE'S FREE POOLING REACH** (#862): a pair of bands in one tribe links out to
+/// `reach_tiles_in_tribe`; a pair in no tribe at that distance does not, and a tribe pair one tile
+/// past it does not either without a road.
+#[test]
+fn a_tribe_pair_pools_out_to_the_tribe_reach_and_no_further() {
+    const STARTING_FOOD: i64 = 200;
+
+    let shipped = shipped_supply();
+    let in_tribe = shipped.reach_tiles_in_tribe;
+    assert!(
+        in_tribe > shipped.reach_tiles_with_messengers,
+        "the distance below is past every other free reach"
+    );
+
+    let mut outside = spawn_world();
+    let (a, b) = two_camps_apart(&mut outside, in_tribe);
+    set_food(&mut outside, a, STARTING_FOOD);
+    set_food(&mut outside, b, 0);
+    resolve_turn(&mut outside);
+    assert_eq!(
+        food_of(&outside, b),
+        0.0,
+        "a pair in no tribe does not pool at the tribe's reach"
+    );
+
+    let mut inside = spawn_world();
+    let (a, b) = two_camps_apart(&mut inside, in_tribe);
+    seat_a_tribe(&mut inside, a, b);
+    set_food(&mut inside, a, STARTING_FOOD);
+    set_food(&mut inside, b, 0);
+    resolve_turn(&mut inside);
+    assert!(
+        food_of(&inside, b) > 0.0,
+        "the same pair in one tribe pools at the tribe's reach"
+    );
+
+    let mut too_far = spawn_world();
+    let (a, b) = two_camps_apart(&mut too_far, in_tribe + 1);
+    seat_a_tribe(&mut too_far, a, b);
+    set_food(&mut too_far, a, STARTING_FOOD);
+    set_food(&mut too_far, b, 0);
+    resolve_turn(&mut too_far);
+    assert_eq!(
+        food_of(&too_far, b),
+        0.0,
+        "the tribe's reach is a value: one tile past it nothing pools without a road"
+    );
+}
+
+/// Put the two camps' bands in one formed tribe.
+fn seat_a_tribe(app: &mut App, a: Entity, b: Entity) {
+    use core_sim::{BandId, Tribe, TribeId, TribeLeader, TribeLeaderKind, TribeRegistry};
+    let band = |app: &App, entity: Entity| *app.world.get::<BandId>(entity).expect("a band id");
+    let (first, second) = (band(app, a), band(app, b));
+    let faction = app
+        .world
+        .get::<core_sim::PopulationCohort>(a)
+        .expect("a cohort")
+        .faction;
+    app.world.init_resource::<TribeRegistry>();
+    app.world.resource_mut::<TribeRegistry>().insert(Tribe {
+        id: TribeId(0),
+        faction,
+        name: "Test tribe".to_string(),
+        members: [first, second].into_iter().collect(),
+        leader: TribeLeader {
+            name: "Orrin".to_string(),
+            kind: TribeLeaderKind::ParamountChief,
+            since_turn: 1,
+            band: first,
+        },
+        since_turn: 1,
+        works: Vec::new(),
+        levy: core_sim::LevyCeiling::default(),
+        scouting_range: 0,
+        carriers: Vec::new(),
+    });
+}
+
 // ---------------------------------------------------------------------------------------------
 // THE KNOWLEDGE CHAIN — a connection that stands teaches roadbuilding
 // ---------------------------------------------------------------------------------------------

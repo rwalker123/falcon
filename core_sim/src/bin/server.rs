@@ -1720,6 +1720,12 @@ enum Command {
         action: sim_runtime::BandOrderAction,
         row: Option<sim_runtime::BandOrderRow>,
     },
+    /// **A tribe's order** (#862), addressed by a member band. See `handle_tribe_order`.
+    TribeOrder {
+        faction: FactionId,
+        band_id: u64,
+        action: sim_runtime::TribeOrderAction,
+    },
     /// **Approve the chief's build proposal** for one band. See `handle_approve_proposal`.
     ApproveProposal {
         faction: FactionId,
@@ -5558,6 +5564,25 @@ fn handle_scouting_range(
     let Some(band) = select_starting_band(app, faction, band_id, "assign_labor", event_kind) else {
         return;
     };
+    // **A tribe member's scouting range is the tribe's** (#862): `tribe_scout` sets it.
+    let in_a_tribe = band.id.is_some_and(|id| {
+        app.world
+            .resource::<core_sim::TribeRegistry>()
+            .tribe_of(id)
+            .is_some()
+    });
+    if in_a_tribe {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!(
+                "{}'s scouting range is set by its tribe - use tribe_scout (scouting_set_by_tribe).",
+                band.label
+            ),
+        );
+        return;
+    }
     let cap = app
         .world
         .resource::<LaborConfigHandle>()
@@ -10464,6 +10489,87 @@ fn handle_unqueue(app: &mut bevy::prelude::App, faction: FactionId, source: Buil
 /// chief's rows stay and become the player's), `claim` is Hand it to the chief. Each restaffs at
 /// once, so the dig row (placed by the sim, `core_sim::keep_on_hand`) and its crew show on the next
 /// frame. Refused for a band with no leader, a kind that takes no order and a target of zero.
+/// **A TRIBE'S ORDER** (#862): `tribe_work`, `tribe_levy` and `tribe_scout`, addressed by a member
+/// band that names its tribe. Each re-runs the tribe pass and restaffs every member
+/// (`core_sim::tribe_levy`); a refusal names its token (`band_not_in_tribe`, `not_a_tribe_work`,
+/// `unknown_levy`, ...).
+fn handle_tribe_order(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: u64,
+    action: sim_runtime::TribeOrderAction,
+) {
+    use sim_runtime::TribeOrderAction;
+    let band = BandId(band_id);
+    let tick = app.world.resource::<SimulationTick>().0;
+    let result = match action {
+        TribeOrderAction::Work {
+            branch,
+            x,
+            y,
+            target_rung,
+            priority,
+        } => {
+            let priority = match priority.as_deref() {
+                None => Ok(None),
+                Some(token) => SourcePriority::from_token(token).map(Some).ok_or(
+                    core_sim::tribe_levy::TribeRefusal {
+                        token: "unknown_priority",
+                        message: format!(
+                            "Unknown work priority '{token}' - expected {}, {} or {}.",
+                            SourcePriority::High.as_str(),
+                            SourcePriority::Normal.as_str(),
+                            SourcePriority::Low.as_str()
+                        ),
+                    },
+                ),
+            };
+            priority.and_then(|priority| {
+                core_sim::tribe_levy::tribe_work(
+                    &mut app.world,
+                    faction,
+                    band,
+                    &branch,
+                    UVec2::new(x, y),
+                    target_rung.as_deref(),
+                    priority,
+                )
+            })
+        }
+        TribeOrderAction::StopWork { branch, x, y } => core_sim::tribe_levy::tribe_work_stop(
+            &mut app.world,
+            faction,
+            band,
+            &branch,
+            UVec2::new(x, y),
+        ),
+        TribeOrderAction::Levy { level } => {
+            core_sim::tribe_levy::tribe_levy(&mut app.world, faction, band, &level)
+        }
+        TribeOrderAction::Scout { range } => {
+            core_sim::tribe_levy::tribe_scout(&mut app.world, faction, band, range)
+                .map(|(echo, _)| echo)
+        }
+    };
+    match result {
+        Ok(label) => push_band_event(
+            app,
+            tick,
+            CommandEventKind::Extraction,
+            faction,
+            Some(band),
+            label,
+            Some("status=applied".to_string()),
+        ),
+        Err(refusal) => emit_command_failure(
+            app,
+            CommandEventKind::Extraction,
+            faction,
+            format!("{} ({})", refusal.message, refusal.token),
+        ),
+    }
+}
+
 fn handle_band_order(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -12140,6 +12246,15 @@ fn command_from_payload(
             band_id,
             build_key,
         }),
+        ProtoCommandPayload::TribeOrder {
+            faction_id,
+            band_id,
+            action,
+        } => Some(Command::TribeOrder {
+            faction: FactionId(faction_id),
+            band_id,
+            action,
+        }),
         ProtoCommandPayload::BandOrder {
             faction_id,
             band_id,
@@ -13076,6 +13191,7 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::Unqueue { faction, .. } => Some((*faction, "unqueue")),
         Command::StopLabor { faction, .. } => Some((*faction, "stop_labor")),
         Command::BandOrder { faction, .. } => Some((*faction, "band_order")),
+        Command::TribeOrder { faction, .. } => Some((*faction, "tribe_order")),
         Command::ApproveProposal { faction, .. } => Some((*faction, "approve_proposal")),
         Command::DeferProposal { faction, .. } => Some((*faction, "defer_proposal")),
         Command::WorkPriority { faction, .. } => Some((*faction, "work_priority")),
@@ -13573,6 +13689,13 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             row,
         } => {
             handle_band_order(app, faction, band_id, &kind, action, row);
+        }
+        Command::TribeOrder {
+            faction,
+            band_id,
+            action,
+        } => {
+            handle_tribe_order(app, faction, band_id, action);
         }
         Command::ApproveProposal { faction, band_id } => {
             handle_approve_proposal(app, faction, band_id);
@@ -14909,6 +15032,8 @@ mod tests {
                         planned_crew: 0,
                         scouting_range: 0,
                         scouting_reach: 0,
+                        for_tribe: None,
+                        scouting_stretch: 1.0,
                         max_workers: Some(BAND_WORKERS),
                         staffing: Default::default(),
                         target,
@@ -33146,6 +33271,101 @@ mod tests {
                 .iter()
                 .any(|row| matches!(row.target, LaborTarget::Scout)),
             "scout 0 drops the row"
+        );
+    }
+
+    /// **A TRIBE MEMBER'S SCOUTING RANGE IS THE TRIBE'S** (#862): `assign_labor ... scout` on a member is
+    /// refused `scouting_set_by_tribe` and changes nothing, `tribe_scout` (through the real handler)
+    /// sets the one range and echoes it, and a band in no tribe is untouched.
+    #[test]
+    fn a_tribe_members_scout_command_is_refused_and_the_tribe_sets_the_range() {
+        let mut app = build_world_app();
+        let (band, entity) = fully_staffed_band(&mut app);
+        let faction = FactionId(0);
+        let scout = |app: &mut bevy::prelude::App, tiles: u32| {
+            handle_assign_labor(
+                app,
+                faction,
+                Some(band.0),
+                "scout".to_string(),
+                tiles,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Vec::new(),
+                false,
+            );
+        };
+        // The control: in no tribe the command works.
+        scout(&mut app, 2);
+        assert_eq!(
+            app.world
+                .get::<LaborAllocation>(entity)
+                .unwrap()
+                .scouting_range_tiles(),
+            2
+        );
+        // Seat the band in a tribe with a second (absent) member.
+        app.world
+            .resource_mut::<core_sim::TribeRegistry>()
+            .insert(core_sim::Tribe {
+                id: core_sim::TribeId(0),
+                faction,
+                name: "Test tribe".to_string(),
+                members: [band, BandId(u64::MAX)].into_iter().collect(),
+                leader: core_sim::TribeLeader {
+                    name: "Orrin".to_string(),
+                    kind: core_sim::TribeLeaderKind::ParamountChief,
+                    since_turn: 1,
+                    band,
+                },
+                since_turn: 1,
+                works: Vec::new(),
+                levy: core_sim::LevyCeiling::default(),
+                scouting_range: 2,
+                carriers: Vec::new(),
+            });
+        scout(&mut app, 7);
+        assert_eq!(
+            app.world
+                .get::<LaborAllocation>(entity)
+                .unwrap()
+                .scouting_range_tiles(),
+            2,
+            "the member's own scout command changed nothing"
+        );
+        let refused = app.world.resource::<CommandEventLog>().iter().any(|entry| {
+            entry
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("scouting_set_by_tribe"))
+                || entry.label.contains("scouting_set_by_tribe")
+        });
+        assert!(refused, "the refusal names scouting_set_by_tribe");
+        handle_tribe_order(
+            &mut app,
+            faction,
+            band.0,
+            sim_runtime::TribeOrderAction::Scout { range: 5 },
+        );
+        assert_eq!(
+            app.world
+                .resource::<core_sim::TribeRegistry>()
+                .get(core_sim::TribeId(0))
+                .unwrap()
+                .scouting_range,
+            5
+        );
+        assert_eq!(
+            app.world
+                .get::<LaborAllocation>(entity)
+                .unwrap()
+                .scouting_range_tiles(),
+            5,
+            "the pass put the tribe's range on the member's row"
         );
     }
 

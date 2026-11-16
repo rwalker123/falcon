@@ -634,6 +634,11 @@ switches the source off).
   (the trail rung's `holds_link_to_tiles`, 6), so messengers never gives every far pair a trail's
   link for free.
 
+A tribe's free pooling reach (`reach_tiles_in_tribe`, **5**) is the next rung up and is read by the same link
+test only, for a pair of bands in one tribe: it is validated `reach_tiles_with_messengers <=
+reach_tiles_in_tribe` and `reach_tiles_in_tribe < routes::trail_reach_tiles(ladder)` beside messengers' own
+(`leadership.md` -> "A tribe levies its bands").
+
 All three are on the Workbench: `supply_network`, `connections` and `intensification_ladder` are
 stageable override kinds (proto 13 / 14 / 15, `config-loading.md`), with rows in the tuning
 manifest. Tests: `core_sim/tests/far_kin.rs` (both credits, the

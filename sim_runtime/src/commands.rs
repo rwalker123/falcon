@@ -35,6 +35,33 @@ pub enum BandOrderAction {
     Claim,
 }
 
+/// The wire tokens of a [`CommandPayload::TribeOrder`]'s action.
+pub const TRIBE_ACTION_WORK: &str = "work";
+pub const TRIBE_ACTION_STOP_WORK: &str = "stop_work";
+pub const TRIBE_ACTION_LEVY: &str = "levy";
+pub const TRIBE_ACTION_SCOUT: &str = "scout";
+
+/// **What a tribe is ordered to do** (#862). Levels, priorities and rungs travel as the player's
+/// words: which exist is the sim's to say, and it refuses an unknown one by name.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TribeOrderAction {
+    /// Add or update a work: a tile-kind branch at `(x, y)`, optionally declaring a build to
+    /// `target_rung` (`branch:id`) and ranked `priority` (`high|normal|low`).
+    Work {
+        branch: String,
+        x: u32,
+        y: u32,
+        target_rung: Option<String>,
+        priority: Option<String>,
+    },
+    /// Remove a work.
+    StopWork { branch: String, x: u32, y: u32 },
+    /// Set the levy ceiling (`none|low|normal|high`).
+    Levy { level: String },
+    /// Set the tribe's scouting range (tiles past the local range).
+    Scout { range: u32 },
+}
+
 /// Supported command payloads.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
@@ -337,6 +364,12 @@ pub enum CommandPayload {
         action: BandOrderAction,
         /// The one row a `release` / `claim` is about, `None` for the whole kind.
         row: Option<BandOrderRow>,
+    },
+    /// **A tribe's order** (#862), addressed by one of its member bands: the band names its tribe.
+    TribeOrder {
+        faction_id: u32,
+        band_id: u64,
+        action: TribeOrderAction,
     },
     /// **Approve the chief's build proposal** for one band (`approve_proposal <faction> <band>`).
     ApproveProposal {
@@ -2275,6 +2308,48 @@ impl CommandEnvelope {
                 band_id: *band_id,
                 build_key: build_key.clone(),
             }),
+            CommandPayload::TribeOrder {
+                faction_id,
+                band_id,
+                action,
+            } => {
+                let mut cmd = pb::TribeOrderCommand {
+                    faction_id: *faction_id,
+                    band_id: *band_id,
+                    ..Default::default()
+                };
+                match action {
+                    TribeOrderAction::Work {
+                        branch,
+                        x,
+                        y,
+                        target_rung,
+                        priority,
+                    } => {
+                        cmd.action = TRIBE_ACTION_WORK.to_string();
+                        cmd.branch = branch.clone();
+                        cmd.x = *x;
+                        cmd.y = *y;
+                        cmd.target_rung = target_rung.clone();
+                        cmd.priority = priority.clone();
+                    }
+                    TribeOrderAction::StopWork { branch, x, y } => {
+                        cmd.action = TRIBE_ACTION_STOP_WORK.to_string();
+                        cmd.branch = branch.clone();
+                        cmd.x = *x;
+                        cmd.y = *y;
+                    }
+                    TribeOrderAction::Levy { level } => {
+                        cmd.action = TRIBE_ACTION_LEVY.to_string();
+                        cmd.level = level.clone();
+                    }
+                    TribeOrderAction::Scout { range } => {
+                        cmd.action = TRIBE_ACTION_SCOUT.to_string();
+                        cmd.range = *range;
+                    }
+                }
+                pb::command_envelope::Command::TribeOrder(cmd)
+            }
             CommandPayload::BandOrder {
                 faction_id,
                 band_id,
@@ -3094,6 +3169,32 @@ impl CommandEnvelope {
                 faction_id: cmd.faction_id,
                 band_id: cmd.band_id,
                 build_key: cmd.build_key,
+            },
+            pb::command_envelope::Command::TribeOrder(cmd) => CommandPayload::TribeOrder {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                action: match cmd.action.as_str() {
+                    TRIBE_ACTION_WORK => TribeOrderAction::Work {
+                        branch: cmd.branch,
+                        x: cmd.x,
+                        y: cmd.y,
+                        target_rung: cmd.target_rung,
+                        priority: cmd.priority,
+                    },
+                    TRIBE_ACTION_STOP_WORK => TribeOrderAction::StopWork {
+                        branch: cmd.branch,
+                        x: cmd.x,
+                        y: cmd.y,
+                    },
+                    TRIBE_ACTION_LEVY => TribeOrderAction::Levy { level: cmd.level },
+                    TRIBE_ACTION_SCOUT => TribeOrderAction::Scout { range: cmd.range },
+                    _ => {
+                        return Err(CommandDecodeError::InvalidEnum {
+                            field: "TribeOrderCommand.action",
+                            value: -1,
+                        })
+                    }
+                },
             },
             pb::command_envelope::Command::BandOrder(cmd) => CommandPayload::BandOrder {
                 faction_id: cmd.faction_id,

@@ -420,6 +420,9 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         // **A band order is a band's** (#860): the stock it holds and the dig row the sim
         // places for it are that band's own.
         CommandPayload::BandOrder { band_id, .. } => Some(*band_id),
+        // **A tribe's order is addressed by a member band** (#862): the band names its tribe, so the
+        // handle is the durable `BandId`, never an `Entity`.
+        CommandPayload::TribeOrder { band_id, .. } => Some(*band_id),
         // **THE CHIEF'S PROPOSAL IS A BAND'S**: approving declares that band's build and Not now hides it
         // for that band, so both name it (the orb sends them with the band's durable id).
         CommandPayload::ApproveProposal { band_id, .. } => Some(*band_id),

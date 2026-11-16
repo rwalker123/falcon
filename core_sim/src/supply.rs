@@ -660,6 +660,9 @@ pub fn balance_supply_networks(
     // reader - `WalkReach`, the work party's local range and the road bonus keep `reach_tiles`.
     // `None` (a hand-rolled world with no ledger) reads as nobody knows it.
     discovery: Option<Res<crate::resources::DiscoveryProgressLedger>>,
+    // **Which bands share a tribe**: a same-tribe pair links out to
+    // `max(its free reach, reach_tiles_in_tribe)`. This link test is the ONLY reader.
+    tribes: Option<Res<crate::tribe::TribeRegistry>>,
 ) {
     // Recomputed from scratch every turn; a 0/1-band map (early return below) leaves it empty.
     membership.clear();
@@ -743,6 +746,7 @@ pub fn balance_supply_networks(
     let cell_size = cfg
         .reach_tiles
         .max(cfg.reach_tiles_with_messengers)
+        .max(cfg.reach_tiles_in_tribe)
         .max(widest_route_reach)
         .max(1);
     let messengers: BTreeSet<FactionId> = discovery
@@ -802,7 +806,17 @@ pub fn balance_supply_networks(
                             nodes[i].pos,
                             nodes[j].pos,
                             // Both nodes are one people here (`pools_freely` short-circuits).
-                            cfg.pooling_reach(messengers.contains(&nodes[i].faction)),
+                            {
+                                let free =
+                                    cfg.pooling_reach(messengers.contains(&nodes[i].faction));
+                                if tribes.as_deref().is_some_and(|registry| {
+                                    registry.share_a_tribe(nodes[i].band, nodes[j].band)
+                                }) {
+                                    cfg.tribe_pooling_reach(free)
+                                } else {
+                                    free
+                                }
+                            },
                             widest_route_reach,
                             width,
                             height,

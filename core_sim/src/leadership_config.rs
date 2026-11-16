@@ -57,6 +57,14 @@ pub struct LeadershipConfig {
     pub reach_paramount_bands: f64,
     /// The share of an order still carried out for the load past a leader's reach, in `(0, 1]`.
     pub over_reach_efficiency: f64,
+    /// The share of a member band's free hands a tribe's `low` levy ceiling may take.
+    pub levy_share_low: f64,
+    /// The share a `normal` ceiling may take.
+    pub levy_share_normal: f64,
+    /// The share a `high` ceiling may take.
+    pub levy_share_high: f64,
+    /// The share of a tribe's working hands that, levied, reads as acting fully as a tribe.
+    pub tribe_acting_full_share: f64,
 }
 
 /// The **only** `Default`: it parses the builtin JSON, so `default()` and the shipped tuning are
@@ -132,6 +140,29 @@ impl LeadershipConfig {
         if !(efficiency.is_finite() && efficiency > 0.0 && efficiency <= 1.0) {
             return Err(format!(
                 "over_reach_efficiency must be finite and in (0, 1], got {efficiency}"
+            ));
+        }
+        let (low, normal, high) = (
+            self.levy_share_low,
+            self.levy_share_normal,
+            self.levy_share_high,
+        );
+        if !(low.is_finite()
+            && normal.is_finite()
+            && high.is_finite()
+            && low > 0.0
+            && low <= normal
+            && normal <= high
+            && high <= 1.0)
+        {
+            return Err(format!(
+                "levy shares must satisfy 0 < low <= normal <= high <= 1, got {low}, {normal}, {high}"
+            ));
+        }
+        let full = self.tribe_acting_full_share;
+        if !(full.is_finite() && full > 0.0 && full <= 1.0) {
+            return Err(format!(
+                "tribe_acting_full_share must be finite and in (0, 1], got {full}"
             ));
         }
         Ok(())

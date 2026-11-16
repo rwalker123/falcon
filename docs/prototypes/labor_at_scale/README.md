@@ -35,6 +35,12 @@ existing row, rung button, rung card and sheets.
 | City | `City.dc.html` | City panel — quarters, trades (Auto), great works, rations | #865 #866 #867 #868 |
 | Nation | `Nation.dc.html` | Nation page — tax (Auto, ceiling), aid between members, national works, the leader's reach | #869 #853 #870 |
 
+**Two tribe artboards predate the levy.** `Tribe.dc.html`'s staffing script deals every member
+band's people as one pool, and `Crafting.dc.html`'s "The tribe" mode is one bench across the
+tribe's bands. The design is now a levy: the tribe's work arrives as rows on a member band's own list,
+and the band's bench marks what it makes for the tribe (`docs/plan_labor_at_scale.md` → "2. Tribe
+orders"). Their layouts still hold; their staffing and crafting logic do not.
+
 `canvas.json` is the canvas layout (board positions and titles).
 
 A band with a chief — the band orders (#860) — has its own prototypes in `docs/prototypes/band_orders/`.

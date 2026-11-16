@@ -21,7 +21,7 @@ use crate::state::population::{
     MaterialBatchState, MaterialShortfallState, PoolCrewLineState, PoolToeLineState,
     PoolingLinkState, PopulationCohortState, PopulationDemographicsState, ScoutTaskState,
     SettlementStageViewState, SourcePriorityState, StorageSaveState, TransferCrossingState,
-    TribeClosenessState, TribePairState, WorkKitWantState,
+    TribeClosenessState, TribePairState, TribeWorkState, WorkKitWantState,
 };
 use crate::state::subsistence::BuildLegState;
 use crate::world::{WorldDelta, WorldSnapshot};
@@ -513,6 +513,8 @@ fn create_populations<'a>(
                                 loadHomeIn: assignment.load_home_in,
                                 scoutingRange: assignment.scouting_range,
                                 scoutingReach: assignment.scouting_reach,
+                                forTribe: assignment.for_tribe,
+                                scoutingStretch: assignment.scouting_stretch,
                                 bareIdle: assignment.bare_idle,
                                 orderKind: Some(order_kind),
                                 chiefOwned: assignment.chief_owned,
@@ -907,6 +909,7 @@ fn create_populations<'a>(
             let band_improvements = create_band_improvements(builder, &cohort.band_improvements);
             let tribe_weights = create_tribe_closeness(builder, &cohort.tribe_weights);
             let tribe_pairs = create_tribe_pairs(builder, &cohort.tribe_pairs);
+            let tribe_works = create_tribe_works(builder, &cohort.tribe_works);
             let tribe_name = builder.create_string(&cohort.tribe_name);
             let tribe_member_names: Vec<_> = cohort
                 .tribe_member_names
@@ -1216,6 +1219,9 @@ fn create_populations<'a>(
                     tribeThreshold: cohort.tribe_threshold,
                     tribeWeights: Some(tribe_weights),
                     tribePairs: Some(tribe_pairs),
+                    tribeLevyCeiling: cohort.tribe_levy_ceiling,
+                    tribeScoutingRange: cohort.tribe_scouting_range,
+                    tribeWorks: Some(tribe_works),
                     tribeName: Some(tribe_name),
                     tribeMemberNames: Some(tribe_member_names),
                     tribeLeaderName: Some(tribe_leader_name),
@@ -1699,6 +1705,8 @@ fn decode_labor_assignment(
         load_home_in: assignment.loadHomeIn(),
         scouting_range: assignment.scoutingRange(),
         scouting_reach: assignment.scoutingReach(),
+        for_tribe: assignment.forTribe(),
+        scouting_stretch: assignment.scoutingStretch(),
         bare_idle: assignment.bareIdle(),
         order_kind: text(assignment.orderKind()),
         chief_owned: assignment.chiefOwned(),
@@ -2266,6 +2274,24 @@ fn decode_population(
         cohesion_ceiling: cohort.cohesionCeiling(),
         morale_fresh_water: cohort.moraleFreshWater(),
         morale_leadership: cohort.moraleLeadership(),
+        tribe_levy_ceiling: cohort.tribeLevyCeiling(),
+        tribe_scouting_range: cohort.tribeScoutingRange(),
+        tribe_works: map_rows(cohort.tribeWorks(), |row| TribeWorkState {
+            x: row.x(),
+            y: row.y(),
+            branch: text(row.branch()),
+            target_rung: text(row.targetRung()),
+            priority: match row.priority() {
+                fb::SourcePriority::High => SourcePriorityState::High,
+                fb::SourcePriority::Low => SourcePriorityState::Low,
+                _ => SourcePriorityState::Normal,
+            },
+            bands: row
+                .bands()
+                .map(|bands| bands.iter().collect())
+                .unwrap_or_default(),
+            workers: row.workers(),
+        }),
         spoil_ahead: map_rows(cohort.spoilAhead(), |row| KeepingSpoilState {
             keeping: text(row.keeping()),
             food: row.food(),
@@ -2480,6 +2506,38 @@ fn create_tribe_pairs<'a>(
                     points: row.points,
                     contribution: Some(contribution),
                     partnerHasLeader: row.partner_has_leader,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+/// `PopulationCohortState.tribeWorks`.
+fn create_tribe_works<'a>(
+    builder: &mut FbBuilder<'a>,
+    rows: &[TribeWorkState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::TribeWorkState<'a>>>> {
+    let offsets: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            let branch = builder.create_string(&row.branch);
+            let target_rung = builder.create_string(&row.target_rung);
+            let bands = builder.create_vector(&row.bands);
+            fb::TribeWorkState::create(
+                builder,
+                &fb::TribeWorkStateArgs {
+                    x: row.x,
+                    y: row.y,
+                    branch: Some(branch),
+                    targetRung: Some(target_rung),
+                    priority: match row.priority {
+                        SourcePriorityState::Normal => fb::SourcePriority::Normal,
+                        SourcePriorityState::High => fb::SourcePriority::High,
+                        SourcePriorityState::Low => fb::SourcePriority::Low,
+                    },
+                    bands: Some(bands),
+                    workers: row.workers,
                 },
             )
         })

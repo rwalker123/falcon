@@ -1,6 +1,7 @@
 {
   "reach_tiles": 3,
   "reach_tiles_with_messengers": 4,
+  "reach_tiles_in_tribe": 5,
   "throughput_per_turn": 50.0,
   "friction": 0.05,
   "min_transfer_fraction": 0.0025

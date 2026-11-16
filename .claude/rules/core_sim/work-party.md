@@ -113,6 +113,7 @@ Pinned by `server::tests::a_band_improvements_crew_is_the_keepers_the_sim_staffs
 | pass | what it hands out |
 |---|---|
 | 0 | the band's **scouts** (below), off the top of the pool and shelf, before any row |
+| levy | **a tribe member only** (`leadership.md` -> "A tribe levies its bands"), after pass 1 and before pass 2: a budget `floor(share x factor x hands_left)` (at least one head while the ceiling allows any) is struck over the hands pass 1 left; the member's **scouts** are dealt first, then per priority group the **levy rows'** (`StaffRowInput::levy`, the rows the tribe pass put on the list) keepers, first builder and kitted hold crew, every head counted against the budget. Levy rows and scouts are skipped in passes 0 and 1, and passes 2 and 3 deal a levy row like any other but stop when the budget is spent. A band in no tribe has no levy step |
 | 1a | the site's **keepers** on every row at every priority, High to Low: `floor(keep_hands)` whole-keeper heads round-robin, then, for a row with a fraction of a hand of keeping left, one head that carries it (a kitted gatherer if the shelf can arm one, else a bare one where a bare hand works, else a keeper; a row with no hold take gives it a keeper's head so the improvement is kept) |
 | 1b | per priority group High to Low: the group's **builds'** first builder (kitted if the shelf can arm one, else bare), then - in the High group only - each **High bench order's first crafter** (queue order; ahead of every hold crew, since the High group is dealt first), then the group's **kitted** hands up to the row's **hold crew** |
 | 1c | a **chief's FOOD order** only (`LaborAllocation::keeps_food_up`: a forage or hunt row `order_rows` lists under `food` while the chief owns the kind): per priority group High to Low, round-robin nearest first, **bare** hands up to the row's hold crew under its Max, only where a bare hand takes something. After every group's pass 1b, before any row's pass 2 |
@@ -653,6 +654,13 @@ clamp note on the feed line; `scout 0` drops the row. The Scout row exists exact
 - **It is zeroed before the shed and refilled after it**, like a staffed row, so `ShedStep::Scout`
   (step 1) is gone: a scout is never a hand the shed gives. The steps keep their numbers (there is
   no step 1).
+- **A tribe member's range is the tribe's, and each band scouts its stretch** (#862): the Scout row
+  carries the tribe's range N and `LaborAssignment::scouting_stretch` (the member's share of the tribe's
+  scouting edge, `1.0` for a band in no tribe); the scouts are dealt in the levy step, after pass 1 and
+  within the levy budget, the stretch needing `ceil(stretch x N)` scout-tiles and `scouting_reach` being
+  `floor(seen / stretch)` (a zero stretch deals no scouts). `assign_labor ... scout` on a member is refused
+  `scouting_set_by_tribe`; the tribe sets the range with `tribe_scout`. `leadership.md` -> "A tribe levies
+  its bands" has the geometry and the wire.
 - **Visibility**: with `scouting_reach > 0`, vantages are posted at
   `visibility_systems::scout_vantage_posting_distance(reach_tiles, scouting_reach, sight)` =
   `max(1, reach_tiles + scouting_reach − sight)`, so the farthest tile seen is

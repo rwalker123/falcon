@@ -75,6 +75,8 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: Some(workers.max(1)),
             staffing: Default::default(),
             target: LaborTarget::Forage {

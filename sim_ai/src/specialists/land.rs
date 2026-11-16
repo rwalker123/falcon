@@ -215,6 +215,11 @@ impl Land {
         memory: &SeatMemory,
         band: &PopulationCohortState,
     ) -> Option<Proposal> {
+        // A tribe member's scouting range is the tribe's: the server refuses `assign_labor ... scout`
+        // for it (`scouting_set_by_tribe`), so the seat does not ask.
+        if !band.tribe_name.is_empty() {
+            return None;
+        }
         let (known, floor) = self.known_and_floor(view, memory, band);
         if known >= floor || Self::scouting_range_posted(band) >= self.floors.scout_range {
             return None;
@@ -568,6 +573,33 @@ mod tests {
             assert!(grid.distance(NORTH, site) <= WORK_RANGE);
         }
         view
+    }
+
+    #[test]
+    fn a_tribe_member_does_not_ask_to_scout() {
+        let mut view = a_view();
+        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
+        assert!(
+            land("forager")
+                .blind(&view, &memory, own_band(&view))
+                .is_some(),
+            "a blind band in no tribe posts scouts (the control)"
+        );
+        let band_id = own_band(&view).band_id;
+        for cohort in view
+            .snapshot
+            .populations
+            .iter_mut()
+            .filter(|cohort| cohort.band_id == band_id)
+        {
+            cohort.tribe_name = "Reedwater tribe".to_owned();
+        }
+        assert!(
+            land("forager")
+                .blind(&view, &memory, own_band(&view))
+                .is_none(),
+            "the server refuses a tribe member's scout command, so the seat never sends it"
+        );
     }
 
     #[test]

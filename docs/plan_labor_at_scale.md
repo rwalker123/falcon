@@ -367,6 +367,24 @@ These are opening rules for playtest.
 The player gives orders at the highest level they have. A change made by hand at a lower level stays
 pinned until the player releases it.
 
+**Each level owns its own work, and levies the level below for it.** Nothing is borrowed.
+
+- **What a level owns:** its works and what it takes for them. What it needs from the level below
+  it takes as a **levy**: people for its work, and the materials that work uses.
+- **The level below keeps running itself.** A band keeps its sources, larder, bench and people, and
+  its own leader runs them with what the levy leaves. A higher leader never staffs a band's sources
+  and never sets a band's targets.
+- **Who pays is what climbs the ladder.** A tribe takes hands, and the band still feeds and equips
+  them: a levied worker lives at home, eats at home and carries the band's own gear. A city is the
+  first level that pays its own way — rations from its granary, tools from its full-time crafters.
+  A nation taxes in kind and hands its works to members.
+- **A levy has no cost of its own beyond what it takes.** If the hands it takes leave a band's own
+  orders falling, the band's judgement of its leader turns, as it already does: strain comes from a
+  leader failing to deliver, not from how much he directs (`docs/plan_civilization_steps.md` →
+  "Directed labor and consent").
+- **How much a level may take is a ceiling.** Who sets that ceiling, and how, is where kinds of
+  government will come from (see "Open questions").
+
 **1. Band orders — the chief.** The player sets how much of each store to keep; the chief decides
 who works where, at what setting, to keep it. Prototype: `docs/prototypes/band_orders/`.
 
@@ -453,33 +471,52 @@ Before a chief, the band runs on the per-source settings in "Decided" above.
 
 **2. Tribe orders — the paramount chief.**
 
-- **One pool of people.** Once bands form a tribe, all their working-age people are one pool and the
-  paramount chief distributes them — the same three passes, over one priority list holding every
-  member band's sources, builds, benches and the shared works. No band staffs "its own work first";
-  a worker sent to another band's site walks there and back, priced the way a far source is today, so
-  distance still keeps most people near home.
-- **No band refuses.** Under a tribal leader a band may push back (grievance, the governance axis), but
-  it never withholds its people; refusing outright is a band leaving the tribe. Whether a band can
-  refuse particular work is left to playtest.
-- **A tribe bench.** Orders queued there are worked by any member band's people, drawn from the
-  network's pooled materials, and the gear goes to whichever band is short of it ("→ Greyfen"). A
-  bench tool serves the tribe within reach the way goods do — one loom is still one weaver at a time.
-- **Shared works** — a granary or a road serving several bands — are rows on the tribe's one list,
-  kept and built from the one pool.
-- **Who comes first when the network runs short**, in place of today's automatic pooling.
-- **One set of band orders for every member band.**
+- **What the tribe owns.** Its works — the shared works (a road between member bands, storage that
+  serves several) and what is built at its gathering place (the monument) — and the watch on its
+  edge (the scouting range, below). It owns no store, no bench and no gear.
+- **The tribe's work arrives as rows on a member band's own list, marked *for the tribe*.** Each
+  work is handed to the member band nearest it, and what that band cannot staff goes to the next
+  nearest — the way the nation hands a national work to its nearest member. The band staffs those
+  rows in its own passes, at the Priority the tribe gives each work, so its kit, materials, craft
+  suggestions and auto-craft count them like any other row.
+- **The levy is worked out again every turn.** There is no standing posting. A band that keeps the
+  same job keeps its crew there; a job that moves to another band is walked to by that band's people.
+- **The levy never takes the hands a band needs to keep up.** Tribe rows are dealt after every one
+  of the band's own rows has its keepers and hold crew (pass 1), so a band's sources stay held at
+  their floors. What the levy reaches is the hands the band would spend refilling toward its targets
+  and beyond. How far it reaches is the tribe's **levy ceiling** — *None*, *Low*, *Normal* or *High*,
+  a share of the hands left after pass 1, set by the player on the tribe (opening shares 0, 0.25,
+  0.5, 1.0; the default is *Normal*). It is the nation tax's shape, in hands.
+- **Travel is paid once.** A tribe row is priced exactly as the band's own row at the same distance:
+  a far crew walks out once, and after that only someone carrying a load home walks. Builders walk
+  nothing, as on any build.
+- **The band feeds and equips its levied hands.** They are its people, living at home.
+- **No band refuses.** A band never withholds its levy; refusing outright is a band leaving the tribe.
+- **A band's own orders stay the band's.** A member band's food, fodder, stone and wood targets are
+  its own chief's, or the player's on a band with no chief. The tribe never sets or overrides them.
+  The tribe and the band reach for the same hands, and the ceiling settles how far the tribe reaches.
+- **Pooling reaches further inside a tribe.** Two bands of one tribe pool for free out to
+  `reach_tiles_in_tribe` (**5**) instead of `reach_tiles` (**3**) — the shape messengers already has
+  (`reach_tiles_with_messengers`, 4), and below a trail's 6, so a tribe never gets a road's link for
+  free. Roads widen it as they do today; a member past it is out of reach. This is how food and
+  goods move to a short member: the ordinary supply network, a little further.
+- **Acting as a tribe reads the levy.** The closeness input (above) reads the share of the tribe's
+  working hands staffed on its rows, its scouts included, at 1 when that share reaches
+  `tribe_acting_full_share` (**0.2**), so a tribe that works together holds together.
 
 **The tribe on screen.** The tribe *replaces* its bands in the Band panel's band switcher and in
 Materials & Crafting's picker — one entry, "Reedwater tribe · 3 bands", so a grown people does not
 list every band. It is the same panel, rows and work strip, rolled up:
 
 - **Work tab:** one collapsed line per member band — its name, crew bar and idle count — then the
-  shared works. Opening a band's line shows its rows exactly as on the Band panel.
+  tribe's works, each naming the band it is handed to this turn. Opening a band's line shows its
+  rows exactly as on the Band panel, its tribe rows marked *for the tribe*.
 - **Drilling into a band is one click.** A band's name on its line (or the band on the map) opens that
   band's own panel, with a breadcrumb back (*Reedwater tribe › Greyfen*); while drilled in, the
   switcher's ◀ ▶ step through the tribe's member bands.
-- **Crafting:** On hand is the network's pooled materials (each pile's tooltip names who holds it);
-  Make next looks across the bands (*Spears ×5 — Greyfen 3, Pinewold 2*).
+- **Crafting:** the tribe has no bench. Each band's own bench marks what it is making or holding for
+  the tribe (*Spears ×2 — for the tribe*), and the tribe's entry lists those items across its
+  members (#864).
 - **People bar:** the one bar, totalled across the tribe, idle included.
 - **Starting a shared work uses the card that already exists.** The tile card's branch actions
   (`Road ▸`, and each storage branch the same way) open the same rung card with the same `Band:`
@@ -487,14 +524,22 @@ list every band. It is the same panel, rows and work strip, rolled up:
   does in the band switcher, and is the default. A rung the tribe starts lands in its Shared works.
 - **A member band can still be picked**, folded under the tribe (`Reedwater tribe ▸`) so the list stays
   one line per tribe until the player opens it. The default is the tribe, unless the card was opened
-  from one of its bands' own panel, which defaults to that band. A work that belongs to one band's
-  camp is that band's: it sits on that band's line in the tribe view, and its own people are sent to
-  it first, before anyone walks in from a neighbour. Assigning harvesters uses the same picker.
+  from one of its bands' own panel, which defaults to that band. A work started for one band is that
+  band's own row and its people's alone. Assigning harvesters uses the same picker with the member
+  bands only: a source is always a band's.
 - **One scouting range for the whole tribe**, counted out from the outer edge of all its bands' local
-  ranges together — the scouts ride the tribe's whole border, not a ring round each camp. It is set on the tribe's
-  panel; a member band's own panel shows it read-only ("set by the tribe"). Scouts are a standing duty
-  from the one pool, drawn from the band nearest each stretch of the edge, so a longer border needs
-  more scouts for the same range.
+  ranges together — the scouts ride the tribe's whole border, not a ring round each camp. It is set
+  on the tribe's panel; a member band's own panel shows it read-only ("set by the tribe").
+  - **Each band scouts its own stretch of that edge:** the edge hexes nearer its camp than any other
+    member's, against the edge of one lone band's local range. A lone band's stretch is 1, so its
+    scouting is unchanged; a band inside the others has none. A longer border needs more scouts for
+    the same range.
+  - **The tribe's scouts are levied like its other work:** dealt after the band's pass 1, ahead of
+    the tribe's other rows, within the levy ceiling. A band short of scouts for its stretch sees
+    less far along it, and the tribe's panel says which stretch. (A band in no tribe still deals its
+    own scouts off the top, before pass 1: its range is the player's own order.)
+  - **When a tribe forms** it takes the largest range among its bands; a band that joins takes the
+    tribe's; when a tribe dissolves each band keeps the tribe's range as its own.
 
 **3. City orders — the ruler.**
 
@@ -559,7 +604,10 @@ list every band. It is the same panel, rows and work strip, rolled up:
 - A chief runs one band, up to the cohesion ceiling (~150 people).
 - A paramount chief runs so many bands — a config lever.
 - A tribe member band with no chief of its own carries the paramount chief's orders out worse, the
-  same lossy shape as over-reach (#870).
+  same lossy shape as over-reach (#870). For the levy that is its reach: the member's levy takes only
+  that share of what the ceiling allows (rounded down, never below one hand while the ceiling allows
+  any), and what the tribe's works still need goes to the next nearest member — less exact, never
+  refused.
 - A ruler's and a faction leader's reach is the **management capacity** writing lifts
   (`docs/plan_civilization_steps.md` → "Writing: the third ceiling caps management").
 
@@ -568,8 +616,12 @@ writing's miscount and the other ceilings.
 
 ## Open questions
 
-None open in this doc. The battle flow that decides who defends is `docs/plan_battles.md`'s; whether
-a tile's cap also counts the people living on it is the settlement design's.
+- **Kinds of government.** How much an upper level may take is a ceiling; who sets it — a
+  hierarchical leader alone, or an egalitarian council only with the bands' consent — and what each
+  combination is called is not designed yet. The tribe's levy ceiling is the first such setting.
+
+The battle flow that decides who defends is `docs/plan_battles.md`'s; whether a tile's cap also
+counts the people living on it is the settlement design's.
 
 ## Related
 

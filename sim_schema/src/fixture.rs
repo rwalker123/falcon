@@ -715,6 +715,15 @@ fn seed_snapshot() -> WorldSnapshot {
             ..Default::default()
         });
         cohort.tribe_member_names = vec![String::new(); ROWS];
+        // The tribe's levy (#862): a ceiling, a range and a work whose carrying bands are a seeded
+        // nested array.
+        cohort.tribe_levy_ceiling = TRIBE_LEVY_HIGH;
+        cohort.tribe_scouting_range = 4;
+        cohort.tribe_works = rows_of(TribeWorkState {
+            bands: vec![0u32; ROWS],
+            workers: 2,
+            ..TribeWorkState::default()
+        });
         cohort.pending_reveal_x = vec![0u32; ROWS];
         cohort.pending_reveal_y = vec![0u32; ROWS];
         cohort.belief_reach_x = vec![0u32; ROWS];

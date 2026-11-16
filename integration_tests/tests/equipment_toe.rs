@@ -151,6 +151,8 @@ fn hunting_world_at(
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(crew.unwrap_or(workers).max(1)),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -199,6 +201,8 @@ fn gathering_world_of(kit: BandEquipment, crew: Option<u32>) -> (bevy::prelude::
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(workers.max(1)),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -234,6 +238,8 @@ fn scouting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
             planned_crew: 0,
             scouting_range: SCOUTING_RANGE,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: None,
             staffing: Default::default(),
             target: LaborTarget::Scout,
@@ -2163,6 +2169,8 @@ fn report_the_strike_wear_the_shipped_opening_pays() {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: Some(workers.max(1)),
             staffing: Default::default(),
             target: LaborTarget::Hunt {

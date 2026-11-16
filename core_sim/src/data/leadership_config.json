@@ -14,5 +14,9 @@
   "tribe_score_threshold": 100.0,
   "reach_chief_people": 150.0,
   "reach_paramount_bands": 4.0,
-  "over_reach_efficiency": 0.5
+  "over_reach_efficiency": 0.5,
+  "levy_share_low": 0.25,
+  "levy_share_normal": 0.5,
+  "levy_share_high": 1.0,
+  "tribe_acting_full_share": 0.2
 }
