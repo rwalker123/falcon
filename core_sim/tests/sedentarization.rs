@@ -9,13 +9,12 @@ use core_sim::shipped;
 
 use core_sim::{
     scalar_one, scalar_zero, sedentarization_tick, spawn_initial_herds, spawn_initial_world,
-    CommandEventKind, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
-    FactionInventory, FaunaConfigHandle, ForagePatch, ForageRegistry, GenerationId,
-    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore, MapPresets,
-    MapPresetsHandle, MoraleCause, PopulationCohort, Scalar, SedentarizationConfigHandle,
-    SedentarizationScore, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle,
+    CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory,
+    FaunaConfigHandle, ForagePatch, ForageRegistry, GenerationId, GenerationRegistry,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, Scalar, SedentarizationConfigHandle, SedentarizationScore,
+    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
 };
 
 fn spawn_world() -> App {
@@ -174,12 +173,8 @@ fn score(app: &App, faction: FactionId) -> f32 {
     app.world.resource::<SedentarizationScore>().score(faction)
 }
 
-fn prompt_count(app: &App) -> usize {
-    app.world
-        .resource::<CommandEventLog>()
-        .iter()
-        .filter(|e| e.kind == CommandEventKind::SedentarizationPrompt)
-        .count()
+fn feed_len(app: &App) -> usize {
+    app.world.resource::<CommandEventLog>().iter().count()
 }
 
 /// A pastoral base (domesticated herds + surplus + population) drives the score far above a
@@ -225,36 +220,28 @@ fn cultivated_patches_feed_domestication_signal() {
     );
 }
 
-/// Soft then hard prompts fire exactly once each on rising crossings, and not again while the
-/// score stays above.
+/// The score is a readout of tether and gates nothing: however high it climbs, it files no
+/// prompt on the command feed (the soft and hard settle prompts are retired, #176).
 #[test]
-fn prompts_fire_once_on_rising_crossings() {
+fn a_climbing_score_files_nothing_on_the_feed() {
     let mut app = spawn_world();
-    // Max out the per-faction inputs so the score climbs across both thresholds.
     spawn_cohort(&mut app, FactionId(0), 300);
     domesticate(&mut app, FactionId(0), 3);
     set_surplus(&mut app, FactionId(0), 300);
 
+    let before = feed_len(&app);
     for _ in 0..8 {
         run_tick(&mut app);
     }
-
-    // Exactly one soft + one hard crossing prompt (edge-gated).
-    assert_eq!(
-        prompt_count(&app),
-        2,
-        "expected one soft and one hard prompt, got {}",
-        prompt_count(&app)
+    assert!(
+        score(&app, FactionId(0)) > 40.0,
+        "fixture: the score really climbed"
     );
-    let stages: Vec<String> = app
-        .world
-        .resource::<CommandEventLog>()
-        .iter()
-        .filter(|e| e.kind == CommandEventKind::SedentarizationPrompt)
-        .filter_map(|e| e.detail.clone())
-        .collect();
-    assert!(stages.iter().any(|d| d.contains("stage=soft")));
-    assert!(stages.iter().any(|d| d.contains("stage=hard")));
+    assert_eq!(
+        feed_len(&app),
+        before,
+        "the tether readout narrates nothing"
+    );
 }
 
 /// The score stays within [0, 100] even with all inputs maxed for many turns.

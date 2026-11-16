@@ -82,5 +82,9 @@
   "messengers": {
     "discovery_id": 2025,
     "observability": 0.5
+  },
+  "granaries": {
+    "discovery_id": 2026,
+    "observability": 0.9
   }
 }

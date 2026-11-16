@@ -122,20 +122,8 @@ fn create_populations<'a>(
                     .collect();
                 Some(builder.create_vector(&entries))
             };
-            let settlement_stage = {
-                let stage = &cohort.settlement_stage;
-                let id = builder.create_string(&stage.id);
-                let label = builder.create_string(&stage.label);
-                let icon = builder.create_string(&stage.icon);
-                fb::SettlementStageView::create(
-                    builder,
-                    &fb::SettlementStageViewArgs {
-                        id: Some(id),
-                        label: Some(label),
-                        icon: Some(icon),
-                    },
-                )
-            };
+            let settlement_stage = create_stage_view(builder, &cohort.settlement_stage);
+            let tribe_settlement_stage = create_stage_view(builder, &cohort.tribe_settlement_stage);
             let harvest = cohort.harvest_task.as_ref().map(|task| {
                 let module = builder.create_string(&task.module);
                 let band_label = builder.create_string(&task.band_label);
@@ -1244,6 +1232,7 @@ fn create_populations<'a>(
                     storageBuildMinSaved: cohort.storage_build_min_saved,
                     heldStores: Some(held_stores),
                     chiefProposals: Some(chief_proposals),
+                    tribeSettlementStage: Some(tribe_settlement_stage),
                 },
             )
         })
@@ -1909,14 +1898,8 @@ fn decode_population(
                 }),
             }
         }),
-        settlement_stage: cohort
-            .settlementStage()
-            .map(|stage| SettlementStageViewState {
-                id: text(stage.id()),
-                label: text(stage.label()),
-                icon: text(stage.icon()),
-            })
-            .unwrap_or_default(),
+        settlement_stage: decode_stage_view(cohort.settlementStage()),
+        tribe_settlement_stage: decode_stage_view(cohort.tribeSettlementStage()),
         food_income: cohort.foodIncome(),
         food_consumption: cohort.foodConsumption(),
         hunt_per_worker_provisions: cohort.huntPerWorkerProvisions(),
@@ -2433,6 +2416,34 @@ fn create_breeding_peoples<'a>(
     builder.create_vector(&rows)
 }
 
+/// A `SettlementStageView` table.
+fn create_stage_view<'a>(
+    builder: &mut FbBuilder<'a>,
+    stage: &SettlementStageViewState,
+) -> WIPOffset<fb::SettlementStageView<'a>> {
+    let id = builder.create_string(&stage.id);
+    let label = builder.create_string(&stage.label);
+    let icon = builder.create_string(&stage.icon);
+    fb::SettlementStageView::create(
+        builder,
+        &fb::SettlementStageViewArgs {
+            id: Some(id),
+            label: Some(label),
+            icon: Some(icon),
+        },
+    )
+}
+
+fn decode_stage_view(stage: Option<fb::SettlementStageView<'_>>) -> SettlementStageViewState {
+    stage
+        .map(|stage| SettlementStageViewState {
+            id: text(stage.id()),
+            label: text(stage.label()),
+            icon: text(stage.icon()),
+        })
+        .unwrap_or_default()
+}
+
 /// A `TribeClosenessState` table.
 fn create_tribe_closeness<'a>(
     builder: &mut FbBuilder<'a>,
@@ -2447,6 +2458,7 @@ fn create_tribe_closeness<'a>(
             belief: inputs.belief,
             monument: inputs.monument,
             acting: inputs.acting,
+            settlement: inputs.settlement,
         },
     )
 }
@@ -2459,6 +2471,7 @@ fn decode_tribe_closeness(table: fb::TribeClosenessState<'_>) -> TribeClosenessS
         belief: table.belief(),
         monument: table.monument(),
         acting: table.acting(),
+        settlement: table.settlement(),
     }
 }
 

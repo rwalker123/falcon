@@ -278,25 +278,9 @@ const FACTION_HEADER_SETTLING := "Settling"
 
 const FACTION_HEADER_DISCOVERIES := "Discoveries"
 
-## **THE SIM'S SEDENTARIZATION STAGE IS A WIRE TOKEN, AND THIS TABLE IS THE ONLY PLACE IT BECOMES A
-## WORD.** `SedentarizationStage::as_str()` spells the three stages `none` / `soft` / `hard`, and
-## `FactionReadouts.SEDENTARIZATION_STAGE_NONE` says outright that they are "not a word anyone sees" —
-## so the SETTLING row rendered its key as a lowercase enum (`soft  ▰▰▰▱▱  62/100`) beside the
-## capitalised `Nomadic` the below-threshold case already had. The words come from the sim's own
-## prompts: the soft threshold asks whether to "establish a seasonal base", the hard one whether to
-## "invest in storehouses and settle".
-##
-## **PROVISIONAL, pending playtest.**
-const FACTION_SETTLING_STAGE_LABELS := {
-    "none": "Nomadic",
-    "soft": "Seasonal base",
-    "hard": "Ready to settle",
-}
-
-## What an absent, `none` or UNRECOGNISED stage reads as — never the raw token, which is the whole
-## point of the table above. It reads the table rather than restating the word, so `Nomadic` has one
-## home and the fallback cannot drift from the `none` row.
-const FACTION_SETTLING_NOMADIC: String = FACTION_SETTLING_STAGE_LABELS["none"]
+## The SETTLING meter's row key. The meter is only the settle SCORE (five point components); the stage a
+## settlement has reached is resolved elsewhere (`settlement_stage_*`) and is no longer this row's key.
+const FACTION_SETTLING_SCORE_KEY := "Pull to settle"
 
 ## `▰▰▱▱▱  62/100` — the SETTLING row's VALUE: the meter and the score against the scale the sim
 ## reports it on. The stage word is the row's KEY, not part of this.

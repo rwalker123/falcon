@@ -1868,6 +1868,10 @@ pub struct PopulationCohortState {
     /// **The chief's build proposal** (zero or one row, own bands only). Appended last.
     #[serde(default)]
     pub chief_proposals: Vec<ChiefProposalState>,
+    /// The stage of the tribe the band belongs to (#176), read over all its members; empty in no
+    /// tribe. `settlement_stage` stays the band's own. Appended last.
+    #[serde(default)]
+    pub tribe_settlement_stage: SettlementStageViewState,
     /// **The messenger reach**, in tiles (`ExpeditionConfig::effective_comm_range`) — a stationed
     /// party's report lands the turn it leaves inside it. Global config echoed per cohort. Appended last.
     #[serde(default)]
@@ -2021,7 +2025,7 @@ pub const TRIBE_LEADER_PARAMOUNT_CHIEF: u8 = 1;
 /// `PopulationCohortState::tribe_leader_kind`: a member band's elders' council, promoted.
 pub const TRIBE_LEADER_COUNCIL_OF_CHIEFS: u8 = 2;
 
-/// **THE SIX INPUTS TO A TRIBE'S POINTS RATE** — the weights, or one pair's inputs times them.
+/// **THE SEVEN INPUTS TO A TRIBE'S POINTS RATE** — the weights, or one pair's inputs times them.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 pub struct TribeClosenessState {
     pub origin: f32,
@@ -2030,6 +2034,8 @@ pub struct TribeClosenessState {
     pub belief: f32,
     pub monument: f32,
     pub acting: f32,
+    /// The settlement-pull input (#176). Appended last.
+    pub settlement: f32,
 }
 
 /// **ONE PARTNER BAND AND HOW CLOSE THE TWO ARE** — a row of

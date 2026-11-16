@@ -494,13 +494,11 @@ fn create_sedentarization<'a>(
 ) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::SedentarizationState<'a>>>> {
     let mut entries = Vec::with_capacity(states.len());
     for state in states {
-        let stage = builder.create_string(state.stage.as_str());
         let entry = fb::SedentarizationState::create(
             builder,
             &fb::SedentarizationStateArgs {
                 faction: state.faction,
                 score: state.score,
-                stage: Some(stage),
                 beliefPoints: state.belief_points,
                 domesticationPoints: state.domestication_points,
                 surplusPoints: state.surplus_points,
@@ -1674,7 +1672,6 @@ fn decode_sedentarization(state: fb::SedentarizationState<'_>) -> Sedentarizatio
     SedentarizationState {
         faction: state.faction(),
         score: state.score(),
-        stage: text(state.stage()),
         belief_points: state.beliefPoints(),
         domestication_points: state.domesticationPoints(),
         surplus_points: state.surplusPoints(),

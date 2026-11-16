@@ -1309,3 +1309,10 @@ keys, or said by the label), `status=ended`'s `reason` is hidden, and the new st
 `DETAIL_VALUE_LABELS` phrases. **A foreign band has no roster name**, so `Hud.update_band_alerts` also
 publishes the names the viewer's ties remember (`subject_name`) in `band_labels_changed`; the roster's own
 name always wins.
+
+## `settlement_stage_reached` is NOTABLE; `found_settlement` and `sedentarization_prompt` are gone
+
+A settlement (a tribe, or a lone band in none) reaching a new stage is told on the feed the first turn it
+does (#176), and `hud_event_vocab.RUNG_BY_KIND` rungs it `RUNG_NOTABLE` -- the world changed in a way
+worth knowing, not a danger. The founding and prompt kinds left the sim with the stage's removal from the
+sedentarization meter, so neither has a rung or a fixture.

@@ -543,7 +543,6 @@ const BELIEFS_COMPACT_DRIFT_AXIS_LABEL := "Open \u2194 Closed"
 const BELIEFS_COMPACT_DRIFT_DELTA := -0.02
 const BELIEFS_COMPACT_VALUES := "Devout 0.4, traditional 0.3."
 const BELIEFS_COMPACT_PULL := "Its sacred ground draws it toward devout, traditional ways."
-const TOPBAR_SEDENTARIZATION_STAGE := "soft"
 ## How many of that score's points the band standing on its dead supplies (the SETTLING block's
 ## `From the dead` row). Seeded non-zero so every faction frame measures the block with the mark in.
 const TOPBAR_SEDENTARIZATION_BELIEF_POINTS := 24.0
@@ -1012,7 +1011,7 @@ func _ready() -> void:
 
 	# Seed the top bar so the HUD reflow reads against real content.
 	_hud.update_sedentarization([{"faction": 0,
-		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE,
+		"score": TOPBAR_SEDENTARIZATION_SCORE,
 		"belief_points": TOPBAR_SEDENTARIZATION_BELIEF_POINTS,
 		"domestication_points": SEDENTARIZATION_DOMESTICATION_POINTS,
 		"surplus_points": SEDENTARIZATION_SURPLUS_POINTS, "land_points": SEDENTARIZATION_LAND_POINTS,
@@ -9556,10 +9555,10 @@ func _assert_faction_band_zone_blocks() -> void:
 	# **THE KEY IS THE STAGE'S LABEL, NEVER THE WIRE TOKEN.** `SedentarizationStage::as_str()` spells the
 	# stage `soft`, which is a database value; the row must render the player word the vocabulary maps it
 	# to. Asserting the raw token here is what let a lowercase enum key ship on this row.
-	var stage_label := String(HudWorkVocab.FACTION_SETTLING_STAGE_LABELS[TOPBAR_SEDENTARIZATION_STAGE])
+	var stage_label := HudWorkVocab.FACTION_SETTLING_SCORE_KEY
 	var settling := _faction_stat_value(zone, stage_label)
-	_assert_band_panel("faction band zone: the SETTLING row is keyed by the stage word '%s' (wire '%s') and reads %d/%d (got '%s')" % [
-			stage_label, TOPBAR_SEDENTARIZATION_STAGE, int(round(TOPBAR_SEDENTARIZATION_SCORE)),
+	_assert_band_panel("faction band zone: the SETTLING row is keyed '%s' (no stage label; '%s' unused) and reads %d/%d (got '%s')" % [
+			stage_label, "", int(round(TOPBAR_SEDENTARIZATION_SCORE)),
 			HudWorkVocab.FACTION_SETTLING_SCALE, settling],
 		settling.ends_with("%d/%d" % [int(round(TOPBAR_SEDENTARIZATION_SCORE)),
 			HudWorkVocab.FACTION_SETTLING_SCALE]))
@@ -9709,7 +9708,7 @@ func _assert_faction_settling_belief() -> void:
 	_assert_settling_tooltips(zone, true)
 	_assert_discovery_tooltips(zone)
 	_hud.update_sedentarization([{"faction": HudConst.PLAYER_FACTION_ID,
-		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE,
+		"score": TOPBAR_SEDENTARIZATION_SCORE,
 		"belief_points": 0.0,
 		"domestication_points": SEDENTARIZATION_DOMESTICATION_POINTS,
 		"surplus_points": SEDENTARIZATION_SURPLUS_POINTS, "land_points": SEDENTARIZATION_LAND_POINTS,
@@ -9730,7 +9729,7 @@ func _assert_faction_settling_belief() -> void:
 	_assert_zone_content_fits()
 	_assert_zone_content_width_fits()
 	_hud.update_sedentarization([{"faction": HudConst.PLAYER_FACTION_ID,
-		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE,
+		"score": TOPBAR_SEDENTARIZATION_SCORE,
 		"belief_points": TOPBAR_SEDENTARIZATION_BELIEF_POINTS,
 		"domestication_points": SEDENTARIZATION_DOMESTICATION_POINTS,
 		"surplus_points": SEDENTARIZATION_SURPLUS_POINTS, "land_points": SEDENTARIZATION_LAND_POINTS,
@@ -9758,8 +9757,7 @@ func _assert_settling_tooltips(zone: Node, tied: bool) -> void:
 	var expected := HudWorkVocab.FACTION_SETTLING_TOOLTIP_FORMAT % [
 		int(round(TOPBAR_SEDENTARIZATION_SCORE)), int(SEDENTARIZATION_DOMESTICATION_POINTS), int(SEDENTARIZATION_SURPLUS_POINTS),
 		int(SEDENTARIZATION_LAND_POINTS), int(SEDENTARIZATION_POPULATION_POINTS), belief]
-	var stage_tip := _faction_row_tooltip(zone, HudWorkVocab.FACTION_SETTLING_STAGE_LABELS.get(
-		TOPBAR_SEDENTARIZATION_STAGE, ""))
+	var stage_tip := _faction_row_tooltip(zone, HudWorkVocab.FACTION_SETTLING_SCORE_KEY)
 	_assert_band_panel("faction settling tooltip: the stage row lists every input (got '%s')" % stage_tip.replace("\n", " | "),
 		stage_tip == expected and stage_tip.contains("Rich land +%d" % int(SEDENTARIZATION_LAND_POINTS))
 		and stage_tip.contains("Dead +%d" % belief))

@@ -625,7 +625,7 @@ func set_attention(attention: AttentionController) -> void:
 func _player_knowledge() -> Dictionary:
     return _topbar.faction_tracks(HudConst.PLAYER_FACTION_ID) if _topbar != null else {}
 
-## The player faction's sedentarization entry (`{score, stage}`), for the band zone's SETTLING block.
+## The player faction's sedentarization entry (`{score, …}`), for the band zone's SETTLING block.
 ## `{}` when the snapshot has not carried one — the block renders nothing rather than a zero.
 func _faction_settling() -> Dictionary:
     return _topbar.faction_sedentarization() if _topbar != null else {}
@@ -8980,9 +8980,10 @@ func render_band(unit: Dictionary) -> void:
     # Header: settlement stage + name + stage label. The stage `id` is the panel's sprite key
     # (bundled art), the `icon` its emoji fallback for a stage with no art; both already flow
     # onto the marker/cohort dict. A missing stage falls back to a neutral glyph.
-    var stage_id := String(_band_labor.panel_band().get("settlement_stage_id", "")).strip_edges()
-    var glyph := String(_band_labor.panel_band().get("settlement_stage_icon", "")).strip_edges()
-    var stage_label := String(_band_labor.panel_band().get("settlement_stage_label", "")).strip_edges()
+    var stage_view := HudFormat.settlement_stage_view(_band_labor.panel_band())
+    var stage_id := String(stage_view["id"])
+    var glyph := String(stage_view["icon"])
+    var stage_label := String(stage_view["label"])
     var index := _index_of_player_band(int(_band_labor.panel_band().get("entity", -1)))
     _panel.set_header(stage_id, glyph, HudFormat.band_name(_band_labor.panel_band()), stage_label,
         _panel_position_label(_band_labor.panel_band()))

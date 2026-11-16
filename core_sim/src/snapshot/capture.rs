@@ -166,6 +166,8 @@ pub struct SnapshotContext<'w> {
     pub materials: Res<'w, crate::materials_config::MaterialsConfigHandle>,
     pub recipes: Res<'w, crate::recipes_config::RecipesConfigHandle>,
     pub settlement_stage: Res<'w, crate::settlement_stage_config::SettlementStageConfigHandle>,
+    /// Each band's and tribe's resolved settlement stage (`crate::settlement`).
+    pub settlement_stages: Option<Res<'w, crate::settlement::SettlementStages>>,
     /// The practice threshold a band's leader emerges at (`crate::leadership`), echoed on each
     /// cohort row so the client can say "N of M". `Option` so a hand-rolled capture world that never
     /// installed it reads the builtin.
@@ -2826,6 +2828,7 @@ pub fn capture_snapshot(
         materials,
         recipes,
         settlement_stage,
+        settlement_stages,
         leadership_config,
         tribes,
         supply_membership,
@@ -3518,6 +3521,7 @@ pub fn capture_snapshot(
                                     *band,
                                     &band_names,
                                     &band_sizes,
+                                    settlement_stages.as_deref(),
                                 )
                             })
                         })
@@ -3637,6 +3641,9 @@ pub fn capture_snapshot(
                             })
                             .flatten(),
                         tribe_membership,
+                        settlement_stage: band_id
+                            .zip(settlement_stages.as_deref())
+                            .and_then(|(band, stages)| stages.of_band(*band)),
                         reach,
                         cohort,
                         allocation,

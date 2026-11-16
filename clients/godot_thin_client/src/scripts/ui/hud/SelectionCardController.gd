@@ -481,7 +481,7 @@ func _band_row_sprite(unit: Dictionary) -> Texture2D:
 	if bool(unit.get("is_expedition", false)):
 		return HudSprites.for_mark(HudFormat.expedition_mission_mark(
 			String(unit.get("expedition_mission", ""))))
-	return StageSprites.for_stage(String(unit.get("settlement_stage_id", "")).strip_edges())
+	return StageSprites.for_stage(String(HudFormat.settlement_stage_view(unit)["id"]))
 
 ## A band row's leading GLYPH — the server's `settlement_stage_icon` (`⛺ 🛖 🏘️`), or a PARTY's
 ## mission mark (`HudFormat.expedition_mission_glyph`, the same ⚑/💀/📦 its parties row and its map
@@ -494,7 +494,7 @@ func _band_row_sprite(unit: Dictionary) -> Texture2D:
 func _band_row_glyph(unit: Dictionary) -> String:
 	if bool(unit.get("is_expedition", false)):
 		return HudFormat.expedition_mission_glyph(String(unit.get("expedition_mission", "")))
-	return String(unit.get("settlement_stage_icon", "")).strip_edges()
+	return String(HudFormat.settlement_stage_view(unit)["icon"])
 
 ## Which ACTIVITY the land row's trailing mark states, `""` for none. It is the same predicate
 ## `_land_row_meta` uses for its count, asked as its own question so the count and the mark can never
@@ -578,7 +578,7 @@ func _build_band_row(unit: Dictionary) -> Button:
 	row.add_child(glyph_label)
 	# Surface the data-driven settlement-stage label (e.g. "Nomadic band") on hover; omit when
 	# the band has no resolved stage (pre-stage / missing snapshot).
-	var stage_label := String(unit.get("settlement_stage_label", "")).strip_edges()
+	var stage_label := String(HudFormat.settlement_stage_view(unit)["label"])
 	if stage_label != "":
 		button.tooltip_text = stage_label
 	button.add_child(row)
@@ -612,7 +612,7 @@ func _update_band_row(button: Button, unit: Dictionary) -> void:
 	_set_row_name(button, _band_row_name(unit), selected)
 	_set_row_meta(button, str(int(unit.get("size", 0))))
 	_set_row_activity_mark(button, _band_row_activity(unit, is_player))
-	button.tooltip_text = String(unit.get("settlement_stage_label", "")).strip_edges()
+	button.tooltip_text = String(HudFormat.settlement_stage_view(unit)["label"])
 
 ## One selectable wildlife row: an ecology-tier dot, the species glyph + name, and — as the meta —
 ## the hunters on it. Selecting it drives the drawer + the map ring to the herd.

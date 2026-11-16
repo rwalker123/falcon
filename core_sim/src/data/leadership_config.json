@@ -10,6 +10,7 @@
   "tribe_weight_belief": 1.0,
   "tribe_weight_acting": 3.0,
   "tribe_weight_monument": 2.0,
+  "tribe_weight_settlement": 2.0,
   "tribe_points_fade_turns": 100.0,
   "tribe_score_threshold": 100.0,
   "reach_chief_people": 150.0,

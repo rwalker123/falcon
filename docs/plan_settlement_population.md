@@ -120,19 +120,68 @@ then exists and must be tended. Building is where the currently-inert
 **tech-gated progression** for free.
 
 ### Settlements — derived clusters, never founded
-A camp/settlement/town/city is the **derived label** over a cluster of populated tiles, tiered
-by population and footprint. There is no founding command. **Decay** makes the sunk cost bite —
-walk away and your granary rots, your patch goes feral. The discrete `found_settlement` /
-`FoundCamp` model is **retired** (or kept only as an optional scenario-start alternative). The
-`SedentarizationScore` is reframed as an emergent **readout of accumulated tether** from built
-improvements, rather than an input gate.
+A camp/village/town/city is a **derived label**, never founded. There is no founding command.
+**Decay** makes the sunk cost bite — walk away and your granary rots, your patch goes feral.
 
-**The city label does something.** A cluster that reaches *city* and runs its first administered
-store (a granary and its rations) gets a ruler — or, Egalitarian, an assembly — who takes city
-orders from the player: trades (people working full time as crafters, traders and builders), great
-works fed from the granary, and rations. It is the third of four levels of orders: band, tribe, city,
-nation (`docs/plan_labor_at_scale.md` → "Leaders: four levels of orders"). Whether a tile's
-capacity counts the people living on it, and not only those working it, is this design's to settle.
+**The settlement is the tribe, or a lone band (#176).** There is no third grouping. A band in no
+tribe is a settlement of its own; a tribe (`core_sim/src/tribe.rs`) is one settlement, read over
+all its members. The tribe is already local — its bands share one belief anchor, and the anchor
+rule keeps them close (measured: members 2–12 hexes apart at formation, median about 5, over 13
+seeds × 400 turns) — so it needs no radius of its own. A band is in at most one tribe, so there is
+no overlap and no part-member: a band that leaves its tribe reads its own stage again. The tribe
+leader runs exactly the tribe's members. A settlement is the *where*; who leads and who owes what
+is the *who* (`docs/plan_labor_at_scale.md` → "Leaders: four levels of orders").
+
+**The stage.** Each turn every settlement resolves its stage from `settlement_stage_config.json`:
+the highest stage whose criteria all hold (`resolve_settlement_stage`), re-checked every turn, so a
+settlement that loses a criterion drops back. The ladder is nomadic band → camp → village → town
+→ city. `StageCriteria` takes four inputs, each an optional criterion on a row:
+
+| Input | What it reads |
+|---|---|
+| People | head-count summed over the settlement's bands (`min_size`) |
+| Store | the highest `food_stores` rung any member holds (the pit, then the granary) |
+| Food | food stored across the members' larders and fixed stores |
+| Belief | belief on the settlement's anchor tile (the tribe's shared urn, or the band's own anchor) |
+
+Every threshold is an opening value and a Workbench lever. Opening rows: camp 50, village 100,
+town about 300 with a pit, city about 1,000 with a granary, a food stock and a belief floor.
+
+**The granary is the store branch's third rung** (`food_stores:granary`, above the storage pit).
+Practising the pit teaches a `granaries` lesson, and the granary is gated on it, following the
+ladder's practise-rung-N, unlock-rung-N+1 rule. It is a fixed store like the pit, only bigger and
+longer-keeping. Opening values: 2,000 food capacity (the pit holds 400), dry food keeps 240 turns
+in it (120 in the pit), 120 work to build, up to 4 builders, upkeep 1.0 per load. All of these are
+levers.
+
+**Reaching city is the trigger.** The first turn a settlement meets the city row is an event (an
+event-log line and a Telling beat), and it is the turn #865 makes the tribe a city: its leader
+becomes the ruler (an assembly if Egalitarian) and its bands become *quarters*. The granary is a
+criterion on the city row itself, so there is one trigger, not a label plus a separate "runs its
+first administered store" check. A lone band reaches city the same way.
+
+**What a city unlocks** — each its own issue: trades (#866), full-time crafters, builders, traders,
+and farmers and herders, fed from the granary; rations (#868); great works (#867). The cost side
+is crowding (#918): sanitation, disease and fire, growing with how many live in one place.
+
+**Settlements pull their neighbours.** A pair banks tribe points faster when one of the two belongs
+to a tribe at village stage or above, scaled by the stage — one more input on the tribe's closeness
+score (`CloseInputs`, weight in `leadership_config.json`). A nearby band joins by the same bank as
+any member; there is no second kind of membership. Bands of another people cannot join a tribe, so
+they are never pulled in.
+
+**Chief credit.** A band with no leader earns practice from its own stage (`credit_stages`), as
+before. A band in a tribe already has the tribe's leader, so the tribe's stage feeds no chief credit.
+
+**The tether readout.** `SedentarizationScore` gates nothing: it keeps its number and its breakdown
+(belief, domestication, surplus, density, population) as a readout of accumulated tether, and its
+soft and hard settle prompts are gone.
+
+**Founding is retired.** The `found_settlement` command, the `FoundSettlement` event kind, the
+`Settlement` and `TownCenter` components and the TownCenter sight range are deleted.
+
+**Residents and workers.** Only the people working a tile count against its work capacity; the
+people living on it wait for dwellings.
 
 ## Cross-cutting touchpoints
 
@@ -192,9 +241,11 @@ held until the prior merges (small, focused PRs, matching the Wildlife & Hunting
   footprint (multiple per tile) + dwellings housing tile population + tending draw + decay. Sets
   the `CONSTRUCTION` bit. Snapshot + client. Likely splits (3a build+catalog, 3b tending/decay,
   3c dwellings/housing).
-- **Phase 4 — Settlements as derived clusters.** Compute the settlement/town/city label from
-  populated-tile clusters; tiering; retire discrete founding; rework `SedentarizationScore` into
-  a tether readout. Client settlement view.
+- **Phase 4 — Settlements as derived clusters (#176).** A settlement is a tribe or a lone band; its
+  stage reads people, store rung, stored food and belief, up to city; reaching city is #865's
+  trigger; settlements pull nearby bands through the tribe bank; retire discrete founding; rework
+  `SedentarizationScore` into a tether readout. Client shows the settlement's stage. See
+  "Settlements — derived clusters, never founded" above.
 
 ## Future arc — Borders & Government (deferred, documented)
 

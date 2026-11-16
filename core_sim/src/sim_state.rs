@@ -54,8 +54,7 @@ use crate::{
     belief::BeliefRegistry,
     components::{
         BandBench, BandEquipment, BandId, BandName, BandTravel, DemographicFlowAccumulator,
-        Expedition, LaborAllocation, PopulationCohort, PowerNode, ResidentBand, Settlement,
-        StartingUnit, Tile, TownCenter,
+        Expedition, LaborAllocation, PopulationCohort, PowerNode, ResidentBand, StartingUnit, Tile,
     },
     connections::{ConnectionLedger, GatheringLedger},
     crisis::{
@@ -83,6 +82,7 @@ use crate::{
     },
     routes::RoadRegistry,
     sedentarization::SedentarizationScore,
+    settlement::SettlementStages,
     sites::{DiscoveredSites, SiteTag},
     starting_loadout::StartingLoadout,
     supply::{BandSupplyMembership, SupplyNetworkMembership},
@@ -172,20 +172,12 @@ pub struct BandRecord {
     pub founding_walk: bool,
 }
 
-/// A settlement and its town centre.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SettlementRecord {
-    pub settlement: Settlement,
-    pub town_center: Option<TownCenter>,
-}
-
 /// The simulation's state at one tick.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimState {
     pub tick: SimulationTick,
     pub tiles: Vec<TileRecord>,
     pub bands: Vec<BandRecord>,
-    pub settlements: Vec<SettlementRecord>,
 
     // --- resources, cloned whole ---
     pub band_ids: BandIdAllocator,
@@ -210,6 +202,10 @@ pub struct SimState {
     /// (`tribe::TribeRegistry`). **State, not derived**: a tribe's identity and its leader persist
     /// across turns, and the Telling diffs the formation count.
     pub tribes: TribeRegistry,
+    /// Every settlement's stage (`settlement::SettlementStages`). **State, not derived**: the
+    /// stored stage is the edge gate of the stage-reached event, and the capture publishes it
+    /// before a restored world has run a turn.
+    pub settlement_stages: SettlementStages,
     /// Every road in the world, one record per tile, with its keeper and its position on the route
     /// branch. **State, not derived** — for a stronger reason than the ties above it: a road is *in
     /// the ground* and outlives the bands that wore it in, so there is nothing to rebuild one
@@ -457,24 +453,6 @@ pub fn capture_sim_state(world: &World) -> SimState {
         .collect();
     bands.sort_by_key(|record| record.id);
 
-    let mut settlements: Vec<SettlementRecord> = world
-        .iter_entities()
-        .filter_map(|entity| {
-            let settlement = entity.get::<Settlement>()?;
-            Some(SettlementRecord {
-                settlement: settlement.clone(),
-                town_center: entity.get::<TownCenter>().cloned(),
-            })
-        })
-        .collect();
-    settlements.sort_by_key(|record| {
-        (
-            record.settlement.position.y,
-            record.settlement.position.x,
-            record.settlement.faction.0,
-        )
-    });
-
     let sweep = world.resource::<VisibilitySweepTracker>();
     let mut sweep_positions: Vec<(BandId, UVec2)> = band_ids_by_entity
         .iter()
@@ -486,7 +464,6 @@ pub fn capture_sim_state(world: &World) -> SimState {
         tick: *world.resource::<SimulationTick>(),
         tiles,
         bands,
-        settlements,
         band_ids: *world.resource::<BandIdAllocator>(),
         band_names: world.resource::<BandNameAllocator>().clone(),
         active_crises: world.resource::<ActiveCrisisLedger>().checkpoint(),
@@ -496,6 +473,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
         connections: world.resource::<ConnectionLedger>().clone(),
         gatherings: world.resource::<GatheringLedger>().clone(),
         tribes: world.resource::<TribeRegistry>().clone(),
+        settlement_stages: world.resource::<SettlementStages>().clone(),
         roads: world.resource::<RoadRegistry>().clone(),
         tile_improvements: world.resource::<TileImprovementRegistry>().clone(),
         corruption: world.resource::<CorruptionLedgers>().clone(),
@@ -693,14 +671,6 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
         world.entity_mut(entity).insert(restored);
     }
 
-    // --- pass 3b: settlements -----------------------------------------------------------------
-    for record in &state.settlements {
-        let mut entity = world.spawn(record.settlement.clone());
-        if let Some(town_center) = &record.town_center {
-            entity.insert(town_center.clone());
-        }
-    }
-
     // --- pass 3c: the visibility corridor sweep -----------------------------------------------
     let mut sweep = VisibilitySweepTracker::default();
     for (band, position) in &state.sweep_positions {
@@ -744,6 +714,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.connections.clone());
     world.insert_resource(state.gatherings.clone());
     world.insert_resource(state.tribes.clone());
+    world.insert_resource(state.settlement_stages.clone());
     world.insert_resource(state.roads.clone());
     world
         .resource_mut::<crate::routes::RoadRegistry>()
@@ -850,8 +821,6 @@ fn owned_entities(world: &mut World) -> Vec<Entity> {
     owned.extend(tiles.iter(world));
     let mut cohorts = world.query_filtered::<Entity, With<PopulationCohort>>();
     owned.extend(cohorts.iter(world));
-    let mut settlements = world.query_filtered::<Entity, With<Settlement>>();
-    owned.extend(settlements.iter(world));
     owned
 }
 

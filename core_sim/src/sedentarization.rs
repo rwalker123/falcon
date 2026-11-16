@@ -1,19 +1,17 @@
-//! Sedentarization Score — the emergent per-faction "pressure to root in place".
+//! Sedentarization Score — the emergent per-faction readout of accumulated tether.
 //!
 //! Each turn `sedentarization_tick` blends normalized inputs (domestication — the Phase E
 //! `HerdRegistry::domesticated_count` seam — plus surplus, map resource density, and
 //! population, and the belief on the ground its bands stand on — the ancestors are a reason to
 //! stay, `.claude/rules/core_sim/belief.md` → "Belief feeds the tether") into a 0–100 score
-//! (config-weighted, EMA-smoothed) and, on a *rising* crossing of the soft (~40) / hard (~70) thresholds, pushes a `SedentarizationPrompt` to the command
-//! feed. The score is exported per-faction in the snapshot (a HUD meter). No new entities —
-//! this is the first slice of the pastoral→settlement chain (`Camp`, corrals, and wiring
-//! `found_settlement` to the hard prompt stay deferred).
+//! (config-weighted, EMA-smoothed). The score gates nothing: it is exported per-faction in the
+//! snapshot (a HUD meter) with its five point components. What a settlement *is* is the
+//! settlement stage (`crate::settlement`), not this score.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use bevy::prelude::*;
-use tracing::info;
 
 use crate::{
     belief::BeliefRegistry,
@@ -21,54 +19,17 @@ use crate::{
     fauna::{HerdDensityMap, HerdRegistry},
     forage::ForageRegistry,
     orders::FactionId,
-    resources::{CommandEventEntry, CommandEventKind, CommandEventLog, SimulationTick},
-    sedentarization_config::{SedentarizationConfig, SedentarizationConfigHandle},
+    sedentarization_config::SedentarizationConfigHandle,
 };
 
 /// The raw blend of normalized inputs and weights (which sum to 1) is scaled to a 0–100 score.
 const RAW_SCALE: f32 = 100.0;
-
-/// Which settle-prompt threshold a faction has currently crossed. Ordered so a *rising* stage
-/// (`new > stored`) edge-gates the prompt emission.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
-pub enum SedentarizationStage {
-    /// Below the soft threshold — still comfortably nomadic.
-    #[default]
-    None,
-    /// Soft prompt band — "establish a seasonal base?".
-    Soft,
-    /// Hard prompt band — "invest in storehouses and settle?".
-    Hard,
-}
-
-impl SedentarizationStage {
-    /// Stable string key (also the snapshot `stage` field).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SedentarizationStage::None => "none",
-            SedentarizationStage::Soft => "soft",
-            SedentarizationStage::Hard => "hard",
-        }
-    }
-
-    fn for_score(score: f32, cfg: &SedentarizationConfig) -> Self {
-        if score >= cfg.hard_threshold {
-            SedentarizationStage::Hard
-        } else if score >= cfg.soft_threshold {
-            SedentarizationStage::Soft
-        } else {
-            SedentarizationStage::None
-        }
-    }
-}
 
 /// One faction's current sedentarization pressure.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct SedentarizationEntry {
     /// EMA-smoothed 0–100 score.
     pub score: f32,
-    /// Highest prompt threshold currently crossed (edge-gates re-prompting).
-    pub stage: SedentarizationStage,
     /// The belief input's raw points this turn — `100 × weights.belief × belief_norm`, before the
     /// EMA that smooths `score`; `0` when no band stands on belief. Published as
     /// `SedentarizationState.beliefPoints`.
@@ -111,31 +72,15 @@ impl SedentarizationScore {
     }
 }
 
-/// Player-facing prompt text for a rising stage crossing.
-fn prompt_label(stage: SedentarizationStage) -> &'static str {
-    match stage {
-        SedentarizationStage::Soft => {
-            "Sedentarization — your people feel the pull to establish a seasonal base."
-        }
-        SedentarizationStage::Hard => {
-            "Sedentarization — time to invest in storehouses and found a settlement?"
-        }
-        // Never emitted (a prompt only fires on a rise into Soft/Hard).
-        SedentarizationStage::None => "Sedentarization",
-    }
-}
-
 /// Per-turn sedentarization computation (`TurnStage::Population`, after `advance_fauna_pursuits`
 /// so the turn's domestication is current). Runs before the Snapshot stage so the score is
 /// captured the same turn.
 // Bevy system signature: each param is a distinct resource/query the score needs (the score
-// state + prompt log + tick, the config, and the four inputs); they can't be collapsed without
+// state, the config, and the four inputs); they can't be collapsed without
 // a container resource that adds no clarity.
 #[allow(clippy::too_many_arguments)]
 pub fn sedentarization_tick(
     mut score: ResMut<SedentarizationScore>,
-    mut event_log: ResMut<CommandEventLog>,
-    tick: Res<SimulationTick>,
     config: Res<SedentarizationConfigHandle>,
     herds: Res<HerdRegistry>,
     forage: Res<ForageRegistry>,
@@ -232,30 +177,5 @@ pub fn sedentarization_tick(
         entry.belief_points = belief_points;
         // EMA smoothing (victory_tick pattern) so the pressure builds gradually.
         entry.score = (smoothing * entry.score + (1.0 - smoothing) * raw).clamp(0.0, 100.0);
-
-        let new_stage = SedentarizationStage::for_score(entry.score, &cfg);
-        // Edge-gate: only narrate a *rising* threshold crossing (a fall lowers the stage
-        // silently so a later re-crossing re-prompts).
-        if new_stage > entry.stage {
-            event_log.push(CommandEventEntry::new(
-                tick.0,
-                CommandEventKind::SedentarizationPrompt,
-                faction,
-                prompt_label(new_stage),
-                Some(format!(
-                    "stage={} score={:.0}",
-                    new_stage.as_str(),
-                    entry.score
-                )),
-            ));
-            info!(
-                target: "shadow_scale::analytics",
-                event = "sedentarization",
-                faction = faction.0,
-                score = entry.score,
-                stage = new_stage.as_str(),
-            );
-        }
-        entry.stage = new_stage;
     }
 }

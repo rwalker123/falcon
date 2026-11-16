@@ -56,12 +56,12 @@ use core_sim::{
     EspionageRoster, FactionBorderPolicies, FactionId, FactionOrders, FactionRegistry,
     FactionSecurityPolicies, FaunaConfigHandle, ForageRegistry, FrameSink, HerdRegistry,
     LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
-    QueueMissionParams, Scalar, SecurityPolicy, Settlement, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, SnapshotAudiences, SnapshotHistory,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
-    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, SubmitError,
-    SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle,
-    TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FODDER, FOOD, POST_RECALLED,
+    QueueMissionParams, Scalar, SecurityPolicy, SimulationConfig, SimulationConfigMetadata,
+    SimulationTick, SnapshotAudiences, SnapshotHistory, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartProfileLookup,
+    StartProfilesHandle, StartingUnit, SubmitError, SubmitOutcome, Tile, TileRegistry,
+    TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
+    WorldEpoch, FODDER, FOOD, POST_RECALLED,
 };
 use core_sim::{BranchId, VerbId};
 
@@ -91,10 +91,6 @@ const DEFAULT_EXPORT_DIR: &str = "exports";
 /// artifact of a dev tool, not a source file, but it is worth being able to open and read while
 /// explaining a playtest.
 const DEFAULT_CONFIG_OVERRIDE_DIR: &str = "config_overrides";
-
-const SETTLEMENT_PROVISION_COST: i64 = 80;
-const SETTLEMENT_CONSTRUCTION_RADIUS: u32 = 3;
-const SETTLEMENT_LOGISTICS_RADIUS: u32 = 4;
 
 /// Exit code when no port block could be bound. Distinct from a panic: this is
 /// an operator-actionable configuration/environment problem, not a bug.
@@ -1648,11 +1644,6 @@ enum Command {
         host_band_id: u64,
         /// See [`Command::SendDenialRaid::kit_id`].
         kit_id: Option<String>,
-    },
-    FoundSettlement {
-        faction: FactionId,
-        target_x: u32,
-        target_y: u32,
     },
     /// **THE ONE BUILD VERB** (issue #175) — `build <verb> ...`, every rung of the ladder. The verb is
     /// resolved against the loaded ladder and its branch's source kind decides which source fields
@@ -3405,120 +3396,6 @@ fn handle_set_start_profile(app: &mut bevy::prelude::App, profile_id: String) {
 // failure, never clamped). That is the opposite discipline: this function's whole behaviour was to
 // keep going on a typo, which is defensible for a four-value picker and is not for the one number
 // the harvest model turns on.
-
-fn handle_found_settlement(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    target_x: u32,
-    target_y: u32,
-) {
-    let target = UVec2::new(target_x, target_y);
-    let Some(_tile_entity) = ensure_land_tile(
-        app,
-        faction,
-        target,
-        "found_settlement",
-        Some(CommandEventKind::FoundSettlement),
-    ) else {
-        return;
-    };
-
-    // Reject if a settlement already exists on this tile.
-    {
-        let mut query = app.world.query::<&Settlement>();
-        if query
-            .iter(&app.world)
-            .any(|settlement| settlement.position == target)
-        {
-            emit_command_failure(
-                app,
-                CommandEventKind::FoundSettlement,
-                faction,
-                "A settlement already exists at that location.",
-            );
-            return;
-        }
-    }
-
-    // Require a Founders band to be present and consume it.
-    let Some(founders) = select_founder_band(app, faction, CommandEventKind::FoundSettlement)
-    else {
-        return;
-    };
-
-    if !consume_faction_provisions(
-        app,
-        faction,
-        SETTLEMENT_PROVISION_COST,
-        "found_settlement",
-        CommandEventKind::FoundSettlement,
-    ) {
-        return;
-    }
-
-    let removed = app.world.despawn(founders.entity);
-    if !removed {
-        warn!(
-            target: "shadow_scale::command",
-            command = "found_settlement",
-            faction = %faction.0,
-            entity_bits = founders.entity.to_bits(),
-            "command.found_settlement.rejected=despawn_failed"
-        );
-        emit_command_failure(
-            app,
-            CommandEventKind::FoundSettlement,
-            faction,
-            "Failed to consume the Founders unit.",
-        );
-        return;
-    }
-
-    let construction_radius = SETTLEMENT_CONSTRUCTION_RADIUS;
-    let logistics_radius = SETTLEMENT_LOGISTICS_RADIUS;
-
-    let settlement_entity = app.world.spawn((
-        Settlement {
-            faction,
-            position: target,
-        },
-        TownCenter {
-            construction_radius,
-            logistics_radius,
-        },
-    ));
-    let settlement_id = settlement_entity.id();
-
-    // Re-home the campaign start marker on the new hub.
-    let tick = app.world.resource::<SimulationTick>().0;
-    let Some(mut start_location) = app.world.get_resource_mut::<StartLocation>() else {
-        warn!(
-            target: "shadow_scale::command",
-            command = "found_settlement",
-            faction = %faction.0,
-            "command.found_settlement.rejected=start_location_missing"
-        );
-        return;
-    };
-    // **Only the founding faction's marker moves.** The marker is per-faction, so a settlement one
-    // people founds says nothing about where another people began.
-    start_location.relocate(faction, target);
-
-    push_command_event(
-        app,
-        tick,
-        CommandEventKind::CampaignFounded,
-        faction,
-        format!("Settlement -> ({}, {})", target_x, target_y),
-        Some(format!(
-            "construction_radius={} logistics_radius={} cost={} provisions founders_entity={}",
-            construction_radius,
-            logistics_radius,
-            SETTLEMENT_PROVISION_COST,
-            settlement_id.to_bits()
-        )),
-    );
-}
 
 /// Fetch (or insert a default) mutable [`LaborAllocation`] on a band entity.
 fn band_allocation_mut(
@@ -12008,15 +11885,6 @@ fn command_from_payload(
             host_band_id,
             kit_id,
         }),
-        ProtoCommandPayload::FoundSettlement {
-            faction_id,
-            target_x,
-            target_y,
-        } => Some(Command::FoundSettlement {
-            faction: FactionId(faction_id),
-            target_x,
-            target_y,
-        }),
         // Retired single-task band orders (Early-Game Labor slice 3a): the source-centric
         // `assign_labor` / `move_band` replace them. Ignored if a stale client still sends one.
         ProtoCommandPayload::ScoutArea { .. }
@@ -12605,34 +12473,6 @@ fn select_starting_band(
     None
 }
 
-fn select_founder_band(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    event_kind: CommandEventKind,
-) -> Option<SelectedBand> {
-    // Founders picker: real bands only (`With<ResidentBand>`) — an expedition can never found.
-    let mut query = app
-        .world
-        .query_filtered::<(Entity, &PopulationCohort, &StartingUnit), With<ResidentBand>>();
-    let picked = query
-        .iter(&app.world)
-        .find(|(_, cohort, unit)| {
-            cohort.faction == faction && unit.kind.eq_ignore_ascii_case("founders")
-        })
-        .map(|(entity, _, _)| entity);
-    if let Some(entity) = picked {
-        return Some(selected_band(app, entity));
-    }
-
-    emit_command_failure(
-        app,
-        event_kind,
-        faction,
-        "No Founders unit is available to found a settlement.",
-    );
-    None
-}
-
 /// **How an event line names a band** - `Band {id}` off its durable [`BandId`], never the unit's
 /// kind (see [`SelectedBand`]). Only a band that never minted an id (a hand-built fixture) falls
 /// back to the kind, there being no honest id to state.
@@ -12644,68 +12484,6 @@ fn starting_unit_label(app: &bevy::prelude::App, entity: Entity) -> String {
         .get::<StartingUnit>(entity)
         .map(|unit| unit.kind.clone())
         .unwrap_or_else(|| format!("starting_unit:{}", entity.index()))
-}
-
-/// Charge a provisions cost from the faction's bands' local larders (food is band-local now — the
-/// supply network keeps networked bands topped up). Sums the faction's carried food; on shortfall
-/// rejects with a command-feed failure, otherwise draws the cost greedily across bands in a
-/// deterministic order.
-fn consume_faction_provisions(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    amount: i64,
-    command_label: &str,
-    event_kind: CommandEventKind,
-) -> bool {
-    if amount <= 0 {
-        return true;
-    }
-    let mut bands: Vec<(Entity, Scalar)> = Vec::new();
-    {
-        let mut query = app.world.query::<(Entity, &PopulationCohort)>();
-        for (entity, cohort) in query.iter(&app.world) {
-            if cohort.faction == faction {
-                bands.push((entity, cohort.stores.get(FOOD)));
-            }
-        }
-    }
-    bands.sort_by_key(|(entity, _)| entity.to_bits());
-    let available = bands
-        .iter()
-        .fold(Scalar::from_i64(0), |acc, (_, food)| acc + *food);
-    let cost = Scalar::from_i64(amount);
-    if available < cost {
-        warn!(
-            target: "shadow_scale::command",
-            command = command_label,
-            faction = %faction.0,
-            item = "provisions",
-            required = amount,
-            available = available.to_i64_whole(),
-            "command.inventory.rejected=insufficient"
-        );
-        emit_command_failure(
-            app,
-            event_kind,
-            faction,
-            format!(
-                "{} provisions required but only {} available.",
-                amount,
-                available.to_i64_whole()
-            ),
-        );
-        return false;
-    }
-    let mut remaining = cost;
-    for (entity, _) in bands {
-        if remaining <= Scalar::from_i64(0) {
-            break;
-        }
-        if let Some(mut cohort) = app.world.get_mut::<PopulationCohort>(entity) {
-            remaining -= cohort.stores.take_food_mix(remaining).total();
-        }
-    }
-    true
 }
 
 fn push_command_event(
@@ -12767,7 +12545,6 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
     match kind {
         CommandEventKind::Scout => "Scout",
         CommandEventKind::FollowHerd => "Hunt (ongoing)",
-        CommandEventKind::FoundSettlement => "Found settlement",
         CommandEventKind::CampaignFounded => "Campaign founded",
         CommandEventKind::CampaignMilestone => "Campaign milestone",
         CommandEventKind::CampaignVictory => "Campaign victory",
@@ -12787,13 +12564,13 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::HuntReport => "Hunt report",
         CommandEventKind::PredatorRaid => "Predator raid",
         CommandEventKind::CancelOrder => "Cancel order",
-        CommandEventKind::SedentarizationPrompt => "Sedentarization",
         CommandEventKind::SiteDiscovered => "Site discovered",
         CommandEventKind::GatheringHeld => "Gathering",
         CommandEventKind::TribeFormed => "Tribe formed",
         CommandEventKind::TribeBandJoined => "Tribe joined",
         CommandEventKind::TribeBandLeft => "Tribe left",
         CommandEventKind::TribeDissolved => "Tribe dissolved",
+        CommandEventKind::SettlementStageReached => "Settlement stage reached",
         CommandEventKind::NarrativeBeat => "The Telling",
         CommandEventKind::NarrativeFork => "The Telling",
         CommandEventKind::ExpeditionSent => "Expedition sent",
@@ -13068,7 +12845,6 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::SendDenialRaid { faction, .. } => Some((*faction, "send_denial_raid")),
         Command::SendTradeExpedition { faction, .. } => Some((*faction, "send_trade_expedition")),
         Command::StationExpedition { faction, .. } => Some((*faction, "station_expedition")),
-        Command::FoundSettlement { faction, .. } => Some((*faction, "found_settlement")),
         Command::AnswerFork { faction, .. } => Some((*faction, "answer_fork")),
         Command::BuildRung { faction, .. } => Some((*faction, "build")),
         Command::AbandonWorking { faction, .. } => Some((*faction, "abandon_working")),
@@ -13510,13 +13286,6 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             kit_id,
         } => {
             handle_station_expedition(app, faction, band_id, party_workers, host_band_id, kit_id);
-        }
-        Command::FoundSettlement {
-            faction,
-            target_x,
-            target_y,
-        } => {
-            handle_found_settlement(app, faction, target_x, target_y);
         }
         Command::BuildRung { faction, request } => {
             handle_build_rung(app, faction, request);
@@ -30851,6 +30620,8 @@ mod tests {
             matched_ if matched_ == VerbId::new("rack") => format!("build rack 0 {ROAD_BAND_ID}"),
             // The belief branch's verb is a tile verb, the pit's shape.
             matched_ if matched_ == VerbId::new("raise") => "build raise 0 1 1".to_string(),
+            // The granary is the pit's tile verb one rung up.
+            matched_ if matched_ == VerbId::new("store") => "build store 0 1 1".to_string(),
             other => panic!("no canonical command line is stated for the verb `{other:?}`"),
         }
     }

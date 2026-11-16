@@ -1248,6 +1248,8 @@ pub(crate) struct TribeMembership {
     pub(crate) leader_kind: u8,
     /// How many bands the tribe has: the tribe leader's load.
     pub(crate) member_count: usize,
+    /// The tribe's settlement stage (an index into the stage config), once resolved.
+    pub(crate) stage: Option<usize>,
 }
 
 /// **A band's leader reach fields, as published** (`crate::leadership::LeaderReach`): all zero
@@ -1306,6 +1308,7 @@ pub(crate) fn tribe_membership(
     band: BandId,
     names: &BandNameLookup,
     sizes: &BandSizeLookup,
+    stages: Option<&crate::settlement::SettlementStages>,
 ) -> Option<TribeMembership> {
     let tribe = registry.tribe_of(band)?;
     let mut members: Vec<BandId> = tribe.members.iter().copied().collect();
@@ -1337,6 +1340,7 @@ pub(crate) fn tribe_membership(
             }
         },
         member_count: tribe.members.len(),
+        stage: stages.and_then(|stages| stages.of_tribe(tribe.id)),
     })
 }
 
@@ -1352,6 +1356,7 @@ fn tribe_contribution(
         belief: (weights.tribe_weight_belief * inputs.belief) as f32,
         monument: (weights.tribe_weight_monument * inputs.monument) as f32,
         acting: (weights.tribe_weight_acting * inputs.acting) as f32,
+        settlement: (weights.tribe_weight_settlement * inputs.settlement) as f32,
     }
 }
 
@@ -1391,6 +1396,7 @@ pub(crate) fn tribe_progress(
                 belief: 1.0,
                 monument: 1.0,
                 acting: 1.0,
+                settlement: 1.0,
             },
         ),
         pairs,
@@ -1424,6 +1430,10 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// The formed tribe the band belongs to; `None` in no tribe, for a foreign or detached row and
     /// for a hand-built fixture.
     pub(crate) tribe_membership: Option<TribeMembership>,
+    /// The band's own settlement stage as `advance_settlements` resolved it (an index into the
+    /// stage config); `None` before any turn has resolved it, which publishes the stage its people
+    /// alone reach.
+    pub(crate) settlement_stage: Option<usize>,
     /// The band's leader reach and the factor its orders arrive at (default for a foreign row, a
     /// party and a hand-built fixture).
     pub(crate) reach: ReachReadout,
@@ -1749,12 +1759,12 @@ pub(crate) fn builtin_hunt_crew_levers() -> &'static HuntCrewLevers<'static> {
 /// The settlement stage a band of `size` people resolves to, as the view the client draws its
 /// marker from. ONE resolution shared by the owner's row and the redacted foreign row, so the two
 /// can never disagree about what stage a band is.
-fn settlement_stage_view(
-    size: u32,
+pub(crate) fn settlement_stage_view(
+    stage_index: Option<usize>,
     config: &crate::settlement_stage_config::SettlementStageConfig,
 ) -> SettlementStageViewState {
-    let inputs = crate::settlement_stage_config::SettlementStageInputs { size };
-    crate::settlement_stage_config::resolve_settlement_stage(&inputs, &config.stages)
+    stage_index
+        .and_then(|index| config.stages.get(index))
         .map(|stage| SettlementStageViewState {
             id: stage.id.clone(),
             label: stage.label.clone(),
@@ -1812,7 +1822,11 @@ pub(crate) fn redacted_population_state(
         current_y: current_position.map(|p| p.y).unwrap_or(0),
         size: cohort.size,
         // Allow-listed ONLY while the stage is a pure function of `size` (see the table above).
-        settlement_stage: settlement_stage_view(cohort.size, settlement_stage_config),
+        // What an observer can read from outside: the stage the people alone reach.
+        settlement_stage: settlement_stage_view(
+            settlement_stage_config.people_only_index(cohort.size),
+            settlement_stage_config,
+        ),
         ..PopulationCohortState::default()
     }
 }
@@ -1996,6 +2010,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         leadership_threshold,
         tribe,
         tribe_membership,
+        settlement_stage,
         reach,
         cohort,
         allocation,
@@ -2816,7 +2831,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     };
     // Resolve the band's settlement stage from the data-driven config (interim input: head-count).
     // Empty config would yield None; fall back to the empty view so the field is always present.
-    let settlement_stage = settlement_stage_view(cohort.size, settlement_stage_config);
+    let settlement_stage = settlement_stage_view(
+        settlement_stage.or_else(|| settlement_stage_config.people_only_index(cohort.size)),
+        settlement_stage_config,
+    );
+    let tribe_settlement_stage = settlement_stage_view(
+        tribe_membership.as_ref().and_then(|t| t.stage),
+        settlement_stage_config,
+    );
     // **THIS PARTY'S PACK** = `party_workers × the per-worker carry of the pack its MISSION fills`
     // (`0` for a scout and for a normal band). The party's worker count is its working-age head-count.
     //
@@ -3501,6 +3523,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         storage_build_min_saved: spoilage.storage_build_min_saved,
         held_stores: spoilage.held_stores,
         chief_proposals,
+        tribe_settlement_stage,
         hunt_meals: crate::hunt_by_need::meals_by_class(
             cohort,
             allocation,
@@ -4154,6 +4177,7 @@ mod tests {
             leadership_threshold: 0.0,
             tribe: None,
             tribe_membership: None,
+            settlement_stage: None,
             reach: ReachReadout::default(),
             // No world, so no outfitting window either.
             loadout_window: None,

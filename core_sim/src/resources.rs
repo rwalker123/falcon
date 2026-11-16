@@ -1579,7 +1579,6 @@ impl FactionInventory {
 pub enum CommandEventKind {
     Scout,
     FollowHerd,
-    FoundSettlement,
     CampaignFounded,
     CampaignMilestone,
     CampaignVictory,
@@ -1686,7 +1685,6 @@ pub enum CommandEventKind {
     /// casualty-causing raid turn (edge-gating a repeated raid to one line is deferred to Phase 3).
     PredatorRaid,
     CancelOrder,
-    SedentarizationPrompt,
     SiteDiscovered,
     /// **Two bands met after having no live tie** - a gathering (`docs/plan_civilization_steps.md`
     /// section "The gathering is detected, not commanded"). One row per participating people,
@@ -1847,6 +1845,11 @@ pub enum CommandEventKind {
     /// **A tribe dissolved**: against its largest former band still standing; detail
     /// `tribe=<id>`.
     TribeDissolved,
+    /// **A settlement reached a stage it was not at the turn before**, told only for the CITY row
+    /// (the stage the config flags `announce`): the first turn a settlement (a tribe, or a lone
+    /// band in none) newly meets it. Edge-gated on `SettlementStages`' stored stage, so it fires
+    /// once per rising crossing (`.claude/rules/core_sim/campaign.md` -> "Settlements").
+    SettlementStageReached,
 }
 
 impl CommandEventKind {
@@ -1854,7 +1857,6 @@ impl CommandEventKind {
         match self {
             CommandEventKind::Scout => "scout",
             CommandEventKind::FollowHerd => "follow_herd",
-            CommandEventKind::FoundSettlement => "found_settlement",
             CommandEventKind::CampaignFounded => "campaign_founded",
             CommandEventKind::CampaignMilestone => "campaign_milestone",
             CommandEventKind::CampaignVictory => "campaign_victory",
@@ -1874,7 +1876,6 @@ impl CommandEventKind {
             CommandEventKind::HuntReport => "hunt_report",
             CommandEventKind::PredatorRaid => "predator_raid",
             CommandEventKind::CancelOrder => "cancel_order",
-            CommandEventKind::SedentarizationPrompt => "sedentarization_prompt",
             CommandEventKind::SiteDiscovered => "site_discovered",
             CommandEventKind::GatheringHeld => "gathering_held",
             CommandEventKind::ExpeditionSent => "expedition_sent",
@@ -1904,6 +1905,7 @@ impl CommandEventKind {
             CommandEventKind::TribeBandJoined => "tribe_band_joined",
             CommandEventKind::TribeBandLeft => "tribe_band_left",
             CommandEventKind::TribeDissolved => "tribe_dissolved",
+            CommandEventKind::SettlementStageReached => "settlement_stage_reached",
         }
     }
 }

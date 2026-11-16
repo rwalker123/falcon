@@ -23,21 +23,49 @@ use bevy::prelude::Resource;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::config_load::{load_config_from_env, ConfigLoadError};
+use crate::{
+    config_load::{load_config_from_env, ConfigLoadError},
+    intensification::LadderConfig,
+    ladder_ids::RungId,
+};
 
 pub const BUILTIN_SETTLEMENT_STAGE_CONFIG: &str = include_str!("data/settlement_stage_config.json");
 
-/// The gate a band must clear to be *eligible* for a stage — an extensible record, not a bare
+/// The gate a settlement must clear to be *eligible* for a stage — an extensible record, not a bare
 /// threshold. Every declared criterion must be satisfied for the stage to match (see
-/// [`resolve_settlement_stage`]). Today the only criterion is `min_size`; enriching the signal set
-/// later is purely additive here (e.g. `min_structures: Option<u32>`, `min_sedentarization:
-/// Option<f32>`) — add an `Option` field, populate the matching field on [`SettlementStageInputs`],
-/// and add one `&&` line to the resolver predicate. No config-iteration, builder, schema, or client
-/// change.
+/// [`resolve_settlement_stage`]). The four inputs are the settlement's people (`min_size`), the
+/// highest food-store rung any member holds (`min_store_rung`), the food stored across the members'
+/// larders and fixed stores (`min_food`) and the belief on the settlement's anchor tile
+/// (`min_belief`). Everything but `min_size` is optional: an absent criterion always holds.
+/// Enriching the signal set later is purely additive here — add an `Option` field, populate the
+/// matching field on [`SettlementStageInputs`], and add one `&&` line to the predicate.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StageCriteria {
-    /// Minimum band head-count for this stage. `0` always matches (the default/nomadic anchor).
+    /// Minimum head-count summed over the settlement's bands. `0` always matches (the
+    /// default/nomadic anchor).
     pub min_size: u32,
+    /// The store rung some member's owned fixed store must hold at least (compared by the ladder's
+    /// own `order` on the rung's branch).
+    #[serde(default)]
+    pub min_store_rung: Option<RungId>,
+    /// Minimum food stored across the members' larders and owned fixed stores.
+    #[serde(default)]
+    pub min_food: Option<f32>,
+    /// Minimum belief standing on the settlement's anchor tile.
+    #[serde(default)]
+    pub min_belief: Option<f32>,
+}
+
+impl StageCriteria {
+    /// A row that asks for people alone.
+    pub fn people(min_size: u32) -> Self {
+        Self {
+            min_size,
+            min_store_rung: None,
+            min_food: None,
+            min_belief: None,
+        }
+    }
 }
 
 /// One settlement stage. `id` is a stable key, `label` a tooltip name, `icon` an opaque
@@ -49,44 +77,26 @@ pub struct SettlementStageDef {
     pub label: String,
     pub icon: String,
     pub criteria: StageCriteria,
+    /// Whether the first turn a settlement newly reaches this stage is told on the command feed
+    /// (`CommandEventKind::SettlementStageReached`). The shipped ladder flags the city row.
+    #[serde(default)]
+    pub announce: bool,
 }
 
-/// Root settlement-stage configuration: the ordered stage list. Defaults ship three stages whose
-/// thresholds are calibrated to the early-game `size` scale — a starting band (`DEFAULT_STARTING_
-/// BAND_SIZE` = 30, see `start_profile.rs`) resolves to `nomadic`; sustained growth reaches `camp`
-/// (50) then `village` (100). **Provisional — meant to be tuned live.**
+/// Root settlement-stage configuration: the ordered stage list and the stage at which a settlement
+/// starts pulling its neighbours. **Provisional — meant to be tuned live.**
 #[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
 pub struct SettlementStageConfig {
     pub stages: Vec<SettlementStageDef>,
+    /// The id of the stage from which a tribe's settlement pulls nearby bands into the tribe bank
+    /// (`tribe::CloseInputs::settlement`); every stage below it pulls nothing.
+    pub pull_from_stage: String,
 }
 
 impl Default for SettlementStageConfig {
     fn default() -> Self {
-        // Keep in sync with `data/settlement_stage_config.json` (that file is authoritative when
-        // present; this is the baked-in fallback).
-        Self {
-            stages: vec![
-                SettlementStageDef {
-                    id: "nomadic".to_string(),
-                    label: "Nomadic band".to_string(),
-                    icon: "⛺".to_string(),
-                    criteria: StageCriteria { min_size: 0 },
-                },
-                SettlementStageDef {
-                    id: "camp".to_string(),
-                    label: "Seasonal camp".to_string(),
-                    icon: "🛖".to_string(),
-                    criteria: StageCriteria { min_size: 50 },
-                },
-                SettlementStageDef {
-                    id: "village".to_string(),
-                    label: "Village".to_string(),
-                    icon: "🏘️".to_string(),
-                    criteria: StageCriteria { min_size: 100 },
-                },
-            ],
-        }
+        // The baked-in JSON is the single source of truth; the Default parses it.
+        Self::builtin().as_ref().clone()
     }
 }
 
@@ -112,26 +122,48 @@ impl SettlementStageConfig {
     }
 }
 
-/// The per-band signals the resolver reads — an extensible record, not a bare `size`. The snapshot
-/// builder constructs one per band. Adding a future signal (structure count, sedentarization,
-/// tether, …) is a new field here, populated at the one call site; the resolver signature and its
-/// callers stay unchanged.
-///
-/// INTERIM INPUT: the only signal today is band head-count (`size`). This size-only rule is a
-/// deliberate proxy — Phase 3/4 enrich the inputs *inside* this record and the resolver predicate
-/// without changing the snapshot field or the client.
-#[derive(Debug, Clone, Copy)]
+/// The per-settlement signals the resolver reads — an extensible record, not a bare `size`.
+/// [`crate::settlement`] builds one per settlement (a tribe or a lone band). Adding a signal is a
+/// new field here, populated at the one call site.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct SettlementStageInputs {
+    /// Head-count summed over the settlement's bands.
     pub size: u32,
+    /// The highest fixed-store rung any member's owned store holds; `None` with no store.
+    pub store: Option<RungId>,
+    /// Food in the members' larders plus their owned fixed stores.
+    pub food: f32,
+    /// Belief on the settlement's anchor tile; `0` with no anchor.
+    pub belief: f32,
 }
 
-/// Whether `inputs` satisfies *every* criterion `criteria` declares. Extending the signal set is a
-/// one-line addition here (e.g. `&& criteria.min_structures.is_none_or(|m| inputs.structures >= m)`).
-fn criteria_match(criteria: &StageCriteria, inputs: &SettlementStageInputs) -> bool {
+impl SettlementStageInputs {
+    /// The reading an observer can take of a band from outside: its people and nothing else.
+    pub fn of_size(size: u32) -> Self {
+        Self {
+            size,
+            ..Self::default()
+        }
+    }
+}
+
+/// Whether `inputs` satisfies *every* criterion `criteria` declares.
+fn criteria_match(
+    criteria: &StageCriteria,
+    inputs: &SettlementStageInputs,
+    ladder: &LadderConfig,
+) -> bool {
     criteria.min_size <= inputs.size
+        && criteria.min_store_rung.is_none_or(|required| {
+            inputs
+                .store
+                .is_some_and(|held| ladder.at_or_above(held, required))
+        })
+        && criteria.min_food.is_none_or(|min| inputs.food >= min)
+        && criteria.min_belief.is_none_or(|min| inputs.belief >= min)
 }
 
-/// Resolve which settlement stage `inputs` places a band in: the highest-ordered entry in the
+/// Resolve which settlement stage `inputs` places a settlement in: the highest-ordered entry in the
 /// ordered `stages` list whose criteria are ALL satisfied, falling back to the first (default)
 /// stage — which should declare `min_size: 0` so it always matches. Generic over the config list —
 /// it never names a specific stage, so **adding a stage is a pure config edit** and this code is
@@ -139,12 +171,65 @@ fn criteria_match(criteria: &StageCriteria, inputs: &SettlementStageInputs) -> b
 pub fn resolve_settlement_stage<'a>(
     inputs: &SettlementStageInputs,
     stages: &'a [SettlementStageDef],
+    ladder: &LadderConfig,
 ) -> Option<&'a SettlementStageDef> {
-    stages
-        .iter()
-        .rev()
-        .find(|stage| criteria_match(&stage.criteria, inputs))
-        .or_else(|| stages.first())
+    stage_index(inputs, stages, ladder).map(|index| &stages[index])
+}
+
+/// [`resolve_settlement_stage`] as the winning stage's index in `stages`.
+pub fn stage_index(
+    inputs: &SettlementStageInputs,
+    stages: &[SettlementStageDef],
+    ladder: &LadderConfig,
+) -> Option<usize> {
+    if stages.is_empty() {
+        return None;
+    }
+    Some(
+        stages
+            .iter()
+            .rposition(|stage| criteria_match(&stage.criteria, inputs, ladder))
+            .unwrap_or(0),
+    )
+}
+
+impl StageCriteria {
+    /// Whether the row asks for people and nothing else.
+    fn asks_people_only(&self) -> bool {
+        self.min_store_rung.is_none() && self.min_food.is_none() && self.min_belief.is_none()
+    }
+}
+
+impl SettlementStageConfig {
+    /// **The stage an observer can read off a band from outside**: the highest row that asks for
+    /// people alone and that `size` meets. Standing on a ridge shows how many there are, not what
+    /// they have stored or buried, so a foreign band's marker reads this (a town or a city is
+    /// only ever read from the inside).
+    pub fn people_only_index(&self, size: u32) -> Option<usize> {
+        self.stages
+            .iter()
+            .rposition(|stage| stage.criteria.asks_people_only() && stage.criteria.min_size <= size)
+    }
+
+    /// The index of the stage a settlement starts pulling from; `stages.len()` (never reached)
+    /// when the id names no stage.
+    pub fn pull_from_index(&self) -> usize {
+        self.stages
+            .iter()
+            .position(|stage| stage.id == self.pull_from_stage)
+            .unwrap_or(self.stages.len())
+    }
+
+    /// **The pull a settlement at stage `index` exerts**, in `[0, 1]`: the stage's place on the
+    /// ladder (`index / last index`), and `0` below the pull stage. A ladder of one stage pulls
+    /// nothing.
+    pub fn pull_strength(&self, index: usize) -> f64 {
+        let last = self.stages.len().saturating_sub(1);
+        if last == 0 || index < self.pull_from_index() {
+            return 0.0;
+        }
+        index.min(last) as f64 / last as f64
+    }
 }
 
 #[derive(Debug, Error)]
@@ -228,13 +313,37 @@ pub fn load_settlement_stage_config_from_env(
 mod tests {
     use super::*;
 
+    fn ladder() -> std::sync::Arc<LadderConfig> {
+        LadderConfig::builtin()
+    }
+
+    fn stage_id(inputs: SettlementStageInputs) -> String {
+        let config = SettlementStageConfig::builtin();
+        resolve_settlement_stage(&inputs, &config.stages, &ladder())
+            .unwrap()
+            .id
+            .clone()
+    }
+
+    fn rung(id: &str) -> RungId {
+        id.parse().expect("a rung id")
+    }
+
+    /// Inputs that satisfy every non-people criterion of the shipped city row.
+    fn city_grade(size: u32) -> SettlementStageInputs {
+        SettlementStageInputs {
+            size,
+            store: Some(rung("food_stores:granary")),
+            food: 1.0e6,
+            belief: 1.0e6,
+        }
+    }
+
     #[test]
     fn builtin_config_parses_and_is_ordered() {
         let config = SettlementStageConfig::builtin();
         assert!(!config.stages.is_empty(), "config must define stages");
-        // A well-formed config anchors the low end at `min_size: 0` so every band resolves.
         assert_eq!(config.stages.first().unwrap().criteria.min_size, 0);
-        // Thresholds are strictly increasing so the ordered list reads as a progression.
         for pair in config.stages.windows(2) {
             assert!(
                 pair[1].criteria.min_size > pair[0].criteria.min_size,
@@ -243,49 +352,110 @@ mod tests {
                 pair[1].criteria.min_size
             );
         }
-        // Presentation tokens are non-empty.
         for stage in &config.stages {
             assert!(!stage.id.is_empty());
             assert!(!stage.label.is_empty());
             assert!(!stage.icon.is_empty());
         }
+        assert!(
+            config.pull_from_index() < config.stages.len(),
+            "pull_from_stage must name a stage"
+        );
     }
 
     #[test]
-    fn builtin_matches_default() {
-        // The baked-in JSON and the `Default` fallback must agree (they are two copies of the
-        // same source of truth).
-        let from_json = SettlementStageConfig::builtin();
-        let from_default = SettlementStageConfig::default();
-        assert_eq!(from_json.stages.len(), from_default.stages.len());
-        for (a, b) in from_json.stages.iter().zip(from_default.stages.iter()) {
-            assert_eq!(a.id, b.id);
-            assert_eq!(a.label, b.label);
-            assert_eq!(a.criteria.min_size, b.criteria.min_size);
-            assert_eq!(a.icon, b.icon);
-        }
-    }
-
-    #[test]
-    fn resolves_highest_eligible_stage() {
+    fn the_shipped_ladder_runs_nomadic_camp_village_town_city() {
         let config = SettlementStageConfig::builtin();
-        let stage_id = |size: u32| {
-            resolve_settlement_stage(&SettlementStageInputs { size }, &config.stages)
-                .unwrap()
-                .id
-                .clone()
+        let ids: Vec<&str> = config.stages.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, ["nomadic", "camp", "village", "town", "city"]);
+        let announced: Vec<&str> = config
+            .stages
+            .iter()
+            .filter(|s| s.announce)
+            .map(|s| s.id.as_str())
+            .collect();
+        assert_eq!(announced, ["city"]);
+    }
+
+    #[test]
+    fn people_alone_resolve_up_to_village() {
+        assert_eq!(stage_id(SettlementStageInputs::of_size(30)), "nomadic");
+        assert_eq!(stage_id(SettlementStageInputs::of_size(0)), "nomadic");
+        assert_eq!(stage_id(SettlementStageInputs::of_size(50)), "camp");
+        assert_eq!(stage_id(SettlementStageInputs::of_size(99)), "camp");
+        assert_eq!(stage_id(SettlementStageInputs::of_size(100)), "village");
+        // Without a store, a crowd is still only a village.
+        assert_eq!(stage_id(SettlementStageInputs::of_size(10_000)), "village");
+    }
+
+    #[test]
+    fn a_store_rung_gates_town_and_city_by_order() {
+        let config = SettlementStageConfig::builtin();
+        let town = config.stages.iter().find(|s| s.id == "town").unwrap();
+        let size = town.criteria.min_size;
+        let with_store = |store: Option<RungId>| {
+            stage_id(SettlementStageInputs {
+                size,
+                store,
+                ..SettlementStageInputs::default()
+            })
         };
-        // A starting band (DEFAULT_STARTING_BAND_SIZE = 30) is nomadic.
-        assert_eq!(stage_id(30), "nomadic");
-        assert_eq!(stage_id(0), "nomadic");
-        assert_eq!(stage_id(50), "camp");
-        assert_eq!(stage_id(99), "camp");
-        assert_eq!(stage_id(100), "village");
-        assert_eq!(stage_id(10_000), "village");
+        assert_eq!(with_store(None), "village");
+        assert_eq!(with_store(Some(rung("food_stores:unstored"))), "village");
+        assert_eq!(with_store(Some(rung("food_stores:storage_pit"))), "town");
+        // The granary outranks the pit on the branch, so it satisfies the town row too.
+        assert_eq!(with_store(Some(rung("food_stores:granary"))), "town");
+    }
+
+    #[test]
+    fn the_city_row_needs_a_granary_food_and_belief() {
+        let config = SettlementStageConfig::builtin();
+        let city = config.stages.iter().find(|s| s.id == "city").unwrap();
+        let size = city.criteria.min_size;
+        assert_eq!(stage_id(city_grade(size)), "city");
+        assert_eq!(stage_id(city_grade(size - 1)), "town");
+        let pit = Some(rung("food_stores:storage_pit"));
+        assert_eq!(
+            stage_id(SettlementStageInputs {
+                store: pit,
+                ..city_grade(size)
+            }),
+            "town",
+            "a pit is not a granary"
+        );
+        assert_eq!(
+            stage_id(SettlementStageInputs {
+                food: city.criteria.min_food.unwrap() - 1.0,
+                ..city_grade(size)
+            }),
+            "town",
+            "too little stored food"
+        );
+        assert_eq!(
+            stage_id(SettlementStageInputs {
+                belief: city.criteria.min_belief.unwrap() - 0.5,
+                ..city_grade(size)
+            }),
+            "town",
+            "too little belief on the anchor"
+        );
+    }
+
+    #[test]
+    fn the_pull_is_zero_below_the_pull_stage_and_grows_to_one_at_the_top() {
+        let config = SettlementStageConfig::builtin();
+        let village = config.pull_from_index();
+        assert!(config.pull_strength(village - 1).abs() < f64::EPSILON);
+        let last = config.stages.len() - 1;
+        assert!((config.pull_strength(last) - 1.0).abs() < f64::EPSILON);
+        assert!(config.pull_strength(village) > 0.0);
+        assert!(config.pull_strength(village) < config.pull_strength(last));
     }
 
     #[test]
     fn empty_stage_list_resolves_to_none() {
-        assert!(resolve_settlement_stage(&SettlementStageInputs { size: 42 }, &[]).is_none());
+        assert!(
+            resolve_settlement_stage(&SettlementStageInputs::of_size(42), &[], &ladder()).is_none()
+        );
     }
 }

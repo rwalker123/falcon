@@ -32,7 +32,7 @@ paths:
 | File | Purpose |
 |------|---------|
 | `src/data/turn_pipeline_config.json` → `population` | The place-based morale levers: `attrition_penalty_scale` (**0.2**), `hardness_penalty_scale` (**0.05**), `attrition_morale_tolerance` (**0.05** — terrain attrition up to this rate drains no morale; finite, `>= 0`), `fresh_water_morale_bonus` (**0.005** — morale per turn on fresh-watered ground; finite, `>= 0`). OPENING VALUES, playtest levers; the last two are stageable in the Workbench as the `turn_pipeline` kind (env `TURN_PIPELINE_CONFIG_PATH`) |
-| `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population/belief), and saturation `references` |
+| `src/data/sedentarization_config.json` | Sedentarization Score tuning (a tether readout that gates nothing): EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population/belief), and saturation `references` |
 | `src/data/mobility_config.json` | Mobility Score tuning (strict: required fields, unknown keys refused, no hand `Default`): EMA `smoothing` (**0.95**, in `[0, 1)`), input `weights` (`skills` **0.5**, `distance` **0.5**, finite and `>= 0`), and `references.hexes_per_turn` (**1.0**, `> 0`, equal to `labor_config.json` `band_move_tiles_per_turn` so a band walking every turn at full pace saturates). OPENING VALUES, playtest levers; stageable in the Workbench as the `mobility` kind, env override `MOBILITY_CONFIG_PATH` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), **`keeping`** (how food keeps, #706 — `classes`, each `{ id, shelf_life_turns }`: **`flesh` 4.0**, **`fresh_plant` 8.0**, **`dry` 60.0**; `startup_class` **`dry`**, the class the opening reserve is seeded into; `plant_fallback_class` **`fresh_plant`** / `kill_fallback_class` **`flesh`**, where a take's food lands when no species says; **`preservation`** (#708, a list of `{ rung, class, shelf_life_turns }` — the value a class's shelf life takes while a band holds that store rung: `camp_stores:drying_rack` flesh **20**, `food_stores:storage_pit` dry **120**, PLAYTEST DIALS; see "What a store buys" below); **`fixed_stores`** (#709, a list of `{ rung, capacity }` — a tile store's capacity in food units, `food_stores:storage_pit` **400**, ≈150 people × 20 turns, a PLAYTEST DIAL; see "A storage pit is its band's second larder" below). Validated at parse — unique ids, finite positive shelf lives, every named class present — and every fauna/flora species' `keeping` is reconciled against it at boot; see "Food spoils by keeping class" below), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `lineage.founding_lines` (`L`, **8**, a `NonZeroU16` so `0` is a parse error — how many founding lines a starting band holds; see "Founding lines" below), `lineage.people_per_line` (`K`, **19**, a `NonZeroU16` — how many people one line carries before births stop; an isolated starting band ceilings at `L × K` = 152, pinned above the shipped `band_size` by `demographics_config::tests::the_shipped_starting_band_opens_below_its_breeding_ceiling`; see "The breeding ceiling" below), `lineage.free_breeding_at` (**500** PEOPLE, a `NonZeroU32` — the head-count at which a people breeds freely for good: a people is latched into `FreeBreedingPeoples`, and no population of it is capped again, in the pre-pass of the turn a breeding population opens at it or its own ceiling is at least it and its uncapped births carry it there (that turn's births are uncapped, so the head-count can pass it); before the latch the effective ceiling is `min(shared ceiling, free_breeding_at)`; pinned above the shipped `L × K` by `demographics_config::tests::the_shipped_lone_band_ceiling_sits_below_the_free_breeding_size`, so a lone band opens capped; see "The breeding ceiling" below), `lineage.shed_share` (**0.25**, an `f32` validated in `(0, 1]` at parse: the share of a breeding population's excess over its ceiling that leaves each turn, a PLAYTEST DIAL; see "Shedding above the ceiling" below), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
 | `src/data/start_profiles.json` | Campaign initialization. Per profile: `food_modules`, `victory_modes_enabled` (AI tuning is per seat and lives in `sim_ai/data/ai_profiles.json`, not here) and a required, ordered **`archetypes`** array — one entry per kind of people (shipped: `major`, `minor`; `factions.md` → "Start archetypes"). Each archetype carries `id`, `display_label`, `min_separation`, `default_count` and the per-people opening: `starting_units` (`kind`/`count`/`band_size` — major 30, minor 12), `starting_knowledge_tags`, `inventory` — plus the **required** `opening_loadout` block (the minor's is the major's with `kit_defaults` empty; the figures below are the major's): `pickable_materials` (`bone`, `fibre`, `hide`, `wood`, `stone` — the picker's list, in the order it is drawn), `material_defaults` (`bone 2` / `fibre 12` / `hide 6`) and **`kit_defaults`** (`big_game 5` / `trapping 5` / `gathering 7` — one kit per hand on the shipped 30-person band). Together they are the **opening band's** default outfit (load 47 against its ≈ 47 goods allowance), APPLIED after the world-build meal, not suggested; a splinter's default is `split_default_outfit`, not these. ⛔ **There is no budget in this file**: what a band may outfit is its CARRY less its larder (`.claude/rules/core_sim/band-carry.md`), and the retired `material_points` key is **refused at load**, not ignored (`start_profile::the_retired_material_points_key_is_refused`). `StartProfiles::validate_against_materials` rejects a pickable or default naming a material the roster does not carry, and `validate_against_equipment` rejects a `kit_defaults` key the equipment roster does not carry **or one whose `uses` is empty** — both run from `build_headless_app`. Defaults over the band's allowance are fitted at apply (`fit_to_carry`, materials cut before tools); the full rules are `starting-loadout.md` |
@@ -65,7 +65,7 @@ paths:
 - **Spawn**: Worldgen seeds the profile's `starting_units`, unlocks `ScoutArea`, `FollowHerd`. Each spawned band's head-count comes from its unit's `band_size` (config lever in `start_profiles.json`; falls back to `DEFAULT_STARTING_BAND_SIZE` = 30 in `start_profile.rs`) — no hardcoded size. `late_forager_tribe` ships a **single ~30-person band** (labor-pool scale per `docs/plan_early_game_labor.md`), not the retired four-band/900-person opening.
 - **Camps**: Transient settlement-likes with `PortableBuildings`, `CampStorage`, `DecayOnAbandon` (backlog — not yet built)
 - **Sedentarization**: implemented — see the dedicated section below.
-- **Founding**: `Command::FoundSettlement { q, r }` requires Founders unit, consumes provisions, spawns Settlement
+- **Settlements are derived, never founded** (#176): there is no founding command. A settlement is a tribe or a lone band; its stage is resolved each turn from its people, store rung, stored food and anchor belief. See "Settlements: derived clusters" below.
 
 ### The outfitting window — the ONE source of starting gear and material
 
@@ -1318,12 +1318,6 @@ transferSent − foodIntoStore + foodFromStore` ledger identity.
 > that walks it"); and a **band split** handing the new band its share of the parent's stores
 > (`.claude/rules/core_sim/fission.md` → "The dowry is a transfer, and it is booked as one").
 >
-> **`found_settlement`'s `SETTLEMENT_PROVISION_COST` debit is a KNOWN-OPEN hole of a different
-> shape.** That food is *destroyed* — spent on standing a settlement up, not handed to another band —
-> so booking it as `transferSent` would name a recipient that does not exist. It wants a term of its
-> own (a consumption-outside-eating line, the shape `raidForfeit` already has), which is a
-> deliberate decision rather than a mechanical fix, and it is not made here.
->
 > **The supply-network half was a pre-existing hole, and it is measured rather than asserted.** The
 > two sibling ledger tests each stand up a *single* band, so no network forms
 > (`MIN_NETWORK_MEMBERS` is 2) and the identity was never exercised against a transfer at all;
@@ -1563,7 +1557,7 @@ its own policy and free equalization is a same-faction one. What holds a link op
 `reach_tiles` is a **route** (`routes::path_reach_tiles`, read by `supply::link_holds`), and that
 state belongs to the route ladder — there is deliberately no `LogisticsLink` component or resource. See "The link is a rider on a CONNECTION" above. A storage pit is deliberately NOT a node here ("A storage pit is its band's second
 larder"): with population as the balancing weight a peopleless node's fair share is zero. The
-connected-components pass is also what Phase 4 will use to derive settlement clusters.
+connected-components pass does not define a settlement: a settlement is a tribe or a lone band ("Settlements: derived clusters" below).
 
 ### Sedentarization
 The emergent per-faction "pressure to root in place" — the first slice of the pastoral→
@@ -1590,12 +1584,11 @@ Weights (sum `1.0`): domestication `0.35`, surplus `0.30`, population `0.15`, re
 `0.20` to fund the belief input — it is the map-wide baseline, identical across factions, so it
 differentiates them least.
 
-On a **rising** crossing of `soft_threshold` (~40, "establish a seasonal base?") or
-`hard_threshold` (~70, "settle?") it pushes a `CommandEventKind::SedentarizationPrompt` to the
-command feed (edge-gated on the stored `SedentarizationStage` so it doesn't re-fire; a fall
-lowers the stage silently). The score is exported per-faction in the snapshot
-(`SedentarizationState`, mirroring `factionInventory`) and shown as a HUD meter. Tunables live
-in `data/sedentarization_config.json` (`sedentarization_config.rs`).
+The score **gates nothing and prompts nothing**: it is a readout of accumulated tether. The soft and
+hard settle prompts, `SedentarizationStage` and `CommandEventKind::SedentarizationPrompt` are
+retired, and so is `SedentarizationState.stage` on the wire. It is exported per-faction in the
+snapshot (`SedentarizationState`, mirroring `factionInventory`) and shown as a HUD meter. Tunables
+live in `data/sedentarization_config.json` (`sedentarization_config.rs`).
 
 **The score is itemized on the wire.** `sedentarization_tick` computes each input's raw points
 once (`100 x weight x norm`, pre-EMA) and builds the raw score as their sum, so the published parts
@@ -1608,10 +1601,67 @@ The entry is checkpoint state (`SimState::sedentarization`, `SAVE_FORMAT_VERSION
 `belief_culture::the_tethers_input_points_sum_to_the_raw_score_on_the_encoded_snapshot`.
 
 > **Reframed by the Settlement & Population Economy arc** (`docs/plan_settlement_population.md`):
-> settlements are *derived* from clustered populated tiles + tended improvements (there is no
-> discrete founding), and `SedentarizationScore` becomes an emergent readout of accumulated
-> *tether* rather than a gate. See that design doc for the population/labor/improvement model
-> this score ultimately feeds.
+> settlements are *derived* (there is no discrete founding), and `SedentarizationScore` is an
+> emergent readout of accumulated *tether* rather than a gate.
+
+### Settlements: derived clusters (#176)
+
+Design: `docs/plan_settlement_population.md` -> "Settlements — derived clusters, never founded".
+Engine: `core_sim/src/settlement.rs`, `settlement_stage_config.rs`, `data/settlement_stage_config.json`.
+
+**A settlement is a tribe (`tribe.rs`), or a lone band in none.** Each turn `advance_settlements`
+(Population stage, `.after(advance_tribes)`) resolves every settlement's stage with
+`resolve_settlement_stage`: the highest row of the ordered ladder whose criteria all hold, so a
+settlement that loses one drops back. `StageCriteria` takes four inputs, each optional but `min_size`:
+
+| Criterion | Input (`SettlementStageInputs`) | Reads |
+|---|---|---|
+| `min_size` | `size` | head-count summed over the settlement's resident bands |
+| `min_store_rung` | `store` | the highest `keeping.fixed_stores` rung any member's OWNED store holds, compared by the ladder's `order` on the branch (`LadderConfig::at_or_above`), so the granary satisfies a pit row |
+| `min_food` | `food` | members' larders plus the contents of their owned fixed stores |
+| `min_belief` | `belief` | `BeliefRegistry` on the first member's `belief_anchor` (a tribe's members share one urn; a lone band reads its own) |
+
+Opening ladder (`settlement_stage_config.json`, every threshold a PLAYTEST DIAL): nomadic 0, camp 50,
+village 100, town 300 + a storage pit, city 1000 + a granary + 1500 stored food + 30 belief. The row's
+`announce` flag (city) says its first newly-reached turn is told; `pull_from_stage` (`village`) names
+the row from which a tribe pulls bands. `resolve_settlement_stage` takes the ladder so the store rung
+compares by order, never by name.
+
+**State and readers.** `SettlementStages` (checkpoint state, `SimState::settlement_stages`,
+`SAVE_FORMAT_VERSION` 72) holds each band's OWN stage (read over itself) and each tribe's. It is the
+edge gate of the event, and what these read: `advance_leadership` credits a leaderless band's
+`credit_stages` from the band's OWN stage (a band in a tribe has the tribe's leader, so the tribe's
+stage feeds no chief credit), `advance_tribes` reads the tribe stage for the settlement pull, and the
+capture publishes both. Readers that run before `advance_settlements` see the previous turn's stages.
+
+**Reaching city is the trigger.** The first turn a settlement newly reaches an `announce` stage pushes
+a `CommandEventKind::SettlementStageReached` (`settlement_stage_reached`): label "The Reedwater tribe
+becomes a city" / "Band 4 becomes a city", detail `stage=<id> tribe=<id>` or `stage=<id> band=<id>`,
+filed against the tribe leader's band (else a resident member) or the lone band. Edge-gated on the
+stored stage, so it fires once per rising crossing. (#865 makes the tribe a city's ruler off this
+turn; there is no Telling beat yet.)
+
+**The granary is the store branch's third rung** (`food_stores:granary`, order 3, requires
+`storage_pit`, verb `store`, unlock `granaries`, build `work_cost` 120, `max_builders` 4, upkeep 1.0
+per `source_load` with the pit's meter decay and grace, `partial_credit: on_completion`). Practising
+the pit teaches `granaries` (`storage_pit.earns_knowledge`; `lesson_costs.granaries` 20; discovery id
+2026 in `start_profile_knowledge_tags.json`). `demographics_config.json`: `keeping.fixed_stores` gains
+`food_stores:granary` capacity **2000** (the pit's 400) and `keeping.preservation` gains
+`food_stores:granary` dry **240** (the pit's 120); `KeepingConfig::store_spec` picks the highest rung
+held, so a granary holder is a store at the higher capacity. All OPENING VALUES.
+
+**The settlement pull** is the tribe closeness input `CloseInputs::settlement`: for a local pair, the
+larger of the two bands' tribe stage readings (`SettlementStageConfig::pull_strength`: the stage's
+place on the ladder, `index / last index`, and `0` below `pull_from_stage`), weighted by
+`leadership_config.json` -> `tribe_weight_settlement` (**2.0**, PLAYTEST DIAL). It only adds to the
+rate, so a pair still banks only while one side has a chief (`leadership.md`).
+
+**Wire.** `PopulationCohortState.settlementStage` is the band's own stage (the resolved one, or the
+stage its people alone reach before any turn has resolved it); `tribeSettlementStage` (appended last)
+is the tribe's, empty in no tribe; `TribeClosenessState.settlement` (appended last) is the new weight
+/ contribution. A foreign band's redacted row publishes the stage its **people alone** reach
+(`SettlementStageConfig::people_only_index`): from a ridge you see how many there are, never what they
+store or bury, so a town or a city is only read from the inside.
 
 ### Mobility
 The roaming counterpart of the Sedentarization Score: a per-faction 0-100 readout of how roaming a

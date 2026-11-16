@@ -11032,6 +11032,23 @@ pub fn advance_labor_allocation(
                         keeping.wear_kit.as_ref(),
                         keeping.armed_kept,
                     );
+                    // **Keeping a tile rung is practising it**: the rung the improvement HOLDS
+                    // teaches its `earns_knowledge` (the pit teaches `granaries`) once per turn a
+                    // crew is at the site, at the food peak's pace (a tile has no stock, so there is
+                    // no floor to scale by). A root or an unkept rung teaches nothing.
+                    if let Some(held) = tile_improvements
+                        .get(*tile, *branch)
+                        .map(|improvement| improvement.held_rung())
+                    {
+                        credit_rung_lesson(
+                            ladder.rung(held),
+                            crate::fauna::MSY_BIOMASS_FRACTION,
+                            crew_at_the_source,
+                            &ladder.knowledge,
+                            faction,
+                            &mut discovery,
+                        );
+                    }
                     if let Some(destination) = declared
                         .filter(|rung| ladder.source_kind(rung.branch) == Some(SourceKind::Tile))
                     {

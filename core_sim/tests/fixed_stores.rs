@@ -956,3 +956,44 @@ fn a_save_and_a_checkpoint_carry_the_owner_and_the_contents() {
     check(&payload.sim.tile_improvements, "the save");
     let _ = FoodMix::default();
 }
+
+/// A take far above the shipped granary's capacity.
+const A_TAKE_ABOVE_A_GRANARY: f32 = 5_000.0;
+/// The shipped granary capacity, in food (`keeping.fixed_stores`).
+const GRANARY_CAPACITY: f32 = 2_000.0;
+
+/// **A GRANARY HOLDS TWO THOUSAND WHERE A PIT HOLDS FOUR HUNDRED** (#176): `KeepingConfig::store_spec`
+/// picks the highest store rung held, and a deposit fills a store only to its capacity.
+#[test]
+fn a_granary_takes_a_deposit_up_to_two_thousand_and_a_pit_up_to_four_hundred() {
+    let granary = RungId::new(food_stores(), "granary");
+    // Both arms stand a finished store and land the same enormous take.
+    let mut contents = Vec::new();
+    let mut pit_capacity = 0.0;
+    for rung in [storage_pit(), granary] {
+        let (mut app, band) = world();
+        pit_capacity = capacity(&app);
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let (base, width) = tile_rung_span(rung, &ladder);
+        app.world
+            .resource_mut::<TileImprovementRegistry>()
+            .place_owned(camp(), food_stores(), FACTION, Some(BandId(OWNER)), &ladder)
+            .set_position(base + width, &ladder);
+        opening(&mut app);
+        land(&mut app, band, DRY, A_TAKE_ABOVE_A_GRANARY);
+        deposit(&mut app);
+        contents.push(pit_contents(&app, camp()));
+    }
+    assert!(
+        (contents[0] - pit_capacity).abs() < EPSILON,
+        "the pit is full: {contents:?}"
+    );
+    assert!(
+        contents[1] > contents[0],
+        "the granary took more: {contents:?}"
+    );
+    assert!(
+        (contents[1] - GRANARY_CAPACITY).abs() < EPSILON,
+        "the granary is full at its own capacity: {contents:?}"
+    );
+}

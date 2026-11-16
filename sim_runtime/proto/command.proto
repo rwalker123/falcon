@@ -239,12 +239,6 @@ message FollowHerdCommand {
   optional uint64 band_id = 4;
 }
 
-message FoundSettlementCommand {
-  uint32 faction_id = 1;
-  uint32 target_x = 2;
-  uint32 target_y = 3;
-}
-
 message ForageTileCommand {
   uint32 faction_id = 1;
   uint32 target_x = 2;
@@ -1802,7 +1796,6 @@ message CommandEnvelope {
     ScoutAreaCommand scout_area = 22;
     FollowHerdCommand follow_herd = 23;
     ForageTileCommand forage_tile = 25;
-    FoundSettlementCommand found_settlement = 27;
     ExportMapCommand export_map = 28;
     CancelOrderCommand cancel_order = 31;
     AssignLaborCommand assign_labor = 32;

@@ -496,7 +496,7 @@ func _ready() -> void:
 		SURVIVABILITY_HEAT_MORTALITY_SCALE, SURVIVABILITY_HEAT_MAX_MORTALITY)
 
 	# Top-bar Sedentarization meter (faction 0, soft band) — visible across all frames.
-	_hud.update_sedentarization([{"faction": 0, "score": 62.0, "stage": "soft"}])
+	_hud.update_sedentarization([{"faction": 0, "score": 62.0}])
 
 	# Top-bar demographics readout (faction 0 age structure + dependency ratio).
 

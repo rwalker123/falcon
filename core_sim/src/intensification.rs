@@ -7018,6 +7018,7 @@ mod tests {
             ("camp_stores:drying_rack", "Drying rack", "a drying rack"),
             ("food_stores:unstored", "No store", "no store"),
             ("food_stores:storage_pit", "Storage pit", "a storage pit"),
+            ("food_stores:granary", "Granary", "a granary"),
             (
                 "belief:gathering_ground",
                 "Gathering ground",
