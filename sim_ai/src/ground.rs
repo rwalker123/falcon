@@ -37,7 +37,8 @@ use crate::profile::AiProfile;
 use crate::specialists::food::ledger::{regrowth_at, BEST_FLOOR};
 use crate::specialists::food::{
     foreign_band_at, herd_kit_id, is_walkable, kit_units_held, patch_per_worker_yield,
-    sustained_hands, workable_patch_at, Climb, Food, HOE_BUILD_WORK_PER_WORKER,
+    sustained_hands, workable_patch_at, worked_by_another_own_band, Climb, Food, SourceKey,
+    HOE_BUILD_WORK_PER_WORKER,
 };
 use crate::view::{band_tile, SeatMemory, SeatView};
 
@@ -354,7 +355,8 @@ impl Reading {
                 let tile = Tile::new(patch.x, patch.y);
                 (view.is_discovered(tile)
                     && is_walkable(view, tile)
-                    && !foreign_band_at(view, faction, tile))
+                    && !foreign_band_at(view, faction, tile)
+                    && !worked_by_another_own_band(view, band, &SourceKey::Patch(tile)))
                 .then(|| workable_patch_at(view, tile))
                 .flatten()
             })
@@ -368,7 +370,13 @@ impl Reading {
                 .filter(|herd| herd.huntable && herd.per_worker_yield > 0.0)
                 .filter(|herd| {
                     let tile = Tile::new(herd.x, herd.y);
-                    view.is_discovered(tile) && !foreign_band_at(view, faction, tile)
+                    view.is_discovered(tile)
+                        && !foreign_band_at(view, faction, tile)
+                        && !worked_by_another_own_band(
+                            view,
+                            band,
+                            &SourceKey::Herd(herd.id.clone()),
+                        )
                 })
                 .map(|herd| herd_site(view, memory, band, herd))
                 // A herd the sim has not answered for stays in the reading at nothing, flagged,

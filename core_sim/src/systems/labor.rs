@@ -6182,6 +6182,14 @@ pub fn advance_labor_allocation(
     // **THE HANDS THE BANDS STAFFED EARLIER THIS TURN HOLD ON EACH TILE** — what a later band's tile
     // room is cut by.
     let mut tile_load: BTreeMap<crate::staffing::TileKey, u32> = BTreeMap::new();
+    // **EVERY BAND'S HOLDINGS ON THE TAKE SOURCES** (`source_holders`): a chief never lists a source
+    // another band of his people holds, and a band later in band order sees the rows an earlier
+    // band's chief just made (refreshed below after each band's managing passes).
+    let mut source_holders = crate::source_holders::SourceHolders::from_bands(
+        cohorts
+            .iter()
+            .map(|parts| (parts.4.copied(), parts.1.faction, parts.2)),
+    );
     for (_, band_entity) in band_order {
         let Ok((
             _,
@@ -6547,12 +6555,14 @@ pub fn advance_labor_allocation(
                     camp: camp.as_ref(),
                     walk_to: &walk_to,
                 };
+                let rivals = source_holders.for_band(band_id, faction);
                 crate::keep_on_hand::manage_dig_rows(
                     &mut allocation,
                     &site_inputs,
                     has_leader,
                     &candidates,
                     &|material: &str| cohort.stores.material_total(material).to_f32(),
+                    &rivals,
                 );
                 let fog = sim_config.fog_enabled;
                 let pool = crate::staffing::staffable_pool(&allocation, available);
@@ -6579,7 +6589,9 @@ pub fn advance_labor_allocation(
                         },
                     },
                     has_leader,
+                    &rivals,
                 );
+                source_holders.set_band(band_id, faction, &allocation);
             }
             let progress_context = BuildProgressContext {
                 sources: &staff_sources,

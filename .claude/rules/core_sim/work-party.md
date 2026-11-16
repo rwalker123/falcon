@@ -534,7 +534,7 @@ warren a pack eats back to its floor every turn is not staffed for a regrowth th
 over (`predated_restaff`). `HuntProjection::step`'s first between-turns step (`ProjectionStart::BeforeRegrowth`)
 takes the same predation through the same helper, so the row's published `realized` / arrivals and the
 crew curve read one stock; later projected steps carry none (the stamp resets on the clone), and an
-`AfterRegrowth` start reads the turn's real post-predation stock (`fauna::tests::a_between_turns_projection_takes_the_predation_the_curve_takes`). Several bands working one source each staff their share of the keeping bill. A band's gear that
+`AfterRegrowth` start reads the turn's real post-predation stock (`fauna::tests::a_between_turns_projection_takes_the_predation_the_curve_takes`). Several bands of DIFFERENT peoples working one source each staff their share of the keeping bill (within one people a take source has one band, "One band of a people per source"). A band's gear that
 the turn settles after staffing (the pools' and the keeping's issue) is not in the staffing's shelf.
 
 Pinned by `staffing::tests` (the passes, in order, against a shelf), `labor_allocation` (the
@@ -619,6 +619,55 @@ a_completed_approved_build_counts_once_as_an_order_met}` and, through the real p
 `server::tests::{a_chief_with_idle_hands_proposes_a_build_and_the_frame_carries_it,
 approving_declares_the_build_and_raises_the_keep, not_now_hides_the_build_for_the_levers_turns_and_then_it_returns,
 approving_with_no_proposal_is_refused}`.
+
+## One band of a people per source
+
+Engine: `core_sim/src/source_holders.rs`. **Within one people a take source is worked by ONE band.**
+The labor pass settles bands in `BandId` order and every take draws the source down at that band's
+own floor, so two bands of one people on one patch left the lower-numbered band its full share and
+the other nothing, and with different floors one band's floor was always overridden. The rule covers
+the three take sources, keyed by `keep_on_hand::source_key` (`f:x,y`, `h:<herd id>`,
+`d:<material>:x,y`; the same identity as `LaborTarget::same_source`): a forage patch, a herd and a
+deposit working. A tile improvement (the tribe's works, a storage pit, a monument), a band
+improvement, Roadwork, Scout, Warrior and an expedition are not take sources: several bands may
+build one tile improvement together. **Across peoples nothing changes**: bands of different peoples
+on one source are still settled in `BandId` order.
+
+- **The seam.** `SourceHolders` is every band's holdings on the take sources (`Holder { band, faction,
+  listed }`, `listed` = the row is in `order_rows`, the chief's; otherwise the player's). The turn's
+  labor pass builds it from every band's allocation before the per-band loop and refreshes a band's
+  entries after that band's managing passes, so a band later in band order sees the rows an earlier
+  band's chief just made; the command restaff (`staffing::managed_dig_allocation`) builds it from the
+  world (`SourceHolders::from_world`). `SourceHolders::for_band` is that map as one band sees it,
+  `OtherBands`: the OTHER bands of its people only.
+- **The command.** `assign_labor` (forage, hunt, extract, a `follow` need row included) for a band with
+  no row on the source, where another band of its faction holds one, is refused and changes nothing,
+  with a failure line on the source's channel naming the other band by its `BandName` (`Band <id>`
+  where it has none): `Ashfell already works (44, 27).`, `Ashfell already hunts the <species>.`,
+  `Ashfell already works the stone at (44, 27).` (`server::another_band_refusal`, through
+  `source_holders::other_band_working`). Editing a row the band already holds is never refused
+  (an old save's duplicate included), and a band of another faction on the source refuses nothing.
+- **The staffing preview** refuses the same case with `query_error` token `worked_by_another_band`
+  (`sim_runtime::query_error::WORKED_BY_ANOTHER_BAND`).
+- **The chief** (`food_orders::manage_food_orders`, fodder included, and `keep_on_hand::manage_dig_rows`):
+  a source another band of his people holds a row on, the player's or a chief's, is no candidate; and
+  a chief-listed row of his on a source another band of his people holds is retired when that other
+  row is the player's, or is chief-listed and that band's `BandId` is the lower (`OtherBands::
+  outranks_my_listed_row`). Between two chief rows the higher `BandId` retires and the lower keeps the
+  ground; two player rows are left alone. A retired duplicate goes whatever the row is: an
+  improvement row (a tended patch) and a row handed to him one at a time (`handed_rows`) do not save
+  it. The cargo rule still holds (`row_is_pinned` / `source_pinned`): a pinned duplicate is staffed to
+  nobody and retired by the first pass that finds it unpinned. The chief proposals' new-ground
+  Cultivate candidate keeps its own `forage_rows` reading of "worked by another band of the faction".
+- **The AI seat** (`sim_ai`, `ai-driver.md` -> "Food") reads the same rule off the frame's own bands'
+  `labor_assignments`.
+
+Pinned by `server::tests::{a_forage_row_on_a_patch_another_band_of_the_people_works_is_refused,
+a_hunt_row_on_a_herd_another_band_of_the_people_hunts_is_refused,
+an_extract_row_on_a_working_another_band_of_the_people_works_is_refused,
+a_band_of_another_people_is_not_refused_the_patch}` (the encoded frame, the refusal wording, the
+preview token), `tests/one_band_per_source.rs` (the chief's skip, the player and the chief duplicate,
+a tended patch, a pinned duplicate, another people) and `tests/keep_on_hand.rs::a_chief_never_lists_a_working_another_band_of_his_people_holds`.
 
 ### Scouting is a range, not a count (#875)
 
@@ -715,7 +764,9 @@ The take selection is passed as sent (the command's prune-to-the-current-basket 
 run). Nothing is written to the world.
 
 **Refusals** (`query_error` tokens): `unknown_band`, `unknown_herd`, `unknown_patch`,
-`unknown_deposit`, `unknown_kit`, `kit_wrong_job`, `invalid_floor`, `invalid_priority`, and
+`unknown_deposit`, `unknown_kit`, `kit_wrong_job`, `invalid_floor`, `invalid_priority`,
+`worked_by_another_band` (a new row on a take source another band of the asking band's people already
+works, "One band of a people per source"), and
 `never_renewing_dig_without_a_count` (an extract row on ground that never renews with
 `max_workers` 0, the row `assign_labor` refuses by the same predicate) and `material_is_kept_on_hand`
 (a row on a material the band's leader keeps on hand). A hunt `follow` box has no

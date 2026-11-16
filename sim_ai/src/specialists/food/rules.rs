@@ -1341,7 +1341,18 @@ impl Food {
                     && distance <= self.floors.split_reach_tiles
                     && is_walkable(view, tile)
                     && !foreign_band_at(view, self.faction, tile)
-                    && !claimed(tile))
+                    && !claimed(tile)
+                    // A child is no band yet, so any own band's row on the patch is another
+                    // band's: the sim refuses the child a second band of the people on a source.
+                    // So is a patch another own band camps on or is walking to.
+                    && !view.own_bands(self.faction).any(|own| {
+                        band_tile(own) == tile
+                            || (own.is_traveling
+                                && Tile::new(own.travel_target_x, own.travel_target_y) == tile)
+                            || own.labor_assignments.iter().any(|row| {
+                                SourceKey::of_row(row) == Some(SourceKey::Patch(tile))
+                            })
+                    }))
                 .then(|| workable_patch_at(view, tile))
                 .flatten()
                 .map(|patch| (patch, distance))
@@ -3849,6 +3860,114 @@ mod tests {
                 item: "hoes".to_owned(),
                 start_tick: TICK + 20 - 5,
             }
+        );
+    }
+
+    // ---- one band of a people per source -----------------------------------------------------
+
+    /// **A SEAT WITH TWO BANDS DOES NOT ASSIGN THE SECOND TO A SOURCE THE FIRST WORKS** - the sim
+    /// refuses a second band of one people a row on it (`core_sim::source_holders`). The band holding
+    /// the row keeps it as a source (an edit is never refused), and once the first band lets go the
+    /// second sees the patch again.
+    #[test]
+    fn a_seat_with_two_bands_does_not_assign_the_second_to_a_source_the_first_works() {
+        let patch_key = SourceKey::Patch(RICH_PATCH);
+        let has_patch = |sources: Vec<Source>| sources.iter().any(|source| source.key == patch_key);
+        let view = a_view_with(|view| {
+            let mut second = view.snapshot.populations[0].clone();
+            second.band_id += 1;
+            second.labor_assignments.clear();
+            view.snapshot.populations[0].labor_assignments = vec![forage_row(RICH_PATCH, 4, 2.0)];
+            view.snapshot.populations.push(second);
+        });
+        let (first, second) = (&view.snapshot.populations[0], &view.snapshot.populations[1]);
+        assert!(
+            has_patch(food().reachable_sources(&view, &memory(), first)),
+            "**LIVENESS**: the band holding the row keeps the patch as a source"
+        );
+        assert!(
+            !has_patch(food().reachable_sources(&view, &memory(), second)),
+            "the second band is not offered a patch the first works"
+        );
+        let freed = a_view_with(|view| {
+            let mut second = view.snapshot.populations[0].clone();
+            second.band_id += 1;
+            view.snapshot.populations.push(second);
+        });
+        assert!(
+            has_patch(food().reachable_sources(&freed, &memory(), &freed.snapshot.populations[1])),
+            "with nobody working it the same band sees the patch"
+        );
+        // A rival people's band on the patch excludes nothing.
+        let rival = a_view_with(|view| {
+            let mut other = view.snapshot.populations[0].clone();
+            other.band_id += 1;
+            other.faction += 1;
+            other.labor_assignments = vec![forage_row(RICH_PATCH, 4, 2.0)];
+            view.snapshot.populations.push(other);
+        });
+        assert!(
+            has_patch(food().reachable_sources(&rival, &memory(), &rival.snapshot.populations[0])),
+            "another people's row excludes nothing"
+        );
+    }
+
+    /// **A PATCH A SIBLING CAMPS ON OR WALKS TO IS THE SIBLING'S** - a band split to feed opens its
+    /// row a turn or two after it arrives, so the parent must not take the patch meanwhile (bench
+    /// seed 3, t5). Between two bands bound for one tile the lower band id keeps it.
+    #[test]
+    fn a_patch_a_sibling_camps_on_or_walks_to_is_not_offered_to_the_other_band() {
+        let patch_key = SourceKey::Patch(RICH_PATCH);
+        let has_patch = |sources: Vec<Source>| sources.iter().any(|source| source.key == patch_key);
+        let with_child = |walking: bool| {
+            a_view_with(|view| {
+                let mut child = view.snapshot.populations[0].clone();
+                child.band_id += 1;
+                child.labor_assignments.clear();
+                if walking {
+                    child.is_traveling = true;
+                    child.travel_target_x = RICH_PATCH.x;
+                    child.travel_target_y = RICH_PATCH.y;
+                } else {
+                    child.current_x = RICH_PATCH.x;
+                    child.current_y = RICH_PATCH.y;
+                }
+                view.snapshot.populations.push(child);
+            })
+        };
+        for walking in [true, false] {
+            let view = with_child(walking);
+            let (parent, child) = (&view.snapshot.populations[0], &view.snapshot.populations[1]);
+            assert!(
+                !has_patch(food().reachable_sources(&view, &memory(), parent)),
+                "the parent is not offered the patch its child {} (walking: {walking})",
+                if walking { "walks to" } else { "camps on" }
+            );
+            assert!(
+                has_patch(food().reachable_sources(&view, &memory(), child)),
+                "**LIVENESS**: the child is offered its own patch (walking: {walking})"
+            );
+        }
+        // Both camped on the patch: the lower band id keeps it.
+        let shared = a_view_with(|view| {
+            view.snapshot.populations[0].current_x = RICH_PATCH.x;
+            view.snapshot.populations[0].current_y = RICH_PATCH.y;
+            let mut child = view.snapshot.populations[0].clone();
+            child.band_id += 1;
+            child.labor_assignments.clear();
+            view.snapshot.populations.push(child);
+        });
+        let (parent, child) = (
+            &shared.snapshot.populations[0],
+            &shared.snapshot.populations[1],
+        );
+        assert!(
+            has_patch(food().reachable_sources(&shared, &memory(), parent)),
+            "the lower band id keeps the patch both camp on"
+        );
+        assert!(
+            !has_patch(food().reachable_sources(&shared, &memory(), child)),
+            "the higher band id is not offered it"
         );
     }
 

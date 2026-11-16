@@ -111,6 +111,7 @@ mod sites;
 mod sites_config;
 mod snapshot;
 mod snapshot_overlays_config;
+pub mod source_holders;
 pub mod spoilage;
 pub mod staffing;
 pub mod staffing_preview;

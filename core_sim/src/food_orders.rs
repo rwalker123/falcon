@@ -367,6 +367,7 @@ pub fn manage_food_orders(
     allocation: &mut LaborAllocation,
     inputs: &FoodInputs<'_>,
     has_leader: bool,
+    rivals: &crate::source_holders::OtherBands,
 ) {
     allocation.order_pool = inputs.pool;
     if !has_leader {
@@ -428,6 +429,18 @@ pub fn manage_food_orders(
             candidates.push(candidate);
         }
     }
+
+    // **ONE BAND OF A PEOPLE PER SOURCE** (`source_holders`): a source another band of the chief's
+    // people holds a row on is no candidate - unless the chief's own listed row there wins the
+    // duplicate (the other band's row is chief-listed and the higher-numbered band's).
+    candidates.retain(|candidate| {
+        let mine_listed = allocation.order_rows.contains_key(&candidate.key)
+            && allocation
+                .assignments
+                .iter()
+                .any(|row| source_key(&row.target).is_some_and(|key| key == candidate.key));
+        !rivals.blocks_candidate(&candidate.key, mine_listed)
+    });
 
     // Adoption: a chief's arrival or a whole-kind claim lists the band's existing rows under the
     // order their product belongs to.
@@ -645,9 +658,12 @@ pub fn manage_food_orders(
             };
             let in_set = set.iter().any(|candidate| candidate.key == key);
             let improvement = row_is_improvement(sources, &target);
-            if !in_set
-                && !improvement
-                && !allocation.handed_rows.contains(&key)
+            // A duplicate this chief loses is retired whatever the row is (an improvement, a row
+            // handed to him one at a time): the other band keeps the ground. The cargo rule still
+            // holds, so a pinned row waits to be unpinned.
+            let lost_to_another_band = rivals.outranks_my_listed_row(&key);
+            if (lost_to_another_band
+                || (!in_set && !improvement && !allocation.handed_rows.contains(&key)))
                 && !source_pinned(allocation, &target)
             {
                 allocation.drop_source_row(&target);

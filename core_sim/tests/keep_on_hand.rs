@@ -1614,3 +1614,52 @@ fn stone_ties_on_what_is_left_in_the_ground() {
         "the bigger body is picked over the nearer thin one"
     );
 }
+
+/// **A CHIEF NEVER LISTS A WORKING ANOTHER BAND OF HIS PEOPLE HOLDS** (`source_holders`): the only
+/// stone is on the camp's tile, and a second band of the people holds a player row on it, so the
+/// chief digs none; with the other band gone he digs it.
+#[test]
+fn a_chief_never_lists_a_working_another_band_of_his_people_holds() {
+    let (mut app, band, camp) = world();
+    reground(&mut app, camp, ROCK);
+    let settle = core_sim::SettleConfig {
+        min_founding_workers: 1,
+        parent_min_workers: 0,
+    };
+    let split = core_sim::split_band_from_parent(&mut app.world, band, 3, &settle)
+        .expect("the split is admitted");
+    let other = {
+        let mut query = app.world.query::<(Entity, &core_sim::BandId)>();
+        query
+            .iter(&app.world)
+            .find(|(_, id)| **id == split.band)
+            .map(|(entity, _)| entity)
+            .expect("the second band")
+    };
+    app.world
+        .get_mut::<LaborAllocation>(other)
+        .unwrap()
+        .set_staffed_row(
+            LaborTarget::Extract {
+                tile: camp,
+                material: STONE.to_string(),
+                floor: 0.0,
+            },
+            Some(1),
+            None,
+        );
+    keep(&mut app, band, A_BIG_TARGET);
+    assert!(
+        !stone_rows(&app, band).iter().any(|(tile, _)| *tile == camp),
+        "the chief digs no working another band of his people holds: {:?}",
+        stone_rows(&app, band)
+    );
+    // The control: the other band lets go, and the chief takes the working.
+    app.world.get_mut::<LaborAllocation>(other).unwrap().clear();
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    assert!(
+        stone_rows(&app, band).iter().any(|(tile, _)| *tile == camp),
+        "**LIVENESS**: the same chief digs it once the other band is gone: {:?}",
+        stone_rows(&app, band)
+    );
+}

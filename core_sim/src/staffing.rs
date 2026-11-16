@@ -3786,12 +3786,15 @@ fn managed_dig_allocation(
         let pool = staffable_pool(&allocation, available);
         let cohort_stores = &cohort.stores;
         let on_hand = |material: &str| cohort_stores.material_total(material).to_f32();
+        let rivals = crate::source_holders::SourceHolders::from_world(world)
+            .for_band(world.get::<BandId>(band).copied(), faction);
         crate::keep_on_hand::manage_dig_rows(
             &mut allocation,
             &inputs,
             has_leader,
             &candidates,
             &on_hand,
+            &rivals,
         );
         let known_tile = |tile: UVec2| {
             !fog_enabled
@@ -3815,6 +3818,7 @@ fn managed_dig_allocation(
                 },
             },
             has_leader,
+            &rivals,
         );
     });
     Some(allocation)

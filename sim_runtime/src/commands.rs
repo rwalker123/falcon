@@ -1391,6 +1391,8 @@ pub mod query_error {
     /// A staffing preview of a crew on a material the band's leader keeps on hand: the dig is the
     /// order's, so `assign_labor` refuses the same row.
     pub const MATERIAL_IS_KEPT_ON_HAND: &str = "material_is_kept_on_hand";
+    /// A new row on a take source another band of the asking band's people already works.
+    pub const WORKED_BY_ANOTHER_BAND: &str = "worked_by_another_band";
 }
 
 /// **How a receiver answers a pending dealing** (`answer_dealing`): accept, refuse, or counter.

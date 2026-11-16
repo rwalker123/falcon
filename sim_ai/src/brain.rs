@@ -404,7 +404,7 @@ impl Brain for Composite {
             .collect();
         self.memory.remember_runways(view, self.faction);
         // A row the chief works is crewed by hand only after the seat releases it (`orders.rs`).
-        release_chief_rows(view, self.faction, commands)
+        answers_last(release_chief_rows(view, self.faction, commands))
     }
 
     fn lens(&self) -> BrainLens<'_> {
@@ -438,6 +438,21 @@ impl Brain for Composite {
             self.plan = None;
         }
     }
+}
+
+/// **The answers to a chief's proposals go after the turn's other commands**, order kept within
+/// each half. Approving or deferring restaffs the band, and the chief's managing pass in that
+/// restaff may retire a row of his: a release or stop the seat sent after it for that row was then
+/// refused ("Band 2 has no food row there", bench seed 54, t43). Every other command is about the
+/// frame the seat read, so it goes first.
+fn answers_last(commands: Vec<CommandPayload>) -> Vec<CommandPayload> {
+    let (answers, rest): (Vec<_>, Vec<_>) = commands.into_iter().partition(|command| {
+        matches!(
+            command,
+            CommandPayload::ApproveProposal { .. } | CommandPayload::DeferProposal { .. }
+        )
+    });
+    rest.into_iter().chain(answers).collect()
 }
 
 /// The fixture: one `Scripted` specialist through a pass-through arbiter.
@@ -551,6 +566,29 @@ mod tests {
     use sim_runtime::{OrdersDirective, PopulationCohortState, WorldSnapshot};
 
     const A_TICK: u64 = 12;
+
+    /// **A proposal answer goes after the turn's other commands**, each half in its own order, so a
+    /// release or stop on a row is not sent after the restaff the answer runs.
+    #[test]
+    fn proposal_answers_are_sent_after_every_other_command() {
+        let approve = CommandPayload::ApproveProposal {
+            faction_id: 1,
+            band_id: 2,
+        };
+        let defer = CommandPayload::DeferProposal {
+            faction_id: 1,
+            band_id: 4,
+            build_key: "food_stores:storage_pit@4,9".to_string(),
+        };
+        let walk = |band: u64| CommandPayload::MoveBand {
+            faction_id: 1,
+            band_id: Some(band),
+            target_x: 3,
+            target_y: 4,
+        };
+        let sent = answers_last(vec![approve.clone(), walk(2), defer.clone(), walk(4)]);
+        assert_eq!(sent, vec![walk(2), walk(4), approve, defer]);
+    }
 
     fn rng() -> StdRng {
         StdRng::seed_from_u64(0)

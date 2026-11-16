@@ -4880,6 +4880,43 @@ fn kept_on_hand_refusal(
     core_sim::keep_on_hand::order_refusal(allocation, kind, keeper.as_ref())
 }
 
+/// **ONE BAND OF A PEOPLE PER TAKE SOURCE**: the refusal for a new row on a source another band of
+/// the band's people already works, naming that band (its `BandName`, else `Band <id>`). `None` for a
+/// row the band already holds (editing it is never refused), for a target that is no take source and
+/// where no other band of the people holds one.
+fn another_band_refusal(
+    app: &bevy::prelude::App,
+    target: &LaborTarget,
+    band: Entity,
+) -> Option<String> {
+    let other = core_sim::source_holders::other_band_working(&app.world, band, target)?;
+    let mut bands = app.world.iter_entities();
+    let other_entity = bands.find(|entity| entity.get::<BandId>() == Some(&other))?;
+    let name = other_entity
+        .get::<BandName>()
+        .map_or_else(|| core_sim::band_label(other), |name| name.0.clone());
+    Some(match target {
+        LaborTarget::Forage { tile, .. } => {
+            format!("{name} already works ({}, {}).", tile.x, tile.y)
+        }
+        LaborTarget::Hunt { fauna_id, .. } => {
+            let herd = app
+                .world
+                .resource::<HerdRegistry>()
+                .find(fauna_id)
+                .map_or_else(|| fauna_id.clone(), |herd| herd.species.clone());
+            format!("{name} already hunts the {herd}.")
+        }
+        LaborTarget::Extract { tile, material, .. } => {
+            format!(
+                "{name} already works the {material} at ({}, {}).",
+                tile.x, tile.y
+            )
+        }
+        _ => return None,
+    })
+}
+
 /// **WHO KEEPS THIS BAND'S ORDERS** - its chief by name, or its elders named for the band. `None`
 /// for a band with no leader. The band's own name is used where it has one, else its label.
 fn band_keeper(
@@ -5264,6 +5301,10 @@ fn handle_assign_labor(
         return;
     };
     if let Some(reason) = kept_on_hand_refusal(app, &band, &target) {
+        emit_command_failure(app, event_kind, faction, reason);
+        return;
+    }
+    if let Some(reason) = another_band_refusal(app, &target, band.entity) {
         emit_command_failure(app, event_kind, faction, reason);
         return;
     }
@@ -23665,21 +23706,10 @@ mod tests {
         app.world
             .entity_mut(second)
             .insert(BandId(SECOND_KEEPING_BAND_ID));
-        handle_assign_labor(
-            &mut app,
-            faction,
-            Some(SECOND_KEEPING_BAND_ID),
-            "forage".to_string(),
-            LAPSED_CREW,
-            Some(coord.x),
-            Some(coord.y),
-            None,
-            None,
-            Some(SUSTAIN_FLOOR),
-            None,
-            Vec::new(),
-            false,
-        );
+        // **Staged directly**: `assign_labor` refuses a second band of one people a row on a source
+        // another holds (`source_holders`), so this is the duplicate an old save can carry - the
+        // keeping split across bands is what the test is about.
+        stage_a_duplicate_forage_row(&mut app, second, coord, LAPSED_CREW);
         resolve_labor(&mut app);
         let site = app
             .world
@@ -23717,6 +23747,31 @@ mod tests {
         );
     }
 
+    /// A forage row on `coord` for `band` written straight onto its allocation (no command), at the
+    /// sustain floor and a Max of `crew`: the duplicate row an old save can hold, which the command
+    /// path now refuses a second band of one people.
+    fn stage_a_duplicate_forage_row(
+        app: &mut bevy::prelude::App,
+        band: Entity,
+        coord: UVec2,
+        crew: u32,
+    ) {
+        app.world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band's allocation")
+            .set_staffed_row(
+                LaborTarget::Forage {
+                    tile: coord,
+                    floor: SUSTAIN_FLOOR,
+                    species: None,
+                    take_species: core_sim::TakeSelection::EVERYTHING,
+                },
+                Some(crew),
+                None,
+            );
+        core_sim::staffing::restaff_band(&mut app.world, band);
+    }
+
     /// ⛔ **A SLIP LINE LINKS TO THE BAND WITH THE LARGEST CREW ON THE SITE** — `band=<BandId>`, so
     /// the event dock can open that band's Work row. Two bands of one people work a finished Field,
     /// both short of its bill; the second carries the bigger crew, so the line names it.
@@ -23746,26 +23801,25 @@ mod tests {
             .get_mut::<BandEquipment>(second)
             .expect("a spawned band carries a ledger")
             .restore_batches("hoes", Vec::new());
-        for (band, crew) in [
-            (LAPSED_BAND_ID, SMALL_CREW),
-            (SECOND_KEEPING_BAND_ID, LARGE_CREW),
-        ] {
-            handle_assign_labor(
-                &mut app,
-                faction,
-                Some(band),
-                "forage".to_string(),
-                crew,
-                Some(coord.x),
-                Some(coord.y),
-                None,
-                None,
-                Some(SUSTAIN_FLOOR),
-                None,
-                Vec::new(),
-                false,
-            );
-        }
+        handle_assign_labor(
+            &mut app,
+            faction,
+            Some(LAPSED_BAND_ID),
+            "forage".to_string(),
+            SMALL_CREW,
+            Some(coord.x),
+            Some(coord.y),
+            None,
+            None,
+            Some(SUSTAIN_FLOOR),
+            None,
+            Vec::new(),
+            false,
+        );
+        // **The second band's row is staged directly**: `assign_labor` refuses a second band of one
+        // people a row on a source another holds (`source_holders`), so this is the duplicate an old
+        // save can carry.
+        stage_a_duplicate_forage_row(&mut app, second, coord, LARGE_CREW);
         app.world
             .resource_mut::<ForageRegistry>()
             .patch_mut(coord)
@@ -33510,6 +33564,318 @@ mod tests {
                 crew.kitted
             );
         }
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // ONE BAND OF A PEOPLE PER TAKE SOURCE (`core_sim::source_holders`)
+    // -----------------------------------------------------------------------------------------
+
+    /// The second band's durable id in the one-band-per-source fixtures.
+    const SECOND_BAND_OF_THE_PEOPLE: u64 = 9_001;
+    /// The first band's name, which the refusal quotes.
+    const FIRST_BAND_NAME: &str = "Ashfell";
+
+    /// Every refusal line on the three take sources' channels.
+    fn take_source_refusals(app: &bevy::prelude::App) -> Vec<String> {
+        app.world
+            .resource::<CommandEventLog>()
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.kind,
+                    CommandEventKind::Forage
+                        | CommandEventKind::Hunt
+                        | CommandEventKind::Extraction
+                ) && entry.label.ends_with(" failed")
+            })
+            .filter_map(|entry| entry.detail.clone())
+            .collect()
+    }
+
+    /// `(workers rows)` the encoded frame publishes for `band`.
+    fn published_rows_of(app: &mut bevy::prelude::App, band: u64) -> usize {
+        app.world
+            .insert_resource(core_sim::ViewerFaction(FactionId(0)));
+        recapture_snapshot_in_place(&mut app.world);
+        app.world
+            .resource::<SnapshotHistory>()
+            .last_snapshot()
+            .expect("a snapshot was captured")
+            .populations
+            .iter()
+            .filter(|cohort| cohort.band_id == band)
+            .map(|cohort| cohort.labor_assignments.len())
+            .sum()
+    }
+
+    #[allow(clippy::too_many_arguments)] // a test helper: one argument per command field
+    fn assign_for_band(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        band: u64,
+        role: &str,
+        at: UVec2,
+        fauna_id: Option<String>,
+        material: Option<&str>,
+        workers: u32,
+    ) {
+        handle_assign_labor(
+            app,
+            faction,
+            Some(band),
+            role.to_string(),
+            workers,
+            Some(at.x),
+            Some(at.y),
+            fauna_id,
+            material.map(str::to_string),
+            None,
+            None,
+            Vec::new(),
+            false,
+        );
+    }
+
+    /// Two bands of one people (or of two) standing together on the harness world.
+    fn two_bands_of(
+        second_faction: FactionId,
+    ) -> (bevy::prelude::App, BandId, Entity, Entity, UVec2) {
+        let mut app = build_test_app();
+        app.update();
+        let first = BandId(starting_band_id(&mut app, FactionId(0)));
+        let (first_entity, patches) = band_entity_and_patches(&app, first, 1);
+        app.world
+            .entity_mut(first_entity)
+            .insert(BandName(FIRST_BAND_NAME.to_string()));
+        let tile = app
+            .world
+            .get::<PopulationCohort>(first_entity)
+            .expect("the band's cohort")
+            .current_tile;
+        let second = spawn_idle_band(&mut app, second_faction, tile);
+        app.world
+            .entity_mut(second)
+            .insert(BandId(SECOND_BAND_OF_THE_PEOPLE));
+        (app, first, first_entity, second, patches[0])
+    }
+
+    /// **A NEW FORAGE ROW ON A PATCH ANOTHER BAND OF THE PEOPLE WORKS IS REFUSED, NAMING THAT BAND**;
+    /// the frame shows no new row. A band of ANOTHER people is not refused, the working band editing
+    /// its own row is not refused, and the staffing preview refuses the same case with its token.
+    #[test]
+    fn a_forage_row_on_a_patch_another_band_of_the_people_works_is_refused() {
+        let (mut app, first, first_entity, _, patch) = two_bands_of(FactionId(0));
+        forage_row(&mut app, first, patch, 0);
+        assert!(
+            app.world
+                .get::<LaborAllocation>(first_entity)
+                .unwrap()
+                .assignments
+                .iter()
+                .any(
+                    |row| matches!(&row.target, LaborTarget::Forage { tile, .. } if *tile == patch)
+                ),
+            "liveness: the first band works the patch"
+        );
+
+        assign_for_band(
+            &mut app,
+            FactionId(0),
+            SECOND_BAND_OF_THE_PEOPLE,
+            "forage",
+            patch,
+            None,
+            None,
+            0,
+        );
+        let expected = format!(
+            "{FIRST_BAND_NAME} already works ({}, {}).",
+            patch.x, patch.y
+        );
+        assert!(
+            take_source_refusals(&app).contains(&expected),
+            "the refusal names the band: {:?}",
+            take_source_refusals(&app)
+        );
+        assert_eq!(
+            published_rows_of(&mut app, SECOND_BAND_OF_THE_PEOPLE),
+            0,
+            "the frame shows no new row"
+        );
+
+        // The staffing preview refuses the same case.
+        let ask = sim_runtime::StaffingPreviewQuery {
+            faction_id: 0,
+            band_id: SECOND_BAND_OF_THE_PEOPLE,
+            source: sim_runtime::WorkPartySource::Forage {
+                x: patch.x,
+                y: patch.y,
+                take_species: Vec::new(),
+            },
+            kit_id: String::new(),
+            floor: DEFAULT_ESCAPEMENT_FLOOR,
+            priority: String::new(),
+            max_workers: 0,
+        };
+        match core_sim::forecast_query::answer_forecast_query(
+            &mut app.world,
+            &sim_runtime::QueryPayload::StaffingPreview(ask),
+        ) {
+            sim_runtime::QueryReply::Error(token) => {
+                assert_eq!(token, sim_runtime::query_error::WORKED_BY_ANOTHER_BAND)
+            }
+            other => panic!("the preview must refuse, got {other:?}"),
+        }
+
+        // Editing the row the band already holds is never refused.
+        let before = take_source_refusals(&app).len();
+        forage_row(&mut app, first, patch, 3);
+        assert_eq!(
+            take_source_refusals(&app).len(),
+            before,
+            "an edit of the band's own row says nothing"
+        );
+        assert_eq!(
+            app.world
+                .get::<LaborAllocation>(first_entity)
+                .unwrap()
+                .assignments
+                .iter()
+                .find(
+                    |row| matches!(&row.target, LaborTarget::Forage { tile, .. } if *tile == patch)
+                )
+                .and_then(|row| row.max_workers),
+            Some(3),
+            "the edit landed"
+        );
+    }
+
+    /// A band of another people on the same patch does not refuse the new row.
+    #[test]
+    fn a_band_of_another_people_is_not_refused_the_patch() {
+        let (mut app, first, _, second, patch) = two_bands_of(FactionId(1));
+        forage_row(&mut app, first, patch, 0);
+        assign_for_band(
+            &mut app,
+            FactionId(1),
+            SECOND_BAND_OF_THE_PEOPLE,
+            "forage",
+            patch,
+            None,
+            None,
+            0,
+        );
+        assert!(
+            app.world
+                .get::<LaborAllocation>(second)
+                .unwrap()
+                .assignments
+                .iter()
+                .any(
+                    |row| matches!(&row.target, LaborTarget::Forage { tile, .. } if *tile == patch)
+                ),
+            "the other people's band got its row: {:?}",
+            take_source_refusals(&app)
+        );
+    }
+
+    /// **A HUNT ROW ON A HERD ANOTHER BAND OF THE PEOPLE HUNTS IS REFUSED, NAMING THE HERD.**
+    #[test]
+    fn a_hunt_row_on_a_herd_another_band_of_the_people_hunts_is_refused() {
+        let (mut app, _, first_entity, _, _) = two_bands_of(FactionId(0));
+        let (herd_id, species, at) = {
+            let registry = app.world.resource::<HerdRegistry>();
+            let herd = registry.entries().first().expect("the world has a herd");
+            (herd.id.clone(), herd.species.clone(), herd.position())
+        };
+        app.world
+            .get_mut::<LaborAllocation>(first_entity)
+            .unwrap()
+            .set_staffed_row(
+                LaborTarget::Hunt {
+                    fauna_id: herd_id.clone(),
+                    floor: DEFAULT_ESCAPEMENT_FLOOR,
+                    move_with_herd: false,
+                },
+                None,
+                None,
+            );
+        assign_for_band(
+            &mut app,
+            FactionId(0),
+            SECOND_BAND_OF_THE_PEOPLE,
+            "hunt",
+            at,
+            Some(herd_id),
+            None,
+            0,
+        );
+        let expected = format!("{FIRST_BAND_NAME} already hunts the {species}.");
+        assert!(
+            take_source_refusals(&app).contains(&expected),
+            "the refusal names the band and the herd: {:?}",
+            take_source_refusals(&app)
+        );
+        assert_eq!(published_rows_of(&mut app, SECOND_BAND_OF_THE_PEOPLE), 0);
+    }
+
+    /// **AN EXTRACT ROW ON A WORKING ANOTHER BAND OF THE PEOPLE WORKS IS REFUSED, NAMING THE MATERIAL.**
+    #[test]
+    fn an_extract_row_on_a_working_another_band_of_the_people_works_is_refused() {
+        let mut app = build_test_app();
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::AlpineMountain);
+        let first = spawn_idle_band(&mut app, FactionId(0), tile);
+        app.world
+            .entity_mut(first)
+            .insert((BandId(11), BandName(FIRST_BAND_NAME.to_string())));
+        let second = spawn_idle_band(&mut app, FactionId(0), tile);
+        app.world
+            .entity_mut(second)
+            .insert(BandId(SECOND_BAND_OF_THE_PEOPLE));
+        assign_for_band(
+            &mut app,
+            FactionId(0),
+            11,
+            "extract",
+            WORKING,
+            None,
+            Some("stone"),
+            1,
+        );
+        assert_eq!(
+            app.world
+                .get::<LaborAllocation>(first)
+                .unwrap()
+                .assignments
+                .len(),
+            1,
+            "liveness: the first band works the stone"
+        );
+        assign_for_band(
+            &mut app,
+            FactionId(0),
+            SECOND_BAND_OF_THE_PEOPLE,
+            "extract",
+            WORKING,
+            None,
+            Some("stone"),
+            1,
+        );
+        let expected = format!(
+            "{FIRST_BAND_NAME} already works the stone at ({}, {}).",
+            WORKING.x, WORKING.y
+        );
+        assert!(
+            take_source_refusals(&app).contains(&expected),
+            "the refusal names the band and the material: {:?}",
+            take_source_refusals(&app)
+        );
+        assert!(app
+            .world
+            .get::<LaborAllocation>(second)
+            .unwrap()
+            .assignments
+            .is_empty());
     }
 }
 
