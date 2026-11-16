@@ -1,7 +1,7 @@
 # Plan: Scenarios — start a game with the state already built
 
-**Status:** design. Design issue #787; the arc and its slices are filed as GitHub issues that link
-here (Falcon Backlog, `type:arc` "Scenarios").
+**Status:** design. Design issue #787, arc #920. The slices are #921–#929; §4 maps each issue to
+its slice.
 
 ## 0. The gap, in one line
 
@@ -282,17 +282,17 @@ A **Scenario** page on the Workbench registry (`.claude/rules/client/workbench.m
 
 Each slice is one GitHub issue under the Scenarios arc and links back here.
 
-| # | Slice | Delivers |
-|---|---|---|
-| 1 | **Loader + bands** | `scenario/mod.rs` (two-pass load, apply order, refusal list), the `load_scenario` verb and reply, `run_stack.sh --scenario`, the lib seam for replayed verbs (§2.9), the client accepting an unrequested world (§2.7), and the **bands** section: `world`, `at`, `size`, `ages`, `founding_lines`, `larder`, `knowledge`, `outfit`. A checked-in `core_sim/scenarios/breeding_ceiling_150.json` covers the immediate case. Also the `scenarios.md` rule and its routing row |
-| 2a | **Worked tiles, labor and tile overrides** | the `labor` section (`AssignLabor`/`ForageTile`/`WorkPriority` entries) and the `tiles` override section as a worldgen input |
-| 2b | **Held rungs and the build queue** | the `rungs` section: a held rung on a patch, a working or a herd as a gated setter, and a declared build as a `BuildRung` entry |
-| 2c | **Pens and herds** | the `herds` section (placing or depleting a herd, with a habitat check) and the `pens` section (`ExtendPen`, `SetHerdOutput`, a held tame rung) |
-| 2d | **Deposits** | the `deposits` section: remaining stock and a working's held rung |
-| 2e | **Roads** | the `roads` section: a held road rung per tile, and road-keeping labor |
-| 2f | **Bench queue** | the `bench` section: `BenchEnqueue*` entries and the auto setting |
-| 3 | **Export** | `export_scenario`, the export half of each section's trait, and the export → load → export test |
-| 4 | **Workbench editor** | the Scenario page, `write_scenario`, and tile and band picking |
+| # | Issue | Slice | Delivers |
+|---|---|---|---|
+| 1 | #921 | **Loader + bands** | `scenario/mod.rs` (two-pass load, apply order, refusal list), the `load_scenario` verb and reply, `run_stack.sh --scenario`, the lib seam for replayed verbs (§2.9), the client accepting an unrequested world (§2.7), and the **bands** section: `world`, `at`, `size`, `ages`, `founding_lines`, `larder`, `knowledge`, `outfit`. A checked-in `core_sim/scenarios/breeding_ceiling_150.json` covers the immediate case. Also the `scenarios.md` rule and its routing row |
+| 2a | #922 | **Worked tiles, labor and tile overrides** | the `labor` section (`AssignLabor`/`ForageTile`/`WorkPriority` entries) and the `tiles` override section as a worldgen input |
+| 2b | #923 | **Held rungs and the build queue** | the `rungs` section: a held rung on a patch, a working or a herd as a gated setter, and a declared build as a `BuildRung` entry |
+| 2c | #924 | **Pens and herds** | the `herds` section (placing or depleting a herd, with a habitat check) and the `pens` section (`ExtendPen`, `SetHerdOutput`, a held tame rung) |
+| 2d | #925 | **Deposits** | the `deposits` section: remaining stock and a working's held rung |
+| 2e | #926 | **Roads** | the `roads` section: a held road rung per tile, and road-keeping labor |
+| 2f | #927 | **Bench queue** | the `bench` section: `BenchEnqueue*` entries and the auto setting |
+| 3 | #928 | **Export** | `export_scenario`, the export half of each section's trait, and the export → load → export test |
+| 4 | #929 | **Workbench editor** | the Scenario page, `write_scenario`, and tile and band picking |
 
 Slices 2a–2f each depend only on slice 1 and can run in parallel, which is what §2.4's split exists
 for. Slice 3 exports only the sections that have landed. A section added later brings its own export
