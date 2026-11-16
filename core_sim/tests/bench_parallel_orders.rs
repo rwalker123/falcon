@@ -808,7 +808,7 @@ const ITEMS_PER_ORDER: u32 = 3;
 /// The kind the encoded forage row publishes.
 const FORAGE_KIND: &str = "forage";
 /// The reason's name for a High opener's hands.
-const HIGH_CRAFTING_WORD: &str = "High crafting";
+const HIGH_CRAFTING_WORD: &str = "crafting";
 
 /// What the encoded frame says about the forage row and the bench orders.
 struct FirstFrame {
@@ -1162,4 +1162,110 @@ fn auto_never_raises_a_players_order() {
     assert!(!auto_craft_fill(&mut app.world, band));
     assert_eq!(bench(&app, band).orders.len(), 1);
     assert_eq!(bench(&app, band).orders[0].count, count);
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE KIT STEP: missing kit is made before anyone works bare
+// ---------------------------------------------------------------------------------------------
+
+/// A band of fourteen hands with one basket and a forage row crewed from them, a basket order queued
+/// and fibre and hide in store: the row is short of baskets.
+const KIT_STEP_HANDS: u32 = 14;
+const KIT_STEP_BASKETS_HELD: u32 = 1;
+const KIT_STEP_BASKETS_ORDERED: u32 = 6;
+/// Turns the fixture may run before the order must have made a basket.
+const TURNS_TO_MAKE_A_BASKET: u32 = 12;
+
+/// `(forage row workers, kittedStaffed, basket order crew)` off the encoded frame.
+fn read_kit_frame(app: &mut App, band: Entity) -> (u32, u32, u32) {
+    recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let band_id = app.world.get::<core_sim::BandId>(band).unwrap().0;
+    let cohort = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == band_id)
+        .expect("the band is published");
+    let row = cohort
+        .laborAssignments()
+        .expect("the labor rows")
+        .iter()
+        .find(|row| row.kind() == Some(FORAGE_KIND))
+        .expect("the forage row is published");
+    // The order retires once its last basket is made, so a late frame has none.
+    let crafters = cohort
+        .bench()
+        .and_then(|bench| bench.orders())
+        .and_then(|orders| orders.iter().next())
+        .map_or(0, |order| order.crewAtTool() + order.crewByHand());
+    (row.workers(), row.kittedStaffed(), crafters)
+}
+
+/// The kit-step fixture with `held` baskets on the shelf at the start (0 = the band's baskets have
+/// all worn out, or it never had any).
+fn run_the_basket_kit_case(held_at_start: u32) {
+    let (mut app, band, _) = auto_band_with_a_kitted_forage_row(KIT_STEP_HANDS);
+    {
+        let mut kit = app.world.get_mut::<BandEquipment>(band).unwrap();
+        *kit = BandEquipment::default();
+        if held_at_start > 0 {
+            kit.stock(BASKETS_ITEM, held_at_start, PLAIN_TIER, None);
+        }
+    }
+    bank(&mut app, band, HIDE, PLENTY, &HIDE_AXES);
+    app.world.get_mut::<BandBench>(band).unwrap().auto = false;
+    queue(
+        &mut app,
+        band,
+        BASKETS,
+        KIT_STEP_BASKETS_ORDERED,
+        SourcePriority::Normal,
+    );
+    staff(&mut app, band);
+    let (workers, kitted_before, crafters) = read_kit_frame(&mut app, band);
+    assert!(crafters > 0, "the basket order is crewed");
+    assert!(
+        bench(&app, band).first_call.crafting > 0,
+        "the kit step's crafters are counted in the first call"
+    );
+    assert!(workers > kitted_before, "liveness: bare hands work the row");
+    for _ in 0..TURNS_TO_MAKE_A_BASKET {
+        app.update();
+    }
+    let held = app
+        .world
+        .get::<BandEquipment>(band)
+        .unwrap()
+        .count_of(BASKETS_ITEM);
+    assert!(held > held_at_start, "baskets were made: {held} held");
+    let (_, kitted_after, _) = read_kit_frame(&mut app, band);
+    assert!(
+        kitted_after > kitted_before,
+        "the row's armed heads rose: {kitted_before} -> {kitted_after}"
+    );
+}
+
+/// **A ROW SHORT OF BASKETS HAS THEM MADE BEFORE ANYONE WORKS BARE**: the basket order holds
+/// crafters the moment the band is staffed (the kit step, counted in the first call), the baskets
+/// land within a few turns and the row's armed heads rise.
+#[test]
+fn a_forage_row_short_of_baskets_has_them_made_and_its_armed_heads_rise() {
+    run_the_basket_kit_case(KIT_STEP_BASKETS_HELD);
+}
+
+/// **THE SAME WITH NOT ONE BASKET HELD**: the band has no live basket line, and the kit is still made
+/// first.
+#[test]
+fn a_band_with_no_baskets_at_all_has_them_made_and_its_armed_heads_rise() {
+    run_the_basket_kit_case(0);
 }

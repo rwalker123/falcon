@@ -14,7 +14,15 @@
 //!    first builder and the group's rows get **kitted** heads up to the crew that takes what
 //!    regrows at the floor (`T_hold`) - a hold crew is a food take, so a Normal row's never beats a
 //!    High build. If the band's units run out the row stays short: there is no bare fallback here,
-//!    except for a chief's FOOD order (pass 1c): once every group's kitted hold heads are dealt
+//!    except for the **kit step** and a chief's FOOD order (pass 1c). The kit step runs after pass 1b and
+//!    before pass 1c: a workable bench order that makes an equipment item some source row is short of
+//!    (the row's useful crew at full kit, under its Max and tile room, exceeds the heads the shelf
+//!    still arms), or the bench tool that bounds the material such an item is made from, is crewed
+//!    first - up to `crafters_per_item x the units the rows lack` for the kit, to its own cap for the
+//!    tool - kitted where the shelf can arm a crafter, else bare, in bench rank order. Missing kit is
+//!    made before anyone works bare. The food-first guard ([`staff_band_food_first`]) re-deals without
+//!    the step when the larder would run short with the crafters at work.
+//!    Then, for a chief's FOOD order (pass 1c): once every group's kitted hold heads are dealt
 //!    and before any row's reach, its rows' hold crews are filled with bare hands where a bare hand
 //!    takes something, so another order's kitted refill never takes the crew that keeps food coming in.
 //!    A crew is sized `ceil(keep_hands + gather hands)`, rounded ONCE: the keeper keeps first and
@@ -289,6 +297,14 @@ pub struct StaffRowInput<'a> {
     /// **A LEVY ROW OF THE BAND'S TRIBE** (#862): skipped in passes 0 and 1, dealt in the levy step
     /// and after it from the levy budget.
     pub levy: bool,
+    /// **WHAT A BENCH ORDER MAKES** (a bench input only): read by the kit step, which crews the
+    /// orders that make the equipment the source rows are short of, and by the food-first check's
+    /// credit for the kit such an order finishes.
+    pub bench_kit: Option<crate::systems::BenchKit>,
+    /// **EVERY ITEM OF THE ROW'S CHOSEN KIT, live or not**, each with the people one unit arms. Read
+    /// only by the kit step, so a band whose baskets have all worn out (or never had any) is still
+    /// seen to be short of them; arming ([`Self::kit_items`]) is unchanged and lists live items only.
+    pub kit_wants: Vec<(Arc<str>, u32)>,
 }
 
 /// What the passes decided for one row, in the order the inputs came.
@@ -657,6 +673,8 @@ fn scout_arming_input(plan: &ScoutPlan) -> StaffRowInput<'static> {
         food_per_take: NO_FOOD,
         finish: None,
         levy: false,
+        bench_kit: None,
+        kit_wants: Vec::new(),
     }
 }
 
@@ -718,7 +736,7 @@ pub fn band_runs_short(
         return false;
     }
     let mut room: Vec<f32> = rows.iter().map(|row| row.useful_take).collect();
-    let capacity: Vec<f32> = rows
+    let mut capacity: Vec<f32> = rows
         .iter()
         .zip(crews)
         .map(|(row, crew)| {
@@ -744,10 +762,19 @@ pub fn band_runs_short(
             })
         })
         .collect();
+    let mut arrivals = kit_arrivals(rows, crews);
+    let mut raised: Vec<u32> = vec![NOBODY; rows.len()];
     let mut larder = ledger.larder;
     for turn in 0..window {
         if larder < ledger.need {
             return true;
+        }
+        for arrival in arrivals
+            .iter_mut()
+            .filter(|a| !a.applied && turn >= a.finished_in)
+        {
+            arrival.applied = true;
+            arm_short_rows(rows, crews, arrival, &mut raised, &mut capacity);
         }
         let mut income = NO_FOOD;
         for (i, row) in rows.iter().enumerate() {
@@ -769,6 +796,81 @@ pub fn band_runs_short(
     false
 }
 
+/// **A KIT ORDER'S FINISHED UNITS, as the food-first walk sees them**: when the order dealt `crews`
+/// finishes its remaining work, how many units of which item it hands the rows. A tool order earns
+/// none (the walk is conservative about it).
+struct KitArrival {
+    /// The turn (0-based, as the walk counts) from which the units are in the rows' hands.
+    finished_in: u32,
+    item: Arc<str>,
+    units: u32,
+    applied: bool,
+}
+
+/// The kit orders (an order making equipment, not a bench tool) the deal crewed, and when each
+/// finishes: `ceil(work remaining / per-turn progress at the dealt crew)`, the per-turn progress
+/// being the bench's own order rate (`Σ hands x craft speed x progress per worker-turn`).
+fn kit_arrivals(rows: &[StaffRowInput<'_>], crews: &[StaffedCrew]) -> Vec<KitArrival> {
+    rows.iter()
+        .zip(crews)
+        .filter_map(|(row, crew)| {
+            let kit = row.bench_kit.as_ref()?;
+            let credit = kit.credit.as_ref()?;
+            if !row.is_bench || !kit.tool_serves.is_empty() || crew.total() == NOBODY {
+                return None;
+            }
+            let per_turn = crew.kitted as f32 * credit.rate_per_tool_crafter
+                + crew.bare as f32 * credit.rate_per_hand_crafter;
+            (per_turn > NO_HANDS).then(|| KitArrival {
+                finished_in: (credit.work_remaining / per_turn).ceil() as u32,
+                item: Arc::clone(&credit.item),
+                units: credit.units.floor() as u32,
+                applied: false,
+            })
+        })
+        .collect()
+}
+
+/// **THE ROWS SHORT OF A FINISHED ITEM TAKE AS IF THAT MANY MORE OF THEIR HEADS WERE ARMED**, High
+/// priority and nearest first, never above the crew they were dealt; the capacity is re-struck
+/// through the row's own `hands` closure ([`crew_take_capacity`]). Only a row whose kit is that one
+/// item is credited: a row that needs a second item the shelf may lack is not promised its heads.
+fn arm_short_rows(
+    rows: &[StaffRowInput<'_>],
+    crews: &[StaffedCrew],
+    arrival: &KitArrival,
+    raised: &mut [u32],
+    capacity: &mut [f32],
+) {
+    let mut order: Vec<usize> = (0..rows.len())
+        .filter(|&i| {
+            let row = &rows[i];
+            !row.is_build
+                && !row.is_bench
+                && row.food_per_take > NO_FOOD
+                && matches!(row.kit_items.as_slice(), [(item, _)] if *item == arrival.item)
+        })
+        .collect();
+    order.sort_by_key(|&i| (std::cmp::Reverse(rows[i].priority), rows[i].distance, i));
+    let mut units_left = arrival.units;
+    for i in order {
+        let people = rows[i].kit_items[0].1.max(1);
+        let unarmed = crews[i]
+            .total()
+            .saturating_sub(crews[i].kitted + raised[i] + crews[i].keepers);
+        let heads = unarmed.min(units_left.saturating_mul(people));
+        if heads == NOBODY {
+            continue;
+        }
+        units_left -= units_for(heads, people).min(units_left);
+        raised[i] += heads;
+        let mut credited = crews[i];
+        credited.kitted += raised[i];
+        credited.bare = credited.bare.saturating_sub(raised[i]);
+        capacity[i] = crew_take_capacity(&rows[i], &credited);
+    }
+}
+
 /// **THE THREE PASSES, FOOD FIRST WHEN THE BAND WOULD GO HUNGRY.** The deal runs in today's order
 /// (builds ahead of their group's hold crews). If the larder walked forward `window` turns at the
 /// crews it produced comes up short ([`band_runs_short`]) and a build holds builders, the band is
@@ -784,12 +886,27 @@ pub fn staff_band_food_first(
     ledger: FoodLedger,
     window: u32,
 ) -> (Vec<RowStaffing>, ScoutCrew, bool) {
-    let (dealt, fed_first) =
+    let (dealt, choice) =
         deal_band_food_first(rows, pool, shelf, tile_room, scouts, ledger, window);
-    (dealt.out, dealt.scout, fed_first)
+    (dealt.out, dealt.scout, choice.fed_first)
+}
+
+/// **WHICH DEAL THE FOOD-FIRST GUARD CHOSE.**
+struct FoodFirstChoice {
+    /// When the builds were dealt in the deal returned.
+    builds: BuildsDealt,
+    /// Whether the kit step ran in it.
+    kit: KitStep,
+    /// Whether the band was re-dealt with builds last because builders were dealt and the larder
+    /// would have run short.
+    fed_first: bool,
 }
 
 /// [`staff_band_food_first`] with the bench's readings ([`Dealt`]).
+///
+/// **The guard's deals, in order:** A (kit step on, builds in turn); if builders were dealt and A
+/// runs short, B (kit step on, builds last); if the last deal tried dealt any kit crafter and still
+/// runs short, C (kit step off, builds last). The last deal tried is returned when none is fine.
 fn deal_band_food_first(
     rows: &[StaffRowInput<'_>],
     pool: u32,
@@ -798,37 +915,59 @@ fn deal_band_food_first(
     scouts: &ScoutPlan,
     ledger: FoodLedger,
     window: u32,
-) -> (Dealt, bool) {
-    let mut builds_first_shelf = shelf.clone();
-    let dealt = deal_builds(
-        rows,
-        pool,
-        &mut builds_first_shelf,
-        tile_room,
-        scouts,
-        EVERY_HIGH_OPENER,
-        BuildsDealt::InTurn,
-    );
+) -> (Dealt, FoodFirstChoice) {
+    let deal = |when: BuildsDealt, kit: KitStep| {
+        let mut dealt_shelf = shelf.clone();
+        let dealt = deal_builds(
+            rows,
+            pool,
+            &mut dealt_shelf,
+            tile_room,
+            scouts,
+            EVERY_HIGH_OPENER,
+            when,
+            kit,
+        );
+        (dealt, dealt_shelf)
+    };
+    let (mut dealt, mut dealt_shelf) = deal(BuildsDealt::InTurn, KitStep::On);
+    let mut choice = FoodFirstChoice {
+        builds: BuildsDealt::InTurn,
+        kit: KitStep::On,
+        fed_first: false,
+    };
     let builders_dealt = rows
         .iter()
         .zip(&dealt.out)
         .any(|(row, crew)| is_a_build(row) && crew.total() > NOBODY);
-    if !builders_dealt || !band_runs_short(rows, &dealt.out, ledger, window) {
-        *shelf = builds_first_shelf;
-        return (dealt, false);
+    let mut runs_short = band_runs_short(rows, &dealt.out, ledger, window);
+    if runs_short && builders_dealt {
+        (dealt, dealt_shelf) = deal(BuildsDealt::Last, KitStep::On);
+        choice = FoodFirstChoice {
+            builds: BuildsDealt::Last,
+            kit: KitStep::On,
+            fed_first: true,
+        };
+        runs_short = band_runs_short(rows, &dealt.out, ledger, window);
     }
-    let mut builds_last_shelf = shelf.clone();
-    let dealt = deal_builds(
-        rows,
-        pool,
-        &mut builds_last_shelf,
-        tile_room,
-        scouts,
-        EVERY_HIGH_OPENER,
-        BuildsDealt::Last,
-    );
-    *shelf = builds_last_shelf;
-    (dealt, true)
+    if runs_short && dealt.kit_crafters > NOBODY {
+        (dealt, dealt_shelf) = deal(BuildsDealt::Last, KitStep::Off);
+        choice = FoodFirstChoice {
+            builds: BuildsDealt::Last,
+            kit: KitStep::Off,
+            fed_first: builders_dealt,
+        };
+    }
+    *shelf = dealt_shelf;
+    (dealt, choice)
+}
+
+/// **WHETHER THE KIT STEP RUNS** (between pass 1b and pass 1c): crafters for the orders that make
+/// the equipment the source rows are short of.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KitStep {
+    On,
+    Off,
 }
 
 /// **WHEN THE BUILDS ARE DEALT**: in their groups' turn (the ordinary passes), or after every source
@@ -847,6 +986,7 @@ fn is_a_build(row: &StaffRowInput<'_>) -> bool {
 /// **THE PASSES, WITH THE BUILDS DEALT `when`.** `Last` deals every other input first over the whole
 /// pool, shelf and tile room, then the builds over what is left; the bench's readings are the first
 /// deal's (no builder was dealt before pass 2).
+#[allow(clippy::too_many_arguments)] // the passes' own inputs plus when to deal the builds
 fn deal_builds(
     rows: &[StaffRowInput<'_>],
     pool: u32,
@@ -855,6 +995,7 @@ fn deal_builds(
     scouts: &ScoutPlan,
     opener_limit: usize,
     when: BuildsDealt,
+    kit_step: KitStep,
 ) -> Dealt {
     if when == BuildsDealt::InTurn {
         return staff_passes_counted(
@@ -866,6 +1007,7 @@ fn deal_builds(
             scouts,
             opener_limit,
             Inputs::Every,
+            kit_step,
         );
     }
     let mut dealt = staff_passes_counted(
@@ -877,6 +1019,7 @@ fn deal_builds(
         scouts,
         opener_limit,
         Inputs::AllButBuilds,
+        kit_step,
     );
     let spent: u32 = dealt.out.iter().map(StaffedCrew::total).sum::<u32>() + dealt.scout.total();
     let mut room_left = tile_room.clone();
@@ -905,6 +1048,7 @@ fn deal_builds(
         &levy_for_builds,
         opener_limit,
         Inputs::BuildsOnly,
+        kit_step,
     );
     for (i, row) in rows.iter().enumerate() {
         if is_a_build(row) {
@@ -969,6 +1113,7 @@ fn staff_passes_scouting(
         scouts,
         EVERY_HIGH_OPENER,
         Inputs::Every,
+        KitStep::On,
     );
     (dealt.out, dealt.scout)
 }
@@ -985,6 +1130,8 @@ struct Dealt {
     openers: Vec<usize>,
     /// What is left of the levy budget (0 with no levy).
     levy_left: u32,
+    /// The crafters the kit step seated.
+    kit_crafters: u32,
 }
 
 /// One crafter on bench order `i`: kitted (holding the tool) when the shelf can arm one, else bare
@@ -996,11 +1143,23 @@ fn deal_bench_opener(
     shelf: &mut BTreeMap<Arc<str>, u32>,
     i: usize,
 ) -> bool {
+    deal_bench_head(rows, ledger, shelf, i)
+}
+
+/// One more crafter on bench order `i`: kitted (holding the tool) when the shelf can arm one more,
+/// else bare where a bare hand works. The head choice the opener and the kit step share.
+fn deal_bench_head(
+    rows: &[StaffRowInput<'_>],
+    ledger: &mut Ledger,
+    shelf: &mut BTreeMap<Arc<str>, u32>,
+    i: usize,
+) -> bool {
     let row = &rows[i];
-    if kitted_capacity(row, NOBODY, shelf) >= 1 {
+    let held = ledger.out[i].kitted;
+    if kitted_capacity(row, held, shelf) > held {
         let dealt = ledger.deal_head(i, true, HeadKind::Kitted);
         if dealt {
-            arm(row, NOBODY, 1, shelf);
+            arm(row, held, held + 1, shelf);
         }
         dealt
     } else if row.bare_can_work {
@@ -1008,6 +1167,93 @@ fn deal_bench_opener(
     } else {
         false
     }
+}
+
+/// **EVERY HEAD ARMED** - the shelf the kit step sizes a row's full-kit crew against.
+const EVERY_HEAD_ARMED: u32 = u32::MAX;
+
+/// **WHAT THE SOURCE ROWS WANT ARMED, AND WHAT THE SHELF CANNOT ARM**, at this point in the deal.
+/// A row wants kit up to its REACH crew (pass 2 is the pass that arms heads: kitted heads up to
+/// `max(hold, reach)`; pass 3's useful crew is filled bare by design), under its Max and its tile's
+/// room. Per item: `wants` = the units those crews would hold, `holds` = the units its kitted heads
+/// already hold, `left` = the units still on the shelf.
+///
+/// Returns `(lacks, reserved)`: the units per item the rows lack (`wants - holds - left`; items nobody
+/// lacks are absent), and the **heads to keep out of the kit step** - per item `min(left, wants -
+/// holds) x people per unit`, summed - so every shelf unit a row wants armed still has a hand to arm
+/// it in pass 2. The kit step only takes hands the shelf cannot arm. Levy rows, builds and bench
+/// orders are not source rows.
+fn kit_lacks(
+    rows: &[StaffRowInput<'_>],
+    order: &[usize],
+    ledger: &Ledger,
+    shelf: &BTreeMap<Arc<str>, u32>,
+) -> (BTreeMap<Arc<str>, u32>, u32) {
+    // item -> (units wanted, units held, people one unit arms)
+    let mut wanted: BTreeMap<Arc<str>, (u32, u32, u32)> = BTreeMap::new();
+    for &i in order {
+        let row = &rows[i];
+        if row.is_build || row.is_bench || row.levy {
+            continue;
+        }
+        let crew = &ledger.out[i];
+        let room = row
+            .tile
+            .and_then(|tile| ledger.tile_room.get(&tile_key(tile)).copied())
+            .unwrap_or(u32::MAX);
+        let limit = |heads: u32| {
+            heads
+                .min(cap_of(row))
+                .min(crew.total().saturating_add(room))
+                .saturating_sub(crew.keepers)
+        };
+        let reach_crew = |armed: u32| reach_heads(row, armed).max(hold_heads(row, armed));
+        let live_heads = limit(reach_crew(EVERY_HEAD_ARMED));
+        // An item the band holds no live unit of cannot be priced through the row's coverage (a dead
+        // item covers nobody): the row is taken to want its bare reach crew in it, and at least one
+        // head where the row has any take at all (a hunt bare hands cannot wound still wants spears).
+        let dead_heads = limit(reach_crew(NOBODY).max(u32::from(row.useful_take > NO_TAKE_WANTED)));
+        for (item, people) in &row.kit_wants {
+            let live = row.kit_items.iter().any(|(held, _)| held == item);
+            let entry = wanted.entry(Arc::clone(item)).or_insert((0, 0, *people));
+            if live {
+                entry.0 += units_for(live_heads, *people);
+                entry.1 += units_for(crew.kitted, *people);
+            } else {
+                entry.0 += units_for(dead_heads, *people);
+            }
+        }
+    }
+    let mut reserved = NOBODY;
+    let lacks = wanted
+        .into_iter()
+        .filter_map(|(item, (wants, holds, people))| {
+            let left = shelf.get(&item).copied().unwrap_or(NOBODY);
+            let unarmed = wants.saturating_sub(holds);
+            reserved = reserved.saturating_add(left.min(unarmed).saturating_mul(people.max(1)));
+            let lack = unarmed.saturating_sub(left);
+            (lack > NOBODY).then_some((item, lack))
+        })
+        .collect();
+    (lacks, reserved)
+}
+
+/// **HOW MANY CRAFTERS A KIT ORDER IS WORTH**, `NOBODY` for an order that is no kit order. An order
+/// making an item the rows lack is crewed up to `crafters_per_item` x the units lacked; an order making
+/// the bench tool that bounds the material such an item is made from, up to its own cap (a tool nobody
+/// holds lengthens the wait for the kit).
+fn kit_crafters_wanted(row: &StaffRowInput<'_>, lacks: &BTreeMap<Arc<str>, u32>) -> u32 {
+    let Some(kit) = &row.bench_kit else {
+        return NOBODY;
+    };
+    let units_short: u32 = kit.makes.iter().filter_map(|item| lacks.get(item)).sum();
+    if units_short > NOBODY {
+        return kit.crafters_per_item.max(1).saturating_mul(units_short);
+    }
+    if kit.tool_serves.iter().any(|item| lacks.contains_key(item)) {
+        return cap_of(row);
+    }
+    NOBODY
 }
 
 /// [`staff_passes_scouting`] that also reports where the hands went before pass 2 opened.
@@ -1024,6 +1270,7 @@ fn staff_passes_counted(
     scouts: &ScoutPlan,
     opener_limit: usize,
     inputs: Inputs,
+    kit_step: KitStep,
 ) -> Dealt {
     let mut order: Vec<usize> = (0..rows.len())
         .filter(|&i| inputs.deals(&rows[i]))
@@ -1162,6 +1409,30 @@ fn staff_passes_counted(
         });
     }
 
+    // ## The kit step - after pass 1b and before pass 1c: a source row short of an equipment item the
+    // bench can make gets that order its crafters before any row's bare hold crew is dealt, so the
+    // kit is made rather than worked around. A kit order is a workable order making an item some
+    // source row is short of, or the bench tool that bounds the material such an item is made from;
+    // dealt in bench rank order, kitted crafters where the shelf can arm one, else bare where a bare
+    // hand works.
+    let mut kit_crafters = NOBODY;
+    if passes == Passes::All && kit_step == KitStep::On {
+        let (lacks, reserved) = kit_lacks(rows, &order, &ledger, shelf);
+        if !lacks.is_empty() {
+            for &i in order.iter().filter(|&&i| rows[i].is_bench) {
+                let want = kit_crafters_wanted(&rows[i], &lacks);
+                // Only hands the shelf cannot arm: the heads for the units already on the shelf
+                // stay in the pool for pass 2's kitted reach heads.
+                while ledger.out[i].total() < want
+                    && ledger.pool_left > reserved
+                    && deal_bench_head(rows, &mut ledger, shelf, i)
+                {
+                    kit_crafters += 1;
+                }
+            }
+        }
+    }
+
     // ## Pass 1c — the chief's FOOD order keeps its rows' hold crews up with bare hands, after every
     // group's kitted hold heads (pass 1b) and before ANY row's pass 2: another order's kitted refill
     // never takes the crew that keeps food coming in. Priority High to Low, round-robin nearest
@@ -1187,7 +1458,7 @@ fn staff_passes_counted(
         .filter(|&i| rows[i].is_build && !rows[i].is_bench)
         .map(|i| ledger.out[i].total())
         .sum();
-    first_call.crafting = openers.len() as u32;
+    first_call.crafting = openers.len() as u32 + kit_crafters;
     first_call.holding = (after_keepers - ledger.pool_left)
         .saturating_sub(first_call.building)
         .saturating_sub(first_call.crafting);
@@ -1290,6 +1561,7 @@ fn staff_passes_counted(
             pass_one,
             openers,
             levy_left: ledger.levy_budget,
+            kit_crafters,
         };
     }
 
@@ -1331,6 +1603,7 @@ fn staff_passes_counted(
         first_call,
         pass_one,
         openers,
+        kit_crafters,
     }
 }
 
@@ -1626,6 +1899,19 @@ fn live_kit_items(
         .collect()
 }
 
+/// **EVERY ITEM OF A KIT**, live or not, each with the people one unit arms.
+fn all_kit_items(
+    kit: &KitChoice,
+    equipment: &crate::equipment_config::EquipmentConfig,
+) -> Vec<(Arc<str>, u32)> {
+    kit.uses()
+        .filter_map(|item| {
+            let def = equipment.item(item)?;
+            Some((Arc::<str>::from(item), def.workers_per_unit))
+        })
+        .collect()
+}
+
 /// A coverage closure: the crews when the first `k` heads are armed and the rest bare.
 fn coverage_with<'a>(
     equipment: &'a crate::equipment_config::EquipmentConfig,
@@ -1838,8 +2124,9 @@ pub fn staff_rows<'a>(
             pass_one,
             openers,
             levy_left: _,
+            kit_crafters: _,
         },
-        fed_first,
+        choice,
     ) = deal_band_food_first(
         &inputs.rows,
         pool,
@@ -1849,11 +2136,7 @@ pub fn staff_rows<'a>(
         world.food,
         world.sources.labor.food_first_window_turns,
     );
-    let builds_dealt = if fed_first {
-        BuildsDealt::Last
-    } else {
-        BuildsDealt::InTurn
-    };
+    let fed_first = choice.fed_first;
     let source_rows = inputs.targets.len();
     let build_end = source_rows + inputs.builds.len();
     // **WHICH HIGH ORDER TOOK A HOLD CREW'S HANDS**: only when an opener took a pass-1 hand, rerun
@@ -1869,7 +2152,8 @@ pub fn staff_rows<'a>(
             &inputs.tile_room,
             &inputs.scouts,
             taken,
-            builds_dealt,
+            choice.builds,
+            choice.kit,
         )
         .pass_one;
         for (row, target) in inputs.targets.iter().enumerate() {
@@ -2333,12 +2617,26 @@ fn build_staff_inputs<'a>(
         })
         .collect();
 
+    let wanted: Vec<Vec<(Arc<str>, u32)>> = allocation
+        .assignments
+        .iter()
+        .zip(&kits)
+        .map(|(row, kit)| {
+            if row.target.is_staffed() {
+                all_kit_items(kit, equipment)
+            } else {
+                Vec::new()
+            }
+        })
+        .collect();
+
     for (idx, row) in allocation.assignments.iter().enumerate() {
         if !row.target.is_staffed() {
             continue;
         }
         let kit = &kits[idx];
         let kit_items = items[idx].clone();
+        let kit_wants = wanted[idx].clone();
         let target = row.target.clone();
         let declared = declared_on(allocation, &target);
         let mut input = StaffRowInput {
@@ -2362,6 +2660,8 @@ fn build_staff_inputs<'a>(
             food_per_take: NO_FOOD,
             finish: None,
             levy: row.for_tribe.is_some(),
+            bench_kit: None,
+            kit_wants,
         };
         if let (Some(camp), Some(site)) = (
             &world.camp,
@@ -2508,6 +2808,8 @@ fn bench_inputs<'a>(world: &StaffingWorld<'a>, rows: &mut Vec<StaffRowInput<'a>>
             food_per_take: NO_FOOD,
             finish: None,
             levy: false,
+            bench_kit: Some(plan.kit.clone()),
+            kit_wants: Vec::new(),
             kitless: false,
             tile: None,
             food_keep_up: false,
@@ -2631,6 +2933,8 @@ fn build_inputs<'a>(
             food_per_take: NO_FOOD,
             finish,
             levy: levy_site,
+            bench_kit: None,
+            kit_wants: Vec::new(),
         });
         metas.push(BuildMeta {
             source: source.clone(),
@@ -3128,6 +3432,8 @@ pub(crate) fn probe_source(
         food_per_take: NO_FOOD,
         finish: None,
         levy: false,
+        bench_kit: None,
+        kit_wants: Vec::new(),
     };
     let (food_rate, fodder_rate) = match target {
         LaborTarget::Forage {
@@ -3757,6 +4063,7 @@ mod tests {
         bare_rate: f32,
         kit_items: Vec<(Arc<str>, u32)>,
     ) -> StaffRowInput<'a> {
+        let kit_wants = kit_items.clone();
         StaffRowInput {
             priority,
             max,
@@ -3791,6 +4098,8 @@ mod tests {
             food_per_take: NO_FOOD,
             finish: None,
             levy: false,
+            bench_kit: None,
+            kit_wants,
         }
     }
 
@@ -4089,6 +4398,8 @@ mod tests {
             food_per_take: NO_FOOD,
             finish: None,
             levy: false,
+            bench_kit: None,
+            kit_wants: Vec::new(),
         }
     }
 
@@ -5217,6 +5528,7 @@ mod tests {
             &plan,
             EVERY_HIGH_OPENER,
             Inputs::Every,
+            KitStep::On,
         )
     }
 
@@ -5297,6 +5609,7 @@ mod tests {
             &scouting,
             EVERY_HIGH_OPENER,
             Inputs::Every,
+            KitStep::On,
         );
         assert_eq!(alone.scout.total(), 4, "pass 0 deals the whole range");
         assert_eq!(alone.out[0].total(), 0, "and the keepers get what is left");
@@ -5367,5 +5680,338 @@ mod tests {
         assert!(trim_one_hand(&allocation, &mut staffed));
         assert_eq!(staffed.rows[0].1.total(), 0, "the levy head went");
         assert_eq!(staffed.rows[1].1.total(), 1, "the band's own head stayed");
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // The kit step
+    // -----------------------------------------------------------------------------------------
+
+    /// A forage row that kits with baskets: a kitted head takes 2, a bare one 1; its useful take is 8,
+    /// so a full-kit crew is 4 heads.
+    fn basket_row<'a>(priority: SourcePriority, hold: f32, max: Option<u32>) -> StaffRowInput<'a> {
+        let mut row = linear_row(
+            priority,
+            max,
+            0,
+            hold,
+            8.0,
+            2.0,
+            1.0,
+            vec![(Arc::from("baskets"), 1)],
+        );
+        row.food_per_take = 1.0;
+        row
+    }
+
+    fn arcs(items: &[&str]) -> Vec<Arc<str>> {
+        items.iter().map(|item| Arc::from(*item)).collect()
+    }
+
+    /// A bench order that makes `makes` (and, as a tool order, serves `tool_serves`).
+    fn a_kit_order<'a>(
+        priority: SourcePriority,
+        cap: u32,
+        tool: Option<&str>,
+        makes: &[&str],
+        tool_serves: &[&str],
+        per_item: u32,
+        credit: Option<crate::systems::KitCredit>,
+    ) -> StaffRowInput<'a> {
+        let mut row = a_bench_order(priority, cap, tool);
+        row.bench_kit = Some(crate::systems::BenchKit {
+            makes: arcs(makes),
+            tool_serves: arcs(tool_serves),
+            crafters_per_item: per_item,
+            credit,
+        });
+        row
+    }
+
+    fn kit_shelf(baskets: u32) -> BTreeMap<Arc<str>, u32> {
+        BTreeMap::from([(Arc::from("baskets"), baskets)])
+    }
+
+    fn kit_deal(
+        rows: &[StaffRowInput<'_>],
+        pool: u32,
+        shelf: BTreeMap<Arc<str>, u32>,
+        kit_step: KitStep,
+    ) -> Dealt {
+        let mut shelf = shelf;
+        staff_passes_counted(
+            rows,
+            pool,
+            &mut shelf,
+            Passes::All,
+            &BTreeMap::new(),
+            &ScoutPlan::default(),
+            EVERY_HIGH_OPENER,
+            Inputs::Every,
+            kit_step,
+        )
+    }
+
+    /// **THE KIT IS MADE BEFORE ANYONE WORKS BARE**: a food row short of baskets (one on the shelf for
+    /// a full crew of four) has the basket order crewed ahead of its bare hold heads, by the units it
+    /// lacks times the crafters an item takes; the same deal with the step off hands the row its bare
+    /// hold heads first.
+    #[test]
+    fn crafters_are_dealt_to_the_kit_order_before_a_bare_hold_head_and_capped_by_what_is_short() {
+        let order = |per_item| {
+            a_kit_order(
+                SourcePriority::Normal,
+                10,
+                None,
+                &["baskets"],
+                &[],
+                per_item,
+                None,
+            )
+        };
+        let rows = |per_item| {
+            let mut food = basket_row(SourcePriority::Normal, 4.0, None);
+            food.food_keep_up = true;
+            vec![food, order(per_item)]
+        };
+        let on = kit_deal(&rows(1), 5, kit_shelf(1), KitStep::On);
+        assert_eq!(
+            on.kit_crafters, 3,
+            "three baskets lacking, one crafter each"
+        );
+        assert_eq!(on.out[1].total(), 3);
+        assert_eq!(
+            on.pass_one[0], 2,
+            "the row's one basket and the single bare hold head the crafters left"
+        );
+        assert_eq!(on.first_call.crafting, 3);
+        let off = kit_deal(&rows(1), 5, kit_shelf(1), KitStep::Off);
+        assert_eq!(off.kit_crafters, 0);
+        assert_eq!(
+            (off.pass_one[0], off.pass_one[1]),
+            (3, 0),
+            "with the step off the bare hold heads came first and nobody crafted in pass one"
+        );
+        let wide = kit_deal(&rows(2), 10, kit_shelf(1), KitStep::On);
+        assert_eq!(wide.kit_crafters, 6, "two crafters an item, three items");
+    }
+
+    /// **A LOOM ORDER AHEAD OF A SHORT BASKET ITEM IS CREWED TO ITS CAP IN THE KIT STEP**, ahead of
+    /// the basket order it serves (bench rank order).
+    #[test]
+    fn a_tool_order_serving_a_short_item_is_crewed_to_its_cap() {
+        let rows = vec![
+            a_kit_order(
+                SourcePriority::Normal,
+                2,
+                None,
+                &["loom"],
+                &["baskets"],
+                2,
+                None,
+            ),
+            a_kit_order(
+                SourcePriority::Normal,
+                4,
+                Some("loom"),
+                &["baskets"],
+                &[],
+                1,
+                None,
+            ),
+            basket_row(SourcePriority::Normal, 1.0, None),
+        ];
+        let dealt = kit_deal(&rows, 8, kit_shelf(0), KitStep::On);
+        assert_eq!(
+            dealt.out[0].total(),
+            2,
+            "the loom order is crewed to its cap"
+        );
+        assert_eq!(dealt.out[1].total(), 4);
+        assert_eq!(dealt.kit_crafters, 6);
+    }
+
+    /// **NO KIT STEP WHEN THE SHELF COVERS EVERY ROW, and a row at its Max is not short.**
+    #[test]
+    fn no_kit_step_when_the_shelf_covers_every_row_or_the_row_is_at_its_max() {
+        let order = || a_kit_order(SourcePriority::Normal, 10, None, &["baskets"], &[], 1, None);
+        let covered = vec![basket_row(SourcePriority::Normal, 1.0, None), order()];
+        let dealt = kit_deal(&covered, 8, kit_shelf(4), KitStep::On);
+        assert_eq!((dealt.kit_crafters, dealt.first_call.crafting), (0, 0));
+        let at_max = vec![basket_row(SourcePriority::Normal, 1.0, Some(1)), order()];
+        let dealt = kit_deal(&at_max, 8, kit_shelf(1), KitStep::On);
+        assert_eq!(dealt.kit_crafters, 0, "one basket arms the row's only head");
+        let short = vec![basket_row(SourcePriority::Normal, 1.0, None), order()];
+        assert!(
+            kit_deal(&short, 8, kit_shelf(1), KitStep::On).kit_crafters > 0,
+            "liveness: the same row with fewer baskets than heads is short"
+        );
+    }
+
+    /// The food-first fixture of the kit guard: a High basket row and a Normal basket order that
+    /// finishes four baskets in one turn at the crew it is dealt (when it is credited).
+    fn kit_guard_rows<'a>(credited: bool) -> Vec<StaffRowInput<'a>> {
+        let mut food = basket_row(SourcePriority::High, 0.0, None);
+        food.useful_take = 40.0;
+        let credit = credited.then(|| crate::systems::KitCredit {
+            item: Arc::from("baskets"),
+            units: 4.0,
+            work_remaining: 4.0,
+            rate_per_tool_crafter: 2.0,
+            rate_per_hand_crafter: 1.0,
+        });
+        vec![
+            food,
+            a_kit_order(
+                SourcePriority::Normal,
+                4,
+                None,
+                &["baskets"],
+                &[],
+                1,
+                credit,
+            ),
+        ]
+    }
+
+    fn kit_guard(rows: &[StaffRowInput<'_>]) -> Vec<u32> {
+        let (out, _, _) = staff_band_food_first(
+            rows,
+            6,
+            &mut kit_shelf(0),
+            &BTreeMap::new(),
+            &ScoutPlan::default(),
+            FoodLedger {
+                larder: 6.0,
+                need: 3.0,
+                standing: 0.0,
+            },
+            FOOD_FIRST_WINDOW,
+        );
+        crews(&out)
+    }
+
+    /// **THE CREDIT**: the larder (6, need 3) runs short inside the window while the four crafters
+    /// make the baskets and the food row's two bare hands take 2 a turn - unless the baskets, done in
+    /// one turn, arm those two hands (4 a turn from then on). Credited, the kit deal stands; without
+    /// the credit the band is re-dealt with the crafters behind the food crews (deal C).
+    #[test]
+    fn the_kit_a_crafter_will_finish_counts_toward_the_larder() {
+        assert_eq!(
+            kit_guard(&kit_guard_rows(true)),
+            vec![2, 4],
+            "the finishing baskets keep the kit crafters"
+        );
+        assert_eq!(
+            kit_guard(&kit_guard_rows(false)),
+            vec![5, 1],
+            "without the credit the larder runs short and the crafters go behind the food crew"
+        );
+    }
+
+    /// **A LARDER THAT RUNS SHORT WHILE THE CRAFTERS WORK FALLS BACK TO DEAL C** even with a credit
+    /// that arrives too late (the crafters take five turns to finish).
+    #[test]
+    fn a_larder_the_late_kit_cannot_save_puts_the_crafters_behind_the_food_crews() {
+        let mut rows = kit_guard_rows(true);
+        if let Some(credit) = rows[1]
+            .bench_kit
+            .as_mut()
+            .and_then(|kit| kit.credit.as_mut())
+        {
+            credit.work_remaining = 400.0;
+        }
+        assert_eq!(kit_guard(&rows), vec![5, 1]);
+    }
+
+    /// **A BAND WITH NO BASKET AT ALL IS SHORT OF BASKETS**: the row's kit lists no live unit (nothing
+    /// to arm with), but its chosen kit still names baskets, so the basket order is crewed in the kit
+    /// step ahead of the bare hold heads.
+    #[test]
+    fn a_band_holding_no_baskets_has_them_made_before_anyone_works_bare() {
+        let mut food = basket_row(SourcePriority::Normal, 4.0, None);
+        food.kit_items = Vec::new();
+        food.food_keep_up = true;
+        let rows = vec![
+            food,
+            a_kit_order(SourcePriority::Normal, 10, None, &["baskets"], &[], 1, None),
+        ];
+        let on = kit_deal(&rows, 12, kit_shelf(0), KitStep::On);
+        assert_eq!(
+            on.kit_crafters, 8,
+            "the row's bare useful crew, a basket each"
+        );
+        assert_eq!(on.pass_one[1], 8, "crafters before any bare hold head");
+        let off = kit_deal(&rows, 12, kit_shelf(0), KitStep::Off);
+        assert_eq!(off.kit_crafters, 0);
+    }
+
+    /// **A ROW BARE HANDS CANNOT WORK, WITH NO SPEAR, IS SHORT OF SPEARS.**
+    #[test]
+    fn a_hunt_bare_hands_cannot_wound_with_no_spears_is_short_of_them() {
+        let mut hunt = linear_row(
+            SourcePriority::Normal,
+            None,
+            0,
+            0.0,
+            4.0,
+            2.0,
+            0.0,
+            Vec::new(),
+        );
+        hunt.kit_wants = vec![(Arc::from("spears"), 1)];
+        let rows = vec![
+            hunt,
+            a_kit_order(SourcePriority::Normal, 3, None, &["spears"], &[], 1, None),
+        ];
+        let dealt = kit_deal(&rows, 6, kit_shelf(0), KitStep::On);
+        assert!(dealt.kit_crafters >= 1, "the spear order is crewed");
+        assert_eq!(dealt.out[0].total(), 0, "bare hands work nothing there");
+    }
+
+    /// **THE KIT STEP ONLY TAKES HANDS THE SHELF CANNOT ARM**: a row whose reach crew wants four
+    /// baskets, with three on the shelf, keeps the hands that arm the two the hold crew has not taken
+    /// for pass 2. A pool of three has nothing to spare (the kit step deals no crafter); a pool of four spares one hand for the one basket the shelf
+    /// lacks.
+    #[test]
+    fn the_kit_step_leaves_the_hands_that_arm_the_shelfs_units() {
+        let rows = || {
+            vec![
+                basket_row(SourcePriority::Normal, 1.0, None),
+                a_kit_order(SourcePriority::Normal, 10, None, &["baskets"], &[], 1, None),
+            ]
+        };
+        let tight = kit_deal(&rows(), 3, kit_shelf(3), KitStep::On);
+        assert_eq!(
+            tight.kit_crafters, 0,
+            "every spare hand is reserved to arm a shelf unit"
+        );
+        assert_eq!(
+            tight.out[0].kitted, 2,
+            "pass 2 armed what its opener left (the order's ordinary opener takes the third hand)"
+        );
+        let spare = kit_deal(&rows(), 4, kit_shelf(3), KitStep::On);
+        assert_eq!(
+            spare.kit_crafters, 1,
+            "one basket lacking, one hand the shelf cannot use"
+        );
+        assert_eq!(
+            spare.out[0].kitted, 3,
+            "and the shelf's units are still all armed"
+        );
+    }
+
+    /// **THE WANT IS SIZED ON THE REACH CREW, NOT THE USEFUL CREW**: pass 3's useful crew is filled
+    /// bare by design, so a row whose reach is covered by the baskets it holds is not short of more.
+    #[test]
+    fn a_row_whose_reach_crew_is_armed_is_not_short_though_its_useful_crew_is_larger() {
+        // Hold 1, reach 2 (one kitted head at 2 a head), useful 8 (four kitted heads).
+        let mut food = basket_row(SourcePriority::Normal, 1.0, None);
+        food.reach = ReachTarget::Take(2.0);
+        let rows = vec![
+            food,
+            a_kit_order(SourcePriority::Normal, 10, None, &["baskets"], &[], 1, None),
+        ];
+        let dealt = kit_deal(&rows, 8, kit_shelf(1), KitStep::On);
+        assert_eq!(dealt.kit_crafters, 0, "one basket arms the reach crew");
     }
 }

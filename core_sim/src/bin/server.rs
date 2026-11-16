@@ -17953,11 +17953,20 @@ mod tests {
             .iter()
             .find(|row| matches!(&row.target, LaborTarget::Forage { tile, .. } if *tile == coord))
             .expect("approving stages a forage row on the patch");
+        let row_key = core_sim::keep_on_hand::source_key(&row.target).unwrap();
+        assert_eq!(
+            allocation.order_rows.get(&row_key).map(String::as_str),
+            Some("food"),
+            "the chief owns the food order, so the staged row is listed under it"
+        );
         assert!(
-            !allocation
-                .order_rows
-                .contains_key(&core_sim::keep_on_hand::source_key(&row.target).unwrap()),
-            "the staged row is the player's, not listed under the food order"
+            allocation.handed_rows.contains(&row_key),
+            "and handed to him, so his pass never retires it"
+        );
+        assert_eq!(
+            wire_forage_row(&mut app, coord),
+            ("food".to_string(), true),
+            "the published row is the chief's"
         );
         let before = app
             .world
@@ -17968,6 +17977,11 @@ mod tests {
         for _ in 0..4 {
             app.update();
         }
+        assert_eq!(
+            wire_forage_row(&mut app, coord),
+            ("food".to_string(), true),
+            "the chief's row survives the managing passes"
+        );
         let allocation = app.world.get::<LaborAllocation>(entity).unwrap();
         let index = allocation
             .assignments
@@ -17988,6 +18002,83 @@ mod tests {
                 .ladder_position()
                 > before,
             "the build progresses"
+        );
+    }
+
+    /// `(orderKind, chiefOwned)` of the forage row at `coord`, read off the ENCODED snapshot.
+    fn wire_forage_row(app: &mut bevy::prelude::App, coord: UVec2) -> (String, bool) {
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+        app.world
+            .insert_resource(core_sim::ViewerFaction(FactionId(0)));
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<core_sim::SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+        let row = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot")
+            .population()
+            .and_then(|section| section.populations())
+            .expect("the cohorts")
+            .iter()
+            .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+            .find(|row| {
+                row.kind().unwrap_or_default() == "forage"
+                    && row.targetX() == coord.x
+                    && row.targetY() == coord.y
+            })
+            .expect("the forage row is published");
+        (
+            row.orderKind().unwrap_or_default().to_string(),
+            row.chiefOwned(),
+        )
+    }
+
+    /// **WITH THE PLAYER OWNING THE FOOD ORDER ("crew it yourself"), AN APPROVED NEW-GROUND ROW STAYS
+    /// THE PLAYER'S**: not listed, not handed, published `orderKind` "" and `chiefOwned` false.
+    #[test]
+    fn an_approved_new_ground_row_stays_the_players_under_a_player_owned_food_order() {
+        let (mut app, faction, band) = proposal_world_with(true, false);
+        let coord = find_lesson_ground(&app, true);
+        let entity = proposal_band_on(&mut app, faction, band, coord);
+        grant_seed_selection(&mut app, faction);
+        app.world
+            .get_mut::<LaborAllocation>(entity)
+            .unwrap()
+            .orders
+            .get_mut("food")
+            .expect("the chief took the food order on arrival")
+            .owner = core_sim::OrderOwner::Player;
+        core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+        let key = format!("plant:tended@{},{}", coord.x, coord.y);
+        let mut offer = wire_proposal(&mut app, band).expect("liveness: an offer");
+        for _ in 0..200 {
+            if offer.build_key == key {
+                break;
+            }
+            send_command_line(
+                &mut app,
+                &format!("defer_proposal 0 {band} {}", offer.build_key),
+            );
+            offer = wire_proposal(&mut app, band).expect("the patch is among the offers");
+        }
+        assert_eq!(offer.build_key, key);
+        send_command_line(&mut app, &format!("approve_proposal 0 {band}"));
+        let allocation = app.world.get::<LaborAllocation>(entity).unwrap();
+        assert!(allocation.order_rows.keys().all(|k| !k.starts_with("f:")));
+        assert!(allocation.handed_rows.is_empty());
+        for _ in 0..4 {
+            app.update();
+        }
+        assert_eq!(
+            wire_forage_row(&mut app, coord),
+            (String::new(), false),
+            "the row is the player's"
         );
     }
 

@@ -1000,10 +1000,19 @@ pub fn commit_approval(
         }
         let source = source_of(&candidate.target)
             .ok_or_else(|| "That build has no place to stand.".to_string())?;
+        let key = crate::keep_on_hand::source_key(&candidate.target)
+            .ok_or_else(|| "That build has no place to stand.".to_string())?;
+        let order_kind = chiefs_order_kind_of_row(world, faction, entity, &candidate.target);
         let Some(mut allocation) = world.get_mut::<LaborAllocation>(entity) else {
             return Err("That band has no work to direct.".to_string());
         };
         allocation.set_staffed_row(candidate.target.clone(), None, None);
+        // A new row the chief's order of its kind covers is HIS, as "Hand it to <leader>" makes it:
+        // listed under the order and handed, so his pass never retires it. Under a player-owned
+        // order it stays the player's row.
+        if let Some(kind) = order_kind.filter(|kind| allocation.chief_owns(kind)) {
+            crate::keep_on_hand::claim_row(&mut allocation, &key, kind);
+        }
         if !allocation.declare_build(source, BuildJob::Climb(candidate.dest)) {
             return Err("That build could not be declared.".to_string());
         }
@@ -1052,6 +1061,33 @@ pub fn commit_approval(
     );
     refresh_proposals(world, false);
     Ok(())
+}
+
+/// **THE ORDER KIND A NEW SOURCE ROW SERVES**: a forage patch or herd by the chief's own food-or-fodder
+/// rule (`food_orders::product_kind` over the probe's per-hand products), a new row
+/// is only ever a forage patch here; `None` for any other target, which no order lists.
+fn chiefs_order_kind_of_row(
+    world: &World,
+    faction: FactionId,
+    entity: bevy::prelude::Entity,
+    target: &LaborTarget,
+) -> Option<&'static str> {
+    match target {
+        LaborTarget::Forage { .. } | LaborTarget::Hunt { .. } => {
+            let kit = world.get::<crate::components::BandEquipment>(entity)?;
+            crate::take_claims::with_world_sources(world, faction, |sources| {
+                let refill = sources.labor.keep_on_hand_refill_turns as f32;
+                let crew = sources.labor.tile_worker_cap as f32;
+                let probe = crate::staffing::probe_source(sources, kit, target, crew, refill)?;
+                Some(crate::food_orders::product_kind(
+                    probe.per_hand * probe.food_rate,
+                    probe.per_hand * probe.fodder_rate,
+                ))
+            })
+            .or(Some(crate::keep_on_hand::FOOD_KIND))
+        }
+        _ => None,
+    }
 }
 
 /// **APPROVE A BAND OR TILE PROPOSAL IN ONE STEP** (a build on a worked source needs the server's

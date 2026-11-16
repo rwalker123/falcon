@@ -268,6 +268,16 @@ pub fn source_pinned(allocation: &LaborAllocation, target: &LaborTarget) -> bool
     party_out || cargo_walking || build_declared
 }
 
+/// **WHICH ORDER A SOURCE BELONGS TO** - fodder only when it gives STRICTLY more fodder than food per
+/// hand, food otherwise. The one rule the chief's candidates and an approved proposal's new row read.
+pub(crate) fn product_kind(food_per_hand: f32, fodder_per_hand: f32) -> &'static str {
+    if fodder_per_hand > food_per_hand {
+        FODDER_KIND
+    } else {
+        FOOD_KIND
+    }
+}
+
 fn candidate_of(
     inputs: &FoodInputs<'_>,
     target: LaborTarget,
@@ -283,13 +293,14 @@ fn candidate_of(
     }
     let food_per_hand = probe.per_hand * probe.food_rate;
     let fodder_per_hand = probe.per_hand * probe.fodder_rate;
-    let (order, units_per_hand, rate) = if fodder_per_hand > food_per_hand {
-        (FODDER_KIND, fodder_per_hand, probe.fodder_rate)
-    } else if probe.food_rate > NOTHING {
-        (FOOD_KIND, food_per_hand, probe.food_rate)
-    } else {
-        return None;
-    };
+    let (order, units_per_hand, rate) =
+        if product_kind(food_per_hand, fodder_per_hand) == FODDER_KIND {
+            (FODDER_KIND, fodder_per_hand, probe.fodder_rate)
+        } else if probe.food_rate > NOTHING {
+            (FOOD_KIND, food_per_hand, probe.food_rate)
+        } else {
+            return None;
+        };
     // The pack one hand carries home, in biomass, at the band's best live kit for the job: baskets
     // for a gather, the sled for a hunt (a herd's pack is seated in whole animals).
     let kit = sources.equipment.default_kit(target.kit_job());
