@@ -184,6 +184,59 @@ pub fn validate_tile_verb(
     }
 }
 
+/// **A road verb's gate** (`grade` / `pave`) for `band` on `tile`: the knowledge is learned, a road
+/// stands there at the rung beneath, no other band keeps it, and a road this band already keeps is
+/// not yet at the rung. A road nobody keeps passes at any held rung - re-issuing the verb on it is
+/// adoption. One copy for the band's own `grade` / `pave` and a tribe's road work.
+pub fn validate_road_verb(
+    world: &World,
+    faction: FactionId,
+    band: BandId,
+    tile: UVec2,
+    rung: &RungDef,
+) -> Result<(), String> {
+    let ladder = world.resource::<crate::LadderConfigHandle>().get();
+    let destination = rung.rung_id();
+    let required = ladder
+        .below_id(destination)
+        .expect("every built route rung stands on the rung below it - the floor is two rungs down");
+    let verb = rung.verb.as_deref().unwrap_or_default();
+    if let Some(refusal) = knowledge_refusal_world(world, faction, rung) {
+        return Err(refusal);
+    }
+    let Some(road) = world.resource::<crate::RoadRegistry>().road(tile) else {
+        return Err(format!(
+            "There is no road at ({}, {}) — walk it into a trail before you {verb} it.",
+            tile.x, tile.y
+        ));
+    };
+    if !ladder.at_or_above(road.held_rung(), required) {
+        return Err(format!(
+            "The road at ({}, {}) is only a {} — it must be a {} before you can {verb} it.",
+            tile.x,
+            tile.y,
+            road.held_rung().id_str().replace('_', " "),
+            required.id_str().replace('_', " "),
+        ));
+    }
+    match road.keeper {
+        // One keeper per tile: a second band cannot co-pay a road another band keeps.
+        Some(keeper) if keeper.band != band => Err(format!(
+            "Band {} already keeps the road at ({}, {}). One band keeps a road tile, never two \
+             — have them abandon it first.",
+            keeper.band.0, tile.x, tile.y
+        )),
+        // Already there, and it is the band's own: nothing left to raise.
+        Some(_) if ladder.at_or_above(road.held_rung(), destination) => Err(format!(
+            "The road at ({}, {}) is already a {}.",
+            tile.x,
+            tile.y,
+            road.held_rung().id_str().replace('_', " ")
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// **A band-kind verb's gate** — [`validate_tile_verb`]'s twin for an improvement a band holds at its
 /// camp. The caller has already established that `faction` commands `band`.
 pub fn validate_band_verb(

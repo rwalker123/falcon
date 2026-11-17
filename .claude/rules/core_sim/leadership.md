@@ -326,8 +326,8 @@ Design: `docs/plan_labor_at_scale.md` ("Each level owns its own work, and levies
 sim halves), the levy step in `staffing.rs`, `tests/tribe_levy.rs`.
 
 **What the tribe owns** (`Tribe`, checkpoint state, `SAVE_FORMAT_VERSION` 72): `works: Vec<TribeWork>` in
-the order added (`{ tile, branch, target_rung: Option<RungId>, priority }`, tile-kind branches only - a
-road, patch, herd, deposit or band-kind branch is refused `not_a_tribe_work`), `levy: LevyCeiling` (`none |
+the order added (`{ tile, branch, target_rung: Option<RungId>, priority }`, tile-kind branches and the
+route branch - a patch, herd, deposit or band-kind branch is refused `not_a_tribe_work`), `levy: LevyCeiling` (`none |
 low | normal | high`, default `normal`), `scouting_range: u32`, and `carriers` (per work, the member bands
 that carried a levy row for it at the last pass, nearest first, with the Max each row carried and the heads
 on it). A tribe forms with `scouting_range` = the largest Scout-row range among its members, no works and
@@ -340,8 +340,8 @@ echoed on the band's feed (`push_band_event`):
 
 | Command | Does | Refusals (token) |
 |---|---|---|
-| `tribe_work <f> <b> <branch> <x> <y> [<branch>:<rung>] [high\|normal\|low]` | add or update a work. With a rung the work declares a build to it through `build_gates::validate_tile_verb`, the band's own `build` verb's gate (knowledge, `rung_site_refusal`, the rung beneath) | `not_a_tribe_work`, `unknown_rung`, `build_refused` (the gate's own sentence), `unknown_priority` |
-| `tribe_work <f> <b> stop <branch> <x> <y>` | remove the work and drop its levy rows | `no_such_work` |
+| `tribe_work <f> <b> <branch> <x> <y> [<branch>:<rung>] [high\|normal\|low]` | add or update a work. With a rung the work declares a build to it through `build_gates::validate_tile_verb`, the band's own `build` verb's gate (knowledge, `rung_site_refusal`, the rung beneath). A **road work** (`route`) is one road tile and **requires** its rung (`route:dirt_road` = grade, `route:paved_road` = pave); its gate is `build_gates::validate_road_verb`, the band's own `grade` / `pave` gate, asked of the work's carrier | `not_a_tribe_work`, `road_needs_rung`, `unknown_rung`, `build_refused` (the gate's own sentence), `unknown_priority` |
+| `tribe_work <f> <b> stop <branch> <x> <y>` | remove the work and drop its levy rows; a road work's declared build goes with it, the road and its keeper stay | `no_such_work` |
 | `tribe_levy <f> <b> none\|low\|normal\|high` | set the ceiling | `unknown_levy` |
 | `tribe_scout <f> <b> <N>` | set the tribe's one range, clamped to `labor_config.scout.range_past_local_max` exactly as `assign_labor ... scout` clamps | - |
 
@@ -368,6 +368,21 @@ tribe's - `tribe_work` without a rung takes the declared build's rung as the wor
 moves the row to whoever should carry it. The pass also syncs every member's Scout row to the tribe's range
 and stamps its stretch, and hands bands that left a tribe back: levy rows dropped, the Scout row keeps the
 tribe's range as the band's own, stretch back to `1.0`. A band that joins takes the range the same way.
+
+**A road work** is one road tile with a target rung on the route branch, and a road has no labor row, so
+it is carried differently (`tribe_levy::{road_carrier, apply_road_works, release_departed_keepers}`;
+`routes.md` -> "A tribe's road"). Its **carrier** is the band that keeps the tile when that band is a
+member, else the nearest member (wrap-aware hex distance from its camp, ties lowest `BandId`), so the tile
+is not handed around as bands move. There is **no overflow chain**: one band per road tile, and the
+work's `carriers` entry holds that one band. The carrier declares the build exactly as its own `grade` /
+`pave` does (`BuildSource::Road(tile)`, `BuildJob::Climb(rung)`, the keeper named with the remoteness
+quote), after the same gate; a carrier that already keeps the tile at or above the rung declares nothing,
+and a gate that refuses leaves what stands untouched. The build's builders are **the tribe's levy**:
+`LevyPlan::road_tiles` (the tiles of the tribe's road works, derived from `Tribe::works`, so nothing extra
+is saved) marks a `Road` build on one of them as a levy build, dealt in the levy step within the levy
+budget and trimmed before the band's own builders at equal priority; with a `none` ceiling it gets none.
+Every other member drops a declaration it holds on such a tile. The wire's `TribeWorkState` names the
+carrier in `bands` and the builders on the build in `workers`.
 
 **The levy in staffing** (`staffing.rs`; the passes table is `work-party.md`). A member's levy rows
 (`StaffRowInput::levy`) and its scouts are skipped in passes 0 and 1. After every group's pass 1 the **levy

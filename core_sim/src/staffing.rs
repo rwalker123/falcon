@@ -565,12 +565,22 @@ pub struct ScoutPlan {
 /// where `hands_left` is the pool after pass 1 - at least one head while `share > 0` and a hand is
 /// left. `share` is the tribe's ceiling, `factor` the share of its orders the tribe leader's reach
 /// carries to this member ([`crate::leadership::tribe_orders_carried_out_for_member`]).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LevyPlan {
     pub share: f64,
     pub factor: f64,
     /// A budget already struck (the builds-last deal's second half spends what the first left).
     pub fixed_budget: Option<u32>,
+    /// The tiles of the tribe's road works: a declared build on `BuildSource::Road` of one of these
+    /// is the tribe's levy build (a road has no labor row to say so), dealt in the levy step.
+    pub road_tiles: Vec<UVec2>,
+}
+
+impl LevyPlan {
+    /// Whether a declared build is the tribe's road build.
+    pub fn levies_road_build(&self, source: &BuildSource) -> bool {
+        matches!(source, BuildSource::Road(tile) if self.road_tiles.contains(tile))
+    }
 }
 
 /// The levy budget: `floor(share x factor x hands_left)`, at least one head while the ceiling allows
@@ -1042,9 +1052,9 @@ fn deal_builds(
     }
     // The builds' deal spends what the first deal left of the levy budget.
     let levy_for_builds = ScoutPlan {
-        levy: scouts.levy.map(|plan| LevyPlan {
+        levy: scouts.levy.as_ref().map(|plan| LevyPlan {
             fixed_budget: Some(dealt.levy_left),
-            ..plan
+            ..plan.clone()
         }),
         stretch: UNSTRETCHED_PLAN,
         ..ScoutPlan::default()
@@ -1480,7 +1490,7 @@ fn staff_passes_counted(
     // hands pass 1 left: first the member's scouts, then each priority group's levy rows' keepers,
     // first builder and hold crew, every head counted against the budget. Passes 2 and 3 deal the
     // levy rows like any other, from what is left of it.
-    if let Some(plan) = scouts.levy {
+    if let Some(plan) = &scouts.levy {
         let hands_left = ledger.pool_left;
         ledger.levy_budget = match plan.fixed_budget {
             Some(budget) => budget.min(hands_left),
@@ -2357,6 +2367,10 @@ pub fn staff_rows_settled<'a>(
     lost_people: u32,
 ) -> StaffedBand {
     let mut staffed = staff_rows(world, allocation, band_kit, pool, available);
+    let levied_roads: &[UVec2] = world
+        .levy
+        .as_ref()
+        .map_or(&[], |plan| plan.road_tiles.as_slice());
     loop {
         let mut after = allocation.clone();
         staffed.clone().apply_to(&mut after, lost_people);
@@ -2364,7 +2378,7 @@ pub fn staff_rows_settled<'a>(
         if committed <= available {
             return staffed;
         }
-        if !trim_one_hand(allocation, &mut staffed) {
+        if !trim_one_hand(allocation, levied_roads, &mut staffed) {
             return staffed;
         }
     }
@@ -2372,7 +2386,11 @@ pub fn staff_rows_settled<'a>(
 
 /// Take ONE hand off the lowest-priority row or build that can lose it (see the ties below), or
 /// answer `false` when nothing can give one.
-fn trim_one_hand(allocation: &LaborAllocation, staffed: &mut StaffedBand) -> bool {
+fn trim_one_hand(
+    allocation: &LaborAllocation,
+    levied_roads: &[UVec2],
+    staffed: &mut StaffedBand,
+) -> bool {
     let standing = |target: &LaborTarget| -> u32 {
         allocation
             .assignments
@@ -2407,10 +2425,11 @@ fn trim_one_hand(allocation: &LaborAllocation, staffed: &mut StaffedBand) -> boo
             .any(|row| row.for_tribe.is_some() && row.target.same_source(target))
     };
     let levy_build = |source: &BuildSource| {
-        allocation
-            .assignments
-            .iter()
-            .any(|row| row.for_tribe.is_some() && source.names(&row.target))
+        matches!(source, BuildSource::Road(tile) if levied_roads.contains(tile))
+            || allocation
+                .assignments
+                .iter()
+                .any(|row| row.for_tribe.is_some() && source.names(&row.target))
     };
     let row_pick = staffed
         .rows
@@ -2943,7 +2962,7 @@ fn scout_plan(
         .find(|row| matches!(row.target, LaborTarget::Scout))
     else {
         return ScoutPlan {
-            levy: world.levy,
+            levy: world.levy.clone(),
             stretch: crate::components::UNSTRETCHED,
             ..ScoutPlan::default()
         };
@@ -2958,7 +2977,7 @@ fn scout_plan(
             .round() as u32
     };
     ScoutPlan {
-        levy: world.levy,
+        levy: world.levy.clone(),
         stretch: row.scouting_stretch,
         range: row.scouting_range,
         kitted_tiles: tiles(&kit),
@@ -3002,7 +3021,11 @@ fn build_inputs<'a>(
             .assignments
             .iter()
             .find(|row| row.for_tribe.is_some() && source.names(&row.target));
-        let levy_site = levy_row.is_some();
+        let levy_site = levy_row.is_some()
+            || world
+                .levy
+                .as_ref()
+                .is_some_and(|plan| plan.levies_road_build(source));
         let levy_cap = levy_row.and_then(|row| row.max_workers);
         let tile = build_site_tile(source, sources.herds);
         let distance = match (&world.camp, tile) {
@@ -3636,7 +3659,8 @@ fn levy_of_band(world: &bevy::prelude::World, band: bevy::prelude::Entity) -> Op
     let own_leader = world
         .get::<crate::leadership::BandLeadership>(band)
         .is_some_and(|leadership| leadership.leader.is_some());
-    crate::tribe_levy::levy_plan(registry, &config.get(), id, own_leader)
+    let ladder = world.get_resource::<crate::LadderConfigHandle>()?.get();
+    crate::tribe_levy::levy_plan(registry, &config.get(), &ladder, id, own_leader)
 }
 
 pub(crate) fn camp_of(
@@ -3672,10 +3696,14 @@ pub(crate) fn band_has_a_build_short_of_builders(
 ) -> bool {
     with_band_staffing(world, band, |staffing, allocation, _, _, _| {
         allocation.builds.iter().any(|declaration| {
-            let levied = allocation
-                .assignments
-                .iter()
-                .any(|row| row.for_tribe.is_some() && declaration.source.names(&row.target));
+            let levied = staffing
+                .levy
+                .as_ref()
+                .is_some_and(|plan| plan.levies_road_build(&declaration.source))
+                || allocation
+                    .assignments
+                    .iter()
+                    .any(|row| row.for_tribe.is_some() && declaration.source.names(&row.target));
             !levied
                 && allocation
                     .build_crews
@@ -5222,7 +5250,7 @@ mod tests {
             )],
             scout: ScoutCrew::default(),
         };
-        assert!(trim_one_hand(&allocation, &mut staffed));
+        assert!(trim_one_hand(&allocation, &[], &mut staffed));
         staffed
     }
 
@@ -5799,6 +5827,7 @@ mod tests {
                 share,
                 factor,
                 fixed_budget: None,
+                road_tiles: Vec::new(),
             }),
             ..scouts
         };
@@ -5960,7 +5989,7 @@ mod tests {
             rows: vec![(levy_target, crew), (own_target, crew)],
             ..StaffedBand::default()
         };
-        assert!(trim_one_hand(&allocation, &mut staffed));
+        assert!(trim_one_hand(&allocation, &[], &mut staffed));
         assert_eq!(staffed.rows[0].1.total(), 0, "the levy head went");
         assert_eq!(staffed.rows[1].1.total(), 1, "the band's own head stayed");
     }

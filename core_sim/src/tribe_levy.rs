@@ -22,6 +22,7 @@ use crate::{
         ResidentBand, SourcePriority, UNSTRETCHED,
     },
     grid_utils::{hex_distance_wrapped, hex_neighbors_wrapped, hex_range_tiles},
+    intensification::{LadderConfig, SourceKind},
     ladder_ids::{BranchId, RungId},
     leadership::{tribe_leader_reach, tribe_orders_carried_out_for_member},
     leadership_config::LeadershipConfig,
@@ -35,6 +36,7 @@ use crate::{
 pub fn levy_plan(
     registry: &TribeRegistry,
     config: &LeadershipConfig,
+    ladder: &LadderConfig,
     band: BandId,
     member_has_own_leader: bool,
 ) -> Option<LevyPlan> {
@@ -44,7 +46,19 @@ pub fn levy_plan(
         share: tribe.levy.share(config),
         factor: tribe_orders_carried_out_for_member(config, &reach, member_has_own_leader),
         fixed_budget: None,
+        road_tiles: tribe
+            .works
+            .iter()
+            .filter(|work| is_road_branch(ladder, work.branch))
+            .map(|work| work.tile)
+            .collect(),
     })
+}
+
+/// Whether a branch is a road branch: its works are one road tile each, built by the carrier band
+/// as a [`BuildSource::Road`] and kept by its Roadwork pool.
+pub fn is_road_branch(ladder: &LadderConfig, branch: BranchId) -> bool {
+    ladder.source_kind(branch) == Some(SourceKind::Road)
 }
 
 /// **EACH MEMBER'S SHARE OF THE TRIBE'S SCOUTING EDGE.** The union `U` of the hex discs of radius
@@ -194,6 +208,8 @@ pub fn apply_tribe_pass(world: &mut World, id: TribeId) {
         scene.wrap,
     );
     let wrap_width = scene.grid.0;
+    release_departed_keepers(world, &tribe, &scene.ladder);
+    let mut road_carriers: Vec<(usize, BandId)> = Vec::new();
     // Which members carry which work, and with what Max.
     let mut desired: BTreeMap<BandId, Vec<(usize, Option<u32>)>> = BTreeMap::new();
     let mut carriers: Vec<Vec<LevyCarrier>> = Vec::with_capacity(tribe.works.len());
@@ -202,6 +218,25 @@ pub fn apply_tribe_pass(world: &mut World, id: TribeId) {
     let mut per_work: BTreeMap<usize, Vec<LevyCarrier>> = BTreeMap::new();
     for &w in &order {
         let work = &tribe.works[w];
+        if is_road_branch(&scene.ladder, work.branch) {
+            // One band per road tile: no overflow chain.
+            let carrier = road_carrier(world, &members, work.tile, wrap_width, scene.wrap);
+            if let Some(band) = carrier {
+                road_carriers.push((w, band));
+            }
+            per_work.insert(
+                w,
+                carrier
+                    .map(|band| LevyCarrier {
+                        band,
+                        max: None,
+                        workers: 0,
+                    })
+                    .into_iter()
+                    .collect(),
+            );
+            continue;
+        }
         let mut by_distance: Vec<&Member> = members.iter().collect();
         by_distance.sort_by_key(|m| {
             (
@@ -244,8 +279,132 @@ pub fn apply_tribe_pass(world: &mut World, id: TribeId) {
             stretches.get(&member.band).copied().unwrap_or(UNSTRETCHED),
         );
     }
+    apply_road_works(world, &scene, &tribe, &members, &road_carriers);
     if let Some(stored) = world.resource_mut::<TribeRegistry>().get_mut(id) {
         stored.carriers = carriers;
+    }
+}
+
+/// **THE CARRIER OF A ROAD TILE**: the band that keeps it when it is a member of the tribe, else the
+/// nearest member (wrap-aware hex distance from its camp, ties to the lowest `BandId`). The tribe
+/// keeps handing a road tile to its keeper, so it does not change hands as bands move.
+fn road_carrier(
+    world: &World,
+    members: &[Member],
+    tile: UVec2,
+    width: u32,
+    wrap: bool,
+) -> Option<BandId> {
+    let keeper = world
+        .resource::<crate::routes::RoadRegistry>()
+        .road(tile)
+        .and_then(|road| road.keeper)
+        .map(|keeper| keeper.band);
+    if let Some(band) = keeper.filter(|band| members.iter().any(|m| m.band == *band)) {
+        return Some(band);
+    }
+    members
+        .iter()
+        .min_by_key(|m| (hex_distance_wrapped(m.camp, tile, width, wrap), m.band))
+        .map(|m| m.band)
+}
+
+/// **A KEEPER THAT LEFT THE TRIBE STOPS KEEPING ITS ROAD TILES**: a road tile of one of the tribe's
+/// road works whose keeper is a band of the tribe's people that is no longer a member (or is gone)
+/// is released, so the pass hands the tile to the nearest member, which picks it up by grading it.
+fn release_departed_keepers(world: &mut World, tribe: &crate::tribe::Tribe, ladder: &LadderConfig) {
+    let mut roads = world.resource_mut::<crate::routes::RoadRegistry>();
+    for work in tribe
+        .works
+        .iter()
+        .filter(|work| is_road_branch(ladder, work.branch))
+    {
+        let Some(road) = roads.road_mut(work.tile) else {
+            continue;
+        };
+        if road.keeper.is_some_and(|keeper| {
+            keeper.faction == tribe.faction && !tribe.members.contains(&keeper.band)
+        }) {
+            road.release_keeper();
+        }
+    }
+}
+
+/// **THE TRIBE'S ROAD BUILDS**: each road work's carrier declares the build exactly as its own
+/// `grade` / `pave` would (the same gate, the keeper named with the remoteness quote), and every
+/// other member drops a declaration it holds on a tile of the tribe's road works. The builders are
+/// dealt in the levy step (`LevyPlan::road_tiles`); the keeping is the keeper's Roadwork pool.
+fn apply_road_works(
+    world: &mut World,
+    scene: &PassScene,
+    tribe: &crate::tribe::Tribe,
+    members: &[Member],
+    carriers: &[(usize, BandId)],
+) {
+    for member in members {
+        let foreign: Vec<UVec2> = carriers
+            .iter()
+            .filter(|(_, band)| *band != member.band)
+            .map(|(w, _)| tribe.works[*w].tile)
+            .collect();
+        if let Some(mut allocation) = world.get_mut::<LaborAllocation>(member.entity) {
+            for tile in foreign {
+                allocation.stop_build(&BuildSource::Road(tile));
+            }
+        }
+    }
+    for &(w, carrier) in carriers {
+        let work = tribe.works[w];
+        let Some(rung) = work.target_rung else {
+            continue;
+        };
+        let Some(member) = members.iter().find(|m| m.band == carrier) else {
+            continue;
+        };
+        let source = BuildSource::Road(work.tile);
+        let road = world
+            .resource::<crate::routes::RoadRegistry>()
+            .road(work.tile)
+            .map(|road| (road.held_rung(), road.keeper));
+        let Some((held, keeper)) = road else {
+            if let Some(mut allocation) = world.get_mut::<LaborAllocation>(member.entity) {
+                allocation.stop_build(&source);
+            }
+            continue;
+        };
+        let keeps = keeper.is_some_and(|keeper| keeper.band == carrier);
+        if keeps && scene.ladder.at_or_above(held, rung) {
+            if let Some(mut allocation) = world.get_mut::<LaborAllocation>(member.entity) {
+                allocation.stop_build(&source);
+            }
+            continue;
+        }
+        let def = scene.ladder.rung(rung).clone();
+        if crate::build_gates::validate_road_verb(world, tribe.faction, carrier, work.tile, &def)
+            .is_err()
+        {
+            continue;
+        }
+        if !keeps {
+            let distance = hex_distance_wrapped(member.camp, work.tile, scene.grid.0, scene.wrap);
+            let remoteness = crate::routes::remoteness_multiplier(distance, &scene.ladder);
+            if let Some(road) = world
+                .resource_mut::<crate::routes::RoadRegistry>()
+                .road_mut(work.tile)
+            {
+                road.take_keeper(
+                    crate::routes::RoadKeeper {
+                        faction: tribe.faction,
+                        band: carrier,
+                    },
+                    remoteness,
+                    &scene.ladder,
+                );
+            }
+        }
+        if let Some(mut allocation) = world.get_mut::<LaborAllocation>(member.entity) {
+            allocation.declare_build(source, BuildJob::Climb(rung));
+        }
     }
 }
 
@@ -437,18 +596,29 @@ pub fn refresh_levy_workers(world: &mut World, id: TribeId) {
         return;
     };
     let members = resident_members(world, &tribe.members);
+    let ladder = world.resource::<crate::LadderConfigHandle>().get();
     let mut carriers = tribe.carriers.clone();
     for (w, chain) in carriers.iter_mut().enumerate() {
         let Some(work) = tribe.works.get(w) else {
             continue;
         };
+        let road_source =
+            is_road_branch(&ladder, work.branch).then_some(BuildSource::Road(work.tile));
         for carrier in chain.iter_mut() {
-            carrier.workers = members
+            let allocation = members
                 .iter()
                 .find(|m| m.band == carrier.band)
-                .and_then(|m| world.get::<LaborAllocation>(m.entity))
-                .and_then(|allocation| levy_row_of(allocation, work.tile, work.branch))
-                .map_or(0, |row| row.workers);
+                .and_then(|m| world.get::<LaborAllocation>(m.entity));
+            carrier.workers = match (&road_source, allocation) {
+                // A road work has no row: its heads are the build's builders.
+                (Some(source), Some(allocation)) => {
+                    allocation.build_crew(source).map_or(0, |crew| crew.total())
+                }
+                (None, Some(allocation)) => {
+                    levy_row_of(allocation, work.tile, work.branch).map_or(0, |row| row.workers)
+                }
+                (_, None) => 0,
+            };
         }
     }
     if let Some(stored) = world.resource_mut::<TribeRegistry>().get_mut(id) {
@@ -514,8 +684,9 @@ fn tribe_of_band(
 }
 
 /// **`tribe_work <faction> <band> <branch> <x> <y> [<target_rung>] [high|normal|low]`** - add or
-/// update a work on the tribe's list. Tile-kind branches only; with a `target_rung` the work declares
-/// a build to that rung through the same gate the band's own build verb on the site runs.
+/// update a work on the tribe's list. Tile-kind branches and the road branch (a road work needs its
+/// `<branch>:<rung>`); with a `target_rung` the work declares a build to that rung through the same
+/// gate the band's own build verb on the site runs.
 #[allow(clippy::too_many_arguments)]
 pub fn tribe_work(
     world: &mut World,
@@ -529,10 +700,11 @@ pub fn tribe_work(
     let id = tribe_of_band(world, faction, band)?;
     let ladder = world.resource::<crate::LadderConfigHandle>().get();
     let branch_id = BranchId::new(branch);
-    if ladder.source_kind(branch_id) != Some(crate::intensification::SourceKind::Tile) {
+    let is_road = is_road_branch(&ladder, branch_id);
+    if !is_road && ladder.source_kind(branch_id) != Some(SourceKind::Tile) {
         return refuse(
             "not_a_tribe_work",
-            format!("A tribe's works are improvements of a tile; `{branch}` is not one."),
+            format!("A tribe's works are improvements or roads of a tile; `{branch}` is neither."),
         );
     }
     let rung = match target_rung {
@@ -550,22 +722,34 @@ pub fn tribe_work(
             Some(rung)
         }
     };
+    if is_road && rung.is_none() {
+        return refuse(
+            "road_needs_rung",
+            format!("A road work names the rung to build to, like `{branch}:<rung>`."),
+        );
+    }
     if let Some(rung) = rung {
         let def = ladder.rung(rung).clone();
-        let gate = crate::build_gates::with_scene(world, |scene| {
-            crate::build_gates::validate_tile_verb(scene, faction, tile, branch_id, &def)
-        });
+        let gate = if is_road {
+            road_work_gate(world, id, faction, tile, &def)
+        } else {
+            crate::build_gates::with_scene(world, |scene| {
+                crate::build_gates::validate_tile_verb(scene, faction, tile, branch_id, &def)
+            })
+        };
         if let Err(message) = gate {
             return refuse("build_refused", message);
         }
     }
     // A member's existing Tile row on the site is adopted, and its declared build carries over.
-    let adopted_rung = if rung.is_none() {
+    let adopted_rung = if rung.is_none() && !is_road {
         declared_rung_on_site(world, id, tile, branch_id)
     } else {
         None
     };
-    adopt_member_rows(world, id, tile, branch_id);
+    if !is_road {
+        adopt_member_rows(world, id, tile, branch_id);
+    }
     let mut registry = world.resource_mut::<TribeRegistry>();
     let Some(tribe) = registry.get_mut(id) else {
         return refuse("band_not_in_tribe", "That tribe is gone.");
@@ -601,6 +785,30 @@ pub fn tribe_work(
         "The {tribe_name} {name} the {branch} at ({}, {}).",
         tile.x, tile.y
     ))
+}
+
+/// The gate a road work's carrier would meet if it declared the build itself: the band's own
+/// `grade` / `pave` gate, asked of the band the tribe would hand the tile to.
+fn road_work_gate(
+    world: &mut World,
+    id: TribeId,
+    faction: FactionId,
+    tile: UVec2,
+    def: &crate::intensification::RungDef,
+) -> Result<(), String> {
+    let Some(scene) = pass_scene(world) else {
+        return Err("There is no map to build a road on.".to_string());
+    };
+    let members = world
+        .resource::<TribeRegistry>()
+        .get(id)
+        .map(|tribe| tribe.members.clone())
+        .unwrap_or_default();
+    let found = resident_members(world, &members);
+    let Some(carrier) = road_carrier(world, &found, tile, scene.grid.0, scene.wrap) else {
+        return Err("The tribe has no band to carry the road.".to_string());
+    };
+    crate::build_gates::validate_road_verb(world, faction, carrier, tile, def)
 }
 
 /// **ADOPT** every member's own Tile row on the site: it becomes a levy row of the tribe, which the
@@ -677,6 +885,18 @@ pub fn tribe_work_stop(
         tribe.carriers.remove(index);
     }
     let tribe_name = tribe.name.clone();
+    let members = tribe.members.clone();
+    if is_road_branch(
+        &world.resource::<crate::LadderConfigHandle>().get(),
+        branch_id,
+    ) {
+        // The tribe's declared build goes; the road and its keeper stay as they are.
+        for member in resident_members(world, &members) {
+            if let Some(mut allocation) = world.get_mut::<LaborAllocation>(member.entity) {
+                allocation.stop_build(&BuildSource::Road(tile));
+            }
+        }
+    }
     rerun_and_restaff(world, id);
     Ok(format!(
         "The {tribe_name} gives up the {branch} at ({}, {}).",

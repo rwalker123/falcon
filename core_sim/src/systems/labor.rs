@@ -6686,6 +6686,7 @@ pub fn advance_labor_allocation(
                     crate::tribe_levy::levy_plan(
                         configs.tribes.as_deref()?,
                         &configs.leadership.as_deref()?.get(),
+                        &ladder,
                         id,
                         band_leadership
                             .as_deref()

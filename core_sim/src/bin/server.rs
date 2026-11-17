@@ -8300,11 +8300,7 @@ fn handle_road_verb(
     else {
         return;
     };
-    let required = ladder
-        .below_id(destination)
-        .expect("every built route rung stands on the rung below it — the floor is two rungs down");
-
-    let refusal = road_verb_refusal(app, faction, band_id, tile, improvement, required);
+    let refusal = road_verb_refusal(app, faction, band_id, tile, improvement);
     if let Err(reason) = refusal {
         warn!(
             target: "shadow_scale::command",
@@ -8393,7 +8389,6 @@ fn road_verb_refusal(
     band_id: u64,
     tile: UVec2,
     improvement: VerbId,
-    required: core_sim::RungId,
 ) -> Result<(), String> {
     let band = BandId(band_id);
     let holds_band = {
@@ -8408,60 +8403,13 @@ fn road_verb_refusal(
         ));
     }
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let Some(destination) = ladder
-        .rung_for_verb(improvement)
-        .map(core_sim::RungDef::rung_id)
-    else {
+    let Some(rung) = ladder.rung_for_verb(improvement) else {
         return Err(format!(
             "'{}' is not a build verb this ladder knows.",
             improvement.as_str()
         ));
     };
-    if let Some(refusal) = knowledge_refusal(app, faction, &ladder, ladder.rung(destination)) {
-        return Err(refusal);
-    }
-    let roads = app.world.resource::<core_sim::RoadRegistry>();
-    let Some(road) = roads.road(tile) else {
-        return Err(format!(
-            "There is no road at ({}, {}) — walk it into a trail before you {} it.",
-            tile.x,
-            tile.y,
-            improvement.as_str()
-        ));
-    };
-    if !ladder.at_or_above(road.held_rung(), required) {
-        return Err(format!(
-            "The road at ({}, {}) is only a {} — it must be a {} before you can {} it.",
-            tile.x,
-            tile.y,
-            road.held_rung().id_str().replace('_', " "),
-            required.id_str().replace('_', " "),
-            improvement.as_str()
-        ));
-    }
-    match road.keeper {
-        // **One keeper per tile.** A second band cannot become a co-payer of a road another band
-        // keeps — the refusal is what makes that unrepresentable rather than merely discouraged.
-        Some(keeper) if keeper.band != band => {
-            return Err(format!(
-                "Band {} already keeps the road at ({}, {}). One band keeps a road tile, never two \
-                 — have them abandon it first.",
-                keeper.band.0, tile.x, tile.y
-            ));
-        }
-        // **Already there, and it is YOURS** — nothing left to raise. A road nobody keeps falls
-        // through instead, which is how adoption works.
-        Some(_) if ladder.at_or_above(road.held_rung(), destination) => {
-            return Err(format!(
-                "The road at ({}, {}) is already a {}.",
-                tile.x,
-                tile.y,
-                road.held_rung().id_str().replace('_', " ")
-            ));
-        }
-        _ => {}
-    }
-    Ok(())
+    core_sim::build_gates::validate_road_verb(&app.world, faction, band, tile, rung)
 }
 
 /// ⛔ **`fell` / `coppice` / `quarry` — THE TWO DEPOSIT BRANCHES' THREE TILE VERBS**

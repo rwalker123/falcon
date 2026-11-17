@@ -479,6 +479,11 @@ Before a chief, the band runs on the per-source settings in "Decided" above.
   nearest — the way the nation hands a national work to its nearest member. The band staffs those
   rows in its own passes, at the Priority the tribe gives each work, so its kit, materials, craft
   suggestions and auto-craft count them like any other row.
+- **A road work is carried by the band that keeps the tile.** Only one band keeps a road tile, so a
+  tribe road is not split across an overflow chain: the carrier is the keeping band when it is a member,
+  else the nearest member. It declares the grade or pave as its own verb would; the builders are the
+  tribe's levy and the keeping stays the keeper's Roadwork pool. A keeper that leaves the tribe stops
+  keeping the tile, and the nearest member picks it up.
 - **The levy is worked out again every turn.** There is no standing posting. A band that keeps the
   same job keeps its crew there; a job that moves to another band is walked to by that band's people.
 - **The levy never takes the hands a band needs to keep up.** Tribe rows are dealt after every one
