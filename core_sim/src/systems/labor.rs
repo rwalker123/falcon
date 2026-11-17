@@ -3226,6 +3226,34 @@ pub(crate) fn build_rung_in_flight(
     }
 }
 
+/// **THE WORK A DECLARED BUILD STILL OWES** - the sum of the legs its turn estimate dates
+/// ([`head_build_legs`], or the pen ring's one leg), so the staffing orders builds by the figure the
+/// published countdown is struck from. A commitment (`SetHerdOutput`) lays no leg and owes nothing.
+pub(crate) fn declared_build_work_remaining(
+    context: &BuildProgressContext<'_>,
+    declaration: &BuildDeclaration,
+) -> f32 {
+    let sources = context.sources;
+    match declaration.declared {
+        BuildJob::Climb(destination) => head_build_legs(
+            &declaration.source,
+            destination,
+            sources.forage,
+            sources.herds,
+            context.roads,
+            context.tile_improvements,
+            sources.deposits,
+            sources.ladder,
+        )
+        .iter()
+        .map(|(_, owed, _)| *owed)
+        .sum(),
+        BuildJob::ExtendPen => head_ring_leg(&declaration.source, sources.herds, sources.ladder)
+            .map_or(NOTHING_DEMANDED, |(_, owed, _)| owed),
+        BuildJob::SetHerdOutput(_) => NOTHING_DEMANDED,
+    }
+}
+
 /// **CAN THIS DECLARED BUILD MAKE PROGRESS THIS TURN?** — the question staffing asks before it gives a
 /// build a builder (*"a build that cannot progress gets no builders"*): the declared job is not
 /// already standing, the rung's own gate holds, and the store holds something of each material the
@@ -6610,6 +6638,9 @@ pub fn advance_labor_allocation(
             let can_progress = |declaration: &BuildDeclaration| {
                 declared_build_can_progress(&progress_context, &allocation, declaration)
             };
+            let work_remaining = |declaration: &BuildDeclaration| {
+                declared_build_work_remaining(&progress_context, declaration)
+            };
             let on_hand = |material: &str| cohort.stores.material_total(material).to_f32();
             let bench_plan = bench.as_deref().map_or_else(Default::default, |bench| {
                 crate::systems::bench_plan(
@@ -6634,6 +6665,7 @@ pub fn advance_labor_allocation(
                 }),
                 tile_hands_elsewhere: &tile_load,
                 build_can_progress: &can_progress,
+                build_work_remaining: &work_remaining,
                 food: crate::staffing::food_ledger_of(
                     &cohort,
                     &allocation,

@@ -18432,6 +18432,170 @@ mod tests {
         );
     }
 
+    /// The most builders the fixtures' rack could take.
+    const RACK_CAP: u32 = 3;
+
+    /// Put wood in the band's store, so a build that eats it is not stalled on materials.
+    fn stock_wood(app: &mut bevy::prelude::App, entity: Entity) {
+        const WOOD_ON_HAND: u32 = 1000;
+        let materials = app
+            .world
+            .resource::<core_sim::MaterialsConfigHandle>()
+            .get();
+        let readings: std::collections::BTreeMap<String, f32> = materials
+            .material("wood")
+            .expect("the roster carries wood")
+            .characteristics
+            .iter()
+            .map(|axis| (axis.clone(), core_sim::OPENING_MATERIAL_READING))
+            .collect();
+        let key = materials
+            .band_key("wood", &readings)
+            .expect("wood has a band key");
+        app.world
+            .get_mut::<PopulationCohort>(entity)
+            .expect("cohort")
+            .stores
+            .deposit_material("wood", key, Scalar::from_u32(WOOD_ON_HAND), &readings);
+    }
+
+    /// The drying rack's declaration, taken from the idle fixture after an approval.
+    fn approved_rack_declaration() -> (
+        core_sim::BuildDeclaration,
+        core_sim::TileImprovementRegistry,
+    ) {
+        let (mut app, faction, band) = proposal_world(true);
+        send_command_line(&mut app, &format!("approve_proposal {} {band}", faction.0));
+        let entity = band_entity(&mut app, band);
+        let declaration = app
+            .world
+            .get::<LaborAllocation>(entity)
+            .unwrap()
+            .builds
+            .first()
+            .cloned()
+            .expect("the approval declared the rack");
+        // The approval placed the rack's record on the band improvements; a fixture that borrows
+        // the declaration borrows the record it stands on.
+        let registry = app
+            .world
+            .resource::<core_sim::TileImprovementRegistry>()
+            .clone();
+        (declaration, registry)
+    }
+
+    /// Declare the rack on `entity` (once) and stamp the staffing's last word on it: `staffed` of
+    /// `RACK_CAP` builders. Then the chief looks again.
+    fn rack_staffed(
+        app: &mut bevy::prelude::App,
+        entity: Entity,
+        (rack, registry): &(
+            core_sim::BuildDeclaration,
+            core_sim::TileImprovementRegistry,
+        ),
+        staffed: u32,
+    ) {
+        app.world.insert_resource(registry.clone());
+        {
+            let mut allocation = app.world.get_mut::<LaborAllocation>(entity).unwrap();
+            if !allocation.has_build(&rack.source) {
+                allocation.builds.push(rack.clone());
+            }
+            allocation.apply_build_crews(vec![(
+                rack.source.clone(),
+                core_sim::BuildCrew {
+                    kitted: 0,
+                    bare: staffed,
+                    cap: RACK_CAP,
+                    fed_first: false,
+                },
+            )]);
+        }
+        core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+    }
+
+    /// **THE CHIEF WAITS UNTIL THE BUILDS UNDERWAY ARE FULL**, on every trigger: a build at 1 of 3
+    /// builders holds the offer back, the same build at 3 of 3 does not.
+    #[test]
+    fn a_chief_offers_nothing_while_a_build_is_short_of_builders() {
+        let rack = approved_rack_declaration();
+        // Idle hands.
+        let (mut app, _, band) = proposal_world(true);
+        let entity = band_entity(&mut app, band);
+        stock_wood(&mut app, entity);
+        rack_staffed(&mut app, entity, &rack, 1);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "a build at 1 of {RACK_CAP} holds the idle-hands offer back"
+        );
+        rack_staffed(&mut app, entity, &rack, RACK_CAP);
+        assert_eq!(
+            wire_proposal(&mut app, band).map(|offer| offer.trigger),
+            Some("idle".to_string()),
+            "the same build at its cap leaves him free to offer"
+        );
+        // Low-yield hands, then a falling food order.
+        let (mut app, band, entity, _) = low_yield_scene(0, LOW_YIELD_HEADS, ALMOST_NOTHING, true);
+        stock_wood(&mut app, entity);
+        rack_staffed(&mut app, entity, &rack, 1);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "a build at 1 of {RACK_CAP} holds the low-yield offer back"
+        );
+        rack_staffed(&mut app, entity, &rack, RACK_CAP);
+        assert_eq!(
+            wire_proposal(&mut app, band).map(|offer| offer.trigger),
+            Some("low_yield".to_string()),
+            "liveness: the same band offers once the build is full"
+        );
+        {
+            let mut cohort = app.world.get_mut::<PopulationCohort>(entity).unwrap();
+            cohort
+                .stores
+                .reset_food("fresh_plant", scalar_from_f32(1.0));
+            app.world
+                .get_mut::<LaborAllocation>(entity)
+                .unwrap()
+                .orders
+                .get_mut("food")
+                .unwrap()
+                .target = 1000;
+        }
+        rack_staffed(&mut app, entity, &rack, 1);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "a build at 1 of {RACK_CAP} holds the falling-food offer back"
+        );
+        rack_staffed(&mut app, entity, &rack, RACK_CAP);
+        assert_eq!(
+            wire_proposal(&mut app, band).map(|offer| offer.trigger),
+            Some("food_falling".to_string()),
+            "liveness: the same band offers once the build is full"
+        );
+    }
+
+    /// **A BUILD THAT CANNOT TAKE BUILDERS DOES NOT HOLD HIM BACK**: the rack eats wood, and with none
+    /// in the store it is stalled on materials however few builders it holds.
+    #[test]
+    fn a_materials_stalled_build_does_not_hold_the_chief_back() {
+        let rack = approved_rack_declaration();
+        let (mut app, _, band) = proposal_world(true);
+        let entity = band_entity(&mut app, band);
+        // No wood: the fixture's store was cleared of materials.
+        rack_staffed(&mut app, entity, &rack, 0);
+        assert!(
+            wire_proposal(&mut app, band).is_some(),
+            "a stalled build at 0 of {RACK_CAP} leaves the chief free to offer"
+        );
+        // Control: the same build with wood on hand holds him back.
+        stock_wood(&mut app, entity);
+        rack_staffed(&mut app, entity, &rack, 0);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "liveness: with wood the build could take builders and holds the offer back"
+        );
+    }
+
     /// **A stale proposal is refused, not declared**: a band with no proposal answers an approval with
     /// a failure line, and declares nothing.
     #[test]

@@ -933,6 +933,11 @@ pub fn refresh_proposals(world: &mut World, advance: bool) {
             ) else {
                 continue;
             };
+            // **The chief waits until the builds underway are full**: a build of the band's own that
+            // is short of builders and could take them holds every trigger's proposal back.
+            if crate::staffing::band_has_a_build_short_of_builders(world, view.entity) {
+                continue;
+            }
             let mut found = candidates(world, view, &bands);
             found.retain(|candidate| !state.deferred.contains_key(&candidate.key));
             if low_yield_trigger {
