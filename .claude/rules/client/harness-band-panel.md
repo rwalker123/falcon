@@ -2329,6 +2329,21 @@ through its real `pressed` signal and requires ONE hunt line ending ` follow`. `
 same line through the real parser (`_drive_assign_labor_kits`) and asserts the token is LAST, after
 `kit <id>`, and absent when unticked.
 
+## `band_panel_scroll_carry.gd` - a scrolled list survives a turn without a flash
+
+A satellite of `band_panel_preview`, appended after every other state so no frame moves. PNG-less, and
+about what the player SEES rather than the variable (`band-city-panel.md` → "A SCROLL REBUILT PER
+SNAPSHOT KEEPS THE PLAYER'S PLACE"). For each of the Work sections (34-source fixture), the Band zone
+(480px canvas, the only one short enough to overflow), the Parties list (24 parties), the Peoples roster
+(40 ties) and the Trade tab (40 history rows) it scrolls the list partway down, crops the viewport to the
+scroll's rect, pushes the SAME roster through `update_band_alerts` (what a turn does), and for each of
+the first three drawn frames (`await RenderingServer.frame_post_draw`) requires a NEW scroll node, a
+row at the same global y, an equal `scroll_vertical` and byte-identical pixels. **Preconditions** keep it
+honest: at least 120px of range and an offset of at least 60px, else it would pass on an unscrolled
+list. **Sabotage-verified**: restoring the old `await process_frame` then setting the value fails only
+drawn frame 1 of every list (15 failures, e.g. `scroll_vertical is the player's (1003 then, 0 now)`) and
+passes frames 2 and 3 — which is the flash.
+
 ## `band_panel_family_limit.gd` - the breeding ceiling's frames (issue #691)
 
 A satellite of `band_panel_preview` in its own file (the `band_panel_trade_tab.gd` shape), appended

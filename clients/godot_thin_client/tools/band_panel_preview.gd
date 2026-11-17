@@ -68,6 +68,7 @@ const RUNG_FX := preload("res://tools/ui_preview/fixtures_rung.gd")
 const TRADE_TAB_STATES := preload("res://tools/band_panel_trade_tab.gd")
 ## The Family limit row and the split sheet's FAMILY LIMIT block (issue #691), in their own file.
 const FAMILY_LIMIT_STATES := preload("res://tools/band_panel_family_limit.gd")
+const SCROLL_CARRY_STATES := preload("res://tools/band_panel_scroll_carry.gd")
 ## The band orders group on the Work tab (#860), in its own file.
 const BAND_ORDERS_STATES := preload("res://tools/band_panel_orders.gd")
 ## The hex `_band_fixture()` stands on — the tile the map-path state clicks.
@@ -2590,6 +2591,9 @@ func _ready() -> void:
 
 	_assert_herd_field_pairs()
 	_assert_rung_offers_open_tracks()
+
+	# The per-turn scroll carry, appended last so no frame above moves.
+	await SCROLL_CARRY_STATES.new().run(self)
 	_finish()
 
 ## **A BAND WITH NOTHING WORKED, ON A HORIZONTAL DOCK — the state a stretched empty view shipped in.**

@@ -1049,6 +1049,15 @@ const PARTIES_LIST_MIN_HEIGHT := float(PARTIES_LIST_MIN_ROWS) * WORK_ROW_HEIGHT
 ## from the zone's own BOX, which is geometry the panel states rather than anything the snapshot says.
 const BAND_ZONE_SCROLL_NAME := "BandZoneScroll"
 
+## A scroll rebuilt per snapshot carries the player's place across the rebuild (`BandPanelController.
+## _restore_scroll_offset`). The meta marks a scroll whose restore has not finished, the two state keys
+## are the restore's own bookkeeping, and the subjects keep one page's offsets from reaching another's.
+const SCROLL_CARRY_PENDING_META := &"scroll_carry_pending"
+const SCROLL_CARRY_STATE_ARMED := &"armed"
+const SCROLL_CARRY_STATE_APPLY := &"apply"
+const SCROLL_CARRY_NO_SUBJECT := -3
+const SCROLL_CARRY_FACTION_SUBJECT := -2
+
 ## Sized so a TYPICAL label — `Forage (nn, nn)`, `Hunt Woolly Mammoth` — fits whole beside the row's
 ## fixed furniture. At 300 a 1920 bottom dock took 4 columns and cut the labels mid-coordinate
 ## (`Forage (73, 20`), which costs the row the one thing it is for: naming WHICH source. Three

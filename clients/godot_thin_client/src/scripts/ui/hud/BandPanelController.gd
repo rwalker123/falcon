@@ -258,6 +258,13 @@ var _roster_expanded_scroll: ScrollContainer = null
 ## would throw the player back to the top on each of them, and the rows only a scrolled list can reach
 ## are exactly the ones the mode exists to reach. It resets on ENTERING the mode.
 var _roster_expanded_scroll_offset: int = 0
+## The player's place in each of the panel's OTHER per-snapshot scrolls, by the scroll's node name, and
+## the subject (band entity, or `HudWorkVocab.SCROLL_CARRY_FACTION_SUBJECT`) they were taken for.
+## See `_capture_carried_scrolls`.
+var _carried_scroll_offsets: Dictionary = {}
+var _carried_scroll_subject: int = HudWorkVocab.SCROLL_CARRY_NO_SUBJECT
+## The parties zone's list, held so the NEXT render can read the player's place off it.
+var _parties_scroll: ScrollContainer = null
 ## **THE RUNG CARD** (`RungCardController`), shared with the compose sheet: the "Take it to…" card, the
 ## crop step, the ring card and a working's deposit track. It is a Window and so is not zone state; this
 ## controller opens it from a row's strip and relays its signals. Set by `Hud` (`set_rung_card`).
@@ -1029,6 +1036,8 @@ func _build_band_zone_scroll() -> ScrollContainer:
     scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
     scroll.custom_minimum_size = Vector2(0.0, _zone_box().y)
     _band_zone_scroll = scroll
+    _carry_scroll_in(scroll, HudWorkVocab.BAND_ZONE_SCROLL_NAME,
+        func() -> bool: return _band_zone_scroll == scroll)
     return scroll
 
 ## Re-declare the band zone's reserved height against the box the panel is offering NOW.
@@ -1951,11 +1960,13 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     # `_repage_work_zone` has `queue_free`d it (deferred, so it is still a valid instance) and
     # `render_band` builds the new zone BEFORE `set_zones` frees the old one.
     if _roster_expanded_scroll != null and is_instance_valid(_roster_expanded_scroll):
-        _roster_expanded_scroll_offset = _roster_expanded_scroll.scroll_vertical
+        _roster_expanded_scroll_offset = _scroll_offset_of(_roster_expanded_scroll,
+            _roster_expanded_scroll_offset)
     # …and the SECTIONS list's, for the same reason: a chevron, a stepper press and every snapshot
     # rebuild this zone, and a list rebuilt at 0 throws the player back to the top on each.
     if _work_sections_scroll != null and is_instance_valid(_work_sections_scroll):
-        _work_sections_scroll_offset = _work_sections_scroll.scroll_vertical
+        _work_sections_scroll_offset = _scroll_offset_of(_work_sections_scroll,
+            _work_sections_scroll_offset)
     _roster_expanded_scroll = null
     _work_sections_scroll = null
     # **THE DESTINATION TRACK IS DISMISSED BY ANY RE-FILL** (`docs/plan_standing_upkeep.md` §2.8): the
@@ -3848,18 +3859,80 @@ func _pool_toe_settled_rows(band: Dictionary, kind: String, effective: Dictionar
 
 
 
-## The one-frame wait is the part that must never be re-derived, which is exactly why there is one
-## of these rather than one per list.
+## **A SCROLL REBUILT PER SNAPSHOT KEEPS THE PLAYER'S PLACE, AND IT IS SET BEFORE THE FIRST FRAME IS
+## DRAWN.** A fresh `ScrollContainer` clamps `scroll_vertical` to 0 until its scrollbar range exists,
+## and the range is set when it sorts its children — a deferred pass that runs at the end of the frame
+## the scroll was built in, BEFORE that frame is drawn. Waiting a frame and then setting the value (what
+## this did) therefore drew one whole frame at the top of the list and jumped back on the next: the
+## flash reported from play on every turn advance of a scrolled panel.
+##
+## So the value is applied from the scroll's own `sort_children` signal — the sort that fixes the range
+## is the sort that restores the place, in the same layout flush — on EVERY sort until the frame ends
+## (a first sort can run against a box that is not final, and a later one in the same flush then
+## corrects the clamp). A scroll that is not on screen (an unselected narrow-shell tab) does not sort
+## for the player, so it keeps waiting until it is shown. `still_current` guards the node and a
+## content that shrank clamps naturally. One helper for every list, so none re-derives the timing.
 func _restore_scroll_offset(scroll: ScrollContainer, want: int,
         still_current: Callable) -> void:
-    if want <= 0:
+    if want <= 0 or scroll == null:
         return
-    await _host.get_tree().process_frame
-    if not is_instance_valid(scroll) or not scroll.is_inside_tree():
+    scroll.set_meta(HudWorkVocab.SCROLL_CARRY_PENDING_META, true)
+    var state := {}
+    state[HudWorkVocab.SCROLL_CARRY_STATE_ARMED] = false
+    var apply := _apply_carried_offset.bind(scroll, want, still_current, state)
+    state[HudWorkVocab.SCROLL_CARRY_STATE_APPLY] = apply
+    scroll.sort_children.connect(apply)
+
+func _apply_carried_offset(scroll: ScrollContainer, want: int, still_current: Callable,
+        state: Dictionary) -> void:
+    if not is_instance_valid(scroll) or not bool(still_current.call()):
         return
-    if not bool(still_current.call()):
+    if not scroll.is_visible_in_tree():
         return
     scroll.scroll_vertical = want
+    if bool(state[HudWorkVocab.SCROLL_CARRY_STATE_ARMED]):
+        return
+    state[HudWorkVocab.SCROLL_CARRY_STATE_ARMED] = true
+    await _host.get_tree().process_frame
+    if not is_instance_valid(scroll):
+        return
+    scroll.sort_children.disconnect(state[HudWorkVocab.SCROLL_CARRY_STATE_APPLY])
+    scroll.set_meta(HudWorkVocab.SCROLL_CARRY_PENDING_META, false)
+
+## The player's place in `scroll` — or `stored` while a restore into it has not finished, because a
+## scroll still waiting for its first sort reads 0 and a second render in the same frame would
+## otherwise take that 0 as the player's place.
+func _scroll_offset_of(scroll: ScrollContainer, stored: int) -> int:
+    if bool(scroll.get_meta(HudWorkVocab.SCROLL_CARRY_PENDING_META, false)):
+        return stored
+    return scroll.scroll_vertical
+
+## Read the player's place off every per-snapshot scroll that is about to be replaced, for a render of
+## `subject`. A different subject starts every list at the top, as a fresh page does.
+func _capture_carried_scrolls(subject: int) -> void:
+    if subject != _carried_scroll_subject:
+        _carried_scroll_offsets.clear()
+        _carried_scroll_subject = subject
+        return
+    var live := {
+        HudWorkVocab.BAND_ZONE_SCROLL_NAME: _band_zone_scroll,
+        HudWorkVocab.PARTIES_LIST_NAME: _parties_scroll,
+        HudConnectionsVocab.LIST_NAME: _find_scroll_in(_connections_block, HudConnectionsVocab.LIST_NAME),
+        TradeZoneController.TAB_SCROLL_NAME:
+            _find_scroll_in(_trade_block, TradeZoneController.TAB_SCROLL_NAME),
+    }
+    for key in live:
+        var scroll: Variant = live[key]
+        if scroll != null and is_instance_valid(scroll):
+            _carried_scroll_offsets[key] = _scroll_offset_of(scroll, int(_carried_scroll_offsets.get(key, 0)))
+
+func _find_scroll_in(block: Variant, scroll_name: String) -> ScrollContainer:
+    if block == null or not is_instance_valid(block):
+        return null
+    return block.find_child(scroll_name, true, false) as ScrollContainer
+
+func _carry_scroll_in(scroll: ScrollContainer, key: String, still_current: Callable) -> void:
+    _restore_scroll_offset(scroll, int(_carried_scroll_offsets.get(key, 0)), still_current)
 
 ## **THE ROAD ROSTER OVER THE WHOLE WORK ZONE — every road it keeps, in a scrolling list**, or `null`
 ## where the band keeps nothing and owes nothing (the collapsed section draws no rows either, so
@@ -5772,6 +5845,10 @@ func build_peoples_zone(band: Dictionary) -> VBoxContainer:
     var tab := ConnectionsRoster.build_tab(int(band.get("band_id", HudConst.NO_BAND_ID)), _band_labor,
         box.y, _station_press(), _peoples_diplomacy())
     _track_connections_block(tab, band)
+    var peoples_scroll := tab.find_child(HudConnectionsVocab.LIST_NAME, true, false) as ScrollContainer
+    if peoples_scroll != null:
+        _carry_scroll_in(peoples_scroll, HudConnectionsVocab.LIST_NAME,
+            func() -> bool: return is_instance_valid(_connections_block) and _connections_block.is_ancestor_of(peoples_scroll))
     return tab
 
 # ---- zone `trade` -----------------------------------------------------------
@@ -5784,6 +5861,10 @@ func build_trade_zone(band: Dictionary) -> VBoxContainer:
     var box := _panel.zone_size(BandCityPanel.ZONE_TRADE) if _panel != null else HudWorkVocab.ZONE_FALLBACK_SIZE
     var tab := _trade.build_tab(band, box.y, _dealing_actions(), _faction_policy())
     _track_trade_block(tab, band)
+    var trade_scroll := tab.find_child(TradeZoneController.TAB_SCROLL_NAME, true, false) as ScrollContainer
+    if trade_scroll != null:
+        _carry_scroll_in(trade_scroll, TradeZoneController.TAB_SCROLL_NAME,
+            func() -> bool: return is_instance_valid(_trade_block) and _trade_block.is_ancestor_of(trade_scroll))
     return tab
 
 ## Is the Trade content on screen — its own tab in the narrow shell, the Parties flank in the wide?
@@ -5890,6 +5971,9 @@ func _build_parties_list() -> ScrollContainer:
     scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
     scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
     scroll.custom_minimum_size = Vector2(0.0, HudWorkVocab.PARTIES_LIST_MIN_HEIGHT)
+    _parties_scroll = scroll
+    _carry_scroll_in(scroll, HudWorkVocab.PARTIES_LIST_NAME,
+        func() -> bool: return _parties_scroll == scroll)
     var rows := HudWidgets.make_zone_column()
     # The zone's own block spacing, not the column's section spacing: these are sibling ROWS plus the
     # strip that belongs to one of them, exactly the spacing they had as direct children of `col`.
@@ -8929,6 +9013,7 @@ func _on_split_band_pressed(band: Dictionary, workers: int) -> void:
 func render_band(unit: Dictionary) -> void:
     if _panel == null or unit.is_empty():
         return
+    _capture_carried_scrolls(int(unit.get("entity", -1)))
     # Leaving the faction page is a subject change like any other, so the composing act it interrupted
     # is closed on the way back the same way a band-to-band cycle closes one. The page itself composes
     # nothing, but the player may have opened a sheet, cycled away to read the rollup and cycled back.
@@ -9010,6 +9095,7 @@ func render_faction() -> void:
     if _panel == null or _band_labor.player_bands().is_empty():
         return
     _panel_is_faction = true
+    _capture_carried_scrolls(HudWorkVocab.SCROLL_CARRY_FACTION_SUBJECT)
     # A pending verb belongs to the BAND it was pressed for, so leaving that band for this page ends it
     # — the identical rule `render_band` applies to a band-to-band cycle.
     if _compose.has_verb():
