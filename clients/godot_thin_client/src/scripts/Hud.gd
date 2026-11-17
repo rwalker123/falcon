@@ -139,6 +139,9 @@ signal stop_labor_requested(payload: Dictionary)
 ## carries the one decision the roles cannot express. RELAYED from `BandPanelController`, its only
 ## emitter.
 signal upkeep_mode_requested(payload: Dictionary)
+## A tribe member's scout range stepper (#862): `{ faction, band_id, range }`; Main formats
+## `tribe_scout <faction> <band_id> <range>`. RELAYED from `BandPanelController`, its only emitter.
+signal tribe_scout_requested(payload: Dictionary)
 ## Emitted when the player sets, releases or claims a band order (#860). Payload `{ faction, band_id,
 ## kind, action, target, priority, x, y, herd_id }`; Main formats `band_order <faction> <band_id> <kind> ...`.
 ## RELAYED from `BandOrdersController`, the only emitter.
@@ -769,6 +772,8 @@ func _ready() -> void:
         func(band: Dictionary, scope: String) -> void: cancel_order_requested.emit(band, scope))
     _bandpanel.upkeep_mode_requested.connect(
         func(payload: Dictionary) -> void: upkeep_mode_requested.emit(payload))
+    _bandpanel.tribe_scout_requested.connect(
+        func(payload: Dictionary) -> void: tribe_scout_requested.emit(payload))
     _bandpanel.open_borders_requested.connect(
         func(payload: Dictionary) -> void: open_borders_requested.emit(payload))
     _bandpanel.diplomacy_command_requested.connect(

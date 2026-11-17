@@ -505,8 +505,8 @@ Surplus spoilage belongs to the band and its storage, never to a hunt row. Engin
   whose food order the chief owns (`LaborAllocation::chief_owns`, `BandSpoilInputs::has_leader`), the
   walk is handed `chief_stops_at` = the order's target turns x the meal. On every walked turn whose
   food on hand (larder plus the stores in reach, after the meal and the rot - the figure
-  `food_orders::OrderReadings::of` reads) is at or above it, only the meal's worth of the income lands
-  (`need`, scaled across the keeping classes in proportion; never more than the whole income); below
+  `food_orders::OrderReadings::of` reads) is at or above it, the rows the chief lists land only what the meal still needs after the rows he does not list (a player's own rows keep landing in full: `spoilage_ahead`'s `chief_income`, read off the rows `order_rows` lists by `band_spoilage::income_by_class_where`)
+  (scaled across the keeping classes in proportion; never more than their whole income); below
   it the whole income lands. A band with no leader, or whose food order is the player's, walks the
   full income every turn. `spoilAhead`, `storageSaves.foodSaved` and the chief's storage proposals
   all read the one walk, so all follow the cut. The runway (`rot_ahead_with_stores`) is a different

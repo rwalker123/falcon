@@ -339,7 +339,7 @@ chief on at least one side adds the rate to its bank each turn. Every weight is 
 | Culture likeness | how alike their cultures are now; bands in touch drift together (#702), bands apart drift apart | 3 |
 | Knowing each other | the existing tie between them, which fills with contact and is forgotten over about 50 quiet turns | 2 |
 | Belief on the shared urn | a stronger sacred place pulls harder | 1 |
-| Acting as a tribe | work done at the tribe level — the shared pool (#862), the tribe bench (#864), shared works; only a tribe has it, so a working tribe holds together | 3 |
+| Acting as a tribe | work done at the tribe level — the hands the tribe levies from its bands for its works and its scouts (#862), against a fifth of its members' working hands; only a tribe has it, so a working tribe holds together | 3 |
 | A kept monument at the urn | the plainest case of a place they walk to and work on (#692); 1 while it stands kept, 0 half-raised or decayed | 2 |
 
 - **A tribe forms at 100 banked points and dissolves below it.** A band joins when its bank with a

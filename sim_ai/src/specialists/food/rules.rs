@@ -3971,6 +3971,36 @@ mod tests {
         );
     }
 
+    /// **A DETACHED PARTY IS NOT A SIBLING BAND**: one of the seat's own expeditions camped on or
+    /// walking to a patch holds it for nobody (the sim's one-band-per-source rule counts bands).
+    #[test]
+    fn an_own_expedition_party_on_a_patch_does_not_hide_it_from_the_band() {
+        let patch_key = SourceKey::Patch(RICH_PATCH);
+        let has_patch = |sources: Vec<Source>| sources.iter().any(|source| source.key == patch_key);
+        let with_party = |is_expedition: bool| {
+            a_view_with(|view| {
+                let mut other = view.snapshot.populations[0].clone();
+                other.band_id += 1;
+                other.labor_assignments.clear();
+                other.is_expedition = is_expedition;
+                other.current_x = RICH_PATCH.x;
+                other.current_y = RICH_PATCH.y;
+                view.snapshot.populations.push(other);
+            })
+        };
+        let band_sees = |view: &SeatView| {
+            has_patch(food().reachable_sources(view, &memory(), &view.snapshot.populations[0]))
+        };
+        assert!(
+            !band_sees(&with_party(false)),
+            "**LIVENESS**: a sibling band camped on the patch still holds it"
+        );
+        assert!(
+            band_sees(&with_party(true)),
+            "an expedition party on the patch holds it for nobody"
+        );
+    }
+
     // ---- rule 5a: hold the ground ------------------------------------------------------------
 
     /// **A tamed herd's hunt row short of its bill is raised the same way** (`docs/plan_site_crews.md`

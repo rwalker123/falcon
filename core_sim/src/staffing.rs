@@ -657,8 +657,14 @@ fn deal_scouts(
     let seen = kitted
         .saturating_mul(plan.kitted_tiles)
         .saturating_add(bare.saturating_mul(plan.bare_tiles));
-    // The reach this band's own stretch buys: its scout-tiles spread over the share of the edge.
-    let reach = (seen as f32 / plan.stretch).floor() as u32;
+    // The reach this band's own stretch buys. At or past the scout-tiles its stretch needs, the
+    // reach is the range plus the raw surplus (a lone band's overshoot); short of them, the
+    // scout-tiles spread over the share of the edge (always under the range, so the two meet).
+    let reach = if seen >= needed {
+        plan.range + (seen - needed)
+    } else {
+        (seen as f32 / plan.stretch).floor() as u32
+    };
     ScoutCrew {
         kitted,
         bare,
@@ -1464,13 +1470,17 @@ fn staff_passes_counted(
             .copied()
             .filter(|&i| rows[i].food_keep_up && rows[i].bare_can_work)
             .collect();
-        let mut needed: Vec<Option<u32>> = vec![None; rows.len()];
+        // The target is re-struck at the units the shelf can still arm (`kitted_capacity`), as
+        // `deal_kitted` strikes its own, so a head dealt kitted never leaves a bare-sized target.
+        let mut memo: Vec<Option<(u32, u32)>> = vec![None; rows.len()];
         deal_round_robin(&keepers_of_food, |i| {
             let row = &rows[i];
-            let kitted = ledger.out[i].kitted;
-            let hold =
-                *needed[i].get_or_insert_with(|| hold_heads(row, kitted).saturating_sub(kept[i]));
-            let wanted = kitted + ledger.out[i].bare < hold;
+            let held = ledger.out[i].kitted;
+            let kmax = kitted_capacity(row, held, shelf);
+            let hold = food_target(&mut memo[i], kmax, || {
+                hold_heads(row, kmax).saturating_sub(kept[i])
+            });
+            let wanted = held + ledger.out[i].bare < hold;
             deal_food_head(rows, &mut ledger, shelf, i, wanted)
         });
     }
@@ -1557,16 +1567,17 @@ fn staff_passes_counted(
             .copied()
             .filter(|&i| rows[i].food_keep_up && rows[i].bare_can_work)
             .collect();
-        let mut needed: Vec<Option<u32>> = vec![None; rows.len()];
+        let mut memo: Vec<Option<(u32, u32)>> = vec![None; rows.len()];
         deal_round_robin(&food_refill, |i| {
             let row = &rows[i];
-            let kitted = ledger.out[i].kitted;
-            let reach = *needed[i].get_or_insert_with(|| {
-                reach_heads(row, kitted)
-                    .max(hold_heads(row, kitted))
+            let held = ledger.out[i].kitted;
+            let kmax = kitted_capacity(row, held, shelf);
+            let reach = food_target(&mut memo[i], kmax, || {
+                reach_heads(row, kmax)
+                    .max(hold_heads(row, kmax))
                     .saturating_sub(kept[i])
             });
-            let wanted = kitted + ledger.out[i].bare < reach;
+            let wanted = held + ledger.out[i].bare < reach;
             deal_food_head(rows, &mut ledger, shelf, i, wanted)
         });
         deal_kitted(rows, sources, &mut ledger, shelf, |i, row, kmax| {
@@ -1758,6 +1769,19 @@ fn deal_food_head(
         return false;
     }
     ledger.deal_head(i, wanted, HeadKind::Bare)
+}
+
+/// A chief's food row's crew target at the kitted capacity `kmax`, remembered per `kmax` so the
+/// target is struck once per shelf reading (the memo `deal_kitted` keeps).
+fn food_target(memo: &mut Option<(u32, u32)>, kmax: u32, strike: impl FnOnce() -> u32) -> u32 {
+    match *memo {
+        Some((at, target)) if at == kmax => target,
+        _ => {
+            let target = strike();
+            *memo = Some((kmax, target));
+            target
+        }
+    }
 }
 
 /// **A ROUND OF ONE HEAD PER ROW**, repeated until a whole round deals nothing. `deal_one` seats at
@@ -2475,15 +2499,16 @@ fn trim_one_hand(
         .map(|(index, order)| (order.priority, std::cmp::Reverse(index), index))
         .min();
     // The build-like candidate: the lower priority of a build and a bench order; a tie takes the bench.
+    // Its last field says whether it is a levy build (a bench order never is).
     let buildish = match (build_pick, bench_pick) {
         (None, None) => None,
-        (Some((priority, _, _, _, at)), None) => Some((priority, false, at)),
-        (None, Some((priority, _, at))) => Some((priority, true, at)),
-        (Some((build_priority, _, _, _, build_at)), Some((bench_priority, _, bench_at))) => {
+        (Some((priority, levied, _, _, at)), None) => Some((priority, false, at, levied.0)),
+        (None, Some((priority, _, at))) => Some((priority, true, at, false)),
+        (Some((build_priority, levied, _, _, build_at)), Some((bench_priority, _, bench_at))) => {
             if bench_priority <= build_priority {
-                Some((bench_priority, true, bench_at))
+                Some((bench_priority, true, bench_at, false))
             } else {
-                Some((build_priority, false, build_at))
+                Some((build_priority, false, build_at, levied.0))
             }
         }
     };
@@ -2497,9 +2522,14 @@ fn trim_one_hand(
     match (row_pick, buildish) {
         (None, None) => return false,
         (Some((_, _, _, _, at)), None) => take_one_row_hand(&mut staffed.rows[at].1),
-        (None, Some((_, is_bench, at))) => take_buildish(staffed, at, is_bench),
+        (None, Some((_, is_bench, at, _))) => take_buildish(staffed, at, is_bench),
         (Some(row), Some(build)) => {
-            if row.1 <= build.0 {
+            // At equal priority any levy head (row or build) goes before any of the band's own; between
+            // two heads of one side the rows' surplus goes before a build's builders.
+            let row_levied = row.2 .0;
+            let build_levied = build.3;
+            let own_row_against_levy_build = !row_levied && build_levied;
+            if row.1 < build.0 || (row.1 == build.0 && !own_row_against_levy_build) {
                 take_one_row_hand(&mut staffed.rows[row.4].1);
             } else {
                 take_buildish(staffed, build.2, build.1);
@@ -3716,6 +3746,24 @@ pub(crate) fn band_has_a_build_short_of_builders(
     .unwrap_or(false)
 }
 
+/// **WHETHER THE BAND'S DECLARED BUILD ON `source` CAN MAKE PROGRESS** (open to builders: no refusing
+/// gate, no materials stall, not already standing), by the one predicate staffing deals builders
+/// through. `false` where the band declares no build there.
+pub(crate) fn band_build_can_progress(
+    world: &bevy::prelude::World,
+    band: bevy::prelude::Entity,
+    source: &BuildSource,
+) -> bool {
+    with_band_staffing(world, band, |staffing, allocation, _, _, _| {
+        allocation
+            .builds
+            .iter()
+            .find(|declaration| declaration.source == *source)
+            .is_some_and(|declaration| (staffing.build_can_progress)(declaration))
+    })
+    .unwrap_or(false)
+}
+
 /// Run `body` over a band's staffing context: the world as the labor pass reads it, regrow-first,
 /// the band's allocation, its gear, the pool and the working crew. `None` where the band has no
 /// cohort or allocation.
@@ -4560,6 +4608,33 @@ mod tests {
         let out = staff_band(&rows, 5, &mut empty);
         assert_eq!(out[0].kitted, 0, "nothing on the shelf, nothing armed");
         assert!(out[0].bare > 0, "the food row is dealt bare as it was");
+    }
+
+    /// **THE FOOD REFILL'S TARGET FOLLOWS THE KIT IT DEALS**: a basket head takes twice what a bare
+    /// head does, so with the shelf arming every head the reach crew is four, not the seven a
+    /// target struck at one armed head would name.
+    #[test]
+    fn a_chiefs_food_target_is_struck_at_the_kit_the_shelf_arms() {
+        const BASKETS: u32 = 10;
+        const REACH: f32 = 8.0;
+        const ARMED_RATE: f32 = 2.0;
+        let kit: Vec<(Arc<str>, u32)> = vec![(Arc::from("baskets"), 1)];
+        let mut row = linear_row(
+            SourcePriority::Normal,
+            None,
+            0,
+            1.0,
+            REACH,
+            ARMED_RATE,
+            1.0,
+            kit,
+        );
+        row.food_keep_up = true;
+        let mut shelf = BTreeMap::from([(Arc::from("baskets"), BASKETS)]);
+        let out = staff_band(&[row], 12, &mut shelf);
+        let aimed = (REACH / ARMED_RATE) as u32;
+        assert_eq!(out[0].total(), aimed, "no hand past the kitted reach crew");
+        assert_eq!((out[0].kitted, out[0].bare), (aimed, 0));
     }
 
     /// **TWO ROWS ON ONE ITEM**: at equal priority the chief's food row arms first, so the stone row
@@ -5958,6 +6033,24 @@ mod tests {
         );
     }
 
+    /// A small stretch's one bare scout is one scout-tile of surplus over the tiles needed, not a
+    /// reach inflated by `1 / stretch` past the range.
+    #[test]
+    fn a_small_stretchs_scout_reaches_the_range_not_the_range_over_the_stretch() {
+        const SMALL_STRETCH: f32 = 0.1;
+        let plan = ScoutPlan {
+            range: 1,
+            kitted_tiles: 2,
+            bare_tiles: 1,
+            stretch: SMALL_STRETCH,
+            ..ScoutPlan::default()
+        };
+        let mut pool_left = 10;
+        let crew = deal_scouts(&plan, &mut pool_left, None, &mut shelf(0));
+        assert_eq!(crew.total(), 1, "liveness: one bare scout");
+        assert_eq!(crew.reach, 1);
+    }
+
     #[test]
     fn at_equal_priority_a_levy_head_is_trimmed_before_the_bands_own() {
         use crate::components::{LaborAllocation, LaborTarget};
@@ -5992,6 +6085,57 @@ mod tests {
         assert!(trim_one_hand(&allocation, &[], &mut staffed));
         assert_eq!(staffed.rows[0].1.total(), 0, "the levy head went");
         assert_eq!(staffed.rows[1].1.total(), 1, "the band's own head stayed");
+    }
+
+    /// A levy build's builder goes before the band's own row hand at equal priority (the cross-kind
+    /// comparison), though a row's surplus otherwise goes before a build's builders.
+    #[test]
+    fn at_equal_priority_a_levy_builder_is_trimmed_before_an_own_row_hand() {
+        use crate::components::{LaborAllocation, LaborTarget};
+        use crate::ladder_ids::BranchId;
+        let branch = BranchId::new("food_stores");
+        let levy_site = UVec2::new(1, 1);
+        let levy_target = LaborTarget::Tile {
+            tile: levy_site,
+            branch,
+        };
+        let own_target = LaborTarget::Tile {
+            tile: UVec2::new(2, 2),
+            branch,
+        };
+        let mut allocation = LaborAllocation::default();
+        allocation.set_staffed_row(levy_target.clone(), None, None);
+        allocation.set_staffed_row(own_target.clone(), None, None);
+        allocation
+            .assignments
+            .iter_mut()
+            .find(|row| row.target.same_source(&levy_target))
+            .unwrap()
+            .for_tribe = Some(crate::tribe::TribeId(0));
+        let row_crew = StaffedCrew {
+            bare: 1,
+            ..StaffedCrew::default()
+        };
+        let build_crew = BuildCrew {
+            kitted: 0,
+            bare: 1,
+            cap: 1,
+            fed_first: false,
+        };
+        let mut staffed = StaffedBand {
+            rows: vec![(own_target, row_crew)],
+            builds: vec![(
+                BuildSource::Tile {
+                    tile: levy_site,
+                    branch,
+                },
+                build_crew,
+            )],
+            ..StaffedBand::default()
+        };
+        assert!(trim_one_hand(&allocation, &[], &mut staffed));
+        assert_eq!(staffed.builds[0].1.total(), 0, "the levy builder went");
+        assert_eq!(staffed.rows[0].1.total(), 1, "the band's own hand stayed");
     }
 
     // -----------------------------------------------------------------------------------------

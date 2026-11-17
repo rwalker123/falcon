@@ -134,6 +134,13 @@ const SCOUT_TIP_MANY_FORMAT := "%d scouts this turn"
 const SCOUT_TIP_GEARED_FORMAT := " · %d with wayfinding gear"
 const SCOUT_STATUS_SHORT_FORMAT := "Reaches +%d of +%d tiles — not enough people to go farther."
 const SCOUT_RANGE_VALUE_FORMAT := "+%d tiles"
+## **A TRIBE MEMBER'S SCOUT RANGE IS THE TRIBE'S** (#862): the stepper shows it and sets it for every
+## band in the tribe. The card line names that, with the scout count after it when there is one; the
+## tooltip on the value says who it is set for.
+const SCOUT_TRIBE_LINE := "Tribe range"
+const SCOUT_TRIBE_LINE_FORMAT := "Tribe range · %s"
+const SCOUT_TRIBE_TOOLTIP_FORMAT := "Set for the whole tribe: every band in %s scouts this far."
+const SCOUT_TRIBE_COMMAND_MESSAGE := "Set the tribe's scouting range."
 const SCOUT_RANGE_LESS_ARIA := "Scout less far"
 const SCOUT_RANGE_FARTHER_ARIA := "Scout farther"
 const SCOUT_RANGE_VALUE_WIDTH := 64.0

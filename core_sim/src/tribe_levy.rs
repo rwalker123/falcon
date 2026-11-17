@@ -169,9 +169,14 @@ fn levy_row_of(
 }
 
 /// How many heads a carrier's row finished the last staffing short of its want: the row's
-/// `reach_crew` less its workers, or its build's cap less its builders (a build counts only once it
-/// holds a builder, so a build that cannot progress is never "short").
-fn shortfall_of(allocation: &LaborAllocation, work: &TribeWork) -> u32 {
+/// `reach_crew` less its workers, or its build's cap less its builders. A build is short when it
+/// **can progress** (open to builders: no refusing gate, no materials stall) and holds fewer than
+/// its cap, **including at no builder at all** (a budget spent before it was dealt one); a build
+/// that cannot progress is never short, so a gated build does not chain the work across the tribe.
+fn shortfall_of(world: &World, member: Entity, work: &TribeWork) -> u32 {
+    let Some(allocation) = world.get::<LaborAllocation>(member) else {
+        return 0;
+    };
     let Some(row) = levy_row_of(allocation, work.tile, work.branch) else {
         return 0;
     };
@@ -181,8 +186,10 @@ fn shortfall_of(allocation: &LaborAllocation, work: &TribeWork) -> u32 {
         branch: work.branch,
     };
     let build_short = allocation.build_crew(&source).map_or(0, |crew| {
-        if crew.total() > 0 {
-            crew.cap.saturating_sub(crew.total())
+        let open = crew.total() < crew.cap
+            && crate::staffing::band_build_can_progress(world, member, &source);
+        if open {
+            crew.cap - crew.total()
         } else {
             0
         }
@@ -220,9 +227,16 @@ pub fn apply_tribe_pass(world: &mut World, id: TribeId) {
         let work = &tribe.works[w];
         if is_road_branch(&scene.ladder, work.branch) {
             // One band per road tile: no overflow chain.
-            let carrier = road_carrier(world, &members, work.tile, wrap_width, scene.wrap);
+            let carrier = road_carrier(world, id, &members, work.tile, wrap_width, scene.wrap);
             if let Some(band) = carrier {
                 road_carriers.push((w, band));
+            } else {
+                // Kept by another tribe: no member declares a build on it.
+                for member in &members {
+                    if let Some(mut allocation) = world.get_mut::<LaborAllocation>(member.entity) {
+                        allocation.stop_build(&BuildSource::Road(work.tile));
+                    }
+                }
             }
             per_work.insert(
                 w,
@@ -254,9 +268,7 @@ pub fn apply_tribe_pass(world: &mut World, id: TribeId) {
             });
             desired.entry(member.band).or_default().push((w, max));
             // Is this carrier short of the work's want? Its shortfall is the next one's Max.
-            let short = world
-                .get::<LaborAllocation>(member.entity)
-                .map_or(0, |allocation| shortfall_of(allocation, work));
+            let short = shortfall_of(world, member.entity, work);
             if short == 0 {
                 break;
             }
@@ -290,6 +302,7 @@ pub fn apply_tribe_pass(world: &mut World, id: TribeId) {
 /// keeps handing a road tile to its keeper, so it does not change hands as bands move.
 fn road_carrier(
     world: &World,
+    id: TribeId,
     members: &[Member],
     tile: UVec2,
     width: u32,
@@ -303,16 +316,43 @@ fn road_carrier(
     if let Some(band) = keeper.filter(|band| members.iter().any(|m| m.band == *band)) {
         return Some(band);
     }
+    // A tile another tribe's band keeps is that tribe's: this tribe's work does not take it.
+    if keeper.is_some_and(|band| kept_by_another_tribe(world, id, band)) {
+        return None;
+    }
     members
         .iter()
         .min_by_key(|m| (hex_distance_wrapped(m.camp, tile, width, wrap), m.band))
         .map(|m| m.band)
 }
 
+/// Whether `band` is a member of a tribe other than `id`.
+fn kept_by_another_tribe(world: &World, id: TribeId, band: BandId) -> bool {
+    world
+        .resource::<TribeRegistry>()
+        .tribe_of(band)
+        .is_some_and(|other| other.id != id)
+}
+
 /// **A KEEPER THAT LEFT THE TRIBE STOPS KEEPING ITS ROAD TILES**: a road tile of one of the tribe's
 /// road works whose keeper is a band of the tribe's people that is no longer a member (or is gone)
 /// is released, so the pass hands the tile to the nearest member, which picks it up by grading it.
+/// A keeper that belongs to **another tribe** is never released here: it keeps the tile for that
+/// tribe, and two tribes listing one tile would otherwise release each other's keeper every pass.
 fn release_departed_keepers(world: &mut World, tribe: &crate::tribe::Tribe, ladder: &LadderConfig) {
+    let other_tribes_keepers: BTreeSet<BandId> = tribe
+        .works
+        .iter()
+        .filter(|work| is_road_branch(ladder, work.branch))
+        .filter_map(|work| {
+            world
+                .resource::<crate::routes::RoadRegistry>()
+                .road(work.tile)
+                .and_then(|road| road.keeper)
+                .map(|keeper| keeper.band)
+        })
+        .filter(|band| kept_by_another_tribe(world, tribe.id, *band))
+        .collect();
     let mut roads = world.resource_mut::<crate::routes::RoadRegistry>();
     for work in tribe
         .works
@@ -323,7 +363,9 @@ fn release_departed_keepers(world: &mut World, tribe: &crate::tribe::Tribe, ladd
             continue;
         };
         if road.keeper.is_some_and(|keeper| {
-            keeper.faction == tribe.faction && !tribe.members.contains(&keeper.band)
+            keeper.faction == tribe.faction
+                && !tribe.members.contains(&keeper.band)
+                && !other_tribes_keepers.contains(&keeper.band)
         }) {
             road.release_keeper();
         }
@@ -626,6 +668,20 @@ pub fn refresh_levy_workers(world: &mut World, id: TribeId) {
     }
 }
 
+/// **Restate every tribe's carrier heads from the rows as they stand**: the Snapshot stage runs it
+/// after the last restaff that can touch a levy row (`restaff_freed_hands`) and before the capture,
+/// so `tribeWorks[].workers` equals the levy rows' workers the same frame publishes.
+pub fn refresh_all_levy_workers(world: &mut World) {
+    let ids: Vec<TribeId> = world
+        .resource::<TribeRegistry>()
+        .iter()
+        .map(|t| t.id)
+        .collect();
+    for id in ids {
+        refresh_levy_workers(world, id);
+    }
+}
+
 /// Re-run the pass for a tribe and restaff every member: what every tribe command ends with.
 fn rerun_and_restaff(world: &mut World, id: TribeId) {
     apply_tribe_pass(world, id);
@@ -728,6 +784,27 @@ pub fn tribe_work(
             format!("A road work names the rung to build to, like `{branch}:<rung>`."),
         );
     }
+    if is_road {
+        // A tile another tribe's band keeps is that tribe's: say so rather than "no band to carry".
+        let keeper = world
+            .resource::<crate::routes::RoadRegistry>()
+            .road(tile)
+            .and_then(|road| road.keeper)
+            .map(|keeper| keeper.band);
+        let members = world
+            .resource::<TribeRegistry>()
+            .get(id)
+            .map(|tribe| tribe.members.clone())
+            .unwrap_or_default();
+        if keeper.is_some_and(|keeper| {
+            !members.contains(&keeper) && kept_by_another_tribe(world, id, keeper)
+        }) {
+            return refuse(
+                "road_kept_by_another_tribe",
+                format!("Another tribe keeps the road at ({}, {}).", tile.x, tile.y),
+            );
+        }
+    }
     if let Some(rung) = rung {
         let def = ladder.rung(rung).clone();
         let gate = if is_road {
@@ -738,6 +815,19 @@ pub fn tribe_work(
             })
         };
         if let Err(message) = gate {
+            return refuse("build_refused", message);
+        }
+    }
+    // A work with no rung is accepted exactly where the band's own `assign_labor ... tile` would be:
+    // another people's improvement refuses it, and an empty site gets the branch's root.
+    if rung.is_none() && !is_road {
+        if let Err(message) = crate::build_gates::place_tile_improvement_root(
+            world,
+            faction,
+            Some(band),
+            tile,
+            branch_id,
+        ) {
             return refuse("build_refused", message);
         }
     }
@@ -805,7 +895,7 @@ fn road_work_gate(
         .map(|tribe| tribe.members.clone())
         .unwrap_or_default();
     let found = resident_members(world, &members);
-    let Some(carrier) = road_carrier(world, &found, tile, scene.grid.0, scene.wrap) else {
+    let Some(carrier) = road_carrier(world, id, &found, tile, scene.grid.0, scene.wrap) else {
         return Err("The tribe has no band to carry the road.".to_string());
     };
     crate::build_gates::validate_road_verb(world, faction, carrier, tile, def)

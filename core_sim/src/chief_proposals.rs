@@ -1139,10 +1139,17 @@ pub fn commit_approval(
     Ok(())
 }
 
+/// **THE ORDER A PROBED SOURCE BELONGS TO**, by what a unit of biomass is worth as food against as
+/// fodder. The rates, not `per_hand x rate`: a patch off a gathering site probes `per_hand == 0`
+/// (nothing is gathered from it today), which would read every such patch as food.
+fn order_kind_of_probe(probe: &crate::staffing::SourceProbe) -> &'static str {
+    crate::food_orders::product_kind(probe.food_rate, probe.fodder_rate)
+}
+
 /// **THE ORDER KIND A NEW SOURCE ROW SERVES**: a forage patch or herd by the chief's own food-or-fodder
-/// rule (`food_orders::product_kind` over the probe's per-hand products), a new row
+/// rule (`food_orders::product_kind` over the probe's food and fodder rates), a new row
 /// is only ever a forage patch here; `None` for any other target, which no order lists.
-fn chiefs_order_kind_of_row(
+pub fn chiefs_order_kind_of_row(
     world: &World,
     faction: FactionId,
     entity: bevy::prelude::Entity,
@@ -1150,20 +1157,27 @@ fn chiefs_order_kind_of_row(
 ) -> Option<&'static str> {
     match target {
         LaborTarget::Forage { .. } | LaborTarget::Hunt { .. } => {
-            let kit = world.get::<crate::components::BandEquipment>(entity)?;
-            crate::take_claims::with_world_sources(world, faction, |sources| {
-                let refill = sources.labor.keep_on_hand_refill_turns as f32;
-                let crew = sources.labor.tile_worker_cap as f32;
-                let probe = crate::staffing::probe_source(sources, kit, target, crew, refill)?;
-                Some(crate::food_orders::product_kind(
-                    probe.per_hand * probe.food_rate,
-                    probe.per_hand * probe.fodder_rate,
-                ))
-            })
-            .or(Some(crate::keep_on_hand::FOOD_KIND))
+            probed_order_kind_of_row(world, faction, entity, target)
+                .or(Some(crate::keep_on_hand::FOOD_KIND))
         }
         _ => None,
     }
+}
+
+/// [`chiefs_order_kind_of_row`] with no fallback: `None` where the source cannot be probed.
+pub fn probed_order_kind_of_row(
+    world: &World,
+    faction: FactionId,
+    entity: bevy::prelude::Entity,
+    target: &LaborTarget,
+) -> Option<&'static str> {
+    let kit = world.get::<crate::components::BandEquipment>(entity)?;
+    crate::take_claims::with_world_sources(world, faction, |sources| {
+        let refill = sources.labor.keep_on_hand_refill_turns as f32;
+        let crew = sources.labor.tile_worker_cap as f32;
+        let probe = crate::staffing::probe_source(sources, kit, target, crew, refill)?;
+        Some(order_kind_of_probe(&probe))
+    })
 }
 
 /// **APPROVE A BAND OR TILE PROPOSAL IN ONE STEP** (a build on a worked source needs the server's
@@ -1207,4 +1221,31 @@ pub fn defer_proposal(
     });
     refresh_proposals(world, false);
     Ok(())
+}
+
+#[cfg(test)]
+mod order_kind_tests {
+    use super::*;
+    use crate::keep_on_hand::{FODDER_KIND, FOOD_KIND};
+    use crate::staffing::SourceProbe;
+
+    /// A probe of an off-site wild patch: nothing is gathered from it today (`per_hand == 0`), so
+    /// only the rates say what it is for.
+    fn off_site_probe(food_rate: f32, fodder_rate: f32) -> SourceProbe {
+        SourceProbe {
+            viable: true,
+            sustainable: 0.0,
+            cap: 0.0,
+            per_hand: 0.0,
+            food_rate,
+            fodder_rate,
+        }
+    }
+
+    #[test]
+    fn a_fodder_dominant_off_site_patch_classifies_as_fodder() {
+        assert_eq!(order_kind_of_probe(&off_site_probe(0.2, 1.0)), FODDER_KIND);
+        assert_eq!(order_kind_of_probe(&off_site_probe(1.0, 0.2)), FOOD_KIND);
+        assert_eq!(order_kind_of_probe(&off_site_probe(0.5, 0.5)), FOOD_KIND);
+    }
 }

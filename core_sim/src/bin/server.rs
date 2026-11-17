@@ -5345,28 +5345,17 @@ fn handle_assign_labor(
     if let (true, LaborTarget::Tile { tile, branch }) =
         (workers > 0 || target.is_staffed(), &target)
     {
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
-        let theirs = app
-            .world
-            .resource::<core_sim::TileImprovementRegistry>()
-            .get(*tile, *branch)
-            .is_some_and(|improvement| improvement.faction != faction);
-        if theirs {
-            emit_command_failure(
-                app,
-                event_kind,
-                faction,
-                format!(
-                    "The improvement at ({}, {}) belongs to another people.",
-                    tile.x, tile.y
-                ),
-            );
+        let placing_band = app.world.get::<BandId>(band.entity).copied();
+        if let Err(reason) = core_sim::build_gates::place_tile_improvement_root(
+            &mut app.world,
+            faction,
+            placing_band,
+            *tile,
+            *branch,
+        ) {
+            emit_command_failure(app, event_kind, faction, reason);
             return;
         }
-        let placing_band = app.world.get::<BandId>(band.entity).copied();
-        app.world
-            .resource_mut::<core_sim::TileImprovementRegistry>()
-            .place_owned(*tile, *branch, faction, placing_band, &ladder);
     }
     // **A BAND CREW PLACES THE BAND'S OWN IMPROVEMENT**, at the branch's floor. The row names the
     // band the command was addressed to (the selected band), never another.
@@ -5605,14 +5594,24 @@ fn handle_scouting_range(
     let Some(band) = select_starting_band(app, faction, band_id, "assign_labor", event_kind) else {
         return;
     };
-    // **A tribe member's scouting range is the tribe's** (#862): `tribe_scout` sets it.
+    let cap = app
+        .world
+        .resource::<LaborConfigHandle>()
+        .get()
+        .scout
+        .range_past_local_max;
+    let range = requested_tiles.min(cap);
+    // **A tribe member's scouting RANGE is the tribe's** (#862): `tribe_scout` sets it. The kit is
+    // still the band's, so a command that restates the band's current range (the kit picker's)
+    // is accepted and applies the kit alone; one that asks for a different range is refused.
     let in_a_tribe = band.id.is_some_and(|id| {
         app.world
             .resource::<core_sim::TribeRegistry>()
             .tribe_of(id)
             .is_some()
     });
-    if in_a_tribe {
+    let current_range = band_allocation_mut(app, band.entity).scouting_range_tiles();
+    if in_a_tribe && range != current_range {
         emit_command_failure(
             app,
             event_kind,
@@ -5624,13 +5623,6 @@ fn handle_scouting_range(
         );
         return;
     }
-    let cap = app
-        .world
-        .resource::<LaborConfigHandle>()
-        .get()
-        .scout
-        .range_past_local_max;
-    let range = requested_tiles.min(cap);
     band_allocation_mut(app, band.entity).set_scouting_range(range, kit);
     restaff_and_reseed(app, band.entity);
     let (staffed, reach) = {
@@ -10473,11 +10465,6 @@ fn handle_unqueue(app: &mut bevy::prelude::App, faction: FactionId, source: Buil
     );
 }
 
-/// **A BAND ORDER** (#860) - `band_order <faction> <band> <kind> set <target> <priority>` |
-/// `release` | `claim`. `set` stores the target and priority, `release` is Crew it yourself (the
-/// chief's rows stay and become the player's), `claim` is Hand it to the chief. Each restaffs at
-/// once, so the dig row (placed by the sim, `core_sim::keep_on_hand`) and its crew show on the next
-/// frame. Refused for a band with no leader, a kind that takes no order and a target of zero.
 /// **A TRIBE'S ORDER** (#862): `tribe_work`, `tribe_levy` and `tribe_scout`, addressed by a member
 /// band that names its tribe. Each re-runs the tribe pass and restaffs every member
 /// (`core_sim::tribe_levy`); a refusal names its token (`band_not_in_tribe`, `not_a_tribe_work`,
@@ -10559,6 +10546,11 @@ fn handle_tribe_order(
     }
 }
 
+/// **A BAND ORDER** (#860) - `band_order <faction> <band> <kind> set <target> <priority>` |
+/// `release` | `claim`. `set` stores the target and priority, `release` is Crew it yourself (the
+/// chief's rows stay and become the player's), `claim` is Hand it to the chief. Each restaffs at
+/// once, so the dig row (placed by the sim, `core_sim::keep_on_hand`) and its crew show on the next
+/// frame. Refused for a band with no leader, a kind that takes no order and a target of zero.
 fn handle_band_order(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -17945,8 +17937,9 @@ mod tests {
         let row_key = core_sim::keep_on_hand::source_key(&row.target).unwrap();
         assert_eq!(
             allocation.order_rows.get(&row_key).map(String::as_str),
-            Some("food"),
-            "the chief owns the food order, so the staged row is listed under it"
+            Some("fodder"),
+            "the fixture's patch gives more fodder than food, so the staged row is listed under the \
+             chief's fodder order"
         );
         assert!(
             allocation.handed_rows.contains(&row_key),
@@ -17954,7 +17947,7 @@ mod tests {
         );
         assert_eq!(
             wire_forage_row(&mut app, coord),
-            ("food".to_string(), true),
+            ("fodder".to_string(), true),
             "the published row is the chief's"
         );
         let before = app
@@ -17968,7 +17961,7 @@ mod tests {
         }
         assert_eq!(
             wire_forage_row(&mut app, coord),
-            ("food".to_string(), true),
+            ("fodder".to_string(), true),
             "the chief's row survives the managing passes"
         );
         let allocation = app.world.get::<LaborAllocation>(entity).unwrap();
@@ -18033,7 +18026,19 @@ mod tests {
     #[test]
     fn an_approved_new_ground_row_stays_the_players_under_a_player_owned_food_order() {
         let (mut app, faction, band) = proposal_world_with(true, false);
-        let coord = find_lesson_ground(&app, true);
+        let band_ent = band_entity(&mut app, band);
+        let coord = find_lesson_ground_by(&app, true, &|tile| {
+            // A patch the chief files under the FOOD order (not the fodder one).
+            let target = LaborTarget::Forage {
+                tile,
+                floor: core_sim::DEFAULT_ESCAPEMENT_FLOOR,
+                species: None,
+                take_species: core_sim::TakeSelection::EVERYTHING,
+            };
+            core_sim::chief_proposals::probed_order_kind_of_row(
+                &app.world, faction, band_ent, &target,
+            ) == Some(core_sim::keep_on_hand::FOOD_KIND)
+        });
         let entity = proposal_band_on(&mut app, faction, band, coord);
         grant_seed_selection(&mut app, faction);
         app.world
@@ -18059,8 +18064,15 @@ mod tests {
         assert_eq!(offer.build_key, key);
         send_command_line(&mut app, &format!("approve_proposal 0 {band}"));
         let allocation = app.world.get::<LaborAllocation>(entity).unwrap();
-        assert!(allocation.order_rows.keys().all(|k| !k.starts_with("f:")));
-        assert!(allocation.handed_rows.is_empty());
+        // The new row is not listed. (Another patch the chief listed on arrival, while the food
+        // order was still his, stays listed: handing the order over unlists nothing.)
+        let new_key = format!("f:{},{}", coord.x, coord.y);
+        assert!(
+            !allocation.order_rows.contains_key(&new_key),
+            "{:?}",
+            allocation.order_rows
+        );
+        assert!(!allocation.handed_rows.contains(&new_key));
         for _ in 0..4 {
             app.update();
         }
@@ -21161,6 +21173,15 @@ mod tests {
     /// Off-site fertile ground with a patch that some lesson would admit (`NeedsLesson` to a people
     /// holding none), WATERED or DRY as asked - Seed Selection opens the watered, Worked Land the dry.
     fn find_lesson_ground(app: &bevy::prelude::App, watered: bool) -> UVec2 {
+        find_lesson_ground_by(app, watered, &|_| true)
+    }
+
+    /// [`find_lesson_ground`] restricted to the tiles `accept` admits.
+    fn find_lesson_ground_by(
+        app: &bevy::prelude::App,
+        watered: bool,
+        accept: &dyn Fn(UVec2) -> bool,
+    ) -> UVec2 {
         let (width, height) = {
             let registry = app.world.resource::<TileRegistry>();
             (registry.width, registry.height)
@@ -21182,7 +21203,7 @@ mod tests {
                         flora.species.get(&crop).is_some_and(|def| {
                             def.cultivation_ceiling
                                 .is_none_or(|ceiling| ceiling != shipped::plant_wild())
-                        })
+                        }) && accept(*coord)
                     }
             })
             .unwrap_or_else(|| {
@@ -33762,9 +33783,10 @@ mod tests {
         );
     }
 
-    /// **A TRIBE MEMBER'S SCOUTING RANGE IS THE TRIBE'S** (#862): `assign_labor ... scout` on a member is
-    /// refused `scouting_set_by_tribe` and changes nothing, `tribe_scout` (through the real handler)
-    /// sets the one range and echoes it, and a band in no tribe is untouched.
+    /// **A TRIBE MEMBER'S SCOUTING RANGE IS THE TRIBE'S** (#862): `assign_labor ... scout` naming another
+    /// range on a member is refused `scouting_set_by_tribe` and changes nothing, restating the current
+    /// range with a kit applies the kit alone, `tribe_scout` (through the real handler) sets the one
+    /// range and echoes it, and a band in no tribe is untouched.
     #[test]
     fn a_tribe_members_scout_command_is_refused_and_the_tribe_sets_the_range() {
         let mut app = build_world_app();
@@ -33833,6 +33855,36 @@ mod tests {
                 || entry.label.contains("scouting_set_by_tribe")
         });
         assert!(refused, "the refusal names scouting_set_by_tribe");
+        // The kit is still the band's: restating the band's current range with a kit applies the
+        // kit alone (the range stays the tribe's).
+        let kitted = |app: &mut bevy::prelude::App, kit: &str| {
+            handle_assign_labor(
+                app,
+                faction,
+                Some(band.0),
+                "scout".to_string(),
+                2,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(kit.to_string()),
+                Vec::new(),
+                false,
+            );
+            let allocation = app.world.get::<LaborAllocation>(entity).unwrap();
+            let row = allocation
+                .assignments
+                .iter()
+                .find(|row| matches!(row.target, LaborTarget::Scout))
+                .expect("the member keeps its Scout row");
+            (row.kit.clone(), allocation.scouting_range_tiles())
+        };
+        let (bare_kit, range) = kitted(&mut app, "none");
+        let (armed_kit, range_after) = kitted(&mut app, "wayfinding");
+        assert_eq!((range, range_after), (2, 2), "the range stayed the tribe's");
+        assert_ne!(bare_kit, armed_kit, "the kit picker's choice applied");
         handle_tribe_order(
             &mut app,
             faction,

@@ -218,7 +218,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "tribe_work",
         aliases: &[],
-        summary: "A TRIBE'S WORK, ordered through one of its member bands (the band names its tribe; refused `band_not_in_tribe` otherwise): add or update a tile improvement the tribe keeps and, with a target rung (`<branch>:<rung>`), builds - the tribe levies its bands for it, putting it on the nearest member's list as a levy row and, while that band's crew falls short, on the next nearest. A member's own row on the site is adopted. Tile-kind branches only. `stop` removes the work and drops its levy rows.",
+        summary: "A TRIBE'S WORK, ordered through one of its member bands (the band names its tribe; refused `band_not_in_tribe` otherwise): add or update a tile improvement or a ROAD tile the tribe keeps and, with a target rung (`<branch>:<rung>`), builds - the tribe levies its bands for it. A tile improvement goes on the nearest member's list as a levy row and, while that band's crew falls short, on the next nearest (overflow); a member's own row on the site is adopted, another people's improvement on the site is refused, and with no rung an empty site gets the branch's root. A road work (`route`) is one road tile, REQUIRES its rung (`route:dirt_road` to grade, `route:paved_road` to pave; refused `road_needs_rung` otherwise, and `road_kept_by_another_tribe` where another tribe's band keeps the tile), is carried by ONE band (the band that keeps the tile, else the nearest member) and has no overflow. Patch, herd, deposit and band branches are refused `not_a_tribe_work`. `stop` removes the work and drops its levy rows (a road's declared build goes, the road and its keeper stay).",
         usage: "tribe_work <faction_id> <band_id> <branch> <x> <y> [<branch>:<rung>] [high|normal|low] | tribe_work <faction_id> <band_id> stop <branch> <x> <y>",
     },
     CommandVerbHelp {
@@ -230,7 +230,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "tribe_scout",
         aliases: &[],
-        summary: "A TRIBE'S ONE SCOUTING RANGE, in tiles past the local range, ordered through one of its member bands (clamped as `assign_labor scout` is). Every member scouts its own stretch of the tribe's edge; a member's own `assign_labor scout` is refused `scouting_set_by_tribe`.",
+        summary: "A TRIBE'S ONE SCOUTING RANGE, in tiles past the local range, ordered through one of its member bands (clamped as `assign_labor scout` is). Every member scouts its own stretch of the tribe's edge; a member's own `assign_labor scout` is refused `scouting_set_by_tribe` when it names a different range (the kit is still the band's to pick).",
         usage: "tribe_scout <faction_id> <band_id> <range>",
     },
     CommandVerbHelp {

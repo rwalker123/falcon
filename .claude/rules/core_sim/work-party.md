@@ -8,6 +8,8 @@ paths:
   - "core_sim/src/staffing_preview.rs"
   - "core_sim/tests/staffing_preview.rs"
   - "core_sim/src/take_claims.rs"
+  - "core_sim/src/source_holders.rs"
+  - "core_sim/tests/one_band_per_source.rs"
   - "core_sim/src/systems/labor.rs"
   - "core_sim/src/supply.rs"
   - "core_sim/src/labor_config.rs"
@@ -74,7 +76,7 @@ Rows are grouped by
 is not free for the row that was just given it. The crews are applied to a copy and, while the
 hands committed (rows, bench, walkers) exceed the people the band has, one hand comes off the
 lowest-priority row whose crew is above the party already standing (a row cannot be shrunk below its
-party without cutting more hands loose). A build ranks by its site's Priority through `staffing::build_site_priority` (a road build at the Roadwork row's), the same reading the passes and the labor pass use. At equal priority the rows' surplus goes before a build's builders (the passes deal a group's builds their first head before its hold crews, so the trim runs in reverse); within one kind the later index goes first. Pinned by `staffing::tests::{a_high_roadwork_build_is_trimmed_after_a_normal_row, a_low_roadwork_build_is_trimmed_before_a_normal_row, at_equal_priority_a_row_is_trimmed_before_the_build}`. The near row waits for the walkers to arrive. Pinned by
+party without cutting more hands loose). A build ranks by its site's Priority through `staffing::build_site_priority` (a road build at the Roadwork row's), the same reading the passes and the labor pass use. At equal priority the rows' surplus goes before a build's builders (the passes deal a group's builds their first head before its hold crews, so the trim runs in reverse), **except that a levy head of a tribe member (a levy row's or a levy build's builder) goes before any of the band's own heads of either kind**; within one kind the later index goes first. Pinned also by `staffing::tests::at_equal_priority_a_levy_builder_is_trimmed_before_an_own_row_hand`. Pinned by `staffing::tests::{a_high_roadwork_build_is_trimmed_after_a_normal_row, a_low_roadwork_build_is_trimmed_before_a_normal_row, at_equal_priority_a_row_is_trimmed_before_the_build}`. The near row waits for the walkers to arrive. Pinned by
 `work_party_caravan::a_far_party_the_staffing_shrinks_walks_its_cut_hands_home_and_commits_no_hand_twice`.
 
 **Within a priority group every pass deals ONE head at a time, round-robin**, across the group's rows
@@ -748,8 +750,8 @@ clamp note on the feed line; `scout 0` drops the row. The Scout row exists exact
   carries the tribe's range N and `LaborAssignment::scouting_stretch` (the member's share of the tribe's
   scouting edge, `1.0` for a band in no tribe); the scouts are dealt in the levy step, after pass 1 and
   within the levy budget, the stretch needing `ceil(stretch x N)` scout-tiles and `scouting_reach` being
-  `floor(seen / stretch)` (a zero stretch deals no scouts). `assign_labor ... scout` on a member is refused
-  `scouting_set_by_tribe`; the tribe sets the range with `tribe_scout`. `leadership.md` -> "A tribe levies
+  `N + (seen - needed)` once `seen >= needed` and `floor(seen / stretch)` short of it (a zero stretch deals no scouts). `assign_labor ... scout` on a member is refused
+  `scouting_set_by_tribe` when it names a range other than the band's current one (the kit picker's restatement of the current range applies the kit); the tribe sets the range with `tribe_scout`. `leadership.md` -> "A tribe levies
   its bands" has the geometry and the wire.
 - **Visibility**: with `scouting_reach > 0`, vantages are posted at
   `visibility_systems::scout_vantage_posting_distance(reach_tiles, scouting_reach, sight)` =

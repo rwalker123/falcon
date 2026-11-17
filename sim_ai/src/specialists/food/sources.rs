@@ -266,11 +266,9 @@ pub(crate) fn worked_by_another_own_band(
     if holds(band) {
         return false;
     }
-    let mut siblings = view
-        .snapshot
-        .populations
-        .iter()
-        .filter(|other| other.faction == band.faction && other.band_id != band.band_id);
+    let mut siblings = view.snapshot.populations.iter().filter(|other| {
+        other.faction == band.faction && other.band_id != band.band_id && !other.is_expedition
+    });
     if siblings.clone().any(holds) {
         return true;
     }

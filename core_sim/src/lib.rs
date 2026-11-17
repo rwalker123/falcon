@@ -1784,6 +1784,9 @@ pub fn build_headless_app() -> App {
                 // **Hands a build or a retired bench order freed this turn are dealt before the
                 // frame is cut.** Every crew-freeing step is in an earlier stage.
                 systems::restaff_freed_hands.run_if(population_stage_enabled()),
+                // **The tribe's carrier heads are read after the last restaff that can touch a levy
+                // row**, so `tribeWorks[].workers` is the heads the frame's levy rows hold.
+                tribe_levy::refresh_all_levy_workers.run_if(population_stage_enabled()),
                 metrics::collect_metrics,
                 systems::advance_tick,
                 // **Before the capture, and only on the turn path.** The transfer counters are the

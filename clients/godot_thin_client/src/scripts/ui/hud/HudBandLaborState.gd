@@ -2054,6 +2054,17 @@ func effective_role_workers(band: Dictionary, kind: String) -> Dictionary:
 ## recapture lands the card claims no shortfall it cannot know about - `reach` follows the ask, and the
 ## counts are the settled ones.
 func scouting_state(band: Dictionary) -> Dictionary:
+	# A tribe member's range is the tribe's (#862): the row's own `scouting_range` is not the ask.
+	if in_tribe(band):
+		return _scouting_state_of(band, int(band.get("tribe_scouting_range", 0)), false)
+	return _scouting_state_of(band, -1, true)
+
+## A band that belongs to a formed tribe: `tribe_name` is empty for a band in none.
+static func in_tribe(band: Dictionary) -> bool:
+	return String(band.get("tribe_name", "")) != ""
+
+## `forced_range` < 0 reads the row's own range; `overlay_pending` lets a pending command replace it.
+func _scouting_state_of(band: Dictionary, forced_range: int, overlay_pending: bool) -> Dictionary:
 	var row: Dictionary = {}
 	for entry in labor_assignments_of(band):
 		if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() \
@@ -2062,9 +2073,9 @@ func scouting_state(band: Dictionary) -> Dictionary:
 			break
 	var pend := pending_assigns_for(int(band.get("entity", -1)))
 	var key := pending_key(HudConst.LABOR_KIND_SCOUT, -1, -1, "")
-	var wanted := int(row.get("scouting_range", 0))
+	var wanted := int(row.get("scouting_range", 0)) if forced_range < 0 else forced_range
 	var reach := int(row.get("scouting_reach", 0))
-	if pend.has(key):
+	if overlay_pending and pend.has(key):
 		wanted = int((pend[key] as Dictionary).get("workers", 0))
 		reach = wanted
 	return {"range": wanted, "reach": reach, "workers": int(row.get("workers", 0)),

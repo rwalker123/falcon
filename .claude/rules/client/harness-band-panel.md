@@ -2344,6 +2344,25 @@ list. **Sabotage-verified**: restoring the old `await process_frame` then settin
 drawn frame 1 of every list (15 failures, e.g. `scroll_vertical is the player's (1003 then, 0 now)`) and
 passes frames 2 and 3 — which is the flash.
 
+**The page-change half** (`_page_change`, through the real cycler): each list is scrolled on the first
+band, then a second band, the first again, and the faction page are visited, and the list must read
+`scroll_vertical` 0 on each. **Every "starts at the top" has a precondition**: the destination list's
+scroll range must exceed the offset just left behind, or a carried offset could not show. So the second
+band owns its own long list (24 parties, 40 history rows, 40 roads) and the Band zone runs on a 420px
+canvas, because the faction page's Band zone is shorter than a band's. The expanded road roster is
+covered the same way. **The cycler reaches a band through the tile's occupant roster**, which a real
+snapshot refreshes and the harness does not, so `_sync_selection_roster` puts the pushed bands into it;
+without that, cycling back to the first band drew the stale 4-row tile-selection copy instead of the 34
+rows just pushed. The faction page does not draw the Work, roster, Parties, Peoples or Trade lists, so
+the faction claim there is the RETURN trip (faction page to the first band), plus the Band zone, which
+the page does draw. **Sabotage-verified**: not dropping the outgoing Work nodes on a subject change
+fails the Work list and the roster.
+
+**Tribe scout card** (`_assert_tribe_scout_card` in `band_panel_preview.gd`, frame
+`band_panel_scout_tribe`): a band in a tribe reads the tribe's range on the stepper, says `Tribe range`
+on the card and names the tribe in the value's hover; its stepper sends `tribe_scout`, its kit picker
+still sends `assign_labor ... scout` at the tribe's range.
+
 ## `band_panel_family_limit.gd` - the breeding ceiling's frames (issue #691)
 
 A satellite of `band_panel_preview` in its own file (the `band_panel_trade_tab.gd` shape), appended

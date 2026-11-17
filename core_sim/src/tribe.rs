@@ -727,7 +727,10 @@ pub fn advance_tribes(
                 let levy: u32 = allocation
                     .assignments
                     .iter()
-                    .filter(|row| row.for_tribe.is_some())
+                    .filter(|row| {
+                        row.for_tribe.is_some()
+                            && !matches!(row.target, crate::components::LaborTarget::Scout)
+                    })
                     .map(|row| row.workers)
                     .sum();
                 let scouts: u32 = allocation

@@ -18,11 +18,11 @@ use core_sim::tribe_levy::{
 };
 use core_sim::{
     advance_tribes, points_per_turn, publish_baseline_snapshot, reconcile_band_culture_layers,
-    BandId, BandLeader, BandLeadership, BandName, BranchId, BuildJob, BuildSource, ConnectionKey,
-    ConnectionLedger, CultureManager, CultureOwner, FactionId, FoundingLines, LaborAllocation,
-    LaborTarget, LeaderKind, LeadershipConfigHandle, LevyCeiling, PopulationCohort, ResidentBand,
-    RungId, Sighting, SimulationConfig, SimulationTick, SnapshotHistory, Tile,
-    TileImprovementRegistry, TribeId, TribeRegistry, CULTURE_TRAIT_AXES,
+    BandId, BandLeader, BandLeadership, BandName, BranchId, BuildCrew, BuildJob, BuildSource,
+    ConnectionKey, ConnectionLedger, CultureManager, CultureOwner, FactionId, FoundingLines,
+    LaborAllocation, LaborTarget, LeaderKind, LeadershipConfigHandle, LevyCeiling,
+    PopulationCohort, ResidentBand, RungId, Sighting, SimulationConfig, SimulationTick,
+    SnapshotHistory, Tile, TileImprovementRegistry, TribeId, TribeRegistry, CULTURE_TRAIT_AXES,
 };
 
 const TEST_BAND_BASE: u64 = 9_000;
@@ -306,6 +306,138 @@ fn the_overflow_goes_to_the_next_nearest_member_one_turn_behind_and_goes_when_no
     assert_eq!(levy_rows(&app, two).len(), 1);
 }
 
+/// A restaff after the pass changes a levy row's heads; the Snapshot stage's refresh then states
+/// them on the work, so `tribeWorks[].workers` equals the levy rows' workers in the same frame.
+#[test]
+fn the_published_work_workers_follow_the_levy_rows_after_the_last_restaff() {
+    const RESTAFFED: u32 = 3;
+    let (mut app, _tribe, _one, two, _three) = tribe_of_two();
+    tribe_work(&mut app.world, FACTION, id(1), PIT_BRANCH, SITE, None, None).unwrap();
+    {
+        let mut allocation = app.world.get_mut::<LaborAllocation>(two).unwrap();
+        let row = allocation
+            .assignments
+            .iter_mut()
+            .find(|row| row.for_tribe.is_some())
+            .unwrap();
+        row.workers = RESTAFFED;
+    }
+    let published = |app: &mut App| {
+        with_row(app, 2, |row| {
+            row.tribeWorks()
+                .expect("the works ride the row")
+                .get(0)
+                .workers()
+        })
+    };
+    assert_ne!(
+        published(&mut app),
+        RESTAFFED,
+        "the work still reads the earlier staffing"
+    );
+    app.world
+        .run_system_once(core_sim::tribe_levy::refresh_all_levy_workers);
+    assert_eq!(published(&mut app), RESTAFFED);
+}
+
+/// A work with no rung is taken where the band's own `assign_labor ... tile` would be: refused on
+/// another people's improvement with the same sentence, and an empty site is placed at the root.
+#[test]
+fn a_work_with_no_rung_is_gated_and_placed_as_assign_labor_would() {
+    let (mut app, tribe, _one, _two, _three) = tribe_of_two();
+    let branch = BranchId::new(PIT_BRANCH);
+    let rival = FactionId(FACTION.0 + 1);
+    {
+        let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+        app.world
+            .resource_mut::<TileImprovementRegistry>()
+            .place_owned(SITE, branch, rival, None, &ladder);
+    }
+    let refusal = tribe_work(&mut app.world, FACTION, id(1), PIT_BRANCH, SITE, None, None)
+        .expect_err("another people's pit is refused");
+    assert_eq!(
+        refusal.message,
+        format!(
+            "The improvement at ({}, {}) belongs to another people.",
+            SITE.x, SITE.y
+        )
+    );
+    assert!(registry(&app).get(tribe).unwrap().works.is_empty());
+
+    // An empty site gets the branch's root, as the band's own crew would place it.
+    let empty = SITE + UVec2::new(1, 0);
+    assert!(app
+        .world
+        .resource::<TileImprovementRegistry>()
+        .get(empty, branch)
+        .is_none());
+    tribe_work(
+        &mut app.world,
+        FACTION,
+        id(1),
+        PIT_BRANCH,
+        empty,
+        None,
+        None,
+    )
+    .unwrap();
+    let placed = app
+        .world
+        .resource::<TileImprovementRegistry>()
+        .get(empty, branch)
+        .expect("the work placed the root");
+    assert_eq!(placed.faction, FACTION);
+}
+
+/// A levy build the budget ran out before dealing it a single builder is short of its cap, so the
+/// work overflows to the next member; the build is open to builders, so the zero is not a gate.
+#[test]
+fn a_levy_build_dealt_no_builder_because_the_budget_ran_out_overflows() {
+    const CAP: u32 = 3;
+    let (mut app, tribe, one, two, _three) = tribe_of_two();
+    let target = format!("{PIT_BRANCH}:{PIT_RUNG}");
+    learn_for(&mut app, &target);
+    tribe_work(
+        &mut app.world,
+        FACTION,
+        id(1),
+        PIT_BRANCH,
+        SITE,
+        Some(&target),
+        None,
+    )
+    .unwrap();
+    let source = BuildSource::Tile {
+        tile: SITE,
+        branch: BranchId::new(PIT_BRANCH),
+    };
+    assert!(
+        app.world
+            .get::<LaborAllocation>(two)
+            .unwrap()
+            .build_declaration(&source)
+            .is_some(),
+        "liveness: the nearest member declared the build"
+    );
+    // The last staffing dealt it nobody: the levy budget was spent on the member's scouts.
+    app.world
+        .get_mut::<LaborAllocation>(two)
+        .unwrap()
+        .apply_build_crews(vec![(
+            source,
+            BuildCrew {
+                kitted: 0,
+                bare: 0,
+                cap: CAP,
+                fed_first: false,
+            },
+        )]);
+    apply_tribe_pass(&mut app.world, tribe);
+    let overflow = levy_rows(&app, one);
+    assert_eq!(overflow.len(), 1, "the next member carries the overflow");
+    assert_eq!(overflow[0].2, Some(CAP), "for the builders it was short");
+}
+
 #[test]
 fn a_members_existing_tile_row_is_adopted_and_its_declared_build_and_meter_carry_over() {
     let (mut app, tribe, one, two, _three) = tribe_of_two();
@@ -581,6 +713,59 @@ fn acting_as_a_tribe_reads_the_levy_and_moves_the_pairs_banked_rate() {
     let _ = tribe;
 }
 
+/// A member's scouts are levy once: the Scout row is `for_tribe` AND counted as scouts, and the
+/// acting reading must count each scout head a single time.
+#[test]
+fn acting_as_a_tribe_counts_each_scout_once() {
+    const SCOUTING_RANGE: u32 = 1;
+    let (mut app, _tribe, one, two, _three) = tribe_of_two();
+    let config = app.world.resource::<LeadershipConfigHandle>().get();
+    tribe_scout(&mut app.world, FACTION, id(1), SCOUTING_RANGE).unwrap();
+    {
+        let allocation = app.world.get::<LaborAllocation>(two).unwrap();
+        let row = allocation
+            .assignments
+            .iter()
+            .find(|row| matches!(row.target, LaborTarget::Scout))
+            .expect("the tribe's range puts a Scout row on the member");
+        assert!(row.for_tribe.is_some(), "the fixture row is the tribe's");
+    }
+    // Every scout head the two members field, each counted once.
+    let scouts: u32 = [one, two]
+        .iter()
+        .map(|entity| {
+            let allocation = app.world.get::<LaborAllocation>(*entity).unwrap();
+            allocation
+                .assignments
+                .iter()
+                .filter(|row| matches!(row.target, LaborTarget::Scout))
+                .map(|row| row.workers)
+                .sum::<u32>()
+        })
+        .sum();
+    let pool: u32 = [one, two]
+        .iter()
+        .map(|entity| {
+            let allocation = app.world.get::<LaborAllocation>(*entity).unwrap();
+            let cohort = app.world.get::<PopulationCohort>(*entity).unwrap();
+            core_sim::staffing::staffable_pool(
+                allocation,
+                core_sim::available_workers(cohort.working),
+            )
+        })
+        .sum();
+    app.world.run_system_once(advance_tribes);
+    let (_, inputs) = registry(&app).pairs_of(id(1)).next().expect("scored");
+    let once = f64::from(scouts) / (config.tribe_acting_full_share * f64::from(pool));
+    assert!(scouts > 0, "liveness: the members field scouts");
+    assert!(once * 2.0 <= 1.0, "the fixture can tell once from twice");
+    assert!(
+        (inputs.acting - once).abs() < 1e-9,
+        "{} vs {once}",
+        inputs.acting
+    );
+}
+
 #[test]
 fn the_tribes_new_fields_and_the_rows_survive_a_checkpoint() {
     let (mut app, tribe, _one, two, _three) = tribe_of_two();
@@ -797,6 +982,74 @@ fn a_keeper_that_leaves_the_tribe_releases_the_tile_and_the_nearest_member_picks
         "released, then adopted by grading it"
     );
     assert_eq!(road_build(&app, two), Some(BuildJob::Climb(dirt_road())));
+}
+
+/// Two tribes of one people that both list one road tile: the band that keeps it for one tribe is
+/// not released by the other, and the other does not take the tile, so the keeper holds steady.
+#[test]
+fn two_tribes_listing_one_road_tile_leave_its_keeper_where_it_is() {
+    const SETTLE_TURNS: usize = 4;
+    let (mut app, tribe_a, _one, _two, _three) = tribe_of_two();
+    let four = member(&mut app, 4, 50, 4);
+    let five = member(&mut app, 5, 60, 4);
+    stand_at(&mut app, four, ROAD + UVec2::new(0, 1));
+    stand_at(&mut app, five, ROAD + UVec2::new(1, 1));
+    tie_all(&mut app, &[4, 5]);
+    for _ in 0..TURNS_TO_FILL_BANK {
+        turn(&mut app);
+        if registry(&app).iter().count() == 2 {
+            break;
+        }
+    }
+    let tribe_b = registry(&app)
+        .iter()
+        .find(|tribe| tribe.members.contains(&id(4)))
+        .expect("the second tribe formed")
+        .id;
+    assert_ne!(tribe_a, tribe_b);
+    learn_for(&mut app, GRADE_TARGET);
+    seat_trail(&mut app, Some(1));
+    road_work(&mut app, Some(GRADE_TARGET)).unwrap();
+    // The command refuses a tile another tribe's band keeps, and says so.
+    let refusal = tribe_work(
+        &mut app.world,
+        FACTION,
+        id(4),
+        ROUTE,
+        ROAD,
+        Some(GRADE_TARGET),
+        None,
+    )
+    .expect_err("another tribe's road is refused");
+    assert_eq!(refusal.token, "road_kept_by_another_tribe");
+    assert_eq!(
+        refusal.message,
+        format!("Another tribe keeps the road at ({}, {}).", ROAD.x, ROAD.y)
+    );
+    // A second tribe's list that already names the same tile (written directly, as the command
+    // refuses it) leaves the keeper alone.
+    app.world
+        .resource_mut::<TribeRegistry>()
+        .get_mut(tribe_b)
+        .unwrap()
+        .works
+        .push(core_sim::TribeWork {
+            tile: ROAD,
+            branch: BranchId::new(ROUTE),
+            target_rung: Some(dirt_road()),
+            priority: core_sim::SourcePriority::default(),
+        });
+    assert_eq!(road_keeper(&app), Some(id(1)), "liveness: band 1 keeps it");
+    for _ in 0..SETTLE_TURNS {
+        turn(&mut app);
+        assert_eq!(road_keeper(&app), Some(id(1)), "the keeper holds steady");
+    }
+    assert_eq!(
+        road_build(&app, four),
+        None,
+        "the other tribe declares nothing"
+    );
+    assert_eq!(road_build(&app, five), None);
 }
 
 #[test]

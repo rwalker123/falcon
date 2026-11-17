@@ -40,8 +40,20 @@ pub struct IncomeSources<'a> {
 /// **THE BAND'S STEADY INCOME BY KEEPING CLASS** — each food row's `realized` (a need row at its
 /// `sustainable`, as `band_food_flow` reads it) split by the class it lands in.
 pub fn income_by_class(allocation: &LaborAllocation, sources: &IncomeSources<'_>) -> IncomeByClass {
+    income_by_class_where(allocation, sources, |_| true)
+}
+
+/// [`income_by_class`] over the rows `keep` accepts.
+pub fn income_by_class_where(
+    allocation: &LaborAllocation,
+    sources: &IncomeSources<'_>,
+    keep: impl Fn(&crate::components::LaborAssignment) -> bool,
+) -> IncomeByClass {
     let mut income = IncomeByClass::new();
     for (row, yields) in allocation.assignments.iter().zip(&allocation.last_yields) {
+        if !keep(row) {
+            continue;
+        }
         let amount = if row.is_need_row() {
             yields.sustainable
         } else {
@@ -90,6 +102,8 @@ pub struct SpoilScene<'a> {
     pub held: &'a HeldPreservation,
     pub stores: &'a crate::fixed_store::ReachableStores,
     pub income: &'a IncomeByClass,
+    /// The share of [`Self::income`] landed by the rows the band's chief lists under his orders.
+    pub chief_income: &'a IncomeByClass,
     /// The food on hand (larder plus stores in reach) at which the band's chief-owned food order is
     /// at its target, so he stops gathering extra; `None` without a chief-owned food order.
     pub chief_stops_at: Option<f32>,
@@ -144,6 +158,7 @@ pub fn band_spoilage(scene: &SpoilScene<'_>) -> BandSpoilage {
             scene.cohort.stores.food(),
             &scene.stores.food,
             scene.income,
+            scene.chief_income,
             scene.need,
             scene.horizon,
             scene.keeping,
@@ -284,38 +299,40 @@ pub struct BandSpoilInputs<'a> {
 /// **ONE BAND'S SPOILAGE AND ITS STORAGE SAVES** — [`income_by_class`] then [`band_spoilage`].
 pub fn band_spoilage_of(inputs: &BandSpoilInputs<'_>) -> BandSpoilage {
     let keeping = &inputs.demographics.keeping;
-    let income = income_by_class(
-        inputs.allocation,
-        &IncomeSources {
-            keeping,
-            fauna: inputs.fauna,
-            herd_species: &|id| inputs.herds.find(id).map(|herd| herd.species.clone()),
-            patch_shares: &|tile, take| {
-                let (Some(patch), Some(composition)) =
-                    (inputs.forage.patch(tile), (inputs.composition)(tile))
-                else {
-                    return Vec::new();
-                };
-                let mix = crate::forage::patch_food_mix(
-                    patch,
-                    &composition,
-                    inputs.flora,
-                    &inputs.labor.forage,
-                    take,
-                    crate::scalar::scalar_one(),
-                    keeping,
-                );
-                let sum = mix.total().to_f32();
-                if sum <= 0.0 {
-                    return Vec::new();
-                }
-                mix.lots()
-                    .into_iter()
-                    .map(|(class, lot)| (class, lot.amount.to_f32() / sum))
-                    .collect()
-            },
+    let sources = IncomeSources {
+        keeping,
+        fauna: inputs.fauna,
+        herd_species: &|id| inputs.herds.find(id).map(|herd| herd.species.clone()),
+        patch_shares: &|tile, take| {
+            let (Some(patch), Some(composition)) =
+                (inputs.forage.patch(tile), (inputs.composition)(tile))
+            else {
+                return Vec::new();
+            };
+            let mix = crate::forage::patch_food_mix(
+                patch,
+                &composition,
+                inputs.flora,
+                &inputs.labor.forage,
+                take,
+                crate::scalar::scalar_one(),
+                keeping,
+            );
+            let sum = mix.total().to_f32();
+            if sum <= 0.0 {
+                return Vec::new();
+            }
+            mix.lots()
+                .into_iter()
+                .map(|(class, lot)| (class, lot.amount.to_f32() / sum))
+                .collect()
         },
-    );
+    };
+    let income = income_by_class(inputs.allocation, &sources);
+    // The rows the chief lists are the only ones he stops at the target.
+    let chief_income = income_by_class_where(inputs.allocation, &sources, |row| {
+        inputs.allocation.row_order(&row.target).is_some()
+    });
     let cohort = inputs.cohort;
     let need = crate::systems::food_demand(
         cohort.children,
@@ -335,6 +352,7 @@ pub fn band_spoilage_of(inputs: &BandSpoilInputs<'_>) -> BandSpoilage {
         held: inputs.held,
         stores: inputs.stores,
         income: &income,
+        chief_income: &chief_income,
         chief_stops_at: (inputs.has_leader
             && inputs.allocation.chief_owns(crate::keep_on_hand::FOOD_KIND))
         .then(|| inputs.allocation.order_for(crate::keep_on_hand::FOOD_KIND))

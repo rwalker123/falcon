@@ -855,3 +855,29 @@ pub fn source_kind_noun(kind: SourceKind) -> &'static str {
         SourceKind::Band => "bands",
     }
 }
+
+/// **THE FIRST CREW PLACES A TILE IMPROVEMENT AT ITS BRANCH'S FLOOR**, the one seam `assign_labor
+/// ... tile` and a tribe work without a rung both go through: another people's improvement on the
+/// site is refused (`Err` with the player's sentence), otherwise the improvement is placed at the
+/// root if the site holds none (and left as it stands if it does).
+pub fn place_tile_improvement_root(
+    world: &mut World,
+    faction: FactionId,
+    placing_band: Option<BandId>,
+    tile: UVec2,
+    branch: BranchId,
+) -> Result<(), String> {
+    let ladder = world.resource::<crate::LadderConfigHandle>().get();
+    let mut improvements = world.resource_mut::<TileImprovementRegistry>();
+    let theirs = improvements
+        .get(tile, branch)
+        .is_some_and(|improvement| improvement.faction != faction);
+    if theirs {
+        return Err(format!(
+            "The improvement at ({}, {}) belongs to another people.",
+            tile.x, tile.y
+        ));
+    }
+    improvements.place_owned(tile, branch, faction, placing_band, &ladder);
+    Ok(())
+}

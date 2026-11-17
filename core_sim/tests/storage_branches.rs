@@ -996,17 +996,21 @@ fn spoilage_world_ordered(
             },
         );
     }
-    allocation.set_assignment(
-        LaborTarget::Hunt {
-            fauna_id: "the_unseen_herd".to_string(),
-            floor: 0.5,
-            move_with_herd: false,
-        },
-        1,
-        CREW as u32,
-        None,
-    );
+    let hunt = LaborTarget::Hunt {
+        fauna_id: "the_unseen_herd".to_string(),
+        floor: 0.5,
+        move_with_herd: false,
+    };
+    allocation.set_assignment(hunt.clone(), 1, CREW as u32, None);
     allocation.last_yields[0].realized = income;
+    // A chief-owned order lists the row (a chief stops only the rows he lists); a player-owned one
+    // leaves it the player's.
+    if order.is_some_and(|setup| matches!(setup.owner, core_sim::OrderOwner::Chief)) {
+        allocation.order_rows.insert(
+            core_sim::keep_on_hand::source_key(&hunt).expect("a hunt row has a key"),
+            "food".to_string(),
+        );
+    }
     app.world.entity_mut(band).insert(allocation);
     if rack {
         hold_the_rack(&mut app, BandId(BAND));

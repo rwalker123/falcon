@@ -9,6 +9,8 @@ paths:
   - "core_sim/tests/leadership.rs"
   - "core_sim/src/tribe.rs"
   - "core_sim/tests/tribe.rs"
+  - "core_sim/src/tribe_levy.rs"
+  - "core_sim/tests/tribe_levy.rs"
   - "core_sim/tests/leadership_consent.rs"
   - "core_sim/src/food_orders.rs"
 ---
@@ -340,13 +342,12 @@ echoed on the band's feed (`push_band_event`):
 
 | Command | Does | Refusals (token) |
 |---|---|---|
-| `tribe_work <f> <b> <branch> <x> <y> [<branch>:<rung>] [high\|normal\|low]` | add or update a work. With a rung the work declares a build to it through `build_gates::validate_tile_verb`, the band's own `build` verb's gate (knowledge, `rung_site_refusal`, the rung beneath). A **road work** (`route`) is one road tile and **requires** its rung (`route:dirt_road` = grade, `route:paved_road` = pave); its gate is `build_gates::validate_road_verb`, the band's own `grade` / `pave` gate, asked of the work's carrier | `not_a_tribe_work`, `road_needs_rung`, `unknown_rung`, `build_refused` (the gate's own sentence), `unknown_priority` |
+| `tribe_work <f> <b> <branch> <x> <y> [<branch>:<rung>] [high\|normal\|low]` | add or update a work. With a rung the work declares a build to it through `build_gates::validate_tile_verb`, the band's own `build` verb's gate (knowledge, `rung_site_refusal`, the rung beneath, another people's improvement). **With no rung** the work is accepted exactly where `assign_labor ... tile` would be, through the same seam (`build_gates::place_tile_improvement_root`): another people's improvement on the site is refused `build_refused` with the band's own sentence ("The improvement at (x, y) belongs to another people."), and an empty site gets the branch's root. A **road work** (`route`) is one road tile and **requires** its rung (`route:dirt_road` = grade, `route:paved_road` = pave); its gate is `build_gates::validate_road_verb`, the band's own `grade` / `pave` gate, asked of the work's carrier | `not_a_tribe_work`, `road_needs_rung`, `road_kept_by_another_tribe` ("Another tribe keeps the road at (x, y)."), `unknown_rung`, `build_refused` (the gate's own sentence), `unknown_priority` |
 | `tribe_work <f> <b> stop <branch> <x> <y>` | remove the work and drop its levy rows; a road work's declared build goes with it, the road and its keeper stay | `no_such_work` |
 | `tribe_levy <f> <b> none\|low\|normal\|high` | set the ceiling | `unknown_levy` |
 | `tribe_scout <f> <b> <N>` | set the tribe's one range, clamped to `labor_config.scout.range_past_local_max` exactly as `assign_labor ... scout` clamps | - |
 
-`assign_labor <f> <b> scout <N>` on a member is refused `scouting_set_by_tribe` (a band in no tribe is
-unchanged). Wire: one proto message `TribeOrderCommand` (field 100, `action` = `work | stop_work | levy |
+`assign_labor <f> <b> scout <N>` on a member is refused `scouting_set_by_tribe` when `N` (clamped) is not the band's current range; naming the current range with a `kit` is accepted and applies the kit alone, because the tribe owns the range and the kit is the band's (a band in no tribe is unchanged). Wire: one proto message `TribeOrderCommand` (field 100, `action` = `work | stop_work | levy |
 scout`), one `CommandPayload::TribeOrder { faction_id, band_id, action: TribeOrderAction }`; the text verbs
 are `tribe_work`, `tribe_levy`, `tribe_scout`, and `render_command_line` writes them back in the parser's
 own shapes. `xtask`'s command guard classifies it as band-addressed (durable `BandId`).
@@ -358,8 +359,7 @@ wrap-aware hex distance from their camp to the work's tile, ties lowest `BandId`
 `LaborTarget::Tile` row marked `LaborAssignment::for_tribe = Some(tribe)` with the work's Priority and, with
 a `target_rung`, the declared build (`BuildJob::Climb`, the improvement placed as the band's own `build`
 places it). **Overflow, one turn behind:** a carrier whose row finished the last staffing short of its want
-(`workers < reach_crew`, or a build that holds builders but fewer than `BuildCrew::cap` - a build with no
-builder is never "short", so a gated build cannot chain the work across the whole tribe) passes the shortfall
+(`workers < reach_crew`, or a build that **can progress** (open to builders: no refusing gate, no materials stall) and holds fewer than `BuildCrew::cap` builders, **including none at all** when the levy budget ran out before it was dealt one; a build that cannot progress is never "short", so a gated build cannot chain the work across the whole tribe) passes the shortfall
 to the next nearest member, whose row for the same work carries `max_workers = Some(shortfall)` (and caps its
 builders likewise); a carrier that is not short ends the chain, so the overflow rows behind it are dropped.
 Levy rows of works no longer on the list are removed (their declared builds with them; progress stays on the
@@ -373,7 +373,7 @@ tribe's range as the band's own, stretch back to `1.0`. A band that joins takes 
 it is carried differently (`tribe_levy::{road_carrier, apply_road_works, release_departed_keepers}`;
 `routes.md` -> "A tribe's road"). Its **carrier** is the band that keeps the tile when that band is a
 member, else the nearest member (wrap-aware hex distance from its camp, ties lowest `BandId`), so the tile
-is not handed around as bands move. There is **no overflow chain**: one band per road tile, and the
+is not handed around as bands move. **A tile another tribe's band keeps is that tribe's**: this tribe's work does not take it (no carrier, no declared build) and `release_departed_keepers` never releases that keeper, so two tribes of one people listing one road tile leave its keeper where it is; only a keeper that belongs to no tribe and is no longer a member is released. There is **no overflow chain**: one band per road tile, and the
 work's `carriers` entry holds that one band. The carrier declares the build exactly as its own `grade` /
 `pave` does (`BuildSource::Road(tile)`, `BuildJob::Climb(rung)`, the keeper named with the remoteness
 quote), after the same gate; a carrier that already keeps the tile at or above the rung declares nothing,
@@ -393,8 +393,7 @@ over-reach efficiency again), `hands_left` the pool after pass 1 - and at least 
 and a hand is left. The levy step deals the scouts first, then per Priority group the levy rows' keepers,
 first builder and hold crews, every head counted against the budget; passes 2 and 3 deal levy rows like any
 row but stop when the budget is spent. The builds-last deal (`staff_band_food_first`) spends what the first
-deal left of the budget (`LevyPlan::fixed_budget`). The settle trim takes a levy head before the band's own
-at equal priority. A band in no tribe is exactly as before (scouts in pass 0, no levy rows).
+deal left of the budget (`LevyPlan::fixed_budget`). The settle trim takes a levy head (a levy row's or a levy build's builder) before any of the band's own heads (a row's or a build's) at equal priority; the existing tie-breaks apply after that. A band in no tribe is exactly as before (scouts in pass 0, no levy rows).
 
 **One scouting range, each band its stretch.** Each member's Scout row carries the tribe's range N and a
 `scouting_stretch` (`scouting_stretches`): the union of hex discs of radius `supply_network_config.reach_tiles`
@@ -402,12 +401,12 @@ around every member's camp, its edge hexes (a neighbour outside the union; off t
 assigned to the nearest camp (ties lowest `BandId`), over `6 x reach_tiles` - a lone band's ring reads `1.0`,
 a member enclosed by the others `0`. The stretch needs `ceil(stretch x N)` scout-tiles; kitted scouts first
 (`min(heads the shelf can arm, ceil(needed / kitted_tiles), budget)`), then bare for what is left, all within
-the budget; `scouting_reach = floor(seen / stretch)` (it may pass N, as the overshoot does today) and a zero
+the budget; `scouting_reach` is `N + (seen - needed)` once `seen >= needed` (the overshoot is the raw scout-tile surplus, exactly as a lone band's is) and `floor(seen / stretch)` short of `needed` (always under `N`, so the two meet); a zero
 stretch deals no scouts and reads reach 0. Visibility and the watched ring keep reading `scouting_reach`
 per band.
 
 **Acting as a tribe reads the levy.** `advance_tribes` (after the labor pass, so it reads this turn's
-staffing) sums, per tribe, the heads on its members' levy rows and their scouts (`levied`) and the members'
+staffing) sums, per tribe, the heads on its members' levy rows and their scouts (`levied`, each scout head counted once) and the members'
 staffable pools (`pool`); the reading `min(1, levied / (tribe_acting_full_share x pool))` (0 with no hands) is
 `CloseInputs::acting` for every pair inside the tribe, so a tribe that levies keeps itself together at
 `tribe_weight_acting` points a turn.
@@ -421,7 +420,7 @@ messengers' checks; the supply bins are sized by it too.
 **Wire** (appended last): `LaborAssignment.forTribe` / `scoutingStretch`; `PopulationCohortState.tribeLevyCeiling`
 (`sim_schema::TRIBE_LEVY_*`: 0 not in a tribe, 1 none, 2 low, 3 normal, 4 high), `tribeScoutingRange` and
 `tribeWorks:[TribeWorkState { x, y, branch, targetRung (empty = keep), priority, bands (BandIds carrying a
-levy row for it, nearest first), workers (heads on those rows) }]`, published to every own member band of a
+levy row for it, nearest first), workers (heads on those rows, restated in the Snapshot stage by `tribe_levy::refresh_all_levy_workers` after the last restaff that can touch a levy row, so the frame's `tribeWorks[].workers` equals its levy rows' workers) }]`, published to every own member band of a
 formed tribe (the `tribeName` rule); a foreign row and a non-member carry the defaults.
 
 Pinned by `tests/tribe_levy.rs` (the nearest-member row on the encoded frame, overflow and its removal,

@@ -2396,7 +2396,10 @@ signal instead, so the sort that fixes the range restores the place in the same 
 re-applies on every sort until the frame ends. A scroll not on screen (an unselected narrow-shell tab)
 keeps waiting until it is shown, and a capture taken while a restore is pending returns the stored
 offset, since the unsorted node reads 0. A page change (band to band, or to the faction page) starts
-every list at the top. Asserted by `band_panel_scroll_carry.gd` (`harness-band-panel.md`).
+every list at the top: the Work sections list and the expanded road roster carry through the same
+subject-keyed `_carried_scroll_offsets` as the rest, and a subject change drops the outgoing nodes
+(`_work_sections_scroll`, `_roster_expanded_scroll`) so the next fill has nothing to read the old place
+off. Asserted by `band_panel_scroll_carry.gd` (`harness-band-panel.md`).
 
 ## THE WORK TAB IS FOUR SECTIONS, AND EVERY SITE HAS ONE SPINNER (`docs/plan_site_crews.md` §3)
 
