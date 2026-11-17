@@ -188,6 +188,17 @@
           "hint": "How many idle turns in a row before the chief's build proposal says the hands are wasted and turns amber. At least the notice lever."
         },
         {
+          "pointer": "/band_orders/proposal_low_yield_share",
+          "label": "Proposal: low-yield line",
+          "type": "float",
+          "min": 0.05,
+          "max": 5,
+          "step": 0.05,
+          "default": 0.5,
+          "unit": "x a person's meal",
+          "hint": "A chief-run food row whose hands each bring home less than this share of one person's meal counts as working for almost nothing; the chief then proposes new ground."
+        },
+        {
           "pointer": "/band_orders/proposal_not_now_turns",
           "label": "Proposal: 'Not now' hides",
           "type": "int",

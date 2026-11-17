@@ -18164,6 +18164,15 @@ mod tests {
             core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
         };
 
+        // The chief's takeover rows have brought in nothing yet: give every row a take that is no
+        // low-yield line, so the control is about the falling trigger alone.
+        {
+            const WELL_FED_ROW: f32 = 100.0;
+            let mut allocation = app.world.get_mut::<LaborAllocation>(entity).unwrap();
+            for yields in &mut allocation.last_yields {
+                yields.realized = WELL_FED_ROW;
+            }
+        }
         // Control: plenty of food (not Falling: the order is met) and no idle hands - no proposal.
         set_food(&mut app, 1_000_000.0);
         assert!(
@@ -18199,6 +18208,228 @@ mod tests {
             assert!(seen < 200, "the offers end");
         }
         assert!(seen > 0);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // THE THIRD PROPOSAL TRIGGER: hands working for almost nothing
+    // -----------------------------------------------------------------------------------------
+
+    /// One person's meal in the low-yield fixtures (a turn's need over the headcount).
+    const LOW_YIELD_MEAL: f32 = 1.0;
+    /// A row's realized headline for three heads that is far under half a meal each.
+    const ALMOST_NOTHING: f32 = 0.07;
+    /// A row's realized headline for three heads that is well over half a meal each.
+    const PLENTY: f32 = 3.0;
+    /// A row whose yield record no turn has written: every field at `SourceYield::ZERO`.
+    const NOT_YET_WORKED: f32 = 0.0;
+    /// The heads on the low-yield fixture's chief row.
+    const LOW_YIELD_HEADS: u32 = 3;
+
+    /// A led band on lesson ground with Seed Selection, no idle hand, food met, and a food row on
+    /// another patch the chief lists with `heads` bare heads, `keepers` keepers and `realized`.
+    fn low_yield_scene(
+        keepers: u32,
+        heads: u32,
+        realized: f32,
+        listed: bool,
+    ) -> (bevy::prelude::App, u64, Entity, UVec2) {
+        let (mut app, faction, band) = proposal_world_with(true, true);
+        let coord = find_lesson_ground(&app, true);
+        let entity = proposal_band_on(&mut app, faction, band, coord);
+        grant_seed_selection(&mut app, faction);
+        let (_, patches) = band_entity_and_patches(&app, BandId(band), 4);
+        let worked = patches
+            .into_iter()
+            .find(|patch| *patch != coord)
+            .expect("a second patch");
+        app.world.entity_mut(entity).insert(core_sim::BandBench {
+            orders: vec![{
+                const MORE_HANDS_THAN_ANY_BAND: u32 = 1_000_000;
+                let mut order = core_sim::BenchOrder::new("spear", 1);
+                order.crew = core_sim::BenchCrew {
+                    at_tool: 0,
+                    by_hand: MORE_HANDS_THAN_ANY_BAND,
+                };
+                order
+            }],
+            ..Default::default()
+        });
+        {
+            let mut cohort = app.world.get_mut::<PopulationCohort>(entity).unwrap();
+            cohort.last_food_need = cohort.size as f32 * LOW_YIELD_MEAL;
+            cohort
+                .stores
+                .reset_food("fresh_plant", scalar_from_f32(1_000_000.0));
+        }
+        {
+            let mut allocation = app.world.get_mut::<LaborAllocation>(entity).unwrap();
+            // Only the fixture's row: the chief's takeover rows would count too.
+            allocation.clear();
+            allocation.orders.insert(
+                "food".to_string(),
+                core_sim::BandOrder {
+                    target: 20,
+                    priority: core_sim::SourcePriority::Normal,
+                    owner: core_sim::OrderOwner::Chief,
+                },
+            );
+            let target = LaborTarget::Forage {
+                tile: worked,
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
+                species: None,
+                take_species: core_sim::TakeSelection::EVERYTHING,
+            };
+            allocation.set_staffed_row(target.clone(), None, None);
+            if listed {
+                let key = core_sim::keep_on_hand::source_key(&target).unwrap();
+                allocation.order_rows.insert(key, "food".to_string());
+            }
+            let index = allocation
+                .assignments
+                .iter()
+                .position(|row| row.target.same_source(&target))
+                .unwrap();
+            allocation.assignments[index].staffing.keepers = keepers;
+            allocation.assignments[index].staffing.bare = heads;
+            allocation.last_yields[index].realized = realized;
+        }
+        core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+        (app, band, entity, worked)
+    }
+
+    /// **LOW-YIELD HANDS GET A NEW-GROUND PROPOSAL, AND ONLY THAT**: no idle hand, food met, a chief
+    /// food row whose three heads bring home almost nothing. The text leads with the count, the
+    /// trigger rides the wire, no climb on a worked source is offered, and every offer is new ground.
+    #[test]
+    fn hands_working_for_almost_nothing_make_the_chief_propose_new_ground_only() {
+        let (mut app, band, _, worked) = low_yield_scene(0, LOW_YIELD_HEADS, ALMOST_NOTHING, true);
+        let offer = wire_proposal(&mut app, band).expect("low-yield hands propose");
+        assert_eq!(offer.trigger, "low_yield");
+        assert_eq!(offer.idle, 0, "the idle count stays the true one");
+        assert_eq!(offer.escalation, 1, "the notice rung");
+        assert!(
+            offer.text.starts_with(&format!(
+                "{LOW_YIELD_HEADS} hands working for almost nothing \u{b7} Orrin proposes:"
+            )),
+            "{}",
+            offer.text
+        );
+        let worked_suffix = format!("@{},{}", worked.x, worked.y);
+        let mut seen = 0;
+        while let Some(offer) = wire_proposal(&mut app, band) {
+            assert!(
+                offer.build_key.starts_with("plant:tended@")
+                    && !offer.build_key.ends_with(&worked_suffix),
+                "only new ground, never a climb on the worked patch: {offer:?}"
+            );
+            send_command_line(
+                &mut app,
+                &format!("defer_proposal 0 {band} {}", offer.build_key),
+            );
+            seen += 1;
+            assert!(seen < 200, "the offers end");
+        }
+        assert!(seen > 0, "liveness: there was new ground to offer");
+    }
+
+    /// A row above the line, a keeper-only row and a player row propose nothing; one head reads
+    /// "1 hand".
+    #[test]
+    fn a_row_above_the_line_a_keeper_only_row_and_a_player_row_are_not_counted() {
+        let (mut app, band, _, _) = low_yield_scene(0, LOW_YIELD_HEADS, PLENTY, true);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "heads bringing home plenty are not low-yield"
+        );
+        let (mut app, band, _, _) = low_yield_scene(LOW_YIELD_HEADS, 0, ALMOST_NOTHING, true);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "a keeper-only row has no take head"
+        );
+        let (mut app, band, _, _) = low_yield_scene(0, LOW_YIELD_HEADS, ALMOST_NOTHING, false);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "a player's row is not the chief's to judge"
+        );
+        // A row no turn has worked yet (its yield record still empty) is not judged.
+        let (mut app, band, _, _) = low_yield_scene(0, LOW_YIELD_HEADS, NOT_YET_WORKED, true);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "a row nobody has worked yet is not working for almost nothing"
+        );
+        let (mut app, band, _, _) = low_yield_scene(0, 1, ALMOST_NOTHING, true);
+        let offer = wire_proposal(&mut app, band).expect("liveness: one low-yield head proposes");
+        assert!(
+            offer.text.starts_with("1 hand working for almost nothing"),
+            "{}",
+            offer.text
+        );
+    }
+
+    /// **PRECEDENCE**: idle hands win, then a falling food order, then low-yield hands.
+    #[test]
+    fn idle_hands_and_a_falling_order_outrank_the_low_yield_trigger() {
+        let (mut app, band, entity, _) = low_yield_scene(0, LOW_YIELD_HEADS, ALMOST_NOTHING, true);
+        assert_eq!(
+            wire_proposal(&mut app, band).map(|offer| offer.trigger),
+            Some("low_yield".to_string())
+        );
+        // Falling: a small larder under a target nothing fills.
+        {
+            let mut cohort = app.world.get_mut::<PopulationCohort>(entity).unwrap();
+            cohort
+                .stores
+                .reset_food("fresh_plant", scalar_from_f32(1.0));
+            app.world
+                .get_mut::<LaborAllocation>(entity)
+                .unwrap()
+                .orders
+                .get_mut("food")
+                .unwrap()
+                .target = 1000;
+        }
+        core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+        assert_eq!(
+            wire_proposal(&mut app, band).map(|offer| offer.trigger),
+            Some("food_falling".to_string()),
+            "a falling order wins over low-yield hands"
+        );
+        // Idle hands: the bench no longer takes everyone.
+        app.world
+            .entity_mut(entity)
+            .insert(core_sim::BandBench::default());
+        core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+        assert_eq!(
+            wire_proposal(&mut app, band).map(|offer| offer.trigger),
+            Some("idle".to_string()),
+            "idle hands win over everything"
+        );
+    }
+
+    /// **THE LEVER SCALES THE LINE**: the same row is above a small share of a meal and below a big one.
+    #[test]
+    fn the_low_yield_share_moves_the_line() {
+        let (mut app, band, _, _) = low_yield_scene(0, LOW_YIELD_HEADS, ALMOST_NOTHING, true);
+        let set_share = |app: &mut bevy::prelude::App, share: f32| {
+            let mut handle = app.world.resource_mut::<LaborConfigHandle>();
+            let mut config = (*handle.0).clone();
+            config.band_orders.proposal_low_yield_share = share;
+            handle.0 = std::sync::Arc::new(config);
+            core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+        };
+        // 0.07 / 3 heads = 0.0233 a head: under 0.5 of a meal, over 0.01 of one.
+        const ROW_ABOVE_THIS_LINE: f32 = 0.01;
+        const ROW_BELOW_THIS_LINE: f32 = 0.5;
+        set_share(&mut app, ROW_ABOVE_THIS_LINE);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "a small share puts the row above the line"
+        );
+        set_share(&mut app, ROW_BELOW_THIS_LINE);
+        assert!(
+            wire_proposal(&mut app, band).is_some(),
+            "a big share puts it below the line"
+        );
     }
 
     /// **A stale proposal is refused, not declared**: a band with no proposal answers an approval with

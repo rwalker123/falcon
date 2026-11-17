@@ -140,8 +140,12 @@ struct BandView {
 pub const TRIGGER_IDLE: &str = "idle";
 /// The `trigger` a proposal rides: the chief's food order reads Falling.
 pub const TRIGGER_FOOD_FALLING: &str = "food_falling";
+/// The `trigger` a proposal rides: hands working for almost nothing on the chief's food rows.
+pub const TRIGGER_LOW_YIELD: &str = "low_yield";
 /// The escalation rung of a proposal raised by a falling food order (amber).
 const FALLING_ESCALATION: u32 = 2;
+/// The escalation rung of a proposal raised by low-yield hands: the notice rung.
+const LOW_YIELD_ESCALATION: u32 = 1;
 
 fn resident_bands(world: &mut World) -> Vec<BandView> {
     let mut query = world.query_filtered::<(
@@ -678,6 +682,51 @@ fn hands_phrase(escalation: u32, idle: u32, idle_turns: u32) -> String {
     }
 }
 
+/// "3 hands working for almost nothing" / "1 hand working for almost nothing".
+fn low_yield_phrase(hands: u32) -> String {
+    let noun = if hands == 1 { "hand" } else { "hands" };
+    format!("{hands} {noun} working for almost nothing")
+}
+
+/// **THE HANDS WORKING FOR ALMOST NOTHING**: the take heads (kitted plus bare, never a whole keeper)
+/// summed over the rows the chief lists under the FOOD order whose food per take head - the row's
+/// realized headline, the forward projection, so a hunt between kills is not misread - is below
+/// `band_orders.proposal_low_yield_share` of one person's meal. Player rows and other orders are not
+/// counted, nor a row with no take head; `0` where the band has no headcount or no need.
+///
+/// **A row whose yield record is still empty (`SourceYield::ZERO`) is not judged**: no turn has worked
+/// it and no seed has priced it yet - a row the chief lists in a command's restaff, or takes over the
+/// turn he arrives - so its `0` says nothing about what its hands bring in. Counted, every such row
+/// would raise a new-ground proposal before anyone had worked it.
+fn low_yield_hands(cohort: &PopulationCohort, allocation: &LaborAllocation, share: f32) -> u32 {
+    if cohort.size == 0 || cohort.last_food_need <= NO_FOOD {
+        return 0;
+    }
+    let line = share * cohort.last_food_need / cohort.size as f32;
+    allocation
+        .assignments
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| {
+            crate::keep_on_hand::source_key(&row.target).is_some_and(|key| {
+                allocation.order_rows.get(&key).map(String::as_str)
+                    == Some(crate::keep_on_hand::FOOD_KIND)
+            })
+        })
+        .filter_map(|(index, row)| {
+            let heads = row.staffing.kitted + row.staffing.bare;
+            if heads == 0 {
+                return None;
+            }
+            let yields = allocation.last_yields.get(index)?;
+            if *yields == crate::components::SourceYield::ZERO {
+                return None;
+            }
+            (yields.realized / (heads as f32) < line).then_some(heads)
+        })
+        .sum()
+}
+
 /// The escalation rung for `idle_turns` against the two levers.
 pub fn escalation_rung(idle_turns: u32, notice: u32, wasted: u32) -> u32 {
     if idle_turns >= wasted {
@@ -697,6 +746,7 @@ fn resolve(
     idle: u32,
     idle_turns: u32,
     escalation: u32,
+    low_yield: u32,
 ) -> ChiefProposalState {
     let reason = candidate
         .food_saved
@@ -716,6 +766,8 @@ fn resolve(
     let verb = if keeper.plural { "propose" } else { "proposes" };
     let lead = if trigger == TRIGGER_FOOD_FALLING {
         "Food falling".to_string()
+    } else if trigger == TRIGGER_LOW_YIELD {
+        low_yield_phrase(low_yield)
     } else {
         hands_phrase(escalation, idle, idle_turns)
     };
@@ -830,7 +882,7 @@ pub fn refresh_proposals(world: &mut World, advance: bool) {
         book.bands
             .retain(|id, _| bands.iter().any(|band| band.id == *id));
         for view in &bands {
-            let (idle, led, keeper, falling) = {
+            let (idle, led, keeper, falling, low_yield) = {
                 let (Some(cohort), Some(allocation)) = (
                     world.get::<PopulationCohort>(view.entity),
                     world.get::<LaborAllocation>(view.entity),
@@ -851,6 +903,7 @@ pub fn refresh_proposals(world: &mut World, advance: bool) {
                     keeper.is_some(),
                     keeper,
                     crate::food_orders::food_order_is_falling(cohort, allocation),
+                    low_yield_hands(cohort, allocation, orders.proposal_low_yield_share),
                 )
             };
             let state = book.bands.entry(view.id).or_default();
@@ -870,13 +923,21 @@ pub fn refresh_proposals(world: &mut World, advance: bool) {
             // **Two triggers**: idle hands, or the food order reading Falling (the one judgement
             // leadership and the wire's order line use). When both hold the idle wording wins; a
             // Falling-only proposal offers only builds that add food.
+            // **A third trigger**: hands working for almost nothing on the chief's food rows, with no
+            // idle hand and food not falling. It offers new ground only.
             let idle_trigger = idle > 0;
-            let (true, Some(keeper)) = (led && (idle_trigger || falling), keeper) else {
+            let low_yield_trigger = !idle_trigger && !falling && low_yield > 0;
+            let (true, Some(keeper)) = (
+                led && (idle_trigger || falling || low_yield_trigger),
+                keeper,
+            ) else {
                 continue;
             };
             let mut found = candidates(world, view, &bands);
             found.retain(|candidate| !state.deferred.contains_key(&candidate.key));
-            if !idle_trigger {
+            if low_yield_trigger {
+                found.retain(|candidate| candidate.new_ground);
+            } else if !idle_trigger {
                 found.retain(|candidate| candidate.food_saved.is_some_and(|saved| saved > NO_FOOD));
             }
             rank(&mut found);
@@ -890,8 +951,10 @@ pub fn refresh_proposals(world: &mut World, advance: bool) {
                             orders.proposal_idle_turns_wasted,
                         ),
                     )
-                } else {
+                } else if falling {
                     (TRIGGER_FOOD_FALLING, FALLING_ESCALATION)
+                } else {
+                    (TRIGGER_LOW_YIELD, LOW_YIELD_ESCALATION)
                 };
                 state.current = Some(resolve(
                     best,
@@ -900,6 +963,7 @@ pub fn refresh_proposals(world: &mut World, advance: bool) {
                     idle,
                     state.idle_turns,
                     escalation,
+                    low_yield,
                 ));
             }
         }

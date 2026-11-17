@@ -1626,6 +1626,7 @@ func _chief_proposal_states() -> void:
 	h._hud.turn_orb.toggle_popover()
 	h._hud.turn_orb.set_attention([])
 	await _food_falling_state()
+	await _low_yield_state()
 
 
 # ---- THE FALLING-FOOD PROPOSAL: NO IDLE HANDS, SO ITS OWN ENTRY -----------------------------------
@@ -1648,3 +1649,61 @@ func _food_falling_state() -> void:
 	await h._save("chief_proposal_food_falling")
 	h._hud.turn_orb.toggle_popover()
 	h._hud.turn_orb.set_attention([])
+
+
+# ---- THE LOW-YIELD PROPOSAL: NEW GROUND, NO IDLE HANDS, SO ITS OWN ENTRY ---------------------------
+const LOW_YIELD_TEXT := "3 hands working for almost nothing · Zeke proposes: cultivate the patch at (42, 28) — +1.1 food a turn once tended"
+const LOW_YIELD_BUILD_KEY := "cultivate:patch@42,28"
+
+func _low_yield_band(idle: int) -> Dictionary:
+	var band := _proposal_band(1, LOW_YIELD_TEXT, [], true)
+	band["idle_workers"] = idle
+	band["chief_proposals"][0]["trigger"] = HudAttentionVocab.PROPOSAL_TRIGGER_LOW_YIELD
+	band["chief_proposals"][0]["build_key"] = LOW_YIELD_BUILD_KEY
+	return band
+
+func _proposal_rows(band: Dictionary) -> Array:
+	var rows: Array = []
+	for row_variant in h._hud._attention.build_band_attention([band], []):
+		if row_variant is Dictionary and (row_variant as Dictionary).has(HudAttentionVocab.ATTENTION_PROPOSAL):
+			rows.append(row_variant)
+	return rows
+
+func _low_yield_state() -> void:
+	var band := _low_yield_band(FALLING_NO_IDLE_HANDS)
+	var rows := _proposal_rows(band)
+	var row: Dictionary = rows[0] if rows.size() == 1 else {}
+	h._assert_turn_orb("low yield — exactly one row carries the proposal, and it is the low_yield row",
+		rows.size() == 1 and String(row.get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_LOW_YIELD
+			and String(row.get("severity", "")) == HudAttentionVocab.ATTENTION_SEVERITY_WARN)
+	h._assert_turn_orb("low yield — label and detail are the vocab's (got %s / %s)"
+			% [str(row.get("label", "")), str(row.get("detail", ""))],
+		String(row.get("label", "")) == HudAttentionVocab.ATTENTION_LOW_YIELD_LABEL_FORMAT % HudFormat.band_name(band)
+			and String(row.get("detail", "")) == HudAttentionVocab.ATTENTION_LOW_YIELD_DETAIL)
+	h._hud.update_band_alerts([band])
+	h._hud.turn_orb.open_popover()
+	await h._settle()
+	h._assert_turn_orb("low yield — the popover names the band and carries the sim's sentence",
+		NodeQuery.has_label_containing(h._hud.turn_orb._popover, "hands wasted")
+			and NodeQuery.has_label_containing(h._hud.turn_orb._popover, LOW_YIELD_TEXT))
+	h._assert_turn_orb("low yield — Approve and Not now are on the entry",
+		_proposal_buttons(HudAttentionVocab.PROPOSAL_APPROVE_LABEL).size() == 1
+			and _proposal_buttons(HudAttentionVocab.PROPOSAL_NOT_NOW_LABEL).size() == 1)
+	await h._save("chief_proposal_low_yield")
+	var lines: Array = []
+	var record := func(p: Dictionary) -> void:
+		lines.append(String(MAIN_SCRIPT.format_chief_proposal(p).get("line", "")))
+	h._hud.chief_proposal_requested.connect(record)
+	(_proposal_buttons(HudAttentionVocab.PROPOSAL_APPROVE_LABEL)[0] as Button).pressed.emit()
+	await h._settle()
+	h._hud.chief_proposal_requested.disconnect(record)
+	h._assert_turn_orb("low yield — Approve sends `approve_proposal 0 %d` (got %s)"
+			% [PROPOSAL_BAND_ID, str(lines)],
+		lines == ["approve_proposal 0 %d" % PROPOSAL_BAND_ID])
+	h._hud.turn_orb.toggle_popover()
+	h._hud.turn_orb.set_attention([])
+	# With idle hands the idle row carries the proposal and no low_yield row is built.
+	var idle_rows := _proposal_rows(_low_yield_band(PROPOSAL_IDLE_HANDS))
+	h._assert_turn_orb("low yield with idle hands — only the idle row carries the proposal",
+		idle_rows.size() == 1
+			and String((idle_rows[0] as Dictionary).get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS)
