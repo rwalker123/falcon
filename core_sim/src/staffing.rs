@@ -1460,7 +1460,8 @@ fn staff_passes_counted(
             let kitted = ledger.out[i].kitted;
             let hold =
                 *needed[i].get_or_insert_with(|| hold_heads(row, kitted).saturating_sub(kept[i]));
-            ledger.deal_head(i, kitted + ledger.out[i].bare < hold, HeadKind::Bare)
+            let wanted = kitted + ledger.out[i].bare < hold;
+            deal_food_head(rows, &mut ledger, shelf, i, wanted)
         });
     }
 
@@ -1555,7 +1556,8 @@ fn staff_passes_counted(
                     .max(hold_heads(row, kitted))
                     .saturating_sub(kept[i])
             });
-            ledger.deal_head(i, kitted + ledger.out[i].bare < reach, HeadKind::Bare)
+            let wanted = kitted + ledger.out[i].bare < reach;
+            deal_food_head(rows, &mut ledger, shelf, i, wanted)
         });
         deal_kitted(rows, sources, &mut ledger, shelf, |i, row, kmax| {
             reach_heads(row, kmax)
@@ -1723,6 +1725,29 @@ fn deal_keeping(
             arm(row, held, held + 1, shelf);
         }
     }
+}
+
+/// **ONE HEAD ON A CHIEF'S FOOD ROW** (pass 1c's hold crew and pass 2's refill): kitted, arming the
+/// row's live kit items from the shelf exactly as [`deal_kitted`] arms, when the shelf can arm one
+/// more; else bare. The caller has already checked a bare hand takes something on the row. `wanted`
+/// is whether the row's crew target is still short.
+fn deal_food_head(
+    rows: &[StaffRowInput<'_>],
+    ledger: &mut Ledger,
+    shelf: &mut BTreeMap<Arc<str>, u32>,
+    i: usize,
+    wanted: bool,
+) -> bool {
+    let row = &rows[i];
+    let held = ledger.out[i].kitted;
+    if wanted && kitted_capacity(row, held, shelf) > held {
+        if ledger.deal_head(i, true, HeadKind::Kitted) {
+            arm(row, held, held + 1, shelf);
+            return true;
+        }
+        return false;
+    }
+    ledger.deal_head(i, wanted, HeadKind::Bare)
 }
 
 /// **A ROUND OF ONE HEAD PER ROW**, repeated until a whole round deals nothing. `deal_one` seats at
@@ -4465,6 +4490,62 @@ mod tests {
         assert_eq!(out[0].kitted, 3, "a player's food row keeps kitted-first");
         assert!(out[1].total() < 4, "its refill is left short");
         assert!(out[0].kitted > 0 && out[1].total() > 0, "liveness");
+    }
+
+    /// A chief's food row that takes baskets (a one-hand hold, a four-hand refill) beside a stone
+    /// row that takes the same `item`, both Normal.
+    fn food_and_stone_on_one_item<'a>(item: &str) -> Vec<StaffRowInput<'a>> {
+        let kit: Vec<(Arc<str>, u32)> = vec![(Arc::from(item), 1)];
+        let mut food = linear_row(
+            SourcePriority::Normal,
+            None,
+            0,
+            1.0,
+            4.0,
+            1.0,
+            1.0,
+            kit.clone(),
+        );
+        food.food_keep_up = true;
+        vec![
+            linear_row(SourcePriority::Normal, None, 0, 0.0, 4.0, 1.0, 1.0, kit),
+            food,
+        ]
+    }
+
+    /// **A CHIEF'S FOOD HEADS ARE KITTED WHERE THE SHELF CAN ARM THEM** (pass 1c's hold and pass 2's
+    /// refill), bare only past the shelf; with nothing on the shelf they are bare as before.
+    #[test]
+    fn a_chiefs_food_heads_are_kitted_while_the_shelf_arms_them() {
+        const BASKETS: u32 = 2;
+        let mut rows = food_and_stone_on_one_item("baskets");
+        rows.remove(0);
+        let mut shelf = BTreeMap::from([(Arc::from("baskets"), BASKETS)]);
+        let out = staff_band(&rows, 5, &mut shelf);
+        assert_eq!(out[0].kitted, BASKETS, "every basket on the shelf is armed");
+        assert!(
+            out[0].bare > 0 && out[0].total() >= out[0].hold_crew,
+            "bare only past the shelf: {:?}",
+            out[0]
+        );
+
+        let mut empty = BTreeMap::from([(Arc::from("baskets"), 0)]);
+        let out = staff_band(&rows, 5, &mut empty);
+        assert_eq!(out[0].kitted, 0, "nothing on the shelf, nothing armed");
+        assert!(out[0].bare > 0, "the food row is dealt bare as it was");
+    }
+
+    /// **TWO ROWS ON ONE ITEM**: at equal priority the chief's food row arms first, so the stone row
+    /// finds the shelf spent, and no unit is armed twice.
+    #[test]
+    fn a_chiefs_food_row_arms_a_shared_item_before_an_equal_stone_row() {
+        const SLEDS: u32 = 2;
+        let rows = food_and_stone_on_one_item("sleds");
+        let mut shelf = BTreeMap::from([(Arc::from("sleds"), SLEDS)]);
+        let out = staff_band(&rows, 5, &mut shelf);
+        assert_eq!(out[1].kitted, SLEDS, "the food row arms both sleds");
+        assert_eq!(out[0].kitted, 0, "the stone row finds none left");
+        assert!(out[0].total() + out[1].total() > 0, "liveness");
     }
 
     #[test]
