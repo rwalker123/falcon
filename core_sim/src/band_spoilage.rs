@@ -90,6 +90,9 @@ pub struct SpoilScene<'a> {
     pub held: &'a HeldPreservation,
     pub stores: &'a crate::fixed_store::ReachableStores,
     pub income: &'a IncomeByClass,
+    /// The food on hand (larder plus stores in reach) at which the band's chief-owned food order is
+    /// at its target, so he stops gathering extra; `None` without a chief-owned food order.
+    pub chief_stops_at: Option<f32>,
     /// The meal the band eats a turn.
     pub need: f32,
     /// `band_orders.storage_build_min_saved`.
@@ -146,6 +149,7 @@ pub fn band_spoilage(scene: &SpoilScene<'_>) -> BandSpoilage {
             scene.keeping,
             held,
             &scene.stores.held,
+            scene.chief_stops_at,
         )
     };
     let now = walk(scene.held);
@@ -272,6 +276,8 @@ pub struct BandSpoilInputs<'a> {
     pub improvements: &'a TileImprovementRegistry,
     pub held: &'a HeldPreservation,
     pub stores: &'a crate::fixed_store::ReachableStores,
+    /// Whether the band has a leader (a chief-owned order is run only by a band that does).
+    pub has_leader: bool,
     pub knows: &'a dyn Fn(u32) -> bool,
 }
 
@@ -329,6 +335,11 @@ pub fn band_spoilage_of(inputs: &BandSpoilInputs<'_>) -> BandSpoilage {
         held: inputs.held,
         stores: inputs.stores,
         income: &income,
+        chief_stops_at: (inputs.has_leader
+            && inputs.allocation.chief_owns(crate::keep_on_hand::FOOD_KIND))
+        .then(|| inputs.allocation.order_for(crate::keep_on_hand::FOOD_KIND))
+        .flatten()
+        .map(|order| order.target as f32 * need),
         need,
         build_min_saved: inputs.labor.band_orders.storage_build_min_saved,
         horizon: inputs.labor.yield_average_horizon_turns,

@@ -941,8 +941,61 @@ struct PublishedSpoilage {
 }
 
 fn spoilage_world(income: f32, rack: bool) -> PublishedSpoilage {
+    spoilage_world_ordered(income, rack, None)
+}
+
+/// A food order on the fixture band for [`spoilage_world_ordered`].
+#[derive(Clone, Copy)]
+struct FoodOrderSetup {
+    /// The order's target, in turns.
+    target: u32,
+    owner: core_sim::OrderOwner,
+    /// Whether the band has a leader.
+    leader: bool,
+}
+
+/// A larder far above any small target, in the class that keeps through the whole forecast window.
+const A_FULL_LARDER: f32 = 1_000.0;
+const A_LARDER_CLASS: &str = "dry";
+/// A target the larder above reaches.
+const A_TARGET_THE_LARDER_MEETS: u32 = 5;
+/// A target no larder reaches.
+const A_TARGET_NO_LARDER_MEETS: u32 = 1_000_000;
+
+fn spoilage_world_ordered(
+    income: f32,
+    rack: bool,
+    order: Option<FoodOrderSetup>,
+) -> PublishedSpoilage {
     let (mut app, band) = rot_world();
+    if let Some(setup) = order {
+        app.world
+            .get_mut::<PopulationCohort>(band)
+            .unwrap()
+            .stores
+            .add_food_aged(A_LARDER_CLASS, scalar_from_f32(A_FULL_LARDER), 0);
+        if setup.leader {
+            app.world.entity_mut(band).insert(core_sim::BandLeadership {
+                leader: Some(core_sim::BandLeader {
+                    name: "Ash".to_string(),
+                    kind: core_sim::LeaderKind::Chief,
+                    since_turn: 0,
+                }),
+                ..Default::default()
+            });
+        }
+    }
     let mut allocation = LaborAllocation::default();
+    if let Some(setup) = order {
+        allocation.orders.insert(
+            "food".to_string(),
+            core_sim::BandOrder {
+                target: setup.target,
+                priority: core_sim::SourcePriority::Normal,
+                owner: setup.owner,
+            },
+        );
+    }
     allocation.set_assignment(
         LaborTarget::Hunt {
             fauna_id: "the_unseen_herd".to_string(),
@@ -1083,6 +1136,67 @@ fn a_meat_surplus_publishes_its_spoilage_and_the_rack_that_would_save_it() {
         eaten.spoil.is_empty(),
         "a band that eats everything spoils nothing: {:?}",
         eaten.spoil
+    );
+}
+
+/// **A CHIEF STOPS GATHERING EXTRA AT HIS TARGET, AND THE FORECAST KNOWS IT**: a band whose chief-owned
+/// food order is already at its target forecasts no rot from an income far above its meal, where the
+/// same band with the order released to the player forecasts the rot; below the target the chief
+/// still gathers everything, so the forecast is the player's; the rack's `foodSaved` follows the
+/// same cut; and a band with no leader is unchanged.
+#[test]
+fn a_chief_at_his_target_forecasts_no_surplus_rot_and_a_player_owned_order_does() {
+    use core_sim::OrderOwner::{Chief, Player};
+    let setup = |target, owner, leader| {
+        spoilage_world_ordered(
+            MEAT_SURPLUS_INCOME,
+            false,
+            Some(FoodOrderSetup {
+                target,
+                owner,
+                leader,
+            }),
+        )
+    };
+    let at_target_chief = setup(A_TARGET_THE_LARDER_MEETS, Chief, true);
+    let at_target_player = setup(A_TARGET_THE_LARDER_MEETS, Player, true);
+    assert!(
+        spoiled_of(&at_target_player, MEAT_CLASS) > 0.0,
+        "liveness: with the order the player's the surplus meat rots: {:?}",
+        at_target_player.spoil
+    );
+    assert!(
+        spoiled_of(&at_target_chief, MEAT_CLASS) < f32::EPSILON,
+        "a chief at his target gathers only the meal: {:?}",
+        at_target_chief.spoil
+    );
+    let rack_saved = |published: &PublishedSpoilage| {
+        published
+            .saves
+            .iter()
+            .find(|(rung, keeping, _)| rung == &drying_rack().wire_key() && keeping == MEAT_CLASS)
+            .map_or(0.0, |row| row.2)
+    };
+    assert!(
+        rack_saved(&at_target_player) > 0.0,
+        "liveness: the rack saves"
+    );
+    assert!(
+        rack_saved(&at_target_chief) < f32::EPSILON,
+        "the rack saves nothing the chief would not gather"
+    );
+
+    let below_chief = setup(A_TARGET_NO_LARDER_MEETS, Chief, true);
+    assert_eq!(
+        below_chief.spoil, at_target_player.spoil,
+        "below his target the chief gathers everything and the forecast is the full income's"
+    );
+    assert!((rack_saved(&below_chief) - rack_saved(&at_target_player)).abs() < 1e-3);
+
+    let leaderless = setup(A_TARGET_THE_LARDER_MEETS, Chief, false);
+    assert_eq!(
+        leaderless.spoil, at_target_player.spoil,
+        "a band with no leader has no chief stopping at a target"
     );
 }
 

@@ -269,6 +269,9 @@ fn candidates(world: &World, view: &BandView, bands: &[BandView]) -> Vec<Candida
         improvements,
         held: &held,
         stores: &stores,
+        has_leader: world
+            .get::<crate::leadership::BandLeadership>(view.entity)
+            .is_some_and(|leadership| leadership.leader.is_some()),
         knows: &|discovery_id| {
             crate::intensification::knows(
                 discovery,

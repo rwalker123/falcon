@@ -501,6 +501,16 @@ Surplus spoilage belongs to the band and its storage, never to a hunt row. Engin
   `realized` split by keeping class (`band_spoilage::income_by_class`: a hunt row by its herd's class,
   `FaunaConfig::keeping_for` else `kill_fallback_class`; a forage row by `forage::patch_food_mix`
   shares; a need row at its `sustainable`, as `band_food_flow` reads it).
+- **A chief stops gathering extra at his target, and the walk knows it.** For a band with a leader
+  whose food order the chief owns (`LaborAllocation::chief_owns`, `BandSpoilInputs::has_leader`), the
+  walk is handed `chief_stops_at` = the order's target turns x the meal. On every walked turn whose
+  food on hand (larder plus the stores in reach, after the meal and the rot - the figure
+  `food_orders::OrderReadings::of` reads) is at or above it, only the meal's worth of the income lands
+  (`need`, scaled across the keeping classes in proportion; never more than the whole income); below
+  it the whole income lands. A band with no leader, or whose food order is the player's, walks the
+  full income every turn. `spoilAhead`, `storageSaves.foodSaved` and the chief's storage proposals
+  all read the one walk, so all follow the cut. The runway (`rot_ahead_with_stores`) is a different
+  walk and is unchanged.
 - **Wire** (own resident bands, appended last on `PopulationCohortState`, not on the redaction
   allow-list): `spoilAhead:[KeepingSpoil{keeping, food}]` (non-zero classes, the keeping table's
   order), `storageSaves:[StorageSave{rung, keeping, foodSaved, lessonKnown, declared, materialId,

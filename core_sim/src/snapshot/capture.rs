@@ -3568,6 +3568,7 @@ pub fn capture_snapshot(
                                 improvements: &tile_improvements,
                                 held: &held_now,
                                 stores: &reachable_now,
+                                has_leader: leadership.is_some_and(|l| l.leader.is_some()),
                                 knows: &|id| {
                                     crate::intensification::knows(
                                         &discovery_progress,

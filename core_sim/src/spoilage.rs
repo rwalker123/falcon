@@ -923,6 +923,11 @@ pub type IncomeByClass = BTreeMap<String, f32>;
 /// **A FORWARD PROJECTION**, never a trailing average: it reads the band's standing rows' `realized`
 /// split by class and nothing from history. The meal is `need` a turn at the band's demand.
 /// Pure: the capture, the chief's managing pass and the saves calculation all call it.
+///
+/// **A CHIEF STOPS GATHERING EXTRA AT HIS TARGET**: with `chief_stops_at` set (the food the band
+/// must hold, larder plus stores, for its chief-owned food order to be at its target), every turn
+/// whose food on hand (after the meal and the rot) is at or above it lands only `need` of the
+/// income, scaled across the classes in proportion; below it the whole income lands.
 #[allow(clippy::too_many_arguments)] // the walk's whole scene
 pub fn spoilage_ahead(
     larder: &FoodMix,
@@ -933,6 +938,7 @@ pub fn spoilage_ahead(
     keeping: &KeepingConfig,
     held: &HeldPreservation,
     store_held: &HeldPreservation,
+    chief_stops_at: Option<f32>,
 ) -> BTreeMap<String, f32> {
     let ration = scalar_from_f32(need.max(0.0));
     let order = keeping.eat_order();
@@ -960,9 +966,12 @@ pub fn spoilage_ahead(
                 }
             }
         }
+        let landing = chief_stops_at
+            .filter(|stop| (larder.total() + stores.total()).to_f32() >= *stop)
+            .map_or(1.0, |_| income_share_the_meal_takes(income, need));
         for (class, amount) in income {
             if *amount > 0.0 {
-                larder.add(class, scalar_from_f32(*amount));
+                larder.add(class, scalar_from_f32(*amount * landing));
             }
         }
     }
@@ -974,6 +983,17 @@ pub fn spoilage_ahead(
         .map(|(class, total)| (class, total / horizon as f32))
         .filter(|(_, per_turn)| *per_turn > f32::EPSILON)
         .collect()
+}
+
+/// The share of `income` that lands once a chief stops gathering extra: `need` of it, never more
+/// than all of it.
+fn income_share_the_meal_takes(income: &IncomeByClass, need: f32) -> f32 {
+    let total: f32 = income.values().filter(|amount| **amount > 0.0).sum();
+    if total <= need.max(0.0) {
+        1.0
+    } else {
+        need.max(0.0) / total
+    }
 }
 
 /// The food of each class in a pile, as floats.
@@ -1048,6 +1068,7 @@ mod party_and_forecast_tests {
                 &keeping,
                 &HeldPreservation::none(),
                 &HeldPreservation::none(),
+                None,
             )
         };
         assert!(walk(NEED * 10.0).get("flesh").copied().unwrap_or(0.0) > 0.0);
