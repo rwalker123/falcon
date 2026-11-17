@@ -6610,11 +6610,21 @@ pub fn advance_labor_allocation(
                                 .is_some_and(|ledger| ledger.is_visible(faction, at.x, at.y))
                         },
                         pool,
-                        readings: crate::food_orders::OrderReadings {
-                            food_stock: cohort.stores.get(crate::components::FOOD).to_f32(),
-                            food_need: cohort.last_food_need,
-                            fodder_stock: cohort.stores.get(crate::components::FODDER).to_f32(),
-                        },
+                        readings: crate::food_orders::OrderReadings::of(
+                            &cohort,
+                            crate::fixed_store::reachable_food(
+                                &crate::spoilage::PreservationScene {
+                                    keeping: food_keeping,
+                                    ladder: &ladder,
+                                    improvements: &tile_improvements,
+                                    reach_tiles: supply_cfg.reach_tiles,
+                                    grid: (grid_width, wrap_horizontal),
+                                },
+                                band_id,
+                                faction,
+                                band_pos,
+                            ),
+                        ),
                     },
                     has_leader,
                     &rivals,

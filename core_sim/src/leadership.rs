@@ -16,9 +16,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    components::{
-        BandId, LaborAllocation, LeadershipReading, PopulationCohort, ResidentBand, FODDER, FOOD,
-    },
+    components::{BandId, LaborAllocation, LeadershipReading, PopulationCohort, ResidentBand},
     culture::{CultureManager, CultureOwner, CultureTraitAxis},
     food_orders::{OrderReadings, OrderVerdict},
     intensification::RungDef,
@@ -300,15 +298,12 @@ pub fn judge_leader(
     axis_over_span: Option<f32>,
     deficit_fraction: f32,
     met_builds: u32,
+    reachable_store_food: f32,
 ) -> LeaderJudgement {
     let patience = config.patience(axis_over_span.unwrap_or(NEUTRAL_AXIS));
     let mut reading = LeadershipReading::default();
     if let Some(allocation) = allocation {
-        let readings = OrderReadings {
-            food_stock: cohort.stores.get(FOOD).to_f32(),
-            food_need: cohort.last_food_need,
-            fodder_stock: cohort.stores.get(FODDER).to_f32(),
-        };
+        let readings = OrderReadings::of(cohort, reachable_store_food);
         let material_on_hand = |kind: &str| cohort.stores.material_total(kind).to_f32();
         for (kind, order) in &allocation.orders {
             let figures = readings.figures(kind, order, allocation, &material_on_hand);

@@ -442,10 +442,16 @@ Engine: `core_sim/src/food_orders.rs` (`manage_food_orders`, run right after `ma
 labor pass and by every command restaff), `staffing::probe_source`, `staffing::apply_chief_share`.
 
 - **Currency.** `target` and `onHand` are in **turns**; `draw` is units a turn. Food: `onHand` = the
-  larder (`stores.get(FOOD)`) over `PopulationCohort::last_food_need` (what the meal was measured against
+  larder (`stores.get(FOOD)`) **plus the food in the stores the band owns within reach**
+  (`fixed_store::reachable_stores`, the helper the runway reads; `OrderReadings::of` is the one place
+  the figure is built, from `fixed_store::reachable_food` / `reachable_food_in_world`) over
+  `PopulationCohort::last_food_need` (what the meal was measured against
   - the sim's own need figure, not a second one); fodder: the `FODDER` store over
   `LaborAllocation::last_fodder_need` (what the tamed and penned herds need beyond their grazing). `hasConsumers` is false
-  for fodder while `last_fodder_need` is 0, and the order then wants nothing and runs no rows.
+  for fodder while `last_fodder_need` is 0, and the order then wants nothing and runs no rows. Every
+  reader of the food order's on-hand sees the larder-plus-stores figure: the managing pass's want, the
+  wire's `onHand` and the order limit, `food_order_is_falling` (the proposal trigger) and
+  `leadership::judge_leader`'s met / falling. A pit out of reach is not counted.
 - **The want** = the draw plus the deficit (`(target - turns) * draw`) over `keep_on_hand_refill_turns`
   below the target, and **the draw itself at or above it** (the band eats every turn, so the keep-up crew
   still works - unlike a material, where nobody works at the target).

@@ -902,7 +902,11 @@ pub fn refresh_proposals(world: &mut World, advance: bool) {
                     workforce.idle(),
                     keeper.is_some(),
                     keeper,
-                    crate::food_orders::food_order_is_falling(cohort, allocation),
+                    crate::food_orders::food_order_is_falling(
+                        cohort,
+                        allocation,
+                        crate::fixed_store::reachable_food_in_world(world, view.entity),
+                    ),
                     low_yield_hands(cohort, allocation, orders.proposal_low_yield_share),
                 )
             };

@@ -1837,6 +1837,11 @@ pub fn simulate_population(
                             .as_deref()
                             .map_or(0, |book| book.met_builds_ready(*band))
                     }),
+                    store_food
+                        .get(&entity)
+                        .copied()
+                        .unwrap_or_default()
+                        .to_f32(),
                 )
             })
             .unwrap_or_default();

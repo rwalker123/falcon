@@ -3953,11 +3953,10 @@ fn managed_dig_allocation(
                 tile_known: &known_tile,
                 herd_known: &known_herd,
                 pool,
-                readings: crate::food_orders::OrderReadings {
-                    food_stock: cohort_stores.get(crate::components::FOOD).to_f32(),
-                    food_need: cohort.last_food_need,
-                    fodder_stock: cohort_stores.get(crate::components::FODDER).to_f32(),
-                },
+                readings: crate::food_orders::OrderReadings::of(
+                    cohort,
+                    crate::fixed_store::reachable_food_in_world(world, band),
+                ),
             },
             has_leader,
             &rivals,

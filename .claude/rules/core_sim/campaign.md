@@ -577,7 +577,9 @@ owner. Sharing between bands goes through the owner's larder and ordinary poolin
   runway (`band_turns_of_food` → `spoilage::rot_ahead_with_stores`, the meal eating by the same
   least-time-left plan across the larder and the stores, each at its own lives — the longest
   in-store life per class where stores differ; `rot_ahead` is that walk with no stores) and the
-  fertility `reserve` (`DemographicState::reachable_store_food`) count it; `hunger` does not need to
+  fertility `reserve` (`DemographicState::reachable_store_food`) count it, and so does the chief's
+  food order (`food_orders::OrderReadings::of`: larder plus the owned stores in reach, over the
+  need, in turns; `work-party.md` -> "The food and fodder orders"); `hunger` does not need to
   (the draw already fed the meal). The hunting need clock and meal pass no stores — dry food keeps
   longer than a kill, so it was excluded anyway.
 - **The tether**: `sedentarization_tick`'s surplus input adds every store's contents to its

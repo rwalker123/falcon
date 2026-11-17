@@ -4153,6 +4153,70 @@ func _storage_band(wood_on_hand: float, pit_declared: bool = true) -> Dictionary
 	]
 	return band
 
+## The surplus spoilage form: the band brings in more than it eats, so the warning says why and what to do.
+const SURPLUS_INCOME := 26.8
+const SURPLUS_NEED := 14.7
+const LUMPY_INCOME := 9.0
+const SURPLUS_LEADER := "Zeke"
+
+func _surplus_band(base: Dictionary, income: float, chief_owns_food: bool, leader_kind: int = HudFormat.LEADER_KIND_CHIEF) -> Dictionary:
+	var band := base.duplicate(true)
+	band["name"] = "Ashfell"
+	# The STEADY income the Food line's net is made of: the realized yield of the band's hunt row.
+	band["labor_assignments"] = [{"kind": "hunt", "realized_yield": income}]
+	band["food_need"] = SURPLUS_NEED
+	band["leader_kind"] = leader_kind
+	band["leader_name"] = SURPLUS_LEADER
+	band["band_orders"] = [{"kind": "food", "chief_owned": chief_owns_food, "has_consumers": false}]
+	return band
+
+func _spoil_text(band: Dictionary) -> String:
+	h._hud.update_band_alerts([band])
+	h._hud.show_unit_selection(band)
+	await h._settle()
+	return String(h._hud.occupant_detail.get_parsed_text())
+
+## The warning and the Food line read the same terms: the surplus form never sits beside a non-positive net.
+func _assert_surplus_agrees(label: String, band: Dictionary, text: String) -> void:
+	h._assert_hud("%s: the Food line's net is positive beside the surplus form" % label,
+		DetailFormat.band_net_food(band) > 0.0 and text.contains("grows more than it eats")
+			and text.contains("+%.2f /turn" % DetailFormat.band_net_food(band)))
+
+func _spoil_surplus_states(base: Dictionary) -> void:
+	var open_store := _storage_band(STORAGE_WOOD_SHORT_ON_HAND, false)
+	var chief_band := _surplus_band(open_store, SURPLUS_INCOME, true)
+	var chief_text := await _spoil_text(chief_band)
+	await h._save("storage_spoil_surplus_chief")
+	h._assert_hud("surplus + chief-owned food + an open store: the store is one more option",
+		chief_text.contains("will spoil — Ashfell grows more than it eats")
+			and chief_text.contains("Lower Zeke's food target, move people to other work, or build a drying rack (saves 0.4 a turn)."))
+	_assert_surplus_agrees("chief", chief_band, chief_text)
+	var bare_band := _surplus_band(base, SURPLUS_INCOME, true)
+	var bare_text := await _spoil_text(bare_band)
+	await h._save("storage_spoil_surplus_chief_nostore")
+	h._assert_hud("surplus + chief-owned food, store already being built: no store option",
+		bare_text.contains("Lower Zeke's food target, or move people to other work.") and not bare_text.contains("build a"))
+	_assert_surplus_agrees("chief, no store", bare_band, bare_text)
+	var council_text := await _spoil_text(_surplus_band(base, SURPLUS_INCOME, true, HudFormat.LEADER_KIND_ELDER_COUNCIL))
+	await h._save("storage_spoil_surplus_council")
+	h._assert_hud("surplus + elders' council: the elders' food target",
+		council_text.contains("Lower the elders' food target, or move people to other work."))
+	var player_band := _surplus_band(open_store, SURPLUS_INCOME, false)
+	var player_text := await _spoil_text(player_band)
+	await h._save("storage_spoil_surplus_player")
+	h._assert_hud("surplus + player-owned food + an open store",
+		player_text.contains("grows more than it eats")
+			and player_text.contains("Move people from food to other work, or build a drying rack (saves 0.4 a turn).")
+			and not player_text.contains("Lower"))
+	_assert_surplus_agrees("player", player_band, player_text)
+	var lumpy_band := _surplus_band(base, LUMPY_INCOME, true)
+	var lumpy_text := await _spoil_text(lumpy_band)
+	await h._save("storage_spoil_lumpy")
+	h._assert_hud("income not above need keeps the single old line, beside a non-positive net",
+		DetailFormat.band_net_food(lumpy_band) <= 0.0
+			and lumpy_text.contains("food a turn spoils uneaten") and not lumpy_text.contains("grows more than it eats")
+			and not lumpy_text.contains("Move people") and not lumpy_text.contains("Lower"))
+
 func _storage_states() -> void:
 	h._hud.update_ladder_rungs(_ladder_fixture())
 	var band := _storage_band(STORAGE_WOOD_SHORT_ON_HAND)
@@ -4162,6 +4226,7 @@ func _storage_states() -> void:
 	h._hud.show_unit_selection(band)
 	await h._settle()
 	await h._save("storage_spoil_band")
+	await _spoil_surplus_states(band)
 	h._hud._band_labor._player_bands = []
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	await h._settle()

@@ -66,7 +66,8 @@ pub struct FoodInputs<'a> {
 }
 
 /// **THE BAND'S FOOD AND FODDER STOCKS AND PER-TURN NEEDS**: the figures the sim already keeps - the
-/// larder (`stores`, `FOOD`) over what the people eat a turn (`PopulationCohort::last_food_need`), the
+/// food the band can reach (its larder plus the food in the stores it owns within reach,
+/// [`OrderReadings::of`]) over what the people eat a turn (`PopulationCohort::last_food_need`), the
 /// hay store (`FODDER`) over what the pens need beyond their pasture
 /// (`LaborAllocation::last_fodder_need`).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -77,6 +78,18 @@ pub struct OrderReadings {
 }
 
 impl OrderReadings {
+    /// **THE ONE READING OF A BAND'S ORDER FIGURES**: the food on hand is the larder (`FOOD`) plus
+    /// `reachable_store_food`, the food in the stores the band owns within reach
+    /// ([`crate::fixed_store::reachable_stores`], the helper the runway reads); the fodder is the hay
+    /// store, which no pit holds.
+    pub fn of(cohort: &crate::components::PopulationCohort, reachable_store_food: f32) -> Self {
+        Self {
+            food_stock: cohort.stores.get(crate::components::FOOD).to_f32() + reachable_store_food,
+            food_need: cohort.last_food_need,
+            fodder_stock: cohort.stores.get(crate::components::FODDER).to_f32(),
+        }
+    }
+
     /// The per-turn draw the `kind` order keeps up with, in the kind's units.
     pub fn draw(&self, kind: &str, allocation: &LaborAllocation) -> f32 {
         match kind {
@@ -184,15 +197,12 @@ impl OrderReadings {
 pub fn food_order_is_falling(
     cohort: &crate::components::PopulationCohort,
     allocation: &LaborAllocation,
+    reachable_store_food: f32,
 ) -> bool {
     let Some(order) = allocation.order_for(FOOD_KIND) else {
         return false;
     };
-    let readings = OrderReadings {
-        food_stock: cohort.stores.get(crate::components::FOOD).to_f32(),
-        food_need: cohort.last_food_need,
-        fodder_stock: cohort.stores.get(crate::components::FODDER).to_f32(),
-    };
+    let readings = OrderReadings::of(cohort, reachable_store_food);
     let on_hand = |kind: &str| cohort.stores.material_total(kind).to_f32();
     readings
         .figures(FOOD_KIND, order, allocation, &on_hand)

@@ -1396,7 +1396,7 @@ fn a_completed_approved_build_counts_once_as_an_order_met() {
             .resource::<core_sim::WellbeingConfigHandle>()
             .get();
         let cohort = app.world.get::<PopulationCohort>(band).unwrap();
-        core_sim::judge_leader(&wellbeing.leadership, None, cohort, None, 0.0, ready)
+        core_sim::judge_leader(&wellbeing.leadership, None, cohort, None, 0.0, ready, 0.0)
             .reading
             .met_orders
     };

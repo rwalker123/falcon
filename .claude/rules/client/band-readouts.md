@@ -1948,6 +1948,18 @@ clause names the best `storage_saves` row, a DECLARED build outranking an open o
 The rung name is the `ladder_rungs` roster's `display_name`, lower-cased (`BandDetailLines` takes the
 catalog as a Callable, `FactionReadouts.ladder_rungs`), never the id.
 
+- **Two forms.** `HudStorageVocab.spoil_lines` returns the shipped single line while the STEADY income
+  (`DetailFormat.band_food_income`, the realized-yield sum the Food line's net is made of -- never the wire's lumpy
+  `food_income`) is not above `food_need`, so the warning can never sit beside a non-positive Food-line net. When it IS
+  above, it returns two lines: the cause, `⚠ 4.3 food a turn will spoil — Ashfell grows more than it eats`
+  (`SPOIL_SURPLUS_PHRASE`, band name via `HudFormat.band_name`; amber and hover-bearing like the single line), then a
+  dim (`INK_DIM`) what-to-do line: `Lower Zeke's food target, or move people to other work.` when the `band_orders`
+  food row is `chief_owned` (`Lower the elders' food target, ...` for a council), else `Move people from food to other
+  work.`. When the best `storage_saves` row is a store with a known lesson and no build declared, the fix line gains it
+  as one more option: `Lower Zeke's food target, move people to other work, or build a drying rack (saves 0.4 a
+  turn).` / `Move people from food to other work, or build a drying rack (saves 0.4 a turn).`. Frames
+  `storage_spoil_surplus_{chief,chief_nostore,council,player}` and `storage_spoil_lumpy` in `crafting_bench`, each
+  asserted, including that the surplus form only renders beside a positive Food-line net.
 - **Amber, and hover-bearing.** It leads with `HudStorageVocab.SPOIL_LINE_LEAD` (the hazard mark) and
   `DetailFormat.detail_bbcode` matches it on `SPOIL_PHRASE` BEFORE the generic hazard branch so it can be
   wrapped in `hover_wrap` under `SPOIL_HOVER_KEY`; the hover lists the per-class figures as `meat` / `greens` /
