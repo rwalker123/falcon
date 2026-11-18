@@ -383,8 +383,11 @@ fn a_settlement_stage_pays_once_and_a_shrink_and_regrow_does_not_repay() {
         .resource::<core_sim::SettlementStageConfigHandle>()
         .get();
     let size_of = |index: usize| stages.stages[index].criteria.min_size;
+    // The stage a band is credited for is the one `advance_settlements` resolved over the band
+    // alone, so each resize resolves it before leadership reads it.
     let set_size = |app: &mut App, size: u32| {
         app.world.get_mut::<PopulationCohort>(band).unwrap().size = size;
+        app.world.run_system_once(core_sim::advance_settlements);
     };
     let paid = |app: &App| app.world.get::<BandLeadership>(band).unwrap().from_stages;
 

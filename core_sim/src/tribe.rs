@@ -2,9 +2,9 @@
 //! belief-anchor tile, and a live connection tie in BOTH directions -- far kin in touch are local,
 //! the supply network plays no part) has a **points bank**. While the pair is
 //! local and at least one of the two bands has a leader, the bank fills each turn by the pair's
-//! **rate**: the weighted sum of six inputs in `[0, 1]` ([`CloseInputs`], [`points_per_turn`]) --
+//! **rate**: the weighted sum of seven inputs in `[0, 1]` ([`CloseInputs`], [`points_per_turn`]) --
 //! shared origin, culture likeness, the connection tie, belief on the shared urn, a kept monument on
-//! it, and acting as a tribe. With no leader on either side the bank holds, so nothing counts toward
+//! it, acting as a tribe, and the pull of a settlement (a tribe at village stage or above). With no leader on either side the bank holds, so nothing counts toward
 //! a tribe before a leader exists. A bank fades while the pair is not local. A pair is *close* when
 //! its bank reaches `leadership_config.json -> tribe_score_threshold`. A tribe-candidate is a
 //! connected component of close pairs within one (people, anchor) set, of [`MIN_TRIBE_BANDS`] or more
@@ -31,6 +31,8 @@ use crate::{
     leadership_config::{LeadershipConfig, LeadershipConfigHandle},
     orders::FactionId,
     resources::{CommandEventEntry, CommandEventKind, CommandEventLog, SimulationTick},
+    settlement::SettlementStages,
+    settlement_stage_config::{SettlementStageConfig, SettlementStageConfigHandle},
     systems::band_label,
     tile_improvement::TileImprovementRegistry,
     wellbeing_config::WellbeingConfigHandle,
@@ -471,7 +473,7 @@ pub fn likeness(a: &CultureLayer, b: &CultureLayer) -> f64 {
     f64::from((1.0 - gap / CULTURE_AXIS_RANGE).clamp(0.0, 1.0))
 }
 
-/// The six inputs to a pair's points rate, each in `[0, 1]`.
+/// The seven inputs to a pair's points rate, each in `[0, 1]`.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct CloseInputs {
     /// 1 when the two bands' founding lines share an origin band, else 0.
@@ -486,6 +488,10 @@ pub struct CloseInputs {
     pub monument: f64,
     /// [`acting_as_a_tribe`].
     pub acting: f64,
+    /// The pull of a settlement: the larger of the two bands' tribe stage readings
+    /// ([`SettlementStageConfig::pull_strength`]), 0 for a band in no tribe or one below the pull
+    /// stage.
+    pub settlement: f64,
 }
 
 /// **A pair's points per turn**: the weighted sum of its inputs. The one pure place the weights are
@@ -497,6 +503,7 @@ pub fn points_per_turn(config: &LeadershipConfig, inputs: &CloseInputs) -> f64 {
         + config.tribe_weight_belief * inputs.belief
         + config.tribe_weight_monument * inputs.monument
         + config.tribe_weight_acting * inputs.acting
+        + config.tribe_weight_settlement * inputs.settlement
 }
 
 /// What a tribe levied this turn against what it could have: the heads on its levy rows and its
@@ -505,6 +512,26 @@ pub fn points_per_turn(config: &LeadershipConfig, inputs: &CloseInputs) -> f64 {
 pub struct TribeLevyReading {
     pub levied: u32,
     pub pool: u32,
+}
+
+/// **The pull of a settlement on a pair** ([`CloseInputs::settlement`]): the larger of the two
+/// bands' tribe-stage readings ([`SettlementStageConfig::pull_strength`], `0` below the pull stage),
+/// `0` for a band in no tribe. Read off last turn's resolved stages. It only enters the rate, and a
+/// pair banks only while one side has a leader, so it never starts a tribe on its own.
+fn settlement_pull(
+    registry: &TribeRegistry,
+    settlements: &SettlementStages,
+    config: &SettlementStageConfig,
+    a: BandId,
+    b: BandId,
+) -> f64 {
+    let pull = |band: BandId| {
+        registry
+            .tribe_of(band)
+            .and_then(|tribe| settlements.of_tribe(tribe.id))
+            .map_or(0.0, |stage| config.pull_strength(stage))
+    };
+    pull(a).max(pull(b))
 }
 
 /// The reading of "acting as a tribe" a pair earns from the levy its tribe raised, in `[0, 1]`:
@@ -711,6 +738,8 @@ pub fn advance_tribes(
     belief_config: Res<BeliefConfigHandle>,
     improvements: Res<TileImprovementRegistry>,
     wellbeing: Res<WellbeingConfigHandle>,
+    stage_config: Res<SettlementStageConfigHandle>,
+    settlements: Res<SettlementStages>,
     mut registry: ResMut<TribeRegistry>,
     mut event_log: ResMut<CommandEventLog>,
     bands: Query<TribeBandParts, With<ResidentBand>>,
@@ -719,6 +748,7 @@ pub fn advance_tribes(
     let config = config.get();
     let wellbeing = wellbeing.get();
     let belief_config = belief_config.get();
+    let stage_config = stage_config.get();
     let mut facts: BTreeMap<BandId, BandFacts> = BTreeMap::new();
     let mut rows = Vec::new();
     for (_entity, band, cohort, name, leadership, allocation) in bands.iter() {
@@ -816,6 +846,7 @@ pub fn advance_tribes(
                 inputs.belief = urn_belief;
                 inputs.monument = monument;
                 inputs.acting = acting_as_a_tribe(same_tribe, config.tribe_acting_full_share);
+                inputs.settlement = settlement_pull(&registry, &settlements, &stage_config, *a, *b);
                 scores.insert((*a, *b), inputs);
             }
         }
@@ -1119,6 +1150,7 @@ mod tests {
             belief,
             monument: 0.0,
             acting: 0.0,
+            settlement: 0.0,
         }
     }
 

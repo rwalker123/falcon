@@ -440,7 +440,6 @@ pub(crate) fn snapshot_sedentarization(
         .map(|(faction, entry)| SchemaSedentarizationState {
             faction: faction.0,
             score: entry.score,
-            stage: entry.stage.as_str().to_string(),
             belief_points: entry.belief_points,
             domestication_points: entry.domestication_points,
             surplus_points: entry.surplus_points,

@@ -27,9 +27,7 @@ use crate::{
         CommandEventEntry, CommandEventKind, CommandEventLog, SimulationConfig, SimulationTick,
     },
     scalar::{scalar_from_f32, Scalar},
-    settlement_stage_config::{
-        resolve_settlement_stage, SettlementStageConfigHandle, SettlementStageInputs,
-    },
+    settlement::SettlementStages,
     wellbeing_config::{LeadershipMoraleConfig, WellbeingConfigHandle},
 };
 
@@ -384,7 +382,7 @@ pub fn advance_leadership(
     config: Res<LeadershipConfigHandle>,
     names: Res<LeaderNameCatalogHandle>,
     sim_config: Res<SimulationConfig>,
-    stage_config: Res<SettlementStageConfigHandle>,
+    settlements: Res<SettlementStages>,
     mut culture: ResMut<CultureManager>,
     wellbeing: Res<WellbeingConfigHandle>,
     follow_steps: Option<Res<HerdFollowSteps>>,
@@ -393,7 +391,6 @@ pub fn advance_leadership(
     mut proposals: ResMut<crate::chief_proposals::ChiefProposalBook>,
 ) {
     let config = config.get();
-    let stages = stage_config.get();
     let mut open: Vec<_> = bands
         .iter_mut()
         .filter(|(_, _, leadership, _, _)| leadership.leader.is_none())
@@ -403,11 +400,10 @@ pub fn advance_leadership(
         if let Some(steps) = follow_steps.as_deref() {
             leadership.credit_herd_hexes(&config, steps.hexes_of(**band));
         }
-        let inputs = SettlementStageInputs { size: cohort.size };
-        if let Some(stage) = resolve_settlement_stage(&inputs, &stages.stages) {
-            if let Some(index) = stages.stages.iter().position(|def| def.id == stage.id) {
-                leadership.credit_stages(&config, index as u32);
-            }
+        // The band's OWN stage (read over itself, never the tribe's: a band in a tribe has the
+        // tribe's leader), as `advance_settlements` resolved it last turn.
+        if let Some(index) = settlements.of_band(**band) {
+            leadership.credit_stages(&config, index as u32);
         }
         if !leadership.ready(&config) {
             continue;

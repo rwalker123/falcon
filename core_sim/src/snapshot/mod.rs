@@ -1517,6 +1517,7 @@ mod tests {
             leadership_threshold: 0.0,
             tribe: None,
             tribe_membership: None,
+            settlement_stage: None,
             reach: Default::default(),
             // No world, so no outfitting window either.
             loadout_window: None,

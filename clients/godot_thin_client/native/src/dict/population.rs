@@ -145,7 +145,7 @@ fn cohort_scalars(cohort: fb::PopulationCohortState<'_>) -> CohortScalars {
     }
 }
 
-/// One `TribeClosenessState` as `{origin, likeness, tie, belief, monument, acting}` -- the
+/// One `TribeClosenessState` as `{origin, likeness, tie, belief, monument, acting, settlement}` -- the
 /// cohort's `tribe_weights` and every pair's `contribution` share this one shape. Absent reads zeros.
 fn tribe_closeness_to_dict(state: Option<fb::TribeClosenessState<'_>>) -> VarDictionary {
     let mut out = VarDictionary::new();
@@ -158,6 +158,7 @@ fn tribe_closeness_to_dict(state: Option<fb::TribeClosenessState<'_>>) -> VarDic
     let _ = out.insert("belief", get(|s| s.belief()));
     let _ = out.insert("monument", get(|s| s.monument()));
     let _ = out.insert("acting", get(|s| s.acting()));
+    let _ = out.insert("settlement", get(|s| s.settlement()));
     out
 }
 
@@ -969,6 +970,21 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert(
         "settlement_stage_icon",
         settlement_stage.and_then(|s| s.icon()).unwrap_or(""),
+    );
+    // The stage of the TRIBE this band belongs to (#176), the same `{id,label,icon}` view; empty in no
+    // tribe, for a foreign band and for a party. The client shows it instead of the band's own.
+    let tribe_stage = cohort.tribeSettlementStage();
+    let _ = dict.insert(
+        "tribe_settlement_stage_id",
+        tribe_stage.and_then(|s| s.id()).unwrap_or(""),
+    );
+    let _ = dict.insert(
+        "tribe_settlement_stage_label",
+        tribe_stage.and_then(|s| s.label()).unwrap_or(""),
+    );
+    let _ = dict.insert(
+        "tribe_settlement_stage_icon",
+        tribe_stage.and_then(|s| s.icon()).unwrap_or(""),
     );
     if let Some(activity) = cohort.activity() {
         let _ = dict.insert("activity", activity);

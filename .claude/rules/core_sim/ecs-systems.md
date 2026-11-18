@@ -151,7 +151,6 @@ Per-faction visibility tracking with three states: `Unexplored` (never seen), `D
   the whole **corridor** it swept from its previous position (tracked in
   `VisibilitySweepTracker`) to the current one — not just the endpoint — so
   passed-over tiles are seen (`corridor_tiles`).
-- **Settlements**: `Settlement` with `TownCenter` provides sight from settlement position
 - **Worked sources** (labor): a band's workers are physically out at the sources they
   work, so those spots provide fog reveal too. For each assignment in the cohort's
   `LaborAllocation`, `calculate_visibility` adds a worked source tile — a **Forage**

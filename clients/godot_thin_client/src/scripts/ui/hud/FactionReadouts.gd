@@ -39,12 +39,6 @@ extends RefCounted
 # looks like. Its `METER_BAR_CELLS` sibling (the wider Sedentarization meter) went with the top-bar
 # strip that was the only thing drawing at that width.
 const KNOWLEDGE_METER_CELLS := 5
-## The sim's own spelling of "no sedentarization stage reached" — a WIRE token, not a word anyone
-## sees, and the same answer as an absent `stage`. Public because the faction page's SETTLING row
-## makes the identical test and two spellings of a wire value is how two surfaces come to disagree
-## about whether a faction has settled at all.
-const SEDENTARIZATION_STAGE_NONE := "none"
-
 ## ⛔ **`KNOWLEDGE_TRACK_LABELS` IS RETIRED — THE LADDER'S ROSTER RIDES THE WIRE NOW.**
 ##
 ## It was a hard-coded `{track: "Name"}` table that doubled as the DECLARED track list, and its two
@@ -142,7 +136,7 @@ const KNOWLEDGE_UNLOCK_NOTES := {
 # each 0..1. Backs the faction page's knowledge rows, the knowledge screen's LAND and HERDS rows
 # (through `faction_tracks`) and the policy-gate reasons (through `faction_knowledge()`).
 var _intensification_knowledge: Dictionary = {}
-## The player faction's own sedentarization entry (`{score, stage}`) and discovered sites from the
+## The player faction's own sedentarization entry (`{score, …}`) and discovered sites from the
 ## latest snapshot — RETAINED, not merely rendered, because the Band/City panel's faction page draws
 ## both in its KNOWLEDGE zone (issue #450) and must read the same answer this strip does.
 ##
@@ -480,7 +474,7 @@ func faction_knowledge(faction: int, track: String) -> float:
 func faction_tracks(faction: int) -> Dictionary:
 	return _intensification_knowledge.get(faction, {})
 
-## The PLAYER faction's sedentarization entry (`{score, stage, …}`) as the snapshot sent it, or `{}`
+## The PLAYER faction's sedentarization entry (`{score, …}`) as the snapshot sent it, or `{}`
 ## when it has sent none. Public for the Band/City panel's faction page, whose KNOWLEDGE zone draws
 ## the same figure this strip does — see `_sedentarization` for why the read belongs here and not on
 ## the snapshot. Returned BY REFERENCE, this HUD's accessor convention; every reader is read-only.

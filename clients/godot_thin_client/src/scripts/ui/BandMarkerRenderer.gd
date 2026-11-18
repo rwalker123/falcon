@@ -358,14 +358,15 @@ func _draw_band_token(unit: Dictionary, center: Vector2, token_radius: float, di
 		# (guarded in _draw_band_stack). Expeditions are lone on their tile, so `dim` is unused.
 		_draw_expedition_body(unit, center, token_radius, _band_faction_color(unit))
 		return
-	var stage_icon := String(unit.get("settlement_stage_icon", ""))
+	var stage_view := HudFormat.settlement_stage_view(unit)
+	var stage_icon := String(stage_view["icon"])
 	var glyph_size := int(maxf(_view.SECONDARY_ICON_MIN_SIZE, token_radius * _view.BAND_STAGE_GLYPH_SIZE_FACTOR))
 	# Bundled stage sprite FIRST — the emoji path draws through `ThemeDB.fallback_font`, so the OS
 	# emoji font would otherwise decide what a camp/village looks like (the same platform-inconsistency
 	# the fauna/site sprites already fixed). Keyed on the server's stable `settlement_stage_id`.
 	# This attempt MUST precede the empty-glyph placeholder below: that branch returns early, so a
 	# sprite-mapped stage whose glyph happened to be empty would wrongly draw a square.
-	var stage_sprite := StageSprites.for_stage(String(unit.get("settlement_stage_id", "")))
+	var stage_sprite := StageSprites.for_stage(String(stage_view["id"]))
 	if stage_sprite != null:
 		# Undimmed = plain white modulate (unchanged art); a behind card recedes by the same
 		# `BAND_STACK_BEHIND_TINT` the glyph path multiplies its colour by.

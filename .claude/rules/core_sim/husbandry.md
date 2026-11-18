@@ -2059,8 +2059,8 @@ Market hunting shipped as the third extractive rung, later renamed `Deplete`
 (`docs/plan_hunt_yield_model.md` §2 — every policy sells, so the rung is named for its
 pressure); `SedentarizationScore` shipped (see
 "Sedentarization" under Campaign Loop); **corrals shipped** (Intensification Rung 1c — see "Corral"
-below). Still deferred (`docs/plan_wildlife_hunting_overlay.md`): the `Camp` entity, and wiring the
-sedentarization hard prompt to an actual `found_settlement`. The tile-based `hunt_game` command is
+below). Still deferred (`docs/plan_wildlife_hunting_overlay.md`): the `Camp` entity, and a settlement
+that is derived rather than founded (`campaign.md` -> "Settlements: derived clusters"). The tile-based `hunt_game` command is
 deleted.
 
 ---

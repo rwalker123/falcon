@@ -66,9 +66,6 @@ pub(crate) fn sedentarization_to_array(
         let _ = dict.insert("surplus_points", state.surplusPoints());
         let _ = dict.insert("land_points", state.landPoints());
         let _ = dict.insert("population_points", state.populationPoints());
-        if let Some(stage) = state.stage() {
-            let _ = dict.insert("stage", stage);
-        }
         array.push(&dict.to_variant());
     }
     array

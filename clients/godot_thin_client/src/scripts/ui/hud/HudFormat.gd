@@ -694,7 +694,34 @@ const TRIBE_LEADER_PARAMOUNT := 1
 const TRIBE_LEADER_COUNCIL := 2
 const TRIBE_NAME_SEPARATOR := ", "
 ## The closeness inputs in the wire's (and the bar's) order, one hue each.
-const TRIBE_INPUT_KEYS := ["origin", "likeness", "tie", "belief", "monument", "acting"]
+const TRIBE_INPUT_KEYS := ["origin", "likeness", "tie", "belief", "monument", "acting", "settlement"]
+
+## The settlement stage a band WEARS (#176): its tribe's when it is in one (a settlement is a tribe, or a
+## lone band in none), else its own. Returns `{id, icon, label}`; the label of a tribe stage carries the
+## member count (`Village · 3 bands`) taken from `tribe_member_names`. Empty strings when the snapshot
+## carried no stage. Every surface that draws a band's stage (map marker, selection card, band panel
+## header) reads it here so one band wears one mark everywhere.
+const SETTLEMENT_STAGE_TRIBE_FORMAT := "%s · %d %s"
+const SETTLEMENT_STAGE_BAND_NOUN := "band"
+const SETTLEMENT_STAGE_BAND_NOUN_PLURAL := "bands"
+static func settlement_stage_view(unit: Dictionary) -> Dictionary:
+    var tribe_id := String(unit.get("tribe_settlement_stage_id", "")).strip_edges()
+    if tribe_id != "":
+        var members: Array = unit.get("tribe_member_names", [])
+        var tribe_label := String(unit.get("tribe_settlement_stage_label", "")).strip_edges()
+        if not members.is_empty():
+            var noun := SETTLEMENT_STAGE_BAND_NOUN if members.size() == 1 else SETTLEMENT_STAGE_BAND_NOUN_PLURAL
+            tribe_label = SETTLEMENT_STAGE_TRIBE_FORMAT % [tribe_label, members.size(), noun]
+        return {
+            "id": tribe_id,
+            "icon": String(unit.get("tribe_settlement_stage_icon", "")).strip_edges(),
+            "label": tribe_label,
+        }
+    return {
+        "id": String(unit.get("settlement_stage_id", "")).strip_edges(),
+        "icon": String(unit.get("settlement_stage_icon", "")).strip_edges(),
+        "label": String(unit.get("settlement_stage_label", "")).strip_edges(),
+    }
 const TRIBE_KEY_TIE := "tie"
 const TRIBE_KEY_BELIEF := "belief"
 const TRIBE_KEY_MONUMENT := "monument"

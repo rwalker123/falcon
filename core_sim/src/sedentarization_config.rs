@@ -2,8 +2,8 @@
 //!
 //! Loaded from `data/sedentarization_config.json`. The score is a per-faction 0–100
 //! "pressure to root in place" (see `sedentarization.rs`), a weighted blend of normalized
-//! inputs (domestication, surplus, resource density, population, belief) crossing a `soft_threshold`
-//! (~40, "establish a seasonal base?") and a `hard_threshold` (~70, "settle?"). Mirrors the
+//! inputs (domestication, surplus, resource density, population, belief). It gates nothing: a
+//! readout of accumulated tether. Mirrors the
 //! `fauna_config.rs` loader (baked-in builtin + optional file/env override).
 
 use std::{
@@ -75,10 +75,6 @@ impl Default for SedentarizationReferences {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct SedentarizationConfig {
-    /// Soft prompt ("establish a seasonal base?").
-    pub soft_threshold: f32,
-    /// Hard prompt ("invest in storehouses and settle?").
-    pub hard_threshold: f32,
     /// EMA factor applied to the previous score each turn (`0` = instant, `→1` = very slow).
     pub smoothing: f32,
     pub weights: SedentarizationWeights,
@@ -88,8 +84,6 @@ pub struct SedentarizationConfig {
 impl Default for SedentarizationConfig {
     fn default() -> Self {
         Self {
-            soft_threshold: 40.0,
-            hard_threshold: 70.0,
             smoothing: 0.5,
             weights: SedentarizationWeights::default(),
             references: SedentarizationReferences::default(),
@@ -203,10 +197,6 @@ mod tests {
     #[test]
     fn builtin_config_parses_and_is_ordered() {
         let config = SedentarizationConfig::builtin();
-        // Thresholds are ordered within (0, 100).
-        assert!(config.soft_threshold > 0.0);
-        assert!(config.soft_threshold < config.hard_threshold);
-        assert!(config.hard_threshold < 100.0);
         // Smoothing is a valid EMA factor.
         assert!(config.smoothing >= 0.0 && config.smoothing < 1.0);
         // Weights blend to ~1.0 so the score scales cleanly to [0, 100].

@@ -79,7 +79,7 @@ fn a_captured_sim_state_survives_a_cbor_round_trip() {
     // Liveness: the two encodings agreeing proves nothing if the encoding is empty.
     assert_eq!(decoded.tiles.len(), original.tiles.len());
     assert_eq!(decoded.bands.len(), original.bands.len());
-    assert_eq!(decoded.settlements.len(), original.settlements.len());
+    assert_eq!(decoded.settlement_stages, original.settlement_stages);
     assert_eq!(decoded.tick.0, original.tick.0);
 }
 
