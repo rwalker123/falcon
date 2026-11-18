@@ -71,7 +71,7 @@ use ledger::{Book, Reassignment, BEST_FLOOR};
 pub(crate) use sources::{
     best_sustained_cluster_within, cluster_take, cluster_take_sustained, foreign_band_at,
     herd_kit_id, honest_ceiling, is_food_site, is_walkable, kit_units_held, patch_per_worker_yield,
-    sustained_hands, workable_patch_at, ClusterTake, IsDead, SourceKey,
+    sustained_hands, workable_patch_at, worked_by_another_own_band, ClusterTake, IsDead, SourceKey,
 };
 use sources::{hunting_kits_held, Source};
 
@@ -245,6 +245,7 @@ impl Food {
                 view.is_discovered(tile)
                     && is_food_site(view, tile)
                     && grid.distance(here, tile) <= band.work_range
+                    && !sources::worked_by_another_own_band(view, band, &SourceKey::Patch(tile))
             })
             .map(|patch| Source {
                 key: SourceKey::Patch(Tile::new(patch.x, patch.y)),
@@ -282,6 +283,13 @@ impl Food {
                 .filter(|herd| herd.huntable && herd.per_worker_yield > 0.0)
                 .filter(|herd| {
                     grid.distance(here, Tile::new(herd.x, herd.y)) <= memory.hunt_reach(band)
+                })
+                .filter(|herd| {
+                    !sources::worked_by_another_own_band(
+                        view,
+                        band,
+                        &SourceKey::Herd(herd.id.clone()),
+                    )
                 })
                 .filter_map(|herd| {
                     let kit = herd_kit_id(view, herd);

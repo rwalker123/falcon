@@ -56,6 +56,11 @@ signal cancel_order_requested(band: Dictionary, scope: String)
 # controller is its only emitter. It is deliberately NOT routed through `_emit_assign_labor`, which
 # staffs a role; this states a policy and carries no worker count at all.
 signal upkeep_mode_requested(payload: Dictionary)
+# A tribe member's scout stepper was pressed (#862): the range is the TRIBE's, so this states it for
+# every member band - relayed to HudLayer.tribe_scout_requested and spelled by `Main.format_tribe_scout`
+# as `tribe_scout <faction> <band> <range>`. `{ faction, band_id, range }`. NOT `assign_labor`, which
+# the sim refuses a tribe member's range change on.
+signal tribe_scout_requested(payload: Dictionary)
 # The faction page's OPEN BORDERS toggle was pressed (issue #512) — relayed to
 # HudLayer.open_borders_requested and formatted by `Main.format_open_borders`. `{ faction, open }`.
 # `FactionRollup` is static and declares no signal, so the toggle reaches this through the Callable
@@ -205,7 +210,6 @@ var _work_sort: StringName = HudWorkVocab.WORK_SORT_NAME
 var _collapsed_sections: Dictionary = {}
 ## The sections list's scroll, and the player's place in it across the rebuilds a press causes.
 var _work_sections_scroll: ScrollContainer = null
-var _work_sections_scroll_offset: int = 0
 ## The source key open in the work inspector ("" = none), and WHICH of its expansions is out.
 ## One row at a time — the dialog shows ONE source, and opening a second re-targets it.
 ##
@@ -257,7 +261,13 @@ var _roster_expanded_scroll: ScrollContainer = null
 ## row's `⌃` or `✕` re-renders the zone, and a snapshot re-renders it once a turn; a list rebuilt at 0
 ## would throw the player back to the top on each of them, and the rows only a scrolled list can reach
 ## are exactly the ones the mode exists to reach. It resets on ENTERING the mode.
-var _roster_expanded_scroll_offset: int = 0
+## The player's place in each of the panel's OTHER per-snapshot scrolls, by the scroll's node name, and
+## the subject (band entity, or `HudWorkVocab.SCROLL_CARRY_FACTION_SUBJECT`) they were taken for.
+## See `_capture_carried_scrolls`.
+var _carried_scroll_offsets: Dictionary = {}
+var _carried_scroll_subject: int = HudWorkVocab.SCROLL_CARRY_NO_SUBJECT
+## The parties zone's list, held so the NEXT render can read the player's place off it.
+var _parties_scroll: ScrollContainer = null
 ## **THE RUNG CARD** (`RungCardController`), shared with the compose sheet: the "Take it to…" card, the
 ## crop step, the ring card and a working's deposit track. It is a Window and so is not zone state; this
 ## controller opens it from a row's strip and relays its signals. Set by `Hud` (`set_rung_card`).
@@ -1029,6 +1039,8 @@ func _build_band_zone_scroll() -> ScrollContainer:
     scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
     scroll.custom_minimum_size = Vector2(0.0, _zone_box().y)
     _band_zone_scroll = scroll
+    _carry_scroll_in(scroll, HudWorkVocab.BAND_ZONE_SCROLL_NAME,
+        func() -> bool: return _band_zone_scroll == scroll)
     return scroll
 
 ## Re-declare the band zone's reserved height against the box the panel is offering NOW.
@@ -1490,7 +1502,11 @@ func _build_roles_block(band: Dictionary) -> VBoxContainer:
     # **THE SCOUT CARD STATES A RANGE** (#875): its line is the status of what the sim staffed for it, amber
     # while the reach falls short of the ask.
     var scout_status := HudWorkVocab.scouting_line(_band_labor.scouting_state(band))
-    scout_row.add_child(_build_role_card(band, HudWorkVocab.SCOUT_CARD_TITLE, String(scout_status["text"]),
+    var scout_hint := String(scout_status["text"])
+    if HudBandLaborState.in_tribe(band):
+        scout_hint = HudWorkVocab.SCOUT_TRIBE_LINE if scout_hint == "" \
+            else HudWorkVocab.SCOUT_TRIBE_LINE_FORMAT % scout_hint
+    scout_row.add_child(_build_role_card(band, HudWorkVocab.SCOUT_CARD_TITLE, scout_hint,
         HudConst.LABOR_KIND_SCOUT, scout_eff, orderable, false, bool(scout_status["short"])))
     # A visible predator within raid range turns the Warrior card's static hint into a live crimson
     # alert naming the on-guard count — the guarding role is only legible when the threat it answers is.
@@ -1719,9 +1735,13 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
     var range_value: Label = null
     if is_scout:
         range_value = HudWidgets.add_range_stepper(stepper, workers, HudBandLaborState.scouting_range_max(band),
-            func(n: int) -> void: _emit_assign_labor(
-                band, kind, n, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR,
-                "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id))
+            func(n: int) -> void:
+                if HudBandLaborState.in_tribe(band):
+                    _emit_tribe_scout(band, n)
+                    return
+                _emit_assign_labor(
+                    band, kind, n, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR,
+                    "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id))
     else:
         HudWidgets.add_stepper_controls(stepper, workers, idle > 0,
         # A BAND-WIDE ROLE (scout / warrior) works no source, so it has no escapement floor to set.
@@ -1745,9 +1765,13 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
             col.add_child(kit_row)
         if is_scout:
             # **THE SCOUT CARD'S DETAIL RIDES THE `+N tiles` TOOLTIP.**
-            HudWidgets.set_label_tooltip(range_value, HudWorkVocab.scouting_tooltip(
+            var range_tip := HudWorkVocab.scouting_tooltip(
                 _band_labor.scouting_state(band), int(band.get("watched_radius", 0)),
-                int(band.get("predators_kept_off", 0))))
+                int(band.get("predators_kept_off", 0)))
+            if HudBandLaborState.in_tribe(band):
+                range_tip = HudWorkVocab.SCOUT_TRIBE_TOOLTIP_FORMAT % String(band.get("tribe_name", "")) \
+                    + "\n" + range_tip
+            HudWidgets.set_label_tooltip(range_value, range_tip)
     # A scout card at range +0 states nothing below its controls; every other card keeps its line.
     if hint != "" or not is_scout:
         var hint_label := HudWidgets.alloc_hint_label(hint)
@@ -1805,6 +1829,17 @@ func _composed_role_kit_id(band: Dictionary, kind: String) -> String:
 ## **AN UNSTAFFED ROLE EMITS NOTHING**, because `assign_labor … <role> 0` drops the assignment and the
 ## sim resolves no kit for it (`equipment.md` → "Unassigning resolves NO kit"). The pick is held here
 ## and rides the first `+`, which is the press that creates the row the kit belongs to.
+## A tribe member's scout stepper: state the TRIBE's range, addressed by this band.
+func _emit_tribe_scout(band: Dictionary, tiles: int) -> void:
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return
+    emit_signal("tribe_scout_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "band_id": band_id,
+        "range": maxi(tiles, 0),
+    })
+
 func _on_role_kit_picked(band: Dictionary, kind: String, kit_id: String, workers: int) -> void:
     _role_kit_ids[_role_kit_key(band, kind)] = kit_id
     if workers > 0:
@@ -1951,11 +1986,13 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     # `_repage_work_zone` has `queue_free`d it (deferred, so it is still a valid instance) and
     # `render_band` builds the new zone BEFORE `set_zones` frees the old one.
     if _roster_expanded_scroll != null and is_instance_valid(_roster_expanded_scroll):
-        _roster_expanded_scroll_offset = _roster_expanded_scroll.scroll_vertical
+        _carried_scroll_offsets[HudWorkVocab.ROSTER_EXPANDED_SCROLL_NAME] = _scroll_offset_of(
+            _roster_expanded_scroll, _carry_offset(HudWorkVocab.ROSTER_EXPANDED_SCROLL_NAME))
     # …and the SECTIONS list's, for the same reason: a chevron, a stepper press and every snapshot
     # rebuild this zone, and a list rebuilt at 0 throws the player back to the top on each.
     if _work_sections_scroll != null and is_instance_valid(_work_sections_scroll):
-        _work_sections_scroll_offset = _work_sections_scroll.scroll_vertical
+        _carried_scroll_offsets[HudWorkVocab.WORK_SECTIONS_SCROLL_NAME] = _scroll_offset_of(
+            _work_sections_scroll, _carry_offset(HudWorkVocab.WORK_SECTIONS_SCROLL_NAME))
     _roster_expanded_scroll = null
     _work_sections_scroll = null
     # **THE DESTINATION TRACK IS DISMISSED BY ANY RE-FILL** (`docs/plan_standing_upkeep.md` §2.8): the
@@ -2327,7 +2364,7 @@ func _flow_work_sections(items: Array) -> Control:
     board.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
     scroll.add_child(board)
     _work_sections_scroll = scroll
-    _restore_scroll_offset(scroll, _work_sections_scroll_offset,
+    _restore_scroll_offset(scroll, _carry_offset(HudWorkVocab.WORK_SECTIONS_SCROLL_NAME),
         func() -> bool: return _work_sections_scroll == scroll)
     return scroll
 
@@ -3848,18 +3885,87 @@ func _pool_toe_settled_rows(band: Dictionary, kind: String, effective: Dictionar
 
 
 
-## The one-frame wait is the part that must never be re-derived, which is exactly why there is one
-## of these rather than one per list.
+## **A SCROLL REBUILT PER SNAPSHOT KEEPS THE PLAYER'S PLACE, AND IT IS SET BEFORE THE FIRST FRAME IS
+## DRAWN.** A fresh `ScrollContainer` clamps `scroll_vertical` to 0 until its scrollbar range exists,
+## and the range is set when it sorts its children — a deferred pass that runs at the end of the frame
+## the scroll was built in, BEFORE that frame is drawn. Waiting a frame and then setting the value (what
+## this did) therefore drew one whole frame at the top of the list and jumped back on the next: the
+## flash reported from play on every turn advance of a scrolled panel.
+##
+## So the value is applied from the scroll's own `sort_children` signal — the sort that fixes the range
+## is the sort that restores the place, in the same layout flush — on EVERY sort until the frame ends
+## (a first sort can run against a box that is not final, and a later one in the same flush then
+## corrects the clamp). A scroll that is not on screen (an unselected narrow-shell tab) does not sort
+## for the player, so it keeps waiting until it is shown. `still_current` guards the node and a
+## content that shrank clamps naturally. One helper for every list, so none re-derives the timing.
 func _restore_scroll_offset(scroll: ScrollContainer, want: int,
         still_current: Callable) -> void:
-    if want <= 0:
+    if want <= 0 or scroll == null:
         return
-    await _host.get_tree().process_frame
-    if not is_instance_valid(scroll) or not scroll.is_inside_tree():
+    scroll.set_meta(HudWorkVocab.SCROLL_CARRY_PENDING_META, true)
+    var state := {}
+    state[HudWorkVocab.SCROLL_CARRY_STATE_ARMED] = false
+    var apply := _apply_carried_offset.bind(scroll, want, still_current, state)
+    state[HudWorkVocab.SCROLL_CARRY_STATE_APPLY] = apply
+    scroll.sort_children.connect(apply)
+
+func _apply_carried_offset(scroll: ScrollContainer, want: int, still_current: Callable,
+        state: Dictionary) -> void:
+    if not is_instance_valid(scroll) or not bool(still_current.call()):
         return
-    if not bool(still_current.call()):
+    if not scroll.is_visible_in_tree():
         return
     scroll.scroll_vertical = want
+    if bool(state[HudWorkVocab.SCROLL_CARRY_STATE_ARMED]):
+        return
+    state[HudWorkVocab.SCROLL_CARRY_STATE_ARMED] = true
+    await _host.get_tree().process_frame
+    if not is_instance_valid(scroll):
+        return
+    scroll.sort_children.disconnect(state[HudWorkVocab.SCROLL_CARRY_STATE_APPLY])
+    scroll.set_meta(HudWorkVocab.SCROLL_CARRY_PENDING_META, false)
+
+## The player's place in `scroll` — or `stored` while a restore into it has not finished, because a
+## scroll still waiting for its first sort reads 0 and a second render in the same frame would
+## otherwise take that 0 as the player's place.
+func _scroll_offset_of(scroll: ScrollContainer, stored: int) -> int:
+    if bool(scroll.get_meta(HudWorkVocab.SCROLL_CARRY_PENDING_META, false)):
+        return stored
+    return scroll.scroll_vertical
+
+## Read the player's place off every per-snapshot scroll that is about to be replaced, for a render of
+## `subject`. A different subject starts every list at the top, as a fresh page does.
+func _capture_carried_scrolls(subject: int) -> void:
+    if subject != _carried_scroll_subject:
+        _carried_scroll_offsets.clear()
+        _carried_scroll_subject = subject
+        # The Work lists are read off their outgoing node at the next fill; drop the node so a
+        # different subject's fill finds nothing to read and starts at the top.
+        _work_sections_scroll = null
+        _roster_expanded_scroll = null
+        return
+    var live := {
+        HudWorkVocab.BAND_ZONE_SCROLL_NAME: _band_zone_scroll,
+        HudWorkVocab.PARTIES_LIST_NAME: _parties_scroll,
+        HudConnectionsVocab.LIST_NAME: _find_scroll_in(_connections_block, HudConnectionsVocab.LIST_NAME),
+        TradeZoneController.TAB_SCROLL_NAME:
+            _find_scroll_in(_trade_block, TradeZoneController.TAB_SCROLL_NAME),
+    }
+    for key in live:
+        var scroll: Variant = live[key]
+        if scroll != null and is_instance_valid(scroll):
+            _carried_scroll_offsets[key] = _scroll_offset_of(scroll, int(_carried_scroll_offsets.get(key, 0)))
+
+func _carry_offset(key: String) -> int:
+    return int(_carried_scroll_offsets.get(key, 0))
+
+func _find_scroll_in(block: Variant, scroll_name: String) -> ScrollContainer:
+    if block == null or not is_instance_valid(block):
+        return null
+    return block.find_child(scroll_name, true, false) as ScrollContainer
+
+func _carry_scroll_in(scroll: ScrollContainer, key: String, still_current: Callable) -> void:
+    _restore_scroll_offset(scroll, int(_carried_scroll_offsets.get(key, 0)), still_current)
 
 ## **THE ROAD ROSTER OVER THE WHOLE WORK ZONE — every road it keeps, in a scrolling list**, or `null`
 ## where the band keeps nothing and owes nothing (the collapsed section draws no rows either, so
@@ -3898,7 +4004,7 @@ func _build_roster_expanded(band: Dictionary, models: Array, unseen: bool) -> VB
         list.add_child(_build_roadwork_roster_row(band, model_variant as Dictionary))
     block.add_child(scroll)
     _roster_expanded_scroll = scroll
-    _restore_scroll_offset(scroll, _roster_expanded_scroll_offset,
+    _restore_scroll_offset(scroll, _carry_offset(HudWorkVocab.ROSTER_EXPANDED_SCROLL_NAME),
         func() -> bool: return _roster_expanded_scroll == scroll)
     return block
 
@@ -3943,7 +4049,7 @@ func _toggle_roster_expanded(kind: StringName) -> void:
     _roster_expanded = &"" if _roster_expanded == kind else kind
     if _roster_expanded != &"":
         _work_open_key = ""
-        _roster_expanded_scroll_offset = 0
+        _carried_scroll_offsets[HudWorkVocab.ROSTER_EXPANDED_SCROLL_NAME] = 0
     _repage_work_zone()
 
 ## One helper over every disclosable block: each head is a `HudWidgets.zone_head` `HBoxContainer` with
@@ -5772,6 +5878,10 @@ func build_peoples_zone(band: Dictionary) -> VBoxContainer:
     var tab := ConnectionsRoster.build_tab(int(band.get("band_id", HudConst.NO_BAND_ID)), _band_labor,
         box.y, _station_press(), _peoples_diplomacy())
     _track_connections_block(tab, band)
+    var peoples_scroll := tab.find_child(HudConnectionsVocab.LIST_NAME, true, false) as ScrollContainer
+    if peoples_scroll != null:
+        _carry_scroll_in(peoples_scroll, HudConnectionsVocab.LIST_NAME,
+            func() -> bool: return is_instance_valid(_connections_block) and _connections_block.is_ancestor_of(peoples_scroll))
     return tab
 
 # ---- zone `trade` -----------------------------------------------------------
@@ -5784,6 +5894,10 @@ func build_trade_zone(band: Dictionary) -> VBoxContainer:
     var box := _panel.zone_size(BandCityPanel.ZONE_TRADE) if _panel != null else HudWorkVocab.ZONE_FALLBACK_SIZE
     var tab := _trade.build_tab(band, box.y, _dealing_actions(), _faction_policy())
     _track_trade_block(tab, band)
+    var trade_scroll := tab.find_child(TradeZoneController.TAB_SCROLL_NAME, true, false) as ScrollContainer
+    if trade_scroll != null:
+        _carry_scroll_in(trade_scroll, TradeZoneController.TAB_SCROLL_NAME,
+            func() -> bool: return is_instance_valid(_trade_block) and _trade_block.is_ancestor_of(trade_scroll))
     return tab
 
 ## Is the Trade content on screen — its own tab in the narrow shell, the Parties flank in the wide?
@@ -5890,6 +6004,9 @@ func _build_parties_list() -> ScrollContainer:
     scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
     scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
     scroll.custom_minimum_size = Vector2(0.0, HudWorkVocab.PARTIES_LIST_MIN_HEIGHT)
+    _parties_scroll = scroll
+    _carry_scroll_in(scroll, HudWorkVocab.PARTIES_LIST_NAME,
+        func() -> bool: return _parties_scroll == scroll)
     var rows := HudWidgets.make_zone_column()
     # The zone's own block spacing, not the column's section spacing: these are sibling ROWS plus the
     # strip that belongs to one of them, exactly the spacing they had as direct children of `col`.
@@ -8929,6 +9046,7 @@ func _on_split_band_pressed(band: Dictionary, workers: int) -> void:
 func render_band(unit: Dictionary) -> void:
     if _panel == null or unit.is_empty():
         return
+    _capture_carried_scrolls(int(unit.get("entity", -1)))
     # Leaving the faction page is a subject change like any other, so the composing act it interrupted
     # is closed on the way back the same way a band-to-band cycle closes one. The page itself composes
     # nothing, but the player may have opened a sheet, cycled away to read the rollup and cycled back.
@@ -9011,6 +9129,7 @@ func render_faction() -> void:
     if _panel == null or _band_labor.player_bands().is_empty():
         return
     _panel_is_faction = true
+    _capture_carried_scrolls(HudWorkVocab.SCROLL_CARRY_FACTION_SUBJECT)
     # A pending verb belongs to the BAND it was pressed for, so leaving that band for this page ends it
     # — the identical rule `render_band` applies to a band-to-band cycle.
     if _compose.has_verb():

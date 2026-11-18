@@ -8,6 +8,8 @@ paths:
   - "core_sim/src/staffing_preview.rs"
   - "core_sim/tests/staffing_preview.rs"
   - "core_sim/src/take_claims.rs"
+  - "core_sim/src/source_holders.rs"
+  - "core_sim/tests/one_band_per_source.rs"
   - "core_sim/src/systems/labor.rs"
   - "core_sim/src/supply.rs"
   - "core_sim/src/labor_config.rs"
@@ -74,7 +76,7 @@ Rows are grouped by
 is not free for the row that was just given it. The crews are applied to a copy and, while the
 hands committed (rows, bench, walkers) exceed the people the band has, one hand comes off the
 lowest-priority row whose crew is above the party already standing (a row cannot be shrunk below its
-party without cutting more hands loose). A build ranks by its site's Priority through `staffing::build_site_priority` (a road build at the Roadwork row's), the same reading the passes and the labor pass use. At equal priority the rows' surplus goes before a build's builders (the passes deal a group's builds their first head before its hold crews, so the trim runs in reverse); within one kind the later index goes first. Pinned by `staffing::tests::{a_high_roadwork_build_is_trimmed_after_a_normal_row, a_low_roadwork_build_is_trimmed_before_a_normal_row, at_equal_priority_a_row_is_trimmed_before_the_build}`. The near row waits for the walkers to arrive. Pinned by
+party without cutting more hands loose). A build ranks by its site's Priority through `staffing::build_site_priority` (a road build at the Roadwork row's), the same reading the passes and the labor pass use. At equal priority the rows' surplus goes before a build's builders (the passes deal a group's builds their first head before its hold crews, so the trim runs in reverse), **except that a levy head of a tribe member (a levy row's or a levy build's builder) goes before any of the band's own heads of either kind**; within one kind the later index goes first. Pinned also by `staffing::tests::at_equal_priority_a_levy_builder_is_trimmed_before_an_own_row_hand`. Pinned by `staffing::tests::{a_high_roadwork_build_is_trimmed_after_a_normal_row, a_low_roadwork_build_is_trimmed_before_a_normal_row, at_equal_priority_a_row_is_trimmed_before_the_build}`. The near row waits for the walkers to arrive. Pinned by
 `work_party_caravan::a_far_party_the_staffing_shrinks_walks_its_cut_hands_home_and_commits_no_hand_twice`.
 
 **Within a priority group every pass deals ONE head at a time, round-robin**, across the group's rows
@@ -113,11 +115,27 @@ Pinned by `server::tests::a_band_improvements_crew_is_the_keepers_the_sim_staffs
 | pass | what it hands out |
 |---|---|
 | 0 | the band's **scouts** (below), off the top of the pool and shelf, before any row |
+| levy | **a tribe member only** (`leadership.md` -> "A tribe levies its bands"), after pass 1 and before pass 2: a budget `floor(share x factor x hands_left)` (at least one head while the ceiling allows any) is struck over the hands pass 1 left; the member's **scouts** are dealt first, then per priority group the **levy rows'** (`StaffRowInput::levy`, the rows the tribe pass put on the list) keepers, first builder and kitted hold crew, every head counted against the budget. Levy rows and scouts are skipped in passes 0 and 1, and passes 2 and 3 deal a levy row like any other but stop when the budget is spent. A band in no tribe has no levy step |
 | 1a | the site's **keepers** on every row at every priority, High to Low: `floor(keep_hands)` whole-keeper heads round-robin, then, for a row with a fraction of a hand of keeping left, one head that carries it (a kitted gatherer if the shelf can arm one, else a bare one where a bare hand works, else a keeper; a row with no hold take gives it a keeper's head so the improvement is kept) |
-| 1b | per priority group High to Low: the group's **builds'** first builder (kitted if the shelf can arm one, else bare), then - in the High group only - each **High bench order's first crafter** (queue order; ahead of every hold crew, since the High group is dealt first), then the group's **kitted** hands up to the row's **hold crew** |
-| 1c | a **chief's FOOD order** only (`LaborAllocation::keeps_food_up`: a forage or hunt row `order_rows` lists under `food` while the chief owns the kind): per priority group High to Low, round-robin nearest first, **bare** hands up to the row's hold crew under its Max, only where a bare hand takes something. After every group's pass 1b, before any row's pass 2 |
-| 2 | per priority group High to Low: first a chief's FOOD order's rows (same `keeps_food_up` rows) get **bare** hands up to their **reach crew** (hold + refill), round-robin nearest first, only where a bare hand takes something; then the group's **kitted** hands up to the row's **reach crew**. A High stone refill therefore goes before a Normal food refill, and a Normal food refill before a Normal stone refill; player rows, a released food row, fodder and the materials keep kitted-first |
-| 3 | every row up to its **useful crew** (the room above the floor, clear-it-now; the crew past which the take stops rising): the kit's units still unspent first, then **bare** hands, only on a web where a bare hand takes something (never on a hunt that needs a weapon) |
+| 1b | per priority group High to Low: the group's **builds'** first builder (kitted if the shelf can arm one, else bare), dealt only to a build the **fill gate** admits ("Builds are filled one at a time" below): while the first build in the fill order is under its cap no other own build gets one; then - in the High group only - each **High bench order's first crafter** (queue order; ahead of every hold crew, since the High group is dealt first), then the group's **kitted** hands up to the row's **hold crew** |
+| kit step | **after 1b, before 1c**, every band: a bench order that makes an equipment item some **source row** (forage, hunt, extract; not a levy row, build or scout) is **short of** is crewed before any bare hold head. A row is short of item X when its **reach crew** at full kit (`max(hold, reach)`, the crew pass 2 arms; under its Max and its tile's room; not the useful crew, which pass 3 fills bare) holds more heads than the units of X the band's kitted heads and the shelf still arm at this point; **the step only takes hands the shelf cannot arm**: per item `min(units left on the shelf, units still wanted armed) x people per unit` heads are reserved, and crafters are dealt only out of `pool_left - reserved`, so every shelf unit a row wants has a hand left to arm it in pass 2; `staffing::kit_lacks` sums the lacked units per item over the rows (read off `StaffRowInput::kit_wants`, every item of the row's chosen kit **live or not**, so a band whose baskets have all worn out, or that never had any, is short of them with nothing held; arming still reads the live `kit_items` only. A dead item cannot be priced through the row's coverage, so the row is taken to want its bare useful crew in it, at least one head where the row has any take, which keeps a hunt bare hands cannot wound short of spears). A **kit order** is a workable order whose recipe outputs such an item (crafters up to `crafters_per_item x units lacked`, under its cap) or whose output is the **bench tool** that bounds the bench material of a recipe making such an item (crafters up to its own cap: a tool nobody holds lengthens the wait). Orders go in bench rank order; each head is kitted (holding the bench tool) where the shelf can arm one, else bare where a bare hand works - `deal_bench_head`, the head the openers use. Pass 2's opener then skips them as usual. The crafters count in `first_call.crafting` (the reason word reads `crafting`, no longer `High crafting`) and so come off the tribe levy budget. `systems::BenchOrderPlan::kit` (`BenchKit`: the items made, the items a tool order serves, `crafters_per_item`, the credit below) is what `bench_plan` states and `bench_inputs` carries onto `StaffRowInput::bench_kit` |
+| 1c | a **chief's FOOD order** only (`LaborAllocation::keeps_food_up`: a forage or hunt row `order_rows` lists under `food` while the chief owns the kind): per priority group High to Low, round-robin nearest first, hands up to the row's hold crew under its Max, each **kitted** (arming the row's live kit items from the shelf exactly as `deal_kitted` does) while the shelf can arm one more and **bare** past it, only where a bare hand takes something (`deal_food_head`). After every group's pass 1b, before any row's pass 2 |
+| 2 | per priority group High to Low: the group's **builds'** kitted heads up to their cap, through the fill gate; then a chief's FOOD order's rows (same `keeps_food_up` rows) get hands up to their **reach crew** (hold + refill), round-robin nearest first, each kitted while the shelf can arm one and bare past it, only where a bare hand takes something; then the group's **kitted** hands up to the row's **reach crew**. A High stone refill therefore goes before a Normal food refill, and a Normal food refill before a Normal stone refill; player rows, a released food row, fodder and the materials keep kitted-first |
+| 3 | every build up to its cap (kitted units first, then bare hands, through the fill gate) and every row up to its **useful crew** (the room above the floor, clear-it-now; the crew past which the take stops rising): the kit's units still unspent first, then **bare** hands, only on a web where a bare hand takes something (never on a hunt that needs a weapon) |
+
+**Builds are filled one at a time.** The band's own builds (not a levy build, which the levy step deals)
+are put in one fill order: priority group High to Low, then the least work still owed on the climb
+(`StaffRowInput::build_work_left`, the legs' `work_remaining` the build's turn estimate is struck from,
+`systems::declared_build_work_remaining`), then nearest to camp, then row index. **The fill gate**
+(`Ledger::deal_head`): in every pass that deals builders (1b, 2, 3 and the food-first guard's builds-last
+deal) a build is dealt a head only when every build before it in that order is **full** - at its cap (its
+`max_builders` less what it holds, and its tile with no room left) or unable to take any (a cap of nothing: a
+refusing gate, a materials stall, a finished climb). Two Normal builds with hands for four staff 3 and 1 (rung
+cap 3), with hands for three 3 and 0; the build closest to done fills first whatever its row index; a High build
+fills before a Normal build starts; a build whose tile has no room left lets the next start. The settle trim
+(`trim_one_hand`) runs the order in reverse: at equal priority the build holding the fewest builders gives its
+hand first (the build filled last), then the later index. A build's published `buildersCap` is its rung cap cut
+by the room its tile has left after the passes.
 
 **The reason for the order is what each head protects.** Only keepers guard the ground the band
 already has; a hold crew is a food take, so a Normal row's hold crew does not beat a High build, and
@@ -137,7 +155,7 @@ remainder (`keepers - keep_hands`, floored at zero) reads zero for it because th
 already counted in `kitted`. Pinned by `staffing::tests::{keeping_and_gathering_round_once,
 a_keeping_only_row_gets_a_whole_keeper_for_a_fraction}`.
 
-**A band that would go hungry feeds itself before it builds** (`staffing::staff_band_food_first`, the one deal the turn, the command restaff and the preview all run). The passes deal as above (a group's builds ahead of its hold crews). Then `staffing::band_runs_short` walks the larder forward `labor_config.food_first_window_turns` (**5**; `0` is off) turns at the crews that deal produced, in the runway's own order: each turn the meal is checked and eaten first, then the income lands. The terms (`staffing::FoodLedger`, `food_ledger_of`): the larder (`stores.get(FOOD)`); **this turn's meal demand** (`food_demand` over the cohort's current brackets and the party it feeds, not last turn's `last_food_need`; the turn path and the command path both have it); the **standing income** that is not a staffed row, which is the band's steady pooling net (`snapshot::pooling_steady_nets`, the term the published runway adds; the turn reads the pre-pass map, the command path recomputes it over the world) plus each **need row at its `sustainable`** rate (as `FoodFlow` reads it); and each staffed food row's take at its crew (`crew_take_capacity`: the row's own `hands` closure bisected, capped at the room above the floor, the regrowth at the floor refilling it, priced at `food_per_take`). From the turn after it completes at the builders it was dealt, a finishing build adds its rung's food gain (`BuildFinish`): a **patch** build is `forage::rung_payoff` at the destination rung less the held one, over `patch_build_legs`' remaining work; a **herd** build is `fauna::herd_msy_biomass_at` (the one sustained-MSY expression behind the forecast's `managed_yield` / `pastoral_yield` and the wire's `rungQuotes[].foodYield`) at the destination block less the held block, at the species' `hunt_yield`, over the destination rung's price on this species less the work the herd has banked; both at one bare builder's `PER_WORKER_OUTPUT` a turn. A deposit, road, tile or band build yields no food and adds none. **Rot is not in the walk** (a lot spoiling before it is eaten would shorten the runway further; leaving it out errs toward keeping the builders). If any meal in the window comes up short and some build holds builders, the band is re-dealt with every source row before any build: the sources get the whole pool and shelf, the builds only what is left (their tile room less what the sources took), and the keepers (pass 1a) and the chief's food order (1c) are unchanged. A hunt row's take hands are WHOLE crews, so `crew_take_capacity` takes only the whole keepers off the crew and lets the keeping's fraction ride in the hunters' slack where it fits (`keeping_fraction_fits`, the rule `crew_heads` deals by); pricing it at `crew - keep_hands` fractional hands made every target need more than the crew had and read a one-rabbit-hunter warren as no food. A build left with no builders by this carries `BuildCrew::fed_first` **only if it would have held builders in the builds-first deal** (its row's Max above nobody, i.e. a cap and a climb that can progress), and `publish_build_chain` gives it `BuildTurns::Blocked` with `BuildGate::FeedingFirst`, wire `buildBlockedReason` **`feeding_first`** - **after** a Materials stall and a refusing gate, which outrank it (a build that could not progress anyway says why). Pinned also by `staffing::tests::a_hunt_with_a_sliver_of_keeping_counts_its_take_and_the_builder_stays` and `labor_yield_tests::a_materials_stalled_build_publishes_materials_on_a_food_first_turn`. Pinned by `staffing::tests::{a_band_that_would_starve_is_restaffed_builds_last, a_band_that_survives_the_window_keeps_its_builder, a_build_finishing_in_the_window_counts_its_gain, a_herd_build_finishing_in_the_window_keeps_its_builder, a_band_fed_by_its_network_keeps_its_builder, food_first_is_stable}` and `fauna::tests::a_rungs_msy_biomass_is_the_forecasts_and_orders_the_ladder`.
+**A band that would go hungry feeds itself before it builds** (`staffing::staff_band_food_first`, the one deal the turn, the command restaff and the preview all run). The passes deal as above (a group's builds ahead of its hold crews). Then `staffing::band_runs_short` walks the larder forward `labor_config.food_first_window_turns` (**5**; `0` is off) turns at the crews that deal produced, in the runway's own order: each turn the meal is checked and eaten first, then the income lands. The terms (`staffing::FoodLedger`, `food_ledger_of`): the larder (`stores.get(FOOD)`); **this turn's meal demand** (`food_demand` over the cohort's current brackets and the party it feeds, not last turn's `last_food_need`; the turn path and the command path both have it); the **standing income** that is not a staffed row, which is the band's steady pooling net (`snapshot::pooling_steady_nets`, the term the published runway adds; the turn reads the pre-pass map, the command path recomputes it over the world) plus each **need row at its `sustainable`** rate (as `FoodFlow` reads it); and each staffed food row's take at its crew (`crew_take_capacity`: the row's own `hands` closure bisected, capped at the room above the floor, the regrowth at the floor refilling it, priced at `food_per_take`). From the turn after it completes at the builders it was dealt, a finishing build adds its rung's food gain (`BuildFinish`): a **patch** build is `forage::rung_payoff` at the destination rung less the held one, over `patch_build_legs`' remaining work; a **herd** build is `fauna::herd_msy_biomass_at` (the one sustained-MSY expression behind the forecast's `managed_yield` / `pastoral_yield` and the wire's `rungQuotes[].foodYield`) at the destination block less the held block, at the species' `hunt_yield`, over the destination rung's price on this species less the work the herd has banked; both at one bare builder's `PER_WORKER_OUTPUT` a turn. A deposit, road, tile or band build yields no food and adds none. **Rot is not in the walk** (a lot spoiling before it is eaten would shorten the runway further; leaving it out errs toward keeping the builders). **The guard deals up to three times** (`deal_band_food_first`): **A** with the kit step on and builds in turn; if builders were dealt and A runs short, **B** with the kit step on and builds last; if the last deal tried seated any kit crafter and still runs short, **C** with the kit step OFF and builds last (the crafters go behind the food crews); otherwise the last deal tried is returned. **`band_runs_short` credits the kit**: a kit order (an order making equipment, not a bench tool, which earns nothing) with its dealt crew finishes its remaining units at turn `ceil(work remaining / per-turn progress)` - per-turn progress is the bench's own order rate, `kitted x tool-crafter rate + bare x hand rate` with `craft speed x progress_per_worker_turn` per crafter (`systems::KitCredit`) - and from that turn the food rows whose whole kit is that item take as if that many more of their heads were armed (High priority and nearest first, never above the crew dealt; `crew_take_capacity` re-struck on the raised `kitted`). If any meal in the window comes up short and some build holds builders, the band is re-dealt with every source row before any build: the sources get the whole pool and shelf, the builds only what is left (their tile room less what the sources took), and the keepers (pass 1a) and the chief's food order (1c) are unchanged. A hunt row's take hands are WHOLE crews, so `crew_take_capacity` takes only the whole keepers off the crew and lets the keeping's fraction ride in the hunters' slack where it fits (`keeping_fraction_fits`, the rule `crew_heads` deals by); pricing it at `crew - keep_hands` fractional hands made every target need more than the crew had and read a one-rabbit-hunter warren as no food. A build left with no builders by this carries `BuildCrew::fed_first` **only if it would have held builders in the builds-first deal** (its row's Max above nobody, i.e. a cap and a climb that can progress), and `publish_build_chain` gives it `BuildTurns::Blocked` with `BuildGate::FeedingFirst`, wire `buildBlockedReason` **`feeding_first`** - **after** a Materials stall and a refusing gate, which outrank it (a build that could not progress anyway says why). Pinned also by `staffing::tests::a_hunt_with_a_sliver_of_keeping_counts_its_take_and_the_builder_stays` and `labor_yield_tests::a_materials_stalled_build_publishes_materials_on_a_food_first_turn`. Pinned by `staffing::tests::{a_band_that_would_starve_is_restaffed_builds_last, a_band_that_survives_the_window_keeps_its_builder, a_build_finishing_in_the_window_counts_its_gain, a_herd_build_finishing_in_the_window_keeps_its_builder, a_band_fed_by_its_network_keeps_its_builder, food_first_is_stable}` and `fauna::tests::a_rungs_msy_biomass_is_the_forecasts_and_orders_the_ladder`.
 
 **A hunt row's three targets (hold, reach, useful) are sized by `fauna::hunt_crew_for_take`**, the
 one crew function `workers_needed` also reads: haul, reach and fight against a take RATE, capped at
@@ -426,10 +444,16 @@ Engine: `core_sim/src/food_orders.rs` (`manage_food_orders`, run right after `ma
 labor pass and by every command restaff), `staffing::probe_source`, `staffing::apply_chief_share`.
 
 - **Currency.** `target` and `onHand` are in **turns**; `draw` is units a turn. Food: `onHand` = the
-  larder (`stores.get(FOOD)`) over `PopulationCohort::last_food_need` (what the meal was measured against
+  larder (`stores.get(FOOD)`) **plus the food in the stores the band owns within reach**
+  (`fixed_store::reachable_stores`, the helper the runway reads; `OrderReadings::of` is the one place
+  the figure is built, from `fixed_store::reachable_food` / `reachable_food_in_world`) over
+  `PopulationCohort::last_food_need` (what the meal was measured against
   - the sim's own need figure, not a second one); fodder: the `FODDER` store over
   `LaborAllocation::last_fodder_need` (what the tamed and penned herds need beyond their grazing). `hasConsumers` is false
-  for fodder while `last_fodder_need` is 0, and the order then wants nothing and runs no rows.
+  for fodder while `last_fodder_need` is 0, and the order then wants nothing and runs no rows. Every
+  reader of the food order's on-hand sees the larder-plus-stores figure: the managing pass's want, the
+  wire's `onHand` and the order limit, `food_order_is_falling` (the proposal trigger) and
+  `leadership::judge_leader`'s met / falling. A pit out of reach is not counted.
 - **The want** = the draw plus the deficit (`(target - turns) * draw`) over `keep_on_hand_refill_turns`
   below the target, and **the draw itself at or above it** (the band eats every turn, so the keep-up crew
   still works - unlike a material, where nobody works at the target).
@@ -475,13 +499,13 @@ labor pass and by every command restaff), `staffing::probe_source`, `staffing::a
   the whole kind. Arrival and a whole-kind claim adopt every existing forage and hunt row
   (`adopt_pending`) under the order its product belongs to. Hand commands on a listed row are refused
   with the step-1 sentence.
-- **The food order's refill crew is dealt before another order's kitted refill at the same Priority (pass 2).** Pass 1c protects only the hold crew; the refill (`reach_crew - hold_crew`) is dealt in pass 2 at the head of the food rows' own priority group, in bare hands, so a stone or wood refill stacked on a rich stand cannot starve the food refill at equal Priority while a higher Priority group still goes first. Pinned by `staffing::tests::{a_chiefs_food_refill_is_dealt_bare_before_a_kitted_stone_refill_at_equal_priority, a_high_stone_refill_still_goes_before_a_normal_food_refill}`.
+- **The food order's refill crew is dealt before another order's kitted refill at the same Priority (pass 2).** Pass 1c protects only the hold crew; the refill (`reach_crew - hold_crew`) is dealt in pass 2 at the head of the food rows' own priority group, each head kitted where the shelf can arm one and bare past it, so a stone or wood refill stacked on a rich stand cannot starve the food refill at equal Priority while a higher Priority group still goes first. Pinned by `staffing::tests::{a_chiefs_food_refill_is_dealt_bare_before_a_kitted_stone_refill_at_equal_priority, a_high_stone_refill_still_goes_before_a_normal_food_refill, a_chiefs_food_heads_are_kitted_while_the_shelf_arms_them, a_chiefs_food_row_arms_a_shared_item_before_an_equal_stone_row}`.
 - **The food order's keep-up crew is dealt before any reach (pass 1c).** Passes otherwise run kitted
   first across priorities, so a band short of gathering kit used to hand its sleds' kitted stone or wood
   refill heads before a food row's bare hold heads, and food fell. The food order's rows
-  (`StaffRowInput::food_keep_up`) therefore get their hold crew in bare hands right after pass 1b and
-  before pass 2; fodder, the materials, player-crewed rows (including a released food row or a Player-owned
-  food order) and leaderless bands are unchanged. Bare hold heads are ordinary `bare` heads, so
+  (`StaffRowInput::food_keep_up`) therefore get their hold crew right after pass 1b and
+  before pass 2, each head kitted where the shelf can arm one (the baskets of a gathering row, the sled of a hauling one) and bare past it, so a shelf of baskets is armed by the chief's food rows before a stone or wood refill takes the same item; fodder, the materials, player-crewed rows (including a released food row or a Player-owned
+  food order) and leaderless bands are unchanged. Kitted and bare hold heads alike are ordinary heads, so
   `order_crew` counts them in `holdHeads`. The settle trim (`trim_one_hand`) takes a protected row last
   among rows: a food-order row whose crew is down to its `hold_crew` goes after every unprotected
   row of any priority (against builds the ordinary priority comparison still applies). Pinned by
@@ -532,7 +556,7 @@ warren a pack eats back to its floor every turn is not staffed for a regrowth th
 over (`predated_restaff`). `HuntProjection::step`'s first between-turns step (`ProjectionStart::BeforeRegrowth`)
 takes the same predation through the same helper, so the row's published `realized` / arrivals and the
 crew curve read one stock; later projected steps carry none (the stamp resets on the clone), and an
-`AfterRegrowth` start reads the turn's real post-predation stock (`fauna::tests::a_between_turns_projection_takes_the_predation_the_curve_takes`). Several bands working one source each staff their share of the keeping bill. A band's gear that
+`AfterRegrowth` start reads the turn's real post-predation stock (`fauna::tests::a_between_turns_projection_takes_the_predation_the_curve_takes`). Several bands of DIFFERENT peoples working one source each staff their share of the keeping bill (within one people a take source has one band, "One band of a people per source"). A band's gear that
 the turn settles after staffing (the pools' and the keeping's issue) is not in the staffing's shelf.
 
 Pinned by `staffing::tests` (the passes, in order, against a shelf), `labor_allocation` (the
@@ -570,6 +594,12 @@ and works as it did.
   the player's; the proposal carries `KeepRaise { material, from, to }` with `from` the order's target
   (`starting_target` where there is none) and `to = from + ceil(pile)`. A material that cannot be gathered
   makes the build ineligible.
+- **The chief waits until the builds underway are full.** Before any trigger offers anything,
+  `refresh_proposals` asks `staffing::band_has_a_build_short_of_builders`: a declared build of the band's own
+  (not a levy row's) whose last-staffed `BuildCrew` holds fewer builders than its cap and which can make progress
+  (`build_can_progress`: no refusing gate, no materials stall) holds the offer back for that refresh. A build whose
+  builders feeding-first pulled counts as short; a stalled one does not. A build is planned as if it gets its
+  maximum builders, and the next one is offered once the builds underway have them.
 - **Idle streak and the words.** `BandProposals::idle_turns` counts consecutive turns of idle hands (the
   turn's pass only). The escalation rung is 0 under `band_orders.proposal_idle_turns_notice` (**3**), 1 from
   it, 2 from `band_orders.proposal_idle_turns_wasted` (**8**). The proposal's text is resolved in the sim:
@@ -579,8 +609,8 @@ and works as it did.
   `proposal_phrase` (`intensification_ladder.json`; absent: the verb and `label_fallback`).
 - **Approve** (`approve_proposal <faction> <band>`): `chief_proposals::prepare_approval` re-runs the
   candidates (the offer may be stale) and refuses if the chosen build is gone. A band or tile build is then
-  placed, staged as a player's row (`set_staffed_row`, not listed under an order) and declared
-  (`BuildJob::Climb(rung)`) by `commit_approval`; a build on a worked source is declared by the server
+  placed, and a forage patch's new row staged (`set_staffed_row`) and declared
+  (`BuildJob::Climb(rung)`) by `commit_approval`; **a new forage row is listed under the chief's order of the kind it serves when he owns that order** (`keep_on_hand::claim_row`, as "Hand it to <leader>": in `order_rows` and `handed_rows`, so his pass never retires it and outside his chosen set it stays listed at zero hands; the kind is `food_orders::product_kind` over the probe's per-hand products, food unless the patch gives strictly more fodder), and stays the player's row when the player owns that order. The published row then reads `chiefOwned` true and `orderKind` `food`. A build on a worked source leaves that row's owner as it is; a build on a worked source is declared by the server
   through `queue_build_on_working_bands`, the path a player's `build <verb>` on that source takes, and
   `commit_approval(.., declared = true)` follows. Both raise each keep order through
   `keep_on_hand::set_order` (priority kept) and the server restaffs the band. The build is tracked on
@@ -596,14 +626,28 @@ and works as it did.
   pass lists a Cultivate candidate on every in-range forage patch the band holds no row on, through the
   same gates as the player's `build cultivate`; a patch owned by another faction or worked by another band
   is skipped. Its food figure is the Tended payoff less the current payoff (0 on an off-site wild patch,
-  which gives nothing today, so the figure is the whole Tended payoff). Approving it stages a PLAYER forage
-  row on the patch and declares Tended in one step. Key `plant:tended@x,y`.
+  which gives nothing today, so the figure is the whole Tended payoff). Approving it stages the forage
+  row on the patch (the chief's when he owns the food order, the player's otherwise) and declares Tended in one step. Key `plant:tended@x,y`.
 - **Second trigger: the food order is Falling.** A leaderful band whose food order reads Falling
   (`food_orders::food_order_is_falling`, the `OrderReadings::figures` verdict) is offered a proposal even
   with 0 idle hands. A Falling-only proposal offers only builds with a positive food figure. Text:
   `Food falling · <Keeper> proposes: cultivate the patch at (x, y) - +N food a turn once tended`; escalation
   2. When both triggers hold the idle wording wins. `trigger` records which fired.
-- **Wire**: `ChiefProposal.trigger` (`"idle"` or `"food_falling"`, appended to the table), native key
+- **Third trigger: hands working for almost nothing.** A led band with no idle hand and food not Falling is
+  offered a proposal when its **low-yield hands** are above zero (`chief_proposals::low_yield_hands`): the take
+  heads (kitted plus bare, never a whole keeper) summed over the rows the chief lists under the FOOD order
+  (`order_rows` -> `food`; a player's row and another order's rows are not counted, nor a row with no take head)
+  whose food per take head - the row's `last_yields[i].realized`, the forward projection, so a hunt between kills
+  is not misread - is below `band_orders.proposal_low_yield_share` of one person's meal (`last_food_need` over the
+  headcount; a band with no headcount or no need counts nothing). A row whose yield record is still empty
+  (`SourceYield::ZERO`: no turn has worked it and no seed priced it, e.g. a row a command's restaff just listed)
+  is not judged, since its `0` says nothing about its hands. **Precedence: idle hands, then Falling, then
+  low-yield hands.** It offers **new ground only** (`Candidate::new_ground`, the off-site Cultivate), ranked as the
+  other triggers rank, and no new-ground candidate means no proposal from it. Text `3 hands working for almost
+  nothing · Orrin proposes: cultivate the patch at (x, y) - +0.4 food a turn once tended` (`1 hand` for one),
+  escalation rung 1 (`LOW_YIELD_ESCALATION`), `ChiefProposalState.idle` the true idle count (0), trigger token
+  `low_yield` (`TRIGGER_LOW_YIELD`).
+- **Wire**: `ChiefProposal.trigger` (`"idle"`, `"food_falling"` or `"low_yield"`, appended to the table), native key
   `trigger`. The client's "Food falling" attention entry reads it. A rival seat approves a plant climb even
   when short of food (it costs hands, not food).
 - **Leadership**: an approved build that completes counts once as an order met (`leadership.md`).
@@ -617,6 +661,55 @@ a_completed_approved_build_counts_once_as_an_order_met}` and, through the real p
 `server::tests::{a_chief_with_idle_hands_proposes_a_build_and_the_frame_carries_it,
 approving_declares_the_build_and_raises_the_keep, not_now_hides_the_build_for_the_levers_turns_and_then_it_returns,
 approving_with_no_proposal_is_refused}`.
+
+## One band of a people per source
+
+Engine: `core_sim/src/source_holders.rs`. **Within one people a take source is worked by ONE band.**
+The labor pass settles bands in `BandId` order and every take draws the source down at that band's
+own floor, so two bands of one people on one patch left the lower-numbered band its full share and
+the other nothing, and with different floors one band's floor was always overridden. The rule covers
+the three take sources, keyed by `keep_on_hand::source_key` (`f:x,y`, `h:<herd id>`,
+`d:<material>:x,y`; the same identity as `LaborTarget::same_source`): a forage patch, a herd and a
+deposit working. A tile improvement (the tribe's works, a storage pit, a monument), a band
+improvement, Roadwork, Scout, Warrior and an expedition are not take sources: several bands may
+build one tile improvement together. **Across peoples nothing changes**: bands of different peoples
+on one source are still settled in `BandId` order.
+
+- **The seam.** `SourceHolders` is every band's holdings on the take sources (`Holder { band, faction,
+  listed }`, `listed` = the row is in `order_rows`, the chief's; otherwise the player's). The turn's
+  labor pass builds it from every band's allocation before the per-band loop and refreshes a band's
+  entries after that band's managing passes, so a band later in band order sees the rows an earlier
+  band's chief just made; the command restaff (`staffing::managed_dig_allocation`) builds it from the
+  world (`SourceHolders::from_world`). `SourceHolders::for_band` is that map as one band sees it,
+  `OtherBands`: the OTHER bands of its people only.
+- **The command.** `assign_labor` (forage, hunt, extract, a `follow` need row included) for a band with
+  no row on the source, where another band of its faction holds one, is refused and changes nothing,
+  with a failure line on the source's channel naming the other band by its `BandName` (`Band <id>`
+  where it has none): `Ashfell already works (44, 27).`, `Ashfell already hunts the <species>.`,
+  `Ashfell already works the stone at (44, 27).` (`server::another_band_refusal`, through
+  `source_holders::other_band_working`). Editing a row the band already holds is never refused
+  (an old save's duplicate included), and a band of another faction on the source refuses nothing.
+- **The staffing preview** refuses the same case with `query_error` token `worked_by_another_band`
+  (`sim_runtime::query_error::WORKED_BY_ANOTHER_BAND`).
+- **The chief** (`food_orders::manage_food_orders`, fodder included, and `keep_on_hand::manage_dig_rows`):
+  a source another band of his people holds a row on, the player's or a chief's, is no candidate; and
+  a chief-listed row of his on a source another band of his people holds is retired when that other
+  row is the player's, or is chief-listed and that band's `BandId` is the lower (`OtherBands::
+  outranks_my_listed_row`). Between two chief rows the higher `BandId` retires and the lower keeps the
+  ground; two player rows are left alone. A retired duplicate goes whatever the row is: an
+  improvement row (a tended patch) and a row handed to him one at a time (`handed_rows`) do not save
+  it. The cargo rule still holds (`row_is_pinned` / `source_pinned`): a pinned duplicate is staffed to
+  nobody and retired by the first pass that finds it unpinned. The chief proposals' new-ground
+  Cultivate candidate keeps its own `forage_rows` reading of "worked by another band of the faction".
+- **The AI seat** (`sim_ai`, `ai-driver.md` -> "Food") reads the same rule off the frame's own bands'
+  `labor_assignments`.
+
+Pinned by `server::tests::{a_forage_row_on_a_patch_another_band_of_the_people_works_is_refused,
+a_hunt_row_on_a_herd_another_band_of_the_people_hunts_is_refused,
+an_extract_row_on_a_working_another_band_of_the_people_works_is_refused,
+a_band_of_another_people_is_not_refused_the_patch}` (the encoded frame, the refusal wording, the
+preview token), `tests/one_band_per_source.rs` (the chief's skip, the player and the chief duplicate,
+a tended patch, a pinned duplicate, another people) and `tests/keep_on_hand.rs::a_chief_never_lists_a_working_another_band_of_his_people_holds`.
 
 ### Scouting is a range, not a count (#875)
 
@@ -653,6 +746,13 @@ clamp note on the feed line; `scout 0` drops the row. The Scout row exists exact
 - **It is zeroed before the shed and refilled after it**, like a staffed row, so `ShedStep::Scout`
   (step 1) is gone: a scout is never a hand the shed gives. The steps keep their numbers (there is
   no step 1).
+- **A tribe member's range is the tribe's, and each band scouts its stretch** (#862): the Scout row
+  carries the tribe's range N and `LaborAssignment::scouting_stretch` (the member's share of the tribe's
+  scouting edge, `1.0` for a band in no tribe); the scouts are dealt in the levy step, after pass 1 and
+  within the levy budget, the stretch needing `ceil(stretch x N)` scout-tiles and `scouting_reach` being
+  `N + (seen - needed)` once `seen >= needed` and `floor(seen / stretch)` short of it (a zero stretch deals no scouts). `assign_labor ... scout` on a member is refused
+  `scouting_set_by_tribe` when it names a range other than the band's current one (the kit picker's restatement of the current range applies the kit); the tribe sets the range with `tribe_scout`. `leadership.md` -> "A tribe levies
+  its bands" has the geometry and the wire.
 - **Visibility**: with `scouting_reach > 0`, vantages are posted at
   `visibility_systems::scout_vantage_posting_distance(reach_tiles, scouting_reach, sight)` =
   `max(1, reach_tiles + scouting_reach − sight)`, so the farthest tile seen is
@@ -706,7 +806,9 @@ The take selection is passed as sent (the command's prune-to-the-current-basket 
 run). Nothing is written to the world.
 
 **Refusals** (`query_error` tokens): `unknown_band`, `unknown_herd`, `unknown_patch`,
-`unknown_deposit`, `unknown_kit`, `kit_wrong_job`, `invalid_floor`, `invalid_priority`, and
+`unknown_deposit`, `unknown_kit`, `kit_wrong_job`, `invalid_floor`, `invalid_priority`,
+`worked_by_another_band` (a new row on a take source another band of the asking band's people already
+works, "One band of a people per source"), and
 `never_renewing_dig_without_a_count` (an extract row on ground that never renews with
 `max_workers` 0, the row `assign_labor` refuses by the same predicate) and `material_is_kept_on_hand`
 (a row on a material the band's leader keeps on hand). A hunt `follow` box has no
@@ -725,7 +827,7 @@ in `query_seat_gate.rs`, and `sim_runtime`'s `the_staffing_preview_round_trips`.
 | `src/data/labor_config.json` | `band_work_range` (**2**) is the apron: past it every job posts a party, and the walk is measured from it. `band_move_tiles_per_turn` (**1**) is read a second time as the party's walking speed — the walk out and every porter's walk home — and is validated `>= 1` for that reason. **No lever of this arc's own exists**: the share of a party on the road falls out of carry, take rate and distance |
 | `src/data/labor_config.json` (`food_first_window_turns`) | **5**, playtest dial, `0` switches it off: how many turns ahead the staffing walks the larder for a missed meal before it lets builders work (see "A band that would go hungry feeds itself before it builds"). A Workbench row (`/food_first_window_turns`) |
 | `src/data/labor_config.json` (keep-on-hand) | `keep_on_hand_refill_turns` (**10**, validated `>= 1`, playtest dial): the turns an ordered material's keep-on-hand deficit is spread over - the dig takes `draw + deficit / this` |
-| `src/data/labor_config.json` (`band_orders`) | `ordered_kinds` (**`["stone", "wood", "food", "fodder"]`**, playtest lever): the kinds a chief takes orders for - `food`, `fodder` or a material id; each listed kind needs a `starting_target` above zero. `starting_target` (**stone 30, wood 30, food 20, fodder 10**, playtest levers): the target a chief opens each kind at when he arrives, and a claim falls back to - units for a material, turns for food and fodder. `learning_floor` (**0.8**, validated in `(0.5, 1.0]`, playtest dial): the floor the chief works his food and fodder rows at while the order is at or above its target; it **must equal the client's Learning preset**, `SourceForecast.FLOOR_PRESET_VALUES[FLOOR_PRESET_LEARN]` (`0.80`, `clients/godot_thin_client/src/scripts/ui/hud/SourceForecast.gd`) - pinned by `food_orders::the_shipped_learning_floor_is_the_clients_learning_preset`, which reads the client file. Below the target he works Best. The `starting_target` values are Workbench rows (`/band_orders/starting_target/*`). `storage_build_min_saved` (**0.2**) gates a storage rung as a proposal candidate. `proposal_idle_turns_notice` (**3**, `>= 1`), `proposal_idle_turns_wasted` (**8**, `>=` the notice) and `proposal_not_now_turns` (**20**, `>= 1`) are the chief's build proposal levers ("A chief proposes a build"), all Workbench rows and playtest dials |
+| `src/data/labor_config.json` (`band_orders`) | `ordered_kinds` (**`["stone", "wood", "food", "fodder"]`**, playtest lever): the kinds a chief takes orders for - `food`, `fodder` or a material id; each listed kind needs a `starting_target` above zero. `starting_target` (**stone 30, wood 30, food 20, fodder 10**, playtest levers): the target a chief opens each kind at when he arrives, and a claim falls back to - units for a material, turns for food and fodder. `learning_floor` (**0.8**, validated in `(0.5, 1.0]`, playtest dial): the floor the chief works his food and fodder rows at while the order is at or above its target; it **must equal the client's Learning preset**, `SourceForecast.FLOOR_PRESET_VALUES[FLOOR_PRESET_LEARN]` (`0.80`, `clients/godot_thin_client/src/scripts/ui/hud/SourceForecast.gd`) - pinned by `food_orders::the_shipped_learning_floor_is_the_clients_learning_preset`, which reads the client file. Below the target he works Best. The `starting_target` values are Workbench rows (`/band_orders/starting_target/*`). `storage_build_min_saved` (**0.2**) gates a storage rung as a proposal candidate. `proposal_idle_turns_notice` (**3**, `>= 1`), `proposal_idle_turns_wasted` (**8**, `>=` the notice) and `proposal_not_now_turns` (**20**, `>= 1`), and `proposal_low_yield_share` (**0.5**, finite and `> 0`: the share of one person's meal a chief food row's take head must reach not to count as low-yield) are the chief's build proposal levers ("A chief proposes a build"), all Workbench rows and playtest dials |
 | `src/data/supply_network_config.json` | Read, not written: `reach_tiles` is subtracted from `supply::free_pooling_reach_tiles` to give the **road bonus** — how much of a walk a road takes away. `friction` is **not** read: distance is paid in walking |
 | `src/data/materials.json` | Read, not written: every material's required **`weight`** — biomass-equivalent mass per unit, validated positive and finite — is what a deposit's pack is divided by (wood **2.4**, stone **3.0**; every value PROVISIONAL, stated in the file's `_comment_weight`) |
 | `src/data/equipment.json` | Read, not written: the extract kits `sledding` (`sled`), `woodcutting` (`sled` + `axe`) and `stonework` (`sled` + `wedges`), claimed whole like every job's kit, so a far working's porters haul on the sled on every rung |

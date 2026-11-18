@@ -223,6 +223,8 @@ pub(crate) fn labor_assignment_to_state(
         load_home_in: assignment.party.as_ref().map_or(0, |p| p.load_home_in),
         scouting_range: assignment.scouting_range,
         scouting_reach: assignment.scouting_reach,
+        for_tribe: assignment.for_tribe.is_some(),
+        scouting_stretch: assignment.scouting_stretch,
         bare_idle: assignment.staffing.bare_idle,
         ..Default::default()
     };
@@ -1248,6 +1250,12 @@ pub(crate) struct TribeMembership {
     pub(crate) leader_kind: u8,
     /// How many bands the tribe has: the tribe leader's load.
     pub(crate) member_count: usize,
+    /// The tribe's levy ceiling (`sim_schema::TRIBE_LEVY_*`).
+    pub(crate) levy_ceiling: u8,
+    /// The tribe's scouting range, in tiles past the local range.
+    pub(crate) scouting_range: u32,
+    /// The tribe's works, with the bands carrying a levy row for each and the heads on those rows.
+    pub(crate) works: Vec<sim_schema::state::TribeWorkState>,
     /// The tribe's settlement stage (an index into the stage config), once resolved.
     pub(crate) stage: Option<usize>,
 }
@@ -1340,6 +1348,38 @@ pub(crate) fn tribe_membership(
             }
         },
         member_count: tribe.members.len(),
+        levy_ceiling: tribe.levy.wire_code(),
+        scouting_range: tribe.scouting_range,
+        works: tribe
+            .works
+            .iter()
+            .enumerate()
+            .map(|(index, work)| {
+                let carriers = tribe.carriers.get(index).map(Vec::as_slice).unwrap_or(&[]);
+                sim_schema::state::TribeWorkState {
+                    x: work.tile.x,
+                    y: work.tile.y,
+                    branch: work.branch.as_str().to_string(),
+                    target_rung: work
+                        .target_rung
+                        .map(|rung| rung.wire_key())
+                        .unwrap_or_default(),
+                    priority: match work.priority {
+                        crate::components::SourcePriority::Low => {
+                            sim_schema::state::SourcePriorityState::Low
+                        }
+                        crate::components::SourcePriority::Normal => {
+                            sim_schema::state::SourcePriorityState::Normal
+                        }
+                        crate::components::SourcePriority::High => {
+                            sim_schema::state::SourcePriorityState::High
+                        }
+                    },
+                    bands: carriers.iter().map(|c| c.band.0 as u32).collect(),
+                    workers: carriers.iter().map(|c| c.workers).sum(),
+                }
+            })
+            .collect(),
         stage: stages.and_then(|stages| stages.of_tribe(tribe.id)),
     })
 }
@@ -3627,6 +3667,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         tribe_leader_load: reach.tribe_leader_load,
         orders_carried_out: reach.orders_carried_out,
         leader_orders_carried_out: reach.leader_orders_carried_out,
+        tribe_levy_ceiling: tribe_membership
+            .as_ref()
+            .map_or(sim_schema::TRIBE_LEVY_NOT_IN_A_TRIBE, |t| t.levy_ceiling),
+        tribe_scouting_range: tribe_membership.as_ref().map_or(0, |t| t.scouting_range),
+        tribe_works: tribe_membership
+            .as_ref()
+            .map(|t| t.works.clone())
+            .unwrap_or_default(),
         tribe_member_names: tribe_membership.map(|t| t.member_names).unwrap_or_default(),
         culture_traits,
         culture_ancestor_pull,
@@ -4235,6 +4283,8 @@ mod tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(4),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -4600,6 +4650,8 @@ mod tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(4),
                 staffing: Default::default(),
                 target: LaborTarget::Scout,

@@ -68,6 +68,7 @@ const RUNG_FX := preload("res://tools/ui_preview/fixtures_rung.gd")
 const TRADE_TAB_STATES := preload("res://tools/band_panel_trade_tab.gd")
 ## The Family limit row and the split sheet's FAMILY LIMIT block (issue #691), in their own file.
 const FAMILY_LIMIT_STATES := preload("res://tools/band_panel_family_limit.gd")
+const SCROLL_CARRY_STATES := preload("res://tools/band_panel_scroll_carry.gd")
 ## The band orders group on the Work tab (#860), in its own file.
 const BAND_ORDERS_STATES := preload("res://tools/band_panel_orders.gd")
 ## The hex `_band_fixture()` stands on — the tile the map-path state clicks.
@@ -1409,6 +1410,7 @@ func _ready() -> void:
 		_push_bands([scout_band])
 		await _settle()
 		await _save("band_panel_scout_%s" % String(state[0]))
+	await _assert_tribe_scout_card()
 	_push_bands([_band_fixture()])
 	await _settle()
 	# **THE TWO BARS, CROSS-CHECKED AGAINST EACH OTHER** — with the reference band's TWO PARTIES in the
@@ -2589,6 +2591,9 @@ func _ready() -> void:
 
 	_assert_herd_field_pairs()
 	_assert_rung_offers_open_tracks()
+
+	# The per-turn scroll carry, appended last so no frame above moves.
+	await SCROLL_CARRY_STATES.new().run(self)
 	_finish()
 
 ## **A BAND WITH NOTHING WORKED, ON A HORIZONTAL DOCK — the state a stretched empty view shipped in.**
@@ -7421,6 +7426,65 @@ func _assert_scouting_range_card() -> void:
 		int(eff.get("range", -1)) == SCOUT_FIXTURE_RANGE + 2 and int(eff.get("workers", -1)) == 2
 		and bool(eff.get("pending", false)))
 	_hud._band_labor.drop_pending_assign(entity, _hud._band_labor.pending_key(HudConst.LABOR_KIND_SCOUT, -1, -1, ""))
+
+## **A TRIBE MEMBER'S SCOUT CARD SHOWS THE TRIBE'S RANGE AND SETS IT** (#862). The band's own row says
+## +3 and the tribe says +5: the stepper must read +5 (never the row), say so on the card and its hover,
+## and send `tribe_scout <faction> <band> <n>` rather than the `assign_labor ... scout` the sim refuses for a
+## tribe member. The kit picker still sends `assign_labor ... scout`, carrying the TRIBE's range so the sim
+## sees a same-range, kit-only change. A band in no tribe keeps `assign_labor` (the claims above).
+const TRIBE_SCOUT_OWN_RANGE := 3
+const TRIBE_SCOUT_RANGE := 5
+const TRIBE_SCOUT_NAME := "Sandreach tribe"
+
+func _assert_tribe_scout_card() -> void:
+	var tribe_band := _band_fixture()
+	_set_scout_row(tribe_band, TRIBE_SCOUT_OWN_RANGE, TRIBE_SCOUT_RANGE, 2, 0)
+	tribe_band["tribe_name"] = TRIBE_SCOUT_NAME
+	tribe_band["tribe_scouting_range"] = TRIBE_SCOUT_RANGE
+	_push_bands([tribe_band])
+	await _settle()
+	await _save("band_panel_scout_tribe")
+	var card := _find_role_card(HudWorkVocab.SCOUT_CARD_TITLE)
+	if card == null:
+		_fail("tribe scout card: no Scout card renders")
+		return
+	_assert_band_panel("tribe scout card: the stepper reads the TRIBE's +%d, not the row's +%d"
+			% [TRIBE_SCOUT_RANGE, TRIBE_SCOUT_OWN_RANGE],
+		_find_label_with_text(card, HudWorkVocab.SCOUT_RANGE_VALUE_FORMAT % TRIBE_SCOUT_RANGE) != null)
+	_assert_band_panel("...and the card says it is the tribe's range",
+		_find_label_with_text(card, HudWorkVocab.SCOUT_TRIBE_LINE_FORMAT % "2 scouts") != null)
+	var tip := _scout_tooltip_of(card)
+	_assert_band_panel("...and the hover names the tribe - \"%s\"" % tip.replace("\n", " | "),
+		tip.contains(HudWorkVocab.SCOUT_TRIBE_TOOLTIP_FORMAT % TRIBE_SCOUT_NAME))
+	var farther := _find_button_with_tooltip(card, HudWorkVocab.SCOUT_RANGE_FARTHER_ARIA)
+	var sent := _emitted_tribe_scout_line(farther) if farther != null else ""
+	_assert_band_panel("...and \"Scout farther\" sends `tribe_scout` at +%d - \"%s\"" % [TRIBE_SCOUT_RANGE + 1, sent],
+		sent.begins_with("tribe_scout ") and sent.ends_with(" %d" % (TRIBE_SCOUT_RANGE + 1)))
+	_assert_band_panel("...addressed by this band's own id - \"%s\"" % sent,
+		sent.contains(" %d " % int(_hud._band_labor.panel_band().get("band_id", -1))))
+	card = _find_role_card(HudWorkVocab.SCOUT_CARD_TITLE)
+	var picker := _find_meta_control(card, KitRoster.KIT_PICKER_META) as OptionButton
+	if picker != null:
+		for i in picker.item_count:
+			if not picker.get_item_text(i).contains(HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX):
+				var kit_line := _emitted_assign_line(picker, i)
+				_assert_band_panel("...and the kit picker still sends `assign_labor ... scout` at the tribe's range - \"%s\""
+						% kit_line,
+					kit_line.begins_with("assign_labor ") and kit_line.contains(" scout %d" % TRIBE_SCOUT_RANGE))
+				break
+	_hud._bandpanel._role_kit_ids.clear()
+	_hud._band_labor._pending_labor.clear()
+
+## Press a card button and hand back the `tribe_scout` line the HUD emitted ("" when none).
+func _emitted_tribe_scout_line(button: Button) -> String:
+	var seen: Array[Dictionary] = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.tribe_scout_requested.connect(sink)
+	button.pressed.emit()
+	_hud.tribe_scout_requested.disconnect(sink)
+	if seen.is_empty():
+		return ""
+	return String(MAIN_SCRIPT.format_tribe_scout(seen[0]).get("line", ""))
 
 func _set_scout_row(band: Dictionary, wanted: int, reach: int, scouts: int, kitted: int) -> void:
 	var rows: Array = []

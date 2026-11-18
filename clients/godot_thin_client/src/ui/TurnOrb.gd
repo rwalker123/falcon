@@ -85,6 +85,8 @@ const KIND_IDLE_WORKERS := "idle_workers"
 const KIND_STARVING := "starving"
 # A Falling food order with a chief's proposal to answer it (no idle-workers row to ride).
 const KIND_FOOD_FALLING := "food_falling"
+# A low-yield proposal of new ground (no idle hands: everyone works, for almost nothing).
+const KIND_LOW_YIELD := "low_yield"
 const KIND_LOSING_POPULATION := "losing_population"
 const KIND_AWAITING_ORDERS := "awaiting_orders"
 # A penned herd its keeper cannot feed — it shrinks every turn (docs/plan_corral_managed_population.md).
@@ -134,6 +136,7 @@ const KIND_ICON := {
 	# mark #249's own rule says to leave as text.
 	KIND_LOSING_POPULATION: "▼",
 	KIND_FOOD_FALLING: "▼",
+	KIND_LOW_YIELD: "🛠",
 	KIND_AWAITING_ORDERS: FoodIcons.STATUS_ICONS[FoodIcons.STATUS_AWAITING],
 	KIND_STARVING_PEN: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_CORRAL],
 	KIND_UNDER_KEPT_RUNG: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_SOW],
@@ -165,6 +168,7 @@ const KIND_ICON_FALLBACK := "●"
 const KIND_ICON_SPRITE := {
 	KIND_KNOWLEDGE_LEARNED: HudKnowledgeVocab.LAUNCH_MARK,
 	KIND_IDLE_WORKERS: "workers",
+	KIND_LOW_YIELD: "workers",
 	KIND_CREW_HANDOFF: "workers",
 	KIND_GATHERING: "gathering",
 	# **AN EMPTY BOWL, NOT THE 🍖 IT REPLACES.** A meat cut is the state this alert does NOT

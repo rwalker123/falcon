@@ -45,6 +45,13 @@ pub struct SupplyNetworkConfig {
     /// the ladder is in scope): at or past a trail's reach messengers would link every far pair for
     /// free and the founding-walk trail would add nothing.
     pub reach_tiles_with_messengers: u32,
+    /// **The free pooling reach of a pair of bands in one tribe** (`docs/plan_labor_at_scale.md`,
+    /// "A tribe levies its bands"), in hex steps - the value the stat takes, never a multiplier. A
+    /// same-tribe pair links out to `max(its free reach otherwise, this)`; roads still widen it.
+    /// Read ONLY by [`crate::supply::balance_supply_networks`]' link test. Validated
+    /// `reach_tiles_with_messengers <= this` ([`SupplyNetworkConfig::validate`]) and `this <` the
+    /// trail rung's `holds_link_to_tiles` ([`SupplyNetworkConfig::validate_against_trail`]).
+    pub reach_tiles_in_tribe: u32,
     /// Max quantity of a single commodity a node may send or receive per turn (how *fast* a
     /// network equalizes; reach and the tie decide *who* is linked).
     pub throughput_per_turn: f32,
@@ -85,6 +92,7 @@ impl Default for SupplyNetworkConfig {
         Self {
             reach_tiles: 3,
             reach_tiles_with_messengers: 4,
+            reach_tiles_in_tribe: 5,
             throughput_per_turn: 50.0,
             friction: 0.05,
             min_transfer_fraction: 0.0025,
@@ -125,8 +133,23 @@ impl SupplyNetworkConfig {
         }
     }
 
-    /// Messengers only ever reaches further: `reach_tiles <= reach_tiles_with_messengers`.
+    /// **The free pooling reach of a pair in one tribe**: the larger of the pair's reach without a
+    /// tribe (`free_reach`) and `reach_tiles_in_tribe`.
+    pub fn tribe_pooling_reach(&self, free_reach: u32) -> u32 {
+        free_reach.max(self.reach_tiles_in_tribe)
+    }
+
+    /// Messengers only ever reaches further: `reach_tiles <= reach_tiles_with_messengers`, and a
+    /// tribe's reach is no less than messengers' (`reach_tiles_with_messengers <=
+    /// reach_tiles_in_tribe`).
     pub fn validate(&self) -> Result<(), SupplyNetworkConfigError> {
+        if self.reach_tiles_in_tribe < self.reach_tiles_with_messengers {
+            return Err(SupplyNetworkConfigError::Invalid(format!(
+                "reach_tiles_in_tribe ({}) must be >= reach_tiles_with_messengers ({}): a tribe \
+                 reaches at least as far as messengers",
+                self.reach_tiles_in_tribe, self.reach_tiles_with_messengers
+            )));
+        }
         if self.reach_tiles_with_messengers < self.reach_tiles {
             return Err(SupplyNetworkConfigError::Invalid(format!(
                 "reach_tiles_with_messengers ({}) must be >= reach_tiles ({}): a lesson that \
@@ -142,6 +165,14 @@ impl SupplyNetworkConfig {
     /// [`crate::routes::trail_reach_tiles`]). The cross-config half, run at boot where both configs
     /// are in scope (`lib.rs`) - a supply config holds no ladder.
     pub fn validate_against_trail(&self, trail_reach: u32) -> Result<(), SupplyNetworkConfigError> {
+        if self.reach_tiles_in_tribe >= trail_reach {
+            return Err(SupplyNetworkConfigError::Invalid(format!(
+                "reach_tiles_in_tribe ({}) must be < the trail's holds_link_to_tiles ({}): \
+                 otherwise a tribe links every far pair for free and the founding-walk trail \
+                 adds nothing",
+                self.reach_tiles_in_tribe, trail_reach
+            )));
+        }
         if self.reach_tiles_with_messengers >= trail_reach {
             return Err(SupplyNetworkConfigError::Invalid(format!(
                 "reach_tiles_with_messengers ({}) must be < the trail's holds_link_to_tiles ({}): \
@@ -257,6 +288,29 @@ mod tests {
             (0.0..=1.0).contains(&config.min_transfer_fraction),
             "the dead-band is a fraction of the node's own fair share, not a quantity"
         );
+    }
+
+    #[test]
+    fn a_tribes_reach_may_not_be_below_messengers_nor_reach_a_trail() {
+        let mut config = SupplyNetworkConfig::default();
+        config.reach_tiles_in_tribe = config.reach_tiles_with_messengers - 1;
+        assert!(config.validate().is_err());
+        config.reach_tiles_in_tribe = config.reach_tiles_with_messengers;
+        assert!(config.validate().is_ok());
+        let trail =
+            crate::routes::trail_reach_tiles(&crate::intensification::LadderConfig::builtin());
+        let mut config = SupplyNetworkConfig::default();
+        assert!(config.reach_tiles_in_tribe < trail);
+        assert!(config.validate_against_trail(trail).is_ok());
+        config.reach_tiles_in_tribe = trail;
+        assert!(config.validate_against_trail(trail).is_err());
+    }
+
+    #[test]
+    fn a_tribe_pair_pools_at_the_larger_of_its_free_reach_and_the_tribe_reach() {
+        let config = SupplyNetworkConfig::default();
+        assert_eq!(config.tribe_pooling_reach(config.reach_tiles), 5);
+        assert_eq!(config.tribe_pooling_reach(9), 9);
     }
 
     #[test]

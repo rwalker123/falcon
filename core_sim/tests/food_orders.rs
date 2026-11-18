@@ -1046,6 +1046,8 @@ fn pen_order_on_the_wire(intake_short_by: f32) -> (bool, f32, f32) {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: Some(PEN_KEEPERS),
             staffing: Default::default(),
             target: LaborTarget::Hunt {
@@ -1337,6 +1339,8 @@ fn saltmarsh() -> (App, Entity, bevy::prelude::UVec2) {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: None,
             staffing: Default::default(),
             target: LaborTarget::Forage {
@@ -1487,4 +1491,194 @@ fn inside_the_apron_a_bigger_patch_is_ranked_over_a_nearer_thin_one() {
         first, big,
         "the full patch at {big:?} outranks the nearer thin ones (nearest {nearest:?})"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The food a band can reach in its own stores counts toward the food order
+// ---------------------------------------------------------------------------------------------
+
+/// The shipped storage pit's branch.
+fn pit_branch() -> core_sim::BranchId {
+    core_sim::BranchId::new("food_stores")
+}
+
+/// Dig a finished pit owned by `band` on `tile` and hold `turns` of the band's need in it as dry food.
+fn pit_holding_turns(app: &mut App, band: Entity, tile: bevy::prelude::UVec2, turns: f32) {
+    let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+    let faction = app.world.get::<PopulationCohort>(band).unwrap().faction;
+    let owner = *app.world.get::<core_sim::BandId>(band).unwrap();
+    let rung = core_sim::RungId::new(pit_branch(), "storage_pit");
+    let (base, width) = core_sim::tile_rung_span(rung, &ladder);
+    let mut registry = app
+        .world
+        .resource_mut::<core_sim::TileImprovementRegistry>();
+    let pit = registry.place_owned(tile, pit_branch(), faction, Some(owner), &ladder);
+    pit.set_position(base + width, &ladder);
+    registry
+        .get_mut(tile, pit_branch())
+        .expect("the pit stands")
+        .contents
+        .add_aged("dry", scalar_from_f32(turns * NEED), 10);
+}
+
+/// The tile the band stands on.
+fn band_tile(app: &App, band: Entity) -> bevy::prelude::UVec2 {
+    let at = app
+        .world
+        .get::<PopulationCohort>(band)
+        .unwrap()
+        .current_tile;
+    app.world.get::<core_sim::Tile>(at).unwrap().position
+}
+
+/// A tile past the supply reach from the band, still on the map.
+fn tile_out_of_reach(app: &App, band: Entity) -> bevy::prelude::UVec2 {
+    let reach = app
+        .world
+        .resource::<core_sim::SupplyNetworkConfigHandle>()
+        .get()
+        .reach_tiles;
+    let here = band_tile(app, band);
+    bevy::prelude::UVec2::new(here.x + reach + 1, here.y)
+}
+
+/// A food order of `target` turns, a larder of `larder_turns`, and a pit of `pit_turns` (none when
+/// zero; out of the band's reach when `out_of_reach`), as the encoded frame publishes the order.
+fn food_order_with(
+    larder_turns: f32,
+    pit_turns: f32,
+    target: u32,
+    out_of_reach: bool,
+) -> sim_schema::BandOrderState {
+    let (mut app, band) = world();
+    app.update();
+    set_target(&mut app, band, FOOD, target);
+    set_larder(&mut app, band, larder_turns * NEED);
+    if pit_turns > 0.0 {
+        let at = if out_of_reach {
+            tile_out_of_reach(&app, band)
+        } else {
+            band_tile(&app, band)
+        };
+        pit_holding_turns(&mut app, band, at, pit_turns);
+    }
+    core_sim::staffing::restaff_band(&mut app.world, band);
+    published_order_state(&mut app, FOOD)
+}
+
+const A_TARGET: u32 = 40;
+const LARDER_TURNS: f32 = 21.0;
+const PIT_TURNS: f32 = 15.0;
+
+/// **THE PIT IS THE BAND'S FOOD**: the wire's on-hand reads larder plus the pit in reach, in turns.
+#[test]
+fn a_pit_in_reach_counts_toward_the_food_orders_turns_on_hand() {
+    let without = food_order_with(LARDER_TURNS, 0.0, A_TARGET, false);
+    let with = food_order_with(LARDER_TURNS, PIT_TURNS, A_TARGET, false);
+    assert!(
+        (without.on_hand - LARDER_TURNS).abs() < 0.05,
+        "liveness: the larder alone reads its turns ({})",
+        without.on_hand
+    );
+    assert!(
+        (with.on_hand - (LARDER_TURNS + PIT_TURNS)).abs() < 0.05,
+        "larder + pit read together ({})",
+        with.on_hand
+    );
+}
+
+/// A pit the band cannot reach is not its food.
+#[test]
+fn a_pit_out_of_reach_is_not_counted() {
+    let near = food_order_with(LARDER_TURNS, PIT_TURNS, A_TARGET, false);
+    let far = food_order_with(LARDER_TURNS, PIT_TURNS, A_TARGET, true);
+    assert!(
+        near.on_hand > far.on_hand + 1.0,
+        "liveness: in reach counts"
+    );
+    assert!(
+        (far.on_hand - LARDER_TURNS).abs() < 0.05,
+        "out of reach reads the larder alone ({})",
+        far.on_hand
+    );
+}
+
+/// With larder + pit at the target the chief stops refilling: the published refill falls against the
+/// same band with an empty pit.
+#[test]
+fn with_larder_and_pit_at_the_target_the_chief_stops_refilling() {
+    let empty = food_order_with(LARDER_TURNS, 0.0, A_TARGET, false);
+    let full = food_order_with(
+        LARDER_TURNS,
+        A_TARGET as f32 - LARDER_TURNS,
+        A_TARGET,
+        false,
+    );
+    assert!(
+        empty.refill_wanted > 0,
+        "liveness: the band below its target wants a refill crew"
+    );
+    assert_eq!(
+        full.refill_wanted, 0,
+        "at the target the refill crew is not wanted"
+    );
+    assert!(full.refill_heads < empty.refill_heads);
+    assert!(full.hold_wanted > 0, "the keep-up crew still works");
+}
+
+/// Fodder is unchanged by a pit of food.
+#[test]
+fn fodder_on_hand_ignores_the_food_in_a_pit() {
+    let fodder_on_hand = |pit: bool| {
+        let (mut app, band) = world();
+        app.update();
+        pens(&mut app, band, NEED);
+        set_larder(&mut app, band, LARDER_TURNS * NEED);
+        if pit {
+            let at = band_tile(&app, band);
+            pit_holding_turns(&mut app, band, at, PIT_TURNS);
+        }
+        core_sim::staffing::restaff_band(&mut app.world, band);
+        published_order_state(&mut app, FODDER).on_hand
+    };
+    assert_eq!(fodder_on_hand(false), fodder_on_hand(true));
+}
+
+/// Leadership counts the food order as met when larder + pit reach the target and not on the larder
+/// alone; the proposal trigger's falling reading shares the figure.
+#[test]
+fn leadership_counts_the_food_order_met_when_larder_and_pit_reach_the_target() {
+    let (mut app, band) = world();
+    app.update();
+    set_target(&mut app, band, FOOD, A_TARGET);
+    set_larder(&mut app, band, LARDER_TURNS * NEED);
+    let wellbeing = app
+        .world
+        .resource::<core_sim::WellbeingConfigHandle>()
+        .get();
+    let cohort = app.world.get::<PopulationCohort>(band).unwrap();
+    let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+    let pit_food = (A_TARGET as f32 - LARDER_TURNS) * NEED;
+    let met = |stored: f32| {
+        core_sim::judge_leader(
+            &wellbeing.leadership,
+            Some(allocation),
+            cohort,
+            None,
+            0.0,
+            0,
+            stored,
+        )
+        .reading
+        .met_orders
+    };
+    assert_eq!(met(0.0), 0, "the larder alone is under the target");
+    assert_eq!(met(pit_food), 1, "larder + pit meet it");
+    let falling =
+        |stored: f32| core_sim::food_orders::food_order_is_falling(cohort, allocation, stored);
+    assert!(
+        falling(0.0) || allocation.order_take(FOOD) >= NEED,
+        "liveness: below target with no take reads falling"
+    );
+    assert!(!falling(pit_food), "at the target it is not falling");
 }

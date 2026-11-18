@@ -1206,7 +1206,8 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
             continue
         # **THE SPOILAGE LINE** is a hazard sentence that also carries a hover (the per-class breakdown),
         # so it is matched on its phrase before the generic hazard branch and wrapped like a row.
-        if line.begins_with(HudStorageVocab.SPOIL_LINE_LEAD) and line.contains(HudStorageVocab.SPOIL_PHRASE):
+        if line.begins_with(HudStorageVocab.SPOIL_LINE_LEAD) and (line.contains(HudStorageVocab.SPOIL_PHRASE)
+                or line.contains(HudStorageVocab.SPOIL_SURPLUS_PHRASE)):
             if table_open:
                 out += "[/table]\n"
                 table_open = false

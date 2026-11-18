@@ -2262,6 +2262,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     }
     let _ = dict.insert("tribe_member_names", &tribe_members);
     let _ = dict.insert("tribe_leader_name", cohort.tribeLeaderName().unwrap_or(""));
+    // The tribe's one scouting range (tiles past the local range), the same on every member band.
+    let _ = dict.insert(
+        "tribe_scouting_range",
+        i64::from(cohort.tribeScoutingRange()),
+    );
     let _ = dict.insert("tribe_leader_kind", i64::from(cohort.tribeLeaderKind()));
     // The most tiles past the local range a scouting range may name (the stepper's ceiling); the
     // local range itself is `move_ferry_reach_tiles`.

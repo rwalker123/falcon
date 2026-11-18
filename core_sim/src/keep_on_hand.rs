@@ -563,6 +563,7 @@ pub fn manage_dig_rows(
     has_leader: bool,
     candidate_tiles: &dyn Fn(&str) -> Vec<UVec2>,
     on_hand: &dyn Fn(&str) -> f32,
+    rivals: &crate::source_holders::OtherBands,
 ) {
     allocation.last_keep_site.clear();
     allocation.keep_shares.clear();
@@ -653,6 +654,16 @@ pub fn manage_dig_rows(
         let mut ranked: Vec<SiteRank> = candidate_tiles(&material)
             .into_iter()
             .filter(|tile| !player_sites.contains(tile))
+            // **One band of a people per source**: a working another band of the chief's people
+            // holds is no candidate, unless his own listed row there wins the duplicate.
+            .filter(|tile| {
+                let key = dig_key(&material, tile.x, tile.y);
+                let mine_listed = allocation.assignments.iter().any(|row| {
+                    source_key(&row.target).as_deref() == Some(key.as_str())
+                        && is_listed(allocation, &row.target)
+                });
+                !rivals.blocks_candidate(&key, mine_listed)
+            })
             .filter_map(|tile| rank_site(inputs, tile, &material))
             .collect();
         ranked.sort_by(|a, b| {
@@ -750,10 +761,15 @@ pub fn manage_dig_rows(
             .collect();
         let mut held_sites: Vec<UVec2> = Vec::new();
         for (tile, target) in listed_rows {
-            if set.iter().any(|site| site.tile == tile) && !held_sites.contains(&tile) {
+            // A duplicate this chief loses to another band of his people goes whatever the row is
+            // (a row handed to him one at a time included); the cargo rule still holds.
+            let lost = source_key(&target).is_some_and(|key| rivals.outranks_my_listed_row(&key));
+            if !lost && set.iter().any(|site| site.tile == tile) && !held_sites.contains(&tile) {
                 held_sites.push(tile);
             } else if !row_is_pinned(allocation, &target)
-                && !source_key(&target).is_some_and(|key| allocation.handed_rows.contains(&key))
+                && (lost
+                    || !source_key(&target)
+                        .is_some_and(|key| allocation.handed_rows.contains(&key)))
             {
                 if let Some(key) = source_key(&target) {
                     allocation.order_rows.remove(&key);

@@ -1699,11 +1699,20 @@ table PopulationCohortState {
   // THE CHIEF'S BUILD PROPOSAL (appended last): zero or one row. A band with a leader and idle hands is
   // offered one build to approve (`approve_proposal`) or put off (`defer_proposal`). Own bands only.
   chiefProposals:[ChiefProposal];
+  // *** THE TRIBE'S LEVY (#862, appended last). *** Published to every own member band of a formed tribe
+  // (the tribeName rule); a foreign row and a band in no tribe carry the defaults.
+  // tribeLevyCeiling: 0 not in a tribe, 1 none, 2 low, 3 normal, 4 high (sim_schema::TRIBE_LEVY_*).
+  tribeLevyCeiling:ubyte = 0;
+  // The tribe's one scouting range, in tiles past the local range.
+  tribeScoutingRange:uint = 0;
+  // The tribe's works, in the order they were added.
+  tribeWorks:[TribeWorkState];
   // THE STAGE OF THE TRIBE THIS BAND BELONGS TO (#176), the same view `settlementStage` uses, read over
   // all the tribe's members; the default (empty id) in no tribe, for a foreign band and for a party.
   // Appended last.
   tribeSettlementStage:SettlementStageView;
 }
+
 
 // ONE IMPROVEMENT A BAND HOLDS ON A BAND-KIND BRANCH - a row of `PopulationCohortState.bandImprovements`,
 // `TileImprovementState`'s shape with the tile taken away (the band IS the key). Appended last.
@@ -2163,6 +2172,21 @@ enum SourcePriority : ubyte {
   Normal = 0,
   High = 1,
   Low = 2,
+}
+
+// ONE WORK THE TRIBE OWNS - a row of `PopulationCohortState.tribeWorks`. Appended last.
+table TribeWorkState {
+  x:uint = 0;
+  y:uint = 0;
+  // The tile-kind branch id.
+  branch:string;
+  // The rung the tribe wants it raised to (`<branch>:<id>`); empty = keep what stands.
+  targetRung:string;
+  priority:SourcePriority;
+  // The BandIds carrying a levy row for this work this turn, nearest first.
+  bands:[uint];
+  // The heads on those rows.
+  workers:uint = 0;
 }
 
 // A BAND'S ORDER FOR ONE KIND - a row of `PopulationCohortState.bandOrders` (#860). `kind` is
@@ -2785,6 +2809,11 @@ table LaborAssignment {
   // hunt's aged packs outrun the band's meals. 0 = all of it is eaten. realizedYield is the row's display
   // figure (the walk's rot alone); a seat that VALUES the source reads realizedYield x (1 - eatenShortfall).
   eatenShortfall:float = 0;
+  // *** A TRIBE'S LEVY (#862, appended last). *** forTribe: the row is a levy row of the band's tribe
+  // (or the Scout row carrying the tribe's range). scoutingStretch: on a tribe member's Scout row, the
+  // share of the tribe's scouting edge this band covers (1 = a lone band's whole ring); 1 elsewhere.
+  forTribe:bool = false;
+  scoutingStretch:float = 1;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

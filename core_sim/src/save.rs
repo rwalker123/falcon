@@ -166,8 +166,9 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 69 | A split's founding walk lays a full trail (`docs/plan_far_kin.md`): `BandRecord` gained `founding_walk` (the band is on its founding walk until its first move order completes) and `Expedition` gained `launch_tile` (the tile a party left from, which a delivery between kin measures its trip from for the messengers lesson). A version-68 blob lacks both and is refused. |
 /// | 70 | The band judges its leader (#710): `MoraleContributions` gained `leadership` (published as `moraleLeadership`), and `PopulationCohort` gained `last_leadership` (`LeadershipReading`: the met and falling order counts and the hunger flag the culture drift and the Telling read); a version-69 blob lacks them |
 /// | 71 | A chief proposes a build and the player approves it: `SimState` gained `chief_proposals` (`ChiefProposalBook`: per band the idle streak, the "Not now" timers, the approved builds awaiting completion, the leader's pending order-met credits and the proposal on offer); a version-70 blob lacks it |
-/// | 72 | Settlements are derived (#176): `SimState` gained `settlement_stages` (`SettlementStages`: each band's own stage and each tribe's, the edge gate of the city event) and lost `settlements` (the `Settlement` / `TownCenter` components are deleted); `SedentarizationEntry` lost `stage`; `CommandEventKind` lost `FoundSettlement` and `SedentarizationPrompt` and gained `SettlementStageReached`; the `food_stores:granary` rung exists. A version-71 blob does not decode |
-pub const SAVE_FORMAT_VERSION: u32 = 72;
+/// | 72 | A tribe levies its bands (#862): `Tribe` gained `works`, `levy`, `scouting_range` and `carriers`, and `LaborAssignment` gained `for_tribe` and `scouting_stretch`; a version-71 blob lacks them |
+/// | 73 | Settlements are derived (#176): `SimState` gained `settlement_stages` (`SettlementStages`: each band's own stage and each tribe's, the edge gate of the city event) and lost `settlements` (the `Settlement` / `TownCenter` components are deleted); `SedentarizationEntry` lost `stage`; `CommandEventKind` lost `FoundSettlement` and `SedentarizationPrompt` and gained `SettlementStageReached`; the `food_stores:granary` rung exists. A version-71 blob does not decode |
+pub const SAVE_FORMAT_VERSION: u32 = 73;
 
 /// gzip level for the payload document.
 ///

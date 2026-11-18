@@ -39,6 +39,18 @@ const KEEPING_WORDS := {
 const SPOIL_LINE_LEAD := "⚠ "
 const SPOIL_PHRASE := "food a turn spoils uneaten"
 const SPOIL_LINE_FORMAT := SPOIL_LINE_LEAD + "%s " + SPOIL_PHRASE
+## **THE SURPLUS FORM**: the band brings in more food than it eats (`food_income > food_need`), so the rot has
+## a cause the line says (`<band> grows more than it eats`) and a second, dimmer line says what to do. The storage
+## clause moves to the fix line as one more option (`or build a drying rack (saves 0.4 a turn)`) when a store
+## would save food and its lesson is known and no build is already declared.
+## "Income" is the STEADY one (`DetailFormat.band_food_income`), the term the Food line's net is made of.
+const SPOIL_SURPLUS_PHRASE := "food a turn will spoil"
+const SPOIL_SURPLUS_LINE_FORMAT := SPOIL_LINE_LEAD + "%s " + SPOIL_SURPLUS_PHRASE + " — %s grows more than it eats"
+const SPOIL_FIX_CHIEF_FORMAT := "Lower %s food target, or move people to other work."
+const SPOIL_FIX_PLAYER := "Move people from food to other work."
+const SPOIL_FIX_CHIEF_STORE_FORMAT := "Lower %s food target, move people to other work, or build a %s (saves %s a turn)."
+const SPOIL_FIX_PLAYER_STORE_FORMAT := "Move people from food to other work, or build a %s (saves %s a turn)."
+const FOOD_NEED_KEY := "food_need"
 const SPOIL_FIX_JOIN := " · "
 const SPOIL_FIX_SAVES_FORMAT := "a %s would save %s"
 const SPOIL_FIX_DECLARED_FORMAT := "%s being built"
@@ -84,6 +96,49 @@ static func rung_name(catalog: Array, rung_id: String) -> String:
 			return (name if name != "" else key.replace("_", " ")).to_lower()
 	return key.replace("_", " ")
 
+## The band panel's spoilage sentences: `[line]` (the shipped single line) or `[cause line, what-to-do line]` when
+## the band brings in more than it needs. `[]` when nothing spoils.
+static func spoil_lines(band: Dictionary, catalog: Array) -> Array:
+	var total := spoil_total(band)
+	if total < FOOD_EPSILON:
+		return []
+	if DetailFormat.band_food_income(band) <= float(band.get(FOOD_NEED_KEY, 0.0)):
+		return [spoil_line(band, catalog)]
+	return [SPOIL_SURPLUS_LINE_FORMAT % [format_food(total), HudFormat.band_name(band)], spoil_fix_line(band, catalog)]
+
+## What to do about a surplus: the chief's food target when the chief owns the food order, else the player's own crews.
+static func spoil_fix_line(band: Dictionary, catalog: Array) -> String:
+	var chief := HudOrdersVocab.is_chief_owned(HudOrdersVocab.order_of(band, HudOrdersVocab.KIND_FOOD))
+	var possessive := ""
+	if chief:
+		possessive = HudOrdersVocab.COUNCIL_POSSESSIVE_LOWER if HudOrdersVocab.is_council(band) \
+			else "%s's" % HudOrdersVocab.who(band)
+	var best := best_save_row(band)
+	# A store is only offered while it is a thing to start: a declared build is already under way and an
+	# unlearned one cannot be built.
+	if best.is_empty() or bool(best.get(DECLARED_KEY, false)) or not bool(best.get(LESSON_KNOWN_KEY, false)):
+		return SPOIL_FIX_CHIEF_FORMAT % possessive if chief else SPOIL_FIX_PLAYER
+	var store := rung_name(catalog, String(best.get(RUNG_KEY, "")))
+	var saved := format_food(float(best.get(FOOD_SAVED_KEY, 0.0)))
+	if chief:
+		return SPOIL_FIX_CHIEF_STORE_FORMAT % [possessive, store, saved]
+	return SPOIL_FIX_PLAYER_STORE_FORMAT % [store, saved]
+
+## The best `storage_saves` row (a declared build outranks an open one, then the larger saving), `{}` for none.
+static func best_save_row(band: Dictionary) -> Dictionary:
+	var best := {}
+	for row_variant in band.get(STORAGE_SAVES_KEY, []):
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if float(row.get(FOOD_SAVED_KEY, 0.0)) <= FOOD_EPSILON:
+			continue
+		if best.is_empty() or (bool(row.get(DECLARED_KEY, false)) and not bool(best.get(DECLARED_KEY, false))) \
+				or (bool(row.get(DECLARED_KEY, false)) == bool(best.get(DECLARED_KEY, false))
+					and float(row.get(FOOD_SAVED_KEY, 0.0)) > float(best.get(FOOD_SAVED_KEY, 0.0))):
+			best = row
+	return best
+
 ## The band panel's spoilage sentence, or `""` when nothing spoils. The fix clause names the best
 ## saving row: a declared build reads `<rung> being built`, an unlearned one `needs Storage`, else what
 ## it would save.
@@ -92,18 +147,7 @@ static func spoil_line(band: Dictionary, catalog: Array) -> String:
 	if total < FOOD_EPSILON:
 		return ""
 	var line := SPOIL_LINE_FORMAT % format_food(total)
-	var best := {}
-	for row_variant in band.get(STORAGE_SAVES_KEY, []):
-		if not (row_variant is Dictionary):
-			continue
-		var row: Dictionary = row_variant
-		if float(row.get(FOOD_SAVED_KEY, 0.0)) <= FOOD_EPSILON:
-			continue
-		# A declared build outranks an open one: it is the news the player is waiting on.
-		if best.is_empty() or (bool(row.get(DECLARED_KEY, false)) and not bool(best.get(DECLARED_KEY, false))) \
-				or (bool(row.get(DECLARED_KEY, false)) == bool(best.get(DECLARED_KEY, false))
-					and float(row.get(FOOD_SAVED_KEY, 0.0)) > float(best.get(FOOD_SAVED_KEY, 0.0))):
-			best = row
+	var best := best_save_row(band)
 	if best.is_empty():
 		return line
 	var name := rung_name(catalog, String(best.get(RUNG_KEY, "")))

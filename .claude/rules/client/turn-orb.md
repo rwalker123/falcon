@@ -612,6 +612,14 @@ detail names the chief's proposal; the same proposal block rides under it). When
 count is above zero the idle row carries the proposal and the falling row is not built, so one proposal is never on
 two rows; `refresh_idle_rows` swaps between the two. `turn_orb.gd::_food_falling_state` renders it.
 
+**A proposal raised by low yield (`trigger == "low_yield"`) is new ground for a band with no idle hands** (the chief
+proposes an off-site Cultivate because people on the food rows work for almost nothing).
+`AttentionController._low_yield_row` gives it a `low_yield` entry (warn, the idle row's rung; label
+`"<band> hands wasted"`, detail `"Chief proposes new ground"`; the `workers` icon, since the row is about the
+hands; located at the band's tile; the same proposal block rides under it, so Approve / Not now relay unchanged).
+Precedence is idle row, then the falling row, then this one, so one proposal is never on two rows;
+`refresh_idle_rows` covers all three kinds. `turn_orb.gd::_low_yield_state` renders it (`chief_proposal_low_yield`).
+
 - **The orb draws it under the entry's row** (`TurnOrb._reason_block` / `_proposal_block`): the sentence, then
   `Not now` and `Approve`. The orb stays producer-agnostic: it reports a press as
   `proposal_action_requested({action, band_id, faction, build_key})` and does not read what a proposal means.

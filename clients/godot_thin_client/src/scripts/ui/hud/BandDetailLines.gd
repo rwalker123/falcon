@@ -411,9 +411,10 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         # Food the larder will lose uneaten, amber beside the food number, with the store that fixes it.
         # The per-class breakdown is the row's hover (`HudStorageVocab.SPOIL_HOVER_KEY`).
         var catalog: Array = _ladder_rungs_fn.call() if _ladder_rungs_fn.is_valid() else []
-        var spoil := HudStorageVocab.spoil_line(unit_data, catalog)
-        if spoil != "":
-            lines.append(spoil)
+        var spoil := HudStorageVocab.spoil_lines(unit_data, catalog)
+        if not spoil.is_empty():
+            for spoil_line in spoil:
+                lines.append(String(spoil_line))
             context.row_tooltips[HudStorageVocab.SPOIL_HOVER_KEY] = HudStorageVocab.spoil_tooltip(unit_data)
         # Category-aggregated food breakdown under Food: a click-to-open disclosure. `_band_food_line`
         # set `_food_flow_present` (a PRIVATE handshake between the two — the formatter never reads

@@ -202,6 +202,8 @@ fn a_band_fed_by_its_neighbours_reads_the_sentinel() {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: None,
             staffing: Default::default(),
             target: LaborTarget::Warrior,

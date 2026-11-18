@@ -1837,6 +1837,11 @@ pub fn simulate_population(
                             .as_deref()
                             .map_or(0, |book| book.met_builds_ready(*band))
                     }),
+                    store_food
+                        .get(&entity)
+                        .copied()
+                        .unwrap_or_default()
+                        .to_f32(),
                 )
             })
             .unwrap_or_default();
@@ -3169,6 +3174,8 @@ mod food_flow_tests {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: Some(4),
             staffing: Default::default(),
             target: LaborTarget::Forage {

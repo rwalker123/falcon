@@ -541,6 +541,11 @@ pub struct BandOrdersConfig {
     /// **How many turns "Not now" hides a proposed build** (`defer_proposal`). At least 1. An opening
     /// value, a playtest dial.
     pub proposal_not_now_turns: u32,
+    /// **THE LOW-YIELD LINE of a chief's third proposal trigger**: a chief-listed food row's take head
+    /// brings home less than this share of one person's meal (a turn's food need over the band's
+    /// headcount), so the hands on it are working for almost nothing. Finite and above zero. An
+    /// opening value, a playtest dial.
+    pub proposal_low_yield_share: f32,
 }
 
 impl BandOrdersConfig {
@@ -733,6 +738,15 @@ impl LaborConfig {
                 field: "band_orders.proposal_idle_turns_wasted",
                 constraint: "be at least proposal_idle_turns_notice".to_string(),
                 value: self.band_orders.proposal_idle_turns_wasted.to_string(),
+            });
+        }
+        if !self.band_orders.proposal_low_yield_share.is_finite()
+            || self.band_orders.proposal_low_yield_share <= 0.0
+        {
+            return Err(LaborConfigError::Invalid {
+                field: "band_orders.proposal_low_yield_share",
+                constraint: "be finite and above 0".to_string(),
+                value: self.band_orders.proposal_low_yield_share.to_string(),
             });
         }
         if self.band_orders.proposal_not_now_turns == 0 {

@@ -330,6 +330,8 @@ fn forage_alloc_policy(tile: UVec2, workers: u32, policy: f32) -> LaborAllocatio
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: Some(workers),
             staffing: Default::default(),
             target: LaborTarget::Forage {
@@ -491,6 +493,8 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(1),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -587,6 +591,8 @@ fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(2),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -735,6 +741,8 @@ fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(4),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -830,6 +838,8 @@ fn a_hunt_past_the_leash_follows_its_herd_and_only_a_vanished_herd_ends_it() {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: Some(3),
             staffing: Default::default(),
             target: LaborTarget::Hunt {
@@ -958,6 +968,8 @@ fn a_hunt_just_past_the_apron_posts_a_party_on_the_same_apron_as_forage() {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(3),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -1048,6 +1060,8 @@ fn a_far_work_partys_hunt_dead_credit_no_belief() {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(HUNTERS),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -1219,6 +1233,8 @@ fn every_labor_loss_line_names_the_band_by_its_durable_id() {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: Some(3),
             staffing: Default::default(),
             target: LaborTarget::Hunt {
@@ -1240,6 +1256,8 @@ fn every_labor_loss_line_names_the_band_by_its_durable_id() {
         planned_crew: 0,
         scouting_range: 0,
         scouting_reach: 0,
+        for_tribe: None,
+        scouting_stretch: 1.0,
         max_workers: Some(4),
         staffing: Default::default(),
         target: LaborTarget::Warrior,
@@ -1572,6 +1590,8 @@ fn hunt_alloc(fauna_id: &str, workers: u32, floor: f32) -> LaborAllocation {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: Some(workers),
             staffing: Default::default(),
             target: LaborTarget::Hunt {
@@ -2037,6 +2057,8 @@ fn stage_hunt(
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(workers),
                 staffing: Default::default(),
                 target: LaborTarget::Hunt {
@@ -2277,6 +2299,8 @@ fn a_crew_that_is_only_trimmed_is_announced_and_says_what_is_left() {
         planned_crew: 0,
         scouting_range: 0,
         scouting_reach: 0,
+        for_tribe: None,
+        scouting_stretch: 1.0,
         max_workers: Some(6),
         staffing: Default::default(),
         target: LaborTarget::Warrior,
@@ -2358,6 +2382,8 @@ fn a_staffed_row_squeezed_to_nobody_is_not_shed_and_keeps_its_declaration() {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: Some(1),
             staffing: Default::default(),
             target: LaborTarget::Hunt {

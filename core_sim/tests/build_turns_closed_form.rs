@@ -321,6 +321,8 @@ fn spawn_keepers_of(
                         planned_crew: 0,
                         scouting_range: 0,
                         scouting_reach: 0,
+                        for_tribe: None,
+                        scouting_stretch: 1.0,
                         max_workers: Some(KEEPERS),
                         staffing: Default::default(),
                         target: LaborTarget::Hunt {
@@ -1471,6 +1473,8 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                         planned_crew: 0,
                         scouting_range: 0,
                         scouting_reach: 0,
+                        for_tribe: None,
+                        scouting_stretch: 1.0,
                         max_workers: Some(GATHERERS),
                         staffing: Default::default(),
                         target: LaborTarget::Forage {

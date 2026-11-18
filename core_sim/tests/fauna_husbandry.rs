@@ -1128,6 +1128,8 @@ fn spawn_crew_of(
                     planned_crew: 0,
                     scouting_range: 0,
                     scouting_reach: 0,
+                    for_tribe: None,
+                    scouting_stretch: 1.0,
                     max_workers: Some(hunters + keepers),
                     staffing: Default::default(),
                     target: LaborTarget::Hunt {
@@ -5301,6 +5303,8 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: Some(crew),
             staffing: Default::default(),
             target: LaborTarget::Hunt {

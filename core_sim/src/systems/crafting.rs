@@ -579,6 +579,40 @@ pub struct BenchOrderPlan {
     pub tool_item: Option<std::sync::Arc<str>>,
     /// Whether a bare hand adds anything on this order's material.
     pub bare_can_work: bool,
+    /// What the order makes, for the kit step ([`BenchKit`]).
+    pub kit: BenchKit,
+}
+
+/// **WHAT AN ORDER MAKES, AS THE STAFFING'S KIT STEP READS IT**: the equipment items its recipe
+/// outputs, and - for an order making a bench tool - the equipment items made from the material that
+/// tool bounds (the tool crews the wait on all of them).
+#[derive(Debug, Clone, Default)]
+pub struct BenchKit {
+    /// The equipment items the order's recipe outputs.
+    pub makes: Vec<std::sync::Arc<str>>,
+    /// For a tool order: every equipment item some recipe makes from the material the tool bounds.
+    pub tool_serves: Vec<std::sync::Arc<str>>,
+    /// The recipe's `crafters_per_item`.
+    pub crafters_per_item: u32,
+    /// What finishing the order's first item makes available to the rows, and how fast the order
+    /// gets there; `None` when the order makes no equipment.
+    pub credit: Option<KitCredit>,
+}
+
+/// **THE KITS AN ORDER WILL HAND THE WORK ROWS, and the rates that decide when.**
+#[derive(Debug, Clone)]
+pub struct KitCredit {
+    /// The equipment item the order makes.
+    pub item: std::sync::Arc<str>,
+    /// Units of the item the order still owes (`remaining items x output amount`).
+    pub units: f32,
+    /// Worker-turns still owed on the whole order (`remaining x work - progress`).
+    pub work_remaining: f32,
+    /// Progress a turn one crafter holding the bench tool banks (`craft speed x progress per
+    /// worker-turn`, the term [`rate_per_turn`] sums).
+    pub rate_per_tool_crafter: f32,
+    /// Progress a turn one bare-handed crafter banks.
+    pub rate_per_hand_crafter: f32,
 }
 
 /// **THE BENCH'S ORDERS AS THE STAFFING PASSES NEED THEM** - one row per queue index, aligned with
@@ -640,6 +674,37 @@ pub fn bench_plan(
         }
         let items = in_flight + startable;
         let per_item = recipe.crafters_per_item.max(1);
+        let makes: Vec<std::sync::Arc<str>> = recipe
+            .outputs
+            .iter()
+            .filter_map(|output| output.equipment_id().map(std::sync::Arc::from))
+            .collect();
+        // A tool order serves every item made from the material its output tool bounds.
+        let bounded: Vec<&str> = makes
+            .iter()
+            .filter_map(|item| equipment.item(item)?.bounds_material())
+            .collect();
+        let tool_serves: Vec<std::sync::Arc<str>> = recipes
+            .recipes()
+            .filter(|(_, other)| other.bench_material().is_some_and(|m| bounded.contains(&m)))
+            .flat_map(|(_, other)| other.outputs.iter())
+            .filter_map(|output| output.equipment_id().map(std::sync::Arc::from))
+            .collect();
+        let progress = recipes.crafting.progress_per_worker_turn;
+        let credit = recipe
+            .outputs
+            .iter()
+            .find_map(|output| Some((output.equipment_id()?, output.amount)))
+            .map(|(item, amount)| KitCredit {
+                item: std::sync::Arc::from(item),
+                units: order.remaining() as f32 * amount,
+                work_remaining: (order.remaining() as f32 * recipe.work
+                    - order.progress_total().to_f32())
+                .max(0.0),
+                rate_per_tool_crafter: bench_tiers(material, materials, equipment, wear).speed
+                    * progress,
+                rate_per_hand_crafter: bare.speed * progress,
+            });
         plan.orders[index] = BenchOrderPlan {
             workable: can_be_worked && items > 0,
             priority: order.priority,
@@ -649,6 +714,12 @@ pub fn bench_plan(
                 .bench_tool_for(material)
                 .map(|(id, _)| std::sync::Arc::from(id)),
             bare_can_work,
+            kit: BenchKit {
+                makes,
+                tool_serves,
+                crafters_per_item: per_item,
+                credit,
+            },
         };
     }
     plan
