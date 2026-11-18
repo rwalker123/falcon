@@ -29,6 +29,7 @@ pub mod chief_proposals;
 pub mod climate;
 pub mod combat;
 mod combat_config;
+pub mod command_seam;
 mod components;
 pub mod config_fingerprint;
 mod config_load;
@@ -102,6 +103,7 @@ pub mod routes;
 pub mod save;
 pub mod save_store;
 mod scalar;
+pub mod scenario;
 pub mod seats;
 mod sedentarization;
 mod sedentarization_config;
@@ -136,6 +138,7 @@ mod visibility_config;
 mod visibility_systems;
 mod wellbeing_config;
 pub mod work_party;
+pub mod yield_seed;
 
 use std::sync::Arc;
 
@@ -608,7 +611,7 @@ pub use systems::{
 /// path, the `new_game` handler and the capacity query all ask the same functions.
 pub use systems::{
     archetype_capacities, archetype_ceiling, faction_start_land_fraction, granted_archetype_counts,
-    max_faction_starts, unattended_archetype_counts, ArchetypeCapacity,
+    max_faction_starts, requested_archetype_counts, unattended_archetype_counts, ArchetypeCapacity,
 };
 pub use telling::{
     load_beat_catalog_from_env, load_beat_config_from_env, telling_tick, BeatCatalog,

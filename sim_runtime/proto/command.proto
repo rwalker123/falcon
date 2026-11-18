@@ -1111,6 +1111,36 @@ message ConfigDriftEntry {
   ConfigDigestKind live = 3;
 }
 
+// "Is a world running, and which one?" Asked by a client on its landing screen, where there may be
+// no world, or one a dev tool (`load_scenario`) built without the client asking.
+message WorldStatusQuery {}
+
+message WorldStatusReply {
+  // True once a `new_game`, `reset_map`, `load_game` or `load_scenario` has built a world.
+  bool world_active = 1;
+  // The world's epoch (the same number every snapshot header carries). It moves when a different
+  // world arrives, so a client that remembers the epoch it joined can tell a new world from its own.
+  uint32 world_epoch = 2;
+}
+
+// DEV: build a world from a scenario file (`core_sim/scenarios/<name>.json`, docs/plan_scenarios.md).
+// Dev-only: nothing in the New Game screen or the main menu sends it. Answered with `ScenarioOpReply`.
+message LoadScenarioCommand {
+  uint64 request_id = 1;
+  // A path the SERVER can read (absolute, or relative to its working directory).
+  string path = 2;
+}
+
+// The answer to a `load_scenario`.
+message ScenarioOpReply {
+  bool ok = 1;
+  // Echoes the path asked for.
+  string path = 2;
+  // Empty when `ok`. Otherwise one line per refusal, `<path in the file>: <reason>`; the whole list
+  // of a file's problems rides one reply. A refused load builds nothing: the previous world stays.
+  repeated string refusals = 3;
+}
+
 // The answer to a save / load / delete.
 message SaveOpReply {
   bool ok = 1;
@@ -1166,6 +1196,9 @@ message QueryCommand {
     // 9 is held by `forage_crew_take`, so the staffing dry run takes 10 (append-only).
     // Seat-gated: it is answered out of the named band's whole labor allocation.
     StaffingPreviewQuery staffing_preview = 10;
+    // 10 is held by `staffing_preview`, so the world-status question takes 11 (append-only).
+    // Answered BEFORE the world gate, like `list_saves`: it is asked while the server is idle.
+    WorldStatusQuery world_status = 11;
   }
 }
 
@@ -1496,6 +1529,11 @@ message QueryReplyEnvelope {
     ForageCrewTakeReply forage_crew_take = 12;
     // 12 is held by `forage_crew_take`, so the staffing dry run's answer takes 13 (append-only).
     StaffingPreviewReply staffing_preview = 13;
+    // 13 is held by `staffing_preview`, so the scenario load's answer takes 14 (append-only). A
+    // `load_scenario` is a COMMAND; it rides this envelope for the reason `save_op` does.
+    ScenarioOpReply scenario_op = 14;
+    // 14 is held by `scenario_op`, so the world-status answer takes 15.
+    WorldStatusReply world_status = 15;
   }
 }
 
@@ -1926,5 +1964,7 @@ message CommandEnvelope {
     ApproveProposalCommand approve_proposal = 98;
     DeferProposalCommand defer_proposal = 99;
     TribeOrderCommand tribe_order = 100;
+    // 100 is held by `tribe_order`, so the dev scenario loader takes 101 (append-only).
+    LoadScenarioCommand load_scenario = 101;
   }
 }

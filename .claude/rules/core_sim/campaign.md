@@ -8,6 +8,7 @@ paths:
   - "core_sim/src/metrics.rs"
   - "core_sim/src/data/victory_config.json"
   - "core_sim/src/starting_loadout.rs"
+  - "core_sim/src/scenario/bands.rs"
   - "core_sim/src/data/start_profiles.json"
   - "core_sim/tests/starting_loadout.rs"
   - "core_sim/src/systems/{population,trade,breeding_shed}.rs"
@@ -38,6 +39,29 @@ paths:
 | `src/data/start_profiles.json` | Campaign initialization. Per profile: `food_modules`, `victory_modes_enabled` (AI tuning is per seat and lives in `sim_ai/data/ai_profiles.json`, not here) and a required, ordered **`archetypes`** array — one entry per kind of people (shipped: `major`, `minor`; `factions.md` → "Start archetypes"). Each archetype carries `id`, `display_label`, `min_separation`, `default_count` and the per-people opening: `starting_units` (`kind`/`count`/`band_size` — major 30, minor 12), `starting_knowledge_tags`, `inventory` — plus the **required** `opening_loadout` block (the minor's is the major's with `kit_defaults` empty; the figures below are the major's): `pickable_materials` (`bone`, `fibre`, `hide`, `wood`, `stone` — the picker's list, in the order it is drawn), `material_defaults` (`bone 2` / `fibre 12` / `hide 6`) and **`kit_defaults`** (`big_game 5` / `trapping 5` / `gathering 7` — one kit per hand on the shipped 30-person band). Together they are the **opening band's** default outfit (load 47 against its ≈ 47 goods allowance), APPLIED after the world-build meal, not suggested; a splinter's default is `split_default_outfit`, not these. ⛔ **There is no budget in this file**: what a band may outfit is its CARRY less its larder (`.claude/rules/core_sim/band-carry.md`), and the retired `material_points` key is **refused at load**, not ignored (`start_profile::the_retired_material_points_key_is_refused`). `StartProfiles::validate_against_materials` rejects a pickable or default naming a material the roster does not carry, and `validate_against_equipment` rejects a `kit_defaults` key the equipment roster does not carry **or one whose `uses` is empty** — both run from `build_headless_app`. Defaults over the band's allowance are fitted at apply (`fit_to_carry`, materials cut before tools); the full rules are `starting-loadout.md` |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius, in **hex steps**), `reach_tiles_in_tribe` (**5**: the free pooling reach of a pair of bands in one tribe, a value not a multiplier), `reach_tiles_with_messengers` (**4**: the free pooling reach of a people that knows `messengers` — a value, not a multiplier; see the Supply Network section below; staged by the Workbench kind `supply_network`, proto 13, env `SUPPLY_NETWORK_CONFIG_PATH`, validated against the trail's reach at the edit), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer_fraction` (the dead-band, as a fraction of the node's own per-capita fair share of that commodity — see "The dead-band is RELATIVE, because one balancer serves food and a bone pile" below) |
 | `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`), `independence` (`grievance_threshold` — see `independence.md`), `culture` (the near / far from the ancestors morale term: `near_bonus`, `away_drag`, `belief_half_saturation` — key table in `belief.md`), `cohesion` (`base_ceiling`, `belief_lift`, `belief_half_saturation`, `drag` — table in `belief.md`), `leadership` (`popularity_per_met_order`, `strain_per_falling_order`, `starvation_strain`, `starvation_full_at`, `egalitarian_sensitivity`, `drift_per_met_order` — table in `leadership.md`) |
+## Scenario section
+
+The **bands** section of a scenario file (`core_sim/src/scenario/bands.rs`; the loader is
+`scenarios.md`). A listed faction spawns these bands, in file order, **instead of** its archetype's
+`starting_units`. A faction the file does not list spawns as its profile says. Every key is
+required except `outfit`.
+
+| key | meaning | refused when |
+|---|---|---|
+| `factions[].faction` | Faction index (`0` is the human) | listed twice, or absent from the built world |
+| `factions[].knowledge` | Tags **added** to the archetype's `starting_knowledge_tags` | a tag `start_profile_knowledge_tags.json` does not carry (the profile path only warns; a scenario refuses) |
+| `factions[].bands` | The faction's bands. **The first holds the opening outfit window** (`stamp_starting_loadout` opens it on the lowest `BandId`, and scenario bands spawn first) | empty |
+| `bands[].id` | The band's name inside the file; later sections refer to the band by it | used twice anywhere in the file |
+| `bands[].at` | `[x, y]`, used **exactly**, with no faction-start offset and no nearest-land search | off the map, or water |
+| `bands[].size` | Head-count | `0` |
+| `bands[].ages` | `children` / `working` / `elders` shares, in place of `initial_distribution` | any negative, or sum off 1 by more than `AGES_SUM_TOLERANCE` |
+| `bands[].founding_lines` | `L` for this band, in place of `lineage.founding_lines` | `0` |
+| `bands[].larder` | `[{ class, amount }]`, the larder **exactly** (`[]` is an empty larder), in place of the `food_reserve_days` reset | unknown keeping class, class listed twice, negative amount |
+| `bands[].outfit` | Optional `{ kits, materials }` (name → count), replayed as `SetStartingLoadout`, so it **replaces** the default fitted to this band. Absent keeps that default | unknown kit, kit with empty `uses`, unknown material, on any band but the faction's first, or the window's own refusals (`OverCarry`, …) |
+
+The band's `StartingUnit` kind and tags are the archetype's **first** `starting_units` entry. An
+archetype with none is refused, because there is nothing to spawn the band as.
+
 ## Campaign Loop & System Activation
 
 ### Start Flow

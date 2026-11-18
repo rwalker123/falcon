@@ -82,6 +82,11 @@ var _stream_seat_token: int = SnapshotStream.NO_SEAT_TOKEN
 # GameLaunch handoff in _build_world_request; it is what makes _try_send_world_request send
 # `load_game` rather than `new_game`, through the same retry and the same reveal gate.
 var _pending_load_slot: String = ""
+# **ATTACHED RUN:** a world is already running that this client did not ask for (a scenario loaded
+# from a terminal, `GameLaunch.pending_attach_epoch`). No world request of any kind is sent for it;
+# `_try_attach_request` asks for a full frame of it instead, once the stream has greeted.
+var _attach_world: bool = false
+var _attach_asked: bool = false
 # The config files whose tuning moved between writing the save and loading it, held from the load's
 # reply until the loaded world REVEALS — the notice belongs over the world it is warning about, and
 # the reply lands while the loading overlay is still up.
@@ -198,6 +203,9 @@ const RESYNC_ABANDONED_HEADLINE := "The server is no longer running this world."
 const RESYNC_ABANDONED_DETAIL_FORMAT := "Asked for a fresh copy of the world for %s seconds with no answer, so nothing more is coming and the map on screen is the last frame. Load a save or start a new game to play on."
 ## The retraction, on the same channel — a full frame after we said the world was gone means it is
 ## back, and a standing alert that has become false is the fault `SEAT_RECOVERED_MESSAGE` exists for.
+## The System-channel line for the `resync` an attached run opens with (it asks for the running world's
+## full frame in place of a world request).
+const ATTACH_RESYNC_MESSAGE := "attaching to the running world"
 const RESYNC_RECOVERED_MESSAGE := "The world is arriving again — the server is streaming this seat."
 const LOADING_OVERLAY_FONT_SIZE = 28
 const COMMAND_HOST = "127.0.0.1"
@@ -625,6 +633,7 @@ func _on_pause_abandon() -> void:
     if launch != null:
         launch.set("active_new_game", null)
         launch.set("active_load_slot", "")
+        launch.set("active_attach_epoch", GameLaunch.NO_ATTACH_EPOCH)
     get_tree().change_scene_to_file("res://src/ui/LandingScreen.tscn")
 
 func _on_pause_exit() -> void:
@@ -661,6 +670,8 @@ func _on_pause_load(slot: String) -> void:
 func _build_world_request() -> void:
     var params: Dictionary = DEV_DEFAULT_NEW_GAME
     var launch: Node = get_node_or_null("/root/GameLaunch")
+    if _consume_attach_handoff(launch):
+        return
     # **A PENDING LOAD WINS.** The two slots are never armed together, and a load is the more
     # specific request: it names the exact world to stand up, where new_game only names how to
     # generate one. Consume-and-clear, the same contract `pending_new_game` follows.
@@ -718,6 +729,52 @@ func _build_world_request() -> void:
             "profile_id": profile,
             "archetype_counts": counts,
         })
+
+## **ATTACH, NOT REQUEST.** True when this run is taking a world that already exists: the landing
+## screen armed `GameLaunch.pending_attach_epoch`, or `Main` was entered directly with the launcher's
+## `FALCON_ATTACH_WORLD` flag set (which would otherwise send `DEV_DEFAULT_NEW_GAME` over the scenario).
+## Arms `_attach_world` and leaves `_new_game_command` EMPTY, which is what keeps `_try_send_world_request`
+## and `_tick_new_game_retry` from ever sending `new_game` / `load_game` for it. The reveal gate is
+## lowered to just under the attached epoch so the full frame of that world is accepted; a direct entry
+## that never saw an epoch keeps the persisted baseline, which a live world's epoch already exceeds.
+func _consume_attach_handoff(launch: Node) -> bool:
+    if launch == null:
+        return false
+    var attach_epoch := int(launch.get("pending_attach_epoch"))
+    if attach_epoch == GameLaunch.NO_ATTACH_EPOCH and not (launch.get("pending_new_game") is Dictionary) \
+            and String(launch.get("pending_load_slot")) == "" \
+            and launch.attach_world_env_set():
+        # Entered without a handoff while the launcher says a world is running: attach, epoch unknown.
+        launch.set("attach_env_spent", true)
+        launch.set("active_attach_epoch", GameLaunch.NO_ATTACH_EPOCH)
+        _attach_world = true
+        return true
+    if attach_epoch == GameLaunch.NO_ATTACH_EPOCH:
+        # A run the client asks for itself: a stale attach record must not outlive it.
+        launch.set("active_attach_epoch", GameLaunch.NO_ATTACH_EPOCH)
+        return false
+    _attach_world = true
+    _reveal_baseline_epoch = attach_epoch - 1
+    launch.set("pending_attach_epoch", GameLaunch.NO_ATTACH_EPOCH)
+    launch.set("active_attach_epoch", attach_epoch)
+    launch.set("active_new_game", null)
+    launch.set("active_load_slot", "")
+    launch.set("pending_new_game", null)
+    launch.set("pending_load_slot", "")
+    return true
+
+
+## Ask for a full frame of the world this run attached to, once the stream has greeted. The server sends
+## a newly greeted client nothing until its next broadcast (`world-handoff.md`), so the client's own
+## `resync` is the request — the same one `_tick_resync` already retries until a full frame lands.
+func _try_attach_request() -> void:
+    if not _attach_world or _attach_asked or _world_revealed:
+        return
+    if not _snapshot_stream_ready():
+        return
+    _attach_asked = true
+    _ask_for_resync(ATTACH_RESYNC_MESSAGE)
+
 
 ## **THE `new_game` LINE, INCLUDING WHETHER IT CARRIES A COUNT AT ALL.** Static and pure, so the one
 ## rule that decides between "2 rivals" and "none" is reachable from a harness without standing a
@@ -3986,6 +4043,8 @@ func _return_to_landing(notice: String) -> void:
         launch.set("active_load_slot", "")
         launch.set("pending_new_game", null)
         launch.set("pending_load_slot", "")
+        launch.set("active_attach_epoch", GameLaunch.NO_ATTACH_EPOCH)
+        launch.set("pending_attach_epoch", GameLaunch.NO_ATTACH_EPOCH)
     get_tree().change_scene_to_file("res://src/ui/LandingScreen.tscn")
 
 
@@ -4060,6 +4119,7 @@ func _process(delta: float) -> void:
         command_client.poll()
         command_client.ensure_connected()
     _tick_new_game_retry(delta)
+    _try_attach_request()
     if streaming_mode:
         _tick_resync(delta)
         # EVERY frame the poll returns is applied, in order. The loader already dropped the ones a

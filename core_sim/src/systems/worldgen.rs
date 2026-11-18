@@ -114,6 +114,9 @@ pub fn spawn_initial_world(
     // The catalog every STARTING faction draws its cultural lean from. `Option` for the reason the
     // start-kit handles are: absent reads as the builtin catalog.
     personalities: Option<Res<crate::personalities::PersonalityCatalogHandle>>,
+    // **A scenario's bands, in place of a profile's** (`docs/plan_scenarios.md` section 2.8, step 3).
+    // Present only while a `load_scenario` builds its candidate world; absent is every other world.
+    mut scenario: Option<ResMut<crate::scenario::ScenarioSetup>>,
 ) {
     // Guard FIRST: the starting inventory, knowledge and culture seeding below all run ahead of any
     // tile work, so a guard placed lower would still double the start profile's grants. Unlike the
@@ -149,10 +152,39 @@ pub fn spawn_initial_world(
         .map(|archetype| starting_knowledge_fragments(archetype, knowledge_catalog.as_ref()))
         .collect();
     let no_knowledge: Vec<KnowledgeFragment> = Vec::new();
+    // **A scenario faction's knowledge is its archetype's plus the file's**, added (a tag the
+    // archetype already grants is not granted twice).
+    let scenario_fragments: BTreeMap<FactionId, Vec<KnowledgeFragment>> = scenario
+        .as_deref()
+        .map(|setup| {
+            setup
+                .factions
+                .iter()
+                .map(|listed| {
+                    let index = archetype_assignment.archetype_index(listed.faction);
+                    let mut fragments = knowledge_fragments_by_archetype
+                        .get(index)
+                        .unwrap_or(&no_knowledge)
+                        .clone();
+                    let granted: &[String] = archetypes
+                        .get(index)
+                        .map(|archetype| archetype.starting_knowledge_tags.as_slice())
+                        .unwrap_or_default();
+                    for tag in listed.knowledge.iter().filter(|tag| !granted.contains(tag)) {
+                        fragments
+                            .extend(knowledge_fragment_for_tag(tag, knowledge_catalog.as_ref()));
+                    }
+                    (listed.faction, fragments)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let knowledge_fragments_for = |faction: FactionId| -> &Vec<KnowledgeFragment> {
-        knowledge_fragments_by_archetype
-            .get(archetype_assignment.archetype_index(faction))
-            .unwrap_or(&no_knowledge)
+        scenario_fragments.get(&faction).unwrap_or_else(|| {
+            knowledge_fragments_by_archetype
+                .get(archetype_assignment.archetype_index(faction))
+                .unwrap_or(&no_knowledge)
+        })
     };
     // Resolved once and reused for the placement below, so the roster that is stocked and the roster
     // that is placed cannot differ.
@@ -932,6 +964,38 @@ pub fn spawn_initial_world(
         );
         StartingCultureLean(personality.lean_vector())
     };
+    // **A listed scenario faction spawns ITS bands, in file order, instead of the archetype's
+    // `starting_units`** - inside this Startup system, with no special case after it. A faction the
+    // scenario does not list spawns exactly as the profile says.
+    let mut scenario_spawned: BTreeSet<FactionId> = BTreeSet::new();
+    if let Some(setup) = scenario.as_deref_mut() {
+        let terrain_grid: Vec<sim_runtime::TerrainType> =
+            prototypes.iter().map(|proto| proto.terrain).collect();
+        let roster: Vec<FactionId> = faction_starts.iter().map(|(faction, _)| *faction).collect();
+        setup.refuse_absent_factions(&roster);
+        for &(faction, _) in &faction_starts {
+            let Some(listed) = setup.faction(faction).cloned() else {
+                continue;
+            };
+            spawn_scenario_population(
+                &mut commands,
+                &registry,
+                &mut identity,
+                &listed,
+                &tiles,
+                &tags_grid,
+                &terrain_grid,
+                (width, height),
+                archetype_for(faction),
+                &mut cohort_index,
+                knowledge_fragments_for(faction),
+                &start_kit,
+                culture_lean_of(faction),
+                setup,
+            );
+            scenario_spawned.insert(faction);
+        }
+    }
     if archetype_for(FactionId(0)).starting_units.is_empty() {
         // **The no-`starting_units` fallback stays faction 0's alone, deliberately.** It is the
         // degenerate/debug path — a lattice of 1,000-person clusters around one point, which no
@@ -942,26 +1006,31 @@ pub fn spawn_initial_world(
             .first()
             .map(|(_, start)| *start)
             .unwrap_or((width as u32 / 2, height as u32 / 2));
-        spawn_default_population_clusters(
-            &mut commands,
-            &registry,
-            &mut identity,
-            FactionId(0),
-            &tiles,
-            &tags_grid,
-            width,
-            height,
-            start_x,
-            start_y,
-            config.population_cluster_stride,
-            &mut cohort_index,
-            knowledge_fragments_for(FactionId(0)),
-            &start_kit,
-            culture_lean_of(FactionId(0)),
-        );
+        if !scenario_spawned.contains(&FactionId(0)) {
+            spawn_default_population_clusters(
+                &mut commands,
+                &registry,
+                &mut identity,
+                FactionId(0),
+                &tiles,
+                &tags_grid,
+                width,
+                height,
+                start_x,
+                start_y,
+                config.population_cluster_stride,
+                &mut cohort_index,
+                knowledge_fragments_for(FactionId(0)),
+                &start_kit,
+                culture_lean_of(FactionId(0)),
+            );
+        }
     } else {
         // Every faction spawns the profile's roster once, around its own start.
         for &(faction, start) in &faction_starts {
+            if scenario_spawned.contains(&faction) {
+                continue;
+            }
             spawn_profile_population(
                 &mut commands,
                 &registry,
@@ -1053,22 +1122,48 @@ pub fn apply_starting_inventory_effects(
     demographics: Res<DemographicsConfigHandle>,
     // `With<ResidentBand>`: only real bands are seeded with startup demographics + food reserves; an
     // expedition is seeded explicitly at launch from the home band's larder.
-    mut cohorts: Query<&mut PopulationCohort, With<ResidentBand>>,
+    mut cohorts: Query<(&mut PopulationCohort, Option<&BandId>), With<ResidentBand>>,
+    // A scenario band states its own age shape and larder (`docs/plan_scenarios.md` step 3).
+    scenario: Option<Res<crate::scenario::ScenarioSetup>>,
 ) {
-    seed_cohort_demographics(&demographics.get(), &mut cohorts);
+    seed_cohort_demographics(&demographics.get(), &mut cohorts, scenario.as_deref());
 }
 
 /// Split each cohort's head-count into the three age brackets, seed its larder with
 /// `startup.food_reserve_days` turns of its own food demand, and apply the well-fed morale bonus.
 fn seed_cohort_demographics(
     config: &DemographicsConfig,
-    cohorts: &mut Query<&mut PopulationCohort, With<ResidentBand>>,
+    cohorts: &mut Query<(&mut PopulationCohort, Option<&BandId>), With<ResidentBand>>,
+    scenario: Option<&crate::scenario::ScenarioSetup>,
 ) {
     let dist = &config.initial_distribution;
     let reserve_days = scalar_from_f32(config.startup.food_reserve_days);
     let morale_bonus = scalar_from_f32(config.startup.well_fed_morale_bonus);
-    for mut cohort in cohorts.iter_mut() {
+    for (mut cohort, band) in cohorts.iter_mut() {
         let size = cohort.size;
+        // **A scenario band uses the file's ages and EXACTLY its listed larder** (an empty list is an
+        // empty larder), in place of the distribution and the reserve-days reset.
+        if let Some(entry) = band
+            .zip(scenario)
+            .and_then(|(band, setup)| setup.band_entry(*band))
+        {
+            cohort.set_brackets_from_size(
+                size,
+                entry.ages.children,
+                entry.ages.working,
+                entry.ages.elders,
+            );
+            cohort
+                .stores
+                .reset_food(&config.keeping.startup_class, scalar_zero());
+            for listed in &entry.larder {
+                cohort
+                    .stores
+                    .add_food(&listed.class, scalar_from_f32(listed.amount));
+            }
+            cohort.morale = (cohort.morale + morale_bonus).clamp(scalar_zero(), scalar_one());
+            continue;
+        }
         cohort.set_brackets_from_size(size, dist.children, dist.working, dist.elders);
         let demand = food_demand(
             cohort.children,
@@ -3046,6 +3141,39 @@ pub fn unattended_archetype_counts(archetypes: &[StartArchetype]) -> Vec<u32> {
         .collect()
 }
 
+/// **What the archetype counts on the wire resolve to before the grid clamps them**, in catalog
+/// order.
+///
+/// An archetype that is not listed is *not* listed-as-0: absent means **nobody picked** - a direct
+/// scene launch, a CLI `new_game`, a test - and an explicit 0 means a player who chose none of
+/// them. Collapsing the two would make the unattended roster unreachable from every caller that
+/// leaves the choice to the sim.
+///
+/// ⛔ **An unlisted archetype resolves to its UNATTENDED count
+/// ([`unattended_archetype_counts`]), NOT to the count the New Game screen pre-selects.**
+/// The screen's number is derived from the map; this path is what a `cargo run` server and a
+/// scripted launch get, and it stays at the archetype's own `default_count` pin, else none.
+///
+/// `Err(id)` names an id the profile does not carry (or one listed twice): the command is rejected
+/// rather than guessed at.
+pub fn requested_archetype_counts(
+    picked: &[sim_runtime::ArchetypeCount],
+    archetypes: &[StartArchetype],
+) -> Result<Vec<u32>, String> {
+    let mut counts = unattended_archetype_counts(archetypes);
+    let mut seen = vec![false; archetypes.len()];
+    for entry in picked {
+        let Some(index) = archetypes.iter().position(|a| a.id == entry.id) else {
+            return Err(entry.id.clone());
+        };
+        if std::mem::replace(&mut seen[index], true) {
+            return Err(entry.id.clone());
+        }
+        counts[index] = entry.count;
+    }
+    Ok(counts)
+}
+
 /// **What requested counts are actually granted** - each archetype's request, clamped IN ORDER to
 /// what the grid can seat once the earlier archetypes' GRANTED counts and the human seat have taken
 /// their sites, with a warning naming both numbers for every clamp that binds. `requested` is in
@@ -3610,7 +3738,7 @@ fn spawn_population_entity(
     knowledge: &[KnowledgeFragment],
     start_kit: &StartKit<'_>,
     lean: StartingCultureLean,
-) {
+) -> BandId {
     let generation = registry.assign_for_index(*cohort_index);
     *cohort_index = cohort_index.saturating_add(1);
     // The flooring rationale and the one-home rule live on [`party_workers`] itself — this branch
@@ -3717,6 +3845,95 @@ fn spawn_population_entity(
     entity.insert(lean);
     if let Some(marker) = marker {
         entity.insert(marker);
+    }
+    band_id
+}
+
+/// One knowledge tag as the fragment a band and the discovery ledger are seeded with, `None` for a
+/// tag the catalog does not carry (a scenario's tags were checked in pass 1).
+fn knowledge_fragment_for_tag(
+    tag: &str,
+    knowledge_tags: &StartProfileKnowledgeTags,
+) -> Option<KnowledgeFragment> {
+    knowledge_tags.get(tag).map(|definition| {
+        KnowledgeFragment::new(
+            definition.discovery_id(),
+            scalar_from_f32(definition.progress()),
+        )
+    })
+}
+
+/// **Spawn a scenario faction's bands**, in file order, each on exactly the tile the file names.
+///
+/// A band takes the faction archetype's FIRST `starting_units` entry for its kind and tags; the file
+/// states everything else (`size`, `founding_lines`; `ages` and `larder` are seeded by
+/// [`apply_starting_inventory_effects`]). A tile off the map or in the water is **refused**, never
+/// moved: no nearest-land search, no faction-start offset. The band ids are recorded so the later
+/// sections can name a band by the id the file gave it.
+#[allow(clippy::too_many_arguments)]
+fn spawn_scenario_population(
+    commands: &mut Commands,
+    registry: &GenerationRegistry,
+    identity: &mut BandIdentitySource<'_>,
+    listed: &crate::scenario::FactionSetup,
+    tiles: &[Entity],
+    tags_grid: &[sim_runtime::TerrainTags],
+    terrain_grid: &[sim_runtime::TerrainType],
+    (width, height): (usize, usize),
+    archetype: &StartArchetype,
+    cohort_index: &mut usize,
+    knowledge: &[KnowledgeFragment],
+    start_kit: &StartKit<'_>,
+    lean: StartingCultureLean,
+    setup: &mut crate::scenario::ScenarioSetup,
+) {
+    let at = |j: usize| format!("factions[{}].bands[{j}].at", listed.file_index);
+    let Some(unit) = archetype.starting_units.first() else {
+        setup.refuse(
+            format!("factions[{}].faction", listed.file_index),
+            format!(
+                "the '{}' archetype has no starting_units to take a band's kind from",
+                archetype.id
+            ),
+        );
+        return;
+    };
+    for (j, entry) in listed.bands.iter().enumerate() {
+        let [x, y] = entry.at;
+        let Some(idx) = tile_index_from_coords(x as i32, y as i32, width, height) else {
+            setup.refuse(
+                at(j),
+                format!("tile ({x},{y}) is outside the {width}x{height} map"),
+            );
+            continue;
+        };
+        let tags = tags_grid.get(idx).copied().unwrap_or_default();
+        if tags.contains(sim_runtime::TerrainTags::WATER) {
+            setup.refuse(at(j), format!("tile ({x},{y}) is {:?}", terrain_grid[idx]));
+            continue;
+        }
+        // This band's own `L`: every other part of the kit is the profile's.
+        let kit = StartKit {
+            equipment: start_kit.equipment,
+            recipes: start_kit.recipes,
+            materials: start_kit.materials,
+            working_fraction: start_kit.working_fraction,
+            founding_lines: entry.founding_lines,
+        };
+        let band = spawn_population_entity(
+            commands,
+            registry,
+            identity,
+            listed.faction,
+            tiles[idx],
+            entry.size,
+            cohort_index,
+            Some(StartingUnit::new(unit.kind.clone(), unit.tags.clone())),
+            knowledge,
+            &kit,
+            lean,
+        );
+        setup.record_band(listed.file_index, j, &entry.id, band);
     }
 }
 

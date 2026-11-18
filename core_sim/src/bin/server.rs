@@ -19,6 +19,7 @@ use tracing_subscriber::prelude::*;
 use core_sim::auto_craft::AutoSkipRefusal;
 use core_sim::log_stream::start_log_stream_server;
 use core_sim::port_alloc;
+use core_sim::requested_archetype_counts;
 
 use core_sim::grid_utils::hex_distance_wrapped;
 use core_sim::metrics::SimulationMetrics;
@@ -29,19 +30,19 @@ use core_sim::sim_state::{restore_sim_state, Replaying};
 use core_sim::turn_profile;
 use core_sim::{
     apply_port_base, available_workers, carry_runtime_owned_fields, carry_world_identity,
-    floor_is_valid, forage_source_yield_preview, herd_build_rung, hunt_source_yield_preview, knows,
-    load_simulation_config_for_new_world, output_multiplier, patch_build_rung, patch_composition,
+    floor_is_valid, knows, load_simulation_config_for_new_world, patch_composition,
     resolve_active_profile, resolve_take_selection, species_stands_in, tile_flora_composition,
     ActiveStartProfile, BandBench, BandEquipment, BandTravel, BandWorkforce, BeatCatalogHandle,
     BeatConfigHandle, BeatLedger, BenchQueueError, BuildJob, BuildSource, CampaignLabel,
-    CombatConfigHandle, CreaturesConfigHandle, Expedition, ExpeditionConfigHandle,
-    ExpeditionMission, ExpeditionPhase, ExtractionConfigHandle, FloraConfigHandle, FoodMix,
-    FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget,
-    LadderConfig, LadderConfigHandle, LocalStore, MaterialDraw, RecipesConfigHandle, ResidentBand,
-    RungId, SiteRefusal, SourceKind, SourcePriority, StartProfile, StartProfileOverrides,
-    TakeSelection, TransferCause, TransferCrossing, TransferDirection, UpkeepFundMode,
-    WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, MIN_ORDER_COUNT, NO_FORAGE_SEASON,
+    CombatConfigHandle, Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase,
+    ExtractionConfigHandle, FloraConfigHandle, FoodMix, ForkAnswerError, HuntingParty, KitChoice,
+    KitJob, LaborAllocation, LaborTarget, LadderConfig, LadderConfigHandle, LocalStore,
+    MaterialDraw, RecipesConfigHandle, ResidentBand, RungId, SiteRefusal, SourceKind,
+    SourcePriority, StartProfile, StartProfileOverrides, TakeSelection, TransferCause,
+    TransferCrossing, TransferDirection, UpkeepFundMode, DEFAULT_ESCAPEMENT_FLOOR, MIN_ORDER_COUNT,
 };
+// Used by the test modules (through `use super::*`) and by nothing in the server proper since the
+// yield-seeding helpers moved to `core_sim::yield_seed`.
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
     fold_party_into_band, granted_archetype_counts, install_config_override, party_owes_a_report,
@@ -638,6 +639,14 @@ fn main() {
                 // refusal rather than dropped, because the client is holding a sheet open for it.
                 let answer = match query_seat_refusal(&seats, connection, &query) {
                     Some(token) => QueryReply::Error(token.to_string()),
+                    // **Answered off the loop's own locals, before the world gate**: whether a world
+                    // is running is a fact about this server, and it is asked while the server is idle.
+                    None if matches!(query, QueryPayload::WorldStatus) => {
+                        QueryReply::WorldStatus(sim_runtime::WorldStatusReply {
+                            world_active,
+                            world_epoch,
+                        })
+                    }
                     None => answer_query(world_active, &mut app.world, &query),
                 };
                 // A send failure means the asking connection is gone. Nothing to recover: the
@@ -696,6 +705,27 @@ fn main() {
                 // `handle_load_game` publishes the restored world itself, and it is NOT replayable:
                 // it replaces the world, so there is nothing before it to replay from. It re-bases
                 // the log rather than being logged, exactly as `new_game` and `reset_map` do.
+                continue;
+            }
+            // **A SCENARIO LOAD IS ANSWERED, NOT LOGGED**, for `LoadGame`'s reasons: it replaces the
+            // world, so there is nothing before it to replay from, and the origin is captured AFTER
+            // its setup so a rollback can never undo the scenario.
+            Command::LoadScenario {
+                request_id,
+                path,
+                reply,
+            } => {
+                let answer = handle_load_scenario(
+                    &mut app,
+                    &mut world_active,
+                    &mut world_epoch,
+                    &mut command_log,
+                    &path,
+                    &snapshot_flat_server,
+                );
+                answer_scenario_op(&reply, request_id, answer);
+                retain_claimed_seats(&app, &mut seats);
+                sync_seat_delivery(&mut app, &seats, &snapshot_flat_server);
                 continue;
             }
             // **A CLAIM IS ANSWERED, NOT APPLIED** — matched here ahead of the catch-all arm for the
@@ -1885,6 +1915,14 @@ enum Command {
         slot: String,
         reply: Sender<QueryReplyEnvelope>,
     },
+    /// **DEV: build a world from a scenario file** (`docs/plan_scenarios.md`). Proto field 101.
+    /// Answered with a `ScenarioOp` reply on the asking connection's writer; not replayable, and it
+    /// re-bases the command log like `NewGame` and `LoadGame`.
+    LoadScenario {
+        request_id: u64,
+        path: String,
+        reply: Sender<QueryReplyEnvelope>,
+    },
     /// **A connection says which faction seat it drives** — the handshake the whole seat model rests
     /// on (`docs/plan_multiplayer_seats.md` §4.1). Proto field 71.
     ///
@@ -2774,6 +2812,49 @@ fn rebuild_world_from_config(
     world_epoch: &mut u32,
     configure: impl FnOnce(&mut bevy::prelude::App),
 ) -> bevy::prelude::App {
+    build_world_app(
+        config,
+        seed_random,
+        command_sender,
+        watch_paths,
+        |new_app| {
+            // Advance the world epoch for this fresh world and stamp it onto the app BEFORE the
+            // first `run_turn` capture, so every snapshot in this world carries the same epoch
+            // (first real world -> 1, next rebuild -> 2, ...). The shared path for BOTH `NewGame`
+            // and `ResetMap`.
+            *world_epoch += 1;
+            new_app.insert_resource(WorldEpoch(*world_epoch));
+
+            // Attach the socket BEFORE the first capture, so this world's baseline frame is
+            // broadcast by the publisher like every frame after it. A world whose publisher has no
+            // sink still publishes - it simply has no audience - which is exactly the state the idle
+            // boot app and every test run in.
+            new_app
+                .world
+                .resource::<SnapshotHistory>()
+                .attach_sink(frame_sink(snapshot_server_flat));
+
+            // Apply any caller-supplied configuration (e.g. the start profile) before Startup
+            // worldgen runs.
+            configure(new_app);
+        },
+    )
+}
+
+/// **The build half of [`rebuild_world_from_config`]: a world-building app, up to and including its
+/// first turn, touching nothing live.**
+///
+/// It takes no epoch counter and no socket, so a caller that is only BUILDING a world it may still
+/// throw away (`load_scenario`'s candidate) can use it without advancing the shared epoch or giving a
+/// client a frame of a world that never arrives. `before_startup` runs after the app's resources are
+/// in and before Startup worldgen, and is where the caller installs everything the build reads.
+fn build_world_app(
+    config: SimulationConfig,
+    seed_random: bool,
+    command_sender: Sender<CommandDelivery>,
+    watch_paths: &WatchPaths,
+    before_startup: impl FnOnce(&mut bevy::prelude::App),
+) -> bevy::prelude::App {
     let mut new_app = build_headless_app();
     // The base this process actually bound travels with the config — `new_game` carries the binds
     // over from the outgoing world and `ResetMap` clones them — but the resource does not:
@@ -2795,60 +2876,11 @@ fn rebuild_world_from_config(
         metadata.set_seed_random(seed_random);
     }
 
-    // Advance the world epoch for this fresh world and stamp it onto the app BEFORE the first
-    // `run_turn` capture, so every snapshot in this world carries the same epoch (first real world →
-    // 1, next rebuild → 2, …). The shared path for BOTH `NewGame` and `ResetMap`.
-    *world_epoch += 1;
-    new_app.insert_resource(WorldEpoch(*world_epoch));
-
-    // Attach the socket BEFORE the first capture, so this world's baseline frame is broadcast by
-    // the publisher like every frame after it. A world whose publisher has no sink still publishes
-    // — it simply has no audience — which is exactly the state the idle boot app and every test
-    // run in.
-    new_app
-        .world
-        .resource::<SnapshotHistory>()
-        .attach_sink(frame_sink(snapshot_server_flat));
-
-    // Apply any caller-supplied configuration (e.g. the start profile) before Startup worldgen runs.
-    configure(&mut new_app);
+    before_startup(&mut new_app);
 
     run_turn(&mut new_app);
 
     new_app
-}
-
-/// **What the archetype counts on the wire resolve to before the grid clamps them**, in catalog
-/// order.
-///
-/// An archetype that is not listed is *not* listed-as-0: absent means **nobody picked** - a direct
-/// scene launch, a CLI `new_game`, a test - and an explicit 0 means a player who chose none of
-/// them. Collapsing the two would make the unattended roster unreachable from every caller that
-/// leaves the choice to the sim.
-///
-/// ⛔ **An unlisted archetype resolves to its UNATTENDED count
-/// ([`core_sim::unattended_archetype_counts`]), NOT to the count the New Game screen pre-selects.**
-/// The screen's number is derived from the map; this path is what a `cargo run` server and a
-/// scripted launch get, and it stays at the archetype's own `default_count` pin, else none.
-///
-/// `Err(id)` names an id the profile does not carry (or one listed twice): the command is rejected
-/// rather than guessed at.
-fn requested_archetype_counts(
-    picked: &[sim_runtime::ArchetypeCount],
-    archetypes: &[core_sim::StartArchetype],
-) -> Result<Vec<u32>, String> {
-    let mut counts = core_sim::unattended_archetype_counts(archetypes);
-    let mut seen = vec![false; archetypes.len()];
-    for entry in picked {
-        let Some(index) = archetypes.iter().position(|a| a.id == entry.id) else {
-            return Err(entry.id.clone());
-        };
-        if std::mem::replace(&mut seen[index], true) {
-            return Err(entry.id.clone());
-        }
-        counts[index] = entry.count;
-    }
-    Ok(counts)
 }
 
 /// Generate a world on demand from the `new_game` wire command (the server boots idle). Validates
@@ -2984,6 +3016,171 @@ fn handle_new_game(
         preset = %preset_id,
         "new_game.completed"
     );
+}
+
+// =================================================================================================
+// SCENARIO LOAD (docs/plan_scenarios.md)
+// =================================================================================================
+
+/// Answer a scenario load on the asking connection's writer. A send failure means the connection is
+/// gone; there is nothing to recover, exactly as for a query.
+fn answer_scenario_op(
+    reply: &Sender<QueryReplyEnvelope>,
+    request_id: u64,
+    answer: sim_runtime::ScenarioOpReply,
+) {
+    if reply
+        .send(QueryReplyEnvelope {
+            request_id,
+            reply: QueryReply::ScenarioOp(answer),
+        })
+        .is_err()
+    {
+        warn!(
+            target: "shadow_scale::scenario",
+            request_id,
+            "scenario.reply.dropped=asking connection closed"
+        );
+    }
+}
+
+/// A refused load: every refusal logged on its own line and returned in one reply.
+fn scenario_refused(
+    path: &str,
+    refusals: Vec<core_sim::scenario::ScenarioRefusal>,
+) -> sim_runtime::ScenarioOpReply {
+    for refusal in &refusals {
+        warn!(
+            target: "shadow_scale::scenario",
+            %path,
+            path_in_file = %refusal.path,
+            reason = %refusal.reason,
+            "scenario.refused"
+        );
+    }
+    sim_runtime::ScenarioOpReply {
+        ok: false,
+        path: path.to_string(),
+        refusals: refusals.iter().map(ToString::to_string).collect(),
+    }
+}
+
+/// **Build a world from a scenario file, or refuse it and leave everything as it was.**
+///
+/// The candidate world is built WITHOUT touching the live one: no snapshot sink, the shared epoch not
+/// advanced, the old publisher not retired. Only after setup has fully succeeded is the candidate
+/// swapped in, so a refused file leaves the previous world (or the idle server) exactly as it was.
+///
+/// 1. Read the file and run pass 1 against the live app's configs ([`core_sim::scenario::parse_scenario`]).
+/// 2. Build the candidate as `new_game` does, with the scenario's setup installed before Startup.
+/// 3. [`core_sim::scenario::finish_scenario`]: collect what the built world refused and replay the
+///    file's command entries through the lib seam.
+/// 4. Swap in, as a load does: retire the old publisher, advance the epoch, attach the sink, publish a
+///    full frame of the set-up world, and re-base the command log AFTER setup.
+fn handle_load_scenario(
+    app: &mut bevy::prelude::App,
+    world_active: &mut bool,
+    world_epoch: &mut u32,
+    command_log: &mut Option<CommandLog>,
+    path: &str,
+    snapshot_server_flat: &Arc<SnapshotServer>,
+) -> sim_runtime::ScenarioOpReply {
+    use core_sim::scenario::{
+        finish_scenario, parse_scenario, ScenarioContext, ScenarioRefusal, FILE_REFUSAL_PATH,
+    };
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) => {
+            return scenario_refused(
+                path,
+                vec![ScenarioRefusal::new(
+                    FILE_REFUSAL_PATH,
+                    format!("cannot read '{path}': {err}"),
+                )],
+            );
+        }
+    };
+    let ctx = ScenarioContext::from_world(&app.world);
+    let plan = match parse_scenario(&text, &ctx) {
+        Ok(plan) => plan,
+        Err(refusals) => return scenario_refused(path, refusals),
+    };
+
+    let command_sender = {
+        let res = app.world.resource::<CommandSenderResource>();
+        res.0.clone()
+    };
+    let watch_paths = collect_watch_paths(app);
+    let world_args = &plan.file.world;
+    let mut new_config =
+        load_simulation_config_for_new_world(app.world.resource::<SimulationConfig>());
+    new_config.grid_size = UVec2::new(world_args.width, world_args.height);
+    new_config.map_preset_id = world_args.preset.clone();
+    new_config.map_seed = world_args.seed;
+    let land_fraction =
+        core_sim::faction_start_land_fraction(&ctx.presets, &new_config.map_preset_id);
+    let granted_counts = granted_archetype_counts(
+        &plan.requested_counts,
+        &plan.profile.overrides().archetypes,
+        new_config.grid_size,
+        land_fraction,
+    );
+    info!(
+        target: "shadow_scale::scenario",
+        %path,
+        name = %plan.file.name,
+        preset = %world_args.preset,
+        seed = world_args.seed,
+        "scenario.begin"
+    );
+
+    let setup = plan.setup();
+    let profile = plan.profile.clone();
+    let mut candidate = build_world_app(
+        new_config,
+        false,
+        command_sender,
+        &watch_paths,
+        move |new_app| {
+            apply_start_profile(new_app, &profile);
+            seed_faction_roster(new_app, &granted_counts);
+            new_app.insert_resource(setup);
+        },
+    );
+    let applied = match finish_scenario(&mut candidate.world) {
+        Ok(applied) => applied,
+        // Dropped here: the previous world, or the idle server, was never touched.
+        Err(refusals) => return scenario_refused(path, refusals),
+    };
+
+    retire_publisher(app);
+    *world_epoch += 1;
+    candidate.insert_resource(WorldEpoch(*world_epoch));
+    candidate
+        .world
+        .resource::<SnapshotHistory>()
+        .attach_sink(frame_sink(snapshot_server_flat));
+    // The setup replayed commands after the build's first frame was captured, so the world a client
+    // is handed is a fresh full capture of the set-up world, not that frame.
+    publish_loaded_world(&mut candidate);
+    *app = candidate;
+    *world_active = true;
+    // **The origin is captured AFTER setup**, so a rollback can never undo the scenario.
+    let mut log = CommandLog::new(app);
+    log.rebase(app, "load_scenario");
+    *command_log = Some(log);
+
+    info!(
+        target: "shadow_scale::scenario",
+        %path,
+        bands = applied.bands.len(),
+        "scenario.completed"
+    );
+    sim_runtime::ScenarioOpReply {
+        ok: true,
+        path: path.to_string(),
+        refusals: Vec::new(),
+    }
 }
 
 // =================================================================================================
@@ -3531,71 +3728,20 @@ fn band_allocation_mut(
     app: &mut bevy::prelude::App,
     band: Entity,
 ) -> bevy::prelude::Mut<'_, LaborAllocation> {
-    if app.world.get::<LaborAllocation>(band).is_none() {
-        app.world
-            .entity_mut(band)
-            .insert(LaborAllocation::default());
-    }
-    app.world
-        .get_mut::<LaborAllocation>(band)
-        .expect("labor allocation inserted above")
+    core_sim::yield_seed::band_allocation_mut(&mut app.world, band)
 }
 
-/// **RE-DECIDE A BAND'S STAFFED CREWS AND RE-QUOTE THEM** (#871) - after a command moved an input
-/// the sim staffs from (a Max, a floor, a kit, a rank, a stopped row), every staffed row's crew may
-/// have changed, not just the one the player touched (the pool is shared), so each is re-seeded from
-/// its pre-commit forecast exactly as the touched row always was, and a row left with nobody reads
-/// nothing rather than the reading of the crew it used to have.
+/// See [`core_sim::yield_seed::restaff_and_reseed`].
 fn restaff_and_reseed(app: &mut bevy::prelude::App, band: Entity) {
-    restaff_and_reseed_after_loss(app, band, 0);
+    core_sim::yield_seed::restaff_and_reseed(&mut app.world, band);
 }
 
-/// [`restaff_and_reseed`] for a command that removed people from the band: `lost_people` staffed
-/// hands left with them and are discarded rather than walked home (`staffing::restaff_band_after_loss`).
+/// See [`core_sim::yield_seed::restaff_and_reseed_after_loss`].
 fn restaff_and_reseed_after_loss(app: &mut bevy::prelude::App, band: Entity, lost_people: u32) {
-    core_sim::staffing::restaff_band_after_loss(&mut app.world, band, lost_people);
-    let rows: Vec<(LaborTarget, u32)> = app
-        .world
-        .get::<LaborAllocation>(band)
-        .map(|allocation| {
-            allocation
-                .assignments
-                .iter()
-                .filter(|row| row.target.is_staffed())
-                .map(|row| (row.target.clone(), row.workers))
-                .collect()
-        })
-        .unwrap_or_default();
-    for (target, workers) in rows {
-        if workers == core_sim::NO_CREW_ON_THIS_ACTIVITY {
-            if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(band) {
-                allocation.set_source_yield(&target, core_sim::SourceYield::ZERO);
-            }
-            continue;
-        }
-        let improvement = build_rung_on_source_at(app, band, &target);
-        seed_source_yield(app, band, &target, improvement, workers);
-    }
+    core_sim::yield_seed::restaff_and_reseed_after_loss(&mut app.world, band, lost_people);
 }
 
-/// Seed the touched source's **yield telemetry** (`LaborAllocation.last_yields`) from its
-/// **pre-commit forecast**, right after the allocation is mutated.
-///
-/// Without this, telemetry is only ever written during turn resolution (`advance_labor_allocation`),
-/// so between "player assigns workers" and "player advances the turn" a brand-new source has no row
-/// and the display snapshot serializes `actual_yield = 0.0` — the client cannot tell "0 because not
-/// computed yet" from "0 because the source is barren", and every fresh assignment reads `+0.00`.
-///
-/// The seeded row is exactly what the turn will pay under unchanged conditions: it reuses the same
-/// forecast helpers the take path reads (`forecast == actual` — see "Pre-commit Yield Forecast" in
-/// `core_sim/CLAUDE.md`), and it is the same number the client's compose-time "Expected yield" row
-/// promises — so there is no jump when the turn lands, and it is overwritten by the resolved take.
-///
-/// Only the **one source the command touched** is seeded (other sources keep their real actuals), and
-/// only where the resolution path would actually pay: a source the turn would skip (an unseeded
-/// patch, a vanished herd) keeps its zero row, and a genuinely barren source seeds `0.0` — `+0.00`
-/// stays reachable, and correct, there. A source past the band's work range is not skipped: it posts
-/// a work party, and is seeded by stepping that caravan.
+/// See [`core_sim::yield_seed::seed_source_yield`].
 fn seed_source_yield(
     app: &mut bevy::prelude::App,
     band: Entity,
@@ -3603,744 +3749,16 @@ fn seed_source_yield(
     improvement: Option<RungId>,
     workers: u32,
 ) {
-    // Unassigned (`workers == 0`): `set_assignment` already dropped the source's row with its
-    // assignment. Scout/Warrior are band-wide roles with no food yield — the resolution path leaves
-    // them at zero, so seeding must too.
-    if workers == 0
-        || !matches!(
-            target,
-            LaborTarget::Forage { .. } | LaborTarget::Hunt { .. } | LaborTarget::Extract { .. }
-        )
-    {
-        return;
-    }
-    // **The band's people, and what they have learned** (#799): the seed resolves the reach the
-    // turn's take will have, so a band that knows `drives` is quoted the driven herd.
-    let Some(cohort) = app.world.get::<PopulationCohort>(band) else {
-        return;
-    };
-    let faction = cohort.faction;
-    let drives_known = core_sim::roaming_skills::world_faction_knows(
-        &app.world,
-        faction,
-        core_sim::roaming_skills::DRIVES_DISCOVERY_ID,
-    );
-    // **The kit this crew was assigned with, read off the assignment itself** — not off the band's
-    // stock. `set_assignment` has already stored it, so the seed and the turn resolve the identical
-    // tier through the identical seam, which is what `forecast == actual` rests on.
-    //
-    // **And the band's per-item BUDGET beside it, for the same reason one step on**
-    // (`equipment.md` → "ONE BAND, ONE SET OF GEAR"): the turn arms this row from its *share* of the
-    // ledger, so a seed priced against the whole ledger promises a band with two rows on one item a
-    // haul only one of them can make. `set_assignment` has already landed this row, so the
-    // allocation read here is the post-assignment truth and its denominator is the one
-    // `advance_labor_allocation` will divide by next turn.
-    //
-    // ⛔ **SETTLED ON EVERY ROW'S CLAIM, NOT ITS HEAD COUNT** (`docs/plan_site_crews.md` §2.3) —
-    // struck through the one function the turn settles with ([`core_sim::take_claims::row_claims`]),
-    // so a brand-new row is quoted on its real claim at once.
-    let crew_gear = {
-        let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-        let band_wear = app
-            .world
-            .get::<BandEquipment>(band)
-            .cloned()
-            .unwrap_or_default();
-        app.world
-            .get::<LaborAllocation>(band)
-            .and_then(|allocation| {
-                let index = allocation
-                    .assignments
-                    .iter()
-                    .position(|assignment| assignment.target.same_source(target))?;
-                let assignment = &allocation.assignments[index];
-                let claims =
-                    core_sim::take_claims::with_world_sources(&app.world, faction, |sources| {
-                        core_sim::take_claims::row_claims(sources, allocation, &band_wear)
-                    });
-                Some((
-                    assignment.kit_choice(&equipment_cfg),
-                    assignment.priority,
-                    allocation.item_budget(&equipment_cfg, &claims.claims),
-                    // **The rows this one competes with for the band's gear** — what a far row's
-                    // caravan forecast is priced beside (`core_sim::work_party::CaravanPricing`).
-                    allocation.rows_excluding_source(&equipment_cfg, target, &claims.claims),
-                    // **And this crew's own planned split** — its keep hands and the take hands
-                    // that claim its kit.
-                    core_sim::take_claims::CrewClaim {
-                        keep_hands: claims.keep_hands[index],
-                        claim: claims.claims[index],
-                    },
-                    claims.claims,
-                ))
-            })
-    };
-    let Some((crew_kit, crew_priority, item_budget, other_rows, crew_split, row_claims)) =
-        crew_gear
-    else {
-        return;
-    };
-    let current_tile = cohort.current_tile;
-    // The band's productivity multiplier is applied at payout in the resolution path, so the forecast
-    // must fold it in too (the snapshot's per-source forecast is captured at 1.0 and scaled client-side
-    // by this same multiplier).
-    let wellbeing = app.world.resource::<WellbeingConfigHandle>().get();
-    let output_mult = output_multiplier(cohort, &wellbeing).to_f32();
-    let Some(band_pos) = app
-        .world
-        .get::<Tile>(current_tile)
-        .map(|tile| tile.position)
-    else {
-        return;
-    };
-    let labor = app.world.resource::<LaborConfigHandle>().get();
-    // **The reported band's width** (`combat_config.forecast_range_sigmas`) — a readout lever, not a
-    // model term (`docs/plan_hunt_through_combat.md` §6.4). Read on both webs so the one
-    // `forecast_source_yield` seeds every row's range the same way.
-    let range_sigmas = app
-        .world
-        .resource::<CombatConfigHandle>()
-        .get()
-        .forecast_range_sigmas;
-
-    let seeded = match target {
-        // The three band-wide roles work no source, so there is nothing to price — see the arm at
-        // the end of this match.
-        LaborTarget::Forage {
-            tile,
-            floor,
-            take_species,
-            ..
-        } => {
-            // ⛔ **PAST THE BAND'S WORK RANGE THE ROW IS A CARAVAN, AND IS SEEDED AS ONE** — never
-            // declined. The row survives past range now, so a seed that returned here published
-            // `+0.00` for the whole first turn of every far posting.
-            let caravan = caravan_seed_party(app, band, target, *tile, band_pos, workers);
-            let Some(tile_entity) = app.world.resource::<TileRegistry>().index(tile.x, tile.y)
-            else {
-                return;
-            };
-            // No food module → no wild **gather** season (`NO_FORAGE_SEASON`), exactly as the labor
-            // arm reads it. Not an early return: since slice 5 a sown Field may stand on a
-            // module-less tile, and its managed harvest is biomass-based and seasonless — returning
-            // here would seed that Field a `0` row and reintroduce the `+0.00`-then-jump bug the seed
-            // exists to kill.
-            let seasonal = app
-                .world
-                .get::<FoodModuleTag>(tile_entity)
-                .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0));
-            let Some(patch) = app.world.resource::<ForageRegistry>().patch(*tile) else {
-                return; // unseeded patch → the turn pays 0 (a bare-ground sow's honest opening row).
-            };
-            // Gathering is site-bound: a wild patch on ground the wild rung refuses has no gather
-            // season, exactly as the labor arm reads it (`forage::gather_season`).
-            let seasonal = core_sim::gather_season(
-                seasonal,
-                Some(patch),
-                app.world.get::<Tile>(tile_entity).is_some_and(|ground| {
-                    core_sim::wild_ground_refuses_gathering(
-                        &app.world.resource::<LadderConfigHandle>().get(),
-                        &app.world.resource::<LaborConfigHandle>().get().forage,
-                        ground,
-                        app.world
-                            .resource::<core_sim::FoodSiteRegistry>()
-                            .is_site(*tile),
-                    )
-                }),
-            );
-            let flora = app.world.resource::<FloraConfigHandle>().get();
-            // **What is growing on this tile** — the same realized basket the labor arm and the
-            // snapshot read, so the assign-time seed is priced off the identical composition the
-            // turn will pay from (#433). Absent ground names no plants.
-            let map_seed = app.world.resource::<SimulationConfig>().map_seed;
-            let tile_composition = app.world.get::<Tile>(tile_entity).map_or_else(
-                || Cow::Owned(Vec::new()),
-                |ground| tile_flora_composition(&flora, &labor.forage, ground, map_seed),
-            );
-            // **The seed must be priced at THIS band's BASKET tier**, for the same reason the hunt
-            // arm below prices its haul at the band's sled tier: `advance_labor_allocation` resolves
-            // the same tier through the same seam, so a band-agnostic equipped rate here would
-            // promise a bare-handed band a basketful (`yield-forecast.md`).
-            let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-            let band_wear = app
-                .world
-                .get::<BandEquipment>(band)
-                .cloned()
-                .unwrap_or_default();
-            // **Through the same coverage the turn resolves** (`equipment.md` → "the
-            // partly-equipped party"): baskets cover gatherers one unit at a time, so a seed priced
-            // at the whole crew's best tier would promise a basketful to people holding nothing —
-            // and off this row's **share** of the band's baskets, because the rows beside it are
-            // reaching for the same ones.
-            // **Spread over the take hands** — a keeper carries the keeping tools, never the take kit.
-            let crew_coverage = equipment_cfg.coverage_from_units(
-                &crew_kit,
-                crew_split.take_hands(workers),
-                &band_wear,
-                item_budget.share_for_source(target, &band_wear, &equipment_cfg),
-            );
-            let per_worker_biomass = crew_coverage.weighted_rate(|kit| {
-                equipment_cfg.forage_per_worker_biomass_capacity(
-                    labor.forage.per_worker_biomass_capacity,
-                    kit,
-                    &band_wear,
-                )
-            });
-            // **THE CREW KEEPS THE PATCH FIRST** (`docs/plan_site_crews.md` §2.1), so the seed quotes
-            // the take on the hands its keeping leaves — the turn's own split, priced before the
-            // band's tools are settled.
-            let keep_hands = core_sim::crew_keep_hands(
-                core_sim::patch_crew_keeping(
-                    patch,
-                    &app.world.resource::<LadderConfigHandle>().get(),
-                    &labor.forage,
-                    app.world
-                        .get::<Tile>(tile_entity)
-                        .map(|ground| core_sim::tile_forage_capacity(&labor.forage, ground)),
-                    improvement,
-                ),
-                &equipment_cfg,
-                &band_wear,
-                workers,
-            );
-            let mut seeded = forage_source_yield_preview(
-                patch,
-                &tile_composition,
-                &labor.forage,
-                &flora,
-                per_worker_biomass,
-                seasonal,
-                output_mult,
-                workers,
-                keep_hands,
-                *floor,
-                // **The crew's own take selection** — a seed priced on the whole basket would
-                // promise a narrowed crew a stand it will not touch, which is exactly the
-                // forecast-vs-actual split the seed exists to close.
-                take_species,
-                labor.yield_average_horizon_turns,
-                labor.arrivals_horizon_turns,
-                range_sigmas,
-            );
-            // ⛔ **THE `+` CAP, STRUCK AS THE TURN STRIKES IT** — the fewest take hands whose
-            // capacity at this row's settled units reaches the room next turn's take will find, plus
-            // the keep hands, rounded up once (`core_sim::forage_crew_needed`).
-            let per_hand = |kit: &core_sim::KitChoice| {
-                core_sim::forage_per_worker_biomass(
-                    equipment_cfg.forage_per_worker_biomass_capacity(
-                        labor.forage.per_worker_biomass_capacity,
-                        kit,
-                        &band_wear,
-                    ),
-                    seasonal,
-                )
-            };
-            seeded.workers_needed = core_sim::forage_crew_needed(
-                core_sim::crew_take_room(
-                    &core_sim::next_turns_stand(patch, &labor.forage),
-                    &tile_composition,
-                    &flora,
-                    &labor.forage,
-                    take_species,
-                    *floor,
-                ),
-                &item_budget.reach_coverage_for_source(
-                    target,
-                    &crew_kit,
-                    crew_split.take_hands(workers),
-                    &band_wear,
-                    &equipment_cfg,
-                ),
-                per_hand,
-                per_hand(&equipment_cfg.no_kit()),
-                keep_hands,
-            );
-            // **A far row is priced by stepping its caravan** — the same function the turn's
-            // published `netRateHome` answers through, at the same pricing.
-            if let Some(party) = caravan {
-                let pricing = core_sim::work_party::CaravanPricing::resolve(
-                    &equipment_cfg,
-                    &crew_kit,
-                    crew_split.take_hands(workers),
-                    crew_split.claim,
-                    crew_priority,
-                    &band_wear,
-                    &other_rows,
-                    &labor,
-                );
-                let forecast = core_sim::work_party::forecast_forage_caravan(
-                    &party,
-                    patch,
-                    &tile_composition,
-                    &labor.forage,
-                    &flora,
-                    pricing.forage_carry,
-                    seasonal,
-                    output_mult,
-                    *floor,
-                    take_species,
-                    keep_hands,
-                    labor.yield_average_horizon_turns,
-                    &app.world
-                        .resource::<core_sim::DemographicsConfigHandle>()
-                        .get()
-                        .keeping,
-                );
-                seed_caravan_row(&mut seeded, &forecast, labor.arrivals_horizon_turns, false);
-            }
-            seeded
-        }
-        LaborTarget::Hunt {
-            fauna_id, floor, ..
-        } => {
-            let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
-                return; // herd gone → the assignment lapses next turn.
-            };
-            // Past the band's work range a hunt is seeded as a caravan, exactly as a gather is and
-            // exactly as the turn posts it — the seed and the turn share one distance rule.
-            let caravan = caravan_seed_party(app, band, target, herd.position(), band_pos, workers);
-            let fauna = app.world.resource::<FaunaConfigHandle>().get();
-            // **The seed must be priced at THIS band's SLED tier** (the minimal TOE), or the
-            // exact-forecast-equals-actual invariant breaks the moment a band's baskets run dry:
-            // `advance_labor_allocation` resolves the same tier through the same seam, so a
-            // band-agnostic equipped rate here would promise a dry band a kitted haul.
-            let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-            let band_wear = app
-                .world
-                .get::<BandEquipment>(band)
-                .cloned()
-                .unwrap_or_default();
-            // **ONE CARRY RATE, PENNED OR WILD** (issue #543) — the same single rate
-            // `advance_labor_allocation` resolves, because the seed has to reach `hunt_forecast`
-            // holding the rate the turn will pay it at. A seed and a resolved row that priced a herd
-            // differently is `yield-forecast.md`'s invariant broken on the one surface the player
-            // commits from, so this must stay exactly-equal to the sim's arm.
-            // **The same coverage the turn resolves** (`equipment.md` → "the partly-equipped
-            // party"): `advance_labor_allocation` divides this crew by the gear the band actually
-            // owns, so a seed priced at the whole party's best tier would promise a haul only the
-            // armed half can make — and by this row's **share** of it, because the hunt row beside
-            // it is reaching into the same stock of traps.
-            // **Spread over the take hands** — a keeper carries the keeping tools, never the take kit.
-            let hunt_coverage = equipment_cfg.coverage_from_units(
-                &crew_kit,
-                crew_split.take_hands(workers),
-                &band_wear,
-                item_budget.share_for_source(target, &band_wear, &equipment_cfg),
-            );
-            let per_worker_biomass = hunt_coverage.weighted_rate(|kit| {
-                equipment_cfg.hunt_per_worker_biomass_capacity(
-                    labor.hunt.per_worker_biomass_capacity,
-                    kit,
-                    &band_wear,
-                )
-            });
-            // **And at THIS band's FIGHTING tier**, for the same reason and through the same seam
-            // (`docs/plan_hunt_through_combat.md` §4): the take now resolves through the combat
-            // system, so a band whose spears are gone brings down less — or, past a quarry's
-            // `defense`, nothing at all — and the seed has to say so.
-            let combat_cfg = app.world.resource::<CombatConfigHandle>().get();
-            let hunting_party = core_sim::PartyResolution {
-                equipment: &equipment_cfg,
-                coverage: &hunt_coverage,
-                wear: &band_wear,
-                intrinsic: app.world.resource::<CreaturesConfigHandle>().get().person(),
-                tuning: combat_cfg.tuning(),
-                hunt_injury_damage_per_animal: combat_cfg.hunt_injury_damage_per_animal,
-                drives_known,
-            }
-            .party_against(core_sim::Quarry::Mass(herd.body_mass));
-            // **THE HUNT ROW IS THE HERD'S CREW AND KEEPS IT FIRST** (`docs/plan_site_crews.md`
-            // §2.2) — the seed quotes the cull on the hands its keeping leaves.
-            let keep_hands = core_sim::crew_keep_hands(
-                core_sim::herd_crew_keeping_next_turn(
-                    herd,
-                    &fauna,
-                    &app.world.resource::<LadderConfigHandle>().get(),
-                    improvement,
-                ),
-                &equipment_cfg,
-                &band_wear,
-                workers,
-            );
-            let mut seeded = hunt_source_yield_preview(
-                herd,
-                &fauna,
-                per_worker_biomass,
-                &hunting_party,
-                output_mult,
-                workers,
-                keep_hands,
-                *floor,
-                labor.yield_average_horizon_turns,
-                labor.arrivals_horizon_turns,
-                range_sigmas,
-                // No posting ⇒ a camp kill: nothing is hauled, so the pack bounds nothing.
-                caravan.is_none(),
-            );
-            // ⛔ **THE TAKE CREW, STRUCK AS THE TURN STRIKES IT** — crew-independent, the haul
-            // walked over this row's own units ([`core_sim::hunt_crew_needed`]), on the herd as the
-            // next turn's take will find it, with the keeping folded in once.
-            let quarry = core_sim::next_turns_quarry(herd, &fauna);
-            let carry = |kit: &core_sim::KitChoice| {
-                equipment_cfg.hunt_per_worker_biomass_capacity(
-                    labor.hunt.per_worker_biomass_capacity,
-                    kit,
-                    &band_wear,
-                )
-            };
-            seeded.workers_needed = core_sim::crew_needed_with_keeping(
-                core_sim::hunt_crew_needed(
-                    core_sim::hunt_crew_room(&quarry, &fauna, *floor),
-                    &quarry,
-                    &fauna,
-                    &item_budget.reach_coverage_for_source(
-                        target,
-                        &crew_kit,
-                        crew_split.take_hands(workers),
-                        &band_wear,
-                        &equipment_cfg,
-                    ),
-                    carry,
-                    carry(&equipment_cfg.no_kit()),
-                    &hunting_party,
-                    drives_known,
-                ),
-                keep_hands,
-            );
-            if let Some(party) = caravan {
-                let pricing = core_sim::work_party::CaravanPricing::resolve(
-                    &equipment_cfg,
-                    &crew_kit,
-                    crew_split.take_hands(workers),
-                    crew_split.claim,
-                    crew_priority,
-                    &band_wear,
-                    &other_rows,
-                    &labor,
-                );
-                let hunters = pricing.hunters(
-                    &equipment_cfg,
-                    &band_wear,
-                    &combat_cfg,
-                    app.world.resource::<CreaturesConfigHandle>().get().person(),
-                    herd.body_mass,
-                    drives_known,
-                );
-                let forecast = core_sim::work_party::forecast_hunt_caravan(
-                    &party,
-                    herd,
-                    &fauna,
-                    pricing.haul_carry,
-                    &hunters,
-                    output_mult,
-                    *floor,
-                    keep_hands,
-                    labor.yield_average_horizon_turns,
-                    &app.world
-                        .resource::<core_sim::DemographicsConfigHandle>()
-                        .get()
-                        .keeping,
-                    app.world.get::<LaborAllocation>(band).map_or(
-                        core_sim::work_party::NOTHING_CAPS_THE_MEAL,
-                        |allocation| {
-                            core_sim::work_party::band_net_eat_without(
-                                cohort,
-                                allocation,
-                                &app.world
-                                    .resource::<core_sim::DemographicsConfigHandle>()
-                                    .get(),
-                                Some(target),
-                            )
-                        },
-                    ),
-                    &app.world
-                        .resource::<core_sim::MaterialsConfigHandle>()
-                        .get(),
-                );
-                seed_caravan_row(&mut seeded, &forecast, labor.arrivals_horizon_turns, true);
-            }
-            seeded
-        }
-        // **A DEPOSIT PAYS NO FOOD, AND IT DOES PAY A MATERIAL — WHICH IS THE ONLY THING THIS ARM
-        // SEEDS** (`docs/plan_extraction.md` §6, issue #650).
-        //
-        // ⛔ **`actual` STAYS `SourceYield::ZERO`, and that half of the original refusal was right.**
-        // `PopulationCohortState::food_income` is `Σ actual` and one side of the pinned larder
-        // identity, so a working must contribute nothing to it — seeded or resolved. The turn's own
-        // `Extract` arm writes `row.materials` and touches no other field of the row, and this
-        // mirrors it exactly, which is what keeps `forecast == actual` true per component here.
-        //
-        // What the refusal got wrong was the **row**: `actual_yield` is unconditionally on the wire
-        // at `0.0` whether or not this seed runs, so declining to seed did not remove a `+0.00` food
-        // line — it removed the *material* figure beside it, and a freshly-assigned deposit crew read
-        // `+0.00` on the tile card where a freshly-assigned forage crew read a real number.
-        LaborTarget::Extract {
-            tile,
-            material,
-            floor,
-        } => {
-            // ⛔ **PAST THE BAND'S WORK RANGE THE ROW IS A CARAVAN, AND IS SEEDED AS ONE** — the
-            // Forage arm's rule. A far working posts a party now rather than lapsing, so a seed that
-            // declined it would publish nothing for the whole first turn of every far posting.
-            let caravan = caravan_seed_party(app, band, target, *tile, band_pos, workers);
-            let Some(tile_entity) = app.world.resource::<TileRegistry>().index(tile.x, tile.y)
-            else {
-                return;
-            };
-            let Some(ground) = app.world.get::<Tile>(tile_entity).cloned() else {
-                return;
-            };
-            let extraction = app.world.resource::<ExtractionConfigHandle>().get();
-            let ladder = app.world.resource::<LadderConfigHandle>().get();
-            // **THE WORKING AS THE NEXT TURN WILL FIND IT.** A working nobody has opened is
-            // DERIVED, not seeded — full stock at the tile's capacity, on its branch's free floor —
-            // which is `snapshot::deposits`' own rule and the reason the commonest case of all (a
-            // crew put on fresh ground) has a figure at all. Ground that holds none of it opens no
-            // working and pays nothing — absence is the answer, and `validate_labor_policy` has
-            // already refused the command in that case.
-            let Some(working) = core_sim::extraction::projected_working(
-                app.world.resource::<core_sim::DepositRegistry>(),
-                *tile,
-                material,
-                &ground,
-                &extraction,
-                &ladder,
-            ) else {
-                return;
-            };
-            // **THE CREW'S KIT, claimed whole like every job's** — its tools' `deposit_take` apply
-            // on the rungs they name, and its haul carry caps the cut and is a far party's pack.
-            let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-            let band_wear = app
-                .world
-                .get::<BandEquipment>(band)
-                .cloned()
-                .unwrap_or_default();
-            let held_rung = working.standing().held;
-            let held_key = held_rung.wire_key();
-            let Some(carry) = core_sim::extraction::DepositCarry::of(
-                &labor,
-                &app.world
-                    .resource::<core_sim::MaterialsConfigHandle>()
-                    .get(),
-                material,
-            ) else {
-                return;
-            };
-            // **REGROW FIRST, THEN TAKE, through the one projection the turn's forecast steps**
-            // (`core_sim::extraction::DepositProjection`). The seed is read between turns, so the
-            // live stock is the one *this* turn's take already drew down; pricing against it quotes
-            // a turn the sim has not run (`yield-forecast.md` → "A FORECAST REGROWS FIRST"). The
-            // take is the turn's own seam — `min(hands + tools, what the crew is allowed to reach)`
-            // above `max(rung floor, this row's floor)` — so raising the floor lowers the seeded
-            // figure by exactly what it will lower the take by.
-            let taken = match caravan {
-                // **A far working is priced by stepping its caravan** — the same function the turn's
-                // published `netRateHome` answers through, at the same pricing — and what it seeds
-                // is what lands home next turn: nothing while the party walks out.
-                Some(party) => {
-                    let pricing = core_sim::work_party::CaravanPricing::resolve(
-                        &equipment_cfg,
-                        &crew_kit,
-                        crew_split.take_hands(workers),
-                        crew_split.claim,
-                        crew_priority,
-                        &band_wear,
-                        &other_rows,
-                        &labor,
-                    );
-                    core_sim::work_party::forecast_extract_caravan(
-                        &party,
-                        &working,
-                        &ground,
-                        &extraction,
-                        &ladder,
-                        core_sim::work_party::material_pack(pricing.haul_carry, carry.weight),
-                        pricing.deposit_gear_per_worker(
-                            &equipment_cfg,
-                            &band_wear,
-                            held_rung.branch,
-                            &held_key,
-                        ),
-                        *floor,
-                        // The crew keeps the working first, off the hands present every turn.
-                        core_sim::extraction::crew_keep_hands(
-                            &equipment_cfg,
-                            &band_wear,
-                            &working,
-                            &ground,
-                            &extraction,
-                            &ladder,
-                            workers,
-                        ),
-                        labor.yield_average_horizon_turns,
-                    )
-                    .home_by_turn
-                    .first()
-                    .copied()
-                    .unwrap_or(core_sim::work_party::NOTHING_CARRIED)
-                }
-                // **A local working is priced at the whole crew, off this row's own coverage of its
-                // share of the band's gear** — the seam the turn strikes it at: its tools
-                // (`EquipmentConfig::deposit_gear`) and its carry
-                // (`core_sim::extraction::DepositCarry`). A seed priced bare would promise an
-                // axe-carrying crew the bare-handed cut and jump the moment the turn landed.
-                None => {
-                    // **THE CREW KEEPS THE WORKING FIRST** (`docs/plan_site_crews.md` §2.5), so the
-                    // seed quotes the cut on the hands its keeping leaves, with the cutters' share
-                    // of the crew's lift — the turn's own split — and its take kit is budgeted less
-                    // the keeping tools this crew's keeping is issued first
-                    // (`extraction::prospective_deposit_gear`, the quote's own ration).
-                    let allocation = app
-                        .world
-                        .get::<LaborAllocation>(band)
-                        .cloned()
-                        .unwrap_or_default();
-                    let keeping = core_sim::extraction::crew_keeping_issue(
-                        &equipment_cfg,
-                        &band_wear,
-                        &working,
-                        &ground,
-                        &extraction,
-                        &ladder,
-                        workers,
-                    );
-                    let keep_hands = core_sim::extraction::crew_keep_hands(
-                        &equipment_cfg,
-                        &band_wear,
-                        &working,
-                        &ground,
-                        &extraction,
-                        &ladder,
-                        workers,
-                    );
-                    let take_hands = (workers as f32 - keep_hands)
-                        .max(core_sim::extraction::NO_HANDS_ON_THE_DEPOSIT);
-                    let crew = core_sim::extraction::prospective_deposit_gear(
-                        &equipment_cfg,
-                        &allocation,
-                        &row_claims,
-                        target,
-                        &crew_kit,
-                        take_hands,
-                        crew_split.claim,
-                        &band_wear,
-                        held_rung,
-                        &carry,
-                        &keeping,
-                    );
-                    core_sim::extraction::DepositProjection::new(&working)
-                        .step(take_hands, crew.lift, *floor, &ground, &extraction, &ladder)
-                        .unwrap_or(core_sim::extraction::DEPOSIT_EMPTY)
-                }
-            };
-            core_sim::SourceYield {
-                // **EMPTY IS "NO ROW", NEVER A ZERO ENTRY** — `SourceYield::materials`' own rule: a
-                // crew that will take nothing next turn publishes no material line rather than one
-                // reading `0.00`.
-                materials: if taken > core_sim::extraction::DEPOSIT_EMPTY {
-                    vec![core_sim::MaterialPayoff {
-                        material: material.clone(),
-                        amount: taken,
-                    }]
-                } else {
-                    Vec::new()
-                },
-                ..core_sim::SourceYield::ZERO
-            }
-        }
-        // A band-wide role produces no per-source yield, so there is no row to seed - and neither
-        // does a tile improvement's crew, which keeps a standing and takes nothing.
-        LaborTarget::Tile { .. }
-        | LaborTarget::Band { .. }
-        | LaborTarget::Scout
-        | LaborTarget::Warrior
-        | LaborTarget::Roadwork => return,
-    };
-    band_allocation_mut(app, band).set_source_yield(target, seeded);
+    core_sim::yield_seed::seed_source_yield(&mut app.world, band, target, improvement, workers);
 }
 
-/// **THE CARAVAN A FAR ROW'S SEED STEPS FROM**, or `None` inside the band's work range.
-///
-/// The row's standing party if it has one — a stepper press on a live posting re-seeds that posting,
-/// not a fresh one that would re-promise a walk out — else a party posted now. The walk comes off
-/// the one resolver the turn and the query read (`core_sim::work_party::resolve_walk`).
-fn caravan_seed_party(
+/// See [`core_sim::yield_seed::build_rung_on_source_at`].
+fn build_rung_on_source_at(
     app: &bevy::prelude::App,
     band: Entity,
     target: &LaborTarget,
-    source_pos: UVec2,
-    band_pos: UVec2,
-    workers: u32,
-) -> Option<core_sim::WorkParty> {
-    let labor = app.world.resource::<LaborConfigHandle>().get();
-    let supply = app
-        .world
-        .resource::<core_sim::SupplyNetworkConfigHandle>()
-        .get();
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let registry = app.world.resource::<TileRegistry>();
-    let geometry = (
-        registry.width,
-        registry.height,
-        app.world
-            .resource::<SimulationConfig>()
-            .map_topology
-            .wrap_horizontal,
-    );
-    let (walk_tiles, walk_turns) = core_sim::work_party::resolve_walk(
-        band_pos,
-        source_pos,
-        &labor,
-        &supply,
-        app.world.resource::<core_sim::RoadRegistry>(),
-        &core_sim::routes::road_access_in_world(
-            &app.world,
-            app.world
-                .get::<core_sim::PopulationCohort>(band)
-                .map_or(FactionId(0), |cohort| cohort.faction),
-            &ladder,
-        ),
-        core_sim::routes::max_route_reach_tiles(&ladder),
-        geometry,
-    )?;
-    let mut party = app
-        .world
-        .get::<LaborAllocation>(band)
-        .and_then(|allocation| {
-            allocation
-                .assignments
-                .iter()
-                .find(|row| row.target.same_source(target))
-                .and_then(|row| row.party.clone())
-        })
-        .unwrap_or_else(|| core_sim::WorkParty::posted(source_pos, walk_tiles, walk_turns));
-    party.restamp(source_pos, workers, walk_tiles, walk_turns);
-    Some(party)
-}
-
-/// **A far row's seed, off its caravan forecast.** `actual` is what the caravan lands **next turn**
-/// — `0` for a party still walking out, which is the honest reading rather than a missing one — and
-/// is a point, because a caravan's first turn has no retreat draw to spread; the rest is the turn's
-/// own [`core_sim::work_party::publish_caravan_projection`].
-fn seed_caravan_row(
-    row: &mut core_sim::SourceYield,
-    forecast: &core_sim::CaravanForecast,
-    arrivals_horizon: u32,
-    keeps_the_carcass: bool,
-) {
-    row.actual = forecast
-        .home_by_turn
-        .first()
-        .copied()
-        .unwrap_or(core_sim::work_party::NOTHING_CARRIED);
-    row.range = core_sim::YieldRange::certain(row.actual);
-    core_sim::work_party::publish_caravan_projection(
-        row,
-        forecast,
-        arrivals_horizon,
-        keeps_the_carcass,
-    );
+) -> Option<RungId> {
+    core_sim::yield_seed::build_rung_on_source_at(&app.world, band, target)
 }
 
 /// Validate a labor target's **stance** against the source it names, returning a player-facing
@@ -7924,9 +7342,15 @@ fn handle_set_starting_loadout(
             units: allocation.units,
         })
         .collect();
-    if let Err(reason) =
-        core_sim::apply_starting_loadout(&mut app.world, faction, band, &kits, &materials)
-    {
+    // **One code path, two callers**: the scenario loader replays this verb through the same seam, and
+    // gets the refusal back as a value. Here a refusal is also the feed line the player reads.
+    if let Err(reason) = core_sim::command_seam::apply_set_starting_loadout(
+        &mut app.world,
+        faction,
+        band,
+        &kits,
+        &materials,
+    ) {
         warn!(
             target: "shadow_scale::command",
             command = "set_starting_loadout",
@@ -7942,30 +7366,6 @@ fn handle_set_starting_loadout(
             band,
             reason.to_string(),
         );
-        return;
-    }
-    // **The outfit moved gear, so the crews are stale until restaffed**: the outfitted band's own
-    // kit changed and, on a take, so did the parent's.
-    let parent = app
-        .world
-        .resource::<core_sim::StartingLoadout>()
-        .window(band)
-        .and_then(|window| match &window.supply {
-            core_sim::LoadoutSupply::Parent { parent, .. } => Some(*parent),
-            core_sim::LoadoutSupply::Grant { .. } => None,
-        });
-    let mut query = app
-        .world
-        .query::<(Entity, &BandId, &core_sim::PopulationCohort)>();
-    let changed: Vec<Entity> = query
-        .iter(&app.world)
-        .filter(|(_, id, cohort)| {
-            cohort.faction == faction && (**id == band || Some(**id) == parent)
-        })
-        .map(|(entity, _, _)| entity)
-        .collect();
-    for entity in changed {
-        restaff_and_reseed(app, entity);
     }
 }
 
@@ -11265,59 +10665,6 @@ fn choose_the_pen_site(app: &mut bevy::prelude::App, band: Entity, herd_id: &str
     }
 }
 
-/// **WHAT ONE BAND IS ACTUALLY RAISING ON A SOURCE** — its declared build's declaration resolved
-/// against the ground (`forage::patch_build_verb` / `fauna::herd_build_verb`), which is what the
-/// yield seed has to price: a declaration answers only while the meter it names is at zero.
-///
-/// `None` for a source this band has not queued, for a ring (which raises no rung and pays no dip),
-/// and for an entry whose ground has moved on — a **dead** entry.
-fn build_rung_on_source(
-    allocation: &LaborAllocation,
-    target: &LaborTarget,
-    app: &bevy::prelude::App,
-) -> Option<RungId> {
-    let source = BuildSource::of(target)?;
-    // Neither "work on a rung already held" kind raises a rung or pays a dip.
-    let declared = allocation.build_declaration(&source)?.declared.climb()?;
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
-    match source {
-        BuildSource::Patch(tile) => app
-            .world
-            .resource::<ForageRegistry>()
-            .patch(tile)
-            .and_then(|patch| patch_build_rung(patch, &ladder, Some(declared))),
-        BuildSource::Herd(id) => app
-            .world
-            .resource::<HerdRegistry>()
-            .find(&id)
-            .and_then(|herd| herd_build_rung(herd, &ladder, Some(declared))),
-        // **A working's declaration answers for itself**, exactly as a road's does and for its
-        // reason: `fell`, `coppice` and `quarry` are the only things that ever raise one, so there
-        // is no second, meter-derived declaration for a stale entry to override.
-        BuildSource::Deposit { .. } => Some(declared),
-        // **A road's declaration answers for itself**, with no meter-derived twin behind it: `grade`
-        // and `pave` are the only things that ever raise a road, so there is no second statement for
-        // the ground to override. Unreachable through this path in any case - the source comes from a
-        // *labor target*, and no target names a road.
-        BuildSource::Road(_) => Some(declared),
-        // A tile improvement's declaration answers for itself, the road's reason exactly.
-        BuildSource::Tile { .. } => Some(declared),
-        // So is a band improvement's.
-        BuildSource::Band { .. } => Some(declared),
-    }
-}
-
-/// [`build_rung_on_source`] for a band named by entity — the shape the queueing loop needs, where
-/// the allocation borrow has already been released.
-fn build_rung_on_source_at(
-    app: &bevy::prelude::App,
-    band: Entity,
-    target: &LaborTarget,
-) -> Option<RungId> {
-    let allocation = app.world.get::<LaborAllocation>(band)?.clone();
-    build_rung_on_source(&allocation, target, app)
-}
-
 fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<String>) {
     let command_sender = {
         let res = app.world.resource::<CommandSenderResource>();
@@ -12471,6 +11818,11 @@ fn command_from_payload(
             slot,
             reply: reply.clone(),
         }),
+        ProtoCommandPayload::LoadScenario { request_id, path } => Some(Command::LoadScenario {
+            request_id,
+            path,
+            reply: reply.clone(),
+        }),
     }
 }
 
@@ -13113,6 +12465,9 @@ fn is_replayable(command: &Command) -> bool {
             | Command::SaveGame { .. }
             | Command::LoadGame { .. }
             | Command::DeleteSave { .. }
+            // `LoadScenario` builds a new world exactly as `NewGame` does, so like it and `LoadGame` it
+            // has nothing before it to replay from and re-bases the origin after setup.
+            | Command::LoadScenario { .. }
             // The seat verbs. Both are about a *connection*, and a replay has none: a claim mutates
             // no world, and a release is the server's own bookkeeping about a socket that closed.
             | Command::ClaimSeat { .. }
@@ -13214,6 +12569,7 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         | Command::SaveGame { .. }
         | Command::LoadGame { .. }
         | Command::DeleteSave { .. }
+        | Command::LoadScenario { .. }
         // ⛔ **A seat claim names a faction and is still nobody's order.** The connection does not
         // hold the seat yet, so returning it here would send the claim through the seat gate that
         // the claim itself is what satisfies — refusing every first claim ever made. `ReleaseSeat`
@@ -13261,7 +12617,9 @@ fn querying_faction(query: &QueryPayload) -> Option<(FactionId, &'static str)> {
         // The save headers on disk, and the roster ceiling for a grid size. Neither reads a
         // faction's state, and both are asked from the landing screen — before a world, and
         // therefore before any seat — so a gate applied to them would close the load menu.
-        QueryPayload::ListSaves | QueryPayload::FactionCapacity(_) => None,
+        QueryPayload::ListSaves | QueryPayload::FactionCapacity(_) | QueryPayload::WorldStatus => {
+            None
+        }
     }
 }
 
@@ -13315,6 +12673,16 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
         // the log.
         // Unreachable for the same reason as `Query` below: the main loop answers each of these and
         // `continue`s. Loud rather than fatal, on the same argument.
+        Command::LoadScenario {
+            request_id, path, ..
+        } => {
+            warn!(
+                target: "shadow_scale::scenario",
+                request_id,
+                %path,
+                "scenario.dispatch.unreachable=load_scenario reached apply_command"
+            );
+        }
         Command::SaveGame {
             request_id, slot, ..
         }
@@ -14675,6 +14043,24 @@ fn handle_resync(
         );
         return;
     };
+    // **A seat that claims an ALREADY-ACTIVE world has never been published to** (a `load_scenario`
+    // or a world built with nobody seated publishes to no audience), so it has no ring entry to
+    // republish. Its first publication is its full baseline (`SeatPublishState::publish`), made now
+    // without advancing the tick or resolving a turn. `no_world` is for a genuinely idle server,
+    // which has no tiles to capture.
+    let world_is_built = app
+        .world
+        .get_resource::<TileRegistry>()
+        .is_some_and(|registry| !registry.tiles.is_empty());
+    if world_is_built
+        && app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry_for(seat)
+            .is_none()
+    {
+        publish_baseline_snapshot(&mut app.world);
+    }
     let mut history = app.world.resource_mut::<SnapshotHistory>();
     let tick = history.latest_entry_for(seat).map(|entry| entry.tick);
     match (history.publish_full_frame_for(seat), tick) {
@@ -14689,8 +14075,8 @@ fn handle_resync(
             );
         }
         _ => {
-            // No world yet (the server boots idle), or this seat has never been published to.
-            // Nothing to republish; the client's `new_game` retry is what recovers the first case.
+            // No world yet (the server boots idle). Nothing to republish; the client's `new_game`
+            // retry is what recovers it.
             info!(target: "shadow_scale::server", faction = %seat, "resync.no_world");
         }
     }
@@ -14880,6 +14266,7 @@ mod tests {
     }
 
     use super::*;
+    use core_sim::{forage_source_yield_preview, hunt_source_yield_preview, FoodModuleTag};
     use core_sim::{rung_site_refusal, tile_is_fresh_watered, FoodSiteRegistry};
 
     /// The tile-verb gate over a live `App`, for the tests that drive it directly.
@@ -15518,6 +14905,58 @@ mod tests {
         );
 
         std::env::remove_var(core_sim::save_store::SAVE_DIR_ENV);
+    }
+
+    /// **A seat that claims an already-active world gets its baseline on `Resync`.** A world built
+    /// with nobody seated (a `load_scenario`, say) has published to no audience for this seat, so the
+    /// claim's first `Resync` used to answer `resync.no_world` and the client waited for some later
+    /// command to recapture. The seat's first publication is its FULL baseline, made without
+    /// advancing the tick.
+    #[test]
+    fn a_seat_claiming_an_active_world_is_baselined_by_its_resync() {
+        let flat = loopback_snapshot_server();
+        let (mut world_active, mut world_epoch) = (false, 0u32);
+        let mut app = a_world_for_saving(&mut world_active, &mut world_epoch, &flat);
+        let seat = FactionId(0);
+
+        // The world was published with no seat claimed: nothing is held for seat 0 ...
+        app.world
+            .resource_mut::<SnapshotHistory>()
+            .drop_audience(seat);
+        // ... and the claim has put it in the audiences (`sync_seat_delivery` on the claim).
+        app.world
+            .resource_mut::<SnapshotAudiences>()
+            .set(vec![seat]);
+        assert!(
+            app.world
+                .resource::<SnapshotHistory>()
+                .latest_entry_for(seat)
+                .is_none(),
+            "the fixture seat has never been published to"
+        );
+        let tick_before = app.world.resource::<SimulationTick>().0;
+
+        handle_resync(&mut app, Some(seat), ConnectionId::INTERNAL, &flat);
+
+        let entry = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry_for(seat)
+            .expect("the resync published the seat's first frame (not resync.no_world)");
+        assert!(
+            entry.encoded_snapshot_flat.is_some(),
+            "a seat's first publication is a FULL baseline, which is what the reveal gate waits for"
+        );
+        assert_eq!(
+            entry.snapshot.header.world_epoch, world_epoch,
+            "the baseline carries the world's epoch"
+        );
+        assert_eq!(
+            app.world.resource::<SimulationTick>().0,
+            tick_before,
+            "a baseline resolves no turn"
+        );
+        assert_eq!(entry.tick, tick_before, "and is the world as it stands");
     }
 
     /// **`new_game` has no such hole**, confirmed rather than assumed.

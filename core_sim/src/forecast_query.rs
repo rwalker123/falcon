@@ -90,6 +90,9 @@ pub fn answer_forecast_query(world: &mut World, query: &QueryPayload) -> QueryRe
         QueryPayload::FactionCapacity(_) => {
             QueryReply::Error(query_error::WRONG_ANSWERER.to_string())
         }
+        // **Answered by the server**, ahead of the world gate, off its own `world_active` and
+        // `world_epoch` locals - facts about the server, not about a world.
+        QueryPayload::WorldStatus => QueryReply::Error(query_error::WRONG_ANSWERER.to_string()),
     }
 }
 

@@ -54,6 +54,36 @@ var pending_load_slot: String = ""
 ## armed and silently GENERATE a fresh world in place of the save the player was playing.
 var active_load_slot: String = ""
 
+## **THE ATTACH HANDOFF — the third way a world arrives, and the one where the client asks for none.**
+## A world the client did not ask for is already running (a scenario loaded from a terminal, or by
+## `scripts/run_stack.sh --scenario`; `docs/plan_scenarios.md` §2.7). `LandingScreen` records the
+## epoch it saw here and `Main` then sends NO world request — no `new_game`, no `load_game`, no dev
+## default — and instead asks for a full frame of that world and reveals it once it arrives.
+## `NO_ATTACH_EPOCH` when no attach is pending; it takes precedence over both other slots.
+const NO_ATTACH_EPOCH := -1
+var pending_attach_epoch: int = NO_ATTACH_EPOCH
+
+## The epoch the CURRENT run attached to, `NO_ATTACH_EPOCH` for a run the client asked for. Held for the
+## reason `active_new_game` is: a scene reload (`apply_theme_now`) must re-attach rather than fall to
+## the dev default and generate a world over the one being played.
+var active_attach_epoch: int = NO_ATTACH_EPOCH
+
+## The environment variable `scripts/run_stack.sh --scenario` sets once it has loaded the scenario,
+## BEFORE launching the client: "a world is already running, take it".
+const ATTACH_WORLD_ENV := "FALCON_ATTACH_WORLD"
+const ATTACH_WORLD_ENV_ON := "1"
+
+
+## The env flag speaks for the launch only: once a run has attached on it, an Abandon back to the menu
+## must not attach straight back to the world still running underneath. Set by whichever scene
+## consumes the flag.
+var attach_env_spent: bool = false
+
+
+func attach_world_env_set() -> bool:
+	return not attach_env_spent and OS.get_environment(ATTACH_WORLD_ENV) == ATTACH_WORLD_ENV_ON
+
+
 
 ## **WHY A SESSION ENDED BEFORE IT BEGAN** — one message for the landing screen to show once it is
 ## back up, in the same handoff direction the launch parameters travel the other way.
@@ -97,7 +127,9 @@ var pending_landing_notice: String = ""
 func apply_theme_now() -> void:
 	# The LOADED slot wins when there is one: the run in progress is that save, and re-arming the
 	# generated-world parameters instead would swap a different world in under the player.
-	if active_load_slot != "":
+	if active_attach_epoch != NO_ATTACH_EPOCH:
+		pending_attach_epoch = active_attach_epoch
+	elif active_load_slot != "":
 		pending_load_slot = active_load_slot
 	elif active_new_game is Dictionary:
 		pending_new_game = active_new_game

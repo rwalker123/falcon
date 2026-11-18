@@ -13,8 +13,9 @@ pub use commands::{
     DenialRaidForecastReply, DenialRow, DepositCrewTakeQuery, DepositCrewTakeReply,
     DepositCrewTakeRow, FactionCapacityQuery, FactionCapacityReply, ForageCrewTakeQuery,
     ForageCrewTakeReply, ForageCrewTakeRow, HuntCrewTakeQuery, HuntCrewTakeReply, HuntCrewTakeRow,
-    QueryPayload, QueryReply, QueryReplyEnvelope, StaffingPreviewLoss, StaffingPreviewQuery,
-    StaffingPreviewReply, WorkPartyForecastQuery, WorkPartyForecastReply, WorkPartySource,
+    QueryPayload, QueryReply, QueryReplyEnvelope, ScenarioOpReply, StaffingPreviewLoss,
+    StaffingPreviewQuery, StaffingPreviewReply, WorkPartyForecastQuery, WorkPartyForecastReply,
+    WorkPartySource, WorldStatusReply,
 };
 pub use commands::{
     BandOrderAction, BandOrderRow, BundleRequest, CancelScope, CommandDecodeError,
@@ -30,7 +31,7 @@ pub use worth::{good_worth, worth, GoodAmount};
 pub mod command_text;
 pub use command_text::{
     command_line_verb, parse_command_line, render_command_line, CommandParseError, CommandVerbHelp,
-    COMMAND_VERBS, ORDERS_VERB,
+    COMMAND_VERBS, ORDERS_VERB, TEXT_VERB_REQUEST_ID,
 };
 
 pub mod scripting;

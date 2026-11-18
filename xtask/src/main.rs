@@ -2,15 +2,19 @@ use glob::glob;
 use jsonschema::JSONSchema;
 use serde_json::Value;
 use sim_runtime::scripting::{manifest_schema, ScriptManifest};
-use sim_runtime::{parse_command_line, CommandEnvelope, COMMAND_VERBS};
+use sim_runtime::{
+    parse_command_line, CommandEnvelope, CommandPayload, QueryReply, QueryReplyEnvelope,
+    COMMAND_VERBS, MAX_PROTO_FRAME,
+};
 use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
 
 mod command_guard;
 mod decode_fixture;
@@ -260,7 +264,10 @@ fn command_subcommand(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let command_args: Vec<String> = remaining.into_iter().skip(1).collect();
+    let mut command_args: Vec<String> = remaining.into_iter().skip(1).collect();
+    if verb.eq_ignore_ascii_case(LOAD_SCENARIO_VERB) {
+        absolutize_scenario_path(&mut command_args)?;
+    }
     let tokens = parse_command_tokens(&command_args);
     let pieces = build_command_pieces(&verb, tokens)?;
     let command_line = pieces.join(" ");
@@ -270,6 +277,18 @@ fn command_subcommand(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             command_line, err
         ))
     })?;
+    // **A scenario load is answered, so this verb keeps the socket open and reports the answer.**
+    // Every other verb stays fire-and-forget.
+    if let CommandPayload::LoadScenario { path, .. } = payload {
+        let envelope = CommandEnvelope {
+            payload: CommandPayload::LoadScenario {
+                request_id: LOAD_SCENARIO_REQUEST_ID,
+                path,
+            },
+            correlation_id,
+        };
+        return load_scenario_and_report(&host, port, &envelope);
+    }
     let envelope = CommandEnvelope {
         payload,
         correlation_id,
@@ -277,6 +296,80 @@ fn command_subcommand(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     send_proto_command(&host, port, &envelope)?;
     println!("Sent `{}` to {}:{}.", command_line, host, port);
     Ok(())
+}
+
+/// The verb whose answer `cargo xtask command` waits for.
+const LOAD_SCENARIO_VERB: &str = "load_scenario";
+/// The `request_id` this tool stamps on its one scenario load: each load rides its own connection,
+/// so the reply cannot be anyone else's, and the id only has to match.
+const LOAD_SCENARIO_REQUEST_ID: u64 = 1;
+/// How long a scenario load is awaited. The server builds the world before it answers, so this is a
+/// world build (seconds on a large map) with headroom, not a network round trip.
+const SCENARIO_REPLY_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// **Resolve the scenario path to an absolute one before it is sent**: the server reads the file from
+/// ITS working directory, which is not this one.
+fn absolutize_scenario_path(args: &mut [String]) -> Result<(), CommandCliError> {
+    let Some(path) = args.first_mut() else {
+        return Ok(());
+    };
+    let absolute = fs::canonicalize(&*path)
+        .map_err(|err| CommandCliError::new(format!("cannot read scenario '{path}': {err}")))?;
+    *path = absolute.to_string_lossy().into_owned();
+    Ok(())
+}
+
+/// Send a `load_scenario`, wait for its `ScenarioOpReply`, and print it: `ok` on success, otherwise
+/// one refusal per line. A refusal, a closed socket and a reply timeout all exit non-zero.
+fn load_scenario_and_report(
+    host: &str,
+    port: u16,
+    envelope: &CommandEnvelope,
+) -> Result<(), Box<dyn Error>> {
+    let mut stream = send_proto_command(host, port, envelope)?;
+    stream
+        .set_read_timeout(Some(SCENARIO_REPLY_TIMEOUT))
+        .map_err(|err| CommandCliError::new(format!("cannot set the reply timeout: {err}")))?;
+    loop {
+        let mut len = [0u8; 4];
+        stream.read_exact(&mut len).map_err(|err| {
+            CommandCliError::new(format!(
+                "no scenario reply from {host}:{port} within {}s: {err}",
+                SCENARIO_REPLY_TIMEOUT.as_secs()
+            ))
+        })?;
+        let len = u32::from_le_bytes(len) as usize;
+        if len > MAX_PROTO_FRAME {
+            return Err(
+                CommandCliError::new(format!("reply frame of {len} bytes is too large")).into(),
+            );
+        }
+        let mut bytes = vec![0u8; len];
+        stream
+            .read_exact(&mut bytes)
+            .map_err(|err| CommandCliError::new(format!("truncated scenario reply: {err}")))?;
+        let reply = QueryReplyEnvelope::decode(&bytes)
+            .map_err(|err| CommandCliError::new(format!("undecodable scenario reply: {err}")))?;
+        let QueryReply::ScenarioOp(answer) = reply.reply else {
+            continue;
+        };
+        if reply.request_id != LOAD_SCENARIO_REQUEST_ID {
+            continue;
+        }
+        if answer.ok {
+            println!("ok");
+            return Ok(());
+        }
+        for refusal in &answer.refusals {
+            eprintln!("{refusal}");
+        }
+        return Err(CommandCliError::new(format!(
+            "scenario '{}' refused ({} refusals)",
+            answer.path,
+            answer.refusals.len()
+        ))
+        .into());
+    }
 }
 
 fn parse_host_port(input: &str) -> Result<(String, u16), CommandCliError> {
@@ -472,7 +565,7 @@ fn send_proto_command(
     host: &str,
     port: u16,
     envelope: &CommandEnvelope,
-) -> Result<(), CommandCliError> {
+) -> Result<TcpStream, CommandCliError> {
     let bytes = envelope
         .encode_to_vec()
         .map_err(|err| CommandCliError::new(format!("failed to encode command: {err}")))?;
@@ -490,7 +583,7 @@ fn send_proto_command(
     stream
         .flush()
         .map_err(|err| CommandCliError::new(format!("failed to flush command to {addr}: {err}")))?;
-    Ok(())
+    Ok(stream)
 }
 
 fn print_command_usage_details() {
