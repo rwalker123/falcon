@@ -134,6 +134,13 @@ const SCOUT_TIP_MANY_FORMAT := "%d scouts this turn"
 const SCOUT_TIP_GEARED_FORMAT := " · %d with wayfinding gear"
 const SCOUT_STATUS_SHORT_FORMAT := "Reaches +%d of +%d tiles — not enough people to go farther."
 const SCOUT_RANGE_VALUE_FORMAT := "+%d tiles"
+## **A TRIBE MEMBER'S SCOUT RANGE IS THE TRIBE'S** (#862): the stepper shows it and sets it for every
+## band in the tribe. The card line names that, with the scout count after it when there is one; the
+## tooltip on the value says who it is set for.
+const SCOUT_TRIBE_LINE := "Tribe range"
+const SCOUT_TRIBE_LINE_FORMAT := "Tribe range · %s"
+const SCOUT_TRIBE_TOOLTIP_FORMAT := "Set for the whole tribe: every band in %s scouts this far."
+const SCOUT_TRIBE_COMMAND_MESSAGE := "Set the tribe's scouting range."
 const SCOUT_RANGE_LESS_ARIA := "Scout less far"
 const SCOUT_RANGE_FARTHER_ARIA := "Scout farther"
 const SCOUT_RANGE_VALUE_WIDTH := 64.0
@@ -1048,6 +1055,15 @@ const PARTIES_LIST_MIN_HEIGHT := float(PARTIES_LIST_MIN_ROWS) * WORK_ROW_HEIGHT
 ## stays a pure function of dock / collapse / window. What it DOES report is declared by the builder
 ## from the zone's own BOX, which is geometry the panel states rather than anything the snapshot says.
 const BAND_ZONE_SCROLL_NAME := "BandZoneScroll"
+
+## A scroll rebuilt per snapshot carries the player's place across the rebuild (`BandPanelController.
+## _restore_scroll_offset`). The meta marks a scroll whose restore has not finished, the two state keys
+## are the restore's own bookkeeping, and the subjects keep one page's offsets from reaching another's.
+const SCROLL_CARRY_PENDING_META := &"scroll_carry_pending"
+const SCROLL_CARRY_STATE_ARMED := &"armed"
+const SCROLL_CARRY_STATE_APPLY := &"apply"
+const SCROLL_CARRY_NO_SUBJECT := -3
+const SCROLL_CARRY_FACTION_SUBJECT := -2
 
 ## Sized so a TYPICAL label — `Forage (nn, nn)`, `Hunt Woolly Mammoth` — fits whole beside the row's
 ## fixed furniture. At 300 a 1920 bottom dock took 4 columns and cut the labels mid-coordinate

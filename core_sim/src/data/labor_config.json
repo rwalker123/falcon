@@ -21,6 +21,8 @@
     "proposal_idle_turns_wasted": 8,
     "_comment_proposal_not_now_turns": "How many turns 'Not now' (defer_proposal) hides a proposed build before it may be proposed again. At least 1. OPENING VALUE, PLAYTEST DIAL.",
     "proposal_not_now_turns": 20,
+    "_comment_proposal_low_yield_share": "A CHIEF PROPOSES NEW GROUND WHEN HIS PEOPLE WORK FOR ALMOST NOTHING (chief_proposals.rs): a chief-listed food row whose take head brings home less than this share of one person's meal (last_food_need / headcount) counts its heads as low-yield; with any and no idle hands or falling food the chief offers new ground. Finite, above 0. OPENING VALUE, PLAYTEST DIAL.",
+    "proposal_low_yield_share": 0.5,
     "ordered_kinds": ["stone", "wood", "food", "fodder"],
     "starting_target": {
       "stone": 30,

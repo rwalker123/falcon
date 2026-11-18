@@ -340,6 +340,9 @@ pub fn answer_staffing_preview(world: &mut World, ask: &StaffingPreviewQuery) ->
             return refusal(query_error::MATERIAL_IS_KEPT_ON_HAND);
         }
     }
+    if crate::source_holders::other_band_working(world, band, &target).is_some() {
+        return refusal(query_error::WORKED_BY_ANOTHER_BAND);
+    }
     if never_renewing_dig_without_a_count(world, &target, ask.max_workers).is_some() {
         return refusal(query_error::NEVER_RENEWING_DIG_WITHOUT_A_COUNT);
     }

@@ -3889,6 +3889,19 @@ pub struct LaborAssignment {
     /// ⛔ **OUTSIDE THIS TYPE'S EQUALITY**, for [`Self::staffing`]'s reason: a fact the staffing
     /// restamps, and it rides the save because the visibility sweep reads it.
     pub scouting_reach: u32,
+    /// **THIS ROW IS A LEVY ROW OF THE BAND'S TRIBE** (#862): the tribe pass put it here from one of
+    /// the tribe's works (or, on the Scout row, the tribe owns the range it carries). The levy step
+    /// of the staffing passes deals it from the band's levy budget, never from a keep-up head.
+    ///
+    /// It is **intent**, so it is inside this type's equality.
+    pub for_tribe: Option<crate::tribe::TribeId>,
+    /// **A TRIBE MEMBER'S SHARE OF THE TRIBE'S SCOUTING EDGE** (`tribe_levy::scouting_stretches`):
+    /// `1.0` for a lone band's whole ring (every band in no tribe), `0` for a member enclosed by the
+    /// others. Meaningful on the Scout row only.
+    ///
+    /// ⛔ **OUTSIDE THIS TYPE'S EQUALITY**, for [`Self::scouting_reach`]'s reason: the tribe pass
+    /// restamps it. It rides the save because the staffing reads it.
+    pub scouting_stretch: f32,
     /// **WHO THE SIM PUT ON THIS ROW THIS TURN, AND WHY** — the keepers, the kitted heads, the bare
     /// heads and the two published crew targets. Meaningful only on a staffed row; `workers` is
     /// their sum there.
@@ -3898,6 +3911,9 @@ pub struct LaborAssignment {
     /// take-kit claim is struck from it ([`crate::take_claims::row_claims`]).
     pub staffing: StaffedCrew,
 }
+
+/// The scouting stretch of a band in no tribe: its whole ring.
+pub const UNSTRETCHED: f32 = 1.0;
 
 /// **THE SIM'S STAFFING OF ONE ROW** — what [`crate::staffing::staff_band`] decided, kept on the
 /// row it decided it for so the walk, the take-kit claim and the wire all read one answer.
@@ -3956,6 +3972,7 @@ impl PartialEq for LaborAssignment {
             && self.priority == other.priority
             && self.max_workers == other.max_workers
             && self.scouting_range == other.scouting_range
+            && self.for_tribe == other.for_tribe
     }
 }
 
@@ -8010,6 +8027,7 @@ impl LaborAllocation {
         // but only while the row is still a need row.
         let mut standing_muster = 0;
         let mut standing_planned = 0;
+        let mut standing_levy = None;
         let mut had_row = false;
         if let Some(idx) = self
             .assignments
@@ -8021,6 +8039,7 @@ impl LaborAllocation {
             standing_party = self.assignments[idx].party.clone();
             standing_muster = self.assignments[idx].muster_crew;
             standing_planned = self.assignments[idx].planned_crew;
+            standing_levy = self.assignments[idx].for_tribe;
             had_row = true;
             self.assignments.remove(idx);
             self.last_yields.remove(idx);
@@ -8077,6 +8096,8 @@ impl LaborAllocation {
                 planned_crew: if need_row { standing_planned } else { 0 },
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: standing_levy,
+                scouting_stretch: UNSTRETCHED,
                 // **A PINNED CREW IS A MAX** — `set_assignment` names an exact crew, which on a
                 // staffed row the sim reads as the most it may put there. The player-facing verb is
                 // [`Self::set_staffed_row`], whose count is the Max outright.
@@ -8129,6 +8150,8 @@ impl LaborAllocation {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: UNSTRETCHED,
             max_workers: max,
             staffing: StaffedCrew::default(),
         });
@@ -8192,6 +8215,8 @@ impl LaborAllocation {
             max_workers: None,
             scouting_range: range,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: UNSTRETCHED,
             staffing: StaffedCrew::default(),
         });
         self.last_yields.push(SourceYield::ZERO);
@@ -9499,6 +9524,8 @@ mod tests {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: Some(take),
             staffing: Default::default(),
             target: LaborTarget::Forage {
@@ -9535,6 +9562,8 @@ mod tests {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: Some(take),
             staffing: Default::default(),
             target: LaborTarget::Hunt {
@@ -9566,6 +9595,8 @@ mod tests {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: Some(workers),
             staffing: Default::default(),
             target,
@@ -9863,6 +9894,8 @@ mod tests {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: None,
             staffing: Default::default(),
             priority,
@@ -11112,6 +11145,8 @@ mod tests {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: Some(workers),
             staffing: Default::default(),
         }

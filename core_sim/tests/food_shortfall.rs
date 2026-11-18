@@ -97,6 +97,8 @@ fn eat_and_publish(larder_in_meals: f32) -> Published {
         planned_crew: 0,
         scouting_range: 0,
         scouting_reach: 0,
+        for_tribe: None,
+        scouting_stretch: 1.0,
         max_workers: Some(0),
         staffing: Default::default(),
         target: LaborTarget::Scout,

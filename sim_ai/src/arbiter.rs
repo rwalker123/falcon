@@ -211,6 +211,8 @@ struct Claims {
     moves: BTreeSet<u64>,
     splits: BTreeSet<u64>,
     rows: BTreeSet<String>,
+    /// The take sources a row was opened on, whichever band holds it.
+    sources: BTreeSet<String>,
 }
 
 impl Claims {
@@ -220,12 +222,17 @@ impl Claims {
             .any(|band| self.moves.contains(band) || self.splits.contains(band))
             || cost.splits.iter().any(|band| self.moves.contains(band))
             || cost.rows.iter().any(|row| self.rows.contains(row))
+            || cost
+                .sources
+                .iter()
+                .any(|source| self.sources.contains(source))
     }
 
     fn take(&mut self, cost: &Cost) {
         self.moves.extend(cost.moves.iter().copied());
         self.splits.extend(cost.splits.iter().copied());
         self.rows.extend(cost.rows.iter().cloned());
+        self.sources.extend(cost.sources.iter().cloned());
     }
 }
 
@@ -439,6 +446,53 @@ mod tests {
                 Outcome::Rejected { rejected_by } => Some(rejected_by.as_str()),
                 Outcome::Accepted => None,
             })
+    }
+
+    /// **TWO BANDS OF ONE PEOPLE CANNOT BOTH OPEN A ROW ON ONE SOURCE IN ONE TURN** - the sim refuses
+    /// the second (`core_sim::source_holders`), so the arbiter takes the first and rejects the other
+    /// as a conflict; a different source for the other band stands.
+    #[test]
+    fn two_bands_opening_one_source_in_a_turn_collide_and_a_different_source_does_not() {
+        let offered = vec![
+            offer_with(
+                SPECIALIST_FOOD,
+                "food:assign:1",
+                0.9,
+                1,
+                BAND_A,
+                vec![assign_row(BAND_A, 5, 5, 0)],
+                false,
+            ),
+            offer_with(
+                SPECIALIST_FOOD,
+                "food:assign:2",
+                0.8,
+                1,
+                BAND_B,
+                vec![assign_row(BAND_B, 5, 5, 0)],
+                false,
+            ),
+            offer_with(
+                SPECIALIST_FOOD,
+                "food:assign:3",
+                0.7,
+                1,
+                BAND_B,
+                vec![assign_row(BAND_B, 6, 5, 0)],
+                false,
+            ),
+        ];
+        let (accepted, decisions) = run(offered, ARGMAX_TOP_K, &SeatMemory::default());
+        assert_eq!(
+            rejection(&decisions, "food:assign:2"),
+            Some(REJECTED_CONFLICT),
+            "the second band's row on the same patch collides"
+        );
+        assert_eq!(
+            accepted.len(),
+            2,
+            "the first band and the other source stand"
+        );
     }
 
     #[test]

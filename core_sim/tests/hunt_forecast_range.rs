@@ -234,6 +234,8 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                     planned_crew: 0,
                     scouting_range: 0,
                     scouting_reach: 0,
+                    for_tribe: None,
+                    scouting_stretch: 1.0,
                     max_workers: Some(CREW),
                     staffing: Default::default(),
                     target: LaborTarget::Hunt {
@@ -972,6 +974,8 @@ fn a_gather_reports_a_point_and_pays_it() {
                         planned_crew: 0,
                         scouting_range: 0,
                         scouting_reach: 0,
+                        for_tribe: None,
+                        scouting_stretch: 1.0,
                         max_workers: Some(CREW),
                         staffing: Default::default(),
                         target: LaborTarget::Forage {

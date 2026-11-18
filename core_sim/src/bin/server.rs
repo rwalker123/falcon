@@ -1720,6 +1720,12 @@ enum Command {
         action: sim_runtime::BandOrderAction,
         row: Option<sim_runtime::BandOrderRow>,
     },
+    /// **A tribe's order** (#862), addressed by a member band. See `handle_tribe_order`.
+    TribeOrder {
+        faction: FactionId,
+        band_id: u64,
+        action: sim_runtime::TribeOrderAction,
+    },
     /// **Approve the chief's build proposal** for one band. See `handle_approve_proposal`.
     ApproveProposal {
         faction: FactionId,
@@ -4874,6 +4880,43 @@ fn kept_on_hand_refusal(
     core_sim::keep_on_hand::order_refusal(allocation, kind, keeper.as_ref())
 }
 
+/// **ONE BAND OF A PEOPLE PER TAKE SOURCE**: the refusal for a new row on a source another band of
+/// the band's people already works, naming that band (its `BandName`, else `Band <id>`). `None` for a
+/// row the band already holds (editing it is never refused), for a target that is no take source and
+/// where no other band of the people holds one.
+fn another_band_refusal(
+    app: &bevy::prelude::App,
+    target: &LaborTarget,
+    band: Entity,
+) -> Option<String> {
+    let other = core_sim::source_holders::other_band_working(&app.world, band, target)?;
+    let mut bands = app.world.iter_entities();
+    let other_entity = bands.find(|entity| entity.get::<BandId>() == Some(&other))?;
+    let name = other_entity
+        .get::<BandName>()
+        .map_or_else(|| core_sim::band_label(other), |name| name.0.clone());
+    Some(match target {
+        LaborTarget::Forage { tile, .. } => {
+            format!("{name} already works ({}, {}).", tile.x, tile.y)
+        }
+        LaborTarget::Hunt { fauna_id, .. } => {
+            let herd = app
+                .world
+                .resource::<HerdRegistry>()
+                .find(fauna_id)
+                .map_or_else(|| fauna_id.clone(), |herd| herd.species.clone());
+            format!("{name} already hunts the {herd}.")
+        }
+        LaborTarget::Extract { tile, material, .. } => {
+            format!(
+                "{name} already works the {material} at ({}, {}).",
+                tile.x, tile.y
+            )
+        }
+        _ => return None,
+    })
+}
+
 /// **WHO KEEPS THIS BAND'S ORDERS** - its chief by name, or its elders named for the band. `None`
 /// for a band with no leader. The band's own name is used where it has one, else its label.
 fn band_keeper(
@@ -5261,6 +5304,10 @@ fn handle_assign_labor(
         emit_command_failure(app, event_kind, faction, reason);
         return;
     }
+    if let Some(reason) = another_band_refusal(app, &target, band.entity) {
+        emit_command_failure(app, event_kind, faction, reason);
+        return;
+    }
 
     // **The bench's crew is off the table.** `Make` draws idle workers onto a recipe, so a band with
     // four hands at the bench has four fewer to send anywhere — see [`BandWorkforce::assignable`],
@@ -5298,28 +5345,17 @@ fn handle_assign_labor(
     if let (true, LaborTarget::Tile { tile, branch }) =
         (workers > 0 || target.is_staffed(), &target)
     {
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
-        let theirs = app
-            .world
-            .resource::<core_sim::TileImprovementRegistry>()
-            .get(*tile, *branch)
-            .is_some_and(|improvement| improvement.faction != faction);
-        if theirs {
-            emit_command_failure(
-                app,
-                event_kind,
-                faction,
-                format!(
-                    "The improvement at ({}, {}) belongs to another people.",
-                    tile.x, tile.y
-                ),
-            );
+        let placing_band = app.world.get::<BandId>(band.entity).copied();
+        if let Err(reason) = core_sim::build_gates::place_tile_improvement_root(
+            &mut app.world,
+            faction,
+            placing_band,
+            *tile,
+            *branch,
+        ) {
+            emit_command_failure(app, event_kind, faction, reason);
             return;
         }
-        let placing_band = app.world.get::<BandId>(band.entity).copied();
-        app.world
-            .resource_mut::<core_sim::TileImprovementRegistry>()
-            .place_owned(*tile, *branch, faction, placing_band, &ladder);
     }
     // **A BAND CREW PLACES THE BAND'S OWN IMPROVEMENT**, at the branch's floor. The row names the
     // band the command was addressed to (the selected band), never another.
@@ -5565,6 +5601,28 @@ fn handle_scouting_range(
         .scout
         .range_past_local_max;
     let range = requested_tiles.min(cap);
+    // **A tribe member's scouting RANGE is the tribe's** (#862): `tribe_scout` sets it. The kit is
+    // still the band's, so a command that restates the band's current range (the kit picker's)
+    // is accepted and applies the kit alone; one that asks for a different range is refused.
+    let in_a_tribe = band.id.is_some_and(|id| {
+        app.world
+            .resource::<core_sim::TribeRegistry>()
+            .tribe_of(id)
+            .is_some()
+    });
+    let current_range = band_allocation_mut(app, band.entity).scouting_range_tiles();
+    if in_a_tribe && range != current_range {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!(
+                "{}'s scouting range is set by its tribe - use tribe_scout (scouting_set_by_tribe).",
+                band.label
+            ),
+        );
+        return;
+    }
     band_allocation_mut(app, band.entity).set_scouting_range(range, kit);
     restaff_and_reseed(app, band.entity);
     let (staffed, reach) = {
@@ -8234,11 +8292,7 @@ fn handle_road_verb(
     else {
         return;
     };
-    let required = ladder
-        .below_id(destination)
-        .expect("every built route rung stands on the rung below it — the floor is two rungs down");
-
-    let refusal = road_verb_refusal(app, faction, band_id, tile, improvement, required);
+    let refusal = road_verb_refusal(app, faction, band_id, tile, improvement);
     if let Err(reason) = refusal {
         warn!(
             target: "shadow_scale::command",
@@ -8327,7 +8381,6 @@ fn road_verb_refusal(
     band_id: u64,
     tile: UVec2,
     improvement: VerbId,
-    required: core_sim::RungId,
 ) -> Result<(), String> {
     let band = BandId(band_id);
     let holds_band = {
@@ -8342,60 +8395,13 @@ fn road_verb_refusal(
         ));
     }
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let Some(destination) = ladder
-        .rung_for_verb(improvement)
-        .map(core_sim::RungDef::rung_id)
-    else {
+    let Some(rung) = ladder.rung_for_verb(improvement) else {
         return Err(format!(
             "'{}' is not a build verb this ladder knows.",
             improvement.as_str()
         ));
     };
-    if let Some(refusal) = knowledge_refusal(app, faction, &ladder, ladder.rung(destination)) {
-        return Err(refusal);
-    }
-    let roads = app.world.resource::<core_sim::RoadRegistry>();
-    let Some(road) = roads.road(tile) else {
-        return Err(format!(
-            "There is no road at ({}, {}) — walk it into a trail before you {} it.",
-            tile.x,
-            tile.y,
-            improvement.as_str()
-        ));
-    };
-    if !ladder.at_or_above(road.held_rung(), required) {
-        return Err(format!(
-            "The road at ({}, {}) is only a {} — it must be a {} before you can {} it.",
-            tile.x,
-            tile.y,
-            road.held_rung().id_str().replace('_', " "),
-            required.id_str().replace('_', " "),
-            improvement.as_str()
-        ));
-    }
-    match road.keeper {
-        // **One keeper per tile.** A second band cannot become a co-payer of a road another band
-        // keeps — the refusal is what makes that unrepresentable rather than merely discouraged.
-        Some(keeper) if keeper.band != band => {
-            return Err(format!(
-                "Band {} already keeps the road at ({}, {}). One band keeps a road tile, never two \
-                 — have them abandon it first.",
-                keeper.band.0, tile.x, tile.y
-            ));
-        }
-        // **Already there, and it is YOURS** — nothing left to raise. A road nobody keeps falls
-        // through instead, which is how adoption works.
-        Some(_) if ladder.at_or_above(road.held_rung(), destination) => {
-            return Err(format!(
-                "The road at ({}, {}) is already a {}.",
-                tile.x,
-                tile.y,
-                road.held_rung().id_str().replace('_', " ")
-            ));
-        }
-        _ => {}
-    }
-    Ok(())
+    core_sim::build_gates::validate_road_verb(&app.world, faction, band, tile, rung)
 }
 
 /// ⛔ **`fell` / `coppice` / `quarry` — THE TWO DEPOSIT BRANCHES' THREE TILE VERBS**
@@ -10459,6 +10465,87 @@ fn handle_unqueue(app: &mut bevy::prelude::App, faction: FactionId, source: Buil
     );
 }
 
+/// **A TRIBE'S ORDER** (#862): `tribe_work`, `tribe_levy` and `tribe_scout`, addressed by a member
+/// band that names its tribe. Each re-runs the tribe pass and restaffs every member
+/// (`core_sim::tribe_levy`); a refusal names its token (`band_not_in_tribe`, `not_a_tribe_work`,
+/// `unknown_levy`, ...).
+fn handle_tribe_order(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: u64,
+    action: sim_runtime::TribeOrderAction,
+) {
+    use sim_runtime::TribeOrderAction;
+    let band = BandId(band_id);
+    let tick = app.world.resource::<SimulationTick>().0;
+    let result = match action {
+        TribeOrderAction::Work {
+            branch,
+            x,
+            y,
+            target_rung,
+            priority,
+        } => {
+            let priority = match priority.as_deref() {
+                None => Ok(None),
+                Some(token) => SourcePriority::from_token(token).map(Some).ok_or(
+                    core_sim::tribe_levy::TribeRefusal {
+                        token: "unknown_priority",
+                        message: format!(
+                            "Unknown work priority '{token}' - expected {}, {} or {}.",
+                            SourcePriority::High.as_str(),
+                            SourcePriority::Normal.as_str(),
+                            SourcePriority::Low.as_str()
+                        ),
+                    },
+                ),
+            };
+            priority.and_then(|priority| {
+                core_sim::tribe_levy::tribe_work(
+                    &mut app.world,
+                    faction,
+                    band,
+                    &branch,
+                    UVec2::new(x, y),
+                    target_rung.as_deref(),
+                    priority,
+                )
+            })
+        }
+        TribeOrderAction::StopWork { branch, x, y } => core_sim::tribe_levy::tribe_work_stop(
+            &mut app.world,
+            faction,
+            band,
+            &branch,
+            UVec2::new(x, y),
+        ),
+        TribeOrderAction::Levy { level } => {
+            core_sim::tribe_levy::tribe_levy(&mut app.world, faction, band, &level)
+        }
+        TribeOrderAction::Scout { range } => {
+            core_sim::tribe_levy::tribe_scout(&mut app.world, faction, band, range)
+                .map(|(echo, _)| echo)
+        }
+    };
+    match result {
+        Ok(label) => push_band_event(
+            app,
+            tick,
+            CommandEventKind::Extraction,
+            faction,
+            Some(band),
+            label,
+            Some("status=applied".to_string()),
+        ),
+        Err(refusal) => emit_command_failure(
+            app,
+            CommandEventKind::Extraction,
+            faction,
+            format!("{} ({})", refusal.message, refusal.token),
+        ),
+    }
+}
+
 /// **A BAND ORDER** (#860) - `band_order <faction> <band> <kind> set <target> <priority>` |
 /// `release` | `claim`. `set` stores the target and priority, `release` is Crew it yourself (the
 /// chief's rows stay and become the player's), `claim` is Hand it to the chief. Each restaffs at
@@ -12140,6 +12227,15 @@ fn command_from_payload(
             band_id,
             build_key,
         }),
+        ProtoCommandPayload::TribeOrder {
+            faction_id,
+            band_id,
+            action,
+        } => Some(Command::TribeOrder {
+            faction: FactionId(faction_id),
+            band_id,
+            action,
+        }),
         ProtoCommandPayload::BandOrder {
             faction_id,
             band_id,
@@ -13076,6 +13172,7 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::Unqueue { faction, .. } => Some((*faction, "unqueue")),
         Command::StopLabor { faction, .. } => Some((*faction, "stop_labor")),
         Command::BandOrder { faction, .. } => Some((*faction, "band_order")),
+        Command::TribeOrder { faction, .. } => Some((*faction, "tribe_order")),
         Command::ApproveProposal { faction, .. } => Some((*faction, "approve_proposal")),
         Command::DeferProposal { faction, .. } => Some((*faction, "defer_proposal")),
         Command::WorkPriority { faction, .. } => Some((*faction, "work_priority")),
@@ -13573,6 +13670,13 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             row,
         } => {
             handle_band_order(app, faction, band_id, &kind, action, row);
+        }
+        Command::TribeOrder {
+            faction,
+            band_id,
+            action,
+        } => {
+            handle_tribe_order(app, faction, band_id, action);
         }
         Command::ApproveProposal { faction, band_id } => {
             handle_approve_proposal(app, faction, band_id);
@@ -14909,6 +15013,8 @@ mod tests {
                         planned_crew: 0,
                         scouting_range: 0,
                         scouting_reach: 0,
+                        for_tribe: None,
+                        scouting_stretch: 1.0,
                         max_workers: Some(BAND_WORKERS),
                         staffing: Default::default(),
                         target,
@@ -17828,11 +17934,21 @@ mod tests {
             .iter()
             .find(|row| matches!(&row.target, LaborTarget::Forage { tile, .. } if *tile == coord))
             .expect("approving stages a forage row on the patch");
+        let row_key = core_sim::keep_on_hand::source_key(&row.target).unwrap();
+        assert_eq!(
+            allocation.order_rows.get(&row_key).map(String::as_str),
+            Some("fodder"),
+            "the fixture's patch gives more fodder than food, so the staged row is listed under the \
+             chief's fodder order"
+        );
         assert!(
-            !allocation
-                .order_rows
-                .contains_key(&core_sim::keep_on_hand::source_key(&row.target).unwrap()),
-            "the staged row is the player's, not listed under the food order"
+            allocation.handed_rows.contains(&row_key),
+            "and handed to him, so his pass never retires it"
+        );
+        assert_eq!(
+            wire_forage_row(&mut app, coord),
+            ("fodder".to_string(), true),
+            "the published row is the chief's"
         );
         let before = app
             .world
@@ -17843,6 +17959,11 @@ mod tests {
         for _ in 0..4 {
             app.update();
         }
+        assert_eq!(
+            wire_forage_row(&mut app, coord),
+            ("fodder".to_string(), true),
+            "the chief's row survives the managing passes"
+        );
         let allocation = app.world.get::<LaborAllocation>(entity).unwrap();
         let index = allocation
             .assignments
@@ -17863,6 +17984,102 @@ mod tests {
                 .ladder_position()
                 > before,
             "the build progresses"
+        );
+    }
+
+    /// `(orderKind, chiefOwned)` of the forage row at `coord`, read off the ENCODED snapshot.
+    fn wire_forage_row(app: &mut bevy::prelude::App, coord: UVec2) -> (String, bool) {
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+        app.world
+            .insert_resource(core_sim::ViewerFaction(FactionId(0)));
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<core_sim::SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+        let row = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot")
+            .population()
+            .and_then(|section| section.populations())
+            .expect("the cohorts")
+            .iter()
+            .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+            .find(|row| {
+                row.kind().unwrap_or_default() == "forage"
+                    && row.targetX() == coord.x
+                    && row.targetY() == coord.y
+            })
+            .expect("the forage row is published");
+        (
+            row.orderKind().unwrap_or_default().to_string(),
+            row.chiefOwned(),
+        )
+    }
+
+    /// **WITH THE PLAYER OWNING THE FOOD ORDER ("crew it yourself"), AN APPROVED NEW-GROUND ROW STAYS
+    /// THE PLAYER'S**: not listed, not handed, published `orderKind` "" and `chiefOwned` false.
+    #[test]
+    fn an_approved_new_ground_row_stays_the_players_under_a_player_owned_food_order() {
+        let (mut app, faction, band) = proposal_world_with(true, false);
+        let band_ent = band_entity(&mut app, band);
+        let coord = find_lesson_ground_by(&app, true, &|tile| {
+            // A patch the chief files under the FOOD order (not the fodder one).
+            let target = LaborTarget::Forage {
+                tile,
+                floor: core_sim::DEFAULT_ESCAPEMENT_FLOOR,
+                species: None,
+                take_species: core_sim::TakeSelection::EVERYTHING,
+            };
+            core_sim::chief_proposals::probed_order_kind_of_row(
+                &app.world, faction, band_ent, &target,
+            ) == Some(core_sim::keep_on_hand::FOOD_KIND)
+        });
+        let entity = proposal_band_on(&mut app, faction, band, coord);
+        grant_seed_selection(&mut app, faction);
+        app.world
+            .get_mut::<LaborAllocation>(entity)
+            .unwrap()
+            .orders
+            .get_mut("food")
+            .expect("the chief took the food order on arrival")
+            .owner = core_sim::OrderOwner::Player;
+        core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+        let key = format!("plant:tended@{},{}", coord.x, coord.y);
+        let mut offer = wire_proposal(&mut app, band).expect("liveness: an offer");
+        for _ in 0..200 {
+            if offer.build_key == key {
+                break;
+            }
+            send_command_line(
+                &mut app,
+                &format!("defer_proposal 0 {band} {}", offer.build_key),
+            );
+            offer = wire_proposal(&mut app, band).expect("the patch is among the offers");
+        }
+        assert_eq!(offer.build_key, key);
+        send_command_line(&mut app, &format!("approve_proposal 0 {band}"));
+        let allocation = app.world.get::<LaborAllocation>(entity).unwrap();
+        // The new row is not listed. (Another patch the chief listed on arrival, while the food
+        // order was still his, stays listed: handing the order over unlists nothing.)
+        let new_key = format!("f:{},{}", coord.x, coord.y);
+        assert!(
+            !allocation.order_rows.contains_key(&new_key),
+            "{:?}",
+            allocation.order_rows
+        );
+        assert!(!allocation.handed_rows.contains(&new_key));
+        for _ in 0..4 {
+            app.update();
+        }
+        assert_eq!(
+            wire_forage_row(&mut app, coord),
+            (String::new(), false),
+            "the row is the player's"
         );
     }
 
@@ -17907,6 +18124,15 @@ mod tests {
             core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
         };
 
+        // The chief's takeover rows have brought in nothing yet: give every row a take that is no
+        // low-yield line, so the control is about the falling trigger alone.
+        {
+            const WELL_FED_ROW: f32 = 100.0;
+            let mut allocation = app.world.get_mut::<LaborAllocation>(entity).unwrap();
+            for yields in &mut allocation.last_yields {
+                yields.realized = WELL_FED_ROW;
+            }
+        }
         // Control: plenty of food (not Falling: the order is met) and no idle hands - no proposal.
         set_food(&mut app, 1_000_000.0);
         assert!(
@@ -17942,6 +18168,392 @@ mod tests {
             assert!(seen < 200, "the offers end");
         }
         assert!(seen > 0);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // THE THIRD PROPOSAL TRIGGER: hands working for almost nothing
+    // -----------------------------------------------------------------------------------------
+
+    /// One person's meal in the low-yield fixtures (a turn's need over the headcount).
+    const LOW_YIELD_MEAL: f32 = 1.0;
+    /// A row's realized headline for three heads that is far under half a meal each.
+    const ALMOST_NOTHING: f32 = 0.07;
+    /// A row's realized headline for three heads that is well over half a meal each.
+    const PLENTY: f32 = 3.0;
+    /// A row whose yield record no turn has written: every field at `SourceYield::ZERO`.
+    const NOT_YET_WORKED: f32 = 0.0;
+    /// The heads on the low-yield fixture's chief row.
+    const LOW_YIELD_HEADS: u32 = 3;
+
+    /// A led band on lesson ground with Seed Selection, no idle hand, food met, and a food row on
+    /// another patch the chief lists with `heads` bare heads, `keepers` keepers and `realized`.
+    fn low_yield_scene(
+        keepers: u32,
+        heads: u32,
+        realized: f32,
+        listed: bool,
+    ) -> (bevy::prelude::App, u64, Entity, UVec2) {
+        let (mut app, faction, band) = proposal_world_with(true, true);
+        let coord = find_lesson_ground(&app, true);
+        let entity = proposal_band_on(&mut app, faction, band, coord);
+        grant_seed_selection(&mut app, faction);
+        let (_, patches) = band_entity_and_patches(&app, BandId(band), 4);
+        let worked = patches
+            .into_iter()
+            .find(|patch| *patch != coord)
+            .expect("a second patch");
+        app.world.entity_mut(entity).insert(core_sim::BandBench {
+            orders: vec![{
+                const MORE_HANDS_THAN_ANY_BAND: u32 = 1_000_000;
+                let mut order = core_sim::BenchOrder::new("spear", 1);
+                order.crew = core_sim::BenchCrew {
+                    at_tool: 0,
+                    by_hand: MORE_HANDS_THAN_ANY_BAND,
+                };
+                order
+            }],
+            ..Default::default()
+        });
+        {
+            let mut cohort = app.world.get_mut::<PopulationCohort>(entity).unwrap();
+            cohort.last_food_need = cohort.size as f32 * LOW_YIELD_MEAL;
+            cohort
+                .stores
+                .reset_food("fresh_plant", scalar_from_f32(1_000_000.0));
+        }
+        {
+            let mut allocation = app.world.get_mut::<LaborAllocation>(entity).unwrap();
+            // Only the fixture's row: the chief's takeover rows would count too.
+            allocation.clear();
+            allocation.orders.insert(
+                "food".to_string(),
+                core_sim::BandOrder {
+                    target: 20,
+                    priority: core_sim::SourcePriority::Normal,
+                    owner: core_sim::OrderOwner::Chief,
+                },
+            );
+            let target = LaborTarget::Forage {
+                tile: worked,
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
+                species: None,
+                take_species: core_sim::TakeSelection::EVERYTHING,
+            };
+            allocation.set_staffed_row(target.clone(), None, None);
+            if listed {
+                let key = core_sim::keep_on_hand::source_key(&target).unwrap();
+                allocation.order_rows.insert(key, "food".to_string());
+            }
+            let index = allocation
+                .assignments
+                .iter()
+                .position(|row| row.target.same_source(&target))
+                .unwrap();
+            allocation.assignments[index].staffing.keepers = keepers;
+            allocation.assignments[index].staffing.bare = heads;
+            allocation.last_yields[index].realized = realized;
+        }
+        core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+        (app, band, entity, worked)
+    }
+
+    /// **LOW-YIELD HANDS GET A NEW-GROUND PROPOSAL, AND ONLY THAT**: no idle hand, food met, a chief
+    /// food row whose three heads bring home almost nothing. The text leads with the count, the
+    /// trigger rides the wire, no climb on a worked source is offered, and every offer is new ground.
+    #[test]
+    fn hands_working_for_almost_nothing_make_the_chief_propose_new_ground_only() {
+        let (mut app, band, _, worked) = low_yield_scene(0, LOW_YIELD_HEADS, ALMOST_NOTHING, true);
+        let offer = wire_proposal(&mut app, band).expect("low-yield hands propose");
+        assert_eq!(offer.trigger, "low_yield");
+        assert_eq!(offer.idle, 0, "the idle count stays the true one");
+        assert_eq!(offer.escalation, 1, "the notice rung");
+        assert!(
+            offer.text.starts_with(&format!(
+                "{LOW_YIELD_HEADS} hands working for almost nothing \u{b7} Orrin proposes:"
+            )),
+            "{}",
+            offer.text
+        );
+        let worked_suffix = format!("@{},{}", worked.x, worked.y);
+        let mut seen = 0;
+        while let Some(offer) = wire_proposal(&mut app, band) {
+            assert!(
+                offer.build_key.starts_with("plant:tended@")
+                    && !offer.build_key.ends_with(&worked_suffix),
+                "only new ground, never a climb on the worked patch: {offer:?}"
+            );
+            send_command_line(
+                &mut app,
+                &format!("defer_proposal 0 {band} {}", offer.build_key),
+            );
+            seen += 1;
+            assert!(seen < 200, "the offers end");
+        }
+        assert!(seen > 0, "liveness: there was new ground to offer");
+    }
+
+    /// A row above the line, a keeper-only row and a player row propose nothing; one head reads
+    /// "1 hand".
+    #[test]
+    fn a_row_above_the_line_a_keeper_only_row_and_a_player_row_are_not_counted() {
+        let (mut app, band, _, _) = low_yield_scene(0, LOW_YIELD_HEADS, PLENTY, true);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "heads bringing home plenty are not low-yield"
+        );
+        let (mut app, band, _, _) = low_yield_scene(LOW_YIELD_HEADS, 0, ALMOST_NOTHING, true);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "a keeper-only row has no take head"
+        );
+        let (mut app, band, _, _) = low_yield_scene(0, LOW_YIELD_HEADS, ALMOST_NOTHING, false);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "a player's row is not the chief's to judge"
+        );
+        // A row no turn has worked yet (its yield record still empty) is not judged.
+        let (mut app, band, _, _) = low_yield_scene(0, LOW_YIELD_HEADS, NOT_YET_WORKED, true);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "a row nobody has worked yet is not working for almost nothing"
+        );
+        let (mut app, band, _, _) = low_yield_scene(0, 1, ALMOST_NOTHING, true);
+        let offer = wire_proposal(&mut app, band).expect("liveness: one low-yield head proposes");
+        assert!(
+            offer.text.starts_with("1 hand working for almost nothing"),
+            "{}",
+            offer.text
+        );
+    }
+
+    /// **PRECEDENCE**: idle hands win, then a falling food order, then low-yield hands.
+    #[test]
+    fn idle_hands_and_a_falling_order_outrank_the_low_yield_trigger() {
+        let (mut app, band, entity, _) = low_yield_scene(0, LOW_YIELD_HEADS, ALMOST_NOTHING, true);
+        assert_eq!(
+            wire_proposal(&mut app, band).map(|offer| offer.trigger),
+            Some("low_yield".to_string())
+        );
+        // Falling: a small larder under a target nothing fills.
+        {
+            let mut cohort = app.world.get_mut::<PopulationCohort>(entity).unwrap();
+            cohort
+                .stores
+                .reset_food("fresh_plant", scalar_from_f32(1.0));
+            app.world
+                .get_mut::<LaborAllocation>(entity)
+                .unwrap()
+                .orders
+                .get_mut("food")
+                .unwrap()
+                .target = 1000;
+        }
+        core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+        assert_eq!(
+            wire_proposal(&mut app, band).map(|offer| offer.trigger),
+            Some("food_falling".to_string()),
+            "a falling order wins over low-yield hands"
+        );
+        // Idle hands: the bench no longer takes everyone.
+        app.world
+            .entity_mut(entity)
+            .insert(core_sim::BandBench::default());
+        core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+        assert_eq!(
+            wire_proposal(&mut app, band).map(|offer| offer.trigger),
+            Some("idle".to_string()),
+            "idle hands win over everything"
+        );
+    }
+
+    /// **THE LEVER SCALES THE LINE**: the same row is above a small share of a meal and below a big one.
+    #[test]
+    fn the_low_yield_share_moves_the_line() {
+        let (mut app, band, _, _) = low_yield_scene(0, LOW_YIELD_HEADS, ALMOST_NOTHING, true);
+        let set_share = |app: &mut bevy::prelude::App, share: f32| {
+            let mut handle = app.world.resource_mut::<LaborConfigHandle>();
+            let mut config = (*handle.0).clone();
+            config.band_orders.proposal_low_yield_share = share;
+            handle.0 = std::sync::Arc::new(config);
+            core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+        };
+        // 0.07 / 3 heads = 0.0233 a head: under 0.5 of a meal, over 0.01 of one.
+        const ROW_ABOVE_THIS_LINE: f32 = 0.01;
+        const ROW_BELOW_THIS_LINE: f32 = 0.5;
+        set_share(&mut app, ROW_ABOVE_THIS_LINE);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "a small share puts the row above the line"
+        );
+        set_share(&mut app, ROW_BELOW_THIS_LINE);
+        assert!(
+            wire_proposal(&mut app, band).is_some(),
+            "a big share puts it below the line"
+        );
+    }
+
+    /// The most builders the fixtures' rack could take.
+    const RACK_CAP: u32 = 3;
+
+    /// Put wood in the band's store, so a build that eats it is not stalled on materials.
+    fn stock_wood(app: &mut bevy::prelude::App, entity: Entity) {
+        const WOOD_ON_HAND: u32 = 1000;
+        let materials = app
+            .world
+            .resource::<core_sim::MaterialsConfigHandle>()
+            .get();
+        let readings: std::collections::BTreeMap<String, f32> = materials
+            .material("wood")
+            .expect("the roster carries wood")
+            .characteristics
+            .iter()
+            .map(|axis| (axis.clone(), core_sim::OPENING_MATERIAL_READING))
+            .collect();
+        let key = materials
+            .band_key("wood", &readings)
+            .expect("wood has a band key");
+        app.world
+            .get_mut::<PopulationCohort>(entity)
+            .expect("cohort")
+            .stores
+            .deposit_material("wood", key, Scalar::from_u32(WOOD_ON_HAND), &readings);
+    }
+
+    /// The drying rack's declaration, taken from the idle fixture after an approval.
+    fn approved_rack_declaration() -> (
+        core_sim::BuildDeclaration,
+        core_sim::TileImprovementRegistry,
+    ) {
+        let (mut app, faction, band) = proposal_world(true);
+        send_command_line(&mut app, &format!("approve_proposal {} {band}", faction.0));
+        let entity = band_entity(&mut app, band);
+        let declaration = app
+            .world
+            .get::<LaborAllocation>(entity)
+            .unwrap()
+            .builds
+            .first()
+            .cloned()
+            .expect("the approval declared the rack");
+        // The approval placed the rack's record on the band improvements; a fixture that borrows
+        // the declaration borrows the record it stands on.
+        let registry = app
+            .world
+            .resource::<core_sim::TileImprovementRegistry>()
+            .clone();
+        (declaration, registry)
+    }
+
+    /// Declare the rack on `entity` (once) and stamp the staffing's last word on it: `staffed` of
+    /// `RACK_CAP` builders. Then the chief looks again.
+    fn rack_staffed(
+        app: &mut bevy::prelude::App,
+        entity: Entity,
+        (rack, registry): &(
+            core_sim::BuildDeclaration,
+            core_sim::TileImprovementRegistry,
+        ),
+        staffed: u32,
+    ) {
+        app.world.insert_resource(registry.clone());
+        {
+            let mut allocation = app.world.get_mut::<LaborAllocation>(entity).unwrap();
+            if !allocation.has_build(&rack.source) {
+                allocation.builds.push(rack.clone());
+            }
+            allocation.apply_build_crews(vec![(
+                rack.source.clone(),
+                core_sim::BuildCrew {
+                    kitted: 0,
+                    bare: staffed,
+                    cap: RACK_CAP,
+                    fed_first: false,
+                },
+            )]);
+        }
+        core_sim::chief_proposals::refresh_proposals(&mut app.world, false);
+    }
+
+    /// **THE CHIEF WAITS UNTIL THE BUILDS UNDERWAY ARE FULL**, on every trigger: a build at 1 of 3
+    /// builders holds the offer back, the same build at 3 of 3 does not.
+    #[test]
+    fn a_chief_offers_nothing_while_a_build_is_short_of_builders() {
+        let rack = approved_rack_declaration();
+        // Idle hands.
+        let (mut app, _, band) = proposal_world(true);
+        let entity = band_entity(&mut app, band);
+        stock_wood(&mut app, entity);
+        rack_staffed(&mut app, entity, &rack, 1);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "a build at 1 of {RACK_CAP} holds the idle-hands offer back"
+        );
+        rack_staffed(&mut app, entity, &rack, RACK_CAP);
+        assert_eq!(
+            wire_proposal(&mut app, band).map(|offer| offer.trigger),
+            Some("idle".to_string()),
+            "the same build at its cap leaves him free to offer"
+        );
+        // Low-yield hands, then a falling food order.
+        let (mut app, band, entity, _) = low_yield_scene(0, LOW_YIELD_HEADS, ALMOST_NOTHING, true);
+        stock_wood(&mut app, entity);
+        rack_staffed(&mut app, entity, &rack, 1);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "a build at 1 of {RACK_CAP} holds the low-yield offer back"
+        );
+        rack_staffed(&mut app, entity, &rack, RACK_CAP);
+        assert_eq!(
+            wire_proposal(&mut app, band).map(|offer| offer.trigger),
+            Some("low_yield".to_string()),
+            "liveness: the same band offers once the build is full"
+        );
+        {
+            let mut cohort = app.world.get_mut::<PopulationCohort>(entity).unwrap();
+            cohort
+                .stores
+                .reset_food("fresh_plant", scalar_from_f32(1.0));
+            app.world
+                .get_mut::<LaborAllocation>(entity)
+                .unwrap()
+                .orders
+                .get_mut("food")
+                .unwrap()
+                .target = 1000;
+        }
+        rack_staffed(&mut app, entity, &rack, 1);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "a build at 1 of {RACK_CAP} holds the falling-food offer back"
+        );
+        rack_staffed(&mut app, entity, &rack, RACK_CAP);
+        assert_eq!(
+            wire_proposal(&mut app, band).map(|offer| offer.trigger),
+            Some("food_falling".to_string()),
+            "liveness: the same band offers once the build is full"
+        );
+    }
+
+    /// **A BUILD THAT CANNOT TAKE BUILDERS DOES NOT HOLD HIM BACK**: the rack eats wood, and with none
+    /// in the store it is stalled on materials however few builders it holds.
+    #[test]
+    fn a_materials_stalled_build_does_not_hold_the_chief_back() {
+        let rack = approved_rack_declaration();
+        let (mut app, _, band) = proposal_world(true);
+        let entity = band_entity(&mut app, band);
+        // No wood: the fixture's store was cleared of materials.
+        rack_staffed(&mut app, entity, &rack, 0);
+        assert!(
+            wire_proposal(&mut app, band).is_some(),
+            "a stalled build at 0 of {RACK_CAP} leaves the chief free to offer"
+        );
+        // Control: the same build with wood on hand holds him back.
+        stock_wood(&mut app, entity);
+        rack_staffed(&mut app, entity, &rack, 0);
+        assert!(
+            wire_proposal(&mut app, band).is_none(),
+            "liveness: with wood the build could take builders and holds the offer back"
+        );
     }
 
     /// **A stale proposal is refused, not declared**: a band with no proposal answers an approval with
@@ -20561,6 +21173,15 @@ mod tests {
     /// Off-site fertile ground with a patch that some lesson would admit (`NeedsLesson` to a people
     /// holding none), WATERED or DRY as asked - Seed Selection opens the watered, Worked Land the dry.
     fn find_lesson_ground(app: &bevy::prelude::App, watered: bool) -> UVec2 {
+        find_lesson_ground_by(app, watered, &|_| true)
+    }
+
+    /// [`find_lesson_ground`] restricted to the tiles `accept` admits.
+    fn find_lesson_ground_by(
+        app: &bevy::prelude::App,
+        watered: bool,
+        accept: &dyn Fn(UVec2) -> bool,
+    ) -> UVec2 {
         let (width, height) = {
             let registry = app.world.resource::<TileRegistry>();
             (registry.width, registry.height)
@@ -20582,7 +21203,7 @@ mod tests {
                         flora.species.get(&crop).is_some_and(|def| {
                             def.cultivation_ceiling
                                 .is_none_or(|ceiling| ceiling != shipped::plant_wild())
-                        })
+                        }) && accept(*coord)
                     }
             })
             .unwrap_or_else(|| {
@@ -23449,21 +24070,10 @@ mod tests {
         app.world
             .entity_mut(second)
             .insert(BandId(SECOND_KEEPING_BAND_ID));
-        handle_assign_labor(
-            &mut app,
-            faction,
-            Some(SECOND_KEEPING_BAND_ID),
-            "forage".to_string(),
-            LAPSED_CREW,
-            Some(coord.x),
-            Some(coord.y),
-            None,
-            None,
-            Some(SUSTAIN_FLOOR),
-            None,
-            Vec::new(),
-            false,
-        );
+        // **Staged directly**: `assign_labor` refuses a second band of one people a row on a source
+        // another holds (`source_holders`), so this is the duplicate an old save can carry - the
+        // keeping split across bands is what the test is about.
+        stage_a_duplicate_forage_row(&mut app, second, coord, LAPSED_CREW);
         resolve_labor(&mut app);
         let site = app
             .world
@@ -23501,6 +24111,31 @@ mod tests {
         );
     }
 
+    /// A forage row on `coord` for `band` written straight onto its allocation (no command), at the
+    /// sustain floor and a Max of `crew`: the duplicate row an old save can hold, which the command
+    /// path now refuses a second band of one people.
+    fn stage_a_duplicate_forage_row(
+        app: &mut bevy::prelude::App,
+        band: Entity,
+        coord: UVec2,
+        crew: u32,
+    ) {
+        app.world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band's allocation")
+            .set_staffed_row(
+                LaborTarget::Forage {
+                    tile: coord,
+                    floor: SUSTAIN_FLOOR,
+                    species: None,
+                    take_species: core_sim::TakeSelection::EVERYTHING,
+                },
+                Some(crew),
+                None,
+            );
+        core_sim::staffing::restaff_band(&mut app.world, band);
+    }
+
     /// ⛔ **A SLIP LINE LINKS TO THE BAND WITH THE LARGEST CREW ON THE SITE** — `band=<BandId>`, so
     /// the event dock can open that band's Work row. Two bands of one people work a finished Field,
     /// both short of its bill; the second carries the bigger crew, so the line names it.
@@ -23530,26 +24165,25 @@ mod tests {
             .get_mut::<BandEquipment>(second)
             .expect("a spawned band carries a ledger")
             .restore_batches("hoes", Vec::new());
-        for (band, crew) in [
-            (LAPSED_BAND_ID, SMALL_CREW),
-            (SECOND_KEEPING_BAND_ID, LARGE_CREW),
-        ] {
-            handle_assign_labor(
-                &mut app,
-                faction,
-                Some(band),
-                "forage".to_string(),
-                crew,
-                Some(coord.x),
-                Some(coord.y),
-                None,
-                None,
-                Some(SUSTAIN_FLOOR),
-                None,
-                Vec::new(),
-                false,
-            );
-        }
+        handle_assign_labor(
+            &mut app,
+            faction,
+            Some(LAPSED_BAND_ID),
+            "forage".to_string(),
+            SMALL_CREW,
+            Some(coord.x),
+            Some(coord.y),
+            None,
+            None,
+            Some(SUSTAIN_FLOOR),
+            None,
+            Vec::new(),
+            false,
+        );
+        // **The second band's row is staged directly**: `assign_labor` refuses a second band of one
+        // people a row on a source another holds (`source_holders`), so this is the duplicate an old
+        // save can carry.
+        stage_a_duplicate_forage_row(&mut app, second, coord, LARGE_CREW);
         app.world
             .resource_mut::<ForageRegistry>()
             .patch_mut(coord)
@@ -33149,6 +33783,132 @@ mod tests {
         );
     }
 
+    /// **A TRIBE MEMBER'S SCOUTING RANGE IS THE TRIBE'S** (#862): `assign_labor ... scout` naming another
+    /// range on a member is refused `scouting_set_by_tribe` and changes nothing, restating the current
+    /// range with a kit applies the kit alone, `tribe_scout` (through the real handler) sets the one
+    /// range and echoes it, and a band in no tribe is untouched.
+    #[test]
+    fn a_tribe_members_scout_command_is_refused_and_the_tribe_sets_the_range() {
+        let mut app = build_world_app();
+        let (band, entity) = fully_staffed_band(&mut app);
+        let faction = FactionId(0);
+        let scout = |app: &mut bevy::prelude::App, tiles: u32| {
+            handle_assign_labor(
+                app,
+                faction,
+                Some(band.0),
+                "scout".to_string(),
+                tiles,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Vec::new(),
+                false,
+            );
+        };
+        // The control: in no tribe the command works.
+        scout(&mut app, 2);
+        assert_eq!(
+            app.world
+                .get::<LaborAllocation>(entity)
+                .unwrap()
+                .scouting_range_tiles(),
+            2
+        );
+        // Seat the band in a tribe with a second (absent) member.
+        app.world
+            .resource_mut::<core_sim::TribeRegistry>()
+            .insert(core_sim::Tribe {
+                id: core_sim::TribeId(0),
+                faction,
+                name: "Test tribe".to_string(),
+                members: [band, BandId(u64::MAX)].into_iter().collect(),
+                leader: core_sim::TribeLeader {
+                    name: "Orrin".to_string(),
+                    kind: core_sim::TribeLeaderKind::ParamountChief,
+                    since_turn: 1,
+                    band,
+                },
+                since_turn: 1,
+                works: Vec::new(),
+                levy: core_sim::LevyCeiling::default(),
+                scouting_range: 2,
+                carriers: Vec::new(),
+            });
+        scout(&mut app, 7);
+        assert_eq!(
+            app.world
+                .get::<LaborAllocation>(entity)
+                .unwrap()
+                .scouting_range_tiles(),
+            2,
+            "the member's own scout command changed nothing"
+        );
+        let refused = app.world.resource::<CommandEventLog>().iter().any(|entry| {
+            entry
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("scouting_set_by_tribe"))
+                || entry.label.contains("scouting_set_by_tribe")
+        });
+        assert!(refused, "the refusal names scouting_set_by_tribe");
+        // The kit is still the band's: restating the band's current range with a kit applies the
+        // kit alone (the range stays the tribe's).
+        let kitted = |app: &mut bevy::prelude::App, kit: &str| {
+            handle_assign_labor(
+                app,
+                faction,
+                Some(band.0),
+                "scout".to_string(),
+                2,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(kit.to_string()),
+                Vec::new(),
+                false,
+            );
+            let allocation = app.world.get::<LaborAllocation>(entity).unwrap();
+            let row = allocation
+                .assignments
+                .iter()
+                .find(|row| matches!(row.target, LaborTarget::Scout))
+                .expect("the member keeps its Scout row");
+            (row.kit.clone(), allocation.scouting_range_tiles())
+        };
+        let (bare_kit, range) = kitted(&mut app, "none");
+        let (armed_kit, range_after) = kitted(&mut app, "wayfinding");
+        assert_eq!((range, range_after), (2, 2), "the range stayed the tribe's");
+        assert_ne!(bare_kit, armed_kit, "the kit picker's choice applied");
+        handle_tribe_order(
+            &mut app,
+            faction,
+            band.0,
+            sim_runtime::TribeOrderAction::Scout { range: 5 },
+        );
+        assert_eq!(
+            app.world
+                .resource::<core_sim::TribeRegistry>()
+                .get(core_sim::TribeId(0))
+                .unwrap()
+                .scouting_range,
+            5
+        );
+        assert_eq!(
+            app.world
+                .get::<LaborAllocation>(entity)
+                .unwrap()
+                .scouting_range_tiles(),
+            5,
+            "the pass put the tribe's range on the member's row"
+        );
+    }
+
     /// **OUTFIT THE BAND WITH EXACTLY WHAT ITS WORK WANTS AND EVERY ROW HOLDS ITS FULL HOLD-AND-REACH
     /// CREW** - the wants are sized from passes 1 and 2, so the real staffing keeps each row's keepers
     /// and kitted crew from those passes; the drawdown hands (pass 3) then work with any unit the
@@ -33199,6 +33959,318 @@ mod tests {
                 crew.kitted
             );
         }
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // ONE BAND OF A PEOPLE PER TAKE SOURCE (`core_sim::source_holders`)
+    // -----------------------------------------------------------------------------------------
+
+    /// The second band's durable id in the one-band-per-source fixtures.
+    const SECOND_BAND_OF_THE_PEOPLE: u64 = 9_001;
+    /// The first band's name, which the refusal quotes.
+    const FIRST_BAND_NAME: &str = "Ashfell";
+
+    /// Every refusal line on the three take sources' channels.
+    fn take_source_refusals(app: &bevy::prelude::App) -> Vec<String> {
+        app.world
+            .resource::<CommandEventLog>()
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.kind,
+                    CommandEventKind::Forage
+                        | CommandEventKind::Hunt
+                        | CommandEventKind::Extraction
+                ) && entry.label.ends_with(" failed")
+            })
+            .filter_map(|entry| entry.detail.clone())
+            .collect()
+    }
+
+    /// `(workers rows)` the encoded frame publishes for `band`.
+    fn published_rows_of(app: &mut bevy::prelude::App, band: u64) -> usize {
+        app.world
+            .insert_resource(core_sim::ViewerFaction(FactionId(0)));
+        recapture_snapshot_in_place(&mut app.world);
+        app.world
+            .resource::<SnapshotHistory>()
+            .last_snapshot()
+            .expect("a snapshot was captured")
+            .populations
+            .iter()
+            .filter(|cohort| cohort.band_id == band)
+            .map(|cohort| cohort.labor_assignments.len())
+            .sum()
+    }
+
+    #[allow(clippy::too_many_arguments)] // a test helper: one argument per command field
+    fn assign_for_band(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        band: u64,
+        role: &str,
+        at: UVec2,
+        fauna_id: Option<String>,
+        material: Option<&str>,
+        workers: u32,
+    ) {
+        handle_assign_labor(
+            app,
+            faction,
+            Some(band),
+            role.to_string(),
+            workers,
+            Some(at.x),
+            Some(at.y),
+            fauna_id,
+            material.map(str::to_string),
+            None,
+            None,
+            Vec::new(),
+            false,
+        );
+    }
+
+    /// Two bands of one people (or of two) standing together on the harness world.
+    fn two_bands_of(
+        second_faction: FactionId,
+    ) -> (bevy::prelude::App, BandId, Entity, Entity, UVec2) {
+        let mut app = build_test_app();
+        app.update();
+        let first = BandId(starting_band_id(&mut app, FactionId(0)));
+        let (first_entity, patches) = band_entity_and_patches(&app, first, 1);
+        app.world
+            .entity_mut(first_entity)
+            .insert(BandName(FIRST_BAND_NAME.to_string()));
+        let tile = app
+            .world
+            .get::<PopulationCohort>(first_entity)
+            .expect("the band's cohort")
+            .current_tile;
+        let second = spawn_idle_band(&mut app, second_faction, tile);
+        app.world
+            .entity_mut(second)
+            .insert(BandId(SECOND_BAND_OF_THE_PEOPLE));
+        (app, first, first_entity, second, patches[0])
+    }
+
+    /// **A NEW FORAGE ROW ON A PATCH ANOTHER BAND OF THE PEOPLE WORKS IS REFUSED, NAMING THAT BAND**;
+    /// the frame shows no new row. A band of ANOTHER people is not refused, the working band editing
+    /// its own row is not refused, and the staffing preview refuses the same case with its token.
+    #[test]
+    fn a_forage_row_on_a_patch_another_band_of_the_people_works_is_refused() {
+        let (mut app, first, first_entity, _, patch) = two_bands_of(FactionId(0));
+        forage_row(&mut app, first, patch, 0);
+        assert!(
+            app.world
+                .get::<LaborAllocation>(first_entity)
+                .unwrap()
+                .assignments
+                .iter()
+                .any(
+                    |row| matches!(&row.target, LaborTarget::Forage { tile, .. } if *tile == patch)
+                ),
+            "liveness: the first band works the patch"
+        );
+
+        assign_for_band(
+            &mut app,
+            FactionId(0),
+            SECOND_BAND_OF_THE_PEOPLE,
+            "forage",
+            patch,
+            None,
+            None,
+            0,
+        );
+        let expected = format!(
+            "{FIRST_BAND_NAME} already works ({}, {}).",
+            patch.x, patch.y
+        );
+        assert!(
+            take_source_refusals(&app).contains(&expected),
+            "the refusal names the band: {:?}",
+            take_source_refusals(&app)
+        );
+        assert_eq!(
+            published_rows_of(&mut app, SECOND_BAND_OF_THE_PEOPLE),
+            0,
+            "the frame shows no new row"
+        );
+
+        // The staffing preview refuses the same case.
+        let ask = sim_runtime::StaffingPreviewQuery {
+            faction_id: 0,
+            band_id: SECOND_BAND_OF_THE_PEOPLE,
+            source: sim_runtime::WorkPartySource::Forage {
+                x: patch.x,
+                y: patch.y,
+                take_species: Vec::new(),
+            },
+            kit_id: String::new(),
+            floor: DEFAULT_ESCAPEMENT_FLOOR,
+            priority: String::new(),
+            max_workers: 0,
+        };
+        match core_sim::forecast_query::answer_forecast_query(
+            &mut app.world,
+            &sim_runtime::QueryPayload::StaffingPreview(ask),
+        ) {
+            sim_runtime::QueryReply::Error(token) => {
+                assert_eq!(token, sim_runtime::query_error::WORKED_BY_ANOTHER_BAND)
+            }
+            other => panic!("the preview must refuse, got {other:?}"),
+        }
+
+        // Editing the row the band already holds is never refused.
+        let before = take_source_refusals(&app).len();
+        forage_row(&mut app, first, patch, 3);
+        assert_eq!(
+            take_source_refusals(&app).len(),
+            before,
+            "an edit of the band's own row says nothing"
+        );
+        assert_eq!(
+            app.world
+                .get::<LaborAllocation>(first_entity)
+                .unwrap()
+                .assignments
+                .iter()
+                .find(
+                    |row| matches!(&row.target, LaborTarget::Forage { tile, .. } if *tile == patch)
+                )
+                .and_then(|row| row.max_workers),
+            Some(3),
+            "the edit landed"
+        );
+    }
+
+    /// A band of another people on the same patch does not refuse the new row.
+    #[test]
+    fn a_band_of_another_people_is_not_refused_the_patch() {
+        let (mut app, first, _, second, patch) = two_bands_of(FactionId(1));
+        forage_row(&mut app, first, patch, 0);
+        assign_for_band(
+            &mut app,
+            FactionId(1),
+            SECOND_BAND_OF_THE_PEOPLE,
+            "forage",
+            patch,
+            None,
+            None,
+            0,
+        );
+        assert!(
+            app.world
+                .get::<LaborAllocation>(second)
+                .unwrap()
+                .assignments
+                .iter()
+                .any(
+                    |row| matches!(&row.target, LaborTarget::Forage { tile, .. } if *tile == patch)
+                ),
+            "the other people's band got its row: {:?}",
+            take_source_refusals(&app)
+        );
+    }
+
+    /// **A HUNT ROW ON A HERD ANOTHER BAND OF THE PEOPLE HUNTS IS REFUSED, NAMING THE HERD.**
+    #[test]
+    fn a_hunt_row_on_a_herd_another_band_of_the_people_hunts_is_refused() {
+        let (mut app, _, first_entity, _, _) = two_bands_of(FactionId(0));
+        let (herd_id, species, at) = {
+            let registry = app.world.resource::<HerdRegistry>();
+            let herd = registry.entries().first().expect("the world has a herd");
+            (herd.id.clone(), herd.species.clone(), herd.position())
+        };
+        app.world
+            .get_mut::<LaborAllocation>(first_entity)
+            .unwrap()
+            .set_staffed_row(
+                LaborTarget::Hunt {
+                    fauna_id: herd_id.clone(),
+                    floor: DEFAULT_ESCAPEMENT_FLOOR,
+                    move_with_herd: false,
+                },
+                None,
+                None,
+            );
+        assign_for_band(
+            &mut app,
+            FactionId(0),
+            SECOND_BAND_OF_THE_PEOPLE,
+            "hunt",
+            at,
+            Some(herd_id),
+            None,
+            0,
+        );
+        let expected = format!("{FIRST_BAND_NAME} already hunts the {species}.");
+        assert!(
+            take_source_refusals(&app).contains(&expected),
+            "the refusal names the band and the herd: {:?}",
+            take_source_refusals(&app)
+        );
+        assert_eq!(published_rows_of(&mut app, SECOND_BAND_OF_THE_PEOPLE), 0);
+    }
+
+    /// **AN EXTRACT ROW ON A WORKING ANOTHER BAND OF THE PEOPLE WORKS IS REFUSED, NAMING THE MATERIAL.**
+    #[test]
+    fn an_extract_row_on_a_working_another_band_of_the_people_works_is_refused() {
+        let mut app = build_test_app();
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::AlpineMountain);
+        let first = spawn_idle_band(&mut app, FactionId(0), tile);
+        app.world
+            .entity_mut(first)
+            .insert((BandId(11), BandName(FIRST_BAND_NAME.to_string())));
+        let second = spawn_idle_band(&mut app, FactionId(0), tile);
+        app.world
+            .entity_mut(second)
+            .insert(BandId(SECOND_BAND_OF_THE_PEOPLE));
+        assign_for_band(
+            &mut app,
+            FactionId(0),
+            11,
+            "extract",
+            WORKING,
+            None,
+            Some("stone"),
+            1,
+        );
+        assert_eq!(
+            app.world
+                .get::<LaborAllocation>(first)
+                .unwrap()
+                .assignments
+                .len(),
+            1,
+            "liveness: the first band works the stone"
+        );
+        assign_for_band(
+            &mut app,
+            FactionId(0),
+            SECOND_BAND_OF_THE_PEOPLE,
+            "extract",
+            WORKING,
+            None,
+            Some("stone"),
+            1,
+        );
+        let expected = format!(
+            "{FIRST_BAND_NAME} already works the stone at ({}, {}).",
+            WORKING.x, WORKING.y
+        );
+        assert!(
+            take_source_refusals(&app).contains(&expected),
+            "the refusal names the band and the material: {:?}",
+            take_source_refusals(&app)
+        );
+        assert!(app
+            .world
+            .get::<LaborAllocation>(second)
+            .unwrap()
+            .assignments
+            .is_empty());
     }
 }
 

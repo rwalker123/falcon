@@ -477,6 +477,25 @@ func _food_falling_row(entry: Dictionary) -> Dictionary:
         HudAttentionVocab.ATTENTION_PROPOSAL: block,
     }
 
+## The row a LOW-YIELD proposal (new ground, raised because the food rows pay almost nothing) rides, `{}`
+## unless the band's published proposal has that trigger. Idle row first, then the falling row, then this
+## one: one proposal is never on two rows.
+func _low_yield_row(entry: Dictionary) -> Dictionary:
+    if not _idle_workers_row(entry).is_empty() or not _food_falling_row(entry).is_empty():
+        return {}
+    var block := _proposal_block_of(entry)
+    if String(block.get(HudAttentionVocab.PROPOSAL_TRIGGER_KEY, "")) != HudAttentionVocab.PROPOSAL_TRIGGER_LOW_YIELD:
+        return {}
+    return {
+        "kind": HudAttentionVocab.ATTENTION_KIND_LOW_YIELD,
+        "owner": int(entry.get("entity", -1)),
+        "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
+        "label": HudAttentionVocab.ATTENTION_LOW_YIELD_LABEL_FORMAT % HudFormat.band_name(entry),
+        "detail": HudAttentionVocab.ATTENTION_LOW_YIELD_DETAIL,
+        "x": int(entry.get("current_x", -1)), "y": int(entry.get("current_y", -1)),
+        HudAttentionVocab.ATTENTION_PROPOSAL: block,
+    }
+
 ## The band half with every idle-workers row recomputed against the CURRENT pending overlay. A stepper
 ## press changes `people_idle` but not the snapshot, and a full `build_band_attention` then would run
 ## the losing-population producer against `prev_band_sizes` that ingest has already overwritten and so
@@ -492,6 +511,8 @@ func refresh_idle_rows(attention: Array, player_bands: Array) -> Array:
             var row := _idle_workers_row(band_variant)
             if row.is_empty():
                 row = _food_falling_row(band_variant)
+            if row.is_empty():
+                row = _low_yield_row(band_variant)
             if not row.is_empty():
                 out.append(row)
     return out
@@ -500,7 +521,8 @@ func refresh_idle_rows(attention: Array, player_bands: Array) -> Array:
 static func _is_idle_or_falling_row(row: Dictionary) -> bool:
     var kind := String(row.get("kind", ""))
     return kind == HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS \
-        or kind == HudAttentionVocab.ATTENTION_KIND_FOOD_FALLING
+        or kind == HudAttentionVocab.ATTENTION_KIND_FOOD_FALLING \
+        or kind == HudAttentionVocab.ATTENTION_KIND_LOW_YIELD
 
 func build_band_attention(player_bands: Array, player_expeditions: Array) -> Array:
     var attention: Array = []
@@ -558,6 +580,10 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
             var falling_row := _food_falling_row(entry)
             if not falling_row.is_empty():
                 attention.append(falling_row)
+            else:
+                var low_yield_row := _low_yield_row(entry)
+                if not low_yield_row.is_empty():
+                    attention.append(low_yield_row)
         # Producer 5 — a starving pen this band keeps (amber/warn; see HudAttentionVocab.ATTENTION_KIND_STARVING_PEN
         # for why it is not critical). Keyed off the band's OWN Corral assignments, never a scan of
         # every herd on the wire: that is what makes it the PLAYER's pen (a herd carries no owner

@@ -86,6 +86,11 @@ pub struct Cost {
     /// `cultivate` / `sow`; a `builders` pool is a row too. Two proposals
     /// setting one row would each overwrite the other's count.
     pub rows: Vec<String>,
+    /// **The take sources this proposal opens or restates a row on, whichever band it names** -
+    /// `<kind>:<x>,<y>` / `<kind>:<herd id>`. The sim refuses a second band of one people a row on a
+    /// source another holds, so two proposals naming one source for DIFFERENT bands in one turn
+    /// cannot both stand: the first takes it.
+    pub sources: Vec<String>,
 }
 
 impl Cost {
@@ -98,6 +103,7 @@ impl Cost {
         let mut moves = Vec::new();
         let mut splits = Vec::new();
         let mut rows = Vec::new();
+        let mut sources = Vec::new();
         for command in commands {
             match command {
                 CommandPayload::MoveBand { band_id: moved, .. } => {
@@ -113,13 +119,29 @@ impl Cost {
                     target_y,
                     fauna_id,
                     ..
-                } => rows.push(row_key(
-                    on.unwrap_or(band_id),
-                    role,
-                    target_x.unwrap_or_default(),
-                    target_y.unwrap_or_default(),
-                    fauna_id.as_deref().unwrap_or_default(),
-                )),
+                } => {
+                    rows.push(row_key(
+                        on.unwrap_or(band_id),
+                        role,
+                        target_x.unwrap_or_default(),
+                        target_y.unwrap_or_default(),
+                        fauna_id.as_deref().unwrap_or_default(),
+                    ));
+                    if matches!(
+                        role.as_str(),
+                        food::ROLE_FORAGE | food::ROLE_HUNT | ROLE_EXTRACT
+                    ) {
+                        // The row key without its band: one source, whoever works it.
+                        let key = row_key(
+                            0,
+                            role,
+                            target_x.unwrap_or_default(),
+                            target_y.unwrap_or_default(),
+                            fauna_id.as_deref().unwrap_or_default(),
+                        );
+                        sources.push(key);
+                    }
+                }
                 // **A `stop_labor` ends the row it names, so it claims that row** under the key the
                 // `assign_labor` that sets the same row claims: a stop of row X and an assign on X
                 // in one turn would otherwise both pass arbitration and the later would silently
@@ -199,11 +221,14 @@ impl Cost {
         splits.dedup();
         rows.sort_unstable();
         rows.dedup();
+        sources.sort_unstable();
+        sources.dedup();
         Self {
             workers,
             moves,
             splits,
             rows,
+            sources,
         }
     }
 }

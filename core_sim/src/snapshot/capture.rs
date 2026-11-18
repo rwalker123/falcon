@@ -3568,6 +3568,7 @@ pub fn capture_snapshot(
                                 improvements: &tile_improvements,
                                 held: &held_now,
                                 stores: &reachable_now,
+                                has_leader: leadership.is_some_and(|l| l.leader.is_some()),
                                 knows: &|id| {
                                     crate::intensification::knows(
                                         &discovery_progress,
@@ -3696,17 +3697,10 @@ pub fn capture_snapshot(
                                 crate::snapshot::population::band_order_rows(
                                     allocation,
                                     &|kind| cohort.stores.material_total(kind).to_f32(),
-                                    &crate::food_orders::OrderReadings {
-                                        food_stock: cohort
-                                            .stores
-                                            .get(crate::components::FOOD)
-                                            .to_f32(),
-                                        food_need: cohort.last_food_need,
-                                        fodder_stock: cohort
-                                            .stores
-                                            .get(crate::components::FODDER)
-                                            .to_f32(),
-                                    },
+                                    &crate::food_orders::OrderReadings::of(
+                                        cohort,
+                                        reachable_now.total().to_f32(),
+                                    ),
                                 )
                             })
                             .unwrap_or_default(),

@@ -66,7 +66,8 @@ pub struct FoodInputs<'a> {
 }
 
 /// **THE BAND'S FOOD AND FODDER STOCKS AND PER-TURN NEEDS**: the figures the sim already keeps - the
-/// larder (`stores`, `FOOD`) over what the people eat a turn (`PopulationCohort::last_food_need`), the
+/// food the band can reach (its larder plus the food in the stores it owns within reach,
+/// [`OrderReadings::of`]) over what the people eat a turn (`PopulationCohort::last_food_need`), the
 /// hay store (`FODDER`) over what the pens need beyond their pasture
 /// (`LaborAllocation::last_fodder_need`).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -77,6 +78,18 @@ pub struct OrderReadings {
 }
 
 impl OrderReadings {
+    /// **THE ONE READING OF A BAND'S ORDER FIGURES**: the food on hand is the larder (`FOOD`) plus
+    /// `reachable_store_food`, the food in the stores the band owns within reach
+    /// ([`crate::fixed_store::reachable_stores`], the helper the runway reads); the fodder is the hay
+    /// store, which no pit holds.
+    pub fn of(cohort: &crate::components::PopulationCohort, reachable_store_food: f32) -> Self {
+        Self {
+            food_stock: cohort.stores.get(crate::components::FOOD).to_f32() + reachable_store_food,
+            food_need: cohort.last_food_need,
+            fodder_stock: cohort.stores.get(crate::components::FODDER).to_f32(),
+        }
+    }
+
     /// The per-turn draw the `kind` order keeps up with, in the kind's units.
     pub fn draw(&self, kind: &str, allocation: &LaborAllocation) -> f32 {
         match kind {
@@ -184,15 +197,12 @@ impl OrderReadings {
 pub fn food_order_is_falling(
     cohort: &crate::components::PopulationCohort,
     allocation: &LaborAllocation,
+    reachable_store_food: f32,
 ) -> bool {
     let Some(order) = allocation.order_for(FOOD_KIND) else {
         return false;
     };
-    let readings = OrderReadings {
-        food_stock: cohort.stores.get(crate::components::FOOD).to_f32(),
-        food_need: cohort.last_food_need,
-        fodder_stock: cohort.stores.get(crate::components::FODDER).to_f32(),
-    };
+    let readings = OrderReadings::of(cohort, reachable_store_food);
     let on_hand = |kind: &str| cohort.stores.material_total(kind).to_f32();
     readings
         .figures(FOOD_KIND, order, allocation, &on_hand)
@@ -268,6 +278,16 @@ pub fn source_pinned(allocation: &LaborAllocation, target: &LaborTarget) -> bool
     party_out || cargo_walking || build_declared
 }
 
+/// **WHICH ORDER A SOURCE BELONGS TO** - fodder only when it gives STRICTLY more fodder than food per
+/// hand, food otherwise. The one rule the chief's candidates and an approved proposal's new row read.
+pub(crate) fn product_kind(food_per_hand: f32, fodder_per_hand: f32) -> &'static str {
+    if fodder_per_hand > food_per_hand {
+        FODDER_KIND
+    } else {
+        FOOD_KIND
+    }
+}
+
 fn candidate_of(
     inputs: &FoodInputs<'_>,
     target: LaborTarget,
@@ -283,13 +303,14 @@ fn candidate_of(
     }
     let food_per_hand = probe.per_hand * probe.food_rate;
     let fodder_per_hand = probe.per_hand * probe.fodder_rate;
-    let (order, units_per_hand, rate) = if fodder_per_hand > food_per_hand {
-        (FODDER_KIND, fodder_per_hand, probe.fodder_rate)
-    } else if probe.food_rate > NOTHING {
-        (FOOD_KIND, food_per_hand, probe.food_rate)
-    } else {
-        return None;
-    };
+    let (order, units_per_hand, rate) =
+        if product_kind(food_per_hand, fodder_per_hand) == FODDER_KIND {
+            (FODDER_KIND, fodder_per_hand, probe.fodder_rate)
+        } else if probe.food_rate > NOTHING {
+            (FOOD_KIND, food_per_hand, probe.food_rate)
+        } else {
+            return None;
+        };
     // The pack one hand carries home, in biomass, at the band's best live kit for the job: baskets
     // for a gather, the sled for a hunt (a herd's pack is seated in whole animals).
     let kit = sources.equipment.default_kit(target.kit_job());
@@ -356,6 +377,7 @@ pub fn manage_food_orders(
     allocation: &mut LaborAllocation,
     inputs: &FoodInputs<'_>,
     has_leader: bool,
+    rivals: &crate::source_holders::OtherBands,
 ) {
     allocation.order_pool = inputs.pool;
     if !has_leader {
@@ -417,6 +439,18 @@ pub fn manage_food_orders(
             candidates.push(candidate);
         }
     }
+
+    // **ONE BAND OF A PEOPLE PER SOURCE** (`source_holders`): a source another band of the chief's
+    // people holds a row on is no candidate - unless the chief's own listed row there wins the
+    // duplicate (the other band's row is chief-listed and the higher-numbered band's).
+    candidates.retain(|candidate| {
+        let mine_listed = allocation.order_rows.contains_key(&candidate.key)
+            && allocation
+                .assignments
+                .iter()
+                .any(|row| source_key(&row.target).is_some_and(|key| key == candidate.key));
+        !rivals.blocks_candidate(&candidate.key, mine_listed)
+    });
 
     // Adoption: a chief's arrival or a whole-kind claim lists the band's existing rows under the
     // order their product belongs to.
@@ -634,9 +668,12 @@ pub fn manage_food_orders(
             };
             let in_set = set.iter().any(|candidate| candidate.key == key);
             let improvement = row_is_improvement(sources, &target);
-            if !in_set
-                && !improvement
-                && !allocation.handed_rows.contains(&key)
+            // A duplicate this chief loses is retired whatever the row is (an improvement, a row
+            // handed to him one at a time): the other band keeps the ground. The cargo rule still
+            // holds, so a pinned row waits to be unpinned.
+            let lost_to_another_band = rivals.outranks_my_listed_row(&key);
+            if (lost_to_another_band
+                || (!in_set && !improvement && !allocation.handed_rows.contains(&key)))
                 && !source_pinned(allocation, &target)
             {
                 allocation.drop_source_row(&target);

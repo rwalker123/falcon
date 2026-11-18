@@ -21,7 +21,7 @@ pub use commands::{
     CommandEncodeError, CommandEnvelope, CommandPayload, ConfigOverrideKind, DealingReply,
     OrdersDirective, ReloadConfigKind, SecurityPolicyKind, StartingKitAllocation,
     StartingMaterialAllocation, StrangersKind, TradeCargoItem, TreatyTermsRequest,
-    FODDER_CARGO_KEY, FOOD_CARGO_KEY, MAX_PROTO_FRAME,
+    TribeOrderAction, FODDER_CARGO_KEY, FOOD_CARGO_KEY, MAX_PROTO_FRAME,
 };
 
 pub mod worth;

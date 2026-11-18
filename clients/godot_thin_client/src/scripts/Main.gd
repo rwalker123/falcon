@@ -409,6 +409,8 @@ func _ready() -> void:
             hud.connect("band_order_requested", Callable(self, "_on_hud_band_order"))
         if hud.has_signal("upkeep_mode_requested") and not hud.is_connected("upkeep_mode_requested", Callable(self, "_on_hud_upkeep_mode")):
             hud.connect("upkeep_mode_requested", Callable(self, "_on_hud_upkeep_mode"))
+        if hud.has_signal("tribe_scout_requested") and not hud.is_connected("tribe_scout_requested", Callable(self, "_on_hud_tribe_scout")):
+            hud.connect("tribe_scout_requested", Callable(self, "_on_hud_tribe_scout"))
         if hud.has_signal("open_borders_requested") and not hud.is_connected("open_borders_requested", Callable(self, "_on_hud_open_borders")):
             hud.connect("open_borders_requested", Callable(self, "_on_hud_open_borders"))
         if hud.has_signal("diplomacy_command_requested") and not hud.is_connected("diplomacy_command_requested", Callable(self, "_on_hud_diplomacy_command")):
@@ -2505,6 +2507,18 @@ static func format_upkeep_mode(payload: Dictionary) -> Dictionary:
             HudWorkVocab.UPKEEP_MODE_COMMAND_MESSAGE_FALLBACK % mode),
     }
 
+## **`tribe_scout <faction> <band_id> <range>`** - a tribe's one scouting range, addressed by any member
+## band (#862). The range is REQUIRED in the payload, for `format_upkeep_mode`'s reason.
+static func format_tribe_scout(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID or not payload.has("range"):
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    return {
+        "line": "tribe_scout %d %d %d" % [faction, band_id, maxi(int(payload["range"]), 0)],
+        "message": HudWorkVocab.SCOUT_TRIBE_COMMAND_MESSAGE,
+    }
+
 ## **`band_order <faction> <band_id> <kind> set <target> <priority> | release [<x> <y> | <herd_id>] |
 ## claim [<x> <y> | <herd_id>]`** -- a band's standing order to its leader (#860). `kind` is `food`,
 ## `fodder` or a material id; a row address (`x`/`y` or `herd_id`) moves ONE food/fodder row, none moves
@@ -2869,6 +2883,10 @@ func _on_hud_stop_labor(payload: Dictionary) -> void:
 ## standing policy on the band's allocation, not part of any source's commit.
 func _on_hud_upkeep_mode(payload: Dictionary) -> void:
     _send_formatted_command(format_upkeep_mode(payload))
+
+## Set a tribe's scouting range. No optimistic write: the next snapshot carries the tribe's range.
+func _on_hud_tribe_scout(payload: Dictionary) -> void:
+    _send_formatted_command(format_tribe_scout(payload))
 
 ## Send a band order (set / release / claim). No optimistic write: the server restaffs at once and the
 ## next snapshot carries the order and its rows.

@@ -140,8 +140,12 @@ struct BandView {
 pub const TRIGGER_IDLE: &str = "idle";
 /// The `trigger` a proposal rides: the chief's food order reads Falling.
 pub const TRIGGER_FOOD_FALLING: &str = "food_falling";
+/// The `trigger` a proposal rides: hands working for almost nothing on the chief's food rows.
+pub const TRIGGER_LOW_YIELD: &str = "low_yield";
 /// The escalation rung of a proposal raised by a falling food order (amber).
 const FALLING_ESCALATION: u32 = 2;
+/// The escalation rung of a proposal raised by low-yield hands: the notice rung.
+const LOW_YIELD_ESCALATION: u32 = 1;
 
 fn resident_bands(world: &mut World) -> Vec<BandView> {
     let mut query = world.query_filtered::<(
@@ -265,6 +269,9 @@ fn candidates(world: &World, view: &BandView, bands: &[BandView]) -> Vec<Candida
         improvements,
         held: &held,
         stores: &stores,
+        has_leader: world
+            .get::<crate::leadership::BandLeadership>(view.entity)
+            .is_some_and(|leadership| leadership.leader.is_some()),
         knows: &|discovery_id| {
             crate::intensification::knows(
                 discovery,
@@ -678,6 +685,51 @@ fn hands_phrase(escalation: u32, idle: u32, idle_turns: u32) -> String {
     }
 }
 
+/// "3 hands working for almost nothing" / "1 hand working for almost nothing".
+fn low_yield_phrase(hands: u32) -> String {
+    let noun = if hands == 1 { "hand" } else { "hands" };
+    format!("{hands} {noun} working for almost nothing")
+}
+
+/// **THE HANDS WORKING FOR ALMOST NOTHING**: the take heads (kitted plus bare, never a whole keeper)
+/// summed over the rows the chief lists under the FOOD order whose food per take head - the row's
+/// realized headline, the forward projection, so a hunt between kills is not misread - is below
+/// `band_orders.proposal_low_yield_share` of one person's meal. Player rows and other orders are not
+/// counted, nor a row with no take head; `0` where the band has no headcount or no need.
+///
+/// **A row whose yield record is still empty (`SourceYield::ZERO`) is not judged**: no turn has worked
+/// it and no seed has priced it yet - a row the chief lists in a command's restaff, or takes over the
+/// turn he arrives - so its `0` says nothing about what its hands bring in. Counted, every such row
+/// would raise a new-ground proposal before anyone had worked it.
+fn low_yield_hands(cohort: &PopulationCohort, allocation: &LaborAllocation, share: f32) -> u32 {
+    if cohort.size == 0 || cohort.last_food_need <= NO_FOOD {
+        return 0;
+    }
+    let line = share * cohort.last_food_need / cohort.size as f32;
+    allocation
+        .assignments
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| {
+            crate::keep_on_hand::source_key(&row.target).is_some_and(|key| {
+                allocation.order_rows.get(&key).map(String::as_str)
+                    == Some(crate::keep_on_hand::FOOD_KIND)
+            })
+        })
+        .filter_map(|(index, row)| {
+            let heads = row.staffing.kitted + row.staffing.bare;
+            if heads == 0 {
+                return None;
+            }
+            let yields = allocation.last_yields.get(index)?;
+            if *yields == crate::components::SourceYield::ZERO {
+                return None;
+            }
+            (yields.realized / (heads as f32) < line).then_some(heads)
+        })
+        .sum()
+}
+
 /// The escalation rung for `idle_turns` against the two levers.
 pub fn escalation_rung(idle_turns: u32, notice: u32, wasted: u32) -> u32 {
     if idle_turns >= wasted {
@@ -697,6 +749,7 @@ fn resolve(
     idle: u32,
     idle_turns: u32,
     escalation: u32,
+    low_yield: u32,
 ) -> ChiefProposalState {
     let reason = candidate
         .food_saved
@@ -716,6 +769,8 @@ fn resolve(
     let verb = if keeper.plural { "propose" } else { "proposes" };
     let lead = if trigger == TRIGGER_FOOD_FALLING {
         "Food falling".to_string()
+    } else if trigger == TRIGGER_LOW_YIELD {
+        low_yield_phrase(low_yield)
     } else {
         hands_phrase(escalation, idle, idle_turns)
     };
@@ -830,7 +885,7 @@ pub fn refresh_proposals(world: &mut World, advance: bool) {
         book.bands
             .retain(|id, _| bands.iter().any(|band| band.id == *id));
         for view in &bands {
-            let (idle, led, keeper, falling) = {
+            let (idle, led, keeper, falling, low_yield) = {
                 let (Some(cohort), Some(allocation)) = (
                     world.get::<PopulationCohort>(view.entity),
                     world.get::<LaborAllocation>(view.entity),
@@ -850,7 +905,12 @@ pub fn refresh_proposals(world: &mut World, advance: bool) {
                     workforce.idle(),
                     keeper.is_some(),
                     keeper,
-                    crate::food_orders::food_order_is_falling(cohort, allocation),
+                    crate::food_orders::food_order_is_falling(
+                        cohort,
+                        allocation,
+                        crate::fixed_store::reachable_food_in_world(world, view.entity),
+                    ),
+                    low_yield_hands(cohort, allocation, orders.proposal_low_yield_share),
                 )
             };
             let state = book.bands.entry(view.id).or_default();
@@ -870,13 +930,26 @@ pub fn refresh_proposals(world: &mut World, advance: bool) {
             // **Two triggers**: idle hands, or the food order reading Falling (the one judgement
             // leadership and the wire's order line use). When both hold the idle wording wins; a
             // Falling-only proposal offers only builds that add food.
+            // **A third trigger**: hands working for almost nothing on the chief's food rows, with no
+            // idle hand and food not falling. It offers new ground only.
             let idle_trigger = idle > 0;
-            let (true, Some(keeper)) = (led && (idle_trigger || falling), keeper) else {
+            let low_yield_trigger = !idle_trigger && !falling && low_yield > 0;
+            let (true, Some(keeper)) = (
+                led && (idle_trigger || falling || low_yield_trigger),
+                keeper,
+            ) else {
                 continue;
             };
+            // **The chief waits until the builds underway are full**: a build of the band's own that
+            // is short of builders and could take them holds every trigger's proposal back.
+            if crate::staffing::band_has_a_build_short_of_builders(world, view.entity) {
+                continue;
+            }
             let mut found = candidates(world, view, &bands);
             found.retain(|candidate| !state.deferred.contains_key(&candidate.key));
-            if !idle_trigger {
+            if low_yield_trigger {
+                found.retain(|candidate| candidate.new_ground);
+            } else if !idle_trigger {
                 found.retain(|candidate| candidate.food_saved.is_some_and(|saved| saved > NO_FOOD));
             }
             rank(&mut found);
@@ -890,8 +963,10 @@ pub fn refresh_proposals(world: &mut World, advance: bool) {
                             orders.proposal_idle_turns_wasted,
                         ),
                     )
-                } else {
+                } else if falling {
                     (TRIGGER_FOOD_FALLING, FALLING_ESCALATION)
+                } else {
+                    (TRIGGER_LOW_YIELD, LOW_YIELD_ESCALATION)
                 };
                 state.current = Some(resolve(
                     best,
@@ -900,6 +975,7 @@ pub fn refresh_proposals(world: &mut World, advance: bool) {
                     idle,
                     state.idle_turns,
                     escalation,
+                    low_yield,
                 ));
             }
         }
@@ -1000,10 +1076,19 @@ pub fn commit_approval(
         }
         let source = source_of(&candidate.target)
             .ok_or_else(|| "That build has no place to stand.".to_string())?;
+        let key = crate::keep_on_hand::source_key(&candidate.target)
+            .ok_or_else(|| "That build has no place to stand.".to_string())?;
+        let order_kind = chiefs_order_kind_of_row(world, faction, entity, &candidate.target);
         let Some(mut allocation) = world.get_mut::<LaborAllocation>(entity) else {
             return Err("That band has no work to direct.".to_string());
         };
         allocation.set_staffed_row(candidate.target.clone(), None, None);
+        // A new row the chief's order of its kind covers is HIS, as "Hand it to <leader>" makes it:
+        // listed under the order and handed, so his pass never retires it. Under a player-owned
+        // order it stays the player's row.
+        if let Some(kind) = order_kind.filter(|kind| allocation.chief_owns(kind)) {
+            crate::keep_on_hand::claim_row(&mut allocation, &key, kind);
+        }
         if !allocation.declare_build(source, BuildJob::Climb(candidate.dest)) {
             return Err("That build could not be declared.".to_string());
         }
@@ -1054,6 +1139,47 @@ pub fn commit_approval(
     Ok(())
 }
 
+/// **THE ORDER A PROBED SOURCE BELONGS TO**, by what a unit of biomass is worth as food against as
+/// fodder. The rates, not `per_hand x rate`: a patch off a gathering site probes `per_hand == 0`
+/// (nothing is gathered from it today), which would read every such patch as food.
+fn order_kind_of_probe(probe: &crate::staffing::SourceProbe) -> &'static str {
+    crate::food_orders::product_kind(probe.food_rate, probe.fodder_rate)
+}
+
+/// **THE ORDER KIND A NEW SOURCE ROW SERVES**: a forage patch or herd by the chief's own food-or-fodder
+/// rule (`food_orders::product_kind` over the probe's food and fodder rates), a new row
+/// is only ever a forage patch here; `None` for any other target, which no order lists.
+pub fn chiefs_order_kind_of_row(
+    world: &World,
+    faction: FactionId,
+    entity: bevy::prelude::Entity,
+    target: &LaborTarget,
+) -> Option<&'static str> {
+    match target {
+        LaborTarget::Forage { .. } | LaborTarget::Hunt { .. } => {
+            probed_order_kind_of_row(world, faction, entity, target)
+                .or(Some(crate::keep_on_hand::FOOD_KIND))
+        }
+        _ => None,
+    }
+}
+
+/// [`chiefs_order_kind_of_row`] with no fallback: `None` where the source cannot be probed.
+pub fn probed_order_kind_of_row(
+    world: &World,
+    faction: FactionId,
+    entity: bevy::prelude::Entity,
+    target: &LaborTarget,
+) -> Option<&'static str> {
+    let kit = world.get::<crate::components::BandEquipment>(entity)?;
+    crate::take_claims::with_world_sources(world, faction, |sources| {
+        let refill = sources.labor.keep_on_hand_refill_turns as f32;
+        let crew = sources.labor.tile_worker_cap as f32;
+        let probe = crate::staffing::probe_source(sources, kit, target, crew, refill)?;
+        Some(order_kind_of_probe(&probe))
+    })
+}
+
 /// **APPROVE A BAND OR TILE PROPOSAL IN ONE STEP** (a build on a worked source needs the server's
 /// declaration path: [`prepare_approval`] / [`commit_approval`]).
 pub fn approve_proposal(world: &mut World, faction: FactionId, band: BandId) -> Result<(), String> {
@@ -1095,4 +1221,31 @@ pub fn defer_proposal(
     });
     refresh_proposals(world, false);
     Ok(())
+}
+
+#[cfg(test)]
+mod order_kind_tests {
+    use super::*;
+    use crate::keep_on_hand::{FODDER_KIND, FOOD_KIND};
+    use crate::staffing::SourceProbe;
+
+    /// A probe of an off-site wild patch: nothing is gathered from it today (`per_hand == 0`), so
+    /// only the rates say what it is for.
+    fn off_site_probe(food_rate: f32, fodder_rate: f32) -> SourceProbe {
+        SourceProbe {
+            viable: true,
+            sustainable: 0.0,
+            cap: 0.0,
+            per_hand: 0.0,
+            food_rate,
+            fodder_rate,
+        }
+    }
+
+    #[test]
+    fn a_fodder_dominant_off_site_patch_classifies_as_fodder() {
+        assert_eq!(order_kind_of_probe(&off_site_probe(0.2, 1.0)), FODDER_KIND);
+        assert_eq!(order_kind_of_probe(&off_site_probe(1.0, 0.2)), FOOD_KIND);
+        assert_eq!(order_kind_of_probe(&off_site_probe(0.5, 0.5)), FOOD_KIND);
+    }
 }

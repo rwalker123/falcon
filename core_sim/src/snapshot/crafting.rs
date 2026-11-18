@@ -94,7 +94,7 @@ const FIRST_CALL_HOLDING: &str = "holding rows";
 const FIRST_CALL_KEEPING: &str = "keeping ground";
 const FIRST_CALL_BUILDING: &str = "building";
 const FIRST_CALL_SCOUTING: &str = "scouting";
-const FIRST_CALL_CRAFTING: &str = "High crafting";
+const FIRST_CALL_CRAFTING: &str = "crafting";
 /// Between two named kinds in the reason.
 const FIRST_CALL_SEPARATOR: &str = ", ";
 
@@ -2005,7 +2005,7 @@ mod first_call_reason_tests {
             every_hand_needed_first(&tied).as_deref(),
             Some(
                 format!(
-                    "{REASON_EVERY_HAND_NEEDED_FIRST}2 holding rows, 2 keeping ground, 2 building, 2 scouting, 2 High crafting"
+                    "{REASON_EVERY_HAND_NEEDED_FIRST}2 holding rows, 2 keeping ground, 2 building, 2 scouting, 2 crafting"
                 )
                 .as_str()
             )

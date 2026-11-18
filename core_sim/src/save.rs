@@ -166,7 +166,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 69 | A split's founding walk lays a full trail (`docs/plan_far_kin.md`): `BandRecord` gained `founding_walk` (the band is on its founding walk until its first move order completes) and `Expedition` gained `launch_tile` (the tile a party left from, which a delivery between kin measures its trip from for the messengers lesson). A version-68 blob lacks both and is refused. |
 /// | 70 | The band judges its leader (#710): `MoraleContributions` gained `leadership` (published as `moraleLeadership`), and `PopulationCohort` gained `last_leadership` (`LeadershipReading`: the met and falling order counts and the hunger flag the culture drift and the Telling read); a version-69 blob lacks them |
 /// | 71 | A chief proposes a build and the player approves it: `SimState` gained `chief_proposals` (`ChiefProposalBook`: per band the idle streak, the "Not now" timers, the approved builds awaiting completion, the leader's pending order-met credits and the proposal on offer); a version-70 blob lacks it |
-pub const SAVE_FORMAT_VERSION: u32 = 71;
+/// | 72 | A tribe levies its bands (#862): `Tribe` gained `works`, `levy`, `scouting_range` and `carriers`, and `LaborAssignment` gained `for_tribe` and `scouting_stretch`; a version-71 blob lacks them |
+pub const SAVE_FORMAT_VERSION: u32 = 72;
 
 /// gzip level for the payload document.
 ///

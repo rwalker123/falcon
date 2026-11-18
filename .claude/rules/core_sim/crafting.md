@@ -1605,6 +1605,7 @@ auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 33)
   suggestion ranks (a kit shortage outranks it). Pinned by
   an auto-bench fixture that queues the hurdles a pen build is short of, and one that skips it and
   stays skipped.
+- **A tool queued for a short kit is crewed in the kit step** (`work-party.md` -> the staffing passes): when a source row is short of an item some recipe makes from the material the tool bounds (the Loom for fibre baskets), the tool's order is crewed to its cap ahead of any bare hold head, in bench rank order with the kit order itself, because a tool nobody works lengthens the wait for the kit. The item's own order is crewed up to `crafters_per_item x units lacked`.
 - **A bench tool that pays for itself is in that list too** ("A bench tool that pays for itself"),
   so a band with enough blocked or suggested work on a material auto-crafts the tool for it first
   (if its craft is known); a band with little work does not.
@@ -1623,8 +1624,8 @@ auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 33)
   the High orders' first crafters (`crafting`), and the hold crews of passes 1b/1c - and **rides the save** with the bench (`SAVE_FORMAT_VERSION` 68), so
   a restored world publishes the same reason. A workable order with no crafter publishes
   `Every hand is needed first: 4 holding rows, 2 scouting` (`neutral`; only the nonzero kinds, largest
-  first, ties in the order holding, keeping, building, scouting, High crafting; words `holding rows`,
-  `keeping ground`, `building`, `scouting`, `High crafting`) when those hands account for the whole pool, and `No spare hands this turn`
+  first, ties in the order holding, keeping, building, scouting, crafting; words `holding rows`,
+  `keeping ground`, `building`, `scouting`, `crafting`; `crafting` is the High openers plus the kit step's crafters) when those hands account for the whole pool, and `No spare hands this turn`
   otherwise (hands were left but the order got none: trimmed, or no bare work and no tool). Pinned by
   `snapshot::crafting::first_call_reason_tests` and
   `bench_parallel_orders::auto_queues_with_no_hand_to_spare_and_the_order_names_what_took_the_hands`.

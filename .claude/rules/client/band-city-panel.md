@@ -2382,6 +2382,25 @@ Measuring only the deepest column passed the 130/263 flank at 88% — the short 
 it. Two independent failure modes (uniformly empty = a tier that did not rise; lopsided = the wrong
 split) need two claims.
 
+## A SCROLL REBUILT PER SNAPSHOT KEEPS THE PLAYER'S PLACE, AND IT IS SET BEFORE THE FIRST FRAME IS DRAWN
+
+Every turn rebuilds every zone (`render_band` → `set_zones`), so each scroll the panel owns is a fresh
+`ScrollContainer`: the Work sections, the Band zone, the Parties list and, in the narrow shell, the
+Peoples and Trade tabs. The old node's place is read off it before the rebuild
+(`_capture_carried_scrolls`, `_fill_work_zone_column`) and `_restore_scroll_offset` puts it on the new
+one. **A one-frame wait flashes.** A fresh scroll clamps `scroll_vertical` to 0 until its scrollbar range
+exists, which happens when it sorts its children — a deferred pass at the end of the frame it was built
+in, before that frame is drawn. Waiting a frame to set the value therefore draws one whole frame at the
+top of the list and jumps back on the next. The restore is connected to the scroll's own `sort_children`
+signal instead, so the sort that fixes the range restores the place in the same layout flush, and it
+re-applies on every sort until the frame ends. A scroll not on screen (an unselected narrow-shell tab)
+keeps waiting until it is shown, and a capture taken while a restore is pending returns the stored
+offset, since the unsorted node reads 0. A page change (band to band, or to the faction page) starts
+every list at the top: the Work sections list and the expanded road roster carry through the same
+subject-keyed `_carried_scroll_offsets` as the rest, and a subject change drops the outgoing nodes
+(`_work_sections_scroll`, `_roster_expanded_scroll`) so the next fill has nothing to read the old place
+off. Asserted by `band_panel_scroll_carry.gd` (`harness-band-panel.md`).
+
 ## THE WORK TAB IS FOUR SECTIONS, AND EVERY SITE HAS ONE SPINNER (`docs/plan_site_crews.md` §3)
 
 A site's crew keeps it before it collects, so there are no Agriculture, Husbandry or Groundwork pool
@@ -2857,10 +2876,11 @@ list is a MODE over the same zone instead, spending nothing permanent:
   for every band the moment one holding no roads is selected.
 - **THE LIST REMEMBERS WHERE THE PLAYER WAS.** Every in-mode interaction frees the zone, so the scroll
   offset is captured off the outgoing node at the top of `_fill_work_zone_column` (the last moment it is
-  readable on both fill paths) and restored by `_restore_scroll_offset`, **deferred one frame**:
-  `scroll_vertical` is clamped to the CURRENT content extent, and a fresh `VScrollBar` is a `Range`
-  shipping `max = 100`, so an offset under 100px sails through the naive form and only a deeper scroll
-  shows the truncation. Entering the mode resets the offset, a place in one list being carried across
+  readable on both fill paths) and restored by `_restore_scroll_offset` (the timing rule is in "A
+  SCROLL REBUILT PER SNAPSHOT KEEPS THE PLAYER'S PLACE" below). The offset can only be set once the
+  fresh `VScrollBar` — a `Range` shipping `max = 100` — has its real range, so an offset under 100px
+  sails through a naive same-call set and only a deeper scroll shows the truncation. Entering the mode
+  resets the offset, a place in one list being carried across
   that list's rebuilds and not across a fresh entry into it.
 - **The head height is measured, and reserves the TALLER of its states.** `ROADWORK_ROSTER_HEAD_HEIGHT`
   is 22.0 against `ZONE_HEAD_HEIGHT` 20, the compact button being what sets the row

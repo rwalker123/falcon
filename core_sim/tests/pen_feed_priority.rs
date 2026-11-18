@@ -211,6 +211,8 @@ fn hunt_row(herd_id: &str, priority: SourcePriority, workers: u32) -> LaborAssig
         planned_crew: 0,
         scouting_range: 0,
         scouting_reach: 0,
+        for_tribe: None,
+        scouting_stretch: 1.0,
         max_workers: Some(workers),
         staffing: Default::default(),
         target: LaborTarget::Hunt {

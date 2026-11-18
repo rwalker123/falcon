@@ -392,12 +392,19 @@ const PROPOSAL_ESCALATION_KEY := "escalation"
 ## The proposal's own `trigger` (what raised it) and the value that means the band's food order reads Falling.
 const PROPOSAL_TRIGGER_KEY := "trigger"
 const PROPOSAL_TRIGGER_FOOD_FALLING := "food_falling"
+## The trigger of a proposal of NEW GROUND (an off-site Cultivate) raised because the band's food rows pay almost nothing.
+const PROPOSAL_TRIGGER_LOW_YIELD := "low_yield"
 ## **THE FALLING-FOOD ROW.** A Falling-only proposal is raised with NO idle hands, so it has no idle-workers
 ## entry to ride; this is the entry that carries it. WARN, like the idle row: a loss in progress the
 ## player can still answer, not yet a starving crisis. The sim's sentence rides beneath it as the block.
 const ATTENTION_KIND_FOOD_FALLING := "food_falling"
 const ATTENTION_FOOD_FALLING_LABEL_FORMAT := "%s food falling"
 const ATTENTION_FOOD_FALLING_DETAIL := "Chief proposes a fix"
+## **THE LOW-YIELD ROW.** A low-yield proposal is raised with NO idle hands (everyone is working, for almost
+## nothing), so like the falling row it needs an entry of its own. WARN, the idle row's rung: an efficiency loss.
+const ATTENTION_KIND_LOW_YIELD := "low_yield"
+const ATTENTION_LOW_YIELD_LABEL_FORMAT := "%s hands wasted"
+const ATTENTION_LOW_YIELD_DETAIL := "Chief proposes new ground"
 ## The entry key the orb reads the proposal block from, and what that block carries.
 const ATTENTION_PROPOSAL := "proposal"
 const PROPOSAL_BAND_ID := "band_id"

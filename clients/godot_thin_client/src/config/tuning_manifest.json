@@ -156,7 +156,7 @@
         },
         {
           "pointer": "/band_orders/storage_build_min_saved",
-          "label": "Storage build threshold (food/turn)",
+          "label": "Storage build threshold",
           "type": "float",
           "min": 0,
           "max": 5,
@@ -167,7 +167,7 @@
         },
         {
           "pointer": "/band_orders/proposal_idle_turns_notice",
-          "label": "Chief proposal: idle turns before it reads 'idle N turns'",
+          "label": "Proposal: idle notice",
           "type": "int",
           "min": 1,
           "max": 30,
@@ -178,7 +178,7 @@
         },
         {
           "pointer": "/band_orders/proposal_idle_turns_wasted",
-          "label": "Chief proposal: idle turns before it reads 'wasted' (amber)",
+          "label": "Proposal: idle is wasted",
           "type": "int",
           "min": 1,
           "max": 60,
@@ -188,8 +188,19 @@
           "hint": "How many idle turns in a row before the chief's build proposal says the hands are wasted and turns amber. At least the notice lever."
         },
         {
+          "pointer": "/band_orders/proposal_low_yield_share",
+          "label": "Proposal: low-yield line",
+          "type": "float",
+          "min": 0.05,
+          "max": 5,
+          "step": 0.05,
+          "default": 0.5,
+          "unit": "x a person's meal",
+          "hint": "A chief-run food row whose hands each bring home less than this share of one person's meal counts as working for almost nothing; the chief then proposes new ground."
+        },
+        {
           "pointer": "/band_orders/proposal_not_now_turns",
-          "label": "Chief proposal: turns 'Not now' hides a build",
+          "label": "Proposal: 'Not now' hides",
           "type": "int",
           "min": 1,
           "max": 100,
@@ -816,7 +827,47 @@
           "max": 10,
           "step": 0.5,
           "default": 3.0,
-          "hint": "Closeness a tribe gets from work done at the tribe level. No tribe-level work exists yet, so this has no effect until it does."
+          "hint": "Closeness a tribe gets from work done at the tribe level: the hands its levy puts on its works and its scouts."
+        },
+        {
+          "pointer": "/tribe_acting_full_share",
+          "label": "Levy for full closeness",
+          "type": "float",
+          "min": 0.05,
+          "max": 1,
+          "step": 0.05,
+          "default": 0.2,
+          "hint": "The share of a tribe's working hands on tribe work at which 'acting as a tribe' counts in full. Less work counts in proportion."
+        },
+        {
+          "pointer": "/levy_share_low",
+          "label": "Levy share: Low",
+          "type": "float",
+          "min": 0.05,
+          "max": 1,
+          "step": 0.05,
+          "default": 0.25,
+          "hint": "How much of a band's hands, after its own keep-up crews, a tribe on a Low levy may take. Keep Low at or under Normal."
+        },
+        {
+          "pointer": "/levy_share_normal",
+          "label": "Levy share: Normal",
+          "type": "float",
+          "min": 0.05,
+          "max": 1,
+          "step": 0.05,
+          "default": 0.5,
+          "hint": "The same share on a Normal levy, the default. Keep it between Low and High."
+        },
+        {
+          "pointer": "/levy_share_high",
+          "label": "Levy share: High",
+          "type": "float",
+          "min": 0.05,
+          "max": 1,
+          "step": 0.05,
+          "default": 1.0,
+          "hint": "The same share on a High levy. At 1 the tribe may take every hand the band's keep-up crews leave."
         },
         {
           "pointer": "/tribe_weight_monument",
@@ -874,6 +925,17 @@
           "default": 4,
           "unit": "tiles",
           "hint": "How far apart two bands of one people can be and still share food once they know Messengers. Without it the reach is 3 tiles. Keep it under what a trail holds open (6)."
+        },
+        {
+          "pointer": "/reach_tiles_in_tribe",
+          "label": "Food reach in a tribe",
+          "type": "int",
+          "min": 3,
+          "max": 5,
+          "step": 1,
+          "default": 5,
+          "unit": "tiles",
+          "hint": "How far apart two bands of one tribe can be and still share food. Keep it at or above the Messengers reach and under what a trail holds open (6)."
         }
       ]
     },

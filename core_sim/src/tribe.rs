@@ -23,8 +23,10 @@ use crate::{
     belief::BeliefRegistry,
     belief_config::{BeliefConfig, BeliefConfigHandle},
     components::{BandId, BandName, PopulationCohort, ResidentBand},
+    components::{LaborAllocation, SourcePriority},
     connections::ConnectionLedger,
     culture::{max_axis_gap, CultureLayer, CultureManager, CultureOwner, CULTURE_TRAIT_SPAN},
+    ladder_ids::{BranchId, RungId},
     leadership::{BandLeader, BandLeadership, LeaderKind},
     leadership_config::{LeadershipConfig, LeadershipConfigHandle},
     orders::FactionId,
@@ -95,6 +97,82 @@ impl TribeLeader {
     }
 }
 
+/// **How much of a member band's free hands the tribe may levy**: the ceiling the tribe leader
+/// sets (`tribe_levy`). The share each level takes is `leadership_config.json` -> `levy_share_*`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LevyCeiling {
+    /// The tribe takes nothing from its bands.
+    None,
+    Low,
+    #[default]
+    Normal,
+    High,
+}
+
+impl LevyCeiling {
+    /// The share of a band's free hands this ceiling allows (`None` = 0).
+    pub fn share(self, config: &LeadershipConfig) -> f64 {
+        match self {
+            LevyCeiling::None => NO_LEVY_SHARE,
+            LevyCeiling::Low => config.levy_share_low,
+            LevyCeiling::Normal => config.levy_share_normal,
+            LevyCeiling::High => config.levy_share_high,
+        }
+    }
+
+    /// The command token.
+    pub fn token(self) -> &'static str {
+        match self {
+            LevyCeiling::None => "none",
+            LevyCeiling::Low => "low",
+            LevyCeiling::Normal => "normal",
+            LevyCeiling::High => "high",
+        }
+    }
+
+    /// Parse a command token (`none`, `low`, `normal`, `high`).
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "none" => Some(LevyCeiling::None),
+            "low" => Some(LevyCeiling::Low),
+            "normal" => Some(LevyCeiling::Normal),
+            "high" => Some(LevyCeiling::High),
+            _ => None,
+        }
+    }
+
+    /// The wire code beside `sim_schema::TRIBE_LEVY_*` (0 is "not in a tribe").
+    pub fn wire_code(self) -> u8 {
+        match self {
+            LevyCeiling::None => sim_schema::TRIBE_LEVY_NONE,
+            LevyCeiling::Low => sim_schema::TRIBE_LEVY_LOW,
+            LevyCeiling::Normal => sim_schema::TRIBE_LEVY_NORMAL,
+            LevyCeiling::High => sim_schema::TRIBE_LEVY_HIGH,
+        }
+    }
+}
+
+/// The share a `none` ceiling takes.
+const NO_LEVY_SHARE: f64 = 0.0;
+
+/// **A WORK THE TRIBE OWNS**: a tile improvement (a tile-kind branch) the tribe wants kept and,
+/// with a `target_rung`, built. The tribe pass turns it into levy rows on member band lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TribeWork {
+    pub tile: UVec2,
+    pub branch: BranchId,
+    /// The rung the tribe wants it raised to; `None` keeps what stands.
+    pub target_rung: Option<RungId>,
+    pub priority: SourcePriority,
+}
+
+impl TribeWork {
+    /// Whether two works name one site.
+    pub fn same_site(&self, tile: UVec2, branch: BranchId) -> bool {
+        self.tile == tile && self.branch == branch
+    }
+}
+
 /// One tribe.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tribe {
@@ -105,6 +183,27 @@ pub struct Tribe {
     pub members: BTreeSet<BandId>,
     pub leader: TribeLeader,
     pub since_turn: u64,
+    /// The works the tribe owns, in the order they were added.
+    pub works: Vec<TribeWork>,
+    /// The most of a member's free hands the tribe may levy.
+    pub levy: LevyCeiling,
+    /// The tribe's one scouting range, in tiles past the local range; every member's Scout row
+    /// carries it and each band scouts its own stretch of the tribe's edge.
+    pub scouting_range: u32,
+    /// The bands whose levy row for each work (index-aligned with `works`) fell short of the work's
+    /// want when last staffed: the overflow the next pass hands to the next nearest member. Derived
+    /// by the labor pass's own readings, kept so the pass is one turn behind.
+    pub carriers: Vec<Vec<LevyCarrier>>,
+}
+
+/// A member band carrying a levy row for one work this turn, and what the work asked of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LevyCarrier {
+    pub band: BandId,
+    /// The Max this carrier's row carries (`None`: the nearest member, uncapped).
+    pub max: Option<u32>,
+    /// The heads on this carrier's row as the last staffing left them.
+    pub workers: u32,
 }
 
 /// An unordered pair of bands, lower id first: the key a points bank is kept under.
@@ -197,6 +296,28 @@ impl TribeRegistry {
     /// The tribe `band` belongs to, if any.
     pub fn tribe_of(&self, band: BandId) -> Option<&Tribe> {
         self.tribes.values().find(|t| t.members.contains(&band))
+    }
+
+    /// The tribe `band` belongs to, mutably.
+    pub fn tribe_of_mut(&mut self, band: BandId) -> Option<&mut Tribe> {
+        self.tribes.values_mut().find(|t| t.members.contains(&band))
+    }
+
+    pub fn get_mut(&mut self, id: TribeId) -> Option<&mut Tribe> {
+        self.tribes.get_mut(&id)
+    }
+
+    /// Seat a tribe in the registry as it stands (a fixture's way to a formed tribe without the
+    /// turns of points a real one earns). Allocates no id: the tribe brings its own.
+    pub fn insert(&mut self, tribe: Tribe) {
+        self.next_id = self.next_id.max(tribe.id.0 + 1);
+        self.tribes.insert(tribe.id, tribe);
+    }
+
+    /// Whether two bands are members of one tribe.
+    pub fn share_a_tribe(&self, a: BandId, b: BandId) -> bool {
+        self.tribe_of(a)
+            .is_some_and(|tribe| tribe.members.contains(&b))
     }
 
     /// The banked points of a pair of bands (`0.0` with none).
@@ -378,18 +499,31 @@ pub fn points_per_turn(config: &LeadershipConfig, inputs: &CloseInputs) -> f64 {
         + config.tribe_weight_acting * inputs.acting
 }
 
-/// The reading of "acting as a tribe" a pair earns from doing things together as one tribe, in
-/// `[0, 1]`. It applies only to a pair already in the same tribe (`same_tribe`); a pair outside one
-/// reads 0. Nothing feeds it yet: the tribe-level orders (#862, #864) and works the tribe shares
-/// are what will, and each adds its measure here.
-pub fn acting_as_a_tribe(same_tribe: bool) -> f64 {
-    if !same_tribe {
-        return NOT_ACTING;
-    }
-    NOT_ACTING
+/// What a tribe levied this turn against what it could have: the heads on its levy rows and its
+/// members' tribe scouts, and the members' working hands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TribeLevyReading {
+    pub levied: u32,
+    pub pool: u32,
 }
 
-/// The reading while no tribe-level act exists to measure.
+/// The reading of "acting as a tribe" a pair earns from the levy its tribe raised, in `[0, 1]`:
+/// `levied / (tribe_acting_full_share x pool)`, clamped. `None` is a pair not in one tribe (reads 0),
+/// and so is a tribe with no hands.
+pub fn acting_as_a_tribe(levy: Option<TribeLevyReading>, full_share: f64) -> f64 {
+    let Some(levy) = levy else {
+        return NOT_ACTING;
+    };
+    if levy.pool == 0 {
+        return NOT_ACTING;
+    }
+    (f64::from(levy.levied) / (full_share * f64::from(levy.pool))).clamp(NOT_ACTING, FULL_ACTING)
+}
+
+/// The reading at full acting.
+const FULL_ACTING: f64 = 1.0;
+
+/// The reading while the tribe levies nothing.
 const NOT_ACTING: f64 = 0.0;
 
 /// Whether two bands' founding lines share an origin band: both descend from one starting band.
@@ -407,6 +541,13 @@ struct BandFacts {
     origins: BTreeSet<u64>,
     /// The band's own leader, if it has accepted one.
     leader: Option<BandLeader>,
+    /// The heads on the band's levy rows, and its scouts (counted only for a tribe member).
+    levy_heads: u32,
+    scout_heads: u32,
+    /// The band's staffable pool.
+    pool: u32,
+    /// The range its Scout row carries (0 with no row).
+    scouting_range: u32,
 }
 
 /// The largest of `bands` (most people; ties to the lowest id) among those still resident.
@@ -551,6 +692,7 @@ type TribeBandParts = (
     &'static PopulationCohort,
     Option<&'static BandName>,
     Option<&'static BandLeadership>,
+    Option<&'static LaborAllocation>,
 );
 
 /// **Score the pairs, then keep the tribes: match, form, change membership, dissolve.** Runs at the
@@ -579,7 +721,34 @@ pub fn advance_tribes(
     let belief_config = belief_config.get();
     let mut facts: BTreeMap<BandId, BandFacts> = BTreeMap::new();
     let mut rows = Vec::new();
-    for (_entity, band, cohort, name, leadership) in bands.iter() {
+    for (_entity, band, cohort, name, leadership, allocation) in bands.iter() {
+        let (levy_heads, scout_heads, pool, scouting_range) =
+            allocation.map_or((0, 0, 0, 0), |allocation| {
+                let levy: u32 = allocation
+                    .assignments
+                    .iter()
+                    .filter(|row| {
+                        row.for_tribe.is_some()
+                            && !matches!(row.target, crate::components::LaborTarget::Scout)
+                    })
+                    .map(|row| row.workers)
+                    .sum();
+                let scouts: u32 = allocation
+                    .assignments
+                    .iter()
+                    .filter(|row| matches!(row.target, crate::components::LaborTarget::Scout))
+                    .map(|row| row.workers)
+                    .sum();
+                (
+                    levy,
+                    scouts,
+                    crate::staffing::staffable_pool(
+                        allocation,
+                        crate::components::available_workers(cohort.working),
+                    ),
+                    allocation.scouting_range_tiles(),
+                )
+            });
         facts.insert(
             *band,
             BandFacts {
@@ -594,6 +763,10 @@ pub fn advance_tribes(
                     .map(|line| line.origin_band)
                     .collect(),
                 leader: leadership.and_then(|l| l.leader.clone()),
+                levy_heads,
+                scout_heads,
+                pool,
+                scouting_range,
             },
         );
         rows.push((*band, cohort.faction, cohort.belief_anchor));
@@ -608,6 +781,22 @@ pub fn advance_tribes(
     let threshold = config.tribe_score_threshold;
     let fade = threshold / config.tribe_points_fade_turns;
     let has_leader = |band: &BandId| facts.get(band).is_some_and(|f| f.leader.is_some());
+    // What each standing tribe levied this turn: its levy rows' heads and its members' scouts, over
+    // its members' working hands.
+    let levy_readings: BTreeMap<TribeId, TribeLevyReading> = registry
+        .tribes
+        .values()
+        .map(|tribe| {
+            let mut reading = TribeLevyReading::default();
+            for member in &tribe.members {
+                if let Some(f) = facts.get(member) {
+                    reading.levied += f.levy_heads + f.scout_heads;
+                    reading.pool += f.pool;
+                }
+            }
+            (tribe.id, reading)
+        })
+        .collect();
     let mut scores: BTreeMap<BandPair, CloseInputs> = BTreeMap::new();
     for bucket in &buckets {
         let anchor = bucket_anchor(bucket, &facts);
@@ -621,11 +810,12 @@ pub fn advance_tribes(
                 }
                 let same_tribe = registry
                     .tribe_of(*a)
-                    .is_some_and(|tribe| tribe.members.contains(b));
+                    .filter(|tribe| tribe.members.contains(b))
+                    .and_then(|tribe| levy_readings.get(&tribe.id).copied());
                 let mut inputs = pair_inputs(&facts, &culture, &ledger, *a, *b);
                 inputs.belief = urn_belief;
                 inputs.monument = monument;
-                inputs.acting = acting_as_a_tribe(same_tribe);
+                inputs.acting = acting_as_a_tribe(same_tribe, config.tribe_acting_full_share);
                 scores.insert((*a, *b), inputs);
             }
         }
@@ -756,6 +946,17 @@ pub fn advance_tribes(
             members: group.members.clone(),
             leader: TribeLeader::promote(leader_band, leader, turn),
             since_turn: turn,
+            works: Vec::new(),
+            levy: LevyCeiling::default(),
+            // The tribe opens at the largest range any member already scouts.
+            scouting_range: group
+                .members
+                .iter()
+                .filter_map(|member| facts.get(member))
+                .map(|f| f.scouting_range)
+                .max()
+                .unwrap_or(0),
+            carriers: Vec::new(),
         };
         *registry.formed.entry(group.faction).or_insert(0) += 1;
         event_log.push(tribe_entry(
@@ -805,6 +1006,10 @@ mod tests {
                     band: band(ids[0]),
                 },
                 since_turn: 1,
+                works: Vec::new(),
+                levy: LevyCeiling::default(),
+                scouting_range: 0,
+                carriers: Vec::new(),
             },
         )
     }
@@ -960,9 +1165,16 @@ mod tests {
     }
 
     #[test]
-    fn acting_as_a_tribe_reads_nothing_until_something_feeds_it() {
-        assert_eq!(acting_as_a_tribe(false), 0.0);
-        assert_eq!(acting_as_a_tribe(true), 0.0);
+    fn acting_as_a_tribe_reads_the_levy_over_the_full_share_of_the_pool() {
+        let full = shipped().tribe_acting_full_share;
+        let reading =
+            |levied, pool| acting_as_a_tribe(Some(TribeLevyReading { levied, pool }), full);
+        assert_eq!(acting_as_a_tribe(None, full), 0.0, "a pair outside a tribe");
+        assert_eq!(reading(0, 100), 0.0);
+        assert_eq!(reading(5, 0), 0.0, "no hands at all reads nothing");
+        let half = reading(10, 100);
+        assert!((half - 10.0 / (full * 100.0)).abs() < 1e-12);
+        assert_eq!(reading(100, 100), 1.0, "clamped at full acting");
     }
 
     #[test]

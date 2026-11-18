@@ -241,6 +241,51 @@ pub(crate) fn foreign_band_at(view: &SeatView, faction: u32, tile: Tile) -> bool
         .any(|cohort| cohort.faction != faction && band_tile(cohort) == tile)
 }
 
+/// **ONE BAND OF A PEOPLE PER SOURCE**: whether another band of `band`'s own people holds a row on
+/// `key` while `band` holds none - a source the sim refuses `band` a new row on (`assign_labor` names
+/// the other band), so no seat picks it. A band that already holds the source's row keeps it as a
+/// candidate (an old-save duplicate is edited, never refused). Rival peoples' rows exclude nothing.
+///
+/// **A patch on the tile another own band camps on or is walking to is that band's too**, row or
+/// not: a band goes to a tile to work the patch under it, and a band split to feed walks there and
+/// opens its row a turn or two after it arrives. Without this the parent took the patch its child
+/// was walking to (bench seed 3, t5: band 2 onto 68,36, band 4's settle target), and the child,
+/// refused it, hunted fowl for 0.3 a turn. Between two bands bound for one tile the lower band id
+/// keeps it, so a parent keeps the patch under its own camp while a fresh split still stands there.
+pub(crate) fn worked_by_another_own_band(
+    view: &SeatView,
+    band: &PopulationCohortState,
+    key: &SourceKey,
+) -> bool {
+    let holds = |cohort: &PopulationCohortState| {
+        cohort
+            .labor_assignments
+            .iter()
+            .any(|row| SourceKey::of_row(row).as_ref() == Some(key))
+    };
+    if holds(band) {
+        return false;
+    }
+    let mut siblings = view.snapshot.populations.iter().filter(|other| {
+        other.faction == band.faction && other.band_id != band.band_id && !other.is_expedition
+    });
+    if siblings.clone().any(holds) {
+        return true;
+    }
+    let SourceKey::Patch(tile) = key else {
+        return false;
+    };
+    let mine = bound_for(band, *tile);
+    siblings.any(|other| bound_for(other, *tile) && (!mine || other.band_id < band.band_id))
+}
+
+/// Whether `cohort` camps on `tile` or is walking to it.
+fn bound_for(cohort: &PopulationCohortState, tile: Tile) -> bool {
+    band_tile(cohort) == tile
+        || (cohort.is_traveling
+            && Tile::new(cohort.travel_target_x, cohort.travel_target_y) == tile)
+}
+
 /// **Whether a band may stand on `tile`** — the sim's own rule for a `move_band`, restated:
 /// `ensure_land_tile` (`core_sim/src/bin/server.rs`) refuses a tile whose
 /// `terrain_tags.contains(TerrainTags::WATER)` as `water_tile`. A tile the frame carries no row
@@ -382,6 +427,7 @@ fn cluster_take_by(
             (view.is_discovered(tile)
                 && grid.distance(standing, tile) <= band.work_range
                 && !foreign_band_at(view, band.faction, tile)
+                && !worked_by_another_own_band(view, band, &key)
                 && !is_dead(&key))
             .then(|| workable_patch_at(view, tile))
             .flatten()
@@ -547,7 +593,8 @@ pub(crate) fn herd_streams<'v>(
             } else {
                 grid.distance(here, tile) <= memory.hunt_reach(band)
             };
-            if !in_reach || is_dead(&SourceKey::Herd(herd.id.clone())) {
+            let key = SourceKey::Herd(herd.id.clone());
+            if !in_reach || is_dead(&key) || worked_by_another_own_band(view, band, &key) {
                 return None;
             }
             let curve = memory.crew_take(band.band_id, &herd.id)?;
@@ -731,6 +778,7 @@ pub(crate) fn cluster_sites<'v>(
             (view.is_discovered(tile)
                 && grid.distance(standing, tile) <= band.work_range
                 && !foreign_band_at(view, band.faction, tile)
+                && !worked_by_another_own_band(view, band, &key)
                 && !is_dead(&key))
             .then(|| workable_patch_at(view, tile))
             .flatten()

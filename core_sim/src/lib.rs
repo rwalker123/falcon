@@ -111,6 +111,7 @@ mod sites;
 mod sites_config;
 mod snapshot;
 mod snapshot_overlays_config;
+pub mod source_holders;
 pub mod spoilage;
 pub mod staffing;
 pub mod staffing_preview;
@@ -126,6 +127,7 @@ pub mod tile_improvement;
 pub mod trade_history;
 pub mod treaties;
 mod tribe;
+pub mod tribe_levy;
 mod turn_pipeline_config;
 pub mod turn_profile;
 mod victory;
@@ -171,11 +173,11 @@ pub use combat_config::{
 pub use components::{
     available_workers, floor_is_valid, floor_overdraws, take_overdraws, BandBench, BandEquipment,
     BandId, BandName, BandOrder, BandTravel, BandWorkforce, BatchGrade, BenchCrew, BenchOrder,
-    BenchQueueError, BuildDeclaration, BuildJob, BuildSource, BuildToeLine, CohesionReading,
-    DeathCause, DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind,
-    EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase, FinishedBatch, FoodBatch,
-    FoodMix, FoundingWalk, ItemInFlight, KeepShare, KeepingIssue, KeepingToolLine, KitOrder,
-    KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LeadershipReading,
+    BenchQueueError, BuildCrew, BuildDeclaration, BuildJob, BuildSource, BuildToeLine,
+    CohesionReading, DeathCause, DemographicFlowAccumulator, DrawnInputs, DrawnMaterial,
+    ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase, FinishedBatch,
+    FoodBatch, FoodMix, FoundingWalk, ItemInFlight, KeepShare, KeepingIssue, KeepingToolLine,
+    KitOrder, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LeadershipReading,
     LocalStore, MaterialBatch, MaterialDraw, MoraleCause, MusterBench, MusterKit, MusterPlan,
     OrderOwner, PoolToeLine, PopulationCohort, PowerNode, ResidentBand, ScoutPack, Settlement,
     ShedCrew, ShedFacts, ShedStep, ShedSubject, ShipmentTerms, SourcePriority, SourceShedFacts,
@@ -520,8 +522,8 @@ pub use tile_improvement::{
     TILE_KEEPING_LOAD,
 };
 pub use tribe::{
-    advance_tribes, points_per_turn, CloseInputs, Tribe, TribeId, TribeLeader, TribeLeaderKind,
-    TribeRegistry, TribeStanding, MIN_TRIBE_BANDS,
+    advance_tribes, points_per_turn, CloseInputs, LevyCarrier, LevyCeiling, Tribe, TribeId,
+    TribeLeader, TribeLeaderKind, TribeRegistry, TribeStanding, TribeWork, MIN_TRIBE_BANDS,
 };
 pub use turn_pipeline_config::{
     load_turn_pipeline_config_from_env, PopulationPhaseConfig, PowerPhaseConfig,
@@ -1681,6 +1683,14 @@ pub fn build_headless_app() -> App {
                 // tail: that one edge puts it after `advance_leadership`, migration, breeding shed,
                 // defection, independence and the culture splits.
                 tribe::advance_tribes.after(sedentarization::sedentarization_tick),
+                // **The tribe pass** (#862): the end of the stage, after `advance_tribes`. It
+                // turns each tribe's works into levy rows on the member bands' lists (the next
+                // labor pass staffs them) and syncs the members' scouting ranges. Exclusive, so it
+                // pins its own position, so it is ordered behind `mobility_tick` too.
+                tribe_levy::advance_tribe_levy
+                    .after(tribe::advance_tribes)
+                    .after(mobility::mobility_tick)
+                    .after(systems::publish_trade_telemetry),
                 // The roaming counterpart: after `advance_band_movement`, which records the turn's
                 // steps following a herd (any roam state) and which this drains — that order is
                 // carried by the whole run between them, and the one edge declared here is the
@@ -1774,6 +1784,9 @@ pub fn build_headless_app() -> App {
                 // **Hands a build or a retired bench order freed this turn are dealt before the
                 // frame is cut.** Every crew-freeing step is in an earlier stage.
                 systems::restaff_freed_hands.run_if(population_stage_enabled()),
+                // **The tribe's carrier heads are read after the last restaff that can touch a levy
+                // row**, so `tribeWorks[].workers` is the heads the frame's levy rows hold.
+                tribe_levy::refresh_all_levy_workers.run_if(population_stage_enabled()),
                 metrics::collect_metrics,
                 systems::advance_tick,
                 // **Before the capture, and only on the turn path.** The transfer counters are the

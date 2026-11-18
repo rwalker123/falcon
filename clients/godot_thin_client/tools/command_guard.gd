@@ -258,6 +258,7 @@ func _ready() -> void:
 	await _drive_work_priority()
 	_drive_band_order()
 	_drive_chief_proposal()
+	_drive_tribe_scout()
 	await _drive_stop_labor()
 	await _drive_unqueue()
 	_assert_retired_kit_verbs()
@@ -670,6 +671,19 @@ func _drive_chief_proposal() -> void:
 	for action in ["approve", "defer"]:
 		orb._on_proposal_pressed(action, {"band_id": BAND_ID, "faction": HudConst.PLAYER_FACTION_ID,
 			"build_key": "food_stores:storage_pit@9,4"})
+
+## **`tribe_scout <faction> <band> <range>`** — a tribe member's scout stepper (#862), sent in place of
+## the `assign_labor ... scout` the sim refuses for a band in a tribe. Driven through the panel's own
+## emitter, with the band named positionally like every other band verb.
+func _drive_tribe_scout() -> void:
+	var panel: BandPanelController = _hud._bandpanel
+	panel.tribe_scout_requested.connect(func(p: Dictionary) -> void:
+		_record("tribe_scout", p, MAIN_SCRIPT.format_tribe_scout(p)))
+	panel._emit_tribe_scout({"faction": HudConst.PLAYER_FACTION_ID, "band_id": BAND_ID, "entity": 1,
+		"tribe_name": "Sandreach tribe"}, TRIBE_SCOUT_RANGE)
+
+## The range the tribe-scout drive sends, in tiles past the local range.
+const TRIBE_SCOUT_RANGE := 4
 
 func _drive_band_order() -> void:
 	var controller := BandOrdersController.new(_hud._band_labor)
@@ -1479,6 +1493,8 @@ const EXPECTED_KINDS := {
 	# ONE EACH — the chief's proposal answered from the orb: Approve (band only) and Not now (band + build key).
 	"approve_proposal": 1,
 	"defer_proposal": 1,
+	# ONE - a tribe member's scout stepper, the only emitter of `tribe_scout`; names the band positionally.
+	"tribe_scout": 1,
 }
 
 func _assert_every_command_emitted() -> void:

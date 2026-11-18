@@ -129,6 +129,55 @@ pub fn reachable_stores(
     reachable
 }
 
+/// **THE FOOD `band` CAN REACH IN ITS OWN STORES**, in units: [`reachable_stores`]'s total. The one
+/// reading the chief's food order adds to the larder.
+pub fn reachable_food(
+    scene: &PreservationScene,
+    band: Option<BandId>,
+    faction: FactionId,
+    at: Option<UVec2>,
+) -> f32 {
+    reachable_stores(scene, band, faction, at).total().to_f32()
+}
+
+/// **[`reachable_food`] READ OFF THE WORLD** for the band on `entity`: `0` for an entity with no cohort
+/// or band id, or a world missing a resource the lookup reads (a hand-built world reaches no store).
+pub fn reachable_food_in_world(world: &bevy::prelude::World, entity: Entity) -> f32 {
+    let (Some(cohort), Some(band)) = (
+        world.get::<PopulationCohort>(entity),
+        world.get::<BandId>(entity).copied(),
+    ) else {
+        return 0.0;
+    };
+    let (Some(demographics), Some(ladder), Some(supply), Some(improvements), Some(registry)) = (
+        world.get_resource::<DemographicsConfigHandle>(),
+        world.get_resource::<LadderConfigHandle>(),
+        world.get_resource::<SupplyNetworkConfigHandle>(),
+        world.get_resource::<TileImprovementRegistry>(),
+        world.get_resource::<TileRegistry>(),
+    ) else {
+        return 0.0;
+    };
+    let Some(at) = world
+        .get::<Tile>(cohort.current_tile)
+        .map(|tile| tile.position)
+    else {
+        return 0.0;
+    };
+    let wrap = world
+        .get_resource::<SimulationConfig>()
+        .is_some_and(|config| config.map_topology.wrap_horizontal);
+    let demographics = demographics.get();
+    let scene = PreservationScene {
+        keeping: &demographics.keeping,
+        ladder: &ladder.get(),
+        improvements,
+        reach_tiles: supply.get().reach_tiles,
+        grid: (registry.width, wrap),
+    };
+    reachable_food(&scene, Some(band), cohort.faction, Some(at))
+}
+
 /// **THE RESOURCES A STORE LOOKUP READS**, bundled so a system with a full parameter list can carry
 /// them as one. Every one is optional: a hand-built world may lack any, and then no band reaches a
 /// store.

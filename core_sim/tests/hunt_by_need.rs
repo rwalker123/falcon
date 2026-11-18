@@ -244,6 +244,8 @@ fn hunt_row(herd: &str, workers: u32, priority: SourcePriority, follow: bool) ->
         planned_crew: 0,
         scouting_range: 0,
         scouting_reach: 0,
+        for_tribe: None,
+        scouting_stretch: 1.0,
         max_workers: Some(workers),
         staffing: Default::default(),
         target: LaborTarget::Hunt {
@@ -760,6 +762,8 @@ fn a_far_row_with_no_party_yet_is_not_a_donor() {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: Some(FAR_ROW_HANDS),
             staffing: Default::default(),
             target: LaborTarget::Forage {

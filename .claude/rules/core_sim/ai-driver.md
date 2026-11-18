@@ -364,6 +364,24 @@ nothing (a plant keeps). Ties stay with the basket and no lever was added. This 
 `kept_share`, which compared one animal to the `hunt_meals` entry and capped at 1 on every shipped
 bench seed, so it moved no decision.
 
+**A source another band of the seat's own people works is not a source for this band**
+(`food::worked_by_another_own_band`, off the frame's own bands' `labor_assignments`): the sim refuses
+a second band of one people a row on a patch, herd or deposit ("One band of a people per source" in
+`work-party.md`), so `reachable_sources`, the cluster and herd-stream readings, the land reading and
+*split to feed*'s site list skip it; a band already holding the row keeps it, and rival peoples' rows
+exclude nothing new (`foreign_band_at` stays as is). **A patch on the tile another own band camps on
+or is walking to is that band's too**, row or not: a child split to feed opens its row a turn or two
+after it arrives, and without this the parent took the child's patch meanwhile (bench seed 3, t5:
+band 2 onto 68,36, band 4's settle target; band 4, refused it, hunted fowl for 0.3 a turn and the
+seed's hunger deaths went 7 to 15). Between two bands bound for one tile the lower band id keeps it.
+Two of the seat's bands opening one source in the same turn collide at the arbiter (`Cost::sources`,
+a `conflict`): the frame shows neither row yet, and the sim refuses the second.
+
+**A proposal answer is sent after the turn's other commands** (`brain::answers_last`):
+`approve_proposal` / `defer_proposal` restaff the band, and the chief's managing pass in that restaff
+can retire one of his rows, so a release or `stop_labor` sent after it on that row was refused
+(bench seed 54, t43: "Band 2 has no food row there for the chief to hand over").
+
 **A far hunt row whose every pack is lost is the row to empty first** (`Food::packs_all_lost`, in
 `row_to_empty` beside *no useful crew* and *dead row*): the herd stands past `work_range` and the
 sim's crew curve - struck at the walk's rot, a walk of four turns or more losing flesh whole -
@@ -1709,6 +1727,13 @@ its stream and at what the seat has measured it landing, and `Land` reads herds 
 ground. `Land` now moves on all eight seeds, so the file's `declined` list is empty. On the
 20-seed paired sweep (seeds 1–20) against the build before: working 16.65 → 22.35, hunger deaths
 6.95 → 3.00 (11 better, 4 worse), food stock 41.5 → 36.8. Seeds 2, 13 and 18 end worse.
+
+**One band of a people per source (#862) moved it again.** A seat's bands no longer share a patch,
+herd or working, so a band crowded out of its own ground no longer takes what a sibling's crew
+leaves on the sibling's site. On the eight bench seeds: alive 42.0 → 43.9 a seed (4 better, 3
+worse), hunger deaths 3.4 → 2.5. On the 20-seed paired sweep (seeds 1–20) against the build before:
+alive 41.65 → 41.45 (8 better, 9 worse), working 22.05 → 21.55, food stock 26.9 → 31.7 (10 better,
+7 worse), hunger deaths 2.60 → 4.70 (3 better, 7 worse).
 
 ⛔ **The start kinds above are what the seeds read NOW, not what they were chosen for.** The
 eight were picked to span `stay` / `split_local` / `split_far` / `short`; the sim changes since

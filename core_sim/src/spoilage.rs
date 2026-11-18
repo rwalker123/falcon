@@ -923,16 +923,26 @@ pub type IncomeByClass = BTreeMap<String, f32>;
 /// **A FORWARD PROJECTION**, never a trailing average: it reads the band's standing rows' `realized`
 /// split by class and nothing from history. The meal is `need` a turn at the band's demand.
 /// Pure: the capture, the chief's managing pass and the saves calculation all call it.
+///
+/// **A CHIEF STOPS GATHERING EXTRA AT HIS TARGET**: with `chief_stops_at` set (the food the band
+/// must hold, larder plus stores, for its chief-owned food order to be at its target), every turn
+/// whose food on hand (after the meal and the rot) is at or above it lands only `need` of the
+/// income, scaled across the classes in proportion; below it the whole income lands.
+/// **Only the chief's own rows stop**: `chief_income` is the share of `income` the rows he lists land,
+/// and at the target it is cut to what the meal still needs after the rows he does not list, which
+/// keep landing in full.
 #[allow(clippy::too_many_arguments)] // the walk's whole scene
 pub fn spoilage_ahead(
     larder: &FoodMix,
     stores: &FoodMix,
     income: &IncomeByClass,
+    chief_income: &IncomeByClass,
     need: f32,
     horizon: u32,
     keeping: &KeepingConfig,
     held: &HeldPreservation,
     store_held: &HeldPreservation,
+    chief_stops_at: Option<f32>,
 ) -> BTreeMap<String, f32> {
     let ration = scalar_from_f32(need.max(0.0));
     let order = keeping.eat_order();
@@ -960,9 +970,18 @@ pub fn spoilage_ahead(
                 }
             }
         }
+        let at_target =
+            chief_stops_at.is_some_and(|stop| (larder.total() + stores.total()).to_f32() >= stop);
+        let chief_landing = if at_target {
+            chief_share_the_meal_takes(income, chief_income, need)
+        } else {
+            1.0
+        };
         for (class, amount) in income {
-            if *amount > 0.0 {
-                larder.add(class, scalar_from_f32(*amount));
+            let chief = chief_income.get(class).copied().unwrap_or(0.0).min(*amount);
+            let landed = (*amount - chief) + chief * chief_landing;
+            if landed > 0.0 {
+                larder.add(class, scalar_from_f32(landed));
             }
         }
     }
@@ -974,6 +993,26 @@ pub fn spoilage_ahead(
         .map(|(class, total)| (class, total / horizon as f32))
         .filter(|(_, per_turn)| *per_turn > f32::EPSILON)
         .collect()
+}
+
+/// The share of the chief's rows' income that lands once he stops gathering extra: what the meal
+/// still needs after the income of every row he does not list, never more than all of it.
+fn chief_share_the_meal_takes(
+    income: &IncomeByClass,
+    chief_income: &IncomeByClass,
+    need: f32,
+) -> f32 {
+    let total: f32 = income.values().filter(|amount| **amount > 0.0).sum();
+    let chief: f32 = chief_income
+        .iter()
+        .map(|(class, amount)| amount.min(income.get(class).copied().unwrap_or(0.0)))
+        .filter(|amount| *amount > 0.0)
+        .sum();
+    if chief <= 0.0 {
+        return 1.0;
+    }
+    let others = total - chief;
+    ((need.max(0.0) - others).max(0.0) / chief).min(1.0)
 }
 
 /// The food of each class in a pile, as floats.
@@ -1032,6 +1071,39 @@ mod party_and_forecast_tests {
         assert!((held(MEAT) - LOT).abs() < 1e-3, "the fresh meat was left");
     }
 
+    /// **A chief at his target stops only his own rows**: the player's forage row that lands more than
+    /// a meal keeps landing in full, so its surplus still rots in the forecast.
+    #[test]
+    fn a_chief_at_his_target_leaves_the_players_rows_landing_in_full() {
+        const NEED: f32 = 1.0;
+        const HORIZON: u32 = 20;
+        const PLAYER_INCOME: f32 = 10.0;
+        const CHIEF_INCOME: f32 = 5.0;
+        const ALWAYS_AT_TARGET: Option<f32> = Some(0.0);
+        let keeping = keeping();
+        let class = |amount: f32| -> IncomeByClass {
+            [("flesh".to_string(), amount)].into_iter().collect()
+        };
+        let walk = |chief: f32| {
+            spoilage_ahead(
+                &FoodMix::default(),
+                &FoodMix::default(),
+                &class(PLAYER_INCOME + chief),
+                &class(chief),
+                NEED,
+                HORIZON,
+                &keeping,
+                &HeldPreservation::none(),
+                &HeldPreservation::none(),
+                ALWAYS_AT_TARGET,
+            )
+        };
+        let rot = |chief: f32| walk(chief).get("flesh").copied().unwrap_or(0.0);
+        assert!(rot(CHIEF_INCOME) > 0.0, "the player's surplus rots");
+        // The chief's rows add nothing once he is at target: the rot is the player's alone.
+        assert!((rot(CHIEF_INCOME) - rot(0.0)).abs() < 1e-3);
+    }
+
     /// The forecast rots nothing for a band that eats all it earns, and a surplus of meat rots.
     #[test]
     fn the_forecast_rots_a_surplus_and_not_a_meal() {
@@ -1043,11 +1115,13 @@ mod party_and_forecast_tests {
                 &FoodMix::default(),
                 &FoodMix::default(),
                 &[("flesh".to_string(), income)].into_iter().collect(),
+                &IncomeByClass::new(),
                 NEED,
                 HORIZON,
                 &keeping,
                 &HeldPreservation::none(),
                 &HeldPreservation::none(),
+                None,
             )
         };
         assert!(walk(NEED * 10.0).get("flesh").copied().unwrap_or(0.0) > 0.0);

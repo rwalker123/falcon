@@ -1565,6 +1565,8 @@ mod tests {
                     planned_crew: 0,
                     scouting_range: 0,
                     scouting_reach: 0,
+                    for_tribe: None,
+                    scouting_stretch: 1.0,
                     max_workers: Some(10),
                     staffing: Default::default(),
                     target: LaborTarget::Forage {
@@ -1583,6 +1585,8 @@ mod tests {
                     planned_crew: 0,
                     scouting_range: 0,
                     scouting_reach: 0,
+                    for_tribe: None,
+                    scouting_stretch: 1.0,
                     max_workers: Some(5),
                     staffing: Default::default(),
                     target: LaborTarget::Hunt {
@@ -1751,6 +1755,8 @@ mod tests {
                     planned_crew: 0,
                     scouting_range: 0,
                     scouting_reach: 0,
+                    for_tribe: None,
+                    scouting_stretch: 1.0,
                     max_workers: Some(10),
                     staffing: Default::default(),
                     target: LaborTarget::Forage {
@@ -1769,6 +1775,8 @@ mod tests {
                     planned_crew: 0,
                     scouting_range: 0,
                     scouting_reach: 0,
+                    for_tribe: None,
+                    scouting_stretch: 1.0,
                     max_workers: Some(5),
                     staffing: Default::default(),
                     target: LaborTarget::Hunt {
@@ -1867,6 +1875,8 @@ mod tests {
                 planned_crew: 0,
                 scouting_range: 0,
                 scouting_reach: 0,
+                for_tribe: None,
+                scouting_stretch: 1.0,
                 max_workers: Some(10),
                 staffing: Default::default(),
                 target: LaborTarget::Forage {
@@ -1952,6 +1962,8 @@ mod tests {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: Some(6),
             staffing: Default::default(),
             target,
@@ -1995,6 +2007,8 @@ mod tests {
             planned_crew: 0,
             scouting_range: 0,
             scouting_reach: 0,
+            for_tribe: None,
+            scouting_stretch: 1.0,
             max_workers: Some(6),
             staffing: Default::default(),
             target: LaborTarget::Forage {

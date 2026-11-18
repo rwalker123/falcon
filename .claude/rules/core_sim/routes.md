@@ -85,6 +85,24 @@ Ray: *"A road could have no owner, but that is an abstract term in this game so 
 meaning."* There is no owning. There is a **job** — *these people look after this tile's road* — and
 the question *"who owns a road"* should not be asked again.
 
+### A tribe's road: carried by its keeper, built by the levy, kept by the keeper's pool
+
+A tribe can own a road work (`tribe_work <f> <b> route <x> <y> route:<rung>`, `leadership.md` -> "A tribe
+levies its bands"). The tile still has **one keeper band**; the tribe only decides who declares the build.
+
+- **Carried by its keeper.** The tile's carrier is its keeper when that band is a tribe member, else the
+  nearest member. The carrier declares `grade` / `pave` through the same gate
+  (`build_gates::validate_road_verb`, the one copy the verbs and the tribe both ask), and declaring makes it
+  the keeper by the rule above, so a tribe road is adopted by the same act as any other.
+- **Built by the levy.** The build's builders are dealt in the levy step (`LevyPlan::road_tiles`), within
+  the levy budget.
+- **Kept by the keeper's Roadwork pool**, as any road it keeps: there is no per-tile row, and the tribe
+  adds no keeping of its own. Shared keeping stays retired.
+- **Released when the keeper leaves the tribe.** A keeper of the tribe's people that is no longer a member
+  (or is gone) stops keeping the tile; the next pass hands the tile to the nearest member, which picks it up
+  by grading it. Stopping the work removes the tribe's declared build and leaves the road and its keeper as
+  they are.
+
 ### DEFERRED, AND IT IS ITS OWN ISSUE: INFRASTRUCTURE ABOVE THE BAND
 
 **Issue #598.** A faction-level authority maintaining roads beyond any single band's reach is more
