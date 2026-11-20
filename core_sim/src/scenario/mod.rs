@@ -11,10 +11,11 @@
 //!
 //! **Fail closed and whole**: any refusal drops the candidate and the previous world stays.
 //!
-//! Each section of the file is its own module (`bands` today), so two worktrees adding two sections
+//! Each section of the file is its own module (`bands`, `roads`), so two worktrees adding two sections
 //! touch two files.
 
 pub mod bands;
+pub mod roads;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -32,6 +33,7 @@ use crate::command_seam::apply_set_starting_loadout;
 use crate::components::BandId;
 use crate::demographics_config::{DemographicsConfig, DemographicsConfigHandle};
 use crate::equipment_config::{EquipmentConfig, EquipmentConfigHandle};
+use crate::intensification::LadderConfig;
 use crate::map_preset::{MapPresets, MapPresetsHandle};
 use crate::materials_config::{MaterialsConfig, MaterialsConfigHandle};
 use crate::resources::SimulationConfig;
@@ -42,6 +44,7 @@ use crate::start_profile::{
 };
 use crate::starting_loadout::{KitAllocation, MaterialAllocation};
 use crate::world_roster::{apply_start_profile, seed_faction_roster};
+use crate::LadderConfigHandle;
 use crate::{faction_start_land_fraction, granted_archetype_counts};
 
 /// The path a refusal carries when the file itself could not be read.
@@ -102,6 +105,7 @@ pub struct ScenarioContext {
     pub demographics: Arc<DemographicsConfig>,
     pub equipment: Arc<EquipmentConfig>,
     pub materials: Arc<MaterialsConfig>,
+    pub ladder: Arc<LadderConfig>,
 }
 
 impl ScenarioContext {
@@ -114,6 +118,7 @@ impl ScenarioContext {
             demographics: world.resource::<DemographicsConfigHandle>().get(),
             equipment: world.resource::<EquipmentConfigHandle>().get(),
             materials: world.resource::<MaterialsConfigHandle>().get(),
+            ladder: world.resource::<LadderConfigHandle>().get(),
         }
     }
 }
@@ -207,6 +212,7 @@ pub fn parse_scenario(
         }
     }
     bands::check(&file.factions, ctx, &mut refusals);
+    roads::check(&file.factions, &file.world, ctx, &mut refusals);
     match profile {
         Some(profile) if refusals.is_empty() => Ok(ScenarioPlan {
             file,
@@ -276,6 +282,7 @@ pub fn finish_scenario(world: &mut World) -> Result<ScenarioApplied, Vec<Scenari
     if !refusals.is_empty() {
         return Err(refusals);
     }
+    roads::apply(world, &setup, &mut refusals);
     for faction_setup in &setup.factions {
         let faction = faction_setup.faction;
         for (j, entry) in faction_setup.bands.iter().enumerate() {

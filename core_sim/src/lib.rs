@@ -465,12 +465,12 @@ pub use routes::Walker as RoadWalker;
 pub use routes::{
     advance_roads, credit_route_lessons, first_built_rung, foreign_roads, free_floor_top_rung,
     max_route_reach_tiles, path_friction_multiplier, path_lesson_rung, path_reach_tiles,
-    remoteness_multiplier, road_access_in_world, road_at_risk_rung, road_build_fraction,
-    road_keeping_basis, road_keeping_range, road_measure, road_neglect_grace_remaining,
-    road_reach_for, road_rung_span, road_upkeep_demand, road_upkeep_measure,
-    road_upkeep_workers_needed, route_rungs_in_climb_order, rung_grants_sight, standing_link,
-    trace_path, traffic_ceiling, ForeignRoads, LinkFloor, Road, RoadAccess, RoadKeeper,
-    RoadRegistry, RoadRights, RouteJourney, RouteTrafficLog, TrafficSource, METER_FULL,
+    quote_road_remoteness, remoteness_multiplier, road_access_in_world, road_at_risk_rung,
+    road_build_fraction, road_keeping_basis, road_keeping_range, road_measure,
+    road_neglect_grace_remaining, road_reach_for, road_rung_span, road_upkeep_demand,
+    road_upkeep_measure, road_upkeep_workers_needed, route_rungs_in_climb_order, rung_grants_sight,
+    standing_link, trace_path, traffic_ceiling, ForeignRoads, LinkFloor, Road, RoadAccess,
+    RoadKeeper, RoadRegistry, RoadRights, RouteJourney, RouteTrafficLog, TrafficSource, METER_FULL,
     NEAR_ENOUGH_TO_KEEP, NO_HERD_HAS_CROSSED, NO_REACH_HELD_OPEN, PAVING_DISCOVERY_ID,
     ROADBUILDING_DISCOVERY_ID,
 };
