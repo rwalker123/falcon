@@ -15,6 +15,7 @@
 //! touch two files.
 
 pub mod bands;
+pub mod bench;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -27,6 +28,7 @@ pub use bands::{
     Ages, BandEntry, FactionSection, FactionSetup, LarderEntry, Outfit, ScenarioSetup,
     AGES_SUM_TOLERANCE,
 };
+pub use bench::BenchEntry;
 
 use crate::command_seam::apply_set_starting_loadout;
 use crate::components::BandId;
@@ -34,6 +36,7 @@ use crate::demographics_config::{DemographicsConfig, DemographicsConfigHandle};
 use crate::equipment_config::{EquipmentConfig, EquipmentConfigHandle};
 use crate::map_preset::{MapPresets, MapPresetsHandle};
 use crate::materials_config::{MaterialsConfig, MaterialsConfigHandle};
+use crate::recipes_config::{RecipesConfig, RecipesConfigHandle};
 use crate::resources::SimulationConfig;
 use crate::run_turn;
 use crate::start_profile::{
@@ -102,6 +105,7 @@ pub struct ScenarioContext {
     pub demographics: Arc<DemographicsConfig>,
     pub equipment: Arc<EquipmentConfig>,
     pub materials: Arc<MaterialsConfig>,
+    pub recipes: Arc<RecipesConfig>,
 }
 
 impl ScenarioContext {
@@ -114,6 +118,7 @@ impl ScenarioContext {
             demographics: world.resource::<DemographicsConfigHandle>().get(),
             equipment: world.resource::<EquipmentConfigHandle>().get(),
             materials: world.resource::<MaterialsConfigHandle>().get(),
+            recipes: world.resource::<RecipesConfigHandle>().get(),
         }
     }
 }
@@ -207,6 +212,7 @@ pub fn parse_scenario(
         }
     }
     bands::check(&file.factions, ctx, &mut refusals);
+    bench::check(&file.factions, ctx, &mut refusals);
     match profile {
         Some(profile) if refusals.is_empty() => Ok(ScenarioPlan {
             file,
@@ -309,6 +315,13 @@ pub fn finish_scenario(world: &mut World) -> Result<ScenarioApplied, Vec<Scenari
                     refusal.to_string(),
                 ));
             }
+        }
+    }
+    // **Apply order is fixed** (plan 2.8): outfit, labor, builds, pens, bench, splits. A later
+    // section's call slots in above the bench's.
+    if refusals.is_empty() {
+        if let Err(refusal) = bench::apply(world, &setup) {
+            refusals.push(refusal);
         }
     }
     if refusals.is_empty() {
