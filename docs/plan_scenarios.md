@@ -115,6 +115,9 @@ scenario can already use. No second vocabulary has to be maintained alongside it
 - **The keys after `bands`** (`labor`, then the sections slice 2 adds: `rungs`, `pens`, `herds`,
   `deposits`, `roads`, `bench`, `tiles`) belong to their arcs (§2.4). The example shows only slice 1
   plus one labor row.
+- **`deposits` is top-level, beside `factions`, not inside one.** A deposit has no owner (its
+  registry is keyed by tile and material), so listing it under a faction would let two factions set
+  the same deposit.
 
 ### 2.4 Each arc owns its section
 

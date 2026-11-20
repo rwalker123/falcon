@@ -13,10 +13,13 @@ use core_sim::scenario::{
 };
 use core_sim::{
     build_test_app, knows_messengers, run_turn, scalar_from_f32, ActiveStartProfile, BandId,
-    DiscoveryProgressLedger, FactionId, FactionRegistry, KitAllocation, LadderConfigHandle,
-    MaterialAllocation, PopulationCohort, SimulationConfig, StartProfileKnowledgeTagsHandle,
-    StartProfiles, StartProfilesHandle, StartingLoadout, Tile,
+    DepositRegistry, DiscoveryProgressLedger, ExtractionConfigHandle, FactionId, FactionRegistry,
+    KitAllocation, LadderConfigHandle, MaterialAllocation, PopulationCohort, SimulationConfig,
+    StartProfileKnowledgeTagsHandle, StartProfiles, StartProfilesHandle, StartingLoadout, Tile,
 };
+
+use core_sim::extraction::tile_deposit_capacity;
+use core_sim::NO_DEPOSIT;
 
 const SHIPPED: &str = include_str!("../scenarios/breeding_ceiling_150.json");
 const HOME: FactionId = FactionId(0);
@@ -507,5 +510,124 @@ fn a_scenario_builds_with_the_profile_it_names() {
     assert_eq!(
         app.world.resource::<SimulationConfig>().start_profile_id,
         "second_tribe"
+    );
+}
+
+const WOOD: &str = "wood";
+
+/// A tile of the shipped scenario's world that holds `material` (with its capacity), and one that
+/// holds none of it, both read off the generated tiles.
+fn wood_and_bare_tiles() -> ((UVec2, f32), UVec2) {
+    let (mut app, _) = load(SHIPPED).expect("the shipped scenario loads");
+    let config = app.world.resource::<ExtractionConfigHandle>().get();
+    let tiles: Vec<Tile> = app
+        .world
+        .query::<&Tile>()
+        .iter(&app.world)
+        .cloned()
+        .collect();
+    let wooded = tiles
+        .iter()
+        .map(|tile| (tile.position, tile_deposit_capacity(&config, WOOD, tile)))
+        .find(|(_, capacity)| *capacity > NO_DEPOSIT)
+        .expect("the map has wood");
+    let bare = tiles
+        .iter()
+        .find(|tile| tile_deposit_capacity(&config, WOOD, tile) <= NO_DEPOSIT)
+        .map(|tile| tile.position)
+        .expect("the map has ground without wood");
+    (wooded, bare)
+}
+
+fn with_deposits(deposits: Value) -> String {
+    let mut file = shipped();
+    file["deposits"] = deposits;
+    file.to_string()
+}
+
+#[test]
+fn a_deposit_stock_is_set_exactly_and_the_first_turn_regrows_it() {
+    let ((tile, capacity), _) = wood_and_bare_tiles();
+    let stock = capacity * 0.5;
+    let text = with_deposits(json!([{ "at": [tile.x, tile.y], "material": WOOD, "stock": stock }]));
+    let (mut app, _) = load(&text).expect("a stock within capacity loads");
+    let held = app
+        .world
+        .resource::<DepositRegistry>()
+        .source(tile, WOOD)
+        .expect("the working is opened")
+        .stock;
+    assert_eq!(held, stock, "the stock is exactly as written");
+    run_turn(&mut app);
+    let after = app
+        .world
+        .resource::<DepositRegistry>()
+        .source(tile, WOOD)
+        .expect("the working stands")
+        .stock;
+    assert!(
+        after > stock && after <= capacity,
+        "the first played turn is the first regrowth: {stock} -> {after}"
+    );
+}
+
+#[test]
+fn deposit_pass_one_refusals_are_collected_together() {
+    let ((tile, _), _) = wood_and_bare_tiles();
+    let at = json!([tile.x, tile.y]);
+    let text = with_deposits(json!([
+        { "at": at, "material": "unobtainium", "stock": 1.0 },
+        { "at": at, "material": WOOD, "stock": -1.0 },
+        { "at": at, "material": WOOD, "stock": 1.0 },
+    ]));
+    let refusals = pass_one(&text).expect_err("refused");
+    let paths: Vec<&str> = refusals.iter().map(|r| r.path.as_str()).collect();
+    for expected in ["deposits[0].material", "deposits[1].stock", "deposits[2]"] {
+        assert!(
+            paths.contains(&expected),
+            "missing {expected}; got {paths:?}"
+        );
+    }
+    let duplicate = refusals.iter().find(|r| r.path == "deposits[2]").unwrap();
+    assert!(duplicate.reason.contains("deposits[1]"), "{duplicate}");
+}
+
+#[test]
+fn deposit_fit_refusals_are_collected_and_a_refused_load_applies_nothing() {
+    let ((tile, capacity), bare) = wood_and_bare_tiles();
+    let text = with_deposits(json!([
+        { "at": [bare.x, bare.y], "material": WOOD, "stock": 1.0 },
+        { "at": [tile.x, tile.y], "material": WOOD, "stock": capacity * 2.0 },
+        { "at": [500, 500], "material": WOOD, "stock": 1.0 },
+    ]));
+    let refusals = load(&text).map(|_| ()).expect_err("refused");
+    assert_eq!(refusals.len(), 3, "{refusals:?}");
+    assert_eq!(refusals[0].path, "deposits[0]");
+    assert!(
+        refusals[0].reason.contains("holds no wood"),
+        "{}",
+        refusals[0]
+    );
+    assert_eq!(refusals[1].path, "deposits[1].stock");
+    assert!(
+        refusals[1]
+            .reason
+            .contains(&format!("capacity of {capacity}")),
+        "{}",
+        refusals[1]
+    );
+    assert_eq!(refusals[2].path, "deposits[2].at");
+
+    // A fit fault anywhere means nothing is applied: the one valid entry beside them is not opened.
+    let mut app = build_test_app();
+    let text = with_deposits(json!([
+        { "at": [tile.x, tile.y], "material": WOOD, "stock": 1.0 },
+        { "at": [bare.x, bare.y], "material": WOOD, "stock": 1.0 },
+    ]));
+    let plan = parse_scenario(&text, &ScenarioContext::from_world(&app.world)).expect("pass 1");
+    assert!(build_scenario_world(&mut app, &plan).is_err());
+    assert!(
+        app.world.resource::<DepositRegistry>().is_empty(),
+        "a refused load applies nothing"
     );
 }

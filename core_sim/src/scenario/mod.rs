@@ -15,6 +15,7 @@
 //! touch two files.
 
 pub mod bands;
+pub mod deposits;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -27,11 +28,13 @@ pub use bands::{
     Ages, BandEntry, FactionSection, FactionSetup, LarderEntry, Outfit, ScenarioSetup,
     AGES_SUM_TOLERANCE,
 };
+pub use deposits::DepositEntry;
 
 use crate::command_seam::apply_set_starting_loadout;
 use crate::components::BandId;
 use crate::demographics_config::{DemographicsConfig, DemographicsConfigHandle};
 use crate::equipment_config::{EquipmentConfig, EquipmentConfigHandle};
+use crate::extraction_config::{ExtractionConfig, ExtractionConfigHandle};
 use crate::map_preset::{MapPresets, MapPresetsHandle};
 use crate::materials_config::{MaterialsConfig, MaterialsConfigHandle};
 use crate::resources::SimulationConfig;
@@ -78,6 +81,8 @@ pub struct ScenarioFile {
     pub note: String,
     pub world: WorldSection,
     pub factions: Vec<FactionSection>,
+    /// World state, not a faction's: a deposit has no owner.
+    pub deposits: Vec<DepositEntry>,
 }
 
 /// The `new_game` arguments, every one required.
@@ -102,6 +107,7 @@ pub struct ScenarioContext {
     pub demographics: Arc<DemographicsConfig>,
     pub equipment: Arc<EquipmentConfig>,
     pub materials: Arc<MaterialsConfig>,
+    pub extraction: Arc<ExtractionConfig>,
 }
 
 impl ScenarioContext {
@@ -114,6 +120,7 @@ impl ScenarioContext {
             demographics: world.resource::<DemographicsConfigHandle>().get(),
             equipment: world.resource::<EquipmentConfigHandle>().get(),
             materials: world.resource::<MaterialsConfigHandle>().get(),
+            extraction: world.resource::<ExtractionConfigHandle>().get(),
         }
     }
 }
@@ -207,6 +214,7 @@ pub fn parse_scenario(
         }
     }
     bands::check(&file.factions, ctx, &mut refusals);
+    deposits::check(&file.deposits, ctx, &mut refusals);
     match profile {
         Some(profile) if refusals.is_empty() => Ok(ScenarioPlan {
             file,
@@ -253,7 +261,7 @@ pub fn build_scenario_world(
     seed_faction_roster(app, &granted_counts);
     app.insert_resource(plan.setup());
     run_turn(app);
-    finish_scenario(&mut app.world)
+    finish_scenario(&mut app.world, &plan.file.deposits)
 }
 
 /// **What a successful load built**: the scenario ids of the bands, for the sections that name one.
@@ -268,14 +276,20 @@ pub struct ScenarioApplied {
 /// The replayed `outfit` goes through [`apply_set_starting_loadout`], the function the server's own
 /// handler calls, so it replaces the default committed on the world-build pass under the carry cap,
 /// and a refusal (`OverCarry` and the rest) names its entry with the handler's own reason.
-pub fn finish_scenario(world: &mut World) -> Result<ScenarioApplied, Vec<ScenarioRefusal>> {
+pub fn finish_scenario(
+    world: &mut World,
+    deposits: &[DepositEntry],
+) -> Result<ScenarioApplied, Vec<ScenarioRefusal>> {
     let Some(mut setup) = world.remove_resource::<ScenarioSetup>() else {
         return Ok(ScenarioApplied::default());
     };
     let mut refusals = setup.take_refusals();
+    deposits::fit(world, deposits, &mut refusals);
     if !refusals.is_empty() {
         return Err(refusals);
     }
+    // Setters first, then the command entries (section 2.8 step 5).
+    deposits::apply(world, deposits, &mut refusals);
     for faction_setup in &setup.factions {
         let faction = faction_setup.faction;
         for (j, entry) in faction_setup.bands.iter().enumerate() {
