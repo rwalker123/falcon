@@ -71,6 +71,12 @@ pub struct Tile {
     /// hex pointing at the water body/delta the river drains into — otherwise the drawn river stops
     /// one hex short of the sea. A confluence hex carries the **union** of the chains through it.
     pub river_channel: u8,
+    /// **The plants a scenario's `tiles` section says grow here** (`docs/plan_scenarios.md` section
+    /// 2.6): sorted, deduplicated species keys, `None` everywhere worldgen does not set it. When set,
+    /// [`crate::forage::tile_flora_composition`] realizes the biome's affinity rows restricted to
+    /// these keys instead of the seeded subset, so the override is read through the one seam every
+    /// flora caller already uses. It never changes the tile's capacity: the land owns `K`.
+    pub flora_override: Option<Vec<String>>,
 }
 
 impl Tile {
@@ -9210,6 +9216,7 @@ impl Default for Tile {
             river_edges: 0,
             river_inflow: 0,
             river_channel: 0,
+            flora_override: None,
         }
     }
 }

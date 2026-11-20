@@ -9,6 +9,7 @@ paths:
   - "core_sim/src/snapshot_overlays_config.rs"
   - "core_sim/src/data/snapshot_overlays_config.json"
   - "core_sim/tests/food_site_water_bias.rs"
+  - "core_sim/src/scenario/tiles.rs"
 ---
 
 <!-- Extracted verbatim from lines 112-1063 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
@@ -47,6 +48,29 @@ Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, 
 > mechanism without re-examining its premise. A stage that decides an outcome and edits the field to
 > reach it is repainting, however it writes.
 
+## Scenario section
+
+The **tiles** section of a scenario file (`core_sim/src/scenario/tiles.rs`; the loader is
+`scenarios.md`). A top-level `tiles: [...]` beside `factions`, because a tile belongs to no faction.
+It is a **worldgen input**: `apply_scenario_tile_overrides` runs in the Startup chain after
+`reconcile_coastal_shelf` (the last pass that paints terrain) and before `reconcile_food_modules`, so
+the food module, sites, herds, forage and graze all derive from the overridden tile. `tiles: []`
+changes nothing.
+
+| key | meaning | refused when |
+|---|---|---|
+| `tiles[].at` | `[x, y]` | off the map, or listed twice |
+| `tiles[].terrain` | Optional. The `TerrainType` name to swap to; the tile's tags are re-read from `terrain_definition` | not a terrain; a water or mountain (`Highland`/`Volcanic` niche) target; at Startup, a tile that is water, `NavigableRiver` or a mountain |
+| `tiles[].flora` | Optional. The species that grow there, stored as `Tile.flora_override` (see `flora.md`) | empty, a species twice, not on the flora roster; at Startup, a species the tile's final biome does not host |
+
+An entry must name `terrain`, `flora` or both. **Terrain is land→land only**, because elevation is
+the terrain authority: the land mask, the coast, the rivers and the mountains derive from it, and
+none has a point to re-derive from after an override. Temperature is not overridden.
+
+**Factions the file does not list place their starts on the pre-override map.** Start-tile scoring
+runs in `spawn_initial_world`, before the override. A listed faction's bands sit exactly at their
+`at`, so they are unaffected.
+
 ## Pipeline Stages
 1. **Macro landmask** - `land[i] = elevation[i] > sea_level`, a pure threshold of the heightfield (`generate_land_mask`, `mapgen.rs`). `target_land_pct` is satisfied upstream by `anchor_contour_to_sea_level` putting that quantile exactly on `sea_level`; `continents` is satisfied by the continental bias term in `build_elevation_field`. **No BFS, no seeds, no area quotas, no jitter** — the pre-`elevation-authority` mask grew weighted-BFS blobs from spaced seeds to fixed per-continent area targets, which is what decoupled terrain from elevation (see the callout above).
 2. **Tectonics** - Drift vectors, collision belts, fault seams, volcanic arcs, dome plateaus → mountain mask
@@ -65,7 +89,8 @@ Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, 
 > ### Anything DERIVED from terrain must be reconciled after the last stage that paints terrain
 >
 > The Startup chain paints terrain in five places (`spawn_initial_world` → `generate_hydrology` →
-> `apply_tag_budget_solver` → `apply_biome_palette_clamp` → `reconcile_coastal_shelf`), so a value
+> `apply_tag_budget_solver` → `apply_biome_palette_clamp` → `reconcile_coastal_shelf`), plus a
+> scenario's `tiles` section (`apply_scenario_tile_overrides`, last, see "Scenario section"), so a value
 > computed from `tile.terrain` **during** that chain is a snapshot of an intermediate map. There are
 > now two reconciliation passes at the end of the chain for exactly this reason, and a third derived
 > quantity would need a third.

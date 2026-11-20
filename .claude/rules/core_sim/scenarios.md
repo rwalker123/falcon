@@ -4,6 +4,8 @@ paths:
   - "core_sim/src/command_seam.rs"
   - "core_sim/scenarios/**"
   - "core_sim/tests/scenario_loader.rs"
+  - "core_sim/tests/scenario_labor_tiles.rs"
+  - "core_sim/src/labor_commands.rs"
   - "xtask/src/main.rs"
   - "scripts/run_stack.sh"
 ---
@@ -14,7 +16,7 @@ A scenario is a **recipe for a world, not a world**: a seed plus setup entries, 
 freshly generated world by the current code, so the file never goes stale the way a save does. The
 design is `docs/plan_scenarios.md`. This file owns the loader. **A section's key table lives in the
 rule of the arc that owns it**, under `## Scenario section`. The bands section's table is in
-`campaign.md`.
+`campaign.md`, the labor section's is in `work-party.md`, the tiles section's is in `worldgen.md`.
 
 ## Where things are
 
@@ -22,8 +24,8 @@ rule of the arc that owns it**, under `## Scenario section`. The bands section's
 |---|---|
 | File shape, pass 1, `ScenarioRefusal`, `build_scenario_world`, `finish_scenario` | `core_sim/src/scenario/mod.rs` |
 | The profile and roster steps every world build runs (`apply_start_profile`, `seed_faction_roster`) | `core_sim/src/world_roster.rs` |
-| One module per section | `core_sim/src/scenario/bands.rs` (slice 1) |
-| Replayed verbs that **return** their refusal | `core_sim/src/command_seam.rs` |
+| One module per section | `core_sim/src/scenario/bands.rs`, `labor.rs`, `tiles.rs` |
+| Replayed verbs that **return** their refusal | `core_sim/src/command_seam.rs` (the labor verbs' bodies are in `labor_commands.rs`) |
 | The verb and its reply | `handle_load_scenario` in `bin/server.rs`; `LoadScenarioCommand` = CommandEnvelope **101**, `ScenarioOpReply` = QueryReplyEnvelope **14** |
 | Checked-in scenarios | `core_sim/scenarios/<name>.json` (reviewed fixtures, not watched) |
 | Sending one | `cargo xtask command load_scenario <path>` · `scripts/run_stack.sh --scenario <path>` |
@@ -31,9 +33,11 @@ rule of the arc that owns it**, under `## Scenario section`. The bands section's
 ## Two passes, and nothing is built on a typo
 
 1. **Parse and resolve names** (`parse_scenario`), with no world built. Every struct is
-   `deny_unknown_fields`, there are no serde defaults, and `outfit` is the only optional key. Names
-   are checked against the live app's config handles (presets, profiles, archetypes, knowledge tags,
-   keeping classes, kits, materials). **Every refusal is collected**, so one load lists all of a
+   `deny_unknown_fields`, there are no serde defaults, and a key is optional only where the
+   command it replays has an `Option` (`outfit`; a labor entry's target, kit, species, floor;
+   a tile's `terrain` and `flora`, of which one is required). Names are checked against the live
+   app's config handles (presets, profiles, archetypes, knowledge tags, keeping classes, kits,
+   materials, labor roles, terrains, the flora roster). **Every refusal is collected**, so one load lists all of a
    file's faults. A serde error has no field path, so it reports `line L, column C`.
    **A repeat is refused, never last-wins**: a knowledge tag twice in one faction's `knowledge`
    (`factions[i].knowledge[k]`, "listed twice"), a larder class or band id twice, and a repeated
@@ -50,7 +54,7 @@ rule of the arc that owns it**, under `## Scenario section`. The bands section's
    the build turn, then `finish_scenario`. Only the swap-in (epoch, sink, `publish_loaded_world`,
    command-log re-base) is server-only. Fit
    refusals found during Startup (band on water or off the map, absent faction, an archetype with no
-   `starting_units`) are recorded on `ScenarioSetup`. `finish_scenario` then replays the command
+   `starting_units`, a tile override that does not fit its tile) are recorded on `ScenarioSetup`. `finish_scenario` then replays the command
    entries.
 
 **Fail closed and whole.** Any refusal drops the candidate. The previous world stays, and an idle
@@ -63,6 +67,9 @@ never undo the scenario.
 
 There is no scenario special case after Startup. `ScenarioSetup` is inserted **before** Startup:
 
+- `apply_scenario_tile_overrides` swaps the listed tiles' terrain and flora after the last pass that
+  paints terrain and before `reconcile_food_modules`, so everything derived from a tile reads the
+  override (`worldgen.md` → "Scenario section").
 - `spawn_initial_world` spawns a listed faction's bands, in file order, **instead of** its
   archetype's `starting_units`, and **ahead of** the profile branches. The first listed band
   therefore holds the faction's lowest `BandId`, which is the band `stamp_starting_loadout` opens the
@@ -77,6 +84,10 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
 - The default outfit is fitted on the world-build pass against the band the scenario built.
 - `finish_scenario` replays `outfit` as `SetStartingLoadout` through `command_seam`, which
   **replaces** the default while the opening window is still open.
+- `finish_scenario` then replays every faction's `labor` entries, in file order, through
+  `apply_assign_labor` / `apply_work_priority`. Labor runs only when no outfit was refused, and the
+  first refused entry stops the load. A replayed entry writes the same success line to the feed a
+  player's command would. Builds come after labor (plan §2.8).
 - `ScenarioSetup` is removed in `finish_scenario`. It is never part of `SimState`, a save or a
   snapshot.
 

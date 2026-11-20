@@ -510,6 +510,7 @@ mod power_tests {
                             river_edges: 0,
                             river_inflow: 0,
                             river_channel: 0,
+                            flora_override: None,
                         },
                         PowerNode {
                             id: PowerNodeId(idx as u32),

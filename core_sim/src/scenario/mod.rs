@@ -15,6 +15,8 @@
 //! touch two files.
 
 pub mod bands;
+pub mod labor;
+pub mod tiles;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -27,11 +29,17 @@ pub use bands::{
     Ages, BandEntry, FactionSection, FactionSetup, LarderEntry, Outfit, ScenarioSetup,
     AGES_SUM_TOLERANCE,
 };
+pub use labor::LaborEntry;
+pub use tiles::TileOverride;
 
-use crate::command_seam::apply_set_starting_loadout;
+use crate::command_seam::{
+    apply_assign_labor, apply_set_starting_loadout, apply_work_priority, AssignLaborOrder,
+};
 use crate::components::BandId;
 use crate::demographics_config::{DemographicsConfig, DemographicsConfigHandle};
 use crate::equipment_config::{EquipmentConfig, EquipmentConfigHandle};
+use crate::flora_config::{FloraConfig, FloraConfigHandle};
+use crate::labor_commands::BuildSourceRef;
 use crate::map_preset::{MapPresets, MapPresetsHandle};
 use crate::materials_config::{MaterialsConfig, MaterialsConfigHandle};
 use crate::resources::SimulationConfig;
@@ -78,6 +86,8 @@ pub struct ScenarioFile {
     pub note: String,
     pub world: WorldSection,
     pub factions: Vec<FactionSection>,
+    /// The tile overrides, applied as a worldgen input. A required key: `[]` for none.
+    pub tiles: Vec<tiles::TileOverride>,
 }
 
 /// The `new_game` arguments, every one required.
@@ -102,6 +112,7 @@ pub struct ScenarioContext {
     pub demographics: Arc<DemographicsConfig>,
     pub equipment: Arc<EquipmentConfig>,
     pub materials: Arc<MaterialsConfig>,
+    pub flora: Arc<FloraConfig>,
 }
 
 impl ScenarioContext {
@@ -114,6 +125,7 @@ impl ScenarioContext {
             demographics: world.resource::<DemographicsConfigHandle>().get(),
             equipment: world.resource::<EquipmentConfigHandle>().get(),
             materials: world.resource::<MaterialsConfigHandle>().get(),
+            flora: world.resource::<FloraConfigHandle>().get(),
         }
     }
 }
@@ -131,7 +143,7 @@ pub struct ScenarioPlan {
 impl ScenarioPlan {
     /// The setup worldgen reads while it spawns.
     pub fn setup(&self) -> ScenarioSetup {
-        ScenarioSetup::from_sections(&self.file.factions)
+        ScenarioSetup::from_sections(&self.file.factions, &self.file.tiles)
     }
 }
 
@@ -207,6 +219,13 @@ pub fn parse_scenario(
         }
     }
     bands::check(&file.factions, ctx, &mut refusals);
+    labor::check(&file.factions, &file.world, ctx, &mut refusals);
+    tiles::check(
+        &file.tiles,
+        (file.world.width, file.world.height),
+        ctx,
+        &mut refusals,
+    );
     match profile {
         Some(profile) if refusals.is_empty() => Ok(ScenarioPlan {
             file,
@@ -311,11 +330,62 @@ pub fn finish_scenario(world: &mut World) -> Result<ScenarioApplied, Vec<Scenari
             }
         }
     }
-    if refusals.is_empty() {
-        Ok(ScenarioApplied {
-            bands: setup.spawned,
-        })
-    } else {
-        Err(refusals)
+    // **Labor after every faction's outfit** (plan section 2.8 step 6): the outfit is an ordinary
+    // revision of the opening window, and a work row's gear is read against the outfit it ends up with.
+    if !refusals.is_empty() {
+        return Err(refusals);
     }
+    for faction_setup in &setup.factions {
+        let faction = faction_setup.faction;
+        for (k, entry) in faction_setup.labor.iter().enumerate() {
+            let path = format!("factions[{}].labor[{k}]", faction_setup.file_index);
+            let Some(band) = setup.spawned.get(entry.band()).copied() else {
+                refusals.push(ScenarioRefusal::new(
+                    path,
+                    format!("'{}' is not a band this scenario spawned", entry.band()),
+                ));
+                return Err(refusals);
+            };
+            let result = match entry {
+                LaborEntry::AssignLabor(order) => apply_assign_labor(
+                    world,
+                    faction,
+                    Some(band.0),
+                    AssignLaborOrder {
+                        role: order.role.clone(),
+                        workers: order.workers,
+                        target_x: order.target_x,
+                        target_y: order.target_y,
+                        fauna_id: order.fauna_id.clone(),
+                        species: order.species.clone(),
+                        floor: order.floor,
+                        kit_id: order.kit_id.clone(),
+                        take_species: order.take_species.clone(),
+                        move_with_herd: order.move_with_herd,
+                    },
+                ),
+                LaborEntry::WorkPriority(order) => apply_work_priority(
+                    world,
+                    faction,
+                    band.0,
+                    BuildSourceRef {
+                        target_x: order.target_x,
+                        target_y: order.target_y,
+                        herd_id: order.herd_id.clone(),
+                        material: order.material.clone(),
+                        branch: order.branch.clone(),
+                    },
+                    order.level.clone(),
+                ),
+            };
+            if let Err(refusal) = result {
+                // **A refused entry stops the load there**: later rows may stand on this one.
+                refusals.push(ScenarioRefusal::new(path, refusal.to_string()));
+                return Err(refusals);
+            }
+        }
+    }
+    Ok(ScenarioApplied {
+        bands: setup.spawned,
+    })
 }
