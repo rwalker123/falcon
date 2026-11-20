@@ -9,6 +9,12 @@ RUN_SERVER=true
 RUN_CLIENT=true
 RUN_GODOT=false
 PORT_BASE=""
+# A scenario file to build the world from (docs/plan_scenarios.md), absolute once resolved. Sent to
+# the server as `load_scenario` once it listens; the client is then told a world is already running.
+SCENARIO_PATH=""
+# The env var the client reads to take the world a scenario built underneath it, rather than
+# waiting at the menu for one it asked for.
+ATTACH_WORLD_ENV="FALCON_ATTACH_WORLD"
 
 # Default port base; base+0 is RESERVED (it carried the retired bincode
 # snapshot socket, #388), +1=command, +2=flat/stream, +3=log.
@@ -68,12 +74,18 @@ PORT_ALLOC_EXIT_CODE=2
 
 usage() {
   cat <<'EOF'
-Usage: scripts/run_stack.sh [--server-only|--client-only|--godot-only] [--port-base N] [--debug] [--no-record] [--help]
+Usage: scripts/run_stack.sh [--server-only|--client-only|--godot-only] [--port-base N] [--scenario PATH] [--debug] [--no-record] [--help]
   --server-only  Start only the core simulation server.
   --client-only  Launch only the thin client (expects a running server).
   --godot-only   Launch a bare Godot editor wired to the sim ports.
   --port-base N  Base port for this run. The server binds N..N+3; the client
                  connects to the matching ports. Overrides auto-derivation.
+  --scenario PATH
+                 DEV: once the server listens, build the world from the scenario
+                 file PATH (e.g. core_sim/scenarios/breeding_ceiling_150.json) with
+                 `cargo xtask command load_scenario`, then launch the client into
+                 that world. A refused file prints every refusal and stops the
+                 stack with a non-zero status. Needs the server half.
   --debug        Build the server WITHOUT optimisation. Measured cost: a turn
                  goes from ~10ms to ~161ms, and click-to-updated-map from
                  ~0.1s to ~1.9s. Worth it only for the overflow traps and
@@ -121,6 +133,17 @@ while [[ $# -gt 0 ]]; do
     --port-base=*)
       PORT_BASE="${1#*=}"
       ;;
+    --scenario)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "[run_stack] --scenario requires a path" >&2
+        exit 1
+      fi
+      SCENARIO_PATH="$1"
+      ;;
+    --scenario=*)
+      SCENARIO_PATH="${1#*=}"
+      ;;
     --debug)
       SERVER_PROFILE_FLAG=""
       ;;
@@ -144,6 +167,19 @@ if [[ "$RUN_SERVER" == false && "$RUN_CLIENT" == false && "$RUN_GODOT" != true ]
   echo "[run_stack] Nothing to do: both server and client disabled." >&2
   usage >&2
   exit 1
+fi
+
+if [[ -n "$SCENARIO_PATH" ]]; then
+  if [[ "$RUN_SERVER" != true ]]; then
+    echo "[run_stack] --scenario needs the server half (it is sent to the server this script starts)." >&2
+    exit 1
+  fi
+  if [[ ! -f "$SCENARIO_PATH" ]]; then
+    echo "[run_stack] Scenario file not found: $SCENARIO_PATH" >&2
+    exit 1
+  fi
+  # Absolute, because the server reads it from ITS working directory.
+  SCENARIO_PATH="$(cd "$(dirname "$SCENARIO_PATH")" && pwd)/$(basename "$SCENARIO_PATH")"
 fi
 
 # --- Port base resolution -----------------------------------------------------
@@ -446,10 +482,25 @@ wait_for_server() {
   echo "[run_stack] Server is ready."
 }
 
+# Send the scenario to the listening server and stop the stack if it is refused. The xtask prints
+# `ok`, or every refusal on its own line, and exits non-zero on a refusal or no answer; `exit 1`
+# here fires the EXIT trap `start_server` set, which stops the server.
+load_scenario() {
+  echo "[run_stack] Loading scenario $SCENARIO_PATH..."
+  if ! cargo xtask command --port "$COMMAND_PORT" load_scenario "$SCENARIO_PATH"; then
+    echo "[run_stack] The scenario was not loaded (refusals above). Stopping the stack." >&2
+    exit 1
+  fi
+}
+
 if [[ "$RUN_SERVER" == true && "$RUN_CLIENT" == false && "$RUN_GODOT" != true ]]; then
   # Backgrounded rather than exec'd so the exit path above runs: the recipe is printed
   # whether the server is stopped by Ctrl-C or exits on its own.
   start_server
+  if [[ -n "$SCENARIO_PATH" ]]; then
+    wait_for_server
+    load_scenario
+  fi
   set +e
   wait "$SERVER_PID"
   SERVER_EXIT_CODE=$?
@@ -460,6 +511,11 @@ fi
 if [[ "$RUN_SERVER" == true && "$RUN_CLIENT" == true ]]; then
   start_server
   wait_for_server
+  if [[ -n "$SCENARIO_PATH" ]]; then
+    load_scenario
+    # The client takes the world the scenario built, not one it asked for.
+    export "$ATTACH_WORLD_ENV=1"
+  fi
 fi
 
 CLIENT_EXIT_CODE=0

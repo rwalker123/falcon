@@ -34,6 +34,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "new_game <preset_id> <width> <height> <seed> <profile_id> [<archetype_id>=<count> ...]",
     },
     CommandVerbHelp {
+        verb: "load_scenario",
+        aliases: &[],
+        summary: "DEV: build a world from a scenario file (core_sim/scenarios/*.json). A refused file builds nothing and lists every refusal; the previous world stays.",
+        usage: "load_scenario <path>",
+    },
+    CommandVerbHelp {
         verb: "order",
         aliases: &[],
         summary: "Submit orders for a faction (currently only 'ready').",
@@ -561,6 +567,18 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 seed: parse_u64(seed_str, "new_game seed")?,
                 profile_id: profile_id.to_string(),
                 archetype_counts,
+            })
+        }
+        "load_scenario" => {
+            // The path is the rest of the line, so a directory with a space in it survives the
+            // `split_whitespace` this parser tokenizes with (runs of spaces collapse to one).
+            let path = parts.collect::<Vec<_>>().join(" ");
+            if path.is_empty() {
+                return Err(CommandParseError::MissingArgument("path"));
+            }
+            Ok(CommandPayload::LoadScenario {
+                request_id: TEXT_VERB_REQUEST_ID,
+                path,
             })
         }
         "order" => {
@@ -3210,6 +3228,10 @@ pub fn command_line_verb(line: &str) -> &str {
     line.split_whitespace().next().unwrap_or_default()
 }
 
+/// The `request_id` a verb parsed from text carries. A text line has no way to name one, so the
+/// SENDER (`cargo xtask command`) stamps its own before it sends; a reply is correlated on that.
+pub const TEXT_VERB_REQUEST_ID: u64 = 0;
+
 /// What a rendered line shows where the payload named no band — the grammar has no token for it,
 /// so the line is readable and deliberately does not parse.
 const NO_BAND: &str = "<no band>";
@@ -3221,6 +3243,21 @@ const ORDERS_READY_TOKEN: &str = "ready";
 mod tests {
     use super::*;
     use crate::commands::{TradeCargoItem, FODDER_CARGO_KEY, FOOD_CARGO_KEY};
+
+    #[test]
+    fn load_scenario_parses_its_path_and_refuses_none() {
+        assert_eq!(
+            parse_command_line("load_scenario /tmp/a b/c.json").unwrap(),
+            CommandPayload::LoadScenario {
+                request_id: TEXT_VERB_REQUEST_ID,
+                path: "/tmp/a b/c.json".to_string(),
+            }
+        );
+        assert!(matches!(
+            parse_command_line("load_scenario"),
+            Err(CommandParseError::MissingArgument("path"))
+        ));
+    }
 
     #[test]
     fn parse_follow_herd_optional_args() {

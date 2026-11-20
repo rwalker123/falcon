@@ -5,6 +5,7 @@ paths:
   - "core_sim/tests/seats.rs"
   - "core_sim/tests/query_seat_gate.rs"
   - "core_sim/src/start_profile.rs"
+  - "core_sim/src/world_roster.rs"
   - "core_sim/src/data/start_profiles.json"
   - "core_sim/src/data/simulation_config.json"
   - "core_sim/src/personalities.rs"
@@ -121,7 +122,7 @@ id after it is `Ai`, by construction.
   `ResetMap` rebuild start from — the shipped server boots idle and builds no world at all.
   ⛔ It is deliberately **not** the map-scaled count a New Game screen pre-selects; see "THE OFFER
   AND THE UNATTENDED ROSTER ARE TWO NUMBERS" below.
-- **`seed_faction_roster`** (`bin/server.rs`) seeds the registry **and everything else the boot path
+- **`seed_faction_roster`** (`world_roster.rs`) seeds the registry **and everything else the boot path
   seeds from it** from the per-archetype counts a `new_game` carried — and rewrites
   `start_archetype_assignment` for the Startup the caller runs next. It has to: `rebuild_world_from_config` calls
   `build_headless_app` *first*, so the replacement app arrives holding the **config file's** roster,

@@ -1,0 +1,32 @@
+{
+  "name": "breeding_ceiling_150",
+  "note": "One isolated people at 150, to watch births stop at L x K.",
+  "world": {
+    "preset": "earthlike",
+    "width": 80,
+    "height": 52,
+    "seed": 41733,
+    "profile": "late_forager_tribe",
+    "archetypes": { "major": 0, "minor": 0 }
+  },
+  "factions": [
+    {
+      "faction": 0,
+      "knowledge": ["messengers"],
+      "bands": [
+        {
+          "id": "home",
+          "at": [13, 11],
+          "size": 150,
+          "ages": { "children": 0.30, "working": 0.60, "elders": 0.10 },
+          "founding_lines": 8,
+          "larder": [{ "class": "dry", "amount": 450.0 }],
+          "outfit": {
+            "kits": { "big_game": 10, "gathering": 20 },
+            "materials": { "fibre": 20, "hide": 12 }
+          }
+        }
+      ]
+    }
+  ]
+}

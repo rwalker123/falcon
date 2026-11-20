@@ -141,6 +141,13 @@ pub(crate) const QUERY_KIND_SAVE_OP: &str = "save_op";
 /// in GDScript. Both directions use this one kind: the ask carries `width`/`height`/`profile_id`, the
 /// answer carries `archetypes: [{id, display_label, site_count, default_count}]` in catalog order.
 pub(crate) const QUERY_KIND_FACTION_CAPACITY: &str = "faction_capacity";
+/// **"Is a world running, and which one?"** — the landing screen's poll, so a world built outside
+/// the menu (a scenario loaded from a terminal) can be attached to. Faction-free, answered before
+/// the server's `world_active` gate. The answer carries `world_active` and `world_epoch`.
+pub(crate) const QUERY_KIND_WORLD_STATUS: &str = "world_status";
+/// The `ScenarioOpReply` answer kind. The client never sends `load_scenario`; the reply is decoded
+/// only so the reply match stays exhaustive.
+pub(crate) const QUERY_KIND_SCENARIO_OP: &str = "scenario_op";
 /// **The seat claim's answer kind** — *"do I drive this faction?"*. A `ClaimSeatCommand` is a command
 /// that answers on this envelope, exactly as the save verbs do — but it is the one answer this module
 /// does not READ: the claim goes out on the seated command link, which owns that socket for the
@@ -314,6 +321,20 @@ pub(crate) fn dispatch(
                 SAVE_REPLY_TIMEOUT,
             )
         }
+        // Polled from the landing screen with no world and no seat; answered before the world gate,
+        // so it takes the same patient timeout as the other idle-time asks.
+        QUERY_KIND_WORLD_STATUS => {
+            return send(
+                host,
+                port,
+                request_id,
+                CommandPayload::Query {
+                    request_id,
+                    query: QueryPayload::WorldStatus,
+                },
+                SAVE_REPLY_TIMEOUT,
+            )
+        }
         // Asked from the New Game screen, where there is no world — answered before the server's
         // world gate, exactly as the slot list is, and given the same patient timeout for the same
         // reason: it still queues behind whatever turn the sim is resolving.
@@ -384,7 +405,10 @@ fn names_a_faction(query: &QueryPayload) -> bool {
         | QueryPayload::StaffingPreview(_) => true,
         // The save headers on disk and the roster ceiling for a grid size. Neither reads a faction's
         // state, and both are asked before a world — and therefore before a seat — exists.
-        QueryPayload::ListSaves | QueryPayload::FactionCapacity(_) => false,
+        // Whether a world is running names no faction and is asked before any seat exists.
+        QueryPayload::ListSaves | QueryPayload::FactionCapacity(_) | QueryPayload::WorldStatus => {
+            false
+        }
     }
 }
 
@@ -712,6 +736,22 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
                 archetypes.push(&row.to_variant());
             }
             let _ = dict.insert("archetypes", &archetypes);
+        }
+        Ok(QueryReply::WorldStatus(reply)) => {
+            let _ = dict.insert("ok", true);
+            let _ = dict.insert("kind", QUERY_KIND_WORLD_STATUS);
+            let _ = dict.insert("world_active", reply.world_active);
+            let _ = dict.insert("world_epoch", i64::from(reply.world_epoch));
+        }
+        Ok(QueryReply::ScenarioOp(reply)) => {
+            let _ = dict.insert("ok", reply.ok);
+            let _ = dict.insert("kind", QUERY_KIND_SCENARIO_OP);
+            let _ = dict.insert("path", reply.path.as_str());
+            let mut refusals = VarArray::new();
+            for line in &reply.refusals {
+                refusals.push(&line.to_variant());
+            }
+            let _ = dict.insert("refusals", &refusals);
         }
         // Shaped like `save_op`'s: a command's answer riding the query channel, with `ok` from the
         // reply itself and the server's refusal token (`sim_runtime::commands::seat_error`) in

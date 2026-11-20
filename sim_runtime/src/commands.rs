@@ -726,6 +726,15 @@ pub enum CommandPayload {
         request_id: u64,
         slot: String,
     },
+    /// **DEV: build a world from a scenario file** (`docs/plan_scenarios.md`). Proto field 101.
+    ///
+    /// Not replayable and it re-bases the command log, like `NewGame` and `LoadGame`; answered with a
+    /// [`QueryReply::ScenarioOp`]. The `path` is read by the server, so a sender in another working
+    /// directory names an absolute one.
+    LoadScenario {
+        request_id: u64,
+        path: String,
+    },
     /// **One band's outfitting loadout.** Proto field 69, and the **one** source of a faction's
     /// starting gear and material — a spawning band owns nothing.
     ///
@@ -804,6 +813,9 @@ pub enum QueryPayload {
     /// **The compose sheet's dry run of the real staffing** — what crew a row would be given if it
     /// were added or re-stated, and which rows lose hands. See [`StaffingPreviewQuery`].
     StaffingPreview(StaffingPreviewQuery),
+    /// *"Is a world running, and which one?"* Answered before the world gate, like
+    /// [`Self::ListSaves`], because it is asked while the server may be idle.
+    WorldStatus,
 }
 
 /// **THE DRY RUN OF THE REAL STAFFING** — *"if this band added (or re-stated) this row at this
@@ -1197,6 +1209,10 @@ pub enum QueryReply {
     ForageCrewTake(ForageCrewTakeReply),
     /// The staffing dry run's crew and the rows it would cost.
     StaffingPreview(StaffingPreviewReply),
+    /// The answer to a `load_scenario` - a command, riding here like [`Self::SaveOp`].
+    ScenarioOp(ScenarioOpReply),
+    /// Whether a world is running and its epoch.
+    WorldStatus(WorldStatusReply),
 }
 
 /// **Whether this connection now drives that faction.**
@@ -1291,6 +1307,23 @@ pub struct ConfigDriftEntry {
     pub file_name: String,
     pub saved: ConfigDigestKind,
     pub live: ConfigDigestKind,
+}
+
+/// The answer to a `load_scenario`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ScenarioOpReply {
+    pub ok: bool,
+    /// Echoes the path asked for.
+    pub path: String,
+    /// Empty when `ok`; otherwise one `<path in the file>: <reason>` line per refusal.
+    pub refusals: Vec<String>,
+}
+
+/// The answer to a world-status query.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WorldStatusReply {
+    pub world_active: bool,
+    pub world_epoch: u32,
 }
 
 /// The answer to a save, load or delete.
@@ -2721,6 +2754,12 @@ impl CommandEnvelope {
                     slot: slot.clone(),
                 })
             }
+            CommandPayload::LoadScenario { request_id, path } => {
+                pb::command_envelope::Command::LoadScenario(pb::LoadScenarioCommand {
+                    request_id: *request_id,
+                    path: path.clone(),
+                })
+            }
             CommandPayload::DeleteSave { request_id, slot } => {
                 pb::command_envelope::Command::DeleteSave(pb::DeleteSaveCommand {
                     request_id: *request_id,
@@ -2780,6 +2819,9 @@ impl CommandEnvelope {
                         }
                         QueryPayload::ListSaves => {
                             pb::query_command::Query::ListSaves(pb::ListSavesQuery {})
+                        }
+                        QueryPayload::WorldStatus => {
+                            pb::query_command::Query::WorldStatus(pb::WorldStatusQuery {})
                         }
                         QueryPayload::WorkPartyForecast(ask) => {
                             pb::query_command::Query::WorkPartyForecast(work_party_query_to_proto(
@@ -3038,6 +3080,10 @@ impl CommandEnvelope {
             pb::command_envelope::Command::LoadGame(cmd) => CommandPayload::LoadGame {
                 request_id: cmd.request_id,
                 slot: cmd.slot,
+            },
+            pb::command_envelope::Command::LoadScenario(cmd) => CommandPayload::LoadScenario {
+                request_id: cmd.request_id,
+                path: cmd.path,
             },
             pb::command_envelope::Command::SetStartingLoadout(cmd) => {
                 CommandPayload::SetStartingLoadout {
@@ -3439,6 +3485,7 @@ impl CommandEnvelope {
                         })
                     }
                     pb::query_command::Query::ListSaves(_) => QueryPayload::ListSaves,
+                    pb::query_command::Query::WorldStatus(_) => QueryPayload::WorldStatus,
                     pb::query_command::Query::FactionCapacity(ask) => {
                         QueryPayload::FactionCapacity(FactionCapacityQuery {
                             width: ask.width,
@@ -3762,6 +3809,19 @@ impl QueryReplyEnvelope {
             QueryReply::SaveOp(reply) => {
                 pb::query_reply_envelope::Reply::SaveOp(save_op_reply_to_proto(reply))
             }
+            QueryReply::ScenarioOp(reply) => {
+                pb::query_reply_envelope::Reply::ScenarioOp(pb::ScenarioOpReply {
+                    ok: reply.ok,
+                    path: reply.path.clone(),
+                    refusals: reply.refusals.clone(),
+                })
+            }
+            QueryReply::WorldStatus(reply) => {
+                pb::query_reply_envelope::Reply::WorldStatus(pb::WorldStatusReply {
+                    world_active: reply.world_active,
+                    world_epoch: reply.world_epoch,
+                })
+            }
             QueryReply::SeatClaim(reply) => {
                 pb::query_reply_envelope::Reply::SeatClaim(pb::ClaimSeatReply {
                     ok: reply.ok,
@@ -3928,6 +3988,19 @@ impl QueryReplyEnvelope {
             ),
             pb::query_reply_envelope::Reply::SaveOp(reply) => {
                 QueryReply::SaveOp(save_op_reply_from_proto(reply))
+            }
+            pb::query_reply_envelope::Reply::ScenarioOp(reply) => {
+                QueryReply::ScenarioOp(ScenarioOpReply {
+                    ok: reply.ok,
+                    path: reply.path,
+                    refusals: reply.refusals,
+                })
+            }
+            pb::query_reply_envelope::Reply::WorldStatus(reply) => {
+                QueryReply::WorldStatus(WorldStatusReply {
+                    world_active: reply.world_active,
+                    world_epoch: reply.world_epoch,
+                })
             }
             pb::query_reply_envelope::Reply::SeatClaim(reply) => {
                 QueryReply::SeatClaim(SeatClaimReply {
@@ -4864,6 +4937,10 @@ mod tests {
             CommandPayload::DeleteSave {
                 request_id: 13,
                 slot: "old-one".to_string(),
+            },
+            CommandPayload::LoadScenario {
+                request_id: 14,
+                path: "/abs/scenario.json".to_string(),
             },
         ] {
             let envelope = CommandEnvelope {
