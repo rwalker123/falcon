@@ -565,6 +565,23 @@ fn a_bench_section_builds_the_queue_in_file_order() {
     assert!(bench.auto, "auto-craft is on");
 }
 
+/// The checked-in bench playtest fixture (`run_stack.sh --scenario core_sim/scenarios/bench_queue.json`).
+const SHIPPED_BENCH: &str = include_str!("../scenarios/bench_queue.json");
+
+#[test]
+fn the_shipped_bench_scenario_opens_with_its_queue() {
+    let (mut app, applied) = load(SHIPPED_BENCH).expect("the shipped bench scenario loads");
+    let bench = bench_of(&mut app, applied.bands["home"]);
+    let queue: Vec<(&str, u32)> = bench
+        .orders
+        .iter()
+        .map(|order| (order.recipe_id.as_str(), order.count))
+        .collect();
+    assert_eq!(queue, vec![("spears", 4), ("sled", 2)]);
+    assert_eq!(bench.kit_orders.len(), 1);
+    assert!(bench.auto, "auto-craft is on");
+}
+
 #[test]
 fn an_absent_bench_section_is_an_empty_one() {
     let (mut app, applied) = load(SHIPPED).expect("the shipped scenario loads");
