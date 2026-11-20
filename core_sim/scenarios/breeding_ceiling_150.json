@@ -9,6 +9,7 @@
     "profile": "late_forager_tribe",
     "archetypes": { "major": 0, "minor": 0 }
   },
+  "herds": [],
   "factions": [
     {
       "faction": 0,

@@ -3,6 +3,7 @@ paths:
   - "core_sim/src/{fauna,fauna_config,creatures_config}.rs"
   - "core_sim/src/data/{fauna_config,creatures}.json"
   - "core_sim/tests/fauna_*.rs"
+  - "core_sim/src/scenario/herds.rs"
 ---
 
 <!-- Extracted verbatim from lines 44-44;55-56;1099-1588 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
@@ -1409,3 +1410,28 @@ above it), and the managing pass re-ranks the herds every turn: a herd that is g
 the band's kit cannot wound (`staffing::probe_source`) loses its row unless cargo is walking home from it
 or a party is out, and the next best herd takes its share. A pen or a tamed herd the band keeps is never
 retired by the chief, even at a zero share, so its keepers keep coming.
+
+## Scenario section
+
+A top-level required key (an empty list is fine), a sibling of `factions` because a placed herd
+belongs to no faction. Entry: `id` (file-local, unique, non-empty), `species` (a `fauna_config.json`
+KEY), `at` `[x, y]`, `stock` (a fraction of capacity, in `(0, 1]`), `origin` (`placed` | `worldgen`).
+Pass 1 refuses the id, species, stock and off-map `at`. `finish_scenario` then fits every entry on
+the built world (`herds::fit`) and collects every refusal with the setup's own BEFORE `herds::apply`
+touches anything. Herds are a setter, so they apply before the outfit replay.
+
+- **Placed** is fitted by `fauna::habitat_refusal`, the predicate the spawn passes ask too (land,
+  hosted module, `adjacent_water` shore rule, a carnivore's prey gate). It is built through
+  `fauna::herd_from_species`, the construction all three spawn passes share, at `stock x K`, with a
+  route from `build_short_route` or `build_migratory_route` (`SeedTile::At` keeps a migratory herd's
+  first anchor on `at`; a route that cannot start there is refused). Its rolls seed from
+  `map_seed ^ SCENARIO_HERD_SEED_SALT ^ entry index`; its runtime id is `scenario_<id>`.
+- **Worldgen** names the one unowned herd of that species standing on `at` when the finish runs (after
+  the build turn), and sets its biomass to `stock x herd_capacity`. None, several, or an owned one are
+  refused; the none case names the nearest.
+- A stock the herd would be dispersed under on its first turn (`fauna::herd_above_extinction_floor`,
+  the expression `advance_herds` retains by) is refused at `herds[i].stock`.
+- `HerdTelemetry` and `HerdDensityMap` are rebuilt as `spawn_initial_herds` does.
+  `ScenarioApplied.herds` maps file id to runtime id.
+
+The loader, the apply order and the refusal contract are `scenarios.md`.

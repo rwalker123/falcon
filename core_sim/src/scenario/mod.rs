@@ -15,6 +15,7 @@
 //! touch two files.
 
 pub mod bands;
+pub mod herds;
 pub mod labor;
 pub mod rungs;
 pub mod tiles;
@@ -30,6 +31,7 @@ pub use bands::{
     Ages, BandEntry, FactionSection, FactionSetup, LarderEntry, Outfit, ScenarioSetup,
     AGES_SUM_TOLERANCE,
 };
+pub use herds::{HerdEntry, HerdOrigin, ScenarioHerdSetup};
 pub use labor::LaborEntry;
 pub use tiles::TileOverride;
 
@@ -40,6 +42,7 @@ use crate::components::BandId;
 use crate::demographics_config::{DemographicsConfig, DemographicsConfigHandle};
 use crate::equipment_config::{EquipmentConfig, EquipmentConfigHandle};
 use crate::extraction_config::{ExtractionConfig, ExtractionConfigHandle};
+use crate::fauna_config::{FaunaConfig, FaunaConfigHandle};
 use crate::flora_config::{FloraConfig, FloraConfigHandle};
 use crate::intensification::{LadderConfig, LadderConfigHandle};
 use crate::labor_commands::BuildSourceRef;
@@ -91,6 +94,8 @@ pub struct ScenarioFile {
     pub factions: Vec<FactionSection>,
     /// The tile overrides, applied as a worldgen input. A required key: `[]` for none.
     pub tiles: Vec<tiles::TileOverride>,
+    /// Wild herds placed or set. Required: an empty list is fine, an absent key is not.
+    pub herds: Vec<HerdEntry>,
 }
 
 /// The `new_game` arguments, every one required.
@@ -118,6 +123,7 @@ pub struct ScenarioContext {
     pub ladder: Arc<LadderConfig>,
     pub flora: Arc<FloraConfig>,
     pub extraction: Arc<ExtractionConfig>,
+    pub fauna: Arc<FaunaConfig>,
 }
 
 impl ScenarioContext {
@@ -133,6 +139,7 @@ impl ScenarioContext {
             ladder: world.resource::<LadderConfigHandle>().get(),
             flora: world.resource::<FloraConfigHandle>().get(),
             extraction: world.resource::<ExtractionConfigHandle>().get(),
+            fauna: world.resource::<FaunaConfigHandle>().get(),
         }
     }
 }
@@ -234,6 +241,7 @@ pub fn parse_scenario(
         ctx,
         &mut refusals,
     );
+    herds::check(&file.herds, &file.world, ctx, &mut refusals);
     match profile {
         Some(profile) if refusals.is_empty() => Ok(ScenarioPlan {
             file,
@@ -279,6 +287,9 @@ pub fn build_scenario_world(
     apply_start_profile(app, &plan.profile);
     seed_faction_roster(app, &granted_counts);
     app.insert_resource(plan.setup());
+    app.insert_resource(ScenarioHerdSetup {
+        herds: plan.file.herds.clone(),
+    });
     run_turn(app);
     finish_scenario(&mut app.world)
 }
@@ -287,6 +298,8 @@ pub fn build_scenario_world(
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ScenarioApplied {
     pub bands: BTreeMap<String, BandId>,
+    /// Scenario herd id to the runtime herd id, for placed and worldgen herds alike.
+    pub herds: BTreeMap<String, String>,
 }
 
 /// **Pass 2, after the candidate's first turn has built the world: collect what worldgen could not
@@ -299,10 +312,19 @@ pub fn finish_scenario(world: &mut World) -> Result<ScenarioApplied, Vec<Scenari
     let Some(mut setup) = world.remove_resource::<ScenarioSetup>() else {
         return Ok(ScenarioApplied::default());
     };
+    let herd_setup = world.remove_resource::<ScenarioHerdSetup>();
     let mut refusals = setup.take_refusals();
+    // Herds are a setter (before the outfit replay). Every fit refusal is collected before any herd
+    // is applied, so a refused file changes nothing.
+    let (fitted, herd_refusals) = match &herd_setup {
+        Some(herd_setup) => herds::fit(world, &herd_setup.herds),
+        None => (Vec::new(), Vec::new()),
+    };
+    refusals.extend(herd_refusals);
     if !refusals.is_empty() {
         return Err(refusals);
     }
+    let herds = herds::apply(world, fitted);
     // **Held rungs (the setters, plan section 2.8 step 5)**, faction order then file order, BEFORE
     // the outfit replay. Every refusal is collected; a refused entry does not stop the others.
     for faction_setup in &setup.factions {
@@ -411,5 +433,6 @@ pub fn finish_scenario(world: &mut World) -> Result<ScenarioApplied, Vec<Scenari
     }
     Ok(ScenarioApplied {
         bands: setup.spawned,
+        herds,
     })
 }

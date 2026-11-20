@@ -18,7 +18,7 @@ freshly generated world by the current code, so the file never goes stale the wa
 design is `docs/plan_scenarios.md`. This file owns the loader. **A section's key table lives in the
 rule of the arc that owns it**, under `## Scenario section`. The bands section's table is in
 `campaign.md`, the labor section's is in `work-party.md`, the tiles section's is in `worldgen.md`,
-the rungs section's is in `intensification.md`.
+the rungs section's is in `intensification.md`, the herds section's is in `fauna.md`.
 
 ## Where things are
 
@@ -26,7 +26,7 @@ the rungs section's is in `intensification.md`.
 |---|---|
 | File shape, pass 1, `ScenarioRefusal`, `build_scenario_world`, `finish_scenario` | `core_sim/src/scenario/mod.rs` |
 | The profile and roster steps every world build runs (`apply_start_profile`, `seed_faction_roster`) | `core_sim/src/world_roster.rs` |
-| One module per section | `core_sim/src/scenario/bands.rs`, `labor.rs`, `tiles.rs`, `rungs.rs` |
+| One module per section | `core_sim/src/scenario/bands.rs`, `labor.rs`, `tiles.rs`, `rungs.rs`, `herds.rs` |
 | Replayed verbs that **return** their refusal | `core_sim/src/command_seam.rs` (the labor verbs' bodies are in `labor_commands.rs`) |
 | The verb and its reply | `handle_load_scenario` in `bin/server.rs`; `LoadScenarioCommand` = CommandEnvelope **101**, `ScenarioOpReply` = QueryReplyEnvelope **14** |
 | Checked-in scenarios | `core_sim/scenarios/<name>.json` (reviewed fixtures, not watched) |
@@ -131,3 +131,4 @@ A band's fixed larder counts against its carry (`starting-loadout.md`), so a lar
 nothing for the outfit. At 150 people (90 working × 7.0 = 630 carry), a 900 dry larder leaves an
 allowance of 0 and any outfit is refused `OverCarry`. That is why `breeding_ceiling_150.json` ships
 450.
+

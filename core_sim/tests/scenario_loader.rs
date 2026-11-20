@@ -4,6 +4,7 @@
 //! ([`parse_scenario`]), then [`build_scenario_world`] (profile, roster, setup, the build turn and
 //! `finish_scenario`, one body shared with the server). The server adds only the swap-in around it.
 
+use bevy::ecs::system::SystemState;
 use bevy::prelude::*;
 use serde_json::{json, Value};
 
@@ -12,10 +13,12 @@ use core_sim::scenario::{
     build_scenario_world, parse_scenario, ScenarioApplied, ScenarioContext, ScenarioRefusal,
 };
 use core_sim::{
-    build_test_app, knows_messengers, run_turn, scalar_from_f32, ActiveStartProfile, BandId,
-    DiscoveryProgressLedger, FactionId, FactionRegistry, KitAllocation, LadderConfigHandle,
-    MaterialAllocation, PopulationCohort, SimulationConfig, StartProfileKnowledgeTagsHandle,
-    StartProfiles, StartProfilesHandle, StartingLoadout, Tile,
+    build_test_app, habitat_refusal, knows_messengers, run_turn, scalar_from_f32,
+    ActiveStartProfile, BandId, Diet, DiscoveryProgressLedger, EcologyPhase, FactionId,
+    FactionRegistry, FaunaConfig, FaunaConfigHandle, HabitatRefusal, Herd, HerdRegistry,
+    KitAllocation, LadderConfigHandle, MaterialAllocation, PopulationCohort, PreyReach,
+    SimulationConfig, StartProfileKnowledgeTagsHandle, StartProfiles, StartProfilesHandle,
+    StartingLoadout, Tile, TileRegistry,
 };
 
 const SHIPPED: &str = include_str!("../scenarios/breeding_ceiling_150.json");
@@ -514,4 +517,304 @@ fn a_scenario_builds_with_the_profile_it_names() {
         app.world.resource::<SimulationConfig>().start_profile_id,
         "second_tribe"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Slice 2c: the herds section
+// ---------------------------------------------------------------------------------------------
+
+/// A `herds` entry.
+fn herd_entry(id: &str, species: &str, at: UVec2, stock: f64, origin: &str) -> Value {
+    json!({ "id": id, "species": species, "at": [at.x, at.y], "stock": stock, "origin": origin })
+}
+
+/// The shipped scenario with `herds` as its herds section.
+fn with_herds(herds: Vec<Value>) -> String {
+    let mut file = shipped();
+    file["herds"] = json!(herds);
+    file.to_string()
+}
+
+fn herds_of(app: &App) -> Vec<Herd> {
+    app.world.resource::<HerdRegistry>().herds.clone()
+}
+
+fn fauna_of(app: &App) -> std::sync::Arc<FaunaConfig> {
+    app.world.resource::<FaunaConfigHandle>().get()
+}
+
+/// A species key and tile the generated world proves hospitable: where a non-migratory herbivore
+/// stands, read off the world the shipped scenario builds so a worldgen retune moves it with the map.
+fn hospitable_tile(app: &App) -> (String, UVec2) {
+    let fauna = fauna_of(app);
+    herds_of(app)
+        .iter()
+        .find_map(|herd| {
+            let key = fauna.species_key_by_display(&herd.species)?;
+            let def = fauna.species.get(key)?;
+            (!def.migratory
+                && def.diet == Diet::Herbivore
+                && def.adjacent_water.satisfied_by(false, false))
+            .then(|| (key.to_string(), herd.position()))
+        })
+        .expect("the map has a wild herbivore on dry ground")
+}
+
+#[test]
+fn a_placed_herd_lands_where_it_was_put() {
+    let (control, _) = load(SHIPPED).expect("the control world loads");
+    let (key, at) = hospitable_tile(&control);
+    let text = with_herds(vec![herd_entry("cattle", &key, at, 0.6, "placed")]);
+    let (app, applied) = load(&text).expect("a herd on ground its species hosts is placed");
+    let runtime = applied.herds.get("cattle").expect("the id is mapped");
+    let herd = herds_of(&app)
+        .into_iter()
+        .find(|herd| &herd.id == runtime)
+        .expect("the herd is in the registry");
+    let fauna = fauna_of(&app);
+    let capacity = fauna.species[&key].carrying_capacity();
+    assert_eq!(herd.position(), at);
+    assert!(
+        (herd.biomass - 0.6 * capacity).abs() < 1e-3 * capacity,
+        "{}",
+        herd.biomass
+    );
+    assert!(herd.owner.is_none(), "a placed herd is wild");
+    assert!(runtime.starts_with("scenario_"), "{runtime}");
+    assert_eq!(
+        herds_of(&app).len(),
+        herds_of(&control).len() + 1,
+        "one herd more than the control world"
+    );
+}
+
+#[test]
+fn a_herd_on_ground_its_species_does_not_hold_is_refused_with_the_habitat_reason() {
+    let (mut app, _) = load(SHIPPED).expect("the control world loads");
+    let sea = app
+        .world
+        .query::<&Tile>()
+        .iter(&app.world)
+        .find(|tile| tile.terrain_tags.contains(sim_runtime::TerrainTags::WATER))
+        .map(|tile| tile.position)
+        .expect("the map has water");
+    let text = with_herds(vec![herd_entry("cattle", "aurochs", sea, 0.5, "placed")]);
+    let refusals = load(&text)
+        .map(|_| ())
+        .expect_err("an aurochs on the sea is refused");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_eq!(refusals[0].path, "herds[0].at");
+    assert!(
+        refusals[0]
+            .reason
+            .contains(&format!("aurochs at ({},{}): tile is", sea.x, sea.y)),
+        "{}",
+        refusals[0]
+    );
+
+    // A seal on land that is not beside salt water: the shore rule, found by the shared predicate.
+    let fauna = fauna_of(&app);
+    let seal = fauna.species.get("seal").expect("the roster has a seal");
+    let wrap = app
+        .world
+        .resource::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let size = app.world.resource::<SimulationConfig>().grid_size;
+    let mut state: SystemState<(Query<&Tile>, Res<TileRegistry>)> =
+        SystemState::new(&mut app.world);
+    let (tiles, registry) = state.get(&app.world);
+    let inland = tiles
+        .iter()
+        .map(|tile| tile.position)
+        .find(|pos| {
+            matches!(
+                habitat_refusal(
+                    seal,
+                    *pos,
+                    size.x,
+                    size.y,
+                    wrap,
+                    &registry,
+                    &tiles,
+                    &PreyReach::NONE
+                ),
+                Some(HabitatRefusal::NeedsShore(_))
+            )
+        })
+        .expect("the map has a seal-hosting tile with no salt water beside it");
+    let text = with_herds(vec![herd_entry("seals", "seal", inland, 0.5, "placed")]);
+    let refusals = load(&text)
+        .map(|_| ())
+        .expect_err("a seal inland is refused");
+    assert_eq!(refusals[0].path, "herds[0].at");
+    assert!(
+        refusals[0].reason.contains("needs salt water beside it"),
+        "{}",
+        refusals[0]
+    );
+}
+
+#[test]
+fn an_unknown_species_and_a_repeated_id_are_refused_in_pass_one() {
+    let at = UVec2::new(1, 1);
+    let text = with_herds(vec![
+        herd_entry("a", "unicorn", at, 0.5, "placed"),
+        herd_entry("a", "deer", at, 0.5, "placed"),
+    ]);
+    let refusals = pass_one(&text).expect_err("refused");
+    let paths: Vec<&str> = refusals.iter().map(|r| r.path.as_str()).collect();
+    assert!(paths.contains(&"herds[0].species"), "{paths:?}");
+    assert!(paths.contains(&"herds[1].id"), "{paths:?}");
+    let species = refusals
+        .iter()
+        .find(|r| r.path == "herds[0].species")
+        .unwrap();
+    assert!(
+        species.reason.contains("'unicorn' is not a fauna species"),
+        "{species}"
+    );
+
+    let mut file = shipped();
+    file.as_object_mut().unwrap().remove("herds");
+    assert!(pass_one(&file.to_string()).is_err(), "herds is required");
+}
+
+#[test]
+fn stock_outside_zero_to_one_is_refused_in_pass_one_and_a_stock_under_the_floor_at_fit() {
+    for bad in [0.0, 1.5, -0.1] {
+        let text = with_herds(vec![herd_entry(
+            "a",
+            "deer",
+            UVec2::new(1, 1),
+            bad,
+            "placed",
+        )]);
+        let refusals = pass_one(&text).expect_err("refused");
+        assert_eq!(refusals[0].path, "herds[0].stock", "stock {bad}");
+    }
+    let (control, _) = load(SHIPPED).expect("the control world loads");
+    let (key, at) = hospitable_tile(&control);
+    let text = with_herds(vec![herd_entry("a", &key, at, 1e-6, "placed")]);
+    let refusals = load(&text)
+        .map(|_| ())
+        .expect_err("a stock under the extinction floor");
+    assert_eq!(refusals[0].path, "herds[0].stock");
+    assert!(
+        refusals[0].reason.contains("extinction floor"),
+        "{}",
+        refusals[0]
+    );
+}
+
+/// A worldgen herd that is the only one of its species on its tile.
+fn lone_worldgen_herd(app: &App) -> (String, Herd) {
+    let fauna = fauna_of(app);
+    let herds = herds_of(app);
+    herds
+        .iter()
+        .find(|herd| {
+            herd.owner.is_none()
+                && herds
+                    .iter()
+                    .filter(|other| {
+                        other.species == herd.species && other.position() == herd.position()
+                    })
+                    .count()
+                    == 1
+                && fauna.species_key_by_display(&herd.species).is_some()
+        })
+        .map(|herd| {
+            (
+                fauna
+                    .species_key_by_display(&herd.species)
+                    .unwrap()
+                    .to_string(),
+                herd.clone(),
+            )
+        })
+        .expect("the map has an unowned herd")
+}
+
+#[test]
+fn a_worldgen_herd_is_set_to_the_stock_and_its_phase_follows() {
+    let (control, _) = load(SHIPPED).expect("the control world loads");
+    let (key, herd) = lone_worldgen_herd(&control);
+    let text = with_herds(vec![herd_entry(
+        "depleted",
+        &key,
+        herd.position(),
+        0.2,
+        "worldgen",
+    )]);
+    let (app, applied) = load(&text).expect("the named herd is set");
+    let runtime = applied.herds.get("depleted").expect("mapped");
+    assert_eq!(
+        runtime, &herd.id,
+        "it is the world's own herd, not a new one"
+    );
+    let set = herds_of(&app)
+        .into_iter()
+        .find(|h| &h.id == runtime)
+        .unwrap();
+    assert!(
+        (set.biomass - 0.2 * herd.carrying_capacity).abs() < 1e-3 * herd.carrying_capacity,
+        "{} of {}",
+        set.biomass,
+        herd.carrying_capacity
+    );
+    assert_ne!(
+        set.ecology_phase,
+        EcologyPhase::Thriving,
+        "a 0.2 stock is not thriving"
+    );
+    assert_eq!(
+        herds_of(&app).len(),
+        herds_of(&control).len(),
+        "no herd was added"
+    );
+
+    // A tile with no such herd is refused, naming the nearest.
+    let empty = [UVec2::new(0, 0), UVec2::new(79, 51)]
+        .into_iter()
+        .find(|pos| {
+            !herds_of(&control)
+                .iter()
+                .any(|h| h.species == herd.species && h.position() == *pos)
+        })
+        .unwrap();
+    let text = with_herds(vec![herd_entry("depleted", &key, empty, 0.2, "worldgen")]);
+    let refusals = load(&text).map(|_| ()).expect_err("no herd there");
+    assert_eq!(refusals[0].path, "herds[0].at");
+    assert!(
+        refusals[0].reason.contains("the nearest is at ("),
+        "{}",
+        refusals[0]
+    );
+    assert!(
+        refusals[0]
+            .reason
+            .contains(&format!("no {} at", herd.species)),
+        "{}",
+        refusals[0]
+    );
+}
+
+#[test]
+fn every_refusal_in_a_file_is_reported_together() {
+    let (mut control, _) = load(SHIPPED).expect("the control world loads");
+    let sea = control
+        .world
+        .query::<&Tile>()
+        .iter(&control.world)
+        .find(|tile| tile.terrain_tags.contains(sim_runtime::TerrainTags::WATER))
+        .map(|tile| tile.position)
+        .expect("the map has water");
+    let mut file = shipped();
+    file["herds"] = json!([herd_entry("cattle", "aurochs", sea, 0.5, "placed")]);
+    file["factions"][0]["bands"][0]["at"] = json!([sea.x, sea.y]);
+    let refusals = load(&file.to_string()).map(|_| ()).expect_err("two faults");
+    let paths: Vec<&str> = refusals.iter().map(|r| r.path.as_str()).collect();
+    assert!(paths.contains(&"herds[0].at"), "{paths:?}");
+    assert!(paths.contains(&"factions[0].bands[0].at"), "{paths:?}");
 }
