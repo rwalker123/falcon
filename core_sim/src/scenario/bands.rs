@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use bevy::prelude::*;
 use serde::Deserialize;
 
+use super::bench::BenchEntry;
 use super::{ScenarioContext, ScenarioRefusal};
 use crate::components::BandId;
 use crate::orders::FactionId;
@@ -28,6 +29,11 @@ pub struct FactionSection {
     pub knowledge: Vec<String>,
     /// The faction's bands, in spawn order. The FIRST holds the faction's opening outfit window.
     pub bands: Vec<BandEntry>,
+    /// The faction's bench commands, replayed in file order. An absent section is an empty one (a
+    /// section is a list of entries, and an empty list and an absent one say the same thing), which
+    /// is what lets sections land in parallel without touching every checked-in file.
+    #[serde(default)]
+    pub bench: Vec<BenchEntry>,
 }
 
 /// One band.
@@ -291,6 +297,7 @@ pub struct FactionSetup {
     pub faction: FactionId,
     pub knowledge: Vec<String>,
     pub bands: Vec<BandEntry>,
+    pub bench: Vec<BenchEntry>,
 }
 
 impl ScenarioSetup {
@@ -304,6 +311,7 @@ impl ScenarioSetup {
                     faction: FactionId(section.faction),
                     knowledge: section.knowledge.clone(),
                     bands: section.bands.clone(),
+                    bench: section.bench.clone(),
                 })
                 .collect(),
             ..Self::default()

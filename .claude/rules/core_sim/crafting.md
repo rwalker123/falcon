@@ -3,6 +3,7 @@ paths:
   - "core_sim/src/{materials_config,recipes_config,crafting,craft_suggestions,auto_craft}.rs"
   - "core_sim/src/systems/crafting.rs"
   - "core_sim/src/snapshot/crafting.rs"
+  - "core_sim/src/scenario/bench.rs"
   - "core_sim/src/data/{materials,recipes}.json"
   - "core_sim/tests/{materials,crafting,crafting_wire,bench_delivery,bench_parallel_orders,auto_craft}.rs"
 ---
@@ -1513,7 +1514,7 @@ guard):
 
 | verb | does | refused when |
 |---|---|---|
-| `bench_enqueue_kit <f> <b> kit <id> kits <n> recipe <id> [recipe <id> …]` | queues `n` of every item of the kit (one recipe named per item) as one kit order; each part writes `last_started`, as `bench_enqueue` does; the crew is untouched | the kit is unknown or carries nothing (`none`); `n` is below 1; a recipe fails `bench_recipe_refusal` (the same predicate `bench_enqueue` uses); a recipe's output item is not one the kit `uses`; two recipes make the same item; an item of the kit has no recipe. **Fails whole** — nothing queues on any failure |
+| `bench_enqueue_kit <f> <b> kit <id> kits <n> recipe <id> [recipe <id> …]` | queues `n` of every item of the kit (one recipe named per item) as one kit order; each part writes `last_started`, as `bench_enqueue` does; the crew is untouched | the kit is unknown or carries nothing (`none`); `n` is below 1; a recipe fails `command_seam::bench_recipe_check` (the same predicate `bench_enqueue` uses); a recipe's output item is not one the kit `uses`; two recipes make the same item; an item of the kit has no recipe. **Fails whole** — nothing queues on any failure |
 | `bench_remove_kit <f> <b> kit_order <id>` | removes every part | no such kit order |
 | `bench_raise_kit <f> <b> kit_order <id>` | raises the whole block | no such kit order; already at the head |
 
@@ -1656,7 +1657,7 @@ and `sim_schema`'s `the_benchs_auto_state_and_an_orders_auto_tag_ride_the_wire`.
 ## `queueable` — the Make button's gate is KNOWLEDGE ONLY
 
 `CraftOffer.queueable` is true when every craft in the recipe's `requires_knowledge` is known — the
-**one predicate** `crafting::first_unknown_craft`, which `bench_recipe_refusal` (`bench_enqueue`) and
+**one predicate** `crafting::first_unknown_craft`, which `command_seam::bench_recipe_check` (`bench_enqueue`) and
 the capture both call, so a `queueable` offer is never refused. Materials and tools do not gate the
 queue: a short order is skipped and `shortToFinish` speaks for it. `available` stays "a pass can run
 NOW" (readouts, `mark_suggested`). Pinned by `crafting_wire::a_short_offer_is_queueable_and_an_unlearned_one_is_not`
@@ -1695,6 +1696,39 @@ said nothing until it stalled. `systems::queue_material_shortfalls` looks at the
 Pinned off the encoded frame by `bench_parallel_orders` and
 `::a_suggestions_shortfalls_are_struck_…`, the edge gate by `::the_bench_short_notice_is_edge_gated_…`,
 the arithmetic by `systems::crafting::forecast_tests`.
+
+## Scenario section
+
+The **bench** section of a scenario file (`core_sim/src/scenario/bench.rs`; the loader is
+`scenarios.md`). `factions[].bench` is a list of **command entries**, replayed in file order through
+the same `command_seam` bodies the server's `bench_enqueue`, `bench_enqueue_kit` and `bench_auto`
+handlers call, so a refusal is the handler's own sentence. An entry is the `CommandPayload` variant in
+snake_case, externally tagged; the faction is implied by the section and `band` is the band's scenario
+id. **An absent `bench` key is an empty section.** Every field inside an entry is required.
+
+```json
+"bench": [
+  { "bench_enqueue":     { "band": "home", "recipe_id": "spears", "count": 4 } },
+  { "bench_enqueue_kit": { "band": "home", "kit_id": "sledding", "kits": 2, "recipes": ["sled"] } },
+  { "bench_auto":        { "band": "home", "enabled": true } }
+]
+```
+
+| entry | keys | refused in pass 1 when | refused at replay when |
+|---|---|---|---|
+| `bench_enqueue` | `band`, `recipe_id`, `count` | `band` is not a band of the same faction section; `recipe_id` is not in `recipes.json` | the craft is unlearned, or `count` is below `MIN_ORDER_COUNT` |
+| `bench_enqueue_kit` | `band`, `kit_id`, `kits`, `recipes` | as above; `kit_id` is not orderable (`EquipmentConfig::orderable_kit`: it exists and `uses` something, so `none` is refused); any `recipes[r]` is not a recipe | a recipe's craft is unlearned, it makes nothing the kit uses, two recipes make one item, an item has no recipe, or `kits` is below `MIN_ORDER_COUNT` |
+| `bench_auto` | `band`, `enabled` | `band` as above | never |
+
+**Pass 1 resolves names only.** Knowledge, counts and kit coverage are judged by the handler at
+replay, when the faction's `knowledge` is already seeded. **The first replay refusal stops the load**
+(`factions[i].bench[k]: <the handler's sentence>`), because a later entry may depend on an earlier one.
+`bench_auto: true` on an empty queue fills it from the band's top suggestion at once, so where it sits
+in the list decides whether it does: after an order it leaves the queue alone.
+
+**The verbs that edit a queue are not entries** (`bench_order_count`, `bench_remove_order`,
+`bench_raise_order`, `bench_remove_kit`, `bench_raise_kit`, `bench_priority`, `bench_auto_skip`). A
+scenario states the queue it wants.
 
 ## What is deliberately not wired
 

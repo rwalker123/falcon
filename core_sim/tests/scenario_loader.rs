@@ -12,8 +12,8 @@ use core_sim::scenario::{
     build_scenario_world, parse_scenario, ScenarioApplied, ScenarioContext, ScenarioRefusal,
 };
 use core_sim::{
-    build_test_app, knows_messengers, run_turn, scalar_from_f32, ActiveStartProfile, BandId,
-    DiscoveryProgressLedger, FactionId, FactionRegistry, KitAllocation, LadderConfigHandle,
+    build_test_app, knows_messengers, run_turn, scalar_from_f32, ActiveStartProfile, BandBench,
+    BandId, DiscoveryProgressLedger, FactionId, FactionRegistry, KitAllocation, LadderConfigHandle,
     MaterialAllocation, PopulationCohort, SimulationConfig, StartProfileKnowledgeTagsHandle,
     StartProfiles, StartProfilesHandle, StartingLoadout, Tile,
 };
@@ -508,4 +508,159 @@ fn a_scenario_builds_with_the_profile_it_names() {
         app.world.resource::<SimulationConfig>().start_profile_id,
         "second_tribe"
     );
+}
+
+// ---- slice 2f: the bench queue ----
+
+/// A recipe the shipped start already knows how to make, and the one that fills the one-item kit.
+const PLAIN_RECIPE: &str = "spears";
+const KIT_RECIPE: &str = "sled";
+/// The one-item kit `KIT_RECIPE` fills.
+const ONE_ITEM_KIT: &str = "sledding";
+/// A recipe that needs a tool craft the opening people has not learned.
+const UNLEARNED_RECIPE: &str = "tanning_frame";
+/// Counts the file asks for.
+const PLAIN_COUNT: u32 = 4;
+const KIT_COUNT: u32 = 2;
+
+fn with_bench(entries: Value) -> String {
+    let mut file = shipped();
+    file["factions"][0]["bench"] = entries;
+    file.to_string()
+}
+
+fn bench_of(app: &mut App, band: BandId) -> BandBench {
+    app.world
+        .query::<(&BandId, &BandBench)>()
+        .iter(&app.world)
+        .find(|(id, _)| **id == band)
+        .map(|(_, bench)| bench.clone())
+        .expect("the band holds a bench")
+}
+
+#[test]
+fn a_bench_section_builds_the_queue_in_file_order() {
+    let text = with_bench(json!([
+        { "bench_enqueue": { "band": "home", "recipe_id": PLAIN_RECIPE, "count": PLAIN_COUNT } },
+        { "bench_enqueue_kit": {
+            "band": "home", "kit_id": ONE_ITEM_KIT, "kits": KIT_COUNT, "recipes": [KIT_RECIPE]
+        } },
+        { "bench_auto": { "band": "home", "enabled": true } },
+    ]));
+    let (mut app, applied) = load(&text).expect("the scenario loads");
+    let bench = bench_of(&mut app, applied.bands["home"]);
+    let queue: Vec<(&str, u32, u32)> = bench
+        .orders
+        .iter()
+        .map(|order| (order.recipe_id.as_str(), order.count, order.kit_order))
+        .collect();
+    assert_eq!(
+        queue,
+        vec![(PLAIN_RECIPE, PLAIN_COUNT, 0), (KIT_RECIPE, KIT_COUNT, 1)],
+        "file order, the kit part grouped under kit order 1"
+    );
+    assert_eq!(bench.kit_orders.len(), 1);
+    assert_eq!(bench.kit_orders[0].kit_id, ONE_ITEM_KIT);
+    assert_eq!(bench.kit_orders[0].kits, KIT_COUNT);
+    assert!(bench.auto, "auto-craft is on");
+}
+
+#[test]
+fn an_absent_bench_section_is_an_empty_one() {
+    let (mut app, applied) = load(SHIPPED).expect("the shipped scenario loads");
+    let band = applied.bands["home"];
+    let orders = app
+        .world
+        .query::<(&BandId, Option<&BandBench>)>()
+        .iter(&app.world)
+        .find(|(id, _)| **id == band)
+        .and_then(|(_, bench)| bench.map(|bench| bench.orders.len()))
+        .unwrap_or_default();
+    assert_eq!(orders, 0);
+}
+
+#[test]
+fn pass_one_names_every_bad_bench_entry() {
+    let text = with_bench(json!([
+        { "bench_enqueue": { "band": "nobody", "recipe_id": PLAIN_RECIPE, "count": 1 } },
+        { "bench_enqueue": { "band": "home", "recipe_id": "no_such_recipe", "count": 1 } },
+        { "bench_enqueue_kit": {
+            "band": "home", "kit_id": ONE_ITEM_KIT, "kits": 1,
+            "recipes": [KIT_RECIPE, "no_such_recipe"]
+        } },
+        { "bench_enqueue_kit": { "band": "home", "kit_id": "none", "kits": 1, "recipes": [] } },
+        { "bench_auto": { "band": "elsewhere", "enabled": false } },
+    ]));
+    let refusals = pass_one(&text).expect_err("five bad entries");
+    let paths: Vec<&str> = refusals.iter().map(|r| r.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        vec![
+            "factions[0].bench[0].band",
+            "factions[0].bench[1].recipe_id",
+            "factions[0].bench[2].recipes[1]",
+            "factions[0].bench[3].kit_id",
+            "factions[0].bench[4].band",
+        ],
+        "{refusals:?}"
+    );
+    assert!(refusals[0]
+        .reason
+        .contains("no band 'nobody' in this faction"));
+}
+
+#[test]
+fn a_replayed_refusal_stops_the_load_with_the_handlers_sentence() {
+    const SECOND: usize = 1;
+    let text = with_bench(json!([
+        { "bench_enqueue": { "band": "home", "recipe_id": PLAIN_RECIPE, "count": PLAIN_COUNT } },
+        { "bench_enqueue": { "band": "home", "recipe_id": PLAIN_RECIPE, "count": 0 } },
+        { "bench_enqueue": { "band": "home", "recipe_id": UNLEARNED_RECIPE, "count": 1 } },
+    ]));
+    let refusals = load(&text)
+        .map(|_| ())
+        .expect_err("a zero count is refused");
+    assert_eq!(refusals.len(), 1, "the first refusal stops the load");
+    assert_eq!(refusals[0].path, format!("factions[0].bench[{SECOND}]"));
+    assert!(
+        refusals[0]
+            .reason
+            .starts_with("bench_enqueue: an order of ")
+            && refusals[0].reason.ends_with("needs a count of at least 1."),
+        "{}",
+        refusals[0].reason
+    );
+
+    let text = with_bench(json!([
+        { "bench_enqueue": { "band": "home", "recipe_id": UNLEARNED_RECIPE, "count": 1 } },
+    ]));
+    let refusals = load(&text)
+        .map(|_| ())
+        .expect_err("an unlearned craft is refused");
+    assert_eq!(refusals[0].path, "factions[0].bench[0]");
+    assert!(
+        refusals[0]
+            .reason
+            .contains("which this people has not learned"),
+        "{}",
+        refusals[0].reason
+    );
+}
+
+#[test]
+fn an_unknown_field_or_variant_in_a_bench_entry_is_a_parse_refusal() {
+    for entry in [
+        json!({ "bench_enqueue": {
+            "band": "home", "recipe_id": PLAIN_RECIPE, "count": 1, "priority": 2
+        } }),
+        json!({ "bench_remove": { "band": "home", "order": 0 } }),
+    ] {
+        let refusals = pass_one(&with_bench(json!([entry]))).expect_err("refused");
+        assert_eq!(refusals.len(), 1);
+        assert!(
+            refusals[0].path.starts_with("line ") && refusals[0].path.contains("column"),
+            "{}",
+            refusals[0].path
+        );
+    }
 }
