@@ -49,15 +49,15 @@ required except `outfit`.
 | key | meaning | refused when |
 |---|---|---|
 | `factions[].faction` | Faction index (`0` is the human) | listed twice, or absent from the built world |
-| `factions[].knowledge` | Tags **added** to the archetype's `starting_knowledge_tags` | a tag `start_profile_knowledge_tags.json` does not carry (the profile path only warns; a scenario refuses) |
+| `factions[].knowledge` | Tags **added** to the archetype's `starting_knowledge_tags`, each seeded **fully known** (progress `1.0`), not at the tag's start-profile `progress` | a tag `start_profile_knowledge_tags.json` does not carry (the profile path only warns; a scenario refuses), or a tag listed twice |
 | `factions[].bands` | The faction's bands. **The first holds the opening outfit window** (`stamp_starting_loadout` opens it on the lowest `BandId`, and scenario bands spawn first) | empty |
 | `bands[].id` | The band's name inside the file; later sections refer to the band by it | used twice anywhere in the file |
 | `bands[].at` | `[x, y]`, used **exactly**, with no faction-start offset and no nearest-land search | off the map, or water |
 | `bands[].size` | Head-count | `0` |
-| `bands[].ages` | `children` / `working` / `elders` shares, in place of `initial_distribution` | any negative, or sum off 1 by more than `AGES_SUM_TOLERANCE` |
+| `bands[].ages` | `children` / `working` / `elders` shares, in place of `initial_distribution`; **divided by their sum**, so the head-count is `size` | any negative, or sum off 1 by more than `AGES_SUM_TOLERANCE` |
 | `bands[].founding_lines` | `L` for this band, in place of `lineage.founding_lines` | `0` |
 | `bands[].larder` | `[{ class, amount }]`, the larder **exactly** (`[]` is an empty larder), in place of the `food_reserve_days` reset | unknown keeping class, class listed twice, negative amount |
-| `bands[].outfit` | Optional `{ kits, materials }` (name → count), replayed as `SetStartingLoadout`, so it **replaces** the default fitted to this band. Absent keeps that default | unknown kit, kit with empty `uses`, unknown material, on any band but the faction's first, or the window's own refusals (`OverCarry`, …) |
+| `bands[].outfit` | Optional `{ kits, materials }` (name → count), replayed as `SetStartingLoadout`, so it **replaces** the default fitted to this band. Absent keeps that default | unknown kit, kit with empty `uses`, unknown material, a kit or material key repeated, on any band but the faction's first, or the window's own refusals (`OverCarry`, …) |
 
 The band's `StartingUnit` kind and tags are the archetype's **first** `starting_units` entry. An
 archetype with none is refused, because there is nothing to spawn the band as.

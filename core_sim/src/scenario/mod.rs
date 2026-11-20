@@ -34,11 +34,15 @@ use crate::demographics_config::{DemographicsConfig, DemographicsConfigHandle};
 use crate::equipment_config::{EquipmentConfig, EquipmentConfigHandle};
 use crate::map_preset::{MapPresets, MapPresetsHandle};
 use crate::materials_config::{MaterialsConfig, MaterialsConfigHandle};
+use crate::resources::SimulationConfig;
+use crate::run_turn;
 use crate::start_profile::{
     StartProfile, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartProfiles,
     StartProfilesHandle,
 };
 use crate::starting_loadout::{KitAllocation, MaterialAllocation};
+use crate::world_roster::{apply_start_profile, seed_faction_roster};
+use crate::{faction_start_land_fraction, granted_archetype_counts};
 
 /// The path a refusal carries when the file itself could not be read.
 pub const FILE_REFUSAL_PATH: &str = "<file>";
@@ -86,6 +90,7 @@ pub struct WorldSection {
     /// Never `0`: `new_game` reads `0` as "pick a random seed", and a scenario names a real one.
     pub seed: u64,
     pub profile: String,
+    #[serde(deserialize_with = "bands::unique_keys")]
     pub archetypes: BTreeMap<String, u32>,
 }
 
@@ -210,6 +215,45 @@ pub fn parse_scenario(
         }),
         _ => Err(refusals),
     }
+}
+
+/// **Build the candidate world for a scenario that passed pass 1, and finish it: the ONE body the
+/// server's `load_scenario` and the tests both run.**
+///
+/// `app` is a freshly built headless app with no Startup run yet. In order: the `world` section's
+/// grid, preset and seed go into its config; the profile the file names is applied
+/// ([`apply_start_profile`]); the roster is seated from the `world.archetypes` counts, clamped to
+/// what the grid seats ([`granted_archetype_counts`]) and re-seeded everywhere the boot path derives
+/// from it ([`seed_faction_roster`]); the [`ScenarioSetup`] is installed before Startup; the build
+/// turn runs; and [`finish_scenario`] collects the refusals and replays the command entries. The
+/// caller owns what follows (the swap-in).
+pub fn build_scenario_world(
+    app: &mut App,
+    plan: &ScenarioPlan,
+) -> Result<ScenarioApplied, Vec<ScenarioRefusal>> {
+    let world = &plan.file.world;
+    let grid_size = UVec2::new(world.width, world.height);
+    let land_fraction = {
+        let presets = app.world.resource::<MapPresetsHandle>().get();
+        faction_start_land_fraction(&presets, &world.preset)
+    };
+    {
+        let mut config = app.world.resource_mut::<SimulationConfig>();
+        config.grid_size = grid_size;
+        config.map_preset_id = world.preset.clone();
+        config.map_seed = world.seed;
+    }
+    let granted_counts = granted_archetype_counts(
+        &plan.requested_counts,
+        &plan.profile.overrides().archetypes,
+        grid_size,
+        land_fraction,
+    );
+    apply_start_profile(app, &plan.profile);
+    seed_faction_roster(app, &granted_counts);
+    app.insert_resource(plan.setup());
+    run_turn(app);
+    finish_scenario(&mut app.world)
 }
 
 /// **What a successful load built**: the scenario ids of the bands, for the sections that name one.

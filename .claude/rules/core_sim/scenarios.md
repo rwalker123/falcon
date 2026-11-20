@@ -20,7 +20,8 @@ rule of the arc that owns it**, under `## Scenario section`. The bands section's
 
 | piece | where |
 |---|---|
-| File shape, pass 1, `ScenarioRefusal`, `finish_scenario` | `core_sim/src/scenario/mod.rs` |
+| File shape, pass 1, `ScenarioRefusal`, `build_scenario_world`, `finish_scenario` | `core_sim/src/scenario/mod.rs` |
+| The profile and roster steps every world build runs (`apply_start_profile`, `seed_faction_roster`) | `core_sim/src/world_roster.rs` |
 | One module per section | `core_sim/src/scenario/bands.rs` (slice 1) |
 | Replayed verbs that **return** their refusal | `core_sim/src/command_seam.rs` |
 | The verb and its reply | `handle_load_scenario` in `bin/server.rs`; `LoadScenarioCommand` = CommandEnvelope **101**, `ScenarioOpReply` = QueryReplyEnvelope **14** |
@@ -34,8 +35,20 @@ rule of the arc that owns it**, under `## Scenario section`. The bands section's
    are checked against the live app's config handles (presets, profiles, archetypes, knowledge tags,
    keeping classes, kits, materials). **Every refusal is collected**, so one load lists all of a
    file's faults. A serde error has no field path, so it reports `line L, column C`.
-2. **Build a candidate, fit, apply.** `build_world_app` builds the candidate with **no snapshot sink
-   attached and the shared `world_epoch` not advanced**, and the live world is never touched. Fit
+   **A repeat is refused, never last-wins**: a knowledge tag twice in one faction's `knowledge`
+   (`factions[i].knowledge[k]`, "listed twice"), a larder class or band id twice, and a repeated
+   key in the JSON objects `outfit.kits`, `outfit.materials` and `world.archetypes` (a serde error,
+   so `line L, column C`; `bands::unique_keys` is the deserializer, serde_json's own map keeps the
+   last key silently).
+2. **Build a candidate, fit, apply.** The server's `prepare_world_app` builds the candidate app with
+   **no snapshot sink attached and the shared `world_epoch` not advanced**, and the live world is
+   never touched. **`scenario::build_scenario_world` is the one body that does the rest** and is what
+   `handle_load_scenario` and `tests/scenario_loader.rs` both call: the `world` section's grid,
+   preset and seed into the config, `apply_start_profile` for the profile the file names,
+   `seed_faction_roster` from `world.archetypes` (requested counts clamped by
+   `granted_archetype_counts` to what the grid seats), the `ScenarioSetup` inserted before Startup,
+   the build turn, then `finish_scenario`. Only the swap-in (epoch, sink, `publish_loaded_world`,
+   command-log re-base) is server-only. Fit
    refusals found during Startup (band on water or off the map, absent faction, an archetype with no
    `starting_units`) are recorded on `ScenarioSetup`. `finish_scenario` then replays the command
    entries.
@@ -54,7 +67,13 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   archetype's `starting_units`, and **ahead of** the profile branches. The first listed band
   therefore holds the faction's lowest `BandId`, which is the band `stamp_starting_loadout` opens the
   outfitting window on.
-- `apply_starting_inventory_effects` seeds a scenario band from its `ages` and its exact larder.
+- `apply_starting_inventory_effects` seeds a scenario band from its `ages` and its exact larder. The
+  three shares are **divided by their sum** first (`Ages::normalised`), so a file whose shares sum to
+  `0.99` within `AGES_SUM_TOLERANCE` opens at the same head-count as one that sums to `1.0`.
+- A faction's listed `knowledge` tags are seeded at **full progress** (`SCENARIO_KNOWN_PROGRESS`,
+  `1.0`) into the same discovery ledger the game reads, replacing the archetype's own grant of the
+  same tag, so `knows_messengers` and every other `progress >= completion_threshold` gate answer
+  yes on turn one.
 - The default outfit is fitted on the world-build pass against the band the scenario built.
 - `finish_scenario` replays `outfit` as `SetStartingLoadout` through `command_seam`, which
   **replaces** the default while the opening window is still open.

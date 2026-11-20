@@ -1,20 +1,21 @@
 //! **The scenario loader, slice 1: the bands section** (`docs/plan_scenarios.md`, issue #921).
 //!
 //! Driven through the library path the server's `load_scenario` handler runs: pass 1
-//! ([`parse_scenario`]), a world built with the setup installed before `Startup`, then
-//! [`finish_scenario`]. The server adds only the swap-in around it.
+//! ([`parse_scenario`]), then [`build_scenario_world`] (profile, roster, setup, the build turn and
+//! `finish_scenario`, one body shared with the server). The server adds only the swap-in around it.
 
 use bevy::prelude::*;
 use serde_json::{json, Value};
 
 use core_sim::command_seam::apply_set_starting_loadout;
 use core_sim::scenario::{
-    finish_scenario, parse_scenario, ScenarioApplied, ScenarioContext, ScenarioRefusal,
+    build_scenario_world, parse_scenario, ScenarioApplied, ScenarioContext, ScenarioRefusal,
 };
 use core_sim::{
-    build_test_app, run_turn, scalar_from_f32, BandId, DiscoveryProgressLedger, FactionId,
-    KitAllocation, MaterialAllocation, PopulationCohort, SimulationConfig,
-    StartProfileKnowledgeTagsHandle, StartingLoadout, Tile,
+    build_test_app, knows_messengers, run_turn, scalar_from_f32, ActiveStartProfile, BandId,
+    DiscoveryProgressLedger, FactionId, FactionRegistry, KitAllocation, LadderConfigHandle,
+    MaterialAllocation, PopulationCohort, SimulationConfig, StartProfileKnowledgeTagsHandle,
+    StartProfiles, StartProfilesHandle, StartingLoadout, Tile,
 };
 
 const SHIPPED: &str = include_str!("../scenarios/breeding_ceiling_150.json");
@@ -38,20 +39,14 @@ fn pass_one(text: &str) -> Result<(), Vec<ScenarioRefusal>> {
     parse_scenario(text, &ScenarioContext::from_world(&app.world)).map(|_| ())
 }
 
-/// The whole library path: pass 1, the candidate world with the setup installed, then pass 2.
+/// The whole library path: pass 1, then the one candidate build the server also runs.
 fn load(text: &str) -> Result<(App, ScenarioApplied), Vec<ScenarioRefusal>> {
-    let mut app = build_test_app();
+    load_on(build_test_app(), text)
+}
+
+fn load_on(mut app: App, text: &str) -> Result<(App, ScenarioApplied), Vec<ScenarioRefusal>> {
     let plan = parse_scenario(text, &ScenarioContext::from_world(&app.world))?;
-    {
-        let world = &plan.file.world;
-        let mut config = app.world.resource_mut::<SimulationConfig>();
-        config.grid_size = UVec2::new(world.width, world.height);
-        config.map_preset_id = world.preset.clone();
-        config.map_seed = world.seed;
-    }
-    app.world.insert_resource(plan.setup());
-    run_turn(&mut app);
-    let applied = finish_scenario(&mut app.world)?;
+    let applied = build_scenario_world(&mut app, &plan)?;
     Ok((app, applied))
 }
 
@@ -159,6 +154,8 @@ fn the_shipped_scenario_loads_a_band_of_150_exactly_as_written() {
     assert_eq!(at, UVec2::new(13, 11), "the band stands exactly on `at`");
     // The brackets are the file's shape, not the profile's `initial_distribution`.
     let size = cohort.size as f32;
+    // The world has run its build turn (the meal, ageing, elder mortality), so the band is read a turn
+    // past its opening head-count; `ages_within_tolerance_do_not_change_the_size` pins the opening one.
     assert!((size - 150.0).abs() <= 6.0, "size {size}");
     let share = |bracket: f32| bracket / (cohort.total().to_f32());
     assert!((share(cohort.children.to_f32()) - 0.30).abs() < 0.03);
@@ -181,6 +178,12 @@ fn the_shipped_scenario_loads_a_band_of_150_exactly_as_written() {
     let discovery = tags.get(MESSENGERS).expect("the tag exists").discovery_id();
     let ledger = app.world.resource::<DiscoveryProgressLedger>();
     assert!(ledger.get_progress(HOME, discovery) > scalar_from_f32(0.0));
+    // **Known, not started**: the game's own reader for the lesson answers yes.
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    assert!(
+        knows_messengers(ledger, HOME, &ladder.knowledge),
+        "a listed tag is a tag the faction already has"
+    );
 
     // The outfit replaced the default under the carry cap, and the window is still open for the
     // player to revise it.
@@ -342,5 +345,167 @@ fn the_default_outfit_is_fitted_to_the_scenario_band() {
     assert!(
         small < large,
         "a small band is cut to its carry ({small} vs {large})"
+    );
+}
+
+/// A listed tag the archetype also grants lands known all the same, and the control world's faction
+/// 0 does not know messengers.
+#[test]
+fn a_listed_tag_is_known_where_the_control_is_not() {
+    let (app, _) = load(SHIPPED).expect("loads");
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let ledger = app.world.resource::<DiscoveryProgressLedger>();
+    assert!(knows_messengers(ledger, HOME, &ladder.knowledge));
+    let mut control = build_test_app();
+    run_turn(&mut control);
+    let ladder = control.world.resource::<LadderConfigHandle>().get();
+    let ledger = control.world.resource::<DiscoveryProgressLedger>();
+    assert!(!knows_messengers(ledger, HOME, &ladder.knowledge));
+}
+
+#[test]
+fn a_knowledge_tag_listed_twice_is_refused() {
+    let mut file = shipped();
+    file["factions"][0]["knowledge"] = json!(["messengers", "messengers"]);
+    let refusals = pass_one(&file.to_string()).expect_err("refused");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_eq!(refusals[0].path, "factions[0].knowledge[1]");
+    assert!(
+        refusals[0].reason.contains("listed twice"),
+        "{}",
+        refusals[0]
+    );
+}
+
+/// serde_json keeps the last of two equal keys in silence; a scenario refuses it, at a line and column.
+#[test]
+fn a_repeated_object_key_is_refused_for_kits_materials_and_archetypes() {
+    let cases = [
+        (
+            r#""kits": { "big_game": 10, "gathering": 20 }"#,
+            r#""kits": { "big_game": 10, "big_game": 20 }"#,
+            "big_game",
+        ),
+        (
+            r#""materials": { "fibre": 20, "hide": 12 }"#,
+            r#""materials": { "fibre": 20, "fibre": 12 }"#,
+            "fibre",
+        ),
+        (
+            r#""archetypes": { "major": 0, "minor": 0 }"#,
+            r#""archetypes": { "major": 0, "major": 1 }"#,
+            "major",
+        ),
+    ];
+    for (from, to, key) in cases {
+        assert!(SHIPPED.contains(from), "the shipped file holds {from}");
+        let refusals = pass_one(&SHIPPED.replace(from, to)).expect_err("a repeated key is refused");
+        assert_eq!(refusals.len(), 1, "{refusals:?}");
+        assert!(
+            refusals[0].path.starts_with("line ") && refusals[0].path.contains("column"),
+            "{}",
+            refusals[0]
+        );
+        assert!(
+            refusals[0]
+                .reason
+                .contains(&format!("'{key}' is listed twice")),
+            "{}",
+            refusals[0]
+        );
+    }
+}
+
+/// Shares that sum to 0.99 are forgiven and normalised: the band is the size the same shape at a sum of
+/// 1.0 gives, not about 1% short of it. (The size is read after the build turn, so the control is the
+/// same proportions at a sum of one rather than the bare `150`.)
+#[test]
+fn ages_within_tolerance_do_not_change_the_size() {
+    let size_with = |ages: Value| -> u32 {
+        let mut file = shipped();
+        file["factions"][0]["bands"][0]["ages"] = ages;
+        let (mut app, applied) = load(&file.to_string()).expect("loads");
+        let id = *applied.bands.get("home").unwrap();
+        band_of(&mut app, id).0.size
+    };
+    let whole = size_with(json!({ "children": 0.30, "working": 0.60, "elders": 0.10 }));
+    let short = size_with(json!({ "children": 0.297, "working": 0.594, "elders": 0.099 }));
+    assert_eq!(short, whole, "0.99 of the same shape is the same band");
+}
+
+/// A land tile far from the shipped band, for a second faction.
+fn far_land_tile() -> [u32; 2] {
+    let (mut app, _) = load(SHIPPED).expect("loads");
+    let tile = app
+        .world
+        .query::<&Tile>()
+        .iter(&app.world)
+        .find(|tile| {
+            !tile.terrain_tags.contains(sim_runtime::TerrainTags::WATER) && tile.position.x >= 60
+        })
+        .map(|tile| tile.position)
+        .expect("the map has land far east");
+    [tile.x, tile.y]
+}
+
+fn two_faction_file(major: u32) -> Value {
+    let mut file = shipped();
+    file["world"]["archetypes"] = json!({ "major": major, "minor": 0 });
+    file["factions"].as_array_mut().unwrap().push(json!({
+        "faction": 1,
+        "knowledge": [],
+        "bands": [{
+            "id": "rival", "at": far_land_tile(), "size": 30,
+            "ages": { "children": 0.3, "working": 0.6, "elders": 0.1 },
+            "founding_lines": 8, "larder": []
+        }]
+    }));
+    file
+}
+
+/// `world.archetypes` seats the roster through the same path the server uses, so a section for faction
+/// 1 loads when one major rival was asked for and is refused when none was.
+#[test]
+fn the_archetype_counts_seat_the_roster_a_faction_section_needs() {
+    let (mut app, applied) = load(&two_faction_file(1).to_string()).expect("a rival was seated");
+    assert_eq!(app.world.resource::<FactionRegistry>().factions().len(), 2);
+    let rival = *applied.bands.get("rival").expect("the rival band");
+    assert_eq!(band_of(&mut app, rival).0.faction, FactionId(1));
+
+    let refusals = load(&two_faction_file(0).to_string())
+        .map(|_| ())
+        .expect_err("no rival was asked for");
+    assert!(
+        refusals
+            .iter()
+            .any(|refusal| refusal.path == "factions[1].faction"),
+        "{refusals:?}"
+    );
+}
+
+/// The world section's profile is the one the world is built with, not the app's default.
+#[test]
+fn a_scenario_builds_with_the_profile_it_names() {
+    let shipped_profiles: Value =
+        serde_json::from_str(include_str!("../src/data/start_profiles.json")).unwrap();
+    let mut second = shipped_profiles["profiles"][0].clone();
+    second["id"] = json!("second_tribe");
+    let mut all = shipped_profiles.clone();
+    all["profiles"].as_array_mut().unwrap().push(second);
+    let profiles = StartProfiles::from_json_str(&all.to_string()).expect("two profiles parse");
+
+    let mut app = build_test_app();
+    app.world
+        .insert_resource(StartProfilesHandle::new(std::sync::Arc::new(profiles)));
+    let mut file = shipped();
+    file["world"]["profile"] = json!("second_tribe");
+    let (app, _) = load_on(app, &file.to_string()).expect("loads");
+    assert_eq!(
+        app.world.resource::<ActiveStartProfile>().profile().id,
+        "second_tribe"
+    );
+    assert_eq!(
+        app.world.resource::<SimulationConfig>().start_profile_id,
+        "second_tribe"
     );
 }

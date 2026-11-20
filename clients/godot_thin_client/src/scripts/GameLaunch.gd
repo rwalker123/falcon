@@ -61,6 +61,11 @@ var active_load_slot: String = ""
 ## default — and instead asks for a full frame of that world and reveals it once it arrives.
 ## `NO_ATTACH_EPOCH` when no attach is pending; it takes precedence over both other slots.
 const NO_ATTACH_EPOCH := -1
+## "Attached to a running world whose epoch this client never saw" — a direct `Main` entry on the
+## launcher's env flag. Distinct from `NO_ATTACH_EPOCH` so `active_attach_epoch` can still say "attached"
+## and a theme reload re-attaches instead of requesting a new game; `Main` keeps its persisted reveal
+## baseline for it rather than deriving one from an epoch.
+const ATTACH_EPOCH_UNKNOWN := -2
 var pending_attach_epoch: int = NO_ATTACH_EPOCH
 
 ## The epoch the CURRENT run attached to, `NO_ATTACH_EPOCH` for a run the client asked for. Held for the

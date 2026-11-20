@@ -20,6 +20,7 @@ use core_sim::auto_craft::AutoSkipRefusal;
 use core_sim::log_stream::start_log_stream_server;
 use core_sim::port_alloc;
 use core_sim::requested_archetype_counts;
+use core_sim::world_roster::{apply_start_profile, seed_faction_roster};
 
 use core_sim::grid_utils::hex_distance_wrapped;
 use core_sim::metrics::SimulationMetrics;
@@ -32,13 +33,12 @@ use core_sim::{
     apply_port_base, available_workers, carry_runtime_owned_fields, carry_world_identity,
     floor_is_valid, knows, load_simulation_config_for_new_world, patch_composition,
     resolve_active_profile, resolve_take_selection, species_stands_in, tile_flora_composition,
-    ActiveStartProfile, BandBench, BandEquipment, BandTravel, BandWorkforce, BeatCatalogHandle,
-    BeatConfigHandle, BeatLedger, BenchQueueError, BuildJob, BuildSource, CampaignLabel,
-    CombatConfigHandle, Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase,
-    ExtractionConfigHandle, FloraConfigHandle, FoodMix, ForkAnswerError, HuntingParty, KitChoice,
-    KitJob, LaborAllocation, LaborTarget, LadderConfig, LadderConfigHandle, LocalStore,
-    MaterialDraw, RecipesConfigHandle, ResidentBand, RungId, SiteRefusal, SourceKind,
-    SourcePriority, StartProfile, StartProfileOverrides, TakeSelection, TransferCause,
+    BandBench, BandEquipment, BandTravel, BandWorkforce, BeatCatalogHandle, BeatConfigHandle,
+    BeatLedger, BenchQueueError, BuildJob, BuildSource, CombatConfigHandle, Expedition,
+    ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, ExtractionConfigHandle,
+    FloraConfigHandle, FoodMix, ForkAnswerError, HuntingParty, KitChoice, KitJob, LaborAllocation,
+    LaborTarget, LadderConfig, LadderConfigHandle, LocalStore, MaterialDraw, RecipesConfigHandle,
+    ResidentBand, RungId, SiteRefusal, SourceKind, SourcePriority, TakeSelection, TransferCause,
     TransferCrossing, TransferDirection, UpkeepFundMode, DEFAULT_ESCAPEMENT_FLOOR, MIN_ORDER_COUNT,
 };
 // Used by the test modules (through `use super::*`) and by nothing in the server proper since the
@@ -60,8 +60,8 @@ use core_sim::{
     QueueMissionParams, Scalar, SecurityPolicy, Settlement, SimulationConfig,
     SimulationConfigMetadata, SimulationTick, SnapshotAudiences, SnapshotHistory,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
-    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, SubmitError,
-    SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle,
+    StartLocation, StartProfilesHandle, StartingUnit, SubmitError, SubmitOutcome, Tile,
+    TileRegistry, TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle,
     TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FODDER, FOOD, POST_RECALLED,
 };
 use core_sim::{BranchId, VerbId};
@@ -2845,15 +2845,30 @@ fn rebuild_world_from_config(
 /// first turn, touching nothing live.**
 ///
 /// It takes no epoch counter and no socket, so a caller that is only BUILDING a world it may still
-/// throw away (`load_scenario`'s candidate) can use it without advancing the shared epoch or giving a
-/// client a frame of a world that never arrives. `before_startup` runs after the app's resources are
-/// in and before Startup worldgen, and is where the caller installs everything the build reads.
+/// throw away can use it without advancing the shared epoch or giving a client a frame of a world
+/// that never arrives. `before_startup` runs after the app's resources are in and before Startup
+/// worldgen, and is where the caller installs everything the build reads.
 fn build_world_app(
     config: SimulationConfig,
     seed_random: bool,
     command_sender: Sender<CommandDelivery>,
     watch_paths: &WatchPaths,
     before_startup: impl FnOnce(&mut bevy::prelude::App),
+) -> bevy::prelude::App {
+    let mut new_app = prepare_world_app(config, seed_random, command_sender, watch_paths);
+    before_startup(&mut new_app);
+    run_turn(&mut new_app);
+    new_app
+}
+
+/// **A world-building app with its resources in and no Startup run yet.** `load_scenario` takes this
+/// directly because the library's [`core_sim::scenario::build_scenario_world`] owns the rest of the
+/// candidate build (profile, roster, setup, the first turn, `finish_scenario`).
+fn prepare_world_app(
+    config: SimulationConfig,
+    seed_random: bool,
+    command_sender: Sender<CommandDelivery>,
+    watch_paths: &WatchPaths,
 ) -> bevy::prelude::App {
     let mut new_app = build_headless_app();
     // The base this process actually bound travels with the config — `new_game` carries the binds
@@ -2875,11 +2890,6 @@ fn build_world_app(
         let mut metadata = new_app.world.resource_mut::<SimulationConfigMetadata>();
         metadata.set_seed_random(seed_random);
     }
-
-    before_startup(&mut new_app);
-
-    run_turn(&mut new_app);
-
     new_app
 }
 
@@ -3072,9 +3082,10 @@ fn scenario_refused(
 /// swapped in, so a refused file leaves the previous world (or the idle server) exactly as it was.
 ///
 /// 1. Read the file and run pass 1 against the live app's configs ([`core_sim::scenario::parse_scenario`]).
-/// 2. Build the candidate as `new_game` does, with the scenario's setup installed before Startup.
-/// 3. [`core_sim::scenario::finish_scenario`]: collect what the built world refused and replay the
-///    file's command entries through the lib seam.
+/// 2. [`core_sim::scenario::build_scenario_world`] builds the candidate as `new_game` does, with the
+///    scenario's setup installed before Startup, then collects what the built world refused and
+///    replays the file's command entries through the lib seam.
+/// 3. (the same function)
 /// 4. Swap in, as a load does: retire the old publisher, advance the epoch, attach the sink, publish a
 ///    full frame of the set-up world, and re-base the command log AFTER setup.
 fn handle_load_scenario(
@@ -3086,7 +3097,7 @@ fn handle_load_scenario(
     snapshot_server_flat: &Arc<SnapshotServer>,
 ) -> sim_runtime::ScenarioOpReply {
     use core_sim::scenario::{
-        finish_scenario, parse_scenario, ScenarioContext, ScenarioRefusal, FILE_REFUSAL_PATH,
+        build_scenario_world, parse_scenario, ScenarioContext, ScenarioRefusal, FILE_REFUSAL_PATH,
     };
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
@@ -3112,19 +3123,7 @@ fn handle_load_scenario(
     };
     let watch_paths = collect_watch_paths(app);
     let world_args = &plan.file.world;
-    let mut new_config =
-        load_simulation_config_for_new_world(app.world.resource::<SimulationConfig>());
-    new_config.grid_size = UVec2::new(world_args.width, world_args.height);
-    new_config.map_preset_id = world_args.preset.clone();
-    new_config.map_seed = world_args.seed;
-    let land_fraction =
-        core_sim::faction_start_land_fraction(&ctx.presets, &new_config.map_preset_id);
-    let granted_counts = granted_archetype_counts(
-        &plan.requested_counts,
-        &plan.profile.overrides().archetypes,
-        new_config.grid_size,
-        land_fraction,
-    );
+    let new_config = load_simulation_config_for_new_world(app.world.resource::<SimulationConfig>());
     info!(
         target: "shadow_scale::scenario",
         %path,
@@ -3134,20 +3133,10 @@ fn handle_load_scenario(
         "scenario.begin"
     );
 
-    let setup = plan.setup();
-    let profile = plan.profile.clone();
-    let mut candidate = build_world_app(
-        new_config,
-        false,
-        command_sender,
-        &watch_paths,
-        move |new_app| {
-            apply_start_profile(new_app, &profile);
-            seed_faction_roster(new_app, &granted_counts);
-            new_app.insert_resource(setup);
-        },
-    );
-    let applied = match finish_scenario(&mut candidate.world) {
+    // **One body with the tests**: the grid, profile, roster, setup, first turn and `finish_scenario`
+    // are `build_scenario_world`'s.
+    let mut candidate = prepare_world_app(new_config, false, command_sender, &watch_paths);
+    let applied = match build_scenario_world(&mut candidate, &plan) {
         Ok(applied) => applied,
         // Dropped here: the previous world, or the idle server, was never touched.
         Err(refusals) => return scenario_refused(path, refusals),
@@ -3493,87 +3482,6 @@ fn write_autosave(app: &bevy::prelude::App) {
         ),
         Err(err) => warn!(target: "shadow_scale::save", error = %err, "autosave.failed=write"),
     }
-}
-
-/// Apply a resolved start profile to the app's campaign resources — config overrides,
-/// `StartProfileLookup`, `ActiveStartProfile`, `CampaignLabel`. Shared by
-/// `handle_set_start_profile` and the `new_game` rebuild; it does NOT regenerate the world, and the
-/// caller runs Startup afterward.
-///
-/// ⛔ **It does not touch the roster, because a profile no longer declares one.** Who plays a world
-/// is the AI count the new game was asked for ([`seed_faction_roster`]), so swapping the profile
-/// mid-session restocks the opening and leaves the peoples alone — there is nothing about the
-/// roster in the new profile to disagree with the registry the world is already running.
-fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) {
-    {
-        let mut config = app.world.resource_mut::<SimulationConfig>();
-        config.start_profile_id = profile.id.clone();
-        config.start_profile_overrides = StartProfileOverrides::from_profile(profile);
-    }
-    {
-        let mut lookup = app.world.resource_mut::<StartProfileLookup>();
-        lookup.id = profile.id.clone();
-    }
-    {
-        let mut active = app.world.resource_mut::<ActiveStartProfile>();
-        *active = ActiveStartProfile::new(profile.clone());
-    }
-    {
-        let mut label = app.world.resource_mut::<CampaignLabel>();
-        *label = CampaignLabel::from_profile(profile);
-    }
-}
-
-/// **Seat one human and `archetype_counts` rivals (per archetype, catalog order) in a world about to
-/// be generated**, and re-seed
-/// everything the boot path derives from that roster.
-///
-/// Called inside `rebuild_world_from_config`'s `configure` hook, i.e. after the replacement app is
-/// built and before Startup: `build_headless_app` seeded the registry from the CONFIG FILE's count,
-/// clamped against the config file's grid, and a `new_game` is neither of those things. Without this
-/// the count the player picked reached `SimulationConfig` and nothing that resolves a turn ever
-/// heard about it.
-///
-/// The counts are expected to be **already clamped** by
-/// [`core_sim::granted_archetype_counts`] — the clamp is the caller's, because only the caller knows
-/// which grid the world is being built on.
-///
-/// ⛔ **EVERY resource `build_headless_app` seeds from the roster is re-seeded here.** The list is
-/// `FactionRegistry`, `TurnQueue`, `EspionageRoster`, `CounterIntelBudgets`,
-/// `FactionSecurityPolicies` and `FactionBorderPolicies` — the six constructions taken from
-/// `faction_registry.factions()` in `lib.rs`, and re-seeding only some of them is the same defect one resource further along. They
-/// are built through the boot path's own constructors so a fresh faction's starting state has one
-/// definition rather than two.
-///
-/// **`EspionageRoster` is deliberately not among them**: `initialise_espionage_roster` is a
-/// `Startup` system that seeds from whatever registry it finds, and the caller runs Startup after
-/// this — so re-seeding it here would be a second, earlier copy of a job the schedule already does
-/// against the same roster.
-fn seed_faction_roster(app: &mut bevy::prelude::App, archetype_counts: &[u32]) {
-    // Who is which archetype: transient and config-side, read by worldgen in the Startup the caller
-    // runs next (see `StartArchetypeAssignment`).
-    app.world
-        .resource_mut::<SimulationConfig>()
-        .start_archetype_assignment =
-        core_sim::StartArchetypeAssignment::from_counts(archetype_counts);
-    let registry = FactionRegistry::with_ai_factions(archetype_counts.iter().sum());
-    let factions = registry.factions().to_vec();
-    app.world.insert_resource(registry);
-    app.world.insert_resource(TurnQueue::new(factions.clone()));
-    let budget_config = app
-        .world
-        .resource::<EspionageCatalog>()
-        .config()
-        .counter_intel_budget()
-        .clone();
-    app.world
-        .insert_resource(CounterIntelBudgets::new(&factions, &budget_config));
-    app.world.insert_resource(FactionSecurityPolicies::new(
-        &factions,
-        SecurityPolicy::Standard,
-    ));
-    app.world
-        .insert_resource(FactionBorderPolicies::new(&factions));
 }
 
 fn handle_set_start_profile(app: &mut bevy::prelude::App, profile_id: String) {

@@ -746,7 +746,16 @@ func _consume_attach_handoff(launch: Node) -> bool:
             and launch.attach_world_env_set():
         # Entered without a handoff while the launcher says a world is running: attach, epoch unknown.
         launch.set("attach_env_spent", true)
-        launch.set("active_attach_epoch", GameLaunch.NO_ATTACH_EPOCH)
+        launch.set("active_attach_epoch", GameLaunch.ATTACH_EPOCH_UNKNOWN)
+        _attach_world = true
+        return true
+    if attach_epoch == GameLaunch.ATTACH_EPOCH_UNKNOWN:
+        # A theme reload of a direct-entry attach: re-attach, still no epoch to derive a baseline from.
+        launch.set("pending_attach_epoch", GameLaunch.NO_ATTACH_EPOCH)
+        launch.set("active_new_game", null)
+        launch.set("active_load_slot", "")
+        launch.set("pending_new_game", null)
+        launch.set("pending_load_slot", "")
         _attach_world = true
         return true
     if attach_epoch == GameLaunch.NO_ATTACH_EPOCH:

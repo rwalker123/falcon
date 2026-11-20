@@ -166,13 +166,18 @@ pub fn spawn_initial_world(
                         .get(index)
                         .unwrap_or(&no_knowledge)
                         .clone();
-                    let granted: &[String] = archetypes
-                        .get(index)
-                        .map(|archetype| archetype.starting_knowledge_tags.as_slice())
-                        .unwrap_or_default();
-                    for tag in listed.knowledge.iter().filter(|tag| !granted.contains(tag)) {
-                        fragments
-                            .extend(knowledge_fragment_for_tag(tag, knowledge_catalog.as_ref()));
+                    // A listed tag is KNOWN, not started: it replaces whatever progress the
+                    // archetype's own grant of the same tag would have seeded.
+                    for tag in &listed.knowledge {
+                        if let Some(definition) = knowledge_catalog.get(tag) {
+                            fragments.retain(|fragment| {
+                                fragment.discovery_id != definition.discovery_id()
+                            });
+                            fragments.push(KnowledgeFragment::new(
+                                definition.discovery_id(),
+                                scalar_from_f32(SCENARIO_KNOWN_PROGRESS),
+                            ));
+                        }
                     }
                     (listed.faction, fragments)
                 })
@@ -1147,12 +1152,10 @@ fn seed_cohort_demographics(
             .zip(scenario)
             .and_then(|(band, setup)| setup.band_entry(*band))
         {
-            cohort.set_brackets_from_size(
-                size,
-                entry.ages.children,
-                entry.ages.working,
-                entry.ages.elders,
-            );
+            // The shares sum to 1 within `AGES_SUM_TOLERANCE`; divided by their sum, the head-count
+            // is exactly `size` whatever the file's rounding.
+            let [children, working, elders] = entry.ages.normalised();
+            cohort.set_brackets_from_size(size, children, working, elders);
             cohort
                 .stores
                 .reset_food(&config.keeping.startup_class, scalar_zero());
@@ -3849,19 +3852,10 @@ fn spawn_population_entity(
     band_id
 }
 
-/// One knowledge tag as the fragment a band and the discovery ledger are seeded with, `None` for a
-/// tag the catalog does not carry (a scenario's tags were checked in pass 1).
-fn knowledge_fragment_for_tag(
-    tag: &str,
-    knowledge_tags: &StartProfileKnowledgeTags,
-) -> Option<KnowledgeFragment> {
-    knowledge_tags.get(tag).map(|definition| {
-        KnowledgeFragment::new(
-            definition.discovery_id(),
-            scalar_from_f32(definition.progress()),
-        )
-    })
-}
+/// **The progress a scenario-listed knowledge tag is seeded at: full.** The discovery ledger clamps
+/// to `[0, 1]` and every gate asks `progress >= completion_threshold` with the threshold validated
+/// at most `1.0`, so full progress is "the faction already has it" for every reader.
+const SCENARIO_KNOWN_PROGRESS: f32 = 1.0;
 
 /// **Spawn a scenario faction's bands**, in file order, each on exactly the tile the file names.
 ///

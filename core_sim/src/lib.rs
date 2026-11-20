@@ -138,6 +138,7 @@ mod visibility_config;
 mod visibility_systems;
 mod wellbeing_config;
 pub mod work_party;
+pub mod world_roster;
 pub mod yield_seed;
 
 use std::sync::Arc;

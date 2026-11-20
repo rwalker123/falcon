@@ -58,6 +58,15 @@ pub struct Ages {
     pub elders: f32,
 }
 
+impl Ages {
+    /// The three shares divided by their sum, so they total exactly one. Pass 1 has already refused a
+    /// negative share and a sum outside `AGES_SUM_TOLERANCE` of one, so the sum is never zero.
+    pub fn normalised(&self) -> [f32; 3] {
+        let sum = self.children + self.working + self.elders;
+        [self.children / sum, self.working / sum, self.elders / sum]
+    }
+}
+
 /// Food of one keeping class.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -70,8 +79,42 @@ pub struct LarderEntry {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Outfit {
+    #[serde(deserialize_with = "unique_keys")]
     pub kits: BTreeMap<String, u32>,
+    #[serde(deserialize_with = "unique_keys")]
     pub materials: BTreeMap<String, u32>,
+}
+
+/// **A JSON object into a map that REFUSES a repeated key.** serde_json's own map handling keeps the
+/// last of two equal keys without a word, so a scenario that names a kit twice would load the later
+/// count and drop the earlier one. The error carries serde_json's `line L, column C`.
+pub fn unique_keys<'de, D>(deserializer: D) -> Result<BTreeMap<String, u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct UniqueKeys;
+    impl<'de> serde::de::Visitor<'de> for UniqueKeys {
+        type Value = BTreeMap<String, u32>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("an object of name to count")
+        }
+
+        fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::MapAccess<'de>,
+        {
+            let mut map = BTreeMap::new();
+            while let Some((key, value)) = access.next_entry::<String, u32>()? {
+                if map.contains_key(&key) {
+                    return Err(serde::de::Error::custom(format!("'{key}' is listed twice")));
+                }
+                map.insert(key, value);
+            }
+            Ok(map)
+        }
+    }
+    deserializer.deserialize_map(UniqueKeys)
 }
 
 /// Pass 1 for the factions section: names resolved against the loaded configs, every fault collected.
@@ -96,7 +139,14 @@ pub(super) fn check(
                 "a listed faction needs at least one band",
             ));
         }
+        let mut seen_tags: BTreeSet<&str> = BTreeSet::new();
         for (k, tag) in section.knowledge.iter().enumerate() {
+            if !seen_tags.insert(tag.as_str()) {
+                refusals.push(ScenarioRefusal::new(
+                    format!("{at}.knowledge[{k}]"),
+                    format!("'{tag}' is listed twice"),
+                ));
+            }
             if ctx.tags.get(tag).is_none() {
                 refusals.push(ScenarioRefusal::new(
                     format!("{at}.knowledge[{k}]"),
