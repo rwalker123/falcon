@@ -5,6 +5,7 @@ paths:
   - "core_sim/src/data/extraction.json"
   - "core_sim/src/snapshot/deposits.rs"
   - "core_sim/tests/extraction.rs"
+  - "core_sim/src/scenario/deposits.rs"
 ---
 
 # Wood and stone get a producer — the deposit, the source, the take
@@ -901,6 +902,25 @@ branch over, because the tile query and the deposits config are the caller's to 
 The other *"this source has no dial"* reading is `systems::labor::credit_managed_rung_lesson`'s, and
 it belongs to **rung 3**, which is a claim about a take that draws nothing down rather than about a
 branch.
+
+## Scenario section
+
+The **deposits** section of a scenario file (`core_sim/src/scenario/deposits.rs`; the loader is
+`scenarios.md`): a deposit's **remaining stock**, written as a setter. It is a **top-level** key
+beside `factions`, not part of a faction, because a deposit has no owner: the registry is keyed by
+tile and material, and `DepositSource` carries no faction. The key is required (`[]` sets nothing).
+
+| key | meaning | refused when |
+|---|---|---|
+| `deposits[].at` | `[x, y]` of the deposit-bearing tile | off the map, or the tile holds none of `material` (`tile_deposit_capacity` is `NO_DEPOSIT`) |
+| `deposits[].material` | An `extraction.json` deposit (`wood`, `stone`) | not a deposit, or the same `(at, material)` listed twice |
+| `deposits[].stock` | The standing stock, in the material's own units (`DepositSource::stock`) | negative, not finite, or over the tile's capacity for that material |
+
+**The setter opens the working through `DepositRegistry::open` and writes only `stock`.** `open` is
+get-or-insert, so a held rung written by the `rungs` section (slice 2b) on the same working composes
+with it in either order. Neither setter constructs a `DepositSource`. A stock below the rung's floor
+is allowed, because over-cutting is a state the game reaches. The first played turn is the deposit's
+first regrowth from the stock the file set.
 
 ## Config files
 
