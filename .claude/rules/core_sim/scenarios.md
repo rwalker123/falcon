@@ -22,17 +22,17 @@ rule of the arc that owns it**, under `## Scenario section`. The bands section's
 |---|---|
 | File shape, pass 1, `ScenarioRefusal`, `build_scenario_world`, `finish_scenario` | `core_sim/src/scenario/mod.rs` |
 | The profile and roster steps every world build runs (`apply_start_profile`, `seed_faction_roster`) | `core_sim/src/world_roster.rs` |
-| One module per section | `core_sim/src/scenario/bands.rs` (slice 1) |
+| One module per section | `core_sim/src/scenario/bands.rs` (slice 1), `core_sim/src/scenario/roads.rs` (slice 2e; key table in `routes.md`) |
 | Replayed verbs that **return** their refusal | `core_sim/src/command_seam.rs` |
 | The verb and its reply | `handle_load_scenario` in `bin/server.rs`; `LoadScenarioCommand` = CommandEnvelope **101**, `ScenarioOpReply` = QueryReplyEnvelope **14** |
-| Checked-in scenarios | `core_sim/scenarios/<name>.json` (reviewed fixtures, not watched) |
+| Checked-in scenarios | `core_sim/scenarios/<name>.json` (reviewed fixtures, not watched): `breeding_ceiling_150.json`, `kept_roads.json` |
 | Sending one | `cargo xtask command load_scenario <path>` · `scripts/run_stack.sh --scenario <path>` |
 
 ## Two passes, and nothing is built on a typo
 
 1. **Parse and resolve names** (`parse_scenario`), with no world built. Every struct is
-   `deny_unknown_fields`, there are no serde defaults, and `outfit` is the only optional key. Names
-   are checked against the live app's config handles (presets, profiles, archetypes, knowledge tags,
+   `deny_unknown_fields`, there are no serde defaults, and `outfit` (a band's) and `roads` (a
+   faction's) are the optional keys. Names are checked against the live app's config handles (presets, profiles, archetypes, knowledge tags,
    keeping classes, kits, materials). **Every refusal is collected**, so one load lists all of a
    file's faults. A serde error has no field path, so it reports `line L, column C`.
    **A repeat is refused, never last-wins**: a knowledge tag twice in one faction's `knowledge`

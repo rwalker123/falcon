@@ -28,6 +28,9 @@ pub struct FactionSection {
     pub knowledge: Vec<String>,
     /// The faction's bands, in spawn order. The FIRST holds the faction's opening outfit window.
     pub bands: Vec<BandEntry>,
+    /// The ONE optional key beside `outfit`: the road rungs the faction holds at the start. Absent
+    /// means the faction has no scenario roads.
+    pub roads: Option<Vec<super::roads::RoadEntry>>,
 }
 
 /// One band.
@@ -291,6 +294,7 @@ pub struct FactionSetup {
     pub faction: FactionId,
     pub knowledge: Vec<String>,
     pub bands: Vec<BandEntry>,
+    pub roads: Vec<super::roads::RoadEntry>,
 }
 
 impl ScenarioSetup {
@@ -304,6 +308,7 @@ impl ScenarioSetup {
                     faction: FactionId(section.faction),
                     knowledge: section.knowledge.clone(),
                     bands: section.bands.clone(),
+                    roads: section.roads.clone().unwrap_or_default(),
                 })
                 .collect(),
             ..Self::default()

@@ -7629,13 +7629,8 @@ fn handle_road_verb(
         return;
     };
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let (width, wrap) = {
-        let registry = app.world.resource::<TileRegistry>();
-        let config = app.world.resource::<SimulationConfig>();
-        (registry.width, config.map_topology.wrap_horizontal)
-    };
-    let distance = hex_distance_wrapped(band_tile, tile, width, wrap);
-    let remoteness = core_sim::remoteness_multiplier(distance, &ladder);
+    let (distance, remoteness) =
+        core_sim::quote_road_remoteness(&app.world, band_tile, tile, &ladder);
     {
         let mut roads = app.world.resource_mut::<core_sim::RoadRegistry>();
         let Some(road) = roads.road_mut(tile) else {

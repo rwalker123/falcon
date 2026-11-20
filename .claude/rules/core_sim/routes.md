@@ -6,6 +6,8 @@ paths:
   - "core_sim/tests/route_traffic.rs"
   - "core_sim/tests/route_sight.rs"
   - "core_sim/tests/route_wire.rs"
+  - "core_sim/src/scenario/roads.rs"
+  - "core_sim/tests/scenario_roads.rs"
   - "sim_schema/src/state/routes.rs"
   - "sim_schema/src/codec/routes.rs"
 ---
@@ -1202,6 +1204,30 @@ staying out of it.
 the client's native bridge parses a line there before it sends, so every
 `assign_labor … roadwork <n>` was refused inside the client with nothing failing anywhere. It is the
 identical hole `builders` fell through one role earlier; `command_guard`'s role sweep found both.
+
+## Scenario section
+
+A scenario's `roads` section (`docs/plan_scenarios.md` §4 slice 2e, `core_sim/src/scenario/roads.rs`)
+is an optional key of a faction section: the road rungs that faction already holds. Absent means no
+scenario roads. Checked-in example: `core_sim/scenarios/kept_roads.json`.
+
+| key | meaning |
+|---|---|
+| `at` | `[x, y]`, the exact tile. One road per tile across the whole file |
+| `rung` | a rung id of the `route` branch as the ladder config spells it (`trail`, `dirt_road`, `paved_road`), resolved against the loaded ladder. A rung whose held position is `RUNG_UNSTARTED` (`path`) is refused |
+| `keeper` | a band id of the same faction section. Required when the rung declares a `verb`, refused when it does not (nobody keeps the free floor) |
+
+- A free-floor rung is held at the top of its span, with no keeper.
+- A built rung replays the climb: the trail is laid, then for each built rung up to the named one
+  `build_gates::validate_road_verb` runs, the keeper is taken at the remoteness
+  `routes::quote_road_remoteness` quotes (the same function `grade` / `pave` call), and the position
+  is set to the top of that rung at that remoteness. A gate refusal (`roadbuilding`, `paving`)
+  arrives in the gate's own words.
+- A held rung is history: no build declaration, no labor row, no material drawn. A water tile is
+  refused at apply with the bands section's predicate.
+- Keepers are staffed by a `roadwork` row of the `labor` section (#922). Until a keeper count is
+  assigned the road is unpaid and loses its rung once its grace runs out.
+- A scenario trail has no traffic history, so it is lost to disuse like any trail nobody walks.
 
 ## Config files
 
