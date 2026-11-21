@@ -963,6 +963,35 @@ impl ForagePatch {
         self.complete_rung(faction, rung, ladder)
     }
 
+    /// **WHAT A REAL COMPLETION OF `rung` LEAVES ON THIS PATCH** - the same writes the labor arm makes
+    /// over the turns a build takes, in one call: the crop committed where the rung `requires_crop`
+    /// (idempotent, as the arm's first-turn commitment is), the Field leg's price stamped where the
+    /// rung's `cost_scale` says so ([`Self::price_field_rung`], at `field_cost_multiplier` - the
+    /// caller reads it **after** the commitment, as the arm does), and the work banked through
+    /// [`Self::accrue_to`] (owner set if none, position seated at the rung's top on this patch's own
+    /// price list, grace reset and peak raised by [`Self::set_ladder_position`]).
+    ///
+    /// Returns whether the patch now holds `rung`. A patch another faction owns banks nothing.
+    pub fn complete_rung_as_built(
+        &mut self,
+        faction: FactionId,
+        rung: &crate::intensification::RungDef,
+        crop: Option<&str>,
+        field_cost_multiplier: f32,
+        ladder: &LadderConfig,
+    ) -> bool {
+        if rung.requires_crop {
+            if let Some(crop) = crop {
+                self.commit_species(crop);
+            }
+        }
+        if rung.cost_scale == CostScale::ReplacedShare {
+            self.price_field_rung(field_cost_multiplier, ladder);
+        }
+        self.accrue_to(faction, f32::MAX, rung.rung_id(), ladder);
+        ladder.at_or_above(self.standing.held, rung.rung_id())
+    }
+
     /// Move the position to the top of `rung`, taking ownership as the real accrual would. Returns
     /// whether the patch now holds that rung.
     fn complete_rung(&mut self, faction: FactionId, rung: RungId, ladder: &LadderConfig) -> bool {

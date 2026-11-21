@@ -15,6 +15,7 @@
 //! touch two files.
 
 pub mod bands;
+pub mod rungs;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -32,6 +33,9 @@ use crate::command_seam::apply_set_starting_loadout;
 use crate::components::BandId;
 use crate::demographics_config::{DemographicsConfig, DemographicsConfigHandle};
 use crate::equipment_config::{EquipmentConfig, EquipmentConfigHandle};
+use crate::extraction_config::{ExtractionConfig, ExtractionConfigHandle};
+use crate::flora_config::{FloraConfig, FloraConfigHandle};
+use crate::intensification::{LadderConfig, LadderConfigHandle};
 use crate::map_preset::{MapPresets, MapPresetsHandle};
 use crate::materials_config::{MaterialsConfig, MaterialsConfigHandle};
 use crate::resources::SimulationConfig;
@@ -102,6 +106,9 @@ pub struct ScenarioContext {
     pub demographics: Arc<DemographicsConfig>,
     pub equipment: Arc<EquipmentConfig>,
     pub materials: Arc<MaterialsConfig>,
+    pub ladder: Arc<LadderConfig>,
+    pub flora: Arc<FloraConfig>,
+    pub extraction: Arc<ExtractionConfig>,
 }
 
 impl ScenarioContext {
@@ -114,6 +121,9 @@ impl ScenarioContext {
             demographics: world.resource::<DemographicsConfigHandle>().get(),
             equipment: world.resource::<EquipmentConfigHandle>().get(),
             materials: world.resource::<MaterialsConfigHandle>().get(),
+            ladder: world.resource::<LadderConfigHandle>().get(),
+            flora: world.resource::<FloraConfigHandle>().get(),
+            extraction: world.resource::<ExtractionConfigHandle>().get(),
         }
     }
 }
@@ -207,6 +217,7 @@ pub fn parse_scenario(
         }
     }
     bands::check(&file.factions, ctx, &mut refusals);
+    rungs::check(&file.factions, ctx, &mut refusals);
     match profile {
         Some(profile) if refusals.is_empty() => Ok(ScenarioPlan {
             file,
@@ -276,6 +287,14 @@ pub fn finish_scenario(world: &mut World) -> Result<ScenarioApplied, Vec<Scenari
     if !refusals.is_empty() {
         return Err(refusals);
     }
+    // **Held rungs (the setters, plan section 2.8 step 5)**, faction order then file order, BEFORE
+    // the outfit replay. Every refusal is collected; a refused entry does not stop the others.
+    for faction_setup in &setup.factions {
+        rungs::apply_held(world, faction_setup, &mut refusals);
+    }
+    if !refusals.is_empty() {
+        return Err(refusals);
+    }
     for faction_setup in &setup.factions {
         let faction = faction_setup.faction;
         for (j, entry) in faction_setup.bands.iter().enumerate() {
@@ -309,6 +328,16 @@ pub fn finish_scenario(world: &mut World) -> Result<ScenarioApplied, Vec<Scenari
                     refusal.to_string(),
                 ));
             }
+        }
+    }
+    if !refusals.is_empty() {
+        return Err(refusals);
+    }
+    // The labor section (slice 2a) slots in here, between the outfit and the builds.
+    for faction_setup in &setup.factions {
+        rungs::apply_builds(world, faction_setup, &setup.spawned, &mut refusals);
+        if !refusals.is_empty() {
+            break;
         }
     }
     if refusals.is_empty() {

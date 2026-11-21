@@ -28,6 +28,8 @@ pub struct FactionSection {
     pub knowledge: Vec<String>,
     /// The faction's bands, in spawn order. The FIRST holds the faction's opening outfit window.
     pub bands: Vec<BandEntry>,
+    /// Improvements the faction already holds and builds already declared (`rungs.rs`).
+    pub rungs: Vec<super::rungs::RungEntry>,
 }
 
 /// One band.
@@ -291,6 +293,7 @@ pub struct FactionSetup {
     pub faction: FactionId,
     pub knowledge: Vec<String>,
     pub bands: Vec<BandEntry>,
+    pub rungs: Vec<super::rungs::RungEntry>,
 }
 
 impl ScenarioSetup {
@@ -304,6 +307,7 @@ impl ScenarioSetup {
                     faction: FactionId(section.faction),
                     knowledge: section.knowledge.clone(),
                     bands: section.bands.clone(),
+                    rungs: section.rungs.clone(),
                 })
                 .collect(),
             ..Self::default()
