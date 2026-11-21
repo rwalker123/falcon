@@ -1529,6 +1529,17 @@ pub fn tile_flora_composition<'a>(
     tile: &Tile,
     map_seed: u64,
 ) -> Cow<'a, [FloraShare]> {
+    // **A scenario's flora override replaces the seeded subset** (`Tile::flora_override`): the biome's
+    // affinity rows restricted to the named species. A navigable hex still blends the channel term.
+    if let Some(keys) = &tile.flora_override {
+        return Cow::Owned(
+            if tile.terrain == sim_runtime::TerrainType::NavigableRiver {
+                flora.overridden_navigable_composition(tile.resource_terrain(), keys, forage)
+            } else {
+                flora.overridden_composition(tile.resource_terrain(), keys)
+            },
+        );
+    }
     if tile.terrain == sim_runtime::TerrainType::NavigableRiver {
         Cow::Owned(flora.realized_navigable_composition(
             tile.resource_terrain(),

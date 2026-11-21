@@ -87,7 +87,7 @@ fn pass_one_collects_every_refusal_in_one_go() {
     file["factions"]
         .as_array_mut()
         .unwrap()
-        .push(json!({ "faction": 0, "knowledge": [], "rungs": [], "bands": [] }));
+        .push(json!({ "faction": 0, "knowledge": [], "rungs": [], "bands": [], "labor": [] }));
 
     let refusals = pass_one(&file.to_string()).expect_err("a faulty file is refused");
     let paths: Vec<&str> = refusals.iter().map(|r| r.path.as_str()).collect();
@@ -119,16 +119,20 @@ fn pass_one_collects_every_refusal_in_one_go() {
 }
 
 #[test]
-fn an_unknown_key_is_refused_and_labor_is_not_yet_a_key() {
-    let mut file = shipped();
-    file["factions"][0]["labor"] = json!([]);
-    let refusals = pass_one(&file.to_string()).expect_err("labor is slice 2a");
-    assert_eq!(refusals.len(), 1, "a parse error is the one refusal");
-    assert!(refusals[0].reason.contains("labor"), "{}", refusals[0]);
-
+fn an_unknown_key_is_refused() {
     let mut file = shipped();
     file["world"]["colour"] = json!("blue");
     assert!(pass_one(&file.to_string()).is_err());
+
+    let mut file = shipped();
+    file["factions"][0]["labor"] = json!([{ "forage_tile": { "band": "home" } }]);
+    let refusals = pass_one(&file.to_string()).expect_err("ForageTile is not a labor entry");
+    assert_eq!(refusals.len(), 1, "a parse error is the one refusal");
+    assert!(
+        refusals[0].reason.contains("forage_tile"),
+        "{}",
+        refusals[0]
+    );
 }
 
 #[test]
@@ -455,6 +459,7 @@ fn two_faction_file(major: u32) -> Value {
         "faction": 1,
         "knowledge": [],
         "rungs": [],
+        "labor": [],
         "bands": [{
             "id": "rival", "at": far_land_tile(), "size": 30,
             "ages": { "children": 0.3, "working": 0.6, "elders": 0.1 },

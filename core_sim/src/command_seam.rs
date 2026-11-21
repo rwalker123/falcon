@@ -14,6 +14,10 @@ use bevy::prelude::*;
 use crate::build_gates::{validate_improvement, PEN_TAKEN_HINT};
 use crate::components::{BandId, PopulationCohort};
 use crate::grid_utils::hex_distance_wrapped;
+pub use crate::labor_commands::{
+    apply_assign_labor, apply_work_priority, forage_source, is_pen_climb, pen_queuer,
+    queue_build_on_working_bands, AssignLaborOrder, SOURCE_NAMED_NOT_ASSIGNED,
+};
 use crate::orders::FactionId;
 use crate::resources::{CommandEventKind, SimulationConfig};
 use crate::starting_loadout::{
@@ -22,8 +26,8 @@ use crate::starting_loadout::{
 };
 use crate::{
     BranchId, BuildJob, BuildSource, HerdRegistry, LaborAllocation, LaborTarget,
-    LadderConfigHandle, RoadKeeper, RoadRegistry, RungDef, RungTrait, SourceKind, TakeSelection,
-    Tile, TileRegistry, VerbId, DEFAULT_ESCAPEMENT_FLOOR,
+    LadderConfigHandle, RoadKeeper, RoadRegistry, RungDef, SourceKind, TakeSelection, Tile,
+    TileRegistry, VerbId,
 };
 
 /// **Why a replayed verb was refused.** `Display` is the reason text the event feed already shows
@@ -42,6 +46,14 @@ pub enum CommandRefusal {
         verb: String,
         reason: String,
         log: RefusalLog,
+    },
+    /// A labor verb (`assign_labor`, `work_priority`) was refused. `kind` is the feed channel the
+    /// player's own refusal lands on and `reason` the text it shows; the server writes exactly that
+    /// line, the scenario loader reports exactly that reason.
+    #[error("{reason}")]
+    Refused {
+        kind: crate::CommandEventKind,
+        reason: String,
     },
 }
 
@@ -140,31 +152,6 @@ pub fn apply_set_starting_loadout(
         crate::yield_seed::restaff_and_reseed(world, entity);
     }
     Ok(())
-}
-
-/// **The placeholder floor a command's target carries when it names a source rather than assigns
-/// one.** `LaborTarget::same_source` keys on the tile, the herd id and (on a deposit) the material
-/// alone, so the floor on a target built to identify a source is matched by nothing and read by
-/// nothing. It is [`DEFAULT_ESCAPEMENT_FLOOR`] so a reader who does look at it sees the sustainable
-/// value, not a strip order.
-pub const SOURCE_NAMED_NOT_ASSIGNED: f32 = DEFAULT_ESCAPEMENT_FLOOR;
-
-/// How many bands may hold one herd's Corral in their queues at once - a herd cannot be in two
-/// places.
-const PEN_QUEUERS_PER_HERD: usize = 1;
-
-/// **The forage source at `tile`, as the improvement commands name it.** `same_source` matches on
-/// the tile alone, so the stance, crop and take-selection slots are placeholders - this exists so
-/// the build verbs cannot *carry* a stance, a crop or a selection into
-/// [`queue_build_on_working_bands`], and so "the command names a source, not an assignment" is
-/// stated once.
-pub fn forage_source(tile: UVec2) -> LaborTarget {
-    LaborTarget::Forage {
-        tile,
-        floor: SOURCE_NAMED_NOT_ASSIGNED,
-        species: None,
-        take_species: TakeSelection::EVERYTHING,
-    }
 }
 
 /// **Gate a plant build verb against the crops the CREWS actually hold**, not against the auto-pick.
@@ -638,158 +625,4 @@ pub fn apply_build_rung(
             bands: switched,
         },
     })
-}
-
-/// **QUEUE A BUILD ON EVERY BAND OF `faction` ALREADY WORKING `target`'s SOURCE** (matched by
-/// `LaborTarget::same_source`, so the tile / herd id). Returns how many bands were updated (`0` =
-/// nobody is working that source, which the callers report as *"staff it first"*). The shared body
-/// of the improvement verbs and of `extend_pen`.
-///
-/// # A VERB DECLARES; IT DOES NOT STAFF
-///
-/// It adds a [`crate::BuildDeclaration`] and restaffs the band: the sim puts builders on the build
-/// from the band's idle hands, so this command names no crew, refuses nothing on affordability, and
-/// cannot disband the gathering it was meant to improve.
-///
-/// # RE-ISSUING KEEPS THE ENTRY'S PLACE IN THE LINE
-///
-/// `LaborAllocation::declare_build` replaces `declared` in place, so correcting `cultivate` ->
-/// `sow` on a declared source keeps its one declaration. Withdrawing one is `unqueue`.
-///
-/// **A verb reaches only bands already WORKING the source** - the rule that keeps an entry paired
-/// with a row.
-pub fn queue_build_on_working_bands(
-    world: &mut World,
-    faction: FactionId,
-    target: &LaborTarget,
-    declared: BuildJob,
-) -> usize {
-    let Some(source) = BuildSource::of(target) else {
-        return 0;
-    };
-    // Each band's own assignment target, because the re-seed below must price the source under the
-    // stance and crop that band actually holds - the command names neither.
-    let mut query = world.query::<(Entity, &PopulationCohort, &LaborAllocation)>();
-    let bands: Vec<(Entity, u32, LaborTarget)> = query
-        .iter(world)
-        .filter(|(_, cohort, _)| cohort.faction == faction)
-        .filter_map(|(entity, _, allocation)| {
-            allocation
-                .assignments
-                .iter()
-                .find(|assignment| {
-                    // **A staffed row is the band's holding at any crew** (#871): the sim staffs it
-                    // from the floor, so a stand at its floor reads nobody on it while the band
-                    // still works the source.
-                    assignment.target.same_source(target)
-                        && (assignment.workers > 0 || assignment.target.is_staffed())
-                })
-                .map(|assignment| (entity, assignment.workers, assignment.target.clone()))
-        })
-        .collect();
-    let bands = if is_pen_climb(world, &source, declared) {
-        bands_that_may_queue_the_pen(world, &source, bands)
-    } else {
-        bands
-    };
-    for (entity, workers, band_target) in &bands {
-        {
-            let mut allocation = crate::yield_seed::band_allocation_mut(world, *entity);
-            allocation.declare_build(source.clone(), declared);
-        }
-        // **A queued Corral picks its pen's tile now** - the best-grazing land within this band's
-        // work range, so the quotes price the tile the pen will really stand on.
-        if let (BuildSource::Herd(id), BuildJob::Climb(rung)) = (&source, declared) {
-            let ladder = world.resource::<LadderConfigHandle>().get();
-            if ladder.rung(rung).trait_set().has(RungTrait::Enclosed) {
-                choose_the_pen_site(world, *entity, id);
-            }
-        }
-        // Queueing a build does not change the take at all, but the source's dip does depend on
-        // what is being raised on it, so re-seed the telemetry from the new forecast.
-        let improvement = crate::yield_seed::build_rung_on_source_at(world, *entity, band_target);
-        crate::yield_seed::seed_source_yield(world, *entity, band_target, improvement, *workers);
-        // A declared build is staffed by the sim, so the declaration restaffs the band: the new
-        // build's builders show on the command's own frame.
-        crate::yield_seed::restaff_and_reseed(world, *entity);
-    }
-    bands.len()
-}
-
-/// **IS `job` ON `source` A CORRAL?** - a climb onto an `enclosed` rung of a herd. The pen is the one
-/// build a herd can hold in one place only, so it is the one the queue admits a single band for.
-pub fn is_pen_climb(world: &World, source: &BuildSource, job: BuildJob) -> bool {
-    let (BuildSource::Herd(_), BuildJob::Climb(rung)) = (source, job) else {
-        return false;
-    };
-    world
-        .resource::<LadderConfigHandle>()
-        .get()
-        .rung(rung)
-        .trait_set()
-        .has(RungTrait::Enclosed)
-}
-
-/// **THE BAND, OF ANY FACTION, THAT HOLDS THIS HERD'S CORRAL IN ITS QUEUE** - `None` when no band
-/// has one queued.
-pub fn pen_queuer(world: &mut World, source: &BuildSource) -> Option<Entity> {
-    let ladder = world.resource::<LadderConfigHandle>().get();
-    let mut query = world.query::<(Entity, &LaborAllocation)>();
-    query
-        .iter(world)
-        .find(|(_, allocation)| {
-            allocation
-                .build_declaration(source)
-                .and_then(|entry| entry.declared.climb())
-                .is_some_and(|rung| ladder.rung(rung).trait_set().has(RungTrait::Enclosed))
-        })
-        .map(|(entity, _)| entity)
-}
-
-/// **A HERD CAN BE PENNED IN ONE PLACE ONLY**, so the Corral is queued on exactly one band: the one
-/// that already holds it (a re-issue replaces its entry in place), else the lowest `BandId` of the
-/// bands working the herd. Another band's hold - of any faction - leaves none, and the caller
-/// refuses with [`PEN_TAKEN_HINT`].
-fn bands_that_may_queue_the_pen(
-    world: &mut World,
-    source: &BuildSource,
-    mut bands: Vec<(Entity, u32, LaborTarget)>,
-) -> Vec<(Entity, u32, LaborTarget)> {
-    match pen_queuer(world, source) {
-        Some(holder) => bands.retain(|(entity, ..)| *entity == holder),
-        None => {
-            bands.sort_by_key(|(entity, ..)| world.get::<BandId>(*entity).copied());
-            bands.truncate(PEN_QUEUERS_PER_HERD);
-        }
-    }
-    bands
-}
-
-/// **STAMP THE TILE A QUEUED CORRAL'S PEN WILL STAND ON** - `fauna::pen_site_in_world` for the herd
-/// as the keeping band at `band` sees it, written to the herd's `pen_site`.
-fn choose_the_pen_site(world: &mut World, band: Entity, herd_id: &str) {
-    let Some(band_tile) = world
-        .get::<PopulationCohort>(band)
-        .and_then(|cohort| world.get::<Tile>(cohort.current_tile))
-        .map(|tile| tile.position)
-    else {
-        return;
-    };
-    let Some(herd) = world
-        .resource::<HerdRegistry>()
-        .find(herd_id)
-        .filter(|herd| !herd.is_corralled())
-        .cloned()
-    else {
-        return;
-    };
-    let site = crate::pen_site_in_world(world, &herd, band_tile);
-    if let Some(herd) = world
-        .resource_mut::<HerdRegistry>()
-        .herds
-        .iter_mut()
-        .find(|herd| herd.id == herd_id)
-    {
-        herd.pen_site = site;
-    }
 }

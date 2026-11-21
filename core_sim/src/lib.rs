@@ -75,6 +75,7 @@ pub mod keep_on_hand;
 pub mod knowledge_contact;
 mod knowledge_contact_config;
 mod knowledge_ledger;
+pub mod labor_commands;
 mod labor_config;
 pub mod ladder_ids;
 mod leader_names;
@@ -1321,6 +1322,11 @@ pub fn build_headless_app() -> App {
                 systems::apply_tag_budget_solver,
                 systems::apply_biome_palette_clamp,
                 systems::reconcile_coastal_shelf,
+                // **A scenario's tile overrides are a worldgen input**: after every pass that
+                // rewrites terrain (the tag solver, the palette clamp, the shelf) and before
+                // everything that derives from it (food modules, fresh-water site bias, wondrous
+                // sites, herds, forage, graze). A no-op when no scenario is being loaded.
+                scenario::tiles::apply_scenario_tile_overrides,
                 systems::reconcile_food_modules,
                 systems::bias_food_sites_toward_fresh_water,
                 sites::place_wondrous_sites,

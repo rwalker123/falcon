@@ -96,9 +96,18 @@ scenario can already use. No second vocabulary has to be maintained alongside it
         }
       ],
       "labor": [
-        { "band": "home", "role": "forage", "target": [32, 18], "workers": 12 }
+        {
+          "assign_labor": {
+            "band": "home", "role": "forage", "workers": 12,
+            "target_x": 32, "target_y": 18,
+            "take_species": [], "move_with_herd": false
+          }
+        }
       ]
     }
+  ],
+  "tiles": [
+    { "at": [32, 18], "flora": ["wild_emmer"] }
   ]
 }
 ```
@@ -113,8 +122,9 @@ scenario can already use. No second vocabulary has to be maintained alongside it
   because neither survives a regeneration (`.claude/rules/core_sim/checkpoints.md` → "No `Entity`
   crosses a persistence boundary").
 - **The keys after `bands`** (`labor`, then the sections slice 2 adds: `rungs`, `pens`, `herds`,
-  `deposits`, `roads`, `bench`, `tiles`) belong to their arcs (§2.4). The example shows only slice 1
-  plus one labor row.
+  `deposits`, `roads`, `bench`) belong to their arcs (§2.4). `tiles` is a top-level key beside
+  `factions`, because a tile belongs to no faction. The example shows slice 1 plus one labor row and
+  one tile override.
 
 ### 2.4 Each arc owns its section
 
@@ -155,8 +165,16 @@ make an entry fit.**
 Overrides are **a worldgen input, not a post-hoc edit.** They apply after the biome stage and before
 anything derives from a tile's biome (flora realization, habitat and herd placement, spawn
 placement), so every derived field is built from the overridden tile and nothing stale survives.
-The slice that builds them (2a) lists which fields can be overridden, and the list is limited to
-fields with a re-derivation point.
+Slice 2a settled the list, limited to fields with a re-derivation point:
+
+- **`terrain`, land to land only.** Elevation is the terrain authority, and the land mask, the
+  coast, the rivers and a mountain's metadata are derived from it, so a change between land and
+  water or onto or off a mountain has no re-derivation point and is refused. A land biome swap
+  re-derives the tile's tags, then its food module, sites, herds, forage and graze from the new
+  biome. Temperature is not overridden.
+- **`flora`**, the species the tile grows, each one of the tile's biome roster. A tile's basket is
+  otherwise a seeded draw recomputed on every read, so the override is stored on the tile and read
+  by the one composition seam, and a save carries it.
 
 **How to keep a scenario alive across worldgen changes:** override every tile the scenario depends
 on. A scenario that overrides its few key tiles survives a worldgen retune that would have moved
@@ -285,7 +303,7 @@ Each slice is one GitHub issue under the Scenarios arc and links back here.
 | # | Issue | Slice | Delivers |
 |---|---|---|---|
 | 1 | #921 | **Loader + bands** | `scenario/mod.rs` (two-pass load, apply order, refusal list), the `load_scenario` verb and reply, `run_stack.sh --scenario`, the lib seam for replayed verbs (§2.9), the client accepting an unrequested world (§2.7), and the **bands** section: `world`, `at`, `size`, `ages`, `founding_lines`, `larder`, `knowledge`, `outfit`. A checked-in `core_sim/scenarios/breeding_ceiling_150.json` covers the immediate case. Also the `scenarios.md` rule and its routing row |
-| 2a | #922 | **Worked tiles, labor and tile overrides** | the `labor` section (`AssignLabor`/`ForageTile`/`WorkPriority` entries) and the `tiles` override section as a worldgen input |
+| 2a | #922 | **Worked tiles, labor and tile overrides** | the `labor` section (`AssignLabor`/`WorkPriority` entries; `ForageTile` is a retired verb the server ignores, and `assign_labor` with role `forage` replaces it) and the `tiles` override section as a worldgen input |
 | 2b | #923 | **Held rungs and the build queue** | the `rungs` section: a held rung on a patch, a working or a herd as a gated setter (the ONE held-rung setter: 2c and 2d set none of their own), and a declared build as a `BuildRung` entry, with `BuildRung`'s dispatch moved into the command seam |
 | 2c | #924 | **Pens and herds** | the `herds` section (placing or depleting a herd, with a habitat check) and the `pens` section (`ExtendPen`, `SetHerdOutput`). A held tame or pen rung is a `rungs` entry (2b) |
 | 2d | #925 | **Deposits** | the `deposits` section: remaining stock. A working's held rung is a `rungs` entry (2b) |
