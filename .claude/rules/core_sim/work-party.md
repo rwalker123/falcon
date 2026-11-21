@@ -67,8 +67,8 @@ retired `policy` key is refused.
 | `work_priority` | required `band`, `level`; optional `target_x`, `target_y`, `herd_id`, `material`, `branch` | a band not of this faction; a target off the map; a level other than `high`, `normal`, `low` |
 
 A pool role names no tile: `{ "assign_labor": { "band": "home", "role": "roadwork", "workers": 3,
-"take_species": [], "move_with_herd": false } }` is the keepers of every road the band keeps (the
-roads come from `routes.md` → "Scenario section"). A kit on a pool row is refused by the verb, as on
+"take_species": [], "move_with_herd": false } }` is the keepers of every road the band keeps
+(`RoadRegistry::kept_by`). A kit on a pool row is refused by the verb, as on
 the server.
 
 ## The sim staffs every source from the player's floor (#871)

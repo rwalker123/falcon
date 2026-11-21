@@ -711,3 +711,43 @@ fn a_kit_named_on_a_pool_row_is_refused_with_the_servers_own_text() {
     assert_eq!(refusals[0].path, "factions[0].labor[0]");
     assert_eq!(refusals[0].reason, refusal.to_string());
 }
+
+#[test]
+fn a_highland_biome_tile_is_refused_a_swap_whether_or_not_the_mask_placed_it() {
+    use core_sim::scenario::tiles::is_elevation_derived_highland;
+    // Prefer a highland biome the mountain mask did NOT place (the case the metadata test missed).
+    let highland = |tile: &Tile| {
+        is_elevation_derived_highland(tile.terrain)
+            && !tile.terrain_tags.contains(TerrainTags::WATER)
+    };
+    let at = find_tile(|tile| highland(tile) && tile.mountain.is_none())
+        .or_else(|| find_tile(highland))
+        .expect("the map has a highland tile");
+    let refusals = load(
+        &with_tiles(vec![
+            json!({ "at": [at.x, at.y], "terrain": "AlluvialPlain" }),
+        ])
+        .to_string(),
+    )
+    .map(|_| ())
+    .expect_err("a highland tile cannot be swapped away");
+    assert_eq!(refusals[0].path, "tiles[0]");
+    assert!(refusals[0].reason.contains("mountain"), "{}", refusals[0]);
+
+    // The control: a lowland source tile takes the same swap.
+    let lowland = find_tile(|tile| {
+        !is_elevation_derived_highland(tile.terrain)
+            && tile.mountain.is_none()
+            && tile.terrain != TerrainType::NavigableRiver
+            && !tile.terrain_tags.contains(TerrainTags::WATER)
+            && tile.terrain != TerrainType::AlluvialPlain
+    })
+    .expect("the map has a lowland tile");
+    load(
+        &with_tiles(vec![
+            json!({ "at": [lowland.x, lowland.y], "terrain": "AlluvialPlain" }),
+        ])
+        .to_string(),
+    )
+    .expect("a lowland tile is accepted");
+}

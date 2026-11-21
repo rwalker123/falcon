@@ -60,7 +60,7 @@ changes nothing.
 | key | meaning | refused when |
 |---|---|---|
 | `tiles[].at` | `[x, y]` | off the map, or listed twice |
-| `tiles[].terrain` | Optional. The `TerrainType` name to swap to; the tile's tags are re-read from `terrain_definition` | not a terrain; a water or mountain (`Highland`/`Volcanic` niche) target; at Startup, a tile that is water, `NavigableRiver` or a mountain |
+| `tiles[].terrain` | Optional. The `TerrainType` name to swap to; the tile's tags are re-read from `terrain_definition` | not a terrain; a water or mountain (`Highland`/`Volcanic` niche) target; at Startup, a tile that is water, `NavigableRiver`, a mountain, or of a `Highland`/`Volcanic` niche (one predicate for source and target, so a generated hill tile cannot be flattened either) |
 | `tiles[].flora` | Optional. The species that grow there, stored as `Tile.flora_override` (see `flora.md`) | empty, a species twice, not on the flora roster; at Startup, a species the tile's final biome does not host |
 
 An entry must name `terrain`, `flora` or both. **Terrain is land→land only**, because elevation is

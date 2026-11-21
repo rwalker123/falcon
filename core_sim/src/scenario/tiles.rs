@@ -61,6 +61,16 @@ fn parse_terrain(name: &str) -> Option<TerrainType> {
         .ok()
 }
 
+/// **Is `terrain` one the elevation field decides?** The highland and volcanic biomes: relief and the
+/// mountain mask place them, so a tile may neither be swapped TO one nor, wherever the generated
+/// map put one, swapped AWAY from it. The one predicate both directions of the override ask.
+pub fn is_elevation_derived_highland(terrain: TerrainType) -> bool {
+    matches!(
+        terrain_definition(terrain).niche,
+        BiomeNiche::Highland | BiomeNiche::Volcanic
+    )
+}
+
 /// **Why a tile may not be CHANGED TO `terrain`**, or `None` when it may: water, a navigable river
 /// and the highland and volcanic biomes (the ones the mountain mask places) all derive from
 /// elevation, which an override does not touch.
@@ -72,10 +82,7 @@ pub fn terrain_target_refusal(terrain: TerrainType) -> Option<String> {
              swapped to another land biome"
         ));
     }
-    if matches!(
-        definition.niche,
-        BiomeNiche::Highland | BiomeNiche::Volcanic
-    ) {
+    if is_elevation_derived_highland(terrain) {
         return Some(format!(
             "{terrain:?} is a mountain biome, and mountains derive from elevation: a tile can only be \
              swapped to another lowland biome"
@@ -190,11 +197,13 @@ pub fn apply_scenario_tile_overrides(
         if let Some(terrain) = entry.parsed_terrain() {
             let generated_water = tile.terrain == TerrainType::NavigableRiver
                 || tile.terrain_tags.contains(TerrainTags::WATER);
-            if generated_water || tile.mountain.is_some() {
-                let what = if tile.mountain.is_some() {
-                    "a mountain".to_string()
-                } else {
+            let generated_mountain =
+                tile.mountain.is_some() || is_elevation_derived_highland(tile.terrain);
+            if generated_water || generated_mountain {
+                let what = if generated_water {
                     format!("{:?}", tile.terrain)
+                } else {
+                    format!("a mountain biome ({:?})", tile.terrain)
                 };
                 setup.refuse(
                     &at,
