@@ -196,6 +196,12 @@ instead of every tile carrying a diluted slice of all of them.
   which does not occur on a generated map, every food-bearing tile already carries a patch) reads the
   **affinity** roster, since there is no realized basket; the fuller "Sow reads affinity everywhere"
   model is deferred (§11).
+- **A scenario can name a tile's basket.** `Tile.flora_override` (set only by a scenario's `tiles`
+  section, `worldgen.md` → "Scenario section") is read first by `tile_flora_composition`: the
+  affinity shares restricted to the named species and renormalized (`renormalized_basket`, shared
+  with `realize_shares`), with the channel term still blended on a navigable hex
+  (`overridden_composition` / `overridden_navigable_composition`). It is the one stored input to the
+  seam, and it rides a save inside `TileRecord`.
 - **Pure and derived, so it costs nothing.** Realization is a pure function of
   `(map_seed, tile, terrain, affinities)` — no stored state, no RNG stream, `splitmix64` +
   FNV-of-coord for entropy — so it is **deterministic under rollback for free** and adds **nothing** to

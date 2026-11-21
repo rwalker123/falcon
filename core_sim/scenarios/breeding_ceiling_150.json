@@ -26,7 +26,9 @@
             "materials": { "fibre": 20, "hide": 12 }
           }
         }
-      ]
+      ],
+      "labor": []
     }
-  ]
+  ],
+  "tiles": []
 }

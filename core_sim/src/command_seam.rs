@@ -12,6 +12,7 @@
 use bevy::prelude::*;
 
 use crate::components::{BandId, PopulationCohort};
+pub use crate::labor_commands::{apply_assign_labor, apply_work_priority, AssignLaborOrder};
 use crate::orders::FactionId;
 use crate::starting_loadout::{
     apply_starting_loadout, KitAllocation, LoadoutRejection, LoadoutSupply, MaterialAllocation,
@@ -25,6 +26,14 @@ pub enum CommandRefusal {
     /// `SetStartingLoadout` was refused by the outfitting window's own checks.
     #[error("{0}")]
     StartingLoadout(#[from] LoadoutRejection),
+    /// A labor verb (`assign_labor`, `work_priority`) was refused. `kind` is the feed channel the
+    /// player's own refusal lands on and `reason` the text it shows; the server writes exactly that
+    /// line, the scenario loader reports exactly that reason.
+    #[error("{reason}")]
+    Refused {
+        kind: crate::CommandEventKind,
+        reason: String,
+    },
 }
 
 /// **Apply a composed opening loadout to one band, restaffing the crews it moved.**

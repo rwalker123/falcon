@@ -506,6 +506,7 @@ pub fn spawn_initial_world(
             river_edges: 0,
             river_inflow: 0,
             river_channel: 0,
+            flora_override: None,
         };
         let power_component = PowerNode {
             id: node_id,
@@ -4893,6 +4894,7 @@ mod terrain_tag_tests {
                     river_edges: 0,
                     river_inflow: 0,
                     river_channel: 0,
+                    flora_override: None,
                 })
                 .id();
             tile_entities.push(entity);
@@ -5011,6 +5013,7 @@ mod terrain_tag_tests {
                         river_edges: 0,
                         river_inflow: 0,
                         river_channel: 0,
+                        flora_override: None,
                     })
                     .id();
                 tile_entities.push(entity);
