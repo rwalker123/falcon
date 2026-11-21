@@ -30,6 +30,8 @@ pub struct FactionSection {
     pub knowledge: Vec<String>,
     /// The faction's bands, in spawn order. The FIRST holds the faction's opening outfit window.
     pub bands: Vec<BandEntry>,
+    /// Improvements the faction already holds and builds already declared (`rungs.rs`).
+    pub rungs: Vec<super::rungs::RungEntry>,
     /// The faction's opening work rows, replayed in order through `assign_labor` and `work_priority`.
     /// A required key: `[]` for none.
     pub labor: Vec<LaborEntry>,
@@ -298,6 +300,7 @@ pub struct FactionSetup {
     pub faction: FactionId,
     pub knowledge: Vec<String>,
     pub bands: Vec<BandEntry>,
+    pub rungs: Vec<super::rungs::RungEntry>,
     pub labor: Vec<LaborEntry>,
 }
 
@@ -313,6 +316,7 @@ impl ScenarioSetup {
                     faction: FactionId(section.faction),
                     knowledge: section.knowledge.clone(),
                     bands: section.bands.clone(),
+                    rungs: section.rungs.clone(),
                     labor: section.labor.clone(),
                 })
                 .collect(),

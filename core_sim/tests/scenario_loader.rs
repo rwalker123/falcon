@@ -87,7 +87,7 @@ fn pass_one_collects_every_refusal_in_one_go() {
     file["factions"]
         .as_array_mut()
         .unwrap()
-        .push(json!({ "faction": 0, "knowledge": [], "bands": [], "labor": [] }));
+        .push(json!({ "faction": 0, "knowledge": [], "rungs": [], "bands": [], "labor": [] }));
 
     let refusals = pass_one(&file.to_string()).expect_err("a faulty file is refused");
     let paths: Vec<&str> = refusals.iter().map(|r| r.path.as_str()).collect();
@@ -458,6 +458,7 @@ fn two_faction_file(major: u32) -> Value {
     file["factions"].as_array_mut().unwrap().push(json!({
         "faction": 1,
         "knowledge": [],
+        "rungs": [],
         "labor": [],
         "bands": [{
             "id": "rival", "at": far_land_tile(), "size": 30,
