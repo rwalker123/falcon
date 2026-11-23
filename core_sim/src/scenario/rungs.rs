@@ -31,11 +31,14 @@ use crate::flora_config::FloraConfigHandle;
 use crate::forage::{
     patch_field_cost_multiplier, resolve_committed_species, tile_flora_composition, ForageRegistry,
 };
-use crate::intensification::{LadderConfig, RungDef, SourceKind};
+use crate::grid_utils::hex_distance_wrapped;
+use crate::intensification::{LadderConfig, RungDef, RungTrait, SourceKind};
 use crate::labor_config::LaborConfigHandle;
 use crate::orders::FactionId;
 use crate::resources::{SimulationConfig, TileRegistry};
-use crate::{HerdRegistry, LadderConfigHandle, RungId, Tile, VerbId};
+use crate::{
+    pen_site_in_world, HerdRegistry, LadderConfigHandle, PopulationCohort, RungId, Tile, VerbId,
+};
 
 /// One entry of a faction's `rungs` list.
 #[derive(Debug, Clone, Deserialize)]
@@ -411,6 +414,30 @@ fn open_working(world: &mut World, tile: UVec2, material: &str, named: &str) -> 
         })
 }
 
+/// **The standing tile of the faction's band nearest `target`** by hex distance, ties to the lowest
+/// [`BandId`]. A scenario queues no Corral, so this band stands in for the one that would.
+fn nearest_band_tile(world: &mut World, faction: FactionId, target: UVec2) -> Option<UVec2> {
+    let (width, wrap) = {
+        let tiles = world.resource::<TileRegistry>();
+        let wrap = world
+            .resource::<SimulationConfig>()
+            .map_topology
+            .wrap_horizontal;
+        (tiles.width, wrap)
+    };
+    let mut query = world.query::<(&BandId, &PopulationCohort)>();
+    let bands: Vec<(BandId, Entity)> = query
+        .iter(world)
+        .filter(|(_, cohort)| cohort.faction == faction)
+        .map(|(id, cohort)| (*id, cohort.current_tile))
+        .collect();
+    bands
+        .into_iter()
+        .filter_map(|(id, tile)| Some((id, world.get::<Tile>(tile)?.position)))
+        .min_by_key(|(id, position)| (hex_distance_wrapped(*position, target, width, wrap), *id))
+        .map(|(_, position)| position)
+}
+
 /// **Write what the game's own completion of `laid` leaves on the source**, through the source's
 /// own `complete_rung_as_built`.
 fn write_completion(
@@ -470,15 +497,33 @@ fn write_completion(
         HeldKind::Herd => {
             let id = held.herd.as_deref().ok_or("a herd needs 'herd'")?;
             let fauna = world.resource::<FaunaConfigHandle>().get();
+            let standing = world
+                .resource::<HerdRegistry>()
+                .find(id)
+                .cloned()
+                .ok_or("the herd vanished while it was being climbed")?;
+            // A pen is fenced where a Corral queued by the faction's band nearest the herd would
+            // fence it: the same `pen_site_in_world` a queued Corral stamps, so the footprint (and
+            // so the herd's K) is the one play gives, and the pens written earlier in this load are
+            // in its taken list. The herd's own position is the fallback only where that pick finds
+            // nothing, or the faction has no band.
+            let pen_tile = if laid.trait_set().has(RungTrait::Enclosed) {
+                standing
+                    .pen_site
+                    .or_else(|| {
+                        nearest_band_tile(world, faction, standing.position())
+                            .and_then(|band_tile| pen_site_in_world(world, &standing, band_tile))
+                    })
+                    .unwrap_or_else(|| standing.position())
+            } else {
+                standing.position()
+            };
             let mut registry = world.resource_mut::<HerdRegistry>();
             let herd = registry
                 .herds
                 .iter_mut()
                 .find(|herd| herd.id == id)
                 .ok_or("the herd vanished while it was being climbed")?;
-            // A pen stands where the herd's own site says, else where the herd stands - the labor
-            // arm's own fallback when no better ground is free.
-            let pen_tile = herd.pen_site.unwrap_or_else(|| herd.position());
             if !herd.complete_rung_as_built(faction, laid, &fauna, ladder, pen_tile) {
                 return Err("the herd could not be raised (another people owns it)".to_string());
             }

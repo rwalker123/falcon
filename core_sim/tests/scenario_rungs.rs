@@ -12,10 +12,10 @@ use core_sim::build_gates::validate_improvement;
 use core_sim::command_seam::{apply_build_rung, BuildRungRequest, CommandRefusal, DeclaredKind};
 use core_sim::scenario::{build_scenario_world, parse_scenario, ScenarioContext, ScenarioRefusal};
 use core_sim::{
-    build_test_app, default_species_for_rung, publish_baseline_snapshot, tile_flora_composition,
-    BandId, BuildSource, FactionId, ForageRegistry, HerdRegistry, LaborAllocation, LaborTarget,
-    LadderConfigHandle, PopulationCohort, SimulationConfig, SnapshotHistory, TakeSelection, Tile,
-    TileRegistry, VerbId,
+    build_test_app, default_species_for_rung, pen_site_in_world, publish_baseline_snapshot,
+    tile_flora_composition, BandId, BuildSource, FactionId, ForageRegistry, HerdRegistry,
+    LaborAllocation, LaborTarget, LadderConfigHandle, PopulationCohort, SimulationConfig,
+    SnapshotHistory, TakeSelection, Tile, TileRegistry, VerbId,
 };
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
@@ -64,6 +64,18 @@ fn base_world() -> App {
         json!([]),
     ))
     .expect("the base scenario loads")
+}
+
+/// The standing tile of the home faction's lowest-id band in `app`.
+fn home_band_tile(app: &mut App) -> UVec2 {
+    let mut query = app.world.query::<(&BandId, &PopulationCohort)>();
+    let (_, cohort) = query
+        .iter(&app.world)
+        .filter(|(_, cohort)| cohort.faction == HOME)
+        .min_by_key(|(id, _)| **id)
+        .expect("the home band");
+    let tile = cohort.current_tile;
+    app.world.get::<Tile>(tile).expect("its tile").position
 }
 
 fn forage_target(tile: UVec2, species: Option<&str>) -> LaborTarget {
@@ -312,6 +324,23 @@ fn a_held_pen_corrals_and_owns_the_herd_and_a_short_ceiling_is_refused() {
     assert!(herd.is_domesticated(), "through tamed");
     assert_eq!(herd.owner, Some(HOME));
 
+    // The pen stands where a Corral queued by the home band would fence it, not under the herd.
+    let mut base = base_world();
+    let band_tile = home_band_tile(&mut base);
+    let unpenned = base
+        .world
+        .resource::<HerdRegistry>()
+        .find(&penable)
+        .expect("the herd in the base world")
+        .clone();
+    let expected = pen_site_in_world(&base.world, &unpenned, band_tile).expect("a site in range");
+    assert_eq!(herd.corralled_at, Some(expected), "the game's own pick");
+    assert_ne!(
+        expected,
+        unpenned.position(),
+        "control: the pick is not the herd's own tile, so the old fallback would have differed"
+    );
+
     // Control: a species that can be tamed but not penned passes the tame rung and is refused at
     // the pen with the gate's own ceiling text.
     let tame_only = scenario(
@@ -334,6 +363,46 @@ fn a_held_pen_corrals_and_owns_the_herd_and_a_short_ceiling_is_refused() {
     let refusals = load(&scenario(&knowing, rungs)).expect_err("refused");
     let refusal = refusal_at(&refusals, "factions[0].rungs[0]");
     assert_eq!(refusal.reason, format!("animal:pen: {ceiling_text}"));
+}
+
+#[test]
+fn two_held_pens_are_never_fenced_on_one_tile() {
+    let mut base = base_world();
+    let band_tile = home_band_tile(&mut base);
+    let ladder = base.world.resource::<LadderConfigHandle>().get();
+    let mut penable: Vec<_> = base
+        .world
+        .resource::<HerdRegistry>()
+        .herds
+        .iter()
+        .filter(|herd| herd.can_pen(&ladder))
+        .cloned()
+        .collect();
+    penable.sort_by_key(|herd| {
+        (
+            pen_site_in_world(&base.world, herd, band_tile).is_none(),
+            herd.position().x.abs_diff(band_tile.x) + herd.position().y.abs_diff(band_tile.y),
+            herd.id.clone(),
+        )
+    });
+    let (first, second) = (&penable[0], &penable[1]);
+    // Liveness: with nothing else penned both herds would take the same tile.
+    assert_eq!(
+        pen_site_in_world(&base.world, first, band_tile),
+        pen_site_in_world(&base.world, second, band_tile),
+        "the control: the unqueued picks collide"
+    );
+
+    let rungs = json!([
+        held("animal:pen", json!({ "herd": first.id })),
+        held("animal:pen", json!({ "herd": second.id })),
+    ]);
+    let app = load(&scenario(&[HERDING, PENNING], rungs)).expect("both pens load");
+    let herds = app.world.resource::<HerdRegistry>();
+    let a = herds.find(&first.id).expect("first").corralled_at;
+    let b = herds.find(&second.id).expect("second").corralled_at;
+    assert!(a.is_some() && b.is_some(), "both are penned");
+    assert_ne!(a, b, "two pens never share a tile");
 }
 
 #[test]
@@ -560,4 +629,40 @@ fn the_seam_declares_a_build_on_a_worked_patch_and_refuses_one_already_built() {
     };
     assert_eq!(reason, gate);
     assert!(gate.to_lowercase().contains("already"), "{gate}");
+}
+
+#[test]
+fn the_held_rungs_playtest_scenario_loads_and_fences_its_pen_off_the_herds_tile() {
+    let text = include_str!("../scenarios/held_rungs_playtest.json");
+    let app = load(text).expect("the playtest scenario loads");
+    let pen = app
+        .world
+        .resource::<HerdRegistry>()
+        .find("game_wild_sheep_00")
+        .expect("the herd")
+        .corralled_at
+        .expect("the sheep are penned");
+
+    // The same world with the pen row dropped: where the herd stood, and what the game would pick.
+    let mut file: Value = serde_json::from_str(text).expect("JSON");
+    let rungs = file["factions"][0]["rungs"].as_array_mut().expect("rungs");
+    rungs.retain(|entry| entry["held"]["rung"] != "animal:pen");
+    let mut base = load(&file.to_string()).expect("the world without the pen loads");
+    let band_tile = home_band_tile(&mut base);
+    let unpenned = base
+        .world
+        .resource::<HerdRegistry>()
+        .find("game_wild_sheep_00")
+        .expect("the herd")
+        .clone();
+    println!("pen at {pen:?}, herd stood at {:?}", unpenned.position());
+    assert_eq!(
+        Some(pen),
+        pen_site_in_world(&base.world, &unpenned, band_tile)
+    );
+    assert_ne!(
+        pen,
+        unpenned.position(),
+        "the pen is off the herd's own tile"
+    );
 }

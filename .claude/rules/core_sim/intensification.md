@@ -2730,7 +2730,11 @@ above the root to the named rung, and each rung passes `build_gates::validate_im
 `build <verb>` runs, before the source is written as that rung's completion leaves it: the position at
 the top of the rung in the source's own span, the owner, the committed crop where the rung
 `requires_crop`, the neglect counter reset. A rung the source already holds is skipped. Held rungs
-apply before the outfit replay, so a later command entry finds them in place. A held rung is kept by
+apply before the outfit replay, so a later command entry finds them in place. A held pen is fenced
+where a Corral queued by the faction's band nearest the herd (hex distance, ties to the lowest
+`BandId`) would fence it, through `fauna::pen_site_in_world`, so pens written earlier in the load are
+in its taken list; the herd's own tile is the fallback only where that pick finds nothing or the
+faction has no band. A held rung is kept by
 its crew like any other: with no labor row on it, it rots after its grace.
 
 | key | meaning | refused when |
