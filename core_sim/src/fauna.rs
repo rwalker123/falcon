@@ -1228,6 +1228,23 @@ impl Herd {
         }
     }
 
+    /// **WHAT A REAL COMPLETION OF `rung` LEAVES ON THIS HERD**: [`Self::accrue_rung`] offered more
+    /// work than any rung costs (every accrual caps the position at the rung's own top), so owner,
+    /// the species' taming price, the position, the fence and the reset grace are exactly what the
+    /// labor arm's accrual leaves. `pen_tile` is where a pen stands, as the arm resolves it.
+    /// Returns whether the rung is now held.
+    pub fn complete_rung_as_built(
+        &mut self,
+        faction: FactionId,
+        rung: &RungDef,
+        fauna: &FaunaConfig,
+        ladder: &LadderConfig,
+        pen_tile: UVec2,
+    ) -> bool {
+        self.accrue_rung(faction, f32::MAX, rung, fauna, ladder, pen_tile);
+        ladder.at_or_above(self.standing.held, rung.rung_id())
+    }
+
     /// **A fixture's already-tamed herd.** Runs the *real* accrual against
     /// [`crate::intensification::FABRICATED_BUILD_COST`], so the husbandry ceiling and the
     /// owner-lock still apply — you cannot fabricate a domesticated `wild` herd. It replaces the

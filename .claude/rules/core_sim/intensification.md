@@ -2,6 +2,7 @@
 paths:
   - "core_sim/src/{intensification,knowledge_ledger,ladder_ids}.rs"
   - "core_sim/src/data/intensification_ladder.json"
+  - "core_sim/src/scenario/rungs.rs"
 ---
 
 <!-- Extracted verbatim from lines 43-43;2063-2198 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
@@ -2718,3 +2719,38 @@ the lesson-cost check and the knowledge-tag check walk.
 
 Wire: `LadderRungState.sizeTiers` (`SizeTierState`) and `knowledgeGains` (`KnowledgeGainState`);
 `HerdTelemetryState.sizeTier` (the current tier id, empty in none).
+
+## Scenario section
+
+The **rungs** section of a scenario file (`core_sim/src/scenario/rungs.rs`; the loader is
+`scenarios.md`). `factions[].rungs` is required (`[]` for none). Each entry is one of two kinds.
+
+**`held`: a rung the source already holds, a setter.** It climbs the branch from the first rung
+above the root to the named rung, and each rung passes `build_gates::validate_improvement`, the gate
+`build <verb>` runs, before the source is written as that rung's completion leaves it: the position at
+the top of the rung in the source's own span, the owner, the committed crop where the rung
+`requires_crop`, the neglect counter reset. A rung the source already holds is skipped. Held rungs
+apply before the outfit replay, so a later command entry finds them in place. A held pen is fenced
+where a Corral queued by the faction's band nearest the herd (hex distance, ties to the lowest
+`BandId`) would fence it, through `fauna::pen_site_in_world`, so pens written earlier in the load are
+in its taken list; the herd's own tile is the fallback only where that pick finds nothing or the
+faction has no band. A held rung is kept by
+its crew like any other: with no labor row on it, it rots after its grace.
+
+| key | meaning | refused when |
+|---|---|---|
+| `held.rung` | The rung id, `branch:rung` (`plant:farm`) | not on the ladder; a branch root; a road, tile or band branch |
+| `held.at` | `[x, y]` of the patch, or of the working | absent for a patch or working; given for a herd; no patch or working there |
+| `held.herd` | The herd's id | absent for a herd; given for a patch or working; no such herd |
+| `held.material` | The deposit material of a working | absent for a working; given for anything else; not a deposit on this rung's branch |
+| `held.species` | Optional: the crop a `requires_crop` rung commits to; absent takes the rung's default pick | not a flora species; given for a herd or a working |
+| (the entry) | | the same source held twice in one faction; any rung of the climb refused by its gate (the gate's own text, prefixed with the rung id) |
+
+**`build_rung`: a declared build, a command entry.** `CommandPayload::BuildRung` in snake_case, with no
+`faction_id` and `band` (the band's scenario id, `null` where `build <verb>` names no band, as on a source verb) in
+place of `band_id`. Replayed after the outfit
+through `command_seam::apply_build_rung`, the same body the server's `build` handler calls, so it is
+refused exactly where `build <verb>` is: a source no band of the faction works, a gate, a pen another
+band already holds. Refused in pass 1 when `band` names no band in the file or `verb` is not a ladder
+verb.
+

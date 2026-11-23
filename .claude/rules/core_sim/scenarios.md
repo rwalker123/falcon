@@ -4,6 +4,7 @@ paths:
   - "core_sim/src/command_seam.rs"
   - "core_sim/scenarios/**"
   - "core_sim/tests/scenario_loader.rs"
+  - "core_sim/tests/scenario_rungs.rs"
   - "core_sim/tests/scenario_labor_tiles.rs"
   - "core_sim/src/labor_commands.rs"
   - "xtask/src/main.rs"
@@ -16,7 +17,8 @@ A scenario is a **recipe for a world, not a world**: a seed plus setup entries, 
 freshly generated world by the current code, so the file never goes stale the way a save does. The
 design is `docs/plan_scenarios.md`. This file owns the loader. **A section's key table lives in the
 rule of the arc that owns it**, under `## Scenario section`. The bands section's table is in
-`campaign.md`, the labor section's is in `work-party.md`, the tiles section's is in `worldgen.md`.
+`campaign.md`, the labor section's is in `work-party.md`, the tiles section's is in `worldgen.md`,
+the rungs section's is in `intensification.md`.
 
 ## Where things are
 
@@ -24,7 +26,7 @@ rule of the arc that owns it**, under `## Scenario section`. The bands section's
 |---|---|
 | File shape, pass 1, `ScenarioRefusal`, `build_scenario_world`, `finish_scenario` | `core_sim/src/scenario/mod.rs` |
 | The profile and roster steps every world build runs (`apply_start_profile`, `seed_faction_roster`) | `core_sim/src/world_roster.rs` |
-| One module per section | `core_sim/src/scenario/bands.rs`, `labor.rs`, `tiles.rs` |
+| One module per section | `core_sim/src/scenario/bands.rs`, `labor.rs`, `tiles.rs`, `rungs.rs` |
 | Replayed verbs that **return** their refusal | `core_sim/src/command_seam.rs` (the labor verbs' bodies are in `labor_commands.rs`) |
 | The verb and its reply | `handle_load_scenario` in `bin/server.rs`; `LoadScenarioCommand` = CommandEnvelope **101**, `ScenarioOpReply` = QueryReplyEnvelope **14** |
 | Checked-in scenarios | `core_sim/scenarios/<name>.json` (reviewed fixtures, not watched) |
@@ -82,12 +84,18 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   same tag, so `knows_messengers` and every other `progress >= completion_threshold` gate answer
   yes on turn one.
 - The default outfit is fitted on the world-build pass against the band the scenario built.
-- `finish_scenario` replays `outfit` as `SetStartingLoadout` through `command_seam`, which
+- `finish_scenario` applies the **setters** first (held rungs, each rung of the climb through the
+  build gate). Setter refusals are all collected, and any one stops the load before a command is
+  replayed.
+- `finish_scenario` then replays `outfit` as `SetStartingLoadout` through `command_seam`, which
   **replaces** the default while the opening window is still open.
 - `finish_scenario` then replays every faction's `labor` entries, in file order, through
   `apply_assign_labor` / `apply_work_priority`. Labor runs only when no outfit was refused, and the
   first refused entry stops the load. A replayed entry writes the same success line to the feed a
-  player's command would. Builds come after labor (plan §2.8).
+  player's command would.
+- `finish_scenario` then replays the `build_rung` entries through `command_seam::apply_build_rung`,
+  after labor (plan §2.8), so a build finds the band labor put on its source. A refused build stops
+  the load at that entry.
 - `ScenarioSetup` is removed in `finish_scenario`. It is never part of `SimState`, a save or a
   snapshot.
 
@@ -98,7 +106,9 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
 The server's handler converts the wire, calls the same function, and on `Err` still writes the warn
 and the feed event, **so the scenario path and the player's path are one body.** A section that
 replays a new verb adds a function and a `CommandRefusal` variant there, never a copy of a
-handler. The yield re-quote those verbs need lives in `core_sim/src/yield_seed.rs` for the same
+handler. `BuildRung` lives there whole (`apply_build_rung`, every source kind, with
+`queue_build_on_working_bands` and the pen helpers), and its refusal carries the feed channel the
+server writes the failure on. The yield re-quote those verbs need lives in `core_sim/src/yield_seed.rs` for the same
 reason.
 
 ## Not replayable, and dev-only
