@@ -1067,3 +1067,55 @@ fn held_rungs_name_a_herd_by_its_scenario_id() {
         "{refusals:?}"
     );
 }
+
+const HERDS_PENS: &str = include_str!("../scenarios/herds_pens_playtest.json");
+/// How close a float stock must land to the file's, as a fraction of the herd's capacity.
+const STOCK_TOLERANCE: f32 = 1e-3;
+
+#[test]
+fn the_herds_and_pens_playtest_file_places_thins_extends_and_recommits() {
+    let (app, applied) = load(HERDS_PENS).expect("the shipped herds and pens playtest loads");
+    let file: Value = serde_json::from_str(HERDS_PENS).expect("JSON");
+    let entry = |id: &str| {
+        file["herds"]
+            .as_array()
+            .expect("herds")
+            .iter()
+            .find(|herd| herd["id"] == id)
+            .unwrap_or_else(|| panic!("the file declares {id}"))
+            .clone()
+    };
+    let fauna = fauna_of(&app);
+    let herds = herds_of(&app);
+    let runtime = |id: &str| {
+        let runtime = applied.herds.get(id).expect("the id is mapped");
+        herds
+            .iter()
+            .find(|herd| &herd.id == runtime)
+            .expect("the herd is in the registry")
+            .clone()
+    };
+
+    let placed = runtime("new_aurochs");
+    let at = entry("new_aurochs")["at"].clone();
+    assert_eq!(
+        placed.position(),
+        UVec2::new(
+            at[0].as_u64().unwrap() as u32,
+            at[1].as_u64().unwrap() as u32
+        )
+    );
+    assert!(placed.owner.is_none(), "a placed herd is wild");
+
+    let thin = runtime("thin_boar");
+    let stock = entry("thin_boar")["stock"].as_f64().unwrap() as f32;
+    assert!(
+        (thin.biomass / herd_capacity(&thin, &fauna) - stock).abs() < STOCK_TOLERANCE,
+        "the worldgen herd holds the file's stock"
+    );
+
+    let sheep = runtime("sheep");
+    assert!(sheep.is_corralled(), "the held pen stands");
+    assert!(sheep.pen_extending, "the pen is widening");
+    assert_eq!(sheep.standing_output_target, Some(ASKED_SHARE));
+}
