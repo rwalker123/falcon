@@ -920,7 +920,8 @@ tile and material, and `DepositSource` carries no faction. The key is required (
 get-or-insert, so a held rung written by the `rungs` section (slice 2b) on the same working composes
 with it in either order. Neither setter constructs a `DepositSource`. A stock below the rung's floor
 is allowed, because over-cutting is a state the game reaches. The first played turn is the deposit's
-first regrowth from the stock the file set.
+first regrowth from the stock the file set. `core_sim/scenarios/deposits_playtest.json` is the
+playtest: a held, crewed felling working at 60 of its 100.
 
 ## Config files
 

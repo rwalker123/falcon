@@ -1816,3 +1816,30 @@ fn deposit_fit_refusals_are_collected_and_a_refused_load_applies_nothing() {
         "a refused load applies nothing"
     );
 }
+
+const DEPOSITS_PLAYTEST: &str = include_str!("../scenarios/deposits_playtest.json");
+
+#[test]
+fn the_deposits_playtest_loads_a_part_cut_wood_that_keeps_its_held_rung() {
+    let file: Value = serde_json::from_str(DEPOSITS_PLAYTEST).expect("the playtest file is JSON");
+    let entry = &file["deposits"][0];
+    let tile = UVec2::new(
+        entry["at"][0].as_u64().expect("x") as u32,
+        entry["at"][1].as_u64().expect("y") as u32,
+    );
+    let material = entry["material"].as_str().expect("material");
+    let stock = entry["stock"].as_f64().expect("stock") as f32;
+
+    let (app, _) = load(DEPOSITS_PLAYTEST).expect("the deposits playtest loads");
+    let working = app
+        .world
+        .resource::<DepositRegistry>()
+        .source(tile, material)
+        .expect("the working is opened")
+        .clone();
+    assert_eq!(working.stock, stock, "the stock is the file's");
+    assert!(
+        working.peak_rung.is_some(),
+        "the held rung on the same working survives the stock setter"
+    );
+}
