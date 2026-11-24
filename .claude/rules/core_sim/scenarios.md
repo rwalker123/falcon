@@ -37,8 +37,8 @@ section's is in `husbandry.md`.
 
 1. **Parse and resolve names** (`parse_scenario`), with no world built. Every struct is
    `deny_unknown_fields`, there are no serde defaults, and a key is optional only where the
-   command it replays has an `Option` (`outfit`; a labor entry's target, kit, species, floor;
-   a tile's `terrain` and `flora`, of which one is required). Names are checked against the live
+   command it replays has an `Option` (a band's `outfit` and `auto_craft`; a labor entry's target,
+   kit, species, floor; a tile's `terrain` and `flora`, of which one is required). Names are checked against the live
    app's config handles (presets, profiles, archetypes, knowledge tags, keeping classes, kits,
    materials, labor roles, terrains, the flora roster). **Every refusal is collected**, so one load lists all of a
    file's faults. A serde error has no field path, so it reports `line L, column C`.
@@ -90,6 +90,9 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   replayed.
 - `finish_scenario` then replays `outfit` as `SetStartingLoadout` through `command_seam`, which
   **replaces** the default while the opening window is still open.
+- `finish_scenario` then replays each band's `auto_craft: true` through
+  `command_seam::apply_set_auto_craft` (after the outfit, before labor). A refusal stops the load at
+  `factions[i].bands[j].auto_craft`.
 - `finish_scenario` then replays every faction's `labor` entries, in file order, through
   `apply_assign_labor` / `apply_work_priority`. Labor runs only when no outfit was refused, and the
   first refused entry stops the load. A replayed entry writes the same success line to the feed a

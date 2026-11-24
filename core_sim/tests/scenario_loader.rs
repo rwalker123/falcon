@@ -1075,6 +1075,8 @@ fn held_rungs_name_a_herd_by_its_scenario_id() {
 const HERDS_PENS: &str = include_str!("../scenarios/herds_pens_playtest.json");
 /// How close a float stock must land to the file's, as a fraction of the herd's capacity.
 const STOCK_TOLERANCE: f32 = 1e-3;
+/// How many turns the playtest band gets to craft its hurdles and start the ring.
+const RING_BUILT_WITHIN_TURNS: u32 = 40;
 
 #[test]
 fn the_herds_and_pens_playtest_file_places_thins_extends_and_recommits() {
@@ -1157,6 +1159,32 @@ fn the_herds_and_pens_playtest_file_places_thins_extends_and_recommits() {
                 Some(BuildJob::SetHerdOutput(_))
             )),
         "the flock's keeper declares the re-sort"
+    );
+
+    // The band was outfitted wood and holds the tanning craft, and auto-craft is on, so its bench
+    // makes the hurdles the ring draws: within a bounded number of turns the ring has builders and
+    // is working (its meter moves), where without hurdles it would sit blocked on materials.
+    let ring_staffed = |app: &mut App| {
+        app.world
+            .query::<&LaborAllocation>()
+            .iter(&app.world)
+            .filter_map(|allocation| allocation.build_crew(&sheep_source))
+            .map(|crew| crew.total())
+            .sum::<u32>()
+    };
+    let mut built_by = None;
+    for turn in 1..=RING_BUILT_WITHIN_TURNS {
+        run_turn(&mut app);
+        let herd = sheep_of(&app, &sheep.id);
+        let worked = herd.pen_extend_progress > 0.0 || herd.pen_radius > sheep.pen_radius;
+        if ring_staffed(&mut app) > 0 && worked {
+            built_by = Some(turn);
+            break;
+        }
+    }
+    assert!(
+        built_by.is_some(),
+        "the ring has builders and moves within {RING_BUILT_WITHIN_TURNS} turns"
     );
 }
 
@@ -1350,4 +1378,53 @@ fn a_labor_entry_naming_an_undeclared_herd_is_refused_in_pass_one() {
             .any(|r| r.path == "factions[0].labor[0].work_priority.herd_id"),
         "{refusals:?}"
     );
+}
+
+/// Whether the playtest sheep's ring is being worked within the turn bound, for a file.
+fn ring_worked_within_bound(text: &str) -> bool {
+    let (mut app, applied) = load(text).expect("the file loads");
+    let id = applied.herds.get(SHEEP).expect("the sheep").clone();
+    let source = BuildSource::Herd(id.clone());
+    (0..RING_BUILT_WITHIN_TURNS).any(|_| {
+        run_turn(&mut app);
+        let herd = sheep_of(&app, &id);
+        let staffed: u32 = app
+            .world
+            .query::<&LaborAllocation>()
+            .iter(&app.world)
+            .filter_map(|allocation| allocation.build_crew(&source))
+            .map(|crew| crew.total())
+            .sum();
+        staffed > 0 && herd.pen_extend_progress > 0.0
+    })
+}
+
+#[test]
+fn the_playtest_ring_is_built_only_because_the_band_crafts_hurdles() {
+    assert!(
+        ring_worked_within_bound(HERDS_PENS),
+        "the shipped file builds its ring"
+    );
+    // Control: the same file with auto-craft off never crafts the hurdles, so the ring stays blocked.
+    let mut file: Value = serde_json::from_str(HERDS_PENS).expect("JSON");
+    file["factions"][0]["bands"][0]["auto_craft"] = Value::Null;
+    assert!(
+        !ring_worked_within_bound(&file.to_string()),
+        "without auto-craft the ring is blocked on hurdles"
+    );
+}
+
+#[test]
+fn a_band_with_auto_craft_true_loads_with_its_bench_auto_on_and_one_without_it_off() {
+    let bench_auto = |app: &mut App| {
+        app.world
+            .query::<&core_sim::BandBench>()
+            .iter(&app.world)
+            .next()
+            .is_some_and(|bench| bench.auto)
+    };
+    let (mut on, _) = load(HERDS_PENS).expect("the playtest loads");
+    assert!(bench_auto(&mut on), "auto_craft true switches the bench on");
+    let (mut off, _) = load(SHIPPED).expect("the shipped file loads");
+    assert!(!bench_auto(&mut off), "an absent auto_craft leaves it off");
 }

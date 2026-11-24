@@ -1,6 +1,6 @@
 {
   "name": "herds_pens_playtest",
-  "note": "Look for a new aurochs herd at (15, 10), the boar at (11, 10) thinned to a fifth of its stock, the sheep pen widening, and the tamed fowl at (16, 11) being re-sorted to give half of itself as milk, eggs and wool.",
+  "note": "Look for a new aurochs herd at (15, 10), the boar at (11, 10) thinned to a fifth of its stock, the tamed fowl at (16, 11) being re-sorted to half milk, eggs and wool, and the sheep pen widening once the band has crafted the hurdles it needs (auto-craft is on, wood is in the outfit).",
   "world": {
     "preset": "earthlike",
     "width": 80,
@@ -12,7 +12,7 @@
   "factions": [
     {
       "faction": 0,
-      "knowledge": ["messengers", "cultivation", "seed_selection", "herding", "penning", "woodcraft", "conservationism"],
+      "knowledge": ["messengers", "cultivation", "seed_selection", "herding", "penning", "woodcraft", "conservationism", "tanning"],
       "rungs": [
         { "held": { "rung": "plant:farm", "at": [12, 12] } },
         { "held": { "rung": "animal:pen", "herd": "sheep" } },
@@ -30,9 +30,10 @@
           "ages": { "children": 0.30, "working": 0.60, "elders": 0.10 },
           "founding_lines": 8,
           "larder": [{ "class": "dry", "amount": 450.0 }],
+          "auto_craft": true,
           "outfit": {
             "kits": { "big_game": 10, "gathering": 20 },
-            "materials": { "fibre": 20, "hide": 12 }
+            "materials": { "fibre": 10, "hide": 12, "wood": 30 }
           }
         }
       ],

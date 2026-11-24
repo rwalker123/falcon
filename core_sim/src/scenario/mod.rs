@@ -38,7 +38,8 @@ pub use pens::PenEntry;
 pub use tiles::TileOverride;
 
 use crate::command_seam::{
-    apply_assign_labor, apply_set_starting_loadout, apply_work_priority, AssignLaborOrder,
+    apply_assign_labor, apply_set_auto_craft, apply_set_starting_loadout, apply_work_priority,
+    AssignLaborOrder,
 };
 use crate::components::BandId;
 use crate::demographics_config::{DemographicsConfig, DemographicsConfigHandle};
@@ -368,6 +369,30 @@ pub fn finish_scenario(world: &mut World) -> Result<ScenarioApplied, Vec<Scenari
                     format!("factions[{}].bands[{j}].outfit", faction_setup.file_index),
                     refusal.to_string(),
                 ));
+            }
+        }
+    }
+    // **Auto-craft after the outfit, before labor**: the bench fills from the gear the outfit left.
+    if !refusals.is_empty() {
+        return Err(refusals);
+    }
+    for faction_setup in &setup.factions {
+        for (j, entry) in faction_setup.bands.iter().enumerate() {
+            if entry.auto_craft != Some(true) {
+                continue;
+            }
+            let Some(band) = setup.spawned.get(&entry.id).copied() else {
+                continue;
+            };
+            if let Err(refusal) = apply_set_auto_craft(world, faction_setup.faction, band.0, true) {
+                refusals.push(ScenarioRefusal::new(
+                    format!(
+                        "factions[{}].bands[{j}].auto_craft",
+                        faction_setup.file_index
+                    ),
+                    refusal.to_string(),
+                ));
+                return Err(refusals);
             }
         }
     }

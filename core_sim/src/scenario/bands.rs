@@ -56,6 +56,9 @@ pub struct BandEntry {
     pub larder: Vec<LarderEntry>,
     /// The ONE optional key: absent keeps the default outfit fitted to this band's size.
     pub outfit: Option<Outfit>,
+    /// The second optional key: absent leaves the band's bench auto-craft off, `true` switches it
+    /// on after the outfit, as `bench_auto <faction> <band> on` does.
+    pub auto_craft: Option<bool>,
 }
 
 /// The shares of a band in each age bracket.

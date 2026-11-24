@@ -905,3 +905,41 @@ pub fn apply_set_herd_output(
     );
     Ok(OutputRecommitted { herd_id: fauna_id })
 }
+
+/// **What a switched auto-craft leaves for the caller to say**: the band it was set on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoCraftSet {
+    pub id: Option<BandId>,
+    pub label: String,
+}
+
+/// **TURN A BAND'S BENCH AUTO-CRAFT ON OR OFF** - the body of `bench_auto <faction> <band> on|off`
+/// (`.claude/rules/core_sim/crafting.md` -> "Auto-craft"): the band is resolved among the faction's
+/// own starting bands, the bench component is inserted on demand (as every bench verb does, so a band
+/// spawned before the component existed can still switch it on), and
+/// [`crate::auto_craft::set_auto_craft`] does the rest. **Never touches the crew.**
+///
+/// A refusal is the band lookup's own, on the `Craft` channel. Writes no log line and no feed event.
+pub fn apply_set_auto_craft(
+    world: &mut World,
+    faction: FactionId,
+    band: u64,
+    enabled: bool,
+) -> Result<AutoCraftSet, CommandRefusal> {
+    let selected =
+        crate::labor_commands::select_starting_band(world, faction, Some(band), "bench_auto")
+            .map_err(|reason| CommandRefusal::Refused {
+                kind: CommandEventKind::Craft,
+                reason,
+            })?;
+    if world.get::<crate::BandBench>(selected.entity).is_none() {
+        world
+            .entity_mut(selected.entity)
+            .insert(crate::BandBench::default());
+    }
+    crate::auto_craft::set_auto_craft(world, selected.entity, enabled);
+    Ok(AutoCraftSet {
+        id: selected.id,
+        label: selected.label,
+    })
+}

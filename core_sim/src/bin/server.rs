@@ -7190,14 +7190,18 @@ fn handle_bench_auto(
     enabled: bool,
 ) {
     let event_kind = CommandEventKind::Craft;
-    let Some(band) = select_starting_band(app, faction, Some(band_id), "bench_auto", event_kind)
-    else {
-        return;
+    let set = match core_sim::command_seam::apply_set_auto_craft(
+        &mut app.world,
+        faction,
+        band_id,
+        enabled,
+    ) {
+        Ok(set) => set,
+        Err(refusal) => {
+            emit_command_failure(app, event_kind, faction, refusal.to_string());
+            return;
+        }
     };
-    // Inserted on demand, as every bench verb does, so a band spawned before the component existed
-    // can still switch it on.
-    let _ = band_bench_mut(app, band.entity);
-    core_sim::auto_craft::set_auto_craft(&mut app.world, band.entity, enabled);
     let tick = app.world.resource::<SimulationTick>().0;
     let state = if enabled { "on" } else { "off" };
     push_band_event(
@@ -7205,8 +7209,8 @@ fn handle_bench_auto(
         tick,
         event_kind,
         faction,
-        band.id,
-        format!("{}: bench auto-craft {state}", band.label),
+        set.id,
+        format!("{}: bench auto-craft {state}", set.label),
         Some(format!(
             "status=applied action=bench_auto enabled={enabled} band={band_id}"
         )),
