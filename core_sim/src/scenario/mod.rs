@@ -236,7 +236,7 @@ pub fn parse_scenario(
     }
     bands::check(&file.factions, ctx, &mut refusals);
     rungs::check(&file.factions, &file.herds, ctx, &mut refusals);
-    labor::check(&file.factions, &file.world, ctx, &mut refusals);
+    labor::check(&file.factions, &file.herds, &file.world, ctx, &mut refusals);
     pens::check(&file.factions, &file.herds, &mut refusals);
     tiles::check(
         &file.tiles,
@@ -387,6 +387,15 @@ pub fn finish_scenario(world: &mut World) -> Result<ScenarioApplied, Vec<Scenari
                 ));
                 return Err(refusals);
             };
+            // The file names a herd by its scenario id; the verbs read the runtime one.
+            let Some(entry) = labor::with_runtime_herd(entry, &herds) else {
+                refusals.push(ScenarioRefusal::new(
+                    path,
+                    "the herd this entry names was not applied",
+                ));
+                return Err(refusals);
+            };
+            let entry = &entry;
             let result = match entry {
                 LaborEntry::AssignLabor(order) => apply_assign_labor(
                     world,

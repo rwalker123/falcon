@@ -1302,3 +1302,52 @@ fn restating_the_same_kind_of_job_cancels_nothing() {
     );
     assert_eq!(sheep_of(&app, &id).pen_site, None);
 }
+
+#[test]
+fn a_labor_row_names_its_herd_by_scenario_id_and_targets_the_runtime_herd() {
+    let (mut app, applied) = load(HERDS_PENS).expect("the shipped file loads");
+    let runtime = applied
+        .herds
+        .get("flock")
+        .expect("the flock is mapped")
+        .clone();
+    assert_eq!(
+        runtime, "game_fowl_71",
+        "the scenario id is not the runtime id"
+    );
+    let hunting_it = app
+        .world
+        .query::<&LaborAllocation>()
+        .iter(&app.world)
+        .flat_map(|allocation| allocation.assignments.iter())
+        .any(
+            |row| matches!(&row.target, LaborTarget::Hunt { fauna_id, .. } if *fauna_id == runtime),
+        );
+    assert!(hunting_it, "the band's hunt row targets the runtime herd");
+}
+
+#[test]
+fn a_labor_entry_naming_an_undeclared_herd_is_refused_in_pass_one() {
+    // The runtime id is not a scenario id.
+    let mut file: Value = serde_json::from_str(HERDS_PENS).expect("JSON");
+    file["factions"][0]["labor"][0]["assign_labor"]["fauna_id"] = json!("game_fowl_71");
+    let refusals = pass_one(&file.to_string()).expect_err("an undeclared herd id");
+    assert!(
+        refusals
+            .iter()
+            .any(|r| r.path == "factions[0].labor[0].assign_labor.fauna_id"),
+        "{refusals:?}"
+    );
+
+    let mut file: Value = serde_json::from_str(HERDS_PENS).expect("JSON");
+    file["factions"][0]["labor"] = json!([{ "work_priority": {
+        "band": "home", "target_x": null, "target_y": null, "herd_id": "ghost",
+        "material": null, "branch": null, "level": "high" } }]);
+    let refusals = pass_one(&file.to_string()).expect_err("an undeclared herd id");
+    assert!(
+        refusals
+            .iter()
+            .any(|r| r.path == "factions[0].labor[0].work_priority.herd_id"),
+        "{refusals:?}"
+    );
+}

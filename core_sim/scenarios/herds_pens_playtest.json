@@ -38,7 +38,7 @@
       ],
       "labor": [
         { "assign_labor": {
-          "band": "home", "role": "hunt", "workers": 2, "fauna_id": "game_fowl_71",
+          "band": "home", "role": "hunt", "workers": 2, "fauna_id": "flock",
           "take_species": [], "move_with_herd": false } }
       ],
       "pens": [
