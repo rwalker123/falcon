@@ -452,7 +452,10 @@ keeping is the site's** (`docs/plan_site_crews.md`): the site's own crew keeps f
 > | `BuildJob::ExtendPen` | the pen ring, which names no rung | a built pen has no meter for the derived verb to answer from |
 >
 > - **At most ONE declaration per source per band**, and re-issuing a verb **replaces `declared` in
->   place** — correcting `cultivate` → `sow` costs nothing.
+>   place** — correcting `cultivate` → `sow` costs nothing. **A herd job it displaces is cancelled
+>   as a drop cancels it**: `queue_build_on_working_bands` hands the displaced entry to
+>   `fauna::cancel_replaced_job`, which clears the old kind's herd state (a ring's `pen_extending`, a
+>   commitment's target, a Corral's `pen_site`) and nothing for a restated kind.
 > - **A declaration requires a ROW** (a road: its keeper). A verb reaches only bands that already work
 >   the source, and a row that dies takes its declaration with it — enforced at the seams
 >   (`drop_source_row`, `clear_kinds`) and swept per turn by `LaborAllocation::prune_builds`.
@@ -2741,7 +2744,7 @@ its crew like any other: with no labor row on it, it rots after its grace.
 |---|---|---|
 | `held.rung` | The rung id, `branch:rung` (`plant:farm`) | not on the ladder; a branch root; a road, tile or band branch |
 | `held.at` | `[x, y]` of the patch, or of the working | absent for a patch or working; given for a herd; no patch or working there |
-| `held.herd` | The herd's id | absent for a herd; given for a patch or working; no such herd |
+| `held.herd` | The herd's scenario id (the `herds` section's `id`) | absent for a herd; given for a patch or working; an id the file's `herds` section does not declare |
 | `held.material` | The deposit material of a working | absent for a working; given for anything else; not a deposit on this rung's branch |
 | `held.species` | Optional: the crop a `requires_crop` rung commits to; absent takes the rung's default pick | not a flora species; given for a herd or a working |
 | (the entry) | | the same source held twice in one faction; any rung of the climb refused by its gate (the gate's own text, prefixed with the rung id) |
@@ -2751,6 +2754,7 @@ its crew like any other: with no labor row on it, it rots after its grace.
 place of `band_id`. Replayed after the outfit
 through `command_seam::apply_build_rung`, the same body the server's `build` handler calls, so it is
 refused exactly where `build <verb>` is: a source no band of the faction works, a gate, a pen another
-band already holds. Refused in pass 1 when `band` names no band in the file or `verb` is not a ladder
-verb.
+band already holds. `herd_id` is a scenario herd id, mapped to the runtime id at replay. Refused in
+pass 1 when `band` names no band in the file, `verb` is not a ladder verb, or `herd_id` is not an id
+the file's `herds` section declares.
 

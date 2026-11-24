@@ -59,12 +59,13 @@ command, externally tagged, keys named as on the wire, with `band` (the file's b
 `band_id`. Entries replay in file order after every outfit, through the seam above, so **fit is the
 verb's own**: a refused entry stops the load at `factions[i].labor[k]` with the verb's text.
 `forage_tile` is not an entry (a retired verb; `assign_labor` with role `forage` replaces it), and the
-retired `policy` key is refused.
+retired `policy` key is refused. **`fauna_id` and `herd_id` are scenario herd ids** (the `herds`
+section's `id`), mapped to the runtime id before the verb runs.
 
 | entry | keys | pass-1 refusals |
 |---|---|---|
-| `assign_labor` | required `band`, `role`, `workers`, `take_species`, `move_with_herd`; optional `target_x`, `target_y`, `fauna_id`, `species`, `floor`, `kit_id` | a band not of this faction; a target off the map, or naming one coordinate without the other; an unknown role; a kit not on the equipment roster; a `take_species` entry, or a forage row's `species`, not on the flora roster |
-| `work_priority` | required `band`, `level`; optional `target_x`, `target_y`, `herd_id`, `material`, `branch` | a band not of this faction; a target off the map; a level other than `high`, `normal`, `low` |
+| `assign_labor` | required `band`, `role`, `workers`, `take_species`, `move_with_herd`; optional `target_x`, `target_y`, `fauna_id`, `species`, `floor`, `kit_id` | a band not of this faction; a target off the map, or naming one coordinate without the other; an unknown role; a kit not on the equipment roster; a `take_species` entry, or a forage row's `species`, not on the flora roster; a `fauna_id` the file's `herds` section does not declare (`labor[k].assign_labor.fauna_id`) |
+| `work_priority` | required `band`, `level`; optional `target_x`, `target_y`, `herd_id`, `material`, `branch` | a band not of this faction; a target off the map; a level other than `high`, `normal`, `low`; a `herd_id` the file's `herds` section does not declare (`labor[k].work_priority.herd_id`) |
 
 A pool role names no tile: `{ "assign_labor": { "band": "home", "role": "roadwork", "workers": 3,
 "take_species": [], "move_with_herd": false } }` is the keepers of every road the band keeps

@@ -11,11 +11,13 @@
 //! at replay ([`super::finish_scenario`]), which stops the load at the first entry it refuses and
 //! reports the handler's own reason.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 
 use super::bands::FactionSection;
+use super::herds::HerdEntry;
+use super::rungs::refuse_undeclared_herd;
 use super::{ScenarioContext, ScenarioRefusal, WorldSection};
 use crate::labor_commands::{parse_work_priority_level, LaborRole};
 
@@ -77,13 +79,37 @@ impl LaborEntry {
     }
 }
 
+/// **The entry with its scenario herd id swapped for the runtime id** `herds` maps it to, for the
+/// replay. `None` when the entry names a herd the map does not hold.
+pub(super) fn with_runtime_herd(
+    entry: &LaborEntry,
+    herds: &BTreeMap<String, String>,
+) -> Option<LaborEntry> {
+    let swap = |id: &Option<String>| match id {
+        Some(scenario_id) => herds.get(scenario_id).cloned().map(Some),
+        None => Some(None),
+    };
+    Some(match entry {
+        LaborEntry::AssignLabor(order) => LaborEntry::AssignLabor(AssignLaborEntry {
+            fauna_id: swap(&order.fauna_id)?,
+            ..order.clone()
+        }),
+        LaborEntry::WorkPriority(order) => LaborEntry::WorkPriority(WorkPriorityEntry {
+            herd_id: swap(&order.herd_id)?,
+            ..order.clone()
+        }),
+    })
+}
+
 /// Pass 1 for every faction's `labor` entries.
 pub(super) fn check(
     factions: &[FactionSection],
+    herds: &[HerdEntry],
     world: &WorldSection,
     ctx: &ScenarioContext,
     refusals: &mut Vec<ScenarioRefusal>,
 ) {
+    let declared_herds: BTreeSet<&str> = herds.iter().map(|herd| herd.id.as_str()).collect();
     for (i, section) in factions.iter().enumerate() {
         let bands: BTreeSet<&str> = section.bands.iter().map(|band| band.id.as_str()).collect();
         for (k, entry) in section.labor.iter().enumerate() {
@@ -98,9 +124,25 @@ pub(super) fn check(
                 LaborEntry::AssignLabor(entry) => {
                     check_target(entry.target_x, entry.target_y, world, &at, refusals);
                     check_assign(entry, &at, ctx, refusals);
+                    if let Some(herd) = &entry.fauna_id {
+                        refuse_undeclared_herd(
+                            herd,
+                            &format!("{at}.fauna_id"),
+                            &declared_herds,
+                            refusals,
+                        );
+                    }
                 }
                 LaborEntry::WorkPriority(entry) => {
                     check_target(entry.target_x, entry.target_y, world, &at, refusals);
+                    if let Some(herd) = &entry.herd_id {
+                        refuse_undeclared_herd(
+                            herd,
+                            &format!("{at}.herd_id"),
+                            &declared_herds,
+                            refusals,
+                        );
+                    }
                     if parse_work_priority_level(&entry.level).is_none() {
                         refusals.push(ScenarioRefusal::new(
                             format!("{at}.level"),

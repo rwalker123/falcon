@@ -11,6 +11,9 @@
 //! - **`build_rung`** is the `BuildRung` command, replayed through [`crate::command_seam`] after the
 //!   outfit, so it is refused with the handler's own reason.
 //!
+//! A herd is named by its **scenario id** (the `herds` section's `id`) in both entry kinds; apply maps it
+//! through the runtime id `herds::apply` returned.
+//!
 //! Pass 1 ([`check`]) resolves names and collects every refusal. Pass 2 is [`apply_held`] and
 //! [`apply_builds`], called by [`super::finish_scenario`] in the apply order of section 2.8.
 
@@ -20,6 +23,7 @@ use bevy::prelude::*;
 use serde::Deserialize;
 
 use super::bands::{FactionSection, FactionSetup};
+use super::herds::HerdEntry;
 use super::{ScenarioContext, ScenarioRefusal};
 use crate::command_seam::SOURCE_NAMED_NOT_ASSIGNED;
 use crate::command_seam::{apply_build_rung, BuildRungRequest};
@@ -128,6 +132,7 @@ fn climb<'a>(ladder: &'a LadderConfig, rung: &RungDef) -> Vec<&'a RungDef> {
 /// **Pass 1 for the `rungs` section**: every name resolved, every fault collected.
 pub(super) fn check(
     factions: &[FactionSection],
+    herds: &[HerdEntry],
     ctx: &ScenarioContext,
     refusals: &mut Vec<ScenarioRefusal>,
 ) {
@@ -135,14 +140,17 @@ pub(super) fn check(
         .iter()
         .flat_map(|section| section.bands.iter().map(|band| band.id.as_str()))
         .collect();
+    let declared_herds: BTreeSet<&str> = herds.iter().map(|herd| herd.id.as_str()).collect();
     for (i, section) in factions.iter().enumerate() {
         let mut seen_sources: BTreeSet<String> = BTreeSet::new();
         for (j, entry) in section.rungs.iter().enumerate() {
             let at = format!("factions[{i}].rungs[{j}]");
             match entry {
-                RungEntry::Held(held) => check_held(held, &at, ctx, &mut seen_sources, refusals),
+                RungEntry::Held(held) => {
+                    check_held(held, &at, ctx, &declared_herds, &mut seen_sources, refusals);
+                }
                 RungEntry::BuildRung(build) => {
-                    check_build(build, &at, ctx, &declared_bands, refusals);
+                    check_build(build, &at, ctx, &declared_bands, &declared_herds, refusals);
                 }
             }
         }
@@ -153,6 +161,7 @@ fn check_held(
     held: &HeldRung,
     at: &str,
     ctx: &ScenarioContext,
+    declared_herds: &BTreeSet<&str>,
     seen_sources: &mut BTreeSet<String>,
     refusals: &mut Vec<ScenarioRefusal>,
 ) {
@@ -216,6 +225,9 @@ fn check_held(
     if kind != HeldKind::Patch && held.species.is_some() {
         need("species", true, false);
     }
+    if let (HeldKind::Herd, Some(herd)) = (kind, &held.herd) {
+        refuse_undeclared_herd(herd, &path("herd"), declared_herds, refusals);
+    }
     if let Some(material) = &held.material {
         match ctx.extraction.deposit(material) {
             None => refusals.push(ScenarioRefusal::new(
@@ -266,8 +278,17 @@ fn check_build(
     at: &str,
     ctx: &ScenarioContext,
     declared_bands: &BTreeSet<&str>,
+    declared_herds: &BTreeSet<&str>,
     refusals: &mut Vec<ScenarioRefusal>,
 ) {
+    if let Some(herd) = &build.herd_id {
+        refuse_undeclared_herd(
+            herd,
+            &format!("{at}.build_rung.herd_id"),
+            declared_herds,
+            refusals,
+        );
+    }
     if let Some(band) = &build.band {
         if !declared_bands.contains(band.as_str()) {
             refusals.push(ScenarioRefusal::new(
@@ -285,11 +306,28 @@ fn check_build(
     }
 }
 
+/// **Refuse a herd id the file's `herds` section does not declare.** Every section names a herd by
+/// its scenario id, so a runtime id (`game_wild_sheep_00`) is refused here.
+pub(super) fn refuse_undeclared_herd(
+    herd: &str,
+    path: &str,
+    declared_herds: &BTreeSet<&str>,
+    refusals: &mut Vec<ScenarioRefusal>,
+) {
+    if !declared_herds.contains(herd) {
+        refusals.push(ScenarioRefusal::new(
+            path,
+            format!("'{herd}' is not a herd id declared in this file's herds section"),
+        ));
+    }
+}
+
 /// **Pass 2, step 5: the held rungs**, in file order, one faction's worth. Every refusal is
 /// collected; a refused entry does not stop the others being tried.
 pub(super) fn apply_held(
     world: &mut World,
     setup: &FactionSetup,
+    herds: &BTreeMap<String, String>,
     refusals: &mut Vec<ScenarioRefusal>,
 ) {
     for (j, entry) in setup.rungs.iter().enumerate() {
@@ -297,7 +335,21 @@ pub(super) fn apply_held(
             continue;
         };
         let at = format!("factions[{}].rungs[{j}]", setup.file_index);
-        if let Err(reason) = climb_held(world, setup.faction, held) {
+        // The file names the herd by its scenario id; the climb reads the runtime one.
+        let mut held = held.clone();
+        if let Some(scenario_id) = &held.herd {
+            match herds.get(scenario_id) {
+                Some(runtime_id) => held.herd = Some(runtime_id.clone()),
+                None => {
+                    refusals.push(ScenarioRefusal::new(
+                        format!("{at}.held.herd"),
+                        format!("herd '{scenario_id}' was not applied"),
+                    ));
+                    continue;
+                }
+            }
+        }
+        if let Err(reason) = climb_held(world, setup.faction, &held) {
             refusals.push(ScenarioRefusal::new(&at, reason));
         }
     }
@@ -550,6 +602,7 @@ pub(super) fn apply_builds(
     world: &mut World,
     setup: &FactionSetup,
     spawned: &BTreeMap<String, BandId>,
+    herds: &BTreeMap<String, String>,
     refusals: &mut Vec<ScenarioRefusal>,
 ) {
     for (j, entry) in setup.rungs.iter().enumerate() {
@@ -570,12 +623,25 @@ pub(super) fn apply_builds(
             },
             None => None,
         };
+        let herd_id = match &build.herd_id {
+            Some(id) => match herds.get(id) {
+                Some(runtime_id) => Some(runtime_id.clone()),
+                None => {
+                    refusals.push(ScenarioRefusal::new(
+                        format!("{at}.build_rung.herd_id"),
+                        format!("herd '{id}' was not applied"),
+                    ));
+                    return;
+                }
+            },
+            None => None,
+        };
         let request = BuildRungRequest {
             band_id,
             verb: build.verb.clone(),
             target_x: build.target_x,
             target_y: build.target_y,
-            herd_id: build.herd_id.clone(),
+            herd_id,
             material: build.material.clone(),
             branch: build.branch.clone(),
         };

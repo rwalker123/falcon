@@ -1552,8 +1552,16 @@ pub fn queue_build_on_working_bands(
     };
     for (entity, workers, band_target) in &bands {
         {
-            let mut allocation = band_allocation_mut(world, *entity);
-            allocation.declare_build(source.clone(), declared);
+            let replaced = band_allocation_mut(world, *entity)
+                .declare_build_replacing(source.clone(), declared)
+                .flatten();
+            // **A verb that replaces another takes its funding**, so the replaced job's herd state
+            // goes with it (the same rule a drop runs).
+            crate::fauna::cancel_replaced_job(
+                &mut world.resource_mut::<HerdRegistry>(),
+                replaced,
+                declared,
+            );
         }
         // **A queued Corral picks its pen's tile now** - the best-grazing land within this band's
         // work range, so the quotes price the tile the pen will really stand on.

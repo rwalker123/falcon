@@ -1,6 +1,6 @@
 {
   "name": "held_rungs_playtest",
-  "note": "A farm, a pen and a felled wood already held at turn 1, and a Coppice queued on the held wood, which the elders already crew.",
+  "note": "A farm, a pen on the wild sheep at (11, 11) and a felled wood already held at turn 1, and a Coppice queued on the held wood, which the elders already crew.",
   "world": {
     "preset": "earthlike",
     "width": 80,
@@ -15,7 +15,7 @@
       "knowledge": ["messengers", "cultivation", "seed_selection", "herding", "penning", "woodcraft", "conservationism"],
       "rungs": [
         { "held": { "rung": "plant:farm", "at": [12, 12] } },
-        { "held": { "rung": "animal:pen", "herd": "game_wild_sheep_00" } },
+        { "held": { "rung": "animal:pen", "herd": "sheep" } },
         { "held": { "rung": "forestry:felling", "at": [13, 10], "material": "wood" } },
         { "build_rung": {
           "band": null, "verb": "coppice", "target_x": 13, "target_y": 10,
@@ -35,8 +35,12 @@
           }
         }
       ],
-      "labor": []
+      "labor": [],
+      "pens": []
     }
   ],
-  "tiles": []
+  "tiles": [],
+  "herds": [
+    { "id": "sheep", "species": "wild_sheep", "at": [11, 11], "stock": 1.0, "origin": "worldgen" }
+  ]
 }

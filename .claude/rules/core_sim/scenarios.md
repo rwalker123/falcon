@@ -18,7 +18,8 @@ freshly generated world by the current code, so the file never goes stale the wa
 design is `docs/plan_scenarios.md`. This file owns the loader. **A section's key table lives in the
 rule of the arc that owns it**, under `## Scenario section`. The bands section's table is in
 `campaign.md`, the labor section's is in `work-party.md`, the tiles section's is in `worldgen.md`,
-the rungs section's is in `intensification.md`.
+the rungs section's is in `intensification.md`, the herds section's is in `fauna.md`, the pens
+section's is in `husbandry.md`.
 
 ## Where things are
 
@@ -26,7 +27,7 @@ the rungs section's is in `intensification.md`.
 |---|---|
 | File shape, pass 1, `ScenarioRefusal`, `build_scenario_world`, `finish_scenario` | `core_sim/src/scenario/mod.rs` |
 | The profile and roster steps every world build runs (`apply_start_profile`, `seed_faction_roster`) | `core_sim/src/world_roster.rs` |
-| One module per section | `core_sim/src/scenario/bands.rs`, `labor.rs`, `tiles.rs`, `rungs.rs` |
+| One module per section | `core_sim/src/scenario/bands.rs`, `labor.rs`, `tiles.rs`, `rungs.rs`, `herds.rs`, `pens.rs` |
 | Replayed verbs that **return** their refusal | `core_sim/src/command_seam.rs` (the labor verbs' bodies are in `labor_commands.rs`) |
 | The verb and its reply | `handle_load_scenario` in `bin/server.rs`; `LoadScenarioCommand` = CommandEnvelope **101**, `ScenarioOpReply` = QueryReplyEnvelope **14** |
 | Checked-in scenarios | `core_sim/scenarios/<name>.json` (reviewed fixtures, not watched) |
@@ -36,8 +37,8 @@ the rungs section's is in `intensification.md`.
 
 1. **Parse and resolve names** (`parse_scenario`), with no world built. Every struct is
    `deny_unknown_fields`, there are no serde defaults, and a key is optional only where the
-   command it replays has an `Option` (`outfit`; a labor entry's target, kit, species, floor;
-   a tile's `terrain` and `flora`, of which one is required). Names are checked against the live
+   command it replays has an `Option` (a band's `outfit` and `auto_craft`; a labor entry's target,
+   kit, species, floor; a tile's `terrain` and `flora`, of which one is required). Names are checked against the live
    app's config handles (presets, profiles, archetypes, knowledge tags, keeping classes, kits,
    materials, labor roles, terrains, the flora roster). **Every refusal is collected**, so one load lists all of a
    file's faults. A serde error has no field path, so it reports `line L, column C`.
@@ -89,6 +90,9 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   replayed.
 - `finish_scenario` then replays `outfit` as `SetStartingLoadout` through `command_seam`, which
   **replaces** the default while the opening window is still open.
+- `finish_scenario` then replays each band's `auto_craft: true` through
+  `command_seam::apply_set_auto_craft` (after the outfit, before labor). A refusal stops the load at
+  `factions[i].bands[j].auto_craft`.
 - `finish_scenario` then replays every faction's `labor` entries, in file order, through
   `apply_assign_labor` / `apply_work_priority`. Labor runs only when no outfit was refused, and the
   first refused entry stops the load. A replayed entry writes the same success line to the feed a
@@ -96,6 +100,10 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
 - `finish_scenario` then replays the `build_rung` entries through `command_seam::apply_build_rung`,
   after labor (plan §2.8), so a build finds the band labor put on its source. A refused build stops
   the load at that entry.
+- `finish_scenario` then replays every faction's `pens` entries through
+  `command_seam::apply_extend_pen` / `apply_set_herd_output`, after the builds (plan §2.8). A herd is
+  named by its scenario id in every section, mapped through `ScenarioApplied.herds`. A refused entry
+  stops the load at that entry.
 - `ScenarioSetup` is removed in `finish_scenario`. It is never part of `SimState`, a save or a
   snapshot.
 
@@ -131,3 +139,4 @@ A band's fixed larder counts against its carry (`starting-loadout.md`), so a lar
 nothing for the outfit. At 150 people (90 working × 7.0 = 630 carry), a 900 dry larder leaves an
 allowance of 0 and any outfit is refused `OverCarry`. That is why `breeding_ceiling_150.json` ships
 450.
+
