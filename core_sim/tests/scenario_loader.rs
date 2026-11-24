@@ -8,17 +8,21 @@ use bevy::ecs::system::SystemState;
 use bevy::prelude::*;
 use serde_json::{json, Value};
 
-use core_sim::command_seam::apply_set_starting_loadout;
+use core_sim::command_seam::{
+    apply_extend_pen, apply_set_herd_output, apply_set_starting_loadout,
+    queue_build_on_working_bands, SOURCE_NAMED_NOT_ASSIGNED,
+};
 use core_sim::scenario::{
     build_scenario_world, parse_scenario, ScenarioApplied, ScenarioContext, ScenarioRefusal,
 };
 use core_sim::{
-    build_test_app, habitat_refusal, herd_capacity, knows_messengers, run_turn, scalar_from_f32,
-    ActiveStartProfile, BandId, BuildJob, Diet, DiscoveryProgressLedger, EcologyPhase, FactionId,
-    FactionRegistry, FaunaConfig, FaunaConfigHandle, HabitatRefusal, Herd, HerdRegistry,
-    KitAllocation, LaborAllocation, LadderConfigHandle, MaterialAllocation, PopulationCohort,
-    PreyReach, SimulationConfig, StartProfileKnowledgeTagsHandle, StartProfiles,
-    StartProfilesHandle, StartingLoadout, Tile, TileRegistry,
+    build_test_app, cancel_replaced_job, habitat_refusal, herd_capacity, knows_messengers,
+    run_turn, scalar_from_f32, ActiveStartProfile, BandId, BuildDeclaration, BuildJob, BuildSource,
+    Diet, DiscoveryProgressLedger, EcologyPhase, FactionId, FactionRegistry, FaunaConfig,
+    FaunaConfigHandle, HabitatRefusal, Herd, HerdRegistry, KitAllocation, LaborAllocation,
+    LaborTarget, LadderConfigHandle, MaterialAllocation, PopulationCohort, PreyReach,
+    SimulationConfig, StartProfileKnowledgeTagsHandle, StartProfiles, StartProfilesHandle,
+    StartingLoadout, Tile, TileRegistry,
 };
 
 const SHIPPED: &str = include_str!("../scenarios/breeding_ceiling_150.json");
@@ -1114,8 +1118,187 @@ fn the_herds_and_pens_playtest_file_places_thins_extends_and_recommits() {
         "the worldgen herd holds the file's stock"
     );
 
+    // The sheep's ring is the declaration its keeper's row carries: nothing replaced it.
     let sheep = runtime("sheep");
     assert!(sheep.is_corralled(), "the held pen stands");
     assert!(sheep.pen_extending, "the pen is widening");
-    assert_eq!(sheep.standing_output_target, Some(ASKED_SHARE));
+    assert_eq!(sheep.standing_output_target, None);
+    let mut app = app;
+    let sheep_source = BuildSource::Herd(sheep.id.clone());
+    let sheep_jobs: Vec<BuildJob> = app
+        .world
+        .query::<&LaborAllocation>()
+        .iter(&app.world)
+        .filter_map(|allocation| allocation.build_declaration(&sheep_source))
+        .map(|declaration| declaration.declared)
+        .collect();
+    assert!(
+        !sheep_jobs.is_empty()
+            && sheep_jobs
+                .iter()
+                .all(|job| matches!(job, BuildJob::ExtendPen)),
+        "the sheep's row declares the ring: {sheep_jobs:?}"
+    );
+
+    // The flock is tamed and kept, and its re-sort is in flight at the asked share.
+    let flock = runtime("flock");
+    assert_eq!(flock.owner, Some(HOME));
+    assert!(flock.is_domesticated());
+    assert_eq!(flock.standing_output_target, Some(ASKED_SHARE));
+    let flock_source = BuildSource::Herd(flock.id.clone());
+    assert!(
+        app.world
+            .query::<&LaborAllocation>()
+            .iter(&app.world)
+            .any(|allocation| matches!(
+                allocation
+                    .build_declaration(&flock_source)
+                    .map(|d| d.declared),
+                Some(BuildJob::SetHerdOutput(_))
+            )),
+        "the flock's keeper declares the re-sort"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// A second verb on a herd replaces the first in place, and takes the first's in-flight state
+// ---------------------------------------------------------------------------------------------
+
+/// The playtest world with its held sheep pen, kept by the home band, and no pen verb replayed.
+fn kept_pen_world() -> (App, String, UVec2) {
+    let (app, applied) =
+        load(&pen_scenario(true, vec![], vec![]).to_string()).expect("the pen world loads");
+    let id = applied.herds.get(SHEEP).expect("the sheep").clone();
+    let pen = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&id)
+        .and_then(|herd| herd.corralled_at)
+        .expect("the held pen stands");
+    (app, id, pen)
+}
+
+fn sheep_of(app: &App, id: &str) -> Herd {
+    app.world
+        .resource::<HerdRegistry>()
+        .find(id)
+        .expect("the herd")
+        .clone()
+}
+
+/// What every home band's declaration on the herd says, in band order.
+fn declared_on(app: &mut App, id: &str) -> Vec<BuildJob> {
+    let source = BuildSource::Herd(id.to_string());
+    app.world
+        .query::<&LaborAllocation>()
+        .iter(&app.world)
+        .filter_map(|allocation| allocation.build_declaration(&source))
+        .map(|declaration| declaration.declared)
+        .collect()
+}
+
+#[test]
+fn an_extend_pen_then_a_set_herd_output_cancels_the_ring_and_keeps_the_recommit() {
+    let (mut app, id, pen) = kept_pen_world();
+    apply_extend_pen(&mut app.world, HOME, pen).expect("the ring starts");
+    assert!(
+        sheep_of(&app, &id).pen_extending,
+        "control: the ring is in flight"
+    );
+    apply_set_herd_output(&mut app.world, HOME, &id, ASKED_SHARE).expect("the recommit starts");
+
+    let herd = sheep_of(&app, &id);
+    assert!(
+        !herd.pen_extending,
+        "the replaced ring is cancelled, not stranded"
+    );
+    assert_eq!(herd.standing_output_target, Some(ASKED_SHARE));
+    let jobs = declared_on(&mut app, &id);
+    assert!(
+        !jobs.is_empty()
+            && jobs
+                .iter()
+                .all(|job| matches!(job, BuildJob::SetHerdOutput(_))),
+        "the row declares the recommit: {jobs:?}"
+    );
+}
+
+#[test]
+fn a_set_herd_output_then_an_extend_pen_cancels_the_recommit_and_keeps_the_ring() {
+    let (mut app, id, pen) = kept_pen_world();
+    apply_set_herd_output(&mut app.world, HOME, &id, ASKED_SHARE).expect("the recommit starts");
+    assert_eq!(
+        sheep_of(&app, &id).standing_output_target,
+        Some(ASKED_SHARE)
+    );
+    apply_extend_pen(&mut app.world, HOME, pen).expect("the ring starts");
+
+    let herd = sheep_of(&app, &id);
+    assert_eq!(
+        herd.standing_output_target, None,
+        "the replaced recommit is cancelled"
+    );
+    assert!(herd.pen_extending);
+    let jobs = declared_on(&mut app, &id);
+    assert!(
+        !jobs.is_empty() && jobs.iter().all(|job| matches!(job, BuildJob::ExtendPen)),
+        "the row declares the ring: {jobs:?}"
+    );
+}
+
+#[test]
+fn restating_the_same_kind_of_job_cancels_nothing() {
+    let (mut app, id, pen) = kept_pen_world();
+    apply_extend_pen(&mut app.world, HOME, pen).expect("the ring starts");
+    let keeper = LaborTarget::Hunt {
+        fauna_id: id.clone(),
+        floor: SOURCE_NAMED_NOT_ASSIGNED,
+        move_with_herd: false,
+    };
+    // The ring declared again, as a restated order: the ring is still the herd's.
+    queue_build_on_working_bands(&mut app.world, HOME, &keeper, BuildJob::ExtendPen);
+    assert!(
+        sheep_of(&app, &id).pen_extending,
+        "a restated ring keeps its ring"
+    );
+
+    // A Corral restated for another rung: the chosen pen site stays.
+    let site = UVec2::new(1, 1);
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|herd| herd.id == id)
+            .expect("the herd");
+        herd.pen_site = Some(site);
+    }
+    let climb = |rung| BuildDeclaration {
+        source: BuildSource::Herd(id.clone()),
+        declared: BuildJob::Climb(rung),
+    };
+    let pen_rung = app
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .enclosed_herd_rung()
+        .rung_id();
+    cancel_replaced_job(
+        &mut app.world.resource_mut::<HerdRegistry>(),
+        Some(climb(pen_rung)),
+        BuildJob::Climb(pen_rung),
+    );
+    assert_eq!(
+        sheep_of(&app, &id).pen_site,
+        Some(site),
+        "a restated Climb keeps its site"
+    );
+
+    // Control: a Climb replaced by a different kind of job loses its site.
+    cancel_replaced_job(
+        &mut app.world.resource_mut::<HerdRegistry>(),
+        Some(climb(pen_rung)),
+        BuildJob::ExtendPen,
+    );
+    assert_eq!(sheep_of(&app, &id).pen_site, None);
 }

@@ -276,8 +276,8 @@ pub use faction_names::{
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, animals_affordable,
     animals_engaged, animals_sparable, animals_that_stay, animals_that_stay_at_rate,
-    build_prey_index, cancel_dropped_rings, carnivore_k_at, choose_pen_site, crew_keep_hands,
-    crew_needed_with_keeping, drop_holding_and_cancel_ring, escapement_ceiling,
+    build_prey_index, cancel_dropped_rings, cancel_replaced_job, carnivore_k_at, choose_pen_site,
+    crew_keep_hands, crew_needed_with_keeping, drop_holding_and_cancel_ring, escapement_ceiling,
     expected_kill_over_retreat, expected_stayers, forecast_expected_take, forecast_take_range,
     habitat_refusal, herd_above_extinction_floor, herd_breeding_gain, herd_build_rung,
     herd_build_verb, herd_capacity, herd_carry_rate, herd_claims_keeping, herd_crew_keeping,

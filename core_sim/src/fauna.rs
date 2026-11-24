@@ -5857,6 +5857,28 @@ pub fn cancel_dropped_rings(
     }
 }
 
+/// **CANCEL THE IN-FLIGHT STATE OF A HERD JOB A NEW DECLARATION JUST REPLACED.**
+///
+/// A second verb on a source replaces the declaration in place
+/// (`LaborAllocation::declare_build_replacing` returns the displaced entry), which takes the funding
+/// from the old job exactly as a drop does, so the old job's herd state is cancelled by the same rule
+/// ([`cancel_dropped_rings`]). **Only the old kind's state is cleared**: a job restated as the same
+/// kind (`ExtendPen` again, one rung's `Climb` for another) cancels nothing, and the new job's own
+/// state, set on the herd before it was queued, is never touched.
+pub fn cancel_replaced_job(
+    herds: &mut HerdRegistry,
+    replaced: Option<crate::components::BuildDeclaration>,
+    new: crate::components::BuildJob,
+) {
+    let Some(entry) = replaced else {
+        return;
+    };
+    if std::mem::discriminant(&entry.declared) == std::mem::discriminant(&new) {
+        return;
+    }
+    cancel_dropped_rings(herds, &[entry]);
+}
+
 /// **WITHDRAW A DECLARATION, AND STOP THE RING IT WAS FUNDING** — the `unqueue` command's whole
 /// effect on one band. Returns whether an entry was there.
 ///

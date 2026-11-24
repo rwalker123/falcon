@@ -8355,17 +8355,38 @@ impl LaborAllocation {
     /// source — and nothing enrols itself (a meter is never the thing that creates a declaration,
     /// §2.4).
     pub fn declare_build(&mut self, source: BuildSource, declared: BuildJob) -> bool {
+        self.declare_build_replacing(source, declared).is_some()
+    }
+
+    /// [`Self::declare_build`], handing back what it displaced. `None` when the band has no holding
+    /// (nothing was declared); `Some(None)` for a fresh declaration; `Some(Some(entry))` when the
+    /// source already carried one, which is **the entry as it stood**.
+    ///
+    /// A herd's ring and commitment set their in-flight state on the *herd* before queueing, so a
+    /// replacement that takes the funding away must take that state with it. A caller that can reach
+    /// a herd source passes the displaced entry to [`crate::fauna::cancel_replaced_job`].
+    pub fn declare_build_replacing(
+        &mut self,
+        source: BuildSource,
+        declared: BuildJob,
+    ) -> Option<Option<BuildDeclaration>> {
         // A road's holding is its keeper, and `grade` / `pave` write it immediately before declaring
         // — the only path that can produce a `BuildSource::Road`, since the row-driven verb
         // cannot reach a source with no row. See [`road_holding_unchanged`].
         if !self.holds_build_source(&source, &road_holding_unchanged) {
-            return false;
+            return None;
         }
         match self.builds.iter_mut().find(|entry| entry.source == source) {
-            Some(entry) => entry.declared = declared,
-            None => self.builds.push(BuildDeclaration { source, declared }),
+            Some(entry) => {
+                let displaced = entry.clone();
+                entry.declared = declared;
+                Some(Some(displaced))
+            }
+            None => {
+                self.builds.push(BuildDeclaration { source, declared });
+                Some(None)
+            }
         }
-        true
     }
 
     /// **Stop a build on a source**, leaving the row, its crew, its kit and the meter exactly as they

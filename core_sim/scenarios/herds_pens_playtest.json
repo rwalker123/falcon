@@ -1,6 +1,6 @@
 {
   "name": "herds_pens_playtest",
-  "note": "Look for a new aurochs herd at (15, 10), the boar at (11, 10) thinned to a fifth of its stock, and the sheep pen widening with its milk, eggs and wool share moving to half.",
+  "note": "Look for a new aurochs herd at (15, 10), the boar at (11, 10) thinned to a fifth of its stock, the sheep pen widening, and the tamed fowl at (16, 11) being re-sorted to give half of itself as milk, eggs and wool.",
   "world": {
     "preset": "earthlike",
     "width": 80,
@@ -19,7 +19,8 @@
         { "held": { "rung": "forestry:felling", "at": [13, 10], "material": "wood" } },
         { "build_rung": {
           "band": null, "verb": "coppice", "target_x": 13, "target_y": 10,
-          "herd_id": null, "material": "wood", "branch": null } }
+          "herd_id": null, "material": "wood", "branch": null } },
+        { "held": { "rung": "animal:pastoral", "herd": "flock" } }
       ],
       "bands": [
         {
@@ -35,10 +36,14 @@
           }
         }
       ],
-      "labor": [],
+      "labor": [
+        { "assign_labor": {
+          "band": "home", "role": "hunt", "workers": 2, "fauna_id": "game_fowl_71",
+          "take_species": [], "move_with_herd": false } }
+      ],
       "pens": [
         { "extend_pen": { "herd": "sheep" } },
-        { "set_herd_output": { "herd": "sheep", "fraction": 0.5 } }
+        { "set_herd_output": { "herd": "flock", "fraction": 0.5 } }
       ]
     }
   ],
@@ -46,6 +51,7 @@
   "herds": [
     { "id": "sheep", "species": "wild_sheep", "at": [11, 11], "stock": 1.0, "origin": "worldgen" },
     { "id": "new_aurochs", "species": "aurochs", "at": [15, 10], "stock": 0.6, "origin": "placed" },
-    { "id": "thin_boar", "species": "boar", "at": [11, 10], "stock": 0.2, "origin": "worldgen" }
+    { "id": "thin_boar", "species": "boar", "at": [11, 10], "stock": 0.2, "origin": "worldgen" },
+    { "id": "flock", "species": "fowl", "at": [16, 11], "stock": 1.0, "origin": "worldgen" }
   ]
 }

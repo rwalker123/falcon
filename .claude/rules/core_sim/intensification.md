@@ -452,7 +452,10 @@ keeping is the site's** (`docs/plan_site_crews.md`): the site's own crew keeps f
 > | `BuildJob::ExtendPen` | the pen ring, which names no rung | a built pen has no meter for the derived verb to answer from |
 >
 > - **At most ONE declaration per source per band**, and re-issuing a verb **replaces `declared` in
->   place** — correcting `cultivate` → `sow` costs nothing.
+>   place** — correcting `cultivate` → `sow` costs nothing. **A herd job it displaces is cancelled
+>   as a drop cancels it**: `queue_build_on_working_bands` hands the displaced entry to
+>   `fauna::cancel_replaced_job`, which clears the old kind's herd state (a ring's `pen_extending`, a
+>   commitment's target, a Corral's `pen_site`) and nothing for a restated kind.
 > - **A declaration requires a ROW** (a road: its keeper). A verb reaches only bands that already work
 >   the source, and a row that dies takes its declaration with it — enforced at the seams
 >   (`drop_source_row`, `clear_kinds`) and swept per turn by `LaborAllocation::prune_builds`.
