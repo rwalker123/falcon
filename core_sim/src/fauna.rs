@@ -3978,6 +3978,36 @@ fn ecological_carrying_capacity(
     Some(total / points.len() as f32)
 }
 
+/// **THE K A WILD HERD WILL LIVE UNDER ON ITS FIRST TURN** — [`ecological_carrying_capacity`] at the
+/// live standing with no owner camps, exactly the reading [`advance_herds`] writes into
+/// `herd.carrying_capacity` for an ownerless herd. `None` is the seam's own "cannot resolve" (a
+/// non-grazing species or an absent graze layer), left to the caller because a scenario must refuse a
+/// herd it cannot size rather than fall back to the species table's K.
+#[allow(clippy::too_many_arguments)]
+pub fn wild_herd_capacity(
+    herd: &Herd,
+    def: Option<&SpeciesDef>,
+    graze: &GrazeRegistry,
+    prey: &[PreyDatum],
+    fauna: &FaunaConfig,
+    width: u32,
+    height: u32,
+    wrap: bool,
+) -> Option<f32> {
+    ecological_carrying_capacity(
+        herd,
+        def,
+        graze,
+        prey,
+        fauna,
+        width,
+        height,
+        wrap,
+        CapacityStanding::live(herd),
+        &[],
+    )
+}
+
 /// **THE RUNG A CAPACITY READING IS STRUCK AT** — the two things [`ecological_carrying_capacity`]
 /// takes off the husbandry ladder rather than off the land: *where does this herd stand* (which
 /// [`herd_density_gain`]) and *is it behind a fence* (which [`herd_footprint_at`]).

@@ -1415,22 +1415,34 @@ retired by the chief, even at a zero share, so its keepers keep coming.
 
 A top-level required key (an empty list is fine), a sibling of `factions` because a placed herd
 belongs to no faction. Entry: `id` (file-local, unique, non-empty), `species` (a `fauna_config.json`
-KEY), `at` `[x, y]`, `stock` (a fraction of capacity, in `(0, 1]`), `origin` (`placed` | `worldgen`).
+KEY), `at` `[x, y]`, `stock` (a fraction of the K the herd lives under on turn 1, in `(0, 1]`), `origin` (`placed` | `worldgen`).
 Pass 1 refuses the id, species, stock and off-map `at`. `finish_scenario` then fits every entry on
 the built world (`herds::fit`) and collects every refusal with the setup's own BEFORE `herds::apply`
 touches anything. Herds are a setter, so they apply before the outfit replay.
 
 - **Placed** is fitted by `fauna::habitat_refusal`, the predicate the spawn passes ask too (land,
   hosted module, `adjacent_water` shore rule, a carnivore's prey gate). It is built through
-  `fauna::herd_from_species`, the construction all three spawn passes share, at `stock x K`, with a
+  `fauna::herd_from_species`, the construction all three spawn passes share, with a
   route from `build_short_route` or `build_migratory_route` (`SeedTile::At` keeps a migratory herd's
   first anchor on `at`; a route that cannot start there is refused). Its rolls seed from
-  `map_seed ^ SCENARIO_HERD_SEED_SALT ^ entry index`; its runtime id is `scenario_<id>`.
+  `map_seed ^ SCENARIO_HERD_SEED_SALT ^ entry index`; its runtime id is `scenario_<id>`. Its K is
+  the ecological K `advance_herds` writes on turn 1 (`fauna::wild_herd_capacity`, the same
+  `ecological_carrying_capacity` seam read at its tile), not the species table's K; biomass is
+  `stock x` that K and the herd carries it as `carrying_capacity`. A tile whose K cannot be resolved
+  (a non-grazing species, no graze layer) is refused at `herds[i].at`.
+- **A placed predator's prey is counted after the file's other herds.** `herds::fit` takes the
+  entries in three groups, file order inside each: every `worldgen` stock, every placed
+  non-carnivore, then every placed carnivore. The prey index the carnivore's gate and K read is built
+  after the first two groups, so a thinned worldgen prey herd counts at its new stock and a placed
+  herbivore counts. Refusals are reported in file order.
 - **Worldgen** names the one unowned herd of that species standing on `at` when the finish runs (after
-  the build turn), and sets its biomass to `stock x herd_capacity`. None, several, or an owned one are
+  the build turn), and sets its biomass to `stock x herd_capacity` (its live ecological K). None, several, or an owned one are
   refused; the none case names the nearest.
-- A stock the herd would be dispersed under on its first turn (`fauna::herd_above_extinction_floor`,
-  the expression `advance_herds` retains by) is refused at `herds[i].stock`.
+- A stock the herd would be dispersed under on its first turn is refused at `herds[i].stock`, for
+  both origins. The check runs the turn loop's own `regrow_biomass` on a copy of the herd (growth, or
+  the `collapse_rate` loss under `collapse_fraction x K`), then tests `fauna::herd_above_extinction_floor`
+  at the K the herd carries, the expression `advance_herds` retains by. Only the herd's own ecology
+  step is modelled; hunting and predation are not.
 - `HerdTelemetry` and `HerdDensityMap` are rebuilt as `spawn_initial_herds` does.
   `ScenarioApplied.herds` maps file id to runtime id.
 

@@ -7379,9 +7379,7 @@ fn handle_set_herd_output(
                 tick,
                 CommandEventKind::Corral,
                 faction,
-                format!(
-                    "Re-sorting {fauna_id} to give {fraction:.0} of itself as milk, eggs and wool"
-                ),
+                core_sim::command_seam::herd_output_feed_line(&fauna_id, fraction),
                 Some(format!(
                     "status=committing action=set_herd_output herd={fauna_id} fraction={fraction:.3}"
                 )),

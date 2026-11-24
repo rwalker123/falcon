@@ -805,6 +805,16 @@ pub fn apply_extend_pen(
     Ok(PenExtended { herd_id: fauna_id })
 }
 
+/// **The feed line for a committed `set_herd_output`**: the share as a whole percentage (`0.5` reads
+/// `50%`), so a half share is not rounded to "0" or "1".
+pub fn herd_output_feed_line(herd_id: &str, fraction: f32) -> String {
+    let percent = (fraction * PERCENT_PER_UNIT).round();
+    format!("Re-sorting {herd_id} to give {percent:.0}% of itself as milk, eggs and wool")
+}
+
+/// Percentage points in a whole (a `0..=1` share shown as a percentage).
+const PERCENT_PER_UNIT: f32 = 100.0;
+
 /// **COMMIT A KEPT HERD'S OUTPUT** - the `SetHerdOutput` command: the player's decision of what
 /// share of a kept herd stands as milk, eggs and wool rather than being taken from. Priced as a
 /// declared build on the herd's own rung, it mirrors [`apply_extend_pen`] step for step - the same

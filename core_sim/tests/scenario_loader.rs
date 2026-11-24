@@ -576,8 +576,15 @@ fn a_placed_herd_lands_where_it_was_put() {
         .find(|herd| &herd.id == runtime)
         .expect("the herd is in the registry");
     let fauna = fauna_of(&app);
-    let capacity = fauna.species[&key].carrying_capacity();
+    let table_capacity = fauna.species[&key].carrying_capacity();
+    let capacity = herd.carrying_capacity;
     assert_eq!(herd.position(), at);
+    // `stock` is a fraction of the K the herd lives under, which is the ecological one, not the
+    // species table's. The inequality keeps the check from passing on the table number.
+    assert!(
+        (capacity - table_capacity).abs() > 1e-3 * table_capacity,
+        "ecological K {capacity} must differ from the table K {table_capacity}"
+    );
     assert!(
         (herd.biomass - 0.6 * capacity).abs() < 1e-3 * capacity,
         "{}",
@@ -709,6 +716,227 @@ fn stock_outside_zero_to_one_is_refused_in_pass_one_and_a_stock_under_the_floor_
         "{}",
         refusals[0]
     );
+}
+
+/// How far above or below the extinction floor the boundary tests put a stock.
+const FLOOR_MARGIN: f32 = 0.25;
+/// The step, as a fraction of the floor, the boundary search climbs by, and how many steps it takes.
+const FLOOR_SEARCH_STEP: f32 = 0.01;
+const FLOOR_SEARCH_STEPS: u32 = 100;
+
+#[test]
+fn a_placed_stock_just_above_the_floor_survives_a_turn_and_one_below_is_refused() {
+    let (control, _) = load(SHIPPED).expect("the control world loads");
+    let (key, at) = hospitable_tile(&control);
+    let probe = with_herds(vec![herd_entry("probe", &key, at, 0.6, "placed")]);
+    let (probe_app, applied) = load(&probe).expect("the probe loads");
+    let runtime = applied.herds.get("probe").expect("mapped").clone();
+    let fauna = fauna_of(&probe_app);
+    let placed = herds_of(&probe_app)
+        .into_iter()
+        .find(|herd| herd.id == runtime)
+        .expect("placed");
+    let floor = core_sim::herd_ecology(&placed, &fauna).extinction_floor;
+    assert!(
+        (placed.carrying_capacity - fauna.species[&key].carrying_capacity()).abs() > 1.0,
+        "the fixture must have an ecological K apart from the table K"
+    );
+
+    // Under `collapse_fraction` of K the herd loses `collapse_rate` of itself on its first turn,
+    // so a stock just over the static floor dies on turn 1 and the loader refuses it. The boundary
+    // is found by search against the loader itself, not by restating the formula.
+    let static_edge = with_herds(vec![herd_entry(
+        "edge",
+        &key,
+        at,
+        (floor * (1.0 + FLOOR_MARGIN)) as f64,
+        "placed",
+    )]);
+    let refusals = load(&static_edge)
+        .map(|_| ())
+        .expect_err("a stock over the static floor that dies on turn 1 is refused");
+    assert_eq!(refusals[0].path, "herds[0].stock");
+    assert!(refusals[0].reason.contains("first turn"), "{}", refusals[0]);
+    let accepted = (1..=FLOOR_SEARCH_STEPS)
+        .map(|step| floor * (1.0 + FLOOR_SEARCH_STEP * step as f32))
+        .find(|stock| {
+            load(&with_herds(vec![herd_entry(
+                "edge",
+                &key,
+                at,
+                *stock as f64,
+                "placed",
+            )]))
+            .is_ok()
+        })
+        .expect("some stock a little above the floor is accepted");
+    let above = with_herds(vec![herd_entry(
+        "above",
+        &key,
+        at,
+        accepted as f64,
+        "placed",
+    )]);
+    let (mut app, applied) = load(&above).expect("a stock just above the floor is placed");
+    let runtime = applied.herds.get("above").expect("mapped").clone();
+    run_turn(&mut app);
+    assert!(
+        herds_of(&app).iter().any(|herd| herd.id == runtime),
+        "the herd survives its first turn"
+    );
+
+    let below = with_herds(vec![herd_entry(
+        "below",
+        &key,
+        at,
+        (floor * (1.0 - FLOOR_MARGIN)) as f64,
+        "placed",
+    )]);
+    let refusals = load(&below)
+        .map(|_| ())
+        .expect_err("a stock under the floor is refused");
+    assert_eq!(refusals[0].path, "herds[0].stock");
+}
+
+/// Every tile of the world, in scan order.
+fn all_tiles(app: &App) -> Vec<UVec2> {
+    let size = app.world.resource::<SimulationConfig>().grid_size;
+    (0..size.y)
+        .flat_map(|y| (0..size.x).map(move |x| UVec2::new(x, y)))
+        .collect()
+}
+
+/// The tiles within `radius` hexes of `centre`.
+fn within(app: &App, centre: UVec2, radius: u32) -> Vec<UVec2> {
+    let config = app.world.resource::<SimulationConfig>();
+    let (width, wrap) = (config.grid_size.x, config.map_topology.wrap_horizontal);
+    all_tiles(app)
+        .into_iter()
+        .filter(|tile| {
+            core_sim::grid_utils::hex_distance_wrapped(centre, *tile, width, wrap) <= radius
+        })
+        .collect()
+}
+
+/// The habitat verdict for `species` on `pos` with no prey in reach: a carnivore reads
+/// `TooLittlePrey` only once every other test has passed.
+fn habitat_without_prey(app: &mut App, species: &str, pos: UVec2) -> Option<HabitatRefusal> {
+    let fauna = fauna_of(app);
+    let config = app.world.resource::<SimulationConfig>();
+    let (size, wrap) = (config.grid_size, config.map_topology.wrap_horizontal);
+    let mut state: SystemState<(Query<&Tile>, Res<TileRegistry>)> =
+        SystemState::new(&mut app.world);
+    let (tiles, registry) = state.get(&app.world);
+    habitat_refusal(
+        &fauna.species[species],
+        pos,
+        size.x,
+        size.y,
+        wrap,
+        &registry,
+        &tiles,
+        &PreyReach::NONE,
+    )
+}
+
+#[test]
+fn a_wolf_is_counted_against_the_herbivore_placed_beside_it() {
+    let (mut control, _) = load(SHIPPED).expect("the control world loads");
+    let mut tried = 0;
+    for wolf_at in all_tiles(&control) {
+        if habitat_without_prey(&mut control, "wolf", wolf_at)
+            != Some(HabitatRefusal::TooLittlePrey)
+        {
+            continue;
+        }
+        let alone = with_herds(vec![herd_entry("wolf", "wolf", wolf_at, 0.8, "placed")]);
+        if load(&alone).is_ok() {
+            continue;
+        }
+        for boar_at in within(&control, wolf_at, 1) {
+            if boar_at == wolf_at || habitat_without_prey(&mut control, "boar", boar_at).is_some() {
+                continue;
+            }
+            tried += 1;
+            // The wolf is listed FIRST: the order of the file does not matter.
+            let both = with_herds(vec![
+                herd_entry("wolf", "wolf", wolf_at, 0.8, "placed"),
+                herd_entry("boar", "boar", boar_at, 0.5, "placed"),
+            ]);
+            if let Ok((_, applied)) = load(&both) {
+                assert!(applied.herds.contains_key("wolf"));
+                return;
+            }
+        }
+    }
+    panic!("no wolf tile was fed by a placed boar ({tried} pairs tried)");
+}
+
+#[test]
+fn a_wolf_is_not_fed_by_a_worldgen_prey_herd_the_file_thins() {
+    let (mut control, _) = load(SHIPPED).expect("the control world loads");
+    let fauna = fauna_of(&control);
+    let attack = fauna.species["wolf"].combat.attack;
+    let all = herds_of(&control);
+    let prey: Vec<(String, UVec2)> = all
+        .iter()
+        .filter(|herd| herd.owner.is_none())
+        .filter_map(|herd| {
+            let key = fauna.species_key_by_display(&herd.species)?;
+            let def = fauna.species.get(key)?;
+            let alone_here = all
+                .iter()
+                .filter(|other| {
+                    other.species == herd.species && other.position() == herd.position()
+                })
+                .count()
+                == 1;
+            (def.diet == Diet::Herbivore && def.combat.defense <= attack && alone_here)
+                .then(|| (key.to_string(), herd.position()))
+        })
+        .collect();
+    let mut tried = 0;
+    for (key, prey_at) in prey {
+        for wolf_at in within(&control, prey_at, 2) {
+            if habitat_without_prey(&mut control, "wolf", wolf_at)
+                != Some(HabitatRefusal::TooLittlePrey)
+            {
+                continue;
+            }
+            tried += 1;
+            let file = |stock: f64| {
+                with_herds(vec![
+                    herd_entry("prey", &key, prey_at, stock, "worldgen"),
+                    herd_entry("wolf", "wolf", wolf_at, 0.8, "placed"),
+                ])
+            };
+            // Half the herd's K is its MSY point, where it feeds the most; a stock just over the
+            // floor feeds almost nothing.
+            if load(&file(0.5)).is_err() {
+                continue;
+            }
+            // Other prey in reach can still carry the wolf; keep looking for a wolf tile this
+            // one herd decides.
+            let Err(refusals) = load(&file(0.03)).map(|_| ()) else {
+                continue;
+            };
+            assert_eq!(refusals[0].path, "herds[1].at");
+            assert!(
+                refusals[0].reason.contains("too little prey"),
+                "{}",
+                refusals[0]
+            );
+            return;
+        }
+    }
+    panic!("no wolf tile was fed by a prey herd at its best and not at a trickle ({tried} tried)");
+}
+
+#[test]
+fn the_herd_output_feed_line_reads_the_share_as_a_percentage() {
+    let line = core_sim::command_seam::herd_output_feed_line("flock", 0.5);
+    assert!(line.contains("give 50% of itself"), "{line}");
+    assert!(core_sim::command_seam::herd_output_feed_line("flock", 1.0).contains("give 100% "));
 }
 
 /// A worldgen herd that is the only one of its species on its tile.
