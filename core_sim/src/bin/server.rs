@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::io::{self, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -30,16 +29,14 @@ use core_sim::record::{CommandRecord, RecordingSink, RunInfo, RunRecorder, RECOR
 use core_sim::sim_state::{restore_sim_state, Replaying};
 use core_sim::turn_profile;
 use core_sim::{
-    apply_port_base, available_workers, carry_runtime_owned_fields, carry_world_identity,
-    floor_is_valid, knows, load_simulation_config_for_new_world, patch_composition,
-    resolve_active_profile, resolve_take_selection, species_stands_in, tile_flora_composition,
-    BandBench, BandEquipment, BandTravel, BandWorkforce, BeatCatalogHandle, BeatConfigHandle,
-    BeatLedger, BenchQueueError, BuildJob, BuildSource, CombatConfigHandle, Expedition,
-    ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, ExtractionConfigHandle,
-    FloraConfigHandle, FoodMix, ForkAnswerError, HuntingParty, KitChoice, KitJob, LaborAllocation,
-    LaborTarget, LadderConfig, LadderConfigHandle, LocalStore, MaterialDraw, RecipesConfigHandle,
-    ResidentBand, RungId, SiteRefusal, SourceKind, SourcePriority, TakeSelection, TransferCause,
-    TransferCrossing, TransferDirection, UpkeepFundMode, DEFAULT_ESCAPEMENT_FLOOR, MIN_ORDER_COUNT,
+    apply_port_base, available_workers, carry_runtime_owned_fields, carry_world_identity, knows,
+    load_simulation_config_for_new_world, resolve_active_profile, BandBench, BandEquipment,
+    BandTravel, BandWorkforce, BeatCatalogHandle, BeatConfigHandle, BeatLedger, BenchQueueError,
+    BuildJob, BuildSource, CombatConfigHandle, Expedition, ExpeditionConfigHandle,
+    ExpeditionMission, ExpeditionPhase, FoodMix, ForkAnswerError, HuntingParty, KitChoice, KitJob,
+    LaborAllocation, LaborTarget, LadderConfig, LadderConfigHandle, LocalStore, MaterialDraw,
+    RecipesConfigHandle, ResidentBand, SourcePriority, TransferCause, TransferCrossing,
+    TransferDirection, UpkeepFundMode, MIN_ORDER_COUNT,
 };
 // Used by the test modules (through `use super::*`) and by nothing in the server proper since the
 // yield-seeding helpers moved to `core_sim::yield_seed`.
@@ -55,16 +52,24 @@ use core_sim::{
     DiscoveryProgressLedger, EquipmentConfigHandle, EspionageAgentHandle, EspionageCatalog,
     EspionageMissionId, EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate,
     EspionageRoster, FactionBorderPolicies, FactionId, FactionOrders, FactionRegistry,
-    FactionSecurityPolicies, FaunaConfigHandle, ForageRegistry, FrameSink, HerdRegistry,
-    LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
-    QueueMissionParams, Scalar, SecurityPolicy, Settlement, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, SnapshotAudiences, SnapshotHistory,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
-    StartLocation, StartProfilesHandle, StartingUnit, SubmitError, SubmitOutcome, Tile,
-    TileRegistry, TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle,
+    FactionSecurityPolicies, FaunaConfigHandle, FrameSink, HerdRegistry, LaborConfigHandle,
+    MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams,
+    Scalar, SecurityPolicy, Settlement, SimulationConfig, SimulationConfigMetadata, SimulationTick,
+    SnapshotAudiences, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    SnapshotOverlaysConfigMetadata, StartLocation, StartProfilesHandle, StartingUnit, SubmitError,
+    SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle,
     TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FODDER, FOOD, POST_RECALLED,
 };
-use core_sim::{BranchId, VerbId};
+// Used by the test modules (through `use super::*`) since the labor verbs moved to the library.
+use core_sim::labor_commands::{
+    BuildSourceRef, SelectedBand, SITE_SOURCE_GRAMMAR, SOURCE_NAMED_NOT_ASSIGNED,
+};
+// The build verbs moved to the command seam; their server tests still name these.
+#[cfg_attr(not(test), allow(unused_imports))]
+use core_sim::{
+    tile_flora_composition, ExtractionConfigHandle, FloraConfigHandle, ForageRegistry, RungId,
+    SiteRefusal, DEFAULT_ESCAPEMENT_FLOOR,
+};
 
 use core_sim::{
     ConnectionId, ConnectionIdAllocator, SeatRegistry, SeatTurnGate, SeatTurnLimits, TurnWait,
@@ -1278,172 +1283,6 @@ fn release_seat_and_settle(
     settle_open_turn_and_publish(app, command_log, seats, turn_gate, world_active);
 }
 
-/// **HOW THE QUEUE VERBS NAME A SOURCE** — a tile, a herd id, a working (`material` on the tile
-/// pair) or a branch's own per-tile source (`branch` on the tile pair — the road branch's road)
-/// (`docs/plan_standing_upkeep.md` §2.5, `docs/plan_site_crews.md` §2.4). Every queue verb reads it:
-/// `abandon`, `unqueue`, `build_order`, `work_priority` and `build_priority`.
-///
-/// One type rather than per-verb copies of the same optional fields, because the queue verbs address
-/// a source identically and a per-verb spelling is how one of them comes to accept a shape the
-/// others reject. It resolves to a [`LaborTarget`] once, in [`BuildSourceRef::target`], and to a
-/// queue key once, in [`BuildSourceRef::build_source`].
-///
-/// **`branch` is a ladder branch id and is resolved against the ladder, never matched by name**: it
-/// names a road when the branch's source kind is [`SourceKind::Road`] ([`Self::is_road`]), and a
-/// branch the ladder does not know — or one whose source is not kept per tile — is refused by name
-/// ([`Self::branch_refusal`]) rather than read as the tile's patch, which would be a destructive
-/// verb quietly landing on the wrong source.
-#[derive(Debug, Clone, Default)]
-struct BuildSourceRef {
-    target_x: Option<u32>,
-    target_y: Option<u32>,
-    herd_id: Option<String>,
-    /// With the tile pair, the deposit a **working** is keyed by — one hex can hold two.
-    material: Option<String>,
-    /// With the tile pair, the ladder branch whose own source on the tile is named, rather than the
-    /// tile's patch.
-    branch: Option<String>,
-}
-
-impl BuildSourceRef {
-    /// **Does this name the tile's road?** — the named branch is the ladder's road-kind branch.
-    fn is_road(&self, ladder: &LadderConfig) -> bool {
-        self.branch.as_deref().is_some_and(|branch| {
-            ladder.source_kind(BranchId::new(branch)) == Some(SourceKind::Road)
-        })
-    }
-
-    /// **Does this name a band improvement?** - the named branch is a band-kind branch of the ladder
-    /// (a drying rack). The band rides `herd_id`, as `build rack <faction> <band>` carries it.
-    fn is_band_improvement(&self, ladder: &LadderConfig) -> bool {
-        self.branch.as_deref().is_some_and(|branch| {
-            ladder.source_kind(BranchId::new(branch)) == Some(SourceKind::Band)
-        })
-    }
-
-    /// **Pin a band improvement to the band a queue verb already names.** `build_order`,
-    /// `build_priority` and `work_priority` carry the band in the command, so their source is
-    /// `<branch>` alone; a band named a second time that disagrees is refused rather than
-    /// silently preferred. Any other source is returned as it was.
-    fn bound_to_band(mut self, ladder: &LadderConfig, band_id: u64) -> Result<Self, String> {
-        if !self.is_band_improvement(ladder) {
-            return Ok(self);
-        }
-        match self.herd_id.as_deref().map(str::parse::<u64>) {
-            None => self.herd_id = Some(band_id.to_string()),
-            Some(Ok(named)) if named == band_id => {}
-            Some(_) => {
-                return Err(format!(
-                    "a band improvement belongs to the band named in the command ({band_id}), \
-                     not to {}.",
-                    self.herd_id.as_deref().unwrap_or_default()
-                ));
-            }
-        }
-        Ok(self)
-    }
-
-    /// **Does this name a tile improvement?** - the named branch is a tile-kind branch of the ladder.
-    fn is_tile_improvement(&self, ladder: &LadderConfig) -> bool {
-        self.branch.as_deref().is_some_and(|branch| {
-            ladder.source_kind(BranchId::new(branch)) == Some(SourceKind::Tile)
-        })
-    }
-
-    /// **Why this source's `branch` cannot be read**, or `None` when it names a road or names none.
-    /// An unknown id and a branch whose source is not per-tile are both refused by name.
-    fn branch_refusal(&self, ladder: &LadderConfig) -> Option<String> {
-        let branch = self.branch.as_deref()?;
-        match ladder.source_kind(BranchId::new(branch)) {
-            Some(SourceKind::Road | SourceKind::Tile | SourceKind::Band) => None,
-            Some(_) => Some(format!(
-                "'{branch}' is a branch whose source is worked by a crew, not kept per tile - \
-                 name it by its tile, herd or `<x> <y> <material>`."
-            )),
-            None => Some(format!(
-                "'{branch}' is not a branch this ladder knows. {SITE_SOURCE_GRAMMAR}."
-            )),
-        }
-    }
-
-    /// The labor target this names, or `None` when the wire carried neither shape — **and for a
-    /// road**, which has no labor row ([`BuildSource::Road`]). A herd id wins a malformed
-    /// both-shapes message only because the tile pair is tested first and requires both halves —
-    /// the text grammar cannot produce one at all.
-    fn target(&self, ladder: &LadderConfig) -> Option<LaborTarget> {
-        if self.is_road(ladder) {
-            return None;
-        }
-        if self.is_band_improvement(ladder) {
-            let band = self.herd_id.as_deref()?.parse::<u64>().ok()?;
-            return Some(LaborTarget::Band {
-                band: BandId(band),
-                branch: BranchId::new(self.branch.as_deref()?),
-            });
-        }
-        if self.is_tile_improvement(ladder) {
-            return match (self.target_x, self.target_y, self.branch.as_deref()) {
-                (Some(x), Some(y), Some(branch)) => Some(LaborTarget::Tile {
-                    tile: UVec2::new(x, y),
-                    branch: BranchId::new(branch),
-                }),
-                _ => None,
-            };
-        }
-        match (self.target_x, self.target_y, self.herd_id.as_ref()) {
-            (Some(x), Some(y), _) => Some(match &self.material {
-                Some(material) => LaborTarget::Extract {
-                    tile: UVec2::new(x, y),
-                    material: material.clone(),
-                    floor: SOURCE_NAMED_NOT_ASSIGNED,
-                },
-                None => forage_source(UVec2::new(x, y)),
-            }),
-            (_, _, Some(herd_id)) => Some(LaborTarget::Hunt {
-                fauna_id: herd_id.clone(),
-                floor: SOURCE_NAMED_NOT_ASSIGNED,
-                move_with_herd: false,
-            }),
-            _ => None,
-        }
-    }
-
-    /// **The build-source key this names** — a road's own [`BuildSource::Road`], else the queue key
-    /// of the labor row it names ([`BuildSource::of`]).
-    fn build_source(&self, ladder: &LadderConfig) -> Option<BuildSource> {
-        match (self.is_road(ladder), self.target_x, self.target_y) {
-            (true, Some(x), Some(y)) => Some(BuildSource::Road(UVec2::new(x, y))),
-            (true, _, _) => None,
-            (false, _, _) => self.target(ladder).as_ref().and_then(BuildSource::of),
-        }
-    }
-
-    /// What the feed line calls it.
-    fn label(&self, ladder: &LadderConfig) -> String {
-        match (self.target_x, self.target_y, self.herd_id.as_ref()) {
-            (_, _, Some(band)) if self.is_band_improvement(ladder) => format!(
-                "the {} of band {band}",
-                self.branch.as_deref().unwrap_or_default()
-            ),
-            (Some(x), Some(y), _) if self.is_road(ladder) => {
-                format!("the road at ({x}, {y})")
-            }
-            (Some(x), Some(y), _) if self.is_tile_improvement(ladder) => {
-                format!(
-                    "the {} improvement at ({x}, {y})",
-                    self.branch.as_deref().unwrap_or_default()
-                )
-            }
-            (Some(x), Some(y), _) => match &self.material {
-                Some(material) => format!("the {material} at ({x}, {y})"),
-                None => format!("({x}, {y})"),
-            },
-            (_, _, Some(herd_id)) => herd_id.clone(),
-            _ => "that source".to_string(),
-        }
-    }
-}
-
 /// **Read the ladder for a queue verb, refusing a source whose `branch` it cannot read.** The
 /// refusal is a typed feed line on the `CancelOrder` channel, the queue family's own.
 fn source_ladder(
@@ -1451,36 +1290,33 @@ fn source_ladder(
     faction: FactionId,
     source: &BuildSourceRef,
 ) -> Option<Arc<LadderConfig>> {
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
-    if let Some(reason) = source.branch_refusal(&ladder) {
-        emit_command_failure(app, CommandEventKind::CancelOrder, faction, reason);
-        return None;
+    match core_sim::labor_commands::source_ladder(&app.world, source) {
+        Ok(ladder) => Some(ladder),
+        Err(refusal) => {
+            report_refusal(app, faction, refusal);
+            None
+        }
     }
-    Some(ladder)
 }
 
-/// **What a `build` line asked for** — the verb as the player typed it, and whichever source fields
-/// the wire carried. The server reads the source kind off the ladder (the verb's rung's branch), so
-/// nothing here says what the verb is.
-#[derive(Debug, Clone, Default)]
-struct BuildRungRequest {
-    /// The keeper band, for a source kind with no work row (a road).
-    band_id: Option<u64>,
-    verb: String,
-    target_x: Option<u32>,
-    target_y: Option<u32>,
-    herd_id: Option<String>,
-    material: Option<String>,
-    /// The ladder branch, when the verb alone does not name it.
-    branch: Option<String>,
+/// **Write a returned refusal on the feed**, exactly as the handler that used to emit it inline did.
+fn report_refusal(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    refusal: core_sim::command_seam::CommandRefusal,
+) {
+    match refusal {
+        core_sim::command_seam::CommandRefusal::Refused { kind, reason } => {
+            emit_command_failure(app, kind, faction, reason);
+        }
+        other => emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            other.to_string(),
+        ),
+    }
 }
-
-/// **What a queue verb says when it was handed no source** — one sentence for every verb that reads
-/// a [`BuildSourceRef`], so the grammar it names cannot drift between them.
-const SITE_SOURCE_GRAMMAR: &str = "two numbers name a tile, one token names a herd, \
-     `<x> <y> <material>` names a working, `<branch> <x> <y>` (`route <x> <y>`) names a road \
-     or a tile improvement and a band improvement (`rack`'s branch) is `<band> <branch>` (the band \
-     is the command's own where the verb already names one, so `<branch>` alone)";
 
 #[derive(Debug, Clone)]
 enum Command {
@@ -3649,6 +3485,7 @@ fn restaff_and_reseed_after_loss(app: &mut bevy::prelude::App, band: Entity, los
     core_sim::yield_seed::restaff_and_reseed_after_loss(&mut app.world, band, lost_people);
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 /// See [`core_sim::yield_seed::seed_source_yield`].
 fn seed_source_yield(
     app: &mut bevy::prelude::App,
@@ -3660,268 +3497,17 @@ fn seed_source_yield(
     core_sim::yield_seed::seed_source_yield(&mut app.world, band, target, improvement, workers);
 }
 
-/// See [`core_sim::yield_seed::build_rung_on_source_at`].
-fn build_rung_on_source_at(
-    app: &bevy::prelude::App,
-    band: Entity,
-    target: &LaborTarget,
-) -> Option<RungId> {
-    core_sim::yield_seed::build_rung_on_source_at(&app.world, band, target)
-}
-
-/// Validate a labor target's **stance** against the source it names, returning a player-facing
-/// rejection reason (`Err`) or `Ok`.
-///
-/// **Since issue #442 the stance axis has two rules, and neither is about a policy.**
-/// - **Hunt:** `fauna::hunt_policies_for` prunes a [`core_sim::HuntYield::yields_nothing`] quarry —
-///   worth neither meat nor pelt — down to `Eradicate` alone, because every other rung would be a
-///   rate at which to collect nothing.
-/// - **Forage:** the **crop the player named**, if they named one. `assign_labor` is the only
-///   command that can *set* `LaborTarget::Forage::species`, so it is the only place a bad selection
-///   can be caught at the moment it is made — and the only place that sees a re-selection dropped
-///   onto a build already in flight.
-///
-/// Everything else this function used to check was about the **build verbs**, which are no longer
-/// stances: the kind-exclusivity check (`Cultivate` on a herd) and the four per-rung gates moved to
-/// [`validate_improvement`], where they belong to the axis that carries them. That split is what
-/// makes a crew change a *stance-side* edit which never re-asserts a paused build's start gate
-/// (`docs/plan_investment_rung_toggle.md` §6).
+#[cfg_attr(not(test), allow(dead_code))]
+/// Validate a labor target's stance against the source it names (`core_sim::labor_commands`).
 fn validate_labor_policy(
     app: &bevy::prelude::App,
     faction: FactionId,
     target: &LaborTarget,
 ) -> Result<(), String> {
-    let _ = faction;
-    match target {
-        LaborTarget::Hunt {
-            fauna_id,
-            floor,
-            move_with_herd,
-        } => {
-            // **MIGRATION MODE FOLLOWS A MIGRATORY HERD ONLY** (`docs/plan_roaming_bands.md`): a
-            // resident herd never leaves its few tiles, so there is nothing to relocate for.
-            if *move_with_herd {
-                let migratory = app
-                    .world
-                    .resource::<HerdRegistry>()
-                    .find(fauna_id)
-                    .is_some_and(|herd| herd.size_class == core_sim::SizeClass::Migratory);
-                if !migratory {
-                    return Err(
-                        "Only a migratory herd can be followed — this one stays where it is."
-                            .to_string(),
-                    );
-                }
-            }
-            // **A species that pays NOTHING may only be worked at floor `0`.** "Harvest it
-            // sustainably" is meaningless for a quarry with no product: the only coherent reason to
-            // put hunters on it is to remove it, so every floor that would leave some standing is
-            // refused. The predicate is the species' own yield vector — the ONE seam this validator
-            // shares with the snapshot's exported ladder (`fauna::hunt_policies_for`), so the picker
-            // the client draws and the picker the sim accepts cannot drift into two lists.
-            let fauna = app.world.resource::<FaunaConfigHandle>().get();
-            let species = app
-                .world
-                .resource::<HerdRegistry>()
-                .find(fauna_id)
-                .map(|herd| herd.species.clone());
-            if let Some(species) = species {
-                let denial_only = core_sim::species_requires_denial(fauna.hunt_yield_for(&species));
-                if denial_only && *floor > core_sim::STRIP_IT_BARE {
-                    return Err(format!(
-                        "The {} yields neither food nor trade goods — the only thing to do with \
-                         it is eradicate it.",
-                        species
-                    ));
-                }
-            }
-            Ok(())
-        }
-        LaborTarget::Forage { tile, species, .. } => {
-            // **CAN THEY GATHER HERE AT ALL?** The plant branch's rung 1 carries a
-            // `site_requirement` of its own — the ground must be a **gathering site** — and this is
-            // where it is enforced. It is the whole of the early game's scarcity: a `FoodModuleTag`
-            // (and therefore a forage patch, and therefore a stand of named plants) sits on ~every
-            // land tile, so without this rule a band gathers anywhere it stands and *which* ground
-            // it can reach never matters.
-            //
-            // It was a CLIENT-SIDE rule until this arc — the tile card simply declined to offer the
-            // compose sheet off-site — which meant the sim accepted a command no player could send,
-            // the card advertised a stand nobody could work, and the rule lived nowhere the sim
-            // could see it (issue #464).
-            let ladder = app.world.resource::<LadderConfigHandle>().get();
-            let root = ladder.kind_root(SourceKind::Patch).rung_id();
-            if let Some(refusal) = plant_rung_site_refusal(app, faction, root, *tile) {
-                // **GROUND A SOW COULD PLACE A SOURCE ON IS GROUND A CREW MAY BE SENT TO.** A sow is
-                // queued on a tile a crew already works, so a tile that is not a gathering site but
-                // that a higher placing rung admits for THIS faction (the Worked Land relaxation)
-                // would otherwise have no way to receive its first crew. The tile is judged by the
-                // highest placing rung: admitted, the crew is accepted; refused for want of a lesson,
-                // the refusal names it; otherwise the root's ordinary refusal stands.
-                let placing = ladder
-                    .rungs_of(ladder.branch_of_kind(SourceKind::Patch))
-                    .into_iter()
-                    .rev()
-                    .find(|rung| rung.places_source);
-                let placing_refusal = placing.map(|rung| {
-                    (
-                        rung,
-                        plant_rung_site_refusal(app, faction, rung.rung_id(), *tile),
-                    )
-                });
-                match placing_refusal {
-                    Some((rung, None)) => {
-                        // **THE FARM'S OWN LESSON STILL GATES IT**: an off-site crew declares the
-                        // sow with it, so it is judged by the same `unlock_knowledge` refusal every
-                        // build verb is (`validate_patch_build`).
-                        if let Some(refusal) = knowledge_refusal(app, faction, &ladder, rung) {
-                            return Err(refusal);
-                        }
-                        // **WORKED LAND OPENS FARMING, NOT GATHERING.** Off a gathering site the
-                        // crew is a FARMING crew: it is accepted only where the patch already holds
-                        // the placing rung or is being raised to it, or when it names the crop it is
-                        // here to sow (`handle_assign_labor` then declares the sow with the crew, so
-                        // the crew is a builder from its first turn). A bare gather is refused.
-                        let farmed = app
-                            .world
-                            .resource::<ForageRegistry>()
-                            .patch(*tile)
-                            .is_some_and(|patch| {
-                                let standing = patch.standing();
-                                standing.holds_at_or_above(rung)
-                                    || standing.raising == Some(rung.rung_id())
-                            });
-                        if !farmed && species.is_none() {
-                            return Err(format!(
-                                "({}, {}) is not a gathering site. What you have learned lets you \
-                                 farm there, not gather: name the crop to {} and the crew will raise \
-                                 a farm.",
-                                tile.x,
-                                tile.y,
-                                rung.verb.as_deref().unwrap_or("sow")
-                            ));
-                        }
-                    }
-                    Some((rung, Some(SiteRefusal::NeedsLesson))) => {
-                        let verb = rung.verb.as_deref().unwrap_or("gather");
-                        let lesson = core_sim::build_gates::plant_rung_nearest_lesson(
-                            &app.world,
-                            faction,
-                            rung.rung_id(),
-                            *tile,
-                        );
-                        return Err(needs_lesson_message(
-                            &ladder,
-                            lesson.as_deref(),
-                            *tile,
-                            verb,
-                        ));
-                    }
-                    _ => return Err(site_refusal_message(refusal, *tile, "gather")),
-                }
-            }
-            // **Judge the crop the player NAMED, and only then.** Absent means "pick the tile's
-            // dominant legal plant for me", which cannot be wrong and — crucially — must not drag
-            // an ordinary wild gather into the ladder's refusals: ground whose whole basket is
-            // `wild` is perfectly gatherable, and rejecting `assign_labor` there would make the
-            // open-water fisheries and the alpine peaks unworkable.
-            //
-            // **At `PlantTended`, the ladder's ENTRY rung.** `cultivation_ceiling` is a ladder
-            // (`allows_sow` implies `allows_cultivate`), so tended is the weaker of the two gates:
-            // judging at `PlantField` here would refuse a crop the player may legitimately intend
-            // to `cultivate`, and the stance command does not yet know which verb will follow.
-            // `handle_sow` re-judges the crew's crop at its own rung.
-            // **WHICH PLANTS ARE THEY HERE FOR? — NOT ASKED HERE.** The take selection is
-            // *resolved* rather than gated, because most of what is wrong with one is the ground
-            // having moved under it rather than the player having mistyped it — see
-            // [`resolve_take_for_ground`], which `handle_assign_labor` runs immediately after this
-            // and which prunes the stale names instead of refusing the command that carries them.
-            //
-            // It lives outside this gate because this function only ever answers *may they*, and a
-            // repair is not a verdict: threading a rewritten selection back out of a
-            // `Result<(), String>` would make every other arm carry a value it has no opinion about.
-            let Some(named) = species.as_deref() else {
-                return Ok(());
-            };
-            validate_species_selection(
-                app,
-                *tile,
-                Some(named),
-                ladder.managed_patch_rung().rung_id(),
-            )
-        }
-        // **IS THERE ANYTHING HERE TO WORK?** — the deposit branches' one stance rule, and it is
-        // `absence is the answer` enforced at the command: a terrain carrying no row in
-        // `extraction.json`'s `by_terrain` holds none of that material, so there is no working to
-        // open and no crew to put on it. That is *also* what refuses the free floor on bare ground,
-        // which is why neither rung 1 carries a `site_requirement` (a floor of ~0 admits every tile
-        // and reads as a placement rule while being none).
-        LaborTarget::Extract { tile, material, .. } => {
-            let extraction = app.world.resource::<ExtractionConfigHandle>().get();
-            if extraction.deposit(material).is_none() {
-                return Err(format!(
-                    "'{material}' is not something that comes out of the ground. Your people can \
-                     work wood and stone."
-                ));
-            }
-            let capacity = app
-                .world
-                .resource::<TileRegistry>()
-                .index(tile.x, tile.y)
-                .and_then(|entity| app.world.get::<Tile>(entity))
-                .map(|ground| {
-                    core_sim::extraction::tile_deposit_capacity(&extraction, material, ground)
-                })
-                .unwrap_or(core_sim::NO_DEPOSIT);
-            if capacity <= core_sim::NO_DEPOSIT {
-                return Err(format!(
-                    "There is no {material} at ({}, {}) — that ground holds none. Move to ground \
-                     that does.",
-                    tile.x, tile.y
-                ));
-            }
-            Ok(())
-        }
-        // **A tile improvement's crew has no stance to validate** - no floor, species or herd. What
-        // `assign_labor` checks for it (a tile-kind branch, not another people's) is its own arm.
-        LaborTarget::Tile { .. } | LaborTarget::Band { .. } => Ok(()),
-        LaborTarget::Scout | LaborTarget::Warrior | LaborTarget::Roadwork => Ok(()),
-    }
+    core_sim::labor_commands::validate_labor_policy(&app.world, faction, target)
 }
 
-/// Validate an **build verb** against the source it names — the gate half of the second axis,
-/// and the home of every check `validate_labor_policy` used to carry for a build verb.
-///
-/// 1. **The web must match the source kind.** `Cultivate`/`Sow` are plant-only, `Tame`/`Corral`
-///    animal-only (the branch's declared source kind). Rejected
-///    outright rather than silently coerced.
-/// 2. **Gates — one knowledge per rung-transition** (§4.3). Each verb resolves its gate off its OWN
-///    rung record, never a hard-coded id: `Cultivate` needs **Cultivation** + a **Thriving** patch
-///    (not already tended, not someone else's); `Sow` needs **Seed Selection** + ground the
-///    `plant:farm` rung's `site_requirement` accepts; `Tame` needs **Herding**; and `Corral` needs
-///    **Penning** — *not* Herding, which gates `tame` alone — plus an owned, **domesticated**,
-///    not-yet-penned herd of a `pen`-ceiling species. Each is unchanged by the axis split.
-fn validate_improvement(
-    app: &bevy::prelude::App,
-    faction: FactionId,
-    target: &LaborTarget,
-    improvement: VerbId,
-) -> Result<(), String> {
-    core_sim::build_gates::validate_improvement(&app.world, faction, target, improvement)
-}
-
-/// The knowledge gate (`build_gates::knowledge_refusal`) over a live `App`.
-fn knowledge_refusal(
-    app: &bevy::prelude::App,
-    faction: FactionId,
-    _ladder: &core_sim::LadderConfig,
-    rung: &core_sim::RungDef,
-) -> Option<String> {
-    with_gate_scene(&app.world, |scene| {
-        core_sim::build_gates::knowledge_refusal(scene, faction, rung)
-    })
-}
-
+#[cfg_attr(not(test), allow(dead_code))]
 /// Build a [`core_sim::build_gates::GateScene`] over `world` and run `f` on it.
 fn with_gate_scene<R>(
     world: &bevy::prelude::World,
@@ -3930,6 +3516,7 @@ fn with_gate_scene<R>(
     core_sim::build_gates::with_scene(world, f)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 /// **Does the land admit `rung` here?** — the ONE place the server resolves a plant rung's
 /// `site_requirement`, so the gather gate, `cultivate` and `sow` cannot drift into disagreeing about
 /// which ground may be worked. It gathers the three readings `rung_site_refusal` judges (is this a
@@ -3943,7 +3530,7 @@ fn with_gate_scene<R>(
 /// boot and the command-unit harnesses run an `App` that has never generated a map, and
 /// `Command::AssignLabor` is dispatched with no `world_active` gate, so a `assign_labor … forage`
 /// arriving before `new_game` reaches this function. Panicking here unwinds out of the command loop
-/// and kills the server. The permissive answer is the same one [`validate_species_selection`] gives
+/// and kills the server. The permissive answer is the same one [`validate_species_selection`](core_sim::build_gates::validate_species_selection) gives
 /// for exactly this case: with no tiles there is no ground to judge, and the labor arm — which
 /// always has the real tiles — remains the authority.
 fn plant_rung_site_refusal(
@@ -3955,308 +3542,16 @@ fn plant_rung_site_refusal(
     core_sim::build_gates::plant_rung_site_refusal(&app.world, faction, rung_key, tile)
 }
 
-use core_sim::build_gates::{needs_lesson_message, site_refusal_message, PEN_TAKEN_HINT};
+use core_sim::command_seam::{BuildRungRequest, CommandRefusal, DeclaredKind, RefusalLog};
 
-/// **THE TAKE SELECTION THIS COMMAND WILL STORE, and the names the ground has taken off it** — the
-/// selection resolved against the mix the take will actually narrow.
-///
-/// `selection` is what the row must carry; `dropped` is the display names pruned out of it, empty
-/// when the player's selection stood as given. The caller stores the one and announces the other.
-struct ResolvedTake {
-    selection: TakeSelection,
-    dropped: Vec<String>,
-}
-
-/// **What may this crew gather HERE, given what it asked for?** — the take selection's command-side
-/// resolution, phrased for the player.
-///
-/// It resolves through the *same* `forage::resolve_take_selection` seam the take path narrows with,
-/// against **the mix that take will narrow** — `forage::patch_composition`, the patch's live
-/// rung-reweighted basket, falling back to the tile's own realization
-/// (`forage::tile_flora_composition`, never `FloraConfig::composition` on a raw terrain) where no
-/// patch stands yet. **There is no rung *asked* in it**: a take selection says what the crew carries
-/// home from the stand that is standing, so a `wild`-ceiling plant is a perfectly good answer — but
-/// the stand that is standing on a tended or sown patch is the reweighted one, not the wild
-/// realization it grew out of.
-///
-/// **Judging the wild basket was a defect, not a simplification.** The two baskets differ on every
-/// committed patch, so a selection naming a plant weeding or sowing had already displaced was
-/// accepted at the command boundary — freshly typed, no staleness involved — and then valued at
-/// exactly zero by the very next turn's take.
-///
-/// > #### ⛔ AN ABSENT PLANT IS PRUNED. ONLY A PLANT NO ROSTER CARRIES IS REFUSED.
-/// >
-/// > Judging the patch's own mix is right; **hard-refusing on it was not.** The mix moves under a
-/// > stored selection — that is what a `Cultivate`/`Sow` *is* — so the names this finds absent are
-/// > typically ones that were legal when the player made them and that the player's own crop then
-/// > weeded out.
-/// >
-/// > Refusing them refused the **whole `assign_labor`**, worker count included: reported from play on
-/// > a Field at `Wild Emmer 100%` whose row still named Wild Pulses, where raising the tenders did
-/// > nothing at all and the feed said only *"Harvest failed — Wild Pulses does not grow at (13,
-/// > 10)"*. There was no way out of it from the panel either — a chip is only drawn for a plant the
-/// > **current** mix carries, so the stale key had no control to clear it with.
-/// >
-/// > So the absent case **prunes** ([`TakeSelection::pruned_to`], the same narrowing the turn's own
-/// > commitment repair runs) and the command lands. An **unknown** key is still refused by name: that
-/// > is a typo, nothing can be inferred from it, and the player should be told.
-fn resolve_take_for_ground(
-    app: &bevy::prelude::App,
-    tile: UVec2,
-    take: &TakeSelection,
-) -> Result<ResolvedTake, String> {
-    let unchanged = || ResolvedTake {
-        selection: take.clone(),
-        dropped: Vec::new(),
-    };
-    if take.is_everything() {
-        return Ok(unchanged());
-    }
-    // **No map, nothing to judge** — the same carve-out `validate_species_selection` makes, and for
-    // the same reason: the command-unit harnesses and the idle boot carry no `TileRegistry`, and the
-    // labor arm (which always has the real tiles) remains the authority.
-    let Some(registry) = app.world.get_resource::<TileRegistry>() else {
-        return Ok(unchanged());
-    };
-    let Some(ground) = registry
-        .index(tile.x, tile.y)
-        .and_then(|entity| app.world.get::<Tile>(entity))
-    else {
-        return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
-    };
-    let labor = app.world.resource::<LaborConfigHandle>().get();
-    let flora = app.world.resource::<FloraConfigHandle>().get();
-    let map_seed = app.world.resource::<SimulationConfig>().map_seed;
-    let tile_composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
-    // The patch's own mix where one stands — the same seam `forage_take` narrows against.
-    let registry = app.world.resource::<ForageRegistry>();
-    let composition = registry.patch(tile).map_or_else(
-        || Cow::Borrowed(tile_composition.as_ref()),
-        |patch| patch_composition(patch, &tile_composition, &flora, &labor.forage),
-    );
-    let absent = match resolve_take_selection(take, &composition, &flora) {
-        Ok(absent) => absent,
-        Err(species) => return Err(format!("Your people know no plant called '{species}'.")),
-    };
-    if absent.is_empty() {
-        return Ok(unchanged());
-    }
-    let dropped = absent
-        .iter()
-        .map(|species| {
-            flora
-                .species
-                .get(*species)
-                .map_or_else(|| (*species).to_string(), |def| def.display_name.clone())
-        })
-        .collect();
-    Ok(ResolvedTake {
-        selection: take.pruned_to(|species| species_stands_in(&composition, species)),
-        dropped,
-    })
-}
-
-/// **THE RUNG THAT PLACES A SOURCE ON `tile` WHEN THE GATHERING RULE REFUSES IT** - `Some` only for
-/// ground the root rung's site rule refuses for this faction and the highest placing rung (the
-/// Farm, through its Worked Land relaxation) admits: off-site farming ground.
-fn off_site_placing_rung(
-    app: &bevy::prelude::App,
-    faction: FactionId,
-    tile: UVec2,
-) -> Option<RungId> {
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let root = ladder.kind_root(SourceKind::Patch).rung_id();
-    plant_rung_site_refusal(app, faction, root, tile)?;
-    let placing = ladder
-        .rungs_of(ladder.branch_of_kind(SourceKind::Patch))
-        .into_iter()
-        .rev()
-        .find(|rung| rung.places_source)?;
-    plant_rung_site_refusal(app, faction, placing.rung_id(), tile)
-        .is_none()
-        .then(|| placing.rung_id())
-}
-
-/// **May a `Cultivate`/`Sow` on this tile commit to this plant?** — the species-side gate
-/// (`docs/plan_flora_roster.md` §4.3), phrased for the player.
-///
-/// It resolves through the *same* `forage::resolve_committed_species` seam the labor arm commits
-/// with, so a selection this accepts can never be one the turn then refuses (the `rung_site_refusal`
-/// discipline). The composition comes from `forage::tile_flora_composition` — the one seam — so a
-/// navigable hex is judged on the two-term basket it actually has.
-fn validate_species_selection(
-    app: &bevy::prelude::App,
-    tile: UVec2,
-    species: Option<&str>,
-    rung: RungId,
-) -> Result<(), String> {
-    core_sim::build_gates::validate_species_selection(&app.world, tile, species, rung)
-}
-
-/// Set the worker count for one labor target on a band (idempotent; `0` unassigns; clamps to the
-/// band's free working-age headroom). Text forms:
-///   `assign_labor <faction> <band> forage <x> <y> [floor] [species] <workers>`
-///   `assign_labor <faction> <band> hunt <herd_id> [floor] <workers>`
-///   `assign_labor <faction> <band> extract <x> <y> <material> [floor] <workers>`
-///   `assign_labor <faction> <band> scout <tiles> [kit <k>]` (tiles past the local range; `0` stops)
-///   `assign_labor <faction> <band> warrior <workers>`
-///
-/// `floor` is where the crew stops, as a fraction of the source's carrying capacity — **all three
-/// worked rows carry one**, validated once at the top of this function and rejected rather than
-/// clamped. A deposit's is composed with its *rung's* own floor as a maximum
-/// (`extraction::deposit_effective_floor`), which is the one thing about it that differs from a
-/// patch's.
-///
-/// It **never accepts a build verb**: an improvement is set by its own command
-/// (`cultivate`/`sow`/`tame`/`corral`/`fell`/`coppice`/`quarry`) and **is never touched by this one**
-/// (`docs/plan_investment_rung_toggle.md` §5), which is what makes a paused build's crew editable.
-#[allow(clippy::too_many_arguments)]
-/// **The floor a `LaborTarget` built to NAME A SOURCE carries** — the improvement commands
-/// (`cultivate`/`sow`/`tame`/`corral`/`fell`/`coppice`/`quarry`), the abandon path and the
-/// pen-keeper lookup all construct a target to identify a tile, a herd or a working, never to state
-/// an assignment. [`LaborTarget::same_source`] keys on the tile/herd id (and, on a deposit, the
-/// material) alone, so the floor here is matched by nothing and read by nothing.
-///
-/// It is [`DEFAULT_ESCAPEMENT_FLOOR`] rather than an arbitrary number so that a future reader who
-/// *does* look at it sees the sustainable value, not a strip order.
-const SOURCE_NAMED_NOT_ASSIGNED: f32 = DEFAULT_ESCAPEMENT_FLOOR;
-
-/// **WHAT AN ABSENT FLOOR TOKEN MEANS ON A DEPOSIT ROW** — [`DEFAULT_ESCAPEMENT_FLOOR`] where the
-/// ground renews, [`core_sim::STRIP_IT_BARE`] where it never does (issue #650).
-///
-/// An escapement floor is a statement about **regrowth**: it names the stock a crew leaves standing
-/// so that it comes back. A body at [`core_sim::NEVER_RENEWS`] has no regrowth for a floor to
-/// protect, so *"leave half of it"* is not a policy anybody could hold there — and the client, which
-/// offers the dial only where a deposit renews, sends no token on a quarry at all. Resolving that
-/// silence to the shared `0.5` wrote a conservation choice onto a row where nobody made one, and
-/// four separate readers believed it. **Absence on finite ground therefore means the honest zero**,
-/// and a reader that reaches this row without asking about the rate is no longer misled by it.
-///
-/// ⛔ **THIS IS DEFENCE IN DEPTH, NOT A REPLACEMENT FOR THE FOUR GUARDS.**
-/// [`core_sim::extraction::deposit_effective_floor`], [`core_sim::extraction::deposit_lesson_floor`]
-/// and the client's `composed_floor` / `floor_mark` each keep their own *"does this deposit renew"*
-/// condition, and each must: an **explicit** token is still stored exactly as sent on a finite
-/// working (`components::LaborTarget::Extract::floor` — the grammar stays uniform across the three
-/// webs on purpose), so the field can still be nonzero there and every reader has to stay
-/// independently right about it. Do not simplify one away on the grounds that this now zeroes it.
-///
-/// ⛔ **A NAMED FLOOR IS NOT TOUCHED HERE.** This answers what *silence* means, nothing else — the
-/// caller only reaches it when the command carried no token.
-///
-/// **The rate read is the GROUND's, un-scaled by the rung's `regrowth_multiplier`**, which is
-/// [`core_sim::extraction::deposit_effective_floor`]'s own reading verbatim: a rung scales a rate,
-/// it does not make the ground finite, so two places forking on one fact fork on one reading of it.
-/// Ground the registry cannot resolve, or that holds none of this material, answers
-/// [`core_sim::NEVER_RENEWS`] exactly as [`core_sim::extraction::tile_deposit_regrowth`] does — and
-/// `validate_labor_policy` refuses that command anyway on any row with hands on it.
-fn unnamed_deposit_floor(app: &bevy::prelude::App, tile: UVec2, material: &str) -> f32 {
-    let extraction = app.world.resource::<ExtractionConfigHandle>().get();
-    let regrowth_rate = app
-        .world
-        .resource::<TileRegistry>()
-        .index(tile.x, tile.y)
-        .and_then(|entity| app.world.get::<Tile>(entity))
-        .map(|ground| core_sim::extraction::tile_deposit_regrowth(&extraction, material, ground))
-        .unwrap_or(core_sim::NEVER_RENEWS);
-    if regrowth_rate > core_sim::NEVER_RENEWS {
-        DEFAULT_ESCAPEMENT_FLOOR
-    } else {
-        core_sim::STRIP_IT_BARE
-    }
-}
-
-/// The feed channel a labor command reports on, resolved from the **role token** rather than from a
-/// built `LaborTarget` — the floor is validated before a target exists, and a rejection has to land
-/// on the channel the player was looking at.
-fn labor_event_kind(role: &str) -> CommandEventKind {
-    match role.to_ascii_lowercase().as_str() {
-        "forage" => CommandEventKind::Forage,
-        "hunt" => CommandEventKind::Hunt,
-        "scout" => CommandEventKind::Scout,
-        "extract" => CommandEventKind::Extraction,
-        _ => CommandEventKind::CancelOrder,
-    }
-}
-
-/// **A SEAM THAT NEVER RENEWS HAS NO REGROWTH TO STAFF AGAINST, SO A HAND CREW NEEDS THE PLAYER'S
-/// COUNT.** The sim sizes a hand-crewed extract row from what the deposit regrows; stone on a rock
-/// body never does (`extraction_config::NEVER_RENEWS`), so its crew is the Max in heads and a row
-/// with no Max would staff nobody forever while reading "(no max)". Refused at the command, by name.
-/// `None` for every other row, and for a count of one or more.
-fn never_renewing_dig_without_a_count(
-    app: &bevy::prelude::App,
-    target: &LaborTarget,
-    workers: u32,
-) -> Option<String> {
-    core_sim::staffing_preview::never_renewing_dig_without_a_count(&app.world, target, workers)
-}
-
-/// **A MATERIAL A LEADER KEEPS ON HAND IS NOT CREWED BY HAND** (#874): the refusal `assign_labor
-/// extract`, `stop_labor` and `work_priority` give for a row on a material whose rows belong to the
-/// band's keep-on-hand order. `None` for every other target and for a band that crews by hand.
+/// **A MATERIAL A LEADER KEEPS ON HAND IS NOT CREWED BY HAND** (#874); see
+/// [`core_sim::labor_commands::kept_on_hand_refusal`].
 fn kept_on_hand_refusal(
     app: &bevy::prelude::App,
     band: &SelectedBand,
     target: &LaborTarget,
 ) -> Option<String> {
-    let allocation = app.world.get::<LaborAllocation>(band.entity)?;
-    let keeper = band_keeper(app, band);
-    // A forage, hunt or dig row the chief lists under an order is his; any other row is the player's.
-    let kind = allocation.row_order(target)?;
-    core_sim::keep_on_hand::order_refusal(allocation, kind, keeper.as_ref())
-}
-
-/// **ONE BAND OF A PEOPLE PER TAKE SOURCE**: the refusal for a new row on a source another band of
-/// the band's people already works, naming that band (its `BandName`, else `Band <id>`). `None` for a
-/// row the band already holds (editing it is never refused), for a target that is no take source and
-/// where no other band of the people holds one.
-fn another_band_refusal(
-    app: &bevy::prelude::App,
-    target: &LaborTarget,
-    band: Entity,
-) -> Option<String> {
-    let other = core_sim::source_holders::other_band_working(&app.world, band, target)?;
-    let mut bands = app.world.iter_entities();
-    let other_entity = bands.find(|entity| entity.get::<BandId>() == Some(&other))?;
-    let name = other_entity
-        .get::<BandName>()
-        .map_or_else(|| core_sim::band_label(other), |name| name.0.clone());
-    Some(match target {
-        LaborTarget::Forage { tile, .. } => {
-            format!("{name} already works ({}, {}).", tile.x, tile.y)
-        }
-        LaborTarget::Hunt { fauna_id, .. } => {
-            let herd = app
-                .world
-                .resource::<HerdRegistry>()
-                .find(fauna_id)
-                .map_or_else(|| fauna_id.clone(), |herd| herd.species.clone());
-            format!("{name} already hunts the {herd}.")
-        }
-        LaborTarget::Extract { tile, material, .. } => {
-            format!(
-                "{name} already works the {material} at ({}, {}).",
-                tile.x, tile.y
-            )
-        }
-        _ => return None,
-    })
-}
-
-/// **WHO KEEPS THIS BAND'S ORDERS** - its chief by name, or its elders named for the band. `None`
-/// for a band with no leader. The band's own name is used where it has one, else its label.
-fn band_keeper(
-    app: &bevy::prelude::App,
-    band: &SelectedBand,
-) -> Option<core_sim::keep_on_hand::Keeper> {
-    let name = app
-        .world
-        .get::<BandName>(band.entity)
-        .map_or_else(|| band.label.clone(), |name| name.0.clone());
-    core_sim::keep_on_hand::Keeper::of(
-        app.world.get::<core_sim::BandLeadership>(band.entity),
-        &name,
-    )
+    core_sim::labor_commands::kept_on_hand_refusal(&app.world, band, target)
 }
 
 /// **What this row runs on when the player names no kit** — the herd's own default for a Hunt on a
@@ -4301,683 +3596,26 @@ fn handle_assign_labor(
     take_species: Vec<String>,
     move_with_herd: bool,
 ) {
-    // **DID THE PLAYER NAME A FLOOR AT ALL** — kept before the line below resolves absence to the
-    // default, because the `extract` arm answers *absence* differently on ground that never renews
-    // (issue #650, [`unnamed_deposit_floor`]). Every other row reads only the resolved value.
-    let player_named_a_floor = floor.is_some();
-    // **The floor FAILS CLOSED** (`docs/plan_harvest_floor.md` §4): absent means the default, but a
-    // value outside `0.0..=1.0` is rejected with its own failure event rather than clamped. A clamp
-    // would turn a typo into a quiet policy change on the one number the whole harvest model turns
-    // on — the `cancel_order` scope precedent.
-    let floor = match floor {
-        None => DEFAULT_ESCAPEMENT_FLOOR,
-        Some(value) if floor_is_valid(value) => value,
-        Some(value) => {
-            emit_command_failure(
-                app,
-                labor_event_kind(&role),
-                faction,
-                format!(
-                    "assign_labor floor must be a fraction of carrying capacity in 0.0..=1.0; got {value}."
-                ),
-            );
-            return;
-        }
+    // **One body, two callers**: the scenario loader's `labor` section replays this verb through the
+    // same function and gets the refusal back as a value. Here a refusal is also the feed line the
+    // player reads.
+    let order = core_sim::command_seam::AssignLaborOrder {
+        role,
+        workers,
+        target_x,
+        target_y,
+        fauna_id,
+        species,
+        floor,
+        kit_id,
+        take_species,
+        move_with_herd,
     };
-    let mut target = match role.to_ascii_lowercase().as_str() {
-        "forage" => match (target_x, target_y) {
-            (Some(x), Some(y)) => LaborTarget::Forage {
-                tile: UVec2::new(x, y),
-                floor,
-                // The optional species selection (Flora Roster S1): which named plant a
-                // `Cultivate`/`Sow` here should commit the patch to. Absent/blank = "pick the tile's
-                // dominant legal plant for me", the same absent-means-default convention the floor has.
-                species: species
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|key| !key.is_empty())
-                    .map(str::to_string),
-                // **WHICH PLANTS THIS CREW CARRIES HOME** (the selective gather) — sorted and
-                // deduplicated by the constructor, so the order the player typed cannot reach the
-                // snapshot. Empty = the whole basket, the same absent-means-default convention the
-                // floor and the commit species have. Its legality is judged below, against this
-                // tile's own basket, and **fails closed**.
-                take_species: TakeSelection::from_keys(&take_species),
-            },
-            _ => {
-                emit_command_failure(
-                    app,
-                    CommandEventKind::Forage,
-                    faction,
-                    "assign_labor forage requires <x> <y>.".to_string(),
-                );
-                return;
-            }
-        },
-        "hunt" => match fauna_id {
-            Some(id) if !id.trim().is_empty() => LaborTarget::Hunt {
-                fauna_id: id,
-                floor,
-                move_with_herd,
-            },
-            _ => {
-                emit_command_failure(
-                    app,
-                    CommandEventKind::Hunt,
-                    faction,
-                    "assign_labor hunt requires <herd_id>.".to_string(),
-                );
-                return;
-            }
-        },
-        "scout" => LaborTarget::Scout,
-        "warrior" => LaborTarget::Warrior,
-        // **The road-keeping role** (`docs/plan_standing_upkeep.md` §4.13) — the one keeping POOL
-        // left (`docs/plan_site_crews.md` §1: a site's own crew keeps it). What its hands hold is not
-        // a source row but the road TILES THIS BAND IS THE KEEPER OF — the ones it graded or paved,
-        // wherever the band has since walked (`routes` rule 2; the catchment is the keeper, never the
-        // band's own position) — and `0` stops keeping roads at all.
-        "roadwork" => LaborTarget::Roadwork,
-        // **THE TWO DEPOSIT BRANCHES' TAKE ROW** (`docs/plan_extraction.md` §6) — the only row in
-        // the game that pays no food, and the whole of what wood and stone cost: every hand here
-        // comes out of the same pool a Forage row spends.
-        //
-        // **It names a TILE AND A MATERIAL**, because one tile can hold two deposits and working
-        // the timber is not working the rock. The material rides the `species` token, which is the
-        // one free-form string this command already carries for a Forage row and means the same
-        // kind of thing there — *which of the things on this ground are you here for*.
-        "extract" => match (target_x, target_y, species.as_deref().map(str::trim)) {
-            (Some(x), Some(y), Some(material)) if !material.is_empty() => LaborTarget::Extract {
-                tile: UVec2::new(x, y),
-                material: material.to_string(),
-                // **The same validated floor a Forage or Hunt row gets when the player NAMED one** —
-                // struck once at the top of this function, so all three webs fail closed on the
-                // identical bound rather than three times over — and [`unnamed_deposit_floor`] when
-                // they named none, because on this web alone *absence* depends on the ground.
-                floor: if player_named_a_floor {
-                    floor
-                } else {
-                    unnamed_deposit_floor(app, UVec2::new(x, y), material)
-                },
-            },
-            _ => {
-                emit_command_failure(
-                    app,
-                    CommandEventKind::Extraction,
-                    faction,
-                    "assign_labor extract requires <x> <y> and a material (wood, stone)."
-                        .to_string(),
-                );
-                return;
-            }
-        },
-        // **A TILE IMPROVEMENT'S CREW** - the deposit row's twin for a source that yields nothing.
-        // It names a TILE AND A BRANCH (one tile can carry improvements of several tile branches);
-        // the branch rides the `species` token, as a deposit's material does. The crew keeps the
-        // improvement first, and distance is nothing special: a far crew is a work party.
-        "tile" => match (target_x, target_y, species.as_deref().map(str::trim)) {
-            (Some(x), Some(y), Some(branch)) if !branch.is_empty() => {
-                let ladder = app.world.resource::<LadderConfigHandle>().get();
-                let branch = BranchId::new(branch);
-                if !core_sim::is_tile_branch(&ladder, branch) {
-                    emit_command_failure(
-                        app,
-                        CommandEventKind::CancelOrder,
-                        faction,
-                        format!("'{branch}' is not a tile improvement branch this ladder knows."),
-                    );
-                    return;
-                }
-                LaborTarget::Tile {
-                    tile: UVec2::new(x, y),
-                    branch,
-                }
-            }
-            _ => {
-                emit_command_failure(
-                    app,
-                    CommandEventKind::CancelOrder,
-                    faction,
-                    "assign_labor tile requires <branch> <x> <y>.".to_string(),
-                );
-                return;
-            }
-        },
-        // **A BAND IMPROVEMENT'S CREW** - `band <branch> <workers>`: the tile row's twin for an
-        // improvement the band holds at its camp. It names the commanded BAND (the improvement is
-        // keyed by it and carried with it) and the ladder branch, which rides the `species` token as
-        // a tile row's does.
-        "band" => match (band_id, species.as_deref().map(str::trim)) {
-            (Some(band), Some(branch)) if !branch.is_empty() => {
-                let ladder = app.world.resource::<LadderConfigHandle>().get();
-                let branch = BranchId::new(branch);
-                if !core_sim::is_band_branch(&ladder, branch) {
-                    emit_command_failure(
-                        app,
-                        CommandEventKind::CancelOrder,
-                        faction,
-                        format!("'{branch}' is not a band improvement branch this ladder knows."),
-                    );
-                    return;
-                }
-                LaborTarget::Band {
-                    band: BandId(band),
-                    branch,
-                }
-            }
-            _ => {
-                emit_command_failure(
-                    app,
-                    CommandEventKind::CancelOrder,
-                    faction,
-                    "assign_labor band requires a band and a <branch>.".to_string(),
-                );
-                return;
-            }
-        },
-        other => {
-            emit_command_failure(
-                app,
-                CommandEventKind::CancelOrder,
-                faction,
-                format!("Unknown labor role '{}'.", other),
-            );
-            return;
-        }
-    };
-
-    let event_kind = match &target {
-        LaborTarget::Forage { .. } => CommandEventKind::Forage,
-        LaborTarget::Hunt { .. } => CommandEventKind::Hunt,
-        LaborTarget::Scout => CommandEventKind::Scout,
-        LaborTarget::Warrior => CommandEventKind::CancelOrder,
-        // **The road keepers have no web's channel to ride**, because the route branch declares no
-        // verb at all — traffic is the crew — so they report on the generic one, as the builders and
-        // the warriors do.
-        LaborTarget::Roadwork => CommandEventKind::CancelOrder,
-        LaborTarget::Extract { .. } => CommandEventKind::Extraction,
-        // A tile or band improvement has no web's channel; it reports on the generic one, as the
-        // pools do.
-        LaborTarget::Tile { .. } | LaborTarget::Band { .. } => CommandEventKind::CancelOrder,
-    };
-
-    // **THE SCOUT ROW IS A RANGE, NOT A HEAD COUNT** (#875): the count slot names the tiles past the
-    // band's local range the player wants to see, and the sim staffs the scouts that reach it.
-    if matches!(target, LaborTarget::Scout) {
-        handle_scouting_range(app, faction, band_id, workers, kit_id, event_kind);
-        return;
-    }
-
-    // Stance validation. Unassigning (`workers == 0`) is always allowed — a player must be able to
-    // abandon an investment even if its gates have since lapsed. **The improvement's gates are NOT
-    // re-run here** (issue #442): this command does not set an improvement, so re-asserting one the
-    // band already carries would refuse a crew change on a paused build — the trap §6 removes.
-    //
-    // **THE TAKE SELECTION IS REPAIRED HERE, NOT REFUSED** — see [`resolve_take_for_ground`]. It
-    // rides the same `workers > 0` guard as the gate above and for the same reason: an unassign must
-    // never be refused, and a row going to zero gathers nothing for a selection to be wrong about.
-    // The names it drops are announced once, beside the applied event at the foot of this function,
-    // because a pruned selection is a change the player did not ask for.
-    let mut pruned_take: Vec<String> = Vec::new();
-    // **A NEED ROW IS VALIDATED AT ZERO TOO**: it holds no standing workers whatever count is sent,
-    // so `workers == 0` is its ordinary shape and the migratory check must still run.
-    if workers > 0 || target.is_need_row() || target.is_staffed() {
-        if let Err(reason) = validate_labor_policy(app, faction, &target) {
-            emit_command_failure(app, event_kind, faction, reason);
-            return;
-        }
-        if let Some(reason) = never_renewing_dig_without_a_count(app, &target, workers) {
-            emit_command_failure(app, event_kind, faction, reason);
-            return;
-        }
-        if let LaborTarget::Forage {
-            tile, take_species, ..
-        } = &target
-        {
-            match resolve_take_for_ground(app, *tile, take_species) {
-                Err(reason) => {
-                    emit_command_failure(app, event_kind, faction, reason);
-                    return;
-                }
-                Ok(resolved) => {
-                    if !resolved.dropped.is_empty() {
-                        pruned_take = resolved.dropped;
-                        if let LaborTarget::Forage { take_species, .. } = &mut target {
-                            *take_species = resolved.selection;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // **The kit this crew works under, resolved at the command boundary and FAILING CLOSED.** An
-    // unknown id, or one whose `jobs` does not cover this role, is refused with a reason rather than
-    // quietly becoming the default: naming a kit is how the player compares tiers, so a silent
-    // substitution answers a different question than the one asked. **The band-wide roles resolve
-    // one too** — `kit_job()` answers for all four roles now, so `assign_labor … scout 3 kit none`
-    // is a real selection rather than a token ignored the way `species` and `floor` are on those
-    // rows.
-    //
-    // **Unassigning (`workers == 0`) resolves NO kit**, the same rule the policy validation above
-    // follows and for the same reason: a player must be able to abandon an investment even if what
-    // it was staffed with has since lapsed. `LaborAllocation::set_assignment` *drops* the assignment
-    // at zero workers and never reads the kit, so refusing here refused a command whose kit could
-    // not be used either way — and a roster edit that removed an id left every crew still holding it
-    // unclearable, locked in by a kit that no longer exists.
-    //
-    // **A HUNT row with no kit named resolves the HERD's default, not the job's.** The wire
-    // publishes that per-herd id (`HerdTelemetryState::default_kit_id`) and the compose sheet opens
-    // on it, so resolving the job default here would run Stalking on a warren whose sheet said
-    // Trapping — the silent substitution the refusal above exists to prevent, arriving through the
-    // absent-token door instead. `default_kits.hunt` stays the answer wherever there is no quarry
-    // to score: every other role, and a Hunt row whose herd or species will not resolve.
-    //
-    // ⛔ **A STANDING POOL CARRIES NO KIT AT ALL, AND NAMING ONE IS REFUSED**
-    // (`docs/plan_pool_toe.md` §4). A pool — `builders` or `roadwork` — says HOW MANY hands; the
-    // tools they carry follow from the rung each of its sites stands on and are settled band-wide
-    // by the player's marks. A kit stored on the row would reach nothing, so accepting the token
-    // would be the worst version of the defect: the player names a tool, the sim stores it, and
-    // nobody anywhere picks it up. **Refused rather than ignored**, by name.
-    //
-    // The fork is **here and not in `default_kit_for_target`**, because the question it answers is
-    // *"what does this command STORE"*, not *"which kit is the absent one"*: that helper returns a
-    // resolved `KitChoice` for the raid path too.
-    // **A STAFFED ROW IS NEVER UNSTAFFED BY A COUNT** (#871): its count is the player's Max and `0`
-    // means no Max; `stop_labor` ends the row.
-    let unstaffing = workers == 0 && !target.is_need_row() && !target.is_staffed();
-    let staffing_a_standing_pool = matches!(
-        target,
-        LaborTarget::Roadwork | LaborTarget::Tile { .. } | LaborTarget::Band { .. }
-    );
-    if staffing_a_standing_pool && kit_id.is_some() {
-        let refusal = match target {
-            LaborTarget::Tile { .. } => {
-                "a tile crew names no kit — its keeping tools follow from the rung the improvement stands on"
-            }
-            LaborTarget::Band { .. } => {
-                "a band crew names no kit — its keeping tools follow from the rung the improvement stands on"
-            }
-            _ => "a pool names no kit — the road keepers' tools follow from the rung each road stands on",
-        }
-        .to_string();
-        emit_command_failure(
-            app,
-            event_kind,
-            faction,
-            format!("assign_labor: {refusal}."),
-        );
-        return;
-    }
-    let crew_kit = if unstaffing || staffing_a_standing_pool {
-        None
-    } else {
-        let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-        let absent = default_kit_for_target(app, &equipment_cfg, &target);
-        match equipment_cfg.resolve_kit_or(kit_id.as_deref(), target.kit_job(), absent) {
-            Ok(kit) => Some(kit),
-            Err(reason) => {
-                emit_command_failure(app, event_kind, faction, format!("assign_labor: {reason}."));
-                return;
-            }
-        }
-    };
-
-    let Some(band) = select_starting_band(app, faction, band_id, "assign_labor", event_kind) else {
-        return;
-    };
-    if let Some(reason) = kept_on_hand_refusal(app, &band, &target) {
-        emit_command_failure(app, event_kind, faction, reason);
-        return;
-    }
-    if let Some(reason) = another_band_refusal(app, &target, band.entity) {
-        emit_command_failure(app, event_kind, faction, reason);
-        return;
-    }
-
-    // **The bench's crew is off the table.** `Make` draws idle workers onto a recipe, so a band with
-    // four hands at the bench has four fewer to send anywhere — see [`BandWorkforce::assignable`],
-    // which nets the bench out for the command path and the published `idleWorkers` alike. Not
-    // modelled as a `LaborTarget` because a bench is not an in-range source, and giving it one would
-    // put a fictitious row on every yield readout in the game.
-    let available = band_workforce(app, band.entity).assignable();
-
-    // **"IS THERE STILL ANYTHING OF OURS HERE?"**, asked before the allocation is borrowed
-    // (`docs/plan_standing_upkeep.md` §2.2). A source row survives losing its take crew — it is the
-    // band's *holding*, and the site's crew keeps what a band holds, not what it happens to be
-    // gathering — but a wild stand nobody has built anything on is not a holding, so unstaffing one
-    // clears its row here rather than leaving a `+0.00` row for the turn to sweep up. The same
-    // predicate retires a holding whose meter has finally rotted away, inside `advance_labor_allocation`.
-    let source_holds_something = {
-        let forage_registry = app.world.resource::<ForageRegistry>();
-        let herds = app.world.resource::<HerdRegistry>();
-        let deposits = app
-            .world
-            .resource::<core_sim::extraction::DepositRegistry>();
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
-        let tile_improvements = app.world.resource::<core_sim::TileImprovementRegistry>();
-        core_sim::source_has_a_meter_at_risk(
-            &target,
-            forage_registry,
-            herds,
-            deposits,
-            tile_improvements,
-            &ladder,
-        )
-    };
-
-    // **THE FIRST CREW PLACES THE IMPROVEMENT** at its branch's floor, so the row, the wire and a
-    // `build` all see ground something stands on. Another people's improvement is refused.
-    if let (true, LaborTarget::Tile { tile, branch }) =
-        (workers > 0 || target.is_staffed(), &target)
+    if let Err(refusal) =
+        core_sim::command_seam::apply_assign_labor(&mut app.world, faction, band_id, order)
     {
-        let placing_band = app.world.get::<BandId>(band.entity).copied();
-        if let Err(reason) = core_sim::build_gates::place_tile_improvement_root(
-            &mut app.world,
-            faction,
-            placing_band,
-            *tile,
-            *branch,
-        ) {
-            emit_command_failure(app, event_kind, faction, reason);
-            return;
-        }
+        report_refusal(app, faction, refusal);
     }
-    // **A BAND CREW PLACES THE BAND'S OWN IMPROVEMENT**, at the branch's floor. The row names the
-    // band the command was addressed to (the selected band), never another.
-    if let (
-        true,
-        LaborTarget::Band {
-            band: held_by,
-            branch,
-        },
-    ) = (workers > 0 || target.is_staffed(), &target)
-    {
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
-        if app.world.get::<BandId>(band.entity) != Some(held_by) {
-            emit_command_failure(
-                app,
-                event_kind,
-                faction,
-                format!(
-                    "Band {} is not the band this order was addressed to.",
-                    held_by.0
-                ),
-            );
-            return;
-        }
-        app.world
-            .resource_mut::<core_sim::TileImprovementRegistry>()
-            .bands_mut()
-            .place(*held_by, *branch, &ladder);
-    }
-
-    let kind_label = target.kind();
-    // **AN OFF-SITE CREW IS A SOWING CREW**: the root rung's rule refuses the ground and the placing
-    // rung admits it, so the crew exists to raise the farm - the sow is declared with it.
-    let off_site_sow = match &target {
-        LaborTarget::Forage { tile, .. } if workers > 0 || target.is_staffed() => {
-            off_site_placing_rung(app, faction, *tile)
-        }
-        _ => None,
-    };
-    let prior_staffing;
-    let (applied, assigned_total, dropped_row) = {
-        let mut allocation = band_allocation_mut(app, band.entity);
-        // The row's staffing BEFORE this order: `set_assignment`'s headroom counts these hands as
-        // free (it replaces them), so the clamp note must net them back out.
-        prior_staffing = allocation.workers_on(&target);
-        // **A STAFFED ROW TAKES THE COUNT AS ITS MAX** (#871); the crew is the sim's to decide and
-        // is restaffed immediately below. Every other kind keeps the crew the player named.
-        let applied = if target.is_staffed() {
-            allocation.set_staffed_row(target.clone(), (workers > 0).then_some(workers), crew_kit);
-            allocation.workers_on(&target)
-        } else {
-            allocation.set_assignment(target.clone(), workers, available, crew_kit)
-        };
-        // **ONE HERD AT A TIME** — migration mode on this hunt row turns it off on the band's others.
-        if let LaborTarget::Hunt {
-            fauna_id,
-            move_with_herd: true,
-            ..
-        } = &target
-        {
-            allocation.clear_move_with_herd_except(Some(fauna_id));
-        }
-        // **Nothing built, nothing DECLARED, nobody on it — the band's business here is over.**
-        // The **declared build** is part of the test: a `Cultivate` declared this turn has no progress
-        // on its meter yet, so dropping the row on the ground's answer alone would abandon a build
-        // the player had just ordered (`docs/plan_standing_upkeep.md` §2.5 — an entry requires a
-        // row, so dropping the row would drop the entry with it).
-        let queued = BuildSource::of(&target).is_some_and(|source| allocation.has_build(&source));
-        // **A NEED ROW IS KEPT BY ITS FLAG**, so a zero head count never drops it: it exists at zero
-        // by design (`docs/plan_roaming_bands.md` §Hunting by need).
-        let dropped_row = if applied == 0
-            && !source_holds_something
-            && !queued
-            && !target.is_need_row()
-            && !target.is_staffed()
-        {
-            allocation.drop_source_row(&target)
-        } else {
-            None
-        };
-        (applied, allocation.assigned_total(), dropped_row)
-    };
-    // **THE SNAPSHOT SHOWS THE NEW CREW THE MOMENT THE PLAYER ACTS** (#871): a staffed row's crew is
-    // the sim's, so the order restaffs the band here instead of waiting for the turn.
-    // A player-set crew (Scout, Warrior, Builders) shrinks the pool the sim staffs from, so it
-    // restaffs too and the sources give up those hands at once.
-    restaff_and_reseed(app, band.entity);
-    let applied = if target.is_staffed() {
-        band_allocation_mut(app, band.entity).workers_on(&target)
-    } else {
-        applied
-    };
-    // **An unassigned far row sends its whole caravan walking home** — the load and every walker's pack —
-    // rather than losing what was on the road with the row.
-    if let Some(row) = dropped_row.as_ref() {
-        core_sim::bring_the_dropped_party_home(&mut app.world, band.entity, row);
-    }
-    if let (Some(rung), true) = (off_site_sow, applied > 0 || target.is_staffed()) {
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
-        let farmed = match &target {
-            LaborTarget::Forage { tile, .. } => app
-                .world
-                .resource::<ForageRegistry>()
-                .patch(*tile)
-                .is_some_and(|patch| patch.standing().holds_at_or_above(ladder.rung(rung))),
-            _ => false,
-        };
-        if !farmed {
-            let mut allocation = band_allocation_mut(app, band.entity);
-            if let Some(source) = BuildSource::of(&target) {
-                allocation.declare_build(source, BuildJob::Climb(rung));
-            }
-            // The sim staffs the declared build from the band's idle hands.
-            restaff_and_reseed(app, band.entity);
-        }
-    }
-    // **A TILE CREW ROW IS THE ORDER FOR THE BRANCH'S FIRST BUILD** — see
-    // [`declare_the_branchs_first_build`].
-    if workers > 0 || target.is_staffed() {
-        declare_the_branchs_first_build(app, faction, &target);
-    }
-    // The seed must price the dip of whatever this band has **queued** here, rather than the
-    // undipped stance — a build in flight is the queue's, not the row's. Read after the allocation
-    // borrow is released, because resolving the declaration against the ground needs both webs'
-    // registries.
-    let improvement = build_rung_on_source_at(app, band.entity, &target);
-    // Show the source's expected yield immediately (workers added/removed OR stance changed — every
-    // shape of this command that moves the number): without the seed the row reads `+0.00` until the
-    // player advances a turn.
-    seed_source_yield(app, band.entity, &target, improvement, applied);
-
-    let tick = app.world.resource::<SimulationTick>().0;
-    // **ONE LINE FOR THE NAMES THE GROUND TOOK OFF THE SELECTION**, ahead of the applied row it
-    // explains. It is stated because the player did not ask for it; it is stated *briefly* because
-    // the row underneath already says what the crew now carries.
-    if !pruned_take.is_empty() {
-        let names = pruned_take.join(", ");
-        // **`band=` NAMES THE WORK BOARD THIS NARROWING HAPPENED ON** — the token the event dock's
-        // per-row *"Work tab"* link reads (`systems::labor::band_detail_token` says why it is the
-        // durable `BandId` and never the entity). Read off the selected band rather than the
-        // command's own argument, because that argument is absent whenever the player let the
-        // default-band picker choose.
-        //
-        // **It sits BEFORE `dropped=`, and it has to.** Detail tokens are space-delimited
-        // `key=value`, so the comma-joined display names can only be the trailing remainder
-        // (`.claude/rules/core_sim/event-feed.md`) — anything appended after them is swallowed by
-        // that value.
-        let band_token = app
-            .world
-            .get::<BandId>(band.entity)
-            .map(|id| format!(" band={}", id.0))
-            .unwrap_or_default();
-        push_command_event(
-            app,
-            tick,
-            event_kind,
-            faction,
-            format!("{} no longer stands here — dropped from the take", names),
-            Some(format!(
-                "status=pruned reason=not_here role={}{} dropped={}",
-                kind_label, band_token, names
-            )),
-        );
-    }
-    // A need row takes no standing hands, so there is nothing to clamp: the count sent is ignored.
-    let clamp_note = if target.is_staffed() {
-        // **A staffed row's count is the Max and the crew is the sim's** (#871): the line states
-        // both rather than a clamp that is not one.
-        if workers > core_sim::NO_CREW_ON_THIS_ACTIVITY {
-            format!(" (max {workers})")
-        } else {
-            " (no max)".to_string()
-        }
-    } else if applied < workers && !target.is_need_row() {
-        // **`applied` IS THE HEADROOM when clamped**: the hands free for THIS source after the bench,
-        // the walkers and every other row — but it includes the hands already on this row, which
-        // were not idle. The idle count is the growth over the row's prior staffing.
-        let free = applied.saturating_sub(prior_staffing);
-        if free == 0 {
-            format!(" (clamped from {} — no idle hands)", workers)
-        } else {
-            format!(" (clamped from {} — only {} idle)", workers, free)
-        }
-    } else {
-        String::new()
-    };
-    push_band_event(
-        app,
-        tick,
-        event_kind,
-        faction,
-        band.id,
-        format!("{} {} x{}{}", band.label, kind_label, applied, clamp_note),
-        Some(format!(
-            "status=applied role={} workers={} assigned_total={} available={}",
-            kind_label, applied, assigned_total, available
-        )),
-    );
-}
-
-/// **STATE A BAND'S SCOUTING RANGE** (#875) - `assign_labor <faction> <band> scout <tiles> [kit <k>]`.
-/// `tiles` is how far past the band's local range (`supply_network_config.reach_tiles`) the player
-/// wants to see, clamped to `labor_config.scout.range_past_local_max`; `0` drops the Scout row. The
-/// scouts that reach it are the sim's ([`core_sim::staffing`]); the band is restaffed here so the
-/// snapshot shows the crew and the reach the moment the player acts.
-fn handle_scouting_range(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    band_id: Option<u64>,
-    requested_tiles: u32,
-    kit_id: Option<String>,
-    event_kind: CommandEventKind,
-) {
-    // A kit is resolved only when the range is above nothing (stopping scouting is never refused
-    // over a kit that has since left the roster) and only when one was named: the standing row
-    // keeps its kit otherwise, and a new row reads the job's default.
-    let kit = match kit_id.as_deref() {
-        Some(id) if requested_tiles > core_sim::NO_CREW_ON_THIS_ACTIVITY => {
-            let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-            let absent = equipment_cfg.no_kit();
-            match equipment_cfg.resolve_kit_or(Some(id), LaborTarget::Scout.kit_job(), absent) {
-                Ok(kit) => Some(kit),
-                Err(reason) => {
-                    emit_command_failure(
-                        app,
-                        event_kind,
-                        faction,
-                        format!("assign_labor: {reason}."),
-                    );
-                    return;
-                }
-            }
-        }
-        _ => None,
-    };
-    let Some(band) = select_starting_band(app, faction, band_id, "assign_labor", event_kind) else {
-        return;
-    };
-    let cap = app
-        .world
-        .resource::<LaborConfigHandle>()
-        .get()
-        .scout
-        .range_past_local_max;
-    let range = requested_tiles.min(cap);
-    // **A tribe member's scouting RANGE is the tribe's** (#862): `tribe_scout` sets it. The kit is
-    // still the band's, so a command that restates the band's current range (the kit picker's)
-    // is accepted and applies the kit alone; one that asks for a different range is refused.
-    let in_a_tribe = band.id.is_some_and(|id| {
-        app.world
-            .resource::<core_sim::TribeRegistry>()
-            .tribe_of(id)
-            .is_some()
-    });
-    let current_range = band_allocation_mut(app, band.entity).scouting_range_tiles();
-    if in_a_tribe && range != current_range {
-        emit_command_failure(
-            app,
-            event_kind,
-            faction,
-            format!(
-                "{}'s scouting range is set by its tribe - use tribe_scout (scouting_set_by_tribe).",
-                band.label
-            ),
-        );
-        return;
-    }
-    band_allocation_mut(app, band.entity).set_scouting_range(range, kit);
-    restaff_and_reseed(app, band.entity);
-    let (staffed, reach) = {
-        let allocation = band_allocation_mut(app, band.entity);
-        (
-            allocation.workers_on(&LaborTarget::Scout),
-            allocation.scouting_reach_tiles(),
-        )
-    };
-    let tick = app.world.resource::<SimulationTick>().0;
-    let clamp_note = if range < requested_tiles {
-        format!(" (clamped from {requested_tiles} - the most is {cap})")
-    } else {
-        String::new()
-    };
-    push_band_event(
-        app,
-        tick,
-        event_kind,
-        faction,
-        band.id,
-        format!(
-            "{} scouting range +{range} tiles{clamp_note}: {staffed} scouts reach +{reach}",
-            band.label
-        ),
-        Some(format!(
-            "status=applied role=scout range={range} reach={reach} workers={staffed}"
-        )),
-    );
 }
 
 /// Order a band to travel toward a target tile at `band_move_tiles_per_turn`/turn (Early-Game
@@ -7078,7 +5716,7 @@ fn cancel_party_standing_in_camp(
     })
 }
 
-/// Resolve a [`BandId`] to a faction's own [`Expedition`] (mirrors [`resolve_starting_unit_entity`]
+/// Resolve a [`BandId`] to a faction's own [`Expedition`] (mirrors [`resolve_starting_unit_entity`](core_sim::labor_commands::resolve_starting_unit_entity)
 /// but gates on the `Expedition` component + faction match rather than merely `StartingUnit`).
 ///
 /// **A detached party is a band and carries a `BandId` like any other** — both expedition spawns
@@ -7442,149 +6080,35 @@ fn handle_answer_fork(
     }
 }
 
-/// **The forage source at `tile`, as the improvement commands name it.** `same_source` matches on
-/// the tile alone, so the stance, crop and take-selection slots are placeholders — this exists so
-/// the two build verbs cannot accidentally *carry* a stance, a crop or a selection into
-/// `queue_build_on_working_bands`, and so "the command names a source, not an assignment" is stated
-/// once.
-fn forage_source(tile: UVec2) -> LaborTarget {
-    LaborTarget::Forage {
-        tile,
-        floor: SOURCE_NAMED_NOT_ASSIGNED,
-        species: None,
-        take_species: TakeSelection::EVERYTHING,
-    }
-}
-
-/// **Gate a plant build verb against the crops the CREWS actually hold**, not against the auto-pick.
-///
-/// `cultivate`/`sow` name a tile and nothing else, so they used to hand [`validate_improvement`] a
-/// `species: None` target — which judges what `resolve_committed_species` would pick *for* the
-/// player. The crop that will really be committed is the one riding each band's
-/// `LaborTarget::Forage::species`, and if this rung refuses it the labor arm silently declines to
-/// commit: `patch.species` stays `None`, the rung's `eligible` gate is false, and **the build meter
-/// never advances, with no player-facing feedback**. So every distinct crop held on the source is
-/// judged, and the first refusal is the command's.
-///
-/// **Every crop, not just the first band's** — unlike the retired `abandon_improvement`'s "the first band answers
-/// for all of them", which is sound because at most one *improvement* is ever in flight on a source.
-/// Crops are per band and can genuinely differ, and a second band's illegal pick stalls exactly the
-/// same way the first's would.
-///
-/// With **no band working the source** the list is `[None]`, so the auto-pick is judged exactly as
-/// before and the gates above the species check (knowledge, phase, ownership, the site rule) keep
-/// their precedence over the command's own "no band is foraging" rejection.
-fn validate_forage_improvement_for_crews(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    tile: UVec2,
-    improvement: VerbId,
-) -> Result<(), String> {
-    // The crop list is collected first (a `World::query` needs unique access), so the validation
-    // below sees the same immutable world every other gate does.
-    for species in crops_named_on_forage_source(app, faction, tile) {
-        let target = LaborTarget::Forage {
-            tile,
-            floor: SOURCE_NAMED_NOT_ASSIGNED,
-            species,
-            take_species: TakeSelection::EVERYTHING,
-        };
-        validate_improvement(app, faction, &target, improvement)?;
-    }
-    Ok(())
-}
-
-/// The distinct crop selections this faction's bands carry on the forage source at `tile`, in a
-/// stable order. `[None]` when nobody works it — see [`validate_forage_improvement_for_crews`] for
-/// why that is the *no-crew* answer rather than an empty list.
-fn crops_named_on_forage_source(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    tile: UVec2,
-) -> Vec<Option<String>> {
-    let source = forage_source(tile);
-    let mut crops: Vec<Option<String>> = Vec::new();
-    for (_, allocation) in app
-        .world
-        .query::<(&PopulationCohort, &LaborAllocation)>()
-        .iter(&app.world)
-        .filter(|(cohort, _)| cohort.faction == faction)
-    {
-        for assignment in &allocation.assignments {
-            if !assignment.target.same_source(&source) || assignment.workers == 0 {
-                continue;
-            }
-            let LaborTarget::Forage { species, .. } = &assignment.target else {
-                continue;
-            };
-            if !crops.contains(species) {
-                crops.push(species.clone());
-            }
-        }
-    }
-    if crops.is_empty() {
-        crops.push(None);
-    }
-    crops
-}
-
-/// **A band by its durable id, and the tile it is standing on** — the pair the road verbs need, so
-/// the lookup and the position cannot come from two different frames.
-///
-/// **Resolves only the commanding faction's own bands.** A band id is a durable, guessable handle,
-/// so a resolver that matches on the id alone hands another faction's band to whatever asked. The
-/// road verbs already refuse a foreign band by name in [`road_verb_refusal`] — that refusal stays,
-/// because it is the message the player reads; this gate is the seam that makes the *next* caller
-/// safe without having to remember.
+/// See [`core_sim::command_seam::band_entity_and_tile`].
 fn band_entity_and_tile(
     app: &mut bevy::prelude::App,
     faction: FactionId,
     band: BandId,
 ) -> Option<(Entity, UVec2)> {
-    let mut query = app.world.query::<(Entity, &PopulationCohort, &BandId)>();
-    let (entity, current_tile) = query
-        .iter(&app.world)
-        .find(|(_, cohort, id)| **id == band && cohort.faction == faction)
-        .map(|(entity, cohort, _)| (entity, cohort.current_tile))?;
-    let position = app.world.get::<Tile>(current_tile)?.position;
-    Some((entity, position))
+    core_sim::command_seam::band_entity_and_tile(&mut app.world, faction, band)
 }
 
-/// ⛔ **`grade <faction> <band> <x> <y>` / `pave …` — THE ROUTE BRANCH'S TWO TILE VERBS.**
-///
-/// `cultivate`/`sow`'s grammar with a **band** token in it, because a road is a per-tile improvement
-/// with a **keeper** and no labor row (`docs/plan_standing_upkeep.md` §4.13b). Issuing one does two
-/// things at once, and they are the same act: it **declares the job** (a `BuildDeclaration` on that
-/// band's queue, raised by the builders staffing deals it) and it **names the keeper** —
-/// exactly what `cultivate` does to a patch's owner.
-///
-/// **ONE KEEPER PER TILE, NO SHARES.** A tile another band already keeps is refused by name, which
-/// is what makes *"several bands each pay a part"* unrepresentable rather than merely discouraged —
-/// and what makes *"one band keeps half the tiles between two camps and another keeps the rest"* the
-/// state the model is built around.
-///
-/// **RE-ISSUING IT ON A ROAD NOBODY KEEPS IS ADOPTION**, and deliberately not a second verb. That is
-/// why the *"already at that rung"* refusal is scoped to a road **this band already keeps**: a
-/// keeperless dirt road is a road to pick up, not a job already done.
-///
-/// # THE REFUSALS, EACH NAMED
-///
-/// | | |
-/// |---|---|
-/// | no band by that id, or not yours | you cannot commit somebody else's people |
-/// | no road on that tile at all | there is nothing to grade; walk it first |
-/// | not yet a trail / not yet a dirt road | the rung beneath has to stand |
-/// | the knowledge is not learned | `roadbuilding` gates `grade`, `paving` gates `pave` |
-/// | another band keeps it | one keeper per tile |
-/// | you already keep it at that rung or above | there is nothing left to raise |
-///
-/// # ⛔ DISTANCE IS PRICED HERE AND REFUSED NOWHERE
-///
-/// The band's hex distance to the tile is quoted through [`core_sim::remoteness_multiplier`] — which
-/// asks [`core_sim::road_keeping_range`], the one seam — and **stamped on the road**, where it prices
-/// both the build pile and the standing upkeep for the life of the job. There is deliberately **no
-/// range refusal**: Ray, *"already forage and hunting have different work ranges, expeditions are even
-/// farther. I don't think it makes sense to restrict it."*
+// The build verbs moved to the command seam; their server tests still name these. Kept below
+// the production builders: `harness_map_seed_guard` scans from the first `#[cfg(test)]` line.
+#[cfg(test)]
+use core_sim::{BranchId, TakeSelection, VerbId};
+
+/// The build gate over an `App`, for the tests that drive it directly; the `build` handler calls
+/// [`core_sim::build_gates::validate_improvement`] through the command seam.
+#[cfg(test)]
+fn validate_improvement(
+    app: &bevy::prelude::App,
+    faction: FactionId,
+    target: &LaborTarget,
+    improvement: VerbId,
+) -> Result<(), String> {
+    core_sim::build_gates::validate_improvement(&app.world, faction, target, improvement)
+}
+
+/// A `grade` / `pave` line for the tests that drive the road verb directly: the `build` handler
+/// with the road's fields.
+#[cfg(test)]
 fn handle_road_verb(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -7592,237 +6116,16 @@ fn handle_road_verb(
     tile: UVec2,
     improvement: VerbId,
 ) {
-    let verb = improvement.as_str();
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let Some(destination) = ladder
-        .rung_for_verb(improvement)
-        .map(core_sim::RungDef::rung_id)
-    else {
-        return;
-    };
-    let refusal = road_verb_refusal(app, faction, band_id, tile, improvement);
-    if let Err(reason) = refusal {
-        warn!(
-            target: "shadow_scale::command",
-            command = verb,
-            faction = %faction.0,
-            band_id,
-            x = tile.x,
-            y = tile.y,
-            reason = %reason,
-            "command.road.rejected"
-        );
-        emit_command_failure(app, CommandEventKind::Road, faction, reason);
-        return;
-    }
-
-    // **The keeper and the remoteness quote, written together**, because the price is a fact about
-    // the moment the band took the road on — `ForagePatch::field_cost_multiplier`'s discipline.
-    let band = BandId(band_id);
-    let Some((entity, band_tile)) = band_entity_and_tile(app, faction, band) else {
-        emit_command_failure(
-            app,
-            CommandEventKind::Road,
-            faction,
-            format!("Band {band_id} is not standing anywhere the simulation can see."),
-        );
-        return;
-    };
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let (width, wrap) = {
-        let registry = app.world.resource::<TileRegistry>();
-        let config = app.world.resource::<SimulationConfig>();
-        (registry.width, config.map_topology.wrap_horizontal)
-    };
-    let distance = hex_distance_wrapped(band_tile, tile, width, wrap);
-    let remoteness = core_sim::remoteness_multiplier(distance, &ladder);
-    {
-        let mut roads = app.world.resource_mut::<core_sim::RoadRegistry>();
-        let Some(road) = roads.road_mut(tile) else {
-            return;
-        };
-        road.take_keeper(core_sim::RoadKeeper { faction, band }, remoteness, &ladder);
-    }
-
-    // **The declaration**, on that band's own queue. A road names no labor row, so this is the
-    // band-addressed twin of `queue_build_on_working_bands` — and there is no yield seed to re-strike
-    // beside it, because a road pays into no take.
-    {
-        let mut allocation = band_allocation_mut(app, entity);
-        allocation.declare_build(BuildSource::Road(tile), BuildJob::Climb(destination));
-    }
-    restaff_and_reseed(app, entity);
-
-    let tick = app.world.resource::<SimulationTick>().0;
-    info!(
-        target: "shadow_scale::command",
-        command = verb,
-        faction = %faction.0,
-        band_id,
-        x = tile.x,
-        y = tile.y,
-        distance,
-        remoteness,
-        "command.road.declared"
-    );
-    push_command_event(
+    handle_build_rung(
         app,
-        tick,
-        CommandEventKind::Road,
         faction,
-        format!(
-            "Band {band_id} takes on the road at ({}, {}) — {verb}",
-            tile.x, tile.y
-        ),
-        Some(format!(
-            "status=declared action={verb} x={} y={} band={band_id} distance={distance}",
-            tile.x, tile.y
-        )),
-    );
-}
-
-/// **Every refusal `grade` / `pave` can produce, in the order they are asked.** Split out so the
-/// command and its tests read one list — the `validate_cultivate` convention one branch over.
-fn road_verb_refusal(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    band_id: u64,
-    tile: UVec2,
-    improvement: VerbId,
-) -> Result<(), String> {
-    let band = BandId(band_id);
-    let holds_band = {
-        let mut query = app.world.query::<(&PopulationCohort, &BandId)>();
-        query
-            .iter(&app.world)
-            .any(|(cohort, id)| *id == band && cohort.faction == faction)
-    };
-    if !holds_band {
-        return Err(format!(
-            "Band {band_id} is not one of your people, so it cannot take on a road."
-        ));
-    }
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let Some(rung) = ladder.rung_for_verb(improvement) else {
-        return Err(format!(
-            "'{}' is not a build verb this ladder knows.",
-            improvement.as_str()
-        ));
-    };
-    core_sim::build_gates::validate_road_verb(&app.world, faction, band, tile, rung)
-}
-
-/// ⛔ **`fell` / `coppice` / `quarry` — THE TWO DEPOSIT BRANCHES' THREE TILE VERBS**
-/// (`docs/plan_extraction.md` §4).
-///
-/// **It is `handle_cultivate`'s body, not `handle_road_verb`'s, and the difference is who the keeper
-/// is.** A road belongs to nobody until a band is named, which is why the route verbs carry a band
-/// token and stamp a `RoadKeeper`. A **working belongs to a camp exactly as a patch does** — the one
-/// place this arc deliberately departs from the route branch — so its keeper is already known: it is
-/// whichever bands hold an `extract` row on the source. The declaration therefore goes on **every**
-/// band of the faction working it, through the same [`queue_build_on_working_bands`] the plant and
-/// animal verbs use, and there is nothing for the command to name.
-///
-/// ⛔ **THE MATERIAL IS HALF THE ADDRESS.** A working's key is `(tile, material)` because one hex can
-/// hold two — a wooded highland holds timber *and* rock — so the target is built with the material
-/// the command carried and `LaborTarget::same_source` keys on both. Raising the timber on a tile is
-/// not raising its rock, and the declared build that lands says which.
-///
-/// **The gates are [`validate_improvement`]'s, not a second copy.** Its `Extract` arm refuses a verb
-/// aimed at the wrong kind of source and then defers to `build_gates::validate_deposit_verb`, which resolves the
-/// ground through the same `rung_site_refusal` seam a `sow` goes through and the knowledge off the
-/// rung record's own `unlock_discovery_id`. So the command's refusal and the turn's
-/// `deposit_head_gate` cannot drift into disagreeing about which ground takes a working.
-///
-/// # THE REFUSALS, EACH NAMED
-///
-/// | | |
-/// |---|---|
-/// | that material does not come out of the ground | an unknown key, refused by name |
-/// | the verb belongs to the other ladder | `quarry` on wood, `fell` on stone |
-/// | there is no tile there | an off-map coordinate |
-/// | the ground carries too little | `extraction:quarry`'s `min_deposit_capacity` — a scatter is not a body of rock |
-/// | the knowledge is not learned | `woodcraft` → `fell`, `conservationism` → `coppice`, `quarrying` → `quarry` |
-/// | no band is working the deposit | the keeper is the crew, so there has to be one |
-fn handle_deposit_verb(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    tile: UVec2,
-    material: &str,
-    improvement: VerbId,
-) {
-    let verb = improvement.as_str();
-    let target = LaborTarget::Extract {
-        tile,
-        material: material.to_string(),
-        // **Named to be VALIDATED, never assigned** — `SOURCE_NAMED_NOT_ASSIGNED`'s convention: the
-        // gate below and `LaborTarget::same_source` key on the tile and the material alone, so this
-        // target says *which working* and nothing about how it is worked.
-        floor: SOURCE_NAMED_NOT_ASSIGNED,
-    };
-    if let Err(reason) = validate_improvement(app, faction, &target, improvement) {
-        warn!(
-            target: "shadow_scale::command",
-            command = verb,
-            faction = %faction.0,
-            x = tile.x,
-            y = tile.y,
-            material,
-            reason = %reason,
-            "command.deposit.rejected"
-        );
-        emit_command_failure(app, CommandEventKind::Extraction, faction, reason);
-        return;
-    }
-    let declared_rung = app
-        .world
-        .resource::<LadderConfigHandle>()
-        .get()
-        .rung_for_verb(improvement)
-        .map(core_sim::RungDef::rung_id);
-    let Some(declared_rung) = declared_rung else {
-        return;
-    };
-    let declared =
-        queue_build_on_working_bands(app, faction, &target, BuildJob::Climb(declared_rung));
-    if declared == 0 {
-        emit_command_failure(
-            app,
-            CommandEventKind::Extraction,
-            faction,
-            format!(
-                "No band is working the {material} at ({}, {}). Put a crew on the deposit first, \
-                 then {verb} it.",
-                tile.x, tile.y
-            ),
-        );
-        return;
-    }
-
-    let tick = app.world.resource::<SimulationTick>().0;
-    info!(
-        target: "shadow_scale::command",
-        command = verb,
-        faction = %faction.0,
-        x = tile.x,
-        y = tile.y,
-        material,
-        bands = declared,
-        "command.deposit.declared"
-    );
-    push_command_event(
-        app,
-        tick,
-        CommandEventKind::Extraction,
-        faction,
-        format!(
-            "Raising the {material} working at ({}, {}) — {verb}",
-            tile.x, tile.y
-        ),
-        Some(format!(
-            "status=declared action={verb} x={} y={} material={material} bands={declared}",
-            tile.x, tile.y
-        )),
+        BuildRungRequest {
+            verb: improvement.as_str().to_string(),
+            band_id: Some(band_id),
+            target_x: Some(tile.x),
+            target_y: Some(tile.y),
+            ..BuildRungRequest::default()
+        },
     );
 }
 
@@ -7921,355 +6224,167 @@ fn handle_abandon_working(
     );
 }
 
-/// **DECLARE A BUILD — the one handler behind `build <verb> ...`** (issue #175). The verb is resolved
-/// against the loaded ladder; **the rung's branch declares the source kind**, and the kind — never
-/// the verb's name — decides what the line must carry:
-///
-/// | the verb's source kind | the line names | a band |
-/// | --- | --- | --- |
-/// | patch | a tile | refused: the keepers are the bands already foraging it |
-/// | herd | a herd id, or the tile it stands on (a pen is a place) | refused, for the same reason |
-/// | deposit | a tile **and** a material (one hex holds two workings) | refused, for the same reason |
-/// | road | a tile | **required**: a road has no work row, so the keeper is said out loud |
-///
-/// Nothing is built outright: the declaration is declared on every band working
-/// the source and raised by the builders staffing deals it — the old early-claim that snapped a
-/// meter to done is gone because it let the player skip the investment, which is the whole decision.
-/// The gates are [`validate_improvement`]'s (knowledge, ownership, species, ground), composed from the
-/// rung's own properties. Every refusal and the declaration itself ride the **rung's** `feed_channel`.
 fn handle_build_rung(app: &mut bevy::prelude::App, faction: FactionId, request: BuildRungRequest) {
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let verb = request.verb.trim().to_ascii_lowercase();
-    let Some(rung) = ladder.rung_for_verb(VerbId::new(&verb)) else {
-        let known: Vec<&str> = ladder
-            .branches_in_config_order()
-            .into_iter()
-            .flat_map(|branch| ladder.rungs_of(branch))
-            .filter_map(|rung| rung.verb.as_deref())
-            .collect();
-        reject_build(
-            app,
-            faction,
-            CommandEventKind::CancelOrder,
-            &verb,
-            format!(
-                "There is no build verb '{verb}'. This ladder's verbs are: {}.",
-                known.join(", ")
-            ),
-        );
-        return;
-    };
-    let channel = rung
-        .feed_channel_kind()
-        .expect("validate requires a feed channel on every built rung");
-    if let Some(named) = request.branch.as_deref() {
-        if BranchId::new(named) != rung.branch {
-            reject_build(
-                app,
-                faction,
-                channel,
-                &verb,
-                format!(
-                    "'{verb}' belongs to the {} branch, not '{named}'.",
-                    rung.branch.as_str()
-                ),
-            );
-            return;
-        }
-    }
-    let Some(improvement) = rung.verb_id() else {
-        reject_build(
-            app,
-            faction,
+    match core_sim::command_seam::apply_build_rung(&mut app.world, faction, &request) {
+        Ok(declared) => report_build_declared(app, faction, declared),
+        Err(CommandRefusal::Build {
             channel,
-            &verb,
-            format!("The simulation has no builder for '{verb}' yet."),
-        );
-        return;
-    };
-    let kind = ladder.source_kind(rung.branch);
-    let tile = request
-        .target_x
-        .zip(request.target_y)
-        .map(|(x, y)| UVec2::new(x, y));
-    if request.band_id.is_some() && !matches!(kind, Some(SourceKind::Road | SourceKind::Band)) {
-        reject_build(
-            app,
-            faction,
-            channel,
-            &verb,
-            format!(
-                "'{verb}' names no band: its keepers are the bands already working the source."
-            ),
-        );
-        return;
-    }
-    let target = match kind {
-        Some(SourceKind::Patch) => match (tile, &request.herd_id, &request.material) {
-            (Some(tile), None, None) => forage_source(tile),
-            _ => {
-                reject_build(
-                    app,
-                    faction,
-                    channel,
-                    &verb,
-                    format!("'{verb}' names a tile: `build {verb} <faction> <x> <y>`."),
-                );
-                return;
-            }
-        },
-        Some(SourceKind::Herd) => {
-            let herd_id = match (&request.herd_id, tile) {
-                (Some(herd_id), None) => Some(herd_id.clone()),
-                (None, Some(tile)) => app
-                    .world
-                    .resource::<HerdRegistry>()
-                    .herds
-                    .iter()
-                    .find(|herd| herd.position() == tile)
-                    .map(|herd| herd.id.clone()),
-                _ => None,
-            };
-            let Some(fauna_id) = herd_id else {
-                reject_build(
-                    app,
-                    faction,
-                    channel,
-                    &verb,
-                    format!(
-                        "'{verb}' names a herd, or the tile one stands on: \
-                         `build {verb} <faction> <herd_id>` or `<x> <y>`."
-                    ),
-                );
-                return;
-            };
-            LaborTarget::Hunt {
-                fauna_id,
-                floor: SOURCE_NAMED_NOT_ASSIGNED,
-                move_with_herd: false,
-            }
-        }
-        Some(SourceKind::Deposit) => {
-            let (Some(tile), Some(material)) = (tile, request.material.as_deref()) else {
-                reject_build(
-                    app,
-                    faction,
-                    channel,
-                    &verb,
-                    format!(
-                        "'{verb}' names a tile AND a material, because one hex can hold two \
-                         workings: `build {verb} <faction> <x> <y> <material>`."
-                    ),
-                );
-                return;
-            };
-            handle_deposit_verb(app, faction, tile, material, improvement);
-            return;
-        }
-        Some(SourceKind::Road) => {
-            let (Some(band_id), Some(tile)) = (request.band_id, tile) else {
-                reject_build(
-                    app,
-                    faction,
-                    channel,
-                    &verb,
-                    format!(
-                        "'{verb}' names the band that will keep the tile, because a road has no \
-                         work row to read a keeper off: `build {verb} <faction> <band> <x> <y>`."
-                    ),
-                );
-                return;
-            };
-            handle_road_verb(app, faction, band_id, tile, improvement);
-            return;
-        }
-        Some(SourceKind::Tile) => match tile {
-            Some(tile) => LaborTarget::Tile {
-                tile,
-                branch: rung.branch,
-            },
-            None => {
-                reject_build(
-                    app,
-                    faction,
-                    channel,
-                    &verb,
-                    format!("'{verb}' names a tile: `build {verb} <faction> <x> <y>`."),
-                );
-                return;
-            }
-        },
-        // **A BAND IMPROVEMENT IS BUILT ON THE BAND ITSELF**: `build <verb> <faction> <band>`. The
-        // text grammar reads a lone number as a herd id (`parse_build_rung_tail` cannot know which
-        // verbs are band verbs), so the band is the explicit `band_id` or that lone number.
-        Some(SourceKind::Band) => {
-            let named = request.band_id.or_else(|| {
-                request
-                    .herd_id
-                    .as_deref()
-                    .and_then(|token| token.parse::<u64>().ok())
-            });
-            match (named, tile, &request.material) {
-                (Some(band), None, None) => LaborTarget::Band {
-                    band: BandId(band),
-                    branch: rung.branch,
-                },
-                _ => {
-                    reject_build(
-                        app,
-                        faction,
-                        channel,
-                        &verb,
-                        format!("'{verb}' names a band: `build {verb} <faction> <band>`."),
-                    );
-                    return;
-                }
-            }
-        }
-        None => {
-            reject_build(
-                app,
-                faction,
-                channel,
-                &verb,
-                format!("'{verb}' is not a verb this server can place on a source yet."),
+            verb,
+            reason,
+            log,
+        }) => reject_build(app, faction, channel, &verb, reason, &log),
+        Err(other) => {
+            warn!(
+                target: "shadow_scale::command",
+                faction = %faction.0,
+                reason = %other,
+                "command.build.rejected"
             );
-            return;
         }
-    };
-
-    let gate = match &target {
-        LaborTarget::Forage { tile, .. } => {
-            validate_forage_improvement_for_crews(app, faction, *tile, improvement)
-        }
-        _ => validate_improvement(app, faction, &target, improvement),
-    };
-    if let Err(reason) = gate {
-        reject_build(app, faction, channel, &verb, reason);
-        return;
     }
-    let label = BuildSource::of(&target).map_or_else(
-        || verb.clone(),
-        |source| match source {
-            BuildSource::Patch(tile) => format!("({}, {})", tile.x, tile.y),
-            BuildSource::Herd(id) => id,
-            BuildSource::Road(tile)
-            | BuildSource::Deposit { tile, .. }
-            | BuildSource::Tile { tile, .. } => {
-                format!("({}, {})", tile.x, tile.y)
-            }
-            BuildSource::Band { band, branch } => {
-                format!("Band {}'s {}", band.0, branch.as_str())
-            }
-        },
-    );
-    let switched =
-        queue_build_on_working_bands(app, faction, &target, BuildJob::Climb(rung.rung_id()));
-    if switched == 0 {
-        let pen_taken = BuildSource::of(&target).is_some_and(|source| {
-            is_pen_climb(app, &source, BuildJob::Climb(rung.rung_id()))
-                && pen_queuer(app, &source).is_some()
-        });
-        let refusal = if pen_taken {
-            PEN_TAKEN_HINT.to_string()
-        } else {
-            format!("No band of yours works {label}. Assign a crew to it first, then {verb} it.")
-        };
-        reject_build(app, faction, channel, &verb, refusal);
-        return;
-    }
-
-    let tick = app.world.resource::<SimulationTick>().0;
-    info!(
-        target: "shadow_scale::command",
-        command = %verb,
-        faction = %faction.0,
-        source = %label,
-        bands = switched,
-        "command.build.declared"
-    );
-    push_command_event(
-        app,
-        tick,
-        channel,
-        faction,
-        format!("Declared {verb} at {label}"),
-        Some(format!(
-            "status=declared action={verb} source={label} bands={switched}"
-        )),
-    );
 }
 
-/// **PUTTING A BAND ON A TILE OR BAND-IMPROVEMENT ROW IS THE ORDER FOR ITS FIRST BUILD.**
-///
-/// When a `tile` crew row is created or raised and the tile still stands at the branch's root rung
-/// with no build declared on it, the branch's next rung up from the root is declared - exactly what
-/// `build <verb> <faction> <x> <y>` would declare, through the same gate ([`validate_improvement`])
-/// and the same queueing ([`queue_build_on_working_bands`]). A refusing gate (lesson unlearned, a
-/// site term unmet) declares nothing and is no error: the row stays assigned. A tile already holding
-/// the improvement is kept by the crew as before, and the climb never goes past the first rung above
-/// the root. Driven by the catalog: no branch is named here.
-fn declare_the_branchs_first_build(
+/// **Say a declared build**: the info line and the feed event, exactly as each source kind has
+/// always written them (the seam returns them, it writes neither).
+fn report_build_declared(
     app: &mut bevy::prelude::App,
     faction: FactionId,
-    target: &LaborTarget,
+    declared: core_sim::command_seam::BuildDeclared,
 ) {
-    let (LaborTarget::Tile { branch, .. } | LaborTarget::Band { branch, .. }) = target else {
-        return;
-    };
-    let branch = *branch;
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let Some(root) = ladder.root_of(branch) else {
-        return;
-    };
-    let Some(first) = ladder.above_rung(root) else {
-        return;
-    };
-    let Some(verb) = first.verb_id() else {
-        return;
-    };
-    let registry = app.world.resource::<core_sim::TileImprovementRegistry>();
-    let held = match target {
-        LaborTarget::Tile { tile, .. } => registry.get(*tile, branch).map(|i| i.held_rung()),
-        LaborTarget::Band { band, .. } => {
-            registry.bands().get(*band, branch).map(|i| i.held_rung())
+    let core_sim::command_seam::BuildDeclared {
+        channel,
+        verb,
+        kind,
+    } = declared;
+    let tick = app.world.resource::<SimulationTick>().0;
+    match kind {
+        DeclaredKind::Source { label, bands } => {
+            info!(
+                target: "shadow_scale::command",
+                command = %verb,
+                faction = %faction.0,
+                source = %label,
+                bands = bands,
+                "command.build.declared"
+            );
+            push_command_event(
+                app,
+                tick,
+                channel,
+                faction,
+                format!("Declared {verb} at {label}"),
+                Some(format!(
+                    "status=declared action={verb} source={label} bands={bands}"
+                )),
+            );
         }
-        _ => None,
-    };
-    let stands_at_the_root = held.is_none_or(|rung| rung == root.rung_id());
-    if !stands_at_the_root {
-        return;
+        DeclaredKind::Deposit {
+            tile,
+            material,
+            bands,
+        } => {
+            info!(
+                target: "shadow_scale::command",
+                command = %verb,
+                faction = %faction.0,
+                x = tile.x,
+                y = tile.y,
+                material = %material,
+                bands = bands,
+                "command.deposit.declared"
+            );
+            push_command_event(
+                app,
+                tick,
+                channel,
+                faction,
+                format!(
+                    "Raising the {material} working at ({}, {}) — {verb}",
+                    tile.x, tile.y
+                ),
+                Some(format!(
+                    "status=declared action={verb} x={} y={} material={material} bands={bands}",
+                    tile.x, tile.y
+                )),
+            );
+        }
+        DeclaredKind::Road {
+            band_id,
+            tile,
+            distance,
+            remoteness,
+        } => {
+            info!(
+                target: "shadow_scale::command",
+                command = %verb,
+                faction = %faction.0,
+                band_id,
+                x = tile.x,
+                y = tile.y,
+                distance,
+                remoteness,
+                "command.road.declared"
+            );
+            push_command_event(
+                app,
+                tick,
+                channel,
+                faction,
+                format!(
+                    "Band {band_id} takes on the road at ({}, {}) — {verb}",
+                    tile.x, tile.y
+                ),
+                Some(format!(
+                    "status=declared action={verb} x={} y={} band={band_id} distance={distance}",
+                    tile.x, tile.y
+                )),
+            );
+        }
     }
-    let Some(source) = BuildSource::of(target) else {
-        return;
-    };
-    let already_declared = app
-        .world
-        .query::<(&PopulationCohort, &LaborAllocation)>()
-        .iter(&app.world)
-        .any(|(cohort, allocation)| cohort.faction == faction && allocation.has_build(&source));
-    if already_declared || validate_improvement(app, faction, target, verb).is_err() {
-        return;
-    }
-    queue_build_on_working_bands(app, faction, target, BuildJob::Climb(first.rung_id()));
 }
 
-/// **Refuse a `build` line** — a warning in the log and a failure line on the verb's own feed
-/// channel, so a refusal reads in the same place the declaration would have.
+/// **Refuse a `build` line** - a warning in the log (under the target the seam named: a deposit's
+/// and a road's refusal have always logged under their own, and a feed-only refusal logs nothing)
+/// and a failure line on the verb's own feed channel, so a refusal reads in the same place the
+/// declaration would have.
 fn reject_build(
     app: &mut bevy::prelude::App,
     faction: FactionId,
     channel: CommandEventKind,
     verb: &str,
     reason: String,
+    log: &RefusalLog,
 ) {
-    warn!(
-        target: "shadow_scale::command",
-        command = %verb,
-        faction = %faction.0,
-        reason = %reason,
-        "command.build.rejected"
-    );
+    match log {
+        RefusalLog::Build => warn!(
+            target: "shadow_scale::command",
+            command = %verb,
+            faction = %faction.0,
+            reason = %reason,
+            "command.build.rejected"
+        ),
+        RefusalLog::Deposit { tile, material } => warn!(
+            target: "shadow_scale::command",
+            command = verb,
+            faction = %faction.0,
+            x = tile.x,
+            y = tile.y,
+            material = material.as_str(),
+            reason = %reason,
+            "command.deposit.rejected"
+        ),
+        RefusalLog::Road { band_id, tile } => warn!(
+            target: "shadow_scale::command",
+            command = verb,
+            faction = %faction.0,
+            band_id = *band_id,
+            x = tile.x,
+            y = tile.y,
+            reason = %reason,
+            "command.road.rejected"
+        ),
+        RefusalLog::FeedOnly => {}
+    }
     emit_command_failure(app, channel, faction, reason);
 }
 
@@ -8417,16 +6532,8 @@ fn handle_upkeep_mode(
 // other question, a band that **shrank**.
 
 /// **A band's head-count, read off the world for a command to clamp against.**
-///
-/// The arithmetic lives on [`BandWorkforce`] — the one authority, shared with the snapshot that
-/// publishes `idleWorkers` — so a command and the readout the player sized it against can never
-/// disagree about who is free. This is only the ECS lookup.
 fn band_workforce(app: &bevy::prelude::App, band: Entity) -> BandWorkforce {
-    BandWorkforce::resolve(
-        app.world.get::<PopulationCohort>(band),
-        app.world.get::<LaborAllocation>(band),
-        app.world.get::<BandBench>(band),
-    )
+    core_sim::labor_commands::band_workforce(&app.world, band)
 }
 
 /// The band's bench, inserted on demand so a band spawned before the component existed still has
@@ -9083,14 +7190,18 @@ fn handle_bench_auto(
     enabled: bool,
 ) {
     let event_kind = CommandEventKind::Craft;
-    let Some(band) = select_starting_band(app, faction, Some(band_id), "bench_auto", event_kind)
-    else {
-        return;
+    let set = match core_sim::command_seam::apply_set_auto_craft(
+        &mut app.world,
+        faction,
+        band_id,
+        enabled,
+    ) {
+        Ok(set) => set,
+        Err(refusal) => {
+            emit_command_failure(app, event_kind, faction, refusal.to_string());
+            return;
+        }
     };
-    // Inserted on demand, as every bench verb does, so a band spawned before the component existed
-    // can still switch it on.
-    let _ = band_bench_mut(app, band.entity);
-    core_sim::auto_craft::set_auto_craft(&mut app.world, band.entity, enabled);
     let tick = app.world.resource::<SimulationTick>().0;
     let state = if enabled { "on" } else { "off" };
     push_band_event(
@@ -9098,8 +7209,8 @@ fn handle_bench_auto(
         tick,
         event_kind,
         faction,
-        band.id,
-        format!("{}: bench auto-craft {state}", band.label),
+        set.id,
+        format!("{}: bench auto-craft {state}", set.label),
         Some(format!(
             "status=applied action=bench_auto enabled={enabled} band={band_id}"
         )),
@@ -9169,187 +7280,48 @@ fn handle_bench_auto_skip(app: &mut bevy::prelude::App, faction: FactionId, band
 /// `pen_radius` below `husbandry.pen_radius_max`, **no extension already in flight**, and a band is
 /// keeping it (or the ring never accrues, and an untended pen escapes anyway).
 fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
-    let Some(fauna_id) = app
-        .world
-        .resource::<HerdRegistry>()
-        .herds
-        .iter()
-        .find(|herd| herd.corralled_at == Some(tile))
-        .map(|herd| herd.id.clone())
-    else {
-        warn!(
-            target: "shadow_scale::command",
-            command = "extend_pen",
-            faction = %faction.0,
-            x = tile.x,
-            y = tile.y,
-            "command.extend_pen.rejected=no_pen"
-        );
-        emit_command_failure(
-            app,
-            CommandEventKind::Corral,
-            faction,
-            format!("No pen at ({}, {}) to extend.", tile.x, tile.y),
-        );
-        return;
-    };
-
-    let (owns, knows_penning, can_pen, species, at_max, already_extending, pen_radius_max) = {
-        let pen_radius_max = app
-            .world
-            .resource::<FaunaConfigHandle>()
-            .get()
-            .husbandry
-            .pen_radius_max;
-        // A fence ring rides the **same `animal:pen` rung** as the initial build (2d-β: same labor,
-        // same dip, same dials), so it takes that rung's gate too — **Penning** since the §4.3
-        // reshuffle. Read off the rung, so a ring can never be gated differently from the pen it
-        // extends.
-        let (knowledge_threshold, pen_unlock) = {
-            let ladder = app.world.resource::<LadderConfigHandle>().get();
-            (
-                ladder.knowledge.completion_threshold,
-                ladder.enclosed_herd_rung().unlock_discovery_id(),
-            )
-        };
-        let knows_penning = pen_unlock.is_none_or(|knowledge| {
-            knows(
-                app.world.resource::<DiscoveryProgressLedger>(),
+    match core_sim::command_seam::apply_extend_pen(&mut app.world, faction, tile) {
+        Err(refusal) => {
+            let reason = refusal.to_string();
+            warn!(
+                target: "shadow_scale::command",
+                command = "extend_pen",
+                faction = %faction.0,
+                x = tile.x,
+                y = tile.y,
+                reason = %reason,
+                "command.extend_pen.rejected"
+            );
+            emit_command_failure(app, CommandEventKind::Corral, faction, reason);
+        }
+        Ok(extended) => {
+            let fauna_id = extended.herd_id;
+            let tick = app.world.resource::<SimulationTick>().0;
+            info!(
+                target: "shadow_scale::command",
+                command = "extend_pen",
+                faction = %faction.0,
+                herd = %fauna_id,
+                x = tile.x,
+                y = tile.y,
+                "command.extend_pen.extending"
+            );
+            push_command_event(
+                app,
+                tick,
+                CommandEventKind::Corral,
                 faction,
-                knowledge,
-                knowledge_threshold,
-            )
-        });
-        let herd = app
-            .world
-            .resource::<HerdRegistry>()
-            .find(&fauna_id)
-            .expect("herd resolved above");
-        (
-            herd.owner == Some(faction),
-            knows_penning,
-            herd.can_pen(&app.world.resource::<LadderConfigHandle>().get()),
-            herd.species.clone(),
-            herd.pen_radius >= pen_radius_max,
-            herd.pen_extending,
-            pen_radius_max,
-        )
-    };
-    let reason = if !can_pen {
-        // Grazing 2d-δ: belt-and-braces — a non-`Pen` species can never be penned, so this is
-        // unreachable via the gated corral path, but the extend command states the rule explicitly.
-        Some(format!("{species} cannot be penned."))
-    } else if !knows_penning {
-        Some(
-            "Your people have not learned Penning yet. Tame and keep herds to learn it."
-                .to_string(),
-        )
-    } else if !owns {
-        Some(format!("You do not own the pen for {}.", fauna_id))
-    } else if already_extending {
-        Some(format!(
-            "The pen for {} is already being extended.",
-            fauna_id
-        ))
-    } else if at_max {
-        Some(format!(
-            "The pen for {} is already at its maximum size.",
-            fauna_id
-        ))
-    } else {
-        None
-    };
-    if let Some(reason) = reason {
-        warn!(
-            target: "shadow_scale::command",
-            command = "extend_pen",
-            faction = %faction.0,
-            herd = %fauna_id,
-            reason = %reason,
-            "command.extend_pen.rejected"
-        );
-        emit_command_failure(app, CommandEventKind::Corral, faction, reason);
-        return;
+                format!(
+                    "Extending the pen for {} at ({}, {})",
+                    fauna_id, tile.x, tile.y
+                ),
+                Some(format!(
+                    "status=extending action=extend_pen herd={} x={} y={}",
+                    fauna_id, tile.x, tile.y
+                )),
+            );
+        }
     }
-
-    // A band must be keeping the pen (a Hunt assignment on it, any policy) or the ring never accrues.
-    let keeper_target = LaborTarget::Hunt {
-        fauna_id: fauna_id.clone(),
-        floor: SOURCE_NAMED_NOT_ASSIGNED, // matched by `same_source` (herd id) — the floor is irrelevant,
-        move_with_herd: false,
-    };
-    let keepers = app
-        .world
-        .query::<(&PopulationCohort, &LaborAllocation)>()
-        .iter(&app.world)
-        .filter(|(cohort, _)| cohort.faction == faction)
-        .filter(|(_, allocation)| allocation.workers_on(&keeper_target) > 0)
-        .count();
-    if keepers == 0 {
-        emit_command_failure(
-            app,
-            CommandEventKind::Corral,
-            faction,
-            format!(
-                "No band is keeping {}. Assign herders to it first, then extend the pen.",
-                fauna_id
-            ),
-        );
-        return;
-    }
-
-    // Enter the extending state — `begin_pen_extension` re-checks is_corralled / not-extending /
-    // below-max, so the guard and the validation above can never disagree.
-    let began = {
-        let mut registry = app.world.resource_mut::<HerdRegistry>();
-        let herd = registry
-            .herds
-            .iter_mut()
-            .find(|h| h.id == fauna_id)
-            .expect("herd resolved above");
-        herd.begin_pen_extension(pen_radius_max)
-    };
-    if !began {
-        emit_command_failure(
-            app,
-            CommandEventKind::Corral,
-            faction,
-            format!("Cannot extend the pen for {} right now.", fauna_id),
-        );
-        return;
-    }
-
-    // **A RING IS A DECLARED BUILD LIKE EVERY OTHER BUILD** (`docs/plan_standing_upkeep.md` §2.5) — it
-    // is fencing work on the same `animal:pen` rung as the pen it widens, so it waits its turn in
-    // the same line and is funded from the same staffing. It is the one entry kind that names
-    // no rung verb: a built pen carries no meter for the derived verb to name, which is exactly the
-    // gap `BuildJob::ExtendPen` fills.
-    queue_build_on_working_bands(app, faction, &keeper_target, BuildJob::ExtendPen);
-
-    let tick = app.world.resource::<SimulationTick>().0;
-    info!(
-        target: "shadow_scale::command",
-        command = "extend_pen",
-        faction = %faction.0,
-        herd = %fauna_id,
-        x = tile.x,
-        y = tile.y,
-        "command.extend_pen.extending"
-    );
-    push_command_event(
-        app,
-        tick,
-        CommandEventKind::Corral,
-        faction,
-        format!(
-            "Extending the pen for {} at ({}, {})",
-            fauna_id, tile.x, tile.y
-        ),
-        Some(format!(
-            "status=extending action=extend_pen herd={} x={} y={}",
-            fauna_id, tile.x, tile.y
-        )),
-    );
 }
 
 /// **COMMIT A KEPT HERD'S OUTPUT** — the `SetHerdOutput` command
@@ -9377,155 +7349,44 @@ fn handle_set_herd_output(
     herd_id: &str,
     fraction: f32,
 ) {
-    let Some(state) = app
-        .world
-        .resource::<HerdRegistry>()
-        .find(herd_id)
-        .map(|herd| {
-            (
-                herd.id.clone(),
-                herd.owner == Some(faction),
-                herd.is_corralled() || herd.is_domesticated(),
-                herd.standing_output_target.is_some(),
-                herd.standing_output_fraction,
-            )
-        })
-    else {
-        warn!(
-            target: "shadow_scale::command",
-            command = "set_herd_output",
-            faction = %faction.0,
-            herd = %herd_id,
-            "command.set_herd_output.rejected=no_herd"
-        );
-        emit_command_failure(
-            app,
-            CommandEventKind::Corral,
-            faction,
-            format!("There is no herd {herd_id} to commit."),
-        );
-        return;
-    };
-    let (fauna_id, owns, managed, already_committing, held) = state;
-    let reason = if !owns {
-        Some(format!("You do not keep {fauna_id}."))
-    } else if !managed {
-        // A wild herd is not yours to re-sort, and its rung declares no build meter to price the
-        // work against — two statements of the same fact, so one refusal covers both.
-        Some(format!(
-            "{fauna_id} is not a kept herd. Tame it before deciding what it produces."
-        ))
-    } else if !fraction.is_finite()
-        || !(core_sim::NO_STANDING_COMMITMENT..=WHOLE_HERD_COMMITTED).contains(&fraction)
+    match core_sim::command_seam::apply_set_herd_output(&mut app.world, faction, herd_id, fraction)
     {
-        Some(format!(
-            "A herd's standing share must be between 0 and 1, not {fraction}."
-        ))
-    } else if fraction == held {
-        Some(format!(
-            "{fauna_id} already gives that share of itself as milk, eggs and wool."
-        ))
-    } else if already_committing {
-        Some(format!("{fauna_id} is already being re-sorted."))
-    } else {
-        None
-    };
-    if let Some(reason) = reason {
-        warn!(
-            target: "shadow_scale::command",
-            command = "set_herd_output",
-            faction = %faction.0,
-            herd = %fauna_id,
-            reason = %reason,
-            "command.set_herd_output.rejected"
-        );
-        emit_command_failure(app, CommandEventKind::Corral, faction, reason);
-        return;
+        Err(refusal) => {
+            let reason = refusal.to_string();
+            warn!(
+                target: "shadow_scale::command",
+                command = "set_herd_output",
+                faction = %faction.0,
+                herd = %herd_id,
+                reason = %reason,
+                "command.set_herd_output.rejected"
+            );
+            emit_command_failure(app, CommandEventKind::Corral, faction, reason);
+        }
+        Ok(committed) => {
+            let fauna_id = committed.herd_id;
+            let tick = app.world.resource::<SimulationTick>().0;
+            info!(
+                target: "shadow_scale::command",
+                command = "set_herd_output",
+                faction = %faction.0,
+                herd = %fauna_id,
+                fraction,
+                "command.set_herd_output.committing"
+            );
+            push_command_event(
+                app,
+                tick,
+                CommandEventKind::Corral,
+                faction,
+                core_sim::command_seam::herd_output_feed_line(&fauna_id, fraction),
+                Some(format!(
+                    "status=committing action=set_herd_output herd={fauna_id} fraction={fraction:.3}"
+                )),
+            );
+        }
     }
-
-    // A band must be keeping the herd (a Hunt assignment on it, any policy) or the meter never
-    // accrues — `extend_pen`'s own requirement, for its own reason.
-    let keeper_target = LaborTarget::Hunt {
-        fauna_id: fauna_id.clone(),
-        floor: SOURCE_NAMED_NOT_ASSIGNED, // matched by `same_source` (herd id) — the floor is irrelevant,
-        move_with_herd: false,
-    };
-    let keepers = app
-        .world
-        .query::<(&PopulationCohort, &LaborAllocation)>()
-        .iter(&app.world)
-        .filter(|(cohort, _)| cohort.faction == faction)
-        .filter(|(_, allocation)| allocation.workers_on(&keeper_target) > 0)
-        .count();
-    if keepers == 0 {
-        emit_command_failure(
-            app,
-            CommandEventKind::Corral,
-            faction,
-            format!(
-                "No band is keeping {fauna_id}. Assign herders to it first, then set its output."
-            ),
-        );
-        return;
-    }
-
-    // Enter the recommitting state — `begin_output_recommit` re-checks managed / not-in-flight /
-    // in-range / actually-a-change, so the guard and the validation above can never disagree. The
-    // herd's rung is read back afterwards so the declared build names the rung the order was priced
-    // against.
-    let (began, rung) = {
-        let mut registry = app.world.resource_mut::<HerdRegistry>();
-        let herd = registry
-            .herds
-            .iter_mut()
-            .find(|h| h.id == fauna_id)
-            .expect("herd resolved above");
-        (
-            herd.begin_output_recommit(fraction),
-            core_sim::herd_rung_key(herd),
-        )
-    };
-    if !began {
-        emit_command_failure(
-            app,
-            CommandEventKind::Corral,
-            faction,
-            format!("Cannot change what {fauna_id} produces right now."),
-        );
-        return;
-    }
-
-    // **A COMMITMENT IS A DECLARED BUILD LIKE EVERY OTHER BUILD** — it is husbandry work on the rung
-    // the herd already stands on, so it waits its turn in the same line and is funded from the same
-    // build crew. It is the second entry kind that names no rung verb, and it carries its rung
-    // because — unlike a ring, which is always fencing — it can be raised at either managed rung.
-    queue_build_on_working_bands(app, faction, &keeper_target, BuildJob::SetHerdOutput(rung));
-
-    let tick = app.world.resource::<SimulationTick>().0;
-    info!(
-        target: "shadow_scale::command",
-        command = "set_herd_output",
-        faction = %faction.0,
-        herd = %fauna_id,
-        fraction,
-        "command.set_herd_output.committing"
-    );
-    push_command_event(
-        app,
-        tick,
-        CommandEventKind::Corral,
-        faction,
-        format!("Re-sorting {fauna_id} to give {fraction:.0} of itself as milk, eggs and wool"),
-        Some(format!(
-            "status=committing action=set_herd_output herd={fauna_id} fraction={fraction:.3}"
-        )),
-    );
 }
-
-/// **A HERD COMMITTED ENTIRELY TO STANDING OUTPUT** — the top of `set_herd_output`'s accepted range,
-/// where the herd is taken from not at all and rides at `K`. Named rather than a bare `1.0` because
-/// it is a *state* the command's bound is stated in terms of, not a multiplier.
-const WHOLE_HERD_COMMITTED: f32 = 1.0;
 
 /// **PUT A SOURCE DOWN** — `abandon <faction> <x> <y>` / `abandon <faction> <herd_id>`
 /// (`docs/plan_standing_upkeep.md` §2.5), and `abandon <faction> <x> <y> <material>` /
@@ -10227,26 +8088,6 @@ fn handle_stop_labor(
     );
 }
 
-/// **MARK ONE WORKED ROW WITH THE PLAYER'S OWN RANK** — `work_priority <faction> <band> <x> <y>
-/// <level>` / `work_priority <faction> <band> <herd_id> <level>` / `work_priority <faction> <band>
-/// <x> <y> <material> <level>` for a working's extract row (`docs/plan_standing_upkeep.md` §4.9
-/// item 9b, `docs/plan_site_crews.md` §2.4). A road (`road <x> <y>`) has no row and is refused.
-///
-/// Sets [`core_sim::SourcePriority`] on the named band's assignment for that source. The take crew,
-/// the floor, the kit and the declared build are untouched — this says only *where this row stands when
-/// the band runs short*.
-///
-/// # IT IS ONE BAND'S STATEMENT, WHICH IS WHY IT NAMES ONE
-///
-/// The ordering it feeds is a **band's**: the shedding walk partitions that band's own rows, and the
-/// pen-feed split serves that band's own stores. `build_order` names a band for exactly the same
-/// reason. The source-addressed verbs that reach *every* band holding a source (`unqueue`,
-/// `abandon`) are the ones whose subject is the ground rather than the holding.
-///
-/// # AN UNKNOWN LEVEL IS REFUSED BY NAME
-///
-/// `upkeep_mode`'s rule. A rank the player mistyped must fail loudly rather than silently landing on
-/// the default, which is the one value that would look like it worked.
 fn handle_work_priority(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -10254,108 +8095,11 @@ fn handle_work_priority(
     source: BuildSourceRef,
     level: String,
 ) {
-    let Some(ladder) = source_ladder(app, faction, &source) else {
-        return;
-    };
-    let source = match source.bound_to_band(&ladder, band_id) {
-        Ok(source) => source,
-        Err(reason) => {
-            emit_command_failure(app, CommandEventKind::CancelOrder, faction, reason);
-            return;
-        }
-    };
-    let label = source.label(&ladder);
-    // ⛔ **A ROAD HAS NO CREW, SO NO ROW TO RANK** (`docs/plan_site_crews.md` §2.4): its only mark
-    // is the Build mark on a queued road build. Refused by name rather than read as the tile's patch,
-    // which is the one outcome that would look like it worked.
-    if source.is_road(&ladder) {
-        emit_command_failure(
-            app,
-            CommandEventKind::CancelOrder,
-            faction,
-            format!(
-                "{label} has no crew to rank — a road's only mark is its declared build's, set with \
-                 build_priority."
-            ),
-        );
-        return;
+    if let Err(refusal) =
+        core_sim::command_seam::apply_work_priority(&mut app.world, faction, band_id, source, level)
+    {
+        report_refusal(app, faction, refusal);
     }
-    let Some(target) = source.target(&ladder) else {
-        emit_command_failure(
-            app,
-            CommandEventKind::CancelOrder,
-            faction,
-            format!("work_priority needs a source: {SITE_SOURCE_GRAMMAR}."),
-        );
-        return;
-    };
-    let Some(priority) = SourcePriority::from_token(level.trim().to_ascii_lowercase().as_str())
-    else {
-        emit_command_failure(
-            app,
-            CommandEventKind::CancelOrder,
-            faction,
-            format!(
-                "Unknown work priority '{}' — expected {}, {} or {}.",
-                level.trim(),
-                SourcePriority::High.as_str(),
-                SourcePriority::Normal.as_str(),
-                SourcePriority::Low.as_str()
-            ),
-        );
-        return;
-    };
-    let Some(band) = select_starting_band(
-        app,
-        faction,
-        Some(band_id),
-        "work_priority",
-        CommandEventKind::CancelOrder,
-    ) else {
-        return;
-    };
-    if let Some(reason) = kept_on_hand_refusal(app, &band, &target) {
-        emit_command_failure(app, CommandEventKind::Extraction, faction, reason);
-        return;
-    }
-    let marked = band_allocation_mut(app, band.entity).set_source_priority(&target, priority);
-    // **A rank decides who the sim arms first** (#871), so the crews are re-decided at once.
-    restaff_and_reseed(app, band.entity);
-    if !marked {
-        emit_command_failure(
-            app,
-            CommandEventKind::CancelOrder,
-            faction,
-            format!("{} works nothing at {label} to rank.", band.label),
-        );
-        return;
-    }
-    let tick = app.world.resource::<SimulationTick>().0;
-    info!(
-        target: "shadow_scale::command",
-        command = "work_priority",
-        faction = %faction.0,
-        band = band_id,
-        source = %label,
-        level = priority.as_str(),
-        "command.work_priority.applied"
-    );
-    let sentence = match priority {
-        SourcePriority::High => format!("{}: {label} is held before anything else", band.label),
-        SourcePriority::Normal => format!("{}: {label} takes its turn like the rest", band.label),
-        SourcePriority::Low => format!("{}: {label} is the first thing given up", band.label),
-    };
-    push_command_event(
-        app,
-        tick,
-        CommandEventKind::CancelOrder,
-        faction,
-        sentence,
-        Some(format!(
-            "status=applied action=work_priority source={label} level={} band={band_id}",
-            priority.as_str()
-        )),
-    );
 }
 
 /// Every band of `faction` with a row on this source — the set the source-wide queue verbs act over, and
@@ -10400,177 +8144,20 @@ fn bands_queueing_source(
         .collect()
 }
 
-/// **QUEUE A BUILD ON EVERY BAND OF `faction` ALREADY WORKING `target`'s SOURCE** (matched by
-/// `LaborTarget::same_source`, so the tile / herd id). Returns how many bands were updated (`0` =
-/// nobody is working that source, which the callers report as *"staff it first"*). The shared body
-/// of the four improvement verbs and of `extend_pen`.
-///
-/// # A VERB DECLARES; IT DOES NOT STAFF
-///
-/// It adds a [`core_sim::BuildDeclaration`] and restaffs the band: the sim puts builders on the
-/// build from the band's idle hands (`docs/plan_labor_at_scale.md`, "Builds join the site's crew"),
-/// so this command names no crew, refuses nothing on affordability, and cannot disband the
-/// gathering it was meant to improve.
-///
-/// # RE-ISSUING KEEPS THE ENTRY'S PLACE IN THE LINE
-///
-/// `LaborAllocation::declare_build` replaces `declared` in place, so correcting `cultivate` → `sow`
-/// on a declared source keeps its one declaration. Withdrawing one is `unqueue`.
-///
-/// **A verb reaches only bands already WORKING the source** — the rule this function has always
-/// carried, and now the rule that keeps an entry paired with a row.
+/// **QUEUE A BUILD ON EVERY BAND OF `faction` ALREADY WORKING `target`'s SOURCE**; see
+/// [`core_sim::labor_commands::queue_build_on_working_bands`].
 fn queue_build_on_working_bands(
     app: &mut bevy::prelude::App,
     faction: FactionId,
     target: &LaborTarget,
     declared: BuildJob,
 ) -> usize {
-    let Some(source) = BuildSource::of(target) else {
-        return 0;
-    };
-    // Each band's own assignment target, because the re-seed below must price the source under the
-    // stance and crop that band actually holds — the command names neither.
-    let bands: Vec<(Entity, u32, LaborTarget)> = app
-        .world
-        .query::<(Entity, &PopulationCohort, &LaborAllocation)>()
-        .iter(&app.world)
-        .filter(|(_, cohort, _)| cohort.faction == faction)
-        .filter_map(|(entity, _, allocation)| {
-            allocation
-                .assignments
-                .iter()
-                .find(|assignment| {
-                    // **A staffed row is the band's holding at any crew** (#871): the sim staffs it
-                    // from the floor, so a stand at its floor reads nobody on it while the band
-                    // still works the source.
-                    assignment.target.same_source(target)
-                        && (assignment.workers > 0 || assignment.target.is_staffed())
-                })
-                .map(|assignment| (entity, assignment.workers, assignment.target.clone()))
-        })
-        .collect();
-    let bands = if is_pen_climb(app, &source, declared) {
-        bands_that_may_queue_the_pen(app, &source, bands)
-    } else {
-        bands
-    };
-    for (entity, workers, band_target) in &bands {
-        {
-            let mut allocation = band_allocation_mut(app, *entity);
-            allocation.declare_build(source.clone(), declared);
-        }
-        // **A queued Corral picks its pen's tile now** - the best-grazing land within this band's
-        // work range, so the quotes price the tile the pen will really stand on.
-        if let (BuildSource::Herd(id), BuildJob::Climb(rung)) = (&source, declared) {
-            let ladder = app.world.resource::<LadderConfigHandle>().get();
-            if ladder
-                .rung(rung)
-                .trait_set()
-                .has(core_sim::RungTrait::Enclosed)
-            {
-                choose_the_pen_site(app, *entity, id);
-            }
-        }
-        // Queueing a build does not change the take at all, but the source's dip does depend on
-        // what is being raised on it, so re-seed the telemetry from the new forecast — the same
-        // reason `handle_assign_labor` seeds after a stance edit.
-        let improvement = build_rung_on_source_at(app, *entity, band_target);
-        seed_source_yield(app, *entity, band_target, improvement, *workers);
-        // A declared build is staffed by the sim, so the declaration restaffs the band: the new
-        // build's builders show on the command's own frame.
-        restaff_and_reseed(app, *entity);
-    }
-    bands.len()
-}
-
-/// **IS `job` ON `source` A CORRAL?** - a climb onto an `enclosed` rung of a herd. The pen is the one
-/// build a herd can hold in one place only, so it is the one the queue admits a single band for.
-fn is_pen_climb(app: &bevy::prelude::App, source: &BuildSource, job: BuildJob) -> bool {
-    let (BuildSource::Herd(_), BuildJob::Climb(rung)) = (source, job) else {
-        return false;
-    };
-    app.world
-        .resource::<LadderConfigHandle>()
-        .get()
-        .rung(rung)
-        .trait_set()
-        .has(core_sim::RungTrait::Enclosed)
-}
-
-/// **THE BAND, OF ANY FACTION, THAT HOLDS THIS HERD'S CORRAL IN ITS QUEUE** - `None` when no band
-/// has one queued.
-fn pen_queuer(app: &mut bevy::prelude::App, source: &BuildSource) -> Option<Entity> {
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
-    app.world
-        .query::<(Entity, &LaborAllocation)>()
-        .iter(&app.world)
-        .find(|(_, allocation)| {
-            allocation
-                .build_declaration(source)
-                .and_then(|entry| entry.declared.climb())
-                .is_some_and(|rung| {
-                    ladder
-                        .rung(rung)
-                        .trait_set()
-                        .has(core_sim::RungTrait::Enclosed)
-                })
-        })
-        .map(|(entity, _)| entity)
-}
-
-/// **A HERD CAN BE PENNED IN ONE PLACE ONLY**, so the Corral is queued on exactly one band: the one
-/// that already holds it (a re-issue replaces its entry in place), else the lowest `BandId` of the
-/// bands working the herd. Another band's hold - of any faction - leaves none, and the caller
-/// refuses with [`PEN_TAKEN_HINT`].
-fn bands_that_may_queue_the_pen(
-    app: &mut bevy::prelude::App,
-    source: &BuildSource,
-    mut bands: Vec<(Entity, u32, LaborTarget)>,
-) -> Vec<(Entity, u32, LaborTarget)> {
-    match pen_queuer(app, source) {
-        Some(holder) => bands.retain(|(entity, ..)| *entity == holder),
-        None => {
-            bands.sort_by_key(|(entity, ..)| app.world.get::<BandId>(*entity).copied());
-            bands.truncate(PEN_QUEUERS_PER_HERD);
-        }
-    }
-    bands
-}
-
-/// How many bands may hold one herd's Corral in their queues at once - a herd cannot be in two
-/// places.
-const PEN_QUEUERS_PER_HERD: usize = 1;
-
-/// **STAMP THE TILE A QUEUED CORRAL'S PEN WILL STAND ON** - `fauna::pen_site_in_world` for the herd
-/// as the keeping band at `band` sees it, written to the herd's `pen_site`.
-fn choose_the_pen_site(app: &mut bevy::prelude::App, band: Entity, herd_id: &str) {
-    let Some(band_tile) = app
-        .world
-        .get::<PopulationCohort>(band)
-        .and_then(|cohort| app.world.get::<core_sim::Tile>(cohort.current_tile))
-        .map(|tile| tile.position)
-    else {
-        return;
-    };
-    let Some(herd) = app
-        .world
-        .resource::<HerdRegistry>()
-        .find(herd_id)
-        .filter(|herd| !herd.is_corralled())
-        .cloned()
-    else {
-        return;
-    };
-    let site = core_sim::pen_site_in_world(&app.world, &herd, band_tile);
-    if let Some(herd) = app
-        .world
-        .resource_mut::<HerdRegistry>()
-        .herds
-        .iter_mut()
-        .find(|herd| herd.id == herd_id)
-    {
-        herd.pen_site = site;
-    }
+    core_sim::labor_commands::queue_build_on_working_bands(
+        &mut app.world,
+        faction,
+        target,
+        declared,
+    )
 }
 
 fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<String>) {
@@ -11789,110 +9376,17 @@ fn ensure_land_tile(
     Some(tile_entity)
 }
 
-/// Resolve a [`BandId`] to the entity that holds it, gated on faction ownership.
-///
-/// **This replaces a raw-`Entity`-bits path; there is deliberately no fallback to it.** The wire
-/// used to carry `entity.to_bits()`, which made the client→server protocol traffic in ECS handles —
-/// and a handle is not an identity: a rollback rebuilds the world and renumbers every entity, so a
-/// logged command naming one resolved to nothing when replayed. `BandId` is the identity the sim
-/// already had. There are no shipped clients, so accepting both forms would be permanent complexity
-/// bought for nobody.
-fn resolve_starting_unit_entity(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    band_id: u64,
-    command_label: &str,
-    event_kind: CommandEventKind,
-) -> Option<Entity> {
-    let wanted = BandId(band_id);
-    let found = {
-        let mut query = app.world.query::<(Entity, &BandId)>();
-        query
-            .iter(&app.world)
-            .find(|(_, id)| **id == wanted)
-            .map(|(entity, _)| entity)
-    };
-    let Some(entity) = found else {
-        // Loud, never a silent no-op — this now covers live commands as well as replayed ones.
-        tracing::error!(
-            target: "shadow_scale::command",
-            command = command_label,
-            faction = %faction.0,
-            band_id,
-            "command.band.rejected=no_such_band"
-        );
-        emit_command_failure(
-            app,
-            event_kind,
-            faction,
-            format!("Band {band_id} does not exist in the simulation."),
-        );
-        return None;
-    };
-    if app.world.get::<StartingUnit>(entity).is_none() {
-        warn!(
-            target: "shadow_scale::command",
-            command = command_label,
-            faction = %faction.0,
-            band_id,
-            "command.band.rejected=not_a_starting_unit"
-        );
-        emit_command_failure(
-            app,
-            event_kind,
-            faction,
-            format!("Band {band_id} is not a commandable unit."),
-        );
-        return None;
-    }
-    let owner = app.world.get::<PopulationCohort>(entity).map(|c| c.faction);
-    if owner != Some(faction) {
-        warn!(
-            target: "shadow_scale::command",
-            command = command_label,
-            faction = %faction.0,
-            band_id,
-            "command.band.rejected=wrong_faction"
-        );
-        emit_command_failure(
-            app,
-            event_kind,
-            faction,
-            format!("Band {band_id} belongs to another faction."),
-        );
-        return None;
-    }
-    Some(entity)
-}
-
-/// **A band a command resolved to**, with the one spelling of it every event line uses.
-///
-/// ⛔ `label` is `Band {id}` ([`core_sim::band_label`]) and NEVER the unit's kind. The kind
-/// (`BandScout`, ...) names what sort of unit a band was founded as, so every band of a people shares
-/// it: two bands' craft lines both read "BandScout queued Baskets…". An event names a band the way
-/// every other event does - by the durable [`BandId`] - and carries the id as a `band=` detail token
-/// ([`push_band_event`]), which is what the client joins on to put the band's real name in the line.
-struct SelectedBand {
-    entity: Entity,
-    /// The durable id; `None` only for a hand-built fixture band that never minted one.
-    id: Option<BandId>,
-    label: String,
-}
-
 /// The [`SelectedBand`] for `entity`.
 fn selected_band(app: &bevy::prelude::App, entity: Entity) -> SelectedBand {
-    SelectedBand {
-        entity,
-        id: app.world.get::<BandId>(entity).copied(),
-        label: starting_unit_label(app, entity),
-    }
+    core_sim::labor_commands::selected_band(&app.world, entity)
 }
 
-/// **Push an event that is about ONE band**, so the line names it the way every other event does:
-/// the entry carries the durable [`BandId`] ([`CommandEventEntry::with_band`]) and its detail a
-/// `band=<id>` token - appended here unless the writer already stated one - which is what the client
-/// re-labels the row by (`event-feed.md` -> "The `band=` token is what makes a loss line clickable").
-/// A band with no durable id (a fixture) publishes its line unchanged and renders linkless.
+/// How an event line names a band; see [`core_sim::labor_commands::starting_unit_label`].
+fn starting_unit_label(app: &bevy::prelude::App, entity: Entity) -> String {
+    core_sim::labor_commands::starting_unit_label(&app.world, entity)
+}
+
+/// **Push an event that is about ONE band**; see [`core_sim::labor_commands::push_band_event`].
 fn push_band_event(
     app: &mut bevy::prelude::App,
     tick: u64,
@@ -11902,23 +9396,15 @@ fn push_band_event(
     label: String,
     detail: Option<String>,
 ) {
-    let detail = match (band, detail) {
-        (Some(id), Some(detail)) if !has_band_token(&detail) => {
-            Some(format!("{detail} band={}", id.0))
-        }
-        (Some(id), None) => Some(format!("band={}", id.0)),
-        (_, detail) => detail,
-    };
-    let mut entry = CommandEventEntry::new(tick, kind, faction, label, detail);
-    if let Some(id) = band {
-        entry = entry.with_band(id);
-    }
-    push_command_entry(app, entry);
-}
-
-/// Whether a detail already carries a whole `band=` token.
-fn has_band_token(detail: &str) -> bool {
-    detail.split(' ').any(|token| token.starts_with("band="))
+    core_sim::labor_commands::push_band_event(
+        &mut app.world,
+        tick,
+        kind,
+        faction,
+        band,
+        label,
+        detail,
+    );
 }
 
 fn select_starting_band(
@@ -11928,37 +9414,18 @@ fn select_starting_band(
     command_label: &str,
     event_kind: CommandEventKind,
 ) -> Option<SelectedBand> {
-    if let Some(bits) = band_id {
-        let entity = resolve_starting_unit_entity(app, faction, bits, command_label, event_kind)?;
-        return Some(selected_band(app, entity));
-    }
-
-    // Default-band picker: only ever auto-grab a real band (`With<ResidentBand>`) so a band-less
-    // command never silently commandeers a detached expedition (which keeps `StartingUnit`).
-    let mut query = app
-        .world
-        .query_filtered::<(Entity, &PopulationCohort), (With<StartingUnit>, With<ResidentBand>)>();
-    let picked = query
-        .iter(&app.world)
-        .find(|(_, cohort)| cohort.faction == faction)
-        .map(|(entity, _)| entity);
-    if let Some(entity) = picked {
-        return Some(selected_band(app, entity));
-    }
-
-    warn!(
-        target: "shadow_scale::command",
-        command = command_label,
-        faction = %faction.0,
-        "command.starting_unit.rejected=none_available"
-    );
-    emit_command_failure(
-        app,
-        event_kind,
+    match core_sim::labor_commands::select_starting_band(
+        &mut app.world,
         faction,
-        "No available bands can accept this order right now.",
-    );
-    None
+        band_id,
+        command_label,
+    ) {
+        Ok(band) => Some(band),
+        Err(reason) => {
+            emit_command_failure(app, event_kind, faction, reason);
+            None
+        }
+    }
 }
 
 fn select_founder_band(
@@ -11987,19 +9454,6 @@ fn select_founder_band(
         "No Founders unit is available to found a settlement.",
     );
     None
-}
-
-/// **How an event line names a band** - `Band {id}` off its durable [`BandId`], never the unit's
-/// kind (see [`SelectedBand`]). Only a band that never minted an id (a hand-built fixture) falls
-/// back to the kind, there being no honest id to state.
-fn starting_unit_label(app: &bevy::prelude::App, entity: Entity) -> String {
-    if let Some(id) = app.world.get::<BandId>(entity).copied() {
-        return core_sim::band_label(id);
-    }
-    app.world
-        .get::<StartingUnit>(entity)
-        .map(|unit| unit.kind.clone())
-        .unwrap_or_else(|| format!("starting_unit:{}", entity.index()))
 }
 
 /// Charge a provisions cost from the faction's bands' local larders (food is band-local now — the
@@ -12072,9 +9526,13 @@ fn push_command_event(
     label: String,
     detail: Option<String>,
 ) {
-    push_command_entry(
-        app,
-        CommandEventEntry::new(tick, kind, faction, label, detail),
+    core_sim::labor_commands::push_command_event(
+        &mut app.world,
+        tick,
+        kind,
+        faction,
+        label,
+        detail,
     );
 }
 
@@ -19147,6 +16605,57 @@ mod tests {
         assert!(
             forage_failure_detail_contains(&app, "does not grow at"),
             "a crop this tile's basket does not carry is refused, naming the tile"
+        );
+    }
+
+    /// **One body, two callers**: the refusal the library seam RETURNS (what a scenario's `labor`
+    /// entry reports) is the line the player's handler writes on the feed, on the channel the seam
+    /// named.
+    #[test]
+    fn the_handler_writes_the_feed_line_the_seam_returns() {
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let order = || core_sim::command_seam::AssignLaborOrder {
+            role: "forage".to_string(),
+            workers: BAND_WORKERS,
+            target_x: Some(coord.x),
+            target_y: Some(coord.y),
+            take_species: vec!["not_a_plant".to_string()],
+            ..core_sim::command_seam::AssignLaborOrder::default()
+        };
+
+        let mut seam_app = forage_ground_with_baskets(faction, coord);
+        let refusal =
+            core_sim::command_seam::apply_assign_labor(&mut seam_app.world, faction, None, order())
+                .expect_err("an unknown plant is refused");
+        let core_sim::command_seam::CommandRefusal::Refused { kind, reason } = refusal else {
+            panic!("a labor refusal carries its feed channel and reason");
+        };
+        assert!(
+            !seam_app
+                .world
+                .resource::<CommandEventLog>()
+                .iter()
+                .any(|entry| {
+                    entry
+                        .detail
+                        .as_deref()
+                        .is_some_and(|detail| detail.contains(&reason))
+                }),
+            "the seam returns the refusal and writes nothing itself"
+        );
+
+        let mut handler_app = forage_ground_with_baskets(faction, coord);
+        assign_forage_take(&mut handler_app, faction, coord, &["not_a_plant"]);
+        assert!(
+            handler_app
+                .world
+                .resource::<CommandEventLog>()
+                .iter()
+                .any(|entry| {
+                    entry.kind == kind && entry.detail.as_deref() == Some(reason.as_str())
+                }),
+            "the handler writes the seam's reason on the seam's channel"
         );
     }
 

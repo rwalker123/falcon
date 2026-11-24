@@ -44,7 +44,7 @@ paths:
 The **bands** section of a scenario file (`core_sim/src/scenario/bands.rs`; the loader is
 `scenarios.md`). A listed faction spawns these bands, in file order, **instead of** its archetype's
 `starting_units`. A faction the file does not list spawns as its profile says. Every key is
-required except `outfit`.
+required except `outfit` and `auto_craft`.
 
 | key | meaning | refused when |
 |---|---|---|
@@ -58,6 +58,7 @@ required except `outfit`.
 | `bands[].founding_lines` | `L` for this band, in place of `lineage.founding_lines` | `0` |
 | `bands[].larder` | `[{ class, amount }]`, the larder **exactly** (`[]` is an empty larder), in place of the `food_reserve_days` reset | unknown keeping class, class listed twice, negative amount |
 | `bands[].outfit` | Optional `{ kits, materials }` (name → count), replayed as `SetStartingLoadout`, so it **replaces** the default fitted to this band. Absent keeps that default | unknown kit, kit with empty `uses`, unknown material, a kit or material key repeated, on any band but the faction's first, or the window's own refusals (`OverCarry`, …) |
+| `bands[].auto_craft` | Optional `bool`. `true` switches the band's bench auto-craft on, replayed through `command_seam::apply_set_auto_craft` (the body of `bench_auto <faction> <band> on`) after the outfit and before labor, so the bench fills from the gear the outfit left. Absent leaves it off | the verb's own band lookup refusal, at `bands[j].auto_craft` |
 
 The band's `StartingUnit` kind and tags are the archetype's **first** `starting_units` entry. An
 archetype with none is refused, because there is nothing to spawn the band as.
