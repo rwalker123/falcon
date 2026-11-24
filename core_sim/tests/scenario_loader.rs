@@ -1428,3 +1428,37 @@ fn a_band_with_auto_craft_true_loads_with_its_bench_auto_on_and_one_without_it_o
     let (mut off, _) = load(SHIPPED).expect("the shipped file loads");
     assert!(!bench_auto(&mut off), "an absent auto_craft leaves it off");
 }
+
+/// The turns the recommit job's countdown is read over: enough to see it fall, short of completion.
+const COUNTDOWN_TURNS_READ: u32 = 5;
+
+#[test]
+fn a_set_herd_output_build_on_a_tamed_herd_counts_down_against_its_own_meter() {
+    let (mut app, applied) = load(HERDS_PENS).expect("the playtest loads");
+    let id = applied.herds.get("flock").expect("the flock").clone();
+    let mut last_progress = 0.0_f32;
+    let mut last_turns: Option<u32> = None;
+    for turn in 1..=COUNTDOWN_TURNS_READ {
+        run_turn(&mut app);
+        let herd = sheep_of(&app, &id);
+        let rate = herd.output_recommit_progress - last_progress;
+        assert!(rate > 0.0, "turn {turn}: the commitment is being worked");
+        let expected = core_sim::build_turns_remaining(
+            herd.output_recommit_cost,
+            herd.output_recommit_progress,
+            rate,
+        )
+        .expect("a worked meter has a finish date");
+        assert_eq!(
+            herd.build_turns_remaining,
+            Some(core_sim::BuildTurns::Turns(expected)),
+            "turn {turn}: the countdown is the commitment's own remainder over its rate, not the \
+             pen rung above it"
+        );
+        if let Some(before) = last_turns {
+            assert!(expected < before, "turn {turn}: the countdown falls");
+        }
+        last_turns = Some(expected);
+        last_progress = herd.output_recommit_progress;
+    }
+}
