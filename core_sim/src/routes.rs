@@ -1113,7 +1113,7 @@ pub fn remoteness_multiplier(distance: u32, ladder: &LadderConfig) -> f32 {
 }
 
 /// **THE REMOTENESS A KEEPER IS QUOTED FOR A ROAD**: the hex distance from the tile the band stands
-/// on to the road tile, through [`remoteness_multiplier`], returned as `(distance, remoteness)`. The one body `grade` / `pave` (server)
+/// on to the road tile, through [`remoteness_multiplier`], returned as `(distance, remoteness)`. The one body `grade` / `pave` (`command_seam`)
 /// and the scenario loader's held roads both ask, so the quote cannot drift between them.
 pub fn quote_road_remoteness(
     world: &World,

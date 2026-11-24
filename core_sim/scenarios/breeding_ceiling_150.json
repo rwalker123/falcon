@@ -9,10 +9,12 @@
     "profile": "late_forager_tribe",
     "archetypes": { "major": 0, "minor": 0 }
   },
+  "herds": [],
   "factions": [
     {
       "faction": 0,
       "knowledge": ["messengers"],
+      "rungs": [],
       "bands": [
         {
           "id": "home",
@@ -26,7 +28,12 @@
             "materials": { "fibre": 20, "hide": 12 }
           }
         }
-      ]
+      ],
+      "labor": [],
+      "roads": [],
+      "pens": []
     }
-  ]
+  ],
+  "tiles": [],
+  "deposits": []
 }

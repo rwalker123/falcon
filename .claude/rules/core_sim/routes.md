@@ -1208,8 +1208,8 @@ identical hole `builders` fell through one role earlier; `command_guard`'s role 
 ## Scenario section
 
 A scenario's `roads` section (`docs/plan_scenarios.md` §4 slice 2e, `core_sim/src/scenario/roads.rs`)
-is an optional key of a faction section: the road rungs that faction already holds. Absent means no
-scenario roads. Checked-in example: `core_sim/scenarios/kept_roads.json`.
+is a required key of a faction section (`[]` for none): the road rungs that faction already
+holds. The roads are setters, applied after the held rungs and before any command is replayed. Checked-in example: `core_sim/scenarios/kept_roads.json`.
 
 | key | meaning |
 |---|---|

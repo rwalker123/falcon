@@ -63,10 +63,7 @@ pub(super) fn check(
 ) {
     let mut seen_tiles: BTreeSet<[u32; 2]> = BTreeSet::new();
     for (i, section) in factions.iter().enumerate() {
-        let Some(roads) = &section.roads else {
-            continue;
-        };
-        for (j, entry) in roads.iter().enumerate() {
+        for (j, entry) in section.roads.iter().enumerate() {
             let at = format!("factions[{i}].roads[{j}]");
             let [x, y] = entry.at;
             if x >= world.width || y >= world.height {

@@ -13,6 +13,9 @@
     {
       "faction": 0,
       "knowledge": ["roadbuilding", "paving"],
+      "rungs": [],
+      "labor": [],
+      "pens": [],
       "bands": [
         {
           "id": "home",
@@ -31,5 +34,8 @@
         { "at": [13, 10], "rung": "paved_road", "keeper": "home" }
       ]
     }
-  ]
+  ],
+  "tiles": [],
+  "herds": [],
+  "deposits": []
 }

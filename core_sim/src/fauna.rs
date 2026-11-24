@@ -21,8 +21,8 @@ use crate::{
     },
     fauna_config::{
         default_loiter_radius, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle, GrazeConfig,
-        HuntYield, SizeClass, SpeciesDef, YieldAccounts, YieldAxis, DEFAULT_HUSBANDRY_DENSITY,
-        NO_GRAZE_CAPACITY,
+        HuntYield, ShoreRequirement, SizeClass, SpeciesDef, YieldAccounts, YieldAxis,
+        DEFAULT_HUSBANDRY_DENSITY, NO_GRAZE_CAPACITY,
     },
     food::{classify_food_module, FoodModule},
     graze::GrazeRegistry,
@@ -1228,6 +1228,23 @@ impl Herd {
         }
     }
 
+    /// **WHAT A REAL COMPLETION OF `rung` LEAVES ON THIS HERD**: [`Self::accrue_rung`] offered more
+    /// work than any rung costs (every accrual caps the position at the rung's own top), so owner,
+    /// the species' taming price, the position, the fence and the reset grace are exactly what the
+    /// labor arm's accrual leaves. `pen_tile` is where a pen stands, as the arm resolves it.
+    /// Returns whether the rung is now held.
+    pub fn complete_rung_as_built(
+        &mut self,
+        faction: FactionId,
+        rung: &RungDef,
+        fauna: &FaunaConfig,
+        ladder: &LadderConfig,
+        pen_tile: UVec2,
+    ) -> bool {
+        self.accrue_rung(faction, f32::MAX, rung, fauna, ladder, pen_tile);
+        ladder.at_or_above(self.standing.held, rung.rung_id())
+    }
+
     /// **A fixture's already-tamed herd.** Runs the *real* accrual against
     /// [`crate::intensification::FABRICATED_BUILD_COST`], so the husbandry ceiling and the
     /// owner-lock still apply — you cannot fabricate a domesticated `wild` herd. It replaces the
@@ -2289,6 +2306,189 @@ fn normalize_density(value: f32) -> f32 {
     }
 }
 
+/// **Why a species cannot stand on a tile** - the ONE habitat predicate ([`habitat_refusal`]) the
+/// initial spawn, the predator spawn and a scenario's placed herd all ask, so a placed herd is fitted
+/// by exactly the rules worldgen seats one by.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HabitatRefusal {
+    /// The tile is water (the terrain it is), or off the map (`None`).
+    NotLand(Option<sim_runtime::TerrainType>),
+    /// The tile's food module (`None`: it has none) is not among the species' `host_biomes`.
+    DoesNotHost(Option<FoodModule>),
+    /// The species' `adjacent_water` rule is not met by the tile's shore.
+    NeedsShore(ShoreRequirement),
+    /// A carnivore's prey-derived `K` here is under its smallest spawn size.
+    TooLittlePrey,
+}
+
+impl std::fmt::Display for HabitatRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HabitatRefusal::NotLand(Some(terrain)) => write!(f, "tile is {terrain:?}"),
+            HabitatRefusal::NotLand(None) => write!(f, "tile is off the map"),
+            HabitatRefusal::DoesNotHost(Some(module)) => {
+                write!(f, "does not host {}", module.as_str())
+            }
+            HabitatRefusal::DoesNotHost(None) => write!(f, "does not host a tile with no module"),
+            HabitatRefusal::NeedsShore(ShoreRequirement::Salt) => {
+                write!(f, "needs salt water beside it")
+            }
+            HabitatRefusal::NeedsShore(ShoreRequirement::Fresh) => {
+                write!(f, "needs fresh water beside it")
+            }
+            HabitatRefusal::NeedsShore(_) => write!(f, "needs water beside it"),
+            HabitatRefusal::TooLittlePrey => write!(f, "too little prey in reach"),
+        }
+    }
+}
+
+/// The prey a carnivore's spawn gate measures against: the herbivore index and the sensing radius.
+#[derive(Debug, Clone, Copy)]
+pub struct PreyReach<'a> {
+    pub index: &'a [PreyDatum],
+    pub radius: u32,
+}
+
+impl PreyReach<'static> {
+    /// No prey at all - for a caller whose species are herbivores, which never read it.
+    pub const NONE: PreyReach<'static> = PreyReach {
+        index: &[],
+        radius: 0,
+    };
+}
+
+/// **THE HABITAT PREDICATE**: `None` when `def` may stand on `pos`, else the first reason it cannot.
+///
+/// In order: the tile is land; its food module is one the species hosts (migratory species too: their
+/// anchors read `host_biomes` as suitability); the `adjacent_water` shore rule; and, for a carnivore,
+/// the prey gate (`carnivore_k_at >= min_spawn_biomass`). It draws no random numbers, so the spawn can
+/// ask it per candidate without moving a draw.
+#[allow(clippy::too_many_arguments)]
+pub fn habitat_refusal(
+    def: &SpeciesDef,
+    pos: UVec2,
+    width: u32,
+    height: u32,
+    wrap: bool,
+    registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    prey: &PreyReach,
+) -> Option<HabitatRefusal> {
+    if !is_land_tile(pos, registry, tiles) {
+        return Some(HabitatRefusal::NotLand(tile_terrain(pos, registry, tiles)));
+    }
+    site_refusal(def, pos, width, height, wrap, registry, tiles, prey)
+}
+
+/// **[`habitat_refusal`] without the land test**: the hosted module, the shore rule and the prey gate.
+///
+/// The spawn passes filter their candidate species through THIS, not the whole predicate: a lake or an
+/// inland sea carries a food module, so a water tile is still a winner there, and the spawn has always
+/// drawn its species and route length on it before `build_short_route` finds it is not land. Asking the
+/// land test first would end that tile's draws early and move every placement after it. Land stays
+/// enforced by `build_short_route` in the spawn, by [`habitat_refusal`] everywhere else.
+#[allow(clippy::too_many_arguments)]
+pub fn site_refusal(
+    def: &SpeciesDef,
+    pos: UVec2,
+    width: u32,
+    height: u32,
+    wrap: bool,
+    registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    prey: &PreyReach,
+) -> Option<HabitatRefusal> {
+    let module = module_at(pos, registry, tiles);
+    if !module.is_some_and(|module| def.hosts_biome(module.as_str())) {
+        return Some(HabitatRefusal::DoesNotHost(module));
+    }
+    if def.adjacent_water.is_required() {
+        let (has_salt, has_fresh) = adjacent_water_kinds(pos, width, height, wrap, registry, tiles);
+        if !def.adjacent_water.satisfied_by(has_salt, has_fresh) {
+            return Some(HabitatRefusal::NeedsShore(def.adjacent_water));
+        }
+    }
+    if def.diet == Diet::Carnivore
+        && carnivore_k_at(
+            pos,
+            def.combat.attack,
+            def.prey_per_biomass,
+            prey.index,
+            prey.radius,
+            width,
+            wrap,
+        ) < def.min_spawn_biomass()
+    {
+        return Some(HabitatRefusal::TooLittlePrey);
+    }
+    None
+}
+
+/// **The one construction of a freshly spawned herd of a species**: the `Herd::new` call, the cached
+/// husbandry ceiling and the first ecology phase. The three spawn passes and a scenario's placed herd
+/// all build through it.
+pub fn herd_from_species(
+    id: String,
+    def: &SpeciesDef,
+    route: Vec<UVec2>,
+    biomass: f32,
+    carrying_capacity: f32,
+    fauna: &FaunaConfig,
+    root: RungStanding,
+) -> Herd {
+    let mut herd = Herd::new(
+        id,
+        def.display_name.clone(),
+        def.size_class,
+        route,
+        biomass,
+        carrying_capacity,
+        def.fodder_per_biomass,
+        def.regrowth_rate_or(fauna.ecology.regrowth_rate),
+        def.body_mass,
+        root,
+    );
+    // Cache the species' husbandry ceiling (Grazing 2d-δ) so the gates read a herd field.
+    herd.husbandry_ceiling = def.husbandry_ceiling;
+    herd.refresh_ecology_phase(fauna);
+    herd
+}
+
+/// **Is this herd standing above the biomass `advance_herds` disperses a herd under?** The one
+/// expression: the herd's own rung ecology's `extinction_floor` times its capacity. (The caller adds
+/// the exemptions for a penned or owned herd.)
+pub fn herd_above_extinction_floor(herd: &Herd, fauna: &FaunaConfig) -> bool {
+    herd.biomass > herd_ecology(herd, fauna).extinction_floor * herd_capacity(herd, fauna)
+}
+
+/// Where a migratory route's home range is seeded: on a tile drawn from the suitable list (the
+/// spawn), or on a tile the caller names (a scenario's placed herd, which must stand where it said).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SeedTile {
+    Drawn,
+    At(UVec2),
+}
+
+/// Every land tile bucketed by its food module, in `(y, x)` scan order, so each species' suitable-tile
+/// slice is a cheap concat ([`suitable_tiles_for`]).
+pub(crate) fn suitable_tiles_by_module(
+    width: u32,
+    height: u32,
+    registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+) -> BTreeMap<FoodModule, Vec<UVec2>> {
+    let mut by_module: BTreeMap<FoodModule, Vec<UVec2>> = BTreeMap::new();
+    for y in 0..height {
+        for x in 0..width {
+            let pos = UVec2::new(x, y);
+            if let Some(module) = module_at(pos, registry, tiles) {
+                by_module.entry(module).or_default().push(pos);
+            }
+        }
+    }
+    by_module
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_initial_herds(
     mut registry: ResMut<HerdRegistry>,
@@ -2557,15 +2757,7 @@ fn spawn_migratory_herds(
     // Bucket every land tile by its host food module once (deterministic (y, x) scan order → ordered
     // Vecs), so each herd's per-species suitable-tile slice is a cheap concat instead of an O(w·h)
     // rescan. A tile has exactly one module, so buckets are disjoint (no cross-bucket duplicates).
-    let mut suitable_by_module: BTreeMap<FoodModule, Vec<UVec2>> = BTreeMap::new();
-    for y in 0..height {
-        for x in 0..width {
-            let pos = UVec2::new(x, y);
-            if let Some(module) = module_at(pos, tile_registry, tiles) {
-                suitable_by_module.entry(module).or_default().push(pos);
-            }
-        }
-    }
+    let suitable_by_module = suitable_tiles_by_module(width, height, tile_registry, tiles);
     let herd_target = fauna.abundance.migratory.herds_for_map(width, height);
     // `idx` is the *seated* herd count, not the attempt count: a `build_migratory_route` failure used
     // to `continue` the `0..herd_target` loop, which consumed the slot and left the map one migratory
@@ -2587,6 +2779,7 @@ fn spawn_migratory_herds(
             tiles,
             &fauna.graze,
             &suitable,
+            SeedTile::Drawn,
             rng,
             steps,
             wrap,
@@ -2596,26 +2789,12 @@ fn spawn_migratory_herds(
         let biomass = def.sample_biomass(rng);
         let carrying_capacity = def.carrying_capacity();
         let id = format!("herd_{key}_{idx:02}");
-        let mut herd = Herd::new(
-            id,
-            def.display_name.clone(),
-            def.size_class,
-            route,
-            biomass,
-            carrying_capacity,
-            def.fodder_per_biomass,
-            def.regrowth_rate_or(fauna.ecology.regrowth_rate),
-            def.body_mass,
-            root,
-        );
+        let mut herd = herd_from_species(id, def, route, biomass, carrying_capacity, fauna, root);
         // Start loitering at the spawn anchor for a randomized window (rather than migrating off
         // immediately from `Loiter { turns_left: 0 }`).
         herd.roam = RoamState::Loiter {
             turns_left: def.sample_loiter_turns(rng),
         };
-        // Cache the species' husbandry ceiling (Grazing 2d-δ) so the gates read a herd field.
-        herd.husbandry_ceiling = def.husbandry_ceiling;
-        herd.refresh_ecology_phase(fauna);
         log_herd_spawn(&herd);
         herds.push(herd);
         idx += 1;
@@ -2742,14 +2921,19 @@ fn spawn_game_group_at(
     // each candidate is tested against its own requirement; the draw stays exactly one `gen_range`
     // — only its bound changes.
     let mut candidates = fauna.game_species_for_biome(module_key);
-    if candidates
-        .iter()
-        .any(|(_, def)| def.adjacent_water.is_required())
-    {
-        let (has_salt, has_fresh) =
-            adjacent_water_kinds(pos, width, height, wrap, tile_registry, tiles);
-        candidates.retain(|(_, def)| def.adjacent_water.satisfied_by(has_salt, has_fresh));
-    }
+    candidates.retain(|(_, def)| {
+        site_refusal(
+            def,
+            pos,
+            width,
+            height,
+            wrap,
+            tile_registry,
+            tiles,
+            &PreyReach::NONE,
+        )
+        .is_none()
+    });
     if candidates.is_empty() {
         return None;
     }
@@ -2759,22 +2943,15 @@ fn spawn_game_group_at(
     let biomass = def.sample_biomass(rng);
     let carrying_capacity = def.carrying_capacity();
     let id = format!("{GAME_ID_PREFIX}{key}_{game_idx:02}");
-    let mut herd = Herd::new(
+    Some(herd_from_species(
         id,
-        def.display_name.clone(),
-        def.size_class,
+        def,
         route,
         biomass,
         carrying_capacity,
-        def.fodder_per_biomass,
-        def.regrowth_rate_or(fauna.ecology.regrowth_rate),
-        def.body_mass,
+        fauna,
         root,
-    );
-    // Cache the species' husbandry ceiling (Grazing 2d-δ) so the gates read a herd field.
-    herd.husbandry_ceiling = def.husbandry_ceiling;
-    herd.refresh_ecology_phase(fauna);
-    Some(herd)
+    ))
 }
 
 /// **The dedicated predator spawn pass** (Predators Phase 1a, `docs/plan_predators.md`) — same
@@ -2918,7 +3095,10 @@ fn spawn_predator_group_at(
     rng: &mut SmallRng,
     root: RungStanding,
 ) -> Option<Herd> {
-    let radius = fauna.predators.prey_sense_radius;
+    let reach = PreyReach {
+        index: prey_index,
+        radius: fauna.predators.prey_sense_radius,
+    };
     let candidates: Vec<(&String, &SpeciesDef)> = fauna
         .carnivore_species_for_biome(module_key)
         .into_iter()
@@ -2931,16 +3111,9 @@ fn spawn_predator_group_at(
             if placed >= target {
                 return false;
             }
-            // The prey gate: enough prey in reach to sustain at least the pack's smallest size.
-            carnivore_k_at(
-                pos,
-                def.combat.attack,
-                def.prey_per_biomass,
-                prey_index,
-                radius,
-                width,
-                wrap,
-            ) >= def.min_spawn_biomass()
+            // The shared habitat predicate: a hosted module, the shore rule and the prey gate (enough prey in
+            // reach to sustain at least the pack's smallest size).
+            site_refusal(def, pos, width, height, wrap, tile_registry, tiles, &reach).is_none()
         })
         .collect();
     if candidates.is_empty() {
@@ -2952,21 +3125,15 @@ fn spawn_predator_group_at(
     let biomass = def.sample_biomass(rng);
     let carrying_capacity = def.carrying_capacity();
     let id = format!("{PREDATOR_ID_PREFIX}{key}_{pack_idx:02}");
-    let mut herd = Herd::new(
+    Some(herd_from_species(
         id,
-        def.display_name.clone(),
-        def.size_class,
+        def,
         route,
         biomass,
         carrying_capacity,
-        def.fodder_per_biomass,
-        def.regrowth_rate_or(fauna.ecology.regrowth_rate),
-        def.body_mass,
+        fauna,
         root,
-    );
-    herd.husbandry_ceiling = def.husbandry_ceiling;
-    herd.refresh_ecology_phase(fauna);
-    Some(herd)
+    ))
 }
 
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
@@ -3292,10 +3459,7 @@ pub fn advance_herds(
     // would be despawned here the moment it dipped below the extinction floor, stranding ~a floor's
     // worth of biomass instead of shedding it out — the animals would vanish rather than go feral.
     registry.herds.retain(|herd| {
-        herd.is_corralled()
-            || herd.owner.is_some()
-            || herd.biomass
-                > herd_ecology(herd, &fauna).extinction_floor * herd_capacity(herd, &fauna)
+        herd.is_corralled() || herd.owner.is_some() || herd_above_extinction_floor(herd, &fauna)
     });
     telemetry.entries = registry.snapshot_entries(&ladder);
     density.rebuild(config.grid_size, &registry);
@@ -3812,6 +3976,36 @@ fn ecological_carrying_capacity(
         total += (flow / herd.fodder_per_biomass * density_gain).min(space);
     }
     Some(total / points.len() as f32)
+}
+
+/// **THE K A WILD HERD WILL LIVE UNDER ON ITS FIRST TURN** — [`ecological_carrying_capacity`] at the
+/// live standing with no owner camps, exactly the reading [`advance_herds`] writes into
+/// `herd.carrying_capacity` for an ownerless herd. `None` is the seam's own "cannot resolve" (a
+/// non-grazing species or an absent graze layer), left to the caller because a scenario must refuse a
+/// herd it cannot size rather than fall back to the species table's K.
+#[allow(clippy::too_many_arguments)]
+pub fn wild_herd_capacity(
+    herd: &Herd,
+    def: Option<&SpeciesDef>,
+    graze: &GrazeRegistry,
+    prey: &[PreyDatum],
+    fauna: &FaunaConfig,
+    width: u32,
+    height: u32,
+    wrap: bool,
+) -> Option<f32> {
+    ecological_carrying_capacity(
+        herd,
+        def,
+        graze,
+        prey,
+        fauna,
+        width,
+        height,
+        wrap,
+        CapacityStanding::live(herd),
+        &[],
+    )
 }
 
 /// **THE RUNG A CAPACITY READING IS STRUCK AT** — the two things [`ecological_carrying_capacity`]
@@ -5691,6 +5885,28 @@ pub fn cancel_dropped_rings(
             crate::components::BuildJob::Climb(_) => herd.pen_site = None,
         }
     }
+}
+
+/// **CANCEL THE IN-FLIGHT STATE OF A HERD JOB A NEW DECLARATION JUST REPLACED.**
+///
+/// A second verb on a source replaces the declaration in place
+/// (`LaborAllocation::declare_build_replacing` returns the displaced entry), which takes the funding
+/// from the old job exactly as a drop does, so the old job's herd state is cancelled by the same rule
+/// ([`cancel_dropped_rings`]). **Only the old kind's state is cleared**: a job restated as the same
+/// kind (`ExtendPen` again, one rung's `Climb` for another) cancels nothing, and the new job's own
+/// state, set on the herd before it was queued, is never touched.
+pub fn cancel_replaced_job(
+    herds: &mut HerdRegistry,
+    replaced: Option<crate::components::BuildDeclaration>,
+    new: crate::components::BuildJob,
+) {
+    let Some(entry) = replaced else {
+        return;
+    };
+    if std::mem::discriminant(&entry.declared) == std::mem::discriminant(&new) {
+        return;
+    }
+    cancel_dropped_rings(herds, &[entry]);
 }
 
 /// **WITHDRAW A DECLARATION, AND STOP THE RING IT WAS FUNDING** — the `unqueue` command's whole
@@ -12732,7 +12948,7 @@ fn build_route(
 /// each of its `host_biomes` keys, restored to global (y, x) scan order (each bucket is already in
 /// scan order, but concatenating disjoint buckets is not). Empty when the map hosts none of the
 /// species' biomes — the graceful-fallback case `build_migratory_route` handles.
-fn suitable_tiles_for(
+pub(crate) fn suitable_tiles_for(
     def: &SpeciesDef,
     suitable_by_module: &BTreeMap<FoodModule, Vec<UVec2>>,
 ) -> Vec<UVec2> {
@@ -12758,7 +12974,7 @@ fn suitable_tiles_for(
 /// Determinism: only the passed seeded `rng`, no `HashMap`/`HashSet` iteration, every tie broken by
 /// an explicit `(y, x)` key — mirroring `build_route` / `spawn_short_range_game`.
 #[allow(clippy::too_many_arguments)]
-fn build_migratory_route(
+pub(crate) fn build_migratory_route(
     base: UVec2,
     width: u32,
     height: u32,
@@ -12766,6 +12982,7 @@ fn build_migratory_route(
     tiles: &Query<&Tile>,
     graze_config: &GrazeConfig,
     suitable: &[UVec2],
+    seed_tile: SeedTile,
     rng: &mut SmallRng,
     steps: u32,
     wrap: bool,
@@ -12785,7 +13002,10 @@ fn build_migratory_route(
         );
     }
     // 2. Seed the home range on a random suitable tile.
-    let seed = suitable[rng.gen_range(0..suitable.len())];
+    let seed = match seed_tile {
+        SeedTile::Drawn => suitable[rng.gen_range(0..suitable.len())],
+        SeedTile::At(tile) => tile,
+    };
     // 3. The regional home range: suitable tiles within `MIGRATORY_HOME_RANGE_RADIUS` of the seed
     //    (which is always in the pool, its own distance being 0).
     let pool: Vec<UVec2> = suitable
@@ -12921,7 +13141,7 @@ fn tile_terrain(
 /// `origin` (radius grows with route length). `steps == 1` yields a single-tile,
 /// stationary group (which the client draws with no trail). Returns `None` only if
 /// `origin` itself is not land.
-fn build_short_route(
+pub(crate) fn build_short_route(
     origin: UVec2,
     steps: u32,
     width: u32,

@@ -10034,7 +10034,14 @@ pub fn advance_labor_allocation(
                     // against `herd_rung_key(..).above()` at this crew, floor and kit, from the work
                     // already banked on that rung; `None` at the top of the ladder (a penned herd has
                     // nothing left to build — and never reaches here, the tend branch returns first).
-                    if improvement.is_none() {
+                    //
+                    // **ONLY WHERE NOTHING IS DECLARED, whatever the declaration is.** `improvement` is
+                    // the rung verb the entry derives, and a commitment names none (a ring never gets
+                    // here: a penned herd has no rung above), so a `set_herd_output` build on a
+                    // pastoral herd read as "no build" and was dated here as the pen above it (the
+                    // rung's full `work_cost`, nothing banked) - and, being pushed first, that quote
+                    // answered for the commitment's own. The recommit pushes its own below.
+                    if improvement.is_none() && !ring_queued && !recommit_queued {
                         let projected =
                             ladder
                                 .above_id(fauna::herd_rung_key(herd))

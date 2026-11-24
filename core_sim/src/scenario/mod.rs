@@ -15,7 +15,13 @@
 //! touch two files.
 
 pub mod bands;
+pub mod deposits;
+pub mod herds;
+pub mod labor;
+pub mod pens;
 pub mod roads;
+pub mod rungs;
+pub mod tiles;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -28,12 +34,24 @@ pub use bands::{
     Ages, BandEntry, FactionSection, FactionSetup, LarderEntry, Outfit, ScenarioSetup,
     AGES_SUM_TOLERANCE,
 };
+pub use deposits::DepositEntry;
+pub use herds::{HerdEntry, HerdOrigin, ScenarioHerdSetup};
+pub use labor::LaborEntry;
+pub use pens::PenEntry;
+pub use tiles::TileOverride;
 
-use crate::command_seam::apply_set_starting_loadout;
+use crate::command_seam::{
+    apply_assign_labor, apply_set_auto_craft, apply_set_starting_loadout, apply_work_priority,
+    AssignLaborOrder,
+};
 use crate::components::BandId;
 use crate::demographics_config::{DemographicsConfig, DemographicsConfigHandle};
 use crate::equipment_config::{EquipmentConfig, EquipmentConfigHandle};
-use crate::intensification::LadderConfig;
+use crate::extraction_config::{ExtractionConfig, ExtractionConfigHandle};
+use crate::fauna_config::{FaunaConfig, FaunaConfigHandle};
+use crate::flora_config::{FloraConfig, FloraConfigHandle};
+use crate::intensification::{LadderConfig, LadderConfigHandle};
+use crate::labor_commands::BuildSourceRef;
 use crate::map_preset::{MapPresets, MapPresetsHandle};
 use crate::materials_config::{MaterialsConfig, MaterialsConfigHandle};
 use crate::resources::SimulationConfig;
@@ -44,7 +62,6 @@ use crate::start_profile::{
 };
 use crate::starting_loadout::{KitAllocation, MaterialAllocation};
 use crate::world_roster::{apply_start_profile, seed_faction_roster};
-use crate::LadderConfigHandle;
 use crate::{faction_start_land_fraction, granted_archetype_counts};
 
 /// The path a refusal carries when the file itself could not be read.
@@ -81,6 +98,12 @@ pub struct ScenarioFile {
     pub note: String,
     pub world: WorldSection,
     pub factions: Vec<FactionSection>,
+    /// The tile overrides, applied as a worldgen input. A required key: `[]` for none.
+    pub tiles: Vec<tiles::TileOverride>,
+    /// Wild herds placed or set. Required: an empty list is fine, an absent key is not.
+    pub herds: Vec<HerdEntry>,
+    /// World state, not a faction's: a deposit has no owner.
+    pub deposits: Vec<DepositEntry>,
 }
 
 /// The `new_game` arguments, every one required.
@@ -106,6 +129,9 @@ pub struct ScenarioContext {
     pub equipment: Arc<EquipmentConfig>,
     pub materials: Arc<MaterialsConfig>,
     pub ladder: Arc<LadderConfig>,
+    pub flora: Arc<FloraConfig>,
+    pub extraction: Arc<ExtractionConfig>,
+    pub fauna: Arc<FaunaConfig>,
 }
 
 impl ScenarioContext {
@@ -119,6 +145,9 @@ impl ScenarioContext {
             equipment: world.resource::<EquipmentConfigHandle>().get(),
             materials: world.resource::<MaterialsConfigHandle>().get(),
             ladder: world.resource::<LadderConfigHandle>().get(),
+            flora: world.resource::<FloraConfigHandle>().get(),
+            extraction: world.resource::<ExtractionConfigHandle>().get(),
+            fauna: world.resource::<FaunaConfigHandle>().get(),
         }
     }
 }
@@ -136,7 +165,7 @@ pub struct ScenarioPlan {
 impl ScenarioPlan {
     /// The setup worldgen reads while it spawns.
     pub fn setup(&self) -> ScenarioSetup {
-        ScenarioSetup::from_sections(&self.file.factions)
+        ScenarioSetup::from_sections(&self.file.factions, &self.file.tiles)
     }
 }
 
@@ -212,7 +241,18 @@ pub fn parse_scenario(
         }
     }
     bands::check(&file.factions, ctx, &mut refusals);
+    rungs::check(&file.factions, &file.herds, ctx, &mut refusals);
+    labor::check(&file.factions, &file.herds, &file.world, ctx, &mut refusals);
+    pens::check(&file.factions, &file.herds, &mut refusals);
     roads::check(&file.factions, &file.world, ctx, &mut refusals);
+    tiles::check(
+        &file.tiles,
+        (file.world.width, file.world.height),
+        ctx,
+        &mut refusals,
+    );
+    herds::check(&file.herds, &file.world, ctx, &mut refusals);
+    deposits::check(&file.deposits, ctx, &mut refusals);
     match profile {
         Some(profile) if refusals.is_empty() => Ok(ScenarioPlan {
             file,
@@ -258,14 +298,19 @@ pub fn build_scenario_world(
     apply_start_profile(app, &plan.profile);
     seed_faction_roster(app, &granted_counts);
     app.insert_resource(plan.setup());
+    app.insert_resource(ScenarioHerdSetup {
+        herds: plan.file.herds.clone(),
+    });
     run_turn(app);
-    finish_scenario(&mut app.world)
+    finish_scenario(&mut app.world, &plan.file.deposits)
 }
 
 /// **What a successful load built**: the scenario ids of the bands, for the sections that name one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ScenarioApplied {
     pub bands: BTreeMap<String, BandId>,
+    /// Scenario herd id to the runtime herd id, for placed and worldgen herds alike.
+    pub herds: BTreeMap<String, String>,
 }
 
 /// **Pass 2, after the candidate's first turn has built the world: collect what worldgen could not
@@ -274,15 +319,40 @@ pub struct ScenarioApplied {
 /// The replayed `outfit` goes through [`apply_set_starting_loadout`], the function the server's own
 /// handler calls, so it replaces the default committed on the world-build pass under the carry cap,
 /// and a refusal (`OverCarry` and the rest) names its entry with the handler's own reason.
-pub fn finish_scenario(world: &mut World) -> Result<ScenarioApplied, Vec<ScenarioRefusal>> {
+pub fn finish_scenario(
+    world: &mut World,
+    deposits: &[DepositEntry],
+) -> Result<ScenarioApplied, Vec<ScenarioRefusal>> {
     let Some(mut setup) = world.remove_resource::<ScenarioSetup>() else {
         return Ok(ScenarioApplied::default());
     };
+    let herd_setup = world.remove_resource::<ScenarioHerdSetup>();
     let mut refusals = setup.take_refusals();
+    // Herds are a setter (before the outfit replay). Every fit refusal is collected before any herd
+    // or deposit is applied, so a refused file changes nothing.
+    let (fitted, herd_refusals) = match &herd_setup {
+        Some(herd_setup) => herds::fit(world, &herd_setup.herds),
+        None => (Vec::new(), Vec::new()),
+    };
+    refusals.extend(herd_refusals);
+    deposits::fit(world, deposits, &mut refusals);
     if !refusals.is_empty() {
         return Err(refusals);
     }
+    let herds = herds::apply(world, fitted);
+    deposits::apply(world, deposits, &mut refusals);
+    // **Held rungs (the setters, plan section 2.8 step 5)**, faction order then file order, BEFORE
+    // the outfit replay. Every refusal is collected; a refused entry does not stop the others.
+    // A held working's rung and a deposit's stock both open the working through
+    // `DepositRegistry::open`, so they compose in either order.
+    for faction_setup in &setup.factions {
+        rungs::apply_held(world, faction_setup, &herds, &mut refusals);
+    }
+    // Held roads are setters too: a keeper's labor row (`labor`) is replayed after them.
     roads::apply(world, &setup, &mut refusals);
+    if !refusals.is_empty() {
+        return Err(refusals);
+    }
     for faction_setup in &setup.factions {
         let faction = faction_setup.faction;
         for (j, entry) in faction_setup.bands.iter().enumerate() {
@@ -318,11 +388,113 @@ pub fn finish_scenario(world: &mut World) -> Result<ScenarioApplied, Vec<Scenari
             }
         }
     }
-    if refusals.is_empty() {
-        Ok(ScenarioApplied {
-            bands: setup.spawned,
-        })
-    } else {
-        Err(refusals)
+    // **Auto-craft after the outfit, before labor**: the bench fills from the gear the outfit left.
+    if !refusals.is_empty() {
+        return Err(refusals);
     }
+    for faction_setup in &setup.factions {
+        for (j, entry) in faction_setup.bands.iter().enumerate() {
+            if entry.auto_craft != Some(true) {
+                continue;
+            }
+            let Some(band) = setup.spawned.get(&entry.id).copied() else {
+                continue;
+            };
+            if let Err(refusal) = apply_set_auto_craft(world, faction_setup.faction, band.0, true) {
+                refusals.push(ScenarioRefusal::new(
+                    format!(
+                        "factions[{}].bands[{j}].auto_craft",
+                        faction_setup.file_index
+                    ),
+                    refusal.to_string(),
+                ));
+                return Err(refusals);
+            }
+        }
+    }
+    // **Labor after every faction's outfit** (plan section 2.8 step 6): the outfit is an ordinary
+    // revision of the opening window, and a work row's gear is read against the outfit it ends up with.
+    if !refusals.is_empty() {
+        return Err(refusals);
+    }
+    for faction_setup in &setup.factions {
+        let faction = faction_setup.faction;
+        for (k, entry) in faction_setup.labor.iter().enumerate() {
+            let path = format!("factions[{}].labor[{k}]", faction_setup.file_index);
+            let Some(band) = setup.spawned.get(entry.band()).copied() else {
+                refusals.push(ScenarioRefusal::new(
+                    path,
+                    format!("'{}' is not a band this scenario spawned", entry.band()),
+                ));
+                return Err(refusals);
+            };
+            // The file names a herd by its scenario id; the verbs read the runtime one.
+            let Some(entry) = labor::with_runtime_herd(entry, &herds) else {
+                refusals.push(ScenarioRefusal::new(
+                    path,
+                    "the herd this entry names was not applied",
+                ));
+                return Err(refusals);
+            };
+            let entry = &entry;
+            let result = match entry {
+                LaborEntry::AssignLabor(order) => apply_assign_labor(
+                    world,
+                    faction,
+                    Some(band.0),
+                    AssignLaborOrder {
+                        role: order.role.clone(),
+                        workers: order.workers,
+                        target_x: order.target_x,
+                        target_y: order.target_y,
+                        fauna_id: order.fauna_id.clone(),
+                        species: order.species.clone(),
+                        floor: order.floor,
+                        kit_id: order.kit_id.clone(),
+                        take_species: order.take_species.clone(),
+                        move_with_herd: order.move_with_herd,
+                    },
+                ),
+                LaborEntry::WorkPriority(order) => apply_work_priority(
+                    world,
+                    faction,
+                    band.0,
+                    BuildSourceRef {
+                        target_x: order.target_x,
+                        target_y: order.target_y,
+                        herd_id: order.herd_id.clone(),
+                        material: order.material.clone(),
+                        branch: order.branch.clone(),
+                    },
+                    order.level.clone(),
+                ),
+            };
+            if let Err(refusal) = result {
+                // **A refused entry stops the load there**: later rows may stand on this one.
+                refusals.push(ScenarioRefusal::new(path, refusal.to_string()));
+                return Err(refusals);
+            }
+        }
+    }
+    // **Builds after labor** (plan section 2.8 step 6): a declared build needs a band already
+    // working its source, which the labor rows put there. A refused build stops the load there.
+    for faction_setup in &setup.factions {
+        rungs::apply_builds(world, faction_setup, &setup.spawned, &herds, &mut refusals);
+        if !refusals.is_empty() {
+            return Err(refusals);
+        }
+    }
+    // **Pens after builds** (plan section 2.8 step 6): a ring or a commitment needs a keeper, which
+    // the labor rows put on the herd, and a pen the held rungs or a queued Corral made. A refused
+    // entry stops the load there, with the verb's own reason.
+    for faction_setup in &setup.factions {
+        pens::apply(world, faction_setup, &herds, &mut refusals);
+        if !refusals.is_empty() {
+            return Err(refusals);
+        }
+    }
+    Ok(ScenarioApplied {
+        bands: setup.spawned,
+        herds,
+    })
 }

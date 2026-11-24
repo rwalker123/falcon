@@ -3039,6 +3039,7 @@ mod tests {
                         river_edges: 0,
                         river_inflow: 0,
                         river_channel: 0,
+                        flora_override: None,
                     })
                     .id();
                 tiles.push(entity);

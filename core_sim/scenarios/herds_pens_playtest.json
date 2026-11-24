@@ -1,0 +1,60 @@
+{
+  "name": "herds_pens_playtest",
+  "note": "Look for a new aurochs herd at (15, 10), the boar at (11, 10) thinned to a fifth of its stock, the tamed fowl at (16, 11) being re-sorted to half milk, eggs and wool, and the sheep pen widening once the band has crafted the hurdles it needs (auto-craft is on, wood is in the outfit).",
+  "world": {
+    "preset": "earthlike",
+    "width": 80,
+    "height": 52,
+    "seed": 41733,
+    "profile": "late_forager_tribe",
+    "archetypes": { "major": 0, "minor": 0 }
+  },
+  "factions": [
+    {
+      "faction": 0,
+      "knowledge": ["messengers", "cultivation", "seed_selection", "herding", "penning", "woodcraft", "conservationism", "tanning"],
+      "rungs": [
+        { "held": { "rung": "plant:farm", "at": [12, 12] } },
+        { "held": { "rung": "animal:pen", "herd": "sheep" } },
+        { "held": { "rung": "forestry:felling", "at": [13, 10], "material": "wood" } },
+        { "build_rung": {
+          "band": null, "verb": "coppice", "target_x": 13, "target_y": 10,
+          "herd_id": null, "material": "wood", "branch": null } },
+        { "held": { "rung": "animal:pastoral", "herd": "flock" } }
+      ],
+      "bands": [
+        {
+          "id": "home",
+          "at": [13, 11],
+          "size": 150,
+          "ages": { "children": 0.30, "working": 0.60, "elders": 0.10 },
+          "founding_lines": 8,
+          "larder": [{ "class": "dry", "amount": 450.0 }],
+          "auto_craft": true,
+          "outfit": {
+            "kits": { "big_game": 10, "gathering": 20 },
+            "materials": { "fibre": 10, "hide": 12, "wood": 30 }
+          }
+        }
+      ],
+      "labor": [
+        { "assign_labor": {
+          "band": "home", "role": "hunt", "workers": 2, "fauna_id": "flock",
+          "take_species": [], "move_with_herd": false } }
+      ],
+      "roads": [],
+      "pens": [
+        { "extend_pen": { "herd": "sheep" } },
+        { "set_herd_output": { "herd": "flock", "fraction": 0.5 } }
+      ]
+    }
+  ],
+  "tiles": [],
+  "herds": [
+    { "id": "sheep", "species": "wild_sheep", "at": [11, 11], "stock": 1.0, "origin": "worldgen" },
+    { "id": "new_aurochs", "species": "aurochs", "at": [15, 10], "stock": 0.6, "origin": "placed" },
+    { "id": "thin_boar", "species": "boar", "at": [11, 10], "stock": 0.2, "origin": "worldgen" },
+    { "id": "flock", "species": "fowl", "at": [16, 11], "stock": 1.0, "origin": "worldgen" }
+  ],
+  "deposits": []
+}
