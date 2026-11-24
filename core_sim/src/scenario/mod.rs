@@ -15,6 +15,7 @@
 //! touch two files.
 
 pub mod bands;
+pub mod deposits;
 pub mod herds;
 pub mod labor;
 pub mod pens;
@@ -32,6 +33,7 @@ pub use bands::{
     Ages, BandEntry, FactionSection, FactionSetup, LarderEntry, Outfit, ScenarioSetup,
     AGES_SUM_TOLERANCE,
 };
+pub use deposits::DepositEntry;
 pub use herds::{HerdEntry, HerdOrigin, ScenarioHerdSetup};
 pub use labor::LaborEntry;
 pub use pens::PenEntry;
@@ -99,6 +101,8 @@ pub struct ScenarioFile {
     pub tiles: Vec<tiles::TileOverride>,
     /// Wild herds placed or set. Required: an empty list is fine, an absent key is not.
     pub herds: Vec<HerdEntry>,
+    /// World state, not a faction's: a deposit has no owner.
+    pub deposits: Vec<DepositEntry>,
 }
 
 /// The `new_game` arguments, every one required.
@@ -246,6 +250,7 @@ pub fn parse_scenario(
         &mut refusals,
     );
     herds::check(&file.herds, &file.world, ctx, &mut refusals);
+    deposits::check(&file.deposits, ctx, &mut refusals);
     match profile {
         Some(profile) if refusals.is_empty() => Ok(ScenarioPlan {
             file,
@@ -295,7 +300,7 @@ pub fn build_scenario_world(
         herds: plan.file.herds.clone(),
     });
     run_turn(app);
-    finish_scenario(&mut app.world)
+    finish_scenario(&mut app.world, &plan.file.deposits)
 }
 
 /// **What a successful load built**: the scenario ids of the bands, for the sections that name one.
@@ -312,25 +317,32 @@ pub struct ScenarioApplied {
 /// The replayed `outfit` goes through [`apply_set_starting_loadout`], the function the server's own
 /// handler calls, so it replaces the default committed on the world-build pass under the carry cap,
 /// and a refusal (`OverCarry` and the rest) names its entry with the handler's own reason.
-pub fn finish_scenario(world: &mut World) -> Result<ScenarioApplied, Vec<ScenarioRefusal>> {
+pub fn finish_scenario(
+    world: &mut World,
+    deposits: &[DepositEntry],
+) -> Result<ScenarioApplied, Vec<ScenarioRefusal>> {
     let Some(mut setup) = world.remove_resource::<ScenarioSetup>() else {
         return Ok(ScenarioApplied::default());
     };
     let herd_setup = world.remove_resource::<ScenarioHerdSetup>();
     let mut refusals = setup.take_refusals();
     // Herds are a setter (before the outfit replay). Every fit refusal is collected before any herd
-    // is applied, so a refused file changes nothing.
+    // or deposit is applied, so a refused file changes nothing.
     let (fitted, herd_refusals) = match &herd_setup {
         Some(herd_setup) => herds::fit(world, &herd_setup.herds),
         None => (Vec::new(), Vec::new()),
     };
     refusals.extend(herd_refusals);
+    deposits::fit(world, deposits, &mut refusals);
     if !refusals.is_empty() {
         return Err(refusals);
     }
     let herds = herds::apply(world, fitted);
+    deposits::apply(world, deposits, &mut refusals);
     // **Held rungs (the setters, plan section 2.8 step 5)**, faction order then file order, BEFORE
     // the outfit replay. Every refusal is collected; a refused entry does not stop the others.
+    // A held working's rung and a deposit's stock both open the working through
+    // `DepositRegistry::open`, so they compose in either order.
     for faction_setup in &setup.factions {
         rungs::apply_held(world, faction_setup, &herds, &mut refusals);
     }

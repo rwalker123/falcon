@@ -121,10 +121,11 @@ scenario can already use. No second vocabulary has to be maintained alongside it
   maps it to the `BandId` that spawning allocated. No `BandId` or `Entity` appears in the file,
   because neither survives a regeneration (`.claude/rules/core_sim/checkpoints.md` → "No `Entity`
   crosses a persistence boundary").
-- **The keys after `bands`** (`labor`, then the sections slice 2 adds: `rungs`, `pens`, `herds`,
-  `deposits`, `roads`, `bench`) belong to their arcs (§2.4). `tiles` is a top-level key beside
-  `factions`, because a tile belongs to no faction. The example shows slice 1 plus one labor row and
-  one tile override.
+- **The keys after `bands`** (`labor`, then the sections slice 2 adds: `rungs`, `pens`, `roads`,
+  `bench`) belong to their arcs (§2.4). **`tiles`, `herds` and `deposits` are top-level keys beside
+  `factions`**, because none of them belongs to a faction: a tile and a wild herd have no owner, and
+  a deposit's registry is keyed by tile and material, so listing one under a faction would let two
+  factions set the same deposit. The example shows slice 1 plus one labor row and one tile override.
 
 ### 2.4 Each arc owns its section
 

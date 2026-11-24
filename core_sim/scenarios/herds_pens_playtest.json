@@ -54,5 +54,6 @@
     { "id": "new_aurochs", "species": "aurochs", "at": [15, 10], "stock": 0.6, "origin": "placed" },
     { "id": "thin_boar", "species": "boar", "at": [11, 10], "stock": 0.2, "origin": "worldgen" },
     { "id": "flock", "species": "fowl", "at": [16, 11], "stock": 1.0, "origin": "worldgen" }
-  ]
+  ],
+  "deposits": []
 }

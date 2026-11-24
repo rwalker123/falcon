@@ -19,7 +19,7 @@ design is `docs/plan_scenarios.md`. This file owns the loader. **A section's key
 rule of the arc that owns it**, under `## Scenario section`. The bands section's table is in
 `campaign.md`, the labor section's is in `work-party.md`, the tiles section's is in `worldgen.md`,
 the rungs section's is in `intensification.md`, the herds section's is in `fauna.md`, the pens
-section's is in `husbandry.md`.
+section's is in `husbandry.md`, the deposits section's is in `extraction.md`.
 
 ## Where things are
 
@@ -27,7 +27,7 @@ section's is in `husbandry.md`.
 |---|---|
 | File shape, pass 1, `ScenarioRefusal`, `build_scenario_world`, `finish_scenario` | `core_sim/src/scenario/mod.rs` |
 | The profile and roster steps every world build runs (`apply_start_profile`, `seed_faction_roster`) | `core_sim/src/world_roster.rs` |
-| One module per section | `core_sim/src/scenario/bands.rs`, `labor.rs`, `tiles.rs`, `rungs.rs`, `herds.rs`, `pens.rs` |
+| One module per section | `core_sim/src/scenario/bands.rs`, `labor.rs`, `tiles.rs`, `rungs.rs`, `herds.rs`, `pens.rs`, `deposits.rs` |
 | Replayed verbs that **return** their refusal | `core_sim/src/command_seam.rs` (the labor verbs' bodies are in `labor_commands.rs`) |
 | The verb and its reply | `handle_load_scenario` in `bin/server.rs`; `LoadScenarioCommand` = CommandEnvelope **101**, `ScenarioOpReply` = QueryReplyEnvelope **14** |
 | Checked-in scenarios | `core_sim/scenarios/<name>.json` (reviewed fixtures, not watched) |
@@ -85,8 +85,11 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   same tag, so `knows_messengers` and every other `progress >= completion_threshold` gate answer
   yes on turn one.
 - The default outfit is fitted on the world-build pass against the band the scenario built.
-- `finish_scenario` applies the **setters** first (held rungs, each rung of the climb through the
-  build gate). Setter refusals are all collected, and any one stops the load before a command is
+- `finish_scenario` applies the **setters** first: the herd and deposit fits are collected
+  together and any refusal stops the load before either is applied, then the herds, the deposit
+  stocks, and the held rungs (each rung of the climb through the build gate). A deposit's stock and
+  a held working's rung both open the working through `DepositRegistry::open`, so they compose in
+  either order. Setter refusals are all collected, and any one stops the load before a command is
   replayed.
 - `finish_scenario` then replays `outfit` as `SetStartingLoadout` through `command_seam`, which
   **replaces** the default while the opening window is still open.
