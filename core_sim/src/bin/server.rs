@@ -7276,187 +7276,48 @@ fn handle_bench_auto_skip(app: &mut bevy::prelude::App, faction: FactionId, band
 /// `pen_radius` below `husbandry.pen_radius_max`, **no extension already in flight**, and a band is
 /// keeping it (or the ring never accrues, and an untended pen escapes anyway).
 fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
-    let Some(fauna_id) = app
-        .world
-        .resource::<HerdRegistry>()
-        .herds
-        .iter()
-        .find(|herd| herd.corralled_at == Some(tile))
-        .map(|herd| herd.id.clone())
-    else {
-        warn!(
-            target: "shadow_scale::command",
-            command = "extend_pen",
-            faction = %faction.0,
-            x = tile.x,
-            y = tile.y,
-            "command.extend_pen.rejected=no_pen"
-        );
-        emit_command_failure(
-            app,
-            CommandEventKind::Corral,
-            faction,
-            format!("No pen at ({}, {}) to extend.", tile.x, tile.y),
-        );
-        return;
-    };
-
-    let (owns, knows_penning, can_pen, species, at_max, already_extending, pen_radius_max) = {
-        let pen_radius_max = app
-            .world
-            .resource::<FaunaConfigHandle>()
-            .get()
-            .husbandry
-            .pen_radius_max;
-        // A fence ring rides the **same `animal:pen` rung** as the initial build (2d-β: same labor,
-        // same dip, same dials), so it takes that rung's gate too — **Penning** since the §4.3
-        // reshuffle. Read off the rung, so a ring can never be gated differently from the pen it
-        // extends.
-        let (knowledge_threshold, pen_unlock) = {
-            let ladder = app.world.resource::<LadderConfigHandle>().get();
-            (
-                ladder.knowledge.completion_threshold,
-                ladder.enclosed_herd_rung().unlock_discovery_id(),
-            )
-        };
-        let knows_penning = pen_unlock.is_none_or(|knowledge| {
-            knows(
-                app.world.resource::<DiscoveryProgressLedger>(),
+    match core_sim::command_seam::apply_extend_pen(&mut app.world, faction, tile) {
+        Err(refusal) => {
+            let reason = refusal.to_string();
+            warn!(
+                target: "shadow_scale::command",
+                command = "extend_pen",
+                faction = %faction.0,
+                x = tile.x,
+                y = tile.y,
+                reason = %reason,
+                "command.extend_pen.rejected"
+            );
+            emit_command_failure(app, CommandEventKind::Corral, faction, reason);
+        }
+        Ok(extended) => {
+            let fauna_id = extended.herd_id;
+            let tick = app.world.resource::<SimulationTick>().0;
+            info!(
+                target: "shadow_scale::command",
+                command = "extend_pen",
+                faction = %faction.0,
+                herd = %fauna_id,
+                x = tile.x,
+                y = tile.y,
+                "command.extend_pen.extending"
+            );
+            push_command_event(
+                app,
+                tick,
+                CommandEventKind::Corral,
                 faction,
-                knowledge,
-                knowledge_threshold,
-            )
-        });
-        let herd = app
-            .world
-            .resource::<HerdRegistry>()
-            .find(&fauna_id)
-            .expect("herd resolved above");
-        (
-            herd.owner == Some(faction),
-            knows_penning,
-            herd.can_pen(&app.world.resource::<LadderConfigHandle>().get()),
-            herd.species.clone(),
-            herd.pen_radius >= pen_radius_max,
-            herd.pen_extending,
-            pen_radius_max,
-        )
-    };
-    let reason = if !can_pen {
-        // Grazing 2d-δ: belt-and-braces — a non-`Pen` species can never be penned, so this is
-        // unreachable via the gated corral path, but the extend command states the rule explicitly.
-        Some(format!("{species} cannot be penned."))
-    } else if !knows_penning {
-        Some(
-            "Your people have not learned Penning yet. Tame and keep herds to learn it."
-                .to_string(),
-        )
-    } else if !owns {
-        Some(format!("You do not own the pen for {}.", fauna_id))
-    } else if already_extending {
-        Some(format!(
-            "The pen for {} is already being extended.",
-            fauna_id
-        ))
-    } else if at_max {
-        Some(format!(
-            "The pen for {} is already at its maximum size.",
-            fauna_id
-        ))
-    } else {
-        None
-    };
-    if let Some(reason) = reason {
-        warn!(
-            target: "shadow_scale::command",
-            command = "extend_pen",
-            faction = %faction.0,
-            herd = %fauna_id,
-            reason = %reason,
-            "command.extend_pen.rejected"
-        );
-        emit_command_failure(app, CommandEventKind::Corral, faction, reason);
-        return;
+                format!(
+                    "Extending the pen for {} at ({}, {})",
+                    fauna_id, tile.x, tile.y
+                ),
+                Some(format!(
+                    "status=extending action=extend_pen herd={} x={} y={}",
+                    fauna_id, tile.x, tile.y
+                )),
+            );
+        }
     }
-
-    // A band must be keeping the pen (a Hunt assignment on it, any policy) or the ring never accrues.
-    let keeper_target = LaborTarget::Hunt {
-        fauna_id: fauna_id.clone(),
-        floor: SOURCE_NAMED_NOT_ASSIGNED, // matched by `same_source` (herd id) — the floor is irrelevant,
-        move_with_herd: false,
-    };
-    let keepers = app
-        .world
-        .query::<(&PopulationCohort, &LaborAllocation)>()
-        .iter(&app.world)
-        .filter(|(cohort, _)| cohort.faction == faction)
-        .filter(|(_, allocation)| allocation.workers_on(&keeper_target) > 0)
-        .count();
-    if keepers == 0 {
-        emit_command_failure(
-            app,
-            CommandEventKind::Corral,
-            faction,
-            format!(
-                "No band is keeping {}. Assign herders to it first, then extend the pen.",
-                fauna_id
-            ),
-        );
-        return;
-    }
-
-    // Enter the extending state — `begin_pen_extension` re-checks is_corralled / not-extending /
-    // below-max, so the guard and the validation above can never disagree.
-    let began = {
-        let mut registry = app.world.resource_mut::<HerdRegistry>();
-        let herd = registry
-            .herds
-            .iter_mut()
-            .find(|h| h.id == fauna_id)
-            .expect("herd resolved above");
-        herd.begin_pen_extension(pen_radius_max)
-    };
-    if !began {
-        emit_command_failure(
-            app,
-            CommandEventKind::Corral,
-            faction,
-            format!("Cannot extend the pen for {} right now.", fauna_id),
-        );
-        return;
-    }
-
-    // **A RING IS A DECLARED BUILD LIKE EVERY OTHER BUILD** (`docs/plan_standing_upkeep.md` §2.5) — it
-    // is fencing work on the same `animal:pen` rung as the pen it widens, so it waits its turn in
-    // the same line and is funded from the same staffing. It is the one entry kind that names
-    // no rung verb: a built pen carries no meter for the derived verb to name, which is exactly the
-    // gap `BuildJob::ExtendPen` fills.
-    queue_build_on_working_bands(app, faction, &keeper_target, BuildJob::ExtendPen);
-
-    let tick = app.world.resource::<SimulationTick>().0;
-    info!(
-        target: "shadow_scale::command",
-        command = "extend_pen",
-        faction = %faction.0,
-        herd = %fauna_id,
-        x = tile.x,
-        y = tile.y,
-        "command.extend_pen.extending"
-    );
-    push_command_event(
-        app,
-        tick,
-        CommandEventKind::Corral,
-        faction,
-        format!(
-            "Extending the pen for {} at ({}, {})",
-            fauna_id, tile.x, tile.y
-        ),
-        Some(format!(
-            "status=extending action=extend_pen herd={} x={} y={}",
-            fauna_id, tile.x, tile.y
-        )),
-    );
 }
 
 /// **COMMIT A KEPT HERD'S OUTPUT** — the `SetHerdOutput` command
@@ -7484,155 +7345,46 @@ fn handle_set_herd_output(
     herd_id: &str,
     fraction: f32,
 ) {
-    let Some(state) = app
-        .world
-        .resource::<HerdRegistry>()
-        .find(herd_id)
-        .map(|herd| {
-            (
-                herd.id.clone(),
-                herd.owner == Some(faction),
-                herd.is_corralled() || herd.is_domesticated(),
-                herd.standing_output_target.is_some(),
-                herd.standing_output_fraction,
-            )
-        })
-    else {
-        warn!(
-            target: "shadow_scale::command",
-            command = "set_herd_output",
-            faction = %faction.0,
-            herd = %herd_id,
-            "command.set_herd_output.rejected=no_herd"
-        );
-        emit_command_failure(
-            app,
-            CommandEventKind::Corral,
-            faction,
-            format!("There is no herd {herd_id} to commit."),
-        );
-        return;
-    };
-    let (fauna_id, owns, managed, already_committing, held) = state;
-    let reason = if !owns {
-        Some(format!("You do not keep {fauna_id}."))
-    } else if !managed {
-        // A wild herd is not yours to re-sort, and its rung declares no build meter to price the
-        // work against — two statements of the same fact, so one refusal covers both.
-        Some(format!(
-            "{fauna_id} is not a kept herd. Tame it before deciding what it produces."
-        ))
-    } else if !fraction.is_finite()
-        || !(core_sim::NO_STANDING_COMMITMENT..=WHOLE_HERD_COMMITTED).contains(&fraction)
+    match core_sim::command_seam::apply_set_herd_output(&mut app.world, faction, herd_id, fraction)
     {
-        Some(format!(
-            "A herd's standing share must be between 0 and 1, not {fraction}."
-        ))
-    } else if fraction == held {
-        Some(format!(
-            "{fauna_id} already gives that share of itself as milk, eggs and wool."
-        ))
-    } else if already_committing {
-        Some(format!("{fauna_id} is already being re-sorted."))
-    } else {
-        None
-    };
-    if let Some(reason) = reason {
-        warn!(
-            target: "shadow_scale::command",
-            command = "set_herd_output",
-            faction = %faction.0,
-            herd = %fauna_id,
-            reason = %reason,
-            "command.set_herd_output.rejected"
-        );
-        emit_command_failure(app, CommandEventKind::Corral, faction, reason);
-        return;
+        Err(refusal) => {
+            let reason = refusal.to_string();
+            warn!(
+                target: "shadow_scale::command",
+                command = "set_herd_output",
+                faction = %faction.0,
+                herd = %herd_id,
+                reason = %reason,
+                "command.set_herd_output.rejected"
+            );
+            emit_command_failure(app, CommandEventKind::Corral, faction, reason);
+        }
+        Ok(committed) => {
+            let fauna_id = committed.herd_id;
+            let tick = app.world.resource::<SimulationTick>().0;
+            info!(
+                target: "shadow_scale::command",
+                command = "set_herd_output",
+                faction = %faction.0,
+                herd = %fauna_id,
+                fraction,
+                "command.set_herd_output.committing"
+            );
+            push_command_event(
+                app,
+                tick,
+                CommandEventKind::Corral,
+                faction,
+                format!(
+                    "Re-sorting {fauna_id} to give {fraction:.0} of itself as milk, eggs and wool"
+                ),
+                Some(format!(
+                    "status=committing action=set_herd_output herd={fauna_id} fraction={fraction:.3}"
+                )),
+            );
+        }
     }
-
-    // A band must be keeping the herd (a Hunt assignment on it, any policy) or the meter never
-    // accrues — `extend_pen`'s own requirement, for its own reason.
-    let keeper_target = LaborTarget::Hunt {
-        fauna_id: fauna_id.clone(),
-        floor: SOURCE_NAMED_NOT_ASSIGNED, // matched by `same_source` (herd id) — the floor is irrelevant,
-        move_with_herd: false,
-    };
-    let keepers = app
-        .world
-        .query::<(&PopulationCohort, &LaborAllocation)>()
-        .iter(&app.world)
-        .filter(|(cohort, _)| cohort.faction == faction)
-        .filter(|(_, allocation)| allocation.workers_on(&keeper_target) > 0)
-        .count();
-    if keepers == 0 {
-        emit_command_failure(
-            app,
-            CommandEventKind::Corral,
-            faction,
-            format!(
-                "No band is keeping {fauna_id}. Assign herders to it first, then set its output."
-            ),
-        );
-        return;
-    }
-
-    // Enter the recommitting state — `begin_output_recommit` re-checks managed / not-in-flight /
-    // in-range / actually-a-change, so the guard and the validation above can never disagree. The
-    // herd's rung is read back afterwards so the declared build names the rung the order was priced
-    // against.
-    let (began, rung) = {
-        let mut registry = app.world.resource_mut::<HerdRegistry>();
-        let herd = registry
-            .herds
-            .iter_mut()
-            .find(|h| h.id == fauna_id)
-            .expect("herd resolved above");
-        (
-            herd.begin_output_recommit(fraction),
-            core_sim::herd_rung_key(herd),
-        )
-    };
-    if !began {
-        emit_command_failure(
-            app,
-            CommandEventKind::Corral,
-            faction,
-            format!("Cannot change what {fauna_id} produces right now."),
-        );
-        return;
-    }
-
-    // **A COMMITMENT IS A DECLARED BUILD LIKE EVERY OTHER BUILD** — it is husbandry work on the rung
-    // the herd already stands on, so it waits its turn in the same line and is funded from the same
-    // build crew. It is the second entry kind that names no rung verb, and it carries its rung
-    // because — unlike a ring, which is always fencing — it can be raised at either managed rung.
-    queue_build_on_working_bands(app, faction, &keeper_target, BuildJob::SetHerdOutput(rung));
-
-    let tick = app.world.resource::<SimulationTick>().0;
-    info!(
-        target: "shadow_scale::command",
-        command = "set_herd_output",
-        faction = %faction.0,
-        herd = %fauna_id,
-        fraction,
-        "command.set_herd_output.committing"
-    );
-    push_command_event(
-        app,
-        tick,
-        CommandEventKind::Corral,
-        faction,
-        format!("Re-sorting {fauna_id} to give {fraction:.0} of itself as milk, eggs and wool"),
-        Some(format!(
-            "status=committing action=set_herd_output herd={fauna_id} fraction={fraction:.3}"
-        )),
-    );
 }
-
-/// **A HERD COMMITTED ENTIRELY TO STANDING OUTPUT** — the top of `set_herd_output`'s accepted range,
-/// where the herd is taken from not at all and rides at `K`. Named rather than a bare `1.0` because
-/// it is a *state* the command's bound is stated in terms of, not a multiplier.
-const WHOLE_HERD_COMMITTED: f32 = 1.0;
 
 /// **PUT A SOURCE DOWN** — `abandon <faction> <x> <y>` / `abandon <faction> <herd_id>`
 /// (`docs/plan_standing_upkeep.md` §2.5), and `abandon <faction> <x> <y> <material>` /

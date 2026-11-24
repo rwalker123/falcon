@@ -17,6 +17,7 @@
 pub mod bands;
 pub mod herds;
 pub mod labor;
+pub mod pens;
 pub mod rungs;
 pub mod tiles;
 
@@ -33,6 +34,7 @@ pub use bands::{
 };
 pub use herds::{HerdEntry, HerdOrigin, ScenarioHerdSetup};
 pub use labor::LaborEntry;
+pub use pens::PenEntry;
 pub use tiles::TileOverride;
 
 use crate::command_seam::{
@@ -233,8 +235,9 @@ pub fn parse_scenario(
         }
     }
     bands::check(&file.factions, ctx, &mut refusals);
-    rungs::check(&file.factions, ctx, &mut refusals);
+    rungs::check(&file.factions, &file.herds, ctx, &mut refusals);
     labor::check(&file.factions, &file.world, ctx, &mut refusals);
+    pens::check(&file.factions, &file.herds, &mut refusals);
     tiles::check(
         &file.tiles,
         (file.world.width, file.world.height),
@@ -328,7 +331,7 @@ pub fn finish_scenario(world: &mut World) -> Result<ScenarioApplied, Vec<Scenari
     // **Held rungs (the setters, plan section 2.8 step 5)**, faction order then file order, BEFORE
     // the outfit replay. Every refusal is collected; a refused entry does not stop the others.
     for faction_setup in &setup.factions {
-        rungs::apply_held(world, faction_setup, &mut refusals);
+        rungs::apply_held(world, faction_setup, &herds, &mut refusals);
     }
     if !refusals.is_empty() {
         return Err(refusals);
@@ -426,7 +429,16 @@ pub fn finish_scenario(world: &mut World) -> Result<ScenarioApplied, Vec<Scenari
     // **Builds after labor** (plan section 2.8 step 6): a declared build needs a band already
     // working its source, which the labor rows put there. A refused build stops the load there.
     for faction_setup in &setup.factions {
-        rungs::apply_builds(world, faction_setup, &setup.spawned, &mut refusals);
+        rungs::apply_builds(world, faction_setup, &setup.spawned, &herds, &mut refusals);
+        if !refusals.is_empty() {
+            return Err(refusals);
+        }
+    }
+    // **Pens after builds** (plan section 2.8 step 6): a ring or a commitment needs a keeper, which
+    // the labor rows put on the herd, and a pen the held rungs or a queued Corral made. A refused
+    // entry stops the load there, with the verb's own reason.
+    for faction_setup in &setup.factions {
+        pens::apply(world, faction_setup, &herds, &mut refusals);
         if !refusals.is_empty() {
             return Err(refusals);
         }

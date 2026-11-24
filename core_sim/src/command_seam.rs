@@ -25,9 +25,10 @@ use crate::starting_loadout::{
     StartingLoadout,
 };
 use crate::{
-    BranchId, BuildJob, BuildSource, HerdRegistry, LaborAllocation, LaborTarget,
-    LadderConfigHandle, RoadKeeper, RoadRegistry, RungDef, SourceKind, TakeSelection, Tile,
-    TileRegistry, VerbId,
+    herd_rung_key, knows, BranchId, BuildJob, BuildSource, DiscoveryProgressLedger,
+    FaunaConfigHandle, HerdRegistry, LaborAllocation, LaborTarget, LadderConfigHandle, RoadKeeper,
+    RoadRegistry, RungDef, SourceKind, TakeSelection, Tile, TileRegistry, VerbId,
+    NO_STANDING_COMMITMENT,
 };
 
 /// **Why a replayed verb was refused.** `Display` is the reason text the event feed already shows
@@ -625,4 +626,282 @@ pub fn apply_build_rung(
             bands: switched,
         },
     })
+}
+
+/// **A HERD COMMITTED ENTIRELY TO STANDING OUTPUT** - the top of `set_herd_output`'s accepted range,
+/// where the herd is taken from not at all and rides at `K`. Named rather than a bare `1.0` because
+/// it is a *state* the command's bound is stated in terms of, not a multiplier.
+pub const WHOLE_HERD_COMMITTED: f32 = 1.0;
+
+/// **What an extended pen leaves for the caller to say**: the herd whose pen is being widened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PenExtended {
+    pub herd_id: String,
+}
+
+/// **What a recommitted herd leaves for the caller to say**: the herd being re-sorted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputRecommitted {
+    pub herd_id: String,
+}
+
+fn corral_refusal(reason: impl Into<String>) -> CommandRefusal {
+    CommandRefusal::Refused {
+        kind: CommandEventKind::Corral,
+        reason: reason.into(),
+    }
+}
+
+/// The Hunt target a pen's keepers are matched by. `same_source` reads the herd id, so the floor is
+/// irrelevant.
+fn keeper_target(fauna_id: &str) -> LaborTarget {
+    LaborTarget::Hunt {
+        fauna_id: fauna_id.to_string(),
+        floor: SOURCE_NAMED_NOT_ASSIGNED,
+        move_with_herd: false,
+    }
+}
+
+/// **A band of `faction` keeps `fauna_id`** (a Hunt assignment on it, any policy), or the ring or
+/// the commitment's meter never accrues.
+fn has_keeper(world: &mut World, faction: FactionId, fauna_id: &str) -> bool {
+    let target = keeper_target(fauna_id);
+    world
+        .query::<(&PopulationCohort, &LaborAllocation)>()
+        .iter(world)
+        .filter(|(cohort, _)| cohort.faction == faction)
+        .any(|(_, allocation)| allocation.workers_on(&target) > 0)
+}
+
+/// Grazing 2d-beta - the `ExtendPen` command. Put an owned, **built** pen at `tile` into the
+/// "extending" state so its keeper band works off the next fenced ring (`pen_radius += 1` at
+/// completion, ~25 turns at the corral build rate, with the harvest dipped to
+/// `corralling_yield_fraction` while it fences). The pen's whole life rides
+/// `CommandEventKind::Corral`, so the extend feed lines reuse it.
+///
+/// Validates: a herd penned **exactly at `tile`** (`corralled_at`, the fixed pen anchor - not the
+/// roaming `position()` `corral` keys off), owned by `faction`, the faction knows **Penning** (a
+/// ring rides the same `animal:pen` rung as the initial build, so it takes that rung's gate - not
+/// Herding), `pen_radius` below `husbandry.pen_radius_max`, **no extension already in flight**, and
+/// a band is keeping it (or the ring never accrues, and an untended pen escapes anyway).
+///
+/// Writes no log line and no feed event: the caller does, from the result.
+pub fn apply_extend_pen(
+    world: &mut World,
+    faction: FactionId,
+    tile: UVec2,
+) -> Result<PenExtended, CommandRefusal> {
+    let Some(fauna_id) = world
+        .resource::<HerdRegistry>()
+        .herds
+        .iter()
+        .find(|herd| herd.corralled_at == Some(tile))
+        .map(|herd| herd.id.clone())
+    else {
+        return Err(corral_refusal(format!(
+            "No pen at ({}, {}) to extend.",
+            tile.x, tile.y
+        )));
+    };
+
+    let pen_radius_max = world
+        .resource::<FaunaConfigHandle>()
+        .get()
+        .husbandry
+        .pen_radius_max;
+    // A fence ring rides the **same `animal:pen` rung** as the initial build (2d-beta: same labor,
+    // same dip, same dials), so it takes that rung's gate too - **Penning** since the 4.3
+    // reshuffle. Read off the rung, so a ring can never be gated differently from the pen it
+    // extends.
+    let (knowledge_threshold, pen_unlock) = {
+        let ladder = world.resource::<LadderConfigHandle>().get();
+        (
+            ladder.knowledge.completion_threshold,
+            ladder.enclosed_herd_rung().unlock_discovery_id(),
+        )
+    };
+    let knows_penning = pen_unlock.is_none_or(|knowledge| {
+        knows(
+            world.resource::<DiscoveryProgressLedger>(),
+            faction,
+            knowledge,
+            knowledge_threshold,
+        )
+    });
+    let (owns, can_pen, species, at_max, already_extending) = {
+        let herd = world
+            .resource::<HerdRegistry>()
+            .find(&fauna_id)
+            .expect("herd resolved above");
+        (
+            herd.owner == Some(faction),
+            herd.can_pen(&world.resource::<LadderConfigHandle>().get()),
+            herd.species.clone(),
+            herd.pen_radius >= pen_radius_max,
+            herd.pen_extending,
+        )
+    };
+    if !can_pen {
+        // Grazing 2d-delta: belt-and-braces - a non-`Pen` species can never be penned, so this is
+        // unreachable via the gated corral path, but the extend command states the rule explicitly.
+        return Err(corral_refusal(format!("{species} cannot be penned.")));
+    }
+    if !knows_penning {
+        return Err(corral_refusal(
+            "Your people have not learned Penning yet. Tame and keep herds to learn it.",
+        ));
+    }
+    if !owns {
+        return Err(corral_refusal(format!(
+            "You do not own the pen for {fauna_id}."
+        )));
+    }
+    if already_extending {
+        return Err(corral_refusal(format!(
+            "The pen for {fauna_id} is already being extended."
+        )));
+    }
+    if at_max {
+        return Err(corral_refusal(format!(
+            "The pen for {fauna_id} is already at its maximum size."
+        )));
+    }
+
+    // A band must be keeping the pen (a Hunt assignment on it, any policy) or the ring never accrues.
+    if !has_keeper(world, faction, &fauna_id) {
+        return Err(corral_refusal(format!(
+            "No band is keeping {fauna_id}. Assign herders to it first, then extend the pen."
+        )));
+    }
+
+    // Enter the extending state - `begin_pen_extension` re-checks is_corralled / not-extending /
+    // below-max, so the guard and the validation above can never disagree.
+    let began = {
+        let mut registry = world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|h| h.id == fauna_id)
+            .expect("herd resolved above");
+        herd.begin_pen_extension(pen_radius_max)
+    };
+    if !began {
+        return Err(corral_refusal(format!(
+            "Cannot extend the pen for {fauna_id} right now."
+        )));
+    }
+
+    // **A RING IS A DECLARED BUILD LIKE EVERY OTHER BUILD** (`docs/plan_standing_upkeep.md` 2.5) - it
+    // is fencing work on the same `animal:pen` rung as the pen it widens, so it waits its turn in
+    // the same line and is funded from the same staffing. It is the one entry kind that names
+    // no rung verb: a built pen carries no meter for the derived verb to name, which is exactly the
+    // gap `BuildJob::ExtendPen` fills.
+    queue_build_on_working_bands(
+        world,
+        faction,
+        &keeper_target(&fauna_id),
+        BuildJob::ExtendPen,
+    );
+    Ok(PenExtended { herd_id: fauna_id })
+}
+
+/// **COMMIT A KEPT HERD'S OUTPUT** - the `SetHerdOutput` command: the player's decision of what
+/// share of a kept herd stands as milk, eggs and wool rather than being taken from. Priced as a
+/// declared build on the herd's own rung, it mirrors [`apply_extend_pen`] step for step - the same
+/// ownership check, the same keeper requirement, the same [`queue_build_on_working_bands`], the same
+/// feed channel.
+///
+/// Validates: a herd with that id, owned by `faction`, **managed** (tamed or penned - a wild herd
+/// stands on a rung with no build meter, so there is nothing to price the job against), a
+/// `fraction` that is finite and inside `[0, 1]` and **different from the one the herd already
+/// holds** (charging a rung's work for no change is the one thing the price must not buy), no
+/// commitment already in flight, and a band keeping it (or the meter never accrues).
+///
+/// Writes no log line and no feed event: the caller does, from the result.
+pub fn apply_set_herd_output(
+    world: &mut World,
+    faction: FactionId,
+    herd_id: &str,
+    fraction: f32,
+) -> Result<OutputRecommitted, CommandRefusal> {
+    let Some((fauna_id, owns, managed, already_committing, held)) =
+        world.resource::<HerdRegistry>().find(herd_id).map(|herd| {
+            (
+                herd.id.clone(),
+                herd.owner == Some(faction),
+                herd.is_corralled() || herd.is_domesticated(),
+                herd.standing_output_target.is_some(),
+                herd.standing_output_fraction,
+            )
+        })
+    else {
+        return Err(corral_refusal(format!(
+            "There is no herd {herd_id} to commit."
+        )));
+    };
+    if !owns {
+        return Err(corral_refusal(format!("You do not keep {fauna_id}.")));
+    }
+    if !managed {
+        // A wild herd is not yours to re-sort, and its rung declares no build meter to price the
+        // work against - two statements of the same fact, so one refusal covers both.
+        return Err(corral_refusal(format!(
+            "{fauna_id} is not a kept herd. Tame it before deciding what it produces."
+        )));
+    }
+    if !fraction.is_finite() || !(NO_STANDING_COMMITMENT..=WHOLE_HERD_COMMITTED).contains(&fraction)
+    {
+        return Err(corral_refusal(format!(
+            "A herd's standing share must be between 0 and 1, not {fraction}."
+        )));
+    }
+    if fraction == held {
+        return Err(corral_refusal(format!(
+            "{fauna_id} already gives that share of itself as milk, eggs and wool."
+        )));
+    }
+    if already_committing {
+        return Err(corral_refusal(format!(
+            "{fauna_id} is already being re-sorted."
+        )));
+    }
+
+    // A band must be keeping the herd (a Hunt assignment on it, any policy) or the meter never
+    // accrues - `extend_pen`'s own requirement, for its own reason.
+    if !has_keeper(world, faction, &fauna_id) {
+        return Err(corral_refusal(format!(
+            "No band is keeping {fauna_id}. Assign herders to it first, then set its output."
+        )));
+    }
+
+    // Enter the recommitting state - `begin_output_recommit` re-checks managed / not-in-flight /
+    // in-range / actually-a-change, so the guard and the validation above can never disagree. The
+    // herd's rung is read back afterwards so the declared build names the rung the order was priced
+    // against.
+    let (began, rung) = {
+        let mut registry = world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|h| h.id == fauna_id)
+            .expect("herd resolved above");
+        (herd.begin_output_recommit(fraction), herd_rung_key(herd))
+    };
+    if !began {
+        return Err(corral_refusal(format!(
+            "Cannot change what {fauna_id} produces right now."
+        )));
+    }
+
+    // **A COMMITMENT IS A DECLARED BUILD LIKE EVERY OTHER BUILD** - it is husbandry work on the rung
+    // the herd already stands on, so it waits its turn in the same line and is funded from the same
+    // build crew. It is the second entry kind that names no rung verb, and it carries its rung
+    // because - unlike a ring, which is always fencing - it can be raised at either managed rung.
+    queue_build_on_working_bands(
+        world,
+        faction,
+        &keeper_target(&fauna_id),
+        BuildJob::SetHerdOutput(rung),
+    );
+    Ok(OutputRecommitted { herd_id: fauna_id })
 }

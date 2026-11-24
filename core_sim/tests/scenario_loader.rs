@@ -13,12 +13,12 @@ use core_sim::scenario::{
     build_scenario_world, parse_scenario, ScenarioApplied, ScenarioContext, ScenarioRefusal,
 };
 use core_sim::{
-    build_test_app, habitat_refusal, knows_messengers, run_turn, scalar_from_f32,
-    ActiveStartProfile, BandId, Diet, DiscoveryProgressLedger, EcologyPhase, FactionId,
+    build_test_app, habitat_refusal, herd_capacity, knows_messengers, run_turn, scalar_from_f32,
+    ActiveStartProfile, BandId, BuildJob, Diet, DiscoveryProgressLedger, EcologyPhase, FactionId,
     FactionRegistry, FaunaConfig, FaunaConfigHandle, HabitatRefusal, Herd, HerdRegistry,
-    KitAllocation, LadderConfigHandle, MaterialAllocation, PopulationCohort, PreyReach,
-    SimulationConfig, StartProfileKnowledgeTagsHandle, StartProfiles, StartProfilesHandle,
-    StartingLoadout, Tile, TileRegistry,
+    KitAllocation, LaborAllocation, LadderConfigHandle, MaterialAllocation, PopulationCohort,
+    PreyReach, SimulationConfig, StartProfileKnowledgeTagsHandle, StartProfiles,
+    StartProfilesHandle, StartingLoadout, Tile, TileRegistry,
 };
 
 const SHIPPED: &str = include_str!("../scenarios/breeding_ceiling_150.json");
@@ -87,10 +87,9 @@ fn pass_one_collects_every_refusal_in_one_go() {
             "founding_lines": 1, "larder": [],
             "outfit": { "kits": {}, "materials": {} }
         }));
-    file["factions"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({ "faction": 0, "knowledge": [], "rungs": [], "bands": [], "labor": [] }));
+    file["factions"].as_array_mut().unwrap().push(
+        json!({ "faction": 0, "knowledge": [], "rungs": [], "bands": [], "labor": [], "pens": [] }),
+    );
 
     let refusals = pass_one(&file.to_string()).expect_err("a faulty file is refused");
     let paths: Vec<&str> = refusals.iter().map(|r| r.path.as_str()).collect();
@@ -463,6 +462,7 @@ fn two_faction_file(major: u32) -> Value {
         "knowledge": [],
         "rungs": [],
         "labor": [],
+        "pens": [],
         "bands": [{
             "id": "rival", "at": far_land_tile(), "size": 30,
             "ages": { "children": 0.3, "working": 0.6, "elders": 0.1 },
@@ -817,4 +817,253 @@ fn every_refusal_in_a_file_is_reported_together() {
     let paths: Vec<&str> = refusals.iter().map(|r| r.path.as_str()).collect();
     assert!(paths.contains(&"herds[0].at"), "{paths:?}");
     assert!(paths.contains(&"factions[0].bands[0].at"), "{paths:?}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Slice 2c: the pens section, and herds named by scenario id
+// ---------------------------------------------------------------------------------------------
+
+const PLAYTEST: &str = include_str!("../scenarios/held_rungs_playtest.json");
+/// The scenario id the playtest file gives the wild sheep, and the runtime id of the same herd.
+const SHEEP: &str = "sheep";
+const SHEEP_RUNTIME: &str = "game_wild_sheep_00";
+/// The share a `set_herd_output` entry asks for.
+const ASKED_SHARE: f32 = 0.5;
+/// A fraction above the accepted range.
+const OVER_RANGE: f64 = 1.5;
+/// A fraction below the accepted range.
+const UNDER_RANGE: f64 = -0.1;
+
+/// The playtest scenario with only its held pen kept (or none), plus `labor` and `pens`.
+fn pen_scenario(held_pen: bool, labor: Vec<Value>, pens: Vec<Value>) -> Value {
+    let mut file: Value = serde_json::from_str(PLAYTEST).expect("the playtest file is JSON");
+    file["factions"][0]["rungs"]
+        .as_array_mut()
+        .expect("rungs")
+        .retain(|entry| held_pen && entry["held"]["rung"] == "animal:pen");
+    file["factions"][0]["labor"] = Value::Array(labor);
+    file["factions"][0]["pens"] = Value::Array(pens);
+    file
+}
+
+fn extend_entry(herd: &str) -> Value {
+    json!({ "extend_pen": { "herd": herd } })
+}
+
+fn output_entry(herd: &str, fraction: f64) -> Value {
+    json!({ "set_herd_output": { "herd": herd, "fraction": fraction } })
+}
+
+/// Every declared build on the home faction's bands that matches `wanted`.
+fn declared_builds(app: &mut App, wanted: fn(&BuildJob) -> bool) -> usize {
+    app.world
+        .query::<(&PopulationCohort, &LaborAllocation)>()
+        .iter(&app.world)
+        .filter(|(cohort, _)| cohort.faction == HOME)
+        .flat_map(|(_, allocation)| allocation.builds.iter())
+        .filter(|declaration| wanted(&declaration.declared))
+        .count()
+}
+
+#[test]
+fn extend_pen_starts_the_ring_and_a_keeper_carries_the_declaration() {
+    let file = pen_scenario(true, vec![], vec![extend_entry(SHEEP)]);
+    let (mut app, applied) = load(&file.to_string()).expect("the pen is extended");
+    let runtime = applied.herds.get(SHEEP).expect("the herd is mapped");
+    assert_eq!(runtime, SHEEP_RUNTIME);
+    let herd = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(runtime)
+        .expect("the herd")
+        .clone();
+    assert!(herd.is_corralled(), "the held pen stands");
+    assert!(herd.pen_extending, "the ring is under way");
+    assert_eq!(
+        declared_builds(&mut app, |job| matches!(job, BuildJob::ExtendPen)),
+        1,
+        "the keeper band carries the declaration"
+    );
+
+    // Control: without the entry nothing is extending and nothing is declared.
+    let file = pen_scenario(true, vec![], vec![]);
+    let (mut app, _) = load(&file.to_string()).expect("the control loads");
+    assert!(
+        !app.world
+            .resource::<HerdRegistry>()
+            .find(SHEEP_RUNTIME)
+            .expect("the herd")
+            .pen_extending
+    );
+    assert_eq!(
+        declared_builds(&mut app, |job| matches!(job, BuildJob::ExtendPen)),
+        0
+    );
+}
+
+#[test]
+fn set_herd_output_puts_the_recommit_in_flight_at_the_asked_share() {
+    let file = pen_scenario(
+        true,
+        vec![],
+        vec![output_entry(SHEEP, f64::from(ASKED_SHARE))],
+    );
+    let (mut app, _) = load(&file.to_string()).expect("the commitment is made");
+    let herd = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(SHEEP_RUNTIME)
+        .expect("the herd")
+        .clone();
+    assert_eq!(herd.standing_output_target, Some(ASKED_SHARE));
+    assert_eq!(
+        declared_builds(&mut app, |job| matches!(job, BuildJob::SetHerdOutput(_))),
+        1
+    );
+}
+
+#[test]
+fn pass_one_refuses_an_undeclared_herd_and_a_fraction_out_of_range_in_one_load() {
+    let file = pen_scenario(
+        true,
+        vec![],
+        vec![
+            extend_entry("ghost"),
+            output_entry(SHEEP, OVER_RANGE),
+            output_entry("phantom", UNDER_RANGE),
+        ],
+    );
+    let refusals = pass_one(&file.to_string()).expect_err("refused");
+    let paths: Vec<&str> = refusals.iter().map(|r| r.path.as_str()).collect();
+    assert!(
+        paths.contains(&"factions[0].pens[0].extend_pen.herd"),
+        "{paths:?}"
+    );
+    assert!(
+        paths.contains(&"factions[0].pens[1].set_herd_output.fraction"),
+        "{paths:?}"
+    );
+    assert!(
+        paths.contains(&"factions[0].pens[2].set_herd_output.herd"),
+        "{paths:?}"
+    );
+    assert!(
+        paths.contains(&"factions[0].pens[2].set_herd_output.fraction"),
+        "{paths:?}"
+    );
+    assert!(
+        !paths.contains(&"factions[0].pens[1].set_herd_output.herd"),
+        "a declared herd is not refused: {paths:?}"
+    );
+}
+
+#[test]
+fn a_pens_entry_the_verb_refuses_stops_the_load_with_the_verbs_own_reason() {
+    // No pen: the herd stands wild.
+    let file = pen_scenario(false, vec![], vec![extend_entry(SHEEP)]);
+    let refusals = load(&file.to_string())
+        .map(|_| ())
+        .expect_err("a herd with no pen cannot be extended");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_eq!(refusals[0].path, "factions[0].pens[0]");
+    assert!(
+        refusals[0].reason.contains("no pen to extend"),
+        "{}",
+        refusals[0].reason
+    );
+
+    // A kept herd and nobody keeping it: the elders keep the pen beside the band, so this is a tamed
+    // herd, the penable one that stands farthest from the band.
+    let (mut control, _) =
+        load(&pen_scenario(false, vec![], vec![]).to_string()).expect("the control loads");
+    let band_tile = {
+        let mut query = control.world.query::<(&BandId, &PopulationCohort)>();
+        let (_, cohort) = query.iter(&control.world).next().expect("the band");
+        control
+            .world
+            .get::<Tile>(cohort.current_tile)
+            .expect("its tile")
+            .position
+    };
+    let fauna = fauna_of(&control);
+    let ladder = control.world.resource::<LadderConfigHandle>().get();
+    let herds = herds_of(&control);
+    let far = herds
+        .iter()
+        .filter(|herd| herd.owner.is_none() && herd.can_pen(&ladder) && herd.id != SHEEP_RUNTIME)
+        .filter(|herd| {
+            herds
+                .iter()
+                .filter(|o| o.species == herd.species && o.position() == herd.position())
+                .count()
+                == 1
+        })
+        .max_by_key(|herd| {
+            let at = herd.position();
+            (
+                at.x.abs_diff(band_tile.x) + at.y.abs_diff(band_tile.y),
+                herd.id.clone(),
+            )
+        })
+        .expect("a penable herd far from the band");
+    let at = far.position();
+    let mut file = pen_scenario(
+        true,
+        vec![],
+        vec![output_entry("far", f64::from(ASKED_SHARE))],
+    );
+    file["herds"] = json!([{
+        "id": "far",
+        "species": fauna.species_key_by_display(&far.species).expect("a species key"),
+        "at": [at.x, at.y],
+        "stock": far.biomass / herd_capacity(far, &fauna),
+        "origin": "worldgen",
+    }]);
+    file["factions"][0]["rungs"][0]["held"] = json!({ "rung": "animal:pastoral", "herd": "far" });
+    let refusals = load(&file.to_string())
+        .map(|_| ())
+        .expect_err("a herd with no keeper cannot be re-sorted");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_eq!(refusals[0].path, "factions[0].pens[0]");
+    assert_eq!(
+        refusals[0].reason,
+        format!(
+            "No band is keeping {}. Assign herders to it first, then set its output.",
+            far.id
+        )
+    );
+}
+
+#[test]
+fn held_rungs_name_a_herd_by_its_scenario_id() {
+    let (app, applied) = load(PLAYTEST).expect("the converted playtest file loads");
+    let runtime = applied.herds.get(SHEEP).expect("the sheep are mapped");
+    assert!(
+        app.world
+            .resource::<HerdRegistry>()
+            .find(runtime)
+            .expect("the herd")
+            .is_corralled(),
+        "the held pen is on the herd the id names"
+    );
+
+    // A runtime id is not a scenario id: it is refused in pass 1, held and built alike.
+    let mut file: Value = serde_json::from_str(PLAYTEST).expect("JSON");
+    file["factions"][0]["rungs"][1]["held"]["herd"] = json!(SHEEP_RUNTIME);
+    let refusals = pass_one(&file.to_string()).expect_err("an undeclared herd id");
+    assert!(
+        refusals
+            .iter()
+            .any(|r| r.path == "factions[0].rungs[1].held.herd"),
+        "{refusals:?}"
+    );
+    let mut file: Value = serde_json::from_str(PLAYTEST).expect("JSON");
+    file["factions"][0]["rungs"][3]["build_rung"]["herd_id"] = json!("ghost");
+    let refusals = pass_one(&file.to_string()).expect_err("an undeclared herd id");
+    assert!(
+        refusals
+            .iter()
+            .any(|r| r.path == "factions[0].rungs[3].build_rung.herd_id"),
+        "{refusals:?}"
+    );
 }

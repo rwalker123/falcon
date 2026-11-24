@@ -18,7 +18,8 @@ freshly generated world by the current code, so the file never goes stale the wa
 design is `docs/plan_scenarios.md`. This file owns the loader. **A section's key table lives in the
 rule of the arc that owns it**, under `## Scenario section`. The bands section's table is in
 `campaign.md`, the labor section's is in `work-party.md`, the tiles section's is in `worldgen.md`,
-the rungs section's is in `intensification.md`, the herds section's is in `fauna.md`.
+the rungs section's is in `intensification.md`, the herds section's is in `fauna.md`, the pens
+section's is in `husbandry.md`.
 
 ## Where things are
 
@@ -26,7 +27,7 @@ the rungs section's is in `intensification.md`, the herds section's is in `fauna
 |---|---|
 | File shape, pass 1, `ScenarioRefusal`, `build_scenario_world`, `finish_scenario` | `core_sim/src/scenario/mod.rs` |
 | The profile and roster steps every world build runs (`apply_start_profile`, `seed_faction_roster`) | `core_sim/src/world_roster.rs` |
-| One module per section | `core_sim/src/scenario/bands.rs`, `labor.rs`, `tiles.rs`, `rungs.rs`, `herds.rs` |
+| One module per section | `core_sim/src/scenario/bands.rs`, `labor.rs`, `tiles.rs`, `rungs.rs`, `herds.rs`, `pens.rs` |
 | Replayed verbs that **return** their refusal | `core_sim/src/command_seam.rs` (the labor verbs' bodies are in `labor_commands.rs`) |
 | The verb and its reply | `handle_load_scenario` in `bin/server.rs`; `LoadScenarioCommand` = CommandEnvelope **101**, `ScenarioOpReply` = QueryReplyEnvelope **14** |
 | Checked-in scenarios | `core_sim/scenarios/<name>.json` (reviewed fixtures, not watched) |
@@ -96,6 +97,10 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
 - `finish_scenario` then replays the `build_rung` entries through `command_seam::apply_build_rung`,
   after labor (plan §2.8), so a build finds the band labor put on its source. A refused build stops
   the load at that entry.
+- `finish_scenario` then replays every faction's `pens` entries through
+  `command_seam::apply_extend_pen` / `apply_set_herd_output`, after the builds (plan §2.8). A herd is
+  named by its scenario id in every section, mapped through `ScenarioApplied.herds`. A refused entry
+  stops the load at that entry.
 - `ScenarioSetup` is removed in `finish_scenario`. It is never part of `SimState`, a save or a
   snapshot.
 

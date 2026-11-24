@@ -35,6 +35,8 @@ pub struct FactionSection {
     /// The faction's opening work rows, replayed in order through `assign_labor` and `work_priority`.
     /// A required key: `[]` for none.
     pub labor: Vec<LaborEntry>,
+    /// The faction's pen verbs, replayed after the builds. A required key: `[]` for none.
+    pub pens: Vec<super::pens::PenEntry>,
 }
 
 /// One band.
@@ -302,6 +304,8 @@ pub struct FactionSetup {
     pub bands: Vec<BandEntry>,
     pub rungs: Vec<super::rungs::RungEntry>,
     pub labor: Vec<LaborEntry>,
+    /// The faction's pen verbs, replayed after the builds. A required key: `[]` for none.
+    pub pens: Vec<super::pens::PenEntry>,
 }
 
 impl ScenarioSetup {
@@ -318,6 +322,7 @@ impl ScenarioSetup {
                     bands: section.bands.clone(),
                     rungs: section.rungs.clone(),
                     labor: section.labor.clone(),
+                    pens: section.pens.clone(),
                 })
                 .collect(),
             ..Self::default()

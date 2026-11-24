@@ -12,10 +12,11 @@ use core_sim::build_gates::validate_improvement;
 use core_sim::command_seam::{apply_build_rung, BuildRungRequest, CommandRefusal, DeclaredKind};
 use core_sim::scenario::{build_scenario_world, parse_scenario, ScenarioContext, ScenarioRefusal};
 use core_sim::{
-    build_test_app, default_species_for_rung, pen_site_in_world, publish_baseline_snapshot,
-    tile_flora_composition, BandId, BuildSource, FactionId, ForageRegistry, HerdRegistry,
-    LaborAllocation, LaborTarget, LadderConfigHandle, PopulationCohort, SimulationConfig,
-    SnapshotHistory, TakeSelection, Tile, TileRegistry, VerbId,
+    build_test_app, default_species_for_rung, herd_capacity, pen_site_in_world,
+    publish_baseline_snapshot, tile_flora_composition, BandId, BuildSource, FactionId,
+    FaunaConfigHandle, ForageRegistry, HerdRegistry, LaborAllocation, LaborTarget,
+    LadderConfigHandle, PopulationCohort, SimulationConfig, SnapshotHistory, TakeSelection, Tile,
+    TileRegistry, VerbId,
 };
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
@@ -41,6 +42,33 @@ fn scenario(knowledge: &[&str], rungs: Value) -> String {
     tags.extend(knowledge.iter().map(|tag| json!(tag)));
     file["factions"][0]["knowledge"] = Value::Array(tags);
     file["factions"][0]["rungs"] = rungs;
+    file.to_string()
+}
+
+/// [`scenario`] plus a `herds` entry per id in `ids`: each is a worldgen herd of `base` set to the
+/// stock it already holds, so it stays the same herd, and the scenario id is the runtime id.
+fn scenario_naming(knowledge: &[&str], rungs: Value, base: &App, ids: &[&str]) -> String {
+    let mut file: Value = serde_json::from_str(&scenario(knowledge, rungs)).expect("JSON");
+    let fauna = base.world.resource::<FaunaConfigHandle>().get();
+    let herds: Vec<Value> = ids
+        .iter()
+        .map(|id| {
+            let herd = base
+                .world
+                .resource::<HerdRegistry>()
+                .find(id)
+                .expect("a herd of the base world");
+            let at = herd.position();
+            json!({
+                "id": id,
+                "species": fauna.species_key_by_display(&herd.species).expect("a species key"),
+                "at": [at.x, at.y],
+                "stock": herd.biomass / herd_capacity(herd, &fauna),
+                "origin": "worldgen",
+            })
+        })
+        .collect();
+    file["herds"] = Value::Array(herds);
     file.to_string()
 }
 
@@ -313,7 +341,7 @@ fn a_held_pen_corrals_and_owns_the_herd_and_a_short_ceiling_is_refused() {
     let knowing = [HERDING, PENNING];
 
     let rungs = json!([held("animal:pen", json!({ "herd": penable }))]);
-    let app = load(&scenario(&knowing, rungs)).expect("the pen loads");
+    let app = load(&scenario_naming(&knowing, rungs, &base, &[&penable])).expect("the pen loads");
     let herd = app
         .world
         .resource::<HerdRegistry>()
@@ -343,9 +371,11 @@ fn a_held_pen_corrals_and_owns_the_herd_and_a_short_ceiling_is_refused() {
 
     // Control: a species that can be tamed but not penned passes the tame rung and is refused at
     // the pen with the gate's own ceiling text.
-    let tame_only = scenario(
+    let tame_only = scenario_naming(
         &knowing,
         json!([held("animal:pastoral", json!({ "herd": short }))]),
+        &base,
+        &[&short],
     );
     let tamed = load(&tame_only).expect("the tame rung alone loads");
     let ceiling_text = validate_improvement(
@@ -360,7 +390,7 @@ fn a_held_pen_corrals_and_owns_the_herd_and_a_short_ceiling_is_refused() {
     )
     .expect_err("the tamed herd cannot be penned");
     let rungs = json!([held("animal:pen", json!({ "herd": short }))]);
-    let refusals = load(&scenario(&knowing, rungs)).expect_err("refused");
+    let refusals = load(&scenario_naming(&knowing, rungs, &base, &[&short])).expect_err("refused");
     let refusal = refusal_at(&refusals, "factions[0].rungs[0]");
     assert_eq!(refusal.reason, format!("animal:pen: {ceiling_text}"));
 }
@@ -397,7 +427,13 @@ fn two_held_pens_are_never_fenced_on_one_tile() {
         held("animal:pen", json!({ "herd": first.id })),
         held("animal:pen", json!({ "herd": second.id })),
     ]);
-    let app = load(&scenario(&[HERDING, PENNING], rungs)).expect("both pens load");
+    let app = load(&scenario_naming(
+        &[HERDING, PENNING],
+        rungs,
+        &base,
+        &[&first.id, &second.id],
+    ))
+    .expect("both pens load");
     let herds = app.world.resource::<HerdRegistry>();
     let a = herds.find(&first.id).expect("first").corralled_at;
     let b = herds.find(&second.id).expect("second").corralled_at;
