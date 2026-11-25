@@ -23,6 +23,9 @@ const BAND_AT: UVec2 = UVec2::new(13, 11);
 const ROADBUILDING: &str = "roadbuilding";
 const PAVING: &str = "paving";
 
+/// Longer than the paved road's `upkeep.grace_turns` (12), so an unpaid road would have slipped.
+const KEPT_TURNS: usize = 20;
+
 fn fixture() -> Value {
     serde_json::from_str(FIXTURE).expect("the fixture is JSON")
 }
@@ -122,6 +125,36 @@ fn the_checked_in_fixture_builds_with_no_refusals() {
         assert_eq!(road.keeper.is_some(), entry.get("keeper").is_some());
     }
     assert_eq!(applied.bands.len(), 1);
+}
+
+/// Past the paved road's grace (the longest of the built rungs'), every KEPT road of the fixture
+/// still stands at the rung the file names: its `roadwork` row (no Max, so the sim staffs what the
+/// roads need) and its stone pay the keeping. The
+/// trails are not asserted — a trail nobody walks wears back to a path, which no keeping prevents.
+#[test]
+fn the_checked_in_fixture_keeps_its_roads() {
+    let (mut app, _) = load(&fixture()).expect("kept_roads.json builds");
+    for _ in 0..KEPT_TURNS {
+        run_turn(&mut app);
+    }
+    let file = fixture();
+    let kept = file["factions"][0]["roads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry.get("keeper").is_some());
+    for entry in kept {
+        let tile = UVec2::new(
+            entry["at"][0].as_u64().unwrap() as u32,
+            entry["at"][1].as_u64().unwrap() as u32,
+        );
+        let road = held(&app, tile);
+        assert_eq!(
+            road.held_rung().id_str(),
+            entry["rung"].as_str().unwrap(),
+            "the road at {tile:?} after {KEPT_TURNS} turns"
+        );
+    }
 }
 
 #[test]

@@ -14,7 +14,11 @@
       "faction": 0,
       "knowledge": ["roadbuilding", "paving"],
       "rungs": [],
-      "labor": [],
+      "labor": [
+        { "assign_labor": {
+          "band": "home", "role": "roadwork", "workers": 0,
+          "take_species": [], "move_with_herd": false } }
+      ],
       "pens": [],
       "bands": [
         {
@@ -23,7 +27,11 @@
           "size": 150,
           "ages": { "children": 0.30, "working": 0.60, "elders": 0.10 },
           "founding_lines": 8,
-          "larder": [{ "class": "dry", "amount": 450.0 }]
+          "larder": [{ "class": "dry", "amount": 450.0 }],
+          "outfit": {
+            "kits": {},
+            "materials": { "stone": 20 }
+          }
         }
       ],
       "roads": [

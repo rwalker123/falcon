@@ -1225,8 +1225,11 @@ holds. The roads are setters, applied after the held rungs and before any comman
   arrives in the gate's own words.
 - A held rung is history: no build declaration, no labor row, no material drawn. A water tile is
   refused at apply with the bands section's predicate.
-- Keepers are staffed by a `roadwork` row of the `labor` section (#922). Until a keeper count is
-  assigned the road is unpaid and loses its rung once its grace runs out.
+- Keepers are staffed by a `roadwork` row of the `labor` section (#922). The row is sim-staffed:
+  its `workers` is the Max, `0` for none, so the sim puts on the keepers the roads need. A faction
+  with no `roadwork` row leaves its roads unpaid, and each loses its rung once its grace runs out.
+  `kept_roads.json` carries the row and a band stone stock for the paved road's upkeep, and
+  `the_checked_in_fixture_keeps_its_roads` runs it past the paved grace.
 - A scenario trail has no traffic history, so it is lost to disuse like any trail nobody walks.
 
 ## Config files
