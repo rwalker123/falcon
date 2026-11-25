@@ -44,8 +44,10 @@ for it.
 
 ## The labor verbs live in the lib, not the server
 
-`assign_labor` and `work_priority` have their bodies in `core_sim/src/labor_commands.rs`
-(`apply_assign_labor`, `apply_work_priority`, re-exported by `command_seam.rs`). They return
+`assign_labor`, `work_priority` and `band_order` have their bodies in `core_sim/src/labor_commands.rs`
+(`apply_assign_labor`, `apply_work_priority`, `apply_band_order`, re-exported by `command_seam.rs`;
+the server's `handle_band_order` is the thin wrapper, and `apply_band_order` writes the success feed
+line and restaffs the band itself). They return
 `CommandRefusal::Refused { kind, reason }`. The server's `handle_assign_labor` and
 `handle_work_priority` are thin wrappers: they convert the wire, call the body, and on `Err` write the
 feed line on the kind the body returns. A scenario's `labor` section calls the same body, so a rule
@@ -66,6 +68,14 @@ section's `id`), mapped to the runtime id before the verb runs.
 |---|---|---|
 | `assign_labor` | required `band`, `role`, `workers`, `take_species`, `move_with_herd`; optional `target_x`, `target_y`, `fauna_id`, `species`, `floor`, `kit_id` | a band not of this faction; a target off the map, or naming one coordinate without the other; an unknown role; a kit not on the equipment roster; a `take_species` entry, or a forage row's `species`, not on the flora roster; a `fauna_id` the file's `herds` section does not declare (`labor[k].assign_labor.fauna_id`) |
 | `work_priority` | required `band`, `level`; optional `target_x`, `target_y`, `herd_id`, `material`, `branch` | a band not of this faction; a target off the map; a level other than `high`, `normal`, `low`; a `herd_id` the file's `herds` section does not declare (`labor[k].work_priority.herd_id`) |
+| `band_order` | required `band`, `kind`, `action` (`set`, `release` or `claim`); optional `target`, `priority` (a `set`'s two wire fields), `target_x` + `target_y` or `herd_id` (the one row a `release` or `claim` moves, a scenario herd id) | a band not of this faction; an action other than `set`, `release`, `claim`; a `set` missing `target` or `priority`, or naming a priority other than `high`, `normal`, `low`, or naming a row; a `release` or `claim` naming a `target` or `priority`, naming one coordinate without the other, naming a tile and a herd, or a `herd_id` the file's `herds` section does not declare (`labor[k].band_order.herd_id`) |
+
+`band_order` is how a file hands one of the leader's rows to the player before assigning it: a
+band with a leader holds a chief-owned food order that lists the rows it works, and `assign_labor` on a
+listed row is refused ("<Band>'s elders keep food on hand ..."), so a file releases the row first
+(`{ "band_order": { "band": "home", "kind": "food", "action": "release", "herd_id": "flock" } }`)
+and the `assign_labor` after it is accepted. A release or claim of a row the chief does not list is
+refused by the verb's own text and stops the load at `factions[i].labor[k]`.
 
 A pool role names no tile: `{ "assign_labor": { "band": "home", "role": "roadwork", "workers": 3,
 "take_species": [], "move_with_herd": false } }` is the keepers of every road the band keeps
@@ -375,7 +385,7 @@ order).
   material. `set_order` on a kind with no order starts it as the chief's and adopts the existing rows,
   as arrival does. **A row the player hands over one at a time is never retired by the chief's pass**
   (`LaborAllocation::handed_rows`, set by `claim_row`, cleared by `release_row`, saved, inside equality):
-  outside his chosen set (a stand ranked below it, a source past `band_work_range` or assigned to the other
+  outside his chosen set (a stand ranked below it or assigned to the other
   order) it stays listed at zero hands, in reserve, and a row he listed himself is still retired when he
   drops it.
 - **Wire for the client**: a player stand under a chief-owned material reads `orderKind` "" and
@@ -490,7 +500,7 @@ labor pass and by every command restaff), `staffing::probe_source`, `staffing::a
 - **The want** = the draw plus the deficit (`(target - turns) * draw`) over `keep_on_hand_refill_turns`
   below the target, and **the draw itself at or above it** (the band eats every turn, so the keep-up crew
   still works - unlike a material, where nobody works at the target).
-- **Sources.** Every known forage patch and every visible herbivore herd inside `band_work_range`,
+- **Sources.** Every known forage patch and every visible herbivore herd, not range-gated: past the apron the row posts a party and the walk lowers its net per hand, and a source whose food would rot on the way home is no candidate (below),
   probed through the staffing's own reading (`probe_source` runs `forage_input` / `hunt_input` on a
   hypothetical row), so a herd the band's kit cannot wound is no candidate. **A patch the band's crew
   would take nothing from is no candidate either**: the probe's gather season is `forage::gather_season`,
@@ -498,7 +508,7 @@ labor pass and by every command restaff), `staffing::probe_source`, `staffing::a
   `intensification.md` -> "Site relaxations"), so the probe finds no useful take. A Tended or Farm patch
   the band holds off-site keeps its season and stays a candidate. A chief row on ground that has become
   ineligible is retired by the ordinary retirement and cargo rules. Ranked by the order's
-  net product per hand (the product per hand at the floor, kitted as the band is, run through the work-party caravan forecast over the walk past the apron at the best live kit's carry: baskets for a gather, the sled's pack for a hunt; `keep_on_hand::caravan_net_per_hand`, the helper the dig sites share), then the most the source gives a turn at the floor (`cap_units`), then the source key. There is no "shortest walk" key; distance acts only through the net figure. Candidates are gated inside `band_work_range`, so today every food source's net equals its per hand and the walk term is exercised by dig sites alone. Pinned by `food_orders::inside_the_apron_a_bigger_patch_is_ranked_over_a_nearer_thin_one`.
+  net product per hand (the product per hand at the floor, kitted as the band is, run through the work-party caravan forecast over the walk past the apron at the best live kit's carry: baskets for a gather, the sled's pack for a hunt; `keep_on_hand::caravan_net_per_hand`, the helper the dig sites share), then the most the source gives a turn at the floor (`cap_units`), then the source key. There is no "shortest walk" key; distance acts only through the net figure. Candidates are not range-gated: a source past the apron is a candidate whose net per hand the walk lowers, exactly as for a dig site, **except that a food source is priced net of the walk's transit rot** (`work_party::TransitRot`, built by `TransitRot::of_herd` / `TransitRot::of_patch`, the constructors the hunt and forage caravan forecasts use: a herd's one keeping class, a patch's basket shares, against the keeping table). A pack whose walk is at least its class's shelf life lands none of it (flesh keeps 4 turns), so a source whose net per hand is nothing is **no candidate**: it is never listed and never counts toward `keep_reach` / `land_gives`. That is the range bound, with no distance lever of its own. A fodder candidate carries no rot (hay has no keeping class) and dig sites pass `NO_TRANSIT_ROT` (a material keeps). The band's eat-in-time cap (`TransitRot::eaten_at`) is not applied. Pinned by `food_orders::inside_the_apron_a_bigger_patch_is_ranked_over_a_nearer_thin_one`.
   Each is given a share up to its cap (what it gives at the floor without being drawn down plus its stock
   above the floor over `keep_on_hand_refill_turns`, never more than `tile_worker_cap` hands take;
   `staffing::SourceProbe::cap`), best first, until the want is covered; the share is written as a `KeepShare` (`hold`/`take` in biomass, `herd` set for a hunt

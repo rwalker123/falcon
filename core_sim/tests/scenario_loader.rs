@@ -1590,12 +1590,12 @@ fn a_labor_row_names_its_herd_by_scenario_id_and_targets_the_runtime_herd() {
 fn a_labor_entry_naming_an_undeclared_herd_is_refused_in_pass_one() {
     // The runtime id is not a scenario id.
     let mut file: Value = serde_json::from_str(HERDS_PENS).expect("JSON");
-    file["factions"][0]["labor"][0]["assign_labor"]["fauna_id"] = json!("game_fowl_71");
+    file["factions"][0]["labor"][1]["assign_labor"]["fauna_id"] = json!("game_fowl_71");
     let refusals = pass_one(&file.to_string()).expect_err("an undeclared herd id");
     assert!(
         refusals
             .iter()
-            .any(|r| r.path == "factions[0].labor[0].assign_labor.fauna_id"),
+            .any(|r| r.path == "factions[0].labor[1].assign_labor.fauna_id"),
         "{refusals:?}"
     );
 
@@ -1843,4 +1843,132 @@ fn the_deposits_playtest_loads_a_part_cut_wood_that_keeps_its_held_rung() {
         working.peak_rung.is_some(),
         "the held rung on the same working survives the stock setter"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The labor section's `band_order` entry: a file hands one of the leader's rows to the player.
+// ---------------------------------------------------------------------------------------------
+
+/// `(order_kind, chief_owned)` of the band's hunt row on `herd`, and whether the band's food order is
+/// still the chief's, off the encoded frame.
+fn encoded_hunt_row_and_food_order(app: &mut App, herd: &str) -> ((String, bool), bool) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    core_sim::recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<core_sim::SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let snap = envelope.payload_as_snapshot().expect("a snapshot");
+    let cohorts = snap
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the cohort list");
+    let mut row = None;
+    let mut food_is_the_chiefs = false;
+    for cohort in cohorts.iter() {
+        for order in cohort.bandOrders().into_iter().flatten() {
+            if order.kind() == Some("food") {
+                food_is_the_chiefs = order.chiefOwned();
+            }
+        }
+        for assignment in cohort.laborAssignments().into_iter().flatten() {
+            if assignment.kind() == Some("hunt") && assignment.faunaId() == Some(herd) {
+                row = Some((
+                    assignment.orderKind().unwrap_or_default().to_string(),
+                    assignment.chiefOwned(),
+                ));
+            }
+        }
+    }
+    (
+        row.expect("the band's hunt row is published"),
+        food_is_the_chiefs,
+    )
+}
+
+#[test]
+fn a_band_order_release_makes_one_chief_row_the_players_and_the_assign_after_it_succeeds() {
+    // The shipped file releases the flock row to the player and then assigns the hunt on it; the
+    // load only succeeds if the assign was accepted (it is refused while the chief lists the row).
+    let (mut app, applied) = load(HERDS_PENS).expect("the release, then the assign, load");
+    let flock = applied
+        .herds
+        .get("flock")
+        .expect("the flock is mapped")
+        .clone();
+    let ((order_kind, chief_owned), food_is_the_chiefs) =
+        encoded_hunt_row_and_food_order(&mut app, &flock);
+    assert_eq!(order_kind, "", "the released row names no order");
+    assert!(!chief_owned, "the released row is the player's");
+    assert!(
+        food_is_the_chiefs,
+        "**LIVENESS**: one row changed hands, the food order is still the chief's"
+    );
+
+    // The control: without the release the elders keep the row and the assign is refused.
+    let mut file: Value = serde_json::from_str(HERDS_PENS).expect("JSON");
+    file["factions"][0]["labor"]
+        .as_array_mut()
+        .expect("labor")
+        .remove(0);
+    let refusals = load(&file.to_string())
+        .map(|_| ())
+        .expect_err("the chief lists the row without a release");
+    assert_eq!(refusals[0].path, "factions[0].labor[0]");
+    assert!(
+        refusals[0].reason.contains("keep food on hand"),
+        "{}",
+        refusals[0].reason
+    );
+}
+
+#[test]
+fn a_band_order_the_verb_refuses_stops_the_load_with_the_verbs_own_reason() {
+    // The band holds no row on tile (0, 0), so there is no row for the chief to hand over.
+    let mut file: Value = serde_json::from_str(HERDS_PENS).expect("JSON");
+    file["factions"][0]["labor"] = json!([{ "band_order": {
+        "band": "home", "kind": "food", "action": "release",
+        "target_x": 0, "target_y": 0 } }]);
+    let refusals = load(&file.to_string())
+        .map(|_| ())
+        .expect_err("a row nobody lists cannot be released");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_eq!(refusals[0].path, "factions[0].labor[0]");
+    assert!(
+        refusals[0]
+            .reason
+            .contains("has no food row there for the chief to hand over"),
+        "{}",
+        refusals[0].reason
+    );
+}
+
+#[test]
+fn band_order_pass_one_collects_every_refusal_in_one_load() {
+    let mut file: Value = serde_json::from_str(HERDS_PENS).expect("JSON");
+    file["factions"][0]["labor"] = json!([
+        { "band_order": { "band": "nowhere", "kind": "food", "action": "frob" } },
+        { "band_order": { "band": "home", "kind": "food", "action": "set" } },
+        { "band_order": { "band": "home", "kind": "food", "action": "release", "target_x": 3 } },
+        { "band_order": { "band": "home", "kind": "food", "action": "release", "herd_id": "ghost" } },
+        { "band_order": {
+            "band": "home", "kind": "food", "action": "set", "target": 20, "priority": "urgent" } },
+    ]);
+    let refusals = pass_one(&file.to_string()).expect_err("a faulty band order");
+    let paths: Vec<&str> = refusals.iter().map(|r| r.path.as_str()).collect();
+    for expected in [
+        "factions[0].labor[0].band_order.band",
+        "factions[0].labor[0].band_order.action",
+        "factions[0].labor[1].band_order.target",
+        "factions[0].labor[1].band_order.priority",
+        "factions[0].labor[2].band_order.target_y",
+        "factions[0].labor[3].band_order.herd_id",
+        "factions[0].labor[4].band_order.priority",
+    ] {
+        assert!(paths.contains(&expected), "missing {expected}: {paths:?}");
+    }
 }

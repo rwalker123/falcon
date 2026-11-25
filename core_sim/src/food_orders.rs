@@ -10,7 +10,9 @@
 //!   per-turn **draw** (`PopulationCohort::last_food_need`, `LaborAllocation::last_fodder_need`). The
 //!   want is `draw + (target - turns) * draw / keep_on_hand_refill_turns` below the target and **the
 //!   draw itself at or above it** - the band eats every turn, so the keep-up crew still works.
-//! - **Which sources.** Every known forage patch and huntable herd in work range, each probed through
+//! - **Which sources.** Every known forage patch and huntable herd, not range-gated: past the apron
+//!   the row posts a party and the walk is priced by the caravan forecast net of the transit rot of
+//!   the food it carries, so a source whose food would rot on the way home is no candidate. Each is probed through
 //!   the staffing's own reading ([`crate::staffing::probe_source`]) so a herd the band's kit cannot
 //!   wound is no candidate. Ranked by the net food (or fodder) a hand brings home (per hand at the floor
 //!   through the caravan forecast over the walk past the apron), then the most the source gives a turn,
@@ -63,6 +65,8 @@ pub struct FoodInputs<'a> {
     pub pool: u32,
     /// The band's readings the two orders are judged on.
     pub readings: OrderReadings,
+    /// How food keeps: the table a pack's transit rot is struck against.
+    pub keeping: &'a crate::demographics_config::KeepingConfig,
 }
 
 /// **THE BAND'S FOOD AND FODDER STOCKS AND PER-TURN NEEDS**: the figures the sim already keeps - the
@@ -330,13 +334,50 @@ fn candidate_of(
             crate::work_party::hunt_pack_biomass(&found, sources.fauna, carry)
         })
     };
+    // **A pack rots by its walk**: the food a far source's packs carry is struck by the keeping
+    // classes it is made of (a herd's one class, a patch's basket), so a walk that outlasts a class's
+    // shelf life lands none of it. Fodder is hay: it has no keeping class and does not rot.
+    let rot = if order == FODDER_KIND {
+        None
+    } else if herd.is_empty() {
+        let composition = (sources.ground_of)(tile)
+            .map(|ground| {
+                crate::forage::tile_flora_composition(
+                    sources.flora,
+                    &sources.labor.forage,
+                    &ground,
+                    sources.map_seed,
+                )
+                .into_owned()
+            })
+            .unwrap_or_default();
+        sources.patch(tile).map(|patch| {
+            crate::work_party::TransitRot::of_patch(
+                inputs.keeping,
+                &patch,
+                &composition,
+                sources.flora,
+                &sources.labor.forage,
+                &crate::components::TakeSelection::EVERYTHING,
+            )
+        })
+    } else {
+        sources.herd(&herd).map(|found| {
+            crate::work_party::TransitRot::of_herd(inputs.keeping, sources.fauna, &found.species)
+        })
+    };
     let net_units_per_hand = crate::keep_on_hand::caravan_net_per_hand(
         inputs.site,
         tile,
         pack,
         units_per_hand,
         probe.per_hand,
+        rot.as_ref(),
     );
+    // A source whose food rots on the walk home (nothing lands that keeps) feeds nobody: no candidate.
+    if net_units_per_hand <= NOTHING {
+        return None;
+    }
     Some(Candidate {
         key: source_key(&target)?,
         net_units_per_hand,
@@ -385,7 +426,6 @@ pub fn manage_food_orders(
     }
     let sources = inputs.site.sources;
     let refill = sources.labor.keep_on_hand_refill_turns as f32;
-    let work_range = sources.labor.band_work_range;
     let crew = sources.labor.tile_worker_cap as f32;
     let best = DEFAULT_ESCAPEMENT_FLOOR;
 
@@ -394,11 +434,7 @@ pub fn manage_food_orders(
     let mut tiles: Vec<UVec2> = sources.forage.patches.keys().copied().collect();
     tiles.sort_by_key(|tile| (tile.y, tile.x));
     for tile in tiles {
-        let within = inputs
-            .site
-            .camp
-            .is_none_or(|camp| camp.distance_to(tile) <= work_range);
-        if !within || !(inputs.tile_known)(tile) {
+        if !(inputs.tile_known)(tile) {
             continue;
         }
         let Some(patch) = sources.forage.patch(tile) else {
@@ -418,15 +454,11 @@ pub fn manage_food_orders(
         }
     }
     for herd in sources.herds.entries() {
-        let within = inputs
-            .site
-            .camp
-            .is_none_or(|camp| camp.distance_to(herd.position()) <= work_range);
         let herbivore = sources
             .fauna
             .species_by_display(&herd.species)
             .is_some_and(|def| def.diet == crate::fauna_config::Diet::Herbivore);
-        if !within || !herbivore || !(inputs.herd_known)(herd) {
+        if !herbivore || !(inputs.herd_known)(herd) {
             continue;
         }
         if let Some(candidate) = candidate_of(

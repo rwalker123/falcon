@@ -100,7 +100,7 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   `command_seam::apply_set_auto_craft` (after the outfit, before labor). A refusal stops the load at
   `factions[i].bands[j].auto_craft`.
 - `finish_scenario` then replays every faction's `labor` entries, in file order, through
-  `apply_assign_labor` / `apply_work_priority`. Labor runs only when no outfit was refused, and the
+  `apply_assign_labor` / `apply_work_priority` / `apply_band_order`. Labor runs only when no outfit was refused, and the
   first refused entry stops the load. A replayed entry writes the same success line to the feed a
   player's command would.
 - `finish_scenario` then replays the `build_rung` entries through `command_seam::apply_build_rung`,

@@ -41,8 +41,8 @@ pub use pens::PenEntry;
 pub use tiles::TileOverride;
 
 use crate::command_seam::{
-    apply_assign_labor, apply_set_auto_craft, apply_set_starting_loadout, apply_work_priority,
-    AssignLaborOrder,
+    apply_assign_labor, apply_band_order, apply_set_auto_craft, apply_set_starting_loadout,
+    apply_work_priority, AssignLaborOrder,
 };
 use crate::components::BandId;
 use crate::demographics_config::{DemographicsConfig, DemographicsConfigHandle};
@@ -468,6 +468,17 @@ pub fn finish_scenario(
                     },
                     order.level.clone(),
                 ),
+                LaborEntry::BandOrder(order) => {
+                    let Some((action, row)) = labor::band_order_wire(order) else {
+                        refusals.push(ScenarioRefusal::new(
+                            path,
+                            "this band_order names no complete action",
+                        ));
+                        return Err(refusals);
+                    };
+                    apply_band_order(world, faction, band.0, &order.kind, action, row)
+                        .map(|_label| ())
+                }
             };
             if let Err(refusal) = result {
                 // **A refused entry stops the load there**: later rows may stand on this one.

@@ -392,13 +392,16 @@ pub struct DigSiteInputs<'a> {
 /// source's food units and biomass on the food webs. Inside the apron there is no walk and the answer
 /// is `cargo_per_hand`; past it the figure is the work-party caravan forecast
 /// ([`crate::work_party::forecast_caravan`]) for one hand posted over [`DigSiteInputs::walk_to`]'s
-/// walk, at a pack of `pack_bulk`.
+/// walk, at a pack of `pack_bulk`. `rot` is the cargo's transit rot: a food source passes the classes
+/// its packs carry, so a walk that outlasts a class's shelf life lands none of it; a deposit passes
+/// [`crate::work_party::NO_TRANSIT_ROT`] (a material keeps).
 pub(crate) fn caravan_net_per_hand(
     inputs: &DigSiteInputs<'_>,
     tile: UVec2,
     pack_bulk: f32,
     cargo_per_hand: f32,
     bulk_per_hand: f32,
+    rot: Option<&crate::work_party::TransitRot<'_>>,
 ) -> f32 {
     let Some((walk_tiles, walk_turns)) = (inputs.walk_to)(tile) else {
         return cargo_per_hand;
@@ -409,7 +412,7 @@ pub(crate) fn caravan_net_per_hand(
         &party,
         inputs.sources.labor.yield_average_horizon_turns,
         pack_bulk,
-        crate::work_party::NO_TRANSIT_ROT,
+        rot,
         |present| {
             Some(crate::work_party::SourceTake {
                 cargo: cargo_per_hand * present as f32,
@@ -500,6 +503,7 @@ fn rank_site(inputs: &DigSiteInputs<'_>, tile: UVec2, material: &str) -> Option<
             crate::work_party::material_pack(haul_carry, def.weight),
             per_hand,
             per_hand,
+            crate::work_party::NO_TRANSIT_ROT,
         ),
         None => per_hand,
     };

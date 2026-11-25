@@ -14,8 +14,8 @@ use bevy::prelude::*;
 use crate::build_gates::{validate_improvement, PEN_TAKEN_HINT};
 use crate::components::{BandId, PopulationCohort};
 pub use crate::labor_commands::{
-    apply_assign_labor, apply_work_priority, forage_source, is_pen_climb, pen_queuer,
-    queue_build_on_working_bands, AssignLaborOrder, SOURCE_NAMED_NOT_ASSIGNED,
+    apply_assign_labor, apply_band_order, apply_work_priority, forage_source, is_pen_climb,
+    pen_queuer, queue_build_on_working_bands, AssignLaborOrder, SOURCE_NAMED_NOT_ASSIGNED,
 };
 use crate::orders::FactionId;
 use crate::resources::CommandEventKind;

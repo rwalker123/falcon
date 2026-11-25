@@ -38,6 +38,8 @@
         }
       ],
       "labor": [
+        { "band_order": {
+          "band": "home", "kind": "food", "action": "release", "herd_id": "flock" } },
         { "assign_labor": {
           "band": "home", "role": "hunt", "workers": 2, "fauna_id": "flock",
           "take_species": [], "move_with_herd": false } }

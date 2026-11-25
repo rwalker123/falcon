@@ -6597,6 +6597,7 @@ pub fn advance_labor_allocation(
                 crate::food_orders::manage_food_orders(
                     &mut allocation,
                     &crate::food_orders::FoodInputs {
+                        keeping: food_keeping,
                         site: &site_inputs,
                         tile_known: &|tile: UVec2| {
                             !fog || visibility

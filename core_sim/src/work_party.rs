@@ -358,6 +358,49 @@ impl TransitRot<'_> {
         }
     }
 
+    /// **A herd's cargo**: its species' one keeping class (the kill fallback where the species names
+    /// none), the whole cargo. The one constructor the hunt forecast and the chief's food ranking share.
+    pub fn of_herd<'a>(
+        keeping: &'a crate::demographics_config::KeepingConfig,
+        fauna: &FaunaConfig,
+        species: &str,
+    ) -> TransitRot<'a> {
+        let class = fauna
+            .keeping_for(species)
+            .unwrap_or(&keeping.kill_fallback_class);
+        TransitRot::single(keeping, class)
+    }
+
+    /// **A forage patch's cargo**: the basket's classes, decomposed as the take site credits them
+    /// ([`crate::forage::patch_food_mix`]). The one constructor the forage forecast and the chief's
+    /// food ranking share.
+    pub fn of_patch<'a>(
+        keeping: &'a crate::demographics_config::KeepingConfig,
+        patch: &crate::forage::ForagePatch,
+        tile_composition: &[crate::flora_config::FloraShare],
+        flora: &FloraConfig,
+        forage: &ForageLaborConfig,
+        take_species: &crate::components::TakeSelection,
+    ) -> TransitRot<'a> {
+        let one_unit = crate::scalar::scalar_one();
+        TransitRot {
+            keeping,
+            shares: crate::forage::patch_food_mix(
+                patch,
+                tile_composition,
+                flora,
+                forage,
+                take_species,
+                one_unit,
+                keeping,
+            )
+            .iter()
+            .map(|(class, share)| (class.to_string(), share.to_f32()))
+            .collect(),
+            meals_per_turn: NOTHING_CAPS_THE_MEAL,
+        }
+    }
+
     /// The same cargo for a band that eats `meals_per_turn` of it a turn.
     pub fn eaten_at(mut self, meals_per_turn: f32) -> Self {
         self.meals_per_turn = meals_per_turn;
@@ -1397,9 +1440,7 @@ pub fn forecast_hunt_caravan(
     // **What a material weighs** — the bulk a pen's fleece fills a pack with ([`standing_stream`]).
     materials: &crate::materials_config::MaterialsConfig,
 ) -> CaravanForecast {
-    let class = fauna
-        .keeping_for(&herd.species)
-        .unwrap_or(&keeping.kill_fallback_class);
+    let rot = TransitRot::of_herd(keeping, fauna, &herd.species);
     let mut forecast = forecast_hunt_caravan_rot(
         party,
         herd,
@@ -1410,7 +1451,7 @@ pub fn forecast_hunt_caravan(
         floor,
         keep_hands,
         horizon,
-        &TransitRot::single(keeping, class),
+        &rot,
         materials,
     );
     if meals_per_turn.is_finite() && forecast.rate_home > NOTHING_CARRIED {
@@ -1424,7 +1465,7 @@ pub fn forecast_hunt_caravan(
             floor,
             keep_hands,
             horizon,
-            &TransitRot::single(keeping, class).eaten_at(meals_per_turn),
+            &rot.eaten_at(meals_per_turn),
             materials,
         );
         forecast.eaten_fraction = (eaten.rate_home / forecast.rate_home).clamp(0.0, 1.0);
@@ -1679,23 +1720,14 @@ pub fn forecast_forage_caravan(
     keeping: &crate::demographics_config::KeepingConfig,
 ) -> CaravanForecast {
     let mut projection = ForageProjection::new(patch);
-    let one_unit = crate::scalar::scalar_one();
-    let rot = TransitRot {
+    let rot = TransitRot::of_patch(
         keeping,
-        shares: crate::forage::patch_food_mix(
-            patch,
-            tile_composition,
-            flora,
-            forage,
-            take_species,
-            one_unit,
-            keeping,
-        )
-        .iter()
-        .map(|(class, share)| (class.to_string(), share.to_f32()))
-        .collect(),
-        meals_per_turn: NOTHING_CAPS_THE_MEAL,
-    };
+        patch,
+        tile_composition,
+        flora,
+        forage,
+        take_species,
+    );
     let mut forecast = forecast_caravan(party, horizon, carry_per_worker, Some(&rot), |present| {
         let gatherers = take_hands_present(present, keep_hands);
         match projection.step(
