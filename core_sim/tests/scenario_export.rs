@@ -191,3 +191,83 @@ fn the_bench_queue_round_trips() {
         "liveness: the bench queue is written"
     );
 }
+
+/// The breeding scenario with a second band beside the first, each holding gear.
+fn two_outfitted_bands(second_size: u32, second_gathering_kits: u32) -> String {
+    let mut file: Value = serde_json::from_str(BREEDING).expect("the fixture is JSON");
+    let first = file["factions"][0]["bands"][0].clone();
+    let at = first["at"].as_array().expect("at").clone();
+    let mut live = loaded(BREEDING, 0);
+    let width = live.world.resource::<core_sim::TileRegistry>().width;
+    let mut tiles = live.world.query::<&core_sim::Tile>();
+    let start = UVec2::new(
+        at[0].as_u64().unwrap_or(0) as u32,
+        at[1].as_u64().unwrap_or(0) as u32,
+    );
+    let beside = tiles
+        .iter(&live.world)
+        .filter(|tile| {
+            !tile.terrain_tags.contains(sim_runtime::TerrainTags::WATER)
+                && tile.position != start
+                && core_sim::grid_utils::hex_distance_wrapped(start, tile.position, width, false)
+                    <= 2
+        })
+        .map(|tile| tile.position)
+        .min_by_key(|pos| (pos.y, pos.x))
+        .expect("land beside the first band");
+    file["factions"][0]["bands"]
+        .as_array_mut()
+        .expect("bands")
+        .push(serde_json::json!({
+            "id": "second",
+            "at": [beside.x, beside.y],
+            "size": second_size,
+            "ages": { "children": 0.30, "working": 0.60, "elders": 0.10 },
+            "founding_lines": 4,
+            "larder": [],
+            "outfit": {
+                "kits": { "gathering": second_gathering_kits },
+                "materials": { "fibre": 2 }
+            }
+        }));
+    file.to_string()
+}
+
+#[test]
+fn a_second_bands_outfit_lands_on_that_band_and_round_trips() {
+    let text = two_outfitted_bands(30, 3);
+    let a = round_trips(&text, TURNS_BEFORE_EXPORT);
+    let bands = a["factions"][0]["bands"].as_array().expect("bands");
+    assert_eq!(bands.len(), 2, "liveness: both bands are exported");
+    assert_eq!(
+        bands[1]["outfit"]["kits"]["gathering"], 3,
+        "the second band's own gear survives"
+    );
+    assert!(
+        bands[0]["outfit"]["kits"]
+            .as_object()
+            .is_some_and(|k| !k.is_empty()),
+        "the first band's gear survives"
+    );
+    let note = a["note"].as_str().unwrap_or("");
+    assert!(
+        !note.contains("only a faction's first band"),
+        "no band is left out for not being first: {note}"
+    );
+}
+
+#[test]
+fn a_second_bands_outfit_over_its_carry_is_refused() {
+    // Two people carry nothing like fifty kits.
+    let text = two_outfitted_bands(2, 50);
+    let mut app = build_test_app();
+    let plan = parse_scenario(&text, &ScenarioContext::from_world(&app.world))
+        .expect("the file passes pass 1");
+    let refusals = build_scenario_world(&mut app, &plan).expect_err("over carry is refused");
+    assert!(
+        refusals
+            .iter()
+            .any(|r| r.path == "factions[0].bands[1].outfit" && r.reason.contains("carry")),
+        "OverCarry at the band's outfit path: {refusals:?}"
+    );
+}

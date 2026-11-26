@@ -64,7 +64,9 @@ use crate::start_profile::{
     StartProfile, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartProfileLookup,
     StartProfiles, StartProfilesHandle,
 };
-use crate::starting_loadout::{KitAllocation, MaterialAllocation};
+use crate::starting_loadout::{
+    KitAllocation, LoadoutSupply, LoadoutWindow, MaterialAllocation, StartingLoadout,
+};
 use crate::world_roster::{apply_start_profile, seed_faction_roster};
 use crate::{faction_start_land_fraction, granted_archetype_counts};
 
@@ -540,6 +542,19 @@ pub fn finish_scenario(
             let Some(band) = setup.spawned.get(&entry.id).copied() else {
                 continue;
             };
+            // **Every scenario band that states an outfit has a window to state it in.** The game
+            // opens one Grant window per faction (its lowest band); a band the file outfits beyond
+            // that gets one of the same kind (its own carry, read live), opened here and nowhere
+            // else, so the carry gate is the window's own.
+            {
+                let mut loadout = world.resource_mut::<StartingLoadout>();
+                if !loadout.window(band).is_some_and(|window| window.open) {
+                    loadout.open(
+                        band,
+                        LoadoutWindow::opened(LoadoutSupply::Grant { carry_budget: None }),
+                    );
+                }
+            }
             let kits: Vec<KitAllocation> = outfit
                 .kits
                 .iter()

@@ -197,14 +197,13 @@ pub(super) fn check(
                     format!("band id '{}' is used twice", band.id),
                 ));
             }
-            check_band(band, j == 0, &at, ctx, refusals);
+            check_band(band, &at, ctx, refusals);
         }
     }
 }
 
 fn check_band(
     band: &BandEntry,
-    is_first: bool,
     at: &str,
     ctx: &ScenarioContext,
     refusals: &mut Vec<ScenarioRefusal>,
@@ -272,12 +271,6 @@ fn check_band(
         return;
     };
     let at = format!("{at}.outfit");
-    if !is_first {
-        refusals.push(ScenarioRefusal::new(
-            &at,
-            "only a faction's first band holds the opening outfit window",
-        ));
-    }
     for kit in outfit.kits.keys() {
         match ctx.equipment.kit_definition(kit) {
             None => refusals.push(ScenarioRefusal::new(
@@ -610,7 +603,6 @@ fn export_band(
     world: &World,
     faction: FactionId,
     band: &ExportedBand,
-    first: bool,
     notes: &mut Vec<String>,
 ) -> Option<BandEntry> {
     let cohort = world.get::<PopulationCohort>(band.entity)?;
@@ -641,7 +633,7 @@ fn export_band(
             band.scenario_id
         ));
     }
-    let outfit = if first {
+    let outfit = {
         if !uncovered.is_empty() {
             let listed: Vec<String> = uncovered
                 .iter()
@@ -684,17 +676,6 @@ fn export_band(
             ));
         }
         Some(Outfit { kits, materials })
-    } else {
-        if !items.is_empty() || !materials.is_empty() {
-            notes.push(format!(
-                "{}: holds {} items of gear and {} units of material, which a scenario cannot give \
-                 it (only a faction's first band takes an outfit)",
-                band.scenario_id,
-                items.values().sum::<u32>(),
-                materials.values().sum::<u32>()
-            ));
-        }
-        None
     };
     let auto_craft = world
         .get::<BandBench>(band.entity)
@@ -752,8 +733,7 @@ pub(super) fn export(
             knowledge: export_knowledge(world, *faction, notes),
             bands: listed
                 .iter()
-                .enumerate()
-                .filter_map(|(index, band)| export_band(world, *faction, band, index == 0, notes))
+                .filter_map(|band| export_band(world, *faction, band, notes))
                 .collect(),
             bench: Vec::new(),
             rungs: Vec::new(),

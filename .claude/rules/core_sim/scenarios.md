@@ -101,6 +101,12 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   a held working's rung both open the working through `DepositRegistry::open`, so they compose in
   either order. Setter refusals are all collected, and any one stops the load before a command is
   replayed.
+- **Every band that states an `outfit` has a window to state it in.** The game opens one Grant window
+  per faction, on its lowest band. Before the outfit replay `finish_scenario` opens a window of the
+  same kind (`LoadoutWindow::opened(LoadoutSupply::Grant { carry_budget: None })`: the band's own carry,
+  read live) on each outfitted scenario band that has no open one. A band with no `outfit` gets none.
+  The carry gate is the window's own, so `OverCarry` refuses a second band at
+  `factions[i].bands[j].outfit` as it does a first.
 - `finish_scenario` then replays `outfit` as `SetStartingLoadout` through `command_seam`, which
   **replaces** the default while the opening window is still open.
 - `finish_scenario` then replays each band's `auto_craft: true` through
@@ -212,5 +218,5 @@ the herd fit matches the spawn tile first, else the tile the herd stands on afte
 `game_` immigrant past the build turn is written as `placed`. A placed herd whose current tile fails
 the placement predicate is written at the nearest tile that passes (hex distance, then `(y, x)`) with a
 note. An outfit lists only the materials the human archetype's pick list names; any other material the
-first band holds is noted. A held rung is replayed through the build gate, so a faction must know the
+first band holds is noted. Every band's gear is written as its own `outfit`. A held rung is replayed through the build gate, so a faction must know the
 lesson it needs, which only `knowledge` tags the start profile names can say.
