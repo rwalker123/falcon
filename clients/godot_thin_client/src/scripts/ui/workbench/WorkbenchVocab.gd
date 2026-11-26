@@ -201,6 +201,14 @@ const KITS_NO_DEFAULTS := "No job defaults yet — they arrive with the roster."
 const SERVICE_SEND_COMMAND := &"send_command"
 const SERVICE_APPEND_LOG := &"append_log"
 const SERVICE_NEW_GAME := &"new_game"
+## SCENARIO_REQUEST — `(kind: String, args: Dictionary, on_reply: Callable) -> bool`; sends one
+##                    scenario verb (`SCENARIO_KIND_*`) over the query bridge and later calls
+##                    `on_reply(reply: Dictionary)`. False when there is no server to ask.
+## PICK_TILE        — `(on_pick: Callable, on_cancel: Callable = Callable()) -> bool`; arms a ONE-SHOT
+##                    map pick: the next hex click calls `on_pick(x: int, y: int)`; Escape or a second
+##                    arm calls `on_cancel()`. False when there is no map to click.
+const SERVICE_SCENARIO_REQUEST := &"scenario_request"
+const SERVICE_PICK_TILE := &"pick_tile"
 
 # ---- runtime commands ------------------------------------------------------
 ## The two verbs the tuning page speaks. **Fixed contract shared with `core_sim`** — the sim parses
@@ -219,3 +227,104 @@ const SECTION_DIAGNOSTICS := "DIAGNOSTICS"
 ## intended shape of the surface without a dead click.
 const PLACEHOLDER_BODY := "Not built yet. This page is registered so the rail shows where the "\
 	+ "replacement for the legacy Inspector's tabs is going."
+
+
+# ---- the scenario page -------------------------------------------------------
+const SCENARIO_PAGE_TITLE := "Scenario"
+const SCENARIO_PAGE_SUBTITLE := "Edit a scenario file, save it, load it"
+## The four verbs, spelled as `bridge/query.rs` matches them. Fixed contract with the native bridge.
+const SCENARIO_KIND_LIST := "list_scenarios"
+const SCENARIO_KIND_READ := "read_scenario"
+const SCENARIO_KIND_WRITE := "write_scenario"
+const SCENARIO_KIND_LOAD := "load_scenario"
+## The directory the server accepts scenario files in, as a path prefix a new file's name goes after.
+const SCENARIO_DIR_PREFIX := "core_sim/scenarios/"
+const SCENARIO_FILE_SUFFIX := ".json"
+## The reply keys of the scenario answer (`answer_to_dict`).
+const SCENARIO_REPLY_OK := "ok"
+const SCENARIO_REPLY_ERROR := "error"
+const SCENARIO_REPLY_REFUSALS := "refusals"
+const SCENARIO_REPLY_FILES := "files"
+const SCENARIO_REPLY_TEXT := "text"
+const SCENARIO_REPLY_SCHEMA := "schema"
+
+## **THE ONLY FILE-SHAPE KNOWLEDGE THE FORM HOLDS**: where a scenario DECLARES the ids a `band` /
+## `herd` pick offers. Each is a walk through the document: a name descends a key, an array is
+## entered implicitly, and the last name is the string read off every element reached.
+const DECLARED_BAND_ID_PATH := ["factions", "bands", "id"]
+const DECLARED_HERD_ID_PATH := ["herds", "id"]
+## The schema's pick hint keys and values (`core_sim::scenario::scenario_schema`).
+const SCHEMA_PICK_KEY := "x-pick"
+const SCHEMA_PICK_TILE := "tile"
+const SCHEMA_PICK_BAND := "band"
+const SCHEMA_PICK_HERD := "herd"
+const SCHEMA_PICK_TILE_KEYS := "x-pick-tile"
+
+const SCENARIO_HEADING_FILE := "FILE"
+const SCENARIO_HEADING_NEW := "NEW"
+const SCENARIO_FILE_PLACEHOLDER := "— choose a file —"
+const SCENARIO_NEW_PLACEHOLDER := "new_name"
+const SCENARIO_REFRESH_LABEL := "Refresh"
+const SCENARIO_NEW_LABEL := "New"
+const SCENARIO_SAVE_LABEL := "Save"
+const SCENARIO_LOAD_LABEL := "Load"
+## What a switch-while-dirty button says on its first press. The second press discards.
+const SCENARIO_DISCARD_LABEL := "Discard edits?"
+const SCENARIO_NO_SERVICES := "No server attached — the file list, Save and Load need one."
+const SCENARIO_NO_MAP := "No map attached — tile picks are unavailable."
+const SCENARIO_NO_SCHEMA := "No schema yet — it arrives with the file list."
+const SCENARIO_NO_FILE := "No file open. Choose one above, or create a new one."
+const SCENARIO_UNREADABLE := "%s could not be read: %s"
+const SCENARIO_BAD_NAME := "A file name is letters, digits, - and _ only."
+const SCENARIO_NAME_EXISTS := "%s already exists."
+const SCENARIO_PICK_ARMED := "Click a hex on the map to fill the tile… (Esc cancels)"
+const SCENARIO_CLEAN_STATUS := "%s — nothing unsaved."
+const SCENARIO_DIRTY_STATUS := "%s — unsaved edits."
+const SCENARIO_NEW_STATUS := "%s — new, not saved yet."
+const SCENARIO_SAVED_LOG := "Scenario: saved %s."
+const SCENARIO_LOADED_LOG := "Scenario: loaded %s — the world was rebuilt from it."
+const SCENARIO_REFUSED_LOG := "Scenario: %s refused — %d problem(s)."
+const SCENARIO_TRANSPORT_LOG := "Scenario: no answer from the server (%s)."
+## Banner prefix for refusals that name no node in the form (`<file>: …`, `line L, column C`).
+const SCENARIO_BANNER_HEADING := "The server refused %s:"
+
+# ---- the schema-walked form -------------------------------------------------
+const FORM_OPEN_GLYPH := "▾"
+const FORM_CLOSED_GLYPH := "▸"
+const FORM_REMOVE_GLYPH := "×"
+const FORM_ADD_FORMAT := "+ %s"
+const FORM_ADD_ROW_LABEL := "+ add"
+const FORM_PICK_LABEL := "pick"
+const FORM_UNSET := "unset"
+const FORM_SET_LABEL := "set"
+const FORM_UNDECLARED_SUFFIX := " (not declared)"
+const FORM_EMPTY_STRING_FACE := "—"
+const FORM_NOT_IN_SCHEMA := "not in schema"
+const FORM_ITEM_FORMAT := "%s[%d]"
+const FORM_VARIANT_TITLE_FORMAT := "%s  %s"
+const FORM_COUNT_FORMAT := "%d"
+const FORM_TILE_X_PLACEHOLDER := "x"
+const FORM_TILE_Y_PLACEHOLDER := "y"
+const FORM_MAP_KEY_PLACEHOLDER := "key"
+## Geometry. A leaf row's key label wraps down to this width rather than widening the column.
+const FORM_KEY_MIN_WIDTH := 48.0
+const FORM_VALUE_MIN_WIDTH := 96.0
+const FORM_TILE_FIELD_WIDTH := 52.0
+const FORM_INDENT := 8
+const FORM_BUTTON_FONT_SIZE := 12
+const FORM_ROW_GAP := 4
+const FORM_NOTE_GAP := 2
+## SpinBox limits when the schema states none. The upper bound is 2^53-1, the largest integer a
+## double (what a SpinBox and a parsed JSON number both are) holds exactly.
+const FORM_FALLBACK_MIN := -9007199254740991.0
+const FORM_FALLBACK_MAX := 9007199254740991.0
+## A `number` field's step. Small enough that a typed value is not snapped away.
+const FORM_FLOAT_STEP := 0.001
+const FORM_INT_STEP := 1.0
+## Schema nodes deeper than this are drawn as a bare caption, as the config tree does.
+const FORM_MAX_DEPTH := 12
+## Top-level blocks start open; everything deeper starts closed.
+const FORM_OPEN_DEPTH := 0
+## JSON text written to disk: two-space indent, and the trailing newline the checked-in files carry.
+const SCENARIO_INDENT := "  "
+const SCENARIO_TRAILING_NEWLINE := "\n"

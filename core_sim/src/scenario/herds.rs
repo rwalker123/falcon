@@ -36,7 +36,7 @@ pub const SCENARIO_HERD_SEED_SALT: u64 = 0x5CE4_A410_4E2D_0001;
 pub const SCENARIO_HERD_ID_PREFIX: &str = "scenario_";
 
 /// One herd entry.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HerdEntry {
     /// The herd's id inside this file. Later sections name a herd by it.
@@ -44,6 +44,7 @@ pub struct HerdEntry {
     /// A `fauna_config.json` species KEY (`aurochs`), not the display name.
     pub species: String,
     /// The tile, `[x, y]`.
+    #[schemars(extend("x-pick" = "tile"))]
     pub at: [u32; 2],
     /// Biomass as a fraction of the K the herd lives under on its first turn (the ecological K the
     /// turn loop writes, for a placed and a worldgen herd alike), in `(0, 1]`.
@@ -52,7 +53,7 @@ pub struct HerdEntry {
 }
 
 /// Where the herd comes from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HerdOrigin {
     /// A new wild herd of the species is put on the tile.

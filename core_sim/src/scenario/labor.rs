@@ -22,7 +22,7 @@ use super::{ScenarioContext, ScenarioRefusal, WorldSection};
 use crate::labor_commands::{parse_work_priority_level, LaborRole};
 
 /// One labor entry, tagged by its verb: `{ "assign_labor": { ... } }`.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LaborEntry {
     AssignLabor(AssignLaborEntry),
@@ -41,10 +41,12 @@ pub const BAND_ORDER_CLAIM: &str = "claim";
 /// `priority` belong to `set` (the wire's `BandOrderAction::Set` fields); a row is named by
 /// `target_x` + `target_y` (a patch or working) or `herd_id` (a scenario herd id) and belongs to
 /// `release` and `claim` (the wire's `Option<BandOrderRow>`).
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(extend("x-pick-tile" = ["target_x", "target_y"]))]
 pub struct BandOrderEntry {
     /// The band's id in this file.
+    #[schemars(extend("x-pick" = "band"))]
     pub band: String,
     pub kind: String,
     /// `"set"`, `"release"` or `"claim"`.
@@ -53,19 +55,23 @@ pub struct BandOrderEntry {
     pub priority: Option<String>,
     pub target_x: Option<u32>,
     pub target_y: Option<u32>,
+    #[schemars(extend("x-pick" = "herd"))]
     pub herd_id: Option<String>,
 }
 
 /// `CommandPayload::AssignLabor`, less `faction_id`, `band_id` (now `band`) and the retired `policy`.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(extend("x-pick-tile" = ["target_x", "target_y"]))]
 pub struct AssignLaborEntry {
     /// The band's id in this file.
+    #[schemars(extend("x-pick" = "band"))]
     pub band: String,
     pub role: String,
     pub workers: u32,
     pub target_x: Option<u32>,
     pub target_y: Option<u32>,
+    #[schemars(extend("x-pick" = "herd"))]
     pub fauna_id: Option<String>,
     pub species: Option<String>,
     pub floor: Option<f32>,
@@ -75,13 +81,16 @@ pub struct AssignLaborEntry {
 }
 
 /// `CommandPayload::WorkPriority`, less `faction_id` and with `band_id` replaced by `band`.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(extend("x-pick-tile" = ["target_x", "target_y"]))]
 pub struct WorkPriorityEntry {
     /// The band's id in this file.
+    #[schemars(extend("x-pick" = "band"))]
     pub band: String,
     pub target_x: Option<u32>,
     pub target_y: Option<u32>,
+    #[schemars(extend("x-pick" = "herd"))]
     pub herd_id: Option<String>,
     pub material: Option<String>,
     pub branch: Option<String>,

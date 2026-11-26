@@ -23,7 +23,7 @@ use crate::command_seam::{apply_extend_pen, apply_set_herd_output, WHOLE_HERD_CO
 use crate::{HerdRegistry, NO_STANDING_COMMITMENT};
 
 /// One pen entry, tagged by its verb: `{ "extend_pen": { "herd": "sheep" } }`.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PenEntry {
     ExtendPen(ExtendPenEntry),
@@ -31,18 +31,20 @@ pub enum PenEntry {
 }
 
 /// `CommandPayload::ExtendPen`, naming the herd rather than the pen's tile.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExtendPenEntry {
     /// The herd's scenario id.
+    #[schemars(extend("x-pick" = "herd"))]
     pub herd: String,
 }
 
 /// `CommandPayload::SetHerdOutput`, naming the herd by its scenario id.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SetHerdOutputEntry {
     /// The herd's scenario id.
+    #[schemars(extend("x-pick" = "herd"))]
     pub herd: String,
     /// The share of the herd that stands as milk, eggs and wool, in `[0, 1]`.
     pub fraction: f32,

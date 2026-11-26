@@ -22,7 +22,7 @@ use crate::orders::FactionId;
 pub const AGES_SUM_TOLERANCE: f32 = 0.011;
 
 /// One faction's section.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FactionSection {
     /// The faction index (`0` is the human).
@@ -45,12 +45,13 @@ pub struct FactionSection {
 }
 
 /// One band.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BandEntry {
     /// The band's id inside this file. Every later entry names its band by it.
     pub id: String,
     /// The tile the band stands on, `[x, y]`. Used exactly: no offset, no nearest-land search.
+    #[schemars(extend("x-pick" = "tile"))]
     pub at: [u32; 2],
     /// Head count.
     pub size: u32,
@@ -67,7 +68,7 @@ pub struct BandEntry {
 }
 
 /// The shares of a band in each age bracket.
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Ages {
     pub children: f32,
@@ -85,7 +86,7 @@ impl Ages {
 }
 
 /// Food of one keeping class.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LarderEntry {
     pub class: String,
@@ -93,12 +94,14 @@ pub struct LarderEntry {
 }
 
 /// An opening outfit, as `SetStartingLoadout` carries it.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Outfit {
     #[serde(deserialize_with = "unique_keys")]
+    #[schemars(with = "BTreeMap<String, u32>")]
     pub kits: BTreeMap<String, u32>,
     #[serde(deserialize_with = "unique_keys")]
+    #[schemars(with = "BTreeMap<String, u32>")]
     pub materials: BTreeMap<String, u32>,
 }
 

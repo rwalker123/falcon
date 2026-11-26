@@ -26,6 +26,7 @@ pub mod tiles;
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use bevy::prelude::*;
@@ -70,6 +71,113 @@ use crate::{faction_start_land_fraction, granted_archetype_counts};
 /// The path a refusal carries when the file itself could not be read.
 pub const FILE_REFUSAL_PATH: &str = "<file>";
 
+/// The directory the Workbench's scenario verbs (`list_scenarios`, `read_scenario`,
+/// `write_scenario`) work in, relative to the server's working directory (`run_stack.sh` runs the
+/// server from the repo root). `load_scenario` takes any readable path and is not bound by it.
+pub const SCENARIO_DIR: &str = "core_sim/scenarios";
+
+/// The extension a scenario file must carry.
+pub const SCENARIO_EXTENSION: &str = "json";
+
+/// **The path the editor verbs accept, resolved lexically.** The path is read against `base` (the
+/// server's working directory); `.` and `..` are folded without touching the disk, and the result
+/// must be a file directly inside `base/SCENARIO_DIR` named `*.json`. Anything else is refused at
+/// [`FILE_REFUSAL_PATH`] with the sentence the editor shows. Returns the path to open.
+pub fn resolve_scenario_path(base: &Path, path: &str) -> Result<PathBuf, ScenarioRefusal> {
+    let refuse = |why: String| ScenarioRefusal::new(FILE_REFUSAL_PATH, why);
+    let dir = lexical_normalize(Path::new(SCENARIO_DIR)).ok_or_else(|| {
+        refuse(format!(
+            "the scenario directory '{SCENARIO_DIR}' is malformed"
+        ))
+    })?;
+    let requested = Path::new(path);
+    let relative = if requested.is_absolute() {
+        requested
+            .strip_prefix(base)
+            .map_err(|_| {
+                refuse(format!(
+                    "'{path}' is outside the scenario directory '{SCENARIO_DIR}'"
+                ))
+            })?
+            .to_path_buf()
+    } else {
+        requested.to_path_buf()
+    };
+    let normal = lexical_normalize(&relative).ok_or_else(|| {
+        refuse(format!(
+            "'{path}' climbs out of the scenario directory '{SCENARIO_DIR}'"
+        ))
+    })?;
+    if normal.parent() != Some(dir.as_path()) {
+        return Err(refuse(format!(
+            "'{path}' is not a file directly inside the scenario directory '{SCENARIO_DIR}'"
+        )));
+    }
+    if normal.extension().and_then(|ext| ext.to_str()) != Some(SCENARIO_EXTENSION) {
+        return Err(refuse(format!(
+            "'{path}' is not a scenario file: it must end in '.{SCENARIO_EXTENSION}'"
+        )));
+    }
+    Ok(base.join(normal))
+}
+
+/// Fold `.` and `..` out of a relative path without touching the disk. `None` when a `..` would
+/// climb above the path's own start, or the path is rooted.
+fn lexical_normalize(path: &Path) -> Option<PathBuf> {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    return None;
+                }
+            }
+            Component::Normal(part) => out.push(part),
+            Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    Some(out)
+}
+
+/// **The scenario files the editor can open**: every `*.json` directly in `base/SCENARIO_DIR`,
+/// sorted, spelled `SCENARIO_DIR/<name>` so each is a path `read_scenario` and `write_scenario`
+/// accept. A directory that cannot be read lists nothing.
+pub fn list_scenario_files(base: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(base.join(SCENARIO_DIR)) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| {
+            Path::new(name).extension().and_then(|ext| ext.to_str()) == Some(SCENARIO_EXTENSION)
+        })
+        .collect();
+    names.sort();
+    names
+        .into_iter()
+        .map(|name| format!("{SCENARIO_DIR}/{name}"))
+        .collect()
+}
+
+/// **The scenario file's JSON Schema, generated from the structs `parse_scenario` deserializes**
+/// (so a key added to any section appears here with no further edit). Subschemas are inlined: a
+/// client walks one tree and resolves no `$ref`. Every object is `additionalProperties: false`
+/// (`deny_unknown_fields`); `required` lists the keys the loader needs (an `Option` key may be
+/// omitted or `null`). Pick extensions: `x-pick: "tile" | "band" | "herd"` on a value, and
+/// `x-pick-tile: [x_key, y_key]` on an object whose tile is a key pair.
+pub fn scenario_schema() -> serde_json::Value {
+    let settings = schemars::generate::SchemaSettings::draft2020_12().with(|s| {
+        s.inline_subschemas = true;
+    });
+    let schema = settings
+        .into_generator()
+        .into_root_schema_for::<ScenarioFile>();
+    serde_json::to_value(schema).expect("a schema is JSON")
+}
+
 /// **One reason a scenario was refused**, named by where in the file it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScenarioRefusal {
@@ -94,7 +202,7 @@ impl fmt::Display for ScenarioRefusal {
 }
 
 /// The scenario file.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ScenarioFile {
     pub name: String,
@@ -110,7 +218,7 @@ pub struct ScenarioFile {
 }
 
 /// The `new_game` arguments, every one required.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorldSection {
     pub preset: String,
@@ -120,6 +228,7 @@ pub struct WorldSection {
     pub seed: u64,
     pub profile: String,
     #[serde(deserialize_with = "bands::unique_keys")]
+    #[schemars(with = "BTreeMap<String, u32>")]
     pub archetypes: BTreeMap<String, u32>,
 }
 

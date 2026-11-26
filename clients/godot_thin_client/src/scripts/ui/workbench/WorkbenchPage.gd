@@ -1,6 +1,8 @@
 extends VBoxContainer
 class_name WorkbenchPage
 
+const KeyboardArbiter := preload("res://src/scripts/KeyboardArbiter.gd")
+
 ## Base class + contract for one Workbench page.
 ##
 ## The shell hosts pages and knows NOTHING about them beyond these methods — not their snapshot
@@ -119,10 +121,26 @@ func focused_number_field() -> SpinBox:
 	return null
 
 
+## The free-text `LineEdit` in this page that holds keyboard focus, or null. A number field's own
+## `LineEdit` is NOT one — `focused_number_field` owns that — so the two never both answer.
+func focused_text_field() -> LineEdit:
+	var holder: Control = get_viewport().gui_get_focus_owner() if is_inside_tree() else null
+	if holder == null or not is_ancestor_of(holder):
+		return null
+	if holder is LineEdit and not (holder.get_parent() is SpinBox):
+		return holder
+	return null
+
+
 ## Commit the focused number field's typed text, then give up its focus. `apply()` comes first so a
 ## release can never drop the player's edit (focus loss would commit it too, but Apply reads the
-## value in the same call and must not depend on that ordering).
+## value in the same call and must not depend on that ordering). A free-text field is released the
+## same way — its text is already in the document, it only has to hand the keyboard back.
 func release_field_focus() -> void:
+	var text := focused_text_field()
+	if text != null:
+		text.release_focus()
+		return
 	var spin := focused_number_field()
 	if spin == null:
 		return
@@ -131,21 +149,23 @@ func release_field_focus() -> void:
 	spin.release_focus()
 
 
-## **A NUMBER FIELD MUST GIVE UP FOCUS WHEN THE PLAYER CLICKS AWAY.** The map is not a focus-taking
+## **A NUMBER OR TEXT FIELD MUST GIVE UP FOCUS WHEN THE PLAYER CLICKS AWAY.** The map is not a focus-taking
 ## Control, so a click there never moves GUI focus and the field's `LineEdit` would swallow every
 ## later key, game hotkeys included. `_input` (not `_unhandled_input`) because the map consumes
 ## clicks; the event is never marked handled, so the click still does its job in the game.
 ## Enter and Escape release too.
 func _input(event: InputEvent) -> void:
-	var spin := focused_number_field()
-	if spin == null:
+	var field: Control = focused_number_field()
+	if field == null:
+		field = focused_text_field()
+	if field == null:
 		return
 	if event is InputEventMouseButton and event.pressed:
-		if not spin.get_global_rect().has_point(event.global_position):
+		if not field.get_global_rect().has_point(event.global_position):
 			release_field_focus()
-	elif event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_ESCAPE]:
-			release_field_focus()
-			# Escape leaving a field is the whole of that keypress: it must not also open the pause menu.
-			if event.keycode == KEY_ESCAPE:
-				get_viewport().set_input_as_handled()
+	elif KeyboardArbiter.is_escape_key(event):
+		release_field_focus()
+		# Escape leaving a field is the whole of that keypress: it must not also open the pause menu.
+		get_viewport().set_input_as_handled()
+	elif KeyboardArbiter.is_bare_key(event, KEY_ENTER) or KeyboardArbiter.is_bare_key(event, KEY_KP_ENTER):
+		release_field_focus()

@@ -54,6 +54,16 @@ const PAGES: Array[Dictionary] = [
 		"script": "res://src/scripts/ui/workbench/pages/KitsPage.gd",
 	},
 	{
+		"id": &"scenario",
+		"title": WorkbenchVocab.SCENARIO_PAGE_TITLE,
+		"subtitle": WorkbenchVocab.SCENARIO_PAGE_SUBTITLE,
+		"section": WorkbenchVocab.SECTION_SIM,
+		# U+270E, a pencil: this page EDITS a file where its siblings print the config. Rendered in
+		# `workbench_preview`'s collapsed-rail frame before it was trusted, per the rule above.
+		"glyph": "✎",
+		"script": "res://src/scripts/ui/workbench/pages/ScenarioPage.gd",
+	},
+	{
 		"id": &"turn_control",
 		"title": "Turn Control",
 		"subtitle": "Step, autoplay, rollback",

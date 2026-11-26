@@ -40,6 +40,18 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "load_scenario <path>",
     },
     CommandVerbHelp {
+        verb: "list_scenarios",
+        aliases: &[],
+        summary: "DEV: list the scenario files (core_sim/scenarios/*.json) and the scenario file's JSON Schema.",
+        usage: "list_scenarios",
+    },
+    CommandVerbHelp {
+        verb: "read_scenario",
+        aliases: &[],
+        summary: "DEV: read one scenario file from core_sim/scenarios. (write_scenario has no text form: it carries a whole file.)",
+        usage: "read_scenario <path>",
+    },
+    CommandVerbHelp {
         verb: "order",
         aliases: &[],
         summary: "Submit orders for a faction (currently only 'ready').",
@@ -577,6 +589,19 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 return Err(CommandParseError::MissingArgument("path"));
             }
             Ok(CommandPayload::LoadScenario {
+                request_id: TEXT_VERB_REQUEST_ID,
+                path,
+            })
+        }
+        "list_scenarios" => Ok(CommandPayload::ListScenarios {
+            request_id: TEXT_VERB_REQUEST_ID,
+        }),
+        "read_scenario" => {
+            let path = parts.collect::<Vec<_>>().join(" ");
+            if path.is_empty() {
+                return Err(CommandParseError::MissingArgument("path"));
+            }
+            Ok(CommandPayload::ReadScenario {
                 request_id: TEXT_VERB_REQUEST_ID,
                 path,
             })
@@ -3255,6 +3280,27 @@ mod tests {
         );
         assert!(matches!(
             parse_command_line("load_scenario"),
+            Err(CommandParseError::MissingArgument("path"))
+        ));
+    }
+
+    #[test]
+    fn the_scenario_editor_verbs_parse() {
+        assert_eq!(
+            parse_command_line("list_scenarios").unwrap(),
+            CommandPayload::ListScenarios {
+                request_id: TEXT_VERB_REQUEST_ID
+            }
+        );
+        assert_eq!(
+            parse_command_line("read_scenario core_sim/scenarios/a.json").unwrap(),
+            CommandPayload::ReadScenario {
+                request_id: TEXT_VERB_REQUEST_ID,
+                path: "core_sim/scenarios/a.json".to_string(),
+            }
+        );
+        assert!(matches!(
+            parse_command_line("read_scenario"),
             Err(CommandParseError::MissingArgument("path"))
         ));
     }

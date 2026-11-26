@@ -738,6 +738,34 @@ fn main() {
                 sync_seat_delivery(&mut app, &seats, &snapshot_flat_server);
                 continue;
             }
+            // **THE EDITOR VERBS ARE ANSWERED, NOT LOGGED, AND TOUCH NO WORLD.** `write_scenario`
+            // builds a trial candidate and drops it, so the live app, `world_active`, `world_epoch`,
+            // the sink and the command log are not even passed in.
+            Command::ListScenarios { request_id, reply } => {
+                let answer = handle_list_scenarios(Path::new(SCENARIO_BASE_DIR));
+                answer_scenario_op(&reply, request_id, answer);
+                continue;
+            }
+            Command::ReadScenario {
+                request_id,
+                path,
+                reply,
+            } => {
+                let answer = handle_read_scenario(Path::new(SCENARIO_BASE_DIR), &path);
+                answer_scenario_op(&reply, request_id, answer);
+                continue;
+            }
+            Command::WriteScenario {
+                request_id,
+                path,
+                text,
+                reply,
+            } => {
+                let answer =
+                    handle_write_scenario(&app, Path::new(SCENARIO_BASE_DIR), &path, &text);
+                answer_scenario_op(&reply, request_id, answer);
+                continue;
+            }
             // **A CLAIM IS ANSWERED, NOT APPLIED** — matched here ahead of the catch-all arm for the
             // two reasons a `Query` is: it belongs in no replay log (it mutates no world), and the
             // seat registry it writes is the loop's own session state rather than anything in the
@@ -1762,6 +1790,28 @@ enum Command {
     LoadScenario {
         request_id: u64,
         path: String,
+        reply: Sender<QueryReplyEnvelope>,
+    },
+    /// **DEV: list the scenario files and the scenario schema.** Proto field 102. Answered with a
+    /// `ScenarioOp` reply; not replayable, touches no world.
+    ListScenarios {
+        request_id: u64,
+        reply: Sender<QueryReplyEnvelope>,
+    },
+    /// **DEV: read one scenario file.** Proto field 103. Answered with a `ScenarioOp` reply; not
+    /// replayable, touches no world.
+    ReadScenario {
+        request_id: u64,
+        path: String,
+        reply: Sender<QueryReplyEnvelope>,
+    },
+    /// **DEV: write one scenario file only if it would load.** Proto field 104. A trial candidate
+    /// world is built and dropped; the live world is never touched. Answered with a `ScenarioOp`
+    /// reply; not replayable.
+    WriteScenario {
+        request_id: u64,
+        path: String,
+        text: String,
         reply: Sender<QueryReplyEnvelope>,
     },
     /// **A connection says which faction seat it drives** — the handshake the whole seat model rests
@@ -2883,7 +2933,7 @@ fn answer_scenario_op(
     if reply
         .send(QueryReplyEnvelope {
             request_id,
-            reply: QueryReply::ScenarioOp(answer),
+            reply: QueryReply::ScenarioOp(Box::new(answer)),
         })
         .is_err()
     {
@@ -2913,22 +2963,73 @@ fn scenario_refused(
         ok: false,
         path: path.to_string(),
         refusals: refusals.iter().map(ToString::to_string).collect(),
+        ..Default::default()
     }
+}
+
+/// The directory the scenario editor verbs resolve `core_sim/scenarios` against: the server's
+/// working directory (`run_stack.sh` runs it from the repo root).
+const SCENARIO_BASE_DIR: &str = ".";
+
+/// **The one body that turns scenario TEXT into a built candidate world, or the full refusal list.**
+///
+/// `load_scenario` swaps the candidate in; `write_scenario` drops it. Neither touches the live app:
+/// it is read for its configs and its sender, and the candidate is built beside it with no snapshot
+/// sink and the shared epoch not advanced.
+///
+/// 1. Pass 1: [`core_sim::scenario::parse_scenario`] against the live app's configs.
+/// 2. [`core_sim::scenario::build_scenario_world`] builds the candidate as `new_game` does, with the
+///    scenario's setup installed before Startup, then collects what the built world refused and
+///    replays the file's command entries through the lib seam.
+///
+/// **A scenario builds its OWN seed**, so checking it against the live world would miss every fit
+/// refusal (a band on this seed's ocean): the trial build is the only check that means "this file
+/// would load".
+fn build_scenario_candidate(
+    app: &bevy::prelude::App,
+    path: &str,
+    text: &str,
+    verb: &str,
+) -> Result<
+    (bevy::prelude::App, core_sim::scenario::ScenarioApplied),
+    Vec<core_sim::scenario::ScenarioRefusal>,
+> {
+    use core_sim::scenario::{build_scenario_world, parse_scenario, ScenarioContext};
+    let ctx = ScenarioContext::from_world(&app.world);
+    let plan = parse_scenario(text, &ctx)?;
+
+    let command_sender = {
+        let res = app.world.resource::<CommandSenderResource>();
+        res.0.clone()
+    };
+    let watch_paths = collect_watch_paths(app);
+    let world_args = &plan.file.world;
+    let new_config = load_simulation_config_for_new_world(app.world.resource::<SimulationConfig>());
+    info!(
+        target: "shadow_scale::scenario",
+        %path,
+        verb,
+        name = %plan.file.name,
+        preset = %world_args.preset,
+        seed = world_args.seed,
+        "scenario.begin"
+    );
+
+    // **One body with the tests**: the grid, profile, roster, setup, first turn and `finish_scenario`
+    // are `build_scenario_world`'s.
+    let mut candidate = prepare_world_app(new_config, false, command_sender, &watch_paths);
+    let applied = build_scenario_world(&mut candidate, &plan)?;
+    Ok((candidate, applied))
 }
 
 /// **Build a world from a scenario file, or refuse it and leave everything as it was.**
 ///
-/// The candidate world is built WITHOUT touching the live one: no snapshot sink, the shared epoch not
-/// advanced, the old publisher not retired. Only after setup has fully succeeded is the candidate
-/// swapped in, so a refused file leaves the previous world (or the idle server) exactly as it was.
-///
-/// 1. Read the file and run pass 1 against the live app's configs ([`core_sim::scenario::parse_scenario`]).
-/// 2. [`core_sim::scenario::build_scenario_world`] builds the candidate as `new_game` does, with the
-///    scenario's setup installed before Startup, then collects what the built world refused and
-///    replays the file's command entries through the lib seam.
-/// 3. (the same function)
-/// 4. Swap in, as a load does: retire the old publisher, advance the epoch, attach the sink, publish a
-///    full frame of the set-up world, and re-base the command log AFTER setup.
+/// The candidate world ([`build_scenario_candidate`]) is built WITHOUT touching the live one: no
+/// snapshot sink, the shared epoch not advanced, the old publisher not retired. Only after setup has
+/// fully succeeded is the candidate swapped in, so a refused file leaves the previous world (or the
+/// idle server) exactly as it was. The swap-in retires the old publisher, advances the epoch,
+/// attaches the sink, publishes a full frame of the set-up world, and re-bases the command log AFTER
+/// setup.
 fn handle_load_scenario(
     app: &mut bevy::prelude::App,
     world_active: &mut bool,
@@ -2937,9 +3038,7 @@ fn handle_load_scenario(
     path: &str,
     snapshot_server_flat: &Arc<SnapshotServer>,
 ) -> sim_runtime::ScenarioOpReply {
-    use core_sim::scenario::{
-        build_scenario_world, parse_scenario, ScenarioContext, ScenarioRefusal, FILE_REFUSAL_PATH,
-    };
+    use core_sim::scenario::{ScenarioRefusal, FILE_REFUSAL_PATH};
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(err) => {
@@ -2952,34 +3051,10 @@ fn handle_load_scenario(
             );
         }
     };
-    let ctx = ScenarioContext::from_world(&app.world);
-    let plan = match parse_scenario(&text, &ctx) {
-        Ok(plan) => plan,
-        Err(refusals) => return scenario_refused(path, refusals),
-    };
-
-    let command_sender = {
-        let res = app.world.resource::<CommandSenderResource>();
-        res.0.clone()
-    };
-    let watch_paths = collect_watch_paths(app);
-    let world_args = &plan.file.world;
-    let new_config = load_simulation_config_for_new_world(app.world.resource::<SimulationConfig>());
-    info!(
-        target: "shadow_scale::scenario",
-        %path,
-        name = %plan.file.name,
-        preset = %world_args.preset,
-        seed = world_args.seed,
-        "scenario.begin"
-    );
-
-    // **One body with the tests**: the grid, profile, roster, setup, first turn and `finish_scenario`
-    // are `build_scenario_world`'s.
-    let mut candidate = prepare_world_app(new_config, false, command_sender, &watch_paths);
-    let applied = match build_scenario_world(&mut candidate, &plan) {
-        Ok(applied) => applied,
-        // Dropped here: the previous world, or the idle server, was never touched.
+    // Dropped on a refusal: the previous world, or the idle server, was never touched.
+    let (mut candidate, applied) = match build_scenario_candidate(app, path, &text, "load_scenario")
+    {
+        Ok(built) => built,
         Err(refusals) => return scenario_refused(path, refusals),
     };
 
@@ -3009,9 +3084,106 @@ fn handle_load_scenario(
     sim_runtime::ScenarioOpReply {
         ok: true,
         path: path.to_string(),
-        refusals: Vec::new(),
+        ..Default::default()
     }
 }
+
+/// **`list_scenarios`**: the scenario directory's `*.json` files and the scenario file's schema.
+fn handle_list_scenarios(base: &Path) -> sim_runtime::ScenarioOpReply {
+    sim_runtime::ScenarioOpReply {
+        ok: true,
+        files: core_sim::scenario::list_scenario_files(base),
+        schema: core_sim::scenario::scenario_schema().to_string(),
+        ..Default::default()
+    }
+}
+
+/// **`read_scenario`**: the file's text, verbatim. A path outside the policy, or a read failure, is
+/// a refusal at [`core_sim::scenario::FILE_REFUSAL_PATH`].
+fn handle_read_scenario(base: &Path, path: &str) -> sim_runtime::ScenarioOpReply {
+    use core_sim::scenario::{resolve_scenario_path, ScenarioRefusal, FILE_REFUSAL_PATH};
+    let file = match resolve_scenario_path(base, path) {
+        Ok(file) => file,
+        Err(refusal) => return scenario_refused(path, vec![refusal]),
+    };
+    match std::fs::read_to_string(&file) {
+        Ok(text) => sim_runtime::ScenarioOpReply {
+            ok: true,
+            path: path.to_string(),
+            text,
+            ..Default::default()
+        },
+        Err(err) => scenario_refused(
+            path,
+            vec![ScenarioRefusal::new(
+                FILE_REFUSAL_PATH,
+                format!("cannot read '{path}': {err}"),
+            )],
+        ),
+    }
+}
+
+/// **`write_scenario`: write `text` to `path` only if it would load.**
+///
+/// The text goes through the very body `load_scenario` runs ([`build_scenario_candidate`]); the
+/// candidate world is then DROPPED. The live app is borrowed shared, and `world_active`,
+/// `world_epoch`, the snapshot sink and the command log are not parameters at all, so none can be
+/// touched. Zero refusals writes the text byte for byte through a temp file in the same directory
+/// and a rename, so a crash leaves the old file whole; any refusal writes nothing and is the answer.
+fn handle_write_scenario(
+    app: &bevy::prelude::App,
+    base: &Path,
+    path: &str,
+    text: &str,
+) -> sim_runtime::ScenarioOpReply {
+    use core_sim::scenario::{resolve_scenario_path, ScenarioRefusal, FILE_REFUSAL_PATH};
+    let file = match resolve_scenario_path(base, path) {
+        Ok(file) => file,
+        Err(refusal) => return scenario_refused(path, vec![refusal]),
+    };
+    let (candidate, applied) = match build_scenario_candidate(app, path, text, "write_scenario") {
+        Ok(built) => built,
+        Err(refusals) => return scenario_refused(path, refusals),
+    };
+    // The trial world has done its job.
+    drop(candidate);
+
+    if let Err(err) = write_file_atomically(&file, text) {
+        return scenario_refused(
+            path,
+            vec![ScenarioRefusal::new(
+                FILE_REFUSAL_PATH,
+                format!("cannot write '{path}': {err}"),
+            )],
+        );
+    }
+    info!(
+        target: "shadow_scale::scenario",
+        %path,
+        bands = applied.bands.len(),
+        "scenario.completed=written"
+    );
+    sim_runtime::ScenarioOpReply {
+        ok: true,
+        path: path.to_string(),
+        ..Default::default()
+    }
+}
+
+/// Write `text` to `file` through a sibling temp file and a rename, removing the temp on failure.
+fn write_file_atomically(file: &Path, text: &str) -> std::io::Result<()> {
+    let mut temp_name = file.file_name().unwrap_or_default().to_os_string();
+    temp_name.push(SCENARIO_TEMP_SUFFIX);
+    let temp = file.with_file_name(temp_name);
+    let result = std::fs::write(&temp, text).and_then(|()| std::fs::rename(&temp, file));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
+
+/// The suffix of the temp file `write_scenario` renames over the target.
+const SCENARIO_TEMP_SUFFIX: &str = ".partial";
 
 // =================================================================================================
 // SAVE GAME
@@ -8994,6 +9166,25 @@ fn command_from_payload(
             path,
             reply: reply.clone(),
         }),
+        ProtoCommandPayload::ListScenarios { request_id } => Some(Command::ListScenarios {
+            request_id,
+            reply: reply.clone(),
+        }),
+        ProtoCommandPayload::ReadScenario { request_id, path } => Some(Command::ReadScenario {
+            request_id,
+            path,
+            reply: reply.clone(),
+        }),
+        ProtoCommandPayload::WriteScenario {
+            request_id,
+            path,
+            text,
+        } => Some(Command::WriteScenario {
+            request_id,
+            path,
+            text,
+            reply: reply.clone(),
+        }),
     }
 }
 
@@ -9510,6 +9701,11 @@ fn is_replayable(command: &Command) -> bool {
             // `LoadScenario` builds a new world exactly as `NewGame` does, so like it and `LoadGame` it
             // has nothing before it to replay from and re-bases the origin after setup.
             | Command::LoadScenario { .. }
+            // The scenario editor verbs read or write a file and build a trial world that is
+            // dropped: nothing in the live world for a replay to reproduce.
+            | Command::ListScenarios { .. }
+            | Command::ReadScenario { .. }
+            | Command::WriteScenario { .. }
             // The seat verbs. Both are about a *connection*, and a replay has none: a claim mutates
             // no world, and a release is the server's own bookkeeping about a socket that closed.
             | Command::ClaimSeat { .. }
@@ -9612,6 +9808,9 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         | Command::LoadGame { .. }
         | Command::DeleteSave { .. }
         | Command::LoadScenario { .. }
+        | Command::ListScenarios { .. }
+        | Command::ReadScenario { .. }
+        | Command::WriteScenario { .. }
         // ⛔ **A seat claim names a faction and is still nobody's order.** The connection does not
         // hold the seat yet, so returning it here would send the claim through the seat gate that
         // the claim itself is what satisfies — refusing every first claim ever made. `ReleaseSeat`
@@ -9723,6 +9922,26 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
                 request_id,
                 %path,
                 "scenario.dispatch.unreachable=load_scenario reached apply_command"
+            );
+        }
+        Command::ListScenarios { request_id, .. } => {
+            warn!(
+                target: "shadow_scale::scenario",
+                request_id,
+                "scenario.dispatch.unreachable=list_scenarios reached apply_command"
+            );
+        }
+        Command::ReadScenario {
+            request_id, path, ..
+        }
+        | Command::WriteScenario {
+            request_id, path, ..
+        } => {
+            warn!(
+                target: "shadow_scale::scenario",
+                request_id,
+                %path,
+                "scenario.dispatch.unreachable=an editor verb reached apply_command"
             );
         }
         Command::SaveGame {
@@ -11554,6 +11773,216 @@ mod tests {
         );
         assert!(*world_active, "the fixture world must build");
         app
+    }
+
+    // =============================================================================================
+    // SCENARIO EDITOR VERBS — list / read / write, through the handlers.
+    // =============================================================================================
+
+    /// A working directory of this test's own holding an empty `core_sim/scenarios`.
+    fn scenario_base(case: &str) -> std::path::PathBuf {
+        let base = save_scratch(&format!("scenario_{case}"));
+        std::fs::create_dir_all(base.join(core_sim::scenario::SCENARIO_DIR)).expect("scenario dir");
+        base
+    }
+
+    /// The checked-in scenario this block writes back.
+    fn kept_roads_text() -> String {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scenarios/kept_roads.json");
+        std::fs::read_to_string(path).expect("kept_roads ships")
+    }
+
+    const EDITOR_TARGET: &str = "core_sim/scenarios/kept_roads.json";
+
+    /// A file that parses and resolves every name but cannot be BUILT: its band stands off the map.
+    /// Only the trial build finds it, which is the point of `write_scenario`.
+    fn kept_roads_with_a_band_off_the_map() -> String {
+        let mut file: serde_json::Value = serde_json::from_str(&kept_roads_text()).expect("json");
+        file["factions"][0]["bands"][0]["at"] = serde_json::json!([9000, 9000]);
+        serde_json::to_string_pretty(&file).expect("json")
+    }
+
+    fn a_live_world_fingerprint(app: &bevy::prelude::App) -> ciborium::value::Value {
+        let mut bytes = Vec::new();
+        ciborium::into_writer(
+            &core_sim::sim_state::capture_sim_state(&app.world),
+            &mut bytes,
+        )
+        .expect("encodes");
+        let raw: ciborium::value::Value = ciborium::from_reader(bytes.as_slice()).expect("parses");
+        canonical_cbor(&raw)
+    }
+
+    /// **A file that would load is written byte for byte, and the live world never notices.**
+    #[test]
+    fn write_scenario_writes_a_loadable_file_verbatim_and_leaves_the_live_world_alone() {
+        let flat = loopback_snapshot_server();
+        let (mut world_active, mut world_epoch) = (false, 0u32);
+        let app = a_world_for_saving(&mut world_active, &mut world_epoch, &flat);
+        let before = a_live_world_fingerprint(&app);
+        let (epoch_before, active_before) = (world_epoch, world_active);
+        let base = scenario_base("write_ok");
+        // Odd whitespace on purpose: byte-identical means no re-serialising on the way to disk.
+        let text = format!("{}\n\n   \n", kept_roads_text());
+
+        let answer = handle_write_scenario(&app, &base, EDITOR_TARGET, &text);
+        assert!(
+            answer.ok,
+            "a loadable file is written: {:?}",
+            answer.refusals
+        );
+        assert!(answer.refusals.is_empty());
+        let written = std::fs::read(base.join(EDITOR_TARGET)).expect("the file landed");
+        assert_eq!(written, text.as_bytes(), "byte for byte");
+        let leftovers: Vec<_> = std::fs::read_dir(base.join(core_sim::scenario::SCENARIO_DIR))
+            .expect("dir")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            leftovers,
+            vec!["kept_roads.json".to_string()],
+            "no temp file left"
+        );
+
+        assert_eq!(
+            a_live_world_fingerprint(&app),
+            before,
+            "the live world is untouched"
+        );
+        assert_eq!((world_epoch, world_active), (epoch_before, active_before));
+    }
+
+    /// **A fit refusal writes nothing and names the path in the file.**
+    #[test]
+    fn write_scenario_refuses_a_file_that_would_not_build_and_writes_nothing() {
+        let flat = loopback_snapshot_server();
+        let (mut world_active, mut world_epoch) = (false, 0u32);
+        let app = a_world_for_saving(&mut world_active, &mut world_epoch, &flat);
+        let before = a_live_world_fingerprint(&app);
+        let base = scenario_base("write_refused");
+
+        let answer = handle_write_scenario(
+            &app,
+            &base,
+            EDITOR_TARGET,
+            &kept_roads_with_a_band_off_the_map(),
+        );
+        assert!(!answer.ok);
+        assert!(
+            answer
+                .refusals
+                .iter()
+                .any(|line| line.starts_with("factions[0].bands[0]")),
+            "the refusal names the path in the file: {:?}",
+            answer.refusals
+        );
+        assert!(
+            !base.join(EDITOR_TARGET).exists(),
+            "a refused file writes nothing"
+        );
+        assert_eq!(a_live_world_fingerprint(&app), before);
+
+        // A pass-1 refusal (not JSON at all) is the same: nothing on disk.
+        let answer = handle_write_scenario(&app, &base, EDITOR_TARGET, "{ not json");
+        assert!(!answer.ok);
+        assert!(!base.join(EDITOR_TARGET).exists());
+    }
+
+    /// **It works with no world active**, as `load_scenario` does.
+    #[test]
+    fn write_scenario_works_on_an_idle_server() {
+        let mut app = build_test_app();
+        app.insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        let base = scenario_base("write_idle");
+        let text = kept_roads_text();
+        let answer = handle_write_scenario(&app, &base, EDITOR_TARGET, &text);
+        assert!(answer.ok, "{:?}", answer.refusals);
+        assert_eq!(
+            std::fs::read_to_string(base.join(EDITOR_TARGET)).expect("written"),
+            text
+        );
+    }
+
+    /// **The path policy**: inside the scenario directory, ending in `.json`, nothing else.
+    #[test]
+    fn the_editor_verbs_refuse_a_path_outside_the_scenario_directory() {
+        let mut app = build_test_app();
+        app.insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        let base = scenario_base("paths");
+        let text = kept_roads_text();
+        for path in [
+            "core_sim/scenarios/../kept_roads.json",
+            "core_sim/scenarios/../../kept_roads.json",
+            "../core_sim/scenarios/kept_roads.json",
+            "core_sim/scenarios/kept_roads.txt",
+            "core_sim/scenarios/kept_roads",
+            "core_sim/kept_roads.json",
+            "core_sim/scenarios/sub/kept_roads.json",
+            "/etc/kept_roads.json",
+        ] {
+            let write = handle_write_scenario(&app, &base, path, &text);
+            assert!(!write.ok, "{path} must be refused for write");
+            assert_eq!(write.refusals.len(), 1, "{path}");
+            assert!(
+                write.refusals[0].starts_with("<file>: "),
+                "{path}: {:?}",
+                write.refusals
+            );
+            let read = handle_read_scenario(&base, path);
+            assert!(!read.ok, "{path} must be refused for read");
+            assert!(read.text.is_empty());
+        }
+        let mut written: Vec<_> = walk_files(&base);
+        written.sort();
+        assert!(written.is_empty(), "nothing was written: {written:?}");
+    }
+
+    fn walk_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(dir).expect("dir").filter_map(Result::ok) {
+            let path = entry.path();
+            if path.is_dir() {
+                out.extend(walk_files(&path));
+            } else {
+                out.push(path);
+            }
+        }
+        out
+    }
+
+    /// **List and read.** The list is sorted `.json` files only, spelled as paths the other verbs
+    /// take; a read is verbatim; a missing file is a refusal at `<file>`.
+    #[test]
+    fn list_and_read_scenario_answer_with_files_schema_and_text() {
+        let base = scenario_base("list_read");
+        let dir = base.join(core_sim::scenario::SCENARIO_DIR);
+        std::fs::write(dir.join("b.json"), "{\"b\": 1}\n").expect("write");
+        std::fs::write(dir.join("a.json"), " {\"a\":2}").expect("write");
+        std::fs::write(dir.join("notes.txt"), "no").expect("write");
+
+        let listed = handle_list_scenarios(&base);
+        assert!(listed.ok);
+        assert_eq!(
+            listed.files,
+            vec![
+                "core_sim/scenarios/a.json".to_string(),
+                "core_sim/scenarios/b.json".to_string()
+            ]
+        );
+        let schema: serde_json::Value = serde_json::from_str(&listed.schema).expect("schema json");
+        assert_eq!(schema["additionalProperties"], false);
+        assert!(schema["properties"]["factions"].is_object());
+
+        let read = handle_read_scenario(&base, &listed.files[0]);
+        assert!(read.ok);
+        assert_eq!(read.path, "core_sim/scenarios/a.json");
+        assert_eq!(read.text, " {\"a\":2}", "verbatim");
+
+        let missing = handle_read_scenario(&base, "core_sim/scenarios/gone.json");
+        assert!(!missing.ok);
+        assert!(missing.refusals[0].starts_with("<file>: cannot read"));
     }
 
     /// **Save, then load into the running server, through the command handlers.**

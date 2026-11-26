@@ -222,6 +222,23 @@ static func wrap_number_field(spin: SpinBox, width: float) -> PanelContainer:
 	return frame
 
 
+## `wrap_number_field` for a field narrower than a `SpinBox`'s own minimum (a tile coordinate, two to a
+## line). The box is a plain `Control` — which has no minimum derived from its children — holding the
+## `SpinBox` full-rect and clipping it, so `width` is the column the field really takes and the
+## container never inherits the stock minimum.
+static func wrap_compact_number_field(spin: SpinBox, width: float) -> PanelContainer:
+	var clip := Control.new()
+	clip.custom_minimum_size = Vector2(width, spin.get_combined_minimum_size().y)
+	clip.clip_contents = true
+	clip.add_child(spin)
+	spin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var frame := PanelContainer.new()
+	frame.add_theme_stylebox_override("panel", _field_stylebox(HudStyle.LINE))
+	frame.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	frame.add_child(clip)
+	return frame
+
+
 ## **THE STOCK STEPPER IS DRAWN FOR A LIGHT SURFACE, like the CheckBox indicator before it** (see
 ## `.claude/rules/client/sprites-widgets.md` → "The checkbox indicator"). A `SpinBox`'s up/down half
 ## wears the default theme's raised BUTTON styleboxes and near-black arrow art, so on this console it

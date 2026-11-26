@@ -57,6 +57,9 @@ var _reservations: Dictionary = {}
 # The save channel (list / save / load / delete). Owned here for the same reason `ForecastQuery`
 # is: the seam holds no socket, and the pause menu that drives it must not reach the network.
 var save_slots: SaveSlots = null
+## `Main`'s end of the Workbench's `scenario_request` / `pick_tile` services — the scenario verbs'
+## request table and the one-shot map-pick latch (`WorkbenchScenarioHost`).
+var scenario_host: WorkbenchScenarioHost = null
 # **THE SEAT.** Claimed once, at boot, on the long-lived command connection — the server takes the
 # faction every command acts on from the seat that CONNECTION holds, so without a grant nothing the
 # player clicks reaches the world (`.claude/rules/client/command-transport.md`). Owned here because
@@ -375,6 +378,8 @@ func _ready() -> void:
     save_slots = SaveSlots.new()
     save_slots.set_sender(Callable(self, "_send_query"))
     save_slots.op_finished.connect(_on_save_op_finished)
+    scenario_host = WorkbenchScenarioHost.new()
+    scenario_host.set_sender(Callable(self, "_send_query"))
     # The server now boots idle and only generates a world on `new_game` (or restores one on
     # `load_game`); build that request from the landing-screen handoff (or a dev default) and fire it
     # (retried in _process if not yet sent).
@@ -475,6 +480,8 @@ func _ready() -> void:
     if map_view != null and inspector != null and map_view.has_signal("hex_selected") and inspector.has_method("focus_tile_from_map"):
         map_view.connect("hex_selected", Callable(inspector, "focus_tile_from_map"))
     if map_view != null:
+        if map_view.has_signal("hex_selected"):
+            map_view.connect("hex_selected", Callable(self, "_on_map_hex_for_pick"))
         if map_view.has_signal("unit_selected") and not map_view.is_connected("unit_selected", Callable(self, "_on_map_unit_selected")):
             map_view.connect("unit_selected", Callable(self, "_on_map_unit_selected"))
         if map_view.has_signal("herd_selected") and not map_view.is_connected("herd_selected", Callable(self, "_on_map_herd_selected")):
@@ -3168,6 +3175,11 @@ static func escape_claimant(pause_open: bool, compose_open: bool, targeting: boo
 
 func _unhandled_input(event: InputEvent) -> void:
     if event.is_action_pressed("ui_cancel"):
+        # An armed Workbench tile pick is the innermost thing Escape can mean: it cancels the pick and
+        # nothing else (no pause menu).
+        if scenario_host != null and scenario_host.cancel_pick():
+            get_viewport().set_input_as_handled()
+            return
         var claimant := escape_claimant(
             pause_layer != null and pause_layer.visible,
             hud != null and hud.has_method("is_compose_sheet_open") and bool(hud.call("is_compose_sheet_open")),
@@ -3641,7 +3653,26 @@ func _workbench_services() -> Dictionary:
         WorkbenchVocab.SERVICE_SEND_COMMAND: Callable(self, "_workbench_send_command"),
         WorkbenchVocab.SERVICE_APPEND_LOG: Callable(self, "_workbench_append_log"),
         WorkbenchVocab.SERVICE_NEW_GAME: Callable(self, "_workbench_new_game"),
+        WorkbenchVocab.SERVICE_SCENARIO_REQUEST: Callable(self, "_workbench_scenario_request"),
+        WorkbenchVocab.SERVICE_PICK_TILE: Callable(self, "_workbench_pick_tile"),
     }
+
+## `scenario_request(kind, args, on_reply) -> bool` — one scenario verb over the query bridge. The reply
+## reaches `on_reply` from `_pump_forecast_queries`; false when there is no server to ask.
+func _workbench_scenario_request(kind: String, args: Dictionary, on_reply: Callable) -> bool:
+    return scenario_host != null and scenario_host.request(kind, args, on_reply)
+
+## `pick_tile(on_pick, on_cancel) -> bool` — arm the one-shot map pick (`_on_map_hex_for_pick` delivers
+## it, Escape cancels it). False when there is no map to click.
+func _workbench_pick_tile(on_pick: Callable, on_cancel: Callable = Callable()) -> bool:
+    if scenario_host == null or map_view == null:
+        return false
+    return scenario_host.arm_pick(on_pick, on_cancel)
+
+## A map hex click: delivers an armed Workbench tile pick. The click's normal selection has already run.
+func _on_map_hex_for_pick(col: int, row: int, _terrain_id: int) -> void:
+    if scenario_host != null:
+        scenario_host.offer_hex(col, row)
 
 ## Send one Workbench command down the SAME transport every other client command uses. Answers
 ## whether it went, so a page can tell "sent" from "no server" — `_send_runtime_command` only warns.
@@ -4070,6 +4101,8 @@ func _pump_forecast_queries() -> void:
     var replies: Array = command_client.poll_query_replies()
     if save_slots != null:
         save_slots.deliver(replies)
+    if scenario_host != null:
+        scenario_host.deliver(replies)
     if seat_claim != null:
         seat_claim.deliver(replies)
     if hud == null or not hud.has_method("forecast_query"):

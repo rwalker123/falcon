@@ -1139,6 +1139,38 @@ message ScenarioOpReply {
   // Empty when `ok`. Otherwise one line per refusal, `<path in the file>: <reason>`; the whole list
   // of a file's problems rides one reply. A refused load builds nothing: the previous world stays.
   repeated string refusals = 3;
+  // `list_scenarios` only (empty otherwise): the `*.json` files in the scenario directory, sorted, each
+  // spelled as a path `read_scenario` and `write_scenario` accept (`core_sim/scenarios/<name>.json`).
+  repeated string files = 4;
+  // `read_scenario` only (empty otherwise): the file's contents, verbatim.
+  string text = 5;
+  // `list_scenarios` only (empty otherwise): the scenario file's JSON Schema, as a JSON string,
+  // generated from the structs the loader deserializes.
+  string schema = 6;
+}
+
+// DEV: list the scenario files and the scenario file's JSON Schema. Answered with `ScenarioOpReply`
+// (`files`, `schema`). Dev-only and not replayable, like `load_scenario`.
+message ListScenariosCommand {
+  uint64 request_id = 1;
+}
+
+// DEV: read one scenario file. `path` must resolve (lexically) to a `*.json` directly inside the
+// scenario directory (`core_sim/scenarios`, relative to the server's working directory), else it is
+// refused at `<file>`. Answered with `ScenarioOpReply` (`path`, `text`).
+message ReadScenarioCommand {
+  uint64 request_id = 1;
+  string path = 2;
+}
+
+// DEV: write one scenario file, only if it would load. The text is parsed against the live world's
+// configs and then built as a trial candidate world that is dropped (the live world is never touched).
+// Zero refusals: `text` is written byte for byte, atomically. Otherwise nothing is written and the
+// reply lists every refusal. Same path policy as `read_scenario`. Answered with `ScenarioOpReply`.
+message WriteScenarioCommand {
+  uint64 request_id = 1;
+  string path = 2;
+  string text = 3;
 }
 
 // The answer to a save / load / delete.
@@ -1966,5 +1998,8 @@ message CommandEnvelope {
     TribeOrderCommand tribe_order = 100;
     // 100 is held by `tribe_order`, so the dev scenario loader takes 101 (append-only).
     LoadScenarioCommand load_scenario = 101;
+    ListScenariosCommand list_scenarios = 102;
+    ReadScenarioCommand read_scenario = 103;
+    WriteScenarioCommand write_scenario = 104;
   }
 }
