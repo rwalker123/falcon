@@ -14,7 +14,7 @@ use bevy::prelude::*;
 use serde::Deserialize;
 
 use super::{FactionSection, ScenarioContext, ScenarioRefusal, ScenarioSetup};
-use crate::command_seam::{apply_bench_enqueue, apply_bench_enqueue_kit, apply_set_auto_craft};
+use crate::command_seam::{apply_bench_enqueue, apply_bench_enqueue_kit};
 
 /// One bench command. Field names match `sim_runtime::CommandPayload`'s; every field is required.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -33,16 +33,14 @@ pub enum BenchEntry {
         kits: u32,
         recipes: Vec<String>,
     },
-    /// `bench_auto`: turn the band's auto-craft on or off.
-    BenchAuto { band: String, enabled: bool },
 }
 
 impl BenchEntry {
     fn band(&self) -> &str {
         match self {
-            BenchEntry::BenchEnqueue { band, .. }
-            | BenchEntry::BenchEnqueueKit { band, .. }
-            | BenchEntry::BenchAuto { band, .. } => band,
+            BenchEntry::BenchEnqueue { band, .. } | BenchEntry::BenchEnqueueKit { band, .. } => {
+                band
+            }
         }
     }
 }
@@ -81,7 +79,6 @@ pub(super) fn check(
                         check_recipe(recipe_id, &format!("{at}.recipes[{r}]"), ctx, refusals);
                     }
                 }
-                BenchEntry::BenchAuto { .. } => {}
             }
         }
     }
@@ -125,9 +122,6 @@ pub(super) fn apply(world: &mut World, setup: &ScenarioSetup) -> Result<(), Scen
                     ..
                 } => apply_bench_enqueue_kit(world, faction, band, kit_id, *kits, recipes)
                     .map(|_| ()),
-                BenchEntry::BenchAuto { enabled, .. } => {
-                    apply_set_auto_craft(world, faction, band.0, *enabled).map(|_| ())
-                }
             };
             if let Err(refusal) = outcome {
                 return Err(ScenarioRefusal::new(at, refusal.to_string()));

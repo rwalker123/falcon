@@ -39,9 +39,8 @@ section's is in `husbandry.md`, the deposits section's is in `extraction.md`, th
 1. **Parse and resolve names** (`parse_scenario`), with no world built. Every struct is
    `deny_unknown_fields`, there are no serde defaults, and a key is optional only where the
    command it replays has an `Option` (a band's `outfit` and `auto_craft`; a labor entry's target,
-   kit, species, floor; a tile's `terrain` and `flora`, of which one is required). **The one absent
-   section is `bench`**: it may be left out and then reads as empty. Every field inside a bench entry
-   stays required. Names are checked against the live
+   kit, species, floor; a tile's `terrain` and `flora`, of which one is required). Every section key
+   is required (`[]` for none). Names are checked against the live
    app's config handles (presets, profiles, archetypes, knowledge tags, keeping classes, kits,
    materials, labor roles, terrains, the flora roster). **Every refusal is collected**, so one load lists all of a
    file's faults. A serde error has no field path, so it reports `line L, column C`.
@@ -111,7 +110,7 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   named by its scenario id in every section, mapped through `ScenarioApplied.herds`. A refused entry
   stops the load at that entry.
 - `finish_scenario` then replays every faction's `bench` entries, in file order, through
-  `command_seam::apply_bench_enqueue` / `apply_bench_enqueue_kit` / `apply_set_auto_craft`, after the
+  `command_seam::apply_bench_enqueue` / `apply_bench_enqueue_kit`, after the
   pens (plan §2.8: outfit, labor, builds, pens, bench, splits). A refused entry stops the load at
   `factions[i].bench[k]`.
 - `ScenarioSetup` is removed in `finish_scenario`. It is never part of `SimState`, a save or a
@@ -129,8 +128,7 @@ handler. `BuildRung` lives there whole (`apply_build_rung`, every source kind, w
 server writes the failure on. The yield re-quote those verbs need lives in `core_sim/src/yield_seed.rs` for the same
 reason.
 
-**The two bench queue verbs** (`apply_bench_enqueue`, `apply_bench_enqueue_kit`; the auto setting is
-`apply_set_auto_craft`) return an
+**The two bench queue verbs** (`apply_bench_enqueue`, `apply_bench_enqueue_kit`) return an
 outcome struct carrying what the server's success feed line names (display name, queue position,
 crew, kit order id), so the server writes the same line it always did. Each has a
 `BandId` form (the scenario path, resolved through `resolve_band`, refused `NoSuchBand` rather than

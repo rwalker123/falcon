@@ -31,10 +31,7 @@ pub struct FactionSection {
     pub knowledge: Vec<String>,
     /// The faction's bands, in spawn order. The FIRST holds the faction's opening outfit window.
     pub bands: Vec<BandEntry>,
-    /// The faction's bench commands, replayed in file order. An absent section is an empty one (a
-    /// section is a list of entries, and an empty list and an absent one say the same thing), which
-    /// is what lets sections land in parallel without touching every checked-in file.
-    #[serde(default)]
+    /// The faction's bench commands, replayed in file order. A required key: `[]` for none.
     pub bench: Vec<BenchEntry>,
     /// Improvements the faction already holds and builds already declared (`rungs.rs`).
     pub rungs: Vec<super::rungs::RungEntry>,
@@ -63,7 +60,7 @@ pub struct BandEntry {
     /// The ONE optional key: absent keeps the default outfit fitted to this band's size.
     pub outfit: Option<Outfit>,
     /// The second optional key: absent leaves the band's bench auto-craft off, `true` switches it
-    /// on after the outfit, as `bench_auto <faction> <band> on` does.
+    /// on after the outfit, as the server's `set_auto_craft` does.
     pub auto_craft: Option<bool>,
 }
 

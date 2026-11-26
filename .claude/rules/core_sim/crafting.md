@@ -1701,33 +1701,34 @@ the arithmetic by `systems::crafting::forecast_tests`.
 
 The **bench** section of a scenario file (`core_sim/src/scenario/bench.rs`; the loader is
 `scenarios.md`). `factions[].bench` is a list of **command entries**, replayed in file order through
-the same `command_seam` bodies the server's `bench_enqueue`, `bench_enqueue_kit` and `bench_auto`
-handlers call, so a refusal is the handler's own sentence. An entry is the `CommandPayload` variant in
-snake_case, externally tagged; the faction is implied by the section and `band` is the band's scenario
-id. **An absent `bench` key is an empty section.** Every field inside an entry is required.
+the same `command_seam` bodies the server's `bench_enqueue` and `bench_enqueue_kit` handlers call, so
+a refusal is the handler's own sentence. An entry is the `CommandPayload` variant in snake_case,
+externally tagged; the faction is implied by the section and `band` is the band's scenario id. **The
+key is required** (`[]` for none), and so is every field inside an entry.
 
 ```json
 "bench": [
   { "bench_enqueue":     { "band": "home", "recipe_id": "spears", "count": 4 } },
-  { "bench_enqueue_kit": { "band": "home", "kit_id": "sledding", "kits": 2, "recipes": ["sled"] } },
-  { "bench_auto":        { "band": "home", "enabled": true } }
+  { "bench_enqueue_kit": { "band": "home", "kit_id": "sledding", "kits": 2, "recipes": ["sled"] } }
 ]
 ```
+
+**The auto setting is not an entry.** It is the band key `auto_craft` (`campaign.md` → Scenario
+section), replayed after the outfit and before labor, so it is already on when the bench entries
+replay.
 
 | entry | keys | refused in pass 1 when | refused at replay when |
 |---|---|---|---|
 | `bench_enqueue` | `band`, `recipe_id`, `count` | `band` is not a band of the same faction section; `recipe_id` is not in `recipes.json` | the craft is unlearned, or `count` is below `MIN_ORDER_COUNT` |
 | `bench_enqueue_kit` | `band`, `kit_id`, `kits`, `recipes` | as above; `kit_id` is not orderable (`EquipmentConfig::orderable_kit`: it exists and `uses` something, so `none` is refused); any `recipes[r]` is not a recipe | a recipe's craft is unlearned, it makes nothing the kit uses, two recipes make one item, an item has no recipe, or `kits` is below `MIN_ORDER_COUNT` |
-| `bench_auto` | `band`, `enabled` | `band` as above | never |
 
 **Pass 1 resolves names only.** Knowledge, counts and kit coverage are judged by the handler at
 replay, when the faction's `knowledge` is already seeded. **The first replay refusal stops the load**
 (`factions[i].bench[k]: <the handler's sentence>`), because a later entry may depend on an earlier one.
-`bench_auto: true` on an empty queue fills it from the band's top suggestion at once, so where it sits
-in the list decides whether it does: after an order it leaves the queue alone.
 
 **The verbs that edit a queue are not entries** (`bench_order_count`, `bench_remove_order`,
-`bench_raise_order`, `bench_remove_kit`, `bench_raise_kit`, `bench_priority`, `bench_auto_skip`). A
+`bench_raise_order`, `bench_remove_kit`, `bench_raise_kit`, `bench_priority`, `bench_auto`,
+`bench_auto_skip`). A
 scenario states the queue it wants.
 
 ## What is deliberately not wired

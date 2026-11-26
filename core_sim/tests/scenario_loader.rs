@@ -96,7 +96,7 @@ fn pass_one_collects_every_refusal_in_one_go() {
             "outfit": { "kits": {}, "materials": {} }
         }));
     file["factions"].as_array_mut().unwrap().push(
-        json!({ "faction": 0, "knowledge": [], "rungs": [], "bands": [], "labor": [], "pens": [] }),
+        json!({ "faction": 0, "knowledge": [], "rungs": [], "bands": [], "labor": [], "pens": [], "bench": [] }),
     );
 
     let refusals = pass_one(&file.to_string()).expect_err("a faulty file is refused");
@@ -471,6 +471,7 @@ fn two_faction_file(major: u32) -> Value {
         "rungs": [],
         "labor": [],
         "pens": [],
+        "bench": [],
         "bands": [{
             "id": "rival", "at": far_land_tile(), "size": 30,
             "ages": { "children": 0.3, "working": 0.6, "elders": 0.1 },
@@ -1880,7 +1881,6 @@ fn a_bench_section_builds_the_queue_in_file_order() {
         { "bench_enqueue_kit": {
             "band": "home", "kit_id": ONE_ITEM_KIT, "kits": KIT_COUNT, "recipes": [KIT_RECIPE]
         } },
-        { "bench_auto": { "band": "home", "enabled": true } },
     ]));
     let (mut app, applied) = load(&text).expect("the scenario loads");
     let bench = bench_of(&mut app, applied.bands["home"]);
@@ -1897,7 +1897,6 @@ fn a_bench_section_builds_the_queue_in_file_order() {
     assert_eq!(bench.kit_orders.len(), 1);
     assert_eq!(bench.kit_orders[0].kit_id, ONE_ITEM_KIT);
     assert_eq!(bench.kit_orders[0].kits, KIT_COUNT);
-    assert!(bench.auto, "auto-craft is on");
 }
 
 /// The checked-in bench playtest fixture (`run_stack.sh --scenario core_sim/scenarios/bench_queue.json`).
@@ -1918,17 +1917,16 @@ fn the_shipped_bench_scenario_opens_with_its_queue() {
 }
 
 #[test]
-fn an_absent_bench_section_is_an_empty_one() {
-    let (mut app, applied) = load(SHIPPED).expect("the shipped scenario loads");
-    let band = applied.bands["home"];
-    let orders = app
-        .world
-        .query::<(&BandId, Option<&BandBench>)>()
-        .iter(&app.world)
-        .find(|(id, _)| **id == band)
-        .and_then(|(_, bench)| bench.map(|bench| bench.orders.len()))
-        .unwrap_or_default();
-    assert_eq!(orders, 0);
+fn a_faction_section_without_bench_is_a_parse_refusal() {
+    let mut file = shipped();
+    file["factions"][0].as_object_mut().unwrap().remove("bench");
+    let refusals = pass_one(&file.to_string()).expect_err("a missing bench key is refused");
+    assert_eq!(refusals.len(), 1);
+    assert!(
+        refusals[0].path.starts_with("line ") && refusals[0].path.contains("column"),
+        "{}",
+        refusals[0].path
+    );
 }
 
 #[test]
@@ -1941,7 +1939,7 @@ fn pass_one_names_every_bad_bench_entry() {
             "recipes": [KIT_RECIPE, "no_such_recipe"]
         } },
         { "bench_enqueue_kit": { "band": "home", "kit_id": "none", "kits": 1, "recipes": [] } },
-        { "bench_auto": { "band": "elsewhere", "enabled": false } },
+        { "bench_enqueue": { "band": "elsewhere", "recipe_id": PLAIN_RECIPE, "count": 1 } },
     ]));
     let refusals = pass_one(&text).expect_err("five bad entries");
     let paths: Vec<&str> = refusals.iter().map(|r| r.path.as_str()).collect();
@@ -2006,6 +2004,7 @@ fn an_unknown_field_or_variant_in_a_bench_entry_is_a_parse_refusal() {
             "band": "home", "recipe_id": PLAIN_RECIPE, "count": 1, "priority": 2
         } }),
         json!({ "bench_remove": { "band": "home", "order": 0 } }),
+        json!({ "bench_auto": { "band": "home", "enabled": true } }),
     ] {
         let refusals = pass_one(&with_bench(json!([entry]))).expect_err("refused");
         assert_eq!(refusals.len(), 1);
