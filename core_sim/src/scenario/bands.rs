@@ -11,6 +11,8 @@ use bevy::prelude::*;
 use serde::Deserialize;
 
 use super::bench::BenchEntry;
+use super::labor::LaborEntry;
+use super::tiles::TileOverride;
 use super::{ScenarioContext, ScenarioRefusal};
 use crate::components::BandId;
 use crate::orders::FactionId;
@@ -34,6 +36,13 @@ pub struct FactionSection {
     /// is what lets sections land in parallel without touching every checked-in file.
     #[serde(default)]
     pub bench: Vec<BenchEntry>,
+    /// Improvements the faction already holds and builds already declared (`rungs.rs`).
+    pub rungs: Vec<super::rungs::RungEntry>,
+    /// The faction's opening work rows, replayed in order through `assign_labor` and `work_priority`.
+    /// A required key: `[]` for none.
+    pub labor: Vec<LaborEntry>,
+    /// The faction's pen verbs, replayed after the builds. A required key: `[]` for none.
+    pub pens: Vec<super::pens::PenEntry>,
 }
 
 /// One band.
@@ -53,6 +62,9 @@ pub struct BandEntry {
     pub larder: Vec<LarderEntry>,
     /// The ONE optional key: absent keeps the default outfit fitted to this band's size.
     pub outfit: Option<Outfit>,
+    /// The second optional key: absent leaves the band's bench auto-craft off, `true` switches it
+    /// on after the outfit, as `bench_auto <faction> <band> on` does.
+    pub auto_craft: Option<bool>,
 }
 
 /// The shares of a band in each age bracket.
@@ -281,6 +293,8 @@ fn check_band(
 pub struct ScenarioSetup {
     /// The listed factions, in file order.
     pub factions: Vec<FactionSetup>,
+    /// The file's tile overrides, applied by `apply_scenario_tile_overrides` during Startup.
+    pub tiles: Vec<TileOverride>,
     /// The scenario id each spawned band answers to, for the sections that name one.
     pub(super) spawned: BTreeMap<String, BandId>,
     /// Which (faction section, band entry) a spawned band came from, for the demographics seeding.
@@ -298,11 +312,16 @@ pub struct FactionSetup {
     pub knowledge: Vec<String>,
     pub bands: Vec<BandEntry>,
     pub bench: Vec<BenchEntry>,
+    pub rungs: Vec<super::rungs::RungEntry>,
+    pub labor: Vec<LaborEntry>,
+    /// The faction's pen verbs, replayed after the builds. A required key: `[]` for none.
+    pub pens: Vec<super::pens::PenEntry>,
 }
 
 impl ScenarioSetup {
-    pub fn from_sections(sections: &[FactionSection]) -> Self {
+    pub fn from_sections(sections: &[FactionSection], tiles: &[TileOverride]) -> Self {
         Self {
+            tiles: tiles.to_vec(),
             factions: sections
                 .iter()
                 .enumerate()
@@ -312,6 +331,9 @@ impl ScenarioSetup {
                     knowledge: section.knowledge.clone(),
                     bands: section.bands.clone(),
                     bench: section.bench.clone(),
+                    rungs: section.rungs.clone(),
+                    labor: section.labor.clone(),
+                    pens: section.pens.clone(),
                 })
                 .collect(),
             ..Self::default()

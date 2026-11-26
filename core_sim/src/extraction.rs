@@ -443,6 +443,16 @@ impl DepositSource {
     }
 }
 
+impl DepositSource {
+    /// **WHAT A REAL COMPLETION OF `rung` LEAVES ON THIS WORKING**: the position seated at the rung's
+    /// top on the deposit branches' flat price through the one mutator (grace reset, peak raised). A
+    /// working has no owner and no crop, so that is the whole of it.
+    pub fn complete_rung_as_built(&mut self, rung: RungId, ladder: &LadderConfig) {
+        let (base, width) = deposit_rung_span(rung, ladder);
+        self.set_ladder_position(base + width, ladder, rung.branch);
+    }
+}
+
 /// **WHERE A POSITION PUTS A WORKING ON ITS BRANCH** — [`RungStanding::at`] at the deposit branches'
 /// flat price ([`DEPOSIT_RUNG_PRICE`]).
 pub fn deposit_standing(

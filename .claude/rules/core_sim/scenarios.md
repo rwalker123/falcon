@@ -4,6 +4,9 @@ paths:
   - "core_sim/src/command_seam.rs"
   - "core_sim/scenarios/**"
   - "core_sim/tests/scenario_loader.rs"
+  - "core_sim/tests/scenario_rungs.rs"
+  - "core_sim/tests/scenario_labor_tiles.rs"
+  - "core_sim/src/labor_commands.rs"
   - "xtask/src/main.rs"
   - "scripts/run_stack.sh"
 ---
@@ -14,7 +17,10 @@ A scenario is a **recipe for a world, not a world**: a seed plus setup entries, 
 freshly generated world by the current code, so the file never goes stale the way a save does. The
 design is `docs/plan_scenarios.md`. This file owns the loader. **A section's key table lives in the
 rule of the arc that owns it**, under `## Scenario section`. The bands section's table is in
-`campaign.md`; the bench section's is in `crafting.md`.
+`campaign.md`, the labor section's is in `work-party.md`, the tiles section's is in `worldgen.md`,
+the rungs section's is in `intensification.md`, the herds section's is in `fauna.md`, the pens
+section's is in `husbandry.md`, the deposits section's is in `extraction.md`, the bench section's is in
+`crafting.md`.
 
 ## Where things are
 
@@ -22,8 +28,8 @@ rule of the arc that owns it**, under `## Scenario section`. The bands section's
 |---|---|
 | File shape, pass 1, `ScenarioRefusal`, `build_scenario_world`, `finish_scenario` | `core_sim/src/scenario/mod.rs` |
 | The profile and roster steps every world build runs (`apply_start_profile`, `seed_faction_roster`) | `core_sim/src/world_roster.rs` |
-| One module per section | `core_sim/src/scenario/bands.rs` (slice 1), `scenario/bench.rs` (2f) |
-| Replayed verbs that **return** their refusal | `core_sim/src/command_seam.rs` |
+| One module per section | `core_sim/src/scenario/bands.rs`, `labor.rs`, `tiles.rs`, `rungs.rs`, `herds.rs`, `pens.rs`, `deposits.rs`, `bench.rs` |
+| Replayed verbs that **return** their refusal | `core_sim/src/command_seam.rs` (the labor verbs' bodies are in `labor_commands.rs`) |
 | The verb and its reply | `handle_load_scenario` in `bin/server.rs`; `LoadScenarioCommand` = CommandEnvelope **101**, `ScenarioOpReply` = QueryReplyEnvelope **14** |
 | Checked-in scenarios | `core_sim/scenarios/<name>.json` (reviewed fixtures, not watched) |
 | Sending one | `cargo xtask command load_scenario <path>` · `scripts/run_stack.sh --scenario <path>` |
@@ -31,13 +37,13 @@ rule of the arc that owns it**, under `## Scenario section`. The bands section's
 ## Two passes, and nothing is built on a typo
 
 1. **Parse and resolve names** (`parse_scenario`), with no world built. Every struct is
-   `deny_unknown_fields`, there are no serde defaults, and `outfit` is the only optional key inside
-   a band. **A section key after `bands` (`bench`, …) may be absent and then reads as empty**: a
-   section is a list of entries, so an absent list and an empty one say the same thing, and it is
-   what lets sections land in parallel without every checked-in file growing every key. Every field
-   inside an entry stays required. Names
-   are checked against the live app's config handles (presets, profiles, archetypes, knowledge tags,
-   keeping classes, kits, materials). **Every refusal is collected**, so one load lists all of a
+   `deny_unknown_fields`, there are no serde defaults, and a key is optional only where the
+   command it replays has an `Option` (a band's `outfit` and `auto_craft`; a labor entry's target,
+   kit, species, floor; a tile's `terrain` and `flora`, of which one is required). **The one absent
+   section is `bench`**: it may be left out and then reads as empty. Every field inside a bench entry
+   stays required. Names are checked against the live
+   app's config handles (presets, profiles, archetypes, knowledge tags, keeping classes, kits,
+   materials, labor roles, terrains, the flora roster). **Every refusal is collected**, so one load lists all of a
    file's faults. A serde error has no field path, so it reports `line L, column C`.
    **A repeat is refused, never last-wins**: a knowledge tag twice in one faction's `knowledge`
    (`factions[i].knowledge[k]`, "listed twice"), a larder class or band id twice, and a repeated
@@ -54,7 +60,7 @@ rule of the arc that owns it**, under `## Scenario section`. The bands section's
    the build turn, then `finish_scenario`. Only the swap-in (epoch, sink, `publish_loaded_world`,
    command-log re-base) is server-only. Fit
    refusals found during Startup (band on water or off the map, absent faction, an archetype with no
-   `starting_units`) are recorded on `ScenarioSetup`. `finish_scenario` then replays the command
+   `starting_units`, a tile override that does not fit its tile) are recorded on `ScenarioSetup`. `finish_scenario` then replays the command
    entries.
 
 **Fail closed and whole.** Any refusal drops the candidate. The previous world stays, and an idle
@@ -67,6 +73,9 @@ never undo the scenario.
 
 There is no scenario special case after Startup. `ScenarioSetup` is inserted **before** Startup:
 
+- `apply_scenario_tile_overrides` swaps the listed tiles' terrain and flora after the last pass that
+  paints terrain and before `reconcile_food_modules`, so everything derived from a tile reads the
+  override (`worldgen.md` → "Scenario section").
 - `spawn_initial_world` spawns a listed faction's bands, in file order, **instead of** its
   archetype's `starting_units`, and **ahead of** the profile branches. The first listed band
   therefore holds the faction's lowest `BandId`, which is the band `stamp_starting_loadout` opens the
@@ -79,12 +88,32 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   same tag, so `knows_messengers` and every other `progress >= completion_threshold` gate answer
   yes on turn one.
 - The default outfit is fitted on the world-build pass against the band the scenario built.
-- `finish_scenario` replays `outfit` as `SetStartingLoadout` through `command_seam`, which
+- `finish_scenario` applies the **setters** first: the herd and deposit fits are collected
+  together and any refusal stops the load before either is applied, then the herds, the deposit
+  stocks, and the held rungs (each rung of the climb through the build gate). A deposit's stock and
+  a held working's rung both open the working through `DepositRegistry::open`, so they compose in
+  either order. Setter refusals are all collected, and any one stops the load before a command is
+  replayed.
+- `finish_scenario` then replays `outfit` as `SetStartingLoadout` through `command_seam`, which
   **replaces** the default while the opening window is still open.
-- Then the command sections, in the fixed order **outfit, labor, builds, pens, bench, splits**, each
-  one call in `finish_scenario` (a section landing later slots its call in at its place). A section
-  replays its entries in file order and **its first refusal stops the load**; the outfit loop is the
-  exception and collects every band's refusal, because no outfit depends on another.
+- `finish_scenario` then replays each band's `auto_craft: true` through
+  `command_seam::apply_set_auto_craft` (after the outfit, before labor). A refusal stops the load at
+  `factions[i].bands[j].auto_craft`.
+- `finish_scenario` then replays every faction's `labor` entries, in file order, through
+  `apply_assign_labor` / `apply_work_priority`. Labor runs only when no outfit was refused, and the
+  first refused entry stops the load. A replayed entry writes the same success line to the feed a
+  player's command would.
+- `finish_scenario` then replays the `build_rung` entries through `command_seam::apply_build_rung`,
+  after labor (plan §2.8), so a build finds the band labor put on its source. A refused build stops
+  the load at that entry.
+- `finish_scenario` then replays every faction's `pens` entries through
+  `command_seam::apply_extend_pen` / `apply_set_herd_output`, after the builds (plan §2.8). A herd is
+  named by its scenario id in every section, mapped through `ScenarioApplied.herds`. A refused entry
+  stops the load at that entry.
+- `finish_scenario` then replays every faction's `bench` entries, in file order, through
+  `command_seam::apply_bench_enqueue` / `apply_bench_enqueue_kit` / `apply_set_auto_craft`, after the
+  pens (plan §2.8: outfit, labor, builds, pens, bench, splits). A refused entry stops the load at
+  `factions[i].bench[k]`.
 - `ScenarioSetup` is removed in `finish_scenario`. It is never part of `SimState`, a save or a
   snapshot.
 
@@ -95,13 +124,15 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
 The server's handler converts the wire, calls the same function, and on `Err` still writes the warn
 and the feed event, **so the scenario path and the player's path are one body.** A section that
 replays a new verb adds a function and a `CommandRefusal` variant there, never a copy of a
-handler. The yield re-quote those verbs need lives in `core_sim/src/yield_seed.rs` for the same
+handler. `BuildRung` lives there whole (`apply_build_rung`, every source kind, with
+`queue_build_on_working_bands` and the pen helpers), and its refusal carries the feed channel the
+server writes the failure on. The yield re-quote those verbs need lives in `core_sim/src/yield_seed.rs` for the same
 reason.
 
-**What the seam holds:** `apply_set_starting_loadout`, and the three bench verbs
-(`apply_bench_enqueue`, `apply_bench_enqueue_kit`, `apply_bench_auto`). A bench verb returns an
+**The two bench queue verbs** (`apply_bench_enqueue`, `apply_bench_enqueue_kit`; the auto setting is
+`apply_set_auto_craft`) return an
 outcome struct carrying what the server's success feed line names (display name, queue position,
-crew, kit order id), so the server writes the same line it always did. Each bench verb has a
+crew, kit order id), so the server writes the same line it always did. Each has a
 `BandId` form (the scenario path, resolved through `resolve_band`, refused `NoSuchBand` rather than
 panicking) and an `_on` form taking the `Entity` that holds the body (the server path, after its own
 `select_starting_band`). A bench refusal is `CommandRefusal::Bench(String)`, the handler's sentence
@@ -128,3 +159,4 @@ A band's fixed larder counts against its carry (`starting-loadout.md`), so a lar
 nothing for the outfit. At 150 people (90 working × 7.0 = 630 carry), a 900 dry larder leaves an
 allowance of 0 and any outfit is refused `OverCarry`. That is why `breeding_ceiling_150.json` ships
 450.
+

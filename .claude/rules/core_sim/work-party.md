@@ -24,6 +24,9 @@ paths:
   - "core_sim/tests/hunt_by_need.rs"
   - "core_sim/src/roaming_skills.rs"
   - "core_sim/tests/roaming_skills.rs"
+  - "core_sim/src/labor_commands.rs"
+  - "core_sim/src/scenario/labor.rs"
+  - "core_sim/tests/scenario_labor_tiles.rs"
 ---
 
 # The work party — hunt, forage and extract are one model, and distance is a caravan
@@ -38,6 +41,36 @@ see "The deposit web: the cargo is the material".
 fourth row kind and posts a party by the same rule**: `party_source_position` names its tile, a far
 crew is a party, and the party carries no cargo (the row takes nothing; it only keeps). Nothing forks
 for it.
+
+## The labor verbs live in the lib, not the server
+
+`assign_labor` and `work_priority` have their bodies in `core_sim/src/labor_commands.rs`
+(`apply_assign_labor`, `apply_work_priority`, re-exported by `command_seam.rs`). They return
+`CommandRefusal::Refused { kind, reason }`. The server's `handle_assign_labor` and
+`handle_work_priority` are thin wrappers: they convert the wire, call the body, and on `Err` write the
+feed line on the kind the body returns. A scenario's `labor` section calls the same body, so a rule
+added to either verb reaches both paths. `LaborRole::from_token` is the one role parser.
+
+## Scenario section
+
+The **labor** section of a scenario file (`core_sim/src/scenario/labor.rs`; the loader is
+`scenarios.md`). `factions[].labor` is required (`[]` assigns nothing). Each entry is one replayed
+command, externally tagged, keys named as on the wire, with `band` (the file's band id) in place of
+`band_id`. Entries replay in file order after every outfit, through the seam above, so **fit is the
+verb's own**: a refused entry stops the load at `factions[i].labor[k]` with the verb's text.
+`forage_tile` is not an entry (a retired verb; `assign_labor` with role `forage` replaces it), and the
+retired `policy` key is refused. **`fauna_id` and `herd_id` are scenario herd ids** (the `herds`
+section's `id`), mapped to the runtime id before the verb runs.
+
+| entry | keys | pass-1 refusals |
+|---|---|---|
+| `assign_labor` | required `band`, `role`, `workers`, `take_species`, `move_with_herd`; optional `target_x`, `target_y`, `fauna_id`, `species`, `floor`, `kit_id` | a band not of this faction; a target off the map, or naming one coordinate without the other; an unknown role; a kit not on the equipment roster; a `take_species` entry, or a forage row's `species`, not on the flora roster; a `fauna_id` the file's `herds` section does not declare (`labor[k].assign_labor.fauna_id`) |
+| `work_priority` | required `band`, `level`; optional `target_x`, `target_y`, `herd_id`, `material`, `branch` | a band not of this faction; a target off the map; a level other than `high`, `normal`, `low`; a `herd_id` the file's `herds` section does not declare (`labor[k].work_priority.herd_id`) |
+
+A pool role names no tile: `{ "assign_labor": { "band": "home", "role": "roadwork", "workers": 3,
+"take_species": [], "move_with_herd": false } }` is the keepers of every road the band keeps
+(`RoadRegistry::kept_by`). A kit on a pool row is refused by the verb, as on
+the server.
 
 ## The sim staffs every source from the player's floor (#871)
 

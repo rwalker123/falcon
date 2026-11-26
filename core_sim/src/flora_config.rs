@@ -215,6 +215,25 @@ pub fn sort_basket(shares: &mut [FloraShare]) {
     });
 }
 
+/// **The ONE renormalization of a picked subset of a basket** — the picked shares divided by their
+/// own sum so they total `1`, in the wire's order. Both the seeded per-tile realization and a
+/// scenario's flora override end on this call, so the two cannot disagree about what "the picked
+/// species, renormalized" means.
+fn renormalized_basket<'a>(
+    picked: impl Iterator<Item = &'a FloraShare> + Clone,
+) -> Vec<FloraShare> {
+    let total: f32 = picked.clone().map(|share| share.share).sum();
+    let mut basket: Vec<FloraShare> = picked
+        .map(|share| FloraShare {
+            species: share.species.clone(),
+            share: share.share / total,
+        })
+        .collect();
+    // Publish in the wire order every basket uses: share DESC, then species key ASC.
+    sort_basket(&mut basket);
+    basket
+}
+
 /// Root flora configuration: the species table plus the **derived** per-biome composition.
 ///
 /// The composition table is built by [`FloraConfig::from_species`], which every construction path —
@@ -518,17 +537,36 @@ impl FloraConfig {
 
         // Renormalize the picked shares to sum to 1 (per-tile neutrality: the tile still yields its
         // full biome capacity gathered wild, just composed of different species).
-        let total: f32 = keyed[..k].iter().map(|(_, s)| s.share).sum();
-        let mut realized: Vec<FloraShare> = keyed[..k]
-            .iter()
-            .map(|(_, s)| FloraShare {
-                species: s.species.clone(),
-                share: s.share / total,
-            })
-            .collect();
-        // Publish in the wire order every basket uses: share DESC, then species key ASC.
-        sort_basket(&mut realized);
-        realized
+        renormalized_basket(keyed[..k].iter().map(|(_, s)| *s))
+    }
+
+    /// **What grows on a tile a scenario's `tiles` section named the plants of** — the biome's
+    /// affinity rows restricted to `keys`, renormalized by the same step the seeded realization
+    /// ends with ([`renormalized_basket`]). A key the biome does not host contributes nothing;
+    /// the scenario loader refuses such a key before this is ever read.
+    pub fn overridden_composition(&self, terrain: TerrainType, keys: &[String]) -> Vec<FloraShare> {
+        renormalized_basket(
+            self.composition(terrain)
+                .iter()
+                .filter(|share| keys.contains(&share.species)),
+        )
+    }
+
+    /// The navigable-hex twin of [`Self::overridden_composition`]: the overridden valley basket
+    /// blended with the channel term exactly as [`Self::realized_navigable_composition`] blends its
+    /// seeded one.
+    pub fn overridden_navigable_composition(
+        &self,
+        underlying: TerrainType,
+        keys: &[String],
+        forage: &ForageLaborConfig,
+    ) -> Vec<FloraShare> {
+        let overridden = self.overridden_composition(underlying, keys);
+        self.blend_navigable(
+            &overridden,
+            forage.capacity_for(underlying),
+            forage.navigable_river_forage_bonus,
+        )
     }
 
     /// The invariants a species row must satisfy **on its own** — the ones that would otherwise make

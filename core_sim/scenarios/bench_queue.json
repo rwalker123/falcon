@@ -9,6 +9,7 @@
     "profile": "late_forager_tribe",
     "archetypes": { "major": 0, "minor": 0 }
   },
+  "herds": [],
   "factions": [
     {
       "faction": 0,
@@ -23,11 +24,16 @@
           "larder": [{ "class": "dry", "amount": 450.0 }]
         }
       ],
+      "rungs": [],
+      "labor": [],
+      "pens": [],
       "bench": [
         { "bench_enqueue": { "band": "home", "recipe_id": "spears", "count": 4 } },
         { "bench_enqueue_kit": { "band": "home", "kit_id": "sledding", "kits": 2, "recipes": ["sled"] } },
         { "bench_auto": { "band": "home", "enabled": true } }
       ]
     }
-  ]
+  ],
+  "tiles": [],
+  "deposits": []
 }

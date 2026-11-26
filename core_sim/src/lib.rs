@@ -75,6 +75,7 @@ pub mod keep_on_hand;
 pub mod knowledge_contact;
 mod knowledge_contact_config;
 mod knowledge_ledger;
+pub mod labor_commands;
 mod labor_config;
 pub mod ladder_ids;
 mod leader_names;
@@ -275,13 +276,14 @@ pub use faction_names::{
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, animals_affordable,
     animals_engaged, animals_sparable, animals_that_stay, animals_that_stay_at_rate,
-    build_prey_index, cancel_dropped_rings, carnivore_k_at, choose_pen_site, crew_keep_hands,
-    crew_needed_with_keeping, drop_holding_and_cancel_ring, escapement_ceiling,
+    build_prey_index, cancel_dropped_rings, cancel_replaced_job, carnivore_k_at, choose_pen_site,
+    crew_keep_hands, crew_needed_with_keeping, drop_holding_and_cancel_ring, escapement_ceiling,
     expected_kill_over_retreat, expected_stayers, forecast_expected_take, forecast_take_range,
-    herd_breeding_gain, herd_build_rung, herd_build_verb, herd_capacity, herd_carry_rate,
-    herd_claims_keeping, herd_crew_keeping, herd_crew_keeping_next_turn, herd_default_hunt_kit,
-    herd_density_gain, herd_destination_capacity, herd_ecology, herd_engage_rate, herd_feed_demand,
-    herd_fenced_share, herd_fight_stage, herd_head_count, herd_herded_fraction,
+    habitat_refusal, herd_above_extinction_floor, herd_breeding_gain, herd_build_rung,
+    herd_build_verb, herd_capacity, herd_carry_rate, herd_claims_keeping, herd_crew_keeping,
+    herd_crew_keeping_next_turn, herd_default_hunt_kit, herd_density_gain,
+    herd_destination_capacity, herd_ecology, herd_engage_rate, herd_feed_demand, herd_fenced_share,
+    herd_fight_stage, herd_from_species, herd_head_count, herd_herded_fraction,
     herd_herders_needed, herd_hunt_yield, herd_keeper_load, herd_keeper_loads, herd_keeping_basis,
     herd_meter_rot, herd_past_recovery, herd_quarry_fight, herd_resistance,
     herd_rung_already_built, herd_rung_key, herd_size_tier, herd_space_capacity,
@@ -298,15 +300,16 @@ pub use fauna::{
     resolve_hunt_engagement, resolve_hunt_fight, retreat_band_edge, retreat_mean, retreat_seed,
     spawn_initial_herds, species_requires_denial, stamp_breeding_gains,
     stamp_migratory_game_trails, stay_fraction, sustainable_yield, taken_pen_tiles,
-    unqueue_build_and_cancel_ring, would_be_herders_needed, AnimalTake, Contact, CrewContact,
-    CrewKeeping, EcologyPhase, EngagementQuantum, EngagementStop, FightCasualties, FightRate, Herd,
-    HerdDensityMap, HerdPayoff, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, HuntCrew,
-    HuntCrewCurveInputs, HuntCrewTake, HuntDraw, HuntEngagement, HuntFight, HuntProjection,
-    HuntTakeBound, HuntingParty, OutcomeKills, PartyResolution, PenSiteScene, PreyDatum,
-    ProjectedHuntTurn, ProjectionStart, QuarryFight, RetreatOutcome, RoamState,
-    SourceYieldForecast, TakeRange, TakeReading, FULLY_HERDED, HERDING_DISCOVERY_ID,
-    MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, NO_HANDS, NO_STANDING_COMMITMENT, NO_USEFUL_CREW,
-    ONE_KEEPER_LOAD, PENNING_DISCOVERY_ID, SELECTIVE_BREEDING_DISCOVERY_ID,
+    unqueue_build_and_cancel_ring, wild_herd_capacity, would_be_herders_needed, AnimalTake,
+    Contact, CrewContact, CrewKeeping, EcologyPhase, EngagementQuantum, EngagementStop,
+    FightCasualties, FightRate, HabitatRefusal, Herd, HerdDensityMap, HerdPayoff, HerdRegistry,
+    HerdTelemetry, HerdTelemetryEntry, HuntCrew, HuntCrewCurveInputs, HuntCrewTake, HuntDraw,
+    HuntEngagement, HuntFight, HuntProjection, HuntTakeBound, HuntingParty, OutcomeKills,
+    PartyResolution, PenSiteScene, PreyDatum, PreyReach, ProjectedHuntTurn, ProjectionStart,
+    QuarryFight, RetreatOutcome, RoamState, SourceYieldForecast, TakeRange, TakeReading,
+    FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, NO_HANDS,
+    NO_STANDING_COMMITMENT, NO_USEFUL_CREW, ONE_KEEPER_LOAD, PENNING_DISCOVERY_ID,
+    SELECTIVE_BREEDING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,
@@ -1321,6 +1324,11 @@ pub fn build_headless_app() -> App {
                 systems::apply_tag_budget_solver,
                 systems::apply_biome_palette_clamp,
                 systems::reconcile_coastal_shelf,
+                // **A scenario's tile overrides are a worldgen input**: after every pass that
+                // rewrites terrain (the tag solver, the palette clamp, the shelf) and before
+                // everything that derives from it (food modules, fresh-water site bias, wondrous
+                // sites, herds, forage, graze). A no-op when no scenario is being loaded.
+                scenario::tiles::apply_scenario_tile_overrides,
                 systems::reconcile_food_modules,
                 systems::bias_food_sites_toward_fresh_water,
                 sites::place_wondrous_sites,
