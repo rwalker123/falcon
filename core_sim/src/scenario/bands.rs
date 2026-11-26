@@ -19,13 +19,18 @@ use super::{
 use crate::components::{
     BandBench, BandEquipment, BandId, Expedition, PopulationCohort, ResidentBand, Tile, FODDER,
 };
+use crate::culture::{CultureManager, CultureOwner, CultureTraitAxis};
 use crate::dealings::PendingDealings;
 use crate::equipment_config::{EquipmentConfig, EquipmentConfigHandle};
 use crate::goodwill::Goodwill;
 use crate::intensification::{knows, LadderConfigHandle};
-use crate::leadership::BandLeadership;
+use crate::leader_names::LeaderNameCatalogHandle;
+use crate::leadership::{emergence_entry, BandLeadership};
+use crate::leadership_config::LeadershipConfigHandle;
 use crate::orders::{FactionId, FactionRegistry};
-use crate::resources::{DiscoveryProgressLedger, SimulationConfig};
+use crate::resources::{
+    CommandEventLog, DiscoveryProgressLedger, SimulationConfig, SimulationTick,
+};
 use crate::start_profile::{ActiveStartProfile, StartProfileKnowledgeTagsHandle};
 use crate::starting_loadout::{
     allocation_load, faction_carry, party_held_items, window_people, LoadoutSupply, LoadoutWindow,
@@ -78,7 +83,11 @@ pub struct BandEntry {
     /// The ONE optional key: absent keeps the default outfit fitted to this band's size.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outfit: Option<Outfit>,
-    /// The second optional key: absent leaves the band's bench auto-craft off, `true` switches it
+    /// `true` gives the band a leader ([`apply_leaders`]); absent leaves it to emergence. The file names
+    /// neither the kind nor the name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub leader: Option<bool>,
+    /// Absent leaves the band's bench auto-craft off, `true` switches it
     /// on after the outfit, as the server's `set_auto_craft` does.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_craft: Option<bool>,
@@ -474,6 +483,70 @@ pub(super) fn export_ids(world: &World, notes: &mut Vec<String>) -> ExportIds {
     ids
 }
 
+/// **The `leader` setter**: each band the file says holds a leader is given one through
+/// [`BandLeadership::appoint`], the body emergence runs, so the kind is the band's own
+/// `HierarchicalEgalitarian` reading's and the name is the catalog's for the band. A band that already
+/// has one (the build turn can make one) is left alone, and the practice bar is not touched. A band
+/// with no culture layer yet is refused: there is no axis to read, and nothing is defaulted. The same
+/// `LeaderEmerged` feed line emergence writes is pushed.
+pub(super) fn apply_leaders(
+    world: &mut World,
+    setup: &ScenarioSetup,
+    refusals: &mut Vec<ScenarioRefusal>,
+) {
+    let tick = world.resource::<SimulationTick>().0;
+    let map_seed = world.resource::<SimulationConfig>().map_seed;
+    let names = world.resource::<LeaderNameCatalogHandle>().get();
+    for faction_setup in &setup.factions {
+        for (j, entry) in faction_setup.bands.iter().enumerate() {
+            if entry.leader != Some(true) {
+                continue;
+            }
+            let Some(band) = setup.spawned.get(&entry.id).copied() else {
+                continue;
+            };
+            let path = format!("factions[{}].bands[{j}].leader", faction_setup.file_index);
+            let axis = world
+                .resource::<CultureManager>()
+                .band_layer_by_owner(CultureOwner::from_band(band))
+                .map(|layer| {
+                    layer.traits.values()[CultureTraitAxis::HierarchicalEgalitarian.index()]
+                        .to_f32()
+                });
+            let Some(axis) = axis else {
+                refusals.push(ScenarioRefusal::new(
+                    path,
+                    "the band has no culture layer yet, so there is no hierarchical/egalitarian \
+                     axis to read its leader's kind from",
+                ));
+                continue;
+            };
+            let Some(entity) = world
+                .query::<(Entity, &BandId)>()
+                .iter(world)
+                .find(|(_, id)| **id == band)
+                .map(|(entity, _)| entity)
+            else {
+                continue;
+            };
+            let Some(mut leadership) = world.get_mut::<BandLeadership>(entity) else {
+                refusals.push(ScenarioRefusal::new(
+                    path,
+                    "the band carries no leadership record",
+                ));
+                continue;
+            };
+            if leadership.leader.is_some() {
+                continue;
+            }
+            let leader = leadership.appoint(axis, tick, names.name_for_band(map_seed, band));
+            world
+                .resource_mut::<CommandEventLog>()
+                .push(emergence_entry(tick, faction_setup.faction, band, &leader));
+        }
+    }
+}
+
 /// The shares of a band's brackets, rounded to the export precision. The elders share is the remainder,
 /// so the three always sum to one and the loader's division by their sum changes nothing.
 fn export_ages(cohort: &PopulationCohort) -> Ages {
@@ -681,6 +754,30 @@ fn export_band(
         .get::<BandBench>(band.entity)
         .is_some_and(|bench| bench.auto)
         .then_some(true);
+    let leader = world
+        .get::<BandLeadership>(band.entity)
+        .is_some_and(|leadership| leadership.leader.is_some())
+        .then_some(true);
+    if leader.is_some() {
+        notes.push(format!(
+            "{}: its leader's name and kind are derived again on load (the name from the band id, the \
+             kind from the culture axis then), so they can differ from this game's",
+            band.scenario_id
+        ));
+    } else if let Some(practice) = world
+        .get::<BandLeadership>(band.entity)
+        .map(BandLeadership::practice)
+        .filter(|practice| *practice > 0.0)
+    {
+        let bar = world
+            .resource::<LeadershipConfigHandle>()
+            .get()
+            .practice_threshold;
+        notes.push(format!(
+            "{}: its leadership practice {practice:.2} of {bar:.2} is not exported",
+            band.scenario_id
+        ));
+    }
     Some(BandEntry {
         id: band.scenario_id.clone(),
         at: [at.x, at.y],
@@ -690,6 +787,7 @@ fn export_band(
         larder,
         outfit,
         auto_craft,
+        leader,
     })
 }
 
@@ -746,7 +844,7 @@ pub(super) fn export(
 
 /// **What no section owns**: parties in the field, pending dealings, treaties, goodwill, the
 /// improvements a tile or a band holds, and the people who lead a band. One line each, counted.
-pub(super) fn export_unexpressed(world: &World, ids: &ExportIds, notes: &mut Vec<String>) {
+pub(super) fn export_unexpressed(world: &World, notes: &mut Vec<String>) {
     let mut parties: BTreeMap<FactionId, usize> = BTreeMap::new();
     for entity in world.iter_entities() {
         if entity.get::<Expedition>().is_some() {
@@ -790,20 +888,5 @@ pub(super) fn export_unexpressed(world: &World, ids: &ExportIds, notes: &mut Vec
                 improvements.bands().len()
             ));
         }
-    }
-    let led = ids
-        .faction_bands
-        .values()
-        .flatten()
-        .filter(|band| {
-            world
-                .get::<BandLeadership>(band.entity)
-                .is_some_and(|leadership| leadership.leader.is_some())
-        })
-        .count();
-    if led > 0 {
-        notes.push(format!(
-            "{led} band(s) have a leader, which a scenario cannot give a band"
-        ));
     }
 }

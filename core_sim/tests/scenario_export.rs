@@ -194,6 +194,15 @@ fn the_bench_queue_round_trips() {
 
 /// The breeding scenario with a second band beside the first, each holding gear.
 fn two_outfitted_bands(second_size: u32, second_gathering_kits: u32) -> String {
+    two_outfitted_bands_with(second_size, second_gathering_kits, false)
+}
+
+/// [`two_outfitted_bands`], the second band optionally holding a leader.
+fn two_outfitted_bands_with(
+    second_size: u32,
+    second_gathering_kits: u32,
+    second_leader: bool,
+) -> String {
     let mut file: Value = serde_json::from_str(BREEDING).expect("the fixture is JSON");
     let first = file["factions"][0]["bands"][0].clone();
     let at = first["at"].as_array().expect("at").clone();
@@ -230,6 +239,9 @@ fn two_outfitted_bands(second_size: u32, second_gathering_kits: u32) -> String {
                 "materials": { "fibre": 2 }
             }
         }));
+    if second_leader {
+        file["factions"][0]["bands"][1]["leader"] = serde_json::json!(true);
+    }
     file.to_string()
 }
 
@@ -270,4 +282,95 @@ fn a_second_bands_outfit_over_its_carry_is_refused() {
             .any(|r| r.path == "factions[0].bands[1].outfit" && r.reason.contains("carry")),
         "OverCarry at the band's outfit path: {refusals:?}"
     );
+}
+
+#[test]
+fn a_band_the_file_gives_a_leader_holds_one_made_the_way_emergence_makes_it() {
+    use core_sim::{
+        BandId, BandLeadership, CommandEventKind, CommandEventLog, CultureManager, CultureOwner,
+        CultureTraitAxis, LeaderKind, LeaderNameCatalogHandle, SimulationConfig,
+    };
+    // The control: the same file without the key leaves the band leaderless, so the setter is what
+    // made the leader below.
+    let mut control = loaded(&two_outfitted_bands_with(30, 3, false), 0);
+    let led_in_control = control
+        .world
+        .query::<&BandLeadership>()
+        .iter(&control.world)
+        .filter(|leadership| leadership.leader.is_some())
+        .count();
+    let text = two_outfitted_bands_with(30, 3, true);
+    let mut app = build_test_app();
+    let plan = parse_scenario(&text, &ScenarioContext::from_world(&app.world)).expect("pass 1");
+    let applied = build_scenario_world(&mut app, &plan).expect("loads");
+    let led_with_key = app
+        .world
+        .query::<&BandLeadership>()
+        .iter(&app.world)
+        .filter(|leadership| leadership.leader.is_some())
+        .count();
+    assert_eq!(
+        led_with_key,
+        led_in_control + 1,
+        "the key adds exactly one leader"
+    );
+    let band = applied.bands["second"];
+    let leader = app
+        .world
+        .query::<(&BandId, &BandLeadership)>()
+        .iter(&app.world)
+        .find(|(id, _)| **id == band)
+        .and_then(|(_, leadership)| leadership.leader.clone())
+        .expect("the band holds a leader");
+    let axis = app
+        .world
+        .resource::<CultureManager>()
+        .band_layer_by_owner(CultureOwner::from_band(band))
+        .expect("a culture layer")
+        .traits
+        .values()[CultureTraitAxis::HierarchicalEgalitarian.index()]
+    .to_f32();
+    assert_eq!(
+        leader.kind,
+        LeaderKind::for_axis_value(axis),
+        "kind per the axis"
+    );
+    let seed = app.world.resource::<SimulationConfig>().map_seed;
+    let name = app
+        .world
+        .resource::<LeaderNameCatalogHandle>()
+        .get()
+        .name_for_band(seed, band);
+    assert_eq!(leader.name, name, "name per the catalog");
+    let emerged = app
+        .world
+        .resource::<CommandEventLog>()
+        .iter()
+        .filter(|entry| entry.kind == CommandEventKind::LeaderEmerged)
+        .any(|entry| {
+            entry
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains(&format!("name={name}")))
+        });
+    assert!(emerged, "a LeaderEmerged feed line names the new leader");
+}
+
+#[test]
+fn a_band_with_a_leader_exports_leader_true_and_the_reload_has_it() {
+    let text = two_outfitted_bands_with(30, 3, true);
+    let a = round_trips(&text, TURNS_BEFORE_EXPORT);
+    assert_eq!(
+        a["factions"][0]["bands"][1]["leader"], true,
+        "the led band exports leader: true"
+    );
+    let a_text = serde_json::to_string(&a).expect("serializes");
+    let mut reloaded = loaded(&a_text, 0);
+    let held = reloaded
+        .world
+        .query::<&core_sim::BandLeadership>()
+        .iter(&reloaded.world)
+        .filter(|leadership| leadership.leader.is_some())
+        .count();
+    assert!(held >= 1, "the reload holds the leader");
 }

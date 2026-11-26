@@ -44,7 +44,7 @@ paths:
 The **bands** section of a scenario file (`core_sim/src/scenario/bands.rs`; the loader is
 `scenarios.md`). A listed faction spawns these bands, in file order, **instead of** its archetype's
 `starting_units`. A faction the file does not list spawns as its profile says. Every key is
-required except `outfit` and `auto_craft`.
+required except `outfit`, `leader` and `auto_craft`.
 
 | key | meaning | refused when |
 |---|---|---|
@@ -58,12 +58,13 @@ required except `outfit` and `auto_craft`.
 | `bands[].founding_lines` | `L` for this band, in place of `lineage.founding_lines` | `0` |
 | `bands[].larder` | `[{ class, amount }]`, the larder **exactly** (`[]` is an empty larder), in place of the `food_reserve_days` reset | unknown keeping class, class listed twice, negative amount |
 | `bands[].outfit` | Optional `{ kits, materials }` (name → count), replayed as `SetStartingLoadout`, so it **replaces** the default fitted to this band (the faction's first band's, which holds the game's opening window) or is stated in a window the loader opens for the band (any other band, `scenarios.md`). Absent keeps that default and opens no window | unknown kit, kit with empty `uses`, unknown material, a kit or material key repeated, or the window's own refusals (`OverCarry`, …) |
+| `bands[].leader` | Optional `bool`. `true` gives the band a leader (`BandLeadership::appoint`: kind from the band's own culture axis, name from the leader-name catalog for the band id; the file names neither), as a setter before the outfit and labor replays, so a `band_order` entry has a leader to order through. Absent leaves it to emergence | the band has no culture layer yet, at `bands[j].leader` |
 | `bands[].auto_craft` | Optional `bool`. `true` switches the band's bench auto-craft on, replayed through `command_seam::apply_set_auto_craft` (the body of `bench_auto <faction> <band> on`) after the outfit and before labor, so the bench fills from the gear the outfit left. Absent leaves it off | the verb's own band lookup refusal, at `bands[j].auto_craft` |
 
 The band's `StartingUnit` kind and tags are the archetype's **first** `starting_units` entry. An
 archetype with none is refused, because there is nothing to spawn the band as.
 
-**Export** writes every faction that has a band and fits `world.archetypes`: `at`, `size`, `ages` (the elders share is the remainder, so the three sum to one), `founding_lines`, the larder by keeping class, `knowledge` (tags held at the completion threshold), and, on every band, `outfit` as whole kits read greedily off the gear it holds (roster order) plus the whole units of each material the human archetype's pick list names, and `auto_craft` when on. A band opens at exactly the `size`, `ages` and `larder` the file states (`finish_scenario` stamps them again after the build turn). Gear no kit is made of, hay and worn or crafted-tier gear are noted.
+**Export** writes every faction that has a band and fits `world.archetypes`: `at`, `size`, `ages` (the elders share is the remainder, so the three sum to one), `founding_lines`, the larder by keeping class, `knowledge` (tags held at the completion threshold), and, on every band, `outfit` as whole kits read greedily off the gear it holds (roster order) plus the whole units of each material the human archetype's pick list names, `leader: true` on a band that holds one, and `auto_craft` when on. A band opens at exactly the `size`, `ages` and `larder` the file states (`finish_scenario` stamps them again after the build turn). Gear no kit is made of, hay and worn or crafted-tier gear are noted.
 
 ## Campaign Loop & System Activation
 

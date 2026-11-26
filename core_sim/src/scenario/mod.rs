@@ -458,7 +458,7 @@ pub fn export_scenario(world: &mut World, name: &str) -> ScenarioExport {
         );
     }
     let deposits = deposits::export(world);
-    bands::export_unexpressed(world, &ids, &mut notes);
+    bands::export_unexpressed(world, &mut notes);
     notes.push(TILES_NOT_EXPORTED_NOTE.to_string());
     let file = ScenarioFile {
         name: name.to_string(),
@@ -508,6 +508,9 @@ pub fn finish_scenario(
             }
         }
     }
+    // **Leaders are a setter** (a `band_order` entry needs one), after the re-stamp and before anything
+    // that reads or replays a band.
+    bands::apply_leaders(world, &setup, &mut refusals);
     // Herds are a setter (before the outfit replay). Every fit refusal is collected before any herd
     // or deposit is applied, so a refused file changes nothing.
     let (fitted, herd_refusals) = match &herd_setup {

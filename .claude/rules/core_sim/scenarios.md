@@ -40,7 +40,7 @@ section's is in `routes.md`, the bench section's is in `crafting.md`.
 
 1. **Parse and resolve names** (`parse_scenario`), with no world built. Every struct is
    `deny_unknown_fields`, there are no serde defaults, and a key is optional only where the
-   command it replays has an `Option` (a band's `outfit` and `auto_craft`; a labor entry's target,
+   command it replays has an `Option` (a band's `outfit`, `leader` and `auto_craft`; a labor entry's target,
    kit, species, floor; a tile's `terrain` and `flora`, of which one is required; a road's
    `keeper`, which a trail has none of). Every section key is required (`[]` for none). Names are
    checked against the live
@@ -101,6 +101,9 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   a held working's rung both open the working through `DepositRegistry::open`, so they compose in
   either order. Setter refusals are all collected, and any one stops the load before a command is
   replayed.
+- **`finish_scenario` then gives each `leader: true` band its leader** (`bands::apply_leaders`, through the
+  `BandLeadership::appoint` body emergence runs; `leadership.md` → "Scenario section"), after the
+  re-stamp and before the herd setters, the outfit and labor, because a `band_order` entry needs one.
 - **Every band that states an `outfit` has a window to state it in.** The game opens one Grant window
   per faction, on its lowest band. Before the outfit replay `finish_scenario` opens a window of the
   same kind (`LoadoutWindow::opened(LoadoutSupply::Grant { carry_budget: None })`: the band's own carry,
@@ -203,7 +206,7 @@ other herd by `(species key, y, x, id)`. Every section that names a band or a he
 **What a section writes.** The per-arc tables (`campaign.md`, `work-party.md`, ...) carry each
 section's export line. Out of every section: a faction with no band, or one the world gained after it
 was built (it cannot be named by `world.archetypes`), is noted and left out; a part-learned knowledge
-tag, worn gear, hay, a leader, a pen's rings, parties in the field, pending dealings, treaties,
+tag, worn gear, hay, a leader's derived name and kind, banked leadership practice, a pen's rings, parties in the field, pending dealings, treaties,
 goodwill and tile or band improvements are noted. `tiles` is always `[]` with the line "tile overrides
 are not exported". A band whose larder plus outfit exceeds its carry is exported anyway and noted
 ("will be refused OverCarry on load; trim by hand").

@@ -228,8 +228,8 @@ pub(super) fn check(
 ///
 /// A staffed row's count is the player's Max (`0` is no Max, the sim staffs it), a scouting row's is its
 /// range in tiles, and any other row's is its crew. A band's chief orders are noted, not written:
-/// `band_order` needs a leader and a scenario cannot give a band one, so a replay would be refused; the
-/// rows a leader lists are the leader's to place and are left out with it.
+/// `band_order` needs a leader, which the band's `leader` key gives it on load; the rows a leader lists
+/// are the leader's to place and are left out with it.
 pub(super) fn export(
     world: &World,
     faction: FactionId,
