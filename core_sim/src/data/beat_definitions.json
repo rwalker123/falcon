@@ -357,6 +357,54 @@
     "cooldown_turns": 3
   },
   {
+    "id": "settlement.city_reached",
+    "tier": "beat",
+    "soul": {
+      "question": "A place that was once only where some bands happened to stop is now where a great many people live as one, with a granary behind them and a crowd in the lanes. A city."
+    },
+    "when": {
+      "all": [
+        {
+          "signal": "settlement.city_reached",
+          "crosses": "rising",
+          "threshold": 1
+        }
+      ]
+    },
+    "nouns": {},
+    "wardrobe": [
+      {
+        "id": "city.one_place",
+        "fit": {},
+        "voice": {
+          "mythic": "The many bands live as one place now. The granary stands full behind us, and there is a crowd in every lane. They will call this a city.",
+          "warm": "All those bands live in one place now. There's a granary full behind us and a crowd in every lane. I think this is what they mean by a city."
+        }
+      },
+      {
+        "id": "city.crowd_and_granary",
+        "fit": {},
+        "voice": {
+          "mythic": "A crowd came to the granary and the granary held. No band could have kept so many. The place itself keeps us now. It is a city.",
+          "warm": "A crowd turned up at the granary and it held. No single band could've fed this many. The place does it for us now. It's a city."
+        }
+      },
+      {
+        "id": "city.no_longer_a_camp",
+        "fit": {},
+        "voice": {
+          "mythic": "We were bands that stopped, and the stopping grew. Walk from one end to the other and you will pass more faces than a band ever knew. This is no camp. It is a city.",
+          "warm": "We started out as bands that happened to stop here, and it just kept growing. Walk end to end and you'll pass more faces than a band ever knew. It's not a camp anymore. It's a city."
+        }
+      }
+    ],
+    "gloss": [
+      "settlement.city_reached"
+    ],
+    "cooldown_turns": 3,
+    "once": true
+  },
+  {
     "id": "knowledge.cultivation_learned",
     "tier": "beat",
     "soul": {

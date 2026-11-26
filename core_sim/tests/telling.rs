@@ -349,3 +349,65 @@ fn losing_a_led_band_the_same_turn_does_not_mask_a_new_chief() {
         beats(&app)
     );
 }
+
+/// A settlement reaching the city stage is told once, and not again the next turn. The stage is
+/// resolved by the real `advance_settlements`; the stage ladder is swapped for one whose city row
+/// asks only for people, so the fixture does not have to stock a granary.
+#[test]
+fn a_settlement_reaching_city_fires_its_beat_once() {
+    use bevy::ecs::system::RunSystemOnce;
+    use core_sim::{advance_settlements, SettlementStageConfig, SettlementStageConfigHandle};
+
+    const CITY_BEAT: &str = "settlement.city_reached";
+    // Nobody's people alone reach a "city" of this size, so it stays a band until the swap.
+    const UNREACHED_CITY_SIZE: u32 = 1_000_000;
+    let ladder_with_city_at = |min_size: u32| {
+        let json = format!(
+            r#"{{ "pull_from_stage": "city", "stages": [
+                {{ "id": "nomadic", "label": "Nomadic band", "icon": "n", "criteria": {{ "min_size": 0 }} }},
+                {{ "id": "city", "label": "City", "icon": "c", "criteria": {{ "min_size": {min_size} }}, "announce": true }}
+            ] }}"#
+        );
+        std::sync::Arc::new(SettlementStageConfig::from_json_str(&json).expect("valid ladder"))
+    };
+    let turn = |app: &mut bevy::app::App| {
+        app.world.run_system_once(advance_settlements);
+        run_turn(app);
+    };
+
+    let mut app = spawn_world();
+    app.world
+        .resource_mut::<SettlementStageConfigHandle>()
+        .replace(ladder_with_city_at(UNREACHED_CITY_SIZE));
+    spawn_band(&mut app, FactionId(0), 31);
+    for _ in 0..3 {
+        turn(&mut app);
+    }
+    let city_beats = |app: &bevy::app::App| {
+        beats(app)
+            .iter()
+            .filter(|e| {
+                e.detail
+                    .as_deref()
+                    .is_some_and(|d| d.contains("settlement.city_reached="))
+            })
+            .count()
+    };
+    assert_eq!(city_beats(&app), 0, "no city yet, no beat");
+    assert!(!app.world.resource::<BeatLedger>().has_fired(CITY_BEAT));
+
+    app.world
+        .resource_mut::<SettlementStageConfigHandle>()
+        .replace(ladder_with_city_at(0));
+    turn(&mut app);
+    assert_eq!(
+        city_beats(&app),
+        1,
+        "the beat fires the turn the city is reached"
+    );
+    assert!(app.world.resource::<BeatLedger>().has_fired(CITY_BEAT));
+    for _ in 0..6 {
+        turn(&mut app);
+    }
+    assert_eq!(city_beats(&app), 1, "and not again while it stays a city");
+}

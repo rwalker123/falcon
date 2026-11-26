@@ -56,6 +56,8 @@ use crate::{
     },
     scalar::Scalar,
     sedentarization::SedentarizationScore,
+    settlement::SettlementStages,
+    settlement_stage_config::SettlementStageConfigHandle,
     sites::DiscoveredSites,
     sites_config::SitesConfigHandle,
     tribe::TribeRegistry,
@@ -794,6 +796,8 @@ pub struct TellingSources<'w, 's> {
     pub discovered_sites: Res<'w, DiscoveredSites>,
     pub gatherings: Res<'w, GatheringLedger>,
     pub tribes: Res<'w, TribeRegistry>,
+    pub settlement_stages: Res<'w, SettlementStages>,
+    pub settlement_config: Res<'w, SettlementStageConfigHandle>,
     pub discovery_progress: Res<'w, DiscoveryProgressLedger>,
     pub herds: Res<'w, HerdRegistry>,
     pub fauna_config: Res<'w, FaunaConfigHandle>,
@@ -865,6 +869,7 @@ pub fn telling_tick(
     let cfg = beat_config.get();
     let catalog = beat_catalog.get();
     let tick = sources.tick.0;
+    let settlement_config = sources.settlement_config.get();
 
     // Signals sample for the *player* faction. There is no `player_faction` accessor; the
     // registry's first entry (`FactionId(0)` in practice) is effectively the player, so take it
@@ -897,6 +902,8 @@ pub fn telling_tick(
         discovered_sites: &sources.discovered_sites,
         gatherings: &sources.gatherings,
         tribes: &sources.tribes,
+        settlement_stages: &sources.settlement_stages,
+        settlement_config: &settlement_config,
         discovery_progress: &sources.discovery_progress,
         herds: &sources.herds,
         culture: &sources.culture,
