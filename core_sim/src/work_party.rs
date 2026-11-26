@@ -684,6 +684,9 @@ impl WorkParty {
     ///    whole round trip rejoins the party.
     /// 2. A party still walking out counts one turn of it off and has nobody at the source.
     pub fn open_turn(&mut self) -> TurnOpen {
+        // **The rot tally is this turn's alone**: a new turn starts it at nothing, so the live
+        // party never carries past rot into a forecast clone, which would count it again.
+        self.rotted_at_source = NOTHING_CARRIED;
         let mut delivered = NOTHING_CARRIED;
         let mut packs = Vec::new();
         // **Food ages at the source**: every lot in the load keeps one more turn. A walk of no length
@@ -2957,5 +2960,23 @@ mod tests {
             "it rots where it lies: {rotted}"
         );
         assert!(party.load.is_empty(), "the rotten food left the load");
+    }
+
+    /// ⛔ **THE ROT TALLY NEVER OUTLIVES ITS TURN.** The live turn never drains it (only the
+    /// forecast does), so a new turn must start it at nothing, or a forecast clone counts every
+    /// past turn's rot again and the row's spoiled figure climbs for as long as the row exists.
+    #[test]
+    fn a_new_turn_starts_the_rot_tally_at_nothing() {
+        const WALK: u32 = 6;
+        const PAST_ROT: f32 = 10.0;
+        let mut party = WorkParty::posted(UVec2::ZERO, WALK, WALK);
+        party.walk_out_remaining = NO_WALK;
+        party.rotted_at_source = PAST_ROT;
+        party.open_turn();
+        assert_eq!(
+            party.take_rotted_at_source(),
+            NOTHING_CARRIED,
+            "last turn's rot is not this turn's"
+        );
     }
 }
