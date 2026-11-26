@@ -28,6 +28,7 @@
       "rungs": [],
       "labor": [],
       "pens": [],
+      "roads": [],
       "bench": [
         { "bench_enqueue": { "band": "home", "recipe_id": "spears", "count": 4 } },
         { "bench_enqueue_kit": { "band": "home", "kit_id": "sledding", "kits": 2, "recipes": ["sled"] } }

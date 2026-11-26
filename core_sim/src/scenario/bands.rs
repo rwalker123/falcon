@@ -40,6 +40,8 @@ pub struct FactionSection {
     pub labor: Vec<LaborEntry>,
     /// The faction's pen verbs, replayed after the builds. A required key: `[]` for none.
     pub pens: Vec<super::pens::PenEntry>,
+    /// The road rungs the faction holds at the start (`roads.rs`). A required key: `[]` for none.
+    pub roads: Vec<super::roads::RoadEntry>,
 }
 
 /// One band.
@@ -313,6 +315,7 @@ pub struct FactionSetup {
     pub labor: Vec<LaborEntry>,
     /// The faction's pen verbs, replayed after the builds. A required key: `[]` for none.
     pub pens: Vec<super::pens::PenEntry>,
+    pub roads: Vec<super::roads::RoadEntry>,
 }
 
 impl ScenarioSetup {
@@ -331,6 +334,7 @@ impl ScenarioSetup {
                     rungs: section.rungs.clone(),
                     labor: section.labor.clone(),
                     pens: section.pens.clone(),
+                    roads: section.roads.clone(),
                 })
                 .collect(),
             ..Self::default()

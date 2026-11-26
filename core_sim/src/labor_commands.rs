@@ -1775,6 +1775,167 @@ pub fn apply_work_priority(
     Ok(())
 }
 
+/// **A BAND ORDER** (#860) - `band_order <faction> <band> <kind> set <target> <priority>` |
+/// `release` | `claim`. `set` stores the target and priority, `release` is Crew it yourself (the
+/// chief's rows stay and become the player's), `claim` is Hand it to the chief; with a `row` the
+/// release or claim moves ONE row of the order. Each restaffs at once, so the dig row (placed by the
+/// sim, [`crate::keep_on_hand`]) and its crew show on the next frame. Refused for a band with no
+/// leader, a kind that takes no order and a target of zero.
+///
+/// **One body, two callers**: the server's `handle_band_order` and a scenario's `band_order` labor
+/// entry both run this, so the refusal text is the same wherever the verb is replayed. It writes the
+/// success feed line itself, as [`apply_work_priority`] does, and returns that line's label.
+pub fn apply_band_order(
+    world: &mut World,
+    faction: FactionId,
+    band_id: u64,
+    kind: &str,
+    action: sim_runtime::BandOrderAction,
+    row: Option<sim_runtime::BandOrderRow>,
+) -> Result<String, CommandRefusal> {
+    use sim_runtime::{BandOrderAction, BandOrderRow};
+    let extraction = |reason: String| refused(CommandEventKind::Extraction, reason);
+    let labor = world.resource::<LaborConfigHandle>().get();
+    let ordered = labor.band_orders.is_ordered(kind);
+    let band =
+        select_starting_band(world, faction, Some(band_id), "band_order").map_err(extraction)?;
+    let has_leader = world
+        .get::<BandLeadership>(band.entity)
+        .is_some_and(|leadership| leadership.leader.is_some());
+    if !has_leader {
+        return Err(extraction(crate::keep_on_hand::leaderless_refusal(
+            kind,
+            &band.label,
+        )));
+    }
+    let (action_word, summary) = match action {
+        BandOrderAction::Set { target, priority } => {
+            if let Some(reason) = crate::keep_on_hand::set_refusal(ordered, kind, target) {
+                return Err(extraction(reason));
+            }
+            let Some(priority) =
+                SourcePriority::from_token(priority.trim().to_ascii_lowercase().as_str())
+            else {
+                return Err(extraction(format!(
+                    "Unknown work priority '{}' - expected {}, {} or {}.",
+                    priority.trim(),
+                    SourcePriority::High.as_str(),
+                    SourcePriority::Normal.as_str(),
+                    SourcePriority::Low.as_str()
+                )));
+            };
+            crate::keep_on_hand::set_order(
+                &mut band_allocation_mut(world, band.entity),
+                kind,
+                target,
+                priority,
+            );
+            (
+                "set",
+                format!(
+                    "{}: keeping {target} {kind} on hand (priority {})",
+                    band.label,
+                    priority.as_str()
+                ),
+            )
+        }
+        BandOrderAction::Release | BandOrderAction::Claim => {
+            let claiming = matches!(action, BandOrderAction::Claim);
+            let opening = labor.band_orders.starting_target_for(kind);
+            let held = world
+                .get::<LaborAllocation>(band.entity)
+                .is_some_and(|allocation| allocation.order_for(kind).is_some());
+            if !ordered || (!claiming && !held) || (claiming && !held && opening.is_none()) {
+                return Err(extraction(format!(
+                    "{kind} takes no order - it is crewed by hand with assign_labor."
+                )));
+            }
+            let mut allocation = band_allocation_mut(world, band.entity);
+            if let Some(row) = row {
+                // ONE row of a food or fodder order changes hands; the kind stays the chief's.
+                let material_kind = !crate::keep_on_hand::is_row_kind(kind);
+                let key = match &row {
+                    BandOrderRow::Tile { x, y } if material_kind => {
+                        crate::keep_on_hand::dig_key(kind, *x, *y)
+                    }
+                    BandOrderRow::Tile { x, y } => format!("f:{x},{y}"),
+                    // A herd is no stand of a material.
+                    BandOrderRow::Herd { .. } if material_kind => String::new(),
+                    BandOrderRow::Herd { id } => format!("h:{id}"),
+                };
+                let listed = allocation.order_rows.contains_key(&key);
+                let held = allocation.assignments.iter().any(|assignment| {
+                    crate::keep_on_hand::source_key(&assignment.target).as_deref()
+                        == Some(key.as_str())
+                });
+                if key.is_empty()
+                    || !allocation.chief_owns(kind)
+                    || !held
+                    || (claiming && listed)
+                    || (!claiming && !listed)
+                {
+                    return Err(extraction(format!(
+                        "{} has no {kind} row there for the chief to {}.",
+                        band.label,
+                        if claiming { "take back" } else { "hand over" }
+                    )));
+                }
+                if claiming {
+                    crate::keep_on_hand::claim_row(&mut allocation, &key, kind);
+                    (
+                        "claim",
+                        format!("{}: the chief takes the {kind} row back", band.label),
+                    )
+                } else {
+                    crate::keep_on_hand::release_row(&mut allocation, &key);
+                    (
+                        "release",
+                        format!("{}: that {kind} row is crewed by hand", band.label),
+                    )
+                }
+            } else if claiming {
+                crate::keep_on_hand::claim_order(
+                    &mut allocation,
+                    kind,
+                    opening.unwrap_or_default(),
+                );
+                (
+                    "claim",
+                    format!("{}: the chief keeps {kind} on hand", band.label),
+                )
+            } else {
+                crate::keep_on_hand::release_order(&mut allocation, kind);
+                (
+                    "release",
+                    format!("{}: {kind} is crewed by hand", band.label),
+                )
+            }
+        }
+    };
+    restaff_and_reseed(world, band.entity);
+    let tick = world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = "band_order",
+        faction = %faction.0,
+        band = band_id,
+        kind = %kind,
+        action = action_word,
+        "command.band_order.applied"
+    );
+    push_command_event(
+        world,
+        tick,
+        CommandEventKind::Extraction,
+        faction,
+        summary.clone(),
+        Some(format!(
+            "status=applied action=band_order order={action_word} kind={kind} band={band_id}"
+        )),
+    );
+    Ok(summary)
+}
+
 /// **HOW THE QUEUE VERBS NAME A SOURCE** — a tile, a herd id, a working (`material` on the tile
 /// pair) or a branch's own per-tile source (`branch` on the tile pair — the road branch's road)
 /// (`docs/plan_standing_upkeep.md` §2.5, `docs/plan_site_crews.md` §2.4). Every queue verb reads it:

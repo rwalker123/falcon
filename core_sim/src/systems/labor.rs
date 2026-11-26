@@ -4595,6 +4595,7 @@ impl PartyPosting {
         goods: &crate::work_party::CarriedGoods,
         bulk: f32,
         pack_bulk: f32,
+        keeping: Option<&crate::demographics_config::KeepingConfig>,
     ) -> HomeDelivery {
         let landed_now = self.party.close_turn_classed(
             crate::work_party::SourceTake {
@@ -4604,6 +4605,7 @@ impl PartyPosting {
             classes,
             goods,
             pack_bulk,
+            keeping,
         );
         self.closed = true;
         self.settle_pending(landed_now)
@@ -4659,15 +4661,20 @@ fn deliver_take_home(
     goods: &crate::work_party::CarriedGoods,
     bulk: f32,
     pack_bulk: f32,
+    keeping: Option<&crate::demographics_config::KeepingConfig>,
 ) -> HomeDelivery {
     match posting {
-        Some(posting) => posting.close_at_take(cargo, classes, goods, bulk, pack_bulk),
+        Some(posting) => posting.close_at_take(cargo, classes, goods, bulk, pack_bulk, keeping),
         None => HomeDelivery {
             total: cargo,
             packs: vec![crate::work_party::LandedPack {
                 walk_turns: crate::work_party::NO_WALK,
                 cargo: cargo.to_f32(),
-                classes: classes.clone(),
+                aged: vec![crate::work_party::AgedCargo {
+                    age: crate::work_party::NO_WALK,
+                    cargo: cargo.to_f32(),
+                    classes: classes.clone(),
+                }],
                 bulk,
                 goods: goods.clone(),
             }],
@@ -4807,26 +4814,33 @@ fn land_food_home(
     if delivery.total <= scalar_zero() {
         return crate::work_party::NOTHING_CARRIED;
     }
-    let pack_classes = |pack: &crate::work_party::LandedPack| -> crate::work_party::CargoClasses {
-        if pack.classes.is_empty() {
-            std::iter::once((fallback_class.to_string(), pack.cargo)).collect()
-        } else {
-            pack.classes.clone()
-        }
-    };
-    // **Each pack lands AGED BY ITS WALK**, so its shelf life is counted from the kill and not from
-    // the landing: a lot is keyed by (class, walk). The whole delivery is still one exact
-    // `delivery.total`, split across those lots in proportion to what the packs carried.
+    // **Each slice of a pack lands AGED BY THE TIME IT KEPT AT THE SOURCE PLUS ITS WALK**, so its
+    // shelf life counts from the take and not from the landing: a lot is keyed by (class, age). The
+    // whole delivery is still one exact `delivery.total`, split across those lots in proportion to
+    // what the packs carried.
     let mut lots: std::collections::BTreeMap<(String, u32), f32> =
         std::collections::BTreeMap::new();
+    let mut add = |class: &str, age: u32, amount: f32| {
+        // A class the table does not carry never rots, so its lot carries no age.
+        let age = crate::spoilage::base_shelf_life(keeping, class)
+            .map_or(crate::work_party::NO_WALK, |_| age);
+        *lots
+            .entry((class.to_string(), age))
+            .or_insert(crate::work_party::NOTHING_CARRIED) += amount;
+    };
     for pack in &delivery.packs {
-        for (class, amount) in pack_classes(pack) {
-            // A class the table does not carry never rots, so its lot carries no age.
-            let age = crate::spoilage::base_shelf_life(keeping, &class)
-                .map_or(crate::work_party::NO_WALK, |_| pack.walk_turns);
-            *lots
-                .entry((class, age))
-                .or_insert(crate::work_party::NOTHING_CARRIED) += amount;
+        if pack.aged.is_empty() {
+            add(fallback_class, pack.walk_turns, pack.cargo);
+            continue;
+        }
+        for slice in &pack.aged {
+            let age = slice.age + pack.walk_turns;
+            if slice.classes.is_empty() {
+                add(fallback_class, age, slice.cargo);
+            }
+            for (class, amount) in &slice.classes {
+                add(class, age, *amount);
+            }
         }
     }
     let landed = crate::components::FoodMix::from_aged_weights(
@@ -6597,6 +6611,7 @@ pub fn advance_labor_allocation(
                 crate::food_orders::manage_food_orders(
                     &mut allocation,
                     &crate::food_orders::FoodInputs {
+                        keeping: food_keeping,
                         site: &site_inputs,
                         tile_known: &|tile: UVec2| {
                             !fog || visibility
@@ -7623,6 +7638,8 @@ pub fn advance_labor_allocation(
             });
             let caravan_haul_carry = caravan_pricing.as_ref().map(|pricing| pricing.haul_carry);
             let caravan_forage_carry = caravan_pricing.as_ref().map(|pricing| pricing.forage_carry);
+            // The gather PACK is the container's hold, not the picking rate.
+            let caravan_forage_hold = caravan_pricing.as_ref().map(|pricing| pricing.forage_hold);
             let caravan_party_for = |body_mass: f32| {
                 caravan_pricing.as_ref().map(|pricing| {
                     pricing.hunters(
@@ -8313,7 +8330,8 @@ pub fn advance_labor_allocation(
                         &provisions_classes,
                         &goods_cut,
                         take,
-                        caravan_forage_carry.unwrap_or(NOTHING_DEMANDED),
+                        caravan_forage_hold.unwrap_or(NOTHING_DEMANDED),
+                        Some(food_keeping),
                     );
                     // What the packs that landed this turn brought besides food — the row's fodder
                     // and material income on a far row.
@@ -8328,9 +8346,11 @@ pub fn advance_labor_allocation(
                     // (`docs/plan_site_crews.md` §2.1) — the reading the seed and the query take
                     // (`fauna::crew_keep_hands`), netted off the hands present every stepped turn
                     // exactly as this turn's take was (`SiteKeeping::at_the_source`).
-                    if let (Some(posting), Some(carry)) =
-                        (postings.get_mut(&idx), caravan_forage_carry)
-                    {
+                    if let (Some(posting), Some(carry), Some(hold)) = (
+                        postings.get_mut(&idx),
+                        caravan_forage_carry,
+                        caravan_forage_hold,
+                    ) {
                         let keep_hands = crate::fauna::crew_keep_hands(
                             crate::forage::patch_crew_keeping(
                                 patch,
@@ -8350,6 +8370,7 @@ pub fn advance_labor_allocation(
                             &labor.forage,
                             &flora,
                             carry,
+                            hold,
                             seasonal,
                             mult_f,
                             *floor,
@@ -9238,6 +9259,7 @@ pub fn advance_labor_allocation(
                                 )
                                 .bulk,
                             pen_pack,
+                            Some(food_keeping),
                         );
                         let (_, materials_landed) =
                             land_delivered_goods(&mut cohort.stores, &delivery.packs);
@@ -10159,6 +10181,7 @@ pub fn advance_labor_allocation(
                             )
                             .bulk,
                         hunt_pack,
+                        Some(food_keeping),
                     );
                     let (_, materials_landed) =
                         land_delivered_goods(&mut cohort.stores, &delivery.packs);
@@ -10817,6 +10840,7 @@ pub fn advance_labor_allocation(
                             &crate::work_party::CarriedGoods::default(),
                             outcome.taken,
                             pack,
+                            crate::work_party::NO_KEEPING,
                         )
                         .total
                         .to_f32()
@@ -11809,6 +11833,7 @@ pub fn advance_labor_allocation(
                     &crate::work_party::CargoClasses::new(),
                     &crate::work_party::CarriedGoods::default(),
                     NOTHING_DEMANDED,
+                    home.is_food().then_some(food_keeping),
                 );
                 let delivery = posting.settle_pending(landed_now);
                 let landed = delivery.total.to_f32();
@@ -21748,7 +21773,11 @@ mod transit_rot_tests {
             packs: vec![LandedPack {
                 walk_turns,
                 cargo,
-                classes,
+                aged: vec![crate::work_party::AgedCargo {
+                    age: crate::work_party::NO_WALK,
+                    cargo,
+                    classes,
+                }],
                 ..LandedPack::default()
             }],
         }

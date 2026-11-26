@@ -343,6 +343,7 @@ pub fn seed_source_yield(
                     &labor.forage,
                     &flora,
                     pricing.forage_carry,
+                    pricing.forage_hold,
                     seasonal,
                     output_mult,
                     *floor,

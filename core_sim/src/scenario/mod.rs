@@ -11,7 +11,7 @@
 //!
 //! **Fail closed and whole**: any refusal drops the candidate and the previous world stays.
 //!
-//! Each section of the file is its own module (`bands` today), so two worktrees adding two sections
+//! Each section of the file is its own module (`bands`, `roads`), so two worktrees adding two sections
 //! touch two files.
 
 pub mod bands;
@@ -20,6 +20,7 @@ pub mod deposits;
 pub mod herds;
 pub mod labor;
 pub mod pens;
+pub mod roads;
 pub mod rungs;
 pub mod tiles;
 
@@ -42,8 +43,8 @@ pub use pens::PenEntry;
 pub use tiles::TileOverride;
 
 use crate::command_seam::{
-    apply_assign_labor, apply_set_auto_craft, apply_set_starting_loadout, apply_work_priority,
-    AssignLaborOrder,
+    apply_assign_labor, apply_band_order, apply_set_auto_craft, apply_set_starting_loadout,
+    apply_work_priority, AssignLaborOrder,
 };
 use crate::components::BandId;
 use crate::demographics_config::{DemographicsConfig, DemographicsConfigHandle};
@@ -249,6 +250,7 @@ pub fn parse_scenario(
     rungs::check(&file.factions, &file.herds, ctx, &mut refusals);
     labor::check(&file.factions, &file.herds, &file.world, ctx, &mut refusals);
     pens::check(&file.factions, &file.herds, &mut refusals);
+    roads::check(&file.factions, &file.world, ctx, &mut refusals);
     tiles::check(
         &file.tiles,
         (file.world.width, file.world.height),
@@ -352,6 +354,8 @@ pub fn finish_scenario(
     for faction_setup in &setup.factions {
         rungs::apply_held(world, faction_setup, &herds, &mut refusals);
     }
+    // Held roads are setters too: a keeper's labor row (`labor`) is replayed after them.
+    roads::apply(world, &setup, &mut refusals);
     if !refusals.is_empty() {
         return Err(refusals);
     }
@@ -470,6 +474,17 @@ pub fn finish_scenario(
                     },
                     order.level.clone(),
                 ),
+                LaborEntry::BandOrder(order) => {
+                    let Some((action, row)) = labor::band_order_wire(order) else {
+                        refusals.push(ScenarioRefusal::new(
+                            path,
+                            "this band_order names no complete action",
+                        ));
+                        return Err(refusals);
+                    };
+                    apply_band_order(world, faction, band.0, &order.kind, action, row)
+                        .map(|_label| ())
+                }
             };
             if let Err(refusal) = result {
                 // **A refused entry stops the load there**: later rows may stand on this one.

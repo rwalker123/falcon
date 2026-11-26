@@ -14,14 +14,13 @@ use bevy::prelude::*;
 use crate::build_gates::{validate_improvement, PEN_TAKEN_HINT};
 use crate::components::{BandBench, BandId, PopulationCohort, MIN_ORDER_COUNT};
 use crate::equipment_config::EquipmentConfigHandle;
-use crate::grid_utils::hex_distance_wrapped;
 pub use crate::labor_commands::{
-    apply_assign_labor, apply_work_priority, forage_source, is_pen_climb, pen_queuer,
-    queue_build_on_working_bands, AssignLaborOrder, SOURCE_NAMED_NOT_ASSIGNED,
+    apply_assign_labor, apply_band_order, apply_work_priority, forage_source, is_pen_climb,
+    pen_queuer, queue_build_on_working_bands, AssignLaborOrder, SOURCE_NAMED_NOT_ASSIGNED,
 };
 use crate::orders::FactionId;
 use crate::recipes_config::RecipesConfigHandle;
-use crate::resources::{CommandEventKind, SimulationConfig};
+use crate::resources::CommandEventKind;
 use crate::starting_loadout::{
     apply_starting_loadout, KitAllocation, LoadoutRejection, LoadoutSupply, MaterialAllocation,
     StartingLoadout,
@@ -29,8 +28,7 @@ use crate::starting_loadout::{
 use crate::{
     herd_rung_key, knows, BranchId, BuildJob, BuildSource, DiscoveryProgressLedger,
     FaunaConfigHandle, HerdRegistry, LaborAllocation, LaborTarget, LadderConfigHandle, RoadKeeper,
-    RoadRegistry, RungDef, SourceKind, TakeSelection, Tile, TileRegistry, VerbId,
-    NO_STANDING_COMMITMENT,
+    RoadRegistry, RungDef, SourceKind, TakeSelection, Tile, VerbId, NO_STANDING_COMMITMENT,
 };
 
 /// **Why a replayed verb was refused.** `Display` is the reason text the event feed already shows
@@ -548,7 +546,7 @@ fn build_refusal(
 ///
 /// A road is a per-tile improvement with a **keeper** and no labor row, so issuing one **declares
 /// the job** (a `BuildDeclaration` on that band's queue) and **names the keeper** - the same act.
-/// The band's hex distance to the tile is quoted through [`crate::remoteness_multiplier`] and
+/// The band's hex distance to the tile is quoted through [`crate::quote_road_remoteness`] and
 /// **stamped on the road**, where it prices the build pile and the standing upkeep for the life of
 /// the job. There is deliberately **no range refusal**.
 fn apply_road_verb(
@@ -586,13 +584,7 @@ fn apply_road_verb(
             RefusalLog::FeedOnly,
         ));
     };
-    let (width, wrap) = {
-        let registry = world.resource::<TileRegistry>();
-        let config = world.resource::<SimulationConfig>();
-        (registry.width, config.map_topology.wrap_horizontal)
-    };
-    let distance = hex_distance_wrapped(band_tile, tile, width, wrap);
-    let remoteness = crate::remoteness_multiplier(distance, &ladder);
+    let (distance, remoteness) = crate::quote_road_remoteness(world, band_tile, tile, &ladder);
     {
         let mut roads = world.resource_mut::<RoadRegistry>();
         let Some(road) = roads.road_mut(tile) else {

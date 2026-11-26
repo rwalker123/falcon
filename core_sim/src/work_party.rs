@@ -112,14 +112,111 @@ pub const NO_LOAD_WITHIN_HORIZON: u32 = 0;
 /// An empty load, or a walker who has handed over what they carried.
 pub const NOTHING_CARRIED: f32 = 0.0;
 
+/// A caravan with no food to keep — the deposit web's cargo is a material, and a material keeps.
+pub const NO_KEEPING: Option<&'static crate::demographics_config::KeepingConfig> = None;
+
 /// **What a load or a pack is MADE OF, by keeping class** (#706) — cargo per class, in the cargo's
 /// own unit. The caravan's arithmetic runs on the scalar `cargo`; this rides beside it as the
 /// composition that cargo lands as, split in the same proportion every time a pack leaves the load.
 /// Empty on the deposit web, whose cargo is a material and keeps for ever.
 pub type CargoClasses = std::collections::BTreeMap<String, f32>;
 
-/// **One pack that reached home this turn**, with the walk it was carried on — the two facts the
-/// transit rot reads.
+/// **One slice of food, by the turn it was taken** — what a pack lands as. `age` is how many turns
+/// the food had kept at the source when its porter set out; it lands aged by `age + walk`
+/// ([`crate::components::FoodMix::from_aged_weights`]) and a class is lost whole when its shelf life
+/// is no longer than that.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AgedCargo {
+    /// Turns the food had kept when the porter left.
+    pub age: u32,
+    /// The cargo in this slice.
+    pub cargo: f32,
+    /// What that cargo is made of; empty reads as the web's fallback class at landing.
+    pub classes: CargoClasses,
+}
+
+/// **FOOD AGES AT THE SOURCE** — what a load or a pack holds, as slices by the turn they were taken,
+/// oldest first.
+pub type AgedFood = Vec<AgedCargo>;
+
+/// **One take's worth of the load**, FIFO by the turn it was taken: its food (with the classes), its
+/// bulk and its fodder and materials. A pack takes the oldest lots first.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Lot {
+    /// Turns this lot has kept at the source (counted only while the party's walk is above nothing).
+    pub age: u32,
+    /// Its food cargo.
+    pub cargo: f32,
+    /// Its bulk, in the carry's unit.
+    pub bulk: f32,
+    /// What the cargo is made of, by keeping class.
+    pub classes: CargoClasses,
+    /// Its fodder and materials.
+    pub goods: CarriedGoods,
+}
+
+impl Lot {
+    /// Nothing left in it.
+    fn is_empty(&self) -> bool {
+        self.bulk <= NOTHING_CARRIED && self.cargo <= NOTHING_CARRIED && self.goods.is_empty()
+    }
+
+    /// **Take `share` of this lot** (`0..1`) out as a lot of its own, the same split every part of
+    /// it gets. A share of the whole takes everything.
+    fn take_share(&mut self, share: f32) -> Lot {
+        if share >= WHOLE_LOAD {
+            return std::mem::take(self);
+        }
+        let cargo = self.cargo * share;
+        let bulk = self.bulk * share;
+        let classes = scaled_classes(&self.classes, share);
+        for (class, amount) in &classes {
+            if let Some(held) = self.classes.get_mut(class) {
+                *held = (*held - amount).max(NOTHING_CARRIED);
+            }
+        }
+        self.cargo = (self.cargo - cargo).max(NOTHING_CARRIED);
+        self.bulk = (self.bulk - bulk).max(NOTHING_CARRIED);
+        Lot {
+            age: self.age,
+            cargo,
+            bulk,
+            classes,
+            goods: self.goods.take_share(share),
+        }
+    }
+}
+
+/// The food of `lots`, as slices by age (lots of one age merged).
+fn aged_food_of(lots: &[Lot]) -> AgedFood {
+    let mut aged: AgedFood = Vec::new();
+    for lot in lots.iter().filter(|lot| lot.cargo > NOTHING_CARRIED) {
+        match aged.iter_mut().find(|slice| slice.age == lot.age) {
+            Some(slice) => {
+                slice.cargo += lot.cargo;
+                merge_classes(&mut slice.classes, &lot.classes);
+            }
+            None => aged.push(AgedCargo {
+                age: lot.age,
+                cargo: lot.cargo,
+                classes: lot.classes.clone(),
+            }),
+        }
+    }
+    aged
+}
+
+/// Every lot's fodder and materials, merged.
+fn goods_of(lots: &[Lot]) -> CarriedGoods {
+    let mut goods = CarriedGoods::default();
+    for lot in lots {
+        goods.merge(&lot.goods);
+    }
+    goods
+}
+
+/// **One pack that reached home this turn**, with the walk it was carried on and the age its food
+/// had kept when it set out — the facts the transit rot reads.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LandedPack {
     /// The one-way walk the porter set out on, in turns. [`NO_WALK`] for a pack landed without
@@ -127,12 +224,26 @@ pub struct LandedPack {
     pub walk_turns: u32,
     /// The cargo it carried.
     pub cargo: f32,
-    /// What that cargo is made of.
-    pub classes: CargoClasses,
+    /// **What that cargo is made of, by the age it had kept at departure.** Empty reads as one slice
+    /// of the whole cargo, fresh, in the web's fallback class.
+    pub aged: AgedFood,
     /// **The pack's bulk** — what it weighed in the carry's unit, whatever its cargo is worth.
     pub bulk: f32,
     /// **Its fodder and materials** (#706) — landed with it, never rotted.
     pub goods: CarriedGoods,
+}
+
+impl LandedPack {
+    /// A pack of `lots` that walked `walk_turns`.
+    fn of_lots(walk_turns: u32, lots: &[Lot]) -> Self {
+        Self {
+            walk_turns,
+            cargo: lots.iter().map(|lot| lot.cargo).sum(),
+            aged: aged_food_of(lots),
+            bulk: lots.iter().map(|lot| lot.bulk).sum(),
+            goods: goods_of(lots),
+        }
+    }
 }
 
 /// `classes × share`, the part of a composition a fraction of its cargo carries.
@@ -228,19 +339,24 @@ pub struct Walker {
     pub walk_turns: u32,
     /// Turns since this hunter left the party with the pack.
     pub turns_out: u32,
-    /// **The cargo in the pack** — what goes home: food on the two food webs, material units on
-    /// the deposit web. Handed to the home band when `turns_out` reaches `walk_turns`, and
-    /// [`NOTHING_CARRIED`] on the way back.
-    pub cargo: f32,
-    /// **What the pack is made of, by keeping class** — split off the load with the cargo.
-    pub classes: CargoClasses,
-    /// The pack's bulk, in the carry's unit.
-    pub bulk: f32,
-    /// **Its fodder and materials** (#706) — split off the load with the cargo.
-    pub goods: CarriedGoods,
+    /// **The pack**, as lots in the order they were taken, each carrying the age its food had kept
+    /// when the porter left. Handed to the home band when `turns_out` reaches `walk_turns`, and
+    /// empty on the way back.
+    pub lots: Vec<Lot>,
 }
 
 impl Walker {
+    /// The cargo in the pack — what goes home: food on the two food webs, material units on the
+    /// deposit web.
+    pub fn cargo(&self) -> f32 {
+        self.lots.iter().map(|lot| lot.cargo).sum()
+    }
+
+    /// The pack's bulk, in the carry's unit.
+    pub fn bulk(&self) -> f32 {
+        self.lots.iter().map(|lot| lot.bulk).sum()
+    }
+
     /// Still walking a load home — the pack has not been handed over yet.
     fn carrying(&self) -> bool {
         self.turns_out < self.walk_turns
@@ -278,19 +394,15 @@ pub struct WorkParty {
     /// `walk_turns` turns with no take. It is never re-raised — a herd that drifts further out
     /// changes the next porter's walk, not a second walk out.
     pub walk_out_remaining: u32,
-    /// **THE LOAD** — take gathered at the source and not yet carried, in **bulk**: the unit a pack
-    /// is measured in. Biomass on the two food webs; material units on the deposit web.
-    pub load_bulk: f32,
-    /// **The cargo [`Self::load_bulk`] converts to** — what goes home (food, or material units on the
-    /// deposit web, where cargo and bulk are one number), riding alongside it so a pack carries its
-    /// own share of it home.
-    pub load_cargo: f32,
-    /// **What [`Self::load_cargo`] is made of, by keeping class** (#706) — what each take added,
-    /// split off with every pack in the cargo's own proportion.
-    pub load_classes: CargoClasses,
-    /// **The load's fodder and materials** (#706) — what each forage take added beside its food,
-    /// split off with every pack in the same proportion.
-    pub load_goods: CarriedGoods,
+    /// **THE LOAD** — take gathered at the source and not yet carried, as lots in the order they
+    /// were taken (FIFO: a pack takes the oldest first). Each lot is measured in **bulk** — the unit
+    /// a pack is measured in: biomass on the two food webs, material units on the deposit web — and
+    /// carries its food cargo, its keeping classes and the turns it has kept at the source.
+    pub load: Vec<Lot>,
+    /// **Food that rotted in the load before a porter could carry it**, this turn — never income, so
+    /// no ledger term; the forecast counts it in its spoiled figure. Transient.
+    #[serde(skip)]
+    pub rotted_at_source: f32,
     /// **THE HUNTERS ON THE ROAD** — at most the party, in the order they left.
     pub on_the_road: Vec<Walker>,
     /// **THE PER-TURN RATE ARRIVING AT THE HOME BAND** — the cargo home per turn over the forecast
@@ -358,36 +470,103 @@ impl TransitRot<'_> {
         }
     }
 
+    /// **A herd's cargo**: its species' one keeping class (the kill fallback where the species names
+    /// none), the whole cargo. The one constructor the hunt forecast and the chief's food ranking share.
+    pub fn of_herd<'a>(
+        keeping: &'a crate::demographics_config::KeepingConfig,
+        fauna: &FaunaConfig,
+        species: &str,
+    ) -> TransitRot<'a> {
+        let class = fauna
+            .keeping_for(species)
+            .unwrap_or(&keeping.kill_fallback_class);
+        TransitRot::single(keeping, class)
+    }
+
+    /// **A forage patch's cargo**: the basket's classes, decomposed as the take site credits them
+    /// ([`crate::forage::patch_food_mix`]). The one constructor the forage forecast and the chief's
+    /// food ranking share.
+    pub fn of_patch<'a>(
+        keeping: &'a crate::demographics_config::KeepingConfig,
+        patch: &crate::forage::ForagePatch,
+        tile_composition: &[crate::flora_config::FloraShare],
+        flora: &FloraConfig,
+        forage: &ForageLaborConfig,
+        take_species: &crate::components::TakeSelection,
+    ) -> TransitRot<'a> {
+        let one_unit = crate::scalar::scalar_one();
+        TransitRot {
+            keeping,
+            shares: crate::forage::patch_food_mix(
+                patch,
+                tile_composition,
+                flora,
+                forage,
+                take_species,
+                one_unit,
+                keeping,
+            )
+            .iter()
+            .map(|(class, share)| (class.to_string(), share.to_f32()))
+            .collect(),
+            meals_per_turn: NOTHING_CAPS_THE_MEAL,
+        }
+    }
+
     /// The same cargo for a band that eats `meals_per_turn` of it a turn.
     pub fn eaten_at(mut self, meals_per_turn: f32) -> Self {
         self.meals_per_turn = meals_per_turn;
         self
     }
 
-    /// **THE PART OF A LANDING PACK THE LARDER KEEPS** - the pack is aged by its walk when it lands
-    /// (`systems::labor::land_food_home`), so a class with `shelf` turns of life has `shelf - walk`
-    /// meals left to be eaten at, and what the band cannot eat at `meals_per_turn` in them rots with
-    /// it (the band's spoilage, which a ROW does not display: its own reading passes
-    /// [`NOTHING_CAPS_THE_MEAL`]). A class whose shelf life is no longer than the walk is lost whole
-    /// ([`crate::spoilage::rots_in_transit`], the rule the landing applies); a walk of no length lands
-    /// fresh and is capped by nothing. A class the table does not carry never ages.
-    pub fn kept_of_pack(&self, walk_turns: u32, cargo: f32) -> f32 {
-        self.shares
+    /// **THE PART OF A LANDING PACK THE LARDER KEEPS** - the pack is aged by the time its food kept
+    /// at the source plus its walk when it lands (`systems::labor::land_food_home`), so a class with
+    /// `shelf` turns of life has `shelf - age - walk` meals left to be eaten at, and what the band
+    /// cannot eat at `meals_per_turn` in them rots with it (the band's spoilage, which a ROW does
+    /// not display: its own reading passes [`NOTHING_CAPS_THE_MEAL`]). A class whose shelf life is
+    /// no longer than that age is lost whole ([`crate::spoilage::rots_in_transit`], the rule the
+    /// landing applies); a pack of no age lands fresh and is capped by nothing. A class the table
+    /// does not carry never ages. A pack naming no slice reads as this cargo's own shares, fresh.
+    pub fn kept_of_landed(&self, pack: &LandedPack) -> f32 {
+        let fresh_shares;
+        let slices: &[AgedCargo] = if pack.aged.is_empty() {
+            fresh_shares = [AgedCargo {
+                age: NO_WALK,
+                cargo: pack.cargo,
+                classes: scaled_classes(&self.shares, pack.cargo),
+            }];
+            &fresh_shares
+        } else {
+            &pack.aged
+        };
+        slices
             .iter()
-            .map(|(class, share)| {
-                let carried = cargo * share;
-                if crate::spoilage::rots_in_transit(class, walk_turns, self.keeping) {
-                    return NOTHING_CARRIED;
-                }
-                match crate::spoilage::base_shelf_life(self.keeping, class) {
-                    Some(shelf) if walk_turns > NO_WALK => {
-                        carried.min(self.meals_per_turn * (shelf - walk_turns as f32))
-                    }
-                    _ => carried,
-                }
+            .flat_map(|slice| {
+                let shares_of;
+                let classes = if slice.classes.is_empty() {
+                    shares_of = scaled_classes(&self.shares, slice.cargo);
+                    &shares_of
+                } else {
+                    &slice.classes
+                };
+                classes
+                    .iter()
+                    .map(|(class, carried)| {
+                        let aged = slice.age + pack.walk_turns;
+                        if crate::spoilage::rots_in_transit(class, aged, self.keeping) {
+                            return NOTHING_CARRIED;
+                        }
+                        match crate::spoilage::base_shelf_life(self.keeping, class) {
+                            Some(shelf) if aged > NO_WALK => {
+                                carried.min(self.meals_per_turn * (shelf - aged as f32))
+                            }
+                            _ => *carried,
+                        }
+                    })
+                    .collect::<Vec<f32>>()
             })
             .sum::<f32>()
-            .min(cargo)
+            .min(pack.cargo)
     }
 
     /// The share of a pack's cargo that rots on a walk of `walk_turns` —
@@ -505,20 +684,25 @@ impl WorkParty {
     ///    whole round trip rejoins the party.
     /// 2. A party still walking out counts one turn of it off and has nobody at the source.
     pub fn open_turn(&mut self) -> TurnOpen {
+        // **The rot tally is this turn's alone**: a new turn starts it at nothing, so the live
+        // party never carries past rot into a forecast clone, which would count it again.
+        self.rotted_at_source = NOTHING_CARRIED;
         let mut delivered = NOTHING_CARRIED;
         let mut packs = Vec::new();
+        // **Food ages at the source**: every lot in the load keeps one more turn. A walk of no length
+        // lands at once and ages nothing.
+        if self.walk_turns > NO_WALK {
+            for lot in self.load.iter_mut() {
+                lot.age += 1;
+            }
+        }
         for walker in self.on_the_road.iter_mut() {
             walker.turns_out += 1;
             if walker.turns_out == walker.walk_turns {
-                let cargo = std::mem::replace(&mut walker.cargo, NOTHING_CARRIED);
-                delivered += cargo;
-                packs.push(LandedPack {
-                    walk_turns: walker.walk_turns,
-                    cargo,
-                    classes: std::mem::take(&mut walker.classes),
-                    bulk: std::mem::replace(&mut walker.bulk, NOTHING_CARRIED),
-                    goods: std::mem::take(&mut walker.goods),
-                });
+                let lots = std::mem::take(&mut walker.lots);
+                let pack = LandedPack::of_lots(walker.walk_turns, &lots);
+                delivered += pack.cargo;
+                packs.push(pack);
             }
         }
         self.on_the_road.retain(|walker| !walker.rejoined());
@@ -535,6 +719,104 @@ impl WorkParty {
             packs,
             present: self.hunters_present(),
         }
+    }
+
+    /// The cargo in the load — take gathered and not yet carried.
+    pub fn load_cargo(&self) -> f32 {
+        self.load.iter().map(|lot| lot.cargo).sum()
+    }
+
+    /// The load's bulk, in the carry's unit.
+    pub fn load_bulk(&self) -> f32 {
+        self.load.iter().map(|lot| lot.bulk).sum()
+    }
+
+    /// The fodder in the load.
+    pub fn load_fodder(&self) -> f32 {
+        self.load.iter().map(|lot| lot.goods.fodder).sum()
+    }
+
+    /// **Take what rotted at the source this turn**, leaving nothing behind.
+    pub fn take_rotted_at_source(&mut self) -> f32 {
+        std::mem::take(&mut self.rotted_at_source)
+    }
+
+    /// **FOOD THAT CAN NO LONGER BE SAVED ROTS WHERE IT LIES** — every food class in the load whose
+    /// shelf life is no longer than `age + walk` would be lost on landing whoever carried it, so it
+    /// is dropped from the load now. It was never income: no ledger term answers for it, and the
+    /// forecast counts it in its spoiled figure. A walk of no length rots nothing.
+    fn rot_the_load(&mut self, keeping: &crate::demographics_config::KeepingConfig) {
+        if self.walk_turns == NO_WALK {
+            return;
+        }
+        let walk = self.walk_turns;
+        let mut rotted = NOTHING_CARRIED;
+        for lot in self.load.iter_mut() {
+            let cargo_before = lot.cargo;
+            if cargo_before <= NOTHING_CARRIED {
+                continue;
+            }
+            let lost: Vec<(String, f32)> = lot
+                .classes
+                .iter()
+                .filter(|(class, _)| {
+                    crate::spoilage::rots_in_transit(class, lot.age + walk, keeping)
+                })
+                .map(|(class, amount)| (class.clone(), *amount))
+                .collect();
+            for (class, amount) in lost {
+                lot.classes.remove(&class);
+                lot.cargo = (lot.cargo - amount).max(NOTHING_CARRIED);
+                // The rotten food's bulk leaves with it; a lot that also carries fodder or materials
+                // keeps its bulk, so what rides with the food still fills a pack and walks home.
+                if lot.goods.is_empty() {
+                    lot.bulk = (lot.bulk - lot.bulk * (amount / cargo_before)).max(NOTHING_CARRIED);
+                }
+                rotted += amount;
+            }
+        }
+        self.rotted_at_source += rotted;
+        self.load.retain(|lot| !lot.is_empty());
+    }
+
+    /// **Would waiting one more turn lose the oldest food lot on landing?** — some class in the
+    /// oldest food lot is saved today (`shelf > age + walk`) and lost tomorrow
+    /// (`shelf <= age + 1 + walk`). Materials and fodder never rot and never ask.
+    fn oldest_food_is_about_to_be_lost(
+        &self,
+        keeping: &crate::demographics_config::KeepingConfig,
+    ) -> bool {
+        if self.walk_turns == NO_WALK {
+            return false;
+        }
+        let Some(lot) = self.load.iter().find(|lot| lot.cargo > NOTHING_CARRIED) else {
+            return false;
+        };
+        let landed_aged = (lot.age + self.walk_turns) as f32;
+        lot.classes
+            .iter()
+            .filter(|(_, amount)| **amount > NOTHING_CARRIED)
+            .filter_map(|(class, _)| crate::spoilage::base_shelf_life(keeping, class))
+            .any(|shelf| shelf > landed_aged && shelf <= landed_aged + 1.0)
+    }
+
+    /// **Fill one pack off the load, oldest lots first**, up to `room` of bulk.
+    fn take_pack(&mut self, room: f32) -> Vec<Lot> {
+        let mut pack = Vec::new();
+        let mut room = room;
+        while room > NOTHING_CARRIED && !self.load.is_empty() {
+            let lot_bulk = self.load[0].bulk;
+            if lot_bulk <= room {
+                pack.push(self.load.remove(0));
+                room -= lot_bulk;
+            } else {
+                let share = room / lot_bulk;
+                pack.push(self.load[0].take_share(share));
+                room = NOTHING_CARRIED;
+            }
+        }
+        self.load.retain(|lot| !lot.is_empty());
+        pack
     }
 
     /// **STEPS 4 AND 5 OF A CARAVAN TURN** — the take is loaded, then the packs go. Returns the cargo
@@ -558,90 +840,87 @@ impl WorkParty {
             &CargoClasses::new(),
             &CarriedGoods::default(),
             pack_bulk,
+            NO_KEEPING,
         )
         .map_or(NOTHING_CARRIED, |pack| pack.cargo)
     }
 
     /// **[`Self::close_turn`] with the take's keeping classes** (#706) — the take site's form. The
-    /// take's `classes` join the load's, and every pack that leaves carries its share of them. The
-    /// pack landed without a walk (if any) comes back whole, classes and all, so the take site can
-    /// credit it by class; its cargo is exactly what [`Self::close_turn`] returns.
+    /// take joins the load as a lot of its own, and every pack that leaves carries its share of it.
+    /// The pack landed without a walk (if any) comes back whole, classes and all, so the take site
+    /// can credit it by class; its cargo is exactly what [`Self::close_turn`] returns.
     ///
-    /// `goods` are the take's fodder and materials (#706): they join the load and leave in every
+    /// `goods` are the take's fodder and materials (#706): they join the lot and leave in every
     /// pack in the same proportion as its bulk, so they land when the pack does.
+    ///
+    /// ⛔ **FOOD AGES AT THE SOURCE, AND A PORTER LEAVES BEFORE IT SPOILS.** With `keeping` (the food
+    /// webs), food in the load that could no longer be saved (`shelf <= age + walk`) rots where it
+    /// lies ([`Self::rotted_at_source`]), and while a hand is present a porter leaves with a
+    /// part-full pack — the oldest lots, up to one pack — when waiting one more turn would lose the
+    /// oldest food lot on landing. Otherwise a porter waits for a full pack.
     pub fn close_turn_classed(
         &mut self,
         take: SourceTake,
         classes: &CargoClasses,
         goods: &CarriedGoods,
         pack_bulk: f32,
+        keeping: Option<&crate::demographics_config::KeepingConfig>,
     ) -> Option<LandedPack> {
         // A take worth no cargo at all (an inedible quarry, a fibre crop) still loads its bulk —
         // the porters walk it whatever it is worth.
-        self.load_bulk += take.bulk.max(NOTHING_CARRIED);
-        self.load_cargo += take.cargo.max(NOTHING_CARRIED);
-        merge_classes(&mut self.load_classes, classes);
-        self.load_goods.merge(goods);
+        let fresh = Lot {
+            age: NO_WALK,
+            cargo: take.cargo.max(NOTHING_CARRIED),
+            bulk: take.bulk.max(NOTHING_CARRIED),
+            classes: classes.clone(),
+            goods: goods.clone(),
+        };
+        if !fresh.is_empty() {
+            match self.load.last_mut() {
+                Some(newest) if newest.age == NO_WALK => {
+                    newest.cargo += fresh.cargo;
+                    newest.bulk += fresh.bulk;
+                    merge_classes(&mut newest.classes, &fresh.classes);
+                    newest.goods.merge(&fresh.goods);
+                }
+                _ => self.load.push(fresh),
+            }
+        }
+        if let Some(keeping) = keeping {
+            self.rot_the_load(keeping);
+        }
 
-        let mut delivered = NOTHING_CARRIED;
-        let mut delivered_classes = CargoClasses::new();
-        let mut delivered_bulk = NOTHING_CARRIED;
-        let mut delivered_goods = CarriedGoods::default();
+        let mut landed_lots: Vec<Lot> = Vec::new();
         let mut landed_now = false;
         let mut present = self.hunters_present();
-        let loads_a_pack =
-            |load: f32| load > NOTHING_CARRIED && (!pack_bulk.is_finite() || load >= pack_bulk);
         if pack_bulk > NOTHING_CARRIED {
-            while present > NOBODY_ON_THE_ROAD && loads_a_pack(self.load_bulk) {
-                let carried = self.load_bulk.min(pack_bulk);
-                let share = carried / self.load_bulk;
-                let cargo = self.load_cargo * share;
-                let pack_classes = scaled_classes(&self.load_classes, share);
-                let pack_goods = if share >= WHOLE_LOAD {
-                    std::mem::take(&mut self.load_goods)
-                } else {
-                    self.load_goods.take_share(share)
-                };
-                self.load_bulk = (self.load_bulk - carried).max(NOTHING_CARRIED);
-                self.load_cargo = (self.load_cargo - cargo).max(NOTHING_CARRIED);
-                if self.load_cargo <= NOTHING_CARRIED {
-                    self.load_classes.clear();
-                } else {
-                    for (class, amount) in &pack_classes {
-                        if let Some(held) = self.load_classes.get_mut(class) {
-                            *held = (*held - amount).max(NOTHING_CARRIED);
-                        }
-                    }
+            while present > NOBODY_ON_THE_ROAD {
+                let load = self.load_bulk();
+                let full = load > NOTHING_CARRIED && (!pack_bulk.is_finite() || load >= pack_bulk);
+                let leaves_early = !full
+                    && !self.load.is_empty()
+                    && keeping.is_some_and(|keeping| self.oldest_food_is_about_to_be_lost(keeping));
+                if !full && !leaves_early {
+                    break;
                 }
-                if self.load_bulk <= NOTHING_CARRIED {
-                    self.load_goods = CarriedGoods::default();
+                let lots = self.take_pack(pack_bulk);
+                if lots.is_empty() {
+                    break;
                 }
                 if self.walk_turns == NO_WALK {
-                    delivered += cargo;
-                    merge_classes(&mut delivered_classes, &pack_classes);
-                    delivered_bulk += carried;
-                    delivered_goods.merge(&pack_goods);
+                    landed_lots.extend(lots);
                     landed_now = true;
                     continue;
                 }
                 self.on_the_road.push(Walker {
                     walk_turns: self.walk_turns,
                     turns_out: 0,
-                    cargo,
-                    classes: pack_classes,
-                    bulk: carried,
-                    goods: pack_goods,
+                    lots,
                 });
                 present -= 1;
             }
         }
-        landed_now.then_some(LandedPack {
-            walk_turns: NO_WALK,
-            cargo: delivered,
-            classes: delivered_classes,
-            bulk: delivered_bulk,
-            goods: delivered_goods,
-        })
+        landed_now.then(|| LandedPack::of_lots(NO_WALK, &landed_lots))
     }
 
     /// **ONE WHOLE CARAVAN TURN around a take `take` prices at the hunters present** — exactly [`Self::open_turn`] → the take → [`Self::close_turn`], which is the
@@ -680,6 +959,9 @@ impl WorkParty {
             ));
         } else {
             let at_the_source = self.hunters_present();
+            let source_cargo = self.load_cargo();
+            let source_aged = aged_food_of(&self.load);
+            let source_goods = goods_of(&self.load);
             for walker in self.on_the_road {
                 walks.push(HomewardWalk::of_porter(target, walker));
             }
@@ -691,9 +973,9 @@ impl WorkParty {
                     workers: at_the_source,
                     turns_left: self.walk_turns,
                     walk_turns: self.walk_turns,
-                    cargo: self.load_cargo,
-                    classes: self.load_classes,
-                    goods: self.load_goods,
+                    cargo: source_cargo,
+                    aged: source_aged,
+                    goods: source_goods,
                     rejoins_row: WALKS_PLAIN,
                 });
             }
@@ -842,8 +1124,9 @@ pub struct HomewardWalk {
     pub walk_turns: u32,
     /// The cargo it carries — food, or a deposit's material units.
     pub cargo: f32,
-    /// What that cargo is made of, by keeping class.
-    pub classes: CargoClasses,
+    /// **What that cargo is made of, by keeping class and the age it had kept when the walk
+    /// began.** Empty reads as the whole cargo, fresh, in the web's fallback class.
+    pub aged: AgedFood,
     /// **Its fodder and materials** (#706) — landed with it, never rotted.
     pub goods: CarriedGoods,
     /// ⛔ **THE WALK'S HANDS ARE STILL ON THEIR ROW** — set when the row survives the stand-down
@@ -852,6 +1135,44 @@ pub struct HomewardWalk {
     /// they do. `false` is the plain walk — hands off any row, counted by
     /// `LaborAllocation::walking_home` and landing into the band's idle pool.
     pub rejoins_row: bool,
+}
+
+/// **The food of `pack` that is lost on landing** — every class whose shelf life is no longer than
+/// the age its slice had kept at departure plus the walk ([`crate::spoilage::rots_in_transit`]).
+/// A pack naming no slice reads as its whole cargo, fresh, in `fallback`.
+pub fn lost_on_landing(
+    pack: &LandedPack,
+    fallback: &str,
+    keeping: &crate::demographics_config::KeepingConfig,
+) -> f32 {
+    let rots = |class: &str, age: u32| {
+        crate::spoilage::rots_in_transit(class, age + pack.walk_turns, keeping)
+    };
+    if pack.aged.is_empty() {
+        return if rots(fallback, NO_WALK) {
+            pack.cargo
+        } else {
+            NOTHING_CARRIED
+        };
+    }
+    pack.aged
+        .iter()
+        .map(|slice| {
+            if slice.classes.is_empty() {
+                return if rots(fallback, slice.age) {
+                    slice.cargo
+                } else {
+                    NOTHING_CARRIED
+                };
+            }
+            slice
+                .classes
+                .iter()
+                .filter(|(class, _)| rots(class, slice.age))
+                .map(|(_, amount)| *amount)
+                .sum()
+        })
+        .sum()
 }
 
 /// A walk whose hands are on no row — the default every stand-down starts with.
@@ -873,7 +1194,7 @@ impl HomewardWalk {
             turns_left,
             walk_turns: NO_WALK,
             cargo: NOTHING_CARRIED,
-            classes: CargoClasses::new(),
+            aged: AgedFood::new(),
             goods: CarriedGoods::default(),
             rejoins_row: WALKS_PLAIN,
         }
@@ -897,9 +1218,9 @@ impl HomewardWalk {
             workers: ONE_PORTER,
             turns_left: Self::turns_home_of(&walker),
             walk_turns: walker.walk_turns,
-            cargo: walker.cargo,
-            classes: walker.classes,
-            goods: walker.goods,
+            cargo: walker.cargo(),
+            aged: aged_food_of(&walker.lots),
+            goods: goods_of(&walker.lots),
             rejoins_row: WALKS_PLAIN,
         }
     }
@@ -921,30 +1242,19 @@ impl HomewardWalk {
         !matches!(self.target, crate::components::LaborTarget::Extract { .. })
     }
 
-    /// **The food it carries that will rot before it lands** — every class whose shelf life is
-    /// no longer than its walk ([`crate::spoilage::rots_in_transit`]), the rule its landing applies.
-    /// A pack naming no class reads as its web's fallback class, as the larder lands it.
+    /// **The food it carries that will rot before it lands** — every class whose shelf life is no
+    /// longer than the age it had kept when the walk began plus the walk
+    /// ([`crate::spoilage::rots_in_transit`]), the rule its landing applies. Food naming no class
+    /// reads as its web's fallback class, as the larder lands it.
     pub fn food_that_rots(&self, keeping: &crate::demographics_config::KeepingConfig) -> f32 {
         if !self.carries_food() {
             return NOTHING_CARRIED;
         }
-        let rots = |class: &str| crate::spoilage::rots_in_transit(class, self.walk_turns, keeping);
-        if self.classes.is_empty() {
-            let fallback = match self.target {
-                crate::components::LaborTarget::Hunt { .. } => &keeping.kill_fallback_class,
-                _ => &keeping.plant_fallback_class,
-            };
-            return if rots(fallback) {
-                self.cargo
-            } else {
-                NOTHING_CARRIED
-            };
-        }
-        self.classes
-            .iter()
-            .filter(|(class, _)| rots(class))
-            .map(|(_, amount)| amount)
-            .sum()
+        let fallback = match self.target {
+            crate::components::LaborTarget::Hunt { .. } => &keeping.kill_fallback_class,
+            _ => &keeping.plant_fallback_class,
+        };
+        lost_on_landing(&self.landed_pack(), fallback, keeping)
     }
 
     /// **Split `hands` of this group off into a walk of their own**, carrying their share of the
@@ -959,11 +1269,21 @@ impl HomewardWalk {
         };
         let cargo = self.cargo * share;
         self.cargo -= cargo;
-        let classes = scaled_classes(&self.classes, share);
-        for (class, amount) in &classes {
-            if let Some(held) = self.classes.get_mut(class) {
-                *held = (*held - amount).max(NOTHING_CARRIED);
+        let mut aged = AgedFood::new();
+        for slice in self.aged.iter_mut() {
+            let part = scaled_classes(&slice.classes, share);
+            for (class, amount) in &part {
+                if let Some(held) = slice.classes.get_mut(class) {
+                    *held = (*held - amount).max(NOTHING_CARRIED);
+                }
             }
+            let slice_cargo = slice.cargo * share;
+            slice.cargo = (slice.cargo - slice_cargo).max(NOTHING_CARRIED);
+            aged.push(AgedCargo {
+                age: slice.age,
+                cargo: slice_cargo,
+                classes: part,
+            });
         }
         let goods = self.goods.take_share(share);
         self.workers -= hands;
@@ -973,7 +1293,7 @@ impl HomewardWalk {
             turns_left: self.turns_left,
             walk_turns: self.walk_turns,
             cargo,
-            classes,
+            aged,
             goods,
             rejoins_row: self.rejoins_row,
         }
@@ -984,7 +1304,7 @@ impl HomewardWalk {
         LandedPack {
             walk_turns: self.walk_turns,
             cargo: self.cargo,
-            classes: self.classes.clone(),
+            aged: self.aged.clone(),
             bulk: NOTHING_CARRIED,
             goods: self.goods.clone(),
         }
@@ -1081,8 +1401,13 @@ pub struct CaravanPricing {
     /// the bare `labor.hunt.per_worker_biomass_capacity`, or the sled's `hunt_carry` where the kit
     /// carries one. One carry, whatever is on the porter's back.
     pub haul_carry: f32,
-    /// One gatherer's basket at this coverage — the gather pack and the projection's crew term.
+    /// One gatherer's PICKING RATE at this coverage, biomass a turn — the gather projection's crew
+    /// term. **Not the pack**: a faster hand fills the container sooner and does not make it bigger.
     pub forage_carry: f32,
+    /// **What one gatherer's container HOLDS at this coverage, in biomass** — the gather pack a far
+    /// party's porter walks home, coverage-weighted exactly as [`Self::forage_carry`] is. Separate
+    /// from the picking rate: the basket's hold is `forage_hold`, the sled's is `haul_carry`.
+    pub forage_hold: f32,
 }
 
 impl CaravanPricing {
@@ -1128,10 +1453,18 @@ impl CaravanPricing {
                 wear,
             )
         });
+        let forage_hold = coverage.weighted_rate(|kit| {
+            equipment.forage_hold_per_worker_biomass(
+                labor.forage.hold_per_worker_biomass_capacity,
+                kit,
+                wear,
+            )
+        });
         Self {
             coverage,
             haul_carry,
             forage_carry,
+            forage_hold,
         }
     }
 
@@ -1308,7 +1641,20 @@ pub fn forecast_caravan_carrying(
             spent = true;
             (SourceTake::default(), CarriedGoods::default())
         });
-        let now = party.close_turn_classed(taken, &CargoClasses::new(), &goods, pack_bulk);
+        // **The take's classes are the row's own shares of its cargo**, so every pack carries the
+        // composition (and, in the load, the age) the turn's own packs do.
+        let take_classes = rot.map_or_else(CargoClasses::new, |rot| {
+            scaled_classes(&rot.shares, taken.cargo)
+        });
+        let now = party.close_turn_classed(
+            taken,
+            &take_classes,
+            &goods,
+            pack_bulk,
+            rot.map(|rot| rot.keeping),
+        );
+        // Food that rotted in the load before a porter could carry it is spoiled, never income.
+        spoiled += party.take_rotted_at_source();
         let landed_now = now.as_ref().map_or(NOTHING_CARRIED, |pack| pack.cargo);
         bulk_home += open.packs.iter().map(|pack| pack.bulk).sum::<f32>()
             + now.as_ref().map_or(NOTHING_CARRIED, |pack| pack.bulk);
@@ -1318,7 +1664,7 @@ pub fn forecast_caravan_carrying(
         let lost: f32 = rot.map_or(NOTHING_CARRIED, |rot| {
             open.packs
                 .iter()
-                .map(|pack| pack.cargo - rot.kept_of_pack(pack.walk_turns, pack.cargo))
+                .map(|pack| pack.cargo - rot.kept_of_landed(pack))
                 .sum()
         });
         let home = open.delivered + landed_now;
@@ -1333,7 +1679,7 @@ pub fn forecast_caravan_carrying(
         if load_landed && forecast.first_load_turn == NO_LOAD_WITHIN_HORIZON {
             forecast.first_load_turn = turn;
         }
-        if spent && party.on_the_road.is_empty() && party.load_bulk <= NOTHING_CARRIED {
+        if spent && party.on_the_road.is_empty() && party.load_bulk() <= NOTHING_CARRIED {
             break;
         }
     }
@@ -1397,9 +1743,7 @@ pub fn forecast_hunt_caravan(
     // **What a material weighs** — the bulk a pen's fleece fills a pack with ([`standing_stream`]).
     materials: &crate::materials_config::MaterialsConfig,
 ) -> CaravanForecast {
-    let class = fauna
-        .keeping_for(&herd.species)
-        .unwrap_or(&keeping.kill_fallback_class);
+    let rot = TransitRot::of_herd(keeping, fauna, &herd.species);
     let mut forecast = forecast_hunt_caravan_rot(
         party,
         herd,
@@ -1410,7 +1754,7 @@ pub fn forecast_hunt_caravan(
         floor,
         keep_hands,
         horizon,
-        &TransitRot::single(keeping, class),
+        &rot,
         materials,
     );
     if meals_per_turn.is_finite() && forecast.rate_home > NOTHING_CARRIED {
@@ -1424,7 +1768,7 @@ pub fn forecast_hunt_caravan(
             floor,
             keep_hands,
             horizon,
-            &TransitRot::single(keeping, class).eaten_at(meals_per_turn),
+            &rot.eaten_at(meals_per_turn),
             materials,
         );
         forecast.eaten_fraction = (eaten.rate_home / forecast.rate_home).clamp(0.0, 1.0);
@@ -1666,7 +2010,12 @@ pub fn forecast_forage_caravan(
     tile_composition: &[crate::flora_config::FloraShare],
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
+    // **The gatherers' PICKING RATE**, biomass a turn — the projection's crew term only.
     carry_per_worker: f32,
+    // **What one gatherer's container HOLDS**, biomass — the gather pack
+    // ([`CaravanPricing::forage_hold`]). Separate from the picking rate: a faster hand fills the
+    // pack sooner and does not make it bigger.
+    hold: f32,
     seasonal: f32,
     output_multiplier: f32,
     floor: f32,
@@ -1679,24 +2028,15 @@ pub fn forecast_forage_caravan(
     keeping: &crate::demographics_config::KeepingConfig,
 ) -> CaravanForecast {
     let mut projection = ForageProjection::new(patch);
-    let one_unit = crate::scalar::scalar_one();
-    let rot = TransitRot {
+    let rot = TransitRot::of_patch(
         keeping,
-        shares: crate::forage::patch_food_mix(
-            patch,
-            tile_composition,
-            flora,
-            forage,
-            take_species,
-            one_unit,
-            keeping,
-        )
-        .iter()
-        .map(|(class, share)| (class.to_string(), share.to_f32()))
-        .collect(),
-        meals_per_turn: NOTHING_CAPS_THE_MEAL,
-    };
-    let mut forecast = forecast_caravan(party, horizon, carry_per_worker, Some(&rot), |present| {
+        patch,
+        tile_composition,
+        flora,
+        forage,
+        take_species,
+    );
+    let mut forecast = forecast_caravan(party, horizon, hold, Some(&rot), |present| {
         let gatherers = take_hands_present(present, keep_hands);
         match projection.step(
             tile_composition,
@@ -1862,9 +2202,9 @@ mod tests {
         );
         assert_eq!(party.hunters_present(), 0);
         assert!(
-            (party.load_bulk - 85.0).abs() < 1e-3,
+            (party.load_bulk() - 85.0).abs() < 1e-3,
             "the packs nobody could carry stay in the load: {}",
-            party.load_bulk
+            party.load_bulk()
         );
     }
 
@@ -1934,7 +2274,7 @@ mod tests {
             "fixture: every hand is on the road"
         );
         assert!(
-            party.load_cargo > NOTHING_CARRIED,
+            party.load_cargo() > NOTHING_CARRIED,
             "fixture: a leftover load"
         );
         let walks = party.walk_home(&crate::components::LaborTarget::Scout);
@@ -1955,16 +2295,22 @@ mod tests {
         let porter = |turns_out: u32, cargo: f32| Walker {
             walk_turns: 6,
             turns_out,
-            cargo,
-            bulk: cargo,
-            ..Walker::default()
+            lots: vec![Lot {
+                cargo,
+                bulk: cargo,
+                ..Lot::default()
+            }],
         };
         let party_with = |road: Vec<Walker>| {
             let mut party = WorkParty::posted(UVec2::ZERO, 6, 6);
             party.walk_out_remaining = NO_WALK;
             party.workers = 5;
             party.on_the_road = road;
-            party.load_cargo = 5.0;
+            party.load = vec![Lot {
+                cargo: 5.0,
+                bulk: 5.0,
+                ..Lot::default()
+            }];
             party
         };
         // Three at the source; an empty porter two turns from home; a carrying one four out.
@@ -1991,7 +2337,8 @@ mod tests {
             "the carrying porter stays on"
         );
         assert_eq!(
-            party.load_cargo, 5.0,
+            party.load_cargo(),
+            5.0,
             "the load stays with those who remain"
         );
 
@@ -2039,13 +2386,15 @@ mod tests {
             &CargoClasses::new(),
             &goods,
             10.0,
+            NO_KEEPING,
         );
         assert_eq!(party.hunters_on_the_road(), 2);
         for walker in &party.on_the_road {
-            assert!((walker.goods.fodder - 2.0).abs() < 1e-5);
-            assert!((walker.goods.materials[0].amount - 1.0).abs() < 1e-5);
+            let goods = goods_of(&walker.lots);
+            assert!((goods.fodder - 2.0).abs() < 1e-5);
+            assert!((goods.materials[0].amount - 1.0).abs() < 1e-5);
         }
-        assert!(party.load_goods.is_empty(), "the whole load left");
+        assert!(party.load.is_empty(), "the whole load left");
         let mut landed = Vec::new();
         for _ in 0..6 {
             landed.extend(party.open_turn().packs);
@@ -2118,12 +2467,12 @@ mod tests {
             home += party.step(pack, |_| SourceTake::default()).0;
         }
         assert!(
-            (home + party.load_cargo - body).abs() < 1e-2,
+            (home + party.load_cargo() - body).abs() < 1e-2,
             "every part of the carcass is home or still in the load: {home} + {}",
-            party.load_cargo
+            party.load_cargo()
         );
         assert!(
-            party.load_cargo > 0.0,
+            party.load_cargo() > 0.0,
             "the part no pack could take is still there, not wasted"
         );
     }
@@ -2331,7 +2680,16 @@ mod tests {
         );
     }
 
-    /// **A PACK THAT SURVIVES ITS WALK LANDS WHOLE** ([`TransitRot::kept_of_pack`]): flesh keeps 4
+    /// A pack of `cargo` that kept no time at the source and walked `walk` turns.
+    fn fresh_pack(walk: u32, cargo: f32) -> LandedPack {
+        LandedPack {
+            walk_turns: walk,
+            cargo,
+            ..LandedPack::default()
+        }
+    }
+
+    /// **A PACK THAT SURVIVES ITS WALK LANDS WHOLE** ([`TransitRot::kept_of_landed`]): flesh keeps 4
     /// turns, so a walk-3 pack is kept entire however slowly the band eats; a walk of the shelf life is
     /// lost whole; a walk of none is fresh. Spoilage of a surplus is the band's, not the row's.
     #[test]
@@ -2345,12 +2703,15 @@ mod tests {
         let last_walk = flesh_shelf as u32 - 1;
         for walk in NO_WALK..=last_walk {
             assert_eq!(
-                rot.kept_of_pack(walk, PACK),
+                rot.kept_of_landed(&fresh_pack(walk, PACK)),
                 PACK,
                 "walk {walk} lands whole"
             );
         }
-        assert_eq!(rot.kept_of_pack(last_walk + 1, PACK), NOTHING_CARRIED);
+        assert_eq!(
+            rot.kept_of_landed(&fresh_pack(last_walk + 1, PACK)),
+            NOTHING_CARRIED
+        );
     }
 
     /// **A pack carries what its load was made of, and lands with the walk it came on** (#706) —
@@ -2381,6 +2742,7 @@ mod tests {
             &classes,
             &CarriedGoods::default(),
             PACK,
+            NO_KEEPING,
         );
         assert!(
             landed_now.is_none(),
@@ -2399,14 +2761,222 @@ mod tests {
         for pack in &packs {
             assert_eq!(pack.walk_turns, WALK, "each pack lands with its walk");
             assert!(
-                (pack.classes["flesh"] / pack.cargo - FLESH_SHARE).abs() < 1e-5,
+                (pack.aged[0].classes["flesh"] / pack.cargo - FLESH_SHARE).abs() < 1e-5,
                 "each pack is three-quarters flesh, as the load was"
             );
         }
-        let home: f32 = packs.iter().flat_map(|pack| pack.classes.values()).sum();
+        let home: f32 = packs
+            .iter()
+            .flat_map(|pack| pack.aged.iter().flat_map(|slice| slice.classes.values()))
+            .sum();
         assert!(
             (home - LOAD).abs() < 1e-4,
             "every class of the load came home: {home}"
+        );
+    }
+
+    /// The pricing a one-hand gathering crew resolves at, on the shipped roster — `kit_id` stocked
+    /// when `stocked`, a bare-handed crew otherwise.
+    fn gather_pricing(kit_id: &str, stocked: bool) -> CaravanPricing {
+        let equipment = crate::equipment_config::EquipmentConfig::builtin();
+        let labor = LaborConfig::builtin();
+        let kit = equipment
+            .kit(kit_id)
+            .expect("the shipped roster carries the kit");
+        let mut wear = crate::components::BandEquipment::default();
+        if stocked {
+            // The shipped spawn owns nothing, so the crew is handed one basket.
+            wear.stock(
+                "baskets",
+                1,
+                &equipment.items["baskets"].default_tier().id,
+                None,
+            );
+        }
+        CaravanPricing::resolve(
+            &equipment,
+            &kit,
+            1.0,
+            1.0,
+            crate::components::SourcePriority::Normal,
+            &wear,
+            &[],
+            &labor,
+        )
+    }
+
+    /// **The first landing of one hand picking `rate` a turn into a pack of `hold`**, walking `walk`
+    /// turns: the turn it lands and the bulk the pack carried.
+    fn first_landing(rate: f32, hold: f32, walk: u32) -> (u32, f32) {
+        let mut party = WorkParty::posted(UVec2::ZERO, walk, walk);
+        party.workers = 1;
+        for turn in 1..=200 {
+            let open = party.open_turn();
+            party.close_turn_classed(
+                SourceTake {
+                    cargo: open.present as f32 * rate,
+                    bulk: open.present as f32 * rate,
+                },
+                &CargoClasses::new(),
+                &CarriedGoods::default(),
+                hold,
+                NO_KEEPING,
+            );
+            if let Some(pack) = open.packs.first() {
+                return (turn, pack.bulk);
+            }
+        }
+        panic!("a pack must land within the horizon");
+    }
+
+    /// ⛔ **A FAR BASKET'S PACK IS ITS HOLD, AND PICKING FASTER FILLS IT SOONER, NOT BIGGER.** The
+    /// basket's `forage_hold` (40) is a fact about the container; its `forage_carry` (8) is how much a
+    /// hand picks a turn. The gatherer walks home only when the container is full, so it picks for
+    /// several turns first, and a doubled picking rate shortens the fill without changing the pack.
+    #[test]
+    fn a_baskets_pack_is_its_hold_and_a_faster_hand_fills_it_sooner_not_bigger() {
+        const WALK: u32 = 3;
+        let basket = gather_pricing("gathering", true);
+        let bare = gather_pricing("none", false);
+        assert!(
+            basket.forage_hold > basket.forage_carry,
+            "a basket holds many turns of picking: hold {} against rate {}",
+            basket.forage_hold,
+            basket.forage_carry
+        );
+        assert!(
+            basket.forage_hold > bare.forage_hold,
+            "a basket holds more than bare hands"
+        );
+        let (slow_turn, slow_bulk) = first_landing(basket.forage_carry, basket.forage_hold, WALK);
+        let (fast_turn, fast_bulk) =
+            first_landing(2.0 * basket.forage_carry, basket.forage_hold, WALK);
+        assert!(
+            (slow_bulk - basket.forage_hold).abs() < 1e-3
+                && (fast_bulk - basket.forage_hold).abs() < 1e-3,
+            "the pack is the hold whatever the rate: {slow_bulk} and {fast_bulk}"
+        );
+        let turns_to_fill = (basket.forage_hold / basket.forage_carry).ceil() as u32;
+        assert!(
+            turns_to_fill > 1 && slow_turn > WALK + turns_to_fill,
+            "the gatherer picks for {turns_to_fill} turns before walking, so the first landing \
+             ({slow_turn}) is past the walk out and the fill"
+        );
+        assert!(
+            fast_turn < slow_turn,
+            "a faster hand fills the same pack sooner: {fast_turn} against {slow_turn}"
+        );
+    }
+
+    /// ⛔ **A PORTER LEAVES BEFORE THE OLDEST FOOD SPOILS.** Fresh plant keeps 8 turns and the walk is
+    /// 6, so food that has kept 1 turn lands aged 7 (kept) and food that waits one more turn would
+    /// land aged 8 (lost). With a hand present a porter leaves with a part-full pack the turn the
+    /// load's oldest food reaches that edge; without the rule it waits for a full pack and loses it.
+    /// With no hand present the food rots where it lies, counted and never income.
+    #[test]
+    fn a_porter_leaves_with_a_part_full_pack_before_the_food_spoils() {
+        const WALK: u32 = 6;
+        const BIG_PACK: f32 = 100.0;
+        const CARGO: f32 = 10.0;
+        let keeping = crate::demographics_config::DemographicsConfig::builtin()
+            .keeping
+            .clone();
+        let shelf =
+            crate::spoilage::base_shelf_life(&keeping, "fresh_plant").expect("keeps") as u32;
+        assert_eq!(
+            shelf,
+            WALK + 2,
+            "fixture: the edge falls on the second turn"
+        );
+        let classes: CargoClasses = [("fresh_plant".to_string(), CARGO)].into_iter().collect();
+        let run = |keeping: Option<&crate::demographics_config::KeepingConfig>, workers: u32| {
+            let mut party = WorkParty::posted(UVec2::ZERO, WALK, WALK);
+            party.workers = workers;
+            party.walk_out_remaining = NO_WALK;
+            let mut rotted = NOTHING_CARRIED;
+            let mut leaving_turn = None;
+            for turn in 1..=4 {
+                party.open_turn();
+                let take = if turn == 1 { CARGO } else { NOTHING_CARRIED };
+                let take_classes = if turn == 1 {
+                    classes.clone()
+                } else {
+                    CargoClasses::new()
+                };
+                party.close_turn_classed(
+                    SourceTake {
+                        cargo: take,
+                        bulk: take,
+                    },
+                    &take_classes,
+                    &CarriedGoods::default(),
+                    BIG_PACK,
+                    keeping,
+                );
+                rotted += party.take_rotted_at_source();
+                if leaving_turn.is_none() && party.hunters_on_the_road() > 0 {
+                    leaving_turn = Some(turn);
+                }
+            }
+            (party, leaving_turn, rotted)
+        };
+        let (mut party, leaving, rotted) = run(Some(&keeping), 1);
+        assert_eq!(
+            leaving,
+            Some(2),
+            "the porter leaves on turn 2, the turn the food is one turn from being lost"
+        );
+        assert_eq!(rotted, NOTHING_CARRIED, "nothing rotted: it left in time");
+        let mut landed = None;
+        for _ in 0..WALK {
+            landed = landed.or_else(|| party.open_turn().packs.into_iter().next());
+        }
+        let pack = landed.expect("the part-full pack lands after its walk");
+        assert!(
+            (pack.cargo - CARGO).abs() < 1e-4,
+            "a part-full pack: {}",
+            pack.cargo
+        );
+        assert_eq!(
+            pack.aged[0].age, 1,
+            "its food had kept one turn when it left"
+        );
+        assert_eq!(
+            lost_on_landing(&pack, "fresh_plant", &keeping),
+            NOTHING_CARRIED,
+            "and it lands in time"
+        );
+        // Control: with no keeping to read the porter waits for a full pack.
+        let (_, waiting, _) = run(NO_KEEPING, 1);
+        assert_eq!(
+            waiting, None,
+            "without the rule nobody leaves for a part-full pack"
+        );
+        // No hand present: the food rots at the source once it can no longer be saved.
+        let (party, leaving, rotted) = run(Some(&keeping), 0);
+        assert_eq!(leaving, None, "nobody is there to carry it");
+        assert!(
+            (rotted - CARGO).abs() < 1e-4,
+            "it rots where it lies: {rotted}"
+        );
+        assert!(party.load.is_empty(), "the rotten food left the load");
+    }
+
+    /// ⛔ **THE ROT TALLY NEVER OUTLIVES ITS TURN.** The live turn never drains it (only the
+    /// forecast does), so a new turn must start it at nothing, or a forecast clone counts every
+    /// past turn's rot again and the row's spoiled figure climbs for as long as the row exists.
+    #[test]
+    fn a_new_turn_starts_the_rot_tally_at_nothing() {
+        const WALK: u32 = 6;
+        const PAST_ROT: f32 = 10.0;
+        let mut party = WorkParty::posted(UVec2::ZERO, WALK, WALK);
+        party.walk_out_remaining = NO_WALK;
+        party.rotted_at_source = PAST_ROT;
+        party.open_turn();
+        assert_eq!(
+            party.take_rotted_at_source(),
+            NOTHING_CARRIED,
+            "last turn's rot is not this turn's"
         );
     }
 }

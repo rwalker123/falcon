@@ -27,6 +27,33 @@ use crate::labor_commands::{parse_work_priority_level, LaborRole};
 pub enum LaborEntry {
     AssignLabor(AssignLaborEntry),
     WorkPriority(WorkPriorityEntry),
+    BandOrder(BandOrderEntry),
+}
+
+/// The `action` token of a `band_order` entry that stores a target and a priority.
+pub const BAND_ORDER_SET: &str = "set";
+/// The `action` token that hands a kind (or one row of it) to the player.
+pub const BAND_ORDER_RELEASE: &str = "release";
+/// The `action` token that hands a kind (or one row of it) back to the chief.
+pub const BAND_ORDER_CLAIM: &str = "claim";
+
+/// `CommandPayload::BandOrder`, less `faction_id` and with `band_id` replaced by `band`. `target` and
+/// `priority` belong to `set` (the wire's `BandOrderAction::Set` fields); a row is named by
+/// `target_x` + `target_y` (a patch or working) or `herd_id` (a scenario herd id) and belongs to
+/// `release` and `claim` (the wire's `Option<BandOrderRow>`).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BandOrderEntry {
+    /// The band's id in this file.
+    pub band: String,
+    pub kind: String,
+    /// `"set"`, `"release"` or `"claim"`.
+    pub action: String,
+    pub target: Option<u32>,
+    pub priority: Option<String>,
+    pub target_x: Option<u32>,
+    pub target_y: Option<u32>,
+    pub herd_id: Option<String>,
 }
 
 /// `CommandPayload::AssignLabor`, less `faction_id`, `band_id` (now `band`) and the retired `policy`.
@@ -68,6 +95,7 @@ impl LaborEntry {
         match self {
             Self::AssignLabor(_) => "assign_labor",
             Self::WorkPriority(_) => "work_priority",
+            Self::BandOrder(_) => "band_order",
         }
     }
 
@@ -75,6 +103,7 @@ impl LaborEntry {
         match self {
             Self::AssignLabor(entry) => &entry.band,
             Self::WorkPriority(entry) => &entry.band,
+            Self::BandOrder(entry) => &entry.band,
         }
     }
 }
@@ -95,6 +124,10 @@ pub(super) fn with_runtime_herd(
             ..order.clone()
         }),
         LaborEntry::WorkPriority(order) => LaborEntry::WorkPriority(WorkPriorityEntry {
+            herd_id: swap(&order.herd_id)?,
+            ..order.clone()
+        }),
+        LaborEntry::BandOrder(order) => LaborEntry::BandOrder(BandOrderEntry {
             herd_id: swap(&order.herd_id)?,
             ..order.clone()
         }),
@@ -128,6 +161,18 @@ pub(super) fn check(
                         refuse_undeclared_herd(
                             herd,
                             &format!("{at}.fauna_id"),
+                            &declared_herds,
+                            refusals,
+                        );
+                    }
+                }
+                LaborEntry::BandOrder(entry) => {
+                    check_target(entry.target_x, entry.target_y, world, &at, refusals);
+                    check_band_order(entry, &at, refusals);
+                    if let Some(herd) = &entry.herd_id {
+                        refuse_undeclared_herd(
+                            herd,
+                            &format!("{at}.herd_id"),
                             &declared_herds,
                             refusals,
                         );
@@ -231,4 +276,81 @@ fn check_assign(
             ));
         }
     }
+}
+
+/// A `band_order`'s action is one of three tokens; `set` carries a target and a priority (the wire's
+/// `Set` fields, both required) and no row, `release` and `claim` carry neither and may name one row.
+fn check_band_order(entry: &BandOrderEntry, at: &str, refusals: &mut Vec<ScenarioRefusal>) {
+    match entry.action.as_str() {
+        BAND_ORDER_SET => {
+            if entry.target.is_none() {
+                refusals.push(ScenarioRefusal::new(
+                    format!("{at}.target"),
+                    "a set names a target",
+                ));
+            }
+            match &entry.priority {
+                None => refusals.push(ScenarioRefusal::new(
+                    format!("{at}.priority"),
+                    "a set names a priority",
+                )),
+                Some(level) if parse_work_priority_level(level).is_none() => {
+                    refusals.push(ScenarioRefusal::new(
+                        format!("{at}.priority"),
+                        format!("'{level}' is not a work priority level (high, normal or low)"),
+                    ));
+                }
+                Some(_) => {}
+            }
+            if entry.target_x.is_some() || entry.target_y.is_some() || entry.herd_id.is_some() {
+                refusals.push(ScenarioRefusal::new(
+                    format!("{at}.action"),
+                    "a set names no row; release or claim moves one",
+                ));
+            }
+        }
+        BAND_ORDER_RELEASE | BAND_ORDER_CLAIM => {
+            if entry.target.is_some() || entry.priority.is_some() {
+                refusals.push(ScenarioRefusal::new(
+                    format!("{at}.action"),
+                    "only a set names a target and a priority",
+                ));
+            }
+            if entry.herd_id.is_some() && (entry.target_x.is_some() || entry.target_y.is_some()) {
+                refusals.push(ScenarioRefusal::new(
+                    format!("{at}.herd_id"),
+                    "a row is a tile or a herd, not both",
+                ));
+            }
+        }
+        other => refusals.push(ScenarioRefusal::new(
+            format!("{at}.action"),
+            format!("'{other}' is not a band order action (set, release or claim)"),
+        )),
+    }
+}
+
+/// The wire's `BandOrderAction` and row for a checked entry; the row is `None` for a whole kind.
+pub(super) fn band_order_wire(
+    entry: &BandOrderEntry,
+) -> Option<(
+    sim_runtime::BandOrderAction,
+    Option<sim_runtime::BandOrderRow>,
+)> {
+    use sim_runtime::{BandOrderAction, BandOrderRow};
+    let action = match entry.action.as_str() {
+        BAND_ORDER_SET => BandOrderAction::Set {
+            target: entry.target?,
+            priority: entry.priority.clone()?,
+        },
+        BAND_ORDER_RELEASE => BandOrderAction::Release,
+        BAND_ORDER_CLAIM => BandOrderAction::Claim,
+        _ => return None,
+    };
+    let row = match (&entry.herd_id, entry.target_x, entry.target_y) {
+        (Some(id), None, None) => Some(BandOrderRow::Herd { id: id.clone() }),
+        (None, Some(x), Some(y)) => Some(BandOrderRow::Tile { x, y }),
+        _ => None,
+    };
+    Some((action, row))
 }

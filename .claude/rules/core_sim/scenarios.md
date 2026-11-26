@@ -19,8 +19,8 @@ design is `docs/plan_scenarios.md`. This file owns the loader. **A section's key
 rule of the arc that owns it**, under `## Scenario section`. The bands section's table is in
 `campaign.md`, the labor section's is in `work-party.md`, the tiles section's is in `worldgen.md`,
 the rungs section's is in `intensification.md`, the herds section's is in `fauna.md`, the pens
-section's is in `husbandry.md`, the deposits section's is in `extraction.md`, the bench section's is in
-`crafting.md`.
+section's is in `husbandry.md`, the deposits section's is in `extraction.md`, the roads
+section's is in `routes.md`, the bench section's is in `crafting.md`.
 
 ## Where things are
 
@@ -28,10 +28,10 @@ section's is in `husbandry.md`, the deposits section's is in `extraction.md`, th
 |---|---|
 | File shape, pass 1, `ScenarioRefusal`, `build_scenario_world`, `finish_scenario` | `core_sim/src/scenario/mod.rs` |
 | The profile and roster steps every world build runs (`apply_start_profile`, `seed_faction_roster`) | `core_sim/src/world_roster.rs` |
-| One module per section | `core_sim/src/scenario/bands.rs`, `labor.rs`, `tiles.rs`, `rungs.rs`, `herds.rs`, `pens.rs`, `deposits.rs`, `bench.rs` |
+| One module per section | `core_sim/src/scenario/bands.rs`, `labor.rs`, `tiles.rs`, `rungs.rs`, `herds.rs`, `pens.rs`, `deposits.rs`, `roads.rs`, `bench.rs` |
 | Replayed verbs that **return** their refusal | `core_sim/src/command_seam.rs` (the labor verbs' bodies are in `labor_commands.rs`) |
 | The verb and its reply | `handle_load_scenario` in `bin/server.rs`; `LoadScenarioCommand` = CommandEnvelope **101**, `ScenarioOpReply` = QueryReplyEnvelope **14** |
-| Checked-in scenarios | `core_sim/scenarios/<name>.json` (reviewed fixtures, not watched) |
+| Checked-in scenarios | `core_sim/scenarios/<name>.json` (reviewed fixtures, not watched): `breeding_ceiling_150.json`, `kept_roads.json` and the `*_playtest.json` files |
 | Sending one | `cargo xtask command load_scenario <path>` · `scripts/run_stack.sh --scenario <path>` |
 
 ## Two passes, and nothing is built on a typo
@@ -39,8 +39,9 @@ section's is in `husbandry.md`, the deposits section's is in `extraction.md`, th
 1. **Parse and resolve names** (`parse_scenario`), with no world built. Every struct is
    `deny_unknown_fields`, there are no serde defaults, and a key is optional only where the
    command it replays has an `Option` (a band's `outfit` and `auto_craft`; a labor entry's target,
-   kit, species, floor; a tile's `terrain` and `flora`, of which one is required). Every section key
-   is required (`[]` for none). Names are checked against the live
+   kit, species, floor; a tile's `terrain` and `flora`, of which one is required; a road's
+   `keeper`, which a trail has none of). Every section key is required (`[]` for none). Names are
+   checked against the live
    app's config handles (presets, profiles, archetypes, knowledge tags, keeping classes, kits,
    materials, labor roles, terrains, the flora roster). **Every refusal is collected**, so one load lists all of a
    file's faults. A serde error has no field path, so it reports `line L, column C`.
@@ -89,7 +90,8 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
 - The default outfit is fitted on the world-build pass against the band the scenario built.
 - `finish_scenario` applies the **setters** first: the herd and deposit fits are collected
   together and any refusal stops the load before either is applied, then the herds, the deposit
-  stocks, and the held rungs (each rung of the climb through the build gate). A deposit's stock and
+  stocks, the held rungs (each rung of the climb through the build gate), and the held roads
+  (`routes.md` → "Scenario section"). A deposit's stock and
   a held working's rung both open the working through `DepositRegistry::open`, so they compose in
   either order. Setter refusals are all collected, and any one stops the load before a command is
   replayed.
@@ -99,7 +101,7 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   `command_seam::apply_set_auto_craft` (after the outfit, before labor). A refusal stops the load at
   `factions[i].bands[j].auto_craft`.
 - `finish_scenario` then replays every faction's `labor` entries, in file order, through
-  `apply_assign_labor` / `apply_work_priority`. Labor runs only when no outfit was refused, and the
+  `apply_assign_labor` / `apply_work_priority` / `apply_band_order`. Labor runs only when no outfit was refused, and the
   first refused entry stops the load. A replayed entry writes the same success line to the feed a
   player's command would.
 - `finish_scenario` then replays the `build_rung` entries through `command_seam::apply_build_rung`,
