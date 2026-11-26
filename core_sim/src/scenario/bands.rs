@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use bevy::prelude::*;
 use serde::Deserialize;
 
+use super::bench::BenchEntry;
 use super::labor::LaborEntry;
 use super::tiles::TileOverride;
 use super::{ScenarioContext, ScenarioRefusal};
@@ -30,6 +31,8 @@ pub struct FactionSection {
     pub knowledge: Vec<String>,
     /// The faction's bands, in spawn order. The FIRST holds the faction's opening outfit window.
     pub bands: Vec<BandEntry>,
+    /// The faction's bench commands, replayed in file order. A required key: `[]` for none.
+    pub bench: Vec<BenchEntry>,
     /// Improvements the faction already holds and builds already declared (`rungs.rs`).
     pub rungs: Vec<super::rungs::RungEntry>,
     /// The faction's opening work rows, replayed in order through `assign_labor` and `work_priority`.
@@ -57,7 +60,7 @@ pub struct BandEntry {
     /// The ONE optional key: absent keeps the default outfit fitted to this band's size.
     pub outfit: Option<Outfit>,
     /// The second optional key: absent leaves the band's bench auto-craft off, `true` switches it
-    /// on after the outfit, as `bench_auto <faction> <band> on` does.
+    /// on after the outfit, as the server's `set_auto_craft` does.
     pub auto_craft: Option<bool>,
 }
 
@@ -305,6 +308,7 @@ pub struct FactionSetup {
     pub faction: FactionId,
     pub knowledge: Vec<String>,
     pub bands: Vec<BandEntry>,
+    pub bench: Vec<BenchEntry>,
     pub rungs: Vec<super::rungs::RungEntry>,
     pub labor: Vec<LaborEntry>,
     /// The faction's pen verbs, replayed after the builds. A required key: `[]` for none.
@@ -323,6 +327,7 @@ impl ScenarioSetup {
                     faction: FactionId(section.faction),
                     knowledge: section.knowledge.clone(),
                     bands: section.bands.clone(),
+                    bench: section.bench.clone(),
                     rungs: section.rungs.clone(),
                     labor: section.labor.clone(),
                     pens: section.pens.clone(),

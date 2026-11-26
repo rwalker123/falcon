@@ -29,15 +29,20 @@ use core_sim::record::{CommandRecord, RecordingSink, RunInfo, RunRecorder, RECOR
 use core_sim::sim_state::{restore_sim_state, Replaying};
 use core_sim::turn_profile;
 use core_sim::{
-    apply_port_base, available_workers, carry_runtime_owned_fields, carry_world_identity, knows,
+    apply_port_base, available_workers, carry_runtime_owned_fields, carry_world_identity,
     load_simulation_config_for_new_world, resolve_active_profile, BandBench, BandEquipment,
     BandTravel, BandWorkforce, BeatCatalogHandle, BeatConfigHandle, BeatLedger, BenchQueueError,
     BuildJob, BuildSource, CombatConfigHandle, Expedition, ExpeditionConfigHandle,
     ExpeditionMission, ExpeditionPhase, FoodMix, ForkAnswerError, HuntingParty, KitChoice, KitJob,
     LaborAllocation, LaborTarget, LadderConfig, LadderConfigHandle, LocalStore, MaterialDraw,
-    RecipesConfigHandle, ResidentBand, SourcePriority, TransferCause, TransferCrossing,
-    TransferDirection, UpkeepFundMode, MIN_ORDER_COUNT,
+    ResidentBand, SourcePriority, TransferCause, TransferCrossing, TransferDirection,
+    UpkeepFundMode, MIN_ORDER_COUNT,
 };
+// Used by the test modules (through `use super::*`) and by nothing in the server proper since the
+// bench's recipe check moved to `core_sim::command_seam`. Not `#[cfg(test)]`: the first such marker
+// in this file is the boundary `tests/harness_map_seed_guard.rs` reads as the start of the tests.
+#[allow(unused_imports)]
+use core_sim::DiscoveryProgressLedger;
 // Used by the test modules (through `use super::*`) and by nothing in the server proper since the
 // yield-seeding helpers moved to `core_sim::yield_seed`.
 use core_sim::{
@@ -49,12 +54,12 @@ use core_sim::{
     CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata, CrisisModifierCatalog,
     CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata, CrisisTelemetry,
     CrisisTelemetryConfig, CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata,
-    DiscoveryProgressLedger, EquipmentConfigHandle, EspionageAgentHandle, EspionageCatalog,
-    EspionageMissionId, EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate,
-    EspionageRoster, FactionBorderPolicies, FactionId, FactionOrders, FactionRegistry,
-    FactionSecurityPolicies, FaunaConfigHandle, FrameSink, HerdRegistry, LaborConfigHandle,
-    MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams,
-    Scalar, SecurityPolicy, Settlement, SimulationConfig, SimulationConfigMetadata, SimulationTick,
+    EquipmentConfigHandle, EspionageAgentHandle, EspionageCatalog, EspionageMissionId,
+    EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate, EspionageRoster,
+    FactionBorderPolicies, FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies,
+    FaunaConfigHandle, FrameSink, HerdRegistry, LaborConfigHandle, MapPresetsHandle,
+    PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams, Scalar,
+    SecurityPolicy, Settlement, SimulationConfig, SimulationConfigMetadata, SimulationTick,
     SnapshotAudiences, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     SnapshotOverlaysConfigMetadata, StartLocation, StartProfilesHandle, StartingUnit, SubmitError,
     SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle,
@@ -6536,15 +6541,9 @@ fn band_workforce(app: &bevy::prelude::App, band: Entity) -> BandWorkforce {
     core_sim::labor_commands::band_workforce(&app.world, band)
 }
 
-/// The band's bench, inserted on demand so a band spawned before the component existed still has
-/// one — the same shape `band_allocation_mut` uses for the labor allocation.
+/// The band's bench, inserted on demand. See [`core_sim::command_seam::band_bench_mut`].
 fn band_bench_mut(app: &mut bevy::prelude::App, band: Entity) -> bevy::prelude::Mut<'_, BandBench> {
-    if app.world.get::<BandBench>(band).is_none() {
-        app.world.entity_mut(band).insert(BandBench::default());
-    }
-    app.world
-        .get_mut::<BandBench>(band)
-        .expect("bench inserted above")
+    core_sim::command_seam::band_bench_mut(&mut app.world, band)
 }
 
 /// **Add an order to a band's bench queue** — `bench_enqueue <faction> <band> recipe <id> count <n>` (`docs/plan_crafting_and_materials.md` §7, "The queue").
@@ -6574,52 +6573,26 @@ fn handle_bench_enqueue(
     count: u32,
 ) {
     let event_kind = CommandEventKind::Craft;
-    let Some(display_name) = bench_recipe_refusal(app, faction, recipe_id, "bench_enqueue") else {
-        return;
-    };
-    if count < MIN_ORDER_COUNT {
-        emit_command_failure(
-            app,
-            event_kind,
-            faction,
-            format!(
-                "bench_enqueue: an order of {display_name} needs a count of at least \
-                 {MIN_ORDER_COUNT}."
-            ),
-        );
-        return;
-    }
-    // **Which row this order belongs to** — what the ledger's per-item suggestion is keyed by.
-    let row_key = app
-        .world
-        .resource::<RecipesConfigHandle>()
-        .get()
-        .recipe(recipe_id)
-        .and_then(|recipe| recipe.row_key().map(str::to_string));
-
     let Some(band) = select_starting_band(app, faction, band_id, "bench_enqueue", event_kind)
     else {
         return;
     };
-    let position = {
-        let mut bench = band_bench_mut(app, band.entity);
-        bench.enqueue(recipe_id, count);
-        // **Written HERE and nowhere else** - queueing an order is the one event that says which of
-        // an item's recipes this band chose, and the ledger suggests that one again next time. A
-        // readout must never write it: it would be the panel deciding what the player picked.
-        if let Some(row) = row_key.as_deref() {
-            bench.record_started(row, recipe_id);
+    // **One body**: the refusals and the queueing live in `command_seam`, which a scenario's
+    // `bench` section replays too.
+    let done = match core_sim::command_seam::apply_bench_enqueue_on(
+        &mut app.world,
+        faction,
+        band.entity,
+        recipe_id,
+        count,
+    ) {
+        Ok(done) => done,
+        Err(refusal) => {
+            emit_command_failure(app, event_kind, faction, refusal.to_string());
+            return;
         }
-        bench.orders.len() - ONE_ORDER
     };
-    // **The sim staffs the order** in the same passes as the work rows: restaffing the band is what
-    // makes the snapshot show the new crew at once.
-    restaff_and_reseed(app, band.entity);
-    let crew = app
-        .world
-        .get::<BandBench>(band.entity)
-        .and_then(|bench| bench.orders.get(position))
-        .map_or(0, |order| order.crew.total());
+    let (display_name, position, crew) = (done.display_name, done.position, done.crew);
     let tick = app.world.resource::<SimulationTick>().0;
     push_band_event(
         app,
@@ -6633,65 +6606,6 @@ fn handle_bench_enqueue(
              order={position} workers={crew}"
         )),
     );
-}
-
-/// **ONE ORDER** — what an enqueue adds to the queue's length, so the new order's index is
-/// `len − ONE_ORDER`.
-const ONE_ORDER: usize = 1;
-
-/// **The two recipe refusals every order-adding verb shares** — an unknown id and an unlearned
-/// craft. Emits the failure and returns `None`, or returns the recipe's display name (*Spears
-/// (Flint)*: the row's name plus its label, because the item owns its name and a recipe owns only
-/// the word that tells it from its siblings).
-fn bench_recipe_refusal(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    recipe_id: &str,
-    verb: &str,
-) -> Option<String> {
-    let event_kind = CommandEventKind::Craft;
-    let recipes = app.world.resource::<RecipesConfigHandle>().get();
-    let Some(recipe) = recipes.recipe(recipe_id) else {
-        emit_command_failure(
-            app,
-            event_kind,
-            faction,
-            format!(
-                "{verb}: unknown recipe '{recipe_id}' — the book offers {}.",
-                recipes.recipe_ids_for_message()
-            ),
-        );
-        return None;
-    };
-    let threshold = app
-        .world
-        .resource::<LadderConfigHandle>()
-        .get()
-        .knowledge
-        .completion_threshold;
-    let display_name = recipe.full_name(&app.world.resource::<EquipmentConfigHandle>().get());
-    let unknown_craft = {
-        let ledger = app.world.resource::<DiscoveryProgressLedger>();
-        // The one predicate the published `CraftOffer.queueable` also reads.
-        core_sim::crafting::first_unknown_craft(recipe, |craft| {
-            core_sim::crafting::craft_discovery_id(craft)
-                .is_some_and(|id| knows(ledger, faction, id, threshold))
-        })
-        .map(str::to_string)
-    };
-    if let Some(craft) = unknown_craft {
-        emit_command_failure(
-            app,
-            event_kind,
-            faction,
-            format!(
-                "{verb}: {display_name} needs {craft}, which this people has not learned — a \
-                 craft is learned by practising it bare-handed."
-            ),
-        );
-        return None;
-    }
-    Some(display_name)
 }
 
 /// **A queue edit's refusal, in a sentence that names the number** — the index the player asked
@@ -6753,7 +6667,7 @@ impl BenchKitEdit {
 ///
 /// **Fails closed and whole**: the kit must exist and carry something (the shipped `none` carries
 /// nothing and is not orderable), `kits` must be at least [`MIN_ORDER_COUNT`], every recipe passes
-/// [`bench_recipe_refusal`] exactly as `bench_enqueue` would, every recipe's output item must be
+/// `command_seam::bench_recipe_check` exactly as `bench_enqueue` would, every recipe's output item must be
 /// one the kit `uses`, no two recipes may make the same item, and every item of the kit must have a
 /// recipe. The crew is untouched.
 fn handle_bench_enqueue_kit(
@@ -6766,105 +6680,23 @@ fn handle_bench_enqueue_kit(
 ) {
     const VERB: &str = "bench_enqueue_kit";
     let event_kind = CommandEventKind::Craft;
-    let equipment = app.world.resource::<EquipmentConfigHandle>().get();
-    let Some(kit) = equipment
-        .kits()
-        .iter()
-        .find(|kit| kit.id == kit_id && !kit.uses.is_empty())
-    else {
-        emit_command_failure(
-            app,
-            event_kind,
-            faction,
-            format!("{VERB}: '{kit_id}' is not a kit that can be ordered."),
-        );
-        return;
-    };
-    if kits < MIN_ORDER_COUNT {
-        emit_command_failure(
-            app,
-            event_kind,
-            faction,
-            format!(
-                "{VERB}: an order of the {} needs at least {MIN_ORDER_COUNT} kit.",
-                kit.display_name
-            ),
-        );
-        return;
-    }
-    let mut row_keys: Vec<Option<String>> = Vec::with_capacity(recipe_ids.len());
-    let mut items_covered: Vec<String> = Vec::with_capacity(recipe_ids.len());
-    for recipe_id in recipe_ids {
-        let Some(display_name) = bench_recipe_refusal(app, faction, recipe_id, VERB) else {
-            return;
-        };
-        let recipes = app.world.resource::<RecipesConfigHandle>().get();
-        let recipe = recipes
-            .recipe(recipe_id)
-            .expect("bench_recipe_refusal found the recipe");
-        let output = recipe
-            .output_equipment_id()
-            .filter(|item| kit.uses.iter().any(|used| used == item));
-        let Some(item) = output else {
-            emit_command_failure(
-                app,
-                event_kind,
-                faction,
-                format!(
-                    "{VERB}: {display_name} makes nothing the {} uses.",
-                    kit.display_name
-                ),
-            );
-            return;
-        };
-        if items_covered.iter().any(|covered| covered == item) {
-            emit_command_failure(
-                app,
-                event_kind,
-                faction,
-                format!("{VERB}: two recipes make the same item ({display_name})."),
-            );
-            return;
-        }
-        items_covered.push(item.to_string());
-        row_keys.push(recipe.row_key().map(str::to_string));
-    }
-    if let Some(missing) = kit
-        .uses
-        .iter()
-        .find(|used| !items_covered.iter().any(|covered| covered == *used))
-    {
-        emit_command_failure(
-            app,
-            event_kind,
-            faction,
-            format!(
-                "{VERB}: the {} needs a recipe for its {missing}.",
-                kit.display_name
-            ),
-        );
-        return;
-    }
     let Some(band) = select_starting_band(app, faction, band_id, VERB, event_kind) else {
         return;
     };
-    let queue: Vec<(String, u32)> = recipe_ids
-        .iter()
-        .map(|recipe_id| (recipe_id.clone(), kits))
-        .collect();
-    let id = {
-        let mut bench = band_bench_mut(app, band.entity);
-        let id = bench
-            .enqueue_kit(kit_id, kits, queue)
-            .expect("the kit count was checked to be at least one");
-        for (recipe_id, row) in recipe_ids.iter().zip(&row_keys) {
-            if let Some(row) = row.as_deref() {
-                bench.record_started(row, recipe_id);
-            }
+    let done = match core_sim::command_seam::apply_bench_enqueue_kit_on(
+        &mut app.world,
+        faction,
+        band.entity,
+        kit_id,
+        kits,
+        recipe_ids,
+    ) {
+        Ok(done) => done,
+        Err(refusal) => {
+            emit_command_failure(app, event_kind, faction, refusal.to_string());
+            return;
         }
-        id
     };
-    restaff_and_reseed(app, band.entity);
     let tick = app.world.resource::<SimulationTick>().0;
     push_band_event(
         app,
@@ -6874,11 +6706,11 @@ fn handle_bench_enqueue_kit(
         band.id,
         format!(
             "{} queued {kits} {} as one order",
-            band.label, kit.display_name
+            band.label, done.kit_display_name
         ),
         Some(format!(
-            "status=applied action={VERB} kit={kit_id} kit_order={id} kits={kits} parts={}",
-            recipe_ids.len()
+            "status=applied action={VERB} kit={kit_id} kit_order={} kits={kits} parts={}",
+            done.order_id, done.parts
         )),
     );
 }
@@ -7030,7 +6862,9 @@ fn handle_bench_queue_edit(
                 text
             }),
             BenchQueueEdit::Raise => bench.raise_order(index).map(|()| {
-                let recipe = bench.orders[index - ONE_ORDER].recipe_id.clone();
+                let recipe = bench.orders[index - core_sim::command_seam::ONE_ORDER]
+                    .recipe_id
+                    .clone();
                 (
                     format!("{}: {recipe} moved up the bench queue", band.label),
                     format!("status=applied action={verb} order={order} recipe={recipe}"),

@@ -1,0 +1,39 @@
+{
+  "name": "bench_queue",
+  "note": "One people of 150 whose bench opens working: spears and a two-sled kit order, with auto-craft on.",
+  "world": {
+    "preset": "earthlike",
+    "width": 80,
+    "height": 52,
+    "seed": 41733,
+    "profile": "late_forager_tribe",
+    "archetypes": { "major": 0, "minor": 0 }
+  },
+  "herds": [],
+  "factions": [
+    {
+      "faction": 0,
+      "knowledge": [],
+      "bands": [
+        {
+          "id": "home",
+          "at": [13, 11],
+          "size": 150,
+          "ages": { "children": 0.30, "working": 0.60, "elders": 0.10 },
+          "founding_lines": 8,
+          "larder": [{ "class": "dry", "amount": 450.0 }],
+          "auto_craft": true
+        }
+      ],
+      "rungs": [],
+      "labor": [],
+      "pens": [],
+      "bench": [
+        { "bench_enqueue": { "band": "home", "recipe_id": "spears", "count": 4 } },
+        { "bench_enqueue_kit": { "band": "home", "kit_id": "sledding", "kits": 2, "recipes": ["sled"] } }
+      ]
+    }
+  ],
+  "tiles": [],
+  "deposits": []
+}

@@ -45,7 +45,8 @@
       "pens": [
         { "extend_pen": { "herd": "sheep" } },
         { "set_herd_output": { "herd": "flock", "fraction": 0.5 } }
-      ]
+      ],
+      "bench": []
     }
   ],
   "tiles": [],
